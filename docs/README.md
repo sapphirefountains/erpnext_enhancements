@@ -24,6 +24,8 @@ anything.
 | [print-design-system.md](print-design-system.md) | The chrome every printed document shares — the pillar stripe, wordmark, display face — how a format composes it, and why the font is a data URI |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
+| [lead-triage-runbook.md](lead-triage-runbook.md) | Why every enquiry starts as a Lead, the Lead → Opportunity qualification path (and what happens to attribution), triage ownership, and the speed-to-lead SLA |
+| [website-capture/](website-capture/) | The WordPress half of attribution: the capture script, the Fluent Forms field mapping, per-platform `utm_id` tagging |
 | [website-capture/](website-capture/) | The WordPress half: the first-touch UTM mu-plugin, the Fluent Forms hidden fields and webhook mapping, and why a JS-injected field never reaches ERPNext |
 | [error-log-runbook.md](error-log-runbook.md) | Every Error Log signature that no code change can fix — dead MDM credentials, missing Google grants, the SMTP relay IP, log retention — with the commands in Bash and PowerShell |
 | [triton-drive-picker-setup.md](triton-drive-picker-setup.md) | The Google Cloud and Workspace admin half of Triton chat attachments: which project, the two APIs, the referrer-restricted browser key (including the `docs.google.com` one everyone misses), the `drive.file` consent screen, where each value lands in ERPNext, why the Drive service account is not in this feature, and the security-review checklist |

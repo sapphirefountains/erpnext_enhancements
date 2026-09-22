@@ -21,14 +21,9 @@ import frappe
 from frappe.utils import add_days, flt, getdate, now_datetime, nowdate, time_diff_in_hours
 
 from erpnext_enhancements.api.dashboard_widgets import fetch_all, widget_feed
+from erpnext_enhancements.crm_enhancements.lead_triage import LEAD_CLOSED_STATUSES, RESPONSE_EXISTS_SQL
 
 ROW_LIMIT = 20
-
-# Lead statuses that mean "no longer waiting on us for a first touch". Expressed
-# as an exclusion list on purpose: the Lead status Select is site-configurable,
-# and a new status should default to "still needs a response" rather than
-# silently dropping out of the queue.
-LEAD_CLOSED_STATUSES = ("Converted", "Opportunity", "Quotation", "Lost Quotation", "Do Not Contact")
 
 # Matches the `stalled_opportunities` KPI's window (snapshots._sales_metrics).
 STALLED_DAYS = 14
@@ -51,13 +46,19 @@ def _days_since(value):
 def get_speed_to_lead():
 	"""Leads still waiting on their first outbound touch, oldest first.
 
-	"Responded" is the existence of a Sent Communication against the Lead — the
-	same signal the desk timeline shows, so a rep who emailed from the Lead form
-	drops off this list without any extra bookkeeping. Inbound-only threads
-	(``sent_or_received = 'Received'``) do not count as a response.
+	"Responded" is ``lead_triage.RESPONSE_EXISTS_SQL``: a Sent Communication of type
+	Communication against the Lead -- an email from the Lead form, a gateway SMS, a
+	logged outbound call. The same rule the first-response SLA alerts on, from the
+	same constant, so this list and the alert cannot disagree about who has been
+	answered. Inbound-only threads and automated messages do not count.
+
+	``due`` / ``overdue`` come from ``custom_first_response_due``, which only inbound
+	Leads carry (see lead_triage.py); a Lead typed in by hand shows neither.
 	"""
 	has_source = frappe.db.has_column("Lead", "custom_lead_source")
 	source_col = "l.custom_lead_source" if has_source else "null"
+	has_due = frappe.db.has_column("Lead", "custom_first_response_due")
+	due_col = "l.custom_first_response_due" if has_due else "null"
 	placeholders = ", ".join(["%(s" + str(i) + ")s" for i in range(len(LEAD_CLOSED_STATUSES))])
 	params = {"s" + str(i): s for i, s in enumerate(LEAD_CLOSED_STATUSES)}
 	params["since"] = add_days(getdate(nowdate()), -30)
@@ -66,16 +67,12 @@ def get_speed_to_lead():
 	rows = frappe.db.sql(
 		f"""
 		select l.name, l.lead_name, l.company_name, l.status, l.creation,
-		       l.lead_owner, l.email_id, l.mobile_no, {source_col} as lead_source
+		       l.lead_owner, l.email_id, l.mobile_no, {source_col} as lead_source,
+		       {due_col} as first_response_due
 		from `tabLead` l
 		where l.status not in ({placeholders})
 		  and l.creation >= %(since)s
-		  and not exists (
-		        select 1 from `tabCommunication` c
-		        where c.reference_doctype = 'Lead'
-		          and c.reference_name = l.name
-		          and c.sent_or_received = 'Sent'
-		  )
+		  and not {RESPONSE_EXISTS_SQL.format(alias="l")}
 		order by l.creation asc
 		limit %(limit)s
 		""",
@@ -97,6 +94,8 @@ def get_speed_to_lead():
 				"source": r.lead_source or "",
 				"contact": r.email_id or r.mobile_no or "",
 				"hours_waiting": round(flt(hours), 1),
+				"due": str(r.first_response_due) if r.first_response_due else None,
+				"overdue": bool(r.first_response_due and now >= r.first_response_due),
 			}
 		)
 	return {"leads": leads}

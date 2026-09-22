@@ -105,7 +105,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint
 
-from erpnext_enhancements.crm_enhancements import attribution
+from erpnext_enhancements.crm_enhancements import attribution, lead_triage
 from erpnext_enhancements.utils.error_throttle import log_error_throttled
 
 #: Inbound key -> Lead fieldname. The complete set of non-attribution fields this
@@ -205,9 +205,9 @@ def submit_web_lead(**payload):
 	attribution._fill_blanks(lead, values)
 	attribution.stamp_capture_time(lead)
 
-	owner = _default_owner()
-	if owner:
-		lead.lead_owner = owner
+	# An owner (the named triage owner, else the Sales Team rotation) and, when the
+	# SLA is on, a first-response deadline. See lead_triage.py; never raises.
+	lead_triage.prepare_inbound_lead(lead)
 
 	try:
 		lead.insert(ignore_permissions=True)
@@ -217,6 +217,7 @@ def submit_web_lead(**payload):
 		return {"status": "rejected"}
 
 	_record_submission_context(lead, payload)
+	lead_triage.assign_inbound_lead(lead)
 
 	return {"status": "accepted", "lead": lead.name}
 
@@ -331,19 +332,6 @@ def _mapped_lead_fields(payload):
 
 	fields["status"] = "Lead"
 	return fields
-
-
-def _default_owner():
-	"""Configured triage owner, or None.
-
-	Deliberately not guessed: routing real enquiries to the wrong person is worse
-	than leaving them unassigned, where the missing-source report will surface
-	them. Same reasoning as ``fmr_default_owner`` in the fountain-move flow.
-	"""
-	owner = (_settings().get("web_lead_default_owner") or "").strip()
-	if owner and frappe.db.exists("User", owner):
-		return owner
-	return None
 
 
 def _record_submission_context(lead, payload):

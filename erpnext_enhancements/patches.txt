@@ -1141,3 +1141,7 @@ erpnext_enhancements.patches.delete_qbo_uncategorized_groups
 # quickbooks_online/core/customer_corrections.json. db.set_value; per-record guarded, both
 # passes wrapped, cannot raise, safe twice.
 erpnext_enhancements.patches.restore_customer_groups_after_qbo_sweep
+# v1.502.0: lead triage + speed-to-lead SLA settings. A new field's default never reaches an
+# existing Single's row; this fills ONLY the six fields that release added, only where no
+# tabSingles row exists (a stored 0 is kept). Direct writes, no validate; safe twice.
+erpnext_enhancements.patches.backfill_lead_triage_settings_defaults

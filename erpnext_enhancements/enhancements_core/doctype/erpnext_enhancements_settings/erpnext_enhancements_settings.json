@@ -146,6 +146,15 @@
   "web_lead_ingress_enabled",
   "web_lead_default_owner",
   "web_lead_shared_secret",
+  "lead_triage_section",
+  "lead_triage_role",
+  "lead_sla_escalate_to",
+  "lead_triage_column_break",
+  "lead_sla_enabled",
+  "lead_sla_response_minutes",
+  "lead_sla_escalation_minutes",
+  "lead_sla_business_start",
+  "lead_sla_business_end",
   "account_hygiene_section",
   "require_industry_on_commercial",
   "require_industry_on_edit",
@@ -1124,6 +1133,70 @@
    "fieldname": "web_lead_shared_secret",
    "fieldtype": "Password",
    "label": "Website Ingress Shared Secret"
+  },
+  {
+   "fieldname": "lead_triage_section",
+   "fieldtype": "Section Break",
+   "label": "Lead Triage & Speed to Lead"
+  },
+  {
+   "default": "Sales Team",
+   "description": "Backup owner pool for inbound (website) Leads: when Website Lead Owner is blank or that user is disabled, new Leads rotate round-robin across enabled users holding this role. Sales Team rather than Sales User, which almost every account holds. See crm_enhancements/lead_triage.py.",
+   "fieldname": "lead_triage_role",
+   "fieldtype": "Link",
+   "label": "Triage Rotation Role",
+   "options": "Role"
+  },
+  {
+   "description": "The one person who hears when an inbound Lead has had no response by the escalation time (the owner is told too). Required to enable the SLA. There is no role fallback: on this site every Sales Team member also holds Sales Manager, so a role would page the whole team.",
+   "fieldname": "lead_sla_escalate_to",
+   "fieldtype": "Link",
+   "label": "Escalate Unanswered Leads To",
+   "options": "User"
+  },
+  {
+   "fieldname": "lead_triage_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Give each inbound Lead a first-response deadline and chase it: a reminder to the owner when it passes, an escalation later. A response is a Sent email, SMS or logged outbound call on the Lead. Off by default; ownership and the ToDo work either way.",
+   "fieldname": "lead_sla_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Speed-to-Lead SLA"
+  },
+  {
+   "default": "60",
+   "depends_on": "lead_sla_enabled",
+   "description": "Working minutes (inside the business hours below, Mon-Fri, excluding the company Holiday List) from arrival to the owner's reminder.",
+   "fieldname": "lead_sla_response_minutes",
+   "fieldtype": "Int",
+   "label": "First Response Within (working minutes)",
+   "non_negative": 1
+  },
+  {
+   "default": "240",
+   "depends_on": "lead_sla_enabled",
+   "description": "Working minutes from arrival to the escalation. Never earlier than the reminder.",
+   "fieldname": "lead_sla_escalation_minutes",
+   "fieldtype": "Int",
+   "label": "Escalate After (working minutes)",
+   "non_negative": 1
+  },
+  {
+   "default": "08:00:00",
+   "depends_on": "lead_sla_enabled",
+   "fieldname": "lead_sla_business_start",
+   "fieldtype": "Time",
+   "label": "Business Day Starts"
+  },
+  {
+   "default": "17:00:00",
+   "depends_on": "lead_sla_enabled",
+   "description": "Site time zone. A Lead arriving after this is due the next working morning.",
+   "fieldname": "lead_sla_business_end",
+   "fieldtype": "Time",
+   "label": "Business Day Ends"
   },
   {
    "fieldname": "account_hygiene_section",

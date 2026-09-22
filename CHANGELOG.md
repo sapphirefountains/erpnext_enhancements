@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.502.0] - 2026-09-22
+
+**Every inbound Lead now gets an owner, a first-response deadline in working time, and a
+chase.** TASK-2026-01473 (Marketing P1, item 4). Between 2026-08-01 and today this site created
+1 Lead against 29 Opportunities. Sales skips the Lead stage, so contact rate, speed to lead and
+lead-to-opportunity conversion cannot be computed, and website attribution has nothing to
+attach to. On 2026-08-13 the decision was to keep the Lead stage and fix the process. This
+release is the part of the process software can hold. Defaults chosen by Nik on 2026-09-22:
+one named triage owner with a role rotation as backup, 1 working hour to first response, and
+escalation at 4.
+
+### Added
+
+- **`crm_enhancements/lead_triage.py`.**
+  - **Owner:** `web_lead_default_owner`, or, when that is blank or disabled, round-robin
+    across enabled users holding **Triage Rotation Role** (default `Sales Team`). Measured on
+    prod, `Sales User` is held by 16 of 19 enabled users, so as a pool it would mean
+    everybody. `Sales Team` resolves to 7 people. Service accounts are excluded:
+    `triton@sapphirefountains.com` holds Sales Team on prod and is a Google Group, so a plain
+    role query would have handed Leads to a bot.
+  - **ToDo:** the owner gets one (High, dated to the deadline) and a notification. Both are
+    made directly, because Frappe's `assign_to.add` words the notification with the session
+    user, and a website submission arrives as Guest ("Guest assigned a new task…").
+  - **Response:** a Sent Communication of type Communication on the Lead: an email from the
+    Lead form, a gateway SMS, or a logged outbound Triton call. That is Frappe's own
+    first-response rule (`update_first_response_time`). A Communication hook stamps it into
+    `custom_first_response_at`. Frappe's version would need the bare fieldnames
+    `first_responded_on`/`first_response_time`, and all 617 Custom Fields in this app are
+    `custom_`-prefixed.
+  - **The chase:** `sweep_first_response_sla` runs every ten minutes. It reminds the owner
+    at the deadline and escalates at the escalation time, each at most once per Lead
+    (`custom_sla_alert`). A Lead that reaches its escalation time without a reminder (an
+    outage, or the SLA switched on over a backlog) escalates once, rather than reminding and
+    then escalating ten minutes apart.
+  - **Escalation goes to one named person, `lead_sla_escalate_to`, with no role fallback.**
+    The fallback I first wrote (Sales Manager ∩ Sales Team) resolved on prod to the entire
+    sales team plus Triton, because every Sales Team member also holds Sales Manager.
+    `validate` on the Settings refuses to enable the SLA without a named, enabled escalation
+    user, and only when the SLA box is ticked, so it can never block an unrelated save. If
+    that user is later disabled, the owner still hears, and the Error Log gets one row a day.
+  - **Scope:** only inbound Leads carry a deadline. Today that means the website ingress; a
+    Lead typed in after a phone call has already been answered.
+- **`utils/business_hours.py`**, stdlib only: working time in minutes (Mon–Fri, business hours,
+  holiday test). `working_days` counts whole days, but a Friday 16:30 enquiry with a one-hour
+  SLA is due Monday 08:30. It raises rather than spinning if the holiday calendar leaves no
+  working day.
+- **Lead fields (fixtures), read-only and shown only when set:** `custom_first_response_due`,
+  `custom_first_response_at`, `custom_sla_alert` (`Reminded`/`Escalated`).
+- **Settings → Lead Triage & Speed to Lead:** rotation role, escalation user, and the SLA
+  switch, which ships **off**. Also response and escalation minutes (60/240) and business
+  hours (08:00–17:00). `patches/backfill_lead_triage_settings_defaults` fills the six new
+  defaults on the existing Single row, but only where no `tabSingles` row exists, and only
+  those six. A blanket "fill every missing default" pass over this Single would have switched
+  on `require_industry_on_commercial` (default 1) on any site where it had never been saved.
+- **`backfill_first_responses`** (`after_migrate`, since the column is a fixture field and
+  `sync_fixtures` runs after the patches) stamps first responses from existing
+  Communications, blanks only.
+- **`docs/lead-triage-runbook.md`**: why every enquiry starts as a Lead, the stages, the
+  Lead → Opportunity qualification path and exactly what happens to attribution on
+  conversion, the fountain-move exception, ownership, the SLA, the triage queue, turning it on,
+  and measuring it.
+- `tests/test_lead_triage.py` (40 tests, own CI step):
+  - business-hours edges: Friday rollover, holidays, closing time, a zero-length day, an
+    all-holiday calendar;
+  - the rotation, with Triton never picked;
+  - escalation needing a named person, and the Settings refusing the SLA without one;
+  - the remind/escalate matrix;
+  - the response rule, and that the dashboard no longer keeps its own copy;
+  - one ToDo and no "Guest" notification;
+  - the stamp firing once;
+  - fixture/Settings/backfill agreement;
+  - `propagate_to_opportunity` carrying `custom_utm_id` from a Lead to its Opportunity.
+
+### Changed
+
+- **The Speed-to-Lead widget's definition of "answered" is now the shared one** (the widget
+  and the alert cannot disagree). Automated messages no longer count as a response, where
+  previously any Sent Communication did. Its rows also carry `due` and `overdue`. The widget
+  markup is unchanged; P1 adds no UI.
+- `web_lead.py` delegates ownership to `lead_triage` (the old `_default_owner` is gone), and
+  creates the ToDo after insert. Triage failures are logged, never refused: the Lead is the
+  thing that mattered.
+
+### Notes
+
+- **The company Holiday List on prod is `Utah, USA Holidays 2025`.** It has no 2026 dates, so
+  2026 holidays count as working days until a 2026 list is set as the company default. It is
+  flagged in the runbook, not guessed at here.
+- **Still a human decision:** who works the queue daily. The named owner is the answer the
+  software expects; the rotation is a backup, not a substitute.
+
 ## [1.501.0] - 2026-09-22
 
 **The website lead ingress could never have accepted a lead: Frappe rejected its credential

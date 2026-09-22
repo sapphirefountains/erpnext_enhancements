@@ -32,6 +32,20 @@ from frappe.utils import cint
 class ERPNextEnhancementsSettings(Document):
 	def validate(self):
 		self.validate_fountain_move_public_form()
+		self.validate_lead_sla()
+
+	def validate_lead_sla(self):
+		"""Refuse to enable the speed-to-lead SLA without a named escalation user.
+
+		Only when ``lead_sla_enabled`` is ticked, so a site that never turns the SLA on
+		can never be blocked from saving this page by it. The rule and its reasoning
+		live in ``crm_enhancements.lead_triage.sla_settings_error``.
+		"""
+		from erpnext_enhancements.crm_enhancements.lead_triage import sla_settings_error
+
+		message = sla_settings_error(self)
+		if message:
+			frappe.throw(message, title=_("Escalation Recipient Required"))
 
 	def validate_fountain_move_public_form(self):
 		"""Refuse to publish the guest intake form without a Turnstile secret.

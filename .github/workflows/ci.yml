@@ -1787,6 +1787,14 @@ jobs:
       # in setUpModule and removes it in tearDownModule.
       - name: Website lead ingress behaviour (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_web_lead_ingress -v
+      # Lead triage + speed-to-lead SLA (TASK-2026-01473, v1.502.0). The working-time
+      # arithmetic every deadline rests on (a Friday 16:30 enquiry is due Monday 08:30,
+      # not overnight), the Sales Team rotation (not Sales User, which nearly everybody
+      # holds), one ToDo and no "Guest assigned" notification, the one response rule the
+      # widget shares, remind-then-escalate once each, and attribution reaching the
+      # Opportunity. Own step: installs a frappe stub and removes it in tearDownModule.
+      - name: Lead triage and speed-to-lead SLA (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_lead_triage -v
       # The WordPress capture script lives in docs/website-capture/ and runs on WP Engine, not
       # here -- so this is the only place its behaviour is checked before somebody pastes it
       # in. Session-scoped first touch, a tagged new visit replacing the whole touch, utm_id,
