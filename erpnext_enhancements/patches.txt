@@ -1133,3 +1133,11 @@ erpnext_enhancements.patches.restore_supplier_groups_after_qbo_sweep
 # into NO group, and an empty "Uncategorized" invites the filing that design rejects. delete_doc
 # refuses a linked record, so a leaf something points at is logged and left; cannot raise, safe twice.
 erpnext_enhancements.patches.delete_qbo_uncategorized_groups
+# v1.498.0: the Customer half of the default-group sweep. 466 QBO-linked Customers sat in
+# "Government" (the newest Customer Group leaf) and 355 had their territory written to "Asia"
+# and then "United States of America" (the newest Territory leaf each time), 63 of them over a
+# real value. Restores the pre-sweep value from tabVersion, clears the rest (a wrong group is
+# worse than none: Nik, 2026-09-22), keeps the 26 real government bodies named in
+# quickbooks_online/core/customer_corrections.json. db.set_value; per-record guarded, both
+# passes wrapped, cannot raise, safe twice.
+erpnext_enhancements.patches.restore_customer_groups_after_qbo_sweep
