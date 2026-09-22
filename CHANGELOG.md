@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.496.0] - 2026-09-22
+
+### Fixed
+
+- **The QuickBooks importer re-filed every QBO-linked Supplier into whichever Supplier
+  Group was newest, on every sync, and nobody could see it happen.** QuickBooks has no
+  supplier group, customer group or territory, so `_map_supplier` / `_map_customer` in
+  `quickbooks_online/core/mapping.py` had to pick one, and `_default_group` picked it with
+  `frappe.db.get_value(doctype, {"is_group": 0}, "name")` — "any leaf group". The trap: a
+  dict-filtered `get_value` on Frappe 16 with no `order_by` sorts by `creation`
+  **descending** — `Database.get_values` rewrites the default sentinel to the bare string
+  `"creation"` (`frappe/database/database.py`), and the query builder's `apply_order_by`
+  gives a field with no direction `Order.desc` (`frappe/database/query.py`, verified on
+  `origin/version-16`) — so "any" meant "the one somebody created most recently". The
+  doctype's own `sort_order` never enters into it (Supplier Group declares `creation ASC`
+  and was swept just the same). On its own that would only have mis-filed *new* parties.
+  What made it a sweep
+  is the already-linked path of `upsert_entity`: it re-applies every mapped value with
+  `apply_values` on each re-sync, defaults included, so each time anyone added a Supplier
+  Group the next scheduled run (as Administrator) moved all 911 QBO-linked Suppliers into
+  it. Verified on prod 2026-09-22 from `tabVersion`: Staffing (the 2026-06-18 vendor
+  import) → Event Decor (07-21) → Encapsulant (08-19) → Labels (09-09) → Garbage & Junk
+  Removal (09-16, 906 rows). 466 Customers sit in "Government", the newest Customer Group
+  leaf, the same way — and `customer_group` is hidden on the Customer form by Property
+  Setter, so the form never showed it. The `owned_fields` snapshot listed the group as
+  QBO-owned too, so a person re-grouping a Supplier would have parked it in Conflict on
+  the next run had the sweep not got there first. Same shape as the Project-title clobber
+  fixed by `_protect_existing_project_title` (v1.89.0), and fixed the same way, in three
+  parts:
+  - **The default is a name.** `constants.DEFAULT_PARTY_GROUP = "Uncategorized"`;
+    `_default_group` returns it when `frappe.db.exists` says it does and `None` otherwise
+    (none of the three Links is `reqd` on v16, so a missing leaf yields an honest blank, not
+    a guess). Never an unordered lookup again — the test stub no longer answers a
+    `{"is_group": 0}` lookup at all, so a regression shows up as a wrong value *and* a call.
+  - **Create-time only.** `_protect_existing_party_groups` drops `supplier_group`,
+    `customer_group` and `territory` from an update when the record already holds one, so
+    the default is set once on create, fills a blank on link / update, and is otherwise
+    ERPNext's. `ERPNEXT_OWNED_PARTY_FIELDS` are excluded from `_owned_snapshot` (whichever
+    path writes the mapping) and skipped by `detect_conflicts` even when an older snapshot
+    still lists them, so re-grouping a party is never a conflict.
+  - **Bench-free tests** pin all of it: the named default, no lookup, the update path
+    leaving a set group and territory alone while still filling a blank one, the preview
+    not listing the field, the snapshot and conflict exclusions, the seed patch's
+    insert-only / never-raise contract, and the remediation's history walk.
+
+### Added
+
+- **`Uncategorized` under All Supplier Groups, All Customer Groups and All Territories**,
+  seeded by `patches/seed_qbo_uncategorized_groups` — insert-only, keyed on the name,
+  guarded on the DocType and the root, cannot raise (a raising patch aborts `bench migrate`,
+  which is the deploy) — and registered on `after_migrate` as the backstop for a site whose
+  Patch Log already has the entry or where the leaf was deleted, because the mapper depends
+  on the record existing and cannot create it. A seed rather than a fixture for the reason
+  `seed_budget_categories` gives: fixture sync deletes and re-inserts each document every
+  migrate.
+- **`quickbooks_online/core/party_group_remediation.py`** puts the swept records back, from
+  each record's `tabVersion` history: for a Supplier in "Garbage & Junk Removal" or a Customer
+  in "Government" with a QuickBooks Sync Mapping, the OLD value of the first `changed` entry
+  whose NEW value is a sweep landing group is the pre-sweep group; an old value that is
+  empty, itself a landing group (the record was created by an earlier sweep) or since
+  deleted becomes `Uncategorized`; a record whose history shows no sweep change is listed
+  and left alone (`include_sync_created=True` files the ones the import created). Writes
+  with `frappe.db.set_value` — no doc hooks 900 times over — but recomputes a Supplier's
+  `custom_supplier_groups_search` / `custom_additional_supplier_groups_list` with
+  `supplier_query.sync_supplier_groups` alongside, since list-view search reads them. Dry-run
+  by default, idempotent, batched, per-record guarded, **not** wired to migrate or the
+  scheduler; runbook in `quickbooks_online/MIGRATION_NOTES.md` §7. Run it on sandbox first.
+
 ## [1.495.0] - 2026-09-21
 
 ### Changed

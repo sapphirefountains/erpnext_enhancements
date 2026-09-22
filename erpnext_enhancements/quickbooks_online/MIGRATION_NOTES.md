@@ -273,3 +273,47 @@ Runbook (do this in order, **on a sandbox/test site first**):
 5. **Only then** re-enable the QBO sync (`QuickBooks Online Settings.sync_enabled`). Running
    the remediation first repoints every job's mapping to its Project, so the resumed sync
    updates the Project instead of recreating the flat Customer.
+
+## 7. Remediation: the default-group sweep (one-off, v1.496.0)
+
+QuickBooks has no supplier group, customer group or territory, so the importer defaults
+them. Until v1.496.0 the default was `frappe.db.get_value(doctype, {"is_group": 0}, "name")`
+-- "any leaf" -- and on Frappe v16 a dict-filtered `get_value` with no `order_by` sorts by
+`creation` **descending**, so it answered "the leaf somebody created most recently". The
+update path re-applied every mapped value on each re-sync, so each new Supplier Group anyone
+added became the group of every QBO-linked Supplier on the next scheduled run. Verified on
+prod 2026-09-22: all 911 QBO-linked Suppliers moved en bloc five times (Staffing on the
+2026-06-18 vendor import, then Event Decor 07-21, Encapsulant 08-19, Labels 09-09, Garbage &
+Junk Removal 09-16: 906 rows), and 466 Customers sit in "Government" for the same reason.
+
+The forward fix is in `core/mapping.py` (a NAMED default, `Uncategorized`, seeded by
+`patches/seed_qbo_uncategorized_groups`; the update path never overwrites a set group; the
+fields are never QBO-owned). `quickbooks_online/core/party_group_remediation.py` restores
+the records already swept, from each record's `tabVersion` history: the OLD value of the
+first change whose NEW value is a sweep landing group is the pre-sweep group; an old value
+that is empty, itself a landing group, or since deleted becomes `Uncategorized`; a record
+whose history shows no sweep change is listed and left alone. Only records with a QuickBooks
+Sync Mapping are in scope. Suppliers get `custom_supplier_groups_search` /
+`custom_additional_supplier_groups_list` recomputed alongside the group. It is **dry-run by
+default**, idempotent, batched/committed, per-record guarded, and writes with
+`frappe.db.set_value` (no doc hooks).
+
+Runbook (**on a sandbox/test site first**):
+
+1. Deploy v1.496.0 (the seed patch runs in that migrate; confirm `Uncategorized` exists under
+   All Supplier Groups, All Customer Groups and All Territories).
+2. Preview (writes nothing):
+   `bench --site <site> execute erpnext_enhancements.quickbooks_online.core.party_group_remediation.restore_party_groups`
+   Review the per-doctype counts (`restored` / `defaulted` / `no_history` /
+   `unlinked_left_alone`) and the `pre_sweep` value on each planned change -- a group a
+   person set deliberately to what later became a landing group reads as a sweep.
+   `--kwargs "{'doctype': 'Supplier', 'limit': 5}"` scopes a first look.
+3. Apply: re-run with `--kwargs "{'apply': True}"` (requires System Manager). Re-runnable --
+   a restored record has left the landing group and drops out of scope.
+4. The `no_history` rows were inserted straight into the landing group (no Version row is
+   written on insert) or filed there by a person; decide them by hand, or pass
+   `include_sync_created: True` to file the ones whose mapping says the import created them
+   into `Uncategorized`.
+5. Confirm: Supplier count in "Garbage & Junk Removal" and Customer count in "Government" are
+   what a person put there; the next scheduled sync moves nothing (the update path drops the
+   group when the record has one).
