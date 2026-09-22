@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.500.0] - 2026-09-22
+
+**The client-IP fix the ingress was waiting for had already been live for seven weeks, on the VM
+and nowhere else.** TASK-2026-01478 (Marketing P1). The task asked for trusted-proxy
+configuration so `frappe.local.request_ip` is the real client behind the Google load balancer,
+before any public ingress is enabled. Measured against prod instead of assumed: somebody had
+already placed `/etc/nginx/conf.d/00-realip.conf` on the VM on **2026-08-03**, and it works. It
+was not in the repo, not reproducible on a rebuilt VM, and nothing would notice if it went.
+
+### Added
+
+- **`infra/configs/nginx-realip.conf`**, the file itself, now version-controlled. Trusts the
+  Google Front End ranges `35.191.0.0/16` and `130.211.0.0/22`, **plus each load balancer's own
+  forwarding-rule address** (prod `136.68.113.208`, beta `34.149.67.36`), with
+  `real_ip_header X-Forwarded-For` and `real_ip_recursive on`. The forwarding-rule address is the
+  easy one to miss: GCLB appends its own address after the client's, so leaving it out stops
+  nginx's right-to-left walk on the load balancer and records *it* for every visitor.
+- **`startup_script.sh` installs it on every boot** as `conf.d/00-realip.conf`, before
+  `bench setup production`, from the app checkout, so the repo is the source of truth. A copy
+  that fails `nginx -t` is rolled back instead of left to stop nginx. It sits in `conf.d` and
+  not in bench's `nginx.conf` because `bench setup production` regenerates that file on every
+  boot. All infra triggers are manual, so this reaches the VM at the next `terraform apply`
+  (an in-place metadata update, not a VM replacement); the file already on the VM is unaffected
+  until then.
+- **`utils/client_ip.py`**: a stdlib-only address classifier (real client / Google Front End /
+  load-balancer address / loopback / private / missing / invalid), and two frappe-side entry
+  points:
+  - `check_client_ip_derivation`, **daily**, writes an Error Log row titled *Client IP
+    derivation regressed* if any successful login in the last three days was recorded from a
+    proxy address. One is enough; a working chain produces none. No logins at all is treated as
+    no evidence, so a quiet weekend neither passes nor fails.
+  - `audit_login_ips`, the `bench execute` before/after report, per month.
+- `tests/test_client_ip.py` (26 tests, own CI step). Pins the classifier's edges
+  (`130.211.4.1` is a client, since the range is a /22, not a /16), and requires the nginx
+  file's `set_real_ip_from` set to equal the module's lists exactly, so the guard can neither
+  cry wolf nor miss a change. It also requires the startup script to use no `${…}` beyond the
+  three variables `compute.tf` passes, because that file is a Terraform `templatefile` and the
+  natural way to write a bash variable would break the whole VM's startup configuration.
+
+### Verified on production, 2026-09-22
+
+- **Before/after, successful logins from Activity Log (site time):** 2026-07-18 19:21 →
+  2026-08-02 18:28, **62 of 62** recorded from `35.191.x`; 2026-08-02 19:09 → 2026-09-22,
+  **0 of 143**. The switch falls between 18:28 and 19:09 local on 2026-08-02, which is the early
+  hours of 2026-08-03 UTC, when the nginx file went on.
+- **Spoof resistance:** a Guest POST to `submit_web_lead` (ingress off, so it returned
+  `rejected` and wrote nothing) carrying a forged `X-Forwarded-For: 203.0.113.77` produced one
+  rate-limit key, and it was the caller's real address. The forged value appeared in no key,
+  and the key held no front-end or load-balancer address.
+
+### Changed
+
+- **Corrected every document that still said the address was unreliable**: the attribution
+  runbook's pre-flight (step 3 now says how to check it rather than to distrust it), the
+  website-capture README, the `web_lead.py` and fountain-move `intake.py` docstrings, the
+  crm_enhancements README pre-flight, the marketing platform plan §1.7 and its open question,
+  the e-sign attempt-cap comment, and the Nik runbook row. The rule survives in a narrower
+  form: **an address is a rate-limit key, never an authentication factor.** The bearer secret
+  stays the web-lead ingress's actual gate.
+
+### Notes
+
+- **Why the 2026-08-13 investigation (v1.278.5) concluded the opposite.** It counted logins
+  per month, and the August bucket ("41/84") held August 1–2, the last two broken days, so it
+  read as still broken. Its month-level counts no longer reproduce, because Activity Log keeps
+  ~90 days and May/June have been pruned. The conclusions it drew about topology (no Cloudflare
+  in front of `erp`; GCLB appends) were right.
+- **What this means for the rate limits already in the app.** `submit_web_lead`'s 120/hour is
+  now the WordPress site's own budget, since every submission arrives from WP Engine's egress
+  address, and a caller without the secret spends their own bucket, not the site's. The
+  fountain-move and e-sign limits are per caller for the same reason.
+- **What it does not cover.** A *new* forwarding-rule address that nobody adds to the list gets
+  recorded for every visitor, and the classifier calls it `public` because it cannot know. The
+  daily check does not catch that case. `infra/README.md` §9 says to add a new address to both
+  lists.
+
 ## [1.499.0] - 2026-09-22
 
 ### Changed

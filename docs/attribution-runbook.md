@@ -157,26 +157,42 @@ every submission with a 401 until both sides agree.
    closed, which is correct but looks like a broken integration if you have not read this.
 2. `web_lead_default_owner` set, or accept that submissions arrive unassigned (they will
    still show up in Attribution Gaps).
-3. **Understand that the IP-keyed rate limit is not a per-client control.** Investigated
-   2026-08-13 (TASK-2026-01478), and both halves of the original premise were wrong:
+3. **Confirm the client address is still real.** The IP-keyed rate limit (120/hour) is a
+   per-caller control **only because of one nginx file on the VM**. The history, because an
+   older revision of this step said the opposite (TASK-2026-01478):
 
    - **There is no Cloudflare in front of the ERP host.** `erp.sapphirefountains.com`
      answers with `via: 1.1 google` and `server: nginx/1.22.1` and no `cf-ray` — the chain is
      **GCLB → nginx → bench**. Only `www.sapphirefountains.com` (WordPress/WP Engine) is
      Cloudflare-fronted.
-   - **The recorded address is already wrong, spoofing aside.** Since ~2026-07-18
-     `frappe.local.request_ip` has been logging the load balancer's own address rather than
-     the visitor's for most traffic — 0/79 of May's logins, 0/252 of June's, then **79/94 in
-     July and 41/84 in August** fall in GCP LB ranges, including ordinary staff logins. All
-     three `Fountain Move Request` rows recorded `submitter_ip_peer = 127.0.0.1` and
-     `submitter_ip_claimed = 35.191.x`.
+   - **2026-07-18 → 2026-08-02: the recorded address was the load balancer's.** Bench's nginx
+     template forwards `$remote_addr`, which behind GCLB is a Google Front End in
+     `35.191.0.0/16`. All 62 logins in that window were recorded from one; the three
+     `Fountain Move Request` rows show `submitter_ip_claimed = 35.191.x`. Every IP-keyed rate
+     limit was one global bucket.
+   - **Fixed 2026-08-03** by `/etc/nginx/conf.d/00-realip.conf` (the realip module, trusting
+     the front-end ranges and the load balancer's own address, `real_ip_recursive on`). 0 of
+     143 logins since (to 2026-09-22) have been recorded from a proxy. The 2026-08-13 investigation that this
+     step used to quote counted August 1–2 and read them as "still broken".
+   - **Spoof-proof, verified 2026-09-22**: a Guest POST to this endpoint carrying a forged
+     `X-Forwarded-For: 203.0.113.77` was keyed by the rate limiter on the caller's real
+     address. nginx walks the header from the right and stops at the first untrusted entry,
+     so a value the caller wrote — always to the left of what the load balancer appended — is
+     never reached.
 
-   So `@rate_limit(limit=120, seconds=3600)` is closer to a global budget than a per-caller
-   one, and GCLB's documented append behaviour means a caller who sets their own header can
-   very likely choose their bucket. **This does not block the ingress** — `web_lead.py` treats
-   the IP as advisory, never decides on it, and gates on the bearer secret, which fails closed.
-   It does mean: do not read 120/hour as per-client, and never add a control that depends on
-   the address. Fixing the derivation needs infrastructure access, not app changes.
+   The file's source of truth is [`infra/configs/nginx-realip.conf`](../infra/configs/nginx-realip.conf),
+   installed on every boot by `startup_script.sh`. `utils/client_ip.check_client_ip_derivation`
+   runs daily and writes an Error Log row titled **Client IP derivation regressed** the day
+   logins start arriving from the load balancer again. Before enabling, run:
+
+   ```
+   bench --site erp.sapphirefountains.com execute erpnext_enhancements.utils.client_ip.check_client_ip_derivation
+   ```
+
+   A non-zero `"total"` with `"proxy": 0` means the 120/hour is per caller (`"total": 0` just
+   means nobody logged in for three days — run `audit_login_ips` instead). A non-zero
+   `"proxy"` means it is one bucket shared by the whole internet — fix nginx before turning the ingress on. The bearer secret stays
+   the actual gate either way: an address is a rate-limit key, never an authentication factor.
 4. Decide what the WordPress form does when ERPNext is unreachable. It should keep its own
    copy — this endpoint is not a queue.
 

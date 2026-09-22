@@ -269,11 +269,15 @@ last-touch comparisons are a reporting-layer concern; do not change the capture 
 
 ### 1.7 Verify the `X-Forwarded-For` chain
 
-`auth.py` takes the first entry of `X-Forwarded-For` unconditionally. If the
-Cloudflare → GCLB → bench chain **appends** rather than **overwrites**, every IP-keyed rate
-limit in the app is spoofable — including the web-lead ingress and the public fountain-move
-form. The runbook flags this as never formally verified. It should be verified before the
-ingress is enabled, not after.
+**Done — TASK-2026-01478.** The premise was wrong in both directions: there is no Cloudflare
+in front of `erp` (the chain is **GCLB → nginx → bench**), and the real problem was not
+spoofing but that from 2026-07-18 to 2026-08-02 frappe recorded the load balancer's own
+address for everybody, making every IP-keyed rate limit one global bucket. nginx's realip
+module fixed it on 2026-08-03 (62/62 logins from a proxy before, 0/143 after), and a forged
+`X-Forwarded-For` sent on 2026-09-22 never reached the rate limiter's key. The nginx file is
+now in the repo (`infra/configs/nginx-realip.conf`, installed on every boot) and
+`utils/client_ip.py` checks daily that it is still working. Pre-flight step 3 of the
+attribution runbook is the operational version.
 
 ---
 
@@ -386,7 +390,9 @@ Recorded 2026-08-13 so they are not re-opened without cause.
 ## Open questions
 
 - Who administers the Search Console property, and is it `sc-domain:` or URL-prefix?
-- Does the Cloudflare → GCLB → bench chain overwrite or append `X-Forwarded-For`?
+- ~~Does the Cloudflare → GCLB → bench chain overwrite or append `X-Forwarded-For`?~~
+  Answered — see §1.7. No Cloudflare; GCLB appends; nginx's realip file makes the recorded
+  address the real caller.
 - Who owns the Lead triage queue daily once web capture is live? Without a named owner,
   decision 5 does not hold.
 - Attribution window and model for reporting — first-touch is what capture implements; the

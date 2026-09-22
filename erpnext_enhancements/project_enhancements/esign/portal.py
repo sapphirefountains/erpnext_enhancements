@@ -611,8 +611,10 @@ def _email_matches(request, typed):
 	"""Constant-time compare against the address frozen at send time.
 
 	Attempts are capped per request, not per IP: the threat is a link-holder
-	fishing for the address, and a forged X-Forwarded-For would sail past an
-	IP-keyed counter.
+	fishing for the address, and changing networks is cheaper than obtaining a
+	second link. (The recorded address itself is real and unforgeable here --
+	nginx's realip file, checked daily by utils/client_ip.py -- but that is not
+	what bounds this attack.)
 
 	A blank entry costs nothing. It is not a guess, and charging for it let the
 	decline flow — whose dialog never asks for an address — silently spend the

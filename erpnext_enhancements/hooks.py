@@ -1205,6 +1205,12 @@ scheduler_events = {
 		# deletes its private File through core's remove_all, which is the whole reason the
 		# file is anchored to a row instead of left orphaned.
 		"erpnext_enhancements.triton_attachments.purge_expired",
+		# Client-IP derivation (TASK-2026-01478): Error Log row if recent logins were recorded
+		# from a Google load-balancer address instead of the visitor's. The fix is a hand-placed
+		# nginx file on the VM (/etc/nginx/conf.d/00-realip.conf, source infra/configs/), so
+		# a rebuilt VM undoes it silently -- and every IP-keyed rate limit, the web-lead
+		# ingress's included, quietly becomes one global bucket. Read-only, ungated.
+		"erpnext_enhancements.utils.client_ip.check_client_ip_derivation",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
 		# Re-drive folder provisioning lost to a deploy FLUSHDB. retry_failed_syncs only
