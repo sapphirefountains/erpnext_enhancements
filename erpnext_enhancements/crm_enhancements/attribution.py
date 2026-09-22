@@ -76,6 +76,13 @@ from frappe.utils import cint, now_datetime
 #: reads as a gap in any report rather than as a real acquisition channel.
 UNKNOWN_LEAD_SOURCE = "Unknown (pre-Aug 2026)"
 
+#: When capture went in. A record created before this and carrying the bucket above
+#: is history; one created on or after it is somebody choosing "unknown" today, which
+#: the source gate allows (so sales is never blocked) and the Attribution Gaps report
+#: must therefore show as a live gap. Same date as
+#: ``patches.backfill_unknown_lead_source.CUTOFF``; a test holds them together.
+CAPTURE_START = "2026-08-01"
+
 #: The Lead Source assigned to a web-form submission we cannot classify further.
 DEFAULT_WEB_LEAD_SOURCE = "Website"
 
@@ -465,9 +472,11 @@ def enforce_source(doc, method=None):
 		return
 
 	frappe.throw(
-		_("Lead Source is required. Pick where this {0} came from, or use '{1}' if it genuinely is not known.").format(
-			_(doc.doctype), UNKNOWN_LEAD_SOURCE
-		),
+		_(
+			"Lead Source is required. Pick where this {0} came from, or use '{1}' if it genuinely "
+			"is not known. Records saved as unknown are listed on the Attribution Gaps report for "
+			"follow-up."
+		).format(_(doc.doctype), UNKNOWN_LEAD_SOURCE),
 		title=_("Attribution required"),
 	)
 

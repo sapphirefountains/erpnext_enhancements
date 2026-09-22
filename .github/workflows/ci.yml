@@ -1795,6 +1795,14 @@ jobs:
       # Opportunity. Own step: installs a frappe stub and removes it in tearDownModule.
       - name: Lead triage and speed-to-lead SLA (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_lead_triage -v
+      # Attribution Gaps classification (v1.502.1). The report every stage of the attribution
+      # enablement checklist reads. It filed "Unknown (pre-Aug 2026)" as Historical whatever
+      # the record's date -- and the source gate tells people to pick exactly that bucket -- so
+      # every bypass of the gate read as old debt and the live count stayed at zero. Pins the
+      # post-cutoff bucket as a live gap, and CAPTURE_START to the backfill's CUTOFF.
+      # Own step: installs a frappe stub and removes it in tearDownModule.
+      - name: Attribution Gaps live-gap classification (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_attribution_gaps -v
       # The WordPress capture script lives in docs/website-capture/ and runs on WP Engine, not
       # here -- so this is the only place its behaviour is checked before somebody pastes it
       # in. Session-scoped first touch, a tagged new visit replacing the whole touch, utm_id,

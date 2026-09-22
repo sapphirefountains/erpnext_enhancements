@@ -17,6 +17,16 @@ fix it.
   expected, and not anybody's fault. Included by default so the size of the debt
   stays visible, but sorted below the live gaps and separable with one filter.
 
+**The bucket is history only on a record created before capture started**
+(``attribution.CAPTURE_START``). The source gate lets a salesperson pick that bucket
+when the source is genuinely unknown -- deliberately, so nobody is blocked mid-day --
+and until v1.502.1 this report filed every such record under *Historical*: sorted to
+the bottom, left out of the chart, and hidden by "only records with no source". So
+once enforcement was on, every bypass of the gate read as debt nobody owned, and the
+live-gap count stayed at zero while the gate was being routed around. Two Opportunities
+created in August and September 2026 were already sitting there. A bucket record
+created on or after ``CAPTURE_START`` is now its own live gap, *Unknown (new)*.
+
 Sorting is by that distinction first and owner second, so the top of the report
 is always the thing worth doing today.
 
@@ -31,7 +41,12 @@ case ``owner`` (whoever created the record) is the only person to ask.
 import frappe
 from frappe import _
 
-from erpnext_enhancements.crm_enhancements.attribution import UNKNOWN_LEAD_SOURCE
+from erpnext_enhancements.crm_enhancements.attribution import CAPTURE_START, UNKNOWN_LEAD_SOURCE
+
+GAP_NO_SOURCE = "No source"
+GAP_UNKNOWN_NEW = "Unknown (new)"
+GAP_HISTORICAL = "Historical"
+LIVE_GAPS = (GAP_NO_SOURCE, GAP_UNKNOWN_NEW)
 
 
 def execute(filters=None):
@@ -79,15 +94,20 @@ def _has_field(doctype):
 
 
 def _source_condition(filters, alias):
-	"""SQL fragment selecting the gap rows, honouring the bucket filter."""
+	"""SQL fragment selecting the gap rows, honouring the live-gaps filter.
+
+	"Live" keeps the bucket when the record was created after capture started --
+	that is somebody choosing "unknown" today, not history.
+	"""
 	blank = f"({alias}.custom_lead_source IS NULL OR {alias}.custom_lead_source = '')"
+	bucket = f"{alias}.custom_lead_source = %(bucket)s"
 	if filters.get("only_live_gaps"):
-		return blank
-	return f"({blank} OR {alias}.custom_lead_source = %(bucket)s)"
+		return f"({blank} OR ({bucket} AND {alias}.creation >= %(capture_start)s))"
+	return f"({blank} OR {bucket})"
 
 
 def _base_values(filters):
-	values = {"bucket": UNKNOWN_LEAD_SOURCE}
+	values = {"bucket": UNKNOWN_LEAD_SOURCE, "capture_start": CAPTURE_START}
 	if filters.get("from_date"):
 		values["from_date"] = filters.from_date
 	if filters.get("to_date"):
@@ -155,12 +175,21 @@ def _opportunity_rows(filters):
 	return [_shape(r, "Opportunity") for r in records]
 
 
+def gap_kind(source, created):
+	"""Which gap a record is: ``GAP_NO_SOURCE``, ``GAP_UNKNOWN_NEW`` or ``GAP_HISTORICAL``."""
+	if source != UNKNOWN_LEAD_SOURCE:
+		return GAP_NO_SOURCE
+	if created and str(created)[:10] >= CAPTURE_START:
+		return GAP_UNKNOWN_NEW
+	return GAP_HISTORICAL
+
+
 def _shape(record, doctype):
-	is_bucket = record.get("source") == UNKNOWN_LEAD_SOURCE
+	kind = gap_kind(record.get("source"), record.get("created"))
 	return {
 		"owner_user": record.get("owner_user"),
-		"gap": _("Historical") if is_bucket else _("No source"),
-		"_gap_rank": 1 if is_bucket else 0,
+		"gap": _(kind),
+		"_gap_rank": 0 if kind in LIVE_GAPS else 1,
 		"doctype_label": _(doctype),
 		"doctype_name": doctype,
 		"record": record.get("name"),
@@ -172,12 +201,13 @@ def _shape(record, doctype):
 
 
 def get_chart(data):
-	"""Live gaps per owner. Historical rows are excluded on purpose — a bar chart
-	dominated by a decade of backfill would hide the handful of records somebody
-	needs to fix this week."""
+	"""Live gaps per owner -- no source, or "unknown" chosen on a new record.
+	Historical rows are excluded on purpose: a bar chart dominated by a decade of
+	backfill would hide the handful of records somebody needs to fix this week."""
+	live = {_(kind) for kind in LIVE_GAPS}
 	counts = {}
 	for row in data:
-		if row.get("gap") != _("No source"):
+		if row.get("gap") not in live:
 			continue
 		counts[row.get("owner_user") or _("Unassigned")] = counts.get(row.get("owner_user") or _("Unassigned"), 0) + 1
 
@@ -185,7 +215,7 @@ def get_chart(data):
 	return {
 		"data": {
 			"labels": labels,
-			"datasets": [{"name": _("Records with no source"), "values": [counts[label] for label in labels]}],
+			"datasets": [{"name": _("Records with no known source"), "values": [counts[label] for label in labels]}],
 		},
 		"type": "bar",
 		"colors": ["#e24c4c"],

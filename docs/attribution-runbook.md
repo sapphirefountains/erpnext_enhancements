@@ -31,29 +31,138 @@ in the UI. So the real coverage was not 55%. It was ~0%.
 
 ## Turning it on
 
-Everything is off by default. **ERPNext Enhancements Settings → Lead Attribution.**
+Everything is off by default. **ERPNext Enhancements Settings → Lead Attribution.** Nothing
+in this app flips these switches; a person does, in the order below.
 
 | Setting | Effect |
 |---|---|
-| `lead_attribution_enabled` | Master switch. Nothing below does anything while this is off. |
-| `require_lead_source_on_lead` | Block the save of a **new** Lead with no source. |
-| `require_lead_source_on_opportunity` | Same for Opportunity. This is the one that matters for spend evaluation. |
-| `web_lead_ingress_enabled` | Accept POSTs from the WordPress site. |
+| `lead_attribution_enabled` | Master switch for the two parts that can **refuse or accept** data: the source gate below, and the website ingress. It does **not** gate capture or propagation — see the note after this table. |
+| `require_lead_source_on_lead` | Block the save of a **new** Lead with no source. Needs the master switch. |
+| `require_lead_source_on_opportunity` | Same for Opportunity. This is the one that matters for spend evaluation. Needs the master switch. |
+| `web_lead_ingress_enabled` | Accept POSTs from the WordPress site. Needs the master switch. |
 | `web_lead_default_owner` | The named triage owner for website submissions. When blank, Leads rotate across the `Sales Team` role instead — see [lead-triage-runbook.md](lead-triage-runbook.md). |
 | `web_lead_shared_secret` | Shared secret for the ingress, sent in `X-Web-Lead-Secret`. At least 32 characters; fails closed when unset or shorter. |
 
-Suggested order: turn on `lead_attribution_enabled` alone first and leave it for a week —
-propagation and capture start working with nothing blocked. Then turn on
-`require_lead_source_on_opportunity`. Leave `require_lead_source_on_lead` until last.
+> **The master switch alone changes nothing you can see.** Lead → Opportunity → Customer
+> propagation (`propagate_to_opportunity`, `propagate_to_customer`,
+> `backfill_opportunity_to_customer`) and the capture timestamp are hooks with no flag
+> check: they have run on every save since v1.241.0. So the original advice here —
+> "turn on `lead_attribution_enabled` alone and leave it for a week, capture and propagation
+> start working" — would have produced a week with no change at all. Stage 1 below turns the
+> master switch on **together with the ingress**, which is the capture that was actually
+> missing. (Found 2026-09-22, TASK-2026-01472.)
+
+### The staged checklist
+
+Three stages, a week or more apart. Each has a check to run **before** moving on, and a
+rollback that leaves the others alone. Every check reads the **Attribution Gaps** report
+(CRM Enhancements → Reports), which sorts live gaps to the top:
+
+| Gap | Meaning |
+|---|---|
+| **No source** (red) | Blank Lead Source on a record created since capture started. A live process failure. |
+| **Unknown (new)** (red) | `Unknown (pre-Aug 2026)` chosen on a record created on or after 2026-08-01. That is the source gate's escape hatch, used today. It is a live gap to chase, not history. (Until v1.502.1 the report filed these as *Historical*, so every bypass of the gate was invisible. Two Opportunities from August and September 2026 were already sitting there.) |
+| **Historical** | The backfill bucket on a record that predates capture. Expected; tick *Only live gaps* to hide it. |
+
+#### Stage 0 — before anything is switched on
+
+- [ ] v1.502.1 or later is installed (`bench --site erp.sapphirefountains.com execute frappe.get_attr --args "['erpnext_enhancements.__version__']"`).
+- [ ] The client address is real: step 3 of [Checks before enabling the ingress](#checks-before-enabling-the-ingress) reports `"proxy": 0`.
+- [ ] Settings: `web_lead_shared_secret` set (32+ characters). **Website Lead Owner** = Brian,
+      **Escalate Unanswered Leads To** = Nikolas (both set 2026-09-22).
+- [ ] WordPress side installed and wired, ingress still off: [website-capture/README.md](website-capture/README.md)
+      steps 1–3 and 5 (plugin, hidden fields, webhook, `utm_id` on the ads).
+- [ ] **Record the baseline.** Attribution Gaps → *Created From* `2026-08-01`, *Only live gaps* ticked.
+      On 2026-09-22 it read: Opportunities **18 No source + 2 Unknown (new)** of 29 created; Leads
+      **1 No source** of 1 created. Write the day's numbers into TASK-2026-01472.
+
+#### Stage 1 — capture on (week 1)
+
+Tick **`lead_attribution_enabled`** and **`web_lead_ingress_enabled`** together. Optionally
+the speed-to-lead SLA too ([lead-triage-runbook.md](lead-triage-runbook.md#turning-it-on)).
+Nothing is blocked in this stage.
+
+- [ ] **Same day:** run the acceptance test ([website-capture/README.md](website-capture/README.md), step 6).
+- [ ] **Daily:** Attribution Gaps → *Created From* = the stage-1 date, *Only live gaps* ticked.
+  - **No Lead owned by the website owner (Brian) may appear as No source.** Every website Lead
+    gets at least *Website*, derived from its landing page, so a sourceless one means the
+    webhook is not mapping the hidden fields (the README's "trap").
+  - Opportunities keep appearing as **No source** at about the baseline rate (≈2.5 a week).
+    Expected: nothing blocks yet. These are the people stage 2 will stop, so tell them now
+    and show them the chart.
+- [ ] **Converted website Leads carry their source.** Opportunity list → filter
+      *Opportunity From* = Lead, *Created On* ≥ stage-1 date, *Lead Source* not set → must be
+      empty. A row means propagation is not reaching the Opportunity.
+- [ ] **Error Log:** no *Web Lead ingress: insert failed*, no *Web Lead ingress: secret too
+      short*, no *Client IP derivation regressed*.
+
+**Move on when**, after at least 7 days: the acceptance test passed, at least one real
+website Lead arrived with its campaign, no website Lead was sourceless, and sales has been
+told the stage-2 date.
+
+**Roll back:** untick `web_lead_ingress_enabled`. WordPress keeps every entry (Fluent Forms is
+the reconciliation source), so nothing is lost.
+
+#### Stage 2 — require a source on new Opportunities (week 2)
+
+Tick **`require_lead_source_on_opportunity`**.
+
+Expect friction, and say so in advance: **18 of the 29 Opportunities created since
+2026-08-01 (62%) would have been stopped at save**, about 2.5 a week. The message offers
+`Unknown (pre-Aug 2026)` as a way out, deliberately, so nobody is blocked mid-deal.
+
+- [ ] **Daily for the first week:** Attribution Gaps → *Created From* = the stage-2 date,
+      *Only live gaps* ticked.
+  - **Opportunities as No source: 0.** Any row means the gate is not firing. Check the master
+    switch is still ticked. Imports, migrations and patches are exempt by design
+    (`attribution._bulk_context`), so a row created by one of those is expected. Look at who
+    created it.
+  - **Opportunities as Unknown (new):** the escape hatch. Some are honest. If they are more
+    than about a fifth of the week's new Opportunities, the gate has become a checkbox. That
+    is a conversation with the owner on the chart, not a software change.
+- [ ] **Automation:** anything that creates Opportunities through the API without setting a
+      source now fails. Watch the Error Log and Triton's tool errors for *Lead Source is
+      required* in the first days. The fountain-move conversion is unaffected: it stamps its
+      own source (`fmr_lead_source`, default *Cactus & Tropicals*).
+
+**Move on when** two consecutive weeks show zero *No source* Opportunities and *Unknown
+(new)* is flat or falling.
+
+**Roll back:** untick `require_lead_source_on_opportunity` only. **Not** the master switch,
+which would also close the website ingress.
+
+#### Stage 3 — require a source on new Leads (week 4 or later)
+
+Tick **`require_lead_source_on_lead`**. Last, because website Leads already arrive with a
+source; this stage only reaches the hand-typed ones (the phone call, the referral), which
+[lead-triage-runbook.md](lead-triage-runbook.md) now asks sales to create.
+
+- [ ] **Daily for the first week:** Attribution Gaps → *Created From* = the stage-3 date,
+      *Only live gaps* ticked. **Leads as No source: 0**. **Leads as Unknown (new):** coaching,
+      as in stage 2.
+- [ ] Website Leads still arrive. The endpoint derives *Website* from the landing page before
+      saving, so a web Lead should never hit the gate. If one does (a form not sending
+      `landing_page`), WordPress gets a 500 and the Error Log gets *Web Lead ingress: insert
+      failed*. Fix the form's mapping and re-send the entry from Fluent Forms.
+
+**Roll back:** untick `require_lead_source_on_lead` only.
+
+#### Steady state
+
+Weekly: Attribution Gaps, *Only live gaps* ticked. Only **Unknown (new)** rows should remain,
+and each one is a follow-up for its owner.
 
 ## Turning it off
 
-Untick `lead_attribution_enabled`. It takes effect on the next save — no deploy, no restart,
-no cache to clear. Every value already captured is left intact, and the Attribution Gaps
-report keeps working.
+**To unblock sales, untick the `require_lead_source_on_*` box that is in the way**, not the
+master switch. It takes effect on the next save: no deploy, no restart, no cache to clear.
+Unticking `lead_attribution_enabled` also works, but it closes the website ingress too.
+Submissions then get a generic refusal, and they have to be re-sent from Fluent Forms' entry
+list later.
 
-**If the sales team is blocked mid-day, that single tickbox is the fix.** It is why the gate
-is a hook and not `reqd = 1` on the field.
+Every value already captured is left intact either way, and the Attribution Gaps report keeps
+working. The gate is a hook, not `reqd = 1` on the field, precisely so that one tickbox is the
+fix.
 
 ---
 
@@ -220,12 +329,15 @@ every submission with a 401 until both sides agree.
 ## Monitoring
 
 **Attribution Gaps** (CRM Enhancements; System Manager / Sales Manager / Sales User)
-separates two things that look identical in a list view:
+separates three things that look identical in a list view:
 
 - **No source** — blank. After the backfill this can only happen to a record created on or
   after 2026-08-01, so it is a *live* process failure. Shown in red, sorted to the top.
-- **Historical** — the `Unknown (pre-Aug 2026)` bucket. Expected, nobody's fault, and
-  hideable with one filter.
+- **Unknown (new)** — the `Unknown (pre-Aug 2026)` bucket on a record created on or after
+  2026-08-01: the source gate's escape hatch, used today. Also red and sorted to the top. It
+  is a live gap: somebody chose not to find out.
+- **Historical** — the same bucket on a record that predates capture. Expected, nobody's
+  fault, and hidden by *Only live gaps*.
 
 Ingress failures land in the Error Log under `Web Lead ingress: insert failed`.
 
