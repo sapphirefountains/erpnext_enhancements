@@ -311,15 +311,26 @@ Verify after the deploy (all three from the MCP sandbox or `bench console`):
 3. Wait for the next `cdc_poll` (hourly, :20) and re-run 1 -- unchanged, because an update
    no longer carries `supplier_group`.
 
-**Customers are not touched by the deploy.** 466 Customers in "Government" include real
-government customers, and only the Version history can separate a sync default from a
-person's choice. Preview, then apply by hand, **sandbox first**:
+**Customers were fixed by the deploy of v1.498.0**, both fields.
+`patches/restore_customer_groups_after_qbo_sweep` runs the same engine over
+`Customer.customer_group` (landing value: Government -- the last of four leaves seeded in one
+second on 2025-07-08, so the sync's default from day one; 466 Customers, all QBO-linked, one
+with a real pre-sweep group) and `Customer.territory` (landing values: Asia, then United States
+of America -- 355 Customers; the 2026-06-18 import overwrote 63 real territories with Asia, a
+manual clear on 06-23 blanked them, and the 08-19 sync re-filed 178 under United States of
+America). A blank territory whose history shows the sweep is a candidate too, which is how the
+63 lost values come back; a no-history record is cleared as well (`clear_no_history=True`),
+because every candidate is QBO-linked and the landing value is the sync's default; a record a
+person re-set afterwards is left alone. Then `core/customer_corrections.json` keeps the 26
+customers that really are government bodies in Government and the one territory a person set
+by hand (Wadsworth Design Group, the day the leaf was created).
 
-1. `bench --site <site> execute erpnext_enhancements.quickbooks_online.core.party_group_remediation.restore_party_groups --kwargs "{'doctype': 'Customer'}"`
-   (writes nothing). Review the counts (`restored` / `cleared` / `no_history` /
-   `unlinked_left_alone`) and the `pre_sweep` value on each planned change.
-2. Apply: re-run with `--kwargs "{'doctype': 'Customer', 'apply': True}"` (requires System
-   Manager). Re-runnable -- a restored or cleared record has left the landing group.
-3. The `no_history` rows were inserted straight into "Government" (no Version row is written
-   on insert) or filed there by a person; decide them by hand, or pass
-   `include_sync_created: True` to clear the ones whose mapping says the import created them.
+Verify after the deploy:
+
+1. `select count(*) from tabCustomer where customer_group = 'Government'` -- 26.
+2. `select count(*) from tabCustomer where territory = 'United States of America'` -- 1
+   (Wadsworth Design Group); `... where territory = 'Utah'` -- roughly 180, up from 128.
+3. Wait for the next `cdc_poll` and re-run -- unchanged.
+
+Re-check by hand at any time (writes nothing):
+`bench --site <site> execute erpnext_enhancements.quickbooks_online.core.party_group_remediation.restore_party_groups --kwargs "{'doctype': 'Customer', 'clear_no_history': True}"`

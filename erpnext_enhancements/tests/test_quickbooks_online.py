@@ -5386,9 +5386,9 @@ def test_party_group_remediation_reads_the_first_sweep_touch():
 		restoration_target,
 	)
 
-	landing = SWEEP_LANDING_GROUPS["Supplier"]
+	landing = SWEEP_LANDING_GROUPS["Supplier"]["supplier_group"]
 	assert landing[-1] == "Garbage & Junk Removal"
-	assert SWEEP_LANDING_GROUPS["Customer"] == ("Government",)
+	assert SWEEP_LANDING_GROUPS["Customer"]["customer_group"] == ("Government",)
 
 	# A pre-existing supplier: its real group, then the sweeps -> restore the real group.
 	history = [
@@ -5422,7 +5422,7 @@ def test_party_group_remediation_reads_the_first_sweep_touch():
 	malformed = [["customer_group", "", "Government"], ["supplier_group"], "junk", None]
 	assert pre_sweep_group(malformed, "supplier_group", landing) == (False, "")
 	assert pre_sweep_group([], "supplier_group", landing) == (False, "")
-	customer_landing = SWEEP_LANDING_GROUPS["Customer"]
+	customer_landing = SWEEP_LANDING_GROUPS["Customer"]["customer_group"]
 	assert pre_sweep_group([["customer_group", "", "Government"]], "customer_group", customer_landing) == (True, "")
 
 
@@ -5450,7 +5450,7 @@ def test_curated_supplier_group_corrections_are_well_formed():
 	corrections = load_curated_supplier_groups()
 	assert len(corrections) == len(keys) >= 200
 	assert all(entry["basis"] in CURATED_BASES for entry in corrections.values())
-	landing = set(SWEEP_LANDING_GROUPS["Supplier"])
+	landing = set(SWEEP_LANDING_GROUPS["Supplier"]["supplier_group"])
 	assert {name for name, entry in corrections.items() if entry["group"] in landing} == {
 		"Kajae",
 		"Taiwan Imports",
@@ -5508,7 +5508,7 @@ def test_apply_curated_supplier_groups_writes_only_what_exists_and_differs(monke
 	suppliers["Ferguson "] = "X"
 	report = remediation.apply_curated_supplier_groups(apply=False, verbose=False, corrections=corrections)
 	assert writes == []  # dry run
-	assert (report["applied"], report["unchanged"], report["missing_supplier"], report["missing_group"]) == (2, 1, 1, 1)
+	assert (report["applied"], report["unchanged"], report["missing_record"], report["missing_group"]) == (2, 1, 1, 1)
 
 	report = remediation.apply_curated_supplier_groups(apply=True, verbose=False, corrections=corrections)
 	assert writes == [
@@ -5599,3 +5599,252 @@ def test_delete_uncategorized_groups_patch_skips_missing_and_never_raises(monkey
 	deleted.clear()
 	cleanup.execute()
 	assert deleted == []
+
+
+# ---------------------------------------------------------------------------
+# Customer side of the sweep (v1.498.0): two fields, lost territories, curated keep-list.
+# ---------------------------------------------------------------------------
+
+
+class _RemediationRow(dict):
+	"""What frappe._dict gives the remediation: a dict with attribute access."""
+
+	__getattr__ = dict.get
+
+
+def test_sweep_landing_groups_cover_both_customer_fields():
+	"""The engine is keyed by (doctype, field): Supplier.supplier_group, and on the Customer
+	both customer_group (Government) and territory (Asia, then United States of America)."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.party_group_remediation import (
+		CURATED_FILES,
+		CURATED_VALUE_KEYS,
+		GROUP_DOCTYPE,
+		SWEEP_LANDING_GROUPS,
+	)
+
+	assert SWEEP_LANDING_GROUPS["Supplier"] == {
+		"supplier_group": ("Staffing", "Event Decor", "Encapsulant", "Labels", "Garbage & Junk Removal")
+	}
+	assert SWEEP_LANDING_GROUPS["Customer"] == {
+		"customer_group": ("Government",),
+		"territory": ("Asia", "United States of America"),
+	}
+	assert set(GROUP_DOCTYPE) == {"supplier_group", "customer_group", "territory"}
+	assert set(CURATED_VALUE_KEYS["Customer"].values()) == {"customer_group", "territory"}
+	assert set(CURATED_FILES) == set(SWEEP_LANDING_GROUPS)
+
+
+def test_restore_field_handles_lost_values_no_history_and_protected_names(monkeypatch):
+	"""_restore_field: a swept record with a real pre-sweep value is restored; one whose
+	history starts blank is cleared; a BLANK record whose history shows the sweep (a person
+	cleared the swept value and the real one went with it) is a candidate and gets its value
+	back; a record a person re-set to something else is not a candidate; a no-history row is
+	listed unless clear_no_history; a curated name is left to the curated pass."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import party_group_remediation as remediation
+
+	monkeypatch.setattr(frappe, "_dict", lambda **kw: _RemediationRow(**kw), raising=False)
+	landing = ("Asia", "United States of America")
+	history = {
+		"Swept Utah": [["territory", "Utah", "Asia"], ["territory", "Asia", "United States of America"]],
+		"Swept Blank": [["territory", "", "Asia"], ["territory", "Asia", "United States of America"]],
+		"Lost Utah": [["territory", "Utah", "Asia"], ["territory", "Asia", ""]],
+		"Re-set Nevada": [["territory", "", "Asia"], ["territory", "Asia", "Nevada"]],
+		"Wadsworth Design Group": [["territory", "", "United States of America"]],
+	}
+	current = {
+		"Swept Utah": "United States of America",
+		"Swept Blank": "United States of America",
+		"No History": "United States of America",
+		"Lost Utah": "",
+		"Re-set Nevada": "Nevada",
+		"Wadsworth Design Group": "United States of America",
+	}
+	in_landing = ("Swept Utah", "Swept Blank", "No History", "Wadsworth Design Group")
+	monkeypatch.setattr(remediation, "_version_changes", lambda dt, field: dict(history))
+	monkeypatch.setattr(
+		remediation,
+		"_swept_rows",
+		lambda dt, field, landing: [_RemediationRow(name=n, current_group=current[n], sync_created=0) for n in in_landing],
+	)
+	monkeypatch.setattr(remediation, "_current_values", lambda dt, field, names: [(n, current[n]) for n in names])
+	monkeypatch.setattr(remediation, "_unlinked_count", lambda *args: 0)
+	monkeypatch.setattr(remediation, "_existence_cache", lambda dt: (lambda name: name in {"Utah", "Nevada"}))
+	writes = []
+	monkeypatch.setattr(remediation, "_write_group", lambda dt, name, field, target: writes.append((name, field, target)))
+	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
+
+	section = remediation._restore_field(
+		"Customer",
+		"territory",
+		landing,
+		apply=True,
+		limit=None,
+		verbose=False,
+		include_sync_created=False,
+		clear_no_history=False,
+		protected={"Wadsworth Design Group"},
+	)
+	# 4 rows in a landing value + Lost Utah (blank, with a sweep touch); Re-set Nevada is
+	# neither blank nor a landing value, so it is not a candidate at all.
+	assert section["candidates"] == 5
+	assert (section["restored"], section["cleared"], section["no_history"], section["protected_curated"]) == (2, 1, 1, 1)
+	assert section["no_history_names"] == ["No History"]
+	assert sorted(writes) == [
+		("Lost Utah", "territory", "Utah"),
+		("Swept Blank", "territory", ""),
+		("Swept Utah", "territory", "Utah"),
+	]
+	assert {change["outcome"] for change in section["changes"]} == {"restored", "cleared"}
+
+	# The Customer pass: every candidate is QBO-linked and the landing value is the sync's
+	# default, so a no-history row is cleared too; and an unprotected Wadsworth reads as a
+	# sweep ('' -> United States of America) and is cleared -- which is why it is curated.
+	writes.clear()
+	section = remediation._restore_field(
+		"Customer",
+		"territory",
+		landing,
+		apply=True,
+		limit=None,
+		verbose=False,
+		include_sync_created=False,
+		clear_no_history=True,
+		protected=set(),
+	)
+	assert section["cleared_no_history"] == 1
+	assert ("No History", "territory", "") in writes
+	assert ("Wadsworth Design Group", "territory", "") in writes
+
+	# A dry run plans the same and writes nothing.
+	writes.clear()
+	section = remediation._restore_field(
+		"Customer",
+		"territory",
+		landing,
+		apply=False,
+		limit=2,
+		verbose=False,
+		include_sync_created=False,
+		clear_no_history=True,
+		protected=set(),
+	)
+	assert section["candidates"] == 2 and writes == []
+
+
+def test_apply_curated_party_values_handles_customer_entries(monkeypatch):
+	"""The curated pass on the Customer writes customer_group and / or territory per entry,
+	skips a missing record, and reports the names it owns per field so the sweep pass can
+	leave them alone."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import party_group_remediation as remediation
+
+	records = {
+		"Park City": {"customer_group": "", "territory": "Utah"},
+		"Wadsworth Design Group": {"customer_group": "", "territory": ""},
+		"Ogden City": {"customer_group": "Government", "territory": ""},
+	}
+	leaves = {"Government", "United States of America"}
+	monkeypatch.setattr(
+		frappe.db, "exists", lambda dt, name: name in records if dt == "Customer" else name in leaves, raising=False
+	)
+	monkeypatch.setattr(frappe.db, "get_value", lambda dt, name, field: records[name][field], raising=False)
+	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
+	monkeypatch.setattr(frappe, "flags", types.SimpleNamespace(in_patch=True, in_migrate=False), raising=False)
+	writes = []
+	monkeypatch.setattr(frappe.db, "set_value", lambda dt, name, values, **kw: writes.append((dt, name, values)), raising=False)
+
+	corrections = {
+		"Park City": {"customer_group": "Government", "basis": "name"},
+		"Ogden City": {"customer_group": "Government", "basis": "name"},
+		"Wadsworth Design Group": {"territory": "United States of America", "basis": "person"},
+		"Ghost": {"customer_group": "Government", "basis": "name"},
+	}
+	report = remediation.apply_curated_party_values("Customer", apply=True, verbose=False, corrections=corrections)
+	assert writes == [
+		("Customer", "Park City", {"customer_group": "Government"}),
+		("Customer", "Wadsworth Design Group", {"territory": "United States of America"}),
+	]
+	assert (report["applied"], report["unchanged"], report["missing_record"]) == (2, 1, 1)
+	assert report["skipped"] == [{"name": "Ghost", "reason": "no such Customer"}]
+	assert remediation.curated_names_by_field("Customer", corrections) == {
+		"customer_group": {"Park City", "Ogden City", "Ghost"},
+		"territory": {"Wadsworth Design Group"},
+	}
+	# The Supplier wrapper still speaks the v1.496.0 shape ("group").
+	assert remediation.normalize_curated("Supplier", {"Tile Tech": {"group": "Tile - Supplier", "basis": "twin"}}) == {
+		"Tile Tech": {"values": {"supplier_group": "Tile - Supplier"}, "basis": "twin"}
+	}
+
+
+def test_customer_corrections_are_well_formed():
+	"""The Customer corrections file loads, names no customer twice, keeps exactly the 26
+	real government bodies in Government by name plus one person-set territory, and a
+	malformed entry (a Supplier key, or no value key) fails a test rather than a migrate."""
+	import re
+	import tempfile
+	from pathlib import Path
+
+	import pytest
+
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.party_group_remediation import (
+		CURATED_FILES,
+		load_curated_corrections,
+		normalize_curated,
+	)
+
+	raw = CURATED_FILES["Customer"].read_text(encoding="utf-8")
+	keys = re.findall(r'^\s{4}"((?:[^"\\]|\\.)+)":\s*\{', raw, flags=re.M)
+	assert len(keys) == len(set(keys)), sorted({key for key in keys if keys.count(key) > 1})
+
+	corrections = load_curated_corrections("Customer")
+	assert len(corrections) == len(keys) == 27
+	entries = normalize_curated("Customer", corrections)
+	government = {name for name, entry in entries.items() if entry["values"].get("customer_group") == "Government"}
+	assert len(government) == 26
+	assert all(entries[name]["basis"] == "name" for name in government)
+	assert all(set(entries[name]["values"]) == {"customer_group"} for name in government)
+	assert entries["Wadsworth Design Group"] == {"values": {"territory": "United States of America"}, "basis": "person"}
+
+	with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+		handle.write(json.dumps({"corrections": {"X": {"group": "Government", "basis": "name"}}}))
+	with pytest.raises(ValueError):
+		load_curated_corrections("Customer", Path(handle.name))
+	with open(handle.name, "w", encoding="utf-8") as fh:
+		fh.write(json.dumps({"corrections": {"X": {"basis": "name"}}}))
+	with pytest.raises(ValueError):
+		load_curated_corrections("Customer", Path(handle.name))
+
+
+def test_restore_customer_groups_patch_never_raises(monkeypatch):
+	"""The Customer patch runs the sweep pass over both fields with clear_no_history, then
+	the curated pass; a failure in either is an Error Log entry and execute() returns."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.patches import restore_customer_groups_after_qbo_sweep as patch
+	from erpnext_enhancements.quickbooks_online.core import party_group_remediation as remediation
+
+	calls, errors = [], []
+	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: errors.append(args), raising=False)
+	monkeypatch.setattr(frappe, "get_traceback", lambda: "tb", raising=False)
+
+	def sweep(**kwargs):
+		calls.append(("sweep", kwargs))
+		raise Exception("boom")
+
+	monkeypatch.setattr(remediation, "restore_party_groups", sweep)
+	monkeypatch.setattr(
+		remediation,
+		"apply_curated_party_values",
+		lambda doctype, **kwargs: calls.append(("curated", doctype, kwargs)) or {"applied": 1},
+	)
+
+	patch.execute()
+
+	assert calls[0] == (
+		"sweep",
+		{"apply": True, "doctype": "Customer", "verbose": False, "include_sync_created": True, "clear_no_history": True},
+	)
+	assert calls[1] == ("curated", "Customer", {"apply": True, "verbose": False})
+	assert len(errors) == 1

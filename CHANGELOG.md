@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.498.0] - 2026-09-22
+
+### Fixed
+
+- **466 Customers sat in "Government" and 355 had a territory the QuickBooks importer
+  invented; the deploy puts the Customers right, both fields.** The same defect as the
+  Supplier sweep (v1.496.0): the importer's default customer group and territory were "any
+  leaf", which on Frappe 16 means the newest leaf, re-applied on every re-sync. Government is
+  the last of the four Customer Group leaves seeded in one second on 2025-07-08, so it was the
+  sync's default from day one — every one of the 466 is QBO-linked and exactly one had a real
+  group before (Commercial). The territory story is worse: the 2026-06-18 import wrote "Asia"
+  (the newest leaf then) onto 355 Customers, 63 of them over a real value (45 Utah); a manual
+  clear on 06-23 blanked the Asia rows and took the real values with them; and once "United
+  States of America" was created on 08-05 the 08-19 sync re-filed 178 under that.
+  `patches/restore_customer_groups_after_qbo_sweep` runs `core/party_group_remediation.py`
+  over both fields: the OLD value of the first `tabVersion` change whose NEW value is a
+  landing value is the pre-sweep value — restored when real (1 group, ~63 territories),
+  otherwise **cleared** to NULL (a wrong group is worse than no group — Nik, 2026-09-22); a
+  blank territory whose history shows the sweep is a candidate too, which is how the lost
+  Utahs come back; a no-history record is cleared as well, because every candidate is
+  QBO-linked and the landing value is the sync's default; a record a person re-set afterwards
+  is left alone. Then `core/customer_corrections.json` keeps the 26 customers that really are
+  government bodies — cities, counties, the state, public schools and universities, recreation
+  districts — in Government by name, and the one territory a person set by hand the day the
+  leaf was created (Wadsworth Design Group). Writes are `frappe.db.set_value`; per-record
+  guarded, both passes wrapped, cannot raise, safe twice.
+
+### Changed
+
+- **`core/party_group_remediation.py` is keyed by `(doctype, field)`** instead of one field
+  per doctype: `SWEEP_LANDING_GROUPS` is `{doctype: {field: landing values}}`, the sweep pass
+  also takes a blank record whose history shows the sweep (the lost-territory case), gains
+  `clear_no_history` and skips the names a curated file owns for that field
+  (`curated_names_by_field`), and the curated pass is the generic
+  `apply_curated_party_values(doctype)` reading one JSON file per doctype
+  (`CURATED_FILES`; a Customer entry carries `customer_group` and / or `territory`, a
+  Supplier entry `group`). `apply_curated_supplier_groups` and `load_curated_supplier_groups`
+  stay as the Supplier wrappers v1.496.0's patch calls. Bench-free tests cover the lost-value
+  candidate, the no-history clear, the protected names, the Customer curated pass, the
+  corrections file's shape (26 Government + 1 territory, no duplicate names) and the patch's
+  never-raise contract.
+
 ## [1.497.0] - 2026-09-22
 
 ### Changed

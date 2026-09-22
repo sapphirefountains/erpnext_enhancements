@@ -1,0 +1,43 @@
+{
+  "_about": [
+    "Hand-curated Customer corrections from the 2026-09-22 audit, applied once by",
+    "patches/restore_customer_groups_after_qbo_sweep after the Version-history restore, which",
+    "clears every QBO-linked Customer the importer filed under Government (the newest Customer",
+    "Group leaf) or under Asia / United States of America (the newest Territory leaf at the time).",
+    "Rule (Nik, 2026-09-22): a wrong group is worse than no group, so an entry exists only where the",
+    "evidence is solid. These are the customers that really ARE government bodies -- cities, counties,",
+    "the state, public schools, universities and recreation districts -- kept in Government by name",
+    "(basis 'name'), plus one territory a person set by hand the day that leaf was created, which the",
+    "history walk would otherwise read as a sweep (basis 'person'). An entry may carry customer_group,",
+    "territory or both; null = clear. A record or leaf that no longer exists is skipped and reported."
+  ],
+  "corrections": {
+    "City of Cedar Hills": {"customer_group": "Government", "basis": "name"},
+    "City of South Jordan": {"customer_group": "Government", "basis": "name"},
+    "Eagle Mountain City": {"customer_group": "Government", "basis": "name"},
+    "Millcreek City": {"customer_group": "Government", "basis": "name"},
+    "Ogden City": {"customer_group": "Government", "basis": "name"},
+    "Park City": {"customer_group": "Government", "basis": "name"},
+    "Taylorsville City": {"customer_group": "Government", "basis": "name"},
+    "Herriman City Parks & Recreation": {"customer_group": "Government", "basis": "name"},
+    "Orem City Parks & Recreation": {"customer_group": "Government", "basis": "name"},
+    "Sandy City Parks & Recreation": {"customer_group": "Government", "basis": "name"},
+    "Spanish Fork Parks & Recreation": {"customer_group": "Government", "basis": "name"},
+    "West Jordan Parks and Recreation": {"customer_group": "Government", "basis": "name"},
+    "Salt Lake County Parks & Recreation": {"customer_group": "Government", "basis": "name"},
+    "Davis County Council of Governments Inc": {"customer_group": "Government", "basis": "name"},
+    "Housing Authority of SLC": {"customer_group": "Government", "basis": "name"},
+    "State of Utah Department of Admin": {"customer_group": "Government", "basis": "name"},
+    "Basin Recreation": {"customer_group": "Government", "basis": "name"},
+    "Chehalem Park & Recreation District": {"customer_group": "Government", "basis": "name"},
+    "Utah School for the Deaf and Blind": {"customer_group": "Government", "basis": "name"},
+    "Salt Lake Community College": {"customer_group": "Government", "basis": "name"},
+    "Utah State University - USU": {"customer_group": "Government", "basis": "name"},
+    "Utah Valley University": {"customer_group": "Government", "basis": "name"},
+    "University of Utah - Red Butte Garden": {"customer_group": "Government", "basis": "name"},
+    "Neuqua Valley High School": {"customer_group": "Government", "basis": "name"},
+    "Cal Expo": {"customer_group": "Government", "basis": "name"},
+    "Marin County Fair": {"customer_group": "Government", "basis": "name"},
+    "Wadsworth Design Group": {"territory": "United States of America", "basis": "person"}
+  }
+}
