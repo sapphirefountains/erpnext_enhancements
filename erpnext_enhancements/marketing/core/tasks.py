@@ -11,7 +11,7 @@ The order is the contract (TASK-2026-01476):
    The cron fires once a night; the throttle is what makes a manual "Sync now" and the
    cron on the same evening one pull instead of two.
 3. **No-op when disconnected.** Only platforms that are switched on *and* show
-   ``Connected`` on Marketing Credentials are queued. An *Auth Failed* platform waits for a
+   ``Connected`` on Marketing Connections are queued. An *Auth Failed* platform waits for a
    human to reconnect rather than failing every night.
 4. **Enqueue on ``long``** with a fixed ``job_id``, so an overlapping trigger is dropped
    rather than run twice.

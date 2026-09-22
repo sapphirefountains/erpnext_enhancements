@@ -18,7 +18,7 @@ The rules, each of which exists because the alternative fails quietly:
 * **One account's failure is one account's problem.** Accounts are committed one at a time;
   a dead Meta token does not cost the Google numbers.
 * **A dead credential stops the platform, not the job, and says so once.** 401 marks the
-  platform *Auth Failed* on Marketing Credentials; the nightly shim skips it until somebody
+  platform *Auth Failed* on Marketing Connections; the nightly shim skips it until somebody
   reconnects, so bad credentials never become a nightly error storm.
 * **Nothing secret is written.** Raw payloads are archived with redacted URLs, and every
   error string has been through ``utils.redact_text`` by the time it gets here.

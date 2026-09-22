@@ -6,7 +6,7 @@ LinkedIn** into ERPNext (TASK-2026-01476, v1.503.0). The code is `erpnext_enhanc
 checks it, and turns it off.
 
 Everything ships **off**. Nothing runs until **Marketing Settings → Enabled** *and* a platform's
-own switch are ticked, *and* that platform shows **Connected** on **Marketing Credentials**.
+own switch are ticked, *and* that platform shows **Connected** on **Marketing Connections**.
 
 ---
 
@@ -41,7 +41,7 @@ forward only when its whole run succeeded, so a failed night is simply pulled ag
 
 ## The redirect URI
 
-Every platform app needs this one URL registered **exactly** (the Marketing Credentials form shows it
+Every platform app needs this one URL registered **exactly** (the Marketing Connections form shows it
 too):
 
 ```
@@ -65,7 +65,7 @@ manager (MCC) account ([approvals](marketing-platform-approvals.md), gate 7).
 4. **Google Ads** → the ad account → **Admin → Access and security** → invite the person who will click
    Connect with access level **Read only**. (Use that user's Google login when you connect, not an
    admin's.)
-5. **Marketing Credentials → Google Ads:** client ID, client secret, developer token, and the manager
+5. **Marketing Connections → Google Ads:** client ID, client secret, developer token, and the manager
    account's customer ID if that user reaches the ad account through the MCC. **Save.**
 6. **Connect** → sign in as the Read-only user → approve. You land back on the form showing
    *Connected*. **Test** lists the accounts it can read; manager accounts are skipped.
@@ -81,7 +81,7 @@ the access token on every run.
 1. **Meta for Developers** → the app (type *Business*) → add **Facebook Login for Business** and
    **Marketing API**.
 2. **Facebook Login → Settings → Valid OAuth Redirect URIs:** the redirect URI above.
-3. **Marketing Credentials → Meta Ads:** App ID and App Secret. **Save.**
+3. **Marketing Connections → Meta Ads:** App ID and App Secret. **Save.**
 4. **Connect** → sign in as someone with access to the ad account in Business Manager → approve.
 
 **Meta's token lasts about 60 days and cannot be renewed without a person.** The form shows the expiry
@@ -96,7 +96,7 @@ clears, enter LinkedIn spend by hand in **Marketing Spend** instead.
 
 1. **LinkedIn Developer Portal** → the app → **Auth** → **Authorized redirect URLs:** the redirect URI
    above.
-2. **Marketing Credentials → LinkedIn Ads:** client ID and client secret. **Save.**
+2. **Marketing Connections → LinkedIn Ads:** client ID and client secret. **Save.**
 3. **Connect** → sign in as a user with a role on the ad account → approve.
 
 The access token lasts 60 days and is refreshed automatically within its last 7 days, using a refresh
@@ -110,7 +110,7 @@ reconnect once a year.
 1. Connect each platform as above; **Test** should list your accounts.
 2. **Marketing Settings:** tick **Enabled** and each connected platform's switch. Leave the dials at
    their defaults (restate 7 days, first backfill 90 days).
-3. **Marketing Credentials → Sync now.** It queues one background job; the first run backfills 90 days.
+3. **Marketing Connections → Sync now.** It queues one background job; the first run backfills 90 days.
 4. Check **Marketing Sync Log**: one row per platform, *Completed*. Then **Ad Daily Metric**, filtered to
    yesterday, and compare one campaign's spend with the platform's own UI. They should match to the cent,
    in the account's currency.
@@ -126,7 +126,7 @@ bench --site erp.sapphirefountains.com execute frappe.get_all --kwargs "{'doctyp
 ## Turning it off
 
 Untick the platform's switch, or **Enabled** in Marketing Settings for all of them. Nothing already
-pulled is deleted. **Disconnect** on Marketing Credentials forgets the stored tokens (and revokes
+pulled is deleted. **Disconnect** on Marketing Connections forgets the stored tokens (and revokes
 Google's).
 
 ---

@@ -48,8 +48,10 @@ not a live account.
   click is stored, and pruned after 180 days unless a Lead carries the gclid (Nik's choice,
   2026-09-22).
 - **Connect buttons (Nik's choice over pasted-in secrets).** New Single **Marketing
-  Credentials**, System Manager only: Marketing Settings is readable by Sales Manager, so no
-  secret lives there.
+  Connections**, System Manager only: Marketing Settings is readable by Sales Manager, so no
+  secret lives there. (Not "Marketing Credentials": the repo's `.gitignore` rule
+  `*credentials*.json`, which exists to keep service-account keys out of git, silently
+  dropped that DocType's schema from the first commit. Renaming beat weakening the guard.)
   - It holds each platform's OAuth app, the Google developer token and MCC id, and the
     tokens. Tokens are hidden and encrypted, and set only by the flow.
   - Buttons: Connect / Reconnect, Test (lists readable accounts), Disconnect (revokes
@@ -91,6 +93,11 @@ not a live account.
 
 - `tests/test_marketing_settings.py`: `Ad Click` joins the Sales-Manager-readable doctypes that
   may hold no secret-shaped field.
+- `tests/test_doctype_modules.py` gains the mirror of its controller check: **every doctype
+  controller must have its schema beside it.** Every existing check starts from the JSON files
+  that exist, so a schema kept out of git (as `*credentials*.json` did here) was invisible to all
+  of them; the doctype would simply have been missing on prod. The folders holding code for
+  erpnext's own Project and Task are the two deliberate exceptions.
 - `marketing/README.md` no longer says the module is data model only.
 
 ## [1.502.2] - 2026-09-22

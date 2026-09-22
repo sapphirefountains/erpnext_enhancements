@@ -13,7 +13,7 @@ const MARKETING_PLATFORMS = [
 
 const MARKETING_API = "erpnext_enhancements.marketing.api";
 
-frappe.ui.form.on("Marketing Credentials", {
+frappe.ui.form.on("Marketing Connections", {
 	refresh(frm) {
 		const redirect = `${window.location.origin}/api/method/${MARKETING_API}.oauth_callback`;
 		frm.set_intro(

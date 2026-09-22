@@ -34,7 +34,7 @@ from erpnext_enhancements.marketing.core.client import MarketingAPIError
 from erpnext_enhancements.marketing.core.utils import field, get_credentials, get_secret
 
 OPERATOR_ROLE = "System Manager"
-CREDENTIALS_ROUTE = "/app/marketing-credentials"
+CREDENTIALS_ROUTE = "/app/marketing-connections"
 
 
 def _require_operator():

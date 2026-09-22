@@ -24,7 +24,7 @@ PLATFORM_LINKEDIN = "LinkedIn Ads"
 PLATFORMS = (PLATFORM_GOOGLE, PLATFORM_META, PLATFORM_LINKEDIN)
 
 SETTINGS_DOCTYPE = "Marketing Settings"
-CREDENTIALS_DOCTYPE = "Marketing Credentials"
+CONNECTIONS_DOCTYPE = "Marketing Connections"
 
 #: Per-platform switch on Marketing Settings.
 ENABLED_FLAG = {
@@ -33,7 +33,7 @@ ENABLED_FLAG = {
 	PLATFORM_LINKEDIN: "linkedin_ads_enabled",
 }
 
-#: Field prefix on Marketing Credentials.
+#: Field prefix on Marketing Connections.
 CREDENTIAL_PREFIX = {
 	PLATFORM_GOOGLE: "google_ads",
 	PLATFORM_META: "meta",

@@ -1,0 +1,287 @@
+{
+ "actions": [],
+ "creation": "2026-09-22 12:00:00.000000",
+ "description": "OAuth apps and tokens for the read-only ad-spend connectors. System Manager only: Marketing Settings is readable by Sales Manager, so no secret lives there.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "google_ads_section",
+  "google_ads_client_id",
+  "google_ads_client_secret",
+  "google_ads_developer_token",
+  "google_ads_login_customer_id",
+  "google_ads_column_break",
+  "google_ads_connection_status",
+  "google_ads_connected_on",
+  "google_ads_connected_by",
+  "google_ads_status_message",
+  "google_ads_last_error_at",
+  "google_ads_refresh_token",
+  "meta_section",
+  "meta_client_id",
+  "meta_client_secret",
+  "meta_column_break",
+  "meta_connection_status",
+  "meta_connected_on",
+  "meta_connected_by",
+  "meta_access_token_expires_on",
+  "meta_status_message",
+  "meta_last_error_at",
+  "meta_access_token",
+  "linkedin_section",
+  "linkedin_client_id",
+  "linkedin_client_secret",
+  "linkedin_column_break",
+  "linkedin_connection_status",
+  "linkedin_connected_on",
+  "linkedin_connected_by",
+  "linkedin_access_token_expires_on",
+  "linkedin_refresh_token_expires_on",
+  "linkedin_status_message",
+  "linkedin_last_error_at",
+  "linkedin_access_token",
+  "linkedin_refresh_token"
+ ],
+ "fields": [
+  {
+   "fieldname": "google_ads_section",
+   "fieldtype": "Section Break",
+   "label": "Google Ads"
+  },
+  {
+   "description": "From the platform's developer console. Not secret.",
+   "fieldname": "google_ads_client_id",
+   "fieldtype": "Data",
+   "label": "OAuth Client ID"
+  },
+  {
+   "fieldname": "google_ads_client_secret",
+   "fieldtype": "Password",
+   "label": "OAuth Client Secret"
+  },
+  {
+   "description": "From the manager (MCC) account's API Center. Basic Access is enough for reporting.",
+   "fieldname": "google_ads_developer_token",
+   "fieldtype": "Password",
+   "label": "Developer Token"
+  },
+  {
+   "description": "The manager account the Connect user reaches the ad account through, e.g. 123-456-7890. Blank when the user has direct access.",
+   "fieldname": "google_ads_login_customer_id",
+   "fieldtype": "Data",
+   "label": "Manager (MCC) Customer ID"
+  },
+  {
+   "fieldname": "google_ads_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "google_ads_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_ads_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_ads_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_ads_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_ads_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "google_ads_refresh_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Refresh Token"
+  },
+  {
+   "fieldname": "meta_section",
+   "fieldtype": "Section Break",
+   "label": "Meta Ads"
+  },
+  {
+   "description": "From the platform's developer console. Not secret.",
+   "fieldname": "meta_client_id",
+   "fieldtype": "Data",
+   "label": "App ID"
+  },
+  {
+   "fieldname": "meta_client_secret",
+   "fieldtype": "Password",
+   "label": "App Secret"
+  },
+  {
+   "fieldname": "meta_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "meta_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_access_token_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Token Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "meta_access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token"
+  },
+  {
+   "fieldname": "linkedin_section",
+   "fieldtype": "Section Break",
+   "label": "LinkedIn Ads"
+  },
+  {
+   "description": "From the platform's developer console. Not secret.",
+   "fieldname": "linkedin_client_id",
+   "fieldtype": "Data",
+   "label": "Client ID"
+  },
+  {
+   "fieldname": "linkedin_client_secret",
+   "fieldtype": "Password",
+   "label": "Client Secret"
+  },
+  {
+   "fieldname": "linkedin_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "linkedin_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_access_token_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Access Token Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_refresh_token_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Refresh Token Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "linkedin_access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token"
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "linkedin_refresh_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Refresh Token"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Connections",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "print": 0,
+   "read": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for Marketing Credentials — the OAuth apps and tokens for the ad connectors.
+"""Controller for Marketing Connections — the OAuth apps and tokens for the ad connectors.
 
 A separate Single from Marketing Settings on purpose: Settings is readable by Sales
 Manager, and this holds client secrets, a Google Ads developer token and live access and
@@ -16,5 +16,5 @@ page that cannot be saved on the day somebody first opens it.
 from frappe.model.document import Document
 
 
-class MarketingCredentials(Document):
+class MarketingConnections(Document):
 	pass

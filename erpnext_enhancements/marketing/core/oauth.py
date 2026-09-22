@@ -11,7 +11,7 @@ marked *Auth Failed* instead of erroring every night. Two differences, both deli
   endpoint (the returning browser carries the ERPNext session), and it refuses a state that
   another user minted. A leaked ``state`` is therefore worthless to anybody but the person
   who clicked Connect.
-* **Credentials live on ``Marketing Credentials``, a System-Manager-only Single**, not on
+* **Credentials live on ``Marketing Connections``, a System-Manager-only Single**, not on
   Marketing Settings, which Sales Manager can read.
 
 Token lifetimes differ and so does the refresh:

@@ -520,7 +520,7 @@ def install_frappe():
 	def get_doc(arg, name=None):
 		if isinstance(arg, dict):
 			return Doc(arg)
-		if name is None and arg in (C.SETTINGS_DOCTYPE, C.CREDENTIALS_DOCTYPE):
+		if name is None and arg in (C.SETTINGS_DOCTYPE, C.CONNECTIONS_DOCTYPE):
 			return STATE[arg]
 		return DB.docs[(arg, name)]
 
@@ -624,10 +624,10 @@ def reset(**settings):
 					**settings,
 				}
 			),
-			C.CREDENTIALS_DOCTYPE: Doc(
+			C.CONNECTIONS_DOCTYPE: Doc(
 				{
-					"doctype": C.CREDENTIALS_DOCTYPE,
-					"name": C.CREDENTIALS_DOCTYPE,
+					"doctype": C.CONNECTIONS_DOCTYPE,
+					"name": C.CONNECTIONS_DOCTYPE,
 					"google_ads_client_id": "cid",
 					"google_ads_connection_status": "Connected",
 				}
@@ -729,7 +729,7 @@ class SyncEngineTests(unittest.TestCase):
 			return FakeResponse(400, FIX["google"]["token_invalid_grant"])
 
 		log = self.run_google(FakeHTTP(route))
-		creds = STATE[C.CREDENTIALS_DOCTYPE]
+		creds = STATE[C.CONNECTIONS_DOCTYPE]
 		self.assertEqual(creds["google_ads_connection_status"], "Auth Failed")
 		self.assertEqual(DB.docs[("Marketing Sync Log", log)]["status"], "Failed")
 		self.assertNotIn("csecret", creds["google_ads_status_message"])
@@ -764,7 +764,7 @@ class TaskShimTests(unittest.TestCase):
 
 	def test_disconnected_platforms_are_skipped(self):
 		reset()
-		STATE[C.CREDENTIALS_DOCTYPE]["google_ads_connection_status"] = "Auth Failed"
+		STATE[C.CONNECTIONS_DOCTYPE]["google_ads_connection_status"] = "Auth Failed"
 		from erpnext_enhancements.marketing.core import tasks
 
 		self.assertIsNone(tasks.nightly_ad_spend_sync())
@@ -817,7 +817,7 @@ class OAuthTests(unittest.TestCase):
 		reset()
 		from erpnext_enhancements.marketing.core import oauth
 
-		creds = STATE[C.CREDENTIALS_DOCTYPE]
+		creds = STATE[C.CONNECTIONS_DOCTYPE]
 		STATE["secrets"]["meta_client_secret"] = "msecret"
 		creds["meta_client_id"] = "app"
 		replies = [FIX["meta"]["token_short"], FIX["meta"]["token_long"]]
@@ -836,7 +836,7 @@ class OAuthTests(unittest.TestCase):
 		http = FakeHTTP(
 			lambda *a: FakeResponse(400, {"error": "invalid_grant", "error_description": "bad code THE-CODE"})
 		)
-		creds = STATE[C.CREDENTIALS_DOCTYPE]
+		creds = STATE[C.CONNECTIONS_DOCTYPE]
 		with self.assertRaises(c.MarketingAPIError) as ctx:
 			oauth.exchange_code(C.PLATFORM_GOOGLE, "THE-CODE", creds, http=http)
 		self.assertTrue(ctx.exception.is_auth_failure)
@@ -846,7 +846,7 @@ class OAuthTests(unittest.TestCase):
 		reset()
 		from erpnext_enhancements.marketing.core import oauth
 
-		creds = STATE[C.CREDENTIALS_DOCTYPE]
+		creds = STATE[C.CONNECTIONS_DOCTYPE]
 		creds["linkedin_client_id"] = "li"
 		creds["linkedin_access_token_expires_on"] = datetime.datetime(2026, 9, 25)
 		STATE["secrets"].update(
@@ -889,7 +889,7 @@ class WiringTests(unittest.TestCase):
 
 	def test_credentials_are_system_manager_only(self):
 		doc = json.loads(
-			(MARKETING / "doctype" / "marketing_credentials" / "marketing_credentials.json").read_text(
+			(MARKETING / "doctype" / "marketing_connections" / "marketing_connections.json").read_text(
 				encoding="utf-8"
 			)
 		)
@@ -901,7 +901,7 @@ class WiringTests(unittest.TestCase):
 
 	def test_every_credential_field_the_code_reads_exists(self):
 		doc = json.loads(
-			(MARKETING / "doctype" / "marketing_credentials" / "marketing_credentials.json").read_text(
+			(MARKETING / "doctype" / "marketing_connections" / "marketing_connections.json").read_text(
 				encoding="utf-8"
 			)
 		)

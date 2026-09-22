@@ -25,7 +25,7 @@ def get_settings():
 def get_credentials():
 	import frappe
 
-	return frappe.get_doc(C.CREDENTIALS_DOCTYPE)
+	return frappe.get_doc(C.CONNECTIONS_DOCTYPE)
 
 
 def platform_enabled(platform, settings=None):
@@ -37,7 +37,7 @@ def platform_enabled(platform, settings=None):
 
 
 def field(platform, name):
-	"""Marketing Credentials fieldname for ``name`` on ``platform``."""
+	"""Marketing Connections fieldname for ``name`` on ``platform``."""
 	return f"{C.CREDENTIAL_PREFIX[platform]}_{name}"
 
 

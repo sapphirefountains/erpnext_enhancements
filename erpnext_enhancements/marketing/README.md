@@ -23,7 +23,7 @@ below once a platform is switched on and connected; setup, checks and troublesho
 | `core/api.py` | System-Manager endpoints: POST-only except the OAuth callback (GET, logged-in, state-bound, rate-limited) |
 | `api.py` | Stable short path for the redirect URI registered in each platform console |
 | `platforms/{google_ads,meta_ads,linkedin_ads}.py` | Per-platform request builders and **pure** parsers, tested against `tests/data/marketing_api_fixtures.json` |
-| `doctype/marketing_credentials/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect). Connect / Test / Disconnect / Sync now buttons |
+| `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect). Connect / Test / Disconnect / Sync now buttons |
 | `doctype/ad_click/` | One Google click (gclid → campaign, date): decision D's fallback join. Named by gclid |
 | `doctype/ad_account/` | One row per connected advertising account. Identity is (platform, external_id) |
 | `doctype/ad_campaign/` | One row per campaign. Identity is (ad_account, external_id) |
@@ -113,7 +113,7 @@ before, by letting a background job re-raise with frame locals intact.
 | `scheduler_events.cron` `"25 3 * * *"` | `core.tasks.nightly_ad_spend_sync` | The nightly pull (a thin shim; the work runs on `long`) |
 | `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention; clicks past 180 days no Lead carries |
 
-Credentials live on **Marketing Credentials**, not on Marketing Settings: Settings is readable
+Credentials live on **Marketing Connections**, not on Marketing Settings: Settings is readable
 by Sales Manager, and the rule above ("no secret on anything beyond System Manager") holds for
 it too. The connectors are built against recorded-shape fixtures because API access is still
 pending (Phase 0); replace fixture entries with real, redacted captures once a platform is

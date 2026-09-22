@@ -86,6 +86,35 @@ class TestDoctypeModules(unittest.TestCase):
                     % (name, module, _scrub(module), dir_module, path),
                 )
 
+    def test_every_controller_has_its_schema(self):
+        """The mirror image of the test below: a controller whose DocType JSON is missing.
+
+        Every other check here starts from the JSON files that exist, so a schema that
+        never reached git is invisible to all of them -- the doctype simply is not there,
+        and nothing fails until code that uses it runs on a site that does not have it.
+        That happened in v1.503.0: the repo's ``.gitignore`` rule ``*credentials*.json``
+        (which keeps service-account keys out of git) silently dropped the schema of a
+        DocType called Marketing Credentials. Locally the file existed and every test
+        passed; CI's checkout had only the ``.py``.
+        """
+        # Folders shaped like a doctype that deliberately hold no schema: code for ERPNext's
+        # OWN Project and Task (whitelisted helpers; the Task class override registered in
+        # hooks.override_doctype_class). Their schema is erpnext's.
+        core_doctype_code = {"project", "task"}
+        for controller in sorted(APP_DIR.glob("*/doctype/*/*.py")):
+            if controller.name == "__init__.py" or controller.stem != controller.parent.name:
+                continue
+            if controller.stem.startswith("test_") or controller.parent.name in core_doctype_code:
+                continue
+            with self.subTest(doctype_dir=controller.parent.name):
+                self.assertTrue(
+                    controller.with_suffix(".json").exists(),
+                    "%s has a controller but no %s beside it. If the file exists on your "
+                    "machine, check `git check-ignore -v` on it: a .gitignore pattern may "
+                    "be keeping it out of the repository."
+                    % (controller.parent.name, controller.with_suffix(".json").name),
+                )
+
     def test_every_doctype_has_a_controller_module(self):
         """The one that would have caught the v1.268.0 deploy failure.
 
