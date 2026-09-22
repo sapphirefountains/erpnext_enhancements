@@ -26,8 +26,10 @@ import frappe
 from frappe.utils import cint, flt, now_datetime
 
 from erpnext_enhancements.quickbooks_online.core.constants import (
+	DEFAULT_PARTY_GROUP,
 	DEFAULT_SALES_TAX_ACCOUNT_NUMBER,
 	ENTITY_DOCTYPE_MAP,
+	ERPNEXT_OWNED_PARTY_FIELDS,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import (
 	json_dumps,
@@ -195,6 +197,11 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		# A QBO job must never re-clobber an existing Project's title with its prefixed
 		# DisplayName; drop it here so it's excluded from conflicts, the write and the snapshot.
 		_protect_existing_project_title(erpnext_doctype, values, doc)
+		# Same shape for a party's group / territory: QuickBooks has no such field, the
+		# mapper only ever supplies a default, and a default must never overwrite a value a
+		# person set (this re-application is what swept 906 Suppliers into whichever
+		# Supplier Group was newest, five times over -- see DEFAULT_PARTY_GROUP).
+		_protect_existing_party_groups(erpnext_doctype, values, doc)
 		conflicts = detect_conflicts(doc, values, mapping)
 		# A conflict = a user changed a QBO-owned field; respect it unless overwriting.
 		if conflicts and not overwrite:
@@ -579,7 +586,12 @@ def _owned_snapshot(erpnext_doctype: str, erpnext_name: str, values: dict) -> di
 	what ERPNext kept, so a record only conflicts when the ERPNext value actually moves
 	away from it. Child-table (list) values are kept as mapped -- detect_conflicts skips
 	them anyway -- and the input values are used unchanged if the record can't be read.
+
+	A party's group / territory (``ERPNEXT_OWNED_PARTY_FIELDS``) is never in the snapshot,
+	whichever path wrote it: the mapper only ever supplies a default for those, so they are
+	ERPNext's from the moment the record exists and a later edit to one is not a conflict.
 	"""
+	values = _without_erpnext_owned_party_fields(erpnext_doctype, values)
 	if not erpnext_name or not frappe.db.exists(erpnext_doctype, erpnext_name):
 		return values
 	try:
@@ -590,6 +602,14 @@ def _owned_snapshot(erpnext_doctype: str, erpnext_name: str, values: dict) -> di
 		fieldname: (value if isinstance(value, list) else doc.get(fieldname))
 		for fieldname, value in values.items()
 	}
+
+
+def _without_erpnext_owned_party_fields(erpnext_doctype: str, values: dict) -> dict:
+	"""``values`` minus the group / territory fields ERPNext owns on a Supplier / Customer."""
+	owned_by_erpnext = ERPNEXT_OWNED_PARTY_FIELDS.get(erpnext_doctype, ())
+	if not owned_by_erpnext:
+		return values
+	return {fieldname: value for fieldname, value in values.items() if fieldname not in owned_by_erpnext}
 
 
 def save_mapping(
@@ -1375,11 +1395,16 @@ def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
 	than owning them row by row, and the live value comes back as child DocType
 	objects whose ``str()`` never equals the plain-dict snapshot, so comparing them
 	would flag a conflict on every re-sync and freeze the record's updates.
+
+	A party's group / territory is skipped too, even when an older mapping still lists it
+	(snapshots written before v1.496.0 do): those fields are ERPNext's, the mapper only
+	ever defaults them, and a person re-grouping a Supplier must never park it in Conflict.
 	"""
 	owned = json_loads(mapping.owned_fields, default={}) or {}
+	owned_by_erpnext = ERPNEXT_OWNED_PARTY_FIELDS.get(getattr(doc, "doctype", None), ())
 	conflicts = []
 	for fieldname, previous_value in owned.items():
-		if fieldname not in incoming_values:
+		if fieldname not in incoming_values or fieldname in owned_by_erpnext:
 			continue
 		if isinstance(previous_value, list) or isinstance(incoming_values[fieldname], list):
 			continue
@@ -1661,8 +1686,10 @@ def _map_customer(payload, settings):
 			"customer_type",
 			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
 		),
-		"customer_group": _default_group("Customer Group", "All Customer Groups"),
-		"territory": _default_group("Territory", "All Territories"),
+		# Create-time defaults only: the update path drops them when the record already
+		# has a value (_protect_existing_party_groups), and neither is ever QBO-owned.
+		"customer_group": _default_group("Customer Group"),
+		"territory": _default_group("Territory"),
 		# Links to an already-imported Payment Terms Template when QBO assigns the
 		# customer a sales term (Term is imported before Customer); None otherwise.
 		"payment_terms": _linked_name(
@@ -1739,7 +1766,9 @@ def _map_supplier(payload, settings):
 			"supplier_type",
 			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
 		),
-		"supplier_group": _default_group("Supplier Group", "All Supplier Groups"),
+		# Create-time default only: the update path drops it when the Supplier already
+		# has a group (_protect_existing_party_groups), and it is never QBO-owned.
+		"supplier_group": _default_group("Supplier Group"),
 		# Links to an already-imported Payment Terms Template when QBO assigns the
 		# vendor a term (Term is imported before Vendor); None otherwise.
 		"payment_terms": _linked_name(
@@ -2735,12 +2764,22 @@ def _default_or_none(doctype: str, name: str):
 	return name if frappe.db.exists(doctype, name) else None
 
 
-def _default_group(doctype: str, fallback_name: str):
-	"""Return any non-group record of ``doctype`` (a safe default leaf group)."""
-	name = frappe.db.get_value(doctype, {"is_group": 0}, "name")
-	if name:
-		return name
-	return None
+def _default_group(doctype: str):
+	"""Return the named default leaf of ``doctype`` (``DEFAULT_PARTY_GROUP``), or None.
+
+	A NAME, never a lookup. This used to be ``frappe.db.get_value(doctype, {"is_group": 0},
+	"name")`` -- "any leaf group" -- and on Frappe v16 a dict-filtered ``get_value`` with no
+	``order_by`` sorts by ``creation`` **descending**, so "any" meant "the one somebody
+	created most recently". Because the in-place update path re-applied every mapped
+	value on each re-sync, each new Supplier Group anyone added became the group of all
+	911 QBO-linked Suppliers on the next scheduled run: Staffing (the 2026-06-18 vendor
+	import), then Event Decor (07-21), Encapsulant (08-19), Labels (09-09) and Garbage &
+	Junk Removal (09-16, 906 rows); 466 Customers landed in "Government" the same way.
+	The leaf is seeded by ``patches/seed_qbo_uncategorized_groups.py``; when it is absent
+	the mapper returns None and the party is created without a group (the three Links are
+	not ``reqd`` on v16), which is an honest blank rather than a guess.
+	"""
+	return DEFAULT_PARTY_GROUP if frappe.db.exists(doctype, DEFAULT_PARTY_GROUP) else None
 
 
 def _select_option(doctype: str, fieldname: str, preferred):
@@ -3015,6 +3054,30 @@ def _protect_existing_project_title(erpnext_doctype: str, values: dict, doc):
 	"""
 	if erpnext_doctype == "Project" and "project_name" in values and (doc.get("project_name") or "").strip():
 		values.pop("project_name", None)
+
+
+def _protect_existing_party_groups(erpnext_doctype: str, values: dict, doc):
+	"""Never let the import's default group / territory overwrite one a person set.
+
+	QuickBooks carries no supplier group, customer group or territory; ``_map_supplier``
+	and ``_map_customer`` only supply a default so a *new* party is filed somewhere. The
+	in-place update path applies every mapped value, so that default was re-written onto
+	every already-linked Supplier and Customer on every re-sync -- and while the default
+	was "whichever leaf is newest" (see ``_default_group``), that moved all 911 QBO-linked
+	Suppliers en bloc each time somebody added a Supplier Group. Drop each of the
+	``ERPNEXT_OWNED_PARTY_FIELDS`` from ``values`` when the record already holds one, so
+	the default is set once (on create), fills a blank on link / update, and is otherwise
+	ERPNext's: excluded from conflict detection, the field write and the owned-field
+	snapshot alike. Same shape as ``_protect_existing_project_title``.
+	"""
+	for fieldname in ERPNEXT_OWNED_PARTY_FIELDS.get(erpnext_doctype, ()):
+		if fieldname not in values:
+			continue
+		current = doc.get(fieldname)
+		if isinstance(current, str):
+			current = current.strip()
+		if current:
+			values.pop(fieldname, None)
 
 
 def _heal_invalid_owned_selects(doc, values: dict) -> list[str]:
