@@ -135,9 +135,136 @@ Google's).
 
 | What you see | What it means |
 |---|---|
-| Credentials show **Auth Failed** | The token was revoked, expired (Meta), or the Google user lost access. Reconnect. The platform is skipped until you do, so there is no nightly error storm. |
+| Credentials show **Auth Failed** | The token was revoked, expired (Meta), or the Google user lost access. Reconnect. The platform is skipped until you do, so there is no nightly error storm. Since v1.508.0 an expired Meta token lands here too (Meta reports it as HTTP 400, code 190, which was read as an ordinary failure before), and a token server that is merely *down* no longer does (it used to mark a good connection Auth Failed). |
 | Sync Log *Failed* with `HTTP 400`/`404` on every call, after months of working | The pinned API version was retired. Bump `GOOGLE_ADS_API_VERSION`, `META_API_VERSION` or `LINKEDIN_API_VERSION` in `marketing/core/constants.py` (checked 2026-09-22: v25, v26.0, 202608). |
 | `refused … not on the read-only allowlist` | Code tried to call something that is not a read. That is the guard working; the call never left ERPNext. It is a bug to fix, never a guard to loosen. |
 | Spend differs from the platform UI for recent days | Expected until the platform finalizes them. The next runs restate them. |
 | A Google account missing from Test | It is a manager (MCC) account, or the connecting user cannot see it. |
 | *Google returned no refresh token* | The consent was granted before; Connect always asks again (`prompt=consent`). Revoke the app at myaccount.google.com → Security and reconnect. |
+
+---
+
+## Publishing connections (Phase 2)
+
+Since v1.508.0 (TASK-2026-01480) the same form connects the accounts that **posts** will go out
+through: the Facebook Page (and the Instagram account linked to it), the LinkedIn Company Page, and
+the YouTube channel. **Nothing publishes yet.** No publisher is installed, and every publishing switch
+in Marketing Settings ships off. Connecting now proves the apps and permissions work before there is
+anything to post.
+
+These are **separate connections from the ad ones**, with their own Connect button, their own token
+and their own section on the form, even where the vendor is the same. A publishing token cannot reach
+ad spend: no spend-capable permission is ever requested, and Meta's Connect **refuses** a login that
+carries one.
+
+All three use the same redirect URI as the ad connectors (above).
+
+### Meta Publishing: Facebook Page + Instagram
+
+**Needs first:** Meta App Review for the publishing permissions: `pages_show_list`,
+`pages_manage_posts`, `pages_read_engagement`, `read_insights`, `instagram_basic`,
+`instagram_content_publish`, `instagram_manage_insights`, plus `ads_read`
+([approvals](marketing-platform-approvals.md), gate 2). Until review clears, only people with a role on
+the app can connect.
+
+1. The same Meta app as Meta Ads is fine; its App ID and App Secret go in again under **Meta
+   Publishing**. **Save.**
+2. **Facebook Page ID:** leave it blank if the person connecting manages one Page. If they manage
+   several, Connect lists them. Put the right ID here and Connect again.
+3. **Connect**, as someone who can **create content** on the Page. Approve every permission. Unticking
+   the Instagram ones connects Facebook alone.
+4. **Test** shows the Page and the Instagram account.
+
+What is kept: **the Page token only.** The login produces a user token that can act on every Page the
+person manages; it is used once, to fetch the Page token, and never stored. A Page token does not
+expire, but it dies if that person loses their role on the Page, changes their Facebook password, or
+removes the app. The daily check notices, clears it and marks the connection *Auth Failed*.
+
+**Instagram** posts through the Page it is linked to, so it needs an Instagram *professional* account
+linked to that Page in Meta Business Suite. The form shows the linked account, or says why there is
+none.
+
+> **If Meta asks for `ads_management`.** Some of Meta's documentation says a person whose Page role
+> comes through Business Manager also needs `ads_management` to publish to Instagram. Other pages say
+> `ads_read` is enough, and this connection requests `ads_read`. If Instagram fails with a permission
+> error naming `ads_management`, **do not add it**: it can change ad spend, and Connect will refuse the
+> login. The fallback is Meta's *Instagram API with Instagram Login*, which needs no ads permission at
+> all. It is a separate connection and a change to the code, so raise it rather than working around it.
+
+**Login Configuration ID** is optional. If Meta requires a *Facebook Login for Business* configuration
+for this app, create one with the permissions above (and nothing that touches ads beyond `ads_read`)
+and put its ID here. Connect still checks what the login actually granted and refuses anything
+spend-capable.
+
+Disconnect forgets the Page token. To revoke it at Meta as well, remove the app under the person's
+Facebook **Settings → Business integrations**.
+
+### LinkedIn Publishing: Company Page
+
+**Needs first:** the **Community Management API** product, on a **second LinkedIn app** of its own.
+LinkedIn requires that product to be the only one on its app, so it cannot share the ads app, and an
+app holding only it cannot carry any ads permission ([approvals](marketing-platform-approvals.md),
+gates 3–4). The app must be verified by a super admin of the Company Page.
+
+1. **Auth → Authorized redirect URLs:** the redirect URI above.
+2. **Marketing Connections → LinkedIn Publishing:** that app's Client ID and Client Secret. **Save.**
+3. **Company Page (Organization) ID:** leave blank if the person connecting is an administrator of one
+   Company Page; otherwise the number from `urn:li:organization:NNN`.
+4. **Connect** as an **administrator** of the Company Page. Permissions requested:
+   `w_organization_social` (post), `r_organization_social` (read posts) and `rw_organization_admin`
+   (find the Company Page, and post statistics later).
+
+Tokens: a 60-day access token and a 365-day refresh token. The access token is refreshed automatically
+inside its last 7 days. **The refresh token is not extended by refreshing**, so a year after connecting
+someone must click **Reconnect**. The form turns orange 30 days before, and the daily check writes the
+date into *Status*. If LinkedIn issues no refresh token at all, the 60-day access token is all there is,
+and the same warning applies to it.
+
+### YouTube Publishing
+
+**Needs first:** a Google Cloud project with the **YouTube Data API v3** and **YouTube Analytics API**
+enabled, and, before anything is posted publicly, the **YouTube API audit**
+([approvals](marketing-platform-approvals.md), gate 6). **Until the audit passes, every video uploaded
+through the API is locked private, and the lock cannot be appealed.** Test with throwaway videos only.
+
+1. **APIs & Services → Credentials → OAuth client ID** (type *Web application*), with the redirect URI
+   above. It can be the same OAuth client as Google Ads if it lives in the same project.
+2. **OAuth consent screen.** This decides whether the connection lasts:
+   - **Internal**, if the channel is owned by a **@sapphirefountains.com** Workspace account (or a
+     Brand Account managed by one). There is no Google verification review, and no 7-day expiry.
+   - **External** otherwise. While the app is in *Testing*, **Google expires the refresh token after
+     7 days**, so the connection dies weekly. Publishing it to *In production* needs Google's
+     verification review for these scopes.
+   - **Open question (2026-09-22):** nobody has confirmed who owns the channel. Check YouTube Studio →
+     Settings → Permissions before choosing.
+3. **Marketing Connections → YouTube Publishing:** Client ID and Client Secret. **Save.**
+4. **Connect** and, on Google's account picker, choose the **channel's** account. A Brand Account
+   appears there as its own entry. Permissions requested: `youtube.force-ssl` (upload, thumbnails,
+   playlists, read the channel; decided 2026-09-22, so it can also manage the channel's videos) and
+   `yt-analytics.readonly` (metrics later).
+
+Kept: the refresh token. Google stops honoring a refresh token that goes unused for six months. The
+daily check uses it, which also keeps it alive.
+
+### The daily check (03:35)
+
+Once **Marketing Settings → Enabled** is on, a job at **03:35** looks at every publishing connection
+that shows *Connected*, and applies that connection's own rule: read the Page (Meta), refresh inside 7
+days of expiry (LinkedIn), exercise the refresh token (YouTube). A credential the platform rejects is
+**cleared and marked *Auth Failed*** with "Reconnect needed" in *Status*, so it is never retried every
+night. A platform that is only down leaves the connection alone and records the error. The publishing
+switches play no part: keeping a token alive while its network is switched off is what lets switching
+it on work without reconnecting.
+
+### When a publishing connection is wrong
+
+| What you see | What it means |
+|---|---|
+| *refused: this Meta login grants …* | The person has granted this app a permission that can touch ad spend (for example `ads_management`), maybe for something else entirely. Remove it from the app's permissions (and from the Login Configuration, if one is set), have them remove and re-add the app, and connect again. |
+| *Facebook publishing needs …, which was not granted* | A required permission was unticked on Meta's dialog, or App Review has not cleared it. Connect again and approve everything. |
+| *this login manages N of them; set Facebook Page ID …* | The person manages several Pages. Copy the right ID from the message into **Facebook Page ID**, then Connect again. Same for LinkedIn and **Company Page (Organization) ID**. |
+| *cannot post to … (no CREATE_CONTENT role)* | The person can see the Page but not post to it. Connect as someone with content access. |
+| Instagram: *no professional account is linked* | Link the Instagram professional account to the Page in Meta Business Suite, then Reconnect. |
+| *this Google account has no YouTube channel* | The wrong account was picked on Google's account picker. A Brand Account is a separate entry there. |
+| YouTube dies after a week | The OAuth consent screen is External and in Testing. See step 2 above. |
+| *Reconnect needed: …* in Status | The daily check found the credential dead: a password change, a removed role, a revoked app, or LinkedIn's year running out. Click **Reconnect**. |

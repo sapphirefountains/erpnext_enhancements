@@ -1122,6 +1122,14 @@ scheduler_events = {
 		# platform is both switched on and connected, then one job on `long` with a fixed
 		# job_id. Dormant: Marketing Settings.enabled and every platform flag ship 0.
 		"25 3 * * *": ["erpnext_enhancements.marketing.core.tasks.nightly_ad_spend_sync"],
+		# marketing (TASK-2026-01480): daily upkeep of the publishing connections' tokens,
+		# one rule per connection -- Meta's Page token is checked by reading the Page,
+		# LinkedIn's access token refreshed inside 7 days of expiry (and warned 30 days
+		# before its non-rolling refresh token runs out), YouTube's refresh token exercised
+		# so Google does not expire it for disuse. A dead credential is cleared and marked
+		# Auth Failed rather than retried every night. 03:35, clear of the 03:25 ad pull.
+		# Dormant: returns at once while Marketing Settings.enabled is 0.
+		"35 3 * * *": ["erpnext_enhancements.marketing.publish.tasks.maintain_publishing_tokens"],
 	},
 	"daily": [
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones

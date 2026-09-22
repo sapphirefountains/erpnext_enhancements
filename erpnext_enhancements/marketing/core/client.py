@@ -66,6 +66,21 @@ def allowed(platform, method, url):
 	)
 
 
+def effective_status(response):
+	"""The HTTP status, except that Meta's dead-token 400 (error code 190) reads as 401."""
+	status = response.status_code
+	if status != 400:
+		return status
+	try:
+		body = response.json()
+	except ValueError:
+		return status
+	error = body.get("error") if isinstance(body, dict) else None
+	if isinstance(error, dict) and error.get("code") in C.META_AUTH_ERROR_CODES:
+		return 401
+	return status
+
+
 def backoff_seconds(attempt, retry_after=None, rand=random.random):
 	"""Seconds to wait before retry ``attempt`` (1-based). Pure."""
 	if retry_after is not None:
@@ -124,7 +139,7 @@ class Transport:
 				self.sleep(backoff_seconds(attempt))
 				continue
 
-			status = response.status_code
+			status = effective_status(response)
 			if status < 400:
 				if self.archive:
 					self.archive(

@@ -59,5 +59,23 @@
    {"pivotValues": ["urn:li:sponsoredCampaign:350000001"], "dateRange": {"start": {"year": 2026, "month": 9, "day": 21}, "end": {"year": 2026, "month": 9, "day": 21}}, "impressions": 2050, "clicks": 17, "costInLocalCurrency": "38.5"}
   ]},
   "token_exchange": {"access_token": "AQV-TEST-ACCESS", "expires_in": 5184000, "refresh_token": "AQX-TEST-REFRESH", "refresh_token_expires_in": 31536000, "scope": "r_ads,r_ads_reporting"}
+ },
+ "publishing": {
+  "_about": "Publishing connections (TASK-2026-01480): Meta Graph v26.0 via Facebook Login (Page + linked Instagram professional account), LinkedIn Community Management 202608, YouTube Data v3 + Google OAuth. Recorded shapes from the published references on 2026-09-22; no platform is connected yet.",
+  "meta_token_short": {"access_token": "EAAB-SHORT-USER", "token_type": "bearer", "expires_in": 5400},
+  "meta_token_long": {"access_token": "EAAB-LONG-USER", "token_type": "bearer", "expires_in": 5183944},
+  "meta_permissions": {"data": [{"permission": "pages_show_list", "status": "granted"}, {"permission": "pages_manage_posts", "status": "granted"}, {"permission": "pages_read_engagement", "status": "granted"}, {"permission": "read_insights", "status": "granted"}, {"permission": "instagram_basic", "status": "granted"}, {"permission": "instagram_content_publish", "status": "granted"}, {"permission": "instagram_manage_insights", "status": "granted"}, {"permission": "ads_read", "status": "granted"}, {"permission": "public_profile", "status": "granted"}]},
+  "meta_accounts": {"data": [{"id": "101", "name": "Sapphire Fountains", "access_token": "EAAB-PAGE-TOKEN", "tasks": ["ADVERTISE", "ANALYZE", "CREATE_CONTENT", "MESSAGING", "MODERATE", "MANAGE"], "instagram_business_account": {"id": "17841400000000001", "username": "sapphirefountains"}}], "paging": {"cursors": {"before": "QVFI-b", "after": "QVFI-a"}}},
+  "meta_accounts_two": {"data": [{"id": "101", "name": "Sapphire Fountains", "access_token": "EAAB-PAGE-TOKEN", "tasks": ["ADVERTISE", "ANALYZE", "CREATE_CONTENT", "MESSAGING", "MODERATE", "MANAGE"]}, {"id": "202", "name": "Sapphire Rentals", "access_token": "EAAB-PAGE-TWO", "tasks": ["ANALYZE"]}], "paging": {"cursors": {"before": "QVFI-b", "after": "QVFI-a"}}},
+  "meta_page": {"id": "101", "name": "Sapphire Fountains", "instagram_business_account": {"id": "17841400000000001", "username": "sapphirefountains"}},
+  "linkedin_token": {"access_token": "AQV-PUB-ACCESS", "expires_in": 5184000, "refresh_token": "AQX-PUB-REFRESH", "refresh_token_expires_in": 31536000, "scope": "r_organization_social,rw_organization_admin,w_organization_social"},
+  "linkedin_token_no_refresh": {"access_token": "AQV-PUB-ACCESS", "expires_in": 5184000, "scope": "r_organization_social,rw_organization_admin,w_organization_social"},
+  "linkedin_refreshed": {"access_token": "AQV-PUB-ACCESS-2", "expires_in": 5184000},
+  "linkedin_acls": {"paging": {"start": 0, "count": 10, "links": []}, "elements": [{"roleAssignee": "urn:li:person:Ab1Cd2", "state": "APPROVED", "role": "ADMINISTRATOR", "organization": "urn:li:organization:2414183"}]},
+  "linkedin_org": {"id": 2414183, "localizedName": "Sapphire Fountains", "vanityName": "sapphire-fountains"},
+  "youtube_token": {"access_token": "ya29.PUB-ACCESS", "expires_in": 3599, "refresh_token": "1//PUB-REFRESH", "scope": "https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly", "token_type": "Bearer"},
+  "youtube_refresh": {"access_token": "ya29.PUB-ACCESS-2", "expires_in": 3599, "token_type": "Bearer"},
+  "youtube_channels": {"kind": "youtube#channelListResponse", "pageInfo": {"totalResults": 1, "resultsPerPage": 5}, "items": [{"kind": "youtube#channel", "id": "UCsapphire0000000000000", "snippet": {"title": "Sapphire Fountains", "customUrl": "@sapphirefountains"}}]},
+  "youtube_no_channel": {"kind": "youtube#channelListResponse", "pageInfo": {"totalResults": 0, "resultsPerPage": 5}}
  }
 }

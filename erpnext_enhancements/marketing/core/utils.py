@@ -37,8 +37,16 @@ def platform_enabled(platform, settings=None):
 
 
 def field(platform, name):
-	"""Marketing Connections fieldname for ``name`` on ``platform``."""
-	return f"{C.CREDENTIAL_PREFIX[platform]}_{name}"
+	"""Marketing Connections fieldname for ``name`` on an ad platform or a publishing connection.
+
+	The two prefix maps are disjoint (``tests/test_marketing_publish_oauth.py``), so a name
+	resolves to exactly one set of fields and an ad token can never be read as a publishing
+	one or the reverse.
+	"""
+	from erpnext_enhancements.marketing.publish import constants as P
+
+	prefix = C.CREDENTIAL_PREFIX.get(platform) or P.CREDENTIAL_PREFIX[platform]
+	return f"{prefix}_{name}"
 
 
 def get_secret(creds, fieldname):

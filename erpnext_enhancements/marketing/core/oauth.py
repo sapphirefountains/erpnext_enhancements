@@ -58,8 +58,22 @@ def _state_key(state):
 	return f"marketing_oauth_state:{state}"
 
 
+def spec_for(name):
+	"""The OAuth spec for an ad platform or a publishing connection."""
+	from erpnext_enhancements.marketing.publish import constants as P
+
+	return C.OAUTH.get(name) or P.PUBLISH_OAUTH[name]
+
+
+def known_connections():
+	"""Every name a Connect flow may be started for: the ad platforms, then publishing."""
+	from erpnext_enhancements.marketing.publish import constants as P
+
+	return C.PLATFORMS + P.PUBLISH_CONNECTIONS
+
+
 def authorization_url(platform, client_id, state):
-	spec = C.OAUTH[platform]
+	spec = spec_for(platform)
 	params = {
 		"client_id": client_id,
 		"redirect_uri": redirect_uri(),
@@ -97,7 +111,7 @@ def consume_state(state, user):
 		data = json.loads(raw)
 	except (TypeError, ValueError):
 		return None
-	if data.get("user") != user or data.get("platform") not in C.PLATFORMS:
+	if data.get("user") != user or data.get("platform") not in known_connections():
 		return None
 	return data["platform"]
 
@@ -106,12 +120,16 @@ def consume_state(state, user):
 
 
 def _token_request(platform, method, params=None, data=None, http=None):
-	"""One call to a platform's token endpoint. The only non-data URL this module hits."""
+	"""One call to a platform's token endpoint. The only non-data URL this module hits.
+
+	``platform`` may also be a publishing connection (``publish/oauth.py``): same token
+	endpoints, same redaction, a different stored token.
+	"""
 	if http is None:
 		import requests
 
 		http = requests
-	url = C.OAUTH[platform]["token_url"]
+	url = spec_for(platform)["token_url"]
 	try:
 		response = http.request(method, url, params=params, data=data, timeout=30)
 	except Exception as exc:
@@ -125,9 +143,25 @@ def _token_request(platform, method, params=None, data=None, http=None):
 		if isinstance(detail, dict):
 			detail = detail.get("message") or str(detail)
 		raise MarketingAPIError(
-			platform, f"token exchange failed: {redact_text(detail, 300)}", status=401
+			platform,
+			f"token exchange failed: {redact_text(detail, 300)}",
+			status=token_failure_status(response.status_code),
 		) from None
 	return body
+
+
+def token_failure_status(status):
+	"""How a failed token call is reported. Pure.
+
+	Only a rejection is an auth failure: ``invalid_grant`` (400), a bad client (401), a
+	refused scope. A token server that is down (5xx) or throttling (408/429) says nothing
+	about the credential, and reporting it as 401 -- as this did until v1.508.0 -- marked a
+	good Google Ads connection *Auth Failed* for one bad minute at Google, and would have
+	cleared a good publishing refresh token.
+	"""
+	if status in C.RETRYABLE_STATUSES:
+		return status
+	return 401
 
 
 def _expiry(seconds):
@@ -248,7 +282,7 @@ def access_token(platform, creds=None, http=None):
 
 def revoke(platform, creds, http=None):
 	"""Best-effort revoke at the platform (Google only offers one). Never raises."""
-	url = C.OAUTH[platform]["revoke_url"]
+	url = spec_for(platform)["revoke_url"]
 	if not url:
 		return
 	token = get_secret(creds, field(platform, "refresh_token"))

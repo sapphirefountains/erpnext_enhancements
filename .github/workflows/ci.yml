@@ -368,8 +368,16 @@ jobs:
       # marketing/), no token reaches an error / log / archived URL, retries only on
       # 408/429/5xx, restate + upsert + cursor-only-on-clean-run end to end, each platform's
       # parser quirks, and an OAuth state bound to the user who clicked Connect.
+      # Since v1.508.0 (TASK-2026-01480) it also covers the publishing connections:
+      #   - the publish transport's own allowlist, with each transport refusing the other's paths;
+      #   - writes never retried on their own, and one retry after a 401;
+      #   - Meta's Connect keeping only the Page token and refusing a spend-capable grant;
+      #   - LinkedIn's non-rolling refresh, and YouTube's refresh-every-use;
+      #   - daily upkeep clearing a dead credential but not a merely-down one.
+      # Two shared fixes: Meta's dead-token 400/190 reads as an auth failure, and a token-server
+      # outage no longer does.
       # Own step: installs a frappe stub (frappe, frappe.utils, frappe.model) and removes it.
-      - name: Ad-spend connectors (bench-free)
+      - name: Ad-spend + publishing connectors (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_marketing_connectors -v
       # The spend -> Lead -> Opportunity -> Project -> invoice join (TASK-2026-01477, v1.504.0).
       # Pins the 2026-09-22 decisions: utm_id then gclid, a paid lead nothing matches is its own

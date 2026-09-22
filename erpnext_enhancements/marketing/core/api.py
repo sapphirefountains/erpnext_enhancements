@@ -1,7 +1,11 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Operator endpoints for the ad-platform connections. System Manager only.
+"""Operator endpoints for the ad-platform and publishing connections. System Manager only.
+
+Since v1.508.0 the Connect, callback, Disconnect and Test endpoints also serve the three
+publishing connections (``publish/oauth.py``), behind the same fences and the same redirect
+URI. ``sync_now`` stays ads-only.
 
 Every endpoint is POST, except one: ``oauth_callback`` is **GET**, because that is how an
 OAuth provider sends the browser back and no provider can be told otherwise. It is the
@@ -39,18 +43,22 @@ CREDENTIALS_ROUTE = "/app/marketing-connections"
 
 def _require_operator():
 	if OPERATOR_ROLE not in frappe.get_roles():
-		frappe.throw(_("Only a System Manager can manage ad-platform connections."), frappe.PermissionError)
+		frappe.throw(_("Only a System Manager can manage marketing connections."), frappe.PermissionError)
 
 
 def _require_platform(platform):
-	if platform not in C.PLATFORMS:
-		frappe.throw(_("Unknown platform {0}").format(platform))
+	if platform not in oauth.known_connections():
+		frappe.throw(_("Unknown connection {0}").format(platform))
 	return platform
+
+
+def _is_publishing(name):
+	return name not in C.PLATFORMS
 
 
 @frappe.whitelist(methods=["POST"])
 def start_oauth(platform):
-	"""Mint a state and return the platform's consent URL. The form sends the browser there."""
+	"""Mint a state and return the consent URL. The form sends the browser there."""
 	_require_operator()
 	platform = _require_platform(platform)
 	creds = get_credentials()
@@ -60,10 +68,13 @@ def start_oauth(platform):
 	if platform == C.PLATFORM_GOOGLE and not get_secret(creds, field(platform, "developer_token")):
 		frappe.throw(_("Enter and save the Google Ads developer token first."))
 	state = oauth.mint_state(platform, frappe.session.user)
-	return {
-		"authorization_url": oauth.authorization_url(platform, client_id, state),
-		"redirect_uri": oauth.redirect_uri(),
-	}
+	if _is_publishing(platform):
+		from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+
+		url = publish_oauth.authorization_url(platform, creds, state)
+	else:
+		url = oauth.authorization_url(platform, client_id, state)
+	return {"authorization_url": url, "redirect_uri": oauth.redirect_uri()}
 
 
 @frappe.whitelist(methods=["GET"])
@@ -86,12 +97,18 @@ def oauth_callback(state=None, code=None, error=None, error_description=None, **
 			message=_("Connection was declined: {0}").format(error or "no code"),
 		)
 		return _redirect()
+	summary = ""
 	try:
-		oauth.exchange_code(platform, code, creds)
+		if _is_publishing(platform):
+			from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+
+			summary = publish_oauth.exchange_code(platform, code, creds)
+		else:
+			oauth.exchange_code(platform, code, creds)
 	except MarketingAPIError as exc:
 		_record(creds, platform, status="Auth Failed", message=str(exc))
 		return _redirect()
-	_record(creds, platform, status="Connected", message="", connected=True)
+	_record(creds, platform, status="Connected", message=summary, connected=True)
 	return _redirect()
 
 
@@ -121,7 +138,19 @@ def disconnect(platform):
 		fieldname = field(platform, name)
 		if creds.meta.has_field(fieldname):
 			creds.set(fieldname, None)
-	for name in ("access_token_expires_on", "refresh_token_expires_on", "connected_on", "connected_by"):
+	identity = ()
+	if _is_publishing(platform):
+		from erpnext_enhancements.marketing.publish import constants as P
+
+		# What was connected goes too; the operator-set Page / Company Page ID stays.
+		identity = P.IDENTITY_FIELDS[platform]
+	for name in (
+		"access_token_expires_on",
+		"refresh_token_expires_on",
+		"connected_on",
+		"connected_by",
+		*identity,
+	):
 		fieldname = field(platform, name)
 		if creds.meta.has_field(fieldname):
 			creds.set(fieldname, None)
@@ -133,7 +162,7 @@ def disconnect(platform):
 
 @frappe.whitelist(methods=["POST"])
 def test_connection(platform):
-	"""List the ad accounts the stored credential can read. Writes nothing but the status."""
+	"""Read what the stored credential reaches. Writes nothing but the status."""
 	_require_operator()
 	platform = _require_platform(platform)
 	from erpnext_enhancements.marketing.core.sync import open_transport
@@ -141,6 +170,8 @@ def test_connection(platform):
 	from erpnext_enhancements.marketing.platforms import module_for
 
 	creds = get_credentials()
+	if _is_publishing(platform):
+		return _test_publishing(creds, platform)
 	try:
 		transport = open_transport(platform, get_settings(), creds)
 		accounts = module_for(platform).discover_accounts(transport)
@@ -152,10 +183,29 @@ def test_connection(platform):
 	_record(creds, platform, status="Connected", message=_("{0} account(s) readable").format(len(accounts)))
 	return {
 		"ok": True,
+		"heading": _("Readable accounts:"),
 		"accounts": [
 			f"{a['account_name']} ({a['external_id']}, {a.get('currency') or '?'})" for a in accounts
 		],
 	}
+
+
+def _test_publishing(creds, connection):
+	"""Re-read the Page, Company Page or channel through the stored token (refreshing it if due)."""
+	from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+
+	try:
+		lines = publish_oauth.describe(connection, creds)
+	except MarketingAPIError as exc:
+		if exc.is_auth_failure:
+			publish_oauth.mark_dead(creds, connection, str(exc))
+			creds.save(ignore_permissions=True)
+			frappe.db.commit()
+		else:
+			_record(creds, connection, status="Connected", message=str(exc))
+		return {"ok": False, "message": str(exc)}
+	_record(creds, connection, status="Connected", message=" · ".join(lines))
+	return {"ok": True, "heading": _("Connected to:"), "accounts": lines}
 
 
 @frappe.whitelist(methods=["POST"])

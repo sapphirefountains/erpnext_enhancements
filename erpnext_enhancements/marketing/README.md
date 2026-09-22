@@ -30,7 +30,10 @@ is installed yet.
 | `platforms/{google_ads,meta_ads,linkedin_ads}.py` | Per-platform request builders and **pure** parsers, tested against `tests/data/marketing_api_fixtures.json` |
 | `publish/constants.py` | The four publishing networks (Facebook, Instagram, LinkedIn, YouTube) and each one's switch, named apart from the ad platforms |
 | `publish/gate.py` | **Pure:** whether an approved post may go out to a network. Master switch AND the network's own switch; never a substitute for approval |
-| `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect). Connect / Test / Disconnect / Sync now buttons |
+| `publish/client.py` | The publishing transport: its own allowlist (never an ad endpoint), reads retry, **writes never retry on their own**, one retry after a 401 with a refreshed token |
+| `publish/oauth.py` | The three publishing connections: Connect (Meta keeps only the Page token and refuses a login that grants a spend-capable permission), token use and refresh, and the per-connection daily upkeep that clears a dead credential instead of retrying it |
+| `publish/tasks.py` | Scheduler shim for that upkeep: master switch, then only *Connected* connections |
+| `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect), for the three ad platforms and, since v1.508.0, the three publishing connections. Connect / Test / Disconnect per connection; Sync now (ads) |
 | `doctype/ad_click/` | One Google click (gclid → campaign, date): decision D's fallback join. Named by gclid |
 | `doctype/ad_account/` | One row per connected advertising account. Identity is (platform, external_id) |
 | `doctype/ad_campaign/` | One row per campaign. Identity is (ad_account, external_id) |
@@ -56,8 +59,15 @@ spend, and the first two are enforced by `tests/test_marketing_publishing.py`:
    which lets a post be **boosted** into paid spend. Google Ads' only scope is full access,
    and it stays confined to `core/constants.py`.
 3. **Never the ad connectors' transport.** `core/client.py` refuses every Meta and LinkedIn
-   POST by design and does not grow a write. The publishers (TASK-2026-01483 to 01485) get
-   their own allowlist.
+   POST by design and does not grow a write. Publishing has its own, `publish/client.py`,
+   whose allowlist holds only the identity reads the Connect flow needs until the publishers
+   (TASK-2026-01483 to 01485) add their writes. It never lists an ad endpoint, and each
+   transport refuses the other's paths.
+
+The publishing **connections** (v1.508.0) are separate from the ad ones: their own Connect,
+their own fields (`meta_publishing_*`, `linkedin_publishing_*`, `youtube_publishing_*`, a
+prefix set disjoint from the ads one) and their own token. Setup, lifetimes and troubleshooting
+are in [the connectors runbook](../../docs/marketing-connectors-runbook.md#publishing-connections-phase-2).
 
 ## There is deliberately no `module_def/` here
 
@@ -138,6 +148,7 @@ before, by letting a background job re-raise with frame locals intact.
 |---|---|---|
 | `after_migrate` | `backfill_marketing_settings_defaults` | Backstop for the Single-defaults trap above |
 | `scheduler_events.cron` `"25 3 * * *"` | `core.tasks.nightly_ad_spend_sync` | The nightly pull (a thin shim; the work runs on `long`) |
+| `scheduler_events.cron` `"35 3 * * *"` | `publish.tasks.maintain_publishing_tokens` | Daily upkeep of the publishing tokens, one rule per connection (v1.508.0) |
 | `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention; clicks past 180 days no Lead carries |
 
 Credentials live on **Marketing Connections**, not on Marketing Settings: Settings is readable
