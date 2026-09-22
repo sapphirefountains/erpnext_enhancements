@@ -1,0 +1,63 @@
+{
+ "_about": "Recorded-shape responses for the ad-spend connectors (TASK-2026-01476), written from the published API references on 2026-09-22 because API access is still pending (Phase 0). Replace any entry with a real, redacted capture once a platform is connected; the tests assert on behaviour, not on these exact values. Google Ads v25 REST (camelCase, int64 as strings, cost in micros); Meta Graph v26.0 (spend as a decimal string, paging.next); LinkedIn Marketing 202608 (Rest.li elements, URN pivots, dateRange objects).",
+ "google": {
+  "accessible_customers": {"resourceNames": ["customers/9876543210", "customers/1234567890"]},
+  "customer_manager": {"results": [{"customer": {"resourceName": "customers/9876543210", "id": "9876543210", "descriptiveName": "Sapphire MCC", "currencyCode": "USD", "manager": true}}]},
+  "customer_client": {"results": [{"customer": {"resourceName": "customers/1234567890", "id": "1234567890", "descriptiveName": "Sapphire Fountains", "currencyCode": "USD", "manager": false}}]},
+  "campaigns": {"results": [
+   {"campaign": {"resourceName": "customers/1234567890/campaigns/21456789012", "id": "21456789012", "name": "Search - Commercial Fountains", "status": "ENABLED", "advertisingChannelType": "SEARCH"}},
+   {"campaign": {"resourceName": "customers/1234567890/campaigns/21456789013", "id": "21456789013", "name": "PMax - Residential", "status": "PAUSED", "advertisingChannelType": "PERFORMANCE_MAX"}}
+  ]},
+  "metrics_page_1": {"results": [
+   {"campaign": {"id": "21456789012"}, "segments": {"date": "2026-09-20"}, "metrics": {"impressions": "1200", "clicks": "48", "costMicros": "152340000", "conversions": 3.0}},
+   {"campaign": {"id": "21456789013"}, "segments": {"date": "2026-09-20"}, "metrics": {"impressions": "5300", "clicks": "61", "costMicros": "98765432", "conversions": 1.5}}
+  ], "nextPageToken": "page-2"},
+  "metrics_page_2": {"results": [
+   {"campaign": {"id": "21456789012"}, "segments": {"date": "2026-09-21"}, "metrics": {"impressions": "1100", "clicks": "40", "costMicros": "140000000"}},
+   {"campaign": {"id": "99999999999"}, "segments": {"date": "2026-09-21"}, "metrics": {"impressions": "10", "clicks": "1", "costMicros": "2500000", "conversions": 0}}
+  ]},
+  "clicks": {"results": [
+   {"clickView": {"gclid": "Cj0KCQjw-TEST-GCLID-1"}, "campaign": {"id": "21456789012"}, "adGroup": {"id": "150000000001"}, "segments": {"date": "2026-09-21"}},
+   {"clickView": {"gclid": "Cj0KCQjw-TEST-GCLID-2"}, "campaign": {"id": "21456789013"}, "adGroup": {"id": "150000000002"}, "segments": {"date": "2026-09-21"}}
+  ]},
+  "error_quota": {"error": {"code": 429, "message": "Resource has been exhausted (e.g. check quota).", "status": "RESOURCE_EXHAUSTED"}},
+  "error_auth": {"error": {"code": 401, "message": "Request had invalid authentication credentials. Expected OAuth 2 access token.", "status": "UNAUTHENTICATED"}},
+  "token_refresh": {"access_token": "ya29.TEST-ACCESS-TOKEN", "expires_in": 3599, "scope": "https://www.googleapis.com/auth/adwords", "token_type": "Bearer"},
+  "token_exchange": {"access_token": "ya29.TEST-ACCESS-TOKEN", "expires_in": 3599, "refresh_token": "1//TEST-REFRESH-TOKEN", "scope": "https://www.googleapis.com/auth/adwords", "token_type": "Bearer"},
+  "token_invalid_grant": {"error": "invalid_grant", "error_description": "Token has been expired or revoked."}
+ },
+ "meta": {
+  "adaccounts": {"data": [
+   {"account_id": "111222333444", "id": "act_111222333444", "name": "Sapphire Fountains", "currency": "USD", "account_status": 1},
+   {"account_id": "555666777888", "id": "act_555666777888", "name": "Old Agency Account", "currency": "USD", "account_status": 101}
+  ], "paging": {"cursors": {"before": "a", "after": "b"}}},
+  "campaigns": {"data": [
+   {"id": "120210000000000001", "name": "Lead Gen - Commercial", "objective": "OUTCOME_LEADS", "effective_status": "ACTIVE", "start_time": "2026-08-01T00:00:00-0600"},
+   {"id": "120210000000000002", "name": "Awareness - Summer", "objective": "OUTCOME_AWARENESS", "effective_status": "PAUSED", "start_time": "2026-06-01T00:00:00-0600", "stop_time": "2026-08-31T23:59:59-0600"}
+  ], "paging": {"cursors": {"before": "a", "after": "b"}}},
+  "insights_page_1": {"data": [
+   {"campaign_id": "120210000000000001", "impressions": "4100", "clicks": "77", "spend": "63.41", "date_start": "2026-09-20", "date_stop": "2026-09-20", "actions": [{"action_type": "link_click", "value": "77"}, {"action_type": "lead", "value": "2"}]}
+  ], "paging": {"cursors": {"before": "a", "after": "b"}, "next": "https://graph.facebook.com/v26.0/act_111222333444/insights?level=campaign&access_token=EAAB-TEST-TOKEN&after=b"}},
+  "insights_page_2": {"data": [
+   {"campaign_id": "120210000000000001", "impressions": "3900", "clicks": "70", "spend": "58.10", "date_start": "2026-09-21", "date_stop": "2026-09-21"}
+  ], "paging": {"cursors": {"before": "b", "after": "c"}}},
+  "token_short": {"access_token": "EAAB-SHORT-TOKEN", "token_type": "bearer", "expires_in": 5183},
+  "token_long": {"access_token": "EAAB-LONG-TOKEN", "token_type": "bearer", "expires_in": 5183944},
+  "error_auth": {"error": {"message": "Error validating access token: Session has expired.", "type": "OAuthException", "code": 190, "error_subcode": 463}}
+ },
+ "linkedin": {
+  "ad_accounts": {"elements": [
+   {"id": 507000001, "name": "Sapphire Fountains", "currency": "USD", "status": "ACTIVE", "type": "BUSINESS"},
+   {"id": 507000002, "name": "Test Account", "currency": "USD", "status": "CANCELED", "type": "BUSINESS"}
+  ], "paging": {"start": 0, "count": 100, "total": 2}},
+  "campaigns": {"elements": [
+   {"id": 350000001, "name": "Sponsored Content - Architects", "status": "ACTIVE", "objectiveType": "LEAD_GENERATION", "runSchedule": {"start": 1754028000000}},
+   {"id": 350000002, "name": "Document Ad - Spec Sheet", "status": "COMPLETED", "objectiveType": "WEBSITE_VISIT", "runSchedule": {"start": 1751349600000, "end": 1756706399000}}
+  ], "metadata": {}},
+  "analytics": {"elements": [
+   {"pivotValues": ["urn:li:sponsoredCampaign:350000001"], "dateRange": {"start": {"year": 2026, "month": 9, "day": 20}, "end": {"year": 2026, "month": 9, "day": 20}}, "impressions": 2200, "clicks": 19, "costInLocalCurrency": "41.07", "externalWebsiteConversions": 1},
+   {"pivotValues": ["urn:li:sponsoredCampaign:350000001"], "dateRange": {"start": {"year": 2026, "month": 9, "day": 21}, "end": {"year": 2026, "month": 9, "day": 21}}, "impressions": 2050, "clicks": 17, "costInLocalCurrency": "38.5"}
+  ]},
+  "token_exchange": {"access_token": "AQV-TEST-ACCESS", "expires_in": 5184000, "refresh_token": "AQX-TEST-REFRESH", "refresh_token_expires_in": 31536000, "scope": "r_ads,r_ads_reporting"}
+ }
+}

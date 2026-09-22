@@ -44,7 +44,7 @@ IDENTITY_FIELDS = {
 SECRET_SHAPED = ("token", "secret", "password", "authorization", "api_key", "credential")
 
 #: Readable by Sales Manager, so subject to the rule above.
-WIDELY_READABLE = ("marketing_sync_log", "marketing_raw_payload", "ad_account", "ad_campaign")
+WIDELY_READABLE = ("marketing_sync_log", "marketing_raw_payload", "ad_account", "ad_campaign", "ad_click")
 
 
 def load(doctype_dir: str) -> dict:

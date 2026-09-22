@@ -6,13 +6,25 @@ the external approvals that gate publishing are in
 [`docs/marketing-platform-approvals.md`](../../docs/marketing-platform-approvals.md).
 
 **Everything here is dormant.** `Marketing Settings.enabled` is `0` and every per-platform
-flag is `0` independently — the master switch alone turns nothing on. As of v1.280.0 this
-module is **data model only**: the doctypes exist and nothing writes to them yet.
+flag is `0` independently — the master switch alone turns nothing on. Since v1.503.0 the
+**read-only ad-spend connectors** (Google Ads, Meta, LinkedIn) exist and write to the doctypes
+below once a platform is switched on and connected; setup, checks and troubleshooting are in
+[`docs/marketing-connectors-runbook.md`](../../docs/marketing-connectors-runbook.md).
 
 ## Files
 
 | Path | What it is |
 |---|---|
+| `core/constants.py` | Pinned API versions (Google Ads v25, Meta v26.0, LinkedIn 202608), OAuth endpoints and read-only scopes, and the **read-only allowlist** |
+| `core/client.py` | The one HTTP transport (`requests`, no SDK): refuses anything off the allowlist, retries only 408/429/5xx, raises `from None` with redacted messages |
+| `core/oauth.py` | Connect flow per platform: user-bound one-time `state`, code exchange, refresh, revoke |
+| `core/sync.py` | The engine: accounts → campaigns → campaign-day metrics (→ Google clicks), restate + upsert, cursor only on a clean run, Sync Log, raw-payload archive, prune |
+| `core/tasks.py` | Scheduler shims: master switch → 20 h throttle → only connected platforms → one `long` job |
+| `core/api.py` | System-Manager endpoints: POST-only except the OAuth callback (GET, logged-in, state-bound, rate-limited) |
+| `api.py` | Stable short path for the redirect URI registered in each platform console |
+| `platforms/{google_ads,meta_ads,linkedin_ads}.py` | Per-platform request builders and **pure** parsers, tested against `tests/data/marketing_api_fixtures.json` |
+| `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect). Connect / Test / Disconnect / Sync now buttons |
+| `doctype/ad_click/` | One Google click (gclid → campaign, date): decision D's fallback join. Named by gclid |
 | `doctype/ad_account/` | One row per connected advertising account. Identity is (platform, external_id) |
 | `doctype/ad_campaign/` | One row per campaign. Identity is (ad_account, external_id) |
 | `doctype/ad_daily_metric/` | Campaign × day. Identity is (campaign, metric_date) — the key that makes restating safe. Carries `upsert()` |
@@ -98,9 +110,14 @@ before, by letting a background job re-raise with frame locals intact.
 | Hook | Entry | Why |
 |---|---|---|
 | `after_migrate` | `backfill_marketing_settings_defaults` | Backstop for the Single-defaults trap above |
+| `scheduler_events.cron` `"25 3 * * *"` | `core.tasks.nightly_ad_spend_sync` | The nightly pull (a thin shim; the work runs on `long`) |
+| `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention; clicks past 180 days no Lead carries |
 
-No `doc_events`, no `scheduler_events` yet — the connectors that need them are
-TASK-2026-01476 and are blocked on the Phase 0 platform approvals.
+Credentials live on **Marketing Connections**, not on Marketing Settings: Settings is readable
+by Sales Manager, and the rule above ("no secret on anything beyond System Manager") holds for
+it too. The connectors are built against recorded-shape fixtures because API access is still
+pending (Phase 0); replace fixture entries with real, redacted captures once a platform is
+connected.
 
 ## Not here on purpose
 
