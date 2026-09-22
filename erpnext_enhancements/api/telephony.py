@@ -21,9 +21,11 @@ SECURITY — read carefully:
         - Several endpoints are ``allow_guest=True`` because they are hit by
           server-to-server webhooks with no Frappe session. They are protected
           either by ``@validate_twilio_request`` (Twilio HMAC signature) or
-          ``@validate_webhook_secret`` (Bearer/``token`` shared secret from
-          ``admin_webhook_secret``). ``get_gateway_config`` is unauthenticated by
-          design and therefore returns ONLY non-sensitive routing config.
+          ``@validate_webhook_secret`` (a Frappe API key, ``Authorization: token
+          key:secret``, which Frappe itself verifies -- see the decorator for why
+          the old ``Bearer`` branch was removed). ``get_gateway_config`` is
+          unauthenticated by design and therefore returns ONLY non-sensitive
+          routing config.
         - Webhook handlers call ``frappe.set_user("triton@sapphirefountains.com")``
           to act as the Triton service user and write with ``ignore_permissions=True``.
         - Outbound endpoints (``send_sms``, ``trigger_outbound_call``) are normal
@@ -97,31 +99,39 @@ def validate_twilio_request(func):
     return wrapper
 
 def validate_webhook_secret(func):
-    """Decorator: require the Triton shared-secret Bearer token.
+    """Decorator: require a caller Frappe has authenticated with an API key.
 
-    Reads the expected secret from Triton Settings ``admin_webhook_secret`` and
-    checks the ``Authorization`` header. Accepts ``Bearer <secret>``; also
-    permits a ``token ...`` scheme (Frappe API key/secret auth) to pass through.
-    ``frappe.throw(... PermissionError)`` if the header is missing or the
-    Bearer secret does not match. Authenticates the guest-accessible Triton
-    gateway endpoints.
+    Despite the name, no shared secret is compared here. The Triton gateway (and
+    the retired Poseidon gateway before it) sends ``Authorization: token
+    <api_key>:<api_secret>``, and ``frappe.auth.validate_auth`` verifies that
+    before any handler runs: a wrong or malformed key is Frappe's own 401 and
+    never reaches this wrapper. So the check is that the ``token`` scheme was
+    used AND the request is no longer Guest. ``frappe.throw(... PermissionError)``
+    otherwise.
+
+    There used to be a ``Bearer <admin_webhook_secret>`` branch, and it was dead
+    twice over (confirmed 2026-09-22). Frappe v16 401s any ``Authorization:
+    Bearer`` that is not a real OAuth token before a handler runs -- verified on
+    prod. And the branch compared against ``getattr(settings,
+    "admin_webhook_secret")``, which is a Password field's masked ``****``
+    placeholder (prod's row is all asterisks), not the secret; only
+    ``get_password`` decrypts. It could never have matched the real secret, only a
+    same-length run of asterisks had Frappe ever let one through.
+    ``admin_webhook_secret`` still authenticates ERPNext *to* the gateway (the
+    outbound calls below); nothing inbound checks it.
+
+    Note that ANY enabled API key passes, not only the Triton service account's,
+    and the handlers then ``set_user`` to the Triton user and write with
+    ``ignore_permissions``. Narrowing this to Triton's own API user needs to know
+    which account its ``FRAPPE_API_KEY`` belongs to.
+
+    The name is kept because a dozen endpoints and ``dev_checks.py`` refer to it.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        try:
-            settings = frappe.get_doc("Triton Settings")
-            secret = getattr(settings, "admin_webhook_secret", "")
-        except Exception:
-            secret = ""
-
-        auth_header = frappe.request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer ") and not auth_header.startswith("token "):
+        scheme = frappe.request.headers.get("Authorization", "").split(" ", 1)[0].lower()
+        if scheme != "token" or frappe.session.user in ("", "Guest"):
             frappe.throw(_("Missing or Invalid Authorization Header"), frappe.PermissionError)
-
-        token = auth_header.split(" ")[1] if " " in auth_header else auth_header
-        if not auth_header.startswith("token ") and token != secret:
-            frappe.throw(_("Invalid Webhook Secret"), frappe.PermissionError)
-
         return func(*args, **kwargs)
     return wrapper
 
@@ -888,7 +898,7 @@ def get_softphone_token():
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def get_telephony_routing():
-    """Routing config for the Triton voice gateway (Bearer/``token``-guarded).
+    """Routing config for the Triton voice gateway (API-key ``token``-guarded).
 
     Returns the Twilio Client identities the gateway should dial for the
     ERPNext desk softphone(s) — per-user identities for every configured

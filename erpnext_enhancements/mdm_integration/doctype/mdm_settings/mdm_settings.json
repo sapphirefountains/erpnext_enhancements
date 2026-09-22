@@ -210,7 +210,7 @@
    "label": "Retry Limit"
   },
   {
-   "description": "Shared secret required (Bearer) on inbound provider webhooks.",
+   "description": "Shared secret for the inbound MDM webhook, sent in the X-MDM-Webhook-Secret header (never Authorization: Frappe rejects that before the endpoint runs). At least 32 characters, or it is treated as unset. Neither Miradore nor Action1 can send webhooks, so leave this empty unless one of our own scripts calls the endpoint.",
    "fieldname": "webhook_secret",
    "fieldtype": "Password",
    "label": "Webhook Secret"
@@ -237,7 +237,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-13 13:00:00.000000",
+ "modified": "2026-09-22 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "MDM Integration",
  "name": "MDM Settings",

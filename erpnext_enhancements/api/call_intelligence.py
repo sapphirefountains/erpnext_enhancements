@@ -12,7 +12,7 @@ Callers:
           webhook) calls :func:`upsert_call_log` after creating the transcript
           Communication and saving the recording File.
         - The Triton gateway may also POST directly to
-          :func:`process_call_intelligence` (guest endpoint, Bearer-secret
+          :func:`process_call_intelligence` (guest endpoint, API-key
           guarded) for calls that carry no recording payload — e.g. missed
           calls with only a voicemail URL.
 
@@ -280,8 +280,8 @@ def upsert_call_log(
 def process_call_intelligence(**kwargs):
     """Standalone ingest endpoint for call intelligence without a recording.
 
-    Guest endpoint guarded by the Triton webhook Bearer secret (same scheme as
-    ``api.telephony``). Used for payloads that don't go through
+    Guest endpoint guarded by ``@validate_webhook_secret`` -- the Triton gateway's
+    Frappe API key (same scheme as ``api.telephony``). Used for payloads that don't go through
     ``process_unified_recording`` — e.g. missed calls (``status: "missed"`` +
     ``voicemail_url``). Resolves the caller like the other webhook handlers,
     but never auto-creates Customers for missed calls (robocall protection).

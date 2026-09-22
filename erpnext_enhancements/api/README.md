@@ -64,7 +64,7 @@ Every function is documented inline. This README is the map.
 - **`allow_guest=True` (unauthenticated) endpoints:**
   - `logger.log_client_error` — writes an Error Log only; the message is untrusted.
   - `telephony.get_gateway_config` — returns only non-sensitive routing config (no secrets).
-  - `telephony.append_call_transcript` / `get_call_transcript` / `get_caller_info` / `update_caller_info` / `process_unified_recording` / `process_unified_sms` and `call_intelligence.process_call_intelligence` — guarded by `@validate_webhook_secret` (Bearer shared secret).
+  - `telephony.append_call_transcript` / `get_call_transcript` / `get_caller_info` / `update_caller_info` / `process_unified_recording` / `process_unified_sms` and `call_intelligence.process_call_intelligence` — guarded by `@validate_webhook_secret`, which despite its name checks no shared secret: the caller must send a Frappe API key (`Authorization: token key:secret`, what Triton sends), which Frappe verifies before the handler runs, and the request must no longer be Guest. Any enabled API key passes, not only Triton's. Its old `Bearer <admin_webhook_secret>` branch was removed in 1.502.2: Frappe v16 401s an unrecognized Bearer before any handler runs, and the branch compared against the masked `****` placeholder rather than the decrypted secret, so it could never have matched.
   - `telephony.receive_mms` — guarded by `@validate_twilio_request` (HMAC signature).
   - `telephony.get_telephony_routing` — guarded by `@validate_webhook_secret`. Since 1.403.0 its
     `routing` block carries staff **mobile numbers**, resolved from Employee records so the
