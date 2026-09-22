@@ -1115,6 +1115,13 @@ scheduler_events = {
 		# briefing batch has finished. Gated by Time Kiosk Settings.send_supervisor_digest;
 		# a recipient with nothing to see gets no email.
 		"45 6 * * *": ["erpnext_enhancements.workforce.digest.send_supervisor_digests"],
+		# marketing (TASK-2026-01476): nightly read-only ad-spend pull -- Google Ads, Meta,
+		# LinkedIn -> Ad Campaign / Ad Daily Metric / Ad Click. 03:25 site time: clear of
+		# the 02:00 backup and QuickBooks' :00/:20/:40, and after every platform has closed
+		# yesterday. A thin shim: master switch, 20-hour self-throttle, no-op unless a
+		# platform is both switched on and connected, then one job on `long` with a fixed
+		# job_id. Dormant: Marketing Settings.enabled and every platform flag ship 0.
+		"25 3 * * *": ["erpnext_enhancements.marketing.core.tasks.nightly_ad_spend_sync"],
 	},
 	"daily": [
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
@@ -1225,6 +1232,10 @@ scheduler_events = {
 		# a rebuilt VM undoes it silently -- and every IP-keyed rate limit, the web-lead
 		# ingress's included, quietly becomes one global bucket. Read-only, ungated.
 		"erpnext_enhancements.utils.client_ip.check_client_ip_derivation",
+		# marketing: prune Marketing Raw Payload past raw_payload_retention_days, and Ad
+		# Click rows past 180 days that no Lead carries (Google keeps click_view 90 days, so
+		# a click nobody matched in that time never will). No-op while the module is off.
+		"erpnext_enhancements.marketing.core.tasks.daily_prune",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
 		# Re-drive folder provisioning lost to a deploy FLUSHDB. retry_failed_syncs only

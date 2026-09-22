@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.503.0] - 2026-09-22
+
+**Nightly, read-only ad-spend connectors for Google Ads, Meta and LinkedIn, with Connect
+buttons.** TASK-2026-01476 (Marketing P1, item 6). Everything ships off. API access is still
+pending (Phase 0), so the connectors are built and tested against recorded-shape responses,
+not a live account.
+
+### Added
+
+- **`marketing/core/`**, in the house connector shape:
+  - `constants`: pinned versions, OAuth, and the read-only allowlist.
+  - `client`: one `requests` transport (no SDK, ADR 0004).
+  - `oauth`, `sync`, `tasks` and `api`.
+- **`marketing/platforms/`**: Google Ads **v25** (REST GAQL), Meta Graph/Marketing **v26.0**, and
+  LinkedIn Marketing **202608**. The versions were checked against the vendors on 2026-09-22.
+  v25 was released 2026-07-22 and sunsets 2027-08. v26.0 was released 2026-07-29; v24.0 is the
+  oldest Meta still serves.
+- **Read-only by construction.** The transport sends a request only if its method and path
+  are on a short allowlist: account and campaign lists, daily reports, and Google's
+  `click_view`. Anything else raises `ReadOnlyViolation` before it leaves the process. A test
+  fails the build if a mutate-shaped string appears anywhere in `marketing/`, or if Meta or
+  LinkedIn ever gets a non-GET.
+  - Google Ads has no read-only OAuth scope: its one scope is full access. So the runbook
+    also requires connecting as a Google user whose Ads access level is **Read only**
+    (Nik's decision, 2026-09-22).
+  - Meta uses `ads_read`, and LinkedIn `r_ads` + `r_ads_reporting`.
+- **The sync:**
+  - Each run restates the last `restate_days` (default 7), since platforms revise closed days.
+  - Rows are upserted on the existing (campaign, date) name.
+  - `Ad Account.sync_cursor` advances **only when that account's run was clean**. A failed
+    night is simply pulled again the next night: the QBO CDC and MDM convention.
+  - One account's failure never costs another's. A 401 marks the platform *Auth Failed*, and
+    the nightly shim skips it until someone reconnects, so a dead token is not a nightly
+    error storm.
+  - A campaign that appears in the daily report but not the campaign list, because it was
+    removed since, keeps its spend.
+- **Decision D (TASK-2026-01570): new `Ad Click` doctype**, gclid → campaign and date, from
+  Google's `click_view`, one day per query. Google keeps click data only 90 days, so every
+  click is stored, and pruned after 180 days unless a Lead carries the gclid (Nik's choice,
+  2026-09-22).
+- **Connect buttons (Nik's choice over pasted-in secrets).** New Single **Marketing
+  Credentials**, System Manager only: Marketing Settings is readable by Sales Manager, so no
+  secret lives there.
+  - It holds each platform's OAuth app, the Google developer token and MCC id, and the
+    tokens. Tokens are hidden and encrypted, and set only by the flow.
+  - Buttons: Connect / Reconnect, Test (lists readable accounts), Disconnect (revokes
+    Google's), and Sync now.
+  - Google stores a refresh token and mints an access token per run. LinkedIn refreshes its
+    60-day token in the last 7 days. Meta's long-lived token (~60 days) cannot be renewed
+    without a person, so the form warns 10 days out.
+- **The OAuth callback is the one GET among the whitelisted methods**, because that is how
+  providers return the browser. It is fenced:
+  - Not guest: the returning browser carries the session, and the user must be a System
+    Manager.
+  - The `state` is single-use, lasts 10 minutes, and is **bound to the user who clicked
+    Connect**.
+  - Rate-limited.
+  - The code is exchanged server-side against the stored client secret.
+  - Everything else is POST-only; a test pins both rules and that nothing in the module is
+    `allow_guest`.
+- **Scheduler:** `"25 3 * * *"` → `nightly_ad_spend_sync`. It sits on a free minute, clear of
+  the 02:00 backup and QuickBooks' :00/:20/:40. The existing hooks test enforces key
+  uniqueness. It is a thin shim, in order: master switch → 20-hour self-throttle → only
+  platforms both switched on and connected → one job on `long` with a fixed `job_id` and
+  `deduplicate`. `daily` → `daily_prune`.
+- `tests/test_marketing_connectors.py` (54 tests, own CI step), against
+  `tests/data/marketing_api_fixtures.json`:
+  - the allowlist, and refusal before sending;
+  - retries only on 408/429/5xx, honoring `Retry-After`, capped;
+  - redaction of errors, URLs and archived payloads;
+  - the window;
+  - each parser's quirks: micros, int64-as-string, camelCase, manager accounts, closed
+    accounts, Meta `paging.next`, LinkedIn URN pivots and exact Rest.li encoding;
+  - the sync engine end to end against an in-memory frappe: clean run, idempotent re-run,
+    cursor held on failure, Auth Failed, disabled account left alone;
+  - the task gates;
+  - OAuth state binding and each platform's token exchange.
+- **`docs/marketing-connectors-runbook.md`**: registering each app, the redirect URI,
+  connecting, turning it on, verifying, and a table of what each failure means.
+
+### Changed
+
+- `tests/test_marketing_settings.py`: `Ad Click` joins the Sales-Manager-readable doctypes that
+  may hold no secret-shaped field.
+- `marketing/README.md` no longer says the module is data model only.
+
 ## [1.502.2] - 2026-09-22
 
 **The MDM webhook could not accept a single request, for three separate reasons, and

@@ -1,0 +1,88 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:gclid",
+ "creation": "2026-09-22 12:00:00.000000",
+ "description": "One Google Ads click (click_view): which campaign a gclid came from. Decision D on TASK-2026-01570: the fallback join when a Lead has a gclid but no utm_id. Kept 180 days unless a Lead carries the gclid.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "gclid",
+  "click_date",
+  "column_break_click",
+  "campaign",
+  "ad_account",
+  "ad_group_id"
+ ],
+ "fields": [
+  {
+   "description": "Google's click ID, as captured on a Lead's custom_gclid. The record name.",
+   "fieldname": "gclid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "GCLID",
+   "length": 255,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "click_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Click Date"
+  },
+  {
+   "fieldname": "column_break_click",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "campaign",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Ad Campaign",
+   "options": "Ad Campaign"
+  },
+  {
+   "fieldname": "ad_account",
+   "fieldtype": "Link",
+   "label": "Ad Account",
+   "options": "Ad Account",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ad_group_id",
+   "fieldtype": "Data",
+   "label": "Ad Group ID",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Ad Click",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "click_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "gclid"
+}
