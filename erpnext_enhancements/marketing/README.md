@@ -22,6 +22,8 @@ below once a platform is switched on and connected; setup, checks and troublesho
 | `core/tasks.py` | Scheduler shims: master switch → 20 h throttle → only connected platforms → one `long` job |
 | `core/api.py` | System-Manager endpoints: POST-only except the OAuth callback (GET, logged-in, state-bound, rate-limited) |
 | `api.py` | Stable short path for the redirect URI registered in each platform console |
+| `core/roas.py` | The spend → Lead → Opportunity → Project → invoice join, **pure**: utm_id then gclid, paid-but-unjoinable as its own row, lead-month cohorts, a 365-day window, contract value and invoiced revenue (TASK-2026-01477) |
+| `report/ad_spend_roas/` | **Ad Spend ROAS** Script Report over `core/roas.py`: cost per lead, cost per won project, ROAS on contract and on invoiced. System Manager / Sales Manager |
 | `platforms/{google_ads,meta_ads,linkedin_ads}.py` | Per-platform request builders and **pure** parsers, tested against `tests/data/marketing_api_fixtures.json` |
 | `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect). Connect / Test / Disconnect / Sync now buttons |
 | `doctype/ad_click/` | One Google click (gclid → campaign, date): decision D's fallback join. Named by gclid |
