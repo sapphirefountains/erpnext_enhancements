@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.502.2] - 2026-09-22
+
+**The MDM webhook could not accept a single request, for three separate reasons, and
+neither provider can send one anyway.** This is the follow-up to v1.501.0, which fixed the
+same `Authorization: Bearer` defect in the website lead ingress. Probing
+`mdm_integration.webhooks.handle_webhook` on prod turned up two more defects behind that one.
+Checking the vendors then showed that there was never a sender to begin with. Miradore's
+public API v2 spec (29 paths) has no webhook, callback or subscription endpoint. Action1's
+alerts are email-only, to one Action1 user. The endpoint is kept, fail-closed, as a hook
+for our own scripts. `mdm_integration/README.md` → *Inbound webhook* has the contract and
+explains why it uses neither a query-string secret nor an `auth_hooks` entry.
+
+Prod on 2026-09-22 bears this out:
+
+- `webhook_secret` has never been set (no `__Auth` row).
+- No MDM Raw Payload row has ever had `source = "Webhook"`.
+
+Device state isn't flowing for a different reason, which this release does not fix. Both
+providers have been auth-paused since June. Miradore has never synced: 12,803 failed Sync
+Logs, and 11 more stuck at `Running`. Action1's last good sync was 2026-06-24; since then
+its token request returns 401 "Incorrect authentication data". Both need their credentials
+re-entered in MDM Settings.
+
+### Fixed
+
+- **The secret moved to `X-MDM-Webhook-Secret`.** Frappe v16's `validate_auth` runs before
+  every handler. It treats any two-part `Authorization` header as an OAuth token or an API
+  key, and 401s it (`{"exc_type":"AuthenticationError"}`) when neither matches, so the
+  documented `Bearer <webhook_secret>` could never reach the endpoint. Verified against this
+  endpoint on prod. The comparison is still constant-time. It now works on UTF-8 bytes,
+  because `hmac.compare_digest` raises `TypeError` on a non-ASCII `str` and that would be a
+  500. A secret under 32 characters is treated as unset and logged at most daily, as for the
+  lead ingress.
+- **`provider` is read from the query string, and only from there.** On a JSON body, Frappe
+  v16's `make_form_dict` builds the request arguments from the body *instead of* the query
+  string. So `?provider=Miradore` never reached `handle_webhook(provider)`, and every JSON
+  POST (which is what a webhook sender makes) died with `TypeError` → HTTP 500 before our
+  code ran. Also verified on prod. A `provider` key in the body is now ignored rather than
+  trusted.
+- **An unset secret no longer tells a guest so.** `get_secret` reads with `get_password`'s
+  default `raise_exception=True`, which `frappe.throw`s. The `except` swallowed the
+  exception, but the queued "Password not found for MDM Settings … webhook_secret" message
+  still went back to the anonymous caller in `_server_messages`. The webhook now reads its
+  secret with `raise_exception=False`.
+- **A push no longer overwrites `MDM Settings.status_message`**, which holds the reason the
+  last sync failed. Each webhook would have replaced the Action1 401 with "Webhook received".
+- **The resync a push queues now respects the provider gates.** `run_device_sync` checks
+  neither "enabled" nor "auth-paused"; the hourly `tasks.sync_devices` does, and the webhook
+  called it directly. So once the endpoint worked, every push would have hit a provider
+  paused on a standing 401. That is the kind of repetition behind the 44,069 Error Log rows
+  the retry loop wrote in June (`utils/error_throttle.py`). The
+  webhook now enqueues `resync_from_webhook`, which applies both gates (not the throttle: a
+  push is the reason to sync now). It is deduplicated per provider with `job_id`, so a burst
+  of pushes is one pull. The endpoint is POST-only and rate-limited to 120 an hour per
+  address, which caps how many Raw Payload rows a leaked secret can write.
+
+### Changed
+
+- **`api/telephony.validate_webhook_secret`: the `Bearer` branch is removed.** It was dead
+  twice over:
+  - Frappe 401s the header before the decorator runs.
+  - The branch compared against `getattr(settings, "admin_webhook_secret")`, which is the
+    Password field's masked `****` placeholder. Prod's `tabSingles` row is all asterisks;
+    only `get_password` decrypts. The branch could never have matched the real secret, only
+    a same-length run of asterisks, had Frappe ever let one through.
+
+  Triton sends `Authorization: token <key>:<secret>` on every call to these endpoints
+  (`core/voice_crm.py`, `api/v1/endpoints/voice.py`), and so did the retired Poseidon
+  gateway. Frappe verifies that header itself. The decorator now requires the `token` scheme
+  and a request that is no longer Guest, and does not read `admin_webhook_secret` at all.
+  That field still authenticates ERPNext's outbound calls *to* the gateway. The name is
+  kept, because a dozen endpoints and `dev_checks.py` use it. Any enabled API key passes,
+  not only Triton's; four enabled users hold one on prod. Narrowing it to a single user
+  would need to know which account owns Triton's `FRAPPE_API_KEY`, so that is left as a
+  follow-up.
+- **MDM Settings → Webhook Secret** now describes the header, the 32-character floor, and
+  the fact that no vendor can call it. The DocType's `modified` is bumped to 2026-09-22.
+  Prod's row (2026-06-16) was newer than the repo's stamp (2026-06-13), so this JSON had
+  been skipped by every migrate since June. Prod's 31 fields were checked against the repo
+  before forcing the sync: they are identical, with no Property Setters or Custom Fields.
+
+### Tests
+
+- `tests/test_webhook_auth.py` (bench-free, its own CI step): 25 tests covering the header,
+  provider-from-query-only, the silent unset secret, the 32-character floor, non-ASCII
+  input, the untouched `status_message`, dedup, the rate limit and the resync gates, plus
+  the telephony decorator (API key accepted, Guest refused, a `Bearer` of asterisks
+  refused). 23 of them fail against the previous code.
+
 ## [1.502.1] - 2026-09-22
 
 **The attribution enablement checklist, and two defects it turned up in the process it

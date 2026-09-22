@@ -1787,6 +1787,15 @@ jobs:
       # in setUpModule and removes it in tearDownModule.
       - name: Website lead ingress behaviour (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_web_lead_ingress -v
+      # The same defect in the MDM webhook, plus one Frappe hid behind it (v1.502.2). Its
+      # `Authorization: Bearer` secret was 401'd by Frappe, and on a JSON POST Frappe drops
+      # the query string, so `?provider=` never arrived and every call was a TypeError 500.
+      # Pins X-MDM-Webhook-Secret, provider-from-query-only, the 32-character floor, and a
+      # resync that respects the disabled/auth-paused gates. Also pins telephony's
+      # validate_webhook_secret to Frappe-verified API keys, now that its dead Bearer branch
+      # is gone. Own step: it stubs frappe, twilio and requests in setUpModule.
+      - name: Webhook auth, MDM + telephony (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_webhook_auth -v
       # Lead triage + speed-to-lead SLA (TASK-2026-01473, v1.502.0). The working-time
       # arithmetic every deadline rests on (a Friday 16:30 enquiry is due Monday 08:30,
       # not overnight), the Sales Team rotation (not Sales User, which nearly everybody
