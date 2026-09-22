@@ -2,13 +2,17 @@
 /**
  * Plugin Name: Sapphire Fountains — Attribution Capture
  * Description: First-touch UTM/gclid capture into a first-party cookie, copied into Fluent Forms hidden fields, plus the honeypot's concealing CSS.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      Sapphire Fountains
  *
  * Install as a must-use plugin: drop this file AND sf-attribution.js into
  * wp-content/mu-plugins/. WordPress auto-loads top-level .php from that
  * directory with no activation step, which is what we want — nobody can
  * deactivate attribution by accident from the plugins screen.
+ *
+ * Prefer this to a Code Snippets entry: a snippet can be switched off from the
+ * admin screen by anyone tidying up, and a PHP snippet that echoes the same
+ * <script> is the only equivalent -- Code Snippets cannot add a raw .js file.
  *
  * The JS is inlined rather than enqueued by URL on purpose. WP Engine serves
  * wp-content with long cache lifetimes and its own edge cache in front, so a

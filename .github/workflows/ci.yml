@@ -1779,6 +1779,20 @@ jobs:
       # Field, and nothing may target the removed `source` field.
       - name: Lead/Opportunity attribution (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_lead_attribution.py -q
+      # The website lead ingress, executed rather than read (v1.501.0). Its contract said
+      # `Authorization: Bearer <secret>`, which Frappe v16 401s before the endpoint runs --
+      # found on prod the day before anyone would have wired WordPress to it. Pins the
+      # X-Web-Lead-Secret header, the 32-character floor, the honeypot, utm_id (the
+      # spend-to-lead join key) and the paid-click signal. Own step: installs a frappe stub
+      # in setUpModule and removes it in tearDownModule.
+      - name: Website lead ingress behaviour (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_web_lead_ingress -v
+      # The WordPress capture script lives in docs/website-capture/ and runs on WP Engine, not
+      # here -- so this is the only place its behaviour is checked before somebody pastes it
+      # in. Session-scoped first touch, a tagged new visit replacing the whole touch, utm_id,
+      # the cookie domain (a foreign one makes the browser drop the cookie) and the size cap.
+      - name: WordPress attribution capture script (node)
+        run: node scripts/test_sf_attribution.js
       # Its own step: installs a frappe stub in sys.modules, so it must not share a
       # process with another stub-installing suite. Guards the distinction the
       # won-date backfill turns on — an audit-trail status transition is evidence of

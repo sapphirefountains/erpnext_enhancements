@@ -10,12 +10,12 @@ being typed into a frappe Web Form -- something on the WordPress side has to
 forward it. This module is the ERPNext half of that contract, and it is
 deliberately the *only* half that lives in this repo.
 
-**Contract summary** (the full version, including the capture snippet the
-WordPress side needs, is in ``docs/attribution-runbook.md``)::
+**Contract summary** (the full version is in ``docs/attribution-runbook.md``;
+the WordPress half is in ``docs/website-capture/``)::
 
     POST https://erp.sapphirefountains.com/api/method/
          erpnext_enhancements.crm_enhancements.web_lead.submit_web_lead
-    Authorization: Bearer <web_lead_shared_secret>
+    X-Web-Lead-Secret: <web_lead_shared_secret>
     Content-Type: application/json
 
     {
@@ -23,13 +23,29 @@ WordPress side needs, is in ``docs/attribution-runbook.md``)::
       "email_id": "jane@example.com", "mobile_no": "801-555-0100",
       "company_name": "Doe Landscapes", "notes": "Interested in a courtyard fountain",
       "utm_source": "google", "utm_medium": "cpc", "utm_campaign": "summer-2026",
-      "utm_content": "hero-cta", "utm_term": "fountain installer",
+      "utm_id": "21456789012", "utm_content": "hero-cta", "utm_term": "fountain installer",
       "gclid": "Cj0KCQ...", "landing_page": "/fountains/commercial",
       "first_referrer": "https://www.google.com/",
       "form_name": "contact-us", "hp_company_url": ""
     }
 
     -> 200 {"status": "accepted", "lead": "CRM-LEAD-2026-00123"}
+
+## Why a custom header and not ``Authorization: Bearer``
+
+This endpoint shipped (v1.241.0) expecting ``Authorization: Bearer <secret>``,
+and on Frappe v16 that request **never reaches this function**.
+``frappe.auth.validate_auth`` runs first, treats any two-part ``Authorization``
+header as a credential, tries it as an OAuth bearer token and then an API key,
+and raises ``AuthenticationError`` (HTTP 401, ``{"exc_type":
+"AuthenticationError"}``) when neither yields a user. Verified on production
+2026-09-22: the same POST returned our own ``{"status": "rejected"}`` without the
+header and Frappe's 401 with ``Authorization: Bearer <anything>``. Nothing had
+ever called the endpoint, so nobody saw it -- and a real submission would have
+failed in a way indistinguishable from a wrong secret.
+
+So the secret travels in ``X-Web-Lead-Secret``, which Frappe does not interpret.
+Never put it in ``Authorization``.
 
 ## Why a shared secret and not Turnstile
 
@@ -38,14 +54,14 @@ question for ``fountain_move/intake.py`` -- the app's one genuinely
 unauthenticated write path, where the caller is a member of the public with no
 credential. It is the wrong question here. The caller is a **server**: the
 WordPress site, posting after it has already run its own form's spam controls.
-A server can hold a secret, so it should, and this endpoint is gated the same way
-every other machine-to-machine webhook in this app is
-(``mdm_integration/utils.verify_webhook_bearer``, ``api/telephony.py``).
+A server can hold a secret, so it should: a shared secret in a request header,
+compared in constant time, failing closed.
 
 That choice has a consequence worth being explicit about: **this endpoint is only
 as trustworthy as WordPress's own spam filtering.** It does not attempt to
-re-adjudicate spam. It records ``form_name`` and the claimed remote address so a
-flood is attributable after the fact, honours a honeypot if the sending form
+re-adjudicate spam. It records ``form_name`` and the caller's address (WordPress's
+egress, not the visitor's) so a flood is attributable after the fact, honours a
+honeypot if the sending form
 supplies one, and rate-limits -- but a compromised or misconfigured WordPress
 install can create Leads. Accepted: the alternative is duplicating Turnstile on a
 form we do not control.
@@ -66,7 +82,10 @@ form we do not control.
   realip file rewrites that header to the real caller, spoof-proof -- verified
   2026-09-22. That makes the rate limit per caller, but only while the file is
   on the VM (``utils/client_ip.py`` checks daily). So the address is recorded
-  for forensics and keys the limit; the bearer secret is what decides.
+  for forensics and keys the limit; the shared secret is what decides. Every
+  genuine submission comes from WP Engine's egress address, so the 120/hour is
+  the WordPress site's own budget, and a stranger without the secret spends
+  their own bucket rather than the site's.
 * **Errors are generic.** A duplicate-email check would turn this into an oracle
   for "is this person a customer of yours?", so there isn't one; de-duplication
   is a downstream review problem, not a response-code problem.
@@ -87,6 +106,7 @@ from frappe.rate_limiter import rate_limit
 from frappe.utils import cint
 
 from erpnext_enhancements.crm_enhancements import attribution
+from erpnext_enhancements.utils.error_throttle import log_error_throttled
 
 #: Inbound key -> Lead fieldname. The complete set of non-attribution fields this
 #: endpoint will write. Anything not listed is dropped.
@@ -120,6 +140,22 @@ HONEYPOT_KEYS = ("hp_company_url", "hp_website")
 #: Cap on the stored raw payload, so a hostile body cannot bloat the Lead's
 #: comment thread.
 RAW_PAYLOAD_CAP = 4000
+
+#: The request header carrying the shared secret. NOT ``Authorization`` -- see the
+#: module docstring: Frappe v16 rejects that header before this code runs.
+SECRET_HEADER = "X-Web-Lead-Secret"
+
+#: A secret shorter than this is treated as unset. It is the ingress's only
+#: credential and the rate limit allows 120 guesses an hour per address, so a
+#: guessable one is a world-writable Lead table. 32 is what
+#: ``python3 -c "import secrets; print(secrets.token_urlsafe(32))"`` comfortably
+#: exceeds (43 characters).
+MIN_SECRET_LENGTH = 32
+
+#: Paid-click IDs with no Lead field of their own (see
+#: ``attribution.PAID_CLICK_ID_KEYS``). Kept in the submission comment so the
+#: evidence is not thrown away; gclid is omitted because it has a field.
+UNSTORED_CLICK_ID_KEYS = ("gbraid", "wbraid", "msclkid")
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -156,7 +192,11 @@ def submit_web_lead(**payload):
 
 	lead = frappe.get_doc({"doctype": "Lead", **lead_fields})
 
-	source = attribution.resolve_lead_source(values, explicit=payload.get("lead_source"))
+	source = attribution.resolve_lead_source(
+		values,
+		explicit=payload.get("lead_source"),
+		paid_click=attribution.has_paid_click_id(payload),
+	)
 	if source and hasattr(lead, "custom_lead_source"):
 		lead.custom_lead_source = source
 
@@ -196,10 +236,15 @@ def _ingress_enabled():
 
 
 def _authorized():
-	"""Constant-time Bearer check against the configured shared secret.
+	"""Constant-time check of ``X-Web-Lead-Secret`` against the shared secret.
 
-	Fails closed: an unset secret means nothing is authorised, so a half-configured
-	site cannot be written to by anyone who guesses the URL.
+	Fails closed: an unset secret -- or one too short to be a secret, see
+	``MIN_SECRET_LENGTH`` -- authorises nothing, so a half-configured site cannot
+	be written to by anyone who guesses the URL. The short-secret case is logged
+	(at most daily): it looks exactly like a broken integration from outside, and
+	the fix is on this side.
+
+	Deliberately never reads ``Authorization``: see the module docstring.
 	"""
 	settings = _settings()
 	try:
@@ -208,12 +253,19 @@ def _authorized():
 		secret = None
 	if not secret:
 		return False
-
-	header = frappe.get_request_header("Authorization") or ""
-	prefix = "Bearer "
-	if not header.startswith(prefix):
+	if len(secret) < MIN_SECRET_LENGTH:
+		log_error_throttled(
+			f"web_lead_shared_secret is shorter than {MIN_SECRET_LENGTH} characters, so the website "
+			"ingress refuses every submission. Generate one with "
+			'`python3 -c "import secrets; print(secrets.token_urlsafe(32))"` and set it here and in '
+			f"the Fluent Forms webhook's {SECRET_HEADER} header together.",
+			"Web Lead ingress: secret too short",
+			window=86400,
+			limit=1,
+		)
 		return False
-	provided = header[len(prefix) :].strip()
+
+	provided = (frappe.get_request_header(SECRET_HEADER) or "").strip()
 	if not provided:
 		return False
 
@@ -222,25 +274,42 @@ def _authorized():
 
 
 def _honeypot_tripped():
-	raw = _raw_body_keys()
+	"""True when a honeypot key arrived carrying anything at all.
+
+	A non-string counts: Fluent Forms only ever sends strings, so a number or a
+	list in a field a human cannot see is a hand-rolled bot, not a quirk.
+	"""
+	raw = _raw_body()
 	for key in HONEYPOT_KEYS:
-		if key in raw and (raw.get(key) or "").strip():
+		if key not in raw:
+			continue
+		value = raw.get(key)
+		if isinstance(value, str):
+			if value.strip():
+				return True
+		elif value is not None:
 			return True
 	return False
 
 
-def _raw_body_keys():
+def _raw_body():
 	"""The request body as a flat dict, read before frappe's sanitisation where
-	possible. Falls back to form_dict, which is always populated."""
+	possible. Falls back to form_dict, which is always populated. Values are
+	left as sent; callers decide what a non-string means."""
 	try:
 		data = frappe.request.get_data(as_text=True) if frappe.request else ""
 		if data:
 			parsed = json.loads(data)
 			if isinstance(parsed, dict):
-				return {k: (v if isinstance(v, str) else "") for k, v in parsed.items()}
+				return parsed
 	except Exception:
 		pass
-	return {k: (v if isinstance(v, str) else "") for k, v in (frappe.form_dict or {}).items()}
+	return dict(frappe.form_dict or {})
+
+
+def _text(value, limit):
+	"""A payload value as a trimmed, capped string; anything else as ""."""
+	return value.strip()[:limit] if isinstance(value, str) else ""
 
 
 # ---------------------------------------------------------------- field mapping
@@ -295,11 +364,16 @@ def _record_submission_context(lead, payload):
 		if notes:
 			lead.add_comment("Comment", _("Website enquiry:\n\n{0}").format(notes))
 
+		# caller_ip is the address that POSTed -- WordPress's server, not the visitor.
+		# request_ip rather than the raw header: since 2026-08-03 nginx rewrites it to
+		# the real caller, and utils/client_ip.py watches that it stays so.
 		context = {
-			"form_name": (payload.get("form_name") or "")[:140],
-			"claimed_ip": (frappe.get_request_header("X-Forwarded-For") or "")[:200],
+			"form_name": _text(payload.get("form_name"), 140),
+			"caller_ip": (getattr(frappe.local, "request_ip", None) or "")[:64],
 			"user_agent": (frappe.get_request_header("User-Agent") or "")[:200],
 		}
+		for key in UNSTORED_CLICK_ID_KEYS:
+			context[key] = _text(payload.get(key), 255)
 		lead.add_comment(
 			"Comment",
 			_("Submitted via website ingress: {0}").format(

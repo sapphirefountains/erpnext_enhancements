@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.501.0] - 2026-09-22
+
+**The website lead ingress could never have accepted a lead: Frappe rejected its credential
+before the endpoint ran.** TASK-2026-01471 (Marketing P1, item 3), plus the `utm_id` join key
+decided on TASK-2026-01570.
+
+### Fixed
+
+- **`submit_web_lead` now takes its secret in `X-Web-Lead-Secret`, not
+  `Authorization: Bearer`.** Frappe v16's `validate_auth` runs before any handler and treats
+  every two-part `Authorization` header as a credential of its own. It tries the token as an
+  OAuth bearer token, then as an API key, and if neither yields a user it raises
+  `AuthenticationError`. Verified on production: the same Guest POST returned our own
+  `{"status": "rejected"}` without the header and Frappe's `401 {"exc_type":
+  "AuthenticationError"}` with `Authorization: Bearer <anything>`. The contract has said
+  Bearer since v1.241.0. Nothing had ever called the endpoint, so nobody noticed, and the first
+  real submission would have failed in exactly the way a mistyped secret does. `web_lead.py`
+  never reads `Authorization` now, and a test enforces that. The same defect affects the MDM
+  webhook (`mdm_integration/webhooks.py`); that is filed as a separate task rather than fixed
+  here.
+- **Google's iOS click IDs were thrown away on arrival.** The capture script collected
+  `gbraid`, `wbraid` and `msclkid`, and its README told you to add hidden fields for them, but
+  the endpoint's allowlist dropped all three. Each is now a paid signal: any of them sets the
+  Lead Source to *Advertisement*, and the values are kept in the submission-context comment.
+  They get no fields of their own, because only `gclid` can be resolved to a campaign. `fbclid`
+  is deliberately still ignored, since Meta adds it to organic links too.
+
+### Added
+
+- **`custom_utm_id` on Lead, Opportunity and Customer**, the spend-to-lead join key
+  (TASK-2026-01570, decided 2026-09-22: option A + D). Each ad platform writes its own campaign
+  ID into `utm_id` with a dynamic URL macro: Google `{campaignid}`, Meta `{{campaign.id}}`,
+  LinkedIn `{{CAMPAIGN_ID}}`. It equals `Ad Campaign.external_id`, so it is exact and cannot
+  drift when somebody renames a campaign, while `utm_campaign` stays a readable slug. It is
+  captured, allowlisted and propagated like every other attribution field (first touch wins,
+  through `_fill_blanks`). The fixture puts it under UTM Campaign, and the attribution
+  section's column break moves down one to make room.
+- **Hardening:**
+  - A `web_lead_shared_secret` shorter than 32 characters is treated as unset, and the Error
+    Log gets one row a day saying so without the value. The rate limit allows 120 guesses an
+    hour per address, so a short secret amounts to a world-writable Lead table.
+  - The honeypot now also fires on a non-string value; Fluent Forms only sends strings.
+  - The submission comment records `caller_ip` from `request_ip`, which is the real caller
+    since the v1.500.0 work, instead of the raw `X-Forwarded-For` header.
+- **The WordPress side, revised** (`docs/website-capture/`, installed by a human on WP Engine):
+  - **`sf-attribution.js` now implements the runbook's own rule: first touch *within a
+    session*.** The 2026-08-13 version kept pure first touch for 90 days. A session ends after
+    30 minutes without a pageview. A new visit that arrives with campaign tags replaces the
+    whole stored touch, landing page and referrer included. An untagged visit changes nothing.
+    Under pure first touch, an ad click that re-engaged someone who once visited organically
+    got no credit at all, which understates every re-engagement campaign. The old behavior is
+    one constant away (`NEW_TAGGED_SESSION_REPLACES = false`).
+  - The script also captures `utm_id`. The cookie is set for `.sapphirefountains.com` only on
+    our own hosts: on a WP Engine staging host a foreign domain attribute makes the browser
+    drop the cookie silently, so it falls back to host-only. A size guard is guaranteed to
+    terminate: it sheds keys, then halves values, and the join keys give way last.
+  - The script is now node-testable: `scripts/test_sf_attribution.js` has 33 checks.
+  - README: a complete Fluent Forms *Selected Fields* mapping, including the honeypot, which
+    has to be mapped or the endpoint never sees it. Also per-platform `utm_id` tagging, with
+    the trap that a Google campaign-level Final URL suffix *replaces* the account-level one.
+    Also Fluent Forms' own honeypot, a troubleshooting table keyed on response body, and the
+    acceptance test extended to `utm_id` and Lead Source.
+- `tests/test_web_lead_ingress.py` (18 behavioral tests against a frappe stub, own CI step).
+  14 of the 18 fail against the v1.500.0 code. `test_lead_attribution.py` now also requires
+  `custom_utm_id` on all three doctypes as a Data field.
+
+### Changed
+
+- The attribution runbook's contract, response table and WordPress rules; the platform plan
+  §1.1; the crm_enhancements README; and the Settings help text for `web_lead_shared_secret`
+  (DocType JSON, re-synced by content hash) all describe the header and the 32-character
+  floor.
+
 ## [1.500.0] - 2026-09-22
 
 **The client-IP fix the ingress was waiting for had already been live for seven weeks, on the VM

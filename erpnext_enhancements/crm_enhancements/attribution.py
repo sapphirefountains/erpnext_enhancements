@@ -86,6 +86,11 @@ ATTRIBUTION_FIELDS = (
 	"custom_utm_source",
 	"custom_utm_medium",
 	"custom_utm_campaign",
+	# The ad platform's own campaign ID, written into utm_id by each platform's
+	# dynamic URL macro. It is the spend-to-lead join key: it equals
+	# Ad Campaign.external_id (TASK-2026-01570, decided 2026-09-22), where
+	# utm_campaign is a human slug nothing can reliably resolve.
+	"custom_utm_id",
 	"custom_utm_content",
 	"custom_utm_term",
 	"custom_gclid",
@@ -107,6 +112,7 @@ FIELD_MAX_LENGTHS = {
 	"custom_utm_source": 140,
 	"custom_utm_medium": 140,
 	"custom_utm_campaign": 140,
+	"custom_utm_id": 140,
 	"custom_utm_content": 140,
 	"custom_utm_term": 140,
 	"custom_gclid": 255,
@@ -122,6 +128,15 @@ SOCIAL_MEDIUMS = frozenset({"social", "paid_social", "paidsocial", "social_paid"
 
 #: utm_medium values that mean email.
 EMAIL_MEDIUMS = frozenset({"email", "e-mail", "newsletter", "mail"})
+
+#: Raw query-string keys an ad platform's auto-tagging adds only to a PAID click.
+#: gbraid/wbraid are what Google sends instead of gclid when iOS blocks it; msclkid
+#: is Microsoft Ads. Only gclid is stored (``custom_gclid``) because only gclid can
+#: be resolved to a campaign (Google Ads click_view); the rest are a paid signal
+#: for ``derive_lead_source`` and are kept in the ingress's submission comment.
+#: ``fbclid`` is deliberately absent: Meta appends it to every outbound link,
+#: organic posts included, so it proves a Facebook visit and not a paid one.
+PAID_CLICK_ID_KEYS = ("gclid", "gbraid", "wbraid", "msclkid")
 
 
 # --------------------------------------------------------------------- helpers
@@ -229,20 +244,31 @@ def normalize_payload(raw):
 	return values
 
 
-def derive_lead_source(values):
+def has_paid_click_id(raw):
+	"""True if an inbound payload carries any ad platform's paid-click ID.
+
+	Reads the raw payload rather than normalised values, because only gclid
+	survives normalisation -- see ``PAID_CLICK_ID_KEYS``.
+	"""
+	raw = raw or {}
+	return any(isinstance(raw.get(key), str) and raw.get(key).strip() for key in PAID_CLICK_ID_KEYS)
+
+
+def derive_lead_source(values, paid_click=False):
 	"""Best-effort ``Lead Source`` for a set of raw UTM values, or "".
 
 	Deliberately coarse. It maps to the handful of ``Lead Source`` records that
 	already exist and are already used in reporting; it does not invent taxonomy.
 	Consulted only to fill a blank -- see ``resolve_lead_source``.
 
-	The ordering matters: ``gclid`` is checked before medium because a Google Ads
-	click is paid regardless of how the medium was tagged (or whether it was
-	tagged at all -- auto-tagging sets gclid and nothing else).
+	The ordering matters: a click ID is checked before medium because an ad click
+	is paid regardless of how the medium was tagged (or whether it was tagged at
+	all -- auto-tagging sets gclid and nothing else). ``paid_click`` carries the
+	click IDs that are not stored as fields (gbraid, wbraid, msclkid).
 	"""
 	medium = (values.get("custom_utm_medium") or "").strip().lower()
 
-	if values.get("custom_gclid"):
+	if values.get("custom_gclid") or paid_click:
 		return "Advertisement"
 	if medium in PAID_MEDIUMS:
 		return "Advertisement"
@@ -258,14 +284,14 @@ def derive_lead_source(values):
 	return ""
 
 
-def resolve_lead_source(values, explicit=None):
+def resolve_lead_source(values, explicit=None, paid_click=False):
 	"""The ``Lead Source`` to stamp, preferring an explicit choice.
 
 	Returns "" when nothing can be resolved or when the resolved record does not
 	exist on this site -- a Link to a missing record would fail validation and
 	reject the whole submission, which is a bad trade for a nice-to-have.
 	"""
-	candidate = (explicit or "").strip() or derive_lead_source(values)
+	candidate = (explicit or "").strip() or derive_lead_source(values, paid_click=paid_click)
 	if not candidate:
 		return ""
 	if not frappe.db.exists("Lead Source", candidate):

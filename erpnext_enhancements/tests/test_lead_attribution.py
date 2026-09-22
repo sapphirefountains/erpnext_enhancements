@@ -232,6 +232,7 @@ ATTRIBUTION_FIELDNAMES = (
 	"custom_utm_source",
 	"custom_utm_medium",
 	"custom_utm_campaign",
+	"custom_utm_id",
 	"custom_utm_content",
 	"custom_utm_term",
 	"custom_gclid",
@@ -303,7 +304,7 @@ def test_raw_utm_fields_are_data_not_link():
 	"""erpnext's utm_medium/utm_campaign are Links into taxonomies. Raw capture
 	has to accept whatever string is in the URL, so ours must be free text — a
 	Link would either reject the submission or spawn junk taxonomy rows."""
-	free_text = {"custom_utm_source", "custom_utm_medium", "custom_utm_campaign", "custom_utm_content", "custom_utm_term", "custom_gclid"}
+	free_text = {"custom_utm_source", "custom_utm_medium", "custom_utm_campaign", "custom_utm_id", "custom_utm_content", "custom_utm_term", "custom_gclid"}
 	for doctype in ATTRIBUTION_DOCTYPES:
 		for fieldname in free_text:
 			field = next(
@@ -465,7 +466,7 @@ def test_ingress_fails_closed_without_a_secret():
 		node for node in ast.walk(tree)
 		if isinstance(node, ast.FunctionDef) and node.name == "_authorized"
 	)
-	assert "compare_digest" in ast.dump(authorized), "the Bearer check must be constant-time"
+	assert "compare_digest" in ast.dump(authorized), "the secret check must be constant-time"
 	assert "if not secret" in _web_lead_source(), "_authorized must return False when no secret is set"
 
 
