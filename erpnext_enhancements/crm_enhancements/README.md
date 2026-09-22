@@ -253,7 +253,8 @@ Source`) stays the single human-facing channel. The accepted cost is that we own
 from a raw source/medium pair to a Lead Source value — `attribution.derive_lead_source`,
 deliberately small, and consulted only to fill a **blank**.
 
-Fields we ship that erpnext has no equivalent for: `custom_utm_term`, `custom_gclid`,
+Fields we ship that erpnext has no equivalent for: `custom_utm_id` (the ad platform's
+campaign ID — the spend-to-lead join key, TASK-2026-01570), `custom_utm_term`, `custom_gclid`,
 `custom_landing_page`, `custom_first_referrer`, `custom_attribution_captured_on`.
 
 Because those four erpnext fields are never written, showing them alongside ours was an
@@ -284,14 +285,18 @@ report separates that historical debt from live process failures.
 
 ### The website ingress
 
-`web_lead.submit_web_lead` is a machine-to-machine POST endpoint gated by a Bearer shared
-secret (`web_lead_shared_secret`, fails closed when unset), rate limited, with a field
-allowlist rather than a payload splat.
+`web_lead.submit_web_lead` is a machine-to-machine POST endpoint gated by a shared secret in
+an **`X-Web-Lead-Secret`** header (`web_lead_shared_secret`, at least 32 characters, fails
+closed when unset), rate limited, with a field allowlist rather than a payload splat. **Never
+`Authorization: Bearer`**: Frappe v16 rejects any `Authorization` header it cannot authenticate
+itself, with a 401, before the endpoint runs — which is what the original v1.241.0 contract
+asked for.
 
 **The public site is WordPress on WP Engine behind Cloudflare** — a different host from
-ERPNext. The capture script that reads `utm_*`/`gclid`/referrer and forwards them lives on
-the WordPress side and is **not in this repo**; only the ERPNext half is. The full payload
-contract is in [`docs/attribution-runbook.md`](../../docs/attribution-runbook.md).
+ERPNext. The capture script that reads `utm_*`/`gclid`/referrer runs on the WordPress side;
+its source is kept in [`docs/website-capture/`](../../docs/website-capture/) (tested by
+`scripts/test_sf_attribution.js`). The full payload contract is in
+[`docs/attribution-runbook.md`](../../docs/attribution-runbook.md).
 
 
 ## `Value Stream` vs `Value Streams` — investigated, not changed

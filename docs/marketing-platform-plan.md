@@ -205,9 +205,12 @@ needs no new code — it needs turning on and wiring.
   must survive a subdomain hop.
 - Hidden fields on each Fluent Form populated from that cookie, plus the `hp_company_url`
   honeypot.
-- A Fluent Forms Pro webhook per form → `POST /api/method/…web_lead.submit_web_lead` with
-  `Authorization: Bearer <web_lead_shared_secret>`, mapped to the payload contract in
-  [attribution-runbook.md](attribution-runbook.md).
+- A Fluent Forms Pro webhook per form → `POST /api/method/…web_lead.submit_web_lead` with the
+  secret in an `X-Web-Lead-Secret` header, mapped to the payload contract in
+  [attribution-runbook.md](attribution-runbook.md). **Not `Authorization: Bearer`** as this plan
+  originally said: Frappe v16 rejects that header with a 401 before the endpoint runs (found
+  2026-09-22, fixed v1.501.0). The files and the wiring procedure are in
+  [website-capture/](website-capture/).
 - Set `web_lead_shared_secret` and `web_lead_default_owner`; enable `web_lead_ingress_enabled`.
 - **Never send a field named `sid`** — frappe pops it during auth and the request silently
   downgrades to Guest.

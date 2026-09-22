@@ -1120,7 +1120,7 @@
   },
   {
    "depends_on": "web_lead_ingress_enabled",
-   "description": "Bearer token the WordPress side must send in the Authorization header. Compared in constant time and fails closed when unset. Rotate by changing it here and on the WordPress side together — there is no grace window.",
+   "description": "Shared secret the WordPress side sends in the X-Web-Lead-Secret header (never in Authorization, which Frappe itself rejects). At least 32 characters or the ingress refuses everything; generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\". Compared in constant time and fails closed when unset. Rotate by changing it here and on the WordPress side together — there is no grace window.",
    "fieldname": "web_lead_shared_secret",
    "fieldtype": "Password",
    "label": "Website Ingress Shared Secret"
