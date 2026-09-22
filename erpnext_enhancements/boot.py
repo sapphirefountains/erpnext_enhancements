@@ -9,6 +9,7 @@ from frappe.utils import get_url
 
 from erpnext_enhancements.api.collab import get_collab_doctypes
 from erpnext_enhancements.api.desk_shortcuts import get_visible_shortcuts_for_user
+from erpnext_enhancements.crm_enhancements.data_quality import industry_rule_for_client
 from erpnext_enhancements.feature_flags import (
 	contacts_ux_enabled,
 	contract_esign_enabled,
@@ -60,6 +61,10 @@ def boot_session(bootinfo):
 	``public/js/global_enhancements/contact_address_quick_entry.js``). The
 	``contacts_ux.sync_contact_account_links`` server invariant is deliberately
 	NOT gated — see ``feature_flags.contacts_ux_enabled``.
+	The same flag gates the Customer/Supplier quick-entry dialogs
+	(``party_quick_entry.js``); ``frappe.boot.ee_industry_rule`` tells the
+	Customer one when Industry is required — ``data_quality.enforce_industry``
+	on ``validate`` remains the authority.
 
 	``frappe.boot.ee_product_configurator`` gates the Product Configuration /
 	Configurable Product generation buttons (Item + BOM + Selling Price,
@@ -86,6 +91,7 @@ def boot_session(bootinfo):
 	bootinfo.ee_field_text_wrap = 1 if field_text_wrap_enabled() else 0
 	bootinfo.ee_merge_tool = 1 if document_merge_enabled() else 0
 	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
+	bootinfo.ee_industry_rule = industry_rule_for_client()
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0
 	bootinfo.ee_package_dispatch = 1 if package_dispatch_enabled() else 0
 	bootinfo.ee_fountain_move = 1 if fountain_move_intake_enabled() else 0

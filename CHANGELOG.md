@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.499.0] - 2026-09-22
+
+### Changed
+
+- **New Account (Customer) and Supplier: the quick-entry dialog asks for the account, and
+  saving opens the full form, where the Address Directory adds the address.** The dialog was
+  erpnext v16's stock `ContactAddressQuickEntryForm` (both doctypes map to it), which appends
+  "Primary Contact Details" and "Primary Address Details" sections that exist only in the
+  dialog. On insert the server turns them into a separate Address and Contact
+  (`Customer.create_primary_address`, `make_contact`), but every field that would show them
+  on the saved form is hidden on this site (`address_html`, `primary_address`,
+  `section_break_map` with the Billing/Shipping links, the Supplier Tax tab), so what was typed
+  looked like it had disappeared. The contact half was dead besides: First/Last Name only show
+  for `customer_type == "Company"`, which this site renamed to Commercial. And Industry,
+  which `data_quality.enforce_industry` requires on a new commercial account, was never in the
+  dialog at all, so Save on a commercial account failed with no field to put it in. On prod
+  both industry flags are on. Of the 269 Customers named users (not the QBO sync or Triton)
+  created since May, 237 have no address, and none has the Billing Address field set.
+  `public/js/global_enhancements/party_quick_entry.js` replaces both dialogs.
+  **Customer:** name, type, Industry (shown and required only for commercial types), account
+  status, territory, value stream, account phone and email. **Supplier:** name, type, group,
+  country, phone, email. Tax ID was dropped: v1.145.0 put it in the stock dialog, but it
+  lives on the hidden Tax tab, which is the same typed-and-vanished trap. After Save the
+  record opens its full form (stock quick entry deliberately stays put when you are on the
+  doctype's list, which is where "+ Add" is). A blue "This account has no address yet"
+  banner there jumps to the Address Directory, whose New Address (Google autocomplete) and Link
+  Existing buttons do the linking. The banner shows only on a record just created, from the
+  dialog or from a first full-form save such as "Edit Full Form" or a Lead conversion. It
+  goes away once the directory lists an address, and never shows when the new record already
+  inherited one. It is scoped that way because 1,166 of 1,670 active Customers and 1,153 of
+  1,184 Suppliers have no address, so a permanent banner would be on nearly every record.
+  Created from a link field on another form (the Customer on a Project, say), the record
+  fills that field and the user stays where they were. A toast offers "Add one" as a new-tab
+  link opened with `?scroll_to=address_list_html`. A `#fieldname` hash would not work there,
+  because v16 overwrites the URL hash with the active tab's name on first render, before the
+  form scrolls to it.
+  The dialog is titled "New Account" and the banner names the doctype in words of its own.
+  `__("Customer")` renders "Accounts" on this site (a plural `Translation` row), which is why
+  the stock dialog read "New Accounts".
+- **The Industry rule reaches the desk as `frappe.boot.ee_industry_rule`**
+  (`data_quality.industry_rule_for_client()`: the `require_industry_on_commercial` flag and
+  `COMMERCIAL_TYPES`). The dialog requires Industry under exactly the server's rule, so the
+  type list has one copy, not two. `enforce_industry` on `validate` stays the authority.
+- **Same toggle as the Contact/Address dialogs** (ERPNext Enhancements Settings → Contacts &
+  Addresses). Off, every method defers to erpnext's class, which ours extends, so the stock
+  dialog comes back unchanged. Ours loads after `erpnext.bundle.js` (app order), which is
+  what lets its assignment to `frappe.ui.form.CustomerQuickEntryForm` win. The toggle's
+  description says so now.
+
+### Added
+
+- **`scripts/test_party_quick_entry.js`**, its own CI step. It runs the real file against a
+  stubbed frappe and erpnext class rather than grepping it. It covers the dialog field lists
+  and the absence of every stock address/contact key and `tax_id`, Industry visibility and
+  requirement for each customer type (checked against `COMMERCIAL_TYPES` parsed from
+  `data_quality.py`), routing after Save for the list, link-field and caller-callback paths,
+  the banner's show/stack/dismiss/retire rules, full stock behaviour with the toggle off, and
+  that every `custom_*` dialog field exists in `fixtures/custom_field.json`. The last check
+  exists because `clone_meta_field` drops an unknown field without a word. Six hand mutations
+  (no redirect, an address field back, erpnext's `render_dialog`, the banner on every record,
+  a stale type list, a leftover industry) each fail it.
+
 ## [1.498.0] - 2026-09-22
 
 ### Fixed

@@ -144,6 +144,23 @@ def is_commercial(doc):
 	return (getattr(doc, "customer_type", None) or "") in COMMERCIAL_TYPES
 
 
+def industry_rule_for_client():
+	"""The part of `enforce_industry` a new-record form can apply before Save.
+
+	Shipped in bootinfo as ``ee_industry_rule`` for the Customer quick-entry dialog
+	(``public/js/global_enhancements/party_quick_entry.js``), which shows and
+	requires Industry under exactly this rule. Before it, the dialog had no Industry
+	field, so a new commercial account failed on Save with nowhere to put one. The
+	type list travels with it so the client never keeps a second copy that can drift.
+	Only the new-record flag matters there: ``require_industry_on_edit`` governs
+	edits, and a quick-entry dialog only ever creates.
+	"""
+	return {
+		"required": 1 if _flag("require_industry_on_commercial") else 0,
+		"types": list(COMMERCIAL_TYPES),
+	}
+
+
 # --------------------------------------------------------------------- the gate
 
 

@@ -75,6 +75,11 @@ import "./global_enhancements/address_autocomplete.js";
 // frappe.boot.ee_contacts_ux; must be global — list/awesomebar/link-field
 // create paths fire outside any doctype_js). Server: contacts_ux.py.
 import "./global_enhancements/contact_address_quick_entry.js";
+// Customer/Supplier quick-entry dialogs: account fields only, then the saved record
+// opens its full form, where the Address Directory adds addresses (same toggle).
+// Must load after erpnext.bundle.js, whose stock dialog it replaces — app order
+// guarantees that.
+import "./global_enhancements/party_quick_entry.js";
 import "./telephony_client.js";
 // global_enhancements
 import "./global_enhancements/quill_mentions.js";
