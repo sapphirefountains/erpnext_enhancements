@@ -12,7 +12,9 @@ below once a platform is switched on and connected; setup, checks and troublesho
 [`docs/marketing-connectors-runbook.md`](../../docs/marketing-connectors-runbook.md).
 Since v1.507.0 the **publishing switches and their gate** exist too (Phase 2's scaffold; see
 [Publishing](#publishing-phase-2) below). They switch nothing on by themselves: no publisher
-is installed yet.
+is installed yet. Since v1.508.0 the publishing connections, and since v1.509.0 the posts,
+accounts, media and the outbox that will publish them. Nothing can publish until a network
+has a publisher (TASK-2026-01483 to 01485) and a post can be approved (01486).
 
 ## Files
 
@@ -33,6 +35,10 @@ is installed yet.
 | `publish/client.py` | The publishing transport: its own allowlist (never an ad endpoint), reads retry, **writes never retry on their own**, one retry after a 401 with a refreshed token |
 | `publish/oauth.py` | The three publishing connections: Connect (Meta keeps only the Page token and refuses a login that grants a spend-capable permission), token use and refresh, and the per-connection daily upkeep that clears a dead credential instead of retrying it |
 | `publish/tasks.py` | Scheduler shim for that upkeep: master switch, then only *Connected* connections |
+| `publish/outbox.py` | **The outbox state machine**, pure over a store: enqueue an approved post, claim, dispatch, retry or hold, and the rule that a job which may have sent goes to **Unconfirmed**, never back to Pending (TASK-2026-01481) |
+| `publish/sweeper.py` | The five-minute sweep and `FrappeStore`: reclaim expired leases, claim due jobs atomically, hand each to `run_dispatch` on `long`; `resolve_job` (POST, System Manager) for a person's answer on an Unconfirmed or Failed job |
+| `publish/accounts.py` | Social Account rows from what a publishing connection reaches, written on Connect |
+| `publish/publishers/` | The per-network publisher registry. **Empty** until TASK-2026-01483 to 01485, so no network is sendable and a queued job waits |
 | `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect), for the three ad platforms and, since v1.508.0, the three publishing connections. Connect / Test / Disconnect per connection; Sync now (ads) |
 | `doctype/ad_click/` | One Google click (gclid → campaign, date): decision D's fallback join. Named by gclid |
 | `doctype/ad_account/` | One row per connected advertising account. Identity is (platform, external_id) |
@@ -41,6 +47,11 @@ is installed yet.
 | `doctype/marketing_sync_log/` | One row per connector run: window covered, counters, error |
 | `doctype/marketing_raw_payload/` | Append-only verbatim response archive, pruned on retention |
 | `doctype/marketing_settings/` | Single: master switch, ad-platform and publishing switches, sync dials. Change-tracked, so the Version log shows who turned a switch on |
+| `doctype/social_account/` | One Page, Instagram account, Company Page or channel. Identity (network, platform ID), set by Connect; a person only ticks **Enabled**. Token status is read from Marketing Connections, not copied here |
+| `doctype/social_post/` (+ `social_post_target/`, `social_post_media/`) | The post, the accounts it goes to, its media in order. **Locked once approved** (`SocialPost.validate` compares `outbox.content_signature`). Change-tracked |
+| `doctype/social_publish_job/` | The outbox row. `external_post_id` is **unique**; indexes on (state, available_at) and (state, lease_expires_at) for the sweep; form buttons to resolve an Unconfirmed job |
+| `doctype/social_post_metric/` | Job × day engagement, named from (job, date) so a restated day upserts (TASK-2026-01488 fills it) |
+| `doctype/marketing_media_asset/` | A photo or video: where it lives, the Project it shows, and **usage rights**. Only *Cleared for social* can be queued; new assets start as *Needs client approval* |
 
 ## Publishing (Phase 2)
 
@@ -149,6 +160,7 @@ before, by letting a background job re-raise with frame locals intact.
 | `after_migrate` | `backfill_marketing_settings_defaults` | Backstop for the Single-defaults trap above |
 | `scheduler_events.cron` `"25 3 * * *"` | `core.tasks.nightly_ad_spend_sync` | The nightly pull (a thin shim; the work runs on `long`) |
 | `scheduler_events.cron` `"35 3 * * *"` | `publish.tasks.maintain_publishing_tokens` | Daily upkeep of the publishing tokens, one rule per connection (v1.508.0) |
+| `scheduler_events.cron` `"2-59/5 * * * *"` | `publish.sweeper.sweep_publish_jobs` | The outbox sweep, the timer for scheduled posts (v1.509.0). Returns at once while the module is off |
 | `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention; clicks past 180 days no Lead carries |
 
 Credentials live on **Marketing Connections**, not on Marketing Settings: Settings is readable

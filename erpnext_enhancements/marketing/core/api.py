@@ -109,7 +109,24 @@ def oauth_callback(state=None, code=None, error=None, error_description=None, **
 		_record(creds, platform, status="Auth Failed", message=str(exc))
 		return _redirect()
 	_record(creds, platform, status="Connected", message=summary, connected=True)
+	if _is_publishing(platform):
+		_sync_social_accounts(platform, creds)
 	return _redirect()
+
+
+def _sync_social_accounts(connection, creds):
+	"""The Social Accounts this connection reaches (v1.509.0). A failure here never undoes the connect."""
+	from erpnext_enhancements.marketing.publish import accounts
+
+	try:
+		accounts.sync(connection, creds)
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(
+			f"Social Account sync failed for {connection}\n\n{frappe.get_traceback()}",
+			"Marketing social account sync",
+		)
 
 
 def _record(creds, platform, *, status, message, connected=False):

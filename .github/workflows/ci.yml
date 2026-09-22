@@ -360,8 +360,14 @@ jobs:
       # switches publish nothing), that every publishing switch ships off and only System
       # Manager can flip one, and decision 3 once writes exist: no spend-capable OAuth scope
       # (pages_manage_ads would boost a post into paid spend) anywhere in marketing/.
-      - name: Marketing settings dials + ad-model identity + publishing gate
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing -v
+      # test_marketing_outbox (TASK-2026-01481, v1.509.0), also stub-free: the publishing
+      # outbox's state machine against an in-memory store. A job that may have sent never
+      # returns to Pending by itself (lease expiry / 5xx / timeout -> Unconfirmed), a
+      # scheduled post waits on available_at rather than a queued RQ job, switches stop even
+      # approved posts, approval needs a second person and media cleared for social, and a
+      # duplicate platform post ID is success. Plus AST checks on the sweeper's wiring.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox -v
       # The read-only ad-spend connectors (TASK-2026-01476, v1.503.0), built against
       # recorded-shape fixtures because API access is still pending. Pins, in order: nothing
       # outside the read-only allowlist is ever sent (and no mutate-shaped string exists in

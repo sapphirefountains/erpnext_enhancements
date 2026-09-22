@@ -140,10 +140,13 @@ marketing/
 ├── publish/             ← Phase 2: the only code in the module that writes to a network
 │   ├── constants.py     ← the four networks and their switches                (01479, shipped)
 │   ├── gate.py          ← master switch AND the network's own switch          (01479, shipped)
-│   ├── outbox.py        ← Social Publish Job state machine                             (01481)
-│   ├── sweeper.py       ← re-drives Pending past available_at; reclaims leases         (01481)
+│   ├── client.py        ← the publishing transport: own allowlist, no write retry (01480, shipped)
+│   ├── oauth.py, tasks.py ← the three connections and their daily token upkeep (01480, shipped)
+│   ├── outbox.py        ← Social Publish Job state machine, pure over a store  (01481, shipped)
+│   ├── sweeper.py       ← 5-minute sweep: reclaim, claim, dispatch on `long`   (01481, shipped)
+│   ├── accounts.py      ← Social Account rows from what a connection reaches  (01481, shipped)
 │   ├── ratelimit.py     ← pure decision functions + Redis Lua; shape described below   (01482)
-│   └── meta.py, linkedin.py, youtube.py ← publishers, with their own allowlist  (01483–01485)
+│   └── publishers/      ← meta.py, linkedin.py, youtube.py; registry shipped 01481 (01483–01485)
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md
@@ -313,6 +316,19 @@ per-platform flags, and posts require draft → approve → publish.
 **Publishing is an outbox, not a direct call.** Approve writes a `Social Publish Job` row;
 a cron sweeper drives it. That is the only design that survives a deploy `FLUSHDB` and the
 only one where "scheduled for 9am Tuesday" is a promise rather than a hope.
+
+*As built (v1.509.0, TASK-2026-01481):*
+
+- **A lease that expires after the request was sent does not return the job to Pending,**
+  which is what this plan first said. It goes to **Unconfirmed**, and a person checks the
+  network. For a public post, a queue that "just retries" publishes it twice.
+- **`Social Post Media` is a seventh doctype**, a child table, so a carousel keeps its order.
+- **Token status is not copied onto `Social Account`.** The sweep reads it from Marketing
+  Connections at send time, so there is one answer to "does this still work".
+- **Approved content is locked.**
+- **Media must be *Cleared for social*.**
+
+See [the connectors runbook](marketing-connectors-runbook.md#the-publishing-outbox).
 
 Rate limiting follows the pattern the chat module established and took with it when it was
 retired, so this doc is now the only written copy: pure decision functions in the bench-free
