@@ -13,6 +13,12 @@
   "meta_ads_enabled",
   "column_break_platforms",
   "linkedin_ads_enabled",
+  "publishing_section",
+  "facebook_publishing_enabled",
+  "instagram_publishing_enabled",
+  "column_break_publishing",
+  "linkedin_publishing_enabled",
+  "youtube_publishing_enabled",
   "sync_section",
   "restate_days",
   "initial_backfill_days",
@@ -70,9 +76,47 @@
    "label": "LinkedIn Ads"
   },
   {
+   "description": "Whether an approved post may go out to each network. All ship off. Switching one on never skips approval: nothing is queued until a post has an approver. Takes effect only once that network's publisher is installed and its account is connected.",
+   "fieldname": "publishing_section",
+   "fieldtype": "Section Break",
+   "label": "Publishing (posts to public accounts)"
+  },
+  {
+   "default": "0",
+   "description": "Post to the Facebook Page. Requires Meta App Review for pages_manage_posts.",
+   "fieldname": "facebook_publishing_enabled",
+   "fieldtype": "Check",
+   "label": "Facebook Page"
+  },
+  {
+   "default": "0",
+   "description": "Post to the Instagram business account linked to the Page. Requires Meta App Review for instagram_content_publish.",
+   "fieldname": "instagram_publishing_enabled",
+   "fieldtype": "Check",
+   "label": "Instagram"
+  },
+  {
+   "fieldname": "column_break_publishing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Post as the Company Page. Requires LinkedIn Community Management API access.",
+   "fieldname": "linkedin_publishing_enabled",
+   "fieldtype": "Check",
+   "label": "LinkedIn Company Page"
+  },
+  {
+   "default": "0",
+   "description": "Upload to the YouTube channel. Until the YouTube Data API audit passes, every video uploaded through the API is locked private, and that lock cannot be appealed.",
+   "fieldname": "youtube_publishing_enabled",
+   "fieldtype": "Check",
+   "label": "YouTube"
+  },
+  {
    "fieldname": "sync_section",
    "fieldtype": "Section Break",
-   "label": "Sync Behaviour"
+   "label": "Sync Behavior"
   },
   {
    "default": "7",
@@ -146,7 +190,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-13 12:00:00.000000",
+ "modified": "2026-09-22 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Settings",
@@ -170,5 +214,6 @@
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1
 }

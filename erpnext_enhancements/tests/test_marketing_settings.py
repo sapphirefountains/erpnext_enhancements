@@ -139,13 +139,20 @@ class TestMarketingSettingsDials(unittest.TestCase):
 		overlap = checks & set(self.dials)
 		self.assertFalse(overlap, f"Check field(s) would be coerced: {sorted(overlap)}")
 
-	def test_master_switch_ships_off(self):
+	def test_every_switch_ships_off(self):
+		"""Every Check on this Single is a switch, and every switch ships off.
+
+		Read from the schema rather than a list, so the publishing switches (v1.507.0) and
+		any added later are covered without anyone remembering to add them here.
+		"""
 		self.assertEqual(
 			self.fields["enabled"].get("default"),
 			"0",
 			"the marketing module must ship dormant",
 		)
-		for flag in ("google_ads_enabled", "meta_ads_enabled", "linkedin_ads_enabled"):
+		checks = [name for name, f in self.fields.items() if f.get("fieldtype") == "Check"]
+		self.assertGreaterEqual(len(checks), 8, "master + 3 ad platforms + 4 publishing networks")
+		for flag in checks:
 			self.assertEqual(
 				self.fields[flag].get("default"), "0", f"{flag} must ship off"
 			)

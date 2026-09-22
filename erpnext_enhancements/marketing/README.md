@@ -10,12 +10,15 @@ flag is `0` independently — the master switch alone turns nothing on. Since v1
 **read-only ad-spend connectors** (Google Ads, Meta, LinkedIn) exist and write to the doctypes
 below once a platform is switched on and connected; setup, checks and troubleshooting are in
 [`docs/marketing-connectors-runbook.md`](../../docs/marketing-connectors-runbook.md).
+Since v1.507.0 the **publishing switches and their gate** exist too (Phase 2's scaffold; see
+[Publishing](#publishing-phase-2) below). They switch nothing on by themselves: no publisher
+is installed yet.
 
 ## Files
 
 | Path | What it is |
 |---|---|
-| `core/constants.py` | Pinned API versions (Google Ads v25, Meta v26.0, LinkedIn 202608), OAuth endpoints and read-only scopes, and the **read-only allowlist** |
+| `core/constants.py` | Pinned API versions (Google Ads v25, Meta v26.0, LinkedIn 202608), OAuth endpoints and read-only scopes, the **read-only allowlist**, and `SPEND_CAPABLE_SCOPES`, the scopes nothing in this module may request |
 | `core/client.py` | The one HTTP transport (`requests`, no SDK): refuses anything off the allowlist, retries only 408/429/5xx, raises `from None` with redacted messages |
 | `core/oauth.py` | Connect flow per platform: user-bound one-time `state`, code exchange, refresh, revoke |
 | `core/sync.py` | The engine: accounts → campaigns → campaign-day metrics (→ Google clicks), restate + upsert, cursor only on a clean run, Sync Log, raw-payload archive, prune |
@@ -25,6 +28,8 @@ below once a platform is switched on and connected; setup, checks and troublesho
 | `core/roas.py` | The spend → Lead → Opportunity → Project → invoice join, **pure**: utm_id then gclid, paid-but-unjoinable as its own row, lead-month cohorts, a 365-day window, contract value and invoiced revenue (TASK-2026-01477) |
 | `report/ad_spend_roas/` | **Ad Spend ROAS** Script Report over `core/roas.py`: cost per lead, cost per won project, ROAS on contract and on invoiced. System Manager / Sales Manager |
 | `platforms/{google_ads,meta_ads,linkedin_ads}.py` | Per-platform request builders and **pure** parsers, tested against `tests/data/marketing_api_fixtures.json` |
+| `publish/constants.py` | The four publishing networks (Facebook, Instagram, LinkedIn, YouTube) and each one's switch, named apart from the ad platforms |
+| `publish/gate.py` | **Pure:** whether an approved post may go out to a network. Master switch AND the network's own switch; never a substitute for approval |
 | `doctype/marketing_connections/` | Single, **System Manager only**: OAuth apps, the Google developer token, and the tokens (hidden, encrypted, set only by Connect). Connect / Test / Disconnect / Sync now buttons |
 | `doctype/ad_click/` | One Google click (gclid → campaign, date): decision D's fallback join. Named by gclid |
 | `doctype/ad_account/` | One row per connected advertising account. Identity is (platform, external_id) |
@@ -32,7 +37,27 @@ below once a platform is switched on and connected; setup, checks and troublesho
 | `doctype/ad_daily_metric/` | Campaign × day. Identity is (campaign, metric_date) — the key that makes restating safe. Carries `upsert()` |
 | `doctype/marketing_sync_log/` | One row per connector run: window covered, counters, error |
 | `doctype/marketing_raw_payload/` | Append-only verbatim response archive, pruned on retention |
-| `doctype/marketing_settings/` | Single: master switch, per-platform flags, sync dials |
+| `doctype/marketing_settings/` | Single: master switch, ad-platform and publishing switches, sync dials. Change-tracked, so the Version log shows who turned a switch on |
+
+## Publishing (Phase 2)
+
+Publishing is the first code in this module that writes to the outside world, arriving in a
+module whose guarantee so far was "read-only". Three rules keep that guarantee true for
+spend, and the first two are enforced by `tests/test_marketing_publishing.py`:
+
+1. **Two switches, and approval on top.** An approved post may go out to a network only when
+   `enabled` *and* that network's publishing switch are on (`publish/gate.py`). The ad
+   switches play no part, so turning on Meta reporting does not bring Facebook publishing
+   one checkbox closer. The gate is asked at send time, so switching a network off stops even
+   posts already approved and scheduled. It never replaces approval (decision 9).
+2. **No spend-capable scope, anywhere.** `core/constants.SPEND_CAPABLE_SCOPES` lists the OAuth
+   scopes that can create, change or fund advertising. The build fails if one appears in any
+   string in `marketing/`. The one a publisher would reach for is Meta's `pages_manage_ads`,
+   which lets a post be **boosted** into paid spend. Google Ads' only scope is full access,
+   and it stays confined to `core/constants.py`.
+3. **Never the ad connectors' transport.** `core/client.py` refuses every Meta and LinkedIn
+   POST by design and does not grow a write. The publishers (TASK-2026-01483 to 01485) get
+   their own allowlist.
 
 ## There is deliberately no `module_def/` here
 
