@@ -1,8 +1,8 @@
 """Pure provider-routing and action-policy rules — no frappe dependency.
 
 Kept frappe-free so the device-class routing, the per-provider capability map,
-and (most importantly) the BYOD wipe-mode guard unit-test bench-free
-(``tests/test_mdm_integration.py``). ``client.py`` and ``actions.py`` import
+and (most importantly) the BYOD wipe-mode guard and the Miradore selective-wipe
+guard unit-test bench-free (``tests/test_mdm_integration.py``). ``client.py`` and ``actions.py`` import
 these so the rules live in one place.
 """
 
@@ -83,3 +83,68 @@ def resolve_wipe_mode(ownership, requested_mode, *, block_byod_full=True, allow_
 	if mode == "full" and not allow_corporate_full:
 		return None, "Full wipe of company devices is disabled in MDM Settings."
 	return mode, None
+
+
+# ---------------------------------------------------------------------------
+# Miradore: what a "selective" wipe can safely mean
+# ---------------------------------------------------------------------------
+#
+# Miradore has no selective-wipe option. POST /api/v2/Device/{id}/Wipe takes a
+# WipeConfiguration with no such field (``additionalProperties: false``), and what
+# it does depends on how the device is enrolled, not on anything we send: a fully
+# managed Android device is factory-reset, a work-profile Android device loses
+# only its work profile, and an iPhone is erased. The operation that removes
+# company data and leaves personal data alone is Retire (DELETE
+# /api/v2/Device/{id}), which also unenrolls the device -- and even Retire
+# factory-resets fully managed Android devices and Shared iPads (Miradore KB
+# "Retire a device", checked 2026-09-22). So a selective wipe is a Retire, allowed
+# only on the enrollment types for which Miradore says Retire keeps personal data.
+# The ``Client.ManagementType`` values are from Miradore API spec v1.19, Appendix 2.
+MIRADORE_RETIRE_KEEPS_PERSONAL_DATA = frozenset({"AndroidProfileOwner", "iOSUnsupervised", "iOSSupervised"})
+
+
+def miradore_selective_wipe_refusal(management_type, model=None):
+	"""Why a selective wipe (a Retire) must not run on this Miradore device, or None.
+
+	Fails closed: an unknown or unlisted management type is refused, because the
+	cost of guessing wrong is a factory reset of somebody's personal phone.
+	"""
+	kind = (management_type or "").strip()
+	if kind == "AndroidDeviceOwner":
+		return (
+			"This is a fully managed Android device. Miradore cannot remove only company data from "
+			"it: Retire and Wipe both factory-reset it. Use a full wipe if that is what you intend."
+		)
+	if kind not in MIRADORE_RETIRE_KEEPS_PERSONAL_DATA:
+		return (
+			f"Miradore reports management type '{kind or 'unknown'}' for this device and does not "
+			"document that Retire keeps personal data on it, so a selective wipe is refused."
+		)
+	if kind == "iOSSupervised" and "ipad" in (model or "").lower():
+		return (
+			"This is a supervised iPad, which may be a Shared iPad, and Retire factory-resets Shared "
+			"iPads. A selective wipe is refused; use a full wipe if that is what you intend."
+		)
+	return None
+
+
+# ---------------------------------------------------------------------------
+# Action1: where and how a script runs
+# ---------------------------------------------------------------------------
+
+
+def action1_script_target(platform):
+	"""``(platform, language)`` for Action1's run_script template, from a device platform.
+
+	The template's ``platform`` enum is Windows / Mac / Linux, and its manual-script
+	languages are PowerShell / Command / Bash. Windows gets PowerShell; everything
+	else Bash. Returns ``(None, None)`` for a platform Action1 cannot script.
+	"""
+	text = (platform or "").strip().lower()
+	if text.startswith("win"):
+		return "Windows", "PowerShell"
+	if "mac" in text or "darwin" in text or "osx" in text:
+		return "Mac", "Bash"
+	if "linux" in text:
+		return "Linux", "Bash"
+	return None, None

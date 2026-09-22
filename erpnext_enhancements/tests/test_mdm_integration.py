@@ -1,5 +1,8 @@
 """Bench-free unit tests for the MDM Integration routing + action policy.
 
+The provider clients themselves (the exact requests sent to Miradore and Action1)
+are pinned in ``test_mdm_provider_clients.py``, which needs a frappe stub.
+
 ``mdm_integration.routing`` is frappe-free (the provider router, the capability
 map, and the BYOD wipe guard), so it runs as plain ``unittest`` in CI — the
 security-sensitive wipe guard is gated on every push. The frappe-backed pieces
@@ -95,6 +98,48 @@ class TestWipeGuard(unittest.TestCase):
 
 	def test_default_mode_is_selective(self):
 		self.assertEqual(routing.resolve_wipe_mode("Company", None), ("selective", None))
+
+
+
+class TestMiradoreSelectiveWipeGuard(unittest.TestCase):
+	"""Miradore has no selective Wipe, so selective is a Retire -- which itself
+	factory-resets fully managed Android devices and Shared iPads. The guard
+	refuses those, and anything it does not recognise."""
+
+	def test_fully_managed_android_is_refused(self):
+		# Retire and Wipe both factory-reset a Device Owner; there is no selective path.
+		refusal = routing.miradore_selective_wipe_refusal("AndroidDeviceOwner", "Pixel 8")
+		self.assertIn("fully managed", refusal)
+
+	def test_enrollments_where_retire_keeps_personal_data(self):
+		self.assertIsNone(routing.miradore_selective_wipe_refusal("AndroidProfileOwner", "Galaxy S23"))
+		self.assertIsNone(routing.miradore_selective_wipe_refusal("iOSUnsupervised", "iPhone 14"))
+		self.assertIsNone(routing.miradore_selective_wipe_refusal("iOSSupervised", "iPhone15,2"))
+
+	def test_supervised_ipad_might_be_shared_and_is_refused(self):
+		self.assertIn("Shared iPad", routing.miradore_selective_wipe_refusal("iOSSupervised", "iPad13,1"))
+		# An unsupervised iPad cannot be a Shared iPad (that requires supervision).
+		self.assertIsNone(routing.miradore_selective_wipe_refusal("iOSUnsupervised", "iPad13,1"))
+
+	def test_unknown_or_unlisted_management_types_fail_closed(self):
+		unknown = (None, "", "Unknown", "None", "AndroidDeviceAdministrator", "BuiltInMDM", "Something new")
+		for kind in unknown:
+			self.assertTrue(routing.miradore_selective_wipe_refusal(kind, "Phone"), kind)
+
+
+class TestAction1ScriptTarget(unittest.TestCase):
+	def test_windows_gets_powershell(self):
+		self.assertEqual(routing.action1_script_target("Windows"), ("Windows", "PowerShell"))
+		self.assertEqual(routing.action1_script_target("Windows 11 (25H2)"), ("Windows", "PowerShell"))
+
+	def test_mac_and_linux_get_bash(self):
+		self.assertEqual(routing.action1_script_target("Mac"), ("Mac", "Bash"))
+		self.assertEqual(routing.action1_script_target("macOS"), ("Mac", "Bash"))
+		self.assertEqual(routing.action1_script_target("Linux"), ("Linux", "Bash"))
+
+	def test_unscriptable_platform(self):
+		self.assertEqual(routing.action1_script_target("Android"), (None, None))
+		self.assertEqual(routing.action1_script_target(None), (None, None))
 
 
 if __name__ == "__main__":

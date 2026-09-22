@@ -6,6 +6,15 @@ stamped ``compliance_source = "Provider"``; a provider device with no registry
 match is created as a **Discovered** Managed Device for a human to confirm/assign
 (never silently trusted). Registry devices the feed stops returning are flagged
 **Unmanaged** by the sync, never deleted.
+
+**Discovered stays Discovered until a person confirms it** (``api.confirm_device``).
+Until v1.506.0 the next hourly sync promoted every Discovered device to Managed
+on its own, so "awaiting confirmation" lasted an hour and nobody ever confirmed
+anything: all four devices on production were promoted that way. It matters
+because a discovered device's ownership defaults to Company, and a full wipe is
+refused for BYOD only -- so an unconfirmed personal phone would have been
+eligible for a factory reset. ``actions.execute_device_action`` now refuses a
+full wipe of a Discovered device.
 """
 
 from __future__ import annotations
@@ -55,7 +64,8 @@ def _apply_provider_fields(doc, pd):
 	"""Overwrite the provider-owned posture + link fields on an existing device."""
 	doc.mdm_provider = pd.provider
 	doc.mdm_provider_device_id = pd.provider_id
-	doc.mdm_link_state = "Managed"
+	if doc.mdm_link_state != "Discovered":
+		doc.mdm_link_state = "Managed"
 	doc.mdm_last_seen = now_datetime()
 	if pd.os_version:
 		doc.os_version = pd.os_version
@@ -71,7 +81,7 @@ def _apply_provider_fields(doc, pd):
 def _create_discovered(pd):
 	"""Insert a Discovered Managed Device from a provider device with no match."""
 	doc = frappe.new_doc("Managed Device")
-	doc.device_name = pd.model or f"Discovered {pd.serial or pd.provider_id}"
+	doc.device_name = pd.device_name or pd.model or f"Discovered {pd.serial or pd.provider_id}"
 	doc.platform = _map_platform(pd.platform)
 	doc.device_type = pd.device_type or _guess_type(doc.platform)
 	doc.manufacturer = pd.manufacturer

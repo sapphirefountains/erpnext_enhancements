@@ -99,11 +99,16 @@ def _open_log(provider_key, log):
 
 def flag_unmanaged(provider_key, seen_ids):
 	"""Mark this provider's registry devices that the feed no longer returns as
-	Unmanaged (so the dashboard surfaces them). Never deletes."""
+	Unmanaged (so the dashboard surfaces them). Never deletes.
+
+	Only Managed devices. A Discovered device stays Discovered until a person
+	confirms it (``api.confirm_device``): if it went Unmanaged here, reappearing
+	in the feed would make it Managed with nobody having looked at it.
+	"""
 	count = 0
 	for device in frappe.get_all(
 		"Managed Device",
-		filters={"mdm_provider": provider_key, "mdm_link_state": ("in", ["Managed", "Discovered"])},
+		filters={"mdm_provider": provider_key, "mdm_link_state": "Managed"},
 		fields=["name", "mdm_provider_device_id"],
 	):
 		if device.mdm_provider_device_id and device.mdm_provider_device_id not in seen_ids:
