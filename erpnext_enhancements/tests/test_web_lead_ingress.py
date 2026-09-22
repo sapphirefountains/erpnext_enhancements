@@ -38,6 +38,7 @@ STUBBED = ("frappe", "frappe.rate_limiter", "frappe.utils")
 OURS = (
 	"erpnext_enhancements.crm_enhancements.web_lead",
 	"erpnext_enhancements.crm_enhancements.attribution",
+	"erpnext_enhancements.crm_enhancements.lead_triage",
 	"erpnext_enhancements.utils.error_throttle",
 )
 
@@ -74,6 +75,9 @@ class FakeLead:
 
 	def set(self, key, value):
 		setattr(self, key, value)
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
 
 	def insert(self, ignore_permissions=False):
 		self.name = "CRM-LEAD-TEST-0001"
@@ -130,13 +134,22 @@ def _install_stub():
 		or (doctype == "User" and name == "triage@example.com"),
 		has_column=lambda doctype, column: True,
 		get_value=lambda *args, **kwargs: None,
+		get_default=lambda key: None,
+		set_default=lambda key, value: None,
 	)
+	# No users and no roles: triage finds no owner, which is the ingress's concern
+	# only in that the Lead must still be created. tests/test_lead_triage.py covers
+	# the owner and the deadline.
+	frappe.get_all = lambda *args, **kwargs: []
 
 	rate_limiter = types.ModuleType("frappe.rate_limiter")
 	rate_limiter.rate_limit = lambda **_kw: (lambda fn: fn)
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda value: int(value or 0)
 	utils.now_datetime = lambda: "2026-09-22 12:00:00"
+	utils.get_datetime = lambda value: value
+	utils.get_time = lambda value: value
+	utils.get_url_to_form = lambda doctype, name: f"/app/{doctype}/{name}"
 	frappe.rate_limiter = rate_limiter
 	frappe.utils = utils
 
@@ -197,6 +210,7 @@ class AuthTests(unittest.TestCase):
 		result = _submit(dict(GOOD))
 		self.assertEqual(result, {"status": "accepted", "lead": "CRM-LEAD-TEST-0001"})
 		self.assertEqual(len(STATE["inserted"]), 1)
+		self.assertEqual(STATE["errors"], [], "triage with no owner available must still be clean")
 
 	def test_missing_header_is_401(self):
 		result = _submit(dict(GOOD), headers={})

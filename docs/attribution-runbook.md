@@ -39,7 +39,7 @@ Everything is off by default. **ERPNext Enhancements Settings → Lead Attributi
 | `require_lead_source_on_lead` | Block the save of a **new** Lead with no source. |
 | `require_lead_source_on_opportunity` | Same for Opportunity. This is the one that matters for spend evaluation. |
 | `web_lead_ingress_enabled` | Accept POSTs from the WordPress site. |
-| `web_lead_default_owner` | Lead Owner for website submissions. Deliberately not guessed. |
+| `web_lead_default_owner` | The named triage owner for website submissions. When blank, Leads rotate across the `Sales Team` role instead — see [lead-triage-runbook.md](lead-triage-runbook.md). |
 | `web_lead_shared_secret` | Shared secret for the ingress, sent in `X-Web-Lead-Secret`. At least 32 characters; fails closed when unset or shorter. |
 
 Suggested order: turn on `lead_attribution_enabled` alone first and leave it for a week —

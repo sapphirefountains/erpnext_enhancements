@@ -549,7 +549,15 @@ doc_events = {
 		# is always empty — the accounting-intake email channel had silently ingested
 		# nothing since it shipped (v1.59.0). It fires on the post-attachment save; the
 		# handler's per-file guard makes the email's later saves a no-op.
-		"on_update": "erpnext_enhancements.accounting_intake.channels.email_from_communication",
+		"on_update": [
+			"erpnext_enhancements.accounting_intake.channels.email_from_communication",
+			# Lead triage (TASK-2026-01473): stamp Lead.custom_first_response_at from the
+			# first Sent Communication of type Communication -- the one "has somebody
+			# answered this Lead" rule, shared with the Speed-to-Lead widget and the SLA
+			# sweep. on_update so a Communication linked to the Lead afterwards counts too.
+			# Returns at once for anything not referencing a Lead; never raises.
+			"erpnext_enhancements.crm_enhancements.lead_triage.stamp_first_response",
+		],
 	},
 	"Fleet Vehicle": {
 		# hr_enhancements (WI-073): `assigned_driver` became a Link to Employee, so the
@@ -1047,6 +1055,12 @@ scheduler_events = {
 			# anywhere. test_hooks_integrity caught exactly that. The chat sweeps are gone
 			# as of v1.426.0; the rule that caught it is not.
 			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
+			# Lead triage (TASK-2026-01473): speed-to-lead SLA. Reminds a Lead's owner once
+			# its first-response deadline passes, escalates once the escalation time does,
+			# each at most once per Lead (Lead.custom_sla_alert). Deadlines are in working
+			# time, so a Friday-evening enquiry is not chased overnight. No-op unless
+			# lead_sla_enabled; only Leads an inbound channel stamped a deadline on.
+			"erpnext_enhancements.crm_enhancements.lead_triage.sweep_first_response_sla",
 		],
 		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
 		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
@@ -1522,6 +1536,11 @@ after_sync = [
 # Run after each `bench migrate` (from global_enhancements)
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
+	# Lead triage (v1.502.0): stamp Lead.custom_first_response_at from Communications that
+	# predate the hook, so the metric has a history. Here, not in patches.txt, because the
+	# column is a FIXTURE Custom Field and sync_fixtures() runs after the post-model-sync
+	# patches. Fills blanks only; one cheap statement on every later migrate.
+	"erpnext_enhancements.crm_enhancements.lead_triage.backfill_first_responses",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 	# Hide the "Project" DocType link in the core Projects module sidebar (user request)
 	"erpnext_enhancements.setup.workspace_tweaks.hide_core_sidebar_items",
