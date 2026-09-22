@@ -1577,6 +1577,7 @@ def snapshot_marketing_web():
 
 	sessions = users = clicks = impressions = None
 	ga4_ok = gsc_ok = False
+	gsc_site = None
 	errors = []
 	channels = []
 	try:
@@ -1610,11 +1611,16 @@ def snapshot_marketing_web():
 			clicks = _sum_dataset(st, "click")
 			impressions = _sum_dataset(st, "impression")
 			gsc_ok = True
+			# Which property form Search Console accepted (sc-domain: or a URL prefix): prod
+			# stores a bare domain, and get_gsc_data tries each form (TASK-2026-01474).
+			gsc_site = gsc.get("property")
 	except Exception:
 		errors.append("GSC exception")
 		frappe.log_error(frappe.get_traceback(), "KPI marketing web — GSC")
 
 	status = f"GA4 {'✓' if ga4_ok else '✗'} · GSC {'✓' if gsc_ok else '✗'}"
+	if gsc_site:
+		status = f"{status} ({gsc_site})"[:140]
 	today = nowdate()
 	name = f"MWS-{today}"
 	if frappe.db.exists("Marketing Web Snapshot", name):

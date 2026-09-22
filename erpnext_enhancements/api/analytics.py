@@ -38,6 +38,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from erpnext_enhancements.utils.error_throttle import log_error_throttled
+from erpnext_enhancements.utils.search_console import rolling_sums, site_candidates, window_for
 
 
 @frappe.whitelist()
@@ -244,6 +245,73 @@ def get_ga4_data():
 		frappe.log_error(message=frappe.get_traceback(), title="GA4 API Error")
 		return {"error": f"Failed to fetch GA4 data: {e!s}"}
 
+#: Where the Search Console property form that last answered is remembered, so the nightly
+#: pull does not spend a refused request on the wrong form every run.
+GSC_SITE_CACHE_KEY = "ee_gsc_working_site"
+GSC_SITE_CACHE_SECONDS = 86400
+
+#: Statuses that mean "this property string is not one we may read". Tried against the next
+#: candidate form rather than treated as the answer.
+GSC_REFUSED = (401, 403, 404)
+
+
+def _gsc_service(ga4_settings):
+	"""``(service, service_account_email, error)`` for the configured Search Console access."""
+	if not ga4_settings.credentials_json:
+		return None, None, "Credentials JSON file is missing in GA4 Settings."
+	credentials_url = ga4_settings.credentials_json
+	if not credentials_url.startswith('/private/files/'):
+		return None, None, "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."
+	credentials_path = frappe.get_site_path('private', 'files', credentials_url.split('/')[-1])
+	if not os.path.exists(credentials_path):
+		return None, None, f"Credentials file not found at: {credentials_path}"
+	credentials = service_account.Credentials.from_service_account_file(credentials_path)
+	return build("searchconsole", "v1", credentials=credentials), credentials.service_account_email, None
+
+
+def _http_status(error):
+	status = getattr(getattr(error, "resp", None), "status", None)
+	try:
+		return int(status)
+	except (TypeError, ValueError):
+		return None
+
+
+def _gsc_query_first_site(service, stored, body):
+	"""Run ``body`` against the first property form Search Console accepts.
+
+	Returns ``(site, response, refusals)``; ``site`` is None when every form was refused,
+	and ``refusals`` lists ``(site, status)`` for each form that was. Any other error
+	raises. The accepted form is cached for a day and tried first next time.
+	"""
+	candidates = site_candidates(stored)
+	cached = frappe.cache().get_value(GSC_SITE_CACHE_KEY)
+	if cached in candidates:
+		candidates = [cached] + [c for c in candidates if c != cached]
+	refusals = []
+	for site in candidates:
+		try:
+			response = service.searchanalytics().query(siteUrl=site, body=body).execute()
+		except HttpError as e:
+			status = _http_status(e)
+			if status in GSC_REFUSED:
+				refusals.append((site, status))
+				continue
+			raise
+		frappe.cache().set_value(GSC_SITE_CACHE_KEY, site, expires_in_sec=GSC_SITE_CACHE_SECONDS)
+		return site, response, refusals
+	return None, None, refusals
+
+
+def _gsc_refused_message(stored, refusals, account):
+	tried = ", ".join(f"{site} ({status})" for site, status in refusals) or "no usable form"
+	return (
+		f"Search Console refused every form of {stored!r}: {tried}. "
+		f"Add {account or 'the GA4 service account'} as a user on the property in Search Console "
+		f"(Settings > Users and permissions), then re-run."
+	)
+
+
 @frappe.whitelist()
 def get_gsc_data():
 	"""
@@ -251,83 +319,54 @@ def get_gsc_data():
 	and 'clicks', 'impressions', 'ctr', and 'position' for Top Queries for the past 30 days.
 	It fetches the property URL and credentials file path from the 'GA4 Settings' Single DocType.
 
-	Returns:
-		dict: A dictionary containing 'search_timeline' (formatted for Frappe Charts) and 'top_queries' (formatted for a DataTable).
+	The stored property is tried in every form Search Console accepts
+	(``utils/search_console.site_candidates``): prod stores the bare ``sapphirefountains.com``,
+	which Google reads as the single URL prefix ``http://sapphirefountains.com/``, and a
+	property that does not exist is refused with the same 403 as a missing grant
+	(TASK-2026-01474).
 
-	Raises:
-		frappe.ValidationError: If GSC settings are not configured or credentials file is missing.
-		Exception: If authentication or the GSC API call fails.
+	Returns:
+		dict: A dictionary containing 'search_timeline' (formatted for Frappe Charts), 'top_queries'
+		(formatted for a DataTable), 'top_pages', and 'property' (the form Search Console accepted).
 	"""
 	ga4_settings = frappe.get_doc("GA4 Settings")
 
 	if not ga4_settings.gsc_property_url:
 		return {"error": "GSC Property URL is missing in GA4 Settings."}
 
-	if not ga4_settings.credentials_json:
-		return {"error": "Credentials JSON file is missing in GA4 Settings."}
-
-	credentials_url = ga4_settings.credentials_json
-	if not credentials_url.startswith('/private/files/'):
-		return {"error": "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."}
-
-	credentials_file = credentials_url.split('/')[-1]
-	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
-
-	if not os.path.exists(credentials_path):
-		return {"error": f"Credentials file not found at: {credentials_path}"}
+	service, account, error = _gsc_service(ga4_settings)
+	if error:
+		return {"error": error}
 
 	try:
-		credentials = service_account.Credentials.from_service_account_file(credentials_path)
-		service = build("searchconsole", "v1", credentials=credentials)
-
 		today = dt.date.today()
-		start_date = (today - dt.timedelta(days=30)).strftime("%Y-%m-%d")
-		end_date = today.strftime("%Y-%m-%d")
+		start, end = window_for(today)
+		start_date, end_date = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
-		def fetch_timeline():
-			request_timeline = {
-				"startDate": start_date,
-				"endDate": end_date,
-				"dimensions": ["date"],
-				"rowLimit": 31
-			}
+		site, response_timeline, refusals = _gsc_query_first_site(
+			service,
+			ga4_settings.gsc_property_url,
+			{"startDate": start_date, "endDate": end_date, "dimensions": ["date"], "rowLimit": 31},
+		)
+		if not site:
+			# Permanent, and the traceback says nothing the operator needs. Throttled because
+			# the nightly pull would otherwise re-log it every run: it once buried 34 rows in
+			# the log for one unchanging fact.
+			message = _gsc_refused_message(ga4_settings.gsc_property_url, refusals, account)
+			log_error_throttled(message, "GSC API Error", key="refused")
+			return {"error": message}
+
+		def fetch_dimension(dimension):
 			return service.searchanalytics().query(
-				siteUrl=ga4_settings.gsc_property_url,
-				body=request_timeline
+				siteUrl=site,
+				body={"startDate": start_date, "endDate": end_date, "dimensions": [dimension], "rowLimit": 15},
 			).execute()
 
-		def fetch_keywords():
-			request_keywords = {
-				"startDate": start_date,
-				"endDate": end_date,
-				"dimensions": ["query"],
-				"rowLimit": 15
-			}
-			return service.searchanalytics().query(
-				siteUrl=ga4_settings.gsc_property_url,
-				body=request_keywords
-			).execute()
-
-		def fetch_landing_pages():
-			request_pages = {
-				"startDate": start_date,
-				"endDate": end_date,
-				"dimensions": ["page"],
-				"rowLimit": 15
-			}
-			# GSC API doesn't have an orderBy parameter for searchanalytics.query directly via API.
-			# By default, rows are grouped by dimensions and ordered by clicks descending.
-			return service.searchanalytics().query(
-				siteUrl=ga4_settings.gsc_property_url,
-				body=request_pages
-			).execute()
-
+		# GSC API has no orderBy for searchanalytics.query: rows come back grouped by the
+		# dimension and ordered by clicks descending, which is the order wanted here.
 		with concurrent.futures.ThreadPoolExecutor() as executor:
-			future_timeline = executor.submit(fetch_timeline)
-			future_keywords = executor.submit(fetch_keywords)
-			future_pages = executor.submit(fetch_landing_pages)
-
-			response_timeline = future_timeline.result()
+			future_keywords = executor.submit(fetch_dimension, "query")
+			future_pages = executor.submit(fetch_dimension, "page")
 			response_keywords = future_keywords.result()
 			response_pages = future_pages.result()
 
@@ -390,34 +429,101 @@ def get_gsc_data():
 				]
 			},
 			"top_queries": top_queries,
-			"top_pages": top_pages
+			"top_pages": top_pages,
+			"property": site,
 		}
 
 	except HttpError as e:
-		status = getattr(getattr(e, "resp", None), "status", None)
-		if status in (401, 403, 404):
-			# Permanent, and the traceback says nothing the operator needs: the
-			# service account simply is not a user on this Search Console
-			# property. Google's own 403 body ("User does not have sufficient
-			# permission for site ...") is the useful part, and re-logging a
-			# 40-line traceback for it once per scheduled run buried 34 rows in
-			# the log for one unchanging fact.
-			log_error_throttled(
-				f"Search Console refused {ga4_settings.gsc_property_url!r} with {status}.\n"
-				f"Add the service account as a user on the property in Search Console "
-				f"(Settings > Users and permissions), then re-run.\n\n{e}",
-				"GSC API Error",
-				key=str(status),
-			)
-			return {
-				"error": (
-					f"Search Console denied access to {ga4_settings.gsc_property_url} ({status}). "
-					"Add the service account as a user on that property in Search Console."
-				)
-			}
+		status = _http_status(e)
 		log_error_throttled(frappe.get_traceback(), "GSC API Error", key=str(status))
 		return {"error": f"Failed to fetch GSC data: {e!s}"}
 
 	except Exception as e:
 		log_error_throttled(frappe.get_traceback(), "GSC API Error")
 		return {"error": f"Failed to fetch GSC data: {e!s}"}
+
+
+def backfill_gsc_snapshots(since=None, dry_run=False):
+	"""Fill the organic figures on every Marketing Web Snapshot that Search Console failed.
+
+	``bench --site <site> execute erpnext_enhancements.api.analytics.backfill_gsc_snapshots``
+	(``--kwargs "{'dry_run': 1}"`` to see what it would write first). Not whitelisted.
+
+	From 2026-06-26 every nightly pull recorded ``gsc_ok = 0`` and organic clicks and
+	impressions of zero or blank -- a figure that read as a business fact and was not one.
+	Search Console keeps 16 months of data, so the history is recoverable: one query for
+	daily clicks and impressions across the whole gap, then each night's rolling 30-day sum
+	(the same window the live pull uses) computed locally. Only snapshots with
+	``gsc_ok = 0`` are touched, so a night that succeeded is never overwritten, and running
+	it twice is harmless.
+
+	Run it after the property grant is fixed; until then it reports the same refusal the
+	nightly pull does and writes nothing.
+	"""
+	from frappe.utils import getdate
+
+	filters = {"gsc_ok": 0}
+	if since:
+		filters["snapshot_date"] = [">=", getdate(since)]
+	snapshots = frappe.get_all(
+		"Marketing Web Snapshot",
+		filters=filters,
+		fields=["name", "snapshot_date", "source_status", "pull_error"],
+		order_by="snapshot_date asc",
+		limit_page_length=0,
+	)
+	if not snapshots:
+		return {"updated": 0, "message": "No snapshot is missing Search Console data."}
+
+	ga4_settings = frappe.get_doc("GA4 Settings")
+	if not ga4_settings.gsc_property_url:
+		return {"updated": 0, "error": "GSC Property URL is missing in GA4 Settings."}
+	service, account, error = _gsc_service(ga4_settings)
+	if error:
+		return {"updated": 0, "error": error}
+
+	days = [getdate(s.snapshot_date) for s in snapshots]
+	start, _ = window_for(min(days))
+	site, response, refusals = _gsc_query_first_site(
+		service,
+		ga4_settings.gsc_property_url,
+		{
+			"startDate": start.strftime("%Y-%m-%d"),
+			"endDate": max(days).strftime("%Y-%m-%d"),
+			"dimensions": ["date"],
+			"rowLimit": 25000,
+		},
+	)
+	if not site:
+		return {"updated": 0, "error": _gsc_refused_message(ga4_settings.gsc_property_url, refusals, account)}
+
+	daily = {row["keys"][0]: (row.get("clicks", 0), row.get("impressions", 0)) for row in response.get("rows", [])}
+	sums = rolling_sums(daily, days)
+
+	written = []
+	for snap, day in zip(snapshots, days, strict=True):
+		clicks, impressions = sums[day]
+		written.append({"snapshot": snap.name, "organic_clicks_30": clicks, "organic_impressions_30": impressions})
+		if dry_run:
+			continue
+		# snapshot_marketing_web appends GA4's error, then GSC's, joined by "; ". Cut at the
+		# GSC one rather than splitting on every "; ": a message may contain one itself.
+		kept = snap.pull_error or ""
+		cut = 0 if kept.startswith("GSC") else kept.find("; GSC")
+		if cut != -1:
+			kept = kept[:cut]
+		frappe.db.set_value(
+			"Marketing Web Snapshot",
+			snap.name,
+			{
+				"organic_clicks_30": clicks,
+				"organic_impressions_30": impressions,
+				"gsc_ok": 1,
+				"source_status": (snap.source_status or "").replace("GSC ✗", "GSC ✓ (backfilled)")[:140],
+				"pull_error": kept or None,
+			},
+			update_modified=False,
+		)
+	if not dry_run:
+		frappe.db.commit()
+	return {"property": site, "dry_run": bool(dry_run), "updated": len(written), "rows": written}

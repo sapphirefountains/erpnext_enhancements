@@ -373,6 +373,14 @@ jobs:
       # and no ratio over zero. roas.py is stdlib-only, so no stub.
       - name: Ad Spend ROAS join (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_ad_spend_roas -v
+      # Search Console property forms + snapshot backfill (TASK-2026-01474, v1.505.0). Prod
+      # stores a bare domain, which names no property and draws the same 403 as a missing
+      # grant; pins sc-domain: first, then the URL prefixes, the working form cached, a
+      # non-refusal still raising, and a backfill that reuses the live 30-day window, touches
+      # only gsc_ok = 0 nights and is not whitelisted. Own step: stubs frappe AND the Google
+      # client libraries (CI installs neither) and removes them.
+      - name: Search Console property + backfill (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_search_console -v
       # The placement test above says a DocType is in the right folder. This one says the
       # folder gets INSTALLED. Adding a module to modules.txt is not sufficient on an
       # already-installed site: frappe.model.sync.sync_for() iterates
