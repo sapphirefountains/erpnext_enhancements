@@ -20,10 +20,13 @@ Threat model and the controls that answer it:
   endpoint sees it, which can blank the value we were hoping to catch.
 * **Resource exhaustion** — ``frappe.rate_limiter.rate_limit`` per endpoint, plus
   in-body counters keyed on the session and on a hash of the email. The
-  decorator's IP dimension is honest but weak: ``auth.py:62-70`` takes the FIRST
-  ``X-Forwarded-For`` entry unconditionally, so it is attacker-controlled unless
-  the edge proxy overwrites the header. We record both the claimed and the peer
-  address and never make an IP the sole basis of a decision.
+  decorator's IP dimension: ``auth.py:62-70`` takes the FIRST
+  ``X-Forwarded-For`` entry unconditionally, so it is only as good as the edge.
+  Here nginx's realip file rewrites the header to the real caller, spoof-proof
+  (GCLB -> nginx -> bench; from 2026-07-18 to 2026-08-02 it recorded the load
+  balancer instead -- see ``utils/client_ip.py``, which checks it daily). We
+  record both the claimed and the peer address and never make an IP the sole
+  basis of a decision.
 * **Malicious uploads** — magic-byte sniffing (not extension trust), a total-pixel
   cap read from the image header before decode, a byte cap, and a server-generated
   filename. Files are always private.

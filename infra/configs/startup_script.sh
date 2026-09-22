@@ -121,6 +121,30 @@ id ${deploy_user} &>/dev/null || useradd -m -s /bin/bash ${deploy_user}
 echo "${deploy_user} ALL=(ALL) NOPASSWD: ${deploy_user_sudo_command}" \
   > /etc/sudoers.d/${deploy_user}
 
+# ── Trust the load balancer for the client address ───────
+# GCLB -> nginx -> bench. Without this file nginx sees a Google front end
+# (35.191.x) as every visitor, frappe records that as request_ip, and every
+# IP-keyed rate limit becomes one global bucket (TASK-2026-01478). Installed on
+# every boot from the app checkout, so the repo stays the source of truth and a
+# rebuilt VM gets it back. A candidate that fails `nginx -t` is rolled back
+# rather than left to stop nginx. It lives in conf.d, not in bench's own
+# nginx.conf, because `bench setup production` below regenerates that file.
+# (No brace-style shell variables here: this file is a Terraform templatefile.)
+REALIP_SRC=/home/frappe/frappe-bench/apps/erpnext_enhancements/infra/configs/nginx-realip.conf
+REALIP_DST=/etc/nginx/conf.d/00-realip.conf
+if [ -f "$REALIP_SRC" ] && command -v nginx &>/dev/null; then
+  rm -f "$REALIP_DST.bak"
+  [ -f "$REALIP_DST" ] && cp -p "$REALIP_DST" "$REALIP_DST.bak"
+  install -m 0644 "$REALIP_SRC" "$REALIP_DST"
+  if nginx -t; then
+    echo "[$(date)] Installed $REALIP_DST"
+    rm -f "$REALIP_DST.bak"
+  else
+    echo "[$(date)] WARNING: $REALIP_DST failed nginx -t; restoring the previous copy"
+    if [ -f "$REALIP_DST.bak" ]; then mv -f "$REALIP_DST.bak" "$REALIP_DST"; else rm -f "$REALIP_DST"; fi
+  fi
+fi
+
 # ── Setup nginx if bench exists ──────────────────────────
 if [ -d /home/frappe/frappe-bench ]; then
   sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup production frappe --yes' || true

@@ -880,6 +880,15 @@ jobs:
       # share a process with the other bench-free suites.
       - name: Administrator login alerts (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
+      # Client-IP derivation guard (TASK-2026-01478). GCLB -> nginx -> bench only yields a
+      # real request_ip because of a hand-placed nginx realip file on the VM; this pins that
+      # file (infra/configs/nginx-realip.conf), the startup script that installs it on every
+      # boot (a Terraform templatefile, so a stray ${...} breaks the VM config), and the
+      # address list the daily regression check classifies against -- three places that must
+      # agree. Own step: the database-reading tests put a frappe stub in sys.modules for the
+      # duration of each test and take it out again.
+      - name: Client-IP derivation guard (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_client_ip -v
       # Frappe v16 force-downloads FOUR extensions from /private/files/ and serves everything
       # else inline; frappe's own develop branch widened that list to fourteen. The seven in
       # the gap (.xhtml .svgz .shtml .mhtml .xsl .xslt .swf) are served from OUR origin with a

@@ -60,11 +60,13 @@ form we do not control.
 * **Never POST a key named ``sid``.** frappe pops it during auth to resume a
   *login* session, before the handler binds arguments. Anything named ``sid``
   here is silently swallowed and the request downgrades to Guest.
-* **``X-Forwarded-For`` is advisory.** ``auth.py`` takes the first entry
-  unconditionally, so behind an *appending* proxy it is attacker-controlled. We
-  store it for forensics and never make it the sole basis of a decision. Confirm
-  the Cloudflare -> GCLB -> bench chain overwrites rather than appends before
-  trusting it for anything.
+* **The client address is a rate-limit key, never a credential.** ``auth.py``
+  takes the first ``X-Forwarded-For`` entry unconditionally. On this host the
+  chain is GCLB -> nginx -> bench (no Cloudflare in front of erp), and nginx's
+  realip file rewrites that header to the real caller, spoof-proof -- verified
+  2026-09-22. That makes the rate limit per caller, but only while the file is
+  on the VM (``utils/client_ip.py`` checks daily). So the address is recorded
+  for forensics and keys the limit; the bearer secret is what decides.
 * **Errors are generic.** A duplicate-email check would turn this into an oracle
   for "is this person a customer of yours?", so there isn't one; de-duplication
   is a downstream review problem, not a response-code problem.

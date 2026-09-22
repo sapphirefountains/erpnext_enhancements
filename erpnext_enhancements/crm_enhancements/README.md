@@ -192,9 +192,13 @@ optional:
 4. `fmr_default_owner` set. Deliberately not guessed by the seed patch — a wrong
    guess routes real customers to the wrong person, so conversion fails loudly
    instead.
-5. **Confirm the edge proxy OVERWRITES `X-Forwarded-For` rather than appending.**
-   `auth.py:62-70` takes the first entry unconditionally, so an appending proxy
-   makes every IP-keyed rate limit spoofable.
+5. **Confirm the client address is real.** `auth.py:62-70` takes the first
+   `X-Forwarded-For` entry unconditionally, so every IP-keyed rate limit is only as
+   good as the edge. The chain is GCLB → nginx → bench, and nginx's realip file
+   (`infra/configs/nginx-realip.conf`, on the VM since 2026-08-03) makes it the real
+   caller, spoof-proof. `bench --site <site> execute
+   erpnext_enhancements.utils.client_ip.check_client_ip_derivation` should report
+   `"proxy": 0`; a daily run of the same check writes an Error Log row if it stops.
 
 ## Sales Pipeline page (`/app/sales-pipeline`)
 

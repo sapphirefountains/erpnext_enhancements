@@ -172,18 +172,21 @@ automatically, and pretending otherwise is how enquiries get lost quietly.
 
 ---
 
-## Known weakness: the rate limit is not per-client
+## The rate limit is per caller — while one nginx file stays in place
 
 `submit_web_lead` carries `@rate_limit(limit=120, seconds=3600)`, which keys on
-`frappe.local.request_ip`. As of 2026-08-13 that address is **unreliable on this
-infrastructure** — it frequently records the Google load balancer rather than the caller, so
-the limit behaves as a single global budget shared by every source, and a caller who sets
-their own `X-Forwarded-For` can very likely land in a bucket of their choosing.
+`frappe.local.request_ip`. An earlier revision of this section (2026-08-13) called that
+address unreliable. It had been fixed ten days before: `/etc/nginx/conf.d/00-realip.conf`
+went onto the VM on **2026-08-03**, no login since has been recorded from a load-balancer
+address, and on 2026-09-22 a request carrying a forged `X-Forwarded-For` was keyed on its real
+caller, not on the forged value. `erp` is **GCLB → nginx → bench, with no Cloudflare in
+front**, unlike `www`.
 
-This does not undermine the ingress itself: `web_lead.py` treats the IP as advisory, never
-decides on it, and gates on the bearer secret. But do not read the 120/hour as a per-client
-control, and do not add one that depends on the IP.
+What that means for this integration: every submission arrives from **WP Engine's egress
+address**, so the 120/hour is the WordPress site's own budget, and a stranger hammering the
+endpoint without the secret spends their own bucket rather than the site's.
 
-The investigation is on **TASK-2026-01478**; the topology finding it corrects — `erp` is
-**GCLB → nginx → bench with no Cloudflare in front**, unlike `www` — is recorded there and in
-the attribution runbook.
+It holds only while that nginx file is on the VM. Its source is
+[`infra/configs/nginx-realip.conf`](../../infra/configs/nginx-realip.conf); a daily check writes
+an Error Log row titled **Client IP derivation regressed** if it goes missing. See step 3 of
+the attribution runbook's pre-flight, and **TASK-2026-01478**.
