@@ -15,6 +15,13 @@ dispatch, so a class-level wrap applied from ``assistant_tools/__init__`` is
 in place before any tool executes in a fresh worker — and ``tool_adapter``
 bypasses ``execute_tool`` entirely.
 
+Re-verified against FAC 3.0.0 (written against 2.4.3): ``_safe_execute`` is unchanged, and
+the new FAC Chat does not add a third execution path. Its cloud runtime is registered as a
+per-user OAuth client of this site's own ``handle_mcp`` endpoint (``chat/api/auth.py``), so a
+tool call from the Desk widget or ``/copilot`` arrives exactly like one from Claude or Triton
+and passes through this wrapper. FAC Chat's own per-tool Ask/Allow/Block approvals sit in
+FAC's cloud, in front of this gate, not instead of it.
+
 Deliberately desk-only confirmation: there is NO MCP-exposed confirm tool — a
 model-callable confirm would collapse the human-in-the-loop guarantee to a
 prompt-injection-resistant-as-tissue-paper convention. The model retrieves the
@@ -48,6 +55,19 @@ EXPLICIT_MUTATING = {
     "run_python_code",
     "create_dashboard",
     "create_dashboard_chart",
+    # FAC 3.0.0's `faco` plugin (disabled on prod until someone ticks it in FAC's plugin
+    # settings). FAC's own detector already calls both `write`, so the category branch would
+    # gate them too -- listed here because this set exists precisely so a write never depends
+    # on a configuration row being present and right.
+    #
+    # send_email queues mail from the site's own Email Account to ANY address the model
+    # supplies, and declares `requires_permission = None`, so every Assistant User holds it.
+    # That is the shape of an exfiltration channel: one injected instruction in a document the
+    # model reads, and the data it just read leaves the building under our domain's name.
+    "send_email",
+    # generate_document renders markdown to a PDF and saves it as a private File -- a create,
+    # which FAC itself reclassified from read_only to write in 3.0.0.
+    "generate_document",
 }
 
 # Privileged-but-read-only: FAC enforces read-only SQL for run_database_query
@@ -154,6 +174,9 @@ HIGH_RISK = {
     "remote_wipe_device",
     "remote_lock_device",
     "run_device_script",
+    # An email cannot be recalled once the queue flushes, and see EXPLICIT_MUTATING for why
+    # this one in particular is an exfiltration channel rather than a notification.
+    "send_email",
 }
 LOW_RISK = {
     "create_document",
@@ -162,6 +185,8 @@ LOW_RISK = {
     "create_followup_task",
     "save_water_design",
     "author_training_course",
+    # a private File the requester owns; nothing existing changes and deleting it undoes it
+    "generate_document",
 }
 
 # Only plain-document create/update may use the settings exempt-doctype
@@ -330,14 +355,22 @@ def annotations_for(tool_name):
     """MCP ToolAnnotations (+ ``x-ee-*`` risk band) for a tool, derived from the
     classification sets above so this gate stays the single source of truth.
 
-    FAC forwards a tool's ``annotations`` verbatim in its ``tools/list`` response
-    (it reads ``getattr(tool, "annotations", None)``), so an MCP client such as
-    Triton can read a tool's mutation/risk from here instead of guessing from the
-    verb — which is how Triton was mis-classifying the oddly-named device tools
-    (``remote_wipe_device`` / ``run_device_script`` / …) as read-only and skipping
-    its confirmation step. Mutating tools advertise ``readOnlyHint: False`` +
-    ``destructiveHint`` + an ``x-ee-risk`` band; explicit read tools advertise
-    ``readOnlyHint: True``; unknown tools get ``{}`` (the client decides).
+    FAC reads ``getattr(tool, "annotations", None)`` into its ``tools/list``
+    response, so an MCP client such as Triton can read a tool's mutation/risk from
+    here instead of guessing from the verb — which is how Triton was
+    mis-classifying the oddly-named device tools (``remote_wipe_device`` /
+    ``run_device_script`` / …) as read-only and skipping its confirmation step.
+    Mutating tools advertise ``readOnlyHint: False`` + ``destructiveHint`` + an
+    ``x-ee-risk`` band; explicit read tools advertise ``readOnlyHint: True``;
+    unknown tools get ``{}`` (the client decides).
+
+    **Not verbatim since FAC 2.5.0.** FAC merges hints derived from the tool's
+    *FAC category* over these (``{**tool_annotations, **category_hints}``), and it
+    seeds every external tool as ``read_write`` → ``readOnlyHint: False``. So every
+    read tool here was advertised as a write until
+    ``ai_governance/fac_tool_categories.py`` began aligning the categories with
+    these annotations. The ``x-ee-*`` keys were never overridden, which is why
+    Triton (it reads ``x-ee-mutation`` first) did not notice.
 
     Pure / bench-free (no frappe calls), so it is safe to call from a tool's
     ``__init__`` and from the schema tests' stub environment."""
@@ -376,6 +409,22 @@ def summarize_tool_call(tool_name, arguments):
         return "Create a dashboard"
     if tool_name == "create_dashboard_chart":
         return "Create a dashboard chart"
+    if tool_name == "send_email":
+        # The recipients ARE the decision, so the card names them rather than counting them:
+        # "Send an email to 1 recipient" reads the same whether that is a colleague or a
+        # stranger's address an injected instruction supplied.
+        recipients = args.get("recipients") or []
+        if isinstance(recipients, str):
+            recipients = [recipients]
+        shown = ", ".join(str(r) for r in list(recipients)[:3])
+        if len(recipients) > 3:
+            shown += f" (+{len(recipients) - 3} more)"
+        subject = (args.get("subject") or "").strip()
+        snippet = (subject[:60] + "…") if len(subject) > 60 else subject
+        return f"Send an email to {shown or 'no recipients'}: “{snippet}”".strip()
+    if tool_name == "generate_document":
+        label = (args.get("title") or args.get("filename") or "").strip()
+        return f"Generate a PDF document {label}".strip()
     if tool_name == "create_followup_task":
         text = (args.get("description") or "").strip()
         snippet = (text[:60] + "…") if len(text) > 60 else text
@@ -583,6 +632,27 @@ def insert_action_log(
 
 # ----------------------------------------------------------------- proposal
 
+# FAC 3.0.0 reads an `X-AR-Session-Id` header into `frappe.local.ar_session_id` when the call
+# comes from FAC Chat's cloud runtime ("AR"), which reaches this site through the very same
+# `handle_mcp` endpoint as every other client -- so its tool calls land in this gate too. That
+# header names the CONVERSATION. FAC's own `assistant_session_id` is no substitute: absent an
+# `Mcp-Session-Id` header it is a fresh UUID per request, so on a stateless endpoint it
+# identifies nothing a human could look up afterwards.
+FAC_CHAT_CLIENT_ID = "fac-chat"
+
+
+def _session_id():
+    local = getattr(frappe, "local", None)
+    return getattr(local, "ar_session_id", None) or getattr(local, "assistant_session_id", None)
+
+
+def _client_id():
+    local = getattr(frappe, "local", None)
+    client = getattr(local, "assistant_client_id", None)
+    if not client and getattr(local, "ar_session_id", None):
+        return FAC_CHAT_CLIENT_ID
+    return client
+
 
 def _propose(tool, arguments):
     user = frappe.session.user
@@ -623,8 +693,8 @@ def _propose(tool, arguments):
             "risk": risk,
             "status": "Pending",
             "requested_by": user,
-            "client_id": getattr(frappe.local, "assistant_client_id", None),
-            "session_id": getattr(frappe.local, "assistant_session_id", None),
+            "client_id": _client_id(),
+            "session_id": _session_id(),
             "arguments": json.dumps(sanitize_arguments(arguments), default=str, indent=1),
             "args_hash": fingerprint,
             "target_doctype": (arguments or {}).get("doctype"),

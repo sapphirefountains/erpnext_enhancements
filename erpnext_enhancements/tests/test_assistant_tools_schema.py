@@ -29,18 +29,36 @@ REPO_ROOT = APP_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Tool names shipped by FAC's bundled plugins (core, data_science,
-# visualization) as of v2.4.3, plus the search/fetch aliases. External tool
-# names must not collide with any of these.
+# Tool names shipped by FAC's bundled plugins (core, data_science, visualization,
+# faco) as of v3.0.0, plus the search/fetch aliases. External tool names must not
+# collide with any of these. 3.0.0 removed search_doctype + search_link (folded
+# into search_documents) and added the faco plugin's eight tools -- which ship
+# disabled, but a name we took would collide the day someone enabled it.
 FAC_BUILTIN_TOOL_NAMES = {
     "create_document", "get_document", "update_document", "list_documents",
-    "delete_document", "submit_document", "search_documents", "search_doctype",
-    "search_link", "chatgpt_search", "chatgpt_fetch", "search", "fetch",
+    "delete_document", "submit_document", "search_documents",
+    "chatgpt_search", "chatgpt_fetch", "search", "fetch",
     "get_doctype_info", "generate_report", "report_list", "report_requirements",
     "run_workflow", "get_pending_approvals", "run_python_code",
     "analyze_business_data", "run_database_query", "extract_file_content",
     "create_dashboard", "create_dashboard_chart", "list_user_dashboards",
+    # faco (3.0.0)
+    "send_email", "generate_document", "browser_get_form_data",
+    "browser_get_page_context", "browser_capture_diagnostics", "browser_navigate_to",
+    "browser_take_screenshot", "browser_wait_for_page",
 }
+
+# frappe_assistant_core.utils.tool_category_detector.category_to_annotations, v3.0.0
+# (unchanged since it arrived in 2.5.0). fac_endpoint merges these OVER a tool's own
+# annotations in tools/list: {**tool.annotations, **FAC_CATEGORY_HINTS[category]}.
+FAC_CATEGORY_HINTS = {
+    "read_only": {"readOnlyHint": True},
+    "write": {"readOnlyHint": False},
+    "read_write": {"readOnlyHint": False},
+    "privileged": {"readOnlyHint": False, "destructiveHint": True},
+}
+
+FAC_CATEGORY_MODULE = "erpnext_enhancements.ai_governance.fac_tool_categories"
 
 SKILL_ID_RE = re.compile(r"^[a-z0-9_-]+$")
 SKILL_TYPES = {"Tool Usage", "Workflow"}
@@ -256,7 +274,7 @@ class TestAssistantToolsContract(unittest.TestCase):
 
     def test_annotations_well_formed(self):
         # Any tool that sets annotations must use a JSON-serialisable dict with a
-        # boolean readOnlyHint and a valid risk band (FAC forwards it verbatim).
+        # boolean readOnlyHint and a valid risk band (FAC reads it into tools/list).
         for path, _module_name, _cls, tool in self.tools:
             ann = getattr(tool, "annotations", None)
             if ann is None:
@@ -266,6 +284,180 @@ class TestAssistantToolsContract(unittest.TestCase):
                 self.assertIsInstance(ann["readOnlyHint"], bool, path)
             if "x-ee-risk" in ann:
                 self.assertIn(ann["x-ee-risk"], {"low", "medium", "high"}, path)
+
+    def test_fac_category_reproduces_each_tools_own_hints(self):
+        # Since FAC 2.5.0, tools/list is {**tool.annotations, **hints(FAC category)}, and FAC
+        # seeds every external tool as read_write. fac_tool_categories writes the category
+        # that makes that merge a no-op. If a tool's annotations mapped to NO category, its
+        # row would stay read_write and a read tool would be advertised as a write again.
+        from erpnext_enhancements.ai_governance.fac_tool_categories import category_for_annotations
+        from erpnext_enhancements.assistant_tools._gate import EXPLICIT_READONLY, HIGH_RISK
+
+        for path, _module_name, _cls, tool in self.tools:
+            category = category_for_annotations(tool.annotations)
+            if tool.name in EXPLICIT_READONLY:
+                expected = "read_only"
+            elif tool.name in HIGH_RISK:
+                expected = "privileged"
+            else:
+                expected = "write"
+            self.assertEqual(category, expected, f"{path}: FAC category")
+            merged = {**tool.annotations, **FAC_CATEGORY_HINTS[category]}
+            self.assertEqual(
+                merged, tool.annotations,
+                f"{path}: FAC's category hints would still override the tool's own",
+            )
+
+    def test_fac_default_category_is_what_broke_the_read_tools(self):
+        # Keeps the reason for fac_tool_categories executable: under FAC's default the merge
+        # flips every read tool's readOnlyHint. If FAC ever stops overriding, this fails and
+        # the sync can be retired.
+        from erpnext_enhancements.assistant_tools._gate import EXPLICIT_READONLY
+
+        read_tools = [tool for *_rest, tool in self.tools if tool.name in EXPLICIT_READONLY]
+        self.assertTrue(read_tools)
+        for tool in read_tools:
+            merged = {**tool.annotations, **FAC_CATEGORY_HINTS["read_write"]}
+            self.assertIs(merged["readOnlyHint"], False, tool.name)
+
+
+class TestFacToolCategorySync(unittest.TestCase):
+    """ai_governance/fac_tool_categories: pure mapping, hook wiring, and both entry points
+    against a mocked frappe (the module never imports FAC, so no FAC stub is involved)."""
+
+    @classmethod
+    def setUpClass(cls):
+        install_stubs()
+        import importlib
+
+        cls.mod = importlib.import_module(FAC_CATEGORY_MODULE)
+        cls.paths = hook_value("assistant_tools") or []
+
+    def test_category_for_annotations(self):
+        f = self.mod.category_for_annotations
+        self.assertEqual(f({"readOnlyHint": True, "x-ee-mutation": False}), "read_only")
+        self.assertEqual(f({"readOnlyHint": False, "destructiveHint": False}), "write")
+        self.assertEqual(f({"readOnlyHint": False, "destructiveHint": True}), "privileged")
+        # a tool that asserts nothing is left to FAC, never guessed at
+        for nothing in (None, {}, {"x-ee-mutation": True}, "readOnlyHint"):
+            self.assertIsNone(f(nothing), nothing)
+
+    def test_hooks_wire_both_entry_points(self):
+        self.assertIn(f"{FAC_CATEGORY_MODULE}.sync_fac_tool_categories", hook_value("after_migrate"))
+        doc_events = hook_value("doc_events")
+        self.assertEqual(
+            doc_events["FAC Tool Configuration"]["before_insert"],
+            f"{FAC_CATEGORY_MODULE}.set_category_before_insert",
+        )
+        for attr in ("sync_fac_tool_categories", "set_category_before_insert"):
+            self.assertTrue(callable(getattr(self.mod, attr)), attr)
+
+    # ---- mocked frappe -------------------------------------------------------------
+
+    def _patch(self, *, table_exists=True, rows=(), attr_error_for=()):
+        """Patch the module's frappe with just enough surface; returns (saved, errors)."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        saved, errors = [], []
+        tools = {path.rsplit(".", 2)[-2]: path for path in self.paths}
+
+        def get_attr(path):
+            name = path.rsplit(".", 2)[-2]
+            if name in attr_error_for:
+                raise ImportError(f"cannot import {name}")
+            module_path, class_name = path.rsplit(".", 1)
+            return getattr(__import__(module_path, fromlist=[class_name]), class_name)
+
+        store = {row["name"]: dict(row) for row in rows}
+
+        class Doc(SimpleNamespace):
+            def save(self, ignore_permissions=False):
+                saved.append((self.name, self.tool_category, self.category_override))
+
+        def get_all(doctype, filters=None, fields=None):
+            wanted = set(filters["tool_name"][1])
+            return [SimpleNamespace(**r) for r in store.values() if r["tool_name"] in wanted]
+
+        frappe = self.mod.frappe
+        patches = [
+            mock.patch.object(frappe, "get_hooks", lambda hook, app_name=None: list(tools.values()), create=True),
+            mock.patch.object(frappe, "get_attr", get_attr, create=True),
+            mock.patch.object(
+                frappe, "db", SimpleNamespace(table_exists=lambda dt: table_exists), create=True
+            ),
+            mock.patch.object(frappe, "get_all", get_all, create=True),
+            mock.patch.object(frappe, "get_doc", lambda dt, name: Doc(**store[name]), create=True),
+            mock.patch.object(frappe, "log_error", lambda *a, **k: errors.append(a), create=True),
+            mock.patch.object(frappe, "get_traceback", lambda *a, **k: "tb", create=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return saved, errors
+
+    def test_sync_is_inert_without_fac(self):
+        saved, errors = self._patch(table_exists=False)
+        self.mod.sync_fac_tool_categories()
+        self.assertEqual((saved, errors), ([], []))
+
+    def test_sync_fixes_seeded_rows_skips_correct_ones_and_survives_a_bad_tool(self):
+        rows = [
+            # as FAC seeded them on prod
+            {"name": "water_calc", "tool_name": "water_calc", "tool_category": "read_write", "category_override": 0},
+            {"name": "remote_wipe_device", "tool_name": "remote_wipe_device", "tool_category": "read_write", "category_override": 0},
+            {"name": "save_water_design", "tool_name": "save_water_design", "tool_category": "read_write", "category_override": 0},
+            # already aligned: must not be re-saved
+            {"name": "kpi_dashboard_status", "tool_name": "kpi_dashboard_status", "tool_category": "read_only", "category_override": 1},
+            # right category but FAC's re-detect patches would still own it: take it
+            {"name": "item_naming_check", "tool_name": "item_naming_check", "tool_category": "read_only", "category_override": 0},
+            # FAC's own tool: never ours to touch, whatever its row says
+            {"name": "run_database_query", "tool_name": "run_database_query", "tool_category": "privileged", "category_override": 0},
+            # a tool that fails to import is logged, and the rest still run
+            {"name": "locate_device", "tool_name": "locate_device", "tool_category": "read_write", "category_override": 0},
+        ]
+        saved, errors = self._patch(rows=rows, attr_error_for={"locate_device"})
+        self.mod.sync_fac_tool_categories()
+        self.assertEqual(
+            sorted(saved),
+            sorted([
+                ("water_calc", "read_only", 1),
+                ("remote_wipe_device", "privileged", 1),
+                ("save_water_design", "write", 1),
+                ("item_naming_check", "read_only", 1),
+            ]),
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("locate_device", errors[0][0])
+
+    def test_before_insert_stamps_ours_and_ignores_the_rest(self):
+        from types import SimpleNamespace
+
+        saved, errors = self._patch()
+
+        def row(tool_name):
+            doc = SimpleNamespace(tool_name=tool_name, tool_category="read_write", category_override=0)
+            doc.get = lambda key: getattr(doc, key, None)
+            return doc
+
+        ours = row("training_compliance_status")
+        self.mod.set_category_before_insert(ours, "before_insert")
+        self.assertEqual((ours.tool_category, ours.category_override), ("read_only", 1))
+
+        theirs = row("send_email")
+        self.mod.set_category_before_insert(theirs, "before_insert")
+        self.assertEqual((theirs.tool_category, theirs.category_override), ("read_write", 0))
+        self.assertEqual((saved, errors), ([], []))
+
+    def test_before_insert_never_raises(self):
+        from types import SimpleNamespace
+
+        saved, errors = self._patch(attr_error_for={"water_calc"})
+        doc = SimpleNamespace(tool_name="water_calc", tool_category="read_write", category_override=0)
+        doc.get = lambda key: getattr(doc, key, None)
+        self.mod.set_category_before_insert(doc, "before_insert")  # must not raise
+        self.assertEqual((doc.tool_category, doc.category_override), ("read_write", 0))
+        self.assertEqual(len(errors), 1)
 
 
 class TestAssistantSkillsManifest(unittest.TestCase):

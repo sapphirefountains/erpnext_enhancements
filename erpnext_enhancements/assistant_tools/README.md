@@ -37,7 +37,37 @@ for AI Writes** is ON (default OFF — ships dormant):
 - **FAC-upgrade risk**: `_safe_execute` is private FAC API. `apply_gate()`
   logs an Error Log entry when the seam is missing, and the integration
   canary test (`test_ai_gating_integration.test_gate_marker_present`) fails
-  on bench CI. Written against FAC v2.4.3.
+  on bench CI. Written against FAC v2.4.3; **re-verified against v3.0.0** (see
+  "FAC 3.0.0" below).
+
+## FAC 3.0.0 (tagged and on prod 2026-09-23; verified the same day)
+
+What changed upstream, and what it meant here:
+
+- **The integration contract did not move.** Same three hooks (`assistant_tools`,
+  `assistant_skills`, `assistant_tool_configs`), same `BaseTool`, same `_safe_execute` seam.
+- **FAC Chat** (Desk widget + `/copilot`; off by default, a paid FAC Cloud service) is not a
+  new execution path. Its cloud runtime registers as a per-user OAuth client of this site's
+  `handle_mcp`, so every tool call it makes passes through the gate. It sends
+  `X-AR-Session-Id`, which FAC puts on `frappe.local.ar_session_id`; the gate now records
+  that as the pending action's `session_id` (and `fac-chat` as `client_id`), because FAC's own
+  `assistant_session_id` is a fresh UUID per request on a stateless endpoint.
+- **New `faco` plugin tools** (disabled on prod until ticked in FAC's plugin settings).
+  `send_email` is **HIGH risk** in `EXPLICIT_MUTATING`: it mails any address from the site's
+  own account and needs no DocPerm, so it is an exfiltration channel under prompt injection.
+  `generate_document` (markdown → private PDF File) is a Low-risk write. The six `browser_*`
+  tools are read-only per FAC and pass through; they drive the FAC Chat widget's tab and do
+  nothing useful for any other client.
+- **`search_doctype` and `search_link` are gone**, folded into `search_documents`
+  (`doctype` for one DocType, `purpose="link_value"` for Link-field resolution). Nothing here
+  named them; Triton did (fixed there).
+- **FAC no longer blocks *reads* of admin DocTypes** for non-System-Managers (Error Log,
+  Access Log, Email Queue, OAuth Bearer Token…); Frappe's DocPerms decide. Writes to
+  code/schema/permission DocTypes (Server Script, Custom Field, Role, Workflow…) are refused
+  over MCP for everyone but System Manager. Our `DENYLIST_DOCTYPES` is unaffected — it exists
+  because raw SQL never consulted either layer.
+- **Categories override annotations** — not new in 3.0 (it arrived in 2.5.0), but found
+  during this review. See "Classification is mandatory" below.
 
 Manual smoke test: enable the flag, ask a connected assistant to create a
 ToDo → expect the confirmation message + desk notification; confirm in the
@@ -135,8 +165,9 @@ For the same reason, do **not** add `frappe_assistant_core` to
   nothing and the client guessing.
   `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
   / `destructiveHint`, plus an `x-ee-mutation` / `x-ee-risk` band) from the
-  gate's classification sets, and FAC forwards a tool's `annotations` verbatim
-  in `tools/list`. This lets an MCP **client** (e.g. Triton) read a tool's
+  gate's classification sets, and FAC reads a tool's `annotations` into
+  `tools/list` (with its category's hints merged over them — see "Classification
+  is mandatory"). This lets an MCP **client** (e.g. Triton) read a tool's
   mutation/risk from the catalog instead of guessing from its verb — closing a
   safety gap where the oddly-named device tools (`remote_wipe_device`,
   `run_device_script`, …) were guessed read-only and skipped the client's
@@ -210,9 +241,20 @@ control reaches the fail-closed `return True`. **An unclassified read tool is
 gated as a write**: with `ai_write_gating_enabled` on it records an AI Pending
 Action and returns the anti-fabrication envelope instead of answering. That is
 what happened to both training tools between v1.216.0 and v1.239.1. The
-annotations are the other half: FAC forwards them verbatim in `tools/list`, and
-without them an MCP client (Triton) guesses mutation from the tool's verb —
-which is how the device tools were mis-read as read-only before v1.71.0.
+annotations are the other half: FAC reads them into `tools/list`, and without
+them an MCP client (Triton) guesses mutation from the tool's verb — which is how
+the device tools were mis-read as read-only before v1.71.0.
+
+**And FAC's category is a third half.** Since FAC 2.5.0, `tools/list` merges hints
+derived from the tool's `FAC Tool Configuration.tool_category` *over* its own
+annotations, and FAC seeds every external tool as `read_write`, which it maps to
+`readOnlyHint: false`. So every read tool here was advertised to Claude, and to FAC
+Chat's approval defaults, as a write (Triton escaped only because it reads
+`x-ee-mutation` first, which FAC never touches). `ai_governance/fac_tool_categories.py`
+now writes each row's category from the tool's own annotations — `read_only`, `write`,
+or `privileged` for `HIGH_RISK` — on insert and on every migrate. The contract test
+`test_fac_category_reproduces_each_tools_own_hints` asserts the merge is a no-op for
+every registered tool.
 
 ## Deployment notes
 
@@ -222,7 +264,8 @@ which is how the device tools were mis-read as read-only before v1.71.0.
 - FAC's **custom_tools plugin must be enabled** on the site, or external tools
   are skipped entirely.
 - On first migrate FAC creates one `FAC Tool Configuration` row per tool
-  (enabled, category `read_write`); optionally flip them to `read_only` in the
-  FAC admin UI. Do **not** rely on that flip for gating — `read_write` is the
-  category that makes `is_mutating()` fail closed, so classification in
-  `_gate.py` is what actually decides, and it is enforced by the contract tests.
+  (enabled, category `read_write`). Since v1.521.0 the app sets each row's category
+  from the tool's annotations (override on) — see "Classification is mandatory". The
+  category shown in FAC's admin UI for these tools is **managed by the app**: change
+  `_gate.py`, not the page, which is reset on the next migrate. It never decided
+  gating anyway — `is_mutating()` consults `_gate.py`'s sets before any category.

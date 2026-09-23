@@ -81,6 +81,24 @@ class TestClassification(unittest.TestCase):
         # privileged/irreversible tools must never be exemptable
         self.assertFalse(_gate.EXEMPTABLE_TOOLS & _gate.HIGH_RISK)
 
+    def test_fac_3_faco_writes_gate_without_a_config_row(self):
+        # FAC 3.0.0's faco plugin. send_email mails any address the model names from the
+        # site's own account and needs no DocPerm, so it must gate -- and be High -- from the
+        # explicit set alone, with no FAC Tool Configuration row to consult (none exists until
+        # someone enables the plugin, and is_mutating must not need FAC importable to decide).
+        for name, risk in (("send_email", "High"), ("generate_document", "Low")):
+            fake = type("T", (), {"name": name})()
+            self.assertTrue(_gate.is_mutating(fake), name)
+            self.assertEqual(_gate.classify_risk(name), risk, name)
+            # and neither may ever skip confirmation through the doctype allowlist
+            self.assertNotIn(name, _gate.EXEMPTABLE_TOOLS)
+
+    def test_fac_3_removed_search_tools_are_not_classified(self):
+        # search_doctype / search_link left FAC in 3.0.0 (folded into search_documents). A
+        # classification entry for a tool that no longer exists is a claim that rots.
+        every = _gate.EXPLICIT_MUTATING | _gate.EXPLICIT_READONLY | _gate.APP_MUTATING
+        self.assertFalse({"search_doctype", "search_link"} & every)
+
 
 class TestSummaries(unittest.TestCase):
     def test_templates(self):
@@ -120,6 +138,69 @@ class TestSummaries(unittest.TestCase):
         )
         self.assertIn("…", long_summary)
         self.assertLess(len(long_summary), 120)
+
+    def test_send_email_summary_names_the_recipients(self):
+        # The recipients are the decision a human is being asked to make, so they are named,
+        # not counted -- "1 recipient" reads the same for a colleague and for an attacker.
+        summary = _gate.summarize_tool_call(
+            "send_email",
+            {"recipients": ["ops@example.com", "x@elsewhere.test"], "subject": "Q3 figures"},
+        )
+        self.assertIn("ops@example.com", summary)
+        self.assertIn("x@elsewhere.test", summary)
+        self.assertIn("Q3 figures", summary)
+        many = _gate.summarize_tool_call(
+            "send_email", {"recipients": [f"u{i}@example.com" for i in range(7)], "subject": "s"}
+        )
+        self.assertIn("(+4 more)", many)
+        # a bare string where FAC's schema says array must not be split into characters
+        self.assertIn(
+            "solo@example.com",
+            _gate.summarize_tool_call("send_email", {"recipients": "solo@example.com", "subject": "s"}),
+        )
+
+    def test_generate_document_summary(self):
+        self.assertEqual(
+            _gate.summarize_tool_call("generate_document", {"filename": "q3.pdf", "title": "Q3 Review"}),
+            "Generate a PDF document Q3 Review",
+        )
+        self.assertEqual(
+            _gate.summarize_tool_call("generate_document", {"filename": "q3.pdf"}),
+            "Generate a PDF document q3.pdf",
+        )
+
+
+class TestRequestContext(unittest.TestCase):
+    """FAC 3.0.0 stamps FAC Chat's conversation id on frappe.local.ar_session_id."""
+
+    def setUp(self):
+        import frappe
+
+        self.frappe = frappe
+        self._saved = getattr(frappe, "local", None)
+        frappe.local = type("Local", (), {})()
+
+    def tearDown(self):
+        if self._saved is None:
+            del self.frappe.local
+        else:
+            self.frappe.local = self._saved
+
+    def test_fac_chat_conversation_wins_over_per_request_uuid(self):
+        self.frappe.local.assistant_session_id = "3f0c-random-per-request"
+        self.frappe.local.ar_session_id = "conv-42"
+        self.assertEqual(_gate._session_id(), "conv-42")
+        self.assertEqual(_gate._client_id(), _gate.FAC_CHAT_CLIENT_ID)
+
+    def test_plain_mcp_client_unchanged(self):
+        self.frappe.local.assistant_session_id = "mcp-session"
+        self.frappe.local.assistant_client_id = "claude-desktop"
+        self.assertEqual(_gate._session_id(), "mcp-session")
+        self.assertEqual(_gate._client_id(), "claude-desktop")
+
+    def test_nothing_set_is_none_not_an_error(self):
+        self.assertIsNone(_gate._session_id())
+        self.assertIsNone(_gate._client_id())
 
 
 class TestEnvelope(unittest.TestCase):
