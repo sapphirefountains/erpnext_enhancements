@@ -221,10 +221,15 @@ publishing scopes are reviewed by the same process.
 | `instagram_content_publish` | publish organic IG feed photo/video posts | Advanced |
 | `instagram_manage_insights` | IG insights for the analytics surface | Advanced |
 | `read_insights` | Facebook Page post insights for the analytics surface | Advanced |
+| `pages_manage_engagement` | the **first comment** on our own Facebook Page post (also needs the MODERATE task) | Advanced |
+| `instagram_manage_comments` | the **first comment** on our own Instagram post | Advanced |
 | `ads_read` | Ads Insights API — spend and campaign reporting; also what Meta requires for IG publishing when the person's Page role comes through Business Manager | Advanced |
 
 *Added 2026-09-22 (TASK-2026-01480):* `read_insights`, because Page post metrics need it and
-`pages_read_engagement` alone does not cover them. The Meta Publishing connection requests exactly
+`pages_read_engagement` alone does not cover them. *Added 2026-09-22 (TASK-2026-01483, Nik's call):*
+`pages_manage_engagement` and `instagram_manage_comments`, for a post's first comment. Neither can
+touch spend, but both can also moderate the Page's comments. Adding them now costs nothing; adding
+them after filing would mean a second review round. The Meta Publishing connection requests exactly
 this list; see [the connectors runbook](marketing-connectors-runbook.md#meta-publishing-facebook-page--instagram).
 
 `instagram_basic` and `pages_show_list` are not in the plan's list but are required

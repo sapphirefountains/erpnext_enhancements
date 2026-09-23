@@ -116,6 +116,11 @@ PUBLISH_OAUTH = {
 			"instagram_content_publish",
 			"instagram_manage_insights",
 			"ads_read",
+			# The first comment (TASK-2026-01483, decided 2026-09-22): Facebook needs
+			# pages_manage_engagement (and the MODERATE task), Instagram instagram_manage_comments.
+			# Neither can touch spend; both can also moderate the Page's comments.
+			"pages_manage_engagement",
+			"instagram_manage_comments",
 		),
 		"scope_separator": ",",
 		"extra_authorize_params": {},
@@ -148,16 +153,31 @@ YOUTUBE_HOST = "www.googleapis.com"
 _V = re.escape(C.META_API_VERSION)
 
 #: (connection, METHOD, host, compiled path regex) for every call ``publish/client.py`` may
-#: send. It holds only the identity reads the Connect flow and the daily token check need;
-#: each publisher (TASK-2026-01483 to 01485) adds its own writes. **No ad endpoint may ever
-#: appear here** -- no ``act_``, ``adAccounts``, ``adCampaigns``, ``adAnalytics``, and not the
-#: Google Ads host -- which ``tests/test_marketing_publish_oauth.py`` enforces.
+#: send: the identity reads the Connect flow and the daily token check need, and each
+#: publisher's own calls (Meta since TASK-2026-01483). **No ad endpoint may ever appear here**
+#: -- no ``act_``, ``adAccounts``, ``adCampaigns``, ``adAnalytics``, and not the Google Ads host
+#: -- and nothing here deletes; ``tests/test_marketing_connectors.py`` and
+#: ``tests/test_marketing_meta_publisher.py`` enforce both. IDs are digits (a Facebook post is
+#: ``{page-id}_{post-id}``), so a path can never name anything but a Page, post, photo, video,
+#: Instagram account, container or media object.
 PUBLISH_ALLOWLIST = tuple(
 	(connection, method, host, re.compile(pattern))
 	for connection, method, host, pattern in (
 		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/me/permissions$"),
 		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/me/accounts$"),
-		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+$"),
+		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+(_\d+)?$"),
+		# Facebook Page (TASK-2026-01483): photos are uploaded unpublished in prepare(), then one
+		# feed post makes them public; a single video goes to /videos. Comments on our own post.
+		(CONNECTION_META, "POST", GRAPH_HOST, rf"^/{_V}/\d+/feed$"),
+		(CONNECTION_META, "POST", GRAPH_HOST, rf"^/{_V}/\d+/photos$"),
+		(CONNECTION_META, "POST", GRAPH_HOST, rf"^/{_V}/\d+/videos$"),
+		(CONNECTION_META, "POST", GRAPH_HOST, rf"^/{_V}/\d+(_\d+)?/comments$"),
+		# Instagram: containers (non-public), then media_publish (the public step). GET .../media
+		# lists recent media, to find a post a timed-out media_publish did in fact publish.
+		(CONNECTION_META, "POST", GRAPH_HOST, rf"^/{_V}/\d+/media$"),
+		(CONNECTION_META, "POST", GRAPH_HOST, rf"^/{_V}/\d+/media_publish$"),
+		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+/media$"),
+		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+/content_publishing_limit$"),
 		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizationAcls$"),
 		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizations/\d+$"),
 		(CONNECTION_YOUTUBE, "GET", YOUTUBE_HOST, r"^/youtube/v3/channels$"),
@@ -201,3 +221,33 @@ META_DEFAULT_PAUSE_SECONDS = 15 * 60
 #: a day, whatever a header says.
 DEFAULT_429_PAUSE_SECONDS = 60
 MAX_PAUSE_SECONDS = 86400
+
+# ---------------------------------------------------------------- Meta publishing (TASK-2026-01483)
+# From Meta's official references, checked 2026-09-22.
+
+#: Instagram captions.
+INSTAGRAM_CAPTION_MAX = 2200
+INSTAGRAM_HASHTAGS_MAX = 30
+INSTAGRAM_MENTIONS_MAX = 20
+#: A carousel holds up to 10 items (and counts as one post). Two is the least that is a carousel.
+INSTAGRAM_CAROUSEL_MAX = 10
+#: Instagram images: JPEG only, aspect ratio 4:5 to 1.91:1. Width outside 320-1440 px is scaled,
+#: not refused, so it is not checked.
+INSTAGRAM_IMAGE_TYPES = ("image/jpeg",)
+INSTAGRAM_IMAGE_RATIO_MIN = 4 / 5
+INSTAGRAM_IMAGE_RATIO_MAX = 1.91
+#: Reels (the only single-video format since Meta retired feed video on 2023-11-09).
+INSTAGRAM_VIDEO_TYPES = ("video/mp4", "video/quicktime")
+INSTAGRAM_REEL_SECONDS_MIN = 3
+INSTAGRAM_REEL_SECONDS_MAX = 15 * 60
+INSTAGRAM_REEL_RATIO_MIN = 0.01
+INSTAGRAM_REEL_RATIO_MAX = 10
+#: Facebook Page photos.
+FACEBOOK_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/bmp", "image/tiff")
+
+#: Container processing: Meta recommends polling at most once a minute for no more than five
+#: minutes. A container still processing after that is retried later (nothing was published).
+CONTAINER_POLL_SECONDS = 30
+CONTAINER_POLL_ATTEMPTS = 10
+#: Instagram error subcode for "the daily publishing limit is reached": treated as a 429.
+INSTAGRAM_LIMIT_SUBCODE = 2207042

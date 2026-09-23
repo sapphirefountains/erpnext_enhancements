@@ -80,30 +80,64 @@ def make_sendable(settings, creds):
 	return sendable
 
 
+#: The Marketing Media Asset fields the checks in ``validation.py`` and ``media.py`` read.
+ASSET_FIELDS = [
+	"name",
+	"title",
+	"asset_type",
+	"usage_rights",
+	"source",
+	"file",
+	"drive_file_id",
+	"gcs_object",
+	"mime_type",
+	"width",
+	"height",
+	"duration_seconds",
+]
+
+
+def post_parts(post):
+	"""``(targets, media)`` of a Social Post document, as plain dicts, media in order.
+
+	Media fields come fresh from the asset, not the fetched copy on the row, which can be stale:
+	rights granted, or dimensions corrected, after the row was added.
+	"""
+	targets = [
+		{
+			"name": row.name,
+			"social_account": row.social_account,
+			"variant_text": row.variant_text,
+			"first_comment": row.first_comment,
+		}
+		for row in post.get("targets") or []
+	]
+	names = [row.asset for row in post.get("media") or [] if row.asset]
+	assets = {}
+	if names:
+		for row in frappe.get_all(ASSET, filters={"name": ["in", names]}, fields=ASSET_FIELDS):
+			assets[row.name] = dict(row)
+	media = [{"asset": name, **assets.get(name, {"name": name})} for name in names]
+	return targets, media
+
+
+def account_networks(names):
+	"""``{account name: network}`` for the given Social Accounts."""
+	names = [n for n in names if n]
+	if not names:
+		return {}
+	return {
+		row.name: row.network
+		for row in frappe.get_all(ACCOUNT, filters={"name": ["in", names]}, fields=["name", "network"])
+	}
+
+
 class FrappeStore:
 	"""The outbox's view of the database. ``outbox`` only ever talks to this."""
 
 	def load_post(self, name):
 		post = frappe.get_doc(POST, name)
-		assets = [row.asset for row in post.media]
-		rights = {}
-		if assets:
-			# Fresh from the asset, not the fetched copy on the row, which can be stale.
-			for row in frappe.get_all(
-				ASSET, filters={"name": ["in", assets]}, fields=["name", "usage_rights"]
-			):
-				rights[row.name] = row.usage_rights
-		media = [{"asset": a, "usage_rights": rights.get(a)} for a in assets]
-		targets = [
-			{
-				"name": row.name,
-				"social_account": row.social_account,
-				"variant_text": row.variant_text,
-				"first_comment": row.first_comment,
-			}
-			for row in post.targets
-		]
-		return post.as_dict(), targets, media
+		return post.as_dict(), *post_parts(post)
 
 	def accounts(self, names):
 		names = [n for n in names if n]
@@ -283,11 +317,14 @@ def run_dispatch(publish_job, lease_id):
 	sendable = make_sendable(settings, creds)
 
 	def prepare(job):
+		# Everything here is non-public: load the post, get a token, and the publisher's own
+		# preparation (Instagram's containers, Facebook's unpublished photos). Only the returned
+		# send() makes anything public, and only it runs after dispatched_at is recorded.
 		publisher = publisher_for(job["network"])
 		connection = P.CONNECTION_FOR[job["network"]]
 		context = publish_context(job)
 		transport = publish_oauth.transport_for(connection, creds, settings=settings)
-		return lambda: publisher.publish(context, transport)
+		return publisher.prepare(context, transport)
 
 	def notify_auth_failure(job, message):
 		connection = P.CONNECTION_FOR.get(job["network"])

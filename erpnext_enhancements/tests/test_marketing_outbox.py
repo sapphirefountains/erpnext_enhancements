@@ -204,6 +204,10 @@ class ClassifyTests(unittest.TestCase):
 			(403, True, O.REJECTED),
 			(500, False, O.RETRY),
 			(None, False, O.RETRY),
+			# A refusal while preparing is a refusal: an Instagram container Meta would not build
+			# is not built on the fifth try either (v1.511.0).
+			(400, False, O.REJECTED),
+			(429, False, O.RETRY),
 		]
 		for status, dispatched, expected in cases:
 			self.assertEqual(O.classify_failure(status, dispatched), expected, (status, dispatched))
@@ -467,6 +471,31 @@ class DispatchTests(unittest.TestCase):
 		store, name = claimed_job(attempts=O.MAX_ATTEMPTS - 1)
 		self.assertEqual(dispatch(store, name, prepare=lambda job: 1 / 0), O.FAILED)
 		self.assertEqual(store.dispatched, [])
+
+	def test_verified_not_published_retries_instead_of_unconfirmed(self):
+		# A publisher that checked with the network after an ambiguous failure, and found the post
+		# is not live (Instagram's container still FINISHED), may be retried (v1.511.0).
+		from erpnext_enhancements.marketing.publish.client import NotPublished
+
+		store, name = claimed_job()
+		self.assertEqual(dispatch(store, name, send=fails(None, NotPublished)), O.PENDING)
+		self.assertEqual(store.notes, [], "nothing ambiguous to tell anyone about")
+		self.assertEqual(store.jobs[name]["dispatched_at"], None)
+
+	def test_a_refusal_while_preparing_fails_without_retrying(self):
+		store, name = claimed_job()
+
+		def prepare(job):
+			raise MarketingAPIError("Instagram", "container ERROR", status=400)
+
+		self.assertEqual(dispatch(store, name, prepare=prepare), O.FAILED)
+		self.assertEqual(store.dispatched, [])
+
+	def test_a_publishers_warning_is_kept_on_a_success(self):
+		store, name = claimed_job()
+		state = dispatch(store, name, send=lambda: {"external_post_id": "1_2", "warning": "no first comment"})
+		self.assertEqual(state, O.PUBLISHED)
+		self.assertEqual(store.jobs[name]["last_error"], "no first comment")
 
 	def test_an_allowlist_refusal_is_a_bug_not_a_retry(self):
 		store, name = claimed_job()

@@ -102,6 +102,10 @@ def classify_failure(status, dispatched, refused_by_allowlist=False):
 		return REJECTED  # a bug: the request was never sent, and resending would be refused again
 	if status == 401:
 		return HOLD  # the credential was refused: the platform did nothing, a person reconnects
+	if status is not None and 400 <= status < 500 and status not in (408, 429):
+		# Refused, before or after dispatch: an Instagram container Meta would not build is not
+		# built on the fifth try either, and each try leaves an orphan behind.
+		return REJECTED
 	if not dispatched:
 		return RETRY  # nothing left the process, so trying again cannot duplicate anything
 	if status in (408, 429):
@@ -228,6 +232,12 @@ def enqueue_problems(post, targets, media, accounts):
 			)
 	if not _text(post.get("body")) and not media:
 		problems.append("it has neither text nor media")
+	# What each network would refuse (TASK-2026-01483): caught here as well as on the form, so a
+	# post that slipped past the form still cannot reach the network.
+	from erpnext_enhancements.marketing.publish import validation
+
+	networks = {name: (account or {}).get("network") for name, account in accounts.items()}
+	problems.extend(validation.post_problems(post, targets, media, networks))
 	return problems
 
 
@@ -332,7 +342,7 @@ def dispatch(store, job_name, lease_id, now_fn, sendable, prepare, notify_auth_f
 	job's new state.
 	"""
 	from erpnext_enhancements.marketing.core.client import MarketingAPIError
-	from erpnext_enhancements.marketing.publish.client import PublishViolation
+	from erpnext_enhancements.marketing.publish.client import NotPublished, PublishViolation
 
 	job = store.get_job(job_name)
 	if not job or job.get("state") != IN_PROGRESS or job.get("lease_id") != lease_id:
@@ -365,6 +375,10 @@ def dispatch(store, job_name, lease_id, now_fn, sendable, prepare, notify_auth_f
 	store.mark_dispatched(job_name, now_fn())  # durable before the request leaves
 	try:
 		result = send()
+	except NotPublished as exc:
+		# The publisher checked with the network after an ambiguous failure and it is NOT live
+		# (an Instagram container still FINISHED, not PUBLISHED): safe to try again.
+		return _record_failure(store, job, RETRY, str(exc), now_fn(), notify_auth_failure)
 	except MarketingAPIError as exc:
 		kind = classify_failure(
 			exc.status, dispatched=True, refused_by_allowlist=isinstance(exc, PublishViolation)
@@ -383,7 +397,9 @@ def record_success(store, job, result, now):
 		"external_post_id": result.get("external_post_id") or None,
 		"permalink": result.get("permalink") or None,
 		"published_at": now,
-		"last_error": None,
+		# The post is live; a follow-up that failed (first comment, permalink) is said here,
+		# never raised -- raising after the public step would turn success into Unconfirmed.
+		"last_error": (result.get("warning") or "")[:1000] or None,
 	}
 	try:
 		_finish(store, job, PUBLISHED, values)

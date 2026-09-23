@@ -12,6 +12,7 @@
   "column_break_post",
   "scheduled_at",
   "campaign",
+  "network_check",
   "content_section",
   "body",
   "link",
@@ -59,6 +60,13 @@
    "in_standard_filter": 1,
    "label": "Campaign",
    "options": "Campaign"
+  },
+  {
+   "description": "What each network would refuse, filled in on every save. It must be empty before the post can be queued: a problem found here is one nobody finds in public.",
+   "fieldname": "network_check",
+   "fieldtype": "Small Text",
+   "label": "Network Check",
+   "read_only": 1
   },
   {
    "fieldname": "content_section",
@@ -119,7 +127,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-22 14:00:00.000000",
+ "modified": "2026-09-22 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Post",
