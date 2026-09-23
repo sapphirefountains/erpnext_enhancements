@@ -29,6 +29,7 @@ import importlib
 MODULES = {
 	"Facebook": "erpnext_enhancements.marketing.publish.publishers.meta",
 	"Instagram": "erpnext_enhancements.marketing.publish.publishers.meta",
+	"LinkedIn": "erpnext_enhancements.marketing.publish.publishers.linkedin",
 }
 
 

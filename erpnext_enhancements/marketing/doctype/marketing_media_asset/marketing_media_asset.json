@@ -34,12 +34,13 @@
    "reqd": 1
   },
   {
+   "description": "Document (PDF, PowerPoint, Word) posts to LinkedIn only.",
    "fieldname": "asset_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Type",
-   "options": "Image\nVideo",
+   "options": "Image\nVideo\nDocument",
    "reqd": 1
   },
   {
@@ -133,7 +134,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-22 14:00:00.000000",
+ "modified": "2026-09-22 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Media Asset",

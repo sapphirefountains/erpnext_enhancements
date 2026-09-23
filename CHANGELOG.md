@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.512.0] - 2026-09-22
+
+**Marketing P2: the LinkedIn publisher, posting as the Company Page.** TASK-2026-01484. Covers
+text, link, single-image, multi-image and document posts, as the task lists; video comes later.
+Nothing can publish on prod yet: nothing approves a post (01486), every switch is off, and LinkedIn's
+Community Management API access has not cleared. Checked against LinkedIn's official references on
+2026-09-22.
+
+### Added
+
+- **`publish/publishers/linkedin.py`,** registered for LinkedIn.
+  - **prepare:** LinkedIn does not fetch media, so each image or document is registered
+    (`initializeUpload`), its bytes PUT to the upload URL, and polled until AVAILABLE.
+    PROCESSING_FAILED is a refusal; slow processing retries. None of this is public, and a
+    **private** file works, read from the site's disk.
+  - **send:** `POST /rest/posts` as `urn:li:organization:{id}`: PUBLIC, MAIN_FEED, PUBLISHED. The
+    new URN, share or ugcPost, comes from the `x-restli-id` header. The permalink is
+    `linkedin.com/feed/update/{urn}/`.
+  - **Link posts:** LinkedIn does not read the page, so a link post is an `article` carrying our
+    *Link Title*. Beside media, the link goes in the text.
+  - **Text:** LinkedIn's little-text format escapes every reserved character, except a `#` that
+    starts a hashtag, so hashtags keep working.
+  - **Creating a post is not idempotent.** After a timeout or 5xx, the Page's ten latest posts are
+    read (`q=author`, FINDER) and the post looked for by its text, with LinkedIn's hashtag template
+    undone. Found is success. **Not found stays ambiguous and becomes Unconfirmed:** absence is not
+    proof, and there is no container to ask as Instagram has.
+  - **The first comment** goes through `socialActions`. LinkedIn's docs disagree on whether
+    `w_organization_social` covers it, so a refusal is only a warning on a published post.
+- **Validation for LinkedIn:**
+  - at most 3,000 characters;
+  - 1 to 20 JPG/PNG/GIF images under 36,152,320 pixels;
+  - a document (PDF, PowerPoint, Word) only on its own;
+  - a link post without media needs a Link Title under 400 characters;
+  - **video refused for now**;
+  - every file must be readable by this app.
+
+  Facebook and Instagram now refuse documents.
+- **Marketing Media Asset → Type *Document*** (adding an option; nothing renamed).
+- **Social Post → *Link Title* and *Link Description*,** shown when there is a link. Both are part of
+  what approval locks.
+- **The publish transport:** per-request headers, raw-byte bodies, and `with_headers` to read a
+  header back. **The bearer token rides on upload PUTs, so the allowlist admits PUT only to
+  LinkedIn's two upload hosts.** A test proves a PUT anywhere else is refused before it is sent.
+- **`media.read_bytes`** reads a local file from the site, private included, or a GCS object through a
+  signed URL to our own bucket, with no bearer token. An external URL is refused: fetching arbitrary
+  addresses from the server is how a server gets turned against its own network.
+- `tests/test_marketing_linkedin_publisher.py`: 22 tests in the marketing CI step, against a scripted
+  LinkedIn that returns headers. Mutation-checked: settling a timeout by re-sending, escaping every
+  `#`, or allowing an upload PUT to another host each fails the suite.
+
+### Noted
+
+- **LinkedIn's Development tier allows 100 API calls per member per day, across everything.** A post
+  costs about three to six. The limit lifts at Standard tier.
+- The pinned `LinkedIn-Version: 202608` is live until 2027-08-17.
+
 ## [1.511.0] - 2026-09-22
 
 **Marketing P2: the Meta publisher, for Facebook Page and Instagram.** TASK-2026-01483. This is the

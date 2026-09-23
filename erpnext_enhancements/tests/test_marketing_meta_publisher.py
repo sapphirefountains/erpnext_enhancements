@@ -464,17 +464,22 @@ class InstagramTests(unittest.TestCase):
 
 
 class WiringTests(unittest.TestCase):
-	def test_registered_for_facebook_and_instagram_only(self):
+	def test_registered_for_facebook_and_instagram(self):
 		self.assertIs(publisher_for("Facebook"), meta)
 		self.assertIs(publisher_for("Instagram"), meta)
-		self.assertIsNone(publisher_for("LinkedIn"))
-		self.assertIsNone(publisher_for("YouTube"))
+		self.assertIsNot(publisher_for("LinkedIn"), meta, "LinkedIn has its own publisher (v1.512.0)")
 
 	def test_the_allowlist_deletes_nothing_and_touches_no_ads(self):
 		for connection, method, host, pattern in P.PUBLISH_ALLOWLIST:
-			self.assertIn(method, ("GET", "POST"), pattern.pattern)
+			self.assertIn(method, ("GET", "POST", "PUT"), pattern.pattern)
 			self.assertNotIn("act_", pattern.pattern)
 			self.assertEqual(host if connection == P.CONNECTION_META else P.GRAPH_HOST, P.GRAPH_HOST)
+			if method == "PUT":
+				# Only LinkedIn's upload URLs take a PUT (v1.512.0): bytes, never an edit.
+				self.assertEqual(connection, P.CONNECTION_LINKEDIN, pattern.pattern)
+				self.assertTrue(
+					pattern.pattern.startswith(("^/dms-uploads/", "^/mediaUpload/")), pattern.pattern
+				)
 
 	def test_first_comment_permissions_are_requested(self):
 		scopes = P.PUBLISH_OAUTH[P.CONNECTION_META]["scopes"]

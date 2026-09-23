@@ -124,8 +124,15 @@ class PublishTransport:
 		except Exception:
 			pass  # an optimisation failing must not fail the request (see ratelimit.py)
 
-	def request(self, method, url, *, params=None, json=None, data=None):
-		"""Send one request and return the parsed JSON body (``{}`` for an empty one)."""
+	def request(self, method, url, *, params=None, json=None, data=None, headers=None, with_headers=False):
+		"""Send one request and return the parsed JSON body (``{}`` for an empty one).
+
+		``headers`` are added for this request only (LinkedIn's ``X-RestLi-Method: FINDER``);
+		``data`` may be raw bytes (an upload PUT). ``with_headers`` returns ``(body, headers)``,
+		for a network that answers in a header (LinkedIn's new post URN is in ``x-restli-id``).
+		The bearer token goes on every request, which is why the allowlist pins hosts: it can
+		reach only the network it belongs to, upload hosts included.
+		"""
 		method = method.upper()
 		if not allowed(self.connection, method, url):
 			raise PublishViolation(
@@ -143,7 +150,7 @@ class PublishTransport:
 					params=params,
 					json=json,
 					data=data,
-					headers=self._headers(),
+					headers={**self._headers(), **(headers or {})},
 					timeout=self.timeout,
 				)
 			except Exception as exc:  # requests.RequestException and friends
@@ -156,12 +163,18 @@ class PublishTransport:
 			status = effective_status(response)  # Meta's dead-token 400 reads as 401
 			self._observed(status, response)
 			if status < 400:
-				if not (response.text or "").strip():
-					return {}
-				try:
-					return response.json()
-				except ValueError:
-					raise MarketingAPIError(self.connection, "response was not JSON", status=status) from None
+				body = {}
+				if (response.text or "").strip():
+					try:
+						body = response.json()
+					except ValueError:
+						if method != "PUT":  # an upload host may answer with anything
+							raise MarketingAPIError(
+								self.connection, "response was not JSON", status=status
+							) from None
+				if with_headers:
+					return body, {str(k).lower(): v for k, v in (response.headers or {}).items()}
+				return body
 
 			if status == 401 and self._refresh and not refreshed:
 				refreshed = True

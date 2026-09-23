@@ -180,6 +180,27 @@ PUBLISH_ALLOWLIST = tuple(
 		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+/content_publishing_limit$"),
 		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizationAcls$"),
 		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizations/\d+$"),
+		# LinkedIn publishing (TASK-2026-01484). Uploads are registered (initializeUpload), the
+		# bytes PUT to the returned upload URL, and the asset read back until AVAILABLE -- all
+		# before the post. URNs appear URL-encoded in paths (urn%3Ali%3Aimage%3A...).
+		(CONNECTION_LINKEDIN, "POST", LINKEDIN_HOST, r"^/rest/(images|documents)$"),
+		(
+			CONNECTION_LINKEDIN,
+			"GET",
+			LINKEDIN_HOST,
+			r"^/rest/(images|documents)/urn%3Ali%3A(image|document)%3A[\w-]+$",
+		),
+		(CONNECTION_LINKEDIN, "POST", LINKEDIN_HOST, r"^/rest/posts$"),
+		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/posts$"),
+		(
+			CONNECTION_LINKEDIN,
+			"POST",
+			LINKEDIN_HOST,
+			r"^/rest/socialActions/urn%3Ali%3A(share|ugcPost)%3A\d+/comments$",
+		),
+		# Upload URLs are LinkedIn's own; the bearer token rides on these PUTs, so only these two.
+		(CONNECTION_LINKEDIN, "PUT", "www.linkedin.com", r"^/dms-uploads/"),
+		(CONNECTION_LINKEDIN, "PUT", LINKEDIN_HOST, r"^/mediaUpload/"),
 		(CONNECTION_YOUTUBE, "GET", YOUTUBE_HOST, r"^/youtube/v3/channels$"),
 	)
 )
@@ -251,3 +272,31 @@ CONTAINER_POLL_SECONDS = 30
 CONTAINER_POLL_ATTEMPTS = 10
 #: Instagram error subcode for "the daily publishing limit is reached": treated as a 429.
 INSTAGRAM_LIMIT_SUBCODE = 2207042
+
+# ---------------------------------------------------------------- LinkedIn publishing (TASK-2026-01484)
+# From LinkedIn's official references, checked 2026-09-22. The Development tier allows 100 calls
+# per member and 500 per app a day, across every API; a post costs about three to six.
+
+#: Commentary: 3,000 characters (the figure LinkedIn publishes; the Posts API names no number).
+LINKEDIN_COMMENTARY_MAX = 3000
+#: A multi-image post: 2 to 20 images. Images JPG, GIF or PNG under 36,152,320 pixels.
+LINKEDIN_IMAGES_MIN = 2
+LINKEDIN_IMAGES_MAX = 20
+LINKEDIN_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif")
+LINKEDIN_IMAGE_PIXELS_MAX = 36_152_320
+#: Documents: PDF, PPT, PPTX, DOC, DOCX; 100 MB and 300 pages. The post needs a title.
+LINKEDIN_DOCUMENT_TYPES = (
+	"application/pdf",
+	"application/vnd.ms-powerpoint",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/msword",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+)
+#: A link post: LinkedIn does not read the page, so the preview's title is ours to send.
+LINKEDIN_ARTICLE_TITLE_MAX = 400
+#: Characters LinkedIn's "little text" format reserves; each is escaped with a backslash. A "#"
+#: that starts a hashtag is left alone, so hashtags stay hashtags.
+LINKEDIN_RESERVED = "\\|{}@[]()<>#*_~"
+#: Waiting for an uploaded image or document to read AVAILABLE.
+LINKEDIN_ASSET_POLL_SECONDS = 5
+LINKEDIN_ASSET_POLL_ATTEMPTS = 24
