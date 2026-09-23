@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 from erpnext_enhancements.procurement_quantities import (
 	NOT_ORDERED,
 	NOT_RECEIVED,
+	OPEN_RULES,
 	ORDER_STATUSES,
 	ORDERED,
 	OVER_ORDERED,
@@ -28,7 +29,9 @@ from erpnext_enhancements.procurement_quantities import (
 	PARTIALLY_RECEIVED,
 	RECEIVE_STATUSES,
 	RECEIVED,
+	SETTLED_PO_STATUSES,
 	dedupe_lines,
+	document_is_open,
 	order_status,
 	plan_receipt,
 	quantity_progress,
@@ -351,3 +354,72 @@ def test_nothing_is_clamped():
 	"""A quantity quietly reduced to fit would be a receipt for goods that did not arrive."""
 	lines, problems = plan_receipt(_order(), {"row-a": 7})
 	assert lines == [] and problems
+
+
+# ---------------------------------------------------------------------------
+# Which documents are open — the tracker's Print → Open
+# ---------------------------------------------------------------------------
+
+
+def test_a_received_order_awaiting_its_bill_is_not_open():
+	"""The case the rule was written around. Billing lives in QuickBooks, so 70 fully
+	received orders on production sit at "To Bill" with no invoice ever coming here. A
+	status-label rule would print every one of them as "open"."""
+	assert document_is_open("Purchase Order", 1, "To Bill", 100) is False
+	assert document_is_open("Purchase Order", 1, "To Receive and Bill", 0) is True
+	assert document_is_open("Purchase Order", 1, "To Receive and Bill", 40) is True
+
+
+def test_closed_and_delivered_orders_are_not_open_whatever_per_received_says():
+	"""Closed is a deliberate "stop chasing this"; Delivered is a drop-ship."""
+	for status in ("Closed", "Delivered"):
+		assert document_is_open("Purchase Order", 1, status, 0) is False
+	assert SETTLED_PO_STATUSES == ("Closed", "Delivered")
+
+
+def test_an_order_on_hold_with_goods_outstanding_is_open():
+	"""Paused is not finished. Same answer as the Project form's "+ Purchase Receipt"
+	picker, which lists every order not Closed/Delivered with goods still to come."""
+	assert document_is_open("Purchase Order", 1, "On Hold", 40) is True
+
+
+def test_drafts_and_cancelled_documents_are_never_open():
+	"""A printed pack of open orders must not carry an order nobody has placed."""
+	for doctype in OPEN_RULES:
+		assert document_is_open(doctype, 0, "Draft", 0) is False
+		assert document_is_open(doctype, 2, "Cancelled", 0) is False
+	# The feed's docstatus comes from frappe as an int, but a missing document reaches this
+	# with None, and junk must not raise mid-feed.
+	assert document_is_open("Purchase Order", None, "To Receive and Bill", 0) is False
+	assert document_is_open("Purchase Order", "junk", "To Receive and Bill", 0) is False
+	assert document_is_open("Purchase Order", "1", "To Receive and Bill", None) is True
+
+
+def test_a_material_request_is_open_until_its_material_arrives():
+	"""Ordered is still open: the job is waiting on it. Each request type's own "done"
+	status, and a deliberate Stop, are not."""
+	for status in ("Pending", "Partially Ordered", "Ordered", "Partially Received"):
+		assert document_is_open("Material Request", 1, status) is True, status
+	for status in ("Received", "Transferred", "Issued", "Manufactured", "Stopped"):
+		assert document_is_open("Material Request", 1, status) is False, status
+
+
+def test_a_purchase_invoice_is_open_while_money_is_owed():
+	for status in ("Unpaid", "Overdue", "Partly Paid"):
+		assert document_is_open("Purchase Invoice", 1, status) is True, status
+	for status in ("Paid", "Return", "Debit Note Issued", "Submitted", "Internal Transfer"):
+		assert document_is_open("Purchase Invoice", 1, status) is False, status
+
+
+def test_doctypes_without_an_open_answer_none_not_false():
+	""""Cannot be open" and "is not open" are different answers: the first hides the Open
+	choice altogether, the second counts toward it. A submitted RFQ, a standing quote and a
+	receipt waiting on a QuickBooks bill would each read as open under any rule written for
+	them, so they get none."""
+	for doctype in ("Request for Quotation", "Supplier Quotation", "Purchase Receipt", "Stock Entry"):
+		assert doctype not in OPEN_RULES
+		assert document_is_open(doctype, 1, "Submitted") is None
+		assert document_is_open(doctype, 1, "To Bill") is None
+	assert set(OPEN_RULES) == {"Material Request", "Purchase Order", "Purchase Invoice"}
+	# The words the dialog shows, one per rule, never empty.
+	assert all(isinstance(text, str) and text.strip() for text in OPEN_RULES.values())

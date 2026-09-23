@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.516.1] - 2026-09-23
+## [1.517.1] - 2026-09-23
 
 **The Desk home grid shows each tile's full name.** CSS only.
 
@@ -43,6 +43,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     against Frappe's `version-16` stylesheet at 1024px, 414px and 375px. Every label fits in
     two lines with no clipping or overflow, and no page scrolls sideways. The same page
     without this change reproduces the truncated grid.
+
+## [1.517.0] - 2026-09-23
+
+**Print from the Procurement Tracker.** The tracker on the Project form lists a job's Material
+Requests, RFQs, Supplier Quotations, Purchase Orders, Receipts and Invoices. Until now the only
+way to print any of them was one at a time, from each document's own form. Now each group can
+print as one PDF, either all of it or only the open documents, and each document can open in the
+print view.
+
+### Added
+
+- **Print on every group header.** It opens a dialog with three choices: which documents (**All
+  (n)**, or **Open (n)** where the doctype has an "open"), the print format and the letter head.
+  The dialog lists the documents that will print, newest first, and names any it left out and
+  why. It then opens a single PDF.
+- **Print on every document row.** It opens Frappe's own print view (`/desk/print/<doctype>/<name>`)
+  in a new tab, where format, letter head, PDF and Print are all available. The Project form keeps
+  whatever you had expanded.
+- **`procurement_print.download_procurement_pdf`** (new, app root). It wraps Frappe's
+  `download_multi_pdf`, the function behind the list view's Actions → Print. Frappe's function
+  runs unchanged. The wrapper adds two things:
+  - the Project read gate every tracker endpoint carries;
+  - a filename that names the job, e.g. `PRJ-00706-Open-Purchase-Orders.pdf`. Frappe would name
+    every job's file `Purchase-Order.pdf`, which is the complaint `po_pdf_filename` (ER-2026-256847)
+    was written for.
+
+  It refuses an empty or malformed name list rather than downloading a blank PDF that would read
+  as "nothing is open".
+- **`is_open` on every document and `open_rule` on every group** in `get_procurement_documents`
+  (so the MCP tool gets them too). Both are decided once, by
+  `procurement_quantities.document_is_open`:
+
+  | Doctype | Open means |
+  |---|---|
+  | Material Request | Submitted, and the material has not all arrived: Pending, Partially Ordered, Ordered, Partially Received |
+  | Purchase Order | Submitted, not `Closed`/`Delivered`, and `per_received < 100` |
+  | Purchase Invoice | Submitted, with money owed: Unpaid, Overdue, Partly Paid |
+  | RFQ, Supplier Quotation, Purchase Receipt | No Open choice (`None`) |
+
+  Drafts are never open: a printed pack of open orders must not include an order nobody placed.
+  The Purchase Order rule is the Receive button's rule exactly, so Open lists the same orders
+  Receive offers.
+
+### Changed
+
+- **`SETTLED_PO_STATUSES` now lives in `procurement_quantities`.** `procurement_project`
+  re-exports it under the same name, so the Supplier Pickup List's import still works. The pure
+  module needed the rule without importing `frappe`. The alternative was a third copy of "nothing
+  left to receive", and copies are how two answers to one question start to disagree.
+
+### Why it is built this way
+
+- **The Purchase Order rule reads `per_received`, not the status.** Billing lives in QuickBooks.
+  On 2026-09-23, 70 fully received orders sat at `To Bill` with no invoice ever coming in ERPNext.
+  "Not Completed", the obvious status-based rule, would have printed every one of them as open.
+  The same fact is why Purchase Receipt gets no Open: its only outstanding state is `To Bill`,
+  and 28 of the 96 submitted receipts sat there. Revisit this once purchase invoicing moves into
+  ERPNext.
+- **The browser filters out documents Frappe would refuse, because Frappe will not say.**
+  `download_multi_pdf` catches printview's "not allowed to print draft/cancelled documents" and
+  moves on. The document is just missing from the PDF, with no message and no Error Log entry.
+  On production, drafts may be printed and cancelled documents may not. Cancelled receipts and
+  invoices do reach the tracker, because the chain's PR/PI joins do not filter `docstatus`. So
+  the dialog applies both Print Settings rules first and names what it left out, and the row
+  hides its Print button.
+- **The dialog sends `pdf_generator`, the way Frappe's print view does.** "Standard" has no Print
+  Format record to carry a PDF backend, so Frappe falls back to wkhtmltopdf. The print view's PDF
+  button sends Print Settings' backend (chrome here) instead. `get_print` reads the value from
+  `form_dict`, so it needs no parameter on the wrapper.
+- **The format starts on the site's own, when there is exactly one.** No procurement doctype here
+  has a `default_print_format`, so Frappe would start on "Standard". For Purchase Orders the
+  dialog starts on "Purchase Order - Sapphire", the only enabled format besides Standard. Where a
+  doctype has no site-built format, or more than one, it starts on Standard.
+- **Over 25 documents go to Frappe's background print** (`download_multi_pdf_async`), wired the
+  same way as the list view. Its threshold is 25, and a synchronous render that size risks the
+  worker timeout. That path keeps Frappe's filename. No project had more than 23 documents of one
+  doctype on 2026-09-23.
+
+### Tests
+
+- `tests/test_procurement_quantities.py` gains seven tests for the Open rule (38 in all).
+  The key one: a received order waiting on its bill is not open.
+- New `tests/test_procurement_print.py`: bench-free unittest with its own `frappe` stub and its
+  own CI step. It checks that:
+  - Frappe's multi-PDF is called once with every argument it was handed;
+  - the file is renamed for the job;
+  - Project read is checked before anything renders;
+  - empty requests are refused;
+  - the six doctypes match `PROCUREMENT_DOCTYPE_ORDER`;
+  - `procurement_project.SETTLED_PO_STATUSES` is the same object `procurement_quantities` defines;
+  - the tracker script dials a method that exists, with the parameters that method reads.
+- The dialog, the buttons, the URLs they build and the >25 background path were exercised in a
+  browser. The harness loaded the real `vue.global.js` and `project_enhancements.js` against a
+  stubbed `frappe`. Not yet run against a live bench.
 
 ## [1.516.0] - 2026-09-22
 
