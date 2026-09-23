@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.523.1] - 2026-09-23
+
+**Docs only: the plan for capture-anywhere feedback, Design Review in ERPNext, and a task
+generator that reads the code.** No behavior changes. Nik asked on 2026-09-23 for a feedback
+widget on every surface (screenshot with annotation, page state, console errors, failed network
+requests), for the concept-review ballots to move into ERPNext as a generic Design Review module
+with voting gated to ERPNext users, for approved design notes and decisions to go through the
+same task generator as Enhancement Requests, for that generator to genuinely look at this
+repository, and for a hand-off Claude Code can execute. He took the recommended defaults the same
+day; this release records them.
+
+### Added
+
+- **[ADR 0016](decisions/adr/0016-every-source-files-an-enhancement-request.md)**, amending ADR
+  0010: every source — the `/feedback` form, the capture widget and Design Review promotion —
+  files an Enhancement Request through one internal `file_request`. `task_writer.py` gains a
+  back-link on every Task it creates and `mark_shipped`, the only code that moves a feedback Task
+  when its release ships (to `Pending Review` with a review date, never `Completed`, and only for a
+  release whose migrate completed). The breakdown gets deterministic "anchors", the actual files a
+  request is about, read from the installed app, and stops receiving document names. Captured
+  screenshots and page data stay in ERPNext and are never sent to a model. The AI write gate is to be
+  turned on, scoped: creating a Task or closing one over the MCP tools waits for a human, while other
+  Task updates and Comments do not; how `run_python_code` is treated is Nik's call before the switch.
+- **[WI-079](work-items/WI-079-feedback-capture-and-design-review.md)**, the build in five slices,
+  with acceptance criteria per slice. It also records the two calls Nik made with it: captured
+  screenshots and the context file are deleted 180 days after a request closes (the text stays), and
+  the widget starts on signed-in pages only — the Desk, `/kiosk`, `/feedback`, `/itinerary` and
+  `/travel_guidelines`. (`/training` was proposed and left off: it sends every Desk user to the Desk
+  learn page, which the Desk entry already covers.)
+
+### Changed
+
+- The ADR index gains the missing row for ADR 0015 as well as 0016, and the Product Feedback README
+  points at the planned amendment.
+
+### Why these, from the measurements
+
+Read-only against production on 2026-09-23:
+
+- **16 Enhancement Requests from 5 requesters since 2026-08-17, and none has a captured page.** The
+  user agent and a build token are filled on every one; the URL, doctype and docname never are.
+  `/feedback` reads the page the user came from out of `document.referrer`, nothing links to
+  `/feedback`, and even a Desk referrer would not parse: `context.js` recognizes only `/app/…`
+  paths, while the v16 Desk lives at `/desk/…`.
+- **The pipeline created 37 Tasks** — 30 leaves recorded in `created_task` and 7 group Tasks that are
+  not — 33 of them Completed, none on the Triton board. The 7 groups are why the back-link backfill
+  reads the writer's "Raised from ER-…" origin note as well as `created_task`.
+- **The breakdown is blind to code.** `codemap.py` sends file *names* capped at 60 per directory with
+  no total, and the first 6,000 characters of the conventions; Triton renders each capped listing
+  under "These exist; nothing else in these directories does", which is false whenever the cap was hit.
+- **The AI write gate would see a lot.** In the last 30 days the connector made 232 Task creates, 419
+  Task updates, 214 Comment creates and 1,595 `run_python_code` calls, all by one user. Switched on
+  unscoped, each would be a Desk confirmation — hence the scoping.
+- **Error Log `trace_id` is not written on production** (none since 2026-07-17; Frappe writes it only
+  with `monitor` on), so reports match failed requests to their Error Log by user, method and time.
+
 ## [1.523.0] - 2026-09-23
 
 **Stock Scan is on the Desk.** Nearly everyone who touches inventory will work it through the
