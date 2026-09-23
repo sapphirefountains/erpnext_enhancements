@@ -7,6 +7,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.519.0] - 2026-09-23
+
+**Every procurement document prints in the Purchase Order's design.** `Purchase Order - Sapphire`
+has been on the print design system since v1.495.0. The five documents either side of it in the
+buying chain were not: they printed on ERPNext's stock formats, and a Material Request had only
+`Standard`. So a job's paperwork came out in two looks, and v1.517.0's tracker Print dialog,
+which prints a whole group at once, made that hard to miss. All six now match, each is its
+doctype's default, and ERPNext's stock formats for them are out of the dropdown.
+
+### Added
+
+- **Five print formats** (`enhancements_core/setup_procurement_print_formats.py`), on the same
+  `print_style` chrome as the order: neutral stripe, wordmark with our address and phone, eyebrow
+  over the display-face title, two ruled rows of facts, a ruled line table, the order's totals
+  block and the running footer.
+
+  | Format | What it prints |
+  |---|---|
+  | Material Request - Sapphire | Project, required-by date, destination warehouse, status, type and requester; lines with qty, UOM, required-by and warehouse. No prices, since a request's rates are zero here. |
+  | Request for Quotation - Sapphire | Addressed to the one supplier it is being sent to. Required-by date, delivery address, project, who to ask. Lines without prices, the supplier's part number where ERPNext has one, the request's notes, and a closing line asking the supplier to quote the RFQ number. |
+  | Supplier Quotation - Sapphire | Supplier, **valid until** in the first row, project, status; priced lines, taxes and total. |
+  | Purchase Receipt - Sapphire | A goods-received note: supplier, receiving warehouse, the supplier's delivery note, the orders it was received against, project; quantities only, plus a line to sign. Titled **Purchase Return** for a return. |
+  | Purchase Invoice - Sapphire | Supplier, **the supplier's own invoice number and date**, due date, status, project; priced lines, taxes, total, Amount due when part-paid, and payment terms. Titled **Debit Note** for a return. |
+
+- **All six procurement doctypes now default to their Sapphire format.** This is done with six
+  `default_print_format` Property Setters in `fixtures/property_setter.json`, including
+  `Purchase Order - Sapphire`, which was "the only PO format we print" but never the default.
+  Three places now open on the house design instead of ERPNext's stock formats:
+  - the print view;
+  - the email composer's attachment;
+  - the RFQ that ERPNext emails to each supplier.
+
+  The Procurement Tracker's Print dialog already preferred the order's format; it now finds a
+  configured default for every group.
+
+### Changed
+
+- **ERPNext's stock formats for these five doctypes are disabled**, the way the order's three
+  superseded formats have been. The Sapphire format is now the only one in the dropdown besides
+  `Standard`, which is not a record and cannot be disabled. Seven formats:
+
+  | Doctype | Disabled |
+  |---|---|
+  | Request for Quotation | `Request for Quotation Print Template`, `Request for Quotation with Item Image` |
+  | Purchase Receipt | `Purchase Receipt Serial and Batch Bundle Print` |
+  | Purchase Invoice | `Purchase Invoice Standard`, `Purchase Invoice with Item Image`, `Purchase Auditing Voucher`, `Purchase eInvoice` (already disabled; listed so it stays so) |
+
+  - **Where the change lives:** the list is `SUPERSEDED_PROCUREMENT_FORMATS`, beside the order's,
+    and it goes through the same `disable_superseded_print_formats` pass on every migrate. ERPNext
+    re-syncs its own formats from JSON on every migrate, so a one-shot patch would undo itself.
+    The write is `frappe.db.set_value`, because `Print Format.validate` refuses standard formats.
+  - **What was checked on production first (2026-09-23):** nothing references any of the seven
+    (no Notification, Auto Repeat or Property Setter). Disabling only hides a format from the
+    dropdown; a caller that names one explicitly still renders it.
+  - **`Request for Quotation Print Template` is not an ERPNext file.** It is `standard = "No"` and
+    is in no version-16 JSON, so somebody made it on the site. It is disabled, not deleted,
+    because a disable is one tick to undo.
+  - **`Purchase Receipt Serial and Batch Bundle Print` prints something the Sapphire receipt does
+    not:** serial and batch numbers. No receipt here has ever carried one, and the site has 0
+    Serial and Batch Bundles. If that changes, take it off the list.
+
+### Why it is built this way
+
+- **The RFQ is addressed to `doc.vendor`, not to the supplier list.** ERPNext prints an RFQ once
+  per supplier: before emailing each one it sets `vendor` (and each line's `supplier_part_no`) and
+  renders again, and `before_print` does the same with the first supplier for the preview. A
+  format that listed every supplier would tell each one who else was asked. With no vendor set,
+  the list is the fallback.
+- **The receipt prints no money.** It is the paper a receiver signs against a delivery. The
+  Rejected column appears only when something was rejected. No receipt on production has had a
+  rejection, and a column of zeros on every receipt teaches the eye to skip it on the one that
+  matters.
+- **Returns say so in the title.** Printed under its ordinary title, a return reads as a second
+  delivery or a second bill.
+- **Our address comes from `billing_address_display`**, the order's field. It is filled on 96 of 97
+  receipts and on every invoice and RFQ on production. A Material Request has no company address,
+  so it prints the constant.
+- **`custom_project` is read through `doc.get`**, so a site without this app's field prints a dash
+  instead of failing the render.
+- **The formats register in `after_migrate` above `ensure_chrome_pdf_generator`**, so they render on
+  Chrome like every other format.
+- **They match the order by test, not by copying.** The totals, dash and table-rule styles are held
+  equal to the order module's own values, and the stripe to the order's neutral band.
+
+### Tests
+
+- New `tests/test_procurement_print_formats.py`: 35 bench-free tests, with their own CI step. Every
+  template is compiled and rendered with 1, 10 and 0 lines and with every optional field blank.
+  The suite also checks:
+  - description markup is kept, and item names are escaped;
+  - print-safe CSS only;
+  - money always carries a currency;
+  - the styles match the order's;
+  - the RFQ is addressed to `vendor` and carries no prices;
+  - the receipt carries no money, and its Rejected column appears only when needed;
+  - returns get their own titles;
+  - the six default Property Setters name formats this app ships;
+  - the hook sits above the chrome pass;
+  - the disable pass, run against a fake database, disables exactly the enabled stock formats,
+    through the low-level write.
+
+  Six deliberate breaks each failed the suite:
+  - an always-on Rejected column;
+  - an always-on Amount due;
+  - a one-pixel drift from the order's grand-total style;
+  - an RFQ that ignores `vendor`;
+  - an escaped description;
+  - a disable pass that drops the new list.
+- All 196 bench-free test commands in `ci.yml` pass.
+- The six formats were rendered side by side at Letter width and checked by eye against the order.
+  They have not yet been printed from a live site.
+
 ## [1.518.0] - 2026-09-23
 
 **QuickBooks Record Matching: tick the rows you want, then act on them together.** Until now the

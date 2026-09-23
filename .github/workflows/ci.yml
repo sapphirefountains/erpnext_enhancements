@@ -925,6 +925,13 @@ jobs:
       # (1 item, 10 items, no items, no taxes, every optional field blank).
       - name: Sales print formats (WI-020, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
+      # The other five procurement documents in the Purchase Order's design (Material
+      # Request, RFQ, Supplier Quotation, Purchase Receipt, Purchase Invoice). Compiles and
+      # renders each, holds the totals/rule/stripe styles equal to the order's own so the
+      # family cannot drift, and checks the six default-format Property Setters name
+      # formats this app actually ships. Own step: exec's two modules under a stub frappe.
+      - name: Procurement print formats (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_procurement_print_formats -v
       # The print design system (print_style.py): the chrome the sales formats compose
       # at after_migrate and the Maintenance Record Print fixture reaches through the
       # ps_* Jinja globals. Renders the fixture against sample records, because nothing

@@ -124,12 +124,12 @@ function procurementPrintBlocker(doc) {
 /**
  * The format the dialog starts on.
  *
- * The doctype's configured default when there is one. There is none on any procurement
- * doctype on this site, and Frappe then falls back to "Standard" — but where the site has
- * built exactly one format of its own for the doctype, that is the one it prints.
- * "Purchase Order - Sapphire" is the only Purchase Order format left enabled besides
- * Standard; the three it superseded are disabled on every migrate precisely so nobody
- * prints them. Two home-built formats is a choice for a person, so that falls back too.
+ * The doctype's configured default when there is one — and since v1.519.0 all six
+ * procurement doctypes have one, the "<Doctype> - Sapphire" format, set by a Property
+ * Setter fixture. The rest is the fallback for a site where that has not synced: Frappe
+ * would start on "Standard", but where the site has built exactly one format of its own
+ * for the doctype, that is the one it prints. Two home-built formats is a choice for a
+ * person, so that falls back to Standard too.
  */
 function procurementDefaultPrintFormat(doctype, formats) {
 	const configured = frappe.get_meta(doctype).default_print_format;

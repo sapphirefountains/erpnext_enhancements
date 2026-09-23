@@ -53,7 +53,11 @@ than to one pillar. **Sales documents take it.** A quotation can be for any of t
 pillars and nothing on the document says which, so Quotation, Sales Order and Sales
 Invoice carry the neutral stripe rather than a guess. Deriving the pillar from the linked
 project's value stream is the obvious next step and deliberately not this one. The
-Maintenance Visit Report is Service.
+Maintenance Visit Report is Service. The six procurement documents take the neutral band
+for the order's reason — a job can belong to any pillar — and each is its doctype's
+**default** format (Property Setter fixtures), so the print view and the email composer open
+on them. ERPNext's stock formats for those doctypes are disabled on every migrate
+(`setup_print_formats.SUPERSEDED_PROCUREMENT_FORMATS`), as the order's three are.
 
 ## How a format consumes it
 
@@ -126,6 +130,7 @@ support still paints the pillar's flat colour.
 |---|---|---|
 | Quotation, Sales Order, Sales Invoice | `enhancements_core/setup_sales_print_formats.py` | neutral |
 | Purchase Order | `enhancements_core/setup_print_formats.py` | neutral |
+| Material Request, Request for Quotation, Supplier Quotation, Purchase Receipt, Purchase Invoice | `enhancements_core/setup_procurement_print_formats.py` | neutral |
 | Maintenance Record Print | `fixtures/print_format.json` via `ps_*` | Service |
 | Contracts (all eight templates) | `project_enhancements/contract_style.py` + the `Project Contract Print` fixture CSS | by template: owner / architect / SOW / MSA → Build, maintenance → Service, rental → Rent, NDA and employee → neutral |
 | Project Brief | `public/js/project_enhancements/project_brief.js` | the job's leading stream: Design, Build (and Products), Service, Events → Rent |
