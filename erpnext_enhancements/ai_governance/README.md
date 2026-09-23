@@ -96,12 +96,35 @@ Three behaviours worth knowing before editing rules:
   evenings *and* Monday-Friday early mornings; it does not stretch Friday evening into
   Saturday.
 
+## FAC tool categories (`fac_tool_categories.py`)
+
+Frappe Assistant Core keeps one `FAC Tool Configuration` row per tool, and since FAC 2.5.0 the
+row's **category** is merged *over* the tool's own MCP annotations in `tools/list`. FAC seeds
+every external tool as `read_write` (→ `readOnlyHint: false`), so all of this app's read tools
+were advertised to every MCP client as writes. `fac_tool_categories.py` writes the category
+that reproduces each tool's declared annotations — `read_only`, `write`, or `privileged` for
+the `HIGH_RISK` tools — with `category_override` set, so FAC's own re-detection leaves it alone.
+
+It runs twice over, because this app is installed *before* FAC and so our `after_migrate`
+runs before FAC's creates the row for a new tool: a `before_insert` doc_event on
+`FAC Tool Configuration` stamps a row as FAC creates it, and `sync_fac_tool_categories`
+(`after_migrate`) repairs the rows that exist. The category shown on FAC's admin page for these
+tools is therefore **managed by the app** — change `assistant_tools/_gate.py`, not the page; a
+change made on the page is undone at the next migrate. Neither entry point imports
+`assistant_tools` (tools are resolved from the hook by dotted path, as FAC does), both are
+inert without FAC, and neither can raise.
+
 ## Relationship to Triton
 
 Triton confirmation-gates writes in its own chat UI (`PendingAction` + `IntegrationAuditLog`);
 this module gates Frappe Assistant Core tool execution at the MCP layer. **There is no
 overlap and both stay** — they cover different entry points into the same data. See Triton's
 `docs/convergence.md`.
+
+FAC 3.0.0's in-Desk **FAC Chat** (off on prod; a paid FAC Cloud service) is a third entry
+point but not a third path: its cloud runtime calls this site's `handle_mcp` endpoint as the
+user, so its tool calls pass through the same gate. Pending actions it causes carry the chat
+conversation id as `session_id` and `fac-chat` as `client_id`.
 
 ## Tests
 
@@ -112,7 +135,9 @@ python -m unittest \
 ```
 
 `test_ai_gate_unit` is bench-free and runs in CI — it is the guard on a security boundary, so
-keep it green and keep it in the CI list.
+keep it green and keep it in the CI list. The FAC category sync is covered by
+`TestFacToolCategorySync` in `test_assistant_tools_schema` (same CI step), which also asserts
+that FAC's category hints, merged over each tool's annotations, change nothing.
 
 ```bash
 python -m unittest \
