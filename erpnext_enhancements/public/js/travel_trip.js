@@ -14,11 +14,15 @@
  *    Lead / Customer, agenda related-party types to the server-validated set,
  *    and traveler-ish Employee links to the trip's travelers.
  *  - New cost rows inherit the trip-level `billable` default.
+ *  - The trip checklist headline (counts from the server's
+ *    travel_management/completeness.py, sent as __onload.trip_gaps) and the
+ *    "Plan step by step" door into the Plan a Trip page, which words each gap
+ *    and fixes it. The wording lives on the page only, so the two cannot drift.
  */
 
 const TRAVEL_FOR_DOCTYPES = ['Project', 'Opportunity', 'Lead', 'Customer'];
 const RELATED_PARTY_DOCTYPES = ['Customer', 'Lead', 'Opportunity', 'Contact', 'Supplier', 'Project'];
-const COST_TABLES = ['flights', 'accommodations', 'ground_transport', 'other_costs'];
+const COST_TABLES = ['flights', 'accommodations', 'ground_transport', 'freight', 'other_costs'];
 
 function travelers_options(frm) {
 	return (frm.doc.travelers || [])
@@ -232,7 +236,49 @@ function send_itinerary(frm) {
 	);
 }
 
+const CHECKLIST_LABELS = {
+	travel: __('a way there or back'),
+	lodging: __('a bed for the night'),
+	confirmation: __('a confirmation number'),
+	cost: __('a cost'),
+};
+
+function show_trip_checklist(frm) {
+	if (frm.is_new() || frm.doc.status === 'Closed') {
+		frm.dashboard.clear_headline();
+		return;
+	}
+	const gaps = (frm.doc.__onload && frm.doc.__onload.trip_gaps) || [];
+	const plan_url = `/app/plan-a-trip?trip=${encodeURIComponent(frm.doc.name)}&step=review`;
+	if (!gaps.length) {
+		frm.dashboard.set_headline_alert(__('Trip checklist: nothing missing.'), 'green');
+		return;
+	}
+	const counts = {};
+	gaps.forEach((gap) => {
+		counts[gap.check] = (counts[gap.check] || 0) + 1;
+	});
+	const parts = Object.keys(CHECKLIST_LABELS)
+		.filter((check) => counts[check])
+		.map((check) => __('{0} missing {1}', [counts[check], CHECKLIST_LABELS[check]]));
+	frm.dashboard.set_headline_alert(
+		`${__('Trip checklist')}: ${frappe.utils.escape_html(parts.join('; '))}.
+		 <a href="${plan_url}">${__('See what and fix it')}</a>`,
+		'orange'
+	);
+}
+
 frappe.ui.form.on('Travel Trip', {
+	onload(frm) {
+		if (frm.is_new()) {
+			frm.set_intro(
+				`${__('Easier: Plan a Trip walks through the crew, flights, rooms and schedule one step at a time.')}
+				 <a href="/app/plan-a-trip?new=1">${__('Plan a Trip')}</a>`,
+				'blue'
+			);
+		}
+	},
+
 	setup(frm) {
 		frm.set_query('travel_for_doctype', () => ({
 			filters: { name: ['in', TRAVEL_FOR_DOCTYPES] },
@@ -244,10 +290,17 @@ frappe.ui.form.on('Travel Trip', {
 			frm.set_query('paid_by_traveler', table, () => traveler_employee_query(frm))
 		);
 		frm.set_query('traveler', 'mileage', () => traveler_employee_query(frm));
+		// Freight's "Received By" is someone on the crew.
+		frm.set_query('traveler', 'freight', () => traveler_employee_query(frm));
 	},
 
 	refresh(frm) {
+		show_trip_checklist(frm);
 		if (frm.is_new()) return;
+
+		frm.add_custom_button(__('Plan step by step'), () =>
+			frappe.set_route('plan-a-trip', { trip: frm.doc.name })
+		);
 
 		// HRMS is optional: the Expense Claim / Employee Advance / Vehicle Log
 		// actions need its doctypes (api.py also guards them). Hide the buttons

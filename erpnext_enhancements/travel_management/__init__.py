@@ -11,12 +11,14 @@ TRAVEL_FOR_DOCTYPES = ("Project", "Opportunity", "Lead", "Customer")
 # Allowed targets for the per-agenda-stop related-party dynamic link.
 RELATED_PARTY_DOCTYPES = ("Customer", "Lead", "Opportunity", "Contact", "Supplier", "Project")
 
-# Travel Trip child-table fieldname -> child doctype, for the four
+# Travel Trip child-table fieldname -> child doctype, for the five
 # cost-bearing tables that share the paid_by/expense_claim cost block.
+# Freight joined in v1.520.0; its expense lines use the misc Expense Claim Type.
 COST_TABLES = {
 	"flights": "Trip Flight",
 	"accommodations": "Trip Accommodation",
 	"ground_transport": "Trip Ground Transport",
+	"freight": "Trip Freight",
 	"other_costs": "Trip Expense",
 }
 

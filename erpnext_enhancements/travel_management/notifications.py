@@ -27,6 +27,7 @@ from frappe.utils import cint, get_url, get_url_to_form
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements.travel_management.ics import trip_ics_attachment
+from erpnext_enhancements.travel_management.itinerary_text import booking_lines, day_lines
 
 TEMPLATE_DIR = "erpnext_enhancements/templates/emails/travel"
 
@@ -161,9 +162,20 @@ def on_trip_update(doc, method=None):
 # -------------------------------------------------------- background jobs
 
 
+def _bookings_context(doc, employee=None):
+	"""The recipient's own bookings with their numbers — or, for the owner who is not on
+	the trip, every booking with who is on it — for the booked / added emails."""
+	from erpnext_enhancements.api.travel import shape_itinerary
+
+	return {
+		"bookings": booking_lines(shape_itinerary(doc, viewing_employee=employee)),
+		"bookings_title": _("Your bookings") if employee else _("Bookings"),
+	}
+
+
 def deliver_trip_booked(trip):
-	"""All travelers + the owner get the booked notice; travelers get their
-	personal ICS calendar attached."""
+	"""All travelers + the owner get the booked notice, each with their own bookings and
+	confirmation numbers listed; travelers get their personal ICS calendar attached."""
 	doc = frappe.get_doc("Travel Trip", trip)
 	context = _base_context(doc)
 	subject = _("Trip booked: {0} ({1} – {2})").format(doc.purpose, doc.start_date, doc.end_date)
@@ -173,7 +185,7 @@ def deliver_trip_booked(trip):
 			recipient,
 			subject,
 			"trip_booked.html",
-			context,
+			dict(context, **_bookings_context(doc, recipient.employee)),
 			doc,
 			attachments=[trip_ics_attachment(doc, recipient.row)],
 		)
@@ -185,7 +197,7 @@ def deliver_trip_booked(trip):
 			frappe._dict(email=owner_email, user_id=doc.owner, employee_name=doc.owner),
 			subject,
 			"trip_booked.html",
-			context,
+			dict(context, **_bookings_context(doc)),
 			doc,
 		)
 
@@ -201,7 +213,7 @@ def deliver_traveler_added(trip, employees):
 			recipient,
 			subject,
 			"traveler_added.html",
-			context,
+			dict(context, **_bookings_context(doc, recipient.employee)),
 			doc,
 			attachments=[trip_ics_attachment(doc, recipient.row)],
 		)
@@ -275,7 +287,7 @@ def send_itinerary_emails(doc, employee=None, force=False):
 			recipient,
 			subject,
 			"pre_travel_reminder.html",
-			dict(base, itinerary=itinerary),
+			dict(base, itinerary=itinerary, itinerary_days=day_lines(itinerary)),
 			doc,
 			attachments=[trip_ics_attachment(doc, recipient.row)],
 		):

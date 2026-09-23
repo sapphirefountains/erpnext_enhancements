@@ -39,6 +39,7 @@ from erpnext_enhancements.travel_management import (
 	TRAVEL_FOR_DOCTYPES,
 	expense_claims_available,
 )
+from erpnext_enhancements.travel_management.completeness import find_gaps
 
 # Status transitions a plain Employee may perform manually. Coordinators are
 # unrestricted; the date-driven transitions belong to the daily job.
@@ -82,6 +83,10 @@ class TravelTrip(Document):
 		# Claim / Employee Advance / Vehicle Log create buttons (api.py also
 		# refuses those endpoints with a clear message). HRMS is optional.
 		self.set_onload("expense_claims_available", expense_claims_available())
+		# The trip checklist (a bed every night, travel both ways, confirmation
+		# numbers, costs) for the form's headline. savedocs runs onload again
+		# after every save, so the headline follows the edits.
+		self.set_onload("trip_gaps", find_gaps(self))
 
 	def validate(self):
 		self._before = self.get_doc_before_save()

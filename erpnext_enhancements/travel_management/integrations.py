@@ -24,6 +24,7 @@ STAMPED_TABLES = (
 	"Trip Flight",
 	"Trip Accommodation",
 	"Trip Ground Transport",
+	"Trip Freight",
 	"Trip Expense",
 	"Trip Mileage",
 )

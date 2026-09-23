@@ -1788,6 +1788,14 @@ jobs:
       # weeks. Its own pytest step, per the rule at the top of this file.
       - name: Travel ICS (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_travel_ics.py -q
+      # Plan a Trip: the trip checklist and the booking fan-out (one card on the page, one
+      # row per person in the trip). Guards a checklist that calls a trip complete while
+      # someone has no bed, one person's flight landing on another's itinerary, an unrelated
+      # edit on the page overwriting what was typed on the form, and the page's field list
+      # drifting from the server's so an edit is dropped with no error. Own step: it installs
+      # its own `frappe` stub.
+      - name: Plan a Trip (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_travel_planner -v
       # Product Configurator engine (found unwired the same way, same day). 27
       # bench-free unittest tests, green, and named nowhere in this file.
       - name: Product Configurator engine (bench-free)

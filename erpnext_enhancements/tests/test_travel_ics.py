@@ -214,3 +214,117 @@ def test_pnr_lands_in_description():
 	events = ics.trip_events_for_traveler(trip, make_traveler())
 	flight = next(e for e in events if "AA100" in e["summary"])
 	assert "PNR: PNR123" in flight["description"]
+
+
+def _with_ground(trip, **overrides):
+	ride = dict(
+		name="gt1",
+		traveler=None,
+		transport_type="Rental/Third Party",
+		supplier="Enterprise",
+		vehicle=None,
+		pickup_location="LAS airport",
+		dropoff_location="Hilton",
+		pickup_datetime="2026-07-01 11:00:00",
+		return_datetime="2026-07-03 15:30:00",
+		booking_reference="ENT-77",
+	)
+	ride.update(overrides)
+	trip.ground_transport = [make_row(**ride)]
+	return trip
+
+
+def test_a_rental_lands_on_the_calendar_with_its_confirmation():
+	events = ics.trip_events_for_traveler(_with_ground(make_trip()), make_traveler())
+	ride = next(e for e in events if e["summary"].startswith("🚗"))
+	assert ride["summary"] == "🚗 Enterprise: LAS airport → Hilton"
+	assert "Confirmation: ENT-77" in ride["description"]
+	assert "Return by: Fri Jul 3, 3:30 PM" in ride["description"]
+	assert ride["uid"] == "TRIP-2026-00001-gt1@test.site"
+
+
+def test_a_rental_pinned_to_someone_else_is_skipped():
+	events = ics.trip_events_for_traveler(_with_ground(make_trip(), traveler="EMP-OTHER"), make_traveler())
+	assert not any(e["summary"].startswith("🚗") for e in events)
+
+
+def test_a_trip_without_ground_rows_still_builds():
+	# Trips loaded before the field list grew, and the fixture above, have no attribute at all.
+	events = ics.trip_events_for_traveler(make_trip(), make_traveler())
+	assert len(events) == 3
+
+
+def test_a_drive_with_an_arrival_spans_the_drive_and_names_its_load():
+	trip = _with_ground(
+		make_trip(),
+		transport_type="Company Fleet",
+		supplier=None,
+		vehicle=None,
+		booking_reference=None,
+		return_datetime=None,
+		pickup_datetime="2026-07-01 06:00:00",
+		arrival_datetime="2026-07-01 11:30:00",
+		cargo="12 ft basin",
+	)
+	ride = next(e for e in ics.trip_events_for_traveler(trip, make_traveler()) if e["summary"].startswith("🚗"))
+	assert ride["end"] == "2026-07-01 11:30:00"
+	assert "Hauling: 12 ft basin" in ride["description"]
+
+
+def test_a_hotel_check_in_time_is_in_the_description():
+	trip = make_trip()
+	trip.accommodations[0].check_in_time = "15:00:00"
+	trip.accommodations[0].check_out_time = "11:00:00"
+	stay = next(e for e in ics.trip_events_for_traveler(trip, make_traveler()) if "Check-in" in e["summary"])
+	assert "Check-in from: 3:00 PM" in stay["description"]
+	assert "by 11:00 AM" in stay["description"]
+
+
+def test_freight_is_the_delivery_window_for_whoever_receives_it():
+	trip = make_trip()
+	trip.freight = [
+		make_row(
+			name="fr1",
+			traveler=None,
+			carrier="Old Dominion",
+			contents="2 crates",
+			tracking_number="PRO 123",
+			ship_from="Factory",
+			deliver_to="Hilton dock",
+			pickup_from=None,
+			pickup_to=None,
+			delivery_from="2026-07-02 08:00:00",
+			delivery_to="2026-07-02 12:00:00",
+		),
+		make_row(
+			name="fr2",
+			traveler="EMP-OTHER",
+			carrier="Estes",
+			contents=None,
+			tracking_number=None,
+			ship_from=None,
+			deliver_to=None,
+			pickup_from=None,
+			pickup_to=None,
+			delivery_from="2026-07-02 08:00:00",
+			delivery_to=None,
+		),
+	]
+	events = [e for e in ics.trip_events_for_traveler(trip, make_traveler()) if e["summary"].startswith("📦")]
+	assert [e["summary"] for e in events] == ["📦 Old Dominion delivery"]
+	assert (events[0]["start"], events[0]["end"]) == ("2026-07-02 08:00:00", "2026-07-02 12:00:00")
+	assert "Tracking: PRO 123" in events[0]["description"]
+	assert events[0]["location"] == "Hilton dock"
+
+
+def test_an_unknown_time_is_an_all_day_event_not_midnight():
+	trip = _with_ground(make_trip(), pickup_datetime="2026-07-01 00:00:00", booking_reference=None)
+	trip.flights[0].departure_time = "2026-07-01 00:00:00"
+	events = ics.trip_events_for_traveler(trip, make_traveler())
+	ride = next(e for e in events if e["summary"].startswith("🚗"))
+	flight = next(e for e in events if "AA100" in e["summary"])
+	for event in (ride, flight):
+		assert event["all_day"] is True
+		assert event["start"] == "2026-07-01"
+	assert "Confirmation" not in ride["description"]
+	assert "DTSTART;VALUE=DATE:20260701" in ics.build_ics([ride])
