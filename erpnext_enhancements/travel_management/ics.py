@@ -122,10 +122,42 @@ def build_ics(events, method="PUBLISH"):
 	return "\r\n".join(folded) + "\r\n"
 
 
+def _time_unknown(value):
+	"""True for a datetime stored at exactly midnight.
+
+	Plan a Trip stores a flight or drive whose time is not known yet at 00:00:00,
+	because a Datetime column cannot hold a date alone. A midnight calendar event
+	would tell the traveler to be somewhere at 12 AM, so those become all-day events
+	on their date instead."""
+	return str(value)[11:19] in ("", "00:00:00")
+
+
+def _clock_text(value):
+	"""'3:00 PM' from a Time value — a ``timedelta`` from the database, or 'HH:MM:SS'."""
+	if hasattr(value, "total_seconds"):
+		seconds = int(value.total_seconds()) % 86400
+		hour, minute = seconds // 3600, seconds % 3600 // 60
+	else:
+		parts = str(value).split(":")
+		hour, minute = int(parts[0]), int(parts[1])
+	return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
+def _friendly(value):
+	"""'Thu Oct 8, 10:00 AM' — a 12-hour time for a line a traveler reads. Built by
+	hand because strftime's no-padding flags differ between Linux and Windows."""
+	dt = get_datetime(value)
+	if _time_unknown(value):
+		return f"{dt:%a %b} {dt.day}"
+	return f"{dt:%a %b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
+
+
 def trip_events_for_traveler(trip_doc, traveler_row):
 	"""Calendar events for one traveler: the trip span (all-day), each visible
-	flight, and each hotel check-in. Segments pinned to a different single
-	traveler are skipped."""
+	flight, each hotel check-in, each rental, ride or drive with a pickup time, and
+	each freight delivery (or pickup) window they receive. Every booking event
+	carries its confirmation or tracking number when there is one. Segments pinned
+	to a different single traveler are skipped."""
 	site = getattr(frappe.local, "site", None) or "site"
 	employee = traveler_row.employee
 
@@ -150,20 +182,23 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 	for flight in trip_doc.flights:
 		if not visible(flight.traveler) or not flight.departure_time:
 			continue
-		end = flight.arrival_time or (get_datetime(flight.departure_time) + timedelta(hours=2))
 		description = f"Flight {flight.flight_number} ({flight.airline})"
 		if flight.booking_reference:
 			description += f"\nPNR: {flight.booking_reference}"
-		events.append(
-			{
-				"uid": uid(flight.name),
-				"summary": f"✈ {flight.flight_number} {flight.departure_airport or ''} → {flight.arrival_airport or ''}".strip(),
-				"start": flight.departure_time,
-				"end": end,
-				"description": description,
-				"location": flight.departure_airport,
-			}
-		)
+		event = {
+			"uid": uid(flight.name),
+			"summary": f"✈ {flight.flight_number} {flight.departure_airport or ''} → {flight.arrival_airport or ''}".strip(),
+			"description": description,
+			"location": flight.departure_airport,
+		}
+		if _time_unknown(flight.departure_time):
+			event.update(start=str(flight.departure_time)[:10], all_day=True)
+		else:
+			event.update(
+				start=flight.departure_time,
+				end=flight.arrival_time or (get_datetime(flight.departure_time) + timedelta(hours=2)),
+			)
+		events.append(event)
 
 	for stay in trip_doc.accommodations:
 		if not visible(stay.traveler) or not stay.check_in_date:
@@ -171,8 +206,12 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 		description = f"Hotel: {stay.hotel_lodging}"
 		if stay.booking_confirmation:
 			description += f"\nConfirmation: {stay.booking_confirmation}"
+		if getattr(stay, "check_in_time", None):
+			description += f"\nCheck-in from: {_clock_text(stay.check_in_time)}"
 		if stay.check_out_date:
 			description += f"\nCheck-out: {stay.check_out_date}"
+			if getattr(stay, "check_out_time", None):
+				description += f" by {_clock_text(stay.check_out_time)}"
 		events.append(
 			{
 				"uid": uid(stay.name),
@@ -183,6 +222,72 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 				"location": stay.address,
 			}
 		)
+
+	# Rentals, rides and drives. Before Plan a Trip these never reached the calendar at
+	# all, so a rental's confirmation number was in nobody's pocket at the counter.
+	for ride in getattr(trip_doc, "ground_transport", None) or []:
+		if not visible(ride.traveler) or not ride.pickup_datetime:
+			continue
+		provider = ride.supplier or ride.vehicle or ride.transport_type
+		description = f"{ride.transport_type}: {provider}" if provider != ride.transport_type else provider
+		if ride.booking_reference:
+			description += f"\nConfirmation: {ride.booking_reference}"
+		if ride.return_datetime:
+			description += f"\nReturn by: {_friendly(ride.return_datetime)}"
+		if getattr(ride, "cargo", None):
+			description += f"\nHauling: {ride.cargo}"
+		event = {
+			"uid": uid(ride.name),
+			"summary": f"🚗 {provider}: {ride.pickup_location or '?'} → {ride.dropoff_location or '?'}",
+			"description": description,
+			"location": ride.pickup_location,
+		}
+		arrival = getattr(ride, "arrival_datetime", None)
+		if _time_unknown(ride.pickup_datetime):
+			event.update(start=str(ride.pickup_datetime)[:10], all_day=True)
+		elif arrival and not _time_unknown(arrival) and get_datetime(arrival) > get_datetime(ride.pickup_datetime):
+			# A drive with a known arrival spans the drive.
+			event.update(start=ride.pickup_datetime, end=arrival)
+		else:
+			# One hour: the event marks the pickup, not the whole rental.
+			event.update(
+				start=ride.pickup_datetime,
+				end=get_datetime(ride.pickup_datetime) + timedelta(hours=1),
+			)
+		events.append(event)
+
+	# Freight: the delivery window (or the pickup window when no delivery is set), for
+	# whoever receives it — the whole crew when nobody is named.
+	for shipment in getattr(trip_doc, "freight", None) or []:
+		if not visible(shipment.traveler):
+			continue
+		start = shipment.delivery_from or shipment.pickup_from
+		if not start:
+			continue
+		end = shipment.delivery_to if shipment.delivery_from else shipment.pickup_to
+		kind = "delivery" if shipment.delivery_from else "pickup"
+		description = f"Freight {kind}: {shipment.carrier}"
+		if shipment.contents:
+			description += f"\n{shipment.contents}"
+		if shipment.tracking_number:
+			description += f"\nTracking: {shipment.tracking_number}"
+		if shipment.ship_from:
+			description += f"\nFrom: {shipment.ship_from}"
+		if shipment.deliver_to:
+			description += f"\nTo: {shipment.deliver_to}"
+		event = {
+			"uid": uid(shipment.name),
+			"summary": f"📦 {shipment.carrier} {kind}",
+			"description": description,
+			"location": shipment.deliver_to if kind == "delivery" else shipment.ship_from,
+		}
+		if _time_unknown(start):
+			event.update(start=str(start)[:10], all_day=True)
+		elif end and not _time_unknown(end) and get_datetime(end) > get_datetime(start):
+			event.update(start=start, end=end)
+		else:
+			event.update(start=start, end=get_datetime(start) + timedelta(hours=1))
+		events.append(event)
 
 	return events
 

@@ -66,9 +66,32 @@
 
 	function fmtTime(value) {
 		if (!value) return '';
-		// "HH:MM:SS" or "YYYY-MM-DD HH:MM:SS"
-		var match = String(value).match(/(\d{2}):(\d{2})(?::\d{2})?$/);
-		return match ? match[1] + ':' + match[2] : '';
+		// "HH:MM:SS" or "YYYY-MM-DD HH:MM:SS" -> "2:30 PM". Midnight is "no time given":
+		// Plan a Trip stores a flight or drive whose time is not known yet at 00:00:00.
+		var match = String(value).match(/(\d{1,2}):(\d{2})(?::\d{2})?$/);
+		if (!match) return '';
+		var hour = parseInt(match[1], 10);
+		if (hour === 0 && match[2] === '00' && String(value).length > 8) return '';
+		return (hour % 12 || 12) + ':' + match[2] + ' ' + (hour < 12 ? 'AM' : 'PM');
+	}
+
+	function fmtRange(from, to) {
+		var a = fmtTime(from);
+		var b = fmtTime(to);
+		if (a && b) return a + ' – ' + b;
+		return a || b;
+	}
+
+	// A PNR / confirmation / tracking number, with a Copy button — the thing a traveler
+	// reads out at a counter.
+	function appendRef(card, label, value) {
+		if (!value) return;
+		var row = el('div', 'ti-pnr');
+		row.appendChild(el('span', null, label + ': ' + value));
+		var copy = el('button', 'ti-copy', 'Copy');
+		copy.addEventListener('click', function () { copyText(value, copy); });
+		row.appendChild(copy);
+		card.appendChild(row);
 	}
 
 	function copyText(text, button) {
@@ -142,6 +165,7 @@
 			times.textContent = fmtTime(item.departure_time) +
 				(item.arrival_time ? ' – ' + fmtTime(item.arrival_time) : '');
 			card.appendChild(times);
+			appendWho(card, item);
 			if (item.booking_reference) {
 				var pnrRow = el('div', 'ti-pnr');
 				pnrRow.appendChild(el('span', null, 'PNR: ' + item.booking_reference));
@@ -162,15 +186,44 @@
 				(item.pickup_location || '?') + ' → ' + (item.dropoff_location || '?')));
 			var sub = [];
 			if (item.provider) sub.push(item.provider);
-			if (item.pickup_datetime) sub.push(fmtTime(item.pickup_datetime));
-			if (item.booking_reference) sub.push('Ref: ' + item.booking_reference);
+			var when = fmtRange(item.pickup_datetime, item.arrival_datetime);
+			if (when) sub.push(when);
 			if (sub.length) card.appendChild(el('div', 'ti-card-sub', sub.join(' · ')));
+			if (item.return_datetime && fmtTime(item.return_datetime)) {
+				card.appendChild(el('div', 'ti-card-sub', 'Return by ' + fmtTime(item.return_datetime) +
+					' (' + String(item.return_datetime).slice(0, 10) + ')'));
+			}
+			if (item.cargo) card.appendChild(el('div', 'ti-notes', 'Hauling: ' + item.cargo));
+			appendWho(card, item);
+			appendRef(card, 'Confirmation', item.booking_reference);
+			appendAttachment(card, item.attachment);
+			return card;
+		},
+		freight: function (item) {
+			var card = el('div', 'ti-card ti-ground');
+			card.appendChild(el('div', 'ti-card-kicker', '📦 Freight · ' + (item.carrier || '')));
+			card.appendChild(el('div', 'ti-card-title', item.contents || 'Shipment'));
+			var delivery = fmtRange(item.delivery_from, item.delivery_to);
+			if (item.deliver_to || delivery) {
+				card.appendChild(el('div', 'ti-card-sub',
+					'Delivers' + (delivery ? ' ' + delivery : '') + (item.deliver_to ? ' to ' + item.deliver_to : '')));
+			}
+			var pickup = fmtRange(item.pickup_from, item.pickup_to);
+			if (item.ship_from || pickup) {
+				card.appendChild(el('div', 'ti-card-sub',
+					'Picked up' + (pickup ? ' ' + pickup : '') +
+					(item.pickup_from ? ' on ' + String(item.pickup_from).slice(0, 10) : '') +
+					(item.ship_from ? ' from ' + item.ship_from : '')));
+			}
+			if (item.received_by) card.appendChild(el('div', 'ti-card-sub', 'Received by ' + item.received_by));
+			appendRef(card, 'Tracking', item.tracking_number);
 			appendAttachment(card, item.attachment);
 			return card;
 		},
 		agenda: function (item) {
 			var card = el('div', 'ti-card ti-agenda');
-			var kicker = '📍 Stop' + (item.time ? ' · ' + fmtTime(item.time) : '');
+			var span = fmtRange(item.time, item.end_time);
+			var kicker = '📍 Stop' + (span ? ' · ' + span : '');
 			card.appendChild(el('div', 'ti-card-kicker', kicker));
 			card.appendChild(el('div', 'ti-card-title', item.activity || ''));
 			var sub = [];
@@ -191,11 +244,12 @@
 
 	function hotelCard(item, kind) {
 		var card = el('div', 'ti-card ti-hotel');
-		card.appendChild(el('div', 'ti-card-kicker', '🏨 Hotel ' + kind));
+		card.appendChild(el('div', 'ti-card-kicker', '🏨 Hotel ' + kind + (item.time ? ' · ' + fmtTime(item.time) : '')));
 		card.appendChild(el('div', 'ti-card-title', item.hotel || ''));
 		var sub = [];
 		if (item.address) sub.push(item.address);
 		if (sub.length) card.appendChild(el('div', 'ti-card-sub', sub.join(' · ')));
+		appendWho(card, item);
 		if (item.booking_confirmation) {
 			var row = el('div', 'ti-pnr');
 			row.appendChild(el('span', null, 'Confirmation: ' + item.booking_confirmation));
@@ -206,6 +260,14 @@
 		}
 		appendAttachment(card, item.attachment);
 		return card;
+	}
+
+	// Only the whole-crew view carries `travelers` (a coordinator looking at a trip they are
+	// not on): api/travel.py shape_itinerary collapses one booking's per-person rows into
+	// one entry and names who is on it. A traveler's own view never has the key.
+	function appendWho(card, item) {
+		if (!item.travelers || !item.travelers.length) return;
+		card.appendChild(el('div', 'ti-card-sub', 'With: ' + item.travelers.join(', ')));
 	}
 
 	function appendAttachment(card, fileUrl) {

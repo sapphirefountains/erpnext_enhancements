@@ -198,6 +198,26 @@ def get_trip_itinerary(trip):
 	return shape_itinerary(doc, viewing_employee)
 
 
+def _clock(value):
+	"""'HH:MM:SS' from a Time value (a ``timedelta`` from the database, a string from a
+	document built in memory), or ``None``."""
+	if value in (None, ""):
+		return None
+	if hasattr(value, "total_seconds"):
+		seconds = int(value.total_seconds()) % 86400
+		return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+	text = str(value)
+	return text if len(text) != 7 else f"0{text}"  # "9:30:00" -> "09:30:00"
+
+
+def _sort_time(value):
+	"""The time-of-day part of a datetime, for ordering one day's items. Every item sorts by
+	the same 'HH:MM:SS' key: until v1.520.0 flights and drives sorted by their whole
+	datetime string while stops sorted by time alone, so "17:00:00" < "2026-..." put a 5 PM
+	stop above a 7 AM flight."""
+	return str(value)[11:19] if value else ""
+
+
 def shape_itinerary(doc, viewing_employee=None):
 	"""Build the typed day-by-day itinerary dict from a Travel Trip document.
 
@@ -209,61 +229,128 @@ def shape_itinerary(doc, viewing_employee=None):
 	def visible(row_traveler):
 		return not row_traveler or not viewing_employee or row_traveler == viewing_employee
 
+	names = {t.employee: t.employee_name or t.employee for t in doc.travelers}
+
+	def bookings(rows, ref_field):
+		"""(first row, who is on it, confirmation) per booking.
+
+		Plan a Trip stores one row per person, so each traveler's own view holds only their
+		own row and their own confirmation number — that view is unchanged here. The
+		whole-crew view (no ``viewing_employee``) would otherwise print a four-person flight
+		as four identical flights, so rows sharing a ``booking_group`` collapse into one
+		entry that names who is on it and lists every distinct confirmation.
+		"""
+		shown = [row for row in rows if visible(row.traveler)]
+		if viewing_employee:
+			return [(row, None, row.get(ref_field)) for row in shown]
+		groups = {}
+		for row in shown:
+			groups.setdefault(row.get("booking_group") or row.name, []).append(row)
+		out = []
+		for members in groups.values():
+			refs = []
+			for member in members:
+				ref = member.get(ref_field)
+				if ref and ref not in refs:
+					refs.append(ref)
+			who = [names.get(m.traveler, m.traveler) for m in members if m.traveler]
+			out.append((members[0], who or None, ", ".join(refs) or None))
+		return out
+
 	items = []
 
-	for row in doc.flights:
-		if not visible(row.traveler):
-			continue
+	for row, who, ref in bookings(doc.flights, "booking_reference"):
 		date = getdate(row.departure_time) if row.departure_time else getdate(doc.start_date)
 		items.append(
 			{
 				"type": "flight",
 				"date": str(date),
-				"sort_time": str(row.departure_time or ""),
+				"sort_time": _sort_time(row.departure_time),
 				"airline": row.airline,
 				"flight_number": row.flight_number,
 				"departure_airport": row.departure_airport,
 				"departure_time": str(row.departure_time) if row.departure_time else None,
 				"arrival_airport": row.arrival_airport,
 				"arrival_time": str(row.arrival_time) if row.arrival_time else None,
-				"booking_reference": row.booking_reference,
+				"booking_reference": ref,
+				"travelers": who,
 				"attachment": row.attachment,
 			}
 		)
 
-	for row in doc.accommodations:
-		if not visible(row.traveler):
-			continue
+	for row, who, ref in bookings(doc.accommodations, "booking_confirmation"):
+		check_in_time = _clock(row.get("check_in_time"))
+		check_out_time = _clock(row.get("check_out_time"))
 		base = {
 			"hotel": row.hotel_lodging,
 			"address": row.address,
-			"booking_confirmation": row.booking_confirmation,
+			"booking_confirmation": ref,
+			"travelers": who,
 			"attachment": row.attachment,
 		}
 		if row.check_in_date:
 			items.append(
-				dict(base, type="hotel_checkin", date=str(row.check_in_date), sort_time="23:00")
+				dict(
+					base,
+					type="hotel_checkin",
+					date=str(row.check_in_date),
+					time=check_in_time,
+					sort_time=check_in_time or "23:00",
+				)
 			)
 		if row.check_out_date:
 			items.append(
-				dict(base, type="hotel_checkout", date=str(row.check_out_date), sort_time="00:30")
+				dict(
+					base,
+					type="hotel_checkout",
+					date=str(row.check_out_date),
+					time=check_out_time,
+					sort_time=check_out_time or "00:30",
+				)
 			)
 
-	for row in doc.ground_transport:
-		if not visible(row.traveler):
-			continue
+	for row, who, ref in bookings(doc.ground_transport, "booking_reference"):
 		date = getdate(row.pickup_datetime) if row.pickup_datetime else getdate(doc.start_date)
 		items.append(
 			{
 				"type": "ground",
 				"date": str(date),
-				"sort_time": str(row.pickup_datetime or ""),
+				"sort_time": _sort_time(row.pickup_datetime),
 				"transport_type": row.transport_type,
 				"provider": row.supplier or row.vehicle,
 				"pickup_location": row.pickup_location,
 				"dropoff_location": row.dropoff_location,
 				"pickup_datetime": str(row.pickup_datetime) if row.pickup_datetime else None,
-				"booking_reference": row.booking_reference,
+				"arrival_datetime": str(row.get("arrival_datetime")) if row.get("arrival_datetime") else None,
+				"return_datetime": str(row.return_datetime) if row.return_datetime else None,
+				"cargo": row.get("cargo"),
+				"booking_reference": ref,
+				"travelers": who,
+				"attachment": row.attachment,
+			}
+		)
+
+	# Freight: shown on the day it arrives (or is picked up, when no delivery window is
+	# known), to whoever receives it — or to everyone when nobody is named.
+	for row in doc.get("freight") or []:
+		if not visible(row.traveler):
+			continue
+		when = row.delivery_from or row.pickup_from
+		items.append(
+			{
+				"type": "freight",
+				"date": str(getdate(when)) if when else str(getdate(doc.start_date)),
+				"sort_time": _sort_time(when),
+				"carrier": row.carrier,
+				"tracking_number": row.tracking_number,
+				"contents": row.contents,
+				"ship_from": row.ship_from,
+				"deliver_to": row.deliver_to,
+				"pickup_from": str(row.pickup_from) if row.pickup_from else None,
+				"pickup_to": str(row.pickup_to) if row.pickup_to else None,
+				"delivery_from": str(row.delivery_from) if row.delivery_from else None,
+				"delivery_to": str(row.delivery_to) if row.delivery_to else None,
+				"received_by": names.get(row.traveler, row.traveler) if row.traveler else None,
 				"attachment": row.attachment,
 			}
 		)
@@ -307,8 +394,11 @@ def shape_itinerary(doc, viewing_employee=None):
 			{
 				"type": "agenda",
 				"date": str(row.date),
-				"sort_time": str(row.time or ""),
-				"time": str(row.time) if row.time else None,
+				"sort_time": _clock(row.time) or "",
+				# Always "HH:MM:SS": str() of the database's timedelta is "9:30:00", which the
+				# itinerary email sliced to "9:30:".
+				"time": _clock(row.time),
+				"end_time": _clock(row.get("end_time")),
 				"activity": row.activity_description,
 				"related_party_doctype": row.related_party_doctype,
 				"related_party": row.related_party_name,

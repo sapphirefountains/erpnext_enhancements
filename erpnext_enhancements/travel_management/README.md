@@ -2,12 +2,16 @@
 
 Crew-based trip planning, logistics and travel finance. A non-submittable **Travel Trip** hub document carries a crew of travelers, the booking segments (flights / lodging / ground / misc costs / personal-vehicle mileage), a day-by-day agenda with CRM outcome capture, and rolls everything into native **Expense Claims**, **Employee Advances** and **Vehicle Logs**. Redesigned ground-up in v1.15.0 (the old submittable + Workflow version is retired; its 2 production drafts were deleted by patch).
 
+Trips are entered on **Plan a Trip** (`/app/plan-a-trip`, v1.520.0): a step-by-step desk page for the office booking a crew — the trip, who's going, getting there, getting back, where everyone sleeps, getting around, freight, the schedule — ending on a **trip checklist** (a bed every night, travel both ways, confirmation and tracking numbers, cost). Location boxes (drive from/to, freight ship-from/deliver-to, a stop's Place) search Google for place names and addresses through the same component as the Address form. The Travel workspace tile and the list's *+ Add* button open it; the form links to it and shows the checklist as a headline. The form is still the full record.
+
 ## Design decisions (the "why")
 
 - **No Workflow, no submit.** Trips are edited *collaboratively* (admins and travelers alike) until Closed; a submittable doc would freeze mid-trip edits behind amend cycles. Lifecycle is a plain `status` Select: **Planning → Booked → In Progress → Completed → Closed**. In Progress/Completed auto-advance from the trip dates (daily job); Booked and Closed are manual. Closed locks the doc (controller check); `api.reopen_trip` is the coordinator escape hatch.
 - **The parent has NO `employee` field — and must never get one.** Travelers live in the `travelers` child table; the Employee dashboard's Travel Trip count works because frappe's link-count filter falls back to the `Trip Traveler.employee` child column. A parent field named `employee` would silently zero that dashboard count.
 - **Documents are created explicitly, never as save side-effects** — `travel_management/api.py` methods back the form's Create buttons. Claim dedupe is stamp-based (see below) so re-running is always safe.
 - **Multi-currency is out of scope for v1**: all costs are company-currency; advances are created at exchange rate 1. Foreign receipts get entered converted.
+- **One row per person, one card per booking.** Plan a Trip shows a flight with four people on it as one card; it stores four Trip Flight rows, each pinned to its traveler with that person's own confirmation number, sharing a hidden `booking_group`. That is what lets each traveler's `/itinerary`, itinerary email and calendar invite show their own booking and nobody else's (a pinned row is hidden from everyone else — the existing visibility rule). Rooms and vehicles work the same way; a room's or vehicle's total cost is split evenly across its rows. `planner.py`'s docstring has the write rules: a shared field is only copied across a booking's rows when the page changed it, the split is only redone when the total or the people changed, and a row on an Expense Claim is never deleted or re-priced.
+- **The checklist flags, it never blocks.** The office asked to *see* what is missing, so `completeness.py` feeds the page and a form headline, and nothing refuses a save or a status change. It returns data, not sentences; the page words it.
 
 ## Data model
 
@@ -24,6 +28,8 @@ Travel Trip (parent, NOT submittable, autoname TRIP-.YYYY.-.#####)
 ├── accommodations   → Trip Accommodation    (hotel → Supplier, confirmation, cost block)
 ├── ground_transport → Trip Ground Transport (typed links: supplier OR vehicle+vehicle_log;
 │                                             Company Fleet rows forced company-paid)
+├── freight          → Trip Freight          (carrier → Supplier, tracking/PRO/BOL #, pickup +
+│                                             delivery windows, received-by traveler, cost block)
 ├── other_costs      → Trip Expense          (misc: parking, tolls, fees; cost block)
 ├── mileage          → Trip Mileage          (personal vehicle only: distance × settings rate)
 └── itinerary        → Trip Agenda           (related party dyn-link, location → Travel POI,
@@ -34,7 +40,11 @@ Travel Settings   Single: per-diem rate rules (Travel Per Diem Rate child), mile
                   Expense Claim Type mapping, auto-advance + notifications master switches
 ```
 
-**Shared cost block** (identical on the four cost tables): `estimated_cost`, `cost`, `paid_by` (Company/Employee), `paid_by_traveler` (required+validated when Employee), `billable`, and the hidden `expense_claim` stamp.
+**Shared cost block** (identical on the five cost tables): `estimated_cost`, `cost`, `paid_by` (Company/Employee), `paid_by_traveler` (required+validated when Employee), `billable`, and the hidden `expense_claim` stamp.
+
+**Plan a Trip fields** (v1.520.0): `leg` (Outbound / Return / During Trip) on Trip Flight and Trip Ground Transport — optional on the form, always set by the page, inferred from the date when blank; hidden `booking_group` on Trip Flight, Trip Accommodation, Trip Ground Transport and Trip Mileage. Ground transport gained a **Personal Vehicle** type (riders get a row each at no cost; the driver's miles go to a Trip Mileage row in the same `booking_group`), and a **Company Fleet** row no longer requires a Vehicle — neither `Vehicle` nor `Fleet Vehicle` held a single record on prod, so the requirement made a company truck impossible to enter. A Vehicle Log still needs one.
+
+**Freight and time ranges** (v1.520.0): **Trip Freight** is a carrier shipment — equipment or materials sent to the job — with its tracking / PRO / BOL number, ship-from and deliver-to, a pickup window and a delivery window (from/to datetimes), who on the crew receives it (`traveler`, blank = whole crew, the same visibility rule as a booking), and the shared cost block. It is one row per shipment, not per person, and it is in `COST_TABLES`: rollups, the unclaimed report, the spend-by-category report (its own Freight column) and Expense Claims (as a misc expense — Travel Settings has no freight type) all count it. Our *own* truck's load is not freight: it is the **Hauling** note (`cargo`) on that Ground Transport row. Time ranges: Ground Transport `arrival_datetime` (a drive's end), Trip Accommodation `check_in_time` / `check_out_time`, Trip Agenda `end_time` (its `time` is now labelled Start Time). A stop's **Place** is still a Link to Travel POI; a place picked from Google on the page becomes a POI with its point (`planner.place_to_poi`), reusing one with exactly the same name.
 
 ## Money flow
 
@@ -52,12 +62,16 @@ Travel Settings   Single: per-diem rate rules (Travel Per Diem Rate child), mile
 | `doctype/travel_trip/travel_trip.py` | Validation pipeline + rollups + status rules + Closed lock | `TravelTrip.validate` (`_validate_*`, `_compute_*`, `_handle_status_change`), `on_trash`, `get_travel_settings`, `user_is_travel_coordinator` |
 | `doctype/travel_trip/travel_trip_dashboard.py` | Trip form connections (claims/advances/logs/outcomes) | `get_data` (fieldname `custom_travel_trip`) |
 | `api.py` | Whitelisted document creation (form Create buttons) | `create_expense_claim(s)`, `create_employee_advance`, `create_outcome_from_stop`, `create_vehicle_log`, `reopen_trip`, `get_trip_financial_summary` |
+| `page/plan_a_trip/` | **Plan a Trip** desk page (`/app/plan-a-trip`, `?trip=` to continue one, `&step=` to jump) — the step-by-step entry. Saves on every step change and when you leave the page; refuses a stale save rather than merging. Times are native inputs (AM/PM on a US device) | `TripPlanner` |
+| `planner.py` | The page's read/write side: cards ↔ per-person rows, freight rows, optimistic lock, allowlisted fields, Google place → Travel POI | `get_plan`, `save_plan`, `get_recent_plans`, `place_to_poi` (whitelisted); `merge_bookings`, `merge_mileage`, `merge_travelers`, `merge_freight`, `merge_stops`, `get_state` |
+| `completeness.py` | The trip checklist, pure Python (no site needed) | `find_gaps`, `lodging_gaps`, `travel_gaps`, `confirmation_gaps`, `cost_gaps` |
 | `permissions.py` | Crew-scoped row access (hooks) | `get_permission_query_conditions`, `has_permission` |
 | `tasks.py` | Daily status auto-advance | `auto_advance_trip_statuses` |
 | `integrations.py` | doc_events on Expense Claim / Employee Advance / Vehicle Log: status mirroring + stamp clearing | `sync_expense_claim_status`, `sync_employee_advance_status`, `sync_vehicle_log_unlink` |
 | `notifications.py` | Code-driven travel emails (+ Notification Log), gated by Travel Settings switch | `on_trip_update` dispatcher, `deliver_*` jobs, `notify_expense_claims_generated`, `send_itinerary_emails` |
 | `reminders.py` | Daily pre-travel itinerary email + single-shot post-trip expense nudge (stamp-first idempotency) | `send_pre_travel_reminders`, `send_post_trip_expense_nudges` |
-| `ics.py` | Dependency-free RFC 5545 builder (METHOD:PUBLISH, stable UIDs) | `build_ics`, `trip_events_for_traveler`, `trip_ics_attachment` |
+| `ics.py` | Dependency-free RFC 5545 builder (METHOD:PUBLISH, stable UIDs). Flights, hotel check-ins, rentals/rides/drives and freight windows, each with its confirmation or tracking number; a datetime at exactly midnight ("time not known yet") becomes an all-day event | `build_ics`, `trip_events_for_traveler`, `trip_ics_attachment` |
+| `itinerary_text.py` | The travel emails' wording, pure Python: one line per itinerary item with its PNR / confirmation / tracking number (or "no … yet"), times on a 12-hour clock. Used by the itinerary email and by "Trip booked" / "You were added", which now list the recipient's own bookings | `clock`, `item_line`, `day_lines`, `booking_lines` |
 | `dashboard.py` | Travel group on Opportunity/Lead/Customer dashboards (dynamic-link counts) | `get_*_dashboard_data` |
 | `report/…` | Script Reports | Travel Trip Cost Summary, Travel Spend by Category, Unclaimed Travel Expenses |
 | `workspace/travel_management/` | "Travel" workspace (links, calendar/new-trip/itinerary shortcuts) | — |
@@ -78,7 +92,8 @@ Row scoping is hook-based (`permission_query_conditions` + `has_permission`), tr
 
 ## hooks.py touchpoints
 
-- `doctype_js["Travel Trip"]`, `doctype_calendar_js["Travel Trip"]`.
+- `doctype_js["Travel Trip"]`, `doctype_calendar_js["Travel Trip"]`, `doctype_list_js["Travel Trip"]` (`public/js/travel/travel_trip_list.js`: *+ Add Travel Trip* opens Plan a Trip).
+- Patch `reload_travel_workspace_for_plan_a_trip` forces the workspace past the import age gate (its "New Travel Trip" tile became "Plan a Trip").
 - `doc_events`: Travel Trip `on_update` (notifications dispatcher); Expense Claim / Employee Advance (status sync + stamp clearing); Vehicle Log `on_trash`.
 - `scheduler_events.daily`: `auto_advance_trip_statuses` **before** the two reminder jobs (they must see today's statuses).
 - `permission_query_conditions` / `has_permission` for Travel Trip.
@@ -93,3 +108,6 @@ Row scoping is hook-based (`permission_query_conditions` + `has_permission`), tr
 - All travel emails are off until **Travel Settings → Send Travel Notifications** is enabled; the form's "Send Itinerary" button works regardless (explicit user action).
 - Deleting a traveler row with a linked claim/advance is blocked; cancel the documents first.
 - The daily job also advances **Planning** trips inside their dates to In Progress (crews forget to click Booked); drop "Planning" from the tuple in `tasks.py` to require Booked.
+- **A flight or drive with no time yet is stored at midnight**, because a Datetime column cannot hold a date alone. Plan a Trip therefore reads a stored `00:00:00` as "no time given" — a flight genuinely leaving at 12:00 AM shows a blank time on the page (the form shows it correctly).
+- **The page and the server each list a booking's shared fields** (`TP_SHARED` in `plan_a_trip.js`, `BOOKING_TABLES` in `planner.py`). Add a field to one and not the other and edits to it are dropped with no error; `tests/test_travel_planner.py` fails the build on a mismatch.
+- **Removing someone from the crew on the page takes them off every booking** (the server refuses a booking for a non-traveler). Their rows are deleted on save unless they are on an Expense Claim.

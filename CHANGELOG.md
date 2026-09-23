@@ -7,6 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.520.0] - 2026-09-23
+
+**Plan a Trip: enter a whole trip one step at a time, and see what is still missing.** Travel
+had one long form with six grid tables. Nobody was using it: prod held no Travel Trips at all,
+only a June test trip that had been deleted. The new desk page asks one thing at a time: the trip,
+who's going, getting there, getting back, where everyone sleeps, getting around, freight, the
+schedule. It ends on a checklist of what is still missing. The office books for the crew, so each
+flight, room or vehicle is one card with a tick box per person, and **each person gets their own
+booking**: their own row, with their own confirmation number, on their own itinerary, email and
+calendar invite. Freight shipments get their own step, the location boxes search Google, and
+confirmation numbers now show up everywhere a traveler looks.
+
+### Added
+
+- **Plan a Trip** (`/app/plan-a-trip`; `travel_management/page/plan_a_trip`). Start a new trip
+  or carry on with one. Every step change saves, and so does leaving the page. Nothing is saved
+  until the trip has its basics and at least one person, because the controller refuses a trip
+  with no traveler. A save based on a version somebody else has since changed is refused rather
+  than merged. Details:
+  - Airline, hotel and rental company are the same required Supplier links as on the form. The
+    picker still offers *Create a new Supplier*.
+  - "Copy the way there, reversed" fills in the return trip.
+  - A second room starts at the same hotel on the same nights as the one before it.
+  - The Lodging step shows a grid of who has a bed on which night.
+  - A personal vehicle records who drove and the miles, which become that driver's mileage row
+    at the Travel Settings rate.
+  - The review step can mark the trip Booked (it warns if the checklist is not clear) and email
+    each person their own itinerary. It also lists **each person's confirmation numbers**,
+    booking by booking, with the missing ones flagged.
+  - Times use the browser's own time input, so they show AM/PM on a US computer or phone.
+  - **Time ranges:** a drive has Leaves and Arrives, a room has optional check-in and check-out
+    times, and a schedule stop has From and Until.
+  - **Google autocomplete on locations.** Drive from/to, freight ship-from/deliver-to and a
+    stop's Place suggest real places and addresses as you type. It uses the same component as
+    the Address form (`global_enhancements/address_autocomplete.js`), so it needs no new key or
+    API. A picked place fills in Google's own wording, name plus address. A stop's Place becomes
+    a Travel POI with the point Google returned (`planner.place_to_poi`, reusing a POI with
+    exactly that name), so the trip map can plot it. A name typed without picking still works;
+    the server makes the POI on save.
+- **Freight** (new child DocType **Trip Freight**, a *Freight* step and a table on the form's
+  Logistics tab). A carrier shipment of equipment or materials has:
+  - the tracking / PRO / BOL number and what is being shipped;
+  - where it ships from and where it goes;
+  - a pickup window and a delivery window;
+  - who on the crew meets it (blank means the whole crew);
+  - the usual cost block.
+
+  It is one row per shipment, not per person. It is a cost table like the others: trip totals,
+  the unclaimed report and Expense Claims all count it (claims file it as a misc expense, since
+  Travel Settings has no freight type), and *Travel Spend by Category* has a Freight column. A
+  cancelled claim clears its stamp. The receiver sees it on their itinerary and calendar, with
+  the tracking number.
+- **Hauling** (`cargo`) on Trip Ground Transport, for what our own truck or trailer carries.
+  Carrier shipments go on the Freight step instead.
+- **Confirmation numbers where they were missing:**
+  - The calendar invite now includes rentals, rides and drives, each with its confirmation
+    number, hauling note and return time, and freight delivery windows with their tracking
+    number. Before this, only flights and hotels were in it.
+  - The itinerary email now shows the confirmation number on rentals and rides.
+  - "Trip booked" and "You were added to a trip" list the recipient's own bookings, each with
+    their own number or "no confirmation number yet". The owner's copy lists every booking and
+    who is on it. Before this, the booked email said "Your bookings are confirmed" and listed
+    none.
+  - The mobile itinerary gives rentals and freight a copyable Confirmation or Tracking line, as
+    flights and hotels already had.
+  - The Travel Trip form's Flights, Accommodation and Ground Transport tables show the
+    confirmation number as a column.
+  - The email wording lives in one place, `travel_management/itinerary_text.py`, which is pure
+    Python and tested without a site.
+- **The trip checklist** (`travel_management/completeness.py`), with the four checks the office
+  chose. It flags gaps and never blocks a save or a status change.
+  - **A bed every night:** every traveler, every night of their own dates. A shared room counts
+    for everyone in it.
+  - **Travel both ways:** a way there and a way back per person. A flight, company truck, own car
+    or rental all count.
+  - **Confirmation numbers:** on every flight, room and booked vehicle, and a tracking number on
+    every shipment. A company or personal vehicle is exempt.
+  - **A cost:** on the same bookings.
+  - It is pure Python, so `tests/test_travel_planner.py` runs it without a site. It returns data
+    and the page words it, so the wording lives in one place.
+- **On the Travel Trip form:**
+  - A checklist headline counting what is missing, with a link to the review step.
+  - A *Plan step by step* button.
+  - A pointer to the page on a blank new trip.
+- **The list's *+ Add Travel Trip* button** now opens Plan a Trip, through frappe's own
+  `listview_settings.primary_action` hook (`public/js/travel/travel_trip_list.js`).
+- **The Travel workspace tile** *New Travel Trip* is now *Plan a Trip*. The JSON stamp is bumped,
+  and the patch `reload_travel_workspace_for_plan_a_trip` forces the workspace past the import
+  age gate, the same trap as `reload_location_timeline_page`.
+- New fields on the travel child tables:
+  - **`leg`** (Outbound / Return / During Trip) on Trip Flight and Trip Ground Transport. It is
+    optional on the form. The page always sets it, and a blank one is read from the date.
+  - **`booking_group`** (hidden) on Trip Flight, Trip Accommodation, Trip Ground Transport and
+    Trip Mileage. It ties one booking's per-person rows together.
+  - **`arrival_datetime`** and **`cargo`** on Trip Ground Transport.
+  - **`check_in_time`** and **`check_out_time`** on Trip Accommodation.
+  - **`end_time`** on Trip Agenda. Its `time` is now labelled *Start Time*.
+
+### Changed
+
+- **One booking is stored as one row per person.** `travel_management/planner.py` fans each card
+  out to rows and reads them back.
+  - A shared field is copied across a booking's rows only when it was changed on the page, so
+    two rows that differ after an edit on the form are left alone.
+  - A booking's total cost is split evenly across its rows (the odd cents go to the first rows),
+    and only when the total or the people changed.
+  - A row already on an Expense Claim is never deleted or re-priced.
+- **Trip Ground Transport has a *Personal Vehicle* type.** Riders get a row each at no cost;
+  the driver's miles are a Trip Mileage row in the same booking.
+- **A *Company Fleet* row no longer requires a Vehicle.** Neither `Vehicle` nor `Fleet Vehicle`
+  holds a single record on prod, so the requirement made a company truck impossible to enter. A
+  Vehicle Log still needs one.
+- **The whole-crew itinerary** (`/itinerary` for a coordinator who is not on the trip) now
+  collapses one booking's rows into one entry that says who is on it. Without that, a four-person
+  flight would print four times. Each traveler's own itinerary, emails and invites are unchanged:
+  they only ever held that person's rows.
+- **The travel emails, calendar invite and mobile itinerary use a 12-hour clock** ("7:15 AM", not
+  "07:15"). A flight or drive whose time is not known yet is stored at midnight, because a
+  Datetime column cannot hold a date alone. These now read that midnight as "no time" rather than
+  as 12 AM, and the calendar makes it an all-day event.
+- `address_autocomplete.js` also returns the suggestion's own text (`label`, `name`) to its
+  callers. It reads this from the prediction instead of fetching `displayName`, which would have
+  moved every pick onto a more expensive Place Details tier. The Address callers ignore it.
+
+### Fixed
+
+- **The itinerary put items in the wrong order within a day.** Flights and drives sorted by
+  their whole datetime string ("2026-10-05 07:15:00") while stops sorted by time alone
+  ("17:00:00"). Strings compare character by character, and "1" sorts before "2", so a 5 PM stop
+  printed above a 7 AM flight. Every item now sorts by its time of day.
+- **The itinerary email printed a stop's time as "9:30:".** A Time column arrives as a
+  `timedelta`, and `str()` of 9:30 is "9:30:00" with no leading zero, so the template's
+  five-character slice caught the colon. Times are now always "HH:MM:SS".
+
+### Notes
+
+- The desk's own date-and-time picker still uses a 24-hour clock everywhere else. Frappe v16's
+  Datetime control builds its picker format from the System Settings time format, which offers
+  only `HH:mm:ss` and `HH:mm`. Plan a Trip avoids it by using native time inputs. A desk-wide
+  AM/PM fix is separate work.
+- Expense Claims, Employee Advances and Vehicle Logs still need HRMS, which is not installed on
+  prod. Costs still add up on the trip.
+
 ## [1.519.0] - 2026-09-23
 
 **Every procurement document prints in the Purchase Order's design.** `Purchase Order - Sapphire`
