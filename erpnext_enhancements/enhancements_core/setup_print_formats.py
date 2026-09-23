@@ -329,9 +329,38 @@ SUPERSEDED_PURCHASE_ORDER_FORMATS = (
 	"Drop Shipping Format",
 )
 
+# The same, for the other five procurement documents, superseded by the "<Doctype> - Sapphire"
+# formats in `setup_procurement_print_formats` (v1.519.0). Measured on production on
+# 2026-09-23: nothing references any of them — no Notification, Auto Repeat or Property
+# Setter. Two notes:
+#
+# - `Request for Quotation Print Template` is NOT an ERPNext file (standard = "No"; it is in
+#   no version-16 JSON) — somebody made it on the site. Disabled rather than deleted all the
+#   same: a disable is one tick to undo, a delete is not, and re-applying it is harmless.
+# - `Purchase Receipt Serial and Batch Bundle Print` does a job the Sapphire receipt does not
+#   — it prints serial and batch numbers. No receipt on this site has ever carried one (0
+#   Serial and Batch Bundles). If that changes, take it off this list.
+#
+# `Purchase eInvoice` is a Regional format that is already disabled; listed so it stays so.
+# Material Request and Supplier Quotation had nothing but `Standard`, which is not a record
+# and cannot be disabled.
+SUPERSEDED_PROCUREMENT_FORMATS = (
+	"Request for Quotation Print Template",
+	"Request for Quotation with Item Image",
+	"Purchase Receipt Serial and Batch Bundle Print",
+	"Purchase Invoice Standard",
+	"Purchase Invoice with Item Image",
+	"Purchase Auditing Voucher",
+	"Purchase eInvoice",
+)
+
 
 def disable_superseded_print_formats():
-	"""Keep the superseded standard PO formats out of the print dropdown.
+	"""Keep the superseded procurement formats out of the print dropdown.
+
+	The Purchase Order's three since the Sapphire order format, and since v1.519.0 the stock
+	formats of the other five procurement doctypes too, each superseded by its own
+	"<Doctype> - Sapphire" format.
 
 	Disabled, not deleted: they belong to ERPNext, and deleting a standard format
 	means it returns on the next migrate. `disabled = 1` is a field on the record,
@@ -345,7 +374,7 @@ def disable_superseded_print_formats():
 		if not frappe.db.has_column("Print Format", "disabled"):
 			return
 		disabled = 0
-		for name in SUPERSEDED_PURCHASE_ORDER_FORMATS:
+		for name in SUPERSEDED_PURCHASE_ORDER_FORMATS + SUPERSEDED_PROCUREMENT_FORMATS:
 			if not frappe.db.exists("Print Format", name):
 				continue
 			if frappe.db.get_value("Print Format", name, "disabled"):
@@ -354,7 +383,7 @@ def disable_superseded_print_formats():
 			disabled += 1
 		if disabled:
 			frappe.db.commit()
-			frappe.logger().info(f"Purchase Order print formats: disabled {disabled} superseded")
+			frappe.logger().info(f"Procurement print formats: disabled {disabled} superseded")
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Superseded print format cleanup")
 

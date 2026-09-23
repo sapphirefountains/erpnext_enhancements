@@ -370,10 +370,11 @@ Three things that would otherwise go wrong silently:
   backend, and Frappe falls back to wkhtmltopdf. The dialog sends `pdf_generator` the way the
   print view does (the format's own, else Print Settings' — chrome here); `get_print` reads it
   off `form_dict`.
-- **The default format.** No procurement doctype on this site has a `default_print_format`, so
-  Frappe would start on "Standard". The dialog starts on the doctype's one site-built format
-  when there is exactly one — "Purchase Order - Sapphire" for Purchase Orders — and on Standard
-  otherwise.
+- **The default format.** Since v1.519.0 every procurement doctype has a
+  `default_print_format` — its "<Doctype> - Sapphire" format, set by a Property Setter fixture —
+  so both the dialog and the row's print view open on the house design. Before that none did and
+  Frappe started on "Standard"; the dialog's fallback (the doctype's one site-built format when
+  there is exactly one, else Standard) is kept for a site where the fixture has not synced.
 
 Over 25 documents the dialog uses Frappe's `download_multi_pdf_async` instead, glued exactly as
 the list view glues it: a synchronous render that size risks the worker timeout. That path keeps
