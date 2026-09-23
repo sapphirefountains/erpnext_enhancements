@@ -13,6 +13,9 @@
  *   - YouTube (`youtube.py`): the text is the description, with the link added at the end; the
  *     Video Title is the title.
  *
+ * And a link to our own site is shown **tagged**, as every publisher sends it (`tagged`, below,
+ * the twin of `publish/tracking.py`). An unsaved draft has no name to tag with yet, and says so.
+ *
  * It never guesses where a network folds "… more", because that moves with the device, and a
  * confident wrong preview is worse than a plain one. The counters count against the limits the
  * server's own checks use (`get_bootstrap().limits`), and the server's answer (`check_post`)
@@ -23,6 +26,76 @@ export const FACEBOOK = "Facebook";
 export const INSTAGRAM = "Instagram";
 export const LINKEDIN = "LinkedIn";
 export const YOUTUBE = "YouTube";
+
+// ------------------------------------------------------------------ tracking tags
+//
+// The same rule as `marketing/publish/tracking.py` (TASK-2026-01488), so the preview shows the
+// link each network is actually sent. `marketing/publish/tracking_vectors.json` holds both to the
+// same answers: `scripts/test_marketing_client.js` runs this half, `test_marketing_metrics.py`
+// the other. Change one, change both, and add the case to the vectors.
+
+const OWN_HOSTS = ["sapphirefountains.com"];
+const SOURCES = { Facebook: "facebook", Instagram: "instagram", LinkedIn: "linkedin", YouTube: "youtube" };
+const TAGGED_NETWORKS = ["Facebook", "LinkedIn", "YouTube"];
+
+export function slug(text) {
+	const value = String(text || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return value.slice(0, 60).replace(/^-+|-+$/g, "");
+}
+
+export function isOwn(link) {
+	let url;
+	try {
+		url = new URL(String(link || "").trim());
+	} catch (e) {
+		return false;
+	}
+	const host = url.hostname.toLowerCase();
+	if ((url.protocol !== "http:" && url.protocol !== "https:") || !host) return false;
+	return OWN_HOSTS.some((own) => host === own || host.endsWith(`.${own}`));
+}
+
+function hasUtm(link) {
+	const base = String(link || "").split("#")[0];
+	const at = base.indexOf("?");
+	const query = at === -1 ? "" : base.slice(at + 1);
+	return query
+		.split("&")
+		.filter(Boolean)
+		.some((part) => part.split("=")[0].toLowerCase().startsWith("utm_"));
+}
+
+function partition(text, separator) {
+	const at = text.indexOf(separator);
+	return at === -1 ? [text, "", ""] : [text.slice(0, at), separator, text.slice(at + separator.length)];
+}
+
+/** The link as it goes to `network`: tagged if it is ours and untagged, else unchanged. */
+export function tagged(link, network, postName, campaign) {
+	const text = String(link || "").trim();
+	const source = SOURCES[network];
+	const content = slug(postName);
+	if (!text || !TAGGED_NETWORKS.includes(network) || !source || !content) return text;
+	if (!isOwn(text) || hasUtm(text)) return text;
+	const [base, hashMark, fragment] = partition(text, "#");
+	const [path, , query] = partition(base, "?");
+	const tags = `utm_source=${source}&utm_medium=social&utm_campaign=${slug(campaign) || "organic"}&utm_content=${content}`;
+	return `${path}?${query ? `${query}&${tags}` : tags}${hashMark}${fragment}`;
+}
+
+/** Text carrying the link: the author's own copy swapped for the sent one, or the sent one added. */
+export function withSentLink(text, link, sent) {
+	const body = String(text || "");
+	const original = String(link || "").trim();
+	const out = String(sent || "").trim();
+	if (!out) return body;
+	if (original && body.includes(original)) return body.split(original).join(out);
+	if (body.includes(out)) return body;
+	return body ? `${body}\n\n${out}` : out;
+}
 
 /** Characters as a person counts them: an emoji is one, not the two UTF-16 units `.length` sees. */
 export function characters(text) {
@@ -46,12 +119,6 @@ export function mentions(text) {
 export function textFor(state, target) {
 	const variant = String((target && target.variant_text) || "").trim();
 	return variant || String(state.body || "");
-}
-
-function withLink(text, link) {
-	const url = String(link || "").trim();
-	if (!url || text.includes(url)) return text;
-	return text ? `${text}\n\n${url}` : url;
 }
 
 /** `[{label, value, max}]` for one network's text. `max` is null where there is no limit. */
@@ -139,7 +206,11 @@ export function previewOf(state, target) {
 	const network = target.network;
 	const media = (state.media || []).slice();
 	const link = String(state.link || "").trim();
+	// What the publisher sends: our own site's link tagged for this post and network.
+	const sent = tagged(link, network, state.name, state.campaign);
 	const base = textFor(state, target);
+	// The author's own copy of the link in the text carries the same tags.
+	const swapped = link && base.includes(link) ? base.split(link).join(sent) : base;
 	const out = {
 		network,
 		account: target.label || target.social_account,
@@ -151,27 +222,36 @@ export function previewOf(state, target) {
 		first_comment: network === YOUTUBE ? "" : String(target.first_comment || "").trim(),
 	};
 	if (network === FACEBOOK) {
-		if (media.length) out.text = withLink(base, link);
-		else if (link) out.card = { url: link, title: "", description: "" };
+		if (media.length) out.text = withSentLink(base, link, sent);
+		else {
+			out.text = swapped;
+			if (link) out.card = { url: sent, title: "", description: "" };
+		}
 		if (link && !media.length) out.notes.push("Facebook draws the link card from the page it points to.");
 	} else if (network === INSTAGRAM) {
 		if (link) out.notes.push("The link is not sent to Instagram.");
 		if (media.length > 1) out.notes.push(`A carousel of ${media.length}.`);
 	} else if (network === LINKEDIN) {
-		if (media.length) out.text = withLink(base, link);
-		else if (link) {
-			out.card = {
-				url: link,
-				title: String(state.link_title || "").trim(),
-				description: String(state.link_description || "").trim(),
-			};
+		if (media.length) out.text = withSentLink(base, link, sent);
+		else {
+			out.text = swapped;
+			if (link) {
+				out.card = {
+					url: sent,
+					title: String(state.link_title || "").trim(),
+					description: String(state.link_description || "").trim(),
+				};
+			}
 		}
 	} else if (network === YOUTUBE) {
 		out.title = String(state.video_title || "").trim();
-		out.text = withLink(base, link);
+		out.text = withSentLink(base, link, sent);
 		out.media = media.filter((asset) => asset.asset_type === "Video").slice(0, 1);
 		out.notes.push("The post text is the video's description.");
 		if (String(state.video_tags || "").trim()) out.notes.push(`Tags: ${String(state.video_tags).trim()}`);
+	}
+	if (network !== INSTAGRAM && link && sent === link && isOwn(link) && !slug(state.name)) {
+		out.notes.push("Tracking tags are added to this link once the post is saved.");
 	}
 	return out;
 }

@@ -149,7 +149,10 @@ marketing/
 │   ├── validation.py, media.py ← pre-approval checks; fetchable media URLs     (01483, shipped)
 │   ├── publishers/      ← meta.py (01483), linkedin.py (01484), youtube.py (01485): shipped
 │   ├── workflow.py, approval.py ← draft → approve → publish, who may do each   (01486, shipped)
-│   └── spa.py, spa_rules.py ← the /marketing app's endpoints and their rules (01487, shipped)
+│   ├── spa.py, spa_rules.py ← the /marketing app's endpoints and their rules (01487, shipped)
+│   ├── tracking.py      ← UTM tags on links to our own site, as sent             (01488, shipped)
+│   ├── metrics.py, insights.py, metrics_sync.py ← nightly engagement pull-back   (01488, shipped)
+│   └── performance.py   ← posts joined to leads and revenue on their tags       (01488, shipped)
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md
@@ -334,6 +337,14 @@ only one where "scheduled for 9am Tuesday" is a promise rather than a hope.
 *As built (v1.514.0, TASK-2026-01486):* Marketing Team drafts, Marketing Manager approves (never
 the author or last editor), and only from a signed-in browser, so no token can approve. Approval
 writes the jobs in the same transaction. Each job keeps an attempt log.
+
+*As built (v1.516.0, TASK-2026-01488):* the metrics pull-back runs nightly at 03:50, and a
+`Social Post Metric` row is a post's **lifetime** total as of its date, not a day's increment.
+Facebook, Instagram and LinkedIn report nothing per post per day, and reach does not add up
+across days. Every link to our own site now goes out tagged: `utm_source=<network>`,
+`utm_medium=social`, `utm_content=<post>`, never `utm_id` (decided 2026-09-22). The **Social
+Post Performance** report joins each post to leads and revenue on those tags, with Ad Spend
+ROAS's window and revenue columns.
 
 See [the connectors runbook](marketing-connectors-runbook.md#the-publishing-outbox).
 

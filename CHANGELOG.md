@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.516.0] - 2026-09-22
+
+**Marketing P2: engagement pull-back and post attribution.** TASK-2026-01488, the last P2 item,
+closes the loop from post to performance. Each published post's engagement is now read back
+nightly, and every link to our own site goes out tagged so a lead can name the post that brought
+it. A new report puts both beside revenue. Nik decided on 2026-09-22 to **tag links automatically
+at publish**.
+
+### Added
+
+- **Tracking tags** (`publish/tracking.py`). A link to sapphirefountains.com (any subdomain) goes
+  out with four tags:
+  - `utm_source=<facebook|linkedin|youtube>`
+  - `utm_medium=social`
+  - `utm_campaign=<the post's Campaign, or organic>`
+  - `utm_content=<the post's ID>`
+
+  The rules:
+  - **Never `utm_id`:** `core/roas.is_paid` reads a `utm_id` as a paid click, and an organic post
+    carrying one would appear in Ad Spend ROAS as unjoinable paid spend.
+  - A link somebody already tagged goes out exactly as written; another site's link is never tagged.
+  - The tags are appended as text, so the rest of the approved link is byte-for-byte unchanged.
+  - If the author pasted the link into the text too, that copy is swapped in place, so the post
+    never shows it twice.
+  - Instagram gets no link at all, so it is never tagged.
+  - Facebook, LinkedIn and YouTube send the tagged link on the link card and in the text alike.
+  - The composer's preview shows it (`composer.js::tagged`, the JS twin). **`tracking_vectors.json`
+    holds the Python and the JS to the same 21 answers**, checked by both test suites.
+- **The engagement pull-back** (`publish/metrics.py`, `insights.py`, `metrics_sync.py`). It runs
+  nightly at **03:50**, after the token upkeep, and reads each post for 90 days after it went out.
+  It needs the master switch and a *Connected* publishing connection, and nothing more: the scopes
+  were requested at Connect in v1.508.0, so there is no reconnect. **A Social Post Metric row is a
+  post's lifetime total as of its date**, not that day's increase:
+  - Facebook, Instagram and LinkedIn report only lifetime totals per post.
+  - Reach does not add up across days.
+  - YouTube's daily figures are summed from the publish date to match.
+
+  The ad connectors' conventions, applied per job:
+  - YouTube's trailing `restate_days` are re-read and rewritten.
+  - **`Social Publish Job.metrics_through` moves only on a clean pull.** A failure sets
+    *Engagement Error* and the next night starts from the cursor again.
+  - A 401 stops that network for the night instead of failing every post on it.
+
+  `pull_metrics_now` (POST, System Manager) queues it on demand.
+- **The metrics that still exist in 2026**, checked against the official references on 2026-09-22:
+  - **Facebook:** `post_media_view` (views), `post_total_media_view_unique` and `post_clicks`. Meta
+    removed `post_impressions*` on 2025-11-15 and the unique-reach set with v26.0. Reaction, comment
+    and share counts come from the post's own fields. A video, published to `/videos` and so
+    identified by a video ID, is read from `video_insights`.
+  - **Instagram:** `views`, `reach` and `total_interactions`. `impressions` was removed in April 2025.
+  - **LinkedIn:** `organizationalEntityShareStatistics` for the one post (lifetime only; LinkedIn has
+    no per-day figures for one post), with the `List(...)` query built by hand so its parentheses
+    survive.
+  - **YouTube:** Analytics `reports` by day, filtered to the video. It has no per-video impressions,
+    and from 2026-08-24 a view counts from the moment playback starts.
+
+  Four reads are added to the allowlist, **all GETs**, including the new host
+  `youtubeanalytics.googleapis.com`.
+- **Social Post Performance** (`report/social_post_performance`, `publish/performance.py`), the
+  organic twin of Ad Spend ROAS:
+  - Each post on each network, with engagement beside leads, opportunities, won deals, contract
+    value and invoiced.
+  - Joined exactly on `utm_content` (the post) and `utm_source` (the network). A lead that names the
+    post but no known network lands on its own "network not recorded" row instead of vanishing.
+  - Revenue columns and the 365-day window are `roas`'s, so the two reports cannot disagree.
+  - Open to System Manager, Sales Manager and Marketing Manager. Revenue is financial, so not
+    Marketing Team (TASK-2026-01486).
+- `tests/test_marketing_metrics.py` (31 tests) covers:
+  - the shared vectors;
+  - a tagged click reading as social, not paid (with `PAID_MEDIUMS` and `SOCIAL_MEDIUMS` read from
+    `attribution.py`);
+  - each publisher sending the tagged link;
+  - the checks counting it;
+  - the engine's lifetime, daily, restate, cursor and 401 rules;
+  - the parsers on recorded response shapes;
+  - every read being an allowlisted GET;
+  - the attribution join;
+  - the wiring.
+
+  `scripts/test_marketing_client.js` runs the same vectors against the JS. **Mutation-checked** with
+  14 deliberate breaks, each caught.
+
+### Changed
+
+- **The pre-approval checks count the link as sent:**
+  - YouTube's description limit is in bytes, and the tagged link now counts toward it.
+  - LinkedIn beside media: the tagged link rides in the text and counts toward the 3,000 characters.
+
+  Neither check counted the link at all before, so a post right at the limit passed the check and
+  would have been refused by the network.
+- **The /marketing results page** shows each post's newest metrics row, not the sum of its rows
+  (which would count every day's lifetime total again), and says which date the totals are as of.
+- `get_post` returns the post's Campaign, which the preview needs for `utm_campaign`.
+
+### Not done
+
+- **Nothing is attributed until the website capture is installed** (`docs/website-capture/README.md`,
+  still a human step). The tags are on the links from today, so posts sent now will join once it is.
+- **Instagram and the `ads_management` question** (recorded in v1.508.0): if Meta insists on it for
+  a Page role granted through Business Manager, that account's reads fail and the job says why. The
+  scope is still never requested.
+
 ## [1.515.0] - 2026-09-22
 
 **Marketing P2: the `/marketing` app.** TASK-2026-01487, decision 8: a daily-driver tool for a

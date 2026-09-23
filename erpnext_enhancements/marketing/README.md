@@ -32,6 +32,7 @@ until the switches are on and a network's platform approval has cleared.
 | `api.py` | Stable short path for the redirect URI registered in each platform console |
 | `core/roas.py` | The spend → Lead → Opportunity → Project → invoice join, **pure**: utm_id then gclid, paid-but-unjoinable as its own row, lead-month cohorts, a 365-day window, contract value and invoiced revenue (TASK-2026-01477) |
 | `report/ad_spend_roas/` | **Ad Spend ROAS** Script Report over `core/roas.py`: cost per lead, cost per won project, ROAS on contract and on invoiced. System Manager / Sales Manager |
+| `report/social_post_performance/` | **Social Post Performance** Script Report over `publish/performance.py` (TASK-2026-01488): each post on each network, engagement beside leads, won deals, contract value and invoiced. The organic twin of Ad Spend ROAS. System Manager / Sales Manager / Marketing Manager (revenue is financial, so not Marketing Team) |
 | `platforms/{google_ads,meta_ads,linkedin_ads}.py` | Per-platform request builders and **pure** parsers, tested against `tests/data/marketing_api_fixtures.json` |
 | `publish/constants.py` | The four publishing networks (Facebook, Instagram, LinkedIn, YouTube) and each one's switch, named apart from the ad platforms |
 | `publish/gate.py` | **Pure:** whether an approved post may go out to a network. Master switch AND the network's own switch; never a substitute for approval |
@@ -41,6 +42,11 @@ until the switches are on and a network's platform approval has cleared.
 | `publish/outbox.py` | **The outbox state machine**, pure over a store: enqueue an approved post, claim, dispatch, retry or hold, and the rule that a job which may have sent goes to **Unconfirmed**, never back to Pending (TASK-2026-01481). Since v1.514.0 every outcome adds an **attempt-log** entry in the same write as the state, and `cancel_post` stops what has not gone out |
 | `publish/sweeper.py` | The five-minute sweep and `FrappeStore`: reclaim expired leases, claim due jobs atomically, hand each to `run_dispatch` on `long`; `resolve_job` (POST; a Marketing Manager or System Manager, from a signed-in browser) for a person's answer on an Unconfirmed or Failed job |
 | `publish/workflow.py` | **Pure:** draft → approve → publish and who may do each (TASK-2026-01486). Approver ≠ author or last editor; only from a signed-in browser (`signed_in_browser`: a token, job or console request has `sid == user`); status, approver and approval time move only through the actions |
+| `publish/tracking.py` | **Pure:** the UTM tags a link to our own site carries as it is sent (TASK-2026-01488, decided 2026-09-22): `utm_source=<network>`, `utm_medium=social`, `utm_campaign=<Campaign or organic>`, `utm_content=<post>`. Never `utm_id` (the ad-spend report reads it as paid). A link already tagged is left alone. `tracking_vectors.json` holds it and the composer's JS twin to the same answers |
+| `publish/metrics.py` | **Pure:** the engagement pull-back's engine over a store. A row is a lifetime total as of its date; YouTube's trailing days are restated; each job's cursor (`metrics_through`) moves only on a clean pull; a 401 stops that network for the run |
+| `publish/insights.py` | Each network's read-only call and its **pure** parser, with 2026's metric names (Facebook `post_media_view`, Instagram `views`, LinkedIn share statistics, YouTube Analytics by day) |
+| `publish/metrics_sync.py` | The nightly job (03:50) and `FrappeMetricsStore`; `pull_metrics_now` (POST, System Manager) |
+| `publish/performance.py` | **Pure:** posts joined to leads and revenue on their tags, per network, with `core/roas.py`'s window and revenue columns |
 | `publish/spa.py` | The `/marketing` app's endpoints (TASK-2026-01487), all POST, each starting with `_require()` (the three marketing roles) and then the DocPerms: bootstrap, calendar, a post, live checks, save, reschedule, the approval queue, delete, the media list and upload, and results |
 | `publish/spa_rules.py` | **Pure:** the rules under them. Who may open the app, the composer's field allowlist (never status, approver or owner), site-local times and "a new time must be in the future", the calendar window, what each person may do to a post, the quota view |
 | `publish/approval.py` | The four Social Post actions, all POST: **Submit for Approval**, **Approve** (writes the outbox rows in the same transaction, and refuses a post edited since the approver opened it), **Send Back**, **Cancel** |
@@ -63,7 +69,7 @@ until the switches are on and a network's platform approval has cleared.
 | `doctype/social_account/` | One Page, Instagram account, Company Page or channel. Identity (network, platform ID), set by Connect; a person only ticks **Enabled**. Token status is read from Marketing Connections, not copied here |
 | `doctype/social_post/` (+ `social_post_target/`, `social_post_media/`) | The post, the accounts it goes to, its media in order. **Locked once approved** (`SocialPost.validate` compares `outbox.content_signature`); status, approver and approval time refused in an ordinary save; deletable only before anything was queued. Form buttons for the four actions. Change-tracked |
 | `doctype/social_publish_job/` (+ `social_publish_attempt/`) | The outbox row. `external_post_id` is **unique**; indexes on (state, available_at) and (state, lease_expires_at) for the sweep; form buttons to resolve an Unconfirmed job. Its **Attempt Log** keeps every attempt and every person's answer |
-| `doctype/social_post_metric/` | Job × day engagement, named from (job, date) so a restated day upserts (TASK-2026-01488 fills it) |
+| `doctype/social_post_metric/` | A published post on one account: its **lifetime** engagement as of a date, named from (job, date) so a restated day upserts. Filled nightly since v1.516.0; a post's figures are its newest row |
 | `doctype/marketing_media_asset/` | A photo or video: where it lives, the Project it shows, and **usage rights**. Only *Cleared for social* can be queued; new assets start as *Needs client approval* |
 
 ## Publishing (Phase 2)
@@ -204,6 +210,7 @@ before, by letting a background job re-raise with frame locals intact.
 | `scheduler_events.cron` `"25 3 * * *"` | `core.tasks.nightly_ad_spend_sync` | The nightly pull (a thin shim; the work runs on `long`) |
 | `scheduler_events.cron` `"35 3 * * *"` | `publish.tasks.maintain_publishing_tokens` | Daily upkeep of the publishing tokens, one rule per connection (v1.508.0) |
 | `scheduler_events.cron` `"2-59/5 * * * *"` | `publish.sweeper.sweep_publish_jobs` | The outbox sweep, the timer for scheduled posts (v1.509.0). Returns at once while the module is off |
+| `scheduler_events.cron` `"50 3 * * *"` | `publish.metrics_sync.nightly_social_metrics` | The engagement pull-back (v1.516.0): master switch, *Connected* only, something to read, then one job on `long` |
 | `scheduler_events.daily` | `core.tasks.daily_prune` | Raw payloads past retention; clicks past 180 days no Lead carries |
 
 Credentials live on **Marketing Connections**, not on Marketing Settings: Settings is readable

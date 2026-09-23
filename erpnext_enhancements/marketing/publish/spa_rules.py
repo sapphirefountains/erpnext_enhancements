@@ -316,12 +316,11 @@ def asset_input(payload):
 
 
 def metric_totals(rows):
-	"""Sum each engagement figure over a job's days; None where no day reported it."""
-	keys = ("impressions", "reach", "engagements", "clicks", "video_views")
-	totals = dict.fromkeys(keys)
-	for row in rows:
-		for key in keys:
-			value = row.get(key)
-			if value is not None:
-				totals[key] = (totals[key] or 0) + value
-	return totals
+	"""A post's figures on one account: its **newest** row's, not a sum.
+
+	Each Social Post Metric row is a lifetime total as of its date (TASK-2026-01488,
+	``publish/metrics.py``), so summing rows would count every day's total again.
+	"""
+	from erpnext_enhancements.marketing.publish import metrics
+
+	return metrics.latest(rows)

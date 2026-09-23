@@ -392,8 +392,16 @@ jobs:
       # a new one must be in the future; every endpoint is POST-only and checks access first; the
       # client's M map and the whitelisted functions are the same set; one route rule serves the
       # subtree and the shell bakes in no post data. The client half runs in node, below.
-      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + publishers
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
+      # test_marketing_metrics (TASK-2026-01488, v1.516.0), stub-free: links to our own site go
+      # out tagged (utm_source=<network>, utm_medium=social, utm_content=<post>; never utm_id,
+      # which the ad-spend report reads as paid), the same in Python and the composer's JS
+      # (tracking_vectors.json, also run by scripts/test_marketing_client.js), and the checks
+      # count the tagged link. The engagement pull-back: a row is a lifetime total as of its
+      # date, YouTube's trailing days restated, the cursor moves only on a clean pull, a 401
+      # stops that network only; parsers on recorded shapes with 2026's metric names; every read
+      # a GET on the allowlist; posts joined to leads and revenue on their tags.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's

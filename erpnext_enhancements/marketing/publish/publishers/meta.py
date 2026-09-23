@@ -32,6 +32,9 @@ Meta draws between *not yet public* and *public*:
 After the public step nothing may raise: the permalink read and the **first comment** (which needs
 ``pages_manage_engagement`` / ``instagram_manage_comments``, requested since v1.511.0) report a
 failure as a ``warning`` on a successful result.
+
+**The link goes out tagged** (TASK-2026-01488): a link to our own site carries UTM tags naming the
+post and the network (``publish/tracking.py``). Facebook only: Instagram is not sent the link.
 """
 
 import time
@@ -40,6 +43,7 @@ from erpnext_enhancements.marketing.core import constants as C
 from erpnext_enhancements.marketing.core.client import MarketingAPIError
 from erpnext_enhancements.marketing.publish import constants as P
 from erpnext_enhancements.marketing.publish import media as M
+from erpnext_enhancements.marketing.publish import tracking
 from erpnext_enhancements.marketing.publish.client import NotPublished
 
 GRAPH = C.META_GRAPH_BASE
@@ -48,13 +52,6 @@ GRAPH = C.META_GRAPH_BASE
 def _text(context):
 	target = context.get("target") or {}
 	return ((target.get("variant_text") or "").strip() or (context["post"].get("body") or "")).strip()
-
-
-def _with_link(text, link):
-	link = (link or "").strip()
-	if not link or link in text:
-		return text
-	return f"{text}\n\n{link}" if text else link
 
 
 def _is_video(item):
@@ -101,6 +98,7 @@ def prepare_facebook(context, transport):
 	page = context["account"]["external_id"]
 	text = _text(context)
 	link = (context["post"].get("link") or "").strip()
+	sent = tracking.for_post(context["post"], P.NETWORK_FACEBOOK)
 	media = _media_urls(context)
 
 	if media and _is_video(media[0][0]):
@@ -110,7 +108,7 @@ def prepare_facebook(context, transport):
 			body = transport.request(
 				"POST",
 				f"{GRAPH}/{page}/videos",
-				data={"file_url": url, "description": _with_link(text, link)},
+				data={"file_url": url, "description": tracking.with_link(text, link, sent)},
 			)
 			video_id = str(body.get("id") or body.get("video_id") or "")
 			permalink = _permalink(
@@ -128,14 +126,15 @@ def prepare_facebook(context, transport):
 	def send_post():
 		data = {}
 		if photo_ids:
-			data["message"] = _with_link(text, link)
+			data["message"] = tracking.with_link(text, link, sent)
 			for index, photo_id in enumerate(photo_ids):
 				data[f"attached_media[{index}]"] = f'{{"media_fbid":"{photo_id}"}}'
 		else:
 			if text:
-				data["message"] = text
-			if link:
-				data["link"] = link
+				# The author's own copy of the link, if any, carries the same tags as the card.
+				data["message"] = text.replace(link, sent) if link and link in text else text
+			if sent:
+				data["link"] = sent
 		body = transport.request("POST", f"{GRAPH}/{page}/feed", data=data)
 		post_id = str(body.get("id") or "")
 		permalink = _permalink(transport, post_id, "permalink_url", f"https://www.facebook.com/{post_id}")

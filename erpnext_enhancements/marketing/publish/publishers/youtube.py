@@ -39,6 +39,7 @@ import time
 from erpnext_enhancements.marketing.core.client import MarketingAPIError
 from erpnext_enhancements.marketing.publish import constants as P
 from erpnext_enhancements.marketing.publish import media as M
+from erpnext_enhancements.marketing.publish import tracking
 from erpnext_enhancements.marketing.publish import validation as V
 from erpnext_enhancements.marketing.publish.client import NotPublished
 
@@ -60,9 +61,10 @@ def metadata(context):
 	post = context["post"]
 	target = context.get("target") or {}
 	description = ((target.get("variant_text") or "").strip() or (post.get("body") or "")).strip()
-	link = (post.get("link") or "").strip()
-	if link and link not in description:
-		description = f"{description}\n\n{link}" if description else link
+	# The link, tagged for our own site (TASK-2026-01488, publish/tracking.py), ends the description.
+	description = tracking.with_link(
+		description, post.get("link"), tracking.for_post(post, P.NETWORK_YOUTUBE)
+	)
 	snippet = {
 		"title": (post.get("video_title") or "").strip(),
 		"description": description,

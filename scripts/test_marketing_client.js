@@ -202,6 +202,30 @@ async function load(name) {
 	check('YouTube has no first comment', ytPreview.first_comment, '');
 	check('a link already in the text is not added twice', K.previewOf({ ...withMedia, body: `See ${state.link}` }, fb).text, `See ${state.link}`);
 
+	// ------------------------------------------------------------------ tracking tags (TASK-2026-01488)
+	// The same vectors tests/test_marketing_metrics.py runs against publish/tracking.py: the
+	// preview must show exactly the link each publisher sends.
+	const vectors = JSON.parse(
+		require('fs').readFileSync(path.join(__dirname, '..', 'erpnext_enhancements', 'marketing', 'publish', 'tracking_vectors.json'), 'utf8')
+	);
+	if (vectors.tagged.length < 10) {
+		console.error('MARKERS NOT FOUND: tracking_vectors.json has too few cases.');
+		process.exit(2);
+	}
+	for (const c of vectors.tagged) check(`tagged: ${c.why}`, K.tagged(c.link, c.network, c.post, c.campaign), c.out);
+	for (const c of vectors.with_link) check(`withSentLink: ${c.why}`, K.withSentLink(c.text, c.link, c.sent), c.out);
+
+	const saved = { ...state, name: 'SPOST-00012', campaign: 'Spring Launch', link: 'https://www.sapphirefountains.com/plaza' };
+	const tag = (net) => `https://www.sapphirefountains.com/plaza?utm_source=${net}&utm_medium=social&utm_campaign=spring-launch&utm_content=spost-00012`;
+	check('a saved post previews the Facebook card tagged', K.previewOf(saved, fb).card.url, tag('facebook'));
+	check('LinkedIn beside media: the tagged link rides in the text', K.previewOf({ ...saved, media: [photo] }, li).text.endsWith(tag('linkedin')), true);
+	check('YouTube: the description ends with the tagged link', K.previewOf({ ...saved, media: [video] }, yt).text.endsWith(tag('youtube')), true);
+	check('Instagram still gets no link, tagged or not', K.previewOf(saved, igt).text, 'IG words');
+	check('the author\'s own copy in the text is tagged in place', K.previewOf({ ...saved, body: `See ${saved.link} now` }, fb).text, `See ${tag('facebook')} now`);
+	const unsaved = K.previewOf({ ...saved, name: '' }, fb);
+	check('an unsaved draft shows the plain link and says tags come on save', [unsaved.card.url, unsaved.notes.some((n) => n.includes('once the post is saved'))], [saved.link, true]);
+	check('somebody else\'s link is never tagged or noted', K.previewOf({ ...saved, link: 'https://example.com/x' }, fb).notes.some((n) => n.includes('Tracking')), false);
+
 	console.log('');
 	if (failures) {
 		console.error(`${failures} assertion(s) failed`);

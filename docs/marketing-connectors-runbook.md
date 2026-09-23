@@ -538,3 +538,48 @@ way.
 
 **Length:** an unverified channel takes videos up to 15 minutes; verifying it by phone raises that
 to 12 hours.
+
+### Engagement and attribution (v1.516.0)
+
+Since TASK-2026-01488, each published post's engagement is read back **every night at 03:50**, for
+90 days after it went out. That needs **Enabled** in Marketing Settings and the network's
+publishing connection *Connected*. The scopes were requested at Connect (v1.508.0), so nothing needs
+reconnecting. The per-network publishing switches play no part: a post already out keeps being
+measured while its network is switched off.
+
+| Network | What is read | Notes |
+|---|---|---|
+| Facebook | Views, unique viewers, link clicks, video views, reactions + comments + shares | Meta retired `post_impressions` in November 2025; "impressions" here are views |
+| Instagram | Views, reach, total interactions | Up to 48 hours behind. No link clicks: Instagram has no links in posts |
+| LinkedIn | Impressions, unique impressions, clicks, likes + comments + shares | Lifetime totals only; LinkedIn has no per-day figures for one post |
+| YouTube | Views, likes + comments + shares, per day | 2 to 3 days behind. YouTube reports no impressions per video, and on 2026-08-24 it began counting a view from the moment playback starts |
+
+**What a row means.** A *Social Post Metric* row is the post's **lifetime total as of that date**,
+not that day's increase. A post's figures are its newest row, and a day's increase is the
+difference between two rows. YouTube's last 7 days (Marketing Settings, *Restate Days*) are
+re-read and rewritten every night, because YouTube revises them.
+
+**When a pull fails**, the post's Social Publish Job shows *Engagement Error*. Its *Engagement
+Through* date stays put, so the next night starts from there again. A refused credential stops
+that network for the night instead of failing every post on it. To pull now: `POST
+/api/method/erpnext_enhancements.marketing.publish.metrics_sync.pull_metrics_now` as a System
+Manager.
+
+**Tracking tags.** Every link to our own site (sapphirefountains.com, any subdomain) now goes out
+with four tags:
+
+- `utm_source=<facebook | linkedin | youtube>`
+- `utm_medium=social`
+- `utm_campaign=<the post's Campaign, or organic>`
+- `utm_content=<the post's ID>`
+
+The composer's preview shows the tagged link once the post is saved. A link somebody already
+tagged is sent exactly as written, and a link to another site is never tagged. There is **never a
+`utm_id`**, because the Ad Spend ROAS report reads that as a paid click. Instagram gets no link at
+all.
+
+**Social Post Performance** (a Script Report; System Manager, Sales Manager and Marketing Manager)
+lists each post on each network with its engagement beside leads, opportunities, won deals,
+contract value and invoiced. Leads and deals join on the tags. So they count only once the website
+capture is installed ([its README](website-capture/README.md)), and only for posts sent since
+v1.516.0.

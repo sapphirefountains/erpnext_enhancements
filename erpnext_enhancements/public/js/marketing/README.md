@@ -26,7 +26,7 @@ answered on the job's Desk form by someone who has looked at the network
 |---|---|
 | `routes.js` | **Pure.** URL ↔ view. Every route survives a round trip, so every link the app builds survives a refresh |
 | `calendar.js` | **Pure.** Day arithmetic on `YYYY-MM-DD` strings and UTC dates. **Never the browser's time zone**: `scheduled_at` is the site's local time, and "today" comes from the server |
-| `composer.js` | **Pure.** Counters, the `save_post` payload, and the per-network preview, which mirrors what the publishers send (Instagram never gets the link; Facebook and LinkedIn put it in the text only beside media; YouTube appends it) |
+| `composer.js` | **Pure.** Counters, the `save_post` payload, and the per-network preview, which mirrors what the publishers send (Instagram never gets the link; Facebook and LinkedIn put it in the text only beside media; YouTube appends it). Since v1.516.0 it also shows a link to our own site **tagged**, as sent: `tagged` is the JS twin of `marketing/publish/tracking.py`, and `marketing/publish/tracking_vectors.json` holds both to the same answers |
 | `transport.js` | One `fetch` wrapper, every call a POST with the CSRF header; the `M` endpoint map; the unattached upload |
 | `dom.js` | Node builders (`el`, `fill`, …), pills with a glyph as well as a colour, `outLink` (http(s) or plain text), `assetThumb`, `dialog` |
 | `app.js` | Layout, router, notices, and **the one placeholder writer** (`showPlaceholder`) |
@@ -62,25 +62,27 @@ other `TZ` values.
 
 ## Size
 
-Measured 2026-09-22 on raw source, and on code only (comments stripped), since these files are
+Measured 2026-09-22 (v1.516.0) on raw source, and on code only (comments stripped), since these files are
 comment-dense and only the code ships after esbuild. **None of it loads on the Desk**: the
 bundle is referenced only by the website route.
 
 | | raw | gzipped |
 |---|---|---|
-| `view_composer.js` | 23,945 | 7,203 |
+| `view_composer.js` | 24,193 | 7,315 |
 | `view_media.js` | 9,693 | 3,642 |
 | `view_calendar.js` | 9,145 | 3,303 |
 | `app.js` | 7,688 | 2,838 |
 | `dom.js` | 7,663 | 2,842 |
-| `composer.js` | 7,168 | 2,587 |
+| `composer.js` | 10,594 | 3,848 |
 | `transport.js` | 6,108 | 2,658 |
 | `calendar.js` | 5,252 | 2,096 |
-| `view_results.js` | 4,233 | 1,791 |
+| `view_results.js` | 4,656 | 1,990 |
 | `routes.js` | 3,892 | 1,451 |
 | `view_queue.js` | 3,349 | 1,456 |
-| **the whole client, code only** | **~70.7 KB** | **~19.7 KB** |
+| **the whole client, code only** | **~73.6 KB** | **~20.6 KB** |
 | `marketing.bundle.css` | ~21.2 KB | ~3.3 KB |
+
+**As shipped** (esbuild, minified), v1.515.0's bundle was **44.6 KB, 15.2 KB gzipped**, measured on prod: less than the source figures above, which still carry names and whitespace.
 
 The source-rule check holds the code-only gzip under **24 KB**. Raising that is fine, but do it
 in the same commit as the reason.

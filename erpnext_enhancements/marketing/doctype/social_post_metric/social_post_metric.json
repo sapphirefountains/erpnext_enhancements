@@ -3,7 +3,7 @@
  "allow_rename": 0,
  "autoname": "format:SPM-{publish_job}-{metric_date}",
  "creation": "2026-09-22 14:00:00.000000",
- "description": "One published post on one account, one day: engagement pulled back from the network (TASK-2026-01488). Named from (job, date) so a restated day updates in place.",
+ "description": "One published post on one account: its lifetime engagement as of this date, pulled back from the network nightly (TASK-2026-01488). A day's increase is the difference of two rows; the post's figures are its newest row. Named from (job, date), so a restated day updates in place.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -26,6 +26,7 @@
    "in_list_view": 1,
    "label": "Publish Job",
    "options": "Social Publish Job",
+   "read_only": 1,
    "reqd": 1,
    "set_only_once": 1
   },
@@ -35,6 +36,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Date",
+   "read_only": 1,
    "reqd": 1,
    "set_only_once": 1
   },
@@ -65,35 +67,45 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Times shown, lifetime to this date. Facebook: views (post_media_view). Instagram: views. LinkedIn: impressions. YouTube: not reported.",
    "fieldname": "impressions",
    "fieldtype": "Int",
    "in_list_view": 1,
-   "label": "Impressions"
+   "label": "Impressions",
+   "read_only": 1
   },
   {
+   "description": "Unique people reached, lifetime to this date. Not additive across days. Not reported by YouTube.",
    "fieldname": "reach",
    "fieldtype": "Int",
-   "label": "Reach"
+   "label": "Reach",
+   "read_only": 1
   },
   {
+   "description": "Reactions + comments + shares (Instagram: total interactions, saves included), lifetime to this date.",
    "fieldname": "engagements",
    "fieldtype": "Int",
    "in_list_view": 1,
-   "label": "Engagements"
+   "label": "Engagements",
+   "read_only": 1
   },
   {
+   "description": "Link clicks, lifetime to this date. Only Facebook and LinkedIn report them.",
    "fieldname": "clicks",
    "fieldtype": "Int",
-   "label": "Link Clicks"
+   "label": "Link Clicks",
+   "read_only": 1
   },
   {
+   "description": "Video views, lifetime to this date (YouTube counts a view from the moment playback starts since 2026-08-24).",
    "fieldname": "video_views",
    "fieldtype": "Int",
-   "label": "Video Views"
+   "label": "Video Views",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-22 22:00:00.000000",
+ "modified": "2026-09-22 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Post Metric",

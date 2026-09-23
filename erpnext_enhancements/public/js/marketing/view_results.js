@@ -10,7 +10,7 @@
 
 import { call, M } from "./transport.js";
 import { VIEW_POST, buildRoute } from "./routes.js";
-import { whenLabel } from "./calendar.js";
+import { dayLabel, whenLabel } from "./calendar.js";
 import { append, el, fill, link, networkTag, outLink, statePill, statusPill } from "./dom.js";
 
 const FIGURES = [
@@ -78,8 +78,19 @@ function jobCard(job) {
 		append(tiles, append(el("div", "ee-mk-figure"), el("span", "ee-mk-figure-num", value === null || value === undefined ? "—" : String(value)), el("span", "ee-mk-muted", label)));
 	}
 	card.appendChild(tiles);
-	if (!(job.metrics && job.metrics.days && job.metrics.days.length)) {
+	const days = (job.metrics && job.metrics.days) || [];
+	if (!days.length) {
 		card.appendChild(el("div", "ee-mk-muted", "Engagement figures appear here once they are collected from the network."));
+	} else {
+		// Each row is a lifetime total as of its date (TASK-2026-01488): the newest is the post's.
+		const newest = days.map((d) => String(d.metric_date || "")).sort().pop();
+		card.appendChild(
+			el(
+				"div",
+				"ee-mk-muted",
+				`Lifetime totals as of ${dayLabel(newest)}. Instagram can be up to two days behind, YouTube two or three. A dash is a figure this network does not report.`
+			)
+		);
 	}
 
 	if (job.log && job.log.length) {
