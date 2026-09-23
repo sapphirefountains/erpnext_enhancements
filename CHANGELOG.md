@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.523.0] - 2026-09-23
+
+**Stock Scan is on the Desk.** Nearly everyone who touches inventory will work it through the
+Stock Scan page (`/stock-scan`, v1.521.0), so it now has the same two doors the Time Kiosk has
+instead of living two clicks deep in the Inventory Enhancements workspace. Asked for by Nik on
+2026-09-23, the day the page merged.
+
+### Added
+
+- **A Stock Scan tile on the `/desk` home grid**, with a QR-scan glyph in Inventory's blue. It
+  sits beside ERPNext's own **Stock** tile (it takes that tile's position; a user can still drag
+  it). It opens `/stock-scan` directly.
+- **A Stock Scan entry in the Home workspace's Desk Shortcuts block**, right after the Time Kiosk
+  and before the count page's Inventory Scanner.
+- Both are shown to the page's own roles — Stock User, Stock Manager, Inventory Clerk and System
+  Manager, which on production is 17 of the 18 enabled staff — so the people who see the door
+  are exactly the people the page lets in.
+
+### Why it is built this way
+
+- **The tile is a patch, not a workspace tile.** Every other tile this app ships fronts a
+  workspace and is created by `setup/desktop_icons._create_tile`, which rightly refuses a label
+  with no Workspace behind it. Stock Scan is a web page, like the Time Kiosk, so
+  `patches/seed_stock_scan_shortcuts` inserts an `External` link tile itself, insert-only and
+  keyed on the label, so an admin who moves, hides or re-roles it keeps their change.
+- **It ships a Workspace Sidebar it does not appear to need.** v16's `get_desktop_icons` shows a
+  `Link` tile only when a same-named Workspace Sidebar has visible items — it does not look at
+  `link_type` — and drops it without a word otherwise. That is how the stale Learning tile
+  stayed invisible until v1.326.0. `workspace_sidebar/stock_scan.json` carries the page and the
+  label print page.
+- **Unlike the kiosk tile, this one has roles.** The time clock is for everybody; Stock Scan
+  refuses anyone without a stock role, and a tile that opens onto "you do not have permission" is
+  worse than no tile. `setup/desktop_icons._sync_roles` derives tile roles from a workspace and
+  skips a label with none, so the patch's roles are not overwritten on the next migrate.
+
+### Tests
+
+- New `tests/test_stock_scan_desktop_icon.py` (9, bench-free, on the Stock Scan surface CI step):
+  the patch's tile and shortcut point at the page's real route and carry `SCAN_ROLES`; it is
+  insert-only, never raises and clears the `desktop_icons` and `bootinfo` caches; the sidebar
+  exists under the tile's exact label with a URL item to `/stock-scan`; the artwork is in the
+  tile map and the SVG is committed. `scripts/build_desktop_icons.py --check` confirms the
+  committed artwork matches the map.
+
 ## [1.522.0] - 2026-09-23
 
 **Frappe Assistant Core 3.0.0 compatibility — and every read tool stops advertising itself as

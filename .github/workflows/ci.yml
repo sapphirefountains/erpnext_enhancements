@@ -2029,9 +2029,15 @@ jobs:
       # each otherwise). Plus: bundles only and the boot through | tojson in the shell, the
       # login redirect before the role check, no innerHTML / frappe.* / URL changes in the
       # client, one doctype_js["Warehouse"], and every new setting's default mirrored in
-      # DEFAULTS and backfilled onto the existing Single.
-      - name: Stock Scan endpoint surface, voucher shape, shell and settings (bench-free)
-        run: python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v
+      # DEFAULTS and backfilled onto the existing Single. With it, the desk tile + Desk Shortcut
+      # (v1.523.0): a Link tile with no same-named Workspace Sidebar is dropped from the grid
+      # without a word, so the seed patch, the sidebar JSON, the artwork and the page's real
+      # route are pinned to one label and one URL, and both doors carry the page's own roles.
+      - name: Stock Scan endpoint surface, voucher shape, shell, settings and desk tile (bench-free)
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_stock_scan_surface
+          erpnext_enhancements.tests.test_stock_scan_desktop_icon -v
       # Every Stock Entry this app builds, wherever it is built: it sets stock_entry_type (on
       # v16 `purpose` is only a read-only fetch from it, so a purpose-only entry raises
       # MandatoryError on insert) and every row takes its difference account from the one
