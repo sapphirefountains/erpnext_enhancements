@@ -164,34 +164,74 @@ class TestOnlyOneWriterCreatesTasks(unittest.TestCase):
 	#: The one module allowed to construct a ``Task``.
 	WRITER = "task_writer.py"
 
+	def test_every_scanned_root_exists(self):
+		"""Control: a root renamed away would make the scan below pass over nothing."""
+		for root in SCANNED:
+			self.assertTrue(root.exists(), f"{root} is scanned but does not exist")
+
 	def test_no_other_module_constructs_a_task(self):
-		pattern = re.compile(r'["\']doctype["\']\s*:\s*["\']Task["\']')
 		offenders = []
-		for path in sorted(MODULE.rglob("*.py")) + [API]:
+		for path in _scanned_files():
 			if path.name == self.WRITER:
 				continue
-			source = path.read_text(encoding="utf-8")
-			# Strip docstrings and comments before matching: this rule is discussed at length
-			# in several of these files, and a scan that matches its own prose inverts the
-			# assertion. That mistake inverted four assertions in the chat work.
-			stripped = _strip_prose(source)
-			if pattern.search(stripped):
-				offenders.append(str(path.relative_to(APP)))
+			lines = _task_constructions(path.read_text(encoding="utf-8"))
+			if lines:
+				offenders.append(f"{path.relative_to(APP)}:{','.join(map(str, lines))}")
 		self.assertEqual(
 			offenders,
 			[],
 			"Only product_feedback/task_writer.py may create a Task — a proposal must reach a "
-			"live board through a call a human made. Offending modules: " + ", ".join(offenders),
+			"live board through a call a human made. Offending sites: " + "; ".join(offenders),
 		)
 
 	def test_the_writer_really_does_create_tasks(self):
 		"""The control for the assertion above.
 
 		``x not in source`` is true of every x, including in a repository where the feature was
-		deleted. Without this the test above passes against nothing at all.
+		deleted. Without this the test above passes against nothing at all. The writer builds a
+		group Task and a leaf Task, so the detector must find both.
 		"""
-		source = _strip_prose((MODULE / self.WRITER).read_text(encoding="utf-8"))
-		self.assertIn('"doctype": "Task"', source)
+		source = (MODULE / self.WRITER).read_text(encoding="utf-8")
+		self.assertGreaterEqual(len(_task_constructions(source)), 2)
+
+	def test_the_detector_catches_every_way_to_construct_a_task(self):
+		# The regex this replaced matched only the dict form, so `frappe.new_doc("Task")` — which
+		# hr_enhancements/safety.py really uses — walked straight past it (ADR 0016).
+		for snippet in (
+			'frappe.new_doc("Task")',
+			"frappe.new_doc('Task')",
+			'frappe.new_doc(doctype="Task")',
+			'new_doc("Task")',
+			'frappe.get_doc({"doctype": "Task"})',
+			'frappe.get_doc(doctype="Task", subject="x")',
+			'frappe.get_doc(dict(doctype="Task"))',
+		):
+			with self.subTest(snippet=snippet):
+				self.assertTrue(_task_constructions(snippet), snippet)
+
+	def test_the_detector_ignores_reads_and_prose(self):
+		for snippet in (
+			'frappe.get_doc("Task", name)',
+			'frappe.new_doc("Task Type")',
+			'frappe.get_all("Task")',
+			'# frappe.new_doc("Task")',
+			'def f():\n\t"""frappe.new_doc("Task")"""\n\treturn 1',
+		):
+			with self.subTest(snippet=snippet):
+				self.assertEqual(_task_constructions(snippet), [], snippet)
+
+	def test_every_task_the_writer_builds_carries_its_request(self):
+		"""Groups included — a group cannot be traced back through its children (ADR 0016 §1)."""
+		tree = ast.parse((MODULE / self.WRITER).read_text(encoding="utf-8"))
+		task_dicts = [node for node in ast.walk(tree) if _is_task_dict(node)]
+		self.assertGreaterEqual(len(task_dicts), 2, "expected the group dict and the leaf dict")
+		for node in task_dicts:
+			keys = {key.value for key in node.keys if isinstance(key, ast.Constant)}
+			self.assertIn(
+				"custom_enhancement_request",
+				keys,
+				f"the Task built at task_writer.py:{node.lineno} does not stamp its request",
+			)
 
 
 class WriterResultShape(unittest.TestCase):
@@ -261,6 +301,61 @@ class WriterResultShape(unittest.TestCase):
 			body.index("create_tasks_for("),
 			"create_tasks must refuse an empty proposal before it calls the writer",
 		)
+
+
+#: Where the one-writer rule is enforced. Add the Design Review module and the capture endpoints
+#: here as they land (WI-079 slices 2 and 5). Task creation elsewhere in the app for human-driven
+#: reasons, such as corrective actions in hr_enhancements/safety.py, is outside this rule.
+SCANNED = (MODULE, API)
+
+
+def _scanned_files():
+	files = []
+	for root in SCANNED:
+		files.extend(sorted(root.rglob("*.py")) if root.is_dir() else [root])
+	return files
+
+
+def _is_task_const(node) -> bool:
+	return isinstance(node, ast.Constant) and node.value == "Task"
+
+
+def _is_task_dict(node) -> bool:
+	"""``{"doctype": "Task", ...}``."""
+	return isinstance(node, ast.Dict) and any(
+		isinstance(key, ast.Constant) and key.value == "doctype" and _is_task_const(value)
+		for key, value in zip(node.keys, node.values)
+	)
+
+
+def _callee_name(call) -> str:
+	func = call.func
+	if isinstance(func, ast.Attribute):
+		return func.attr
+	if isinstance(func, ast.Name):
+		return func.id
+	return ""
+
+
+def _task_constructions(source: str) -> list[int]:
+	"""Line numbers where ``source`` builds a new ``Task``, in any of the three Frappe forms.
+
+	``frappe.get_doc(dict)`` (and ``dict(doctype="Task")``), ``frappe.get_doc(**kwargs)`` with no
+	positional argument, and ``frappe.new_doc("Task")``. A positional ``get_doc("Task", name)`` is
+	a load and is ignored, as are comments and docstrings, which the AST does not contain as code.
+	"""
+	lines = set()
+	for node in ast.walk(ast.parse(source)):
+		if _is_task_dict(node):
+			lines.add(node.lineno)
+		elif isinstance(node, ast.Call):
+			name = _callee_name(node)
+			doctype_kw = any(kw.arg == "doctype" and _is_task_const(kw.value) for kw in node.keywords)
+			if name == "new_doc" and ((node.args and _is_task_const(node.args[0])) or doctype_kw):
+				lines.add(node.lineno)
+			elif name in ("get_doc", "dict") and not node.args and doctype_kw:
+				lines.add(node.lineno)
+	return sorted(lines)
 
 
 def _strip_prose(source: str) -> str:

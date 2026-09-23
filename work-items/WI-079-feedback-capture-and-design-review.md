@@ -86,6 +86,31 @@ Checked against Frappe and ERPNext `version-16` (`git show origin/version-16:…
     ungated through a decider, which is defensible only once its sandbox is verified read-only.
   - Then `ai_write_gating_enabled` is turned on through a patch, recorded in the changelog.
 
+**Status, v1.524.0 (2026-09-23).** Everything above except the settings patch shipped. The
+back-link, backfill, code-map repair and one-writer test are live; the `update_document` decider
+and the `NEVER_EXEMPT` guard are in `_gate.py` and dormant while the flag is 0. The flag and the
+`Comment` exemption row were **held**, because the condition on `run_python_code` failed:
+
+- **Its sandbox is not read-only.** As deployed (FAC 3.0.0, not overridden here) the child process
+  gets the whole `frappe` module and `frappe.get_doc` on a normal read-write connection; only the
+  local `db` variable is wrapped, and `db._original_db` gets past even that. `frappe.os` and
+  `frappe.get_module` reach the operating system. Production holds rows it created: in the 30 days
+  to 2026-09-23, 19 successful calls contained `db.commit`, and on 2026-09-14 calls created 6 Items,
+  10 Assets and a Comment. It is arbitrary code for any System Manager (Administrator, Nik,
+  `triton@`), and ungating it would also ungate every Task create and close the gate exists for.
+  It stays gated; `test_ai_gate_per_call` now pins `PER_CALL_GATED` disjoint from `HIGH_RISK`.
+- **The gate's load is larger than the inventory above said.** Re-measured on 2026-09-23, the last
+  30 days under the §6 scope hold about **928** confirmations — 245 Task creates, 233 Task closes and
+  about 450 other writes (maintenance templates, Training Lessons, ToDos, Serial Nos…), which ADR
+  0006's default gates — plus about 1,600 `run_python_code` calls while it stays gated. Before the
+  flag goes on, Nik chooses how to carry that load (for example routine diagnostics through the
+  SELECT-only `run_database_query`, which the gate already lets through).
+- Found alongside, and outside this slice: `tabAssistant Audit Log` row
+  `ASST-AUDIT-2026-09-17-00048` holds the site database user's password hash in its output, readable
+  by anyone who can read that log; and `gating_api.confirm_action` re-executes the *sanitized*
+  arguments stored on the Pending Action, so a confirmed write whose data key contains a sensitive
+  substring (for example `author`) would write `***REDACTED***`.
+
 ### Slice 2 — Capture anywhere, v1 [M]
 
 - `file_request(values, requested_by, source, source_ref)` extracted from `submit_request`

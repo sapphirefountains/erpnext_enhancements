@@ -1161,3 +1161,9 @@ erpnext_enhancements.patches.reload_stock_scan_workspaces
 # page's own gate, beside ERPNext's Stock tile; needs workspace_sidebar/stock_scan.json to render)
 # and an Enhancement Desk Shortcut. Insert-only, keyed on the label; never raises.
 erpnext_enhancements.patches.seed_stock_scan_shortcuts
+# v1.524.0: Task.custom_enhancement_request back-link (WI-079 slice 1, ADR 0016). Creates the Custom
+# Field first (patches run before fixture sync), stamps the leaves from Enhancement Request Proposed
+# Task.created_task and the groups from the writer's "Raised from ER-..." origin note, cross-checked
+# against the request's group_subject. Fills blanks only, set_value without modified; cannot raise,
+# safe twice.
+erpnext_enhancements.patches.backfill_task_enhancement_request

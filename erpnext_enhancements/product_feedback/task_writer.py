@@ -116,7 +116,7 @@ def create_tasks_for(request_name: str) -> dict[str, Any]:
 
 	failures: list[str] = []
 	groups = _ensure_groups(rows, doc, failures)
-	created = _create_leaves(rows, groups, failures)
+	created = _create_leaves(rows, groups, failures, doc.name)
 	_link_dependencies(doc, rows, failures)
 
 	# `Tasks Created` is terminal, so it is only reached when there is nothing left to
@@ -154,6 +154,10 @@ def _ensure_groups(
 
 	The group is created once per distinct subject, so a five-row proposal that all shares one
 	``group_subject`` produces one parent rather than five.
+
+	Groups carry ``custom_enhancement_request`` as well as leaves (ADR 0016 §1). A group cannot
+	be traced back through its children: on production they already hold other requests'
+	leaves and hand-written tasks, so the stamp is written here, at creation, or not at all.
 	"""
 	groups: dict[tuple[str, str], str] = {}
 	for row in rows:
@@ -175,6 +179,7 @@ def _ensure_groups(
 					"status": NEW_TASK_STATUS,
 					"is_group": 1,
 					"description": _origin_note(doc),
+					"custom_enhancement_request": doc.name,
 				}
 			)
 			group.insert(ignore_permissions=True)
@@ -192,12 +197,15 @@ def _create_leaves(
 	rows: list[Any],
 	groups: dict[tuple[str, str], str],
 	failures: list[str],
+	request_name: str,
 ) -> list[str]:
 	"""Create one ``Task`` per row and stamp ``created_task`` back onto it.
 
 	The stamp is written to the in-memory child row; the caller saves the request once at the
 	end. Writing it per row would mean a save per task on a document whose ``validate`` runs
-	a transition check each time.
+	a transition check each time. The Task itself carries the other direction of the link,
+	``custom_enhancement_request``. On a site whose migrate has not yet added that column the
+	key is simply dropped (``get_valid_dict`` keeps only real fields), so no guard is needed.
 	"""
 	created: list[str] = []
 	for row in rows:
@@ -216,6 +224,7 @@ def _create_leaves(
 					"description": row.get("description") or "",
 					"expected_time": flt(row.get("expected_hours")),
 					"parent_task": parent or None,
+					"custom_enhancement_request": request_name,
 				}
 			)
 			task.insert(ignore_permissions=True)

@@ -96,7 +96,12 @@ def _build() -> dict[str, Any]:
 	package = frappe.get_app_path("erpnext_enhancements")
 	repo_root = os.path.dirname(package)
 
-	return {
+	# How much each capped listing really holds. It rides under its own key because today's
+	# Triton renders only the keys it knows and ignores the rest (``codebase`` is a loose dict
+	# on its side), whereas an int inside ``packages`` would break its ``os.path.basename`` over
+	# every entry and fail the breakdown. Triton starts saying "first N of M" in WI-079 slice 3.
+	totals: dict[str, Any] = {"packages": {}, "doctypes": {}, "gotchas": 0}
+	built = {
 		"repo": "erpnext_enhancements",
 		"language": "Python (Frappe v16 app) + vanilla JS/CSS browser assets",
 		"version": frappe.get_attr("erpnext_enhancements.__version__"),
@@ -111,10 +116,12 @@ def _build() -> dict[str, Any]:
 		),
 		"environment": _environment(),
 		"modules": _modules(package, repo_root),
-		"doctypes": _doctypes(package),
-		"packages": _detailed_dirs(package),
-		"conventions": _conventions(repo_root),
+		"doctypes": _doctypes(package, totals),
+		"packages": _detailed_dirs(package, totals),
+		"conventions": _conventions(repo_root, totals),
 	}
+	built["totals"] = totals
+	return built
 
 
 def _environment() -> dict[str, Any]:
@@ -162,7 +169,7 @@ def _environment() -> dict[str, Any]:
 	return env
 
 
-def _doctypes(package: str) -> dict[str, list[str]]:
+def _doctypes(package: str, totals: dict[str, Any] | None = None) -> dict[str, list[str]]:
 	"""This app's own DocTypes, grouped by module.
 
 	The single most useful fact for planning ERPNext work, and the one a file listing does not
@@ -198,6 +205,8 @@ def _doctypes(package: str) -> dict[str, list[str]]:
 			continue
 		if names:
 			out[module] = names[:MAX_DOCTYPES_PER_MODULE]
+			if totals is not None:
+				totals["doctypes"][module] = len(names)
 	return out
 
 
@@ -281,8 +290,13 @@ def _plain(markdown: str) -> str:
 	return re.sub(r"\s+", " ", text).strip()
 
 
-def _detailed_dirs(package: str) -> dict[str, list[str]]:
-	"""File listings for the packages where new code actually lands."""
+def _detailed_dirs(package: str, totals: dict[str, Any] | None = None) -> dict[str, list[str]]:
+	"""File listings for the packages where new code actually lands.
+
+	Each listing stays a list of path strings — Triton basenames every entry. The real count
+	goes to ``totals`` instead, because ``patches/`` alone holds over 200 files against a cap of
+	60, and a listing that silently stops is read as the whole directory.
+	"""
 	out: dict[str, list[str]] = {}
 	for name in _DETAILED_DIRS:
 		# `scripts/` is at the repo root, the rest are inside the package.
@@ -304,15 +318,28 @@ def _detailed_dirs(package: str) -> dict[str, list[str]]:
 		if not files:
 			continue
 		out[prefix] = [prefix + entry for entry in files[:MAX_FILES_PER_DIR]]
+		if totals is not None:
+			totals["packages"][prefix] = len(files)
 	return out
 
 
-def _conventions(repo_root: str) -> str:
-	"""The Gotchas/Conventions half of ``CLAUDE.md``.
+#: A top-level bullet's bold lead: ``- **A trailing-space check … is always false**, so …``.
+#: DOTALL because several leads wrap across lines; bounded to one bullet by the split before it.
+_GOTCHA_LEAD = re.compile(r"-\s+\*\*(.+?)\*\*", re.S)
+
+
+def _conventions(repo_root: str, totals: dict[str, Any] | None = None) -> str:
+	"""Every Gotchas headline from ``CLAUDE.md``, then its Conventions section.
 
 	That file exists to stop a contributor rediscovering expensive things, which is the same
-	job it does here. Only the second half is sent — the first is orientation a model does
-	not need, and the caps matter more than the completeness.
+	job it does here. It used to go as the first 6,000 characters of the Gotchas section, which
+	stopped mid-sentence in the tenth of 21 bullets, so the model never saw the other eleven or
+	the Conventions at all. Each bullet opens with a bold sentence that states the trap, so the
+	headlines of all of them fit where the first ten bullets did; the full text stays in
+	``CLAUDE.md``, which is where the work is done.
+
+	Must stay a ``str``: Triton calls ``.strip()`` on it, and anything else fails the breakdown.
+	Falls back to the old prefix if no headline parses, and never raises.
 	"""
 	try:
 		with open(os.path.join(repo_root, "CLAUDE.md"), encoding="utf-8") as handle:
@@ -320,8 +347,52 @@ def _conventions(repo_root: str) -> str:
 	except Exception:
 		return ""
 
-	marker = "## Gotchas"
-	index = text.find(marker)
-	if index == -1:
-		return text[:MAX_CONVENTION_CHARS]
-	return text[index : index + MAX_CONVENTION_CHARS]
+	try:
+		headlines = _gotcha_headlines(_section(text, "## Gotchas"))
+	except Exception:
+		headlines = []
+	if not headlines:
+		marker = "## Gotchas"
+		index = text.find(marker)
+		if index == -1:
+			return text[:MAX_CONVENTION_CHARS]
+		return text[index : index + MAX_CONVENTION_CHARS]
+
+	if totals is not None:
+		totals["gotchas"] = len(headlines)
+	out = (
+		f"CLAUDE.md gotchas, all {len(headlines)}, headline only "
+		"(the full text of each is in CLAUDE.md at the repo root):\n"
+		+ "\n".join(f"- {headline}" for headline in headlines)
+	)
+	conventions = _section(text, "## Conventions")
+	if conventions:
+		out += "\n\n" + conventions
+	return _cap_at_line(out, MAX_CONVENTION_CHARS)
+
+
+def _section(text: str, heading: str) -> str:
+	"""A ``## `` section of a Markdown file, heading included, up to the next ``## ``."""
+	start = text.find(heading)
+	if start == -1:
+		return ""
+	end = text.find("\n## ", start + len(heading))
+	return text[start : end if end != -1 else len(text)].strip()
+
+
+def _gotcha_headlines(section: str) -> list[str]:
+	"""The bold lead of every top-level ``- `` bullet in the Gotchas section."""
+	out = []
+	for chunk in re.split(r"\n(?=- )", section):
+		match = _GOTCHA_LEAD.match(chunk.strip())
+		if match:
+			out.append(re.sub(r"\s+", " ", match.group(1)).strip())
+	return out
+
+
+def _cap_at_line(text: str, limit: int) -> str:
+	"""``text`` cut to ``limit`` characters at a line boundary rather than mid-sentence."""
+	if len(text) <= limit:
+		return text
+	cut = text.rfind("\n", 0, limit)
+	return text[: cut if cut > 0 else limit]

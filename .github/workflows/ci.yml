@@ -343,12 +343,26 @@ jobs:
       # the SPA dials resolves, and — the one worth the most — that only
       # product_feedback/task_writer.py constructs a Task. A model proposes, a human confirms,
       # one module writes; that is easy to restate in a docstring and easy to undo in a hurry.
-      # Verified by reintroducing the bug: adding a Task literal to breakdown.py fails it.
-      - name: Enhancement Request states + feedback endpoint surface
+      # Verified by reintroducing the bug: adding a Task literal to breakdown.py fails it. Since
+      # v1.524.0 it is an AST check that also catches frappe.new_doc("Task") and kwargs get_doc,
+      # which the old regex let through, and it asserts every Task the writer builds carries its
+      # request (Task.custom_enhancement_request, ADR 0016 §1).
+      #
+      # `test_feedback_task_backlink` keeps the backfill patch's Custom Field identical to the
+      # fixture's (the patch creates it first, fixture sync adopts it) and pins the patch's
+      # production-only safety: registered post_model_sync, never save(), anchored group match.
+      - name: Enhancement Request states + feedback endpoint surface + Task back-link
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_feedback_states
-          erpnext_enhancements.tests.test_feedback_endpoint_surface -v
+          erpnext_enhancements.tests.test_feedback_endpoint_surface
+          erpnext_enhancements.tests.test_feedback_task_backlink -v
+      # The code map the breakdown sends Triton (ADR 0016 §3): every CLAUDE.md gotcha headline
+      # reaches the model (the old 6,000-character prefix dropped 11 of 21), and Triton's type
+      # contracts hold — conventions a str, packages lists of strings, totals under their own key.
+      # Its own step because it installs a frappe stub.
+      - name: Work-breakdown code map (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_codemap -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the

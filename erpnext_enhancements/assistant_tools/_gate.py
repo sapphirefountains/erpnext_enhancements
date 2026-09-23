@@ -202,10 +202,47 @@ EXEMPTABLE_TOOLS = {"create_document", "update_document"}
 # The role check that actually stops an unauthorised on-behalf clock-out lives inside
 # close_interval_for_employee, and must not be assumed to live here.
 # A decider must be pure and total — it runs inside the gate, and anything it raises must fail closed.
+#
+# A decider is never registered for a HIGH_RISK tool. Step 3b does not consult HIGH_RISK, so a
+# decider returning False would run it unconfirmed; test_ai_gate_per_call pins the two sets
+# disjoint. In particular run_python_code stays gated: as deployed (FAC 3.0.0) it hands the caller
+# the whole `frappe` module on a read-write connection, so it is arbitrary code, not a read — and
+# one unconfirmed call could create or close any Task and undo ADR 0016 §6 (verified 2026-09-23).
+
+#: Task statuses an AI may set without a confirmation (ADR 0016 §6). An allowlist rather than a
+#: Completed/Canceled denylist, so a status this site adds later, ERPNext core's "Cancelled"
+#: spelling, "Invoiced" or a typo all wait for a human. Closing a Task is the thing to confirm.
+_TASK_STATUSES_THAT_RUN = frozenset({"Open", "Working", "Pending Review", "Overdue"})
+
+
+def _update_document_needs_human(args):
+    """update_document executes for a Task unless it closes it; anything else is ADR 0006's default.
+
+    Reads the raw arguments FAC 3.0.0 passes, {doctype, name, data}, before FAC has validated
+    them, so every shape it does not recognise answers "needs a human". True for other doctypes
+    hands the call on to step 4, which is where an exempt doctype such as Comment still executes.
+    """
+    if not isinstance(args, dict) or args.get("doctype") != "Task":
+        return True
+    data = args.get("data")
+    if not isinstance(data, dict):
+        return True
+    if "status" not in data:
+        return False
+    status = data.get("status")
+    return not (isinstance(status, str) and status in _TASK_STATUSES_THAT_RUN)
+
+
 PER_CALL_GATED = {
     "workforce_clock_out": lambda args: bool((args or {}).get("employee")),
     "workforce_clock_in": lambda args: False,
+    "update_document": _update_document_needs_human,
 }
+
+#: Doctypes the settings allowlist may never exempt, whatever a row says. The exemption step
+#: applies to create_document and update_document alike, so exempting Task would ungate Task
+#: creation along with its updates — the one write ADR 0016 §6 exists to confirm.
+NEVER_EXEMPT = frozenset({"Task"})
 
 # ------------------------------------------------- private-context denylist
 #
@@ -564,7 +601,8 @@ def is_mutating(tool):
 def _exempt_doctypes():
     try:
         settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
-        return {row.document_type for row in settings.get("ai_exempt_doctypes") or []}
+        rows = {row.document_type for row in settings.get("ai_exempt_doctypes") or []}
+        return rows - NEVER_EXEMPT
     except Exception:
         return set()
 

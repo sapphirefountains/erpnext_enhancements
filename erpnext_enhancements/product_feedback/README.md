@@ -9,10 +9,15 @@ The design record is [ADR 0010](../../decisions/adr/0010-employee-feedback-to-ta
 it before changing anything in here — three of the decisions below look like implementation
 detail and are not.
 
-**Planned, not yet built:** [ADR 0016](../../decisions/adr/0016-every-source-files-an-enhancement-request.md)
+**Being built:** [ADR 0016](../../decisions/adr/0016-every-source-files-an-enhancement-request.md)
 amends 0010 — the capture widget and Design Review will file requests through the same door,
 the breakdown will read the files a request is about, and shipped work will report back through
 the changelog. The build is [WI-079](../../work-items/WI-079-feedback-capture-and-design-review.md).
+Slice 1 (v1.524.0) is in: every Task the writer creates, groups included, carries
+`custom_enhancement_request` (backfilled for the 37 it wrote before — leaves from `created_task`,
+groups from their origin note, never from their children); the code map sends every CLAUDE.md
+gotcha headline instead of a 6,000-character prefix, plus the real size of each capped listing
+under `totals`; and the one-writer test is an AST check that also catches `frappe.new_doc("Task")`.
 
 ## The one rule
 
