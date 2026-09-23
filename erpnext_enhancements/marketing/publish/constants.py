@@ -175,3 +175,29 @@ LINKEDIN_REFRESH_WITHIN_DAYS = 7
 #: runs out: LinkedIn's refresh token (365 days, not rolling), or a LinkedIn access token
 #: when LinkedIn issued no refresh token at all.
 EXPIRY_WARNING_DAYS = 30
+
+# ---------------------------------------------------------------- rate limits (TASK-2026-01482)
+# Checked 2026-09-22. The task text carried older figures (25 IG posts; 1,600 units per
+# upload); both had moved. Read live figures where the platform offers them.
+
+#: Instagram posts per rolling 24 hours per account, until the Meta publisher has read the
+#: live figure from content_publishing_limit. Meta's docs say 100 and 50 in different places;
+#: 25 is the most conservative figure ever published, so the fallback cannot overshoot.
+INSTAGRAM_POSTS_PER_DAY_FALLBACK = 25
+
+#: YouTube: videos.insert has its own bucket of 100 calls a day, and thumbnails.set and
+#: playlistItems.insert cost about 50 units each from the 10,000-unit general budget. Both
+#: reset at midnight Pacific.
+YOUTUBE_UPLOADS_PER_DAY = 100
+YOUTUBE_UNITS_PER_DAY = 10_000
+YOUTUBE_UPLOAD_EXTRA_UNITS = 100  # one thumbnail + one playlist add per upload
+
+#: Meta usage headers: pause the connection when any figure reaches this percent, for this
+#: long, unless Meta names its own time to regain access.
+META_USAGE_PAUSE_PERCENT = 90
+META_DEFAULT_PAUSE_SECONDS = 15 * 60
+
+#: A 429 without a Retry-After pauses the connection this long. No pause is ever longer than
+#: a day, whatever a header says.
+DEFAULT_429_PAUSE_SECONDS = 60
+MAX_PAUSE_SECONDS = 86400

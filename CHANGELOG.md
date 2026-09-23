@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.510.0] - 2026-09-22
+
+**Marketing P2: publishing rate limits, as pure Python mirrored in Redis Lua.** TASK-2026-01482.
+The outbox sweep now asks a limiter before it claims a job, and the publish transport reports
+every response to it. Nothing can publish yet (no publisher is installed), so on prod this
+changes nothing until TASK-2026-01483.
+
+**The standing rule, kept: the bucket is an optimisation; backoff is the correctness mechanism.**
+A limit only stops the sweep asking for what the network would refuse. The retry rules
+(transport and outbox) are untouched.
+
+### Added
+
+- **`publish/ratelimit.py`.** Each rule is a **pure, total function**, which is the tested
+  specification, and where it must hold across workers a **Lua script** is printed next to it:
+  - `window_decision` / `WINDOW_LUA`: Instagram's rolling 24 hours per account. It uses the
+    **live** limit once the Meta publisher has read it from `content_publishing_limit`
+    (`set_instagram_limit`, TASK-2026-01483), and **25** until then.
+  - `budgets_decision` / `BUDGETS_LUA`: YouTube's daily buckets, all or nothing. There are 100
+    uploads a day, and each upload also takes 100 units from the 10,000-unit budget, covering a
+    thumbnail and a playlist add.
+  - `quota_day` / `seconds_to_quota_reset`: YouTube resets at midnight **Pacific**, whatever the
+    site's time zone. US DST is computed directly, because Windows Pythons often lack the tz
+    database; it is checked against `zoneinfo` hour by hour across two years wherever that is
+    available.
+  - `meta_pause_seconds`: `X-App-Usage` and `X-Business-Use-Case-Usage` are authoritative. Any
+    figure at or over 90% pauses Meta Publishing for 15 minutes, and Meta's own
+    `estimated_time_to_regain_access` wins when present. A header that does not parse pauses
+    nothing.
+  - `pause_after_response`: a **429** pauses its connection for `Retry-After` (seconds or an
+    HTTP date), or a minute without one. No pause is ever longer than a day.
+  - `admit(job)`: what the sweep asks. It spends quota when it says yes, since the claim that
+    follows is the send.
+- **The sweep defers instead of re-asking.** A refused job stays Pending, with `available_at`
+  moved to when quota returns (or the pause ends) and the reason in *Last Error*. The limiter is
+  asked only about jobs that could otherwise be sent, because a yes spends quota. *Posts
+  Remaining Today* on the Social Account shows what it last saw.
+- **The publish transport shows every response to the limiter** (`observe`). This is
+  best-effort: a limiter failure never fails a request.
+- `tests/test_marketing_ratelimit.py`: 26 tests, in a new CI step.
+  - **Runs the real Lua**, via fakeredis and lupa (pinned), against the Python spec over
+    randomized sequences, including a limit lowered below what the window already holds.
+  - If `CI` is set and those libraries are missing, the Lua half **fails rather than skips**.
+    A quietly skipped hard half is how the QuickBooks suite went untested for weeks.
+  - Also checks that raw Redis keys get Frappe's site prefix: `eval` does not add it on its own.
+- Runbook: *Rate limits* under *The publishing outbox*.
+
+### Where the task's text was out of date
+
+- **The chat module's `ratelimit.py` and `backoff.py`, which it says to copy, went with the
+  chat module in v1.426.0.** This is a rewrite to the same design.
+- **Instagram's limit is not a fixed 25.** Meta's current docs say 100 in one place and 50 in
+  another, so the limiter reads the live figure and uses 25 only as a floor until it has one.
+- **A YouTube upload no longer costs 1,600 units.** `videos.insert` has its own bucket of 100 a
+  day, and the add-ons cost about 50 units each.
+- **"Never retry a 4xx other than 429" keeps one exception, 408.** A 408 means the server gave
+  up waiting for the request, so the platform never acted on it and resending cannot duplicate
+  anything. It is not a configuration fault.
+
 ## [1.509.0] - 2026-09-22
 
 **Marketing P2: the publishing outbox.** TASK-2026-01481. Seven doctypes, and the machinery that

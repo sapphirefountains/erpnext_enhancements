@@ -291,17 +291,30 @@ def reclaim_expired(store, now):
 	return moved
 
 
-def claim_due(store, now, sendable, lease_id_for, limit=SWEEP_BATCH):
+def claim_due(store, now, sendable, lease_id_for, limit=SWEEP_BATCH, admit=None):
 	"""Claim due Pending jobs whose network may send right now. Returns ``[(job, lease_id)]``.
 
 	A job whose network is switched off, disconnected or has no publisher is left Pending and
 	untouched: that is how a switch stops even approved, scheduled posts.
+
+	``admit(job)`` is the rate limiter (``ratelimit.admit``, TASK-2026-01482), asked only once a
+	job is otherwise sendable because a yes spends quota. It returns ``(ok, retry_after_seconds,
+	note, quota_remaining)``. A no leaves the job Pending with ``available_at`` moved to when
+	quota returns, so the sweep does not ask again every five minutes; the remaining quota is
+	written to the account for the calendar to show.
 	"""
 	claimed = []
 	lease_until = now + datetime.timedelta(minutes=LEASE_MINUTES)
 	for job in store.due_jobs(now, limit):
 		if not sendable(job):
 			continue
+		if admit is not None:
+			ok, retry_after, note, remaining = admit(job)
+			if remaining is not None:
+				store.set_quota(job["social_account"], remaining, now)
+			if not ok:
+				store.defer(job["name"], now + datetime.timedelta(seconds=max(retry_after, 60)), note)
+				continue
 		lease_id = lease_id_for(job)
 		if store.claim(job["name"], lease_id, now, lease_until):
 			claimed.append((job["name"], lease_id))

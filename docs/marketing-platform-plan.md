@@ -145,7 +145,7 @@ marketing/
 │   ├── outbox.py        ← Social Publish Job state machine, pure over a store  (01481, shipped)
 │   ├── sweeper.py       ← 5-minute sweep: reclaim, claim, dispatch on `long`   (01481, shipped)
 │   ├── accounts.py      ← Social Account rows from what a connection reaches  (01481, shipped)
-│   ├── ratelimit.py     ← pure decision functions + Redis Lua; shape described below   (01482)
+│   ├── ratelimit.py     ← pure decision functions + Redis Lua, run against each other (01482, shipped)
 │   └── publishers/      ← meta.py, linkedin.py, youtube.py; registry shipped 01481 (01483–01485)
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
@@ -331,9 +331,10 @@ only one where "scheduled for 9am Tuesday" is a promise rather than a hope.
 See [the connectors runbook](marketing-connectors-runbook.md#the-publishing-outbox).
 
 Rate limiting follows the pattern the chat module established and took with it when it was
-retired, so this doc is now the only written copy: pure decision functions in the bench-free
-CI tier, deployed as Redis Lua so the limiter is shared across workers, with the Lua printed
-next to the function it mirrors. And the standing rule — **the bucket is an optimisation;
+retired: pure decision functions in the bench-free CI tier, deployed as Redis Lua so the
+limiter is shared across workers, with the Lua printed next to the function it mirrors.
+*Built in v1.510.0 as `publish/ratelimit.py`, which is now the written copy. CI runs the
+real Lua (fakeredis + lupa) against the Python over randomized sequences.* And the standing rule — **the bucket is an optimisation;
 backoff is the correctness mechanism.** Never retry a 4xx other than 429; a 403 is a config
 fault and retrying turns a fast legible failure into a slow confusing one.
 

@@ -446,10 +446,23 @@ def _linkedin_access_token(creds, force_refresh, http):
 	return token
 
 
-def transport_for(connection, creds, http=None, settings=None):
-	"""An authorized ``PublishTransport`` that refreshes itself once on a 401."""
+_DEFAULT = object()
+
+
+def transport_for(connection, creds, http=None, settings=None, observe=_DEFAULT):
+	"""An authorized ``PublishTransport`` that refreshes itself once on a 401.
+
+	Every response is shown to the rate limiter (TASK-2026-01482), which pauses the connection
+	when Meta's usage headers or a 429 say to. Pass ``observe=None`` explicitly to opt out.
+	"""
 	settings = settings or {}
 	token = access_token(connection, creds, http=http)
+	if observe is _DEFAULT:
+		from erpnext_enhancements.marketing.publish import ratelimit
+
+		def observe(status, headers):
+			ratelimit.observe(connection, status, headers)
+
 	return PublishTransport(
 		connection,
 		token=token,
@@ -458,6 +471,7 @@ def transport_for(connection, creds, http=None, settings=None):
 		max_retries=settings.get("max_retries") or 3,
 		timeout=settings.get("request_timeout_seconds") or 30,
 		http=http,
+		observe=observe,
 	)
 
 

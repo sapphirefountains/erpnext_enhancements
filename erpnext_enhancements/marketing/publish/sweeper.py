@@ -10,7 +10,9 @@
    left ERPNext, otherwise Unconfirmed (``outbox.after_lease_expiry``).
 3. **Claim.** Due Pending jobs, oldest first, whose network may send *now*
    (``can_send``): the network's publishing switch on, its connection Connected, the account
-   enabled, and a publisher installed. Anything else stays Pending, untouched. The claim is one
+   enabled, and a publisher installed. Anything else stays Pending, untouched. Then the rate
+   limiter (``ratelimit.admit``, TASK-2026-01482): a no moves the job's ``available_at`` to
+   when quota returns, or when a paused connection resumes. The claim is one
    conditional ``UPDATE ... WHERE state = 'Pending'`` followed by a read-back of the lease ID, so
    two sweeps racing for a job cannot both win.
 4. **Hand each claimed job to ``run_dispatch`` on the ``long`` queue.** If a deploy flushes
@@ -29,7 +31,7 @@ from frappe.utils import cint, now_datetime
 
 from erpnext_enhancements.marketing.core.utils import field, get_credentials, get_settings
 from erpnext_enhancements.marketing.publish import constants as P
-from erpnext_enhancements.marketing.publish import gate, outbox
+from erpnext_enhancements.marketing.publish import gate, outbox, ratelimit
 from erpnext_enhancements.marketing.publish.publishers import publisher_for
 
 JOB = "Social Publish Job"
@@ -187,6 +189,17 @@ class FrappeStore:
 			frappe.db.rollback(save_point="social_publish_job_update")
 			raise outbox.DuplicatePostId(values.get("external_post_id")) from None
 
+	def defer(self, name, until, note):
+		"""Leave a Pending job Pending, not before ``until`` (the rate limiter said not yet)."""
+		frappe.db.set_value(
+			JOB, name, {"available_at": until, "last_error": (note or "")[:1000]}, update_modified=False
+		)
+
+	def set_quota(self, account, remaining, when):
+		frappe.db.set_value(
+			ACCOUNT, account, {"quota_remaining": remaining, "quota_checked_at": when}, update_modified=False
+		)
+
 	def mark_dispatched(self, name, when):
 		frappe.db.set_value(JOB, name, "dispatched_at", when, update_modified=False)
 		frappe.db.commit()  # durable before the request leaves ERPNext
@@ -227,7 +240,10 @@ def sweep_publish_jobs():
 	claimed = []
 	if gate.enabled_networks(settings):
 		sendable = make_sendable(settings, get_credentials())
-		claimed = outbox.claim_due(store, now, sendable, _lease_id)
+		limiter = ratelimit.RedisLimiter()
+		claimed = outbox.claim_due(
+			store, now, sendable, _lease_id, admit=lambda job: ratelimit.admit(job, limiter)
+		)
 		for name, lease_id in claimed:
 			# Not job_name=: that is frappe.enqueue's own parameter (the RQ job label) and would
 			# never reach run_dispatch.

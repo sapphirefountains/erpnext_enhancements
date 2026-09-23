@@ -59,8 +59,11 @@ class PublishTransport:
 
 	``token`` is the bearer token to start with. ``refresh``, when given, is called with no
 	arguments after a 401 and must return a new token or raise ``MarketingAPIError`` with
-	status 401. ``headers`` are extra headers (LinkedIn's version header, for one). ``http``
-	and ``sleep`` are injectable so the rules above are tested without a network or a clock.
+	status 401. ``headers`` are extra headers (LinkedIn's version header, for one).
+	``observe(status, headers)``, when given, sees every response -- the rate limiter
+	(``ratelimit.observe``) reads Meta's usage headers and a 429's Retry-After from it -- and
+	is best-effort: a limiter failure never fails a request. ``http`` and ``sleep`` are
+	injectable so the rules above are tested without a network or a clock.
 	"""
 
 	def __init__(
@@ -74,6 +77,7 @@ class PublishTransport:
 		timeout=30,
 		http=None,
 		sleep=time.sleep,
+		observe=None,
 	):
 		if http is None:
 			import requests
@@ -87,9 +91,18 @@ class PublishTransport:
 		self.timeout = timeout
 		self.http = http
 		self.sleep = sleep
+		self._observe = observe
 
 	def _headers(self):
 		return {**self._extra_headers, "Authorization": f"Bearer {self._token}"}
+
+	def _observed(self, status, response):
+		if not self._observe:
+			return
+		try:
+			self._observe(status, dict(getattr(response, "headers", None) or {}))
+		except Exception:
+			pass  # an optimisation failing must not fail the request (see ratelimit.py)
 
 	def request(self, method, url, *, params=None, json=None, data=None):
 		"""Send one request and return the parsed JSON body (``{}`` for an empty one)."""
@@ -121,6 +134,7 @@ class PublishTransport:
 				continue
 
 			status = effective_status(response)  # Meta's dead-token 400 reads as 401
+			self._observed(status, response)
 			if status < 400:
 				if not (response.text or "").strip():
 					return {}

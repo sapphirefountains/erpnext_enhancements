@@ -141,6 +141,13 @@ class MemoryStore:
 		self.jobs[name]["dispatched_at"] = when
 		self.dispatched.append(name)
 
+	def defer(self, name, until, note):
+		self.jobs[name].update(available_at=until, last_error=note)
+
+	def set_quota(self, account, remaining, when):
+		self.quotas = getattr(self, "quotas", {})
+		self.quotas[account] = remaining
+
 	def notify(self, job, message):
 		self.notes.append((job["name"], message))
 
@@ -349,6 +356,39 @@ class SweepTests(unittest.TestCase):
 		self.assertEqual(len(claimed), 1)
 		fb = next(j for j in store.jobs.values() if j["network"] == "Facebook")
 		self.assertEqual((fb["state"], fb["attempts"]), (O.PENDING, 0))
+
+	def test_the_rate_limiter_defers_instead_of_claiming(self):
+		# TASK-2026-01482: a refused job stays Pending, moved to when quota returns, so the sweep
+		# does not ask again every five minutes; remaining quota lands on the account.
+		store = MemoryStore()
+		O.enqueue(store, "SPOST-00001", T0)
+
+		def admit(job):
+			if job["network"] == "Facebook":
+				return False, 3600, "Facebook paused by its rate limit", None
+			return True, 0, "", 7
+
+		claimed = O.claim_due(store, T0, always, lambda j: "L", admit=admit)
+		self.assertEqual([store.jobs[n]["network"] for n, _ in claimed], ["LinkedIn"])
+		fb = next(j for j in store.jobs.values() if j["network"] == "Facebook")
+		self.assertEqual((fb["state"], fb["attempts"]), (O.PENDING, 0))
+		self.assertEqual(fb["available_at"], T0 + datetime.timedelta(hours=1))
+		self.assertIn("rate limit", fb["last_error"])
+		self.assertEqual(store.quotas, {"SACC-LinkedIn-9": 7})
+
+	def test_the_limiter_is_asked_only_about_sendable_jobs(self):
+		# A yes spends quota, so a job that could not be sent anyway must never be asked about.
+		store = MemoryStore()
+		O.enqueue(store, "SPOST-00001", T0)
+		asked = []
+		O.claim_due(
+			store,
+			T0,
+			lambda job: job["network"] == "LinkedIn",
+			lambda j: "L",
+			admit=lambda job: asked.append(job["network"]) or (True, 0, "", None),
+		)
+		self.assertEqual(asked, ["LinkedIn"])
 
 	def test_a_claim_cannot_be_won_twice(self):
 		store, name = claimed_job()
