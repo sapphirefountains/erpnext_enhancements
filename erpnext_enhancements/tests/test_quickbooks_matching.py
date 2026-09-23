@@ -17,7 +17,10 @@ the one action that deletes something:
 * ``account_merge_blockers`` -- the four properties ERPNext's own ``merge_account``
   insists on, because ``rename_doc(merge=True)`` alone would fold a Liability into an
   Asset without a word.
-* ``decide_many`` -- one failing row is reported and the rest still land.
+* ``decide_many`` -- one failing row is reported and the rest still land, and a ticked
+  row's own "Fill blank fields" box reaches only that row.
+* The page's bulk actions -- 500-row pages that the server really serves, and *Link
+  selected* sent in chunks small enough that a run of merges cannot outrun the gateway.
 
 Plus the wiring that fails silently when it is wrong: a workspace shortcut row without its
 content block renders as nothing, a Page whose roles differ from the endpoint gate opens a
@@ -54,7 +57,14 @@ MAPPING_JSON = (
 )
 RAW_JSON = APP / "quickbooks_online" / "doctype" / "quickbooks_raw_payload" / "quickbooks_raw_payload.json"
 
-ENDPOINTS = ("get_match_queue", "get_parked_transactions", "decide_match", "decide_matches", "confirm_match")
+ENDPOINTS = (
+	"get_match_queue",
+	"get_parked_transactions",
+	"decide_match",
+	"decide_matches",
+	"confirm_match",
+	"confirm_matches",
+)
 
 
 def _read(path):
@@ -481,6 +491,59 @@ def test_decide_many_isolates_one_failure(monkeypatch):
 	assert [call[1] for call in calls["link"]] == ["1", "3"]
 
 
+def test_decide_many_lets_a_row_carry_its_own_fill_blanks(monkeypatch):
+	"""Link selected sends each ticked row's own "Fill blank fields" box. One row asking for
+	the QBO data must not impose it on the rest, and a row that says nothing falls back to
+	the call-level flag (Accept suggestions sends none)."""
+	matching, frappe = _matching()
+	calls = _wire_decide(monkeypatch, matching, frappe, previous={})
+	matching.decide_many(
+		[
+			{"entity_type": "Vendor", "qbo_id": "1", "erpnext_name": "A", "fill_blanks": 1},
+			{"entity_type": "Vendor", "qbo_id": "2", "erpnext_name": "B", "fill_blanks": "0"},
+			{"entity_type": "Vendor", "qbo_id": "3", "erpnext_name": "C"},
+		],
+		fill_blanks=False,
+		user="lisa@example.com",
+	)
+	assert [(call[1], call[4]) for call in calls["link"]] == [("1", True), ("2", False), ("3", False)]
+
+	calls["link"].clear()
+	matching.decide_many(
+		[{"entity_type": "Vendor", "qbo_id": "4", "erpnext_name": "D"}],
+		fill_blanks=True,
+		user="lisa@example.com",
+	)
+	assert calls["link"][0][4] is True, "no per-row flag: the call-level one applies"
+
+
+def test_confirm_many_reports_a_row_with_no_mapping_and_carries_on(monkeypatch):
+	matching, frappe = _matching()
+	stamped = []
+	monkeypatch.setattr(
+		matching,
+		"get_mapping",
+		lambda entity_type, qbo_id: None
+		if qbo_id == "2"
+		else types.SimpleNamespace(name=f"QBO-MAP-{entity_type}-{qbo_id}", match_status="Auto Matched"),
+	)
+	monkeypatch.setattr(matching, "_stamp_reviewed", lambda name, user: stamped.append(name))
+	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
+	results = matching.confirm_many(
+		[
+			{"entity_type": "Customer", "qbo_id": "1"},
+			{"entity_type": "Customer", "qbo_id": "2"},
+			{"entity_type": "Customer", "qbo_id": "3"},
+			None,
+		],
+		user="lisa@example.com",
+	)
+	assert [result["ok"] for result in results] == [True, False, True, False]
+	assert results[1]["qbo_id"] == "2" and "No mapping exists" in results[1]["error"]
+	assert results[0]["mapping"] == "QBO-MAP-Customer-1"
+	assert stamped == ["QBO-MAP-Customer-1", "QBO-MAP-Customer-3"]
+
+
 def test_confirm_stamps_and_changes_no_status(monkeypatch):
 	matching, frappe = _matching()
 	stamped = []
@@ -608,6 +671,42 @@ def test_page_script_dials_only_endpoints_that_exist():
 	for endpoint in (*ENDPOINTS, "sync_entity"):
 		assert f'"{endpoint}"' in js, f"the page never calls {endpoint}"
 		assert endpoint in whitelisted, f"{endpoint} is dialled by the page but not whitelisted"
+
+
+def test_every_page_size_the_page_offers_is_one_the_server_serves():
+	"""The server clamps ``page_length`` at ``MAX_PAGE_LENGTH`` without a word. If the page
+	offered more, it would show MAX rows and label them "1-500 of N" -- and if it paged by
+	what it asked for, Next would skip every row between the two. So the ceiling holds
+	the offer, and the page pages by the ``page_length`` the response reports."""
+	matching, _ = _matching()
+	js = _read(PAGE_DIR / "quickbooks_record_matching.js")
+	offered = re.search(r"const PAGE_LENGTHS = \[([\d,\s]+)\]", js)
+	assert offered, "PAGE_LENGTHS moved or changed shape; this test reads it"
+	sizes = [int(size) for size in offered.group(1).split(",") if size.strip()]
+	assert sizes == [50, 100, 200, 500]
+	assert max(sizes) <= matching.MAX_PAGE_LENGTH
+	assert matching._page_args(0, max(sizes)) == (0, max(sizes))
+	assert matching._page_args(0, 10_000) == (0, matching.MAX_PAGE_LENGTH)
+	assert matching._page_args(-5, 0) == (0, matching.DEFAULT_PAGE_LENGTH)
+	assert js.count("data.page_length ||") == 2, "both tabs page by what the server served"
+
+
+def test_a_big_page_neither_validates_every_picker_nor_links_in_one_request():
+	"""Two things that were fine at 50 rows and are not at 500. The picker pre-fill went
+	through ``set_value``, which validates the record with a request of its own -- a
+	500-row page would open with 500 of them -- so it goes through ``set_input`` now, the
+	server having just confirmed each suggestion exists. And a link can run ``rename_doc``
+	merges, so *Link selected* and *Accept suggestions* go to ``decide_matches`` in small
+	chunks rather than a whole page in one request that outruns the gateway timeout."""
+	js = _read(PAGE_DIR / "quickbooks_record_matching.js")
+	assert "control.set_input(chosen)" in js
+	assert "control.set_value(best.name)" not in js
+	chunk = re.search(r"const LINK_CHUNK = (\d+);", js)
+	assert chunk and 1 <= int(chunk.group(1)) <= 25
+	assert js.count('"decide_matches"') == 1, "every bulk link goes through the one chunked runner"
+	runner = js[js.index("function runDecisions(") :]
+	runner = runner[: runner.index("\n\t}\n")]
+	assert '"decide_matches"' in runner and "size: LINK_CHUNK" in runner
 
 
 def test_entity_types_arrive_as_json_csv_or_list_and_leave_as_a_list():

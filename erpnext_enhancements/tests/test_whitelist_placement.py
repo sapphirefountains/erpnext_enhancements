@@ -73,6 +73,7 @@ MUST_STAY_WHITELISTED = {
         "decide_match",
         "decide_matches",
         "confirm_match",
+        "confirm_matches",
         "link_existing_record",
         "sync_entity",
     ),

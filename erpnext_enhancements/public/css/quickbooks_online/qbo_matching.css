@@ -3,9 +3,11 @@
  *
  * What this styles: the accountant's QBO -> ERPNext matching queue (desk page
  * quickbooks-record-matching): the tab strip, filter toolbar, count chips, the
- * five-column decision table (QBO record / current link / suggestions / picker /
- * actions) and the parked-transactions table. Frappe CSS variables throughout so
- * it holds in both themes; the three score bands are the only literal colours.
+ * decision table (tick box / QBO record / current link / suggestions / picker /
+ * actions), the parked-transactions table, the selection bar that pins to the
+ * bottom of the window while a long page scrolls under it, and the row list in the
+ * "Link selected" confirmation. Frappe CSS variables throughout so it holds in
+ * both themes; the three score bands are the only literal colours.
  * Loaded via: desk_addons.bundle.scss (see public/README.md).
  */
 .qbo-matching {
@@ -39,6 +41,10 @@
 
 .qbo-mt-toolbar input[data-filter="search"] {
 	min-width: 240px;
+}
+
+.qbo-mt-toolbar select.qbo-mt-page-length {
+	min-width: 0;
 }
 
 .qbo-mt-spacer {
@@ -110,6 +116,19 @@
 	border-bottom: 1px solid var(--border-color);
 	padding: 10px 8px;
 	vertical-align: top;
+}
+
+.qbo-mt-col-check {
+	width: 28px;
+}
+
+.qbo-mt-col-check input {
+	cursor: pointer;
+	margin: 2px 0 0;
+}
+
+.qbo-mt-row.is-selected td {
+	background: var(--highlight-color);
 }
 
 .qbo-mt-col-qbo {
@@ -228,6 +247,74 @@
 	color: var(--text-muted);
 	padding: 40px;
 	text-align: center;
+}
+
+/* After the table and sticky to the bottom: on a 500-row page the bulk buttons stay in
+   reach while the accountant scrolls and ticks, and it settles back under the table at
+   the end. */
+.qbo-mt-selbar {
+	align-items: center;
+	background: var(--card-bg);
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	bottom: 8px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+	padding: 8px 12px;
+	position: sticky;
+	z-index: 3;
+}
+
+.qbo-mt-selbar[hidden] {
+	display: none;
+}
+
+.qbo-mt-selbar.has-selection {
+	border-color: var(--primary);
+	box-shadow: var(--shadow-md);
+}
+
+.qbo-mt-selcount {
+	color: var(--text-muted);
+	font-size: 12px;
+	margin-right: auto;
+}
+
+.qbo-mt-selbar.has-selection .qbo-mt-selcount {
+	color: var(--text-color);
+	font-weight: 600;
+}
+
+.qbo-mt-confirm-list {
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	margin-top: 8px;
+	max-height: 320px;
+	overflow: auto;
+}
+
+.qbo-mt-confirm-table {
+	border-collapse: collapse;
+	font-size: 12px;
+	width: 100%;
+}
+
+.qbo-mt-confirm-table th,
+.qbo-mt-confirm-table td {
+	border-bottom: 1px solid var(--border-color);
+	padding: 5px 8px;
+	text-align: left;
+	vertical-align: top;
+}
+
+.qbo-mt-confirm-table th {
+	background: var(--card-bg);
+	color: var(--text-muted);
+	font-weight: 600;
+	position: sticky;
+	top: 0;
 }
 
 .qbo-mt-pager {

@@ -13,6 +13,7 @@ in its own module: ``erpnext_enhancements.quickbooks_time.api``.
 # at the ...quickbooks_online.api.* path used by JS/hooks/Intuit webhook.
 from erpnext_enhancements.quickbooks_online.core.api import (
 	confirm_match,
+	confirm_matches,
 	decide_match,
 	decide_matches,
 	disconnect,

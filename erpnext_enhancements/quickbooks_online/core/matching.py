@@ -112,7 +112,11 @@ STATUS_FILTERS = (
 	"Unmapped",
 )
 
-MAX_PAGE_LENGTH = 200
+#: The page offers 50/100/200/500 rows (``PAGE_LENGTHS`` in the page script, which a test
+#: holds to this ceiling). A larger request is clamped, and the response's ``page_length``
+#: says so -- the page pages by that, never by what it asked for, so a clamp can never make
+#: it skip rows.
+MAX_PAGE_LENGTH = 500
 DEFAULT_PAGE_LENGTH = 50
 SUGGESTION_LIMIT = 5
 #: Below this a name-similarity candidate is noise rather than a suggestion.
@@ -853,20 +857,25 @@ def decide(entity_type, qbo_id, erpnext_name, *, fill_blanks=False, merge_duplic
 
 def decide_many(decisions, *, fill_blanks=False, merge_duplicate=True, user=None) -> list:
 	"""``decide`` for each of ``decisions`` (dicts of entity_type/qbo_id/erpnext_name), one
-	failure never stopping the rest and never leaving its own half-applied work behind."""
+	failure never stopping the rest and never leaving its own half-applied work behind.
+
+	A decision may carry its own ``fill_blanks``, which wins over the call-level flag: the
+	page's *Link selected* sends each ticked row's own "Fill blank fields" box, so one row
+	asking for the QBO data does not impose it on the rest."""
 	results = []
 	for decision in decisions or []:
 		decision = decision or {}
 		entity_type = decision.get("entity_type")
 		qbo_id = decision.get("qbo_id")
 		erpnext_name = decision.get("erpnext_name")
+		own_fill = decision.get("fill_blanks")
 		try:
 			frappe.db.savepoint("qbo_match_decide")
 			result = decide(
 				entity_type,
 				qbo_id,
 				erpnext_name,
-				fill_blanks=fill_blanks,
+				fill_blanks=fill_blanks if own_fill is None else bool(cint(own_fill)),
 				merge_duplicate=merge_duplicate,
 				user=user,
 			)
@@ -892,3 +901,24 @@ def confirm(entity_type, qbo_id, *, user=None) -> dict:
 	_stamp_reviewed(mapping.name, user)
 	frappe.db.commit()
 	return {"mapping": mapping.name, "reviewed_by": user}
+
+
+def confirm_many(pairs, *, user=None) -> list:
+	"""``confirm`` for each of ``pairs`` (dicts of entity_type/qbo_id) -- the page's *Keep
+	selected* -- one result per pair in order. A row with no mapping (an *Unmapped payloads*
+	row has nothing to keep) is reported and never stops the rest."""
+	results = []
+	for pair in pairs or []:
+		pair = pair or {}
+		entity_type = pair.get("entity_type")
+		qbo_id = pair.get("qbo_id")
+		try:
+			if not entity_type or not qbo_id:
+				frappe.throw("Each row needs an entity_type and a qbo_id.")
+			result = confirm(entity_type, qbo_id, user=user)
+			results.append(dict(result, entity_type=entity_type, qbo_id=qbo_id, ok=True))
+		except Exception as exc:
+			results.append(
+				{"entity_type": entity_type, "qbo_id": qbo_id, "ok": False, "error": clean_error(exc)}
+			)
+	return results
