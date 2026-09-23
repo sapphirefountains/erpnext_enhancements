@@ -37,8 +37,13 @@ read-only, and verification found it is not (see *Held*).
   unless it closes the Task. It is an allowlist — Open, Working, Pending Review, Overdue — so
   Completed, this site's `Canceled`, ERPNext core's `Cancelled`, `Invoiced` and anything
   unrecognised wait for a human, and every other doctype falls through to the exempt allowlist and
-  then a proposal. **`NEVER_EXEMPT`** strips `Task` from the settings allowlist whatever a row says,
-  because that allowlist ungates `create_document` and `update_document` together.
+  then a proposal. Any key that changes *which* record is written or how it is saved also waits —
+  `name`, `modified`, `docstatus`, `owner`, the tree fields, anything starting `_`, and
+  `is_template` (ERPNext derives status "Template" from it). Review caught the reason: FAC
+  `setattr`s every key, so `{"name": <Task B>, "modified": <B's modified>}` with no status would
+  save Task A's fields, status included, over Task B unconfirmed. **`NEVER_EXEMPT`** strips `Task`
+  from the settings allowlist whatever a row says, because that allowlist ungates `create_document`
+  and `update_document` together.
 - Tests: `test_feedback_codemap` (its own CI step, frappe stub), `test_feedback_task_backlink`
   (fixture and patch agree; the patch never saves, is registered post-model-sync and anchors its
   group match), the one-writer detector cases, the decider's truth table, the scoped gate end to end,
@@ -50,7 +55,8 @@ read-only, and verification found it is not (see *Held*).
   stopped mid-sentence in the tenth of 21 bullets, so the trailing-space trap, the Frappe 16
   `get_all` refusal and nine others, and the whole Conventions section, never reached the model.
   It now sends each bullet's bold headline (all 21) plus the Conventions section, 2,472 characters
-  today. It stays a `str`, because Triton calls `.strip()` on it and anything else fails every
+  today; a bullet written without a bold lead is summarized by its first sentence rather than
+  dropped, and the test counts every bullet independently of the extractor. It stays a `str`, because Triton calls `.strip()` on it and anything else fails every
   breakdown with a 502.
 - **The code map reports how much each capped listing really holds**, under a new
   `codebase.erpnext.totals` key (`patches/` is 212 files against a cap of 60). A new key there is

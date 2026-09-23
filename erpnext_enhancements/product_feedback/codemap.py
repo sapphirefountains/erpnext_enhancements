@@ -381,12 +381,21 @@ def _section(text: str, heading: str) -> str:
 
 
 def _gotcha_headlines(section: str) -> list[str]:
-	"""The bold lead of every top-level ``- `` bullet in the Gotchas section."""
+	"""One line per top-level ``- `` bullet in the Gotchas section: its bold lead, or failing that
+	its first sentence, so a bullet written without a bold lead is summarized rather than dropped
+	and the "all N" the payload claims stays true."""
 	out = []
 	for chunk in re.split(r"\n(?=- )", section):
-		match = _GOTCHA_LEAD.match(chunk.strip())
+		chunk = chunk.strip()
+		if not chunk.startswith("- "):
+			continue
+		match = _GOTCHA_LEAD.match(chunk)
 		if match:
 			out.append(re.sub(r"\s+", " ", match.group(1)).strip())
+			continue
+		prose = re.sub(r"\s+", " ", chunk[2:]).strip()
+		first = re.split(r"(?<=[.!?])\s", prose, maxsplit=1)[0]
+		out.append(first[:MAX_PURPOSE_CHARS])
 	return out
 
 

@@ -255,6 +255,25 @@ class TestUpdateDocumentDecider(unittest.TestCase):
             with self.subTest(data=data):
                 self.assertTrue(self.decider({"doctype": "Task", "name": "T-1", "data": data}))
 
+    def test_a_key_that_changes_which_record_is_written_waits(self):
+        # {"name": other Task, "modified": its modified} with no status would save this Task's
+        # fields — status included — over the other one, unconfirmed (review of WI-079 slice 1).
+        for data in (
+            {"name": "TASK-B", "modified": "2026-09-23 10:00:00"},
+            {"name": "TASK-B"},
+            {"modified": "2026-09-23 10:00:00", "status": "Working"},
+            {"docstatus": 1},
+            {"owner": "someone@example.com"},
+            {"doctype": "Project"},
+            {"is_template": 1},  # ERPNext derives status "Template" from it
+            {"lft": 1, "rgt": 2},
+            {"__unsaved": 1},
+            {"_assign": "[]"},
+            {1: "x"},
+        ):
+            with self.subTest(data=data):
+                self.assertTrue(self.decider({"doctype": "Task", "name": "T-1", "data": data}))
+
     def test_malformed_calls_and_other_doctypes_wait(self):
         for args in (
             None,
@@ -294,21 +313,30 @@ class TestTheScopedGateEndToEnd(unittest.TestCase):
         def _log(**kwargs):
             calls["logged"].append(kwargs)
 
-        settings = type(
-            "Settings",
-            (),
-            {"get": lambda self, key: [type("Row", (), {"document_type": d})() for d in exempt_rows]},
-        )()
+        def _rows(self, key):
+            # Only the real table field answers, so a renamed field fails these tests instead of
+            # being papered over by a stub that returns rows for any key.
+            if key != "ai_exempt_doctypes":
+                return []
+            return [type("Row", (), {"document_type": d})() for d in exempt_rows]
+
+        settings = type("Settings", (), {"get": _rows})()
+
+        def _cached(doctype, *a, **k):
+            assert doctype == "ERPNext Enhancements Settings", doctype
+            return settings
+
+        gate_frappe = _gate.frappe
         saved = {
             "gating": _gate._gating_enabled,
             "propose": _gate._propose,
             "log": _gate.insert_action_log,
-            "cached": getattr(frappe, "get_cached_doc", None),
+            "cached": getattr(gate_frappe, "get_cached_doc", None),
         }
         _gate._gating_enabled = lambda: True
         _gate._propose = _propose
         _gate.insert_action_log = _log
-        frappe.get_cached_doc = lambda *a, **k: settings
+        gate_frappe.get_cached_doc = _cached
         try:
             response = _gate._gated_execute(fake_tool, original, arguments)
         finally:
@@ -316,9 +344,9 @@ class TestTheScopedGateEndToEnd(unittest.TestCase):
             _gate._propose = saved["propose"]
             _gate.insert_action_log = saved["log"]
             if saved["cached"] is None:
-                del frappe.get_cached_doc
+                del gate_frappe.get_cached_doc
             else:
-                frappe.get_cached_doc = saved["cached"]
+                gate_frappe.get_cached_doc = saved["cached"]
         return response, calls
 
     def test_a_task_moved_to_working_executes_once_and_is_logged(self):
@@ -347,6 +375,21 @@ class TestTheScopedGateEndToEnd(unittest.TestCase):
     def test_a_task_row_in_the_exempt_table_cannot_ungate_task_creation(self):
         response, calls = self._run(
             "create_document", {"doctype": "Task", "data": {"subject": "x"}}, exempt_rows=("Task",)
+        )
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
+    def test_a_task_row_in_the_exempt_table_cannot_ungate_a_task_close(self):
+        response, calls = self._run(
+            "update_document",
+            {"doctype": "Task", "name": "T-1", "data": {"status": "Completed"}},
+            exempt_rows=("Task",),
+        )
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
+    def test_the_record_swap_is_proposed_not_executed(self):
+        response, calls = self._run(
+            "update_document",
+            {"doctype": "Task", "name": "T-A", "data": {"name": "T-B", "modified": "2026-09-23 10:00:00"}},
         )
         self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
 

@@ -214,6 +214,33 @@ EXEMPTABLE_TOOLS = {"create_document", "update_document"}
 #: spelling, "Invoiced" or a typo all wait for a human. Closing a Task is the thing to confirm.
 _TASK_STATUSES_THAT_RUN = frozenset({"Open", "Working", "Pending Review", "Overdue"})
 
+#: Keys in update_document's `data` that change which record is written or how it is saved
+#: rather than a field of it. FAC 3.0.0 setattr()s every key it is given, so
+#: {"name": <another Task>, "modified": <that Task's modified>} with no status would make the
+#: save land on the OTHER Task and write this one's fields — its status included — over it
+#: (frappe v16 check_if_latest compares against the modified the caller supplied). Each of these
+#: waits for a human, as does `is_template`, from which ERPNext derives status "Template".
+_TASK_KEYS_THAT_WAIT = frozenset(
+    {
+        "name",
+        "doctype",
+        "docstatus",
+        "modified",
+        "modified_by",
+        "creation",
+        "owner",
+        "idx",
+        "parent",
+        "parenttype",
+        "parentfield",
+        "lft",
+        "rgt",
+        "old_parent",
+        "amended_from",
+        "is_template",
+    }
+)
+
 
 def _update_document_needs_human(args):
     """update_document executes for a Task unless it closes it; anything else is ADR 0006's default.
@@ -227,6 +254,9 @@ def _update_document_needs_human(args):
     data = args.get("data")
     if not isinstance(data, dict):
         return True
+    for key in data:
+        if not isinstance(key, str) or key in _TASK_KEYS_THAT_WAIT or key.startswith("_"):
+            return True
     if "status" not in data:
         return False
     status = data.get("status")

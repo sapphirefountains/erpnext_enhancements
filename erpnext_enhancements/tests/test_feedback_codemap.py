@@ -75,13 +75,23 @@ def _claude_md() -> str:
 	return (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 
 
-def _independent_gotcha_leads() -> list[str]:
-	"""Count CLAUDE.md's gotcha bullets without the code under test: top-level ``- **`` lines."""
+def _gotcha_section() -> str:
 	text = _claude_md()
 	start = text.index("## Gotchas")
 	end = text.index("\n## ", start + 1)
-	section = text[start:end]
-	return [line for line in section.splitlines() if line.startswith("- **")]
+	return text[start:end]
+
+
+def _independent_gotcha_bullets() -> list[str]:
+	"""CLAUDE.md's gotcha bullets counted without the code under test: every top-level ``- ``
+	line, bold lead or not — so a bullet the extractor cannot parse is still counted here."""
+	return [line for line in _gotcha_section().splitlines() if line.startswith("- ")]
+
+
+def _sent_headlines(text: str) -> list[str]:
+	"""The ``- `` lines of the gotcha list only, not of the Conventions section after it."""
+	head = text.split("\n\n## Conventions", 1)[0]
+	return [line for line in head.splitlines() if line.startswith("- ")]
 
 
 class TestConventions(unittest.TestCase):
@@ -94,28 +104,33 @@ class TestConventions(unittest.TestCase):
 		self.assertLessEqual(len(self.text), codemap.MAX_CONVENTION_CHARS)
 
 	def test_every_gotcha_is_sent(self):
-		leads = _independent_gotcha_leads()
-		self.assertGreaterEqual(len(leads), 20, "CLAUDE.md's Gotchas section looks empty")
-		self.assertEqual(self.totals["gotchas"], len(leads))
-		sent = [line for line in self.text.splitlines() if line.startswith("- ")]
-		self.assertEqual(len(sent), len(leads))
+		bullets = _independent_gotcha_bullets()
+		self.assertGreaterEqual(len(bullets), 20, "CLAUDE.md's Gotchas section looks empty")
+		self.assertEqual(self.totals["gotchas"], len(bullets))
+		self.assertEqual(len(_sent_headlines(self.text)), len(bullets))
+
+	def test_a_bullet_without_a_bold_lead_is_summarized_not_dropped(self):
+		section = "## Gotchas\n\n- **Bold one.** Body.\n- No bold here. More text.\n"
+		self.assertEqual(codemap._gotcha_headlines(section), ["Bold one.", "No bold here."])
 
 	def test_the_gotchas_the_old_prefix_dropped_are_present(self):
 		# Control: the old 6,000-character prefix ended inside the tenth bullet, so the last
-		# bullet is exactly the one it could not reach.
-		last_lead = _independent_gotcha_leads()[-1]
-		headline = re.sub(r"\s+", " ", re.match(r"- \*\*(.+?)\*\*", last_lead).group(1)).strip()
+		# bullet is exactly the one it could not reach. Its bold lead can wrap onto the next
+		# line, so it is read from the whole bullet, not the first line.
+		last_bullet = re.split(r"\n(?=- )", _gotcha_section())[-1]
+		lead = re.match(r"- \*\*(.+?)\*\*", last_bullet.strip(), re.S)
+		self.assertIsNotNone(lead, "the last gotcha no longer opens with a bold lead")
+		headline = re.sub(r"\s+", " ", lead.group(1)).strip()
 		self.assertIn(headline, self.text)
 		old = _claude_md()[_claude_md().index("## Gotchas") :][: codemap.MAX_CONVENTION_CHARS]
-		self.assertNotIn(headline, old, "the control no longer distinguishes old from new")
+		self.assertNotIn(headline, re.sub(r"\s+", " ", old), "the control no longer distinguishes old from new")
 
 	def test_conventions_section_is_present(self):
 		self.assertIn("## Conventions", self.text)
 
 	def test_headlines_carry_no_markdown_bold(self):
-		for line in self.text.splitlines():
-			if line.startswith("- "):
-				self.assertNotIn("**", line)
+		for line in _sent_headlines(self.text):
+			self.assertNotIn("**", line)
 
 	def test_a_bullet_that_wraps_is_joined_into_one_line(self):
 		section = "## Gotchas\n\n- **First line\n  continues here.** Body.\n- **Second.** Body.\n"
@@ -166,9 +181,17 @@ class TestListingsAndTotals(unittest.TestCase):
 		self.assertEqual(len(self.built["packages"][patches]), codemap.MAX_FILES_PER_DIR)
 		self.assertGreater(self.built["totals"]["packages"][patches], codemap.MAX_FILES_PER_DIR)
 
-	def test_totals_do_not_collide_with_what_triton_renders(self):
-		self.assertNotIn("totals", TRITON_RENDERED_KEYS)
+	def test_every_key_triton_does_not_render_is_a_known_one(self):
+		# A new key that collides with one Triton renders changes what the model reads; one it
+		# does not render is ignored until Triton learns it. Either way it must be deliberate.
+		self.assertEqual(set(self.built) - TRITON_RENDERED_KEYS, {"environment", "doctypes", "totals"})
+
+	def test_the_rendered_keys_keep_the_types_triton_reads(self):
 		self.assertIsInstance(self.built["conventions"], str)
+		self.assertIsInstance(self.built["packages"], dict)
+		self.assertIsInstance(self.built["modules"], list)
+		for module in self.built["modules"]:
+			self.assertIsInstance(module, dict)
 
 	def test_totals_hold_only_numbers(self):
 		totals = self.built["totals"]

@@ -72,6 +72,13 @@ def _ensure_field() -> bool:
 			create_custom_field("Task", dict(FIELD), is_system_generated=False)
 		return bool(frappe.db.has_column("Task", "custom_enhancement_request"))
 	except Exception:
+		# A Custom Field row inserted before its on_update failed would otherwise be committed by
+		# the patch runner with no column behind it, and every later Task save would fail on the
+		# missing column. Nothing earlier in this patch has written, so this discards only that.
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
 		frappe.log_error(title="backfill_task_enhancement_request: could not create the field")
 		print("backfill_task_enhancement_request: could not create the field; nothing stamped.")
 		return False

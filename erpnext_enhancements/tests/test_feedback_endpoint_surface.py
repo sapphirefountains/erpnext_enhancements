@@ -205,6 +205,7 @@ class TestOnlyOneWriterCreatesTasks(unittest.TestCase):
 			'frappe.get_doc({"doctype": "Task"})',
 			'frappe.get_doc(doctype="Task", subject="x")',
 			'frappe.get_doc(dict(doctype="Task"))',
+			'frappe.get_doc(frappe._dict(doctype="Task"))',
 		):
 			with self.subTest(snippet=snippet):
 				self.assertTrue(_task_constructions(snippet), snippet)
@@ -340,7 +341,7 @@ def _callee_name(call) -> str:
 def _task_constructions(source: str) -> list[int]:
 	"""Line numbers where ``source`` builds a new ``Task``, in any of the three Frappe forms.
 
-	``frappe.get_doc(dict)`` (and ``dict(doctype="Task")``), ``frappe.get_doc(**kwargs)`` with no
+	``frappe.get_doc(dict)`` (and ``dict(doctype="Task")`` or ``frappe._dict(...)``), ``frappe.get_doc(**kwargs)`` with no
 	positional argument, and ``frappe.new_doc("Task")``. A positional ``get_doc("Task", name)`` is
 	a load and is ignored, as are comments and docstrings, which the AST does not contain as code.
 	"""
@@ -353,7 +354,7 @@ def _task_constructions(source: str) -> list[int]:
 			doctype_kw = any(kw.arg == "doctype" and _is_task_const(kw.value) for kw in node.keywords)
 			if name == "new_doc" and ((node.args and _is_task_const(node.args[0])) or doctype_kw):
 				lines.add(node.lineno)
-			elif name in ("get_doc", "dict") and not node.args and doctype_kw:
+			elif name in ("get_doc", "dict", "_dict") and not node.args and doctype_kw:
 				lines.add(node.lineno)
 	return sorted(lines)
 
