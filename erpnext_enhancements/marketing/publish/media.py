@@ -74,6 +74,60 @@ def url_problem(asset):
 	return f"{name} has an unknown source {source!r}"
 
 
+def bytes_problem(asset):
+	"""Why this app cannot read ``asset``'s bytes to upload them itself (LinkedIn), or None. Pure.
+
+	LinkedIn never fetches a URL: we register an upload and PUT the file. So, unlike for Meta, a
+	**private** file is fine -- it is read from the site's own disk. A GCS object is read through a
+	signed URL to our own bucket. An external https URL is refused: fetching arbitrary addresses
+	from the server is how a server gets turned against its own network.
+	"""
+	name = asset.get("name") or asset.get("title") or "An asset"
+	source = asset.get("source") or "File"
+	if source == "File":
+		path = (asset.get("file") or "").strip()
+		if not path:
+			return f"{name} has no file attached"
+		if not path.startswith(("/files/", "/private/files/")):
+			return f"{name} is not a file on this site ({path}); upload it here, or store it in Google Cloud Storage"
+		return None
+	if source == "Google Cloud Storage":
+		return (
+			None
+			if split_gcs(asset.get("gcs_object"))
+			else f"{name} has no GCS object in the form bucket/path"
+		)
+	if source == "Google Drive":
+		return f"{name} is on Google Drive, which this app does not read. Upload it here or to Google Cloud Storage"
+	return f"{name} has an unknown source {source!r}"
+
+
+def read_bytes(asset, http=None):
+	"""The file's bytes, for a network that takes an upload rather than a URL."""
+	problem = bytes_problem(asset)
+	if problem:
+		raise MediaNotReachable(problem)
+	if (asset.get("source") or "File") == "File":
+		import frappe
+
+		file_name = frappe.db.get_value("File", {"file_url": asset["file"].strip()}, "name")
+		if not file_name:
+			raise MediaNotReachable(f"{asset.get('name') or 'An asset'}: no File record for {asset['file']}")
+		return frappe.get_doc("File", file_name).get_content()
+	url = public_url(asset)  # a short-lived signed URL to our own bucket
+	if http is None:
+		import requests
+
+		http = requests
+	# No bearer token here, deliberately: this reads our own bucket, not a network's API.
+	response = http.get(url, timeout=120)
+	if response.status_code >= 400:
+		raise MediaNotReachable(
+			f"{asset.get('name') or 'An asset'}: Google Cloud Storage answered {response.status_code}"
+		)
+	return response.content
+
+
 def public_url(asset):
 	"""The URL a network fetches ``asset`` from. Raises ``MediaNotReachable`` with the reason."""
 	problem = url_problem(asset)

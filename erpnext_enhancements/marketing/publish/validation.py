@@ -52,8 +52,21 @@ def _reachable(media):
 	return [p for p in (M.url_problem(item) for item in media) if p]
 
 
-def facebook_problems(text, link, media, first_comment=""):
-	problems = []
+def _is_document(item):
+	return (item.get("asset_type") or "") == "Document"
+
+
+def _no_documents(network, media):
+	return [
+		f"{network}: {_name(item)} is a document; only LinkedIn posts documents"
+		for item in media
+		if _is_document(item)
+	]
+
+
+def facebook_problems(text, link, media, first_comment="", link_title=""):
+	problems = _no_documents("Facebook", media)
+	media = [m for m in media if not _is_document(m)]
 	if not (text or "").strip() and not (link or "").strip() and not media:
 		problems.append("Facebook: a post needs text, a link or media")
 	videos = [m for m in media if _is_video(m)]
@@ -66,8 +79,9 @@ def facebook_problems(text, link, media, first_comment=""):
 	return problems + [f"Facebook: {p}" for p in _reachable(media)]
 
 
-def instagram_problems(text, link, media, first_comment=""):
-	problems = []
+def instagram_problems(text, link, media, first_comment="", link_title=""):
+	problems = _no_documents("Instagram", media)
+	media = [m for m in media if not _is_document(m)]
 	caption = (text or "").strip()
 	if not media:
 		problems.append("Instagram: a post needs at least one photo or video")
@@ -117,17 +131,74 @@ def instagram_problems(text, link, media, first_comment=""):
 	return problems + [f"Instagram: {p}" for p in _reachable(media)]
 
 
-#: network -> checker. LinkedIn (01484) and YouTube (01485) add theirs.
+def linkedin_problems(text, link, media, first_comment="", link_title=""):
+	"""LinkedIn (TASK-2026-01484). We upload the bytes ourselves, so private files are fine."""
+	problems = []
+	commentary = (text or "").strip()
+	link = (link or "").strip()
+	if not commentary and not link and not media:
+		problems.append("LinkedIn: a post needs text, a link or media")
+	if len(commentary) > P.LINKEDIN_COMMENTARY_MAX:
+		problems.append(
+			f"LinkedIn: the text is {len(commentary)} characters; the limit is {P.LINKEDIN_COMMENTARY_MAX}"
+		)
+	videos = [m for m in media if _is_video(m)]
+	documents = [m for m in media if _is_document(m)]
+	images = [m for m in media if not _is_video(m) and not _is_document(m)]
+	if videos:
+		problems.append(
+			"LinkedIn: video posts are not supported yet; post it without the video, or to YouTube"
+		)
+	if documents and (len(documents) > 1 or images or videos):
+		problems.append("LinkedIn: a document goes on its own -- one per post, with no photos or videos")
+	for item in documents:
+		mime = (item.get("mime_type") or "").lower()
+		if mime not in P.LINKEDIN_DOCUMENT_TYPES:
+			problems.append(
+				f"LinkedIn: {_name(item)} must be a PDF, PowerPoint or Word file (type is {mime or 'not set'})"
+			)
+	if len(images) > P.LINKEDIN_IMAGES_MAX:
+		problems.append(f"LinkedIn: at most {P.LINKEDIN_IMAGES_MAX} photos in one post")
+	for item in images:
+		mime = (item.get("mime_type") or "").lower()
+		if mime not in P.LINKEDIN_IMAGE_TYPES:
+			problems.append(
+				f"LinkedIn: {_name(item)} must be a JPG, PNG or GIF (type is {mime or 'not set'})"
+			)
+		try:
+			pixels = float(item.get("width") or 0) * float(item.get("height") or 0)
+		except (TypeError, ValueError):
+			pixels = 0
+		if pixels >= P.LINKEDIN_IMAGE_PIXELS_MAX:
+			problems.append(
+				f"LinkedIn: {_name(item)} is over LinkedIn's {P.LINKEDIN_IMAGE_PIXELS_MAX:,} pixels"
+			)
+	if link and not media:
+		title = (link_title or "").strip()
+		if not title:
+			problems.append(
+				"LinkedIn: a link post needs a Link Title -- LinkedIn does not read the page to make its preview"
+			)
+		elif len(title) >= P.LINKEDIN_ARTICLE_TITLE_MAX:
+			problems.append(
+				f"LinkedIn: the Link Title must be under {P.LINKEDIN_ARTICLE_TITLE_MAX} characters"
+			)
+	problems.extend(f"LinkedIn: {p}" for p in (M.bytes_problem(item) for item in media) if p)
+	return problems
+
+
+#: network -> checker. YouTube (01485) adds its own.
 CHECKS = {
 	P.NETWORK_FACEBOOK: facebook_problems,
 	P.NETWORK_INSTAGRAM: instagram_problems,
+	P.NETWORK_LINKEDIN: linkedin_problems,
 }
 
 
-def problems(network, text, link, media, first_comment=""):
+def problems(network, text, link, media, first_comment="", link_title=""):
 	"""Why ``network`` would refuse this post, as sentences; empty if it would accept it. Pure."""
 	check = CHECKS.get(network)
-	return check(text, link, list(media), first_comment) if check else []
+	return check(text, link, list(media), first_comment, link_title) if check else []
 
 
 def post_problems(post, targets, media, networks):
@@ -139,7 +210,14 @@ def post_problems(post, targets, media, networks):
 	for target in targets:
 		network = networks.get(target.get("social_account"))
 		text = (target.get("variant_text") or "").strip() or (post.get("body") or "")
-		for problem in problems(network, text, post.get("link"), media, target.get("first_comment") or ""):
+		for problem in problems(
+			network,
+			text,
+			post.get("link"),
+			media,
+			target.get("first_comment") or "",
+			post.get("link_title") or "",
+		):
 			if problem not in found:
 				found.append(problem)
 	return found

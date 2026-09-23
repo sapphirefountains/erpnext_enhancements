@@ -189,6 +189,9 @@ def content_signature(post, targets, media):
 	return (
 		_text(post.get("body")),
 		_text(post.get("link")),
+		# The link preview LinkedIn shows is part of what goes out (v1.512.0).
+		_text(post.get("link_title")),
+		_text(post.get("link_description")),
 		str(post.get("scheduled_at") or ""),
 		tuple(_text(m.get("asset")) for m in media),
 		tuple(

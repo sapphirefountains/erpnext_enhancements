@@ -396,3 +396,33 @@ Error* says what did not happen.
 
 **Instagram's daily limit** is read live from Instagram before each post, and handed to the rate
 limiter. Meta's docs say 50 in one place and 100 in another.
+
+### LinkedIn (v1.512.0)
+
+Since TASK-2026-01484 the Company Page can be published to. It needs the same switches and
+approval as Facebook, plus LinkedIn Publishing *Connected*.
+
+**What goes out:**
+
+- **Text:** as written, with hashtags.
+- **A link, with no media:** a link post with a preview. **LinkedIn does not read the page to make
+  the preview**, so fill in **Link Title** (and optionally **Link Description**) on the Social
+  Post, or Network Check will say so.
+- **One photo, or 2 to 20 photos:** JPG, PNG or GIF. A link goes into the text beside them.
+- **A document**, on its own: PDF, PowerPoint or Word, up to 100 MB and 300 pages. The asset's
+  title becomes the document's title on LinkedIn. Set the asset's **Type** to *Document*.
+- **Video: not yet.** LinkedIn's video upload is a separate flow. Network Check refuses a LinkedIn
+  video until it is built. Post the video to YouTube, or post to LinkedIn without it.
+
+**Private files work for LinkedIn,** unlike for Meta: this app uploads the file itself instead of
+LinkedIn fetching it. Google Drive does not; a file stored elsewhere on the web does not either.
+
+**A timeout on LinkedIn:** the publisher looks for the post among the Page's latest ten. **Found:**
+Published, with a note. **Not found:** Unconfirmed, and a person checks. Missing from that list is
+not proof the post failed, and LinkedIn has no equivalent of Instagram's container to ask.
+
+**The first comment may be refused.** LinkedIn's docs disagree on whether the permission we hold
+covers comments. If it is refused, the post still publishes and *Last Error* says so.
+
+**LinkedIn's Development tier allows 100 API calls per person per day,** across everything. A post
+costs about three to six. The limit lifts at Standard tier.
