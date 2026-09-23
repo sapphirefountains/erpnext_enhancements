@@ -940,6 +940,16 @@ doc_events = {
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
 	},
+	# ai_governance (FAC 3.0.0 compat): give each of this app's assistant tools the FAC category
+	# its own annotations imply, at the moment FAC inserts its row. FAC seeds every external
+	# tool as `read_write`, and since FAC 2.5.0 that category OVERRIDES the tool's declared
+	# readOnlyHint in tools/list -- so every read tool here was advertised as a write. This
+	# half exists for ordering: this app is installed before frappe_assistant_core, so our
+	# after_migrate (the other half, below) runs before FAC's creates the row for a new tool.
+	# Inert without FAC -- the doctype never saves. Never raises.
+	"FAC Tool Configuration": {
+		"before_insert": "erpnext_enhancements.ai_governance.fac_tool_categories.set_category_before_insert",
+	},
 }
 
 scheduler_events = {
@@ -1755,6 +1765,12 @@ after_migrate = [
 	# until its rows exist. Fills only where `tabSingles` has no row, so it never writes
 	# over a deliberate 0.
 	"erpnext_enhancements.patches.backfill_quality_settings_defaults.backfill_quality_settings_defaults",
+	# ai_governance (FAC 3.0.0 compat): align the FAC Tool Configuration rows that already exist
+	# with each assistant tool's declared annotations (read_only / write / privileged, override
+	# on). Every migrate rather than a patch, because the FAC admin page can change a row and
+	# `_gate.py` -- not that page -- is the source of truth. The doc_event on the same doctype
+	# covers rows FAC creates AFTER this runs. Returns at once without FAC; never raises.
+	"erpnext_enhancements.ai_governance.fac_tool_categories.sync_fac_tool_categories",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -2325,6 +2341,10 @@ portal_menu_items = [
 # overrides go in site_config.json under "assistant_tools".
 # NOTE: each module filename must equal its tool's name (FAC's custom_tools
 # plugin derives tool identifiers from the module path).
+# FAC 3.0.0 (verified): the same three hooks, the same BaseTool contract, the same
+# `_safe_execute` seam the write gate wraps. FAC's own category for each tool below is
+# kept in step with its annotations by ai_governance/fac_tool_categories.py (the
+# after_migrate + doc_events entries above) -- see that module for why it matters.
 assistant_tools = [
 	# training: two read-only tools. Compliance status answers "is my team current"
 	# and leads with the exceptions; learner record answers "can I send this person to

@@ -64,6 +64,15 @@ see the items there, press − or +, save, scan the next one. A technician takes
 needs; a receiver adds what arrived. `/stock-scan` is that page, `/warehouse-labels` prints
 the codes, and `api/stock_scan.py` is every endpoint either of them calls.
 
+**It is on the Desk** (v1.523.0), because nearly everyone who touches inventory works through
+it: a **Stock Scan** tile on the `/desk` home grid, beside ERPNext's Stock tile, and a *Stock
+Scan* entry in the Home workspace's Desk Shortcuts block — both seeded by
+`patches/seed_stock_scan_shortcuts`, both shown only to the page's own roles (Stock User,
+Stock Manager, Inventory Clerk, System Manager). The tile is an `External` link like the Time
+Kiosk's, and like it renders only because a same-named Workspace Sidebar
+(`workspace_sidebar/stock_scan.json`) ships beside it: `get_desktop_icons` drops a `Link` tile
+with no sidebar items without a word.
+
 ### A label is a URL, not a code
 
 Each label encodes `https://<site>/stock-scan?w=<warehouse name>`

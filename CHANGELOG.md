@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.523.0] - 2026-09-23
+
+**Stock Scan is on the Desk.** Nearly everyone who touches inventory will work it through the
+Stock Scan page (`/stock-scan`, v1.521.0), so it now has the same two doors the Time Kiosk has
+instead of living two clicks deep in the Inventory Enhancements workspace. Asked for by Nik on
+2026-09-23, the day the page merged.
+
+### Added
+
+- **A Stock Scan tile on the `/desk` home grid**, with a QR-scan glyph in Inventory's blue. It
+  sits beside ERPNext's own **Stock** tile (it takes that tile's position; a user can still drag
+  it). It opens `/stock-scan` directly.
+- **A Stock Scan entry in the Home workspace's Desk Shortcuts block**, right after the Time Kiosk
+  and before the count page's Inventory Scanner.
+- Both are shown to the page's own roles — Stock User, Stock Manager, Inventory Clerk and System
+  Manager, which on production is 17 of the 18 enabled staff — so the people who see the door
+  are exactly the people the page lets in.
+
+### Why it is built this way
+
+- **The tile is a patch, not a workspace tile.** Every other tile this app ships fronts a
+  workspace and is created by `setup/desktop_icons._create_tile`, which rightly refuses a label
+  with no Workspace behind it. Stock Scan is a web page, like the Time Kiosk, so
+  `patches/seed_stock_scan_shortcuts` inserts an `External` link tile itself, insert-only and
+  keyed on the label, so an admin who moves, hides or re-roles it keeps their change.
+- **It ships a Workspace Sidebar it does not appear to need.** v16's `get_desktop_icons` shows a
+  `Link` tile only when a same-named Workspace Sidebar has visible items — it does not look at
+  `link_type` — and drops it without a word otherwise. That is how the stale Learning tile
+  stayed invisible until v1.326.0. `workspace_sidebar/stock_scan.json` carries the page and the
+  label print page.
+- **Unlike the kiosk tile, this one has roles.** The time clock is for everybody; Stock Scan
+  refuses anyone without a stock role, and a tile that opens onto "you do not have permission" is
+  worse than no tile. `setup/desktop_icons._sync_roles` derives tile roles from a workspace and
+  skips a label with none, so the patch's roles are not overwritten on the next migrate.
+
+### Tests
+
+- New `tests/test_stock_scan_desktop_icon.py` (9, bench-free, on the Stock Scan surface CI step):
+  the patch's tile and shortcut point at the page's real route and carry `SCAN_ROLES`; it is
+  insert-only, never raises and clears the `desktop_icons` and `bootinfo` caches; the sidebar
+  exists under the tile's exact label with a URL item to `/stock-scan`; the artwork is in the
+  tile map and the SVG is committed. `scripts/build_desktop_icons.py --check` confirms the
+  committed artwork matches the map.
+
+## [1.522.0] - 2026-09-23
+
+**Frappe Assistant Core 3.0.0 compatibility — and every read tool stops advertising itself as
+a write.** FAC 3.0.0 was tagged 2026-09-23 and production was running it the same day. This
+reviews that upgrade against
+everything this app hands FAC: the three integration hooks, the `BaseTool` contract and the
+`_safe_execute` seam the AI write gate wraps are all unchanged, so nothing was broken. Three
+things needed doing, one of them a long-standing bug the review turned up.
+
+### Fixed
+
+- **Our 24 read tools (of 37) were advertised to every MCP client as writes.** Since FAC **2.5.0**,
+  `tools/list` merges hints derived from each tool's `FAC Tool Configuration.tool_category`
+  *over* the tool's own annotations — `{**tool.annotations, **category_hints}` — and FAC seeds
+  every external tool as `read_write`, which it maps to `readOnlyHint: false`. So
+  `water_calc`, `training_compliance_status` and the rest told every client that picks its
+  default approval behaviour from these hints — Claude's apps, and now FAC Chat's tool
+  settings — that they modify data. FAC can never
+  correct it itself: it does not re-detect external tools, and its detector looks for
+  `perm_type="…"` keywords in the class source, which ours do not use. Triton was unaffected
+  only because it reads `x-ee-mutation` before `readOnlyHint`, and FAC never touches the
+  `x-ee-*` keys. The new `ai_governance/fac_tool_categories.py` writes the category that
+  reproduces each tool's own hints — 24 `read_only`, 10 `write`, and `privileged` for the
+  three `HIGH_RISK` device tools (lock, wipe, run-script) — with `category_override` on, so
+  FAC's re-detect patches leave it alone. It runs
+  twice over because of install order: on prod this app is installed *before* FAC, so our
+  `after_migrate` runs before FAC's inserts the row for a new tool. A `before_insert`
+  doc_event on `FAC Tool Configuration` stamps a row as FAC creates it, and
+  `sync_fac_tool_categories` (`after_migrate`) repairs the rows that exist. Neither imports
+  `assistant_tools` (tools are resolved from the hook by dotted path, as FAC does), both are
+  inert without FAC, and neither can raise. The category FAC's admin page shows for these
+  tools is now managed by the app; change `_gate.py`, not the page.
+
+### Added
+
+- **The gate classifies FAC 3.0.0's new `faco` tools explicitly.** `send_email` is a
+  **High**-risk write: it queues mail from the site's own Email Account to any address the
+  model supplies and declares no `requires_permission`, so every Assistant User holds it — an
+  exfiltration channel under prompt injection. Its confirmation card names the recipients
+  rather than counting them. `generate_document` (markdown → private PDF File) is a Low-risk
+  write. FAC's own detector already calls both `write`, but `EXPLICIT_MUTATING` exists so a
+  write never depends on a configuration row being present and right. The plugin is
+  **disabled on prod**; this is in place before anyone enables it.
+- **AI Pending Actions from FAC Chat record the conversation.** FAC Chat's cloud runtime calls
+  this site's own `handle_mcp` as the user, so its tool calls already pass through the gate. It
+  sends `X-AR-Session-Id`, which FAC 3.0.0 stores on `frappe.local.ar_session_id`; the gate now
+  records that as `session_id`, and `fac-chat` as `client_id`. FAC's own
+  `assistant_session_id` is a fresh UUID per request on a stateless endpoint, so it identified
+  nothing anyone could look up.
+
+### Changed
+
+- `FAC_BUILTIN_TOOL_NAMES` (the collision list in `test_assistant_tools_schema`) matches
+  FAC 3.0.0: `search_doctype` and `search_link` were folded into `search_documents`, and the
+  eight `faco` tools are added — they ship disabled, but a name we took would collide the day
+  someone enabled the plugin. No skill or tool here named the removed search tools.
+- `assistant_tools/README.md` gains a "FAC 3.0.0" section, including one upstream change
+  worth knowing: FAC no longer blocks non-System-Managers from *reading* admin DocTypes
+  (Error Log, Access Log, Email Queue, OAuth Bearer Token…) — Frappe's DocPerms now decide —
+  and it refuses MCP *writes* to code, schema and permission DocTypes for everyone but System
+  Manager. The gate's `DENYLIST_DOCTYPES` is unaffected.
+
 ## [1.521.0] - 2026-09-23
 
 **Stock Scan: a QR label on every shelf, and a phone page that takes and adds stock.** Every
