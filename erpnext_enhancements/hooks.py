@@ -1685,6 +1685,11 @@ after_migrate = [
 	# unbranded `* Standard` formats. Like the certificate below, this MUST sit ABOVE
 	# ensure_chrome_pdf_generator so that function sees them.
 	"erpnext_enhancements.enhancements_core.setup_sales_print_formats.ensure_sales_print_formats",
+	# enhancements_core: the other five procurement documents in the Purchase Order's design —
+	# Material Request, Request for Quotation, Supplier Quotation, Purchase Receipt, Purchase
+	# Invoice. Same module and same reason as the order's format. MUST sit ABOVE
+	# ensure_chrome_pdf_generator, or they render on wkhtmltopdf.
+	"erpnext_enhancements.enhancements_core.setup_procurement_print_formats.ensure_procurement_print_formats",
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
@@ -1724,7 +1729,8 @@ after_migrate = [
 	# After the chrome pass on purpose: disabling a format it has already pointed
 	# at chrome costs nothing, and the reverse order would leave a disabled format
 	# skipped by the chrome filter and then re-enabled by a future migrate with a
-	# stale generator.
+	# stale generator. Since v1.519.0 it also disables the stock formats of the other five
+	# procurement doctypes (SUPERSEDED_PROCUREMENT_FORMATS), for the same reason.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.disable_superseded_print_formats",
 	# The eight chat backstops that stood here from v1.261.0 went with the module in
 	# v1.426.0 (ADR 0011). THE PATTERN THEY DEMONSTRATED IS STILL THE HOUSE RULE and is
