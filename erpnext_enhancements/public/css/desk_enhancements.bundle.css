@@ -415,10 +415,11 @@ header.navbar {
     color: #ef6c00;
 }
 
-/* "Receive" quick action on a Purchase Order row. Deliberately quiet — it sits in a
-   header whose job is to be scanned, and it is an action on one order rather than the
-   subject of the row. */
-.procurement-tracker .btn-receive {
+/* "Receive" quick action on a Purchase Order row, and "Print" on every row and group
+   header. Deliberately quiet — they sit in headers whose job is to be scanned, and each is
+   an action on the row rather than its subject. */
+.procurement-tracker .btn-receive,
+.procurement-tracker .btn-print {
     margin-left: 8px;
     padding: 1px 8px;
     font-size: 11px;
@@ -431,22 +432,31 @@ header.navbar {
     white-space: nowrap;
 }
 
-.procurement-tracker .btn-receive:hover {
+.procurement-tracker .btn-receive:hover,
+.procurement-tracker .btn-print:hover {
     background: #e3f2fd;
     border-color: #0d47a1;
     color: #0d47a1;
 }
 
-[data-theme="dark"] .procurement-tracker .btn-receive {
+[data-theme="dark"] .procurement-tracker .btn-receive,
+[data-theme="dark"] .procurement-tracker .btn-print {
     background: transparent;
     border-color: #4a5a6a;
     color: #ecf0f1;
 }
 
-[data-theme="dark"] .procurement-tracker .btn-receive:hover {
+[data-theme="dark"] .procurement-tracker .btn-receive:hover,
+[data-theme="dark"] .procurement-tracker .btn-print:hover {
     background: #0d47a1;
     border-color: #0d47a1;
     color: #e3f2fd;
+}
+
+/* The group header is a flex row holding only its title; this pushes Print to the far
+   end, where it cannot be mistaken for part of the "Purchase Order (9)" toggle. */
+.procurement-tracker .group-header .btn-print-group {
+    margin-left: auto;
 }
 
 /* Sortable column headers.

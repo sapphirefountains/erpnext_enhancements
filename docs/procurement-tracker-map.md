@@ -26,11 +26,12 @@ the field calls it a feed, and the tasks call it a tracker. They are one thing.
 
 | Layer | Where |
 |---|---|
-| Renderer | [`public/js/project_enhancements.js`](../erpnext_enhancements/public/js/project_enhancements.js) — `render_procurement_tracker`, lines 100-602 |
-| Sort registry | same file, `PROCUREMENT_SORT_COLUMNS` at `:30-58` — declared outside the Vue options on purpose |
-| Endpoint | [`project_enhancements/__init__.py`](../erpnext_enhancements/project_enhancements/__init__.py) — `get_procurement_documents`, `:492-568` |
-| Underneath that | same file — `get_procurement_status`, `:13-277` (the raw SQL) |
+| Renderer | [`public/js/project_enhancements.js`](../erpnext_enhancements/public/js/project_enhancements.js) — `render_procurement_tracker`, lines 345-877 |
+| Sort registry | same file, `PROCUREMENT_SORT_COLUMNS` at `:30-49` — declared outside the Vue options on purpose |
+| Endpoint | [`project_enhancements/__init__.py`](../erpnext_enhancements/project_enhancements/__init__.py) — `get_procurement_documents`, `:569-663` |
+| Underneath that | same file — `get_procurement_status`, `:33-320` (the raw SQL) |
 | Quantity math | [`procurement_quantities.py`](../erpnext_enhancements/procurement_quantities.py) — app root, pure, no `frappe` import |
+| Printing | [`procurement_print.py`](../erpnext_enhancements/procurement_print.py) — `download_procurement_pdf`, app root; the Open rule is `procurement_quantities.document_is_open`. See *Printing* |
 | Styling | [`public/css/desk_enhancements.bundle.css`](../erpnext_enhancements/public/css/desk_enhancements.bundle.css) — `.procurement-tracker` and friends |
 | Field | `Project-custom_material_request_feed` (HTML, read-only) — a **fixture**, inside the equally-fixture section break `custom_section_break_xbww4`, at the bottom of the Budget tab |
 | Also consumes the backend | [`assistant_tools/project_procurement_status.py`](../erpnext_enhancements/assistant_tools/project_procurement_status.py) — the MCP tool |
@@ -45,8 +46,8 @@ Vue is loaded ahead of it in `hooks.py` (`vue.global.js`, `comments.js`, `projec
 ## How it renders
 
 **Vue 3, via the global `window.Vue`, with an inline template string.** Not a frappe DataTable,
-not `frappe.ui.form.make_control`, not a hand-rolled HTML string. `createApp` at `:124`,
-`app.mount('#procurement-tracker-app')` at `:583`.
+not `frappe.ui.form.make_control`, not a hand-rolled HTML string. `createApp` at `:369`,
+`app.mount('#procurement-tracker-app')` at `:858`.
 
 That choice is the single most important fact for anyone planning work here: **there is no table
 library to configure.** Sorting, column visibility and per-row actions are all things you write
@@ -57,7 +58,8 @@ by hand against the template.
 Only the innermost is a `<table>`.
 
 **Level 1 — DocType group.** A `div.group-header`: chevron, then
-`{{ group.doctype }} ({{ group.documents.length }})`. Collapsed by default.
+`{{ group.doctype }} ({{ group.documents.length }})`, then a **Print** button pushed to the far
+end (`:727`) — see *Printing*. Collapsed by default.
 
 **Level 2 — document.** A flex `div.doc-header`, cells in order:
 
@@ -68,16 +70,17 @@ Only the innermost is a `<table>`.
 | 3 | date | `formatDate(doc.date)` |
 | 4 | supplier | `doc.supplier` or `-` |
 | 5 | status badge | `doc.status`, class from `getStatusColorClass` |
-| 6 | **quantity rollup** (`:477`) | `rollupText(doc)` — `"362 req · 358 ord · 0 rec"`. Hidden entirely when there is nothing to total, so an RFQ header does not sprout a row of zeroes |
+| 6 | **quantity rollup** (`:748`) | `rollupText(doc)` — `"362 req · 358 ord · 0 rec"`. Hidden entirely when there is nothing to total, so an RFQ header does not sprout a row of zeroes |
 | 7 | item count | `{{ doc.items.length }} item(s)` |
-| 8 | **Receive button** (`:482`) | Purchase Order group only, and only where receiving makes sense — see *Quick actions* |
+| 8 | **Receive button** (`:753`) | Purchase Order group only, and only where receiving makes sense — see *Quick actions* |
+| 9 | **Print button** (`:757`) | Every group, only where Frappe would actually print the document — see *Printing* |
 
 One span for the rollup rather than three, because `.doc-supplier` is the only element in that
 flex row that grows and three `nowrap` spans squeeze a supplier name to nothing on a narrow
 screen.
 
 **Level 3 — the item table**, `<table class="glass-table">`. Headers are rendered from the sort
-registry (`:493`), so a column cannot exist in the template and not in the comparator:
+registry (`:768`), so a column cannot exist in the template and not in the comparator:
 
 | # | Header | Cell | Sortable |
 |---|---|---|---|
@@ -106,7 +109,7 @@ status bug this document used to describe was exactly a confusion between those 
 ### Expansion, search and sort state
 
 Three plain objects on `data()`: `collapsedGroups` keyed by doctype, `collapsedDocs` keyed
-`"DocType::name"` via `docKey`, and `sortByDoc` (`:142`) keyed the same way. `toggleDoc` uses a
+`"DocType::name"` via `docKey`, and `sortByDoc` (`:387`) keyed the same way. `toggleDoc` uses a
 tri-state trick — `this.collapsedDocs[key] = (this.collapsedDocs[key] === false)` — so an absent
 key reads as collapsed.
 
@@ -117,7 +120,7 @@ Search is `filteredGroups` plus `tokenize` / `itemMatches` / `filteredItems` /
 `docLevelMatches` / `docMatches`, a watcher that auto-expands anything containing a match, and
 `highlight()` which wraps hits in `<mark>`.
 
-**Search filters first, then sort sorts.** Sorting lives in `displayItems` (`:318`), a render
+**Search filters first, then sort sorts.** Sorting lives in `displayItems` (`:585`), a render
 method rather than a computed, so `filteredGroups`, the auto-expand watcher and the highlighting
 are untouched by it.
 
@@ -141,7 +144,7 @@ calls `get_procurement_status` and regroups its output.
 
 ### `get_procurement_status` — the SQL
 
-`__init__.py:13-277`, `@frappe.whitelist()`, **no permission check of any kind**. One raw-SQL
+`__init__.py:33-320`, `@frappe.whitelist()`, gated on Project read by `require_project_read`. One raw-SQL
 `UNION ALL` of two shapes:
 
 - **Part 1** — the Material Request chain. Roots on `tabMaterial Request Item`, then `LEFT JOIN`s
@@ -149,7 +152,7 @@ calls `get_procurement_status` and regroups its output.
 - **Part 2** — direct Purchase Orders with no MR link. Roots on `tabPurchase Order Item`.
 
 Both filter cancelled orders. Part 1's `AND po.docstatus < 2` on the Purchase Order join
-(`:105`) was added in v1.194.0; Part 2 always had it. Latent only because this site has no
+(`:126`) was added in v1.194.0; Part 2 always had it. Latent only because this site has no
 cancelled Purchase Orders.
 
 Part 1 also selects the per-line rollups the arithmetic depends on — `mr_item.name`,
@@ -175,7 +178,7 @@ Purchase Invoice join has the same `OR` shape. Concretely: `MAT-MR-2026-00001`'s
 arrive from this query as **nineteen** rows.
 
 **Aggregation de-duplicates on the child row name before summing** —
-`procurement_quantities.dedupe_lines`, called by `_document_rollup` (`:460`). Summing the raw
+`procurement_quantities.dedupe_lines`, called by `_document_rollup` (`:504`). Summing the raw
 rows reports **720 requested / 716 ordered** against a true **362 / 358**. Rows with no child row
 of their own (the supplementary sweep builds those) stay distinct and each count once.
 
@@ -213,7 +216,7 @@ why v1.194.0 *corrected the meaning* of `ordered_qty` rather than renaming it, a
 Three different things on screen are called "status", and they come from three different places.
 
 **(a) The document badge, level 2** — `doc.status`, straight from the DocType's own `status`
-field via `_fetch_doc_meta` (`:476`), falling back to a docstatus label. For Purchase Orders that
+field via `_fetch_doc_meta` (`:552`), falling back to a docstatus label. For Purchase Orders that
 helper also fetches `docstatus` and `per_received`, which drive the Receive action.
 
 **(b) The item "Status" column, level 3** — the line's own `receive_status`, computed from that
@@ -284,7 +287,7 @@ unsaved-Project guard.
 | `custom_btn_request_quote` | same shape, both fields |
 | `custom_btn_supplier_quotation` | `frappe.new_doc("Supplier Quotation", {project})` |
 | `custom_btn_purchase_order` | as above, plus a WI-066 `frappe.model.can_create` pre-check |
-| `custom_btn_purchase_receipt` (`:659`) | **PO picker** — see below |
+| `custom_btn_purchase_receipt` (`:934`) | **PO picker** — see below |
 | `custom_btn_purchase_invoice` | `frappe.new_doc("Purchase Invoice", {project})` |
 
 The Purchase Order button's comment is the precedent worth copying for any guarded quick-create:
@@ -297,7 +300,7 @@ Two entry points, both routing through ERPNext's own mapper
 `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt` via
 `frappe.model.open_mapped_doc`:
 
-- **Per-PO row in the tracker** — `canReceive` (`:259`) / `receiveAgainst` (`:266`). The row
+- **Per-PO row in the tracker** — `canReceive` (`:504`) / `receiveAgainst` (`:511`). The row
   button carries `@click.stop`, because `.doc-header`'s own click toggles expansion and without
   it every Receive click would also collapse the row being read.
 - **The project-level button** — lists the project's outstanding orders via the whitelisted
@@ -318,6 +321,64 @@ rather than disabled without create permission.
 > Before v1.197.0, `custom_btn_purchase_receipt` did only
 > `frappe.new_doc("Purchase Receipt", {project})` — a blank form with no supplier, no order and
 > no items, which the receiver could not link back to the PO afterwards.
+
+## Printing (v1.517.0)
+
+Two ways onto paper, both reached from the tracker without leaving the Project form.
+
+- **One document** — the row's **Print** (`printDoc`, `:543`) opens Frappe's own print view,
+  `/desk/print/<doctype>/<name>`, in a **new tab**: format, letter head, PDF and Print are all
+  there, and the Project form keeps whatever was expanded. `@click.stop` for the same reason as
+  Receive.
+- **A whole group** — the group header's **Print** (`printGroup`, `:536`) opens a dialog
+  (`openProcurementPrintDialog`, `:189`): **All (n)**, or **Open (n)** where the doctype has an
+  "open"; print format; letter head. It lists the documents that will print, newest first, and
+  the ones left out and why, then opens one PDF from
+  `procurement_print.download_procurement_pdf`. That endpoint is Frappe's
+  `download_multi_pdf` — the list view's Actions → Print — called unchanged and then renamed
+  `PRJ-00706-Open-Purchase-Orders.pdf`, because Frappe would name every job's file
+  `Purchase-Order.pdf`. It gates on Project read like every other tracker endpoint.
+
+**"All" means the whole group**, read from `groups`, not the search-narrowed `filteredGroups`
+the header may be showing.
+
+**"Open" is decided on the server**, once, by `procurement_quantities.document_is_open`, and
+arrives on each document as `is_open` (with the group's rule in words as `open_rule`, shown in
+the dialog). `None` means the doctype has no Open at all, and the choice is not offered:
+
+| Doctype | Open means |
+|---|---|
+| Material Request | Submitted, material not all arrived: Pending, Partially Ordered, Ordered, Partially Received |
+| Purchase Order | Submitted, not `Closed`/`Delivered`, `per_received < 100` — `SETTLED_PO_STATUSES`, so exactly what Receive offers |
+| Purchase Invoice | Submitted, money owed: Unpaid, Overdue, Partly Paid |
+| RFQ, Supplier Quotation, Purchase Receipt | *no Open* — see the comment on `OPEN_RULES` |
+
+Drafts are never open. The Purchase Order rule reads the number, not the label, because billing
+lives in QuickBooks: 70 fully received orders sat at `To Bill` on 2026-09-23, and "not
+Completed" would have called every one of them open. The same fact is why Purchase Receipt has
+no Open — its only outstanding state is `To Bill`.
+
+Three things that would otherwise go wrong silently:
+
+- **Frappe drops a document it refuses without saying so.** `download_multi_pdf` catches
+  printview's "not allowed to print draft/cancelled documents" and moves on, so the document is
+  just missing from the PDF. `procurementPrintBlocker` (`:113`) applies both Print Settings
+  rules first; the dialog names what it left out, and the row hides its Print button. On
+  production drafts may be printed and cancelled documents may not — and cancelled receipts and
+  invoices *do* reach the tracker, since the chain's PR/PI joins do not filter docstatus.
+- **"Standard" would render on wkhtmltopdf.** It has no Print Format record to carry a PDF
+  backend, and Frappe falls back to wkhtmltopdf. The dialog sends `pdf_generator` the way the
+  print view does (the format's own, else Print Settings' — chrome here); `get_print` reads it
+  off `form_dict`.
+- **The default format.** No procurement doctype on this site has a `default_print_format`, so
+  Frappe would start on "Standard". The dialog starts on the doctype's one site-built format
+  when there is exactly one — "Purchase Order - Sapphire" for Purchase Orders — and on Standard
+  otherwise.
+
+Over 25 documents the dialog uses Frappe's `download_multi_pdf_async` instead, glued exactly as
+the list view glues it: a synchronous render that size risks the worker timeout. That path keeps
+Frappe's filename and cannot be handed a PDF backend. No project had more than 23 of any one
+doctype on 2026-09-23.
 
 ## Custom fields
 
@@ -375,10 +436,6 @@ Still open:
 - **`v-html` on unescaped data.** `highlight()` escapes the *search tokens* for the regex, but
   never escapes `text` — item codes, item names, warehouses, supplier names and document names
   all reach the DOM raw.
-- **`get_procurement_status` and `get_procurement_documents` are whitelisted with no permission
-  check.** Anyone who can call the endpoint can read any project's purchasing. The MCP tool
-  compensates with its own gate; the browser path does not. `api/README.md` notes the same about
-  the Pick Routing Map on the same tab, and tightening either means tightening both together.
 - **`_supplementary_documents` swallows every exception** — a bare `except Exception` with
   `frappe.log_error`. A doctype whose sweep fails silently vanishes from the feed rather than
   erroring.
@@ -399,16 +456,23 @@ Closed, and worth not reintroducing:
 - Quantities read from one arbitrary row of a fanned-out join (v1.194.0).
 - Cancelled Purchase Orders joining the chain in Part 1 (v1.194.0).
 - The project-level Purchase Receipt button opening a blank, unlinkable form (v1.197.0).
+- `get_procurement_status` / `get_procurement_documents` whitelisted with no permission check —
+  both gate on Project read via `require_project_read` (v1.341.0).
 
 ## Tests
 
 - [`tests/test_procurement_quantities.py`](../erpnext_enhancements/tests/test_procurement_quantities.py)
-  — **21 bench-free pytest tests with their own CI step.** The one that matters is
+  — **38 bench-free pytest tests with their own CI step**, the Open rule's among them. The one that matters is
   `test_item_status_is_not_inherited_from_the_document`: three lines of one request, three
   different statuses, one parent whose label happens to be correct for exactly one of them. That
   coincidence is what let the original bug survive a casual look. Also fences the fan-out
   de-duplication against the naive-sum case, so a refactor that drops it fails rather than
   silently doubling.
+- [`tests/test_procurement_print.py`](../erpnext_enhancements/tests/test_procurement_print.py)
+  — bench-free unittest with its own `frappe` stub and its own CI step. Frappe's multi-PDF
+  called once and unchanged, the job-named file, Project read before anything renders, an empty
+  request refused, and the tracker script dialling a method that exists. The Open rule's cases
+  live in `test_procurement_quantities.py`.
 - [`tests/test_procurement_status.py`](../erpnext_enhancements/tests/test_procurement_status.py)
   — **bench-required**, so it does *not* run in CI. Carries the end-to-end reproduction through
   the real query, plus the draft-PO case.

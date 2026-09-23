@@ -575,8 +575,9 @@ def get_procurement_documents(project_name):
 		[
 			{
 				"doctype": "Material Request",
+				"open_rule": "<what open means here>" | None,
 				"documents": [
-					{"name", "date", "supplier", "status", "items": [<item row>, ...]},
+					{"name", "date", "supplier", "status", "is_open", "items": [<item row>, ...]},
 					...
 				],
 			},
@@ -584,6 +585,8 @@ def get_procurement_documents(project_name):
 		]
 
 	Each item row keeps the full Doc Chain fields (mr/rfq/sq/po/pr/pi + statuses).
+	``is_open`` / ``open_rule`` come from ``procurement_quantities.document_is_open`` and
+	drive the tracker's Print → Open choice; both are ``None`` for a doctype with no "open".
 	"""
 	if not project_name:
 		return []
@@ -623,14 +626,22 @@ def get_procurement_documents(project_name):
 		for name in names:
 			m = meta.get(name) or {}
 			items = doc_items[dt][name]
+			# Not `status`: that name already holds get_procurement_status() above.
+			doc_status = m.get("status") or _docstatus_label(m.get("docstatus"))
 			documents.append(
 				{
 					"name": name,
 					"date": str(m.get("doc_date")) if m.get("doc_date") else None,
 					"supplier": m.get("supplier"),
-					"status": m.get("status") or _docstatus_label(m.get("docstatus")),
+					"status": doc_status,
 					"docstatus": m.get("docstatus"),
 					"per_received": m.get("per_received"),
+					# True / False, or None where this doctype has no notion of open. Decided
+					# here, once, so the print dialog's Open choice and the MCP tool read
+					# the same answer rather than each re-deriving it from the status.
+					"is_open": procurement_quantities.document_is_open(
+						dt, m.get("docstatus"), doc_status, m.get("per_received")
+					),
 					"items": items,
 					# Totals across this document's lines, computed here rather than in
 					# the browser so the MCP tool gets them too and so the de-duplication
@@ -640,7 +651,14 @@ def get_procurement_documents(project_name):
 			)
 		# Newest documents first.
 		documents.sort(key=lambda d: (d["date"] or "", d["name"]), reverse=True)
-		output.append({"doctype": dt, "documents": documents})
+		output.append(
+			{
+				"doctype": dt,
+				# What "open" means for this doctype, in words, or None when it has no Open.
+				"open_rule": procurement_quantities.OPEN_RULES.get(dt),
+				"documents": documents,
+			}
+		)
 
 	return output
 

@@ -963,6 +963,15 @@ jobs:
       # setUpModule.
       - name: Purchase Order PDF filename (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_pdf_filename -v
+      # Print from the Project form's Procurement Tracker: frappe's own multi-document
+      # print called once and unchanged, the PDF renamed for the job
+      # (PRJ-00706-Open-Purchase-Orders.pdf), Project read checked before anything renders,
+      # an empty request refused rather than downloaded as a blank PDF, and the browser and
+      # server agreeing on the method, the parameters and the six doctypes. The open rule
+      # itself is in test_procurement_quantities. Own step: installs its own frappe stub
+      # (incl. frappe.utils.print_format) in setUpModule.
+      - name: Procurement Tracker print (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_procurement_print -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other bench-free suites.
       - name: Administrator login alerts (bench-free)
