@@ -11,7 +11,14 @@
   "block_negative_counts",
   "allow_unknown_item",
   "column_break_scan",
-  "enable_camera_scan"
+  "enable_camera_scan",
+  "stock_scan_section",
+  "take_expense_account",
+  "add_offset_account",
+  "scan_cost_center",
+  "column_break_stock_scan",
+  "require_project_for_take",
+  "undo_window_minutes"
  ],
  "fields": [
   {
@@ -56,12 +63,58 @@
    "fieldname": "enable_camera_scan",
    "fieldtype": "Check",
    "label": "Enable In-Page Camera Scanning"
+  },
+  {
+   "description": "The /stock-scan page: technicians take parts, receivers add stock, anyone puts stock away, from a warehouse's QR label.",
+   "fieldname": "stock_scan_section",
+   "fieldtype": "Section Break",
+   "label": "Stock Scan Page"
+  },
+  {
+   "description": "Debited when parts are taken for a job: a technician's take on the Stock Scan page, and the consumables a Sapphire Maintenance Record issues. Used only when the item and its item group name no expense account of their own. Blank uses the company's Stock Adjustment Account, and failing that the company's only Stock Adjustment account.",
+   "fieldname": "take_expense_account",
+   "fieldtype": "Link",
+   "label": "Parts Taken: Expense Account",
+   "options": "Account"
+  },
+  {
+   "description": "Credited when stock is added on the Stock Scan page without a purchase order (a Material Receipt, flagged for review). Used only when the item and its item group name no expense account of their own. Blank uses the same fallback as above.",
+   "fieldname": "add_offset_account",
+   "fieldtype": "Link",
+   "label": "Added Without PO: Offset Account",
+   "options": "Account"
+  },
+  {
+   "description": "Blank uses the job's cost center when a job is chosen, else the company's default.",
+   "fieldname": "scan_cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "column_break_stock_scan",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Off: the technician may pick a job for the run or skip it. On: every take must name one.",
+   "fieldname": "require_project_for_take",
+   "fieldtype": "Check",
+   "label": "Require a Job for Every Take"
+  },
+  {
+   "default": "30",
+   "description": "How long the person who saved a scan can undo it from the page. 0 turns undo off for everyone but Stock Managers, who can always reverse a save.",
+   "fieldname": "undo_window_minutes",
+   "fieldtype": "Int",
+   "label": "Undo Window (Minutes)",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-13 10:00:00.000000",
+ "modified": "2026-09-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Scanner Settings",

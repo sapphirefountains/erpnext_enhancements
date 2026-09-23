@@ -105,6 +105,11 @@ doctype_js = {
 	# without mangling it, and being masked it then hides the damage. Also carries
 	# the Test GCS Connection action.
 	"Training Settings": ["public/js/training/training_settings.js"],
+	# inventory (v1.521.0): the Warehouse form's doors to the QR label print page
+	# (/warehouse-labels) and to the Stock Scan page (/stock-scan) the label opens.
+	# A location gets "QR Label" + "Open Stock Scan"; a group gets "Print QR Labels"
+	# for everything beneath it. Both are www routes, so the buttons window.open them.
+	"Warehouse": ["public/js/warehouse_stock_scan.js"],
 	# security: the Drive service-account key goes in through a dialog, not the
 	# field. It is a Password (v1.211.0, was Code and therefore cleartext), and a
 	# Password renders as a single-line masked input that mangles a multi-line key

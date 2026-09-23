@@ -9,6 +9,13 @@ in-page camera scanner button is shown.
 Exposes ``get_settings()``, a defensive reader (used by the scanner API and the
 page bootstrap) that falls back to ``DEFAULTS`` for any unset field, so it is
 safe even before the Single has ever been saved.
+
+The **Stock Scan Page** section (v1.521.0) configures ``/stock-scan``
+(``api/stock_scan.py``): the accounts a take and an add-without-PO post to, the cost
+center, whether a take needs a job, and the undo window. Those fields were added to a
+Single that already existed, so ``patches/backfill_stock_scan_settings_defaults`` writes
+their declared defaults where no ``tabSingles`` row exists — and ``DEFAULTS`` below falls
+back the same way, so the page is right even before that patch has run.
 """
 
 import frappe
@@ -22,6 +29,14 @@ DEFAULTS = {
 	"block_negative_counts": 1,
 	"allow_unknown_item": 0,
 	"enable_camera_scan": 1,
+	# Stock Scan page. A blank account or cost center means "use the fallback chain in
+	# api.stock_scan", so None is the default, not a missing value.
+	"take_expense_account": None,
+	"add_offset_account": None,
+	"scan_cost_center": None,
+	"require_project_for_take": 0,
+	# A stored 0 is a deliberate "undo off" and is kept; only a missing row falls back.
+	"undo_window_minutes": 30,
 }
 
 

@@ -1145,3 +1145,12 @@ erpnext_enhancements.patches.restore_customer_groups_after_qbo_sweep
 # existing Single's row; this fills ONLY the six fields that release added, only where no
 # tabSingles row exists (a stored 0 is kept). Direct writes, no validate; safe twice.
 erpnext_enhancements.patches.backfill_lead_triage_settings_defaults
+# v1.521.0: the Stock Scan page's settings on Inventory Scanner Settings. A new field's default never
+# reaches an existing Single's row; this fills ONLY the fields that release added, only where no
+# tabSingles row exists (a stored 0 -- undo switched off -- is kept). Direct writes, no validate; safe twice.
+erpnext_enhancements.patches.backfill_stock_scan_settings_defaults
+# v1.521.0: Inventory Enhancements gains the Stock Scan + Warehouse QR Labels shortcuts and a Stock
+# Scan Log link; Production Hub the Stock Scan shortcut and the log. A Workspace JSON is age-gated on
+# the way in, so the bumped stamps alone reach no existing site. reload_doc(force=True) for both;
+# also brings the v1.337.0 Reports card that shipped without a bump. Cannot raise; safe twice.
+erpnext_enhancements.patches.reload_stock_scan_workspaces

@@ -14,7 +14,7 @@ services.
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, nowtime
+from frappe.utils import cint, flt, getdate, nowtime
 
 #: Roles that may read/write supplier purchase links. Purchasing staff plus the
 #: administrative roles that manage Items. A user outside this set has no business
@@ -172,8 +172,34 @@ def _over_receipt_allowance(item_code):
     return flt(frappe.db.get_single_value("Stock Settings", "over_delivery_receipt_allowance"))
 
 
+def _receiving_warehouse(warehouse, company):
+    """The warehouse a receipt is put into, refused in the receiver's terms before a document
+    exists.
+
+    Only the Stock Scan page passes one: it receives into the location whose QR label was just
+    scanned rather than the order line's own warehouse. ERPNext refuses the same things later
+    -- ``StockController.validate_warehouse`` (company, disabled) and the Stock Ledger Entry's
+    ``block_transactions_against_group_warehouse`` (group) -- so this adds no rule, only the
+    sentence.
+    """
+    row = frappe.db.get_value(
+        "Warehouse", warehouse, ["name", "company", "is_group", "disabled"], as_dict=True
+    )
+    if not row:
+        frappe.throw(_("Location {0} was not found.").format(warehouse))
+    if row.is_group:
+        frappe.throw(
+            _("{0} is a group of locations. Receive into one of the locations inside it.").format(row.name)
+        )
+    if row.disabled:
+        frappe.throw(_("{0} is disabled.").format(row.name))
+    if row.company != company:
+        frappe.throw(_("{0} belongs to {1}, not {2}.").format(row.name, row.company, company))
+    return row.name
+
+
 @frappe.whitelist(methods=["POST"])
-def receive_items(purchase_order, rows, posting_date=None):
+def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remarks=None):
     """Write and submit a Purchase Receipt for what just arrived against one order.
 
     The Receive Items dialog on a submitted Purchase Order (``public/js/po_receive_items.js``,
@@ -213,6 +239,17 @@ def receive_items(purchase_order, rows, posting_date=None):
       Create > Purchase Receipt: ``received_qty`` moves only on submit. Submitting that draft
       later hits ERPNext's over-limit check, so nothing double-counts in the ledger, but the
       draft will need editing. The packing-slip intake creates such drafts.
+    * **``warehouse`` puts the goods somewhere other than the order line's warehouse.** The
+      Stock Scan page (v1.521.0, through :func:`receive_order_line`) receives into the bin
+      whose QR label was scanned. It grants nothing new: a user who may create and submit a
+      receipt can already change the warehouse on Create > Purchase Receipt. Both the header
+      ``set_warehouse`` and every row are set, because ERPNext never pushes the header into
+      the rows on the server and only *clears* a header that disagrees with them. The order's
+      ``Bin.ordered_qty`` still falls at the line's own warehouse and ``actual_qty`` rises at
+      the scanned one -- "on order" drops where it was ordered for, "on hand" rises where it
+      was put, which is right.
+    * **``remarks``** replaces the receipt's remarks, so the page can say on the voucher that
+      it came from a scan and who did it.
     """
     from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
@@ -229,6 +266,7 @@ def receive_items(purchase_order, rows, posting_date=None):
             frappe.throw(
                 _("You need permission to {0} a Purchase Receipt.").format(ptype), frappe.PermissionError
             )
+    target = _receiving_warehouse(warehouse, po.company) if warehouse else None
 
     order_lines = [
         {
@@ -252,12 +290,18 @@ def receive_items(purchase_order, rows, posting_date=None):
 
     wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
     receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
+    if target:
+        receipt.set_warehouse = target
     for item in receipt.items:
         # Accepted quantity is what was typed; nothing rejected. The receipt's own validate
         # recomputes stock_qty, received_stock_qty and every amount from these.
         item.qty = wanted[item.purchase_order_item]
         item.received_qty = item.qty
         item.rejected_qty = 0
+        if target:
+            item.warehouse = target
+    if remarks:
+        receipt.remarks = remarks
     if posting_date:
         receipt.set_posting_time = 1
         receipt.posting_date = getdate(posting_date)
@@ -279,3 +323,43 @@ def receive_items(purchase_order, rows, posting_date=None):
         "status": after.get("status"),
         "order_stage": after.get("custom_order_stage"),
     }
+
+
+def receive_order_line(purchase_order_item, stock_qty, warehouse, item_code=None, remarks=None):
+    """Receive ONE Purchase Order line, counted in the item's STOCK UOM, into ``warehouse``.
+
+    The Stock Scan page's "+" when the scanned item has an open order line
+    (``api.stock_scan.add``). Deliberately owns no check of its own beyond the unit
+    conversion: every refusal -- read on the order, submitted, not Closed or On Hold,
+    Purchase Receipt create + submit, over-receipt through ``plan_receipt`` -- is
+    :func:`receive_items`', so the scan page and the order's Receive Items dialog cannot
+    disagree about what may be received. Not whitelisted: the page reaches it only through
+    its own gated endpoint.
+
+    The page counts in the stock UOM; the order line may be in another (a Box of 10), and a
+    receipt row's UOM must equal the order line's. ``stock_scan_rules.to_order_uom`` converts
+    and refuses a result that is not whole in a whole-number UOM rather than rounding it --
+    rounding would receive goods that did not arrive.
+    """
+    from erpnext_enhancements.inventory_enhancements.stock_scan_rules import to_order_uom
+
+    line = frappe.db.get_value(
+        "Purchase Order Item",
+        purchase_order_item,
+        ["parent", "parenttype", "item_code", "uom", "conversion_factor"],
+        as_dict=True,
+    )
+    if not line or line.parenttype != "Purchase Order":
+        frappe.throw(_("Purchase Order line {0} was not found.").format(purchase_order_item))
+    if item_code and line.item_code != item_code:
+        frappe.throw(_("That order line is for {0}, not {1}.").format(line.item_code, item_code))
+    whole = cint(frappe.get_cached_value("UOM", line.uom, "must_be_whole_number")) if line.uom else 0
+    qty, problem = to_order_uom(flt(stock_qty), line.conversion_factor, whole_number=bool(whole), uom=line.uom)
+    if problem:
+        frappe.throw(problem, title=_("Nothing was received"))
+    return receive_items(
+        line.parent,
+        [{"purchase_order_item": purchase_order_item, "qty": qty}],
+        warehouse=warehouse,
+        remarks=remarks,
+    )

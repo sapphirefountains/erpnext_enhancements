@@ -1,0 +1,71 @@
+{#
+  Stock Scan page shell (served at /stock-scan; controller: stock_scan.py).
+
+  Every warehouse QR label (/warehouse-labels) encodes <site>/stock-scan?w=<warehouse>, so a
+  phone's own camera app opens this page on that location. From there the page scans the next
+  label itself (public/js/stock_scan/scanner.js), and it never changes its own URL afterwards:
+  iOS asks for camera permission again whenever the URL changes.
+
+  This template's jobs, and only these:
+
+    * set the stored theme on <html> BEFORE the stylesheet is parsed, so the first paint is
+      in the right palette (the three-way system / light / dark switch, as on the kiosk);
+    * load stock_scan.bundle.css and stock_scan.bundle.js — BUNDLES, resolved through
+      assets.json to content-hashed files. A raw /assets path is cached for a year with no
+      content hash, so an edit would never reach a phone that already has it. The QR decoder
+      for iPhones is the one raw path, and it arrives in the boot payload, versioned by name;
+    * hand the server-computed boot payload (the scanned location, already resolved, and the
+      person's recent saves) to the bundle as window.EE_STOCK_SCAN_BOOT;
+    * provide the single mount point. Every node inside it is built by the bundle with
+      createElement / textContent: item names, supplier names and error text are data.
+
+  No framework and no Desk client API in the bundle: this is a website route, not Desk.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Stock Scan{% endblock %}
+
+{% block head_include %}
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('ee_ss_theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      else document.documentElement.removeAttribute('data-theme');
+    } catch (e) { /* storage blocked: follow the phone's theme */ }
+  })();
+</script>
+<meta name="theme-color" content="#f3f5f7">
+<meta name="mobile-web-app-capable" content="yes">
+{# viewport-fit=cover lets env(safe-area-inset-*) reach the bottom bar past the home indicator. #}
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="{{ bundled_asset('stock_scan.bundle.css') }}">
+{% endblock %}
+
+{# Best-effort removal of the website chrome; the stylesheet is the real guarantee. #}
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+{% block breadcrumbs %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+
+{% block page_content %}
+<div id="ee-stock-scan-root" class="ee-ss-root" aria-label="Stock Scan">
+	{# The only pre-rendered content, deliberately: a bundle that fails to load must not leave a
+	   blank screen in the middle of a shelf. The bundle removes this node on mount. #}
+	<div class="ee-ss-boot" role="status">
+		<div class="ee-ss-boot-text">Loading…</div>
+		<noscript>This page needs JavaScript turned on.</noscript>
+	</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+	window.EE_STOCK_SCAN_BOOT = {{ boot | tojson }};
+</script>
+<script src="{{ bundled_asset('stock_scan.bundle.js') }}"></script>
+{% endblock %}

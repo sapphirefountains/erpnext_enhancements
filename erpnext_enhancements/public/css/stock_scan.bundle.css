@@ -1,0 +1,1545 @@
+/*
+ * Stock Scan (/stock-scan) — the whole visual layer. Loaded by www/stock-scan.html through
+ * bundled_asset('stock_scan.bundle.css'), i.e. a content-hashed file: a raw /assets path is
+ * cached for a year and an edit would never reach a phone that already has it.
+ *
+ * WHO LOOKS AT THIS: a technician holding parts, one-handed, in a dim warehouse. So every
+ * target is at least 48px (the - / + stepper 76px), text is large, a take is red AND carries a
+ * minus sign, an add is green AND carries a plus sign — never color alone — and every text
+ * color below reaches 4.5:1 on the surface it sits on, in both themes.
+ *
+ * THEME — three-way, like public/css/kiosk/kiosk.css, and the two dark blocks are deliberate
+ * duplicates:
+ *
+ *   :root { ... }                                 light palette, always declared
+ *   @media (prefers-color-scheme: dark) {
+ *     :root:not([data-theme="light"]) { ... }     phone set to dark, unless forced light
+ *   }
+ *   :root[data-theme="dark"] { ... }              forced dark (the Screen switch on Start)
+ *
+ * <html data-theme> ABSENT means "follow the phone". The inline script at the top of
+ * stock-scan.html's head sets or removes it from localStorage.ee_ss_theme before this sheet
+ * is parsed, so there is no flash. A media block and a plain rule cannot share a declaration
+ * list, so the dark palette is written twice; tests/test_stock_scan_theme.py fails the build
+ * when the copies drift, or when a light color has no dark twin. The palette blocks hold
+ * COLOURS only — every one is overridden in dark, the camera's included, which is dark in
+ * both themes on purpose. Lengths, fonts and timings live on .ee-ss-root instead.
+ *
+ * Frappe's website stylesheet colors h1-h6 with a fixed near-black --heading-color that
+ * ignores the color scheme; an explicit color beats inheritance, so headings here set
+ * their own. Sheets and toasts are appended to <body>, outside the app root, and carry the
+ * .ee-ss-root class so these rules (and the tokens) still reach them.
+ */
+
+/* ------------------------------------------------------------------------ */
+/* Palette                                                                  */
+/* ------------------------------------------------------------------------ */
+
+:root {
+	color-scheme: light;
+	--ss-bg: #f3f5f7;
+	--ss-surface: #ffffff;
+	--ss-surface-2: #e8ecf0;
+	--ss-text: #14181d;
+	--ss-text-2: #545e69;
+	--ss-border: #d3d9e0;
+	--ss-border-strong: #97a1ac;
+	--ss-accent: #0a5cb3;
+	--ss-accent-soft: #e2ecf8;
+	--ss-on-accent: #ffffff;
+	--ss-take: #b3261e;
+	--ss-take-soft: #fce8e6;
+	--ss-add: #18703a;
+	--ss-add-soft: #def3e5;
+	--ss-warn: #8a4b00;
+	--ss-warn-soft: #fff1d6;
+	--ss-on-state: #ffffff;
+	--ss-sheet-bg: #ffffff;
+	--ss-bar-bg: rgba(255, 255, 255, 0.97);
+	--ss-backdrop: rgba(15, 18, 22, 0.5);
+	--ss-shadow: 0 1px 3px rgba(15, 18, 22, 0.08);
+	--ss-shadow-lg: 0 -8px 32px rgba(15, 18, 22, 0.2);
+	--ss-focus: #0a5cb3;
+	--ss-input-bg: #ffffff;
+	--ss-chip-bg: #e8ecf0;
+	--ss-progress: #0a5cb3;
+	--ss-toast-bg: #1c2229;
+	--ss-toast-fg: #ffffff;
+	--ss-toast-action: #9ccbff;
+	--ss-toast-ok: #6fdc8c;
+	--ss-toast-err: #ff9a8f;
+	--ss-toast-info: #9ccbff;
+	--ss-cam-bg: #000000;
+	--ss-cam-fg: #ffffff;
+	--ss-cam-muted: rgba(255, 255, 255, 0.82);
+	--ss-cam-line: rgba(255, 255, 255, 0.92);
+	--ss-cam-dim: rgba(0, 0, 0, 0.38);
+	--ss-cam-button: rgba(255, 255, 255, 0.16);
+	--ss-torch-on: #ffd54a;
+	--ss-torch-on-fg: #111111;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		color-scheme: dark;
+		--ss-bg: #0e1116;
+		--ss-surface: #171b21;
+		--ss-surface-2: #222830;
+		--ss-text: #eef1f4;
+		--ss-text-2: #a3adb8;
+		--ss-border: #2e353f;
+		--ss-border-strong: #5a6470;
+		--ss-accent: #7ab8ff;
+		--ss-accent-soft: #15314f;
+		--ss-on-accent: #0b1220;
+		--ss-take: #ff8a7e;
+		--ss-take-soft: #3d1714;
+		--ss-add: #62d388;
+		--ss-add-soft: #11301c;
+		--ss-warn: #f5b14a;
+		--ss-warn-soft: #3a2a0c;
+		--ss-on-state: #0e1116;
+		--ss-sheet-bg: #171b21;
+		--ss-bar-bg: rgba(23, 27, 33, 0.97);
+		--ss-backdrop: rgba(0, 0, 0, 0.62);
+		--ss-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+		--ss-shadow-lg: 0 -8px 32px rgba(0, 0, 0, 0.6);
+		--ss-focus: #8cc4ff;
+		--ss-input-bg: #0e1116;
+		--ss-chip-bg: #262d36;
+		--ss-progress: #7ab8ff;
+		--ss-toast-bg: #eef1f4;
+		--ss-toast-fg: #0e1116;
+		--ss-toast-action: #0a5cb3;
+		--ss-toast-ok: #18703a;
+		--ss-toast-err: #b3261e;
+		--ss-toast-info: #0a5cb3;
+		--ss-cam-bg: #000000;
+		--ss-cam-fg: #ffffff;
+		--ss-cam-muted: rgba(255, 255, 255, 0.82);
+		--ss-cam-line: rgba(255, 255, 255, 0.92);
+		--ss-cam-dim: rgba(0, 0, 0, 0.38);
+		--ss-cam-button: rgba(255, 255, 255, 0.16);
+		--ss-torch-on: #ffd54a;
+		--ss-torch-on-fg: #111111;
+	}
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--ss-bg: #0e1116;
+	--ss-surface: #171b21;
+	--ss-surface-2: #222830;
+	--ss-text: #eef1f4;
+	--ss-text-2: #a3adb8;
+	--ss-border: #2e353f;
+	--ss-border-strong: #5a6470;
+	--ss-accent: #7ab8ff;
+	--ss-accent-soft: #15314f;
+	--ss-on-accent: #0b1220;
+	--ss-take: #ff8a7e;
+	--ss-take-soft: #3d1714;
+	--ss-add: #62d388;
+	--ss-add-soft: #11301c;
+	--ss-warn: #f5b14a;
+	--ss-warn-soft: #3a2a0c;
+	--ss-on-state: #0e1116;
+	--ss-sheet-bg: #171b21;
+	--ss-bar-bg: rgba(23, 27, 33, 0.97);
+	--ss-backdrop: rgba(0, 0, 0, 0.62);
+	--ss-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+	--ss-shadow-lg: 0 -8px 32px rgba(0, 0, 0, 0.6);
+	--ss-focus: #8cc4ff;
+	--ss-input-bg: #0e1116;
+	--ss-chip-bg: #262d36;
+	--ss-progress: #7ab8ff;
+	--ss-toast-bg: #eef1f4;
+	--ss-toast-fg: #0e1116;
+	--ss-toast-action: #0a5cb3;
+	--ss-toast-ok: #18703a;
+	--ss-toast-err: #b3261e;
+	--ss-toast-info: #0a5cb3;
+	--ss-cam-bg: #000000;
+	--ss-cam-fg: #ffffff;
+	--ss-cam-muted: rgba(255, 255, 255, 0.82);
+	--ss-cam-line: rgba(255, 255, 255, 0.92);
+	--ss-cam-dim: rgba(0, 0, 0, 0.38);
+	--ss-cam-button: rgba(255, 255, 255, 0.16);
+	--ss-torch-on: #ffd54a;
+	--ss-torch-on-fg: #111111;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Reset against the host                                                   */
+/* ------------------------------------------------------------------------ */
+
+html {
+	background: var(--ss-bg);
+}
+body {
+	background: var(--ss-bg);
+	color: var(--ss-text);
+	margin: 0;
+	-webkit-text-size-adjust: 100%;
+	-webkit-tap-highlight-color: transparent;
+}
+body.ee-ss-locked {
+	overflow: hidden;
+}
+
+/* The website shell wraps page_content in containers that would letterbox a full-height app.
+   Overridden here rather than only by emptying template blocks, so an upgrade that changes
+   templates/web.html does not silently un-fix it. */
+body > .main-section,
+body .page_content,
+body .container,
+body .page-content-wrapper {
+	max-width: none;
+	padding: 0;
+	margin: 0;
+}
+body .navbar,
+body .web-footer,
+body > footer,
+body .page-breadcrumbs,
+body .page-header-wrapper,
+body .page-footer {
+	display: none !important;
+}
+
+.ee-ss-root {
+	--ss-radius: 16px;
+	--ss-radius-sm: 12px;
+	--ss-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	--ss-motion: 160ms;
+	--ss-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+	color: var(--ss-text);
+	font-family: var(--ss-font);
+	font-size: 16px;
+	line-height: 1.4;
+}
+.ee-ss-root *,
+.ee-ss-root *::before,
+.ee-ss-root *::after {
+	box-sizing: border-box;
+}
+.ee-ss-root h1,
+.ee-ss-root h2,
+.ee-ss-root h3,
+.ee-ss-root h4,
+.ee-ss-root h5,
+.ee-ss-root h6 {
+	color: var(--ss-text);
+	font-family: var(--ss-font);
+}
+/* Zero specificity (:where), so every classed paragraph below keeps its own color. */
+:where(.ee-ss-root) p {
+	color: inherit;
+}
+/* Font only: a color here would outrank every single-class button color below. */
+.ee-ss-root button,
+.ee-ss-root input {
+	font-family: inherit;
+}
+.ee-ss-root :focus-visible {
+	outline: 3px solid var(--ss-focus);
+	outline-offset: 2px;
+}
+.ee-ss-root [hidden] {
+	display: none !important;
+}
+.ee-ss-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Shell: top bar, content, bottom bar                                      */
+/* ------------------------------------------------------------------------ */
+
+#ee-stock-scan-root {
+	display: flex;
+	flex-direction: column;
+	/* dvh, with vh first as the fallback for older phones: 100vh is taller than the visible
+	   page while the URL bar shows, which would put the bottom of the page under it. */
+	min-height: 100vh;
+	min-height: 100dvh;
+	max-width: 640px;
+	margin: 0 auto;
+	/* room for the bottom bar and the home indicator, whatever the view scrolls to */
+	padding-bottom: calc(96px + env(safe-area-inset-bottom));
+	background: var(--ss-bg);
+}
+
+.ee-ss-boot {
+	padding: 96px 16px;
+	text-align: center;
+	color: var(--ss-text-2);
+	font-size: 1.1rem;
+}
+
+.ee-ss-top {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 60px;
+	padding: calc(6px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(16px, env(safe-area-inset-left));
+	background: var(--ss-bar-bg);
+	border-bottom: 1px solid var(--ss-border);
+}
+.ee-ss-top-title {
+	flex: 1;
+	min-width: 0;
+	font-size: 1.1rem;
+	font-weight: 800;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.ee-ss-job-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 58%;
+	min-height: 48px;
+	padding: 0 14px;
+	border: 1px solid var(--ss-border);
+	border-radius: 999px;
+	background: var(--ss-chip-bg);
+	color: var(--ss-text);
+	font-size: 0.95rem;
+	font-weight: 700;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-job-chip.is-set {
+	background: var(--ss-accent-soft);
+	border-color: var(--ss-accent);
+	color: var(--ss-accent);
+}
+.ee-ss-job-chip-text {
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.ee-ss-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: -1px;
+	height: 3px;
+	background: linear-gradient(90deg, transparent, var(--ss-progress), transparent);
+	background-size: 50% 100%;
+	background-repeat: no-repeat;
+	opacity: 0;
+	transition: opacity var(--ss-motion) ease;
+}
+#ee-stock-scan-root.is-loading .ee-ss-progress {
+	opacity: 1;
+	animation: ee-ss-progress 1s linear infinite;
+}
+@keyframes ee-ss-progress {
+	from {
+		background-position: -100% 0;
+	}
+	to {
+		background-position: 200% 0;
+	}
+}
+
+.ee-ss-main {
+	flex: 1;
+	padding: 12px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left));
+}
+.ee-ss-view {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.ee-ss-bar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 30;
+	max-width: 640px;
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 10px;
+	padding: 10px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom))
+		max(16px, env(safe-area-inset-left));
+	background: var(--ss-bar-bg);
+	border-top: 1px solid var(--ss-border);
+}
+/* One line each, even at 320px: Search takes what its label needs, Scan next the rest. */
+.ee-ss-bar .ee-ss-btn {
+	min-height: 64px;
+	padding: 0 14px;
+	gap: 8px;
+	font-size: 1.1rem;
+	white-space: nowrap;
+}
+.ee-ss-bar-scan.is-pulse {
+	animation: ee-ss-pulse 1.1s var(--ss-ease) 2;
+}
+@keyframes ee-ss-pulse {
+	0% {
+		box-shadow: 0 0 0 0 var(--ss-focus);
+	}
+	100% {
+		box-shadow: 0 0 0 12px transparent;
+	}
+}
+
+/* ------------------------------------------------------------------------ */
+/* Buttons and icons                                                        */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 52px;
+	padding: 0 18px;
+	border: 2px solid transparent;
+	border-radius: 14px;
+	font-size: 1.05rem;
+	font-weight: 700;
+	line-height: 1.2;
+	text-align: center;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-user-select: none;
+	user-select: none;
+	transition: filter var(--ss-motion) ease, transform var(--ss-motion) ease;
+}
+.ee-ss-btn:active:not(:disabled) {
+	transform: scale(0.98);
+	filter: brightness(0.95);
+}
+.ee-ss-btn:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+.ee-ss-btn.is-busy:disabled {
+	opacity: 0.8;
+}
+.ee-ss-btn.is-lg {
+	min-height: 64px;
+	font-size: 1.15rem;
+}
+.ee-ss-btn-primary {
+	background: var(--ss-accent);
+	color: var(--ss-on-accent);
+}
+.ee-ss-btn-outline {
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	border-color: var(--ss-border-strong);
+}
+.ee-ss-btn-ghost {
+	background: transparent;
+	color: var(--ss-accent);
+}
+.ee-ss-btn-take {
+	background: var(--ss-take);
+	color: var(--ss-on-state);
+}
+.ee-ss-btn-add {
+	background: var(--ss-add);
+	color: var(--ss-on-state);
+}
+.ee-ss-icon {
+	width: 1.35em;
+	height: 1.35em;
+	flex: none;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.ee-ss-glyph {
+	flex: none;
+	font-weight: 800;
+	line-height: 1;
+}
+.ee-ss-btn .ee-ss-glyph {
+	font-size: 1.4em;
+}
+.ee-ss-spinner {
+	width: 1.1em;
+	height: 1.1em;
+	flex: none;
+	border: 3px solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: ee-ss-spin 0.7s linear infinite;
+}
+@keyframes ee-ss-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.ee-ss-back {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 4px;
+	max-width: 100%;
+	min-height: 48px;
+	margin: 0 0 -4px -6px;
+	padding: 0 10px 0 2px;
+	border: 0;
+	border-radius: 10px;
+	background: none;
+	color: var(--ss-accent);
+	font-size: 1rem;
+	font-weight: 700;
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-linkbtn {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 8px;
+	min-height: 48px;
+	padding: 0 6px;
+	border: 0;
+	background: none;
+	color: var(--ss-accent);
+	font-size: 1rem;
+	font-weight: 700;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Text blocks                                                              */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-h1 {
+	margin: 0;
+	font-size: 1.75rem;
+	font-weight: 800;
+	line-height: 1.15;
+	letter-spacing: -0.01em;
+	overflow-wrap: anywhere;
+}
+.ee-ss-trail {
+	margin: -6px 0 0;
+	color: var(--ss-text-2);
+	font-size: 0.95rem;
+	overflow-wrap: anywhere;
+}
+.ee-ss-section-title {
+	margin: 12px 0 0;
+	font-size: 0.8rem;
+	font-weight: 800;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ss-text-2);
+}
+.ee-ss-root .ee-ss-section-title {
+	color: var(--ss-text-2);
+}
+.ee-ss-note {
+	margin: 0;
+	color: var(--ss-text-2);
+	font-size: 0.95rem;
+}
+.ee-ss-alert {
+	margin: 0;
+	padding: 12px 14px;
+	border-left: 4px solid var(--ss-take);
+	border-radius: var(--ss-radius-sm);
+	background: var(--ss-take-soft);
+	color: var(--ss-take);
+	font-weight: 700;
+}
+.ee-ss-notice {
+	margin: 0;
+	padding: 14px 16px;
+	border-left: 4px solid var(--ss-warn);
+	border-radius: var(--ss-radius-sm);
+	background: var(--ss-warn-soft);
+	color: var(--ss-text);
+	font-weight: 600;
+	line-height: 1.45;
+}
+.ee-ss-badge {
+	display: inline-block;
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--ss-chip-bg);
+	color: var(--ss-text-2);
+	font-size: 0.78rem;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Start                                                                    */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-hero {
+	min-height: 120px;
+	flex-direction: column;
+	gap: 8px;
+	border-radius: 20px;
+	font-size: 1.3rem;
+}
+.ee-ss-hero .ee-ss-hero-icon {
+	width: 2.2em;
+	height: 2.2em;
+}
+.ee-ss-searchbox {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 56px;
+	padding: 0 16px;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 14px;
+	background: var(--ss-input-bg);
+	color: var(--ss-text-2);
+	font-size: 1.05rem;
+	text-align: left;
+	cursor: text;
+	touch-action: manipulation;
+}
+.ee-ss-recent-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+}
+.ee-ss-recent-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--ss-border);
+}
+.ee-ss-recent-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	font-size: 1.3rem;
+}
+.ee-ss-recent-mark.is-take {
+	background: var(--ss-take-soft);
+	color: var(--ss-take);
+}
+.ee-ss-recent-mark.is-add {
+	background: var(--ss-add-soft);
+	color: var(--ss-add);
+}
+.ee-ss-recent-mark.is-move {
+	background: var(--ss-accent-soft);
+	color: var(--ss-accent);
+}
+.ee-ss-recent-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	min-height: 56px;
+	justify-content: center;
+	padding: 4px 0;
+	border: 0;
+	background: none;
+	color: var(--ss-text);
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-recent-row.is-undone .ee-ss-row-title {
+	color: var(--ss-text-2);
+	text-decoration: line-through;
+}
+.ee-ss-recent-row.is-loading,
+.ee-ss-row.is-loading {
+	opacity: 0.6;
+}
+.ee-ss-undo-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	min-height: 48px;
+	padding: 0 14px;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 12px;
+	background: var(--ss-surface);
+	color: var(--ss-accent);
+	font-size: 0.95rem;
+	font-weight: 800;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 0.82rem;
+	font-weight: 700;
+}
+.ee-ss-pill.is-undone {
+	background: var(--ss-chip-bg);
+	color: var(--ss-text-2);
+}
+.ee-ss-pill.is-review {
+	background: var(--ss-warn-soft);
+	color: var(--ss-warn);
+}
+.ee-ss-theme {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 20px;
+}
+.ee-ss-theme-label {
+	margin-right: 4px;
+	color: var(--ss-text-2);
+	font-size: 0.95rem;
+	font-weight: 600;
+}
+.ee-ss-theme-opt {
+	min-height: 48px;
+	padding: 0 16px;
+	border: 2px solid var(--ss-border);
+	border-radius: 999px;
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	font-size: 0.95rem;
+	font-weight: 700;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-theme-opt.is-on {
+	border-color: var(--ss-accent);
+	background: var(--ss-accent-soft);
+	color: var(--ss-accent);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Lists (locations, items, orders, jobs, search results)                   */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.ee-ss-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	min-height: 72px;
+	padding: 10px 12px;
+	border: 1px solid var(--ss-border);
+	border-radius: 14px;
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-row:active:not(:disabled) {
+	background: var(--ss-surface-2);
+}
+.ee-ss-row:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+.ee-ss-row.is-current {
+	border-color: var(--ss-accent);
+	background: var(--ss-accent-soft);
+}
+.ee-ss-row-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.ee-ss-row-title {
+	font-size: 1.05rem;
+	font-weight: 700;
+	overflow-wrap: anywhere;
+}
+.ee-ss-row-sub {
+	color: var(--ss-text-2);
+	font-size: 0.9rem;
+	overflow-wrap: anywhere;
+}
+.ee-ss-row-warn {
+	color: var(--ss-warn);
+	font-size: 0.88rem;
+	font-weight: 700;
+}
+.ee-ss-row-qty {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	max-width: 34%;
+	text-align: right;
+}
+.ee-ss-row-qty strong {
+	font-size: 1.4rem;
+	font-weight: 800;
+	line-height: 1.1;
+	font-variant-numeric: tabular-nums;
+}
+.ee-ss-row-qty span {
+	color: var(--ss-text-2);
+	font-size: 0.8rem;
+	overflow-wrap: anywhere;
+}
+.ee-ss-row-qty.is-zero strong {
+	color: var(--ss-text-2);
+}
+.ee-ss-row-icon,
+.ee-ss-row-go {
+	flex: none;
+	color: var(--ss-text-2);
+}
+.ee-ss-row .ee-ss-glyph.ee-ss-row-icon {
+	width: 1.35em;
+	font-size: 1.2rem;
+	text-align: center;
+}
+.ee-ss-row-check {
+	color: var(--ss-accent);
+	font-size: 1.4rem;
+}
+
+.ee-ss-thumb {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 52px;
+	height: 52px;
+	overflow: hidden;
+	border-radius: 10px;
+	background: var(--ss-surface-2);
+}
+.ee-ss-thumb.is-lg {
+	width: 84px;
+	height: 84px;
+	border-radius: 14px;
+}
+.ee-ss-thumb-img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.ee-ss-monogram {
+	color: var(--ss-text-2);
+	font-size: 1.05rem;
+	font-weight: 800;
+	letter-spacing: 0.02em;
+}
+.ee-ss-thumb.is-lg .ee-ss-monogram {
+	font-size: 1.6rem;
+}
+.ee-ss-empty {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 28px 16px;
+	border: 2px dashed var(--ss-border-strong);
+	border-radius: var(--ss-radius);
+	text-align: center;
+}
+.ee-ss-empty-text {
+	margin: 0;
+	font-size: 1.1rem;
+	font-weight: 700;
+}
+.ee-ss-loading-note {
+	padding: 24px 0;
+	text-align: center;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Item and the stepper                                                     */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-item-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 14px;
+}
+.ee-ss-item-text {
+	flex: 1;
+	min-width: 0;
+}
+.ee-ss-item-name {
+	margin: 0;
+	font-size: 1.4rem;
+	font-weight: 800;
+	line-height: 1.2;
+	overflow-wrap: anywhere;
+}
+.ee-ss-item-code {
+	margin: 2px 0 0;
+	color: var(--ss-text-2);
+	font-size: 0.95rem;
+	overflow-wrap: anywhere;
+}
+.ee-ss-item-desc {
+	display: -webkit-box;
+	margin: 6px 0 0;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	color: var(--ss-text-2);
+	font-size: 0.92rem;
+	line-height: 1.35;
+}
+.ee-ss-onhand {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 12px 16px;
+	border: 1px solid var(--ss-border);
+	border-radius: var(--ss-radius);
+	background: var(--ss-surface);
+}
+.ee-ss-onhand-label {
+	color: var(--ss-text-2);
+	font-size: 0.85rem;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+.ee-ss-onhand-qty {
+	overflow-wrap: anywhere;
+}
+.ee-ss-onhand-qty strong {
+	font-size: 2.4rem;
+	font-weight: 800;
+	line-height: 1.1;
+	font-variant-numeric: tabular-nums;
+}
+.ee-ss-onhand-qty span {
+	color: var(--ss-text-2);
+	font-size: 1.15rem;
+	font-weight: 600;
+}
+.ee-ss-onhand-sub {
+	color: var(--ss-text-2);
+	font-size: 0.9rem;
+}
+
+.ee-ss-stepper-box {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 4px;
+}
+.ee-ss-stepper {
+	display: grid;
+	grid-template-columns: 76px minmax(0, 1fr) 76px;
+	gap: 10px;
+}
+.ee-ss-step {
+	min-height: 76px;
+	border: 2px solid;
+	border-radius: 18px;
+	font-size: 2.6rem;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-user-select: none;
+	user-select: none;
+}
+.ee-ss-step:active:not(:disabled) {
+	transform: scale(0.96);
+}
+.ee-ss-step:disabled {
+	cursor: not-allowed;
+	opacity: 0.35;
+}
+.ee-ss-step-minus {
+	border-color: var(--ss-take);
+	background: var(--ss-take-soft);
+	color: var(--ss-take);
+}
+.ee-ss-step-plus {
+	border-color: var(--ss-add);
+	background: var(--ss-add-soft);
+	color: var(--ss-add);
+}
+.ee-ss-step-value {
+	min-width: 0;
+	min-height: 76px;
+	padding: 0 6px;
+	overflow: hidden;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 18px;
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	font-size: 2.4rem;
+	font-weight: 800;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-step-value.is-take {
+	color: var(--ss-take);
+	border-color: var(--ss-take);
+}
+.ee-ss-step-value.is-add {
+	color: var(--ss-add);
+	border-color: var(--ss-add);
+}
+.ee-ss-step-value.is-long {
+	font-size: 1.6rem;
+}
+.ee-ss-step-hint {
+	margin: 0;
+	min-height: 1.4em;
+	font-size: 1.05rem;
+	font-weight: 700;
+	text-align: center;
+}
+.ee-ss-step-note {
+	margin: 0;
+	color: var(--ss-warn);
+	font-size: 0.95rem;
+	font-weight: 700;
+	text-align: center;
+}
+.ee-ss-save-error,
+.ee-ss-field-error {
+	margin: 0;
+	padding: 10px 14px;
+	border-radius: var(--ss-radius-sm);
+	background: var(--ss-take-soft);
+	color: var(--ss-take);
+	font-weight: 700;
+	line-height: 1.4;
+}
+/* The one way out an error line may carry ("Reload" when the session is gone). */
+.ee-ss-btn.ee-ss-error-action {
+	display: flex;
+	margin-top: 10px;
+}
+.ee-ss-btn.ee-ss-save {
+	min-height: 68px;
+	font-size: 1.3rem;
+	background: var(--ss-surface-2);
+	color: var(--ss-text-2);
+	border-color: var(--ss-border);
+}
+.ee-ss-btn.ee-ss-save.ee-ss-btn-take {
+	background: var(--ss-take);
+	color: var(--ss-on-state);
+	border-color: var(--ss-take);
+}
+.ee-ss-btn.ee-ss-save.ee-ss-btn-add {
+	background: var(--ss-add);
+	color: var(--ss-on-state);
+	border-color: var(--ss-add);
+}
+.ee-ss-move-btn {
+	margin-top: 4px;
+}
+.ee-ss-also {
+	margin: 0;
+	color: var(--ss-text-2);
+	font-size: 0.92rem;
+	overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Inputs                                                                   */
+/* ------------------------------------------------------------------------ */
+
+/* 16px or more, always: iOS zooms the whole page into any smaller input on focus. */
+.ee-ss-input {
+	width: 100%;
+	min-width: 0;
+	min-height: 52px;
+	padding: 0 14px;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 12px;
+	background: var(--ss-input-bg);
+	color: var(--ss-text);
+	font-size: 1.0625rem;
+	-webkit-appearance: none;
+	appearance: none;
+}
+.ee-ss-input::placeholder {
+	color: var(--ss-text-2);
+	opacity: 1;
+}
+.ee-ss-input:focus {
+	border-color: var(--ss-focus);
+}
+.ee-ss-qty-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.ee-ss-qty-input {
+	flex: 1;
+	min-height: 64px;
+	font-size: 2rem;
+	font-weight: 800;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+.ee-ss-qty-unit {
+	flex: none;
+	max-width: 30%;
+	color: var(--ss-text-2);
+	font-weight: 700;
+	overflow-wrap: anywhere;
+}
+.ee-ss-mini-step {
+	flex: none;
+	width: 56px;
+	height: 56px;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 14px;
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	font-size: 1.8rem;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Bottom sheets                                                            */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-sheet-host {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	pointer-events: none;
+}
+.ee-ss-sheet-host:empty {
+	display: none;
+}
+.ee-ss-sheet-layer {
+	position: absolute;
+	inset: 0;
+	pointer-events: auto;
+}
+.ee-ss-sheet-backdrop {
+	position: absolute;
+	inset: 0;
+	background: var(--ss-backdrop);
+	opacity: 0;
+	transition: opacity var(--ss-motion) var(--ss-ease);
+}
+.ee-ss-sheet-layer.is-open .ee-ss-sheet-backdrop {
+	opacity: 1;
+}
+.ee-ss-sheet {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 640px;
+	max-height: 92vh;
+	max-height: 92dvh;
+	padding-bottom: env(safe-area-inset-bottom);
+	border-radius: 20px 20px 0 0;
+	background: var(--ss-sheet-bg);
+	color: var(--ss-text);
+	box-shadow: var(--ss-shadow-lg);
+	outline: none;
+	/* Centered with margins, not translate(-50%): half of an odd pixel width left a 1px seam
+	   of backdrop down the edge of a full-screen sheet. */
+	transform: translateY(100%);
+	transition: transform var(--ss-motion) var(--ss-ease);
+}
+.ee-ss-sheet-layer.is-open .ee-ss-sheet {
+	transform: none;
+}
+.ee-ss-sheet.is-full {
+	height: 100vh;
+	height: 100dvh;
+	max-height: none;
+	border-radius: 0;
+}
+.ee-ss-sheet-handle {
+	width: 40px;
+	height: 4px;
+	margin: 10px auto 0;
+	border-radius: 2px;
+	background: var(--ss-border-strong);
+}
+.ee-ss-sheet-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 16px 8px;
+}
+.ee-ss-sheet.is-full .ee-ss-sheet-head {
+	padding-top: calc(10px + env(safe-area-inset-top));
+}
+.ee-ss-sheet-title {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	font-size: 1.25rem;
+	font-weight: 800;
+	line-height: 1.25;
+	overflow-wrap: anywhere;
+}
+.ee-ss-sheet-close {
+	flex: none;
+	width: 48px;
+	height: 48px;
+	border: 0;
+	border-radius: 50%;
+	background: var(--ss-surface-2);
+	color: var(--ss-text);
+	font-size: 1.6rem;
+	line-height: 1;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-sheet-body {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 4px 16px 16px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+.ee-ss-sheet-text {
+	margin: 0;
+	font-size: 1.05rem;
+	line-height: 1.45;
+}
+.ee-ss-sheet-foot {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 10px 16px 16px;
+	border-top: 1px solid var(--ss-border);
+}
+.ee-ss-sheet-foot:empty {
+	display: none;
+}
+/* Take and Add side by side in "How many?": the thumb chooses a direction, not a list item. */
+.ee-ss-qty-sheet .ee-ss-sheet-foot {
+	flex-direction: row;
+	flex-wrap: wrap;
+}
+.ee-ss-qty-sheet .ee-ss-sheet-foot .ee-ss-btn-take,
+.ee-ss-qty-sheet .ee-ss-sheet-foot .ee-ss-btn-add {
+	flex: 1 1 40%;
+	min-height: 60px;
+}
+.ee-ss-qty-sheet .ee-ss-sheet-foot .ee-ss-btn-ghost {
+	flex: 1 1 100%;
+}
+
+.ee-ss-search-field {
+	position: sticky;
+	top: -4px;
+	z-index: 1;
+	padding: 4px 0 8px;
+	background: var(--ss-sheet-bg);
+}
+.ee-ss-search-status {
+	margin: 0;
+	color: var(--ss-text-2);
+}
+.ee-ss-search-status:empty {
+	display: none;
+}
+/* No answer (no signal, signed out) is not "no match": said in the take red, never gray. */
+.ee-ss-search-status.is-error {
+	color: var(--ss-take);
+	font-weight: 700;
+}
+.ee-ss-results {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.ee-ss-root .ee-ss-group-title {
+	margin: 8px 0 0;
+	color: var(--ss-text-2);
+	font-size: 0.8rem;
+	font-weight: 800;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------------ */
+/* The camera sheet (dark in both themes: it frames a live picture)         */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-sheet.is-camera {
+	background: var(--ss-cam-bg);
+	color: var(--ss-cam-fg);
+}
+.ee-ss-sheet.is-camera .ee-ss-sheet-title {
+	color: var(--ss-cam-fg);
+}
+.ee-ss-sheet.is-camera .ee-ss-sheet-close {
+	background: var(--ss-cam-button);
+	color: var(--ss-cam-fg);
+}
+.ee-ss-sheet.is-camera .ee-ss-sheet-body {
+	gap: 0;
+	padding: 0 0 16px;
+}
+.ee-ss-cam {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1 1 auto;
+	min-height: 240px;
+	overflow: hidden;
+	background: var(--ss-cam-bg);
+}
+.ee-ss-cam-video {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.ee-ss-cam-frame {
+	position: relative;
+	width: min(68vw, 280px);
+	height: min(68vw, 280px);
+	border: 3px solid var(--ss-cam-line);
+	border-radius: 20px;
+	box-shadow: 0 0 0 100vmax var(--ss-cam-dim);
+}
+.ee-ss-cam-status {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 14px;
+	margin: 0;
+	padding: 0 16px;
+	color: var(--ss-cam-fg);
+	font-size: 1.05rem;
+	font-weight: 700;
+	text-align: center;
+	text-shadow: 0 1px 3px var(--ss-cam-bg);
+}
+.ee-ss-cam-problem {
+	position: relative;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	max-width: 440px;
+	margin: 16px;
+	padding: 16px;
+	border-radius: var(--ss-radius);
+	background: var(--ss-sheet-bg);
+	color: var(--ss-text);
+}
+.ee-ss-cam-problem-text {
+	margin: 0;
+	font-size: 1.05rem;
+	font-weight: 600;
+	line-height: 1.45;
+}
+.ee-ss-cam-tools {
+	display: flex;
+	justify-content: center;
+	padding: 10px 16px 0;
+}
+.ee-ss-cam-tools:has(> [hidden]:only-child) {
+	display: none;
+}
+.ee-ss-btn.ee-ss-cam-torch {
+	width: auto;
+	background: var(--ss-cam-button);
+	border-color: var(--ss-cam-line);
+	color: var(--ss-cam-fg);
+}
+.ee-ss-btn.ee-ss-cam-torch.is-on {
+	background: var(--ss-torch-on);
+	border-color: var(--ss-torch-on);
+	color: var(--ss-torch-on-fg);
+}
+.ee-ss-cam-type {
+	padding: 12px 16px 0;
+}
+.ee-ss-cam-type-label {
+	margin: 0 0 8px;
+	color: var(--ss-cam-muted);
+	font-size: 0.95rem;
+}
+.ee-ss-cam-type-row {
+	display: flex;
+	gap: 8px;
+}
+.ee-ss-cam-type-row .ee-ss-input {
+	flex: 1;
+}
+.ee-ss-btn.ee-ss-cam-go {
+	flex: none;
+	width: auto;
+	min-width: 76px;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Toasts: above the bottom bar, one live region                            */
+/* ------------------------------------------------------------------------ */
+
+/* Below the sheets (z-index 100), not above: a toast over an open sheet covers the sheet's own
+   buttons (Take / Add in "How many?"). While a sheet is up, it is what the person is doing. */
+.ee-ss-toasts {
+	position: fixed;
+	left: 50%;
+	bottom: calc(96px + env(safe-area-inset-bottom));
+	z-index: 90;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: calc(100% - 24px);
+	max-width: 600px;
+	transform: translateX(-50%);
+	pointer-events: none;
+}
+.ee-ss-toast {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 8px 8px 12px;
+	border-radius: 14px;
+	background: var(--ss-toast-bg);
+	color: var(--ss-toast-fg);
+	box-shadow: var(--ss-shadow-lg);
+	font-size: 1rem;
+	font-weight: 600;
+	pointer-events: auto;
+	animation: ee-ss-toast-in var(--ss-motion) var(--ss-ease);
+	transition: opacity var(--ss-motion) ease;
+}
+.ee-ss-toast.is-leaving {
+	opacity: 0;
+}
+.ee-ss-toast-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background: var(--ss-toast-info);
+	color: var(--ss-toast-bg);
+	font-size: 1rem;
+}
+.ee-ss-toast.is-ok .ee-ss-toast-mark {
+	background: var(--ss-toast-ok);
+}
+.ee-ss-toast.is-error .ee-ss-toast-mark {
+	background: var(--ss-toast-err);
+}
+.ee-ss-toast-text {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 0;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+.ee-ss-toast-action {
+	flex: none;
+	min-height: 48px;
+	padding: 0 14px;
+	border: 2px solid var(--ss-toast-action);
+	border-radius: 10px;
+	background: transparent;
+	color: var(--ss-toast-action);
+	font-size: 1rem;
+	font-weight: 800;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+@keyframes ee-ss-toast-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* ------------------------------------------------------------------------ */
+/* Motion                                                                   */
+/* ------------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+	#ee-stock-scan-root *,
+	.ee-ss-sheet-host *,
+	.ee-ss-toasts * {
+		transition-duration: 0ms !important;
+		animation-duration: 0ms !important;
+		animation-iteration-count: 1 !important;
+	}
+	#ee-stock-scan-root.is-loading .ee-ss-progress {
+		animation: none;
+		background-size: 100% 100%;
+	}
+}

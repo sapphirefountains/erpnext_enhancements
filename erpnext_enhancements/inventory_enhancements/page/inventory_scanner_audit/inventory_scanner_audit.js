@@ -1,12 +1,18 @@
 // Inventory Scanner Audit — mobile-first physical-count page for inventory clerks.
 //
-// Scan a shelf/bin Storage Location, then scan items (keyboard-wedge scanner or
-// the device camera via the BarcodeDetector API) and type the counted quantity.
-// Counts accumulate in a resumable Inventory Count Session with a live system-qty
-// snapshot and variance per line; Finalize builds a DRAFT Stock Reconciliation
-// for a Stock Manager to review and submit. All data flows through
-// erpnext_enhancements.api.inventory_scanner. Theme-aware (Frappe CSS vars);
-// semantic variance colours are literal.
+// Scan a location — a Storage Location barcode, or the warehouse QR label printed for
+// the Stock Scan page (/warehouse-labels) — then scan items (keyboard-wedge scanner or
+// the device camera) and type the counted quantity. Counts accumulate in a resumable
+// Inventory Count Session with a live system-qty snapshot and variance per line;
+// Finalize builds a DRAFT Stock Reconciliation for a Stock Manager to review and
+// submit. All data flows through erpnext_enhancements.api.inventory_scanner.
+// Theme-aware (Frappe CSS vars); semantic variance colours are literal.
+//
+// Camera: the native BarcodeDetector where it reads QR codes (Chrome on Android), else
+// the vendored jsQR decoder, loaded once on first use. Every iPhone takes the jsQR path:
+// Safari has no BarcodeDetector, and before v1.521.0 the camera button simply never
+// appeared there. jsQR reads QR only, so on an iPhone an item BARCODE still needs the
+// wedge scanner or "Find item" — the location labels are QR, which is what matters.
 
 frappe.pages['inventory-scanner-audit'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -22,6 +28,13 @@ frappe.pages['inventory-scanner-audit'].on_page_show = function (wrapper) {
 };
 
 const ISA_METHOD = 'erpnext_enhancements.api.inventory_scanner.';
+// The QR decoder for browsers without a QR-capable BarcodeDetector. The version is in the
+// filename and the file is never edited, so the year-immutable /assets cache cannot serve
+// a stale copy; frappe.require loads it once and adds its own ?v= on top.
+const ISA_QR_DECODER = '/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js';
+// jsQR decodes a frame drawn at most this wide: a QR label fills a good share of the frame,
+// and a full 1080p frame costs ~5x the time for no better read.
+const ISA_QR_FRAME_WIDTH = 480;
 
 class InventoryScanner {
 	constructor(page, wrapper) {
@@ -126,7 +139,7 @@ class InventoryScanner {
 
 	renderControls() {
 		const s = this.state.session;
-		const camOn = this.state.settings.enable_camera_scan && 'BarcodeDetector' in window;
+		const camOn = this.state.settings.enable_camera_scan && this.cameraAvailable();
 		this.$cam.toggle(!!camOn);
 		if (s) {
 			this.$status.html(
@@ -144,10 +157,16 @@ class InventoryScanner {
 	renderLocation() {
 		const loc = this.state.activeLocation;
 		if (loc) {
+			// A warehouse QR label resolves with no Storage Location: its name and its
+			// warehouse are the same thing, so say it once.
+			const name = loc.location_name || loc.storage_location || loc.warehouse_name || loc.warehouse;
+			const wh = loc.warehouse_name || loc.warehouse;
 			this.$loc
 				.addClass('show')
 				.html(
-					`📍 <b>${frappe.utils.escape_html(loc.location_name || loc.storage_location)}</b> — ${frappe.utils.escape_html(loc.warehouse_name || loc.warehouse)}`
+					`📍 <b>${frappe.utils.escape_html(name)}</b>${
+						wh && wh !== name ? ` — ${frappe.utils.escape_html(wh)}` : ''
+					}`
 				);
 		} else {
 			this.$loc.removeClass('show').empty();
@@ -269,12 +288,19 @@ class InventoryScanner {
 
 	onResolved(res, code) {
 		if (!res) return;
+		// Everything the server sends back can carry text off a scanned code, and
+		// frappe.show_alert and __() both interpolate into HTML. A QR label is a string anyone
+		// can print, so a crafted one scanned by a Stock Manager must not become markup.
+		const esc = frappe.utils.escape_html;
+		// For a Stock Scan label the server answers with the code it actually looked up (the
+		// bare value inside the URL); say and search for that, never the whole URL.
+		const shown = res.code || code;
 		if (res.type === 'location') {
 			this.state.activeLocation = res;
 			this.state.pendingItem = null;
 			this.renderLocation();
 			this.renderPending();
-			frappe.show_alert({ message: __('Location: {0}', [res.location_name || res.storage_location]), indicator: 'blue' });
+			frappe.show_alert({ message: __('Location: {0}', [esc(res.location_name || res.storage_location)]), indicator: 'blue' });
 			this.focusScan();
 			return;
 		}
@@ -285,21 +311,27 @@ class InventoryScanner {
 				return;
 			}
 			if (res.disabled) {
-				frappe.show_alert({ message: __('Item {0} is disabled.', [res.item_code]), indicator: 'red' });
+				frappe.show_alert({ message: __('Item {0} is disabled.', [esc(res.item_code)]), indicator: 'red' });
 			}
 			if (res.has_serial_no || res.has_batch_no) {
 				frappe.show_alert({ message: __('Serial/batch item — count posts at warehouse qty only.'), indicator: 'orange' });
 			}
-			res.scanned_barcode = code;
+			res.scanned_barcode = shown;
 			this.state.pendingItem = res;
 			this.renderPending();
 			return;
 		}
-		// unknown
+		// unknown. A reason from the server (a group or disabled warehouse's label) is said
+		// as it is: an item search pre-filled with a label URL helps nobody.
+		if (res.message) {
+			frappe.show_alert({ message: esc(res.message), indicator: 'orange' });
+			this.focusScan();
+			return;
+		}
 		if (this.state.settings.allow_unknown_item) {
-			this.openItemSearch(code);
+			this.openItemSearch(shown);
 		} else {
-			frappe.show_alert({ message: __('Unknown barcode: {0}', [code]), indicator: 'red' });
+			frappe.show_alert({ message: __('Unknown barcode: {0}', [esc(shown)]), indicator: 'red' });
 			this.focusScan();
 		}
 	}
@@ -420,58 +452,144 @@ class InventoryScanner {
 		}, 100);
 	}
 
-	// ----- camera scan (BarcodeDetector) -----
+	// ----- camera scan (BarcodeDetector where it reads QR, else jsQR) -----
+	cameraAvailable() {
+		// getUserMedia exists only in a secure context (https, or localhost). This, not
+		// BarcodeDetector, is what decides whether the camera button shows.
+		return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+	}
+
+	// Resolves to {read, qrOnly} — read(video) reads one frame and resolves to the code or
+	// null — or to null when no decoder could be had. BarcodeDetector is used only when it
+	// lists qr_code: the location labels are QR, and a detector that cannot read them makes
+	// a camera that never fires. It is built with no formats, so it still reads every 1D
+	// barcode the device supports, as it always has.
+	qrReader() {
+		const formats =
+			'BarcodeDetector' in window && typeof window.BarcodeDetector.getSupportedFormats === 'function'
+				? window.BarcodeDetector.getSupportedFormats().catch(() => [])
+				: Promise.resolve([]);
+		return formats.then((supported) => {
+			if ((supported || []).includes('qr_code')) {
+				const detector = new window.BarcodeDetector();
+				return {
+					qrOnly: false,
+					read: (video) =>
+						detector.detect(video).then((codes) => (codes && codes.length ? codes[0].rawValue : null)),
+				};
+			}
+			return frappe.require(ISA_QR_DECODER).then(() => {
+				// frappe.require resolves even when the script failed to load.
+				if (typeof window.jsQR !== 'function') return null;
+				const canvas = document.createElement('canvas');
+				const ctx = canvas.getContext('2d', { willReadFrequently: true });
+				return {
+					qrOnly: true,
+					read: (video) => {
+						const vw = video.videoWidth;
+						const vh = video.videoHeight;
+						if (!vw || !vh) return null;
+						const w = Math.min(ISA_QR_FRAME_WIDTH, vw);
+						const h = Math.round(vh * (w / vw));
+						if (canvas.width !== w || canvas.height !== h) {
+							canvas.width = w;
+							canvas.height = h;
+						}
+						ctx.drawImage(video, 0, 0, w, h);
+						// Always these same options: jsQR folds the options it is given into its
+						// module defaults, so one call with others would change every later call.
+						const hit = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, {
+							inversionAttempts: 'dontInvert',
+						});
+						return hit && hit.data ? hit.data : null;
+					},
+				};
+			});
+		});
+	}
+
 	openCamera() {
 		const app = this;
-		if (!('BarcodeDetector' in window)) {
-			frappe.msgprint(__('Camera scanning is not supported in this browser. Use a hardware/Bluetooth scanner or “Find item”.'));
+		if (!this.cameraAvailable()) {
+			frappe.msgprint(
+				__('The camera needs a secure (https) connection and a browser that allows camera access. Use a hardware/Bluetooth scanner or “Find item”.')
+			);
 			return;
 		}
-		const d = new frappe.ui.Dialog({ title: __('Camera Scan'), size: 'small' });
-		d.$body.html(
-			`<video class="isa-video" playsinline muted></video><div class="text-muted" style="margin-top:6px;">${__('Point the camera at a barcode or QR code.')}</div>`
-		);
-		const video = d.$body.find('video')[0];
-		const detector = new window.BarcodeDetector();
-		let stream = null;
-		let stopped = false;
-		const cleanup = () => {
-			stopped = true;
-			if (stream) stream.getTracks().forEach((t) => t.stop());
-		};
-		const tick = () => {
-			if (stopped) return;
-			detector
-				.detect(video)
-				.then((codes) => {
-					if (stopped) return;
-					if (codes && codes.length) {
-						const val = codes[0].rawValue;
-						cleanup();
-						d.hide();
-						app.handleScan(val);
-					} else {
-						setTimeout(tick, 200);
+		this.qrReader().then((reader) => {
+			if (!reader) {
+				frappe.msgprint(
+					__('Could not load the QR code reader. Check the connection, or use a hardware/Bluetooth scanner or “Find item”.')
+				);
+				return;
+			}
+			const hint = reader.qrOnly
+				? __('Point the camera at a QR code. For an item barcode, use a scanner or “Find item”.')
+				: __('Point the camera at a barcode or QR code.');
+			const d = new frappe.ui.Dialog({ title: __('Camera Scan'), size: 'small' });
+			d.$body.html(
+				`<video class="isa-video" playsinline muted autoplay></video><div class="text-muted" style="margin-top:6px;">${hint}</div>`
+			);
+			const video = d.$body.find('video')[0];
+			video.muted = true; // iOS plays inline, unprompted, only when muted
+			let stream = null;
+			let stopped = false;
+			let timer = null;
+			const later = (fn, ms) => {
+				if (!stopped) timer = setTimeout(fn, ms);
+			};
+			// A phone that locks with the dialog open must not keep the camera running.
+			const onHidden = () => {
+				if (document.hidden) d.hide();
+			};
+			const cleanup = () => {
+				stopped = true;
+				clearTimeout(timer);
+				document.removeEventListener('visibilitychange', onHidden);
+				if (stream) stream.getTracks().forEach((t) => t.stop());
+			};
+			const tick = () => {
+				if (stopped) return;
+				if (video.readyState < 2) {
+					later(tick, 200);
+					return;
+				}
+				Promise.resolve()
+					.then(() => reader.read(video))
+					.then((val) => {
+						if (stopped) return;
+						if (val) {
+							cleanup();
+							d.hide();
+							app.handleScan(val);
+						} else {
+							later(tick, 180);
+						}
+					})
+					.catch(() => later(tick, 300));
+			};
+			d.onhide = cleanup;
+			d.show();
+			document.addEventListener('visibilitychange', onHidden);
+			navigator.mediaDevices
+				.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+				.then((s) => {
+					if (stopped) {
+						// Closed while the permission prompt was up.
+						s.getTracks().forEach((t) => t.stop());
+						return;
 					}
+					stream = s;
+					video.srcObject = s;
+					const playing = video.play();
+					if (playing && playing.catch) playing.catch(() => {});
+					tick();
 				})
 				.catch(() => {
-					if (!stopped) setTimeout(tick, 300);
+					frappe.msgprint(__('Could not access the camera.'));
+					d.hide();
 				});
-		};
-		navigator.mediaDevices
-			.getUserMedia({ video: { facingMode: 'environment' } })
-			.then((s) => {
-				stream = s;
-				video.srcObject = s;
-				video.play();
-				tick();
-			})
-			.catch(() => {
-				frappe.msgprint(__('Could not access the camera.'));
-				d.hide();
-			});
-		d.onhide = cleanup;
-		d.show();
+		});
 	}
 
 	// ----- styles (theme-aware; semantic variance colours literal) -----

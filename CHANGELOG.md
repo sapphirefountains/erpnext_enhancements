@@ -7,6 +7,183 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.521.0] - 2026-09-23
+
+**Stock Scan: a QR label on every shelf, and a phone page that takes and adds stock.** Every
+warehouse that can hold stock now gets a printable QR label. Scanning it with a phone's own
+camera opens `/stock-scan` on that location: the items kept there, each with a big − and +, and
+Save. A technician scans a bin, taps − for what they grabbed and saves; a receiver scans, taps +
+and saves; either one taps **Scan next** for the next shelf, or **Search** for an item by name.
+Every save changes inventory the moment it returns, and can be undone from the page. Asked for by
+Nik on 2026-09-23, who also made the three accounting calls this is built on: "+" receives against
+the item's open purchase order, a take can be charged to a job, and saves post immediately.
+
+### Added
+
+- **`/warehouse-labels`: printable QR labels** for every leaf, enabled, non-transit warehouse
+  (176 on production), on **Avery 5160** (30 per sheet, 2⅝ × 1 in), **Avery 5163** (10 per sheet,
+  4 × 2 in) or a **2 × 1 in label printer**. Each label carries the QR code, the location's name
+  and its breadcrumb (`Inventory › Row 2 › Bay B1 › Shelf B1-2`). Print one group ("Locations
+  under"), untick locations you don't want, and skip the labels already used on a part sheet.
+  Labels sort naturally, so `Bin B1-2-9` comes before `Bin B1-2-10`: the warehouse tree's own
+  order is creation order, and on production it already reads `C2-3-6` before `C2-3-5`. The
+  Warehouse form has **QR Label** and **Open Stock Scan** (on a location) or **Print QR Labels**
+  (on a group) under a Stock Scan menu.
+- **`/stock-scan`: the scan page.** Phone-first, chrome-free, light and dark, one hand.
+  - **Take (−)** posts a submitted **Stock Entry, Material Issue** from the location. The
+    technician can pick a **job** once per run (the chip at the top); every take is then charged
+    to that Project, so the part's cost lands on the job through ERPNext's own
+    `update_cost_in_project`. Optional by default; **Require a Job for Every Take** makes it
+    mandatory.
+  - **Add (+)** asks **"Where did these come from?"** and lists the item's **open purchase order
+    lines** ("PO-00042 · Pentair · 5 of 10 still to come · due Sep 30"). Picking one posts a real
+    **Purchase Receipt** into the scanned bin through the same code as the order's own Receive
+    Items dialog (`api.procurement.receive_order_line` → `receive_items`), so the order's received
+    quantity, % Received, status and Order Stage move exactly as they do from the Desk. While a job
+    is picked, **Returned from <job>** books parts coming back from that job; **Not on a purchase
+    order** covers found stock. Both post a **Material Receipt** at the item's current cost and flag
+    the save for a Stock Manager to review.
+  - **Move here from…** puts stock away: a **Material Transfer** from wherever it is recorded into
+    the scanned location. On the day this shipped every bin on production was empty and every unit
+    of stock sat in `Stores - SF` or `Inventory Room - SF`, so this is how the bins fill; without it
+    a technician's first scan would find nothing to take.
+  - **Scan next** reads the next label inside the page: the phone's `BarcodeDetector` where it
+    reads QR (Chrome on Android), else the vendored **jsQR 1.4.0** decoder (every iPhone — Safari
+    has no `BarcodeDetector`). A keyboard-wedge or Bluetooth scanner works anywhere on the page.
+  - **Search** finds items by any words of their code or name (or an exact barcode), and
+    locations by name. A receiver at an empty bin searches for the item and adds it there.
+  - **Recent** lists your own saves with **Undo**: for 30 minutes to the person who saved
+    (**Undo Window**, settable), any time to a Stock Manager. Undo cancels the voucher, so ERPNext
+    still refuses what it would refuse in the Desk — undoing a receipt whose stock has since been
+    taken says so.
+- **`Stock Scan Log`** (Inventory Enhancements): one row per save — who, what, where, the job, the
+  order line and the voucher it posted. It is the page's history, its Undo, and the **review
+  queue**: stock added without a purchase order sets **Needs Review** until a Stock Manager ticks
+  **Reviewed**. Rows are written only by the page; after that only Reviewed and the review note can
+  change, and who reviewed it and when are stamped by the server.
+- **Inventory Scanner Settings → Stock Scan Page**: the **Parts Taken** expense account (also used
+  by maintenance consumables and returns from a job), the **Added Without PO** offset account, a
+  **Cost Center**, **Require a Job for Every Take**, and the **Undo Window**. The account pickers
+  offer only accounts a Stock Entry row can post to. Shipped with
+  `patches/backfill_stock_scan_settings_defaults`, since a default on a new field of a Single never
+  reaches the row that already exists.
+- **Workspaces**: Stock Scan and Warehouse QR Labels shortcuts and the Stock Scan Log on
+  Inventory Enhancements; Stock Scan and the log on the Production Hub
+  (`patches/reload_stock_scan_workspaces`, because workspace JSON only re-syncs when its `modified`
+  moves — which also brings in the Reports card v1.337.0 added to Inventory Enhancements without a
+  bump, so it had probably never appeared on an existing site).
+
+### Changed
+
+- **One label, two scanners.** The count page (Inventory Scanner Audit) reads the new warehouse
+  labels as locations, and a bare warehouse name typed into its scan box works too. Its camera now
+  works on iPhones: it used `BarcodeDetector` alone, so the button never appeared in Safari; it
+  falls back to the same jsQR decoder.
+- **`api.procurement.receive_items`** takes an optional `warehouse` (receive into a location other
+  than the order line's) and `remarks`. It grants nothing new: a user who can create and submit a
+  receipt can already change the warehouse on Create > Purchase Receipt.
+
+### Fixed
+
+- **A submitted Sapphire Maintenance Record could never have issued its consumables.**
+  `api/maintenance_workflow.create_stock_entry` set `purpose = "Material Issue"` and appended rows
+  with no difference account. On v16 both fail: `stock_entry_type` is mandatory and `purpose` is
+  only a read-only fetch from it — `validate` never derives one from the other; ERPNext's own
+  builders call `set_stock_entry_type()` by hand — and with perpetual inventory on,
+  `validate_difference_account` refuses a row with no account, because production's Company has no
+  Stock Adjustment Account and no Item names one. It never actually failed only because no
+  maintenance record has been submitted on production yet (all 18 are drafts). It now sets the
+  type, takes each row's account from the shared resolver below, and sets the header project so
+  ERPNext's cost-center default can read it.
+
+### Security
+
+- **The count page no longer renders scanned text as HTML.** Its "Unknown barcode" alert
+  interpolated the raw scanned string into `frappe.show_alert`, which builds HTML — so a crafted QR
+  code or barcode, scanned by a Stock Manager, became markup in their Desk session. The new
+  unknown-location alert had the same shape. Both now escape at the sink.
+
+### Why it is built this way
+
+- **The label is a URL, not a code.** A phone's own camera app opens a URL straight into the
+  browser, so the first scan of a run needs no app and no button. It is a **query string**
+  (`/stock-scan?w=Bin%20B1-2-10%20-%20SF`), not a path, so it survives the login round trip and
+  needs no `website_route_rules` entry (and no `website_404` cache trap). The page never changes
+  its own URL afterwards: iOS asks for camera permission again on every URL change.
+- **Receiving is PO-first, on purpose.** Every receipt on production so far is a Purchase Receipt
+  against an order. A plain Material Receipt for goods that are on an order would count them twice
+  the day the order's own receipt arrives, and credit Stock Adjustment instead of Stock Received
+  But Not Billed. So the page offers the order lines first and adds without one only when told to,
+  and flags it.
+- **A return credits the account the take charged.** An add without a PO *with* a job offsets to
+  the Parts Taken account, so the job's cost nets by project in the ledger. ERPNext's own
+  `Project.total_consumed_material_cost` counts Material Issue rows only and is not reduced by a
+  receipt — only cancelling the issue does that. The field is hidden on this site's Project form
+  and nothing here reads it; the ledger is right.
+- **Every voucher posts as the person scanning.** After the role gate (System Manager, Stock
+  Manager, Stock User, Inventory Clerk) nothing is inserted, submitted or cancelled with
+  `ignore_permissions`, so the page can do nothing the Desk would refuse, and User Permissions still
+  apply. Only the log row, the page's own record, is written past permissions.
+- **A retried save does not post twice.** The page mints a `client_ref` for each save and resends
+  it on a retry within ten minutes; it is unique on the log, and the log row is inserted before the
+  voucher in the same transaction. A retry that finds the first save returns it and says so ("That
+  save was already recorded"); one that arrives while the first is still committing gets a 409 and
+  keeps the same reference, so the next tap finds it rather than posting again.
+- **`inventory_enhancements/stock_accounts.difference_account` is the one rule for a Stock Entry
+  row's other side**: the Item's default, its Item Group's, the Inventory Scanner Settings account,
+  the Company's Stock Adjustment Account, then the company's only Stock Adjustment account
+  (`5119 - Stock Adjustment - SF` on production). ERPNext's own chain stops at the Company, which
+  is empty on production, so every Material Issue would otherwise be refused. Setting
+  `Company.stock_adjustment_account` would make the last step unnecessary; that is accounting's
+  call, not a deploy's.
+- **A receipt without a PO carries an explicit cost.** A Material Receipt with no rate is refused
+  at submit ("Valuation Rate Missing") — or, submitted straight from new, silently posts stock at
+  zero. The page uses the item's last rate at that location, else its average across the company,
+  else its last purchase rate or Valuation Rate, and refuses rather than post at zero.
+- **Jobs are "Active", not "Open".** This site renames ERPNext's Open to Active (411 of them on
+  production, and zero Open), so the job rule is a deny-list of closed statuses. The picker lists
+  with `get_all` behind a doctype-level read check: every user here has a User Permission on their
+  own Employee record, and Project's owner and technical-lead links would otherwise hide every job
+  led by someone else.
+- **Serial, batch, variant, customer-provided and non-stock items are shown but not moved.**
+  ERPNext would auto-pick serial numbers FIFO on an issue, which is wrong for serialised equipment.
+  Only 111 of 824 items on production are stock items; an item needs Maintain Stock on to live in
+  a bin.
+- **An expired session says so.** On v16 an expired session becomes Guest, and every whitelisted
+  call then answers 403 "not whitelisted" rather than 401, so the page recognises that shape (and
+  `session_expired`) and offers Reload instead of an endless Try again.
+
+### Tests
+
+- `tests/test_stock_scan_rules.py` (35, bench-free, its own CI step with `PyQRCode~=1.2.1`
+  installed so the real encoder runs): scan parsing, quantities, undo eligibility, label geometry
+  that must add up to the sheet, the login redirect, and a real label URL encoded small enough to
+  read on a 1-inch label.
+- `tests/data/stock_scan_parse_vectors.json` (37 cases), run through both the server's
+  `parse_scan` and the page's twin, so the two cannot drift.
+- `tests/test_stock_scan_surface.py` (69): the page's endpoint map equals the whitelisted POST
+  functions; access is checked first; no voucher is posted or cancelled with `ignore_permissions`;
+  every Stock Entry row carries a difference account and every receipt a rate; the log is written
+  after every refusal and before every voucher; the shells redirect a guest before the role check;
+  no `innerHTML`, `frappe.` or `pushState` in the page's code; the settings' defaults match the
+  controller and the backfill patch.
+- `tests/test_stock_scan_theme.py` (26): the page's light and two identical dark palettes.
+- `tests/test_stock_entry_builders.py` (8): every Stock Entry this app builds sets
+  `stock_entry_type` and takes each row's account from the one resolver, and the list of builders
+  is pinned. Run against the `maintenance_workflow.py` that was on `main`, it reports exactly the
+  two bugs fixed above.
+- `scripts/test_stock_scan_client.mjs` (160 checks, plain node): the page's pure logic, error
+  sentences (CSRF, signed-out, 409), retry-reference rules, and `call()` over a stubbed `fetch`.
+- `tests/test_po_receive_items.py` (+8): `receive_order_line` shares every check of
+  `receive_items` and posts nothing itself.
+- `tests/test_inventory_scanner.py`: bench cases for the count page reading warehouse labels. **Not
+  run** — there is no bench here.
+- Checked by hand: every printed QR code decodes back to its exact URL, rasterised as small as
+  90 px; the sheet geometry measures exact in inches; the page was driven end to end against a
+  stubbed server at 320 and 375 px, light and dark; the location, search, open-order and job queries
+  were run read-only against production's data. **Not yet done:** a real take, receive, move and
+  undo on a bench or the test site, and a real phone camera.
+
 ## [1.519.0] - 2026-09-23
 
 **Every procurement document prints in the Purchase Order's design.** `Purchase Order - Sapphire`

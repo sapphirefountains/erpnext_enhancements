@@ -1,0 +1,321 @@
+{
+ "actions": [],
+ "autoname": "format:SCAN-{YYYY}-{#####}",
+ "creation": "2026-09-23 12:00:00.000000",
+ "description": "One save on the Stock Scan page (/stock-scan): who moved what, where, and the stock voucher it posted. Written by the page, never by hand.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "posted_at",
+  "posted_by",
+  "action",
+  "status",
+  "column_break_head",
+  "item_code",
+  "item_name",
+  "qty",
+  "stock_uom",
+  "where_section",
+  "warehouse",
+  "from_warehouse",
+  "project",
+  "column_break_where",
+  "purchase_order",
+  "purchase_order_item",
+  "voucher_type",
+  "voucher_no",
+  "review_section",
+  "needs_review",
+  "reviewed",
+  "reviewed_by",
+  "reviewed_on",
+  "column_break_review",
+  "review_note",
+  "undo_section",
+  "undone_by",
+  "undone_at",
+  "column_break_undo",
+  "scanned_code",
+  "client_ref"
+ ],
+ "fields": [
+  {
+   "fieldname": "posted_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Posted At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "posted_by",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Posted By",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Action",
+   "options": "Take\nReceive\nAdd Without PO\nMove",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Posted",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Posted\nUndone",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Item",
+   "options": "Item",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "As it was when scanned. Fetched once, so renaming the Item later neither rewrites history nor trips this log's immutability check on the next review save.",
+   "fetch_from": "item_code.item_name",
+   "fetch_if_empty": 1,
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "description": "In the item's stock UOM. Always positive; the Action says which way it moved.",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "Stock UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "where_section",
+   "fieldtype": "Section Break",
+   "label": "Where"
+  },
+  {
+   "description": "The scanned location. Stock was taken from it, received into it, or moved into it.",
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Location",
+   "options": "Warehouse",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.action=='Move'",
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "label": "Moved From",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Job",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_where",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.action=='Receive'",
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "label": "Purchase Order",
+   "options": "Purchase Order",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.action=='Receive'",
+   "fieldname": "purchase_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Purchase Order Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "voucher_type",
+   "fieldtype": "Link",
+   "label": "Voucher Type",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "voucher_no",
+   "fieldtype": "Dynamic Link",
+   "label": "Voucher",
+   "options": "voucher_type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "default": "0",
+   "description": "Stock added without a purchase order. A Stock Manager should confirm where it came from.",
+   "fieldname": "needs_review",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Needs Review",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "needs_review",
+   "fieldname": "reviewed",
+   "fieldtype": "Check",
+   "label": "Reviewed"
+  },
+  {
+   "depends_on": "reviewed",
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "depends_on": "reviewed",
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "needs_review",
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "undo_section",
+   "fieldtype": "Section Break",
+   "label": "Undo and Source"
+  },
+  {
+   "fieldname": "undone_by",
+   "fieldtype": "Link",
+   "label": "Undone By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "undone_at",
+   "fieldtype": "Datetime",
+   "label": "Undone At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_undo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What was scanned or searched to reach this item, when known.",
+   "fieldname": "scanned_code",
+   "fieldtype": "Data",
+   "label": "Scanned Code",
+   "read_only": 1
+  },
+  {
+   "description": "The page's key for this save. A retried or double-tapped save carries the same key and returns this row instead of posting twice.",
+   "fieldname": "client_ref",
+   "fieldtype": "Data",
+   "label": "Client Reference",
+   "read_only": 1,
+   "unique": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Stock Scan Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock User"
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Inventory Clerk"
+  }
+ ],
+ "sort_field": "posted_at",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "item_name",
+ "track_changes": 1
+}

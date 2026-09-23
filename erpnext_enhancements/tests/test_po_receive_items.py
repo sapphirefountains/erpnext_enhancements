@@ -51,16 +51,23 @@ def _whitelist_decorator(node):
 
 def _strip_prose(source):
 	"""Source with docstrings and ``#`` comments removed, so a rule discussed in prose is
-	not matched as if it were code — the trap the chat work fell into three times."""
+	not matched as if it were code — the trap the chat work fell into three times.
+
+	Every docstring is located against the source *as parsed* before any is removed: removing
+	the module docstring first shifts every later line, and on a whole file the next lookup
+	then reads the wrong text or runs off the end (IndexError).
+	"""
 	tree = ast.parse(source)
+	docstrings = []
 	for node in ast.walk(tree):
 		if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
 			body = getattr(node, "body", None)
 			if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
 				if isinstance(body[0].value.value, str):
-					segment = ast.get_source_segment(source, body[0].value) or ""
-					if segment:
-						source = source.replace(segment, "", 1)
+					docstrings.append(ast.get_source_segment(source, body[0].value) or "")
+	for segment in docstrings:
+		if segment:
+			source = source.replace(segment, "", 1)
 	return re.sub(r"#.*$", "", source, flags=re.M)
 
 
@@ -149,3 +156,163 @@ def test_form_script_does_not_cap_at_pending():
 
 def test_endpoint_is_documented_in_the_api_map():
 	assert f"`{ENDPOINT}`" in API_README.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# The Stock Scan page's "+" (v1.521.0): one order line, into the scanned location
+#
+# The page receives through ``receive_order_line`` -> ``receive_items``, so the page and the
+# order's Receive Items dialog cannot disagree about what may be received. What can go wrong
+# silently: the helper growing a receipt path of its own (a second mapper, a second set of
+# checks, an ignore_permissions), the helper becoming dialable over HTTP without the page's
+# gate, and the dialog's receipts being put somewhere other than the order line's warehouse
+# because a new ``warehouse`` argument leaked out of its ``if``.
+# ---------------------------------------------------------------------------
+
+LINE_HELPER = "receive_order_line"
+WAREHOUSE_HELPER = "_receiving_warehouse"
+
+
+def _function(name):
+	for node in ast.parse(API.read_text(encoding="utf-8")).body:
+		if isinstance(node, ast.FunctionDef) and node.name == name:
+			return node
+	raise AssertionError(f"{name} is not defined in api/procurement.py")
+
+
+def _function_source(name):
+	return ast.get_source_segment(API.read_text(encoding="utf-8"), _function(name)) or ""
+
+
+def _calls_named(node, name):
+	return [
+		sub
+		for sub in ast.walk(node)
+		if isinstance(sub, ast.Call) and ast.unparse(sub.func).split(".")[-1] == name
+	]
+
+
+def test_receive_order_line_is_not_reachable_over_http():
+	"""The page reaches it only through ``api.stock_scan.add``, which checks the page's roles
+	and the ``client_ref`` first. Whitelisted, it would be a second door with neither."""
+	assert _whitelist_decorator(_function(LINE_HELPER)) is None
+	assert _whitelist_decorator(_function(WAREHOUSE_HELPER)) is None
+
+
+def test_receive_order_line_owns_no_receipt_of_its_own():
+	"""Every refusal and the receipt itself are ``receive_items``'. A second mapper, insert or
+	submit here would be a second copy of that path, with its own idea of what is allowed."""
+	body = _strip_prose(_function_source(LINE_HELPER))
+	assert "receive_items(" in body
+	for forbidden in (
+		"make_purchase_receipt(",
+		".insert(",
+		".submit(",
+		"ignore_permissions",
+		"set_user",
+		".commit(",
+	):
+		assert forbidden not in body, f"receive_order_line must not contain {forbidden}"
+
+
+def test_receive_order_line_hands_on_the_location_and_converts_the_unit():
+	"""The page counts in the stock UOM; a receipt row is in the order line's UOM."""
+	calls = _calls_named(_function(LINE_HELPER), "receive_items")
+	assert len(calls) == 1
+	keywords = {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
+	assert keywords.get("warehouse") == "warehouse", "the scanned location must reach the receipt"
+	assert keywords.get("remarks") == "remarks"
+	body = _strip_prose(_function_source(LINE_HELPER))
+	assert "to_order_uom(" in body
+	unparsed = ast.unparse(_function(LINE_HELPER))
+	assert "line.parenttype != 'Purchase Order'" in unparsed, "the line must belong to a Purchase Order"
+	assert "line.item_code != item_code" in body, "the line must be for the item that was scanned"
+
+
+def test_only_the_stock_scan_endpoint_calls_it():
+	callers = []
+	for path in sorted(APP.rglob("*.py")):
+		if "tests" in path.relative_to(APP).parts or path == API:
+			continue
+		source = path.read_text(encoding="utf-8")
+		if f"{LINE_HELPER}(" in source and f"{LINE_HELPER}(" in _strip_prose(source):
+			callers.append(path.relative_to(APP).as_posix())
+	assert callers == ["api/stock_scan.py"]
+
+
+def test_receive_items_keeps_the_dialogs_signature():
+	"""The dialog sends ``purchase_order, rows, posting_date``; the two new arguments default
+	to None so that call means exactly what it meant before."""
+	args = _endpoint().args
+	names = [a.arg for a in args.args]
+	assert names[:3] == ["purchase_order", "rows", "posting_date"]
+	defaults = dict(
+		zip(names[len(names) - len(args.defaults) :], (ast.unparse(d) for d in args.defaults), strict=True)
+	)
+	assert defaults.get("posting_date") == "None"
+	assert defaults.get("warehouse") == "None"
+	assert defaults.get("remarks") == "None"
+
+
+def _parents(tree):
+	parents = {}
+	for node in ast.walk(tree):
+		for child in ast.iter_child_nodes(node):
+			parents[child] = node
+	return parents
+
+
+def _inside_if_target(node, parents):
+	child, parent = node, parents.get(node)
+	while parent is not None:
+		if isinstance(parent, ast.If) and ast.unparse(parent.test) == "target" and child in parent.body:
+			return True
+		child, parent = parent, parents.get(parent)
+	return False
+
+
+def test_the_warehouse_is_only_changed_when_one_was_asked_for():
+	"""Outside ``if target`` the dialog's receipts would land in ``None``, or in the last
+	scanned bin, instead of the order line's warehouse."""
+	fn = _endpoint()
+	parents = _parents(fn)
+	writes = [
+		(ast.unparse(target), node)
+		for node in ast.walk(fn)
+		if isinstance(node, ast.Assign)
+		for target in node.targets
+		if isinstance(target, ast.Attribute) and target.attr in ("warehouse", "set_warehouse")
+	]
+	# Both the header and every row: ERPNext never pushes the header into the rows.
+	assert {name for name, _node in writes} == {"receipt.set_warehouse", "item.warehouse"}
+	for name, node in writes:
+		assert _inside_if_target(node, parents), f"{name} is assigned outside `if target:`"
+
+
+def test_the_location_is_checked_after_the_permissions_and_before_the_receipt():
+	fn = _endpoint()
+	assigns = [
+		node
+		for node in ast.walk(fn)
+		if isinstance(node, ast.Assign)
+		and any(isinstance(t, ast.Name) and t.id == "target" for t in node.targets)
+	]
+	assert len(assigns) == 1, "target is computed once"
+	assert f"{WAREHOUSE_HELPER}(" in ast.unparse(assigns[0].value)
+	permission_lines = [
+		call.lineno for name in ("has_permission", "check_permission") for call in _calls_named(fn, name)
+	]
+	assert permission_lines, "receive_items checks permissions"
+	# A refusal about the location must not leak before a permission one.
+	assert assigns[0].lineno > max(permission_lines)
+	mapper = _calls_named(fn, "make_purchase_receipt")
+	assert mapper and assigns[0].lineno < min(call.lineno for call in mapper)
+
+
+def test_the_receiving_warehouse_refuses_what_erpnext_would():
+	"""Group, disabled and another company's warehouse: ERPNext refuses all three later, in
+	words about a Stock Ledger Entry. Here they are sentences, before a document exists."""
+	body = _strip_prose(_function_source(WAREHOUSE_HELPER))
+	for check in ("if not row:", "row.is_group", "row.disabled", "row.company != company"):
+		assert check in body, f"_receiving_warehouse no longer checks {check}"
+	assert body.count("frappe.throw(") >= 4

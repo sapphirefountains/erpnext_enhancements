@@ -1,0 +1,224 @@
+[
+  {
+    "why": "A printed label: the host and %20-encoded warehouse name scan_url writes.",
+    "raw": "https://erp.sapphirefountains.com/stock-scan?w=Bin%20B1-2-10%20-%20SF",
+    "kind": "warehouse",
+    "value": "Bin B1-2-10 - SF"
+  },
+  {
+    "why": "+ is a space in a query string, in both parsers.",
+    "raw": "https://erp.sapphirefountains.com/stock-scan?w=Bin+B1-2-10+-+SF",
+    "kind": "warehouse",
+    "value": "Bin B1-2-10 - SF"
+  },
+  {
+    "why": "An encoded plus (%2B) is a literal plus, not a space.",
+    "raw": "https://erp.sapphirefountains.com/stock-scan?w=Rack%2BShelf%20-%20SF",
+    "kind": "warehouse",
+    "value": "Rack+Shelf - SF"
+  },
+  {
+    "why": "A label printed on another site still resolves: only the path and query identify it.",
+    "raw": "https://beta.erp.sapphirefountains.com/stock-scan?w=Stores%20-%20SF",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "Plain http and a port are accepted too.",
+    "raw": "http://localhost:8000/stock-scan?w=Stores%20-%20SF",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "A relative /stock-scan path, as a hand-typed or keyboard-wedge code might arrive.",
+    "raw": "/stock-scan?w=Inventory%20Room%20-%20SF",
+    "kind": "warehouse",
+    "value": "Inventory Room - SF"
+  },
+  {
+    "why": "A trailing slash on the path is allowed.",
+    "raw": "https://erp.sapphirefountains.com/stock-scan/?w=Stores%20-%20SF",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "A relative path with a trailing slash.",
+    "raw": "/stock-scan/?w=Stores%20-%20SF",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "item= opens an item.",
+    "raw": "https://x.test/stock-scan?item=PDT-0008",
+    "kind": "item",
+    "value": "PDT-0008"
+  },
+  {
+    "why": "loc= is a Storage Location.",
+    "raw": "https://x.test/stock-scan?loc=MAIN-A-03-B",
+    "kind": "storage_location",
+    "value": "MAIN-A-03-B"
+  },
+  {
+    "why": "w wins over item, whatever order they are written in.",
+    "raw": "https://x.test/stock-scan?item=PDT-1&w=Stores%20-%20SF",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "item wins over loc.",
+    "raw": "https://x.test/stock-scan?loc=MAIN-A-03-B&item=PDT-1",
+    "kind": "item",
+    "value": "PDT-1"
+  },
+  {
+    "why": "An empty w= is skipped and the next key is tried.",
+    "raw": "https://x.test/stock-scan?w=&item=PDT-1",
+    "kind": "item",
+    "value": "PDT-1"
+  },
+  {
+    "why": "A w= that is only spaces is blank too, so the next key is tried.",
+    "raw": "https://x.test/stock-scan?w=%20%20&loc=MAIN-A-03-B",
+    "kind": "storage_location",
+    "value": "MAIN-A-03-B"
+  },
+  {
+    "why": "The value is trimmed.",
+    "raw": "https://x.test/stock-scan?w=%20Stores%20-%20SF%20",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "With w repeated, the first one counts.",
+    "raw": "https://x.test/stock-scan?w=Stores%20-%20SF&w=Bin%20A1-3-1%20-%20SF",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "A fragment is not part of the value.",
+    "raw": "https://x.test/stock-scan?w=Stores%20-%20SF#top",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "UTF-8 percent-encoding decodes.",
+    "raw": "https://x.test/stock-scan?w=Caf%C3%A9%20Shelf",
+    "kind": "warehouse",
+    "value": "Café Shelf"
+  },
+  {
+    "why": "Leading and trailing whitespace around the whole scan is ignored.",
+    "raw": "  https://x.test/stock-scan?w=Stores%20-%20SF \n",
+    "kind": "warehouse",
+    "value": "Stores - SF"
+  },
+  {
+    "why": "Our page with an empty w= and nothing else is text: it names no location.",
+    "raw": "https://x.test/stock-scan?w=",
+    "kind": "text",
+    "value": "https://x.test/stock-scan?w="
+  },
+  {
+    "why": "Our page with no query at all is text.",
+    "raw": "https://x.test/stock-scan",
+    "kind": "text",
+    "value": "https://x.test/stock-scan"
+  },
+  {
+    "why": "Query keys are case-sensitive: W= is not w=.",
+    "raw": "https://x.test/stock-scan?W=Stores",
+    "kind": "text",
+    "value": "https://x.test/stock-scan?W=Stores"
+  },
+  {
+    "why": "A foreign URL is text, never a guess (a swapped sticker must not become a location).",
+    "raw": "https://example.com/products?w=Stores",
+    "kind": "text",
+    "value": "https://example.com/products?w=Stores"
+  },
+  {
+    "why": "A path that only starts with stock-scan is a different page.",
+    "raw": "https://x.test/stock-scanner?w=Stores",
+    "kind": "text",
+    "value": "https://x.test/stock-scanner?w=Stores"
+  },
+  {
+    "why": "A relative path that only starts with /stock-scan is a different page too.",
+    "raw": "/stock-scanner?w=Stores",
+    "kind": "text",
+    "value": "/stock-scanner?w=Stores"
+  },
+  {
+    "why": "Without a scheme or a leading slash it is not a URL at all, so it is a code.",
+    "raw": "stock-scan?w=Stores",
+    "kind": "text",
+    "value": "stock-scan?w=Stores"
+  },
+  {
+    "why": "A bare barcode is text, trimmed.",
+    "raw": " 012345678905 ",
+    "kind": "text",
+    "value": "012345678905"
+  },
+  {
+    "why": "A warehouse name typed by hand is text; resolve() looks it up.",
+    "raw": "Bin A1-3-1 - SF",
+    "kind": "text",
+    "value": "Bin A1-3-1 - SF"
+  },
+  {
+    "why": "An item code is text.",
+    "raw": "PDT-0008",
+    "kind": "text",
+    "value": "PDT-0008"
+  },
+  {
+    "why": "A keyboard-wedge scanner's trailing Enter and a tab are trimmed.",
+    "raw": "\tPDT-0008\r\n",
+    "kind": "text",
+    "value": "PDT-0008"
+  },
+  {
+    "why": "An unbalanced [ in the host is not a label. Python's urlsplit raises on it; parse_scan must return text, not a 500.",
+    "raw": "https://[bad/stock-scan?w=x",
+    "kind": "text",
+    "value": "https://[bad/stock-scan?w=x"
+  },
+  {
+    "why": "An unbalanced ] in the host is not a label either.",
+    "raw": "https://bad]/stock-scan?w=x",
+    "kind": "text",
+    "value": "https://bad]/stock-scan?w=x"
+  },
+  {
+    "why": "A host that NFKC-normalizes into a slash (fullwidth U+FF0F) is refused by urlsplit; it is text.",
+    "raw": "https://h／x/stock-scan?w=nfkc",
+    "kind": "text",
+    "value": "https://h／x/stock-scan?w=nfkc"
+  },
+  {
+    "why": "A barcode sent as a JSON number is text in both parsers, not a crash.",
+    "raw": 12345678,
+    "kind": "text",
+    "value": "12345678"
+  },
+  {
+    "why": "Blank is nothing.",
+    "raw": "",
+    "kind": "",
+    "value": ""
+  },
+  {
+    "why": "Whitespace only is nothing.",
+    "raw": "   \t\n ",
+    "kind": "",
+    "value": ""
+  },
+  {
+    "why": "null is nothing (a scanner callback with no value).",
+    "raw": null,
+    "kind": "",
+    "value": ""
+  }
+]
