@@ -20,12 +20,18 @@ Locations resolve to a single warehouse: stock in ERPNext is tracked at the
 warehouse level, not per bin, so counts across several bins of one warehouse sum
 into one reconciliation row. Serialized/batch items are out of scope for v1
 (plain warehouse quantity only) and are flagged to the clerk in the UI.
+
+A location is either a ``Storage Location`` or, since v1.521.0, a stock-holding
+**Warehouse** itself — so the QR label printed for the Stock Scan page
+(``/warehouse-labels``, encoding ``<site>/stock-scan?w=<warehouse>``) is also a
+location label here. One label on the shelf, two scanners that read it.
 """
 
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime
 
+from erpnext_enhancements.inventory_enhancements import stock_scan_rules
 from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
 	get_settings,
 )
@@ -70,19 +76,65 @@ def get_bootstrap():
 def resolve_scan(code, warehouse=None):
 	"""Classify a raw scanned/typed code as a location, an item, or unknown.
 
-	Storage Locations are checked first (by ``barcode`` then by code/name), then
-	Items (by Item Barcode child then by exact ``item_code``). Location and item
-	code-spaces should therefore be kept distinct. When the scan resolves to an
-	item and ``warehouse`` is supplied (the active location's warehouse), the
-	current on-hand ``system_qty`` is included so the page can show the variance
-	before the clerk types a count.
+	A Stock Scan QR label is a URL (``<site>/stock-scan?w=<warehouse>``, or ``?loc=`` /
+	``?item=``); ``stock_scan_rules.parse_scan`` reads it, and the thing it names is the
+	only thing looked up — a URL is never matched against barcodes. Any other text is
+	tried as, in order: a Storage Location (by ``barcode`` then by code/name), a
+	stock-holding Warehouse by its exact name, then an Item (by Item Barcode child then
+	by exact ``item_code``). Location and item code-spaces should therefore be kept
+	distinct; the Warehouse check sits *after* Storage Location so a Storage Location
+	barcode that happens to equal a warehouse name keeps resolving as it always has.
+
+	A warehouse location carries ``storage_location: None``; ``add_count`` then counts
+	against the warehouse directly. A group or disabled warehouse is not somewhere stock
+	can be counted, and comes back ``unknown`` with a ``message`` saying why rather than
+	throwing (a caught ``frappe.throw`` still shows its modal).
+
+	When the scan resolves to an item and ``warehouse`` is supplied (the active
+	location's warehouse), the current on-hand ``system_qty`` is included so the page
+	can show the variance before the clerk types a count.
 	"""
 	_check_access()
 	code = (code or "").strip()
 	if not code:
 		frappe.throw(_("Empty scan."))
 
+	kind, value = stock_scan_rules.parse_scan(code)
+
+	# 0) A Stock Scan label names exactly one thing: resolve that, or say why not. Both an
+	# item hit and an unknown ``?item=`` carry the bare code as ``code``, and the page uses it
+	# for the count line's scanned_barcode and its item search rather than the whole URL.
+	# The sentences here are plain text: the page escapes them where it shows them.
+	if kind == "warehouse":
+		return _warehouse_location(value) or _unknown(code, _warehouse_problem(value))
+	if kind == "storage_location":
+		return _storage_location(value) or _unknown(
+			code, _("There is no storage location {0}.").format(value)
+		)
+	if kind == "item":
+		return _item_payload(value, warehouse) or _unknown(value)
+
 	# 1) Storage Location — by printed barcode, then by its code (the record name).
+	loc = _storage_location(code)
+	if loc:
+		return loc
+
+	# 2) Warehouse — a stock-holding warehouse typed or printed by its exact name.
+	loc = _warehouse_location(code)
+	if loc:
+		return loc
+
+	# 3) Item — by barcode child table, then by exact item code.
+	payload = _item_payload(code, warehouse)
+	if payload:
+		return payload
+
+	# A group or disabled warehouse's name gets a reason, not a search box.
+	return _unknown(code, _warehouse_problem(code) if frappe.db.exists("Warehouse", code) else None)
+
+
+def _storage_location(code):
+	"""The location payload for a Storage Location barcode or name, else ``None``."""
 	loc = frappe.db.get_value(
 		"Storage Location",
 		{"barcode": code, "disabled": 0},
@@ -93,40 +145,88 @@ def resolve_scan(code, warehouse=None):
 		loc = frappe.db.get_value(
 			"Storage Location", code, ["name", "warehouse", "location_name"], as_dict=True
 		)
-	if loc:
-		return {
-			"type": "location",
-			"storage_location": loc.name,
-			"warehouse": loc.warehouse,
-			"warehouse_name": frappe.db.get_value("Warehouse", loc.warehouse, "warehouse_name") or loc.warehouse,
-			"location_name": loc.location_name or loc.name,
-		}
+	if not loc:
+		return None
+	return {
+		"type": "location",
+		"storage_location": loc.name,
+		"warehouse": loc.warehouse,
+		"warehouse_name": frappe.db.get_value("Warehouse", loc.warehouse, "warehouse_name") or loc.warehouse,
+		"location_name": loc.location_name or loc.name,
+	}
 
-	# 2) Item — by barcode child table, then by exact item code.
+
+def _warehouse_location(name):
+	"""The location payload for a leaf, enabled Warehouse named exactly ``name``, else ``None``.
+
+	The same warehouses the QR labels are printed for (``inventory_enhancements.warehouse_labels``)
+	bar the transit exclusion: a count of what is on a truck is still a count.
+	"""
+	row = frappe.db.get_value(
+		"Warehouse", name, ["name", "warehouse_name", "is_group", "disabled"], as_dict=True
+	)
+	if not row or cint(row.is_group) or cint(row.disabled):
+		return None
+	label = row.warehouse_name or row.name
+	return {
+		"type": "location",
+		"storage_location": None,
+		"warehouse": row.name,
+		"warehouse_name": label,
+		"location_name": label,
+	}
+
+
+def _warehouse_problem(name):
+	"""Why ``name`` is not a warehouse a count can be taken in."""
+	row = frappe.db.get_value("Warehouse", name, ["warehouse_name", "is_group", "disabled"], as_dict=True)
+	if not row:
+		return _("There is no location called {0}.").format(name)
+	label = row.warehouse_name or name
+	if cint(row.is_group):
+		return _("{0} is a group of locations. Scan the label of a location inside it.").format(label)
+	if cint(row.disabled):
+		return _("{0} is disabled.").format(label)
+	return None
+
+
+def _unknown(code, message=None):
+	payload = {"type": "unknown", "code": code}
+	if message:
+		payload["message"] = message
+	return payload
+
+
+def _item_payload(code, warehouse=None):
+	"""The item payload for an Item barcode or exact item code, else ``None``."""
 	item_code = frappe.db.get_value("Item Barcode", {"barcode": code}, "parent")
 	if not item_code and frappe.db.exists("Item", code):
 		item_code = code
-	if item_code:
-		item = frappe.db.get_value(
-			"Item",
-			item_code,
-			["item_name", "stock_uom", "disabled", "has_serial_no", "has_batch_no"],
-			as_dict=True,
-		)
-		payload = {
-			"type": "item",
-			"item_code": item_code,
-			"item_name": item.item_name,
-			"uom": item.stock_uom,
-			"disabled": cint(item.disabled),
-			"has_serial_no": cint(item.has_serial_no),
-			"has_batch_no": cint(item.has_batch_no),
-		}
-		if warehouse:
-			payload["system_qty"] = _system_qty(item_code, warehouse)
-		return payload
-
-	return {"type": "unknown", "code": code}
+	if not item_code:
+		return None
+	item = frappe.db.get_value(
+		"Item",
+		item_code,
+		["item_name", "stock_uom", "disabled", "has_serial_no", "has_batch_no"],
+		as_dict=True,
+	)
+	if not item:
+		return None
+	payload = {
+		"type": "item",
+		# The code that matched: for a label URL the bare value inside it, which the page
+		# records as the count line's scanned_barcode rather than the whole URL.
+		"code": code,
+		"item_code": item_code,
+		"item_name": item.item_name,
+		"uom": item.stock_uom,
+		"disabled": cint(item.disabled),
+		"has_serial_no": cint(item.has_serial_no),
+		"has_batch_no": cint(item.has_batch_no),
+	}
+	if warehouse:
+		payload["system_qty"] = _system_qty(item_code, warehouse)
+	return payload
 
 
 @frappe.whitelist()

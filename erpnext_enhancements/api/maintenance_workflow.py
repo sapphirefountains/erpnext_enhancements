@@ -171,7 +171,28 @@ def create_stock_entry(doc):
     linked Project (falling back to the global default). Inserts and submits a
     Stock Entry and adds a Comment linking to it. May raise on stock errors
     (e.g. insufficient quantity) — caught by the per-step handler in the caller.
+
+    Two things v16 requires that this used to leave out (fixed v1.521.0; it had never
+    run on production, where no record had yet been submitted):
+
+    * **``stock_entry_type``, not ``purpose``.** The type is mandatory and ``purpose``
+      is a read-only fetch from it; ``validate`` never derives one from the other
+      (ERPNext's own builders call ``set_stock_entry_type()`` by hand). Setting only
+      ``purpose`` raised ``MandatoryError: stock_entry_type`` on insert.
+    * **A difference account on every row.** Production's Company has no Stock
+      Adjustment Account and no Item names one, so ERPNext's default chain comes up
+      empty and ``validate_difference_account`` refused the entry. Rows now take
+      ``inventory_enhancements.stock_accounts.difference_account`` — the same rule the
+      Stock Scan page uses, including its "Parts Taken" account from Inventory Scanner
+      Settings, since consumables used on a visit are parts taken for a job.
+      ``cost_center`` stays blank so ERPNext fills it (Project → Item → Company); the
+      header ``project`` is set so the first step of that chain can apply.
     """
+    from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
+        get_settings,
+    )
+    from erpnext_enhancements.inventory_enhancements.stock_accounts import difference_account
+
     rows = build_stock_entry_rows(doc)
     if not rows:
         return
@@ -185,11 +206,18 @@ def create_stock_entry(doc):
         return
 
     stock_entry = frappe.new_doc("Stock Entry")
-    stock_entry.purpose = "Material Issue"
+    # The type, not the purpose: purpose is fetched from it on insert (see docstring).
+    stock_entry.stock_entry_type = "Material Issue"
     stock_entry.remarks = f"Auto-generated from {marker}"
     stock_entry.company = frappe.db.get_value("Project", doc.project, "company") or frappe.defaults.get_global_default("company")
+    # The rows already carry the project; the header is what ERPNext's cost-center default
+    # reads (get_default_cost_center takes the header project), so set it too.
+    if doc.project:
+        stock_entry.project = doc.project
 
+    configured = get_settings().get("take_expense_account")
     for row in rows:
+        row["expense_account"] = difference_account(stock_entry.company, row["item_code"], configured)
         stock_entry.append("items", row)
 
     stock_entry.insert()

@@ -2000,6 +2000,54 @@ jobs:
       # is loaded in hooks.py and dials a method that exists. Plain pytest, own step.
       - name: Purchase Order Receive Items wiring (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_po_receive_items.py -q
+      # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
+      # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
+      # every one of them fails in the direction that looks fine: a take past what is on hand
+      # quoted as a ledger error instead of "use Move here" (on day one every bin was empty
+      # and all stock sat in Stores - SF), a whole-number unit accepting 2.5, an undo window
+      # that is off-by-one at its edge, a label sheet a sixteenth of an inch off its die-cut.
+      # It also runs parse_scan over tests/data/stock_scan_parse_vectors.json. parse_scan decides
+      # every scan (the page sends the raw text to resolve); the page's JS twin, parseScan, only
+      # names the label in the error shown when the server could not answer, and runs over the
+      # SAME file in the node step below, so the two stay identical. PyQRCode is what Frappe v16
+      # itself pins and uses for 2FA;
+      # installed here so the real-encoder test (a label URL small enough for a one-inch QR)
+      # runs instead of skipping. Stub-free, own step.
+      - name: Stock Scan rules + QR drawing + shared parse vectors (bench-free)
+        run: |
+          python -m pip install "PyQRCode~=1.2.1"
+          python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v
+      # Stock Scan's surface, asserted on the source because there is no bench in CI to post
+      # a voucher against. Guards the class of bug where a phone moves stock nobody could move
+      # in the Desk, or moves it twice: every endpoint POST-only, never guest, role-checked
+      # first; the client's M map and the whitelisted functions the same set (a rename is a
+      # 404 in front of a technician holding a part); the only ignore_permissions is on the
+      # page's own log row, never a voucher; the client_ref is looked up and the log row
+      # (unique on it) inserted BEFORE any voucher, so a retry after a dropped connection
+      # returns the first save instead of posting a second; stock_entry_type set, a
+      # difference account on every row and a basic_rate on a Material Receipt (v16 refuses
+      # each otherwise). Plus: bundles only and the boot through | tojson in the shell, the
+      # login redirect before the role check, no innerHTML / frappe.* / URL changes in the
+      # client, one doctype_js["Warehouse"], and every new setting's default mirrored in
+      # DEFAULTS and backfilled onto the existing Single.
+      - name: Stock Scan endpoint surface, voucher shape, shell and settings (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v
+      # Every Stock Entry this app builds, wherever it is built: it sets stock_entry_type (on
+      # v16 `purpose` is only a read-only fetch from it, so a purpose-only entry raises
+      # MandatoryError on insert) and every row takes its difference account from the one
+      # shared resolver (production's Company has no Stock Adjustment Account, so ERPNext's
+      # own chain comes up empty and validate_difference_account refuses the entry).
+      # maintenance_workflow.create_stock_entry shipped with both and a green build; this
+      # reads the source, so the next builder with that shape fails here, not on submit.
+      - name: Stock Entry builders set the type and a difference account (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
+      # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
+      # system-dark block and the forced-dark block must stay identical, every color token
+      # must be overridden in dark, and the pre-paint theme script must run before the
+      # stylesheet. Each failure shows only in the mode nobody tested -- here, a technician's
+      # phone in dark mode in a dim stock room.
+      - name: Stock Scan theme palette (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,
@@ -2127,6 +2175,24 @@ jobs:
       # sets its colour, the CSS comments balance, and the bundle stays under its gzip ceiling.
       - name: Marketing app source rules (bench-free, node)
         run: node scripts/test_marketing_source_rules.js
+      # The Stock Scan page's pure client logic (v1.521.0), executed. The server's parse_scan
+      # decides every scan; the page's twin, parseScan, only names the label in the error shown
+      # when the server could not be reached ("Couldn't open Bin B1-2-10 - SF: ..."), and runs
+      # here over the same tests/data/stock_scan_parse_vectors.json the Python suite runs
+      # parse_scan over, so the two stay identical. mintRef() is checked
+      # against the server's _CLIENT_REF pattern read out of api/stock_scan.py -- a ref the
+      # server refuses is a save that fails every time. errorMessage picks the LAST raised
+      # message (Frappe queues its own unique-key message first), strips ERPNext's HTML, and
+      # turns a CSRF failure into "reload" -- and a signed-out session too, which v16 answers
+      # as a Guest 403 "... is not whitelisted", never a 401. call() over a stubbed fetch: a
+      # dropped connection or a timeout is status 0 and retryable with the same client_ref, a
+      # refusal is not, a Guest 403 is a 401 signedOut error; and the page's own reuse rule --
+      # mayHaveSaved keeps the ref for 0/409/502-504 (409 is the server saying this very ref is
+      # still being posted), keptRef only for ten minutes (the server keeps refs forever, so a
+      # later identical save would post nothing), saveKey mints a new one only when what the
+      # save would post changes. Plain node, no npm install.
+      - name: Stock Scan client logic (bench-free, node)
+        run: node scripts/test_stock_scan_client.mjs
       # Google address components -> Frappe Address fields. Every rule in that
       # mapping is a judgement call that looks arbitrary until it is wrong, and
       # the branches for UK/Nordic mailing towns and for states with no

@@ -1,0 +1,215 @@
+{#
+  Printable warehouse QR labels (served at /warehouse-labels; controller: warehouse_labels.py).
+
+  Every label is rendered here, QR code included: an inline SVG from
+  inventory_enhancements/qr_svg.py, sized by the CSS below in inches. The script at the
+  bottom only paginates — it moves the rendered labels onto sheets, leaving the first
+  `skip` cells blank on a part-used sheet and leaving out any location unticked in the
+  list — and calls window.print().
+
+  Each QR code encodes <site>/stock-scan?w=<warehouse>, so a phone's own camera opens the
+  Stock Scan page on that location with no app.
+
+  Print with Scale 100% ("Actual size") and Margins "None": the sheet geometry already
+  carries the label stock's own margins (stock_scan_rules.LABEL_PRESETS), and a browser
+  that adds its own shifts every label off its die-cut.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Warehouse QR Labels{% endblock %}
+
+{% block head_include %}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% endblock %}
+
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+	@page { size: {{ preset.page_width }}in {{ preset.page_height }}in; margin: 0; }
+
+	.navbar, nav.navbar, .web-footer, footer, .footer, .page-breadcrumbs, .breadcrumb-container,
+	.page-header, .page-content-wrapper > .page-header { display: none !important; }
+	main, .main-section, #body, .page_content, .page-content-wrapper, .container,
+	.page-content { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+
+	:root {
+		--wl-bg: #eef1f4; --wl-panel: #ffffff; --wl-text: #1f2328; --wl-muted: #5b636d;
+		--wl-line: #d4d9df; --wl-accent: #0b6bcb;
+	}
+	body { background: var(--wl-bg); color: var(--wl-text); margin: 0;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+	.wl-bar { position: sticky; top: 0; z-index: 2; background: var(--wl-panel); border-bottom: 1px solid var(--wl-line);
+		padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+	.wl-bar h1 { font-size: 18px; margin: 0 16px 0 0; align-self: center; }
+	.wl-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--wl-muted); }
+	.wl-field select, .wl-field input { font-size: 14px; padding: 6px 8px; border: 1px solid var(--wl-line);
+		border-radius: 6px; background: #fff; color: var(--wl-text); max-width: 340px; }
+	.wl-field input[type=number] { width: 80px; }
+	.wl-print { font-size: 15px; font-weight: 600; padding: 9px 18px; border: 0; border-radius: 8px;
+		background: var(--wl-accent); color: #fff; cursor: pointer; }
+	.wl-note { flex-basis: 100%; font-size: 12px; color: var(--wl-muted); margin: 0; }
+	.wl-picks { margin: 12px 16px 0; background: var(--wl-panel); border: 1px solid var(--wl-line); border-radius: 8px; }
+	.wl-picks summary { cursor: pointer; padding: 10px 12px; font-size: 14px; }
+	.wl-picks-list { max-height: 260px; overflow: auto; padding: 4px 12px 12px; columns: 3 220px; font-size: 13px; }
+	.wl-picks-list label { display: block; break-inside: avoid; padding: 2px 0; }
+	.wl-picks-tools { padding: 0 12px 8px; font-size: 13px; }
+	.wl-picks-tools button { font-size: 13px; background: none; border: 0; color: var(--wl-accent); cursor: pointer; padding: 0 8px 0 0; }
+	.wl-empty { margin: 40px auto; max-width: 520px; text-align: center; color: var(--wl-muted); }
+	#wl-pool { display: none; }
+
+	/* ---- the sheet: exact label-stock geometry, in inches ---- */
+	.sheet { width: {{ preset.page_width }}in; height: {{ preset.page_height }}in; box-sizing: border-box;
+		padding: {{ preset.top }}in {{ preset.left }}in 0; background: #fff; overflow: hidden;
+		display: grid; grid-template-columns: repeat({{ preset.columns }}, {{ preset.width }}in);
+		grid-auto-rows: {{ preset.height }}in; column-gap: {{ preset.column_gap }}in; row-gap: {{ preset.row_gap }}in;
+		align-content: start; break-after: page; page-break-after: always; }
+	.sheet:last-child { break-after: auto; page-break-after: auto; }
+	.label { width: {{ preset.width }}in; height: {{ preset.height }}in; box-sizing: border-box; overflow: hidden;
+		display: flex; align-items: center; gap: 0.07in; padding: 0.05in 0.12in 0.05in 0.05in; color: #000; }
+	.label svg { height: 100%; width: auto; aspect-ratio: 1 / 1; flex: 0 0 auto; display: block; }
+	.label .t { min-width: 0; display: flex; flex-direction: column; gap: 0.02in; }
+	.label .name { font-weight: 800; line-height: 1.05; overflow-wrap: anywhere; }
+	.label .trail { line-height: 1.15; color: #333; overflow-wrap: anywhere; }
+	.label .hint { color: #555; letter-spacing: 0.01em; }
+	.size-avery-5160 .label .name { font-size: 12pt; }
+	.size-avery-5160 .label .trail { font-size: 6.5pt; }
+	.size-avery-5160 .label .hint { font-size: 5.5pt; }
+	.size-avery-5163 .label { gap: 0.14in; padding: 0.12in 0.2in 0.12in 0.12in; }
+	.size-avery-5163 .label .name { font-size: 22pt; }
+	.size-avery-5163 .label .trail { font-size: 10pt; }
+	.size-avery-5163 .label .hint { font-size: 8pt; }
+	.size-thermal-2x1 .label { padding: 0.04in 0.06in 0.04in 0.04in; gap: 0.05in; }
+	.size-thermal-2x1 .label .name { font-size: 9.5pt; }
+	.size-thermal-2x1 .label .trail { font-size: 5.5pt; }
+	.size-thermal-2x1 .label .hint { display: none; }
+
+	@media screen {
+		#wl-sheets { padding: 16px; overflow-x: auto; }
+		.sheet { margin: 0 auto 16px; box-shadow: 0 1px 4px rgba(0, 0, 0, .18); }
+		.label { outline: 1px dashed #c9cfd6; outline-offset: -1px; }
+		.label.blank { background: repeating-linear-gradient(45deg, #fafbfc, #fafbfc 6px, #f0f2f4 6px, #f0f2f4 12px); }
+	}
+	@media print {
+		/* Frappe's website CSS carries Bootstrap 4's print partial, which sets
+		   body/.container min-width: 992px !important and @page size a3. Left alone, Chrome
+		   shrinks the page to fit and every label prints ~82% size, off its die-cut. The
+		   @page rule above wins by coming later; the widths need !important to win. */
+		html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; min-width: 0 !important; }
+		body .container, body > .main-section, body .page_content, main { min-width: 0 !important; max-width: none !important; width: auto !important; }
+		.wl-bar, .wl-picks, .wl-empty { display: none !important; }
+		#wl-sheets { padding: 0; }
+	}
+</style>
+{% endblock %}
+
+{% block page_content %}
+<form class="wl-bar" method="get" action="/warehouse-labels">
+	<h1>Warehouse QR Labels</h1>
+	{% for name in names %}<input type="hidden" name="w" value="{{ name | e }}">{% endfor %}
+	{% if not names %}
+	<label class="wl-field">Locations under
+		<select name="under" onchange="this.form.submit()">
+			<option value="">All locations</option>
+			{% for g in groups %}<option value="{{ g.value | e }}"{% if g.value == under %} selected{% endif %}>{{ g.label | e }}</option>{% endfor %}
+		</select>
+	</label>
+	{% endif %}
+	<label class="wl-field">Label stock
+		<select name="size" onchange="this.form.submit()">
+			{% for p in presets %}<option value="{{ p.value }}"{% if p.value == size %} selected{% endif %}>{{ p.label | e }}</option>{% endfor %}
+		</select>
+	</label>
+	{% if per_sheet > 1 %}
+	<label class="wl-field">Labels already used on the first sheet
+		<input type="number" name="skip" id="wl-skip" min="0" max="{{ per_sheet - 1 }}" value="{{ skip }}">
+	</label>
+	{% endif %}
+	<button type="button" class="wl-print" id="wl-print">Print <span id="wl-count">{{ labels | length }}</span> labels</button>
+	<p class="wl-note">In the print dialog, set Scale to 100% (Actual size) and Margins to None, or the labels will not line up with the sheet.
+	{% if names %} Printing {{ names | length }} chosen location{{ "" if names | length == 1 else "s" }}. <a href="/warehouse-labels">Print all locations instead</a>.{% endif %}</p>
+</form>
+
+{% if labels %}
+<details class="wl-picks">
+	<summary>Choose locations ({{ labels | length }})</summary>
+	<div class="wl-picks-tools"><button type="button" data-all="1">Select all</button><button type="button" data-all="0">Select none</button></div>
+	<div class="wl-picks-list">
+		{% for row in labels %}<label><input type="checkbox" checked data-idx="{{ loop.index0 }}"> {{ row.title | e }}{% if row.trail %} <small>· {{ row.trail | e }}</small>{% endif %}</label>{% endfor %}
+	</div>
+</details>
+
+<div id="wl-pool">
+	{% for row in labels %}<div class="label" data-idx="{{ loop.index0 }}" title="{{ row.url | e }}">{{ row.svg | safe }}<div class="t"><div class="name">{{ row.title | e }}</div>{% if row.trail %}<div class="trail">{{ row.trail | e }}</div>{% endif %}<div class="hint">Scan to take or add stock</div></div></div>{% endfor %}
+</div>
+<div id="wl-sheets" class="size-{{ size }}"><noscript><p class="wl-empty">This page needs JavaScript to lay the labels out on sheets.</p></noscript></div>
+{% else %}
+<p class="wl-empty">No stock locations match. A label is printed for every warehouse that can hold stock: not a group, not disabled, and not a transit warehouse.</p>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script>
+(function () {
+	var layout = {{ layout_json | safe }};
+	var pool = document.getElementById("wl-pool");
+	var out = document.getElementById("wl-sheets");
+	if (!pool || !out) return;
+	var skipInput = document.getElementById("wl-skip");
+	var count = document.getElementById("wl-count");
+	var boxes = Array.prototype.slice.call(document.querySelectorAll(".wl-picks-list input[type=checkbox]"));
+
+	function chosen() {
+		var off = {};
+		boxes.forEach(function (box) { if (!box.checked) off[box.getAttribute("data-idx")] = true; });
+		return Array.prototype.slice.call(pool.children).filter(function (el) { return !off[el.getAttribute("data-idx")]; });
+	}
+
+	function paginate() {
+		var skip = Math.max(0, Math.min(layout.perSheet - 1, parseInt(skipInput ? skipInput.value : layout.skip, 10) || 0));
+		var labels = chosen();
+		out.textContent = "";
+		var sheet = null;
+		var used = 0;
+		function newSheet() {
+			sheet = document.createElement("div");
+			sheet.className = "sheet";
+			out.appendChild(sheet);
+			used = 0;
+		}
+		newSheet();
+		for (var i = 0; i < skip; i++) {
+			var blank = document.createElement("div");
+			blank.className = "label blank";
+			sheet.appendChild(blank);
+			used++;
+		}
+		labels.forEach(function (el) {
+			if (used >= layout.perSheet) newSheet();
+			sheet.appendChild(el.cloneNode(true));
+			used++;
+		});
+		if (count) count.textContent = String(labels.length);
+	}
+
+	boxes.forEach(function (box) { box.addEventListener("change", paginate); });
+	Array.prototype.forEach.call(document.querySelectorAll(".wl-picks-tools button"), function (btn) {
+		btn.addEventListener("click", function () {
+			var on = btn.getAttribute("data-all") === "1";
+			boxes.forEach(function (box) { box.checked = on; });
+			paginate();
+		});
+	});
+	if (skipInput) skipInput.addEventListener("input", paginate);
+	document.getElementById("wl-print").addEventListener("click", function () { window.print(); });
+	paginate();
+})();
+</script>
+{% endblock %}

@@ -1,10 +1,17 @@
 """Tests for the Inventory Scanner Audit API (``api.inventory_scanner``).
 
-Covers scan resolution (location / item-by-barcode / item-by-code / unknown),
-the single-open-session invariant, counted-line upsert with system-qty snapshot
-and variance, the negative-count and variance-reason guards, line removal and
-session cancel, the role gate, and the finalize aggregation + draft Stock
+Covers scan resolution (location / item-by-barcode / item-by-code / unknown, and
+since v1.521.0 the Stock Scan warehouse QR labels: a label URL or a bare warehouse
+name is a location, a group warehouse is not, and a Storage Location still wins a
+tie), the single-open-session invariant, counted-line upsert with system-qty
+snapshot and variance, the negative-count and variance-reason guards, line removal
+and session cancel, the role gate, and the finalize aggregation + draft Stock
 Reconciliation build.
+
+Needs a bench (``bench --site <site> run-tests --app erpnext_enhancements --module
+erpnext_enhancements.tests.test_inventory_scanner``); it is deliberately not in CI.
+``stock_scan_rules.parse_scan`` — the part of resolution that decides what a label
+says — is covered bench-free by ``test_stock_scan_rules``.
 
 ``erpnext.stock.utils.get_stock_balance`` is patched so the count maths are
 deterministic without seeding the stock ledger; the finalize happy-path patches
@@ -20,6 +27,10 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from erpnext_enhancements.api import inventory_scanner as isa
+from erpnext_enhancements.inventory_enhancements import stock_scan_rules
+from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
+	DEFAULTS,
+)
 
 NO_ROLE_USER = "isa_test_norole@example.com"
 
@@ -44,7 +55,13 @@ class TestInventoryScanner(FrappeTestCase):
 	def _ensure_warehouse(self):
 		if not self.company:
 			return None
-		existing = frappe.db.get_value("Warehouse", {"company": self.company, "is_group": 0}, "name")
+		# The OLDEST leaf, explicitly. get_value with no order_by returns the newest match on
+		# v16 (a direction-less "creation" sorts DESC), and the warehouse-label tests insert a
+		# leaf of their own -- which, with no per-test rollback, would become every later
+		# test's anchor and leave ISA-LOC-1 pointing at the old one.
+		existing = frappe.db.get_value(
+			"Warehouse", {"company": self.company, "is_group": 0}, "name", order_by="creation asc"
+		)
 		if existing:
 			return existing
 		return (
@@ -87,6 +104,27 @@ class TestInventoryScanner(FrappeTestCase):
 				"warehouse": self.warehouse,
 			}
 		).insert(ignore_permissions=True)
+
+	def _ensure_test_warehouse(self, warehouse_name, is_group=0):
+		"""A warehouse of our own, so the label tests never lean on the state (group?
+		disabled?) of whichever warehouse the site happens to have."""
+		existing = frappe.db.get_value(
+			"Warehouse", {"warehouse_name": warehouse_name, "company": self.company}, "name"
+		)
+		if existing:
+			return existing
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Warehouse",
+					"warehouse_name": warehouse_name,
+					"company": self.company,
+					"is_group": is_group,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
 
 	def _ensure_no_role_user(self):
 		if not frappe.db.exists("User", NO_ROLE_USER):
@@ -135,6 +173,69 @@ class TestInventoryScanner(FrappeTestCase):
 			res = isa.resolve_scan("ISA-BC-1", warehouse=self.warehouse)
 		self.assertEqual(res["system_qty"], 10.0)
 
+	# ----- resolve_scan: the Stock Scan warehouse QR labels (v1.521.0) -----
+	def test_resolve_warehouse_label_url(self):
+		"""The label printed at /warehouse-labels is a location here too, with no Storage Location."""
+		self._require_stock()
+		name = self._ensure_test_warehouse("ISA Scan Bin")
+		# scan_url is what the label sheet prints; a warehouse name has spaces, so this is %20-encoded.
+		res = isa.resolve_scan(stock_scan_rules.scan_url("https://labels.example", name))
+		self.assertEqual(res["type"], "location")
+		self.assertIsNone(res["storage_location"])
+		self.assertEqual(res["warehouse"], name)
+		self.assertEqual(res["warehouse_name"], "ISA Scan Bin")
+		self.assertEqual(res["location_name"], "ISA Scan Bin")
+
+	def test_resolve_bare_warehouse_name(self):
+		self._require_stock()
+		name = self._ensure_test_warehouse("ISA Scan Bin")
+		res = isa.resolve_scan(name)
+		self.assertEqual(res["type"], "location")
+		self.assertIsNone(res["storage_location"])
+		self.assertEqual(res["warehouse"], name)
+
+	def test_group_warehouse_is_not_a_location(self):
+		"""A group holds no stock, so neither its label nor its name opens a count there."""
+		self._require_stock()
+		group = self._ensure_test_warehouse("ISA Scan Row", is_group=1)
+		for code in (stock_scan_rules.scan_url("https://labels.example", group), group):
+			with self.subTest(code=code):
+				res = isa.resolve_scan(code)
+				self.assertEqual(res["type"], "unknown")
+				self.assertIn("group of locations", res["message"])
+
+	def test_storage_location_still_wins_over_a_warehouse_name(self):
+		"""The Warehouse check sits after Storage Location: a barcode that happens to equal a
+		warehouse name keeps resolving the way it did before the labels existed."""
+		self._require_stock()
+		shadowed = self._ensure_test_warehouse("ISA Scan Shadow")
+		if not frappe.db.exists("Storage Location", "ISA-LOC-SHADOW"):
+			frappe.get_doc(
+				{
+					"doctype": "Storage Location",
+					"location_code": "ISA-LOC-SHADOW",
+					"barcode": shadowed,
+					"warehouse": self.warehouse,
+				}
+			).insert(ignore_permissions=True)
+		res = isa.resolve_scan(shadowed)
+		self.assertEqual(res["type"], "location")
+		self.assertEqual(res["storage_location"], "ISA-LOC-SHADOW")
+		self.assertEqual(res["warehouse"], self.warehouse)
+
+	def test_count_at_a_warehouse_location(self):
+		"""What the page sends after a warehouse label: storage_location None, the warehouse set."""
+		self._require_stock()
+		name = self._ensure_test_warehouse("ISA Scan Bin")
+		sess = self._new_session()
+		with patch("erpnext.stock.utils.get_stock_balance", _fake_balance):
+			payload = isa.add_count(sess.name, "ISA-TEST-ITEM", 10, storage_location=None, warehouse=name)
+		self.assertEqual(len(payload["lines"]), 1)
+		line = payload["lines"][0]
+		self.assertIsNone(line["storage_location"])
+		self.assertEqual(line["warehouse"], name)
+		self.assertEqual(line["variance"], 0.0)
+
 	# ----- session lifecycle -----
 	def test_start_session_single_open_invariant(self):
 		self._require_stock()
@@ -162,14 +263,22 @@ class TestInventoryScanner(FrappeTestCase):
 			with self.assertRaises(frappe.ValidationError):
 				isa.add_count(sess.name, "ISA-TEST-ITEM", -1, storage_location="ISA-LOC-1")
 
-	def test_add_count_requires_variance_reason(self):
+	def test_variance_reason_is_required_at_finalize_not_per_scan(self):
+		"""The reason is asked for once the item+warehouse count is complete, not per bin:
+		add_count stopped refusing a reasonless variance when that check moved to
+		finalize_session (an item spread over bins reads short until every bin is scanned).
+		This test used to assert the per-scan refusal, which no longer exists."""
 		self._require_stock()
 		sess = self._new_session()
-		with patch("erpnext.stock.utils.get_stock_balance", _fake_balance):
+		settings = dict(DEFAULTS, require_variance_reason=1)
+		with (
+			patch("erpnext.stock.utils.get_stock_balance", _fake_balance),
+			patch.object(isa, "get_settings", return_value=settings),
+		):
+			payload = isa.add_count(sess.name, "ISA-TEST-ITEM", 7, storage_location="ISA-LOC-1")
+			self.assertEqual(payload["lines"][0]["variance"], -3.0)
 			with self.assertRaises(frappe.ValidationError):
-				isa.add_count(sess.name, "ISA-TEST-ITEM", 7, storage_location="ISA-LOC-1")
-			payload = isa.add_count(sess.name, "ISA-TEST-ITEM", 7, storage_location="ISA-LOC-1", reason="short")
-		self.assertEqual(payload["lines"][0]["variance"], -3.0)
+				isa.finalize_session(sess.name)
 
 	# ----- remove + cancel -----
 	def test_remove_line(self):

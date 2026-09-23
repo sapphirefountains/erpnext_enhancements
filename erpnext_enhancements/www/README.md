@@ -1,4 +1,4 @@
-# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary, feedback, marketing)
+# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary, feedback, marketing, Stock Scan)
 
 Several standalone web pages live here, separate from the heavy desk app:
 
@@ -41,6 +41,16 @@ Several standalone web pages live here, separate from the heavy desk app:
   signed-out visitor is sent to log in and back to the same path, and a signed-in one without
   Marketing Team, Marketing Manager or System Manager gets a 403. There is no "publishing is off"
   gate: writing and approving posts while publishing is switched off is how the team gets ready.
+- the **Stock Scan page** at **`/stock-scan`** (v1.521.0): scan the QR label on a location,
+  then take parts, receive stock or put it away with − / + and Save. Chrome-free, phone-first,
+  gated to the stock roles (`stock_scan.py` + `stock-scan.html`; front end in
+  [`public/js/stock_scan/`](../public/README.md), server surface in
+  [`api/stock_scan.py`](../api/README.md)). **A query string, not a route rule** — see
+  [its section below](#stock-scan--the-stock-scan-page).
+- the **warehouse QR labels** at **`/warehouse-labels`** (v1.521.0): a printable sheet of those
+  labels, one per stock-holding warehouse, server-rendered (`warehouse_labels.py` +
+  `warehouse-labels.html`). See [its section below](#warehouse-labels--printable-qr-labels) —
+  it has print settings that are not optional.
 
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 
@@ -88,6 +98,100 @@ api/task_dashboard.py    get_wall_dashboard_data (task-dashboard payload + task_
 - **Deploy pickup, two belts**: (1) the SW is registered as `/wall-sw.js?v=<deploy token>` and re-checked every 60s; a new worker taking control reloads the page immediately (nothing to protect on a display). (2) Every data refresh carries the server's `deploy_version`; a mismatch with `WALL_BUILD` reloads even if the SW never installed.
 - **Settings** (ERPNext Enhancements Settings → Wall / TV Display): rotation seconds, data refresh seconds, weather toggle + coordinates/label (defaults: Bountiful UT).
 - **Donut semantics**: `Completed` + `Invoiced` count as done; `Canceled`/`Cancelled`/`Template` are in neither slice.
+
+## `/stock-scan` — the Stock Scan page
+
+The phone page a warehouse QR label opens: the items at that location, a − / + stepper, Save,
+**Scan next**. What each save posts, and why, is in
+[`inventory_enhancements/README.md`](../inventory_enhancements/README.md#the-stock-scan-page);
+this section is the shell.
+
+```
+www/stock-scan.html               chrome-free shell — theme script first, bundled css, boot payload, bundled js
+www/stock_scan.py                 controller — guest → login (query kept), role gate, boot via api.stock_scan.boot_payload
+public/js/stock_scan.bundle.js    entry: mounts StockScanApp on #ee-stock-scan-root
+public/js/stock_scan/             app.js (state machine), scanner.js, transport.js, logic.js (pure), ui.js, dom.js, lib/jsQR
+public/css/stock_scan.bundle.css  --ss-* tokens: light, then two identical dark blocks
+api/stock_scan.py                 every endpoint the page calls (transport.js's M map)
+```
+
+- **The shell is the `/feedback` one.** It extends `templates/web.html` with the chrome blocks
+  emptied, loads its CSS and JS through `bundled_asset()` (content-hashed — a raw `/assets` path
+  is served year-immutable, so an edit never reaches a phone that already cached it), and hands
+  the boot over as `window.EE_STOCK_SCAN_BOOT` (`| tojson`). `no_cache = 1`: the render carries
+  the caller's name and recent saves. The theme script (`localStorage.ee_ss_theme`) runs first in
+  `head_include`, before the stylesheet, as the kiosk's does. No Vue, no `frappe.*` and no
+  `innerHTML` under `public/js/stock_scan/`: item, supplier and job names are data.
+- **The gate.** A signed-out visitor goes to `/login?redirect-to=<full path>`, and `full_path`
+  keeps the query string — a technician whose session lapsed scans a bin, logs in, and lands on
+  that bin. Signed in without a stock role (`stock_scan_rules.SCAN_ROLES`) is a 403. The scanned
+  location is resolved server-side into the boot (`boot_payload`), so the first screen costs no
+  second round trip on a warehouse's phone signal.
+- **Why a query string (`?w=`), not a path.** A path would need a `website_route_rules` entry and
+  bring the `website_404` trap described under `/feedback` above — and these URLs are *printed*:
+  stuck on shelves months ahead and scanned whenever, including in the minutes before a deploy
+  that would have added the rule. A query string needs no rule at all. The keys (`w`, `item`,
+  `loc`) stay clear of the request keys Frappe consumes before a page sees them — `sid`,
+  `csrf_token`, `cmd`, `usr`, `pwd`.
+- **The URL never changes while the page runs.** No `pushState`, `replaceState` or hash:
+  iOS Safari asks for camera permission again when the URL changes, so a page that routed would
+  re-prompt at every bin. Navigation is an in-memory back stack and every view has a visible
+  back link. The consequence is deliberate: a reload returns to the location in the URL — the
+  label the phone's camera app opened — not to the last bin scanned in the page.
+- **The camera.** `getUserMedia` needs https. The browser's `BarcodeDetector` is used only
+  where `getSupportedFormats()` lists `qr_code` (Chrome on Android); everywhere else — every
+  iPhone — the vendored **jsQR** decodes frames drawn to a canvas at most 480 px wide, about
+  five times a second. jsQR is loaded once, by a plain `<script>`, from `decoder_url` in the
+  boot — **not** bundled, because esbuild would inline 130 KB into every page load for the
+  Android phones that never need it; a raw `/assets` path is safe for it because the version is
+  in the filename and the file is never edited. jsQR folds the options it is given into its
+  module defaults, so every call passes the same ones. Every camera track is stopped on close,
+  on a hit, when the page is hidden and on `pagehide` — a live track keeps the iOS capture
+  indicator lit. The **Type a code** box is also where a Bluetooth or USB scanner gun's
+  keystrokes and Enter land. The Desk count page (`inventory_scanner_audit`) got the same jsQR
+  fallback in the same release, through `frappe.require`.
+- **A retried save does not post twice.** The page mints a `client_ref` per intended save and
+  resends the same one after a network failure or timeout, a proxy 502/503/504, or a 409 (the
+  same reference still being posted by an earlier attempt) — `logic.mayHaveSaved` — so the
+  server returns the first save instead of making a second; any other refusal (nothing saved)
+  or a change to what the save would post (`logic.saveKey`: quantity, item, location, order
+  line, job) mints a fresh one. Walking to another screen and back keeps it. The server half is
+  in the inventory README.
+- **Tests** (bench-free): `tests/test_stock_scan_surface.py` (the endpoint surface, the shell,
+  the controller), `tests/test_stock_scan_theme.py` (the three-way theme, cloned from the
+  kiosk's) and `scripts/test_stock_scan_client.mjs` (the pure `logic.js` and the transport's
+  error extraction, against the same parse vectors as the Python rules).
+
+## `/warehouse-labels` — printable QR labels
+
+A sheet of QR labels, one per warehouse that can hold stock (a leaf, not disabled, not
+Transit), each encoding that warehouse's `/stock-scan?w=` URL. Server-rendered: every QR code
+is an inline SVG drawn by `inventory_enhancements/qr_svg.py`, so what prints is exactly what the
+preview shows and nothing needs a script to put a code on paper. The small inline script only
+paginates — leaves the first `skip` cells blank on a part-used sheet, drops locations unticked
+in the list — and calls `window.print()`.
+
+- **Who and what.** Signed-out visitors go to log in and come back; signed in, the stock roles
+  plus Item Manager (`stock_scan_rules.LABEL_ROLES`). Query: `under=<group warehouse>` (only the
+  locations beneath it — the group Warehouse form's **Print QR Labels**), `w=<name>` repeatable
+  (exactly these — a location's **QR Label** button; wins over `under`),
+  `size=avery-5160|avery-5163|thermal-2x1`, `skip=<n>`.
+- **Print settings are part of the product.** Print from desktop Chrome or Edge (only Chromium
+  honours `@page` size reliably). **Scale 100%** ("Actual size" / Custom 100 — not "Default" or
+  "Fit to printable area"), **Margins None**, headers and footers off. The sheet geometry
+  already carries the label stock's own margins (`stock_scan_rules.LABEL_PRESETS`), so any
+  margin the browser adds shifts every label off its die-cut. For a label printer, define a
+  2 × 1 in stock in the printer driver and pick it as the paper size.
+- **The Bootstrap print trap, and why "Default" scale is wrong.** Frappe's website stylesheet
+  compiles the whole of Bootstrap 4.6.2 (`frappe/public/scss/website/index.scss`), and
+  Bootstrap's print partial — `$enable-print-styles` defaults on and Frappe never turns it off —
+  adds, inside `@media print`, `@page { size: a3 }` and `min-width: 992px !important` on both
+  `body` and `.container`. The page's own `@page` comes later in the cascade and wins the paper
+  size. The `min-width` does not lose on its own: a 992 px minimum on an 8.5 in (816 px) page is
+  wider than the paper, and at "Default" scale Chrome shrinks the whole sheet to fit that width
+  (816 / 992 — roughly 82% on Letter; worse on a 2 in thermal label), so every label misses its
+  die-cut. A www page that prints exact geometry has to reset `min-width: 0 !important` on
+  `body` and `.container` in its print CSS, and still says Scale 100% next to the Print button.
 
 ---
 

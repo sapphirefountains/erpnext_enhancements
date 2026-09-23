@@ -1,10 +1,14 @@
-# `inventory_enhancements/` — barcode counting and storage locations
+# `inventory_enhancements/` — barcode counting, storage locations and Stock Scan
 
-A resumable physical-count workflow driven by a barcode scanner, plus a storage-location
-model finer-grained than ERPNext's Warehouse.
+A resumable physical-count workflow driven by a barcode scanner, a storage-location model
+finer-grained than ERPNext's Warehouse, and — since v1.521.0 — the **Stock Scan** page: a QR
+label on every stock-holding warehouse that opens a phone page to take parts, receive stock
+and put it away.
 
-Backend endpoints are in `api/inventory_scanner.py`; the scanner UI is under `public/js/`.
-This module holds the data model and the audit page.
+Backend endpoints are in `api/inventory_scanner.py` (counting) and `api/stock_scan.py`
+(Stock Scan); the count page is a Desk page here, and the Stock Scan page is a website route
+(`www/stock-scan.html`, front end in `public/js/stock_scan/`). This module holds the data
+model, the pure rules and the label reads.
 
 ## Contents
 
@@ -13,8 +17,13 @@ This module holds the data model and the audit page.
 | `doctype/inventory_count_session/` | A resumable physical-count run |
 | `doctype/inventory_count_line/` | One counted row |
 | `doctype/storage_location/` | Sub-warehouse storage locations |
-| `doctype/inventory_scanner_settings/` | Single — scanner configuration |
+| `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
+| `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO, and the idempotency key |
 | `page/inventory_scanner_audit/` | Desk audit view over count sessions |
+| `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
+| `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
+| `qr_svg.py` | QR codes as one compact inline `<path>` SVG, encoded with the `pyqrcode` Frappe already depends on. No Frappe |
+| `warehouse_labels.py` | The reads behind `/warehouse-labels`: which warehouses get a label, their breadcrumbs, their QR codes |
 | `item_naming_rules.py` | The Item naming schema as executable rules. No Frappe, no I/O |
 | `item_naming.py` | The reads behind it — corpus, brands, reserved codes, and the audit |
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
@@ -34,7 +43,190 @@ Finalizing (`api.inventory_scanner.finalize_session`) aggregates the lines per
 (item, warehouse) into a **draft** Stock Reconciliation for a Stock Manager to review and
 submit; `stock_reconciliation` on the session links back to it.
 
-Nothing here submits stock movements. The clerk counts, the Stock Manager decides.
+Nothing in the count flow submits stock movements. The clerk counts, the Stock Manager
+decides. (The Stock Scan page, below, is the opposite by design.)
+
+A location is a Storage Location barcode **or** a Stock Scan warehouse label: since v1.521.0
+`resolve_scan` reads the label URL with `stock_scan_rules.parse_scan`, and a bare warehouse
+name typed at the scan box works too. The Warehouse check comes *after* Storage Location, so
+a Storage Location barcode that equals a warehouse name resolves as it did before. A
+warehouse location carries `storage_location: None` and the line counts against the
+warehouse itself. A group or disabled warehouse comes back `unknown` with a sentence rather
+than an item search pre-filled with a URL. The page's camera also works on an iPhone now: it
+used `BarcodeDetector` alone, which Safari does not have, so the button never appeared there;
+it now falls back to the vendored jsQR decoder (QR only — an item *barcode* on an iPhone
+still wants the wedge scanner or "Find item").
+
+## The Stock Scan page
+
+What Nik asked for, 2026-09-23: a QR code on every location that holds inventory; scan it,
+see the items there, press − or +, save, scan the next one. A technician takes what a job
+needs; a receiver adds what arrived. `/stock-scan` is that page, `/warehouse-labels` prints
+the codes, and `api/stock_scan.py` is every endpoint either of them calls.
+
+### A label is a URL, not a code
+
+Each label encodes `https://<site>/stock-scan?w=<warehouse name>`
+(`stock_scan_rules.scan_url`). The phone's own camera app opens a URL straight into the
+browser, so the first scan of a run needs no app and no button — a bare code would open a web
+search. From there the page's own scanner reads the next label without leaving the page,
+which matters because iOS asks for camera permission again on every page load. The in-page
+scanner reads the same labels, and so does the count page, so one label serves all three.
+
+`parse_scan` accepts **any host**: a label printed from the test site still resolves on
+production, where the warehouse has the same name. A URL to some other page is returned as
+text, never followed. The query string (rather than a path) is deliberate — see
+[`www/README.md`](../www/README.md#stock-scan--the-stock-scan-page).
+
+### Four actions, four vouchers, all submitted
+
+Every Save **posts immediately**. That is what the people using it asked for, and it is why
+Undo exists.
+
+| On the page | Log `action` | Voucher | Notes |
+|---|---|---|---|
+| **−** Take | `Take` | Stock Entry, **Material Issue** from the scanned location | Optionally charged to a job picked once per run; the cost reaches the Project through ERPNext's own `update_cost_in_project`. *Require a Job for Every Take* in the settings makes the job mandatory |
+| **+** against an open order | `Receive` | **Purchase Receipt** into the scanned location | Through `api.procurement.receive_order_line` → `receive_items`: the same checks, the same `make_purchase_receipt` mapper and the same over-receipt rule as the order's *Receive Items* dialog |
+| **+** returned from the run's job | `Add Without PO` (with the job) | Stock Entry, **Material Receipt** at the item's current cost, tagged with the job | Offsets to the *Parts Taken* account, so the credit reverses the account the take charged and the job nets by project in the ledger. Flagged `needs_review` |
+| **+** found, or not from a job | `Add Without PO` (no job) | Stock Entry, **Material Receipt** at the item's current cost | Offsets to the *Added Without PO* account. Flagged `needs_review` for a Stock Manager |
+| **Move here from…** | `Move` | Stock Entry, **Material Transfer** into the scanned location | Put-away: from wherever the stock is recorded |
+
+**"+" is PO-first, and the fallback is a choice, never a default.** The item's open order
+lines are offered first, oldest promise first (`order_line_sort_key`). "Open" is ERPNext's own
+"still on order" rule (`stock_balance.get_purchase_order_qty`) plus On Hold, which a receipt
+refuses — an exclusion list, because v16 shows an order waiting on an advance as *To Pay*
+with nothing received — and what is left is compared with `procurement_quantities.TOLERANCE`,
+the receive planner's own, so the page never offers a line the receipt would then call fully
+received. After the lines, while a job is picked for the run, comes **"Returned from <job>"**
+(`without_po: 1` *with* the job), and last **"Not on a purchase order — found, or not from a
+job"** (`without_po: 1` and **no** job); with no open line and no job the page just asks to
+confirm the second. The job is sent only when the person says the parts came back from it, so
+found stock is never booked against whatever job the run happened to have.
+One ERPNext limit to know: `Project.total_consumed_material_cost` sums Material Issue rows
+only, so a return does not reduce it (only cancelling the issue does). The ledger by project
+*is* right, because the return credits the same account the take debited; that field is
+hidden on this site's Project form and nothing here reads it. With neither a line
+nor `without_po`, `add` refuses to post: receiving stock that *is* on an order without the order
+double-counts it on the day the order's own receipt arrives.
+
+The page counts in the item's stock UOM; an order line may be a Box of 10.
+`to_order_uom` converts and **refuses** a quantity that is not whole in a whole-number UOM
+rather than rounding it — rounding would receive goods that did not arrive. A receipt row's
+project must equal its order line's (`validate_with_previous_doc`), so the job on a receive
+comes from the order, not from the page. And the order's `Bin.ordered_qty` falls at the
+*line's* warehouse while `actual_qty` rises at the *scanned* one — "on order" drops where it
+was ordered for, "on hand" rises where it was put, which is right. Against an order line that
+came from a Material Request, a scan receipt fires the *Material Request Received*
+notification exactly as any receipt does — and an undo followed by a re-receive fires it again.
+
+### Why every row names its own difference account
+
+**Production's Company has no Stock Adjustment Account.** ERPNext looks for a Stock Entry
+row's difference account in the Item Default, then the Item Group, then the Company — and on
+production all three are empty, so a Material Issue refuses to insert with "Please enter
+Difference Account or set default Stock Adjustment Account". It is also mandatory on a
+Material Transfer, where both sides of the GL net to nothing.
+`stock_accounts.difference_account` walks ERPNext's order, puts the account chosen in
+Inventory Scanner Settings where ERPNext would read the Company's (*Parts Taken: Expense
+Account* for a take, a move, a return from a job and the maintenance consumables issue;
+*Added Without PO: Offset Account* for found stock), then the
+Company's, then **the company's one leaf Stock Adjustment account** (`5119 - Stock Adjustment -
+SF` on production), and refuses rather than guesses if there are several. A configured account
+that is a group, disabled, another company's or `Stock`-typed is skipped, not posted to.
+Setting the Company's Stock Adjustment Account would fix desk Stock Entries and Stock
+Reconciliations too; that is a settings decision for accounting, so nothing here depends on it.
+
+The maintenance consumables issue (`api/maintenance_workflow.create_stock_entry`) shipped
+without a difference account *and* without a `stock_entry_type` (first bullet below), and had
+simply never run on production. Since v1.521.0 it uses the same resolver and sets the type,
+and `tests/test_stock_entry_builders.py` fails the build on any Stock Entry builder that does
+not.
+
+Three more things the obvious version gets wrong, each verified against v16:
+
+- **`stock_entry_type` is always set.** It is mandatory, and `purpose` is *fetched* from it
+  on insert; setting only `purpose` raises `MandatoryError`.
+- **A Material Receipt carries an explicit `basic_rate`.** Without one, insert-then-submit
+  fails with "Valuation Rate Missing" — and submitting straight from new posts the stock at
+  **zero** value, which makes every later issue of it cost nothing. `_receipt_rate` takes the
+  last rate at this location, then the company-wide average, then the last purchase rate or
+  the Item's Valuation Rate — never the selling price — and a zero refuses the save.
+- **A take with a job re-saves the Project.** `update_cost_in_project` runs a full
+  `project.save()` inside the submit, with every Project hook in `hooks.py`. A Project that
+  cannot be saved makes the take fail, and anyone with that Project open in the Desk gets a
+  "document has been modified" on their next save.
+
+Serial, batch, variant, customer-provided and non-stock items are refused up front
+(`item_refusal`): the page shows them but withholds the stepper. ERPNext would auto-pick serial
+numbers FIFO on an issue, which is wrong for serialised equipment somebody may claim a warranty
+on. A take larger than what is on hand is refused before a document exists, in words that say
+what to do (`check_take`).
+
+**Permissions are the framework's.** After the role gate (`SCAN_ROLES`: Stock User and up,
+plus Inventory Clerk) every voucher is inserted, submitted and cancelled **without**
+`ignore_permissions`, so User Permissions on Warehouse or Project still apply and a user who
+could not post the voucher in the Desk cannot post it here. Only the log row — this page's own
+record — is written with `ignore_permissions`.
+
+### Undo, and why a retried save cannot post twice
+
+**Undo cancels the voucher, as the session user.** The person who saved it may undo it for
+the *Undo Window* (Inventory Scanner Settings, default 30 minutes; `0` switches it off for
+everyone but Stock Managers); a Stock Manager may undo any save at any time, which is the
+power they already have over the voucher in the Desk (`undo_refusal`). ERPNext still decides
+whether the cancel is possible: undoing a receipt whose stock has since been taken would drive
+the location negative and is refused, and a receipt cannot be cancelled once its order is
+Closed or On Hold. Every cancel queues a Repost Item Valuation, which the scheduler works off.
+
+**`client_ref` makes a save idempotent.** The page mints one per intended save and sends the
+same one on a retry after a dropped connection. It is **unique** on the log, and the log row is
+inserted *before* the voucher in the same transaction — so a double tap or a retry finds the
+first save and returns it (`repeated: true`) instead of posting a second, and a save whose
+voucher fails rolls its log row back with it. One retry needs its own answer: one that arrives
+while the first attempt is **still submitting** (a slow Purchase Receipt outlasting the page's
+30-second timeout) finds no committed row, waits on the unique key, and then collides. That is
+not a refusal — the first attempt is about to commit — so `_begin_log` raises it as
+`DuplicateEntryError` (HTTP 409), and the page treats a 409 like a dropped connection: it keeps
+the same `client_ref`, and the next tap gets the first save back. Answered as an ordinary 417,
+the page would mint a fresh reference and post the save twice.
+
+The server keeps every reference forever, so the page keeps one for a retry for **ten minutes
+only** (`logic.keptRef`, `RETRY_WINDOW_MS`): the same numbers saved later are a new save, not an
+"already saved" that posts nothing. An answer with `repeated: true` is said as exactly that —
+"That save was already recorded — nothing new was posted" — and the dialled change stays, so a
+person who did mean a second one taps Save again and gets a fresh reference.
+
+### The labels page
+
+`/warehouse-labels` prints a label for every warehouse that can hold stock: a leaf, not
+disabled, not a Transit warehouse (goods in transit sit on a truck, not a shelf). Each carries
+the warehouse's name, the breadcrumb of its groups (`Row 2 › Bay B1 › Shelf B1-2`, the tree
+root dropped) and the QR code, drawn server-side as inline SVG by `qr_svg.py` so what prints is
+exactly what the preview shows. Sheets are Avery 5160 (30 up), Avery 5163 (10 up) or one 2×1 in
+label per page for a label printer (`LABEL_PRESETS`; `preset_fits_page` checks that each
+preset's margins, labels and gaps add up to its page, so a typo cannot shift every label a
+sixteenth off its die-cut). Labels sort
+**naturally** — `Bin B1-2-9` before `Bin B1-2-10` — because the tree's own order is creation
+order, and on production that already reads `Bin C2-3-6` before `Bin C2-3-5`: a sheet peeled onto
+a shelf in that order puts two labels on the wrong bins.
+
+The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR Label** and
+**Open Stock Scan** on a location, **Print QR Labels** on a group for everything beneath it.
+
+### Day one: the bins are empty
+
+On the day this shipped all stock sat in `Stores - SF` and `Inventory Room - SF`; the bins under
+Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
+technician who scans a bin and
+presses − gets "The system shows none on hand here … use Move here", and that is correct: the
+ledger says the part is in Stores. **Move here** (a Material Transfer) is how the bins fill, and
+the first weeks are a put-away exercise before Take is useful. Two more facts from the same
+day that shape the page: only 111 of 824 Items maintain stock (the rest open as "not tracked"),
+and no Item has a barcode or an image, so items are found by location, by name, or by search,
+and show a monogram tile.
+
+**Watch** the `needs_review` queue (Stock Scan Log, *Needs Review* ticked, *Reviewed* not): it is
+every unit that entered stock without an order, at a cost the page chose.
 
 ## Item naming
 
@@ -129,12 +321,26 @@ trailing space is still a character. Use `BINARY` if you must write it in SQL.
 
 ## Tests
 
+Needs a bench (a `FrappeTestCase`; not in CI):
+
 ```bash
-python -m unittest erpnext_enhancements.tests.test_inventory_scanner -v
+bench --site <site> run-tests --app erpnext_enhancements --module erpnext_enhancements.tests.test_inventory_scanner
 ```
 
-Bench-free, and wired into CI:
+Bench-free:
 
 ```bash
 python -m unittest erpnext_enhancements.tests.test_item_naming_rules -v
+python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v    # needs PyQRCode~=1.2.1 for the QR half
+python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v
+python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
+python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
+node scripts/test_stock_scan_client.mjs
 ```
+
+`stock_scan_rules.parse_scan` decides every scan — the page sends the raw text to `resolve`
+and acts only on the answer. The page's JS twin, `parseScan`, has one job: naming the label in
+the error it shows when the server could not be reached ("Couldn't open Bin B1-2-10 - SF: …").
+`tests/data/stock_scan_parse_vectors.json` is read by both `test_stock_scan_rules` (Python
+`parse_scan`) and `scripts/test_stock_scan_client.mjs` (JS `parseScan`), so the two stay
+identical and that name is the one the server would have looked up.
