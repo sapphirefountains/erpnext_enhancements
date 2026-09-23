@@ -228,6 +228,65 @@ class TestTravelBothWays(unittest.TestCase):
 		self.assertEqual(len(completeness.travel_gaps(t)), 2)
 
 
+class TestLegFromItsPeoplesDates(unittest.TestCase):
+	"""The first real trip on prod (TRIP-2026-00001, entered on the form before the page
+	existed): four people, two of whom start a day late, and whole-crew flights with no leg.
+	Reading legs off the TRIP's dates put the day-two flight — the late starters' way there —
+	under "Getting around"."""
+
+	def real_trip(self):
+		return trip(
+			start_date="2026-09-27",
+			end_date="2026-10-02",
+			travelers=[
+				traveler("EMP-K", "K", "2026-09-27", "2026-10-02"),
+				traveler("EMP-J", "J", "2026-09-27", "2026-10-02"),
+				traveler("EMP-B", "B", "2026-09-28", "2026-09-28"),
+				traveler("EMP-L", "L", "2026-09-28", "2026-09-29"),
+			],
+			flights=[
+				flight(None, None, "2026-09-27 05:10:00", name="F1", airline="Delta"),
+				flight(None, None, "2026-09-28 07:20:00", name="F2", airline="Southwest"),
+			],
+			ground_transport=[
+				row(name="G1", traveler=None, leg=None, transport_type="Rental/Third Party", pickup_datetime=None,
+					supplier="FOX", booking_reference=None, cost=0),
+			],
+		)
+
+	def test_the_day_two_flight_is_a_way_there(self):
+		t = self.real_trip()
+		self.assertEqual(completeness.booking_leg("flights", [t.flights[1]], t), "Outbound")
+		# And the checklist agrees: nobody lacks a way there.
+		self.assertEqual({g["kind"] for g in completeness.travel_gaps(t)}, {"Return"})
+
+	def test_an_undated_rental_is_getting_around(self):
+		t = self.real_trip()
+		self.assertEqual(completeness.booking_leg("ground_transport", t.ground_transport, t), "During Trip")
+
+	def test_fix_links_point_at_the_step_the_page_shows_it_on(self):
+		t = self.real_trip()
+		t.flights[1].booking_reference = ""  # as on prod: no confirmation numbers yet
+		steps = {g["label"]: g["step"] for g in completeness.confirmation_gaps(t)}
+		self.assertEqual(steps["Southwest WN1"], "there")
+		self.assertEqual(steps["FOX"], "around")
+
+	def test_an_explicit_leg_always_wins(self):
+		t = self.real_trip()
+		t.flights[1].leg = "During Trip"
+		self.assertEqual(completeness.booking_leg("flights", [t.flights[1]], t), "During Trip")
+
+	def test_the_page_uses_the_same_rule(self):
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		body = re.search(r"\n\tinfer_legs\(\) \{(.*?)\n\t\}\n", source, re.S).group(1)
+		# Per-person windows, not the trip's dates alone; hired transport undated = around.
+		self.assertIn("c.from_date || t.start_date", body)
+		self.assertIn('"Rental/Third Party", "Taxi/Rideshare"', body)
+		self.assertEqual(
+			sorted(completeness.HIRED_TRANSPORT), ["Rental/Third Party", "Taxi/Rideshare"]
+		)
+
+
 class TestConfirmationAndCost(unittest.TestCase):
 	def test_only_the_person_without_a_number_is_named(self):
 		t = trip(
@@ -732,6 +791,9 @@ class TestContracts(unittest.TestCase):
 		self.assertLess(patches.index("[post_model_sync]"), patches.index("reload_travel_workspace_for_plan_a_trip"))
 
 	def test_node_check(self):
+		self._node_check()
+
+	def _node_check(self):
 		node = shutil.which("node")
 		if not node:
 			self.skipTest("node is not installed")
@@ -743,6 +805,72 @@ class TestContracts(unittest.TestCase):
 		):
 			result = subprocess.run([node, "--check", path], capture_output=True, text=True, check=False)
 			self.assertEqual(result.returncode, 0, f"{path}: {result.stderr}")
+
+
+class TestPageRouting(unittest.TestCase):
+	"""v1.520.0 shipped a page whose buttons only redrew the landing ("it just refreshes").
+
+	In frappe v16, ``frappe.set_route("plan-a-trip", {trip: X})`` does not put ``?trip=X``
+	in the address bar: ``make_url`` moves the object into ``frappe.route_options`` and
+	``push_state`` writes the path alone. The page read only ``location.search``, so every
+	route it was sent to looked empty. The browser harness that "passed" had faked
+	``set_route`` to write the query string, which is exactly the behaviour frappe lacks.
+	"""
+
+	def setUp(self):
+		self.source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		# Absence checks run on code only: the comments explaining each rule quote the very
+		# call they forbid.
+		self.code = _strip_js_comments(self.source)
+
+	def test_the_page_reads_frappe_route_options(self):
+		body = re.search(r"\n\troute_args\(\) \{(.*?)\n\t\}\n", self.source, re.S)
+		self.assertIsNotNone(body, "route_args() is gone")
+		self.assertIn("frappe.route_options", body.group(1))
+		# ...and consumes it, or a later plain visit replays the last trip.
+		self.assertIn("delete options[key]", body.group(1))
+
+	def test_the_page_never_routes_to_itself(self):
+		self.assertIsNone(re.search(r"frappe\.set_route\(\s*[\"']plan-a-trip", self.code))
+
+	def test_the_route_is_handled_once_per_show(self):
+		# frappe fires on_page_show right after on_page_load; handling the route in the
+		# constructor too consumed route_options twice and raced two renders.
+		self.assertEqual(self.code.count(".handle_route()"), 1)
+		self.assertIn("wrapper.trip_planner.handle_route()", self.code)
+
+	def test_no_hand_built_app_links(self):
+		# The v16 desk is /desk; the router only intercepts /desk links, so an in-desk
+		# href="/app/..." costs a full reload and a redirect.
+		for path in (
+			os.path.join(PAGE_DIR, "plan_a_trip.js"),
+			os.path.join(APP_DIR, "public", "js", "travel_trip.js"),
+			os.path.join(APP_DIR, "public", "js", "travel", "travel_trip_list.js"),
+		):
+			self.assertIsNone(re.search(r"[\"'`]/app/", _strip_js_comments(_read(path))), path)
+
+	def test_the_guards_catch_the_version_that_shipped(self):
+		# Each check above, run against the v1.520.0 shape of the page, must fire; a guard
+		# that cannot fail guards nothing.
+		shipped = (
+			"class TripPlanner {\n\tconstructor() {\n\t\tthis.handle_route();\n\t}\n"
+			"\thandle_route() { this.route(); }\n"
+			"\troute() { const name = frappe.utils.get_url_arg(\"trip\"); }\n"
+			"\trender_landing() { frappe.set_route(\"plan-a-trip\", { new: 1 }); }\n}\n"
+			"frappe.pages[\"plan-a-trip\"].on_page_show = function (wrapper) {\n"
+			"\twrapper.trip_planner.handle_route();\n};\n"
+		)
+		code = _strip_js_comments(shipped)
+		self.assertIsNotNone(re.search(r"frappe\.set_route\(\s*[\"']plan-a-trip", code))
+		self.assertNotEqual(code.count(".handle_route()"), 1)
+		self.assertIsNone(re.search(r"\n\troute_args\(\) \{", code))
+
+
+def _strip_js_comments(source):
+	"""Drop // line comments and /* */ blocks (good enough for these files: none of them
+	carries '//' or '/*' inside a string that matters here)."""
+	source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+	return re.sub(r"(^|[^:\"'`])//[^\n]*", r"\1", source)
 
 
 if __name__ == "__main__":

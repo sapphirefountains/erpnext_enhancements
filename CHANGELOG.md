@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.520.1] - 2026-09-23
+
+**Plan a Trip: "Start a new trip" and opening a trip only redrew the landing.** Every button
+that should open a trip (*Start a new trip*, a trip in the list, the form's *Plan step by
+step*, the list's *+ Add*) left you on the page you were already on.
+
+### Fixed
+
+- **The page now reads `frappe.route_options`.** In frappe v16,
+  `frappe.set_route("plan-a-trip", {trip: X})` does not put `?trip=X` in the address bar.
+  `make_url` moves the object into `frappe.route_options`, and `push_state` writes the path
+  alone. The page read only `location.search`, so every route it was sent to looked empty and
+  it drew the landing again. It now reads `frappe.route_options`, which the router also fills
+  from the address bar on every route change, falling back to the address bar, and consumes
+  them as the list view does so a later plain visit does not replay the last trip.
+- **The landing opens trips itself**, instead of routing to the page it is already on. The
+  address bar follows by `history.replaceState` (`?trip=…` / `?new=1`), so a reload or a
+  bookmark comes back to the same trip. That address was never written before.
+- **The route is handled once.** The constructor handled it and so did `on_page_show`, which
+  frappe fires straight after `on_page_load`. Two passes loaded the landing twice on every
+  visit, and with the options now consumed the second pass would have drawn the landing over
+  the trip it had just opened.
+- **In-desk links use `/desk/…`.** Frappe's link handler only intercepts `/desk` paths, so the
+  form's checklist link, its "Plan a Trip" pointer and the page's "Open the full form" links
+  (written as `/app/…`) each cost a full reload and a redirect.
+- **A booking with no leg is placed by its people's dates, not the trip's.** This showed up on
+  the first real trip on prod. Two of four travelers start a day late, and the whole-crew
+  flight that gets them there, dated day two, was filed under *Getting around*. Opening and
+  saving the trip on the page would have stored that leg, and the checklist would then have
+  said both had no way there. Both the page and the checklist now use one rule
+  (`completeness.booking_leg`). A date on or before any of the booking's people's first day
+  means the way there, and a date on or after any last day means the way back. An undated
+  rental or taxi counts as getting around. The checklist's *Fix* links now point at the step
+  the booking actually appears on.
+
+### Why the tests missed it
+
+The browser harness behind v1.520.0 faked `frappe.set_route` to write the query string, which
+is exactly what frappe does not do. The harness now models v16's router as it is, and it
+reproduced the bug against the deployed file before the fix. `tests/test_travel_planner.py`
+checks:
+
+- that the page reads and consumes `frappe.route_options`;
+- that it never routes to itself;
+- that it handles the route once;
+- that it builds no `/app/` links;
+- a test showing those checks fire on the v1.520.0 shape of the page;
+- the leg rule against the real trip's shape (anonymized).
+
 ## [1.520.0] - 2026-09-23
 
 **Plan a Trip: enter a whole trip one step at a time, and see what is still missing.** Travel

@@ -249,7 +249,7 @@ function show_trip_checklist(frm) {
 		return;
 	}
 	const gaps = (frm.doc.__onload && frm.doc.__onload.trip_gaps) || [];
-	const plan_url = `/app/plan-a-trip?trip=${encodeURIComponent(frm.doc.name)}&step=review`;
+	const plan_url = `/desk/plan-a-trip?trip=${encodeURIComponent(frm.doc.name)}&step=review`;
 	if (!gaps.length) {
 		frm.dashboard.set_headline_alert(__('Trip checklist: nothing missing.'), 'green');
 		return;
@@ -273,7 +273,7 @@ frappe.ui.form.on('Travel Trip', {
 		if (frm.is_new()) {
 			frm.set_intro(
 				`${__('Easier: Plan a Trip walks through the crew, flights, rooms and schedule one step at a time.')}
-				 <a href="/app/plan-a-trip?new=1">${__('Plan a Trip')}</a>`,
+				 <a href="/desk/plan-a-trip?new=1">${__('Plan a Trip')}</a>`,
 				'blue'
 			);
 		}

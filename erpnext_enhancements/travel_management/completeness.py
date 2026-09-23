@@ -147,13 +147,53 @@ def _bookings(trip, table):
 	return groups
 
 
+#: Ground transport that is hired for getting around, not for getting there: an undated
+#: one is placed under "Getting around" rather than "Getting there".
+HIRED_TRANSPORT = frozenset({"Rental/Third Party", "Taxi/Rideshare"})
+
+
+def booking_leg(table, rows, trip):
+	"""The leg one booking belongs to — its own, or the one its people's dates imply.
+
+	The page places a leg-less booking with this same rule (``infer_legs`` in
+	``plan_a_trip.js``) and writes it on the next save, so it must agree with the
+	per-traveler reading in :func:`travel_gaps`. Using the TRIP's dates instead got this
+	wrong on the first real trip: a whole-crew flight on day two, which is how two of the
+	four got there, read as "getting around" — and saving would have stored that, leaving
+	both with no way there.
+
+	Outbound if the date is on or before ANY of its people's first day, Return if on or
+	after any last day, otherwise During Trip. No date: a rental or taxi is getting around,
+	anything else is taken as the way there.
+	"""
+	leg = _get(rows[0], "leg")
+	if leg:
+		return leg
+	when = segment_date(table, rows[0])
+	if when is None:
+		if table == "ground_transport" and _get(rows[0], "transport_type") in HIRED_TRANSPORT:
+			return DURING
+		return OUTBOUND
+	travelers = _travelers(trip)
+	named = {_get(row, "traveler") for row in rows if _get(row, "traveler")}
+	whole_crew = any(not _get(row, "traveler") for row in rows)
+	pool = [t for t in travelers if whole_crew or _get(t, "employee") in named] or travelers
+	windows = [traveler_window(trip, t) for t in pool] or [
+		(to_date(_get(trip, "start_date")), to_date(_get(trip, "end_date")))
+	]
+	if any(start and when <= start for start, _end in windows):
+		return OUTBOUND
+	if any(end and when >= end for _start, end in windows):
+		return RETURN
+	return DURING
+
+
 def _step(table, rows, trip):
 	if table == "accommodations":
 		return "lodging"
 	if table == "freight":
 		return "freight"
-	start, end = to_date(_get(trip, "start_date")), to_date(_get(trip, "end_date"))
-	return STEP_FOR_LEG.get(leg_of(table, rows[0], start, end), "there")
+	return STEP_FOR_LEG.get(booking_leg(table, rows, trip), "there")
 
 
 # --------------------------------------------------------------------------- checks
