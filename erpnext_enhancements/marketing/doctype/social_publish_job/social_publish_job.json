@@ -28,7 +28,12 @@
   "last_error",
   "resolved_by",
   "attempts_section",
-  "attempt_log"
+  "attempt_log",
+  "engagement_section",
+  "metrics_through",
+  "metrics_checked_at",
+  "column_break_engagement",
+  "metrics_error"
  ],
  "fields": [
   {
@@ -181,10 +186,40 @@
    "label": "Attempt Log",
    "options": "Social Publish Attempt",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "engagement_section",
+   "fieldtype": "Section Break",
+   "label": "Engagement"
+  },
+  {
+   "description": "The last day this post's engagement is complete for. Moves only on a clean pull.",
+   "fieldname": "metrics_through",
+   "fieldtype": "Date",
+   "label": "Engagement Through",
+   "read_only": 1
+  },
+  {
+   "fieldname": "metrics_checked_at",
+   "fieldtype": "Datetime",
+   "label": "Engagement Checked At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_engagement",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Why the last engagement pull for this post failed. Cleared by the next clean one.",
+   "fieldname": "metrics_error",
+   "fieldtype": "Small Text",
+   "label": "Engagement Error",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-22 22:00:00.000000",
+ "modified": "2026-09-22 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Publish Job",

@@ -209,8 +209,18 @@ PUBLISH_ALLOWLIST = tuple(
 		(CONNECTION_YOUTUBE, "PUT", YOUTUBE_HOST, r"^/upload/youtube/v3/videos$"),
 		(CONNECTION_YOUTUBE, "POST", YOUTUBE_HOST, r"^/upload/youtube/v3/thumbnails/set$"),
 		(CONNECTION_YOUTUBE, "POST", YOUTUBE_HOST, r"^/youtube/v3/playlistItems$"),
+		# The engagement pull-back (TASK-2026-01488): reads only. A Facebook post's and an
+		# Instagram media object's insights, a Facebook video's; LinkedIn's per-post statistics;
+		# YouTube Analytics' report by day. (A post's own reaction/comment/share counts go through
+		# the existing GET on a post ID.)
+		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+(_\d+)?/insights$"),
+		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+/video_insights$"),
+		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizationalEntityShareStatistics$"),
+		(CONNECTION_YOUTUBE, "GET", "youtubeanalytics.googleapis.com", r"^/v2/reports$"),
 	)
 )
+
+YOUTUBE_ANALYTICS_HOST = "youtubeanalytics.googleapis.com"
 
 YOUTUBE_API_BASE = f"https://{YOUTUBE_HOST}/youtube/v3"
 

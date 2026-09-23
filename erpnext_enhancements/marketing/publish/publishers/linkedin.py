@@ -26,6 +26,9 @@ themselves, except a ``#`` that starts a hashtag, which is left so the hashtag w
 Video is not here yet: LinkedIn's video upload is a multi-part flow of its own, and the pre-approval
 check refuses a LinkedIn video until it is. The first comment may be refused -- LinkedIn's docs
 disagree on whether ``w_organization_social`` covers comments -- and a refusal is only a warning.
+
+The link goes out tagged (TASK-2026-01488): a link to our own site carries UTM tags naming the post
+and the network (``publish/tracking.py``), on the article card and in the text alike.
 """
 
 import re
@@ -36,6 +39,7 @@ from erpnext_enhancements.marketing.core import constants as C
 from erpnext_enhancements.marketing.core.client import MarketingAPIError
 from erpnext_enhancements.marketing.publish import constants as P
 from erpnext_enhancements.marketing.publish import media as M
+from erpnext_enhancements.marketing.publish import tracking
 
 REST = C.LINKEDIN_REST_BASE
 HASHTAG_START = re.compile(r"#\w")
@@ -157,7 +161,7 @@ def _content(context, transport, owner, read, sleep):
 				entry["altText"] = item["alt_text"].strip()[:4086]
 			entries.append(entry)
 		return {"media": entries[0]} if len(entries) == 1 else {"multiImage": {"images": entries}}
-	link = (post.get("link") or "").strip()
+	link = tracking.for_post(post, P.NETWORK_LINKEDIN)
 	if link:
 		article = {"source": link, "title": (post.get("link_title") or "").strip()}
 		if (post.get("link_description") or "").strip():
@@ -224,8 +228,11 @@ def prepare(context, transport, sleep=time.sleep, read=M.read_bytes):
 	owner = _org(context)
 	text = _text(context)
 	link = (context["post"].get("link") or "").strip()
-	if link and context.get("media") and link not in text:
-		text = f"{text}\n\n{link}" if text else link  # beside media, the link rides in the text
+	sent = tracking.for_post(context["post"], P.NETWORK_LINKEDIN)
+	if context.get("media"):
+		text = tracking.with_link(text, link, sent)  # beside media, the link rides in the text
+	elif link and link in text:
+		text = text.replace(link, sent)  # the author's own copy carries the card's tags
 	commentary = little_text(text)
 	body = {
 		"author": owner,

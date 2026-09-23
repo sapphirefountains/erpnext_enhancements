@@ -19,6 +19,7 @@ import re
 
 from erpnext_enhancements.marketing.publish import constants as P
 from erpnext_enhancements.marketing.publish import media as M
+from erpnext_enhancements.marketing.publish import tracking
 
 HASHTAG = re.compile(r"(?<![\w&])#\w+")
 MENTION = re.compile(r"(?<![\w.])@[\w.]+")
@@ -138,6 +139,12 @@ def linkedin_problems(text, link, media, first_comment="", link_title="", post=N
 	link = (link or "").strip()
 	if not commentary and not link and not media:
 		problems.append("LinkedIn: a post needs text, a link or media")
+	# Counted as sent: beside media the (tagged) link rides in the text (publishers/linkedin.py).
+	sent = tracking.tagged(link, P.NETWORK_LINKEDIN, (post or {}).get("name"), (post or {}).get("campaign"))
+	if media:
+		commentary = tracking.with_link(commentary, link, sent)
+	elif link and link in commentary:
+		commentary = commentary.replace(link, sent)
 	if len(commentary) > P.LINKEDIN_COMMENTARY_MAX:
 		problems.append(
 			f"LinkedIn: the text is {len(commentary)} characters; the limit is {P.LINKEDIN_COMMENTARY_MAX}"
@@ -225,7 +232,12 @@ def youtube_problems(text, link, media, first_comment="", link_title="", post=No
 		problems.append(
 			f"YouTube: the Video Title is {len(title)} characters; the limit is {P.YOUTUBE_TITLE_MAX}"
 		)
-	description = (text or "").strip()
+	# Counted as sent: the (tagged) link ends the description (publishers/youtube.metadata).
+	description = tracking.with_link(
+		(text or "").strip(),
+		link,
+		tracking.tagged(link, P.NETWORK_YOUTUBE, post.get("name"), post.get("campaign")),
+	)
 	if len(description.encode("utf-8")) > P.YOUTUBE_DESCRIPTION_MAX_BYTES:
 		problems.append(f"YouTube: the description is over {P.YOUTUBE_DESCRIPTION_MAX_BYTES} bytes")
 	for label, value in (("Video Title", title), ("description", description)):

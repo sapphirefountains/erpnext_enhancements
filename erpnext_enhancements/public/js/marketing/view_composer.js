@@ -50,6 +50,8 @@ const CHECK_DELAY_MS = 700;
 
 function emptyState(day) {
 	return {
+		name: "",
+		campaign: "",
 		title: "",
 		body: "",
 		link: "",
@@ -68,6 +70,9 @@ function emptyState(day) {
 
 function stateFrom(post) {
 	return {
+		// The post's name and Campaign are what its link's tracking tags carry (TASK-2026-01488).
+		name: post.name || "",
+		campaign: post.campaign || "",
 		title: post.title || "",
 		body: post.body || "",
 		link: post.link || "",
@@ -589,6 +594,7 @@ function actionBar(ctx) {
 		bar.appendChild(
 			button("Copy into a new draft", "ee-mk-btn", () => {
 				const copy = stateFrom(saved);
+				copy.name = ""; // a new post, with a name (and tags) of its own
 				copy.day = "";
 				copy.time = "";
 				app.seed = copy;

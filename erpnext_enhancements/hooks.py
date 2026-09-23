@@ -1138,6 +1138,12 @@ scheduler_events = {
 		# run_dispatch on `long`. Every 5 minutes at :02/:07/..., off every other minute used
 		# here. Dormant: returns at once while Marketing Settings.enabled is 0.
 		"2-59/5 * * * *": ["erpnext_enhancements.marketing.publish.sweeper.sweep_publish_jobs"],
+		# marketing (TASK-2026-01488): the engagement pull-back. Each published post's figures
+		# for 90 days, into Social Post Metric (a lifetime total per date); YouTube's trailing
+		# days are restated, and each job's cursor moves only on a clean pull. Only Connected
+		# publishing connections; the publish switches play no part. Enqueues on `long`.
+		# 03:50: after the 03:35 token upkeep. Dormant while Marketing Settings.enabled is 0.
+		"50 3 * * *": ["erpnext_enhancements.marketing.publish.metrics_sync.nightly_social_metrics"],
 	},
 	"daily": [
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones

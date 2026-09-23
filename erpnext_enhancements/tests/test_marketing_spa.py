@@ -323,8 +323,14 @@ class AssetTests(unittest.TestCase):
 			S.USAGE_RIGHTS[0], fields["usage_rights"]["default"], "an upload starts as the doctype's default"
 		)
 
-	def test_metric_totals(self):
-		totals = S.metric_totals([{"impressions": 10, "reach": None}, {"impressions": 5, "clicks": 2}])
+	def test_metric_totals_are_the_newest_row(self):
+		# Rows are lifetime totals as of their date (TASK-2026-01488): the newest one is the post's.
+		totals = S.metric_totals(
+			[
+				{"metric_date": "2026-09-21", "impressions": 10, "reach": 7, "clicks": 1},
+				{"metric_date": "2026-09-22", "impressions": 15, "reach": None, "clicks": 2},
+			]
+		)
 		self.assertEqual(
 			totals, {"impressions": 15, "reach": None, "engagements": None, "clicks": 2, "video_views": None}
 		)

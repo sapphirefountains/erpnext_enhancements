@@ -179,6 +179,8 @@ def _post_payload(doc):
 		"video_tags": doc.video_tags or "",
 		"video_thumbnail": doc.video_thumbnail or "",
 		"youtube_playlist_id": doc.youtube_playlist_id or "",
+		# Read-only here; the preview needs it because the link's utm_campaign carries it.
+		"campaign": doc.get("campaign") or "",
 		"author": people.get(doc.owner),
 		"last_edited_by": people.get(doc.modified_by),
 		"approver": people.get(doc.get("approver")) if doc.get("approver") else None,

@@ -1,0 +1,28 @@
+{
+ "_comment": "Cases for tracking.tagged (Python) and composer.js tagged (JS). Both implementations must give every 'out' exactly: the composer's preview shows what the publishers send. tests/test_marketing_metrics.py and scripts/test_marketing_client.js both read this file.",
+ "tagged": [
+  {"why": "our site, no query", "link": "https://www.sapphirefountains.com/plaza", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/plaza?utm_source=facebook&utm_medium=social&utm_campaign=organic&utm_content=spost-00012"},
+  {"why": "the bare domain counts", "link": "https://sapphirefountains.com/", "network": "LinkedIn", "post": "SPOST-00012", "campaign": "Spring Launch 2026!", "out": "https://sapphirefountains.com/?utm_source=linkedin&utm_medium=social&utm_campaign=spring-launch-2026&utm_content=spost-00012"},
+  {"why": "an existing query is kept as written and the tags appended", "link": "https://www.sapphirefountains.com/find?q=a%20b&x=1", "network": "YouTube", "post": "SPOST-00012", "campaign": null, "out": "https://www.sapphirefountains.com/find?q=a%20b&x=1&utm_source=youtube&utm_medium=social&utm_campaign=organic&utm_content=spost-00012"},
+  {"why": "the fragment stays last", "link": "https://www.sapphirefountains.com/plaza#gallery", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/plaza?utm_source=facebook&utm_medium=social&utm_campaign=organic&utm_content=spost-00012#gallery"},
+  {"why": "a query and a fragment", "link": "https://www.sapphirefountains.com/p?id=4#top", "network": "LinkedIn", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/p?id=4&utm_source=linkedin&utm_medium=social&utm_campaign=organic&utm_content=spost-00012#top"},
+  {"why": "an upper-case host is still ours", "link": "https://WWW.SapphireFountains.com/plaza", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://WWW.SapphireFountains.com/plaza?utm_source=facebook&utm_medium=social&utm_campaign=organic&utm_content=spost-00012"},
+  {"why": "already tagged by a person: left alone", "link": "https://www.sapphirefountains.com/plaza?utm_source=newsletter", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/plaza?utm_source=newsletter"},
+  {"why": "an upper-case UTM key still counts as tagged", "link": "https://www.sapphirefountains.com/plaza?UTM_Campaign=x", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/plaza?UTM_Campaign=x"},
+  {"why": "somebody else's site: left alone", "link": "https://www.example.com/story", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://www.example.com/story"},
+  {"why": "a look-alike domain is not ours", "link": "https://sapphirefountains.com.evil.test/x", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://sapphirefountains.com.evil.test/x"},
+  {"why": "nor is a host that merely ends with our name", "link": "https://notsapphirefountains.com/x", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://notsapphirefountains.com/x"},
+  {"why": "not http(s): left alone", "link": "mailto:hello@sapphirefountains.com", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "mailto:hello@sapphirefountains.com"},
+  {"why": "Instagram never gets the link, so it is never tagged", "link": "https://www.sapphirefountains.com/plaza", "network": "Instagram", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/plaza"},
+  {"why": "no post yet (an unsaved draft): nothing to join on", "link": "https://www.sapphirefountains.com/plaza", "network": "Facebook", "post": "", "campaign": "", "out": "https://www.sapphirefountains.com/plaza"},
+  {"why": "blank", "link": "", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": ""},
+  {"why": "surrounding spaces are trimmed", "link": "  https://www.sapphirefountains.com/plaza  ", "network": "Facebook", "post": "SPOST-00012", "campaign": "", "out": "https://www.sapphirefountains.com/plaza?utm_source=facebook&utm_medium=social&utm_campaign=organic&utm_content=spost-00012"},
+  {"why": "a campaign of only symbols falls back to organic", "link": "https://www.sapphirefountains.com/", "network": "Facebook", "post": "SPOST-00012", "campaign": "!!!", "out": "https://www.sapphirefountains.com/?utm_source=facebook&utm_medium=social&utm_campaign=organic&utm_content=spost-00012"}
+ ],
+ "with_link": [
+  {"why": "appended after the text", "text": "Come see it", "link": "https://www.sapphirefountains.com/p", "sent": "https://www.sapphirefountains.com/p?utm_source=facebook", "out": "Come see it\n\nhttps://www.sapphirefountains.com/p?utm_source=facebook"},
+  {"why": "the author's own copy of the link is swapped in place", "text": "See https://www.sapphirefountains.com/p today", "link": "https://www.sapphirefountains.com/p", "sent": "https://www.sapphirefountains.com/p?utm_source=facebook", "out": "See https://www.sapphirefountains.com/p?utm_source=facebook today"},
+  {"why": "no text: the link alone", "text": "", "link": "https://www.sapphirefountains.com/p", "sent": "https://www.sapphirefountains.com/p?utm_source=facebook", "out": "https://www.sapphirefountains.com/p?utm_source=facebook"},
+  {"why": "no link: the text alone", "text": "Hello", "link": "", "sent": "", "out": "Hello"}
+ ]
+}
