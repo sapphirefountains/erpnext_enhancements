@@ -7,7 +7,7 @@
    custom Comments App (comments.js), Kanban horizontal scroll + Opportunity
    high-value card / value-stream dots (kanban_customization.js), activity-log
    numbering (activity_log_numbering.js) and the filter-help button
-   (filter_help.js).
+   (filter_help.js). Also un-truncates the tile names on the /desk home grid.
 
    Loaded via: hooks.py `app_include_css` (global; bundled file name
    "desk_enhancements.bundle.css"). Light/dark handled with [data-theme] vars.
@@ -1410,6 +1410,62 @@ mark {
    ========================================================================== */
 .desk-home-button-wrapper {
     display: none !important;
+}
+
+/* ==========================================================================
+   DESK HOME (/desk) — SHOW EACH TILE'S FULL NAME
+
+   Frappe v16's desktop page (frappe/desk/page/desktop/desktop.css) holds a
+   tile's name to one line — `.icon-title { white-space: nowrap; text-overflow:
+   ellipsis }` — in a 127px tile whose padding and border leave it 93px. Most
+   of our workspace names are two words, so the grid read "Inventory E…",
+   "Process Do…", and two "Production …" tiles sat side by side with nothing
+   to tell them apart.
+
+   - The name wraps, balanced so a two-word name splits evenly. Frappe's
+     caption box is already 35px tall and two lines at 14px × 115% take 32px,
+     so on the desktop grid a two-line name leaves the tile exactly the size
+     it was.
+   - The caption spills 12px into each side's padding (93px → 117px), so the
+     longest single word on the grid — "Documentation", ~104px — fits its line
+     instead of breaking mid-word. The tile's `align-items: center` keeps the
+     wider box centred.
+   - The tile grows when its name needs the room: the caption drops its fixed
+     height, and `min-height: max-content` lets the tile outgrow Frappe's fixed
+     `height`. On the desktop grid that takes a third line; on a phone, where
+     Frappe's 117px/100px tile only ever had room for one, a two-line name
+     makes that row ~16px taller. It is min-height rather than `height: auto`
+     on purpose — Frappe sets that height at (0,1,0) on the grid, (0,3,0) in
+     a folder's modal and (0,4,0) on phones, and sets no min-height anywhere,
+     so there is no specificity contest, and each breakpoint keeps its own
+     tile size as the floor.
+
+   Frappe injects the page stylesheet when the page loads, AFTER this bundle,
+   so a rule of equal specificity here loses on source order; each rule below
+   outranks the one it overrides by a class. `:has(> .icon-caption)` leaves
+   out the thumbnails inside a folder tile, which have no caption.
+   ========================================================================== */
+.desktop-icon:has(> .icon-caption) {
+    min-height: max-content;
+}
+
+.desktop-icon .icon-caption {
+    width: calc(100% + 24px);
+    height: auto;
+}
+
+.desktop-icon .icon-title {
+    white-space: normal;
+    text-wrap: balance;
+    overflow-wrap: break-word;
+}
+
+/* Under 380px wide the phone tile is 100px square, which leaves the caption
+   ~90px — "Documentation" needs ~104px at 14px, and ~89px at 12px. */
+@media screen and (max-width: 380px) {
+    .desktop-icon .icon-title {
+        font-size: var(--text-xs);
+    }
 }
 
 /* ==========================================================================
