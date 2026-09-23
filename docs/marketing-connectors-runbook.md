@@ -327,10 +327,35 @@ Since v1.514.0 each job's **Attempt Log** keeps every attempt and every person's
 attempt, the outcome, the HTTP status, whether the request had left ERPNext, and who, when a person
 decided. *Last Error* still shows only the latest.
 
+### The /marketing app
+
+Since v1.515.0 (TASK-2026-01487) the marketing team works at
+**`https://erp.sapphirefountains.com/marketing`**, not in the Desk. It needs Marketing Team,
+Marketing Manager or System Manager (anybody else gets a 403), and it is where everything below
+happens:
+
+- **Calendar:** a month or a week of posts, the drafts with no time yet, and the Instagram and
+  YouTube quota left. **Drag a post to another day** to move it (same time of day). Only a Draft
+  or a post waiting for approval moves; an approved post's time was approved with it.
+- **New post / a post:** choose the accounts, write the text (per account if you like), add a
+  link, photos or a video, and pick a time. The right-hand side shows each account's version and
+  **what the networks would refuse**, checked as you type. Then Save, or Submit for approval.
+- **Media:** every photo, video and PDF. **Add** one here or from the post's "Add photos or
+  video". New media starts as *Needs client approval*; only *Cleared for social* can go into a
+  post. Uploads are **private** unless you tick *Public file*, which Facebook and Instagram need
+  (they fetch the file from its address, and anyone with the address can then open it).
+- **Approval queue:** every post waiting, oldest first, and whether you can approve it. Approve
+  from the post itself, after reading it; Send back works from the queue.
+- **Results** (from a post that went out): each account's job, its link, every attempt, and the
+  engagement figures once they are collected. An *Unconfirmed* job is still resolved on its Desk
+  form, by someone who checked the network.
+
+Times are the site's (America/Denver), whatever the phone's clock says.
+
 ### Approving a post
 
 Since v1.514.0 (TASK-2026-01486). **Nothing reaches a public account without a second person's
-approval.**
+approval.** The buttons below are on the post in `/marketing` and on its Desk form.
 
 | Status | How it gets there | Buttons |
 |---|---|---|

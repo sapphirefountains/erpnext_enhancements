@@ -1394,8 +1394,14 @@ extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 # list is one careless line-delete away from taking /feedback's deep links down with it —
 # which would 404 every link in every enhancement-request notification, and cache those 404s
 # until the following full deploy.
+#
+# /marketing (TASK-2026-01487, v1.515.0) is the same shape again: one shell at
+# www/marketing.html for the calendar, composer, media library and approval queue, so a
+# refresh at /marketing/post/SPOST-00001 or /marketing/calendar/2026-10 renders it. The client
+# routes itself (public/js/marketing/routes.js); the server never parses the path.
 website_route_rules = [
 	{"from_route": "/feedback/<path:feedback_path>", "to_route": "feedback"},
+	{"from_route": "/marketing/<path:marketing_path>", "to_route": "marketing"},
 ]
 
 # Jinja methods available to Print Formats / web templates. The print sandbox

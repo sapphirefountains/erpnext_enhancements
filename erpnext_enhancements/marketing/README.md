@@ -15,8 +15,9 @@ Since v1.507.0 the **publishing switches and their gate** exist too (Phase 2's s
 is installed yet. Since v1.508.0 the publishing connections, and since v1.509.0 the posts,
 accounts, media and the outbox that will publish them. Every network has had a publisher since
 v1.513.0 (TASK-2026-01483 to 01485), and since v1.514.0 a post can be approved (01486; see
-[Roles and approval](#roles-and-approval)). Nothing goes out until the switches are on and a
-network's platform approval has cleared.
+[Roles and approval](#roles-and-approval)). Since v1.515.0 the marketing team works in its own
+app at **`/marketing`** (01487; see [The /marketing app](#the-marketing-app)). Nothing goes out
+until the switches are on and a network's platform approval has cleared.
 
 ## Files
 
@@ -40,6 +41,8 @@ network's platform approval has cleared.
 | `publish/outbox.py` | **The outbox state machine**, pure over a store: enqueue an approved post, claim, dispatch, retry or hold, and the rule that a job which may have sent goes to **Unconfirmed**, never back to Pending (TASK-2026-01481). Since v1.514.0 every outcome adds an **attempt-log** entry in the same write as the state, and `cancel_post` stops what has not gone out |
 | `publish/sweeper.py` | The five-minute sweep and `FrappeStore`: reclaim expired leases, claim due jobs atomically, hand each to `run_dispatch` on `long`; `resolve_job` (POST; a Marketing Manager or System Manager, from a signed-in browser) for a person's answer on an Unconfirmed or Failed job |
 | `publish/workflow.py` | **Pure:** draft → approve → publish and who may do each (TASK-2026-01486). Approver ≠ author or last editor; only from a signed-in browser (`signed_in_browser`: a token, job or console request has `sid == user`); status, approver and approval time move only through the actions |
+| `publish/spa.py` | The `/marketing` app's endpoints (TASK-2026-01487), all POST, each starting with `_require()` (the three marketing roles) and then the DocPerms: bootstrap, calendar, a post, live checks, save, reschedule, the approval queue, delete, the media list and upload, and results |
+| `publish/spa_rules.py` | **Pure:** the rules under them. Who may open the app, the composer's field allowlist (never status, approver or owner), site-local times and "a new time must be in the future", the calendar window, what each person may do to a post, the quota view |
 | `publish/approval.py` | The four Social Post actions, all POST: **Submit for Approval**, **Approve** (writes the outbox rows in the same transaction, and refuses a post edited since the approver opened it), **Send Back**, **Cancel** |
 | `publish/accounts.py` | Social Account rows from what a publishing connection reaches, written on Connect |
 | `publish/ratelimit.py` | Rate limits (TASK-2026-01482): each rule a **pure** function (the spec) plus a **Redis Lua** script printed next to it, run against each other in CI. Instagram's rolling 24 h per account (live limit when known, 25 until then), YouTube's Pacific-day budgets, and connection pauses from Meta's usage headers or a 429's Retry-After. The sweep asks it before claiming; the publish transport reports every response to it. **The bucket is an optimisation; backoff is the correctness mechanism** |
@@ -105,6 +108,15 @@ The Marketing department's dashboard gate (`api/kpi.py`, `DEPARTMENT_ROLES`) alr
 Marketing Manager; the approver is the same role. A Campaign link on a post needs read access to
 ERPNext's Campaign, which neither marketing role has: granting it would take a Custom DocPerm,
 and that replaces Campaign's standard permissions wholesale.
+
+### The /marketing app
+
+Since v1.515.0 (TASK-2026-01487). A chrome-free page at `/marketing` for the calendar (month and
+week, drag to reschedule), the composer (per-network preview and live checks), the media library
+(with upload), the approval queue and each post's results. It is gated to the three roles above;
+the endpoints are `publish/spa.py` and the front end is
+[`public/js/marketing/`](../public/js/marketing/README.md), which documents its rules, what
+enforces them, and what the bundle costs.
 
 The publishing **connections** (v1.508.0) are separate from the ad ones: their own Connect,
 their own fields (`meta_publishing_*`, `linkedin_publishing_*`, `youtube_publishing_*`, a

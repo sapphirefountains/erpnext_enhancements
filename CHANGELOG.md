@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.515.0] - 2026-09-22
+
+**Marketing P2: the `/marketing` app.** TASK-2026-01487, decision 8: a daily-driver tool for a
+non-technical marketing hire, so they never need the Desk. It has a calendar, a composer, a media
+library, an approval queue and per-post results. Posts can be written and approved today; nothing
+goes out until the switches are on and a platform's approval clears.
+
+### Added
+
+- **`www/marketing.html` + `www/marketing.py`,** a chrome-free shell served for the whole
+  `/marketing/...` subtree by a second `website_route_rules` entry, the twin of `/feedback`'s. The
+  client routes itself and the server never parses the path. A signed-out visitor is sent to log in
+  and back to the same path. Anyone signed in without Marketing Team, Marketing Manager or System
+  Manager gets a 403. The boot payload carries identity and the CSRF token only, never posts.
+- **`marketing/publish/spa.py`, 11 endpoints,** all POST and never guest. Each starts with
+  `_require()` (the three roles) and then defers to the DocPerms (`get_list`,
+  `check_permission`), with no `ignore_permissions` anywhere:
+  - `get_bootstrap`, `get_calendar`, `get_post`, `check_post` (each network's refusals for the
+    composer's current state, saved or not, from the outbox's own checks);
+  - `save_post`, `reschedule`, `approval_queue`, `delete_post`;
+  - `list_media`, `create_asset`, `get_results`.
+
+  The four post actions are `approval.py`'s (v1.514.0), called directly. People are always shown
+  by full name, never by their `User` docname, which on this site is an email address.
+- **`marketing/publish/spa_rules.py`, the rules, frappe-free:**
+  - who may open the app;
+  - **the composer's field allowlist**: a payload carrying `status`, `approver` or `owner` changes
+    nothing, and the controller refuses those in any ordinary save anyway;
+  - **site-local times**: a time with a zone offset is refused rather than converted, because the
+    app is opened from phones in whatever zone their owner is in;
+  - **a new time must be in the future**: a post scheduled in the past goes out the moment it is
+    approved, which a drag onto yesterday almost never means. Empty is how "as soon as it is
+    approved" is said;
+  - the calendar window, capped at 45 days so a request is never an unbounded query;
+  - what each person may do to a post, **with the reason Approve is unavailable** ("you wrote
+    it", "you made the latest change");
+  - the Instagram and YouTube quota view, where "never checked" reads as unknown, not zero.
+- **The client, `public/js/marketing/`,** loaded only by the website route through
+  `marketing.bundle.js`:
+  - **Calendar:** month and week, the site's first day of the week (Sunday on prod), the drafts
+    with no time, and the quota left. **Drag to reschedule** moves a Draft or a post waiting for
+    approval to another day at the same time of day. An approved post does not move, because its
+    time was approved with it, and past days take no drops.
+  - **Composer:** accounts with per-account text and a first comment, text counters against the
+    server's limits (Instagram's characters, hashtags and @mentions, and YouTube's description in
+    **bytes**), link, media in carousel order, the YouTube fields, and a date and time. Beside it:
+    **each account's version**, and **what the networks would refuse**, re-checked as you type.
+    The preview mirrors what the publishers actually send:
+    - Instagram never gets the link;
+    - Facebook and LinkedIn put the link in the text only beside media;
+    - LinkedIn without media is an article card with the Link Title;
+    - YouTube appends the link to the description.
+
+    It never guesses where a network folds "… more".
+  - **Approve sends the `modified` the page loaded,** and it is off while the page holds unsaved
+    changes: an approver who edits becomes the last editor, and somebody else must approve.
+    **Save and reschedule send it too,** so a post somebody else saved since is refused, not
+    overwritten.
+  - **Media library and picker,** with upload. The picker shows media cleared for social by
+    default. Upload is **private unless the uploader ticks *Public file***, which Facebook and
+    Instagram need; the form says why and what it costs. A new asset starts as *Needs client
+    approval*. Width, height and duration are read in the browser, so the server's Instagram ratio
+    and Reel-length checks have something to check.
+  - **Approval queue:** oldest first, with whether you can approve each and why not. Send back
+    works inline; approving only happens on the post itself.
+  - **Results:** each account's job state, link, attempt log and engagement totals. It is
+    read-only on purpose: an Unconfirmed job is answered on its Desk form by someone who looked at
+    the network.
+  - Unsaved work asks before it is lost, both on in-app navigation and on closing the tab.
+- **`scripts/test_marketing_source_rules.js`,** the build-blocking source-rule test the task
+  asked for, adapted from the retired chat SPA's (deleted in v1.426.0). It fails on:
+  - `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write`;
+  - any Vue, and any `frappe.*` (a website route has no Desk bundle);
+  - a used-but-never-imported name, which esbuild compiles to a bare global that throws at load;
+  - a list renderer that can empty without reaching the one placeholder writer;
+  - a surface that reads shared state without writing it;
+  - approve, save or reschedule not sending `modified`;
+  - an `href` set outside `dom.js`, whose `outLink` is http(s) or plain text (a permalink can be
+    typed by a person, and `javascript:` runs on click);
+  - `--ee-brand` carrying text;
+  - a heading class with no colour;
+  - unbalanced CSS comments;
+  - a bundle over its gzip ceiling.
+- **`scripts/test_marketing_client.js`,** the router round trips, the calendar arithmetic, the
+  composer's counters, payload and preview. The calendar is **run again under three other `TZ`
+  values**, since day arithmetic that leaned on the device's clock would drift in one of them.
+- **`tests/test_marketing_spa.py`** (24 tests): the rules, and a set-equality check between the
+  client's `M` map and the whitelisted functions, so a rename with no matching edit fails CI
+  instead of 404ing. Also POST-only and access-first on every endpoint, `save_post` never
+  assigning a workflow field, `create_asset` taking only the caller's own unattached upload, the
+  route rule, the controller and the shell.
+- **Measured bundle cost** (the task asked, as Chat did): ~70.7 KB of code, **~19.7 KB gzipped**,
+  plus ~3.3 KB of CSS gzipped. None of it loads on the Desk. The per-file table is in
+  `public/js/marketing/README.md`, and the source-rule check holds the gzip under 24 KB.
+- Mutation-checked. Each of these breaks a check:
+  - `innerHTML` in `el()`;
+  - approve without `modified`;
+  - an empty queue with no placeholder;
+  - a calendar that stops writing;
+  - the brand colour as text;
+  - `outLink` without its guard;
+  - an unimported name;
+  - a drag that resets the hour;
+  - an Instagram preview with the link;
+  - local-time day arithmetic;
+  - a composer that writes `status`;
+  - everyone let in;
+  - a past time accepted;
+  - an unbounded window.
+- Rendered and exercised against a scripted fake server before shipping: every view at desktop
+  and phone width, in light and dark, with no horizontal scroll. The `<script>` in an asset title
+  rendered as text, and a `javascript:` permalink rendered as text, not as a link.
+
+### Where the task's text was out of date
+
+- **"Following the Chat SPA."** The chat SPA and its source-rule test were deleted in v1.426.0
+  (ADR 0011). The surviving model is the feedback SPA, and the rules were rebuilt from the deleted
+  test in git history.
+
+### Not done
+
+- **Keyboard or touch rescheduling on the calendar.** The drag is HTML5 drag and drop, which
+  phone browsers support unevenly. Anywhere it does not work, a post is moved from its own page's
+  date field, which does the same.
+- **Engagement figures** fill in once the metrics sync ships (TASK-2026-01488); until then the
+  results page says so.
+
 ## [1.514.0] - 2026-09-22
 
 **Marketing P2: draft → approve → publish, and the marketing roles.** TASK-2026-01486, decision 9:
