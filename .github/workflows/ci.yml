@@ -386,8 +386,14 @@ jobs:
       # opened is refused; a save cannot type "Approved"; Marketing Team is granted on five
       # Marketing doctypes and nowhere else; every action is POST-only and checks edit permission
       # first. test_marketing_outbox covers the other half: the attempt log and cancel.
-      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + publishers
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
+      # test_marketing_spa (TASK-2026-01487, v1.515.0), stub-free (rules in publish/spa_rules.py):
+      # the /marketing app's server side. Only the three marketing roles get in; the composer
+      # writes an allowlist of fields (never status, approver or owner); times are site-local and
+      # a new one must be in the future; every endpoint is POST-only and checks access first; the
+      # client's M map and the whitelisted functions are the same set; one route rule serves the
+      # subtree and the shell bakes in no post data. The client half runs in node, below.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + publishers
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's
@@ -2074,6 +2080,21 @@ jobs:
       # plausible bug in a four-line function.
       - name: Feedback derived status label (bench-free, node)
         run: node scripts/test_feedback_status.js
+      # The /marketing app's client (TASK-2026-01487, v1.515.0). The pure half -- the router,
+      # the calendar arithmetic, the composer's rules -- is checked directly, and the calendar
+      # again under three other TZ values: day arithmetic that leaned on the device's clock would
+      # drift in one of them, and scheduled_at is the site's time, never the phone's. The preview
+      # is checked against what the publishers actually send (Instagram never gets the link).
+      - name: Marketing app client logic (bench-free, node)
+        run: node scripts/test_marketing_client.js
+      # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
+      # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
+      # list renderer reaches the one placeholder writer when empty, every surface that reads
+      # shared state writes it too, approve/save/reschedule send the `modified` the page loaded,
+      # outbound links are http(s) or text, --ee-brand never carries text, every heading class
+      # sets its colour, the CSS comments balance, and the bundle stays under its gzip ceiling.
+      - name: Marketing app source rules (bench-free, node)
+        run: node scripts/test_marketing_source_rules.js
       # Google address components -> Frappe Address fields. Every rule in that
       # mapping is a judgement call that looks arbitrary until it is wrong, and
       # the branches for UK/Nordic mailing towns and for states with no

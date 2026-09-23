@@ -148,7 +148,8 @@ marketing/
 │   ├── ratelimit.py     ← pure decision functions + Redis Lua, run against each other (01482, shipped)
 │   ├── validation.py, media.py ← pre-approval checks; fetchable media URLs     (01483, shipped)
 │   ├── publishers/      ← meta.py (01483), linkedin.py (01484), youtube.py (01485): shipped
-│   └── workflow.py, approval.py ← draft → approve → publish, who may do each   (01486, shipped)
+│   ├── workflow.py, approval.py ← draft → approve → publish, who may do each   (01486, shipped)
+│   └── spa.py, spa_rules.py ← the /marketing app's endpoints and their rules (01487, shipped)
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md
@@ -360,6 +361,15 @@ is gone; the surviving shell built to the same rules is the **Feedback SPA**
 Surfaces: month/week content calendar with drag-to-reschedule, composer with per-network
 preview and character/aspect-ratio validation, media picker over `Marketing Media Asset`,
 approval queue, and per-post analytics.
+
+*As built (v1.515.0, TASK-2026-01487):* every surface above, plus the remaining Instagram and
+YouTube quota on the calendar and an upload in the media picker (private by default).
+`scripts/test_marketing_source_rules.js` is the source-rule test; it also enforces that approve,
+save and reschedule send the `modified` the page loaded, and that the bundle stays under a gzip
+ceiling (~19.7 KB code-only gzipped at launch, documented in
+[`public/js/marketing/README.md`](../erpnext_enhancements/public/js/marketing/README.md)).
+Dragging moves Drafts and posts waiting for approval only: an approved post's time is part of
+what was approved.
 
 ---
 

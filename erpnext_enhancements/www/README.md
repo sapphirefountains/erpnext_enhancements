@@ -1,4 +1,4 @@
-# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary, feedback)
+# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary, feedback, marketing)
 
 Several standalone web pages live here, separate from the heavy desk app:
 
@@ -13,7 +13,7 @@ Several standalone web pages live here, separate from the heavy desk app:
   [`public/js/feedback/`](../public/README.md), server surface in
   [`api/feedback.py`](../api/README.md)).
 
-  **It is the only page here that serves a whole URL subtree.** `hooks.py` carries
+  **It serves a whole URL subtree** (so does `/marketing`, below, the same way). `hooks.py` carries
   `website_route_rules = [{"from_route": "/feedback/<path:feedback_path>", "to_route": "feedback"}]`,
   so a hard refresh at `/feedback/request/ER-YYYY-NNNNN` — the URL every notification this
   feature sends links to — renders this same shell and the bundle routes itself from
@@ -32,6 +32,15 @@ Several standalone web pages live here, separate from the heavy desk app:
   in `api.feedback.submit_request`, not here — pausing intake should still let people read what
   they already filed and let a reviewer finish the queue, and a page that 404'd on pause would
   take both away.
+- the **marketing app** at **`/marketing`** (TASK-2026-01487, v1.515.0): the calendar, composer,
+  media library and approval queue for social posts, chrome-free (`marketing.py` +
+  `marketing.html`; front end in [`public/js/marketing/`](../public/js/marketing/README.md),
+  server surface in `marketing/publish/spa.py` and `approval.py`). A second
+  `website_route_rules` entry, `/marketing/<path:marketing_path>`, serves the subtree exactly as
+  `/feedback`'s does, with the same `website_404` trap. **Unlike `/feedback` it is gated:** a
+  signed-out visitor is sent to log in and back to the same path, and a signed-in one without
+  Marketing Team, Marketing Manager or System Manager gets a 403. There is no "publishing is off"
+  gate: writing and approving posts while publishing is switched off is how the team gets ready.
 
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 
