@@ -1,6 +1,6 @@
 // Plan a Trip — the office's step-by-step way to enter a whole trip.
 //
-// A desk Page (/app/plan-a-trip, or ?trip=TRIP-... to carry on with one) that walks through a
+// A desk Page (/desk/plan-a-trip, or ?trip=TRIP-... to carry on with one) that walks through a
 // Travel Trip one question at a time: the trip, who's going, getting there, getting back, where
 // everyone sleeps, getting around, the schedule — and ends on a checklist of what is still
 // missing. It reads and writes the same Travel Trip as the desk form, through
@@ -296,7 +296,9 @@ class TripPlanner {
 		this.saving = null;
 		this.card_seq = 0;
 		this.bind_unload();
-		this.handle_route();
+		// No handle_route() here: frappe fires on_page_show right after on_page_load, and
+		// route_args() consumes frappe.route_options — a second pass would find them gone
+		// and draw the landing over the trip it had just been asked to open.
 	}
 
 	bind_unload() {
@@ -310,32 +312,73 @@ class TripPlanner {
 	// ------------------------------------------------------------------ routing and loading
 
 	handle_route() {
-		// Switching trips, or back to the list, saves the one on screen first. The route is
-		// read again afterwards, so a save that creates the trip cannot send you back to it.
+		// Switching trips, or back to the list, saves the one on screen first.
+		const args = this.route_args();
 		if (this.state && this.is_dirty() && !this.saving) {
-			this.save({ quiet: true }).then(() => this.route());
+			this.save({ quiet: true }).then(() => this.route(args));
 			return;
 		}
-		this.route();
+		this.route(args);
 	}
 
-	route() {
-		const name = frappe.utils.get_url_arg("trip");
-		const step_key = frappe.utils.get_url_arg("step");
-		if (name) {
-			if (this.state && this.state.name === name) {
-				if (step_key) this.jump_to(step_key);
+	route_args() {
+		// What the page was asked to open: {trip, new, step}.
+		//
+		// Frappe v16 delivers these in frappe.route_options, not the address bar.
+		// frappe.set_route("plan-a-trip", {trip: ...}) (the form's button, the list's + Add)
+		// puts the object there and writes the address WITHOUT a query string; a link to
+		// /desk/plan-a-trip?trip=... has its query copied there by the router's link handler;
+		// and a full load of that URL is copied there by router.set_route_options_from_url on
+		// every route change. v1.520.0 read only location.search, so every click redrew the
+		// landing — "it just refreshes the page". The address bar is still read as a fallback.
+		//
+		// Consumed, like the list view does: route_options outlives the route, and a later
+		// plain visit would otherwise replay the last trip instead of showing the list.
+		const options = frappe.route_options || {};
+		const pick = (key) => {
+			let value = options[key];
+			if (value == null || value === "") value = frappe.utils.get_url_arg(key);
+			delete options[key];
+			return value == null ? "" : String(value);
+		};
+		const args = { trip: pick("trip"), new: pick("new"), step: pick("step") };
+		if (frappe.route_options && !Object.keys(frappe.route_options).length) {
+			frappe.route_options = null;
+		}
+		return args;
+	}
+
+	route(args) {
+		if (args.trip) {
+			if (this.state && this.state.name === args.trip) {
+				if (args.step) this.jump_to(args.step);
 				return;
 			}
-			this.load(name, step_key);
+			this.load(args.trip, args.step);
 			return;
 		}
-		if (frappe.utils.get_url_arg("new")) {
+		if (args.new) {
 			if (this.state && !this.state.name) return;
 			this.start_new();
 			return;
 		}
 		this.render_landing();
+	}
+
+	set_address(args) {
+		// Keep the address bar on what is open, so a reload or a bookmark comes back to it
+		// (a full load's query string reaches route_args through the router). replaceState,
+		// not frappe.set_route: the page moves between its own trips itself, and routing to
+		// the page it is already on is exactly what went wrong in v1.520.0.
+		const query = Object.entries(args || {})
+			.filter(([, value]) => value)
+			.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+			.join("&");
+		try {
+			window.history.replaceState(window.history.state, "", window.location.pathname + (query ? `?${query}` : ""));
+		} catch (e) {
+			// An address bar that does not follow is cosmetic; never fail a load over it.
+		}
 	}
 
 	load(name, step_key) {
@@ -349,6 +392,7 @@ class TripPlanner {
 					this.adopt(data.state);
 					this.step = 0;
 					if (step_key) this.jump_to(step_key, true);
+					this.set_address({ trip: name });
 					this.render();
 				},
 				() => this.body.html(`<div class="tp-empty">${__("This trip could not be opened.")}</div>`)
@@ -363,6 +407,7 @@ class TripPlanner {
 				this.lookups = data.lookups;
 				this.adopt(this.blank_state());
 				this.step = 0;
+				this.set_address({ new: 1 });
 				this.render();
 			},
 			() => this.body.html(`<div class="tp-empty">${__("You are not allowed to plan trips.")}</div>`)
@@ -371,6 +416,7 @@ class TripPlanner {
 
 	render_landing() {
 		this.state = null;
+		this.set_address({});
 		this.remove_chrome();
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
 		frappe.call({ method: "erpnext_enhancements.travel_management.planner.get_recent_plans" }).then(
@@ -399,9 +445,11 @@ class TripPlanner {
 							? `<h5 style="margin:18px 0 8px;">${__("Carry on with a trip")}</h5>${items}`
 							: `<div class="tp-muted">${__("No upcoming trips yet.")}</div>`
 					}`);
-				this.body.find('[data-action="new"]').on("click", () => frappe.set_route("plan-a-trip", { new: 1 }));
+				// Opened directly, not through frappe.set_route: routing to the page we are
+				// already on is what made these buttons redraw the landing in v1.520.0.
+				this.body.find('[data-action="new"]').on("click", () => this.start_new());
 				this.body.find(".tp-list-item").on("click", (event) => {
-					frappe.set_route("plan-a-trip", { trip: $(event.currentTarget).data("name") });
+					this.load(String($(event.currentTarget).attr("data-name")));
 				});
 			},
 			() => this.body.html(`<div class="tp-empty">${__("Could not load trips.")}</div>`)
@@ -471,20 +519,33 @@ class TripPlanner {
 	}
 
 	infer_legs() {
-		// A flight or drive typed on the form may have no Leg. Place it by date, the same rule
-		// as completeness.leg_of, and mark it so the next save makes it explicit.
-		const start = this.state.trip.start_date;
-		const end = this.state.trip.end_date;
+		// A flight or drive typed on the form may have no Leg. Place it by its people's own
+		// dates — the rule in completeness.booking_leg, which the checklist's "Fix" links use —
+		// and mark it so the next save makes it explicit. v1.520.0 used the TRIP's dates,
+		// which put a whole-crew flight on day two (how the late starters got there) under
+		// "Getting around", and saving would have stored that.
+		const t = this.state.trip;
+		const crew = this.crew();
 		["flights", "ground_transport"].forEach((table) => {
 			this.state.bookings[table].forEach((card) => {
 				if (card.values.leg) return;
 				const when = tp_date_part(
 					table === "flights" ? card.values.departure_time : card.values.pickup_datetime
 				);
-				let leg = "Outbound";
-				if (when && start && end) {
-					if (when >= end) leg = "Return";
-					else if (when > start) leg = "During Trip";
+				let leg;
+				if (!when) {
+					const hired = ["Rental/Third Party", "Taxi/Rideshare"].includes(card.values.transport_type);
+					leg = table === "ground_transport" && hired ? "During Trip" : "Outbound";
+				} else {
+					const whole = card.members.some((m) => !m.traveler);
+					let pool = crew.filter((c) => whole || card.members.some((m) => m.traveler === c.employee));
+					if (!pool.length) pool = crew;
+					const windows = pool.length
+						? pool.map((c) => [c.from_date || t.start_date, c.to_date || t.end_date])
+						: [[t.start_date, t.end_date]];
+					if (windows.some(([from]) => from && when <= from)) leg = "Outbound";
+					else if (windows.some(([, to]) => to && when >= to)) leg = "Return";
+					else leg = "During Trip";
 				}
 				card.values.leg = leg;
 				card.changed.add("leg");
@@ -729,10 +790,11 @@ class TripPlanner {
 					if ((fresh.notes || []).length) {
 						frappe.msgprint({ title: __("Saved, with notes"), message: fresh.notes.map(tp_esc).join("<br>") });
 					}
-					// Only while still on the new-trip route: a save fired by leaving the page
-					// must not pull you back to it.
-					if (was_new && frappe.get_route()[0] === "plan-a-trip" && frappe.utils.get_url_arg("new")) {
-						frappe.set_route("plan-a-trip", { trip: fresh.name });
+					// The trip exists now: point the address at it, but only while this page is
+					// still the one on screen — a save fired by leaving the page must not
+					// rewrite the address of wherever you went.
+					if (was_new && frappe.get_route()[0] === "plan-a-trip") {
+						this.set_address({ trip: fresh.name });
 					}
 					return true;
 				},
@@ -897,7 +959,7 @@ class TripPlanner {
 			<span class="tp-muted">${tp_esc(dates)}${s.name ? ` &middot; ${tp_esc(s.name)}` : ""}</span>
 		</div>`).appendTo(this.body);
 		if (s.name) {
-			$(`<a class="tp-muted" style="margin-left:auto;" href="/app/travel-trip/${encodeURIComponent(s.name)}">${__(
+			$(`<a class="tp-muted" style="margin-left:auto;" href="${frappe.utils.get_form_link("Travel Trip", s.name)}">${__(
 				"Open the full form"
 			)}</a>`).appendTo($head);
 		}
@@ -2033,9 +2095,7 @@ class TripPlanner {
 		$(`<button class="tp-btn">${__("Email everyone their itinerary")}</button>`)
 			.appendTo($actions)
 			.on("click", () => this.send_itineraries());
-		$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" href="/app/travel-trip/${encodeURIComponent(
-			s.name
-		)}">${__("Open the full form")}</a>`).appendTo($actions);
+		$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" href="${frappe.utils.get_form_link("Travel Trip", s.name)}">${__("Open the full form")}</a>`).appendTo($actions);
 	}
 
 	render_numbers_by_person($step) {
