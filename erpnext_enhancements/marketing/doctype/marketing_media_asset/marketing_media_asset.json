@@ -134,7 +134,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-22 16:00:00.000000",
+ "modified": "2026-09-22 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Media Asset",
@@ -153,6 +153,22 @@
    "read": 1,
    "report": 1,
    "role": "Sales Manager"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Marketing Team",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Marketing Manager",
+   "write": 1
   }
  ],
  "sort_field": "modified",

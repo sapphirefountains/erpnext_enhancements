@@ -93,7 +93,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-22 14:00:00.000000",
+ "modified": "2026-09-22 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Post Metric",
@@ -113,6 +113,16 @@
    "read": 1,
    "report": 1,
    "role": "Sales Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Marketing Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Marketing Manager"
   }
  ],
  "sort_field": "metric_date",

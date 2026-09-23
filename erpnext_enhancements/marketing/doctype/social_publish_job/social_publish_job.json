@@ -26,7 +26,9 @@
   "published_at",
   "column_break_result",
   "last_error",
-  "resolved_by"
+  "resolved_by",
+  "attempts_section",
+  "attempt_log"
  ],
  "fields": [
   {
@@ -166,10 +168,23 @@
    "label": "Resolved By",
    "options": "User",
    "read_only": 1
+  },
+  {
+   "fieldname": "attempts_section",
+   "fieldtype": "Section Break",
+   "label": "Attempts"
+  },
+  {
+   "description": "Every attempt, and every person's answer, in order. Written by the outbox.",
+   "fieldname": "attempt_log",
+   "fieldtype": "Table",
+   "label": "Attempt Log",
+   "options": "Social Publish Attempt",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-22 14:00:00.000000",
+ "modified": "2026-09-22 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Publish Job",
@@ -186,6 +201,16 @@
    "read": 1,
    "report": 1,
    "role": "Sales Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Marketing Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Marketing Manager"
   }
  ],
  "sort_field": "available_at",

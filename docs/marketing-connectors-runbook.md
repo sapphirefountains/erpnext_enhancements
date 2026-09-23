@@ -275,8 +275,8 @@ it on work without reconnecting.
 ## The publishing outbox
 
 Since v1.509.0 (TASK-2026-01481) the records a post lives in exist, along with the machinery that
-will publish it. **No post can go out yet:** no network has a publisher installed (TASK-2026-01483
-to 01485), and nothing approves a post (TASK-2026-01486). Until then, a queued job just waits.
+publishes it. Every network has had a publisher since v1.513.0, and since v1.514.0 a post can be
+approved ([below](#approving-a-post)). A queued job still waits until its network's switches are on.
 
 **The records:**
 
@@ -320,7 +320,50 @@ Pending on its own. Only a person who has looked can send it again. A job that p
 until someone reconnects.
 
 The post's owner and approver get a notification when a job goes Failed or Unconfirmed. Resolving
-takes a System Manager, from the job's form.
+takes a Marketing Manager or a System Manager, from the job's form in a signed-in browser: the answer
+has to come from a person who looked at the network, never from an API token.
+
+Since v1.514.0 each job's **Attempt Log** keeps every attempt and every person's answer: when, which
+attempt, the outcome, the HTTP status, whether the request had left ERPNext, and who, when a person
+decided. *Last Error* still shows only the latest.
+
+### Approving a post
+
+Since v1.514.0 (TASK-2026-01486). **Nothing reaches a public account without a second person's
+approval.**
+
+| Status | How it gets there | Buttons |
+|---|---|---|
+| Draft | New, or sent back | **Submit for Approval**, **Cancel Post** |
+| Pending Approval | Submitted. Its text can still be edited | **Approve** (a Marketing Manager other than its author and last editor), **Send Back**, **Cancel Post** |
+| Approved → Scheduled | Approved: one job per account is queued, and the content is locked | **Cancel Post** |
+| Publishing | Some jobs have gone out and some have not | **Cancel Post** (stops the ones still waiting) |
+| Published, Partially Published, Failed | Nothing is left waiting | None: resolve a Failed or Unconfirmed job from its own form |
+| Canceled | Stopped by a person | Duplicate it to start again |
+
+- **Submit for Approval** is refused while *Network Check* shows anything, or while a photo is not
+  *Cleared for social*: an approver is never asked to approve what could not be sent.
+- **Approve** is refused when:
+  - it is not done from a signed-in browser (API keys, tokens and scripts never approve);
+  - the approver wrote the post or made its latest change;
+  - the post changed after the approver opened it (reload it and review again).
+
+  If the outbox refuses the post, the approval is undone with it.
+- **Cancel Post** stops every job that has not gone out. It never takes anything down: a published
+  job stays published, and an Unconfirmed one still needs a person. It is refused for the few
+  seconds a job is actually being sent.
+- The status, approver and approval time change only through these buttons. Typing into them, by
+  any route, is refused.
+- **Delete** works only on a Draft, Pending Approval or Canceled post that was never queued.
+  After that the post is the record of what went out.
+
+**Giving someone access**, in the Desk (*User → Role Profiles*). A user who has any role profile
+gets roles only through profiles: a role added directly is dropped on the next save.
+
+- A marketing hire: role profile **Marketing** (Marketing Team only). They can draft and submit,
+  and see nothing outside marketing.
+- Someone who approves: add **Marketing Approvers** as a second profile, or grant Marketing
+  Manager directly to a user without a profile.
 
 ### Rate limits
 

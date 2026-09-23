@@ -10,14 +10,21 @@ after approval and the outbox would publish something nobody approved. The compa
 and first comment. Status and results are left out, because the outbox writes those itself
 (through ``frappe.db.set_value``, which does not come through here).
 
-Approving, cancelling and re-drafting are TASK-2026-01486's; this only refuses the edit.
+Two more rules since TASK-2026-01486, which added the actions (``publish/approval.py``):
+
+* **Status, approver and approval time are the actions' to change.** An ordinary save that
+  changes them is refused, or anyone who may edit a post could type "Approved" into it through the
+  REST API and name somebody else as approver. The actions set ``flags.status_change``; the outbox
+  writes with ``frappe.db.set_value``, which does not come through here.
+* **A post is deleted only before anything was queued for it, or once canceled.** After that the
+  post is the record of what went out, and Cancel is how it is stopped.
 """
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from erpnext_enhancements.marketing.publish import outbox
+from erpnext_enhancements.marketing.publish import outbox, workflow
 
 
 def _signature(doc):
@@ -30,9 +37,23 @@ def _signature(doc):
 
 class SocialPost(Document):
 	def validate(self):
+		self._refuse_status_edits()
 		self._refuse_duplicate_accounts()
 		self._refuse_edits_after_approval()
 		self._check_networks()
+
+	def on_trash(self):
+		problems = workflow.delete_problems(self.as_dict())
+		if problems:
+			frappe.throw(workflow.refusal(self.name, "deleted", problems))
+
+	def _refuse_status_edits(self):
+		if self.flags.get("status_change"):
+			return
+		before = self.get_doc_before_save()
+		problem = workflow.status_edit_problem(before.as_dict() if before else None, self.as_dict())
+		if problem:
+			frappe.throw(_(problem), title=_("Use the post's actions"))
 
 	def _check_networks(self):
 		"""Fill Network Check with what each network would refuse (TASK-2026-01483).
@@ -63,7 +84,7 @@ class SocialPost(Document):
 			frappe.throw(
 				_(
 					"This post is {0}: its text, link, media, accounts and publish time are locked to "
-					"what was approved. Cancel it and draft a new one to change them."
+					"what was approved. Cancel it, then Duplicate it to make a new draft."
 				).format(before.status),
 				title=_("Approved posts cannot be edited"),
 			)

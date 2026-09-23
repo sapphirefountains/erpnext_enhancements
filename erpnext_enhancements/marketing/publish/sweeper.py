@@ -53,7 +53,6 @@ JOB_FIELDS = [
 	"dispatched_at",
 	"external_post_id",
 ]
-OPERATOR_ROLE = "System Manager"
 
 
 def make_sendable(settings, creds):
@@ -221,9 +220,12 @@ class FrappeStore:
 		row = frappe.db.get_value(JOB, name, JOB_FIELDS, as_dict=True)
 		return dict(row) if row else None
 
-	def update_job(self, name, values):
+	def update_job(self, name, values, log=None):
 		doc = frappe.get_doc(JOB, name)
 		doc.update(values)
+		if log:
+			# The attempt log row (TASK-2026-01486) rides in the same save as the state it records.
+			doc.append("attempt_log", log)
 		frappe.db.savepoint("social_publish_job_update")
 		try:
 			doc.save(ignore_permissions=True)
@@ -352,13 +354,17 @@ def run_dispatch(publish_job, lease_id):
 
 @frappe.whitelist(methods=["POST"])
 def resolve_job(job, outcome, external_post_id=None, permalink=None):
-	"""A person's answer for an Unconfirmed or Failed job. System Manager only.
+	"""A person's answer for an Unconfirmed or Failed job (``workflow.resolve_problems``).
 
 	``published`` records it (with the post's ID or link if known), ``retry`` sends it again,
-	``cancel`` stops it.
+	``cancel`` stops it. A Marketing Manager or System Manager, from a signed-in browser: the
+	answer comes from someone who looked at the network, never from a token (TASK-2026-01486).
 	"""
-	if OPERATOR_ROLE not in frappe.get_roles():
-		frappe.throw(_("Only a System Manager can resolve a publish job."), frappe.PermissionError)
+	from erpnext_enhancements.marketing.publish import approval, workflow
+
+	problems = workflow.resolve_problems(frappe.get_roles(), approval.browser_request())
+	if problems:
+		frappe.throw(workflow.refusal(job, "resolved", problems), frappe.PermissionError)
 	try:
 		state = outbox.resolve(
 			FrappeStore(), job, outcome, frappe.session.user, now_datetime(), external_post_id, permalink

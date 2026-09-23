@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.514.0] - 2026-09-22
+
+**Marketing P2: draft → approve → publish, and the marketing roles.** TASK-2026-01486, decision 9:
+nothing reaches a public account by accident. Nik's calls on 2026-09-22: **Marketing Manager
+approves**, and **never a post they wrote**. This is the piece that lets an approved post go out
+at all. On prod nothing will, until the switches are on and a platform's approval clears.
+
+### Added
+
+- **Four Social Post actions** (`publish/approval.py`, all POST, none guest, each checks edit
+  permission first). Buttons on the form:
+  - **Submit for Approval**, Draft → Pending Approval. Refused while *Network Check* shows anything
+    or media is not *Cleared for social* (`outbox.content_problems`, split out of
+    `enqueue_problems`), so an approver is never asked to approve what could not be sent.
+  - **Approve**, Pending Approval → Approved. It writes the outbox rows **in the same
+    transaction**: if the outbox refuses the post, the approval rolls back with it.
+  - **Send Back**, to Draft, with an optional reason recorded as a comment.
+  - **Cancel**: see `outbox.cancel_post` below.
+- **The rules, in the frappe-free `publish/workflow.py`,** so the bench-free tier tests all of them.
+  **Approve** is refused when:
+  - the user is not a **Marketing Manager**;
+  - the user is the post's **author or its last editor**;
+  - the post **changed after the approver opened it** (the form sends `modified`);
+  - the request is not **from a signed-in browser**.
+
+  The browser test works because Frappe's `set_user` gives any request authenticated by an API
+  key, an OAuth bearer, a background job or the console `session.sid == user`, while a login gets a
+  random one. An `Authorization` header also fails the test. **Triton's service account holds
+  Marketing Manager; this rule is what keeps it from approving.** `outbox.enqueue` still
+  independently refuses an approver who is the owner.
+- **Status, approver and approval time can no longer be typed in.** An ordinary save that changes
+  them is refused (`SocialPost._refuse_status_edits`), and a new post must start as a Draft.
+  Without this, anyone who could edit a post could PUT `status: Approved` with someone else as
+  approver through the REST API. The actions pass through on `flags.status_change`; the outbox
+  already wrote with `db.set_value`, which skips `validate`.
+- **`outbox.cancel_post`** cancels every Pending job and never touches what went out: Published
+  stays published, and Unconfirmed stays for a person to resolve. It is refused while a job is In
+  Progress, because that request may be leaving and nothing can call it back.
+- **A post can be deleted** only as a Draft, Pending Approval or Canceled post. After that it is
+  the record of what went out.
+- **Every publish attempt is recorded on the outbox row:** a new *Attempt Log* child table
+  (`Social Publish Attempt`) on Social Publish Job. It keeps one entry per outcome (published,
+  will retry, held, failed, unconfirmed, not sent, resolved, canceled): when, which attempt, the
+  HTTP status, whether the request had left ERPNext, and who, when a person decided. The entry is
+  appended **in the same save as the state change** (`FrappeStore.update_job(..., log=)`), so the
+  log cannot disagree with the state. `last_error` still shows only the latest.
+- **Roles.** None of these grants reaches anything outside the Marketing module:
+  - **Marketing Team** (it existed and granted nothing) can create, edit and delete Social Posts and
+    Marketing Media Assets, and read Social Accounts, Publish Jobs and Post Metrics.
+  - **Marketing Manager** gets the same grants. Approving is an action, not a wider grant.
+
+  Neither role can reach Marketing Connections (credentials), Marketing Settings (switches) or the
+  raw payloads. **System Manager alone cannot approve.**
+- **Role profiles** (fixtures):
+  - **Marketing**: Marketing Team only. This is what a marketing hire gets.
+  - **Marketing Approvers**: a single-role add-on carrying Marketing Manager, the same shape as the
+    PO profiles and for the same reason: a user with a profile gets roles only through profiles.
+- *Duplicate* makes a clean draft: `no_copy` is now set on status, approver, approval time and
+  Network Check, and on each target's result fields.
+- `tests/test_marketing_approval.py` (30 tests) covers the rules. It also checks that Marketing
+  Team is granted on exactly five Marketing doctypes and nowhere else, that no Custom DocPerm widens
+  either role, and that each action is POST-only and checks permission first.
+  `tests/test_marketing_outbox.py` gains 12 tests for the attempt log and cancel.
+- Mutation-checked. The suite fails if:
+  - an author may approve;
+  - any authenticated request counts as a browser;
+  - a save may type "Approved";
+  - a post changed since it was opened is approved;
+  - cancel overwrites published or in-progress jobs;
+  - nothing is logged.
+
+### Changed
+
+- **`sweeper.resolve_job`** ("It was published", "Send it again", "Cancel" on an Unconfirmed or
+  Failed job) now takes a **Marketing Manager or System Manager, from a signed-in browser**. Before,
+  it took any System Manager, by any route. Both answers are about what is public, so they must come
+  from a person who looked at the network.
+
+### Not done
+
+- **The Campaign link on a post** needs read access to ERPNext's Campaign, which neither marketing
+  role has. Granting it takes a Custom DocPerm, and that replaces Campaign's standard permissions
+  wholesale ([`fixtures/README.md`](erpnext_enhancements/fixtures/README.md)). Left for whoever
+  approves.
+- **No notification when a post is waiting for approval.** The /marketing app's approval queue
+  (TASK-2026-01487) is where that belongs.
+
 ## [1.513.0] - 2026-09-22
 
 **Marketing P2: the YouTube uploader.** TASK-2026-01485. This covers a resumable upload with title,

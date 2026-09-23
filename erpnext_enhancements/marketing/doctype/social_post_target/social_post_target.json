@@ -54,6 +54,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
+   "no_copy": 1,
    "options": "\nQueued\nPublished\nFailed\nUnconfirmed\nCanceled",
    "read_only": 1
   },
@@ -61,12 +62,14 @@
    "fieldname": "external_post_id",
    "fieldtype": "Data",
    "label": "Platform Post ID",
+   "no_copy": 1,
    "read_only": 1
   },
   {
    "fieldname": "permalink",
    "fieldtype": "Data",
    "label": "Link to Post",
+   "no_copy": 1,
    "options": "URL",
    "read_only": 1
   },
@@ -74,12 +77,13 @@
    "fieldname": "published_at",
    "fieldtype": "Datetime",
    "label": "Published At",
+   "no_copy": 1,
    "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-09-22 14:00:00.000000",
+ "modified": "2026-09-22 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Post Target",

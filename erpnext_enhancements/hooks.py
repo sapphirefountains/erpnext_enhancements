@@ -1967,6 +1967,16 @@ fixtures = [
 					"HR",
 					"Inventory",
 					"Manufacturing",
+					# TASK-2026-01486: the marketing publishing surface, and nothing else.
+					# "Marketing" is what a marketing hire gets -- Marketing Team only, which
+					# grants the Marketing module's doctypes and no customers, invoices or
+					# financials. "Marketing Approvers" is a single-role add-on carrying
+					# Marketing Manager, the approval authority, the same shape as the PO
+					# profiles below and for the same reason: a profiled user can only get a
+					# role through a profile. Neither is "Sales & Marketing", which also
+					# carries Sales Manager.
+					"Marketing",
+					"Marketing Approvers",
 					# WI-066: two single-role add-on profiles, each carrying exactly one
 					# purchasing authority. They exist because a user who holds ANY role
 					# profile has `roles` regenerated from the union of their profiles on

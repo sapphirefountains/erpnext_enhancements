@@ -13,6 +13,9 @@ so these pin its promises:
    person as approver.
 5. **Idempotency is structural:** the same network post is never recorded twice, and a
    collision reads as success.
+6. **Every attempt stays on the row** (TASK-2026-01486): each outcome, and each person's answer,
+   is one attempt-log entry, written in the same update as the state it records. Canceling a
+   post stops what has not gone out and never touches what has.
 
 The state machine runs against an in-memory store, so no frappe is needed. The sweeper's
 frappe wiring is checked by AST: its whitelist, and the ``frappe.enqueue`` call, whose
@@ -85,6 +88,7 @@ class MemoryStore:
 		self.notes = []
 		self.seq = 0
 		self.dispatched = []
+		self.logs = {}
 
 	def load_post(self, name):
 		return dict(self.post), [dict(t) for t in self.targets], [dict(m) for m in self.media]
@@ -131,11 +135,13 @@ class MemoryStore:
 	def get_job(self, name):
 		return dict(self.jobs[name]) if name in self.jobs else None
 
-	def update_job(self, name, values):
+	def update_job(self, name, values, log=None):
 		post_id = values.get("external_post_id")
 		if post_id and any(j.get("external_post_id") == post_id for n, j in self.jobs.items() if n != name):
-			raise O.DuplicatePostId(post_id)
+			raise O.DuplicatePostId(post_id)  # like the savepoint: neither the state nor the log lands
 		self.jobs[name].update(values)
+		if log:
+			self.logs.setdefault(name, []).append(log)
 
 	def mark_dispatched(self, name, when):
 		self.jobs[name]["dispatched_at"] = when
@@ -178,6 +184,10 @@ def claimed_job(store=None, **job):
 def dispatch(store, name, send=None, prepare=None, sendable=always, notify_auth=None):
 	prepare = prepare or (lambda job: send)
 	return O.dispatch(store, name, "L1", lambda: T0, sendable, prepare, notify_auth)
+
+
+def outcomes(store, name):
+	return [entry["outcome"] for entry in store.logs.get(name, [])]
 
 
 def fails(status, cls=MarketingAPIError):
@@ -556,6 +566,145 @@ class ResolveTests(unittest.TestCase):
 			O.resolve(store, name, "published", "nik@example.com", T0)
 
 
+class AttemptLogTests(unittest.TestCase):
+	"""Every publish attempt recorded on the outbox row (TASK-2026-01486)."""
+
+	def test_each_dispatch_outcome_is_one_entry(self):
+		cases = [
+			(lambda: {"external_post_id": "1_2"}, O.LOG_PUBLISHED, None, 1),
+			(fails(429), O.LOG_RETRY, 429, 1),
+			(fails(401), O.LOG_HELD, 401, 1),
+			(fails(400), O.LOG_FAILED, 400, 1),
+			(fails(502), O.LOG_UNCONFIRMED, 502, 1),
+			(fails(None), O.LOG_UNCONFIRMED, None, 1),
+		]
+		for send, outcome, status, sent in cases:
+			store, name = claimed_job()
+			dispatch(store, name, send=send)
+			self.assertEqual(outcomes(store, name), [outcome], outcome)
+			entry = store.logs[name][0]
+			self.assertEqual(
+				(entry["http_status"], entry["sent"], entry["attempt"]), (status, sent, 1), outcome
+			)
+			self.assertEqual(entry["at"], T0)
+			self.assertIsNone(entry["by_user"], "the outbox decided, not a person")
+
+	def test_a_failure_before_sending_is_logged_as_not_sent(self):
+		store, name = claimed_job()
+
+		def prepare(job):
+			raise MarketingAPIError("Facebook", "token server down", status=503)
+
+		dispatch(store, name, prepare=prepare)
+		entry = store.logs[name][0]
+		self.assertEqual((entry["outcome"], entry["sent"], entry["http_status"]), (O.LOG_RETRY, 0, 503))
+		self.assertIn("token server down", entry["message"])
+
+	def test_the_log_keeps_every_attempt_where_last_error_keeps_one(self):
+		store, name = claimed_job()
+		dispatch(store, name, send=fails(429))
+		store.claim(name, "L1", O.retry_at(T0, 1), T0 + datetime.timedelta(hours=1))
+		dispatch(store, name, send=lambda: {"external_post_id": "1_2", "permalink": "https://fb/1"})
+		self.assertEqual(outcomes(store, name), [O.LOG_RETRY, O.LOG_PUBLISHED])
+		self.assertEqual([e["attempt"] for e in store.logs[name]], [1, 2])
+		self.assertIn("https://fb/1", store.logs[name][1]["message"])
+
+	def test_retries_running_out_say_so(self):
+		store, name = claimed_job(attempts=O.MAX_ATTEMPTS - 1)
+		dispatch(store, name, send=fails(429))
+		self.assertEqual(outcomes(store, name), [O.LOG_FAILED])
+		self.assertIn("Gave up", store.logs[name][0]["message"])
+
+	def test_a_duplicate_is_logged_once_as_published(self):
+		store, first = claimed_job()
+		dispatch(store, first, send=lambda: {"external_post_id": "101_555"})
+		store, second = claimed_job(store, target="row-li", social_account="SACC-LinkedIn-9")
+		dispatch(store, second, send=lambda: {"external_post_id": "101_555"})
+		self.assertEqual(outcomes(store, second), [O.LOG_PUBLISHED])
+		self.assertIn("already recorded", store.logs[second][0]["message"])
+
+	def test_lease_expiry_and_switching_off_are_logged(self):
+		store, name = claimed_job()
+		O.reclaim_expired(store, T0 + datetime.timedelta(hours=1))
+		self.assertEqual(outcomes(store, name), [O.LOG_NOT_SENT])
+		store, name = claimed_job()
+		store.mark_dispatched(name, T0)
+		O.reclaim_expired(store, T0 + datetime.timedelta(hours=1))
+		self.assertEqual(outcomes(store, name), [O.LOG_UNCONFIRMED])
+		self.assertEqual(store.logs[name][0]["sent"], 1)
+		store, name = claimed_job()
+		dispatch(store, name, send=lambda: None, sendable=lambda job: False)
+		self.assertEqual(outcomes(store, name), [O.LOG_NOT_SENT])
+
+	def test_a_persons_answer_names_them(self):
+		for outcome, logged in (
+			("published", O.LOG_RESOLVED),
+			("retry", O.LOG_RESOLVED),
+			("cancel", O.LOG_CANCELED),
+		):
+			store, name = claimed_job()
+			dispatch(store, name, send=fails(502))
+			O.resolve(store, name, outcome, "nik@example.com", T0, permalink="https://fb/9")
+			self.assertEqual(outcomes(store, name), [O.LOG_UNCONFIRMED, logged], outcome)
+			self.assertEqual(store.logs[name][-1]["by_user"], "nik@example.com")
+			if outcome == "published":
+				self.assertIn("https://fb/9", store.logs[name][-1]["message"])
+
+	def test_every_outcome_is_an_option_and_messages_are_capped(self):
+		self.assertEqual(
+			tuple(fields("social_publish_attempt")["outcome"]["options"].split("\n")[1:]), O.LOG_OUTCOMES
+		)
+		entry = O.log_entry(T0, {"attempts": 3}, O.LOG_FAILED, "x" * 5000, 400, True)
+		self.assertEqual((len(entry["message"]), entry["sent"], entry["attempt"]), (1000, 1, 3))
+		self.assertEqual(set(entry), set(fields("social_publish_attempt")) - {"column_break_attempt"})
+
+
+class CancelPostTests(unittest.TestCase):
+	"""Canceling stops what has not gone out; it never touches what has (TASK-2026-01486)."""
+
+	def queued(self):
+		store = MemoryStore()
+		O.enqueue(store, "SPOST-00001", T0)
+		return store, {j["network"]: n for n, j in store.jobs.items()}
+
+	def test_a_post_with_nothing_queued_is_simply_canceled(self):
+		store = MemoryStore(post={"status": O.POST_DRAFT})
+		self.assertEqual(O.cancel_post(store, "SPOST-00001", "nik@example.com", T0), O.POST_CANCELED)
+		self.assertEqual(store.post_statuses, [O.POST_CANCELED])
+
+	def test_pending_jobs_are_canceled_with_who_and_a_log_entry(self):
+		store, jobs = self.queued()
+		self.assertEqual(O.cancel_post(store, "SPOST-00001", "nik@example.com", T0), O.POST_CANCELED)
+		for name in jobs.values():
+			self.assertEqual(
+				(store.jobs[name]["state"], store.jobs[name]["resolved_by"]), (O.CANCELED, "nik@example.com")
+			)
+			self.assertEqual(outcomes(store, name), [O.LOG_CANCELED])
+		self.assertEqual(store.target_values["row-fb"]["status"], O.CANCELED)
+		self.assertEqual(store.post_statuses[-1], O.POST_CANCELED)
+
+	def test_what_went_out_or_may_have_stays_as_it_is(self):
+		store, jobs = self.queued()
+		fb, li = jobs["Facebook"], jobs["LinkedIn"]
+		store.claim(fb, "L1", T0, T0 + datetime.timedelta(minutes=30))
+		dispatch(store, fb, send=lambda: {"external_post_id": "1_2"})
+		self.assertEqual(O.cancel_post(store, "SPOST-00001", "nik@example.com", T0), O.POST_PUBLISHED)
+		self.assertEqual((store.jobs[fb]["state"], store.jobs[li]["state"]), (O.PUBLISHED, O.CANCELED))
+		store, jobs = self.queued()
+		fb = jobs["Facebook"]
+		store.claim(fb, "L1", T0, T0 + datetime.timedelta(minutes=30))
+		dispatch(store, fb, send=fails(502))
+		O.cancel_post(store, "SPOST-00001", "nik@example.com", T0)
+		self.assertEqual(store.jobs[fb]["state"], O.UNCONFIRMED, "a person still has to look")
+
+	def test_refused_while_a_request_may_be_leaving(self):
+		store, jobs = self.queued()
+		store.claim(jobs["Facebook"], "L1", T0, T0 + datetime.timedelta(minutes=30))
+		with self.assertRaises(ValueError):
+			O.cancel_post(store, "SPOST-00001", "nik@example.com", T0)
+		self.assertEqual(store.jobs[jobs["LinkedIn"]]["state"], O.PENDING, "nothing half-canceled")
+
+
 # ---------------------------------------------------------------- schema and wiring
 
 
@@ -597,11 +746,14 @@ class WiringTests(unittest.TestCase):
 	def setUp(self):
 		self.tree = ast.parse(SWEEPER.read_text(encoding="utf-8"))
 
-	def test_resolve_is_post_only_system_manager_and_not_guest(self):
+	def test_resolve_is_post_only_gated_and_not_guest(self):
 		fn = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == "resolve_job")
 		decorators = [ast.unparse(d) for d in fn.decorator_list]
 		self.assertEqual(decorators, ["frappe.whitelist(methods=['POST'])"])
-		self.assertIn("OPERATOR_ROLE", ast.unparse(fn))
+		body = ast.unparse(fn)
+		# TASK-2026-01486: Marketing Manager or System Manager, from a signed-in browser.
+		self.assertIn("workflow.resolve_problems(frappe.get_roles(), approval.browser_request())", body)
+		self.assertLess(body.index("resolve_problems"), body.index("outbox.resolve"), "checked first")
 		whitelisted = [
 			n.name
 			for n in self.tree.body
