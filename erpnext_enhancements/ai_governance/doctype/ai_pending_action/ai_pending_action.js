@@ -17,11 +17,20 @@ frappe.ui.form.on("AI Pending Action", {
 		if (!may_decide) return;
 
 		frm.add_custom_button(__("Confirm & Execute"), () => {
+			// A Password field reaches the form as asterisks, so this only tells us that values
+			// were sealed, not what they are. Say so, because the card shows ***REDACTED*** and
+			// confirming runs the real values.
+			const hidden = frm.doc.sealed_arguments
+				? "<br><br>" +
+				  __(
+						"Some values are hidden on this card as ***REDACTED*** because their names look like credentials. They will be used exactly as the assistant proposed them."
+				  )
+				: "";
 			frappe.confirm(
 				__("Execute this AI action now?<br><br><b>{0}</b> (risk: {1})", [
 					frappe.utils.escape_html(frm.doc.summary || frm.doc.tool_name),
 					frm.doc.risk || "?",
-				]),
+				]) + hidden,
 				() => {
 					frappe.call({
 						method: "erpnext_enhancements.assistant_tools.gating_api.confirm_action",

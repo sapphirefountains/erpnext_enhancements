@@ -110,6 +110,10 @@ and the `NEVER_EXEMPT` guard are in `_gate.py` and dormant while the flag is 0. 
   by anyone who can read that log; and `gating_api.confirm_action` re-executes the *sanitized*
   arguments stored on the Pending Action, so a confirmed write whose data key contains a sensitive
   substring (for example `author`) would write `***REDACTED***`.
+  - **Update, v1.524.1:** `confirm_action` is fixed. The redacted values are sealed in a Password
+    field and restored at confirm, and the action fails closed if they can't be. This blocker to
+    switching the gate on is gone. The same hash is also in `ASST-AUDIT-2026-09-23-00365`, the
+    audit record of the query that found it. Nik approved redacting both rows on 2026-09-23.
 
 ### Slice 2 — Capture anywhere, v1 [M]
 

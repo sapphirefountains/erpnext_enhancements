@@ -16,7 +16,14 @@ import frappe
 from frappe import _
 from frappe.utils import get_datetime, now_datetime
 
-from erpnext_enhancements.assistant_tools._gate import insert_action_log, truncate_json
+from erpnext_enhancements.assistant_tools._gate import (
+    SealError,
+    has_unrestored_redaction,
+    insert_action_log,
+    mask_secrets,
+    truncate_json,
+    unseal_arguments,
+)
 
 
 def _check_identity(action):
@@ -40,6 +47,34 @@ def _transition(action, **values):
         frappe.flags.ai_action_transition = False
 
 
+def _arguments_to_execute(action):
+    """The arguments exactly as the assistant proposed them, plus the sealed entries.
+
+    ``action.arguments`` is the redacted copy people read. The values it hides come back from
+    the sealed Password field. Raises SealError when they cannot be restored exactly, and in
+    that case nothing may run: the only alternative is writing "***REDACTED***" into a real
+    record, which is what this used to do.
+    """
+    arguments = json.loads(action.arguments or "{}")
+    sealed = []
+    if action.get("sealed_arguments"):
+        try:
+            payload = action.get_password("sealed_arguments", raise_exception=False)
+        except Exception:
+            payload = None
+        if not payload:
+            raise SealError("its hidden values could not be decrypted")
+        try:
+            sealed = json.loads(payload)
+        except ValueError:
+            raise SealError("its hidden values are unreadable") from None
+        unseal_arguments(arguments, sealed)
+    if has_unrestored_redaction(arguments):
+        # A pre-v1.524.1 proposal (no seal) or a seal that doesn't cover every placeholder.
+        raise SealError("some of its values were hidden and not kept")
+    return arguments, sealed
+
+
 @frappe.whitelist()
 def confirm_action(name):
     """Execute a Pending action as the confirming user and record the outcome.
@@ -48,6 +83,10 @@ def confirm_action(name):
     survives a crash); on failure the transaction is rolled back first (the
     tool may have partially written) and the Failed outcome + log row are
     persisted afterwards.
+
+    It executes the arguments as proposed, not the redacted copy on the card. Credential-like
+    values come back from the sealed field, which the Confirmed transition then deletes. What
+    the execution returns or raises is masked before it is stored.
     """
     action = frappe.get_doc("AI Pending Action", name)
     _check_identity(action)
@@ -64,7 +103,36 @@ def confirm_action(name):
     except ImportError:
         frappe.throw(_("Frappe Assistant Core is not installed on this site."))
 
-    arguments = json.loads(action.arguments or "{}")
+    try:
+        arguments, sealed = _arguments_to_execute(action)
+    except SealError as e:
+        message = _(
+            "Not executed: {0}. Running it would write the placeholder ***REDACTED*** instead of "
+            "what the assistant proposed. Ask the assistant to propose it again."
+        ).format(e)
+        # Failed, not left Pending. A re-proposal with the same arguments would otherwise dedupe
+        # onto this same unrunnable card until it expired.
+        log_name = insert_action_log(
+            user=frappe.session.user,
+            tool_name=action.tool_name,
+            arguments=json.loads(action.arguments or "{}"),
+            success=0,
+            risk=action.risk,
+            summary=action.summary,
+            error=message,
+            error_type="SealError",
+            pending_action=action.name,
+        )
+        _transition(
+            action,
+            status="Failed",
+            decided_by=frappe.session.user,
+            decided_at=now_datetime(),
+            error=message,
+            action_log=log_name,
+        )
+        frappe.db.commit()
+        frappe.throw(message)
 
     _transition(action, status="Confirmed", decided_by=frappe.session.user, decided_at=now_datetime())
     frappe.db.commit()
@@ -78,6 +146,7 @@ def confirm_action(name):
     except Exception as e:
         frappe.db.rollback()  # the tool may have partially written
         action = frappe.get_doc("AI Pending Action", name)  # post-rollback state (Confirmed survived)
+        error = mask_secrets(str(e), sealed)
         log_name = insert_action_log(
             user=frappe.session.user,
             tool_name=action.tool_name,
@@ -85,17 +154,18 @@ def confirm_action(name):
             success=0,
             risk=action.risk,
             summary=action.summary,
-            error=str(e),
+            error=error,
             error_type=type(e).__name__,
             pending_action=action.name,
         )
-        _transition(action, status="Failed", error=str(e)[:2000], action_log=log_name)
+        _transition(action, status="Failed", error=error[:2000], action_log=log_name)
         frappe.db.commit()  # persist the Failed outcome before throwing
-        frappe.throw(_("Execution failed: {0}").format(str(e)))
+        frappe.throw(_("Execution failed: {0}").format(error))
     finally:
         frappe.flags.ai_gate_bypass = False
         frappe.flags.ai_gate_pending = None
 
+    stored_result = mask_secrets(result, sealed)
     log_name = insert_action_log(
         user=frappe.session.user,
         tool_name=action.tool_name,
@@ -103,7 +173,7 @@ def confirm_action(name):
         success=1,
         risk=action.risk,
         summary=action.summary,
-        result=result,
+        result=stored_result,
         pending_action=action.name,
     )
     target_name = action.target_name
@@ -112,7 +182,7 @@ def confirm_action(name):
     _transition(
         action,
         status="Executed",
-        result=truncate_json(result),
+        result=truncate_json(stored_result),
         action_log=log_name,
         target_name=target_name,
     )

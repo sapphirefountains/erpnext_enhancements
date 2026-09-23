@@ -24,6 +24,7 @@
   "action_log",
   "payload_section",
   "arguments",
+  "sealed_arguments",
   "args_hash",
   "result",
   "error"
@@ -155,12 +156,23 @@
    "label": "Payload"
   },
   {
-   "description": "Tool arguments, credential-like keys redacted.",
+   "description": "Tool arguments as shown to people. Credential-like values appear as ***REDACTED*** here; the real values are sealed until the action is decided, and confirming runs them as proposed.",
    "fieldname": "arguments",
    "fieldtype": "Code",
    "label": "Arguments",
    "options": "JSON",
    "read_only": 1
+  },
+  {
+   "description": "The values shown as ***REDACTED*** in Arguments, encrypted. Held only while the action is Pending; deleted when it is decided or expires.",
+   "fieldname": "sealed_arguments",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Sealed Arguments",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1,
+   "report_hide": 1
   },
   {
    "fieldname": "args_hash",
@@ -185,7 +197,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-11 12:00:00.000000",
+ "modified": "2026-09-23 18:30:00.000000",
  "modified_by": "Administrator",
  "module": "AI Governance",
  "name": "AI Pending Action",

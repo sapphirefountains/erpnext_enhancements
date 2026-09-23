@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.524.1] - 2026-09-23
+
+**A confirmed AI action now runs what the assistant proposed, not the redacted copy shown on the
+card.** Found during WI-079 slice 1, and a blocker to turning the AI write gate on.
+
+### Fixed
+
+- **`gating_api.confirm_action` executed `AI Pending Action.arguments`**, the copy in which
+  `sanitize_arguments` had replaced every credential-like key with `***REDACTED***`. So a
+  confirmation wrote the placeholder into the real record. The key test is FAC 3.0.0's name
+  heuristic, and most of what it catches is ordinary data:
+  - its substring `auth` matches `author` (Help Article, Training Course);
+  - `credential` matches `credential_type` / `credential_number` (Employee Credential);
+  - its token rule matches QuickBooks Sync Mapping's `sync_token`, which is a version counter;
+  - the same rule matches `author_training_course`'s own `draft_token`, so that tool could
+    never succeed through a confirmation.
+
+  It never fired in production. The gate was only on for a few days in July (16 Pending
+  Actions), and none of them carried a redacted key. It would have fired on the first such write
+  after the gate went back on.
+- **The fix seals the replaced values.** `_propose` now also stores just the values it redacted,
+  as `[path, value]` pairs, in the new hidden **Password** field
+  `AI Pending Action.sealed_arguments`. Frappe encrypts it into `__Auth` and keeps only asterisks
+  in the column. `confirm_action` reads it while the action is still Pending and puts each value
+  back at its path in the parsed card. The controller then deletes it on the Confirmed transition,
+  and on every other save that leaves the action non-Pending (Cancel, the expiry sweep).
+  - A Password field and not a Long Text, because the doctype has `track_changes`. A Long Text
+    would copy the value into `tabVersion` on the very save that clears it.
+  - Only the redacted values are sealed, not the whole payload, so the secret material is exactly
+    what the card hides. It also stays well inside the TEXT column once Fernet has inflated it.
+    A seal over 32,000 bytes is refused at proposal time with a clear error, not queued.
+- **It fails closed.** In each of these cases the action goes to **Failed** with an explanation
+  and an AI Action Log row, and the tool is never called:
+  - the seal is missing or cannot be decrypted;
+  - a sealed path doesn't end at a placeholder on the card;
+  - a placeholder is still under a credential-like key after restoring, which is what any
+    pre-1.524.1 card with such a key looks like.
+
+  It goes to Failed rather than staying Pending because the retry dedupe would otherwise map
+  every re-proposal onto the same unrunnable card until it expired.
+
+### Security
+
+- **The confirmed call's result and error are masked** of every sealed string of six or more
+  characters before they reach `AI Pending Action.result` / `error`, AI Action Log, or the thrown
+  message. Until now the call only ever ran with the placeholder, so nothing real could be echoed.
+  It now runs with the real value, and a Frappe validation message quotes the value it rejects.
+- **`args_hash` is an HMAC-SHA256** keyed by the site encryption key; it was a bare SHA-1. The
+  hash is over the raw arguments, and everything else it covers is in plain view in `arguments`.
+  So anyone able to read the row, AI Auditor included, could brute-force a short sealed password
+  offline. It is still over the raw values, so two proposals that differ only in a secret remain
+  two cards.
+- The Confirm dialog says when values are hidden on the card and will be used as proposed.
+
+### Tests
+
+- New bench-free `tests/test_ai_gate_sealed_arguments.py` (34 tests), run in the existing AI-gate
+  CI step. It runs under a copy of FAC 3.0.0's real key predicate, because the stub environment's
+  fallback has neither `auth` nor the token-word rule. Reverting `confirm_action` to execute the
+  stored copy fails 7 of them.
+
 ## [1.524.0] - 2026-09-23
 
 **WI-079 slice 1: every feedback Task knows its request, the planner sees every gotcha, and the

@@ -27,6 +27,11 @@ for AI Writes** is ON (default OFF — ships dormant):
   `cancel_action` (dotted path — no Python import, the tripwire stays green).
   There is deliberately **no MCP confirm tool** — a model-callable confirm
   would collapse the human-in-the-loop guarantee under prompt injection.
+- Confirming executes the arguments **as proposed**. The card shows credential-like values as
+  `***REDACTED***`, and `_propose` seals the real ones in the hidden Password field
+  `sealed_arguments`. `confirm_action` restores them, refuses if it can't, and masks them out of
+  the stored result and error. Before v1.524.1 it executed the redacted card. See
+  [`ai_governance/README.md`](../ai_governance/README.md#confirming-runs-what-was-proposed-not-what-the-card-shows).
 - The model retrieves the real outcome afterwards via the read-only
   `check_ai_pending_action` tool; the `ee-ai-write-confirmation` skill teaches
   connected assistants the flow.
