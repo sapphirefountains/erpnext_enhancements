@@ -320,3 +320,20 @@ until someone reconnects.
 
 The post's owner and approver get a notification when a job goes Failed or Unconfirmed. Resolving
 takes a System Manager, from the job's form.
+
+### Rate limits
+
+Since v1.510.0 (TASK-2026-01482) the sweep asks a rate limiter before it claims a job. A job it
+refuses stays **Pending**, and its *Available At* moves to when the quota comes back. *Last Error*
+says why, for example "Instagram's 25 posts per 24 hours for this account is used up".
+
+| Network | Limit | Resets |
+|---|---|---|
+| Instagram | Posts per rolling 24 hours, per account. The live figure once the Meta publisher has read it from Meta; **25** until then, the most conservative figure Meta has published | Rolling |
+| YouTube | **100 uploads** a day, plus 100 units per upload (a thumbnail and a playlist add) from the 10,000-unit budget | Midnight **Pacific**, not site time |
+| Facebook, LinkedIn | No local count: their limits are far above what the company posts | n/a |
+| Any | A **429** pauses the whole connection for its *Retry-After* (a minute if none). Meta's usage headers pause Meta Publishing when any figure reaches 90%, or for as long as Meta says | When the pause runs out (never longer than a day) |
+
+*Posts Remaining Today* on each Social Account shows what the limiter last saw. The limiter only
+avoids asking for what would be refused. If it is wrong, the network's own 429 still pauses the
+connection and the job retries later: nothing is lost either way.

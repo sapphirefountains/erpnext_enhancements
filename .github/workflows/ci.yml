@@ -368,6 +368,16 @@ jobs:
       # duplicate platform post ID is success. Plus AST checks on the sweeper's wiring.
       - name: Marketing settings dials + ad-model identity + publishing gate + outbox
         run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox -v
+      # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
+      # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
+      # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's
+      # Pacific quota day checked against the tz database, Meta usage headers, Retry-After, and
+      # admit() for each network. Own step: it needs fakeredis + lupa, pinned. The suite FAILS
+      # rather than skips its Lua half when CI is set and they are missing (GitHub sets CI=true).
+      - name: Publishing rate limits, Python spec vs Redis Lua (bench-free)
+        run: |
+          python -m pip install fakeredis==2.38.0 lupa==2.8
+          python -m unittest erpnext_enhancements.tests.test_marketing_ratelimit -v
       # The read-only ad-spend connectors (TASK-2026-01476, v1.503.0), built against
       # recorded-shape fixtures because API access is still pending. Pins, in order: nothing
       # outside the read-only allowlist is ever sent (and no mutate-shaped string exists in
