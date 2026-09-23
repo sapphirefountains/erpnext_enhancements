@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.524.0] - 2026-09-23
+
+**WI-079 slice 1: every feedback Task knows its request, the planner sees every gotcha, and the
+AI write gate's scoped rules are in place but not switched on.** The first slice of the build
+ADR 0016 describes. One part was held back on purpose: turning `ai_write_gating_enabled` on. It
+was approved on the condition that `run_python_code` could be ungated once its sandbox was verified
+read-only, and verification found it is not (see *Held*).
+
+### Added
+
+- **`Task.custom_enhancement_request`**, a read-only Link from a Task to the Enhancement Request it
+  came from, `no_copy` so a recurring successor does not inherit it and with no `default` (on a
+  normal doctype the ALTER would write one into every row). `product_feedback/task_writer.py`
+  stamps it on every Task it creates, **groups included** — `_ensure_groups` as well as
+  `_create_leaves`, which now takes the request name.
+- **Patch `backfill_task_enhancement_request`** stamps the Tasks the pipeline wrote before the field
+  existed: 37 on production on 2026-09-23. Leaves come from `Enhancement Request Proposed
+  Task.created_task`. Groups come from the `<p><b>Raised from ER-…</b>` origin note the writer puts
+  in their description, cross-checked against a proposal row with that `group_subject`, project and
+  no `parent_task`. A group is never traced through its children: on production they already hold
+  other requests' leaves (TASK-2026-01584 has three requests' leaves, TASK-2026-01638 five) and
+  hand-written tasks, and two older epics hold pipeline leaves without being pipeline Tasks. An
+  unanchored `ER-2026-` match would also catch two hand-written Tasks that name requests in prose.
+  The patch creates the Custom Field itself (patches run before fixture sync), writes through
+  `set_value(..., update_modified=False)` so no Task hook fires and the breakdown's
+  modified-ordered task list keeps its order, fills blanks only, and cannot raise.
+- **`PER_CALL_GATED["update_document"]`** (dormant while the flag is 0): a Task update executes
+  unless it closes the Task. It is an allowlist — Open, Working, Pending Review, Overdue — so
+  Completed, this site's `Canceled`, ERPNext core's `Cancelled`, `Invoiced` and anything
+  unrecognised wait for a human, and every other doctype falls through to the exempt allowlist and
+  then a proposal. Any key that changes *which* record is written or how it is saved also waits —
+  `name`, `modified`, `docstatus`, `owner`, the tree fields, anything starting `_`, and
+  `is_template` (ERPNext derives status "Template" from it). Review caught the reason: FAC
+  `setattr`s every key, so `{"name": <Task B>, "modified": <B's modified>}` with no status would
+  save Task A's fields, status included, over Task B unconfirmed. **`NEVER_EXEMPT`** strips `Task`
+  from the settings allowlist whatever a row says, because that allowlist ungates `create_document`
+  and `update_document` together.
+- Tests: `test_feedback_codemap` (its own CI step, frappe stub), `test_feedback_task_backlink`
+  (fixture and patch agree; the patch never saves, is registered post-model-sync and anchors its
+  group match), the one-writer detector cases, the decider's truth table, the scoped gate end to end,
+  and `PER_CALL_GATED` disjoint from `HIGH_RISK`.
+
+### Changed
+
+- **The code map sends every CLAUDE.md gotcha, not the first 6,000 characters.** The old prefix
+  stopped mid-sentence in the tenth of 21 bullets, so the trailing-space trap, the Frappe 16
+  `get_all` refusal and nine others, and the whole Conventions section, never reached the model.
+  It now sends each bullet's bold headline (all 21) plus the Conventions section, 2,472 characters
+  today; a bullet written without a bold lead is summarized by its first sentence rather than
+  dropped, and the test counts every bullet independently of the extractor. It stays a `str`, because Triton calls `.strip()` on it and anything else fails every
+  breakdown with a 502.
+- **The code map reports how much each capped listing really holds**, under a new
+  `codebase.erpnext.totals` key (`patches/` is 212 files against a cap of 60). A new key there is
+  safe with today's Triton, which treats `codebase` as a loose dict and renders only the keys it
+  knows; a top-level key would be dropped by pydantic, and an int inside `packages` would break its
+  basename over every entry. Triton starts saying "first N of M" in slice 3.
+- **The one-writer test is an AST check.** Its regex matched only `{"doctype": "Task"}` and walked
+  past `frappe.new_doc("Task")` — which `hr_enhancements/safety.py` really uses, outside this rule's
+  scope — and kwargs `get_doc`. It now finds all three construction forms, ignores reads, comments
+  and docstrings, and its control requires both of the writer's construction sites. Verified by
+  planting a `frappe.new_doc("Task")` in `notify.py`: the test failed with the line number.
+
+### Held
+
+- **`ai_write_gating_enabled` stays 0, and the `Comment` exemption row is not added.** WI-079 made
+  the switch conditional on Nik's call on `run_python_code`, and he chose to ungate it only if its
+  sandbox proved read-only. It is not: as deployed (FAC 3.0.0) the child process gets the whole
+  `frappe` module and `frappe.get_doc` on a normal read-write connection, only the local `db`
+  variable is wrapped, and `frappe.os` and `frappe.get_module` reach the operating system.
+  Production holds rows it created — 19 successful calls with `db.commit` in 30 days, and 6 Items,
+  10 Assets and a Comment on 2026-09-14. So it stays gated, and the gate's re-measured load under the
+  scoped rules is about 928 confirmations per 30 days plus about 1,600 `run_python_code` calls. How
+  to carry that is Nik's call before the flag goes on; WI-079 slice 1 records the numbers.
+
 ## [1.523.1] - 2026-09-23
 
 **Docs only: the plan for capture-anywhere feedback, Design Review in ERPNext, and a task

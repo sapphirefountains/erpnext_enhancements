@@ -145,7 +145,17 @@ For the same reason, do **not** add `frappe_assistant_core` to
   `workforce_clock_out` executes self-service ("clock me out" — authority the kiosk already
   hands that person) and proposes on-behalf. Splitting those into two tools was rejected
   because the model picks the tool, which would make the model decide whether a human is
-  consulted. The exception is `create_followup_task`
+  consulted. **Since v1.524.0 FAC's `update_document` has one too** (ADR 0016 §6): a Task
+  update executes unless it closes the Task — an allowlist of Open, Working, Pending Review
+  and Overdue, so Completed, Canceled, core's "Cancelled" and anything unrecognised wait —
+  and every other doctype falls through to the exempt allowlist and then a proposal.
+  `NEVER_EXEMPT` strips Task from the settings allowlist whatever a row says, because that
+  allowlist ungates `create_document` and `update_document` together. **No decider is ever
+  registered for a `HIGH_RISK` tool** (`test_ai_gate_per_call` pins the sets disjoint): step 3b
+  does not consult `HIGH_RISK`, so a decider would run it unconfirmed. `run_python_code` is
+  the case in point — as deployed it hands the caller the whole `frappe` module on a read-write
+  connection, so it is arbitrary code, not a read (verified 2026-09-23). These deciders are
+  dormant while `ai_write_gating_enabled` is 0. The exception is `create_followup_task`
   (v1.29.0) — the first *write* tool. **Every write tool MUST be added to
   `_gate.py`'s `APP_MUTATING` set** so the AI write gate confirms it through a
   human (when gating is on) instead of relying on the fail-closed fallback;
