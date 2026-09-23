@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.518.0] - 2026-09-23
+
+**QuickBooks Record Matching: tick the rows you want, then act on them together.** Until now the
+page offered two speeds: one row at a time, or *Accept suggestions on this page*, which linked
+every row whose best suggestion cleared the threshold, whether you had looked at it or not. Now
+every row has a tick box, so you can pick which records to link, keep or re-import as you work
+through the queue. Pages also go up to 500 rows.
+
+### Added
+
+- **A tick box on every row of both tabs**, plus one in the header that ticks the whole page.
+  Shift-click ticks every row between the last box you clicked and this one. Choosing a record in
+  a row's *Link to* picker, or clicking one of its suggestions, ticks that row for you.
+- **A selection bar under each table** that stays pinned to the bottom of the window while you
+  scroll. It says how many rows are ticked and offers:
+  - **Link selected** links each ticked row to the record in its own picker, with that row's own
+    *Fill blank fields from QBO* box. Before anything happens, the confirmation says how many rows
+    get their first link, how many move off the record they point at now (and how many of those
+    are leaving a record the import created, which is merged where ERPNext allows it), and how many
+    already point at the picked record. It then lists every row. Rows with nothing picked are left
+    alone and counted.
+  - **Keep selected** marks the ticked rows reviewed and leaves each one linked as it is. This is
+    the bulk version of the *Keep* button, for auto-matches that are already right.
+  - **Retry selected** re-syncs the ticked parked rows from QuickBooks, one after another. On the
+    *Parked transactions* tab this is the only bulk action; *Retry all on this page* is still
+    there.
+  - **Clear.**
+- **`confirm_matches`** (`core/api.py`, re-exported from `quickbooks_online.api`), the endpoint
+  behind *Keep selected*. It takes a list of `{entity_type, qbo_id}` and returns one result per
+  row. A row with no mapping is reported, never raised, and never stops the rest. It has the same
+  operator gate as the other matching endpoints.
+- **50, 100, 200 or 500 rows per page** on both tabs. Your choice is remembered in this browser.
+  Changing it keeps you on the page that holds the first row you were looking at.
+
+### Changed
+
+- **`decide_matches` accepts `fill_blanks` on each decision**, and a row's own flag wins over the
+  call-level one. Without this, *Link selected* could only fill every row's blanks or none of them.
+- **`matching.MAX_PAGE_LENGTH` is 500** (was 200). The page never offered a size other than 50
+  before, so the old ceiling was never reached.
+- **A reload keeps your work on the rows still on screen.** *Refresh*, a finished bulk action and a
+  new page size all keep ticks, hand-picked records and *Fill blank fields* boxes. A row that links
+  successfully forgets its own. Ticks on rows that leave the screen are dropped, so a bulk action
+  can only ever reach rows you can see.
+- **Accept suggestions on this page now links in chunks of 20**, the same way *Link selected*
+  does. See below.
+
+### Why it is built this way
+
+- **The picker's pre-fill is the best *other* record, never the current link.** The matcher leaves
+  the current link out of its own suggestions. So a ticked row that is already right would be
+  re-pointed if you linked it. That is why the confirmation counts "move off the record they are
+  linked to now" in bold before it lists anything, and why *Keep selected* exists.
+- **Bulk links go to the server 20 at a time.** A link can merge the import's duplicate with
+  `rename_doc`, which re-points every Link to it across the database. A 500-row page linked in one
+  request would outrun the gateway timeout. Worse, the page would get no word on which rows had
+  landed, because each decision commits on its own. If one chunk's request fails outright, its
+  rows are reported as "Refresh to see whether it landed" and the run carries on.
+- **The pre-fill no longer costs a request per row.** It used `set_value`, and on a Link control
+  that validates the record with a request of its own. That meant up to 50 requests to open a
+  50-row page, and would have meant up to 500 for a 500-row page. It now uses `set_input`, because the server
+  has just confirmed every suggestion exists. Clicking a suggestion still validates, since that is
+  one request for one click.
+- **The pager moves by the page length the server says it served**, not the one the page asked
+  for. The server clamps at `MAX_PAGE_LENGTH` without a word. If the two ever disagreed, paging by
+  the request would skip every row between them. `test_quickbooks_matching.py` also holds the
+  offered sizes to the server's ceiling.
+
+### Verified
+
+- `test_quickbooks_matching.py`: 4 new tests, 49 in all.
+  - A row's own `fill_blanks` reaches only that row.
+  - `confirm_many` reports a missing mapping or an empty entry and carries on.
+  - Every offered page size is one the server serves.
+  - The pre-fill does not validate per row, and every bulk link goes through the chunked runner.
+- The page script, against a stubbed Frappe in a browser:
+  - range ticking, auto-tick on a picked suggestion, and the header's partial state;
+  - per-row fill flags in the request;
+  - a failed row staying ticked with its pick;
+  - 500 rows linked as 21 requests of 20 or fewer, with one request failing outright and the rest
+    still landing;
+  - paging 501–730, and a page-size change keeping position;
+  - no horizontal scroll at 375 px.
+
+  It has **not** yet been run against a real site. The real Link control and the gateway are
+  the parts the stub cannot answer for.
+
 ## [1.517.1] - 2026-09-23
 
 **The Desk home grid shows each tile's full name.** CSS only.

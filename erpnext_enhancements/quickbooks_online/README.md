@@ -28,8 +28,8 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
-| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match` |
-| `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `merge_plan`, `similar_records`, `latest_payloads` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches` |
+| `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `confirm_many`, `merge_plan`, `similar_records`, `latest_payloads` |
 | `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `revoke_tokens`, `request`, `query`, `get_entity`, `cdc`, `report`, `download_attachable`), `QuickBooksAPIError`, `QuickBooksDownloadTicketError` |
 | `core/attachments.py` | Mirror QBO `Attachable` files onto their ERPNext docs as private Files (WI-071); self-protecting daily pass, fresh-ticket batching | `sync_attachments`, `reset_attachable`, `DOWNLOAD_URI_BATCH`, `MAX_ATTEMPTS`, `STALE_ATTEMPT_SECONDS`, `SAVE_TIMEOUT_SECONDS` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
@@ -45,7 +45,7 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
 | `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh; the Record Matching button routes to the page below |
-| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `sync_entity` |
+| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `confirm_matches` / `sync_entity`; tick boxes, 50–500 rows per page |
 
 ## Doctypes
 
@@ -60,7 +60,8 @@ The **QuickBooks Record Matching** desk page (`page/quickbooks_record_matching/`
 the Finance Hub and on this workspace, roles System Manager + Accounts Manager — the same gate
 as the endpoints) is the accountant's queue for deciding which QBO records link to which
 ERPNext records. Logic in `core/matching.py`; the whitelisted surface is `get_match_queue`,
-`get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match` in `core/api.py`.
+`get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches`
+in `core/api.py`.
 
 **Why it replaced the dashboard's "Link Existing Records" dialog.** That dialog listed QBO
 records with *no* Sync Mapping row, and after Import All that is none of them — every master
@@ -82,6 +83,22 @@ the best one, and per row:
 | **Keep** | `confirm_match` | stamps the row reviewed; changes no status (a `Pending Review` row stays pending until its cause is fixed and it is retried) |
 | **Retry** | `sync_entity` | re-syncs a parked row from QBO |
 | **Accept suggestions on this page** | `decide_matches` | Link for every row whose best suggestion clears the threshold; one failure never stops the rest |
+| **Link selected** (v1.518.0) | `decide_matches` | Link for every ticked row, each to the record in its *own* picker with its *own* "Fill blank fields" box (a decision's `fill_blanks` wins over the call-level one) |
+| **Keep selected** (v1.518.0) | `confirm_matches` | Keep for every ticked row; a row with no mapping is reported, not raised |
+| **Retry selected** (v1.518.0) | `sync_entity` | Retry for every ticked parked row, one request after another |
+
+**Ticking rows (v1.518.0).** Every row on both tabs has a tick box, the header ticks the page,
+and Shift-click ticks a range. Choosing a record in a row's picker, or clicking one of its
+suggestions, ticks the row. The bulk buttons live in a bar under the table that pins to the bottom
+of the window, so they stay in reach on a long page. A reload keeps the ticks, picks and fill
+boxes of the rows still on screen and drops the rest, so a bulk action only ever reaches rows the
+accountant can see. Mind the pre-fill: it is the best *other* record (the current link is never
+its own suggestion), so linking a ticked row that is already right re-points it. The *Link
+selected* confirmation counts those rows first, in bold, and *Keep selected* is the action for
+them. Pages hold 50, 100, 200 or 500 rows (`MAX_PAGE_LENGTH` is 500, and a test holds the page's
+`PAGE_LENGTHS` to it). The pager moves by the `page_length` the server reports serving. Bulk
+links go to `decide_matches` 20 at a time (`LINK_CHUNK` in the page script), because a batch of
+`rename_doc` merges in one request would outrun the gateway timeout.
 
 **Merge policy** (`matching.merge_plan`, pinned by `tests/test_quickbooks_matching.py`): when
 the link moves off a record whose mapping said `Created` — i.e. the import made it — onto a
@@ -99,8 +116,8 @@ merge is attempted; a merge ERPNext refuses comes back as `merge.status == "fail
 message and the decision stands. The merged record's Drive folder is not touched.
 
 **The Parked transactions tab** lists `Pending Review` mappings of transaction types with the
-stored preflight `issues`, the draft document if one exists, and Retry (per row, or the whole
-page sequentially).
+stored preflight `issues`, the draft document if one exists, and Retry (per row, for the ticked
+rows, or the whole page, one request after another).
 
 **Performance.** The newest payload for a page of rows comes from one query per entity type
 (`latest_payloads`), never one per row: `tabQuickBooks Raw Payload` holds ~433k rows and until

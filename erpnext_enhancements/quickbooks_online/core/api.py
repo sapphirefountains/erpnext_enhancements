@@ -467,8 +467,10 @@ def decide_match(entity_type, qbo_id, erpnext_name, fill_blanks=0, merge_duplica
 
 @frappe.whitelist()
 def decide_matches(decisions, fill_blanks=0, merge_duplicate=1):
-	"""RPC: ``decide_match`` over a list (the page's Accept suggestions), one result per
-	decision in order; one failure never stops the rest."""
+	"""RPC: ``decide_match`` over a list (the page's Accept suggestions and Link selected),
+	one result per decision in order; one failure never stops the rest. A decision's own
+	``fill_blanks`` wins over the call-level one. The page sends these in chunks, so one
+	request never carries enough merges to outrun the gateway timeout."""
 	_require_qbo_operator()
 	if isinstance(decisions, str):
 		try:
@@ -489,6 +491,21 @@ def confirm_match(entity_type, qbo_id):
 	"""RPC: stamp a mapping as reviewed without changing it (the page's Keep button)."""
 	_require_qbo_operator()
 	return matching.confirm(entity_type, qbo_id)
+
+
+@frappe.whitelist()
+def confirm_matches(pairs):
+	"""RPC: ``confirm_match`` over a list (the page's Keep selected), one result per pair in
+	order; a row with no mapping is reported, never raised, and never stops the rest."""
+	_require_qbo_operator()
+	if isinstance(pairs, str):
+		try:
+			pairs = json.loads(pairs)
+		except ValueError:
+			pairs = None
+	if not isinstance(pairs, list):
+		frappe.throw("pairs must be a list of {entity_type, qbo_id}.")
+	return matching.confirm_many(pairs)
 
 
 def _state_key(state):
