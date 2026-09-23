@@ -268,3 +268,55 @@ it on work without reconnecting.
 | *this Google account has no YouTube channel* | The wrong account was picked on Google's account picker. A Brand Account is a separate entry there. |
 | YouTube dies after a week | The OAuth consent screen is External and in Testing. See step 2 above. |
 | *Reconnect needed: …* in Status | The daily check found the credential dead: a password change, a removed role, a revoked app, or LinkedIn's year running out. Click **Reconnect**. |
+
+---
+
+## The publishing outbox
+
+Since v1.509.0 (TASK-2026-01481) the records a post lives in exist, along with the machinery that
+will publish it. **No post can go out yet:** no network has a publisher installed (TASK-2026-01483
+to 01485), and nothing approves a post (TASK-2026-01486). Until then, a queued job just waits.
+
+**The records:**
+
+- **Social Account:** one per Facebook Page, Instagram account, Company Page or channel. Connect
+  creates them. Untick **Enabled** to stop anything reaching that account, approved posts included.
+- **Social Post:** the post. Once approved, its text, link, media, accounts and publish time are
+  **locked**: what goes out is what was approved.
+- **Marketing Media Asset:** a photo or video. Only one marked **Cleared for social** can be
+  published. A photo of a client's fountain needs the client's approval first, and every asset
+  starts as *Needs client approval*.
+- **Social Publish Job:** the outbox, one row per post per account.
+- **Social Post Metric:** engagement, filled in later (TASK-2026-01488).
+
+**How a post goes out.** Approval writes one Social Publish Job per account, *Pending*, not before
+its publish time. Every five minutes (:02, :07, …) the sweep claims the jobs that are due and whose
+network may send, then hands each to a background worker. "May send" means all of these:
+
+- **Enabled** in Marketing Settings;
+- the network's publishing switch on;
+- the connection *Connected*;
+- the account enabled;
+- a publisher installed.
+
+A job for a network that is switched off simply waits. **A scheduled post waits in the database, not
+in the job queue, so a deploy cannot lose it.**
+
+| State | Means | What to do |
+|---|---|---|
+| Pending | Waiting for its time, or for its network to be able to send | Nothing |
+| In Progress | A worker has it (for at most 30 minutes) | Nothing |
+| Published | Live; the post's ID and link are recorded | Nothing |
+| Failed | The network refused it (a 4xx), or five tries failed | Read *Last Error*; fix, then **Send it again** or **Cancel** |
+| **Unconfirmed** | The request left ERPNext but no answer came back (a timeout, a 5xx, a worker that died). **The post may be live.** | **Check the account on the network first.** Then **It was published** (paste the link) or **Send it again** |
+| Canceled | Stopped by a person | Nothing |
+
+**Why Unconfirmed exists.** A queue that "just retries" would publish the same post twice, in public,
+whenever a network timed out after accepting it. So a job that may have sent never goes back to
+Pending on its own. Only a person who has looked can send it again. A job that provably sent nothing
+(a throttle, a token server that was down, a worker that died before sending) retries by itself, 1,
+5, 15, 60 and 240 minutes apart. A refused credential stops the job without using up a try: it waits
+until someone reconnects.
+
+The post's owner and approver get a notification when a job goes Failed or Unconfirmed. Resolving
+takes a System Manager, from the job's form.

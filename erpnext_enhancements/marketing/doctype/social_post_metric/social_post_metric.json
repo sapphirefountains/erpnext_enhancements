@@ -1,0 +1,121 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:SPM-{publish_job}-{metric_date}",
+ "creation": "2026-09-22 14:00:00.000000",
+ "description": "One published post on one account, one day: engagement pulled back from the network (TASK-2026-01488). Named from (job, date) so a restated day updates in place.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "publish_job",
+  "metric_date",
+  "social_post",
+  "social_account",
+  "network",
+  "column_break_metric",
+  "impressions",
+  "reach",
+  "engagements",
+  "clicks",
+  "video_views"
+ ],
+ "fields": [
+  {
+   "fieldname": "publish_job",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Publish Job",
+   "options": "Social Publish Job",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "social_post",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Social Post",
+   "options": "Social Post",
+   "read_only": 1
+  },
+  {
+   "fieldname": "social_account",
+   "fieldtype": "Link",
+   "label": "Account",
+   "options": "Social Account",
+   "read_only": 1
+  },
+  {
+   "fieldname": "network",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Network",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_metric",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "impressions",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Impressions"
+  },
+  {
+   "fieldname": "reach",
+   "fieldtype": "Int",
+   "label": "Reach"
+  },
+  {
+   "fieldname": "engagements",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Engagements"
+  },
+  {
+   "fieldname": "clicks",
+   "fieldtype": "Int",
+   "label": "Link Clicks"
+  },
+  {
+   "fieldname": "video_views",
+   "fieldtype": "Int",
+   "label": "Video Views"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-22 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Post Metric",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "metric_date",
+ "sort_order": "DESC",
+ "states": []
+}

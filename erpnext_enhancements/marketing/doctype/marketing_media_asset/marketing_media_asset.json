@@ -1,0 +1,161 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "MMA-.#####",
+ "creation": "2026-09-22 14:00:00.000000",
+ "description": "A photo or video that may be used in a social post, with where it lives and whether it is cleared for social use (TASK-2026-01481).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "asset_type",
+  "usage_rights",
+  "rights_notes",
+  "column_break_asset",
+  "project",
+  "alt_text",
+  "source_section",
+  "source",
+  "file",
+  "drive_file_id",
+  "gcs_object",
+  "column_break_source",
+  "mime_type",
+  "width",
+  "height",
+  "duration_seconds"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "asset_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type",
+   "options": "Image\nVideo",
+   "reqd": 1
+  },
+  {
+   "default": "Needs client approval",
+   "description": "Only a Cleared asset can be published. Photographs of a client's fountain need the client's approval first.",
+   "fieldname": "usage_rights",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Usage Rights",
+   "options": "Needs client approval\nCleared for social\nNot for social",
+   "reqd": 1
+  },
+  {
+   "fieldname": "rights_notes",
+   "fieldtype": "Small Text",
+   "label": "Rights Notes"
+  },
+  {
+   "fieldname": "column_break_asset",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "description": "Describes the image or video for someone who cannot see it. Used as alt text where the network supports it.",
+   "fieldname": "alt_text",
+   "fieldtype": "Small Text",
+   "label": "Alt Text"
+  },
+  {
+   "fieldname": "source_section",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "default": "File",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "File\nGoogle Drive\nGoogle Cloud Storage",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.source=='File'",
+   "fieldname": "file",
+   "fieldtype": "Attach",
+   "label": "File"
+  },
+  {
+   "depends_on": "eval:doc.source=='Google Drive'",
+   "fieldname": "drive_file_id",
+   "fieldtype": "Data",
+   "label": "Drive File ID"
+  },
+  {
+   "depends_on": "eval:doc.source=='Google Cloud Storage'",
+   "description": "bucket/path/to/object",
+   "fieldname": "gcs_object",
+   "fieldtype": "Data",
+   "label": "GCS Object"
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mime_type",
+   "fieldtype": "Data",
+   "label": "MIME Type"
+  },
+  {
+   "fieldname": "width",
+   "fieldtype": "Int",
+   "label": "Width (px)"
+  },
+  {
+   "fieldname": "height",
+   "fieldtype": "Int",
+   "label": "Height (px)"
+  },
+  {
+   "fieldname": "duration_seconds",
+   "fieldtype": "Float",
+   "label": "Duration (seconds)"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-22 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Media Asset",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title"
+}

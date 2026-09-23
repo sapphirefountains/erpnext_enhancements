@@ -1,0 +1,130 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:SACC-{network}-{external_id}",
+ "creation": "2026-09-22 14:00:00.000000",
+ "description": "One Facebook Page, Instagram account, LinkedIn Company Page or YouTube channel that posts can go out to. Created by Connect on Marketing Connections (TASK-2026-01481).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "network",
+  "external_id",
+  "account_name",
+  "handle",
+  "column_break_account",
+  "enabled",
+  "connection",
+  "connected_on",
+  "quota_section",
+  "quota_remaining",
+  "column_break_quota",
+  "quota_checked_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "network",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Network",
+   "options": "Facebook\nInstagram\nLinkedIn\nYouTube",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The Facebook Page ID, Instagram account ID, LinkedIn organization ID or YouTube channel ID. With the network, the record's name.",
+   "fieldname": "external_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Platform ID",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "account_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name"
+  },
+  {
+   "fieldname": "handle",
+   "fieldtype": "Data",
+   "label": "Handle"
+  },
+  {
+   "fieldname": "column_break_account",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Untick to stop anything being published to this account, approved posts included. The network's switch in Marketing Settings does the same for every account on that network.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "description": "Which Marketing Connections section holds this account's token. Whether that token still works is shown there, and deliberately not copied here.",
+   "fieldname": "connection",
+   "fieldtype": "Data",
+   "label": "Connection",
+   "read_only": 1
+  },
+  {
+   "fieldname": "connected_on",
+   "fieldtype": "Datetime",
+   "label": "Last Connected",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "description": "Filled in by the rate limiter (TASK-2026-01482).",
+   "fieldname": "quota_section",
+   "fieldtype": "Section Break",
+   "label": "Quota"
+  },
+  {
+   "fieldname": "quota_remaining",
+   "fieldtype": "Int",
+   "label": "Posts Remaining Today",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_quota",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "quota_checked_at",
+   "fieldtype": "Datetime",
+   "label": "Quota Checked At",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-22 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Account",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "account_name"
+}

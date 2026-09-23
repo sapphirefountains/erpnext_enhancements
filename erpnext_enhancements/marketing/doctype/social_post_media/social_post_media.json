@@ -1,0 +1,51 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-22 14:00:00.000000",
+ "description": "One photo or video on a Social Post, in order. Several make a carousel.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "asset",
+  "asset_type",
+  "usage_rights"
+ ],
+ "fields": [
+  {
+   "fieldname": "asset",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Asset",
+   "options": "Marketing Media Asset",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "asset.asset_type",
+   "fieldname": "asset_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Type",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "asset.usage_rights",
+   "fieldname": "usage_rights",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Usage Rights",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-22 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Post Media",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

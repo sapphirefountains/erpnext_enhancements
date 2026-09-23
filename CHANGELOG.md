@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.509.0] - 2026-09-22
+
+**Marketing P2: the publishing outbox.** TASK-2026-01481. Seven doctypes, and the machinery that
+will publish a post: approval writes one outbox row per account, and a five-minute sweep publishes
+it. Nothing can publish yet. No network has a publisher installed (TASK-2026-01483 to 01485),
+nothing can approve a post (01486), and the sweep returns at once while the module is off.
+
+### Added
+
+- **Doctypes (module Marketing):**
+  - **Social Account:** one Page, Instagram account, Company Page or channel, named
+    `SACC-{network}-{platform ID}`. Connect creates or refreshes them (`publish/accounts.py`).
+    *Enabled* stops anything reaching that account. Token status is read from Marketing
+    Connections at send time and not copied here.
+  - **Social Post**, with child tables **Social Post Target** (one row per account, with that
+    network's text and first comment) and **Social Post Media** (the media, in order, so a
+    carousel keeps its sequence). Social Post Media is not in the task's list; it was added for
+    that reason.
+    - **Locked once approved:** changing its text, link, publish time, media or accounts raises,
+      so what goes out is what was approved.
+    - Change-tracked.
+  - **Social Publish Job:** the outbox.
+    - `external_post_id` is **unique**, so the same network post is never recorded twice, and a
+      collision reads as success.
+    - Composite indexes on (state, available_at) and (state, lease_expires_at) serve the sweep.
+  - **Social Post Metric:** job × day engagement, named from (job, date) so a restated day
+    upserts. Filled by TASK-2026-01488.
+  - **Marketing Media Asset:** a photo or video, its source (file, Drive, GCS), the Project it
+    shows, and **usage rights**. Only *Cleared for social* can be queued, and every asset starts
+    as *Needs client approval*: a photo of a client's fountain needs the client's say-so first.
+- **`publish/outbox.py`:** the state machine, written as pure functions over a store (a Frappe
+  one in production, an in-memory one in tests).
+  - **A job that may have sent never returns to Pending by itself.** It records `dispatched_at`,
+    committed, just before the request leaves. After that, a lease running out, a 5xx or a
+    timeout makes it **Unconfirmed**, and the post's owner and approver are notified to check
+    the network.
+  - **The task text said lease-expired rows go back to Pending, as the retired chat relay did.**
+    For a chat message a duplicate is a nuisance. For a public post it goes out twice.
+  - What retries by itself is only what provably sent nothing: a throttle, a token server that
+    was down while preparing, a worker that died before sending. Retries back off 1, 5, 15, 60
+    and 240 minutes and stop after 5 tries.
+  - A refused credential **holds** the job without using a try, and marks the connection for
+    reconnecting.
+  - Enqueueing refuses a post that is not Approved, has no recorded approver, **was approved by
+    its own author**, targets a switched-off or unknown account, or carries media not cleared
+    for social.
+- **`publish/sweeper.py`:** the cron **`2-59/5 * * * *`**, and the timer for a scheduled post:
+  it waits on `available_at` in the table, so the deploy's `FLUSHDB` cannot lose it. Each run:
+  1. The master switch.
+  2. Reclaim expired leases.
+  3. Claim due jobs whose network may send, via a conditional `UPDATE` plus a read-back of the
+     lease ID, so two sweeps cannot both win. "May send" means the network switch is on, the
+     connection is Connected, the account is enabled, and a publisher is installed.
+  4. Hand each claimed job to `run_dispatch` on `long`. Everything is checked again at dispatch,
+     so a switch flipped in between still stops the post.
+- **Resolving a stuck job:** `resolve_job` (POST, System Manager). The job's form has **It was
+  published** (paste the link), **Send it again** and **Cancel**.
+- **`publish/publishers/`:** the per-network publisher registry, empty for now. A network with
+  no publisher is not sendable, so an early-approved post waits.
+- `tests/test_marketing_outbox.py`: 38 tests, stub-free, in the existing marketing CI step.
+  - They cover the classification table, the lease rule, approval locking and checks, the whole
+    dispatch path, resolution, schema, and AST wiring.
+  - The wiring check includes that the sweep never passes `job_name` to `frappe.enqueue`. That
+    is Frappe's own parameter, and an early draft of this code passed it, so the job would never
+    have received its argument.
+  - Mutation-checked: breaking the lease rule, the failure classification or the approval checks
+    each fails the suite.
+- Runbook: *The publishing outbox* in `marketing-connectors-runbook.md`, covering what each state
+  means and how to resolve an Unconfirmed job.
+
+### Changed
+
+- `tests/test_marketing_settings.py`'s no-secret-shaped-field rule now reads every marketing
+  doctype except Marketing Connections from the filesystem, not a hand-kept list. It covered 5
+  doctypes and now covers 14.
+- The plan's *Phase 2* notes what was built differently from the plan, and why.
+
 ## [1.508.0] - 2026-09-22
 
 **Marketing P2: the publishing connections.** TASK-2026-01480. Meta (Facebook Page + Instagram),

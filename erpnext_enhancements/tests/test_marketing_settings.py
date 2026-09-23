@@ -43,8 +43,17 @@ IDENTITY_FIELDS = {
 #: Substrings that have no business in a doctype a non-System-Manager can read.
 SECRET_SHAPED = ("token", "secret", "password", "authorization", "api_key", "credential")
 
-#: Readable by Sales Manager, so subject to the rule above.
-WIDELY_READABLE = ("marketing_sync_log", "marketing_raw_payload", "ad_account", "ad_campaign", "ad_click")
+#: The one marketing doctype that holds secrets, and it is System Manager only. Every other
+#: doctype under marketing/ is subject to the rule above -- read from the filesystem, so the
+#: publishing doctypes (v1.509.0) and any added later are covered without being listed here.
+SECRET_HOLDERS = {"marketing_connections"}
+WIDELY_READABLE = tuple(
+	sorted(
+		p.name
+		for p in MARKETING.iterdir()
+		if p.is_dir() and (p / f"{p.name}.json").exists() and p.name not in SECRET_HOLDERS
+	)
+)
 
 
 def load(doctype_dir: str) -> dict:

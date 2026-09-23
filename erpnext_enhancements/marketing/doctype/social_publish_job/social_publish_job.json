@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "SPJ-.#######",
+ "creation": "2026-09-22 14:00:00.000000",
+ "description": "The outbox: one row per post per account. Approval writes it; a five-minute sweep publishes it (TASK-2026-01481). Never publish inline.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "social_post",
+  "target",
+  "social_account",
+  "network",
+  "column_break_job",
+  "state",
+  "available_at",
+  "attempts",
+  "lease_section",
+  "lease_id",
+  "lease_expires_at",
+  "column_break_lease",
+  "dispatched_at",
+  "result_section",
+  "external_post_id",
+  "permalink",
+  "published_at",
+  "column_break_result",
+  "last_error",
+  "resolved_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "social_post",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Social Post",
+   "options": "Social Post",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The Social Post Target row this job publishes.",
+   "fieldname": "target",
+   "fieldtype": "Data",
+   "label": "Target Row",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "social_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Account",
+   "options": "Social Account",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "network",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Network",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_job",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "State",
+   "options": "Pending\nIn Progress\nPublished\nFailed\nUnconfirmed\nCanceled",
+   "read_only": 1
+  },
+  {
+   "description": "Not before this time. A scheduled post waits here, in the database, which is what survives a deploy.",
+   "fieldname": "available_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Available At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "lease_section",
+   "fieldtype": "Section Break",
+   "label": "Lease"
+  },
+  {
+   "fieldname": "lease_id",
+   "fieldtype": "Data",
+   "label": "Lease ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lease_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Lease Expires At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lease",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Set just before the request leaves ERPNext. A job whose lease runs out after this may already be live, so it goes to Unconfirmed, never back to Pending.",
+   "fieldname": "dispatched_at",
+   "fieldtype": "Datetime",
+   "label": "Dispatched At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "description": "The network's own ID for the post. Unique: the same post can never be recorded twice.",
+   "fieldname": "external_post_id",
+   "fieldtype": "Data",
+   "label": "Platform Post ID",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "permalink",
+   "fieldtype": "Data",
+   "label": "Link to Post",
+   "options": "URL",
+   "read_only": 1
+  },
+  {
+   "fieldname": "published_at",
+   "fieldtype": "Datetime",
+   "label": "Published At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "resolved_by",
+   "fieldtype": "Link",
+   "label": "Resolved By",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-22 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Publish Job",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "available_at",
+ "sort_order": "DESC",
+ "states": []
+}

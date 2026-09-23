@@ -1,0 +1,148 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "SPOST-.#####",
+ "creation": "2026-09-22 14:00:00.000000",
+ "description": "One post, to one or more social accounts. Drafted, approved by a second person, then queued and published by the outbox (TASK-2026-01481).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "status",
+  "column_break_post",
+  "scheduled_at",
+  "campaign",
+  "content_section",
+  "body",
+  "link",
+  "media",
+  "targets_section",
+  "targets",
+  "approval_section",
+  "approver",
+  "column_break_approval",
+  "approved_at"
+ ],
+ "fields": [
+  {
+   "description": "For finding it in ERPNext. Not published.",
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nPending Approval\nApproved\nScheduled\nPublishing\nPublished\nPartially Published\nFailed\nCanceled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_post",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Site time. Blank publishes as soon as the post is approved.",
+   "fieldname": "scheduled_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Publish At"
+  },
+  {
+   "fieldname": "campaign",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Campaign",
+   "options": "Campaign"
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Content"
+  },
+  {
+   "fieldname": "body",
+   "fieldtype": "Text",
+   "label": "Post Text"
+  },
+  {
+   "fieldname": "link",
+   "fieldtype": "Data",
+   "label": "Link",
+   "options": "URL"
+  },
+  {
+   "fieldname": "media",
+   "fieldtype": "Table",
+   "label": "Photos and Videos",
+   "options": "Social Post Media"
+  },
+  {
+   "fieldname": "targets_section",
+   "fieldtype": "Section Break",
+   "label": "Where It Goes"
+  },
+  {
+   "fieldname": "targets",
+   "fieldtype": "Table",
+   "label": "Accounts",
+   "options": "Social Post Target",
+   "reqd": 1
+  },
+  {
+   "description": "Once approved, the text, link, media, accounts and publish time are locked: what goes out is exactly what was approved.",
+   "fieldname": "approval_section",
+   "fieldtype": "Section Break",
+   "label": "Approval"
+  },
+  {
+   "fieldname": "approver",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_approval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approved_at",
+   "fieldtype": "Datetime",
+   "label": "Approved At",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-22 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Post",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

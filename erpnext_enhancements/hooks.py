@@ -1130,6 +1130,14 @@ scheduler_events = {
 		# Auth Failed rather than retried every night. 03:35, clear of the 03:25 ad pull.
 		# Dormant: returns at once while Marketing Settings.enabled is 0.
 		"35 3 * * *": ["erpnext_enhancements.marketing.publish.tasks.maintain_publishing_tokens"],
+		# marketing (TASK-2026-01481): the publishing outbox sweep. The deploy FLUSHDBs the
+		# queue and Frappe v16 wires no RQ retries, so this sweep over Social Publish Job.
+		# available_at IS the timer for a scheduled post. Each run: reclaim lease-expired jobs
+		# (back to Pending only if never dispatched, else Unconfirmed -- a public post must not
+		# go out twice), then claim due jobs whose network may send and hand each to
+		# run_dispatch on `long`. Every 5 minutes at :02/:07/..., off every other minute used
+		# here. Dormant: returns at once while Marketing Settings.enabled is 0.
+		"2-59/5 * * * *": ["erpnext_enhancements.marketing.publish.sweeper.sweep_publish_jobs"],
 	},
 	"daily": [
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
