@@ -30,6 +30,7 @@ MODULES = {
 	"Facebook": "erpnext_enhancements.marketing.publish.publishers.meta",
 	"Instagram": "erpnext_enhancements.marketing.publish.publishers.meta",
 	"LinkedIn": "erpnext_enhancements.marketing.publish.publishers.linkedin",
+	"YouTube": "erpnext_enhancements.marketing.publish.publishers.youtube",
 }
 
 

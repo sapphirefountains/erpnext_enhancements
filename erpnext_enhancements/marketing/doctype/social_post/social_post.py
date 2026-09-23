@@ -41,11 +41,11 @@ class SocialPost(Document):
 		queue a post with any, so they must be fixed before it can go out.
 		"""
 		from erpnext_enhancements.marketing.publish import validation
-		from erpnext_enhancements.marketing.publish.sweeper import account_networks, post_parts
+		from erpnext_enhancements.marketing.publish.sweeper import account_networks, post_dict, post_parts
 
 		targets, media = post_parts(self)
 		networks = account_networks([t["social_account"] for t in targets])
-		problems = validation.post_problems(self.as_dict(), targets, media, networks)
+		problems = validation.post_problems(post_dict(self), targets, media, networks)
 		self.network_check = "\n".join(problems)
 
 	def _refuse_duplicate_accounts(self):

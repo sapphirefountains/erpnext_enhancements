@@ -19,6 +19,12 @@
   "link_title",
   "link_description",
   "media",
+  "youtube_section",
+  "video_title",
+  "video_tags",
+  "column_break_youtube",
+  "video_thumbnail",
+  "youtube_playlist_id",
   "targets_section",
   "targets",
   "approval_section",
@@ -107,6 +113,43 @@
    "options": "Social Post Media"
   },
   {
+   "collapsible": 1,
+   "description": "Used only when the post goes to a YouTube channel. The post text becomes the video's description.",
+   "fieldname": "youtube_section",
+   "fieldtype": "Section Break",
+   "label": "YouTube"
+  },
+  {
+   "description": "The video's public title on YouTube (the post's Title above is only for finding it in ERPNext). Up to 100 characters, no < or >.",
+   "fieldname": "video_title",
+   "fieldtype": "Data",
+   "label": "Video Title",
+   "length": 100
+  },
+  {
+   "description": "Comma-separated. YouTube allows 500 characters in all.",
+   "fieldname": "video_tags",
+   "fieldtype": "Small Text",
+   "label": "Tags"
+  },
+  {
+   "fieldname": "column_break_youtube",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "A JPEG or PNG image, ideally 1280x720. Custom thumbnails need a verified YouTube channel; if YouTube refuses it, the video still publishes.",
+   "fieldname": "video_thumbnail",
+   "fieldtype": "Link",
+   "label": "Thumbnail",
+   "options": "Marketing Media Asset"
+  },
+  {
+   "description": "Add the video to this playlist (the ID from the playlist's URL, list=...).",
+   "fieldname": "youtube_playlist_id",
+   "fieldtype": "Data",
+   "label": "Playlist ID"
+  },
+  {
    "fieldname": "targets_section",
    "fieldtype": "Section Break",
    "label": "Where It Goes"
@@ -143,7 +186,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-22 16:00:00.000000",
+ "modified": "2026-09-22 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Social Post",

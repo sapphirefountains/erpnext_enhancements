@@ -475,11 +475,14 @@ class WiringTests(unittest.TestCase):
 			self.assertNotIn("act_", pattern.pattern)
 			self.assertEqual(host if connection == P.CONNECTION_META else P.GRAPH_HOST, P.GRAPH_HOST)
 			if method == "PUT":
-				# Only LinkedIn's upload URLs take a PUT (v1.512.0): bytes, never an edit.
-				self.assertEqual(connection, P.CONNECTION_LINKEDIN, pattern.pattern)
-				self.assertTrue(
-					pattern.pattern.startswith(("^/dms-uploads/", "^/mediaUpload/")), pattern.pattern
-				)
+				# Only upload paths take a PUT -- bytes, never an edit: LinkedIn's (v1.512.0) and
+				# YouTube's resumable session (v1.513.0).
+				uploads = {
+					P.CONNECTION_LINKEDIN: ("^/dms-uploads/", "^/mediaUpload/"),
+					P.CONNECTION_YOUTUBE: ("^/upload/youtube/v3/videos$",),
+				}
+				self.assertIn(connection, uploads, pattern.pattern)
+				self.assertTrue(pattern.pattern.startswith(uploads[connection]), pattern.pattern)
 
 	def test_first_comment_permissions_are_requested(self):
 		scopes = P.PUBLISH_OAUTH[P.CONNECTION_META]["scopes"]

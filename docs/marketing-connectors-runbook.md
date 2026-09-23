@@ -426,3 +426,47 @@ covers comments. If it is refused, the post still publishes and *Last Error* say
 
 **LinkedIn's Development tier allows 100 API calls per person per day,** across everything. A post
 costs about three to six. The limit lifts at Standard tier.
+
+### YouTube (v1.513.0)
+
+Since TASK-2026-01485 a video can be uploaded to the channel. It needs the same switches and approval
+as the others, plus YouTube Publishing *Connected*.
+
+> **Until the YouTube API audit passes, every video uploaded through the API is locked private,
+> and that lock cannot be appealed.** The upload works, but the video stays private, and the job's
+> *Last Error* says so. Test with throwaway videos only.
+
+**What the post needs** (Network Check says what is missing):
+
+- **Exactly one video**, and nothing else in *Photos and Videos*. Private files work: this app
+  uploads the file itself.
+- **Video Title** in the post's YouTube section: up to 100 characters, no `<` or `>`. The post's
+  own *Title* is only for finding it in ERPNext.
+- The post text becomes the **description**: up to 5,000 bytes, no `<` or `>`. A link is added at
+  the end.
+- Optionally **Tags** (comma-separated, 500 characters in all as YouTube counts them), a
+  **Thumbnail** (a JPEG or PNG asset), and a **Playlist ID** (the `list=` value from the playlist's
+  address).
+- No first comment on YouTube yet.
+
+**How it goes out:**
+
+1. **Open an upload session.** Nothing exists on YouTube until the last byte arrives.
+2. **Upload the file in 32 MB pieces.** If a piece fails, the publisher asks YouTube how far the
+   upload got:
+   - **Finished:** that answer is the video, and nothing is sent twice.
+   - **Incomplete:** it resumes from where YouTube got to. After several tries it gives up and
+     retries later with a fresh upload; the abandoned one never becomes a video.
+   - Only if YouTube cannot be asked does the job become **Unconfirmed**.
+3. **Set the thumbnail and add to the playlist.** Custom thumbnails need a *verified* channel
+   (YouTube Studio → Settings → Channel → Feature eligibility). If either is refused, the video is
+   still published, and *Last Error* says what did not happen.
+
+**Quota:** 100 uploads a day for the project, plus about 100 units per upload for the thumbnail and
+playlist. The quota resets at midnight Pacific. When it is used up the job **waits** for the next
+day rather than failing, and *Posts Remaining Today* on the Social Account shows what is left. A
+channel can also hit YouTube's own daily upload limit (`uploadLimitExceeded`), which waits the same
+way.
+
+**Length:** an unverified channel takes videos up to 15 minutes; verifying it by phone raises that
+to 12 hours.

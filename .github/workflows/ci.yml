@@ -375,8 +375,12 @@ jobs:
       # read back AVAILABLE before anything public; the token cannot reach a non-LinkedIn host; a
       # timed-out post is looked for among the Page's latest, never re-sent, and not-found stays
       # ambiguous; little-text escaping keeps hashtags; LinkedIn's limits checked before approval.
+      # test_marketing_youtube_publisher (TASK-2026-01485, v1.513.0): prepare opens the resumable
+      # session and uploads nothing; a failed chunk is settled by asking the session (308 resumes
+      # from YouTube's Range, 201 is the video, unanswerable stays ambiguous, endless incomplete is
+      # NotPublished); a spent quota waits as a 429; thumbnail and playlist are warnings only.
       - name: Marketing settings dials + ad-model identity + publishing gate + outbox + publishers
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher -v
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's

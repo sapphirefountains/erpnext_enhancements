@@ -64,7 +64,7 @@ def _no_documents(network, media):
 	]
 
 
-def facebook_problems(text, link, media, first_comment="", link_title=""):
+def facebook_problems(text, link, media, first_comment="", link_title="", post=None):
 	problems = _no_documents("Facebook", media)
 	media = [m for m in media if not _is_document(m)]
 	if not (text or "").strip() and not (link or "").strip() and not media:
@@ -79,7 +79,7 @@ def facebook_problems(text, link, media, first_comment="", link_title=""):
 	return problems + [f"Facebook: {p}" for p in _reachable(media)]
 
 
-def instagram_problems(text, link, media, first_comment="", link_title=""):
+def instagram_problems(text, link, media, first_comment="", link_title="", post=None):
 	problems = _no_documents("Instagram", media)
 	media = [m for m in media if not _is_document(m)]
 	caption = (text or "").strip()
@@ -131,7 +131,7 @@ def instagram_problems(text, link, media, first_comment="", link_title=""):
 	return problems + [f"Instagram: {p}" for p in _reachable(media)]
 
 
-def linkedin_problems(text, link, media, first_comment="", link_title=""):
+def linkedin_problems(text, link, media, first_comment="", link_title="", post=None):
 	"""LinkedIn (TASK-2026-01484). We upload the bytes ourselves, so private files are fine."""
 	problems = []
 	commentary = (text or "").strip()
@@ -187,18 +187,86 @@ def linkedin_problems(text, link, media, first_comment="", link_title=""):
 	return problems
 
 
-#: network -> checker. YouTube (01485) adds its own.
+def tags_length(tags):
+	"""YouTube's count of a tag list: commas between tags count, and a tag with a space is counted
+	as if quoted (two more). Pure."""
+	tags = [t for t in tags if t]
+	return sum(len(t) + (2 if " " in t else 0) for t in tags) + max(len(tags) - 1, 0)
+
+
+def split_tags(value):
+	return [t.strip() for t in (value or "").split(",") if t.strip()]
+
+
+def youtube_problems(text, link, media, first_comment="", link_title="", post=None):
+	"""YouTube (TASK-2026-01485). The post text is the description; Video Title is the title.
+
+	``post`` carries ``video_title``, ``video_tags``, ``youtube_playlist_id`` and, when a thumbnail
+	is chosen, ``video_thumbnail_asset`` (that asset's fields).
+	"""
+	post = post or {}
+	problems = []
+	videos = [m for m in media if _is_video(m)]
+	if len(videos) != 1 or len(media) != 1:
+		problems.append(
+			"YouTube: a post needs exactly one video and nothing else (choose a Thumbnail separately)"
+		)
+	for item in videos:
+		mime = (item.get("mime_type") or "").lower()
+		if mime and not (mime.startswith("video/") or mime == "application/octet-stream"):
+			problems.append(f"YouTube: {_name(item)} is {mime}, not a video")
+		problem = M.bytes_problem(item)
+		if problem:
+			problems.append(f"YouTube: {problem}")
+	title = (post.get("video_title") or "").strip()
+	if not title:
+		problems.append("YouTube: the video needs a Video Title (the post's Title is only for ERPNext)")
+	elif len(title) > P.YOUTUBE_TITLE_MAX:
+		problems.append(
+			f"YouTube: the Video Title is {len(title)} characters; the limit is {P.YOUTUBE_TITLE_MAX}"
+		)
+	description = (text or "").strip()
+	if len(description.encode("utf-8")) > P.YOUTUBE_DESCRIPTION_MAX_BYTES:
+		problems.append(f"YouTube: the description is over {P.YOUTUBE_DESCRIPTION_MAX_BYTES} bytes")
+	for label, value in (("Video Title", title), ("description", description)):
+		if "<" in value or ">" in value:
+			problems.append(f"YouTube: the {label} may not contain < or >")
+	tags = split_tags(post.get("video_tags"))
+	if tags_length(tags) > P.YOUTUBE_TAGS_MAX:
+		problems.append(
+			f"YouTube: the tags come to {tags_length(tags)} characters; the limit is {P.YOUTUBE_TAGS_MAX}"
+		)
+	thumbnail = post.get("video_thumbnail_asset")
+	if thumbnail:
+		mime = (thumbnail.get("mime_type") or "").lower()
+		if (thumbnail.get("asset_type") or "") != "Image" or mime not in P.YOUTUBE_THUMBNAIL_TYPES:
+			problems.append("YouTube: the Thumbnail must be a JPEG or PNG image")
+		problem = M.bytes_problem(thumbnail)
+		if problem:
+			problems.append(f"YouTube: {problem}")
+	playlist = (post.get("youtube_playlist_id") or "").strip()
+	if playlist and not all(c.isalnum() or c in "_-" for c in playlist):
+		problems.append("YouTube: the Playlist ID is the list=... value from the playlist's address")
+	if (first_comment or "").strip():
+		problems.append(
+			"YouTube: a first comment is not supported yet; leave it empty for the YouTube account"
+		)
+	return problems
+
+
+#: network -> checker.
 CHECKS = {
 	P.NETWORK_FACEBOOK: facebook_problems,
 	P.NETWORK_INSTAGRAM: instagram_problems,
 	P.NETWORK_LINKEDIN: linkedin_problems,
+	P.NETWORK_YOUTUBE: youtube_problems,
 }
 
 
-def problems(network, text, link, media, first_comment="", link_title=""):
+def problems(network, text, link, media, first_comment="", link_title="", post=None):
 	"""Why ``network`` would refuse this post, as sentences; empty if it would accept it. Pure."""
 	check = CHECKS.get(network)
-	return check(text, link, list(media), first_comment, link_title) if check else []
+	return check(text, link, list(media), first_comment, link_title, post) if check else []
 
 
 def post_problems(post, targets, media, networks):
@@ -217,6 +285,7 @@ def post_problems(post, targets, media, networks):
 			media,
 			target.get("first_comment") or "",
 			post.get("link_title") or "",
+			post,
 		):
 			if problem not in found:
 				found.append(problem)
