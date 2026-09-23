@@ -105,6 +105,13 @@ TILES = {
 	# touches. FIELD amber, not Workforce's teal: the kiosk leaves the building. `timer`
 	# rather than `clock`, which QuickBooks Time already owns.
 	"Time Kiosk": ("time_kiosk", "timer", FIELD),
+	# The second non-workspace tile (v1.523.0): an `External` link straight to the /stock-scan
+	# page, seeded by `patches/seed_stock_scan_shortcuts` for the same reason as the kiosk's.
+	# Unlike the kiosk it DOES carry roles -- the page's own gate (Stock User, Stock Manager,
+	# Inventory Clerk, System Manager), set by the patch and left alone by `_sync_roles`,
+	# which skips a label with no Workspace. PRODUCT blue with the Inventory Enhancements
+	# module it belongs to; `scan-qr-code` because the page opens from a QR label.
+	"Stock Scan": ("stock_scan", "scan-qr-code", PRODUCT),
 	# The team hubs (WI-074). One per `* Team` role, which are the only roles on this
 	# site that discriminate -- no role at all is held by every System User, but the
 	# Team roles split the company cleanly. Their `Desktop Icon.roles` is NOT listed

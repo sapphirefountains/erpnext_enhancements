@@ -1157,3 +1157,7 @@ erpnext_enhancements.patches.backfill_stock_scan_settings_defaults
 # the way in, so the bumped stamps alone reach no existing site. reload_doc(force=True) for both;
 # also brings the v1.337.0 Reports card that shipped without a bump. Cannot raise; safe twice.
 erpnext_enhancements.patches.reload_stock_scan_workspaces
+# v1.523.0: Stock Scan on the Desk -- a home-grid tile (External link to /stock-scan, roles = the
+# page's own gate, beside ERPNext's Stock tile; needs workspace_sidebar/stock_scan.json to render)
+# and an Enhancement Desk Shortcut. Insert-only, keyed on the label; never raises.
+erpnext_enhancements.patches.seed_stock_scan_shortcuts
