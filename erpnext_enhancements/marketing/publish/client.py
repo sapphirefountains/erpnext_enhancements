@@ -43,6 +43,26 @@ class PublishViolation(MarketingAPIError):
 	"""A request outside the publishing allowlist. Never sent, never retried."""
 
 
+class NotPublished(MarketingAPIError):
+	"""Raised by a publisher's send() after an ambiguous failure it has **verified** did not publish.
+
+	The outbox retries it rather than holding it Unconfirmed. Raise it only on evidence -- an
+	Instagram container that still reads FINISHED, not PUBLISHED -- never on a guess.
+	"""
+
+
+def error_codes(response):
+	"""``(code, subcode)`` from a Graph API error body, or ``(None, None)``. Pure."""
+	try:
+		body = response.json()
+	except ValueError:
+		return None, None
+	error = body.get("error") if isinstance(body, dict) else None
+	if not isinstance(error, dict):
+		return None, None
+	return error.get("code"), error.get("error_subcode")
+
+
 def allowed(connection, method, url):
 	"""True if ``method url`` is on the publishing allowlist for ``connection``."""
 	parts = urlsplit(url)
@@ -152,6 +172,9 @@ class PublishTransport:
 			error = MarketingAPIError(
 				self.connection, f"HTTP {status}: {_provider_message(response)}", status=status
 			)
+			# The network's own error codes, for a publisher that needs them (Instagram's
+			# "daily limit reached" is a 400 with a subcode, and must be read as a 429).
+			error.code, error.subcode = error_codes(response)
 			if method not in RETRYABLE_METHODS or not error.retryable or attempt > self.max_retries:
 				raise error from None
 			self.sleep(backoff_seconds(attempt, response.headers.get("Retry-After")))

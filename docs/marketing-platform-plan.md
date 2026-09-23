@@ -146,7 +146,8 @@ marketing/
 │   ├── sweeper.py       ← 5-minute sweep: reclaim, claim, dispatch on `long`   (01481, shipped)
 │   ├── accounts.py      ← Social Account rows from what a connection reaches  (01481, shipped)
 │   ├── ratelimit.py     ← pure decision functions + Redis Lua, run against each other (01482, shipped)
-│   └── publishers/      ← meta.py, linkedin.py, youtube.py; registry shipped 01481 (01483–01485)
+│   ├── validation.py, media.py ← pre-approval checks; fetchable media URLs     (01483, shipped)
+│   └── publishers/      ← meta.py (01483, shipped); linkedin.py, youtube.py        (01484–01485)
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md

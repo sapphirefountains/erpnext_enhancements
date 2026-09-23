@@ -32,6 +32,21 @@ class SocialPost(Document):
 	def validate(self):
 		self._refuse_duplicate_accounts()
 		self._refuse_edits_after_approval()
+		self._check_networks()
+
+	def _check_networks(self):
+		"""Fill Network Check with what each network would refuse (TASK-2026-01483).
+
+		A draft may be saved with problems -- it is a draft -- but ``outbox.enqueue`` refuses to
+		queue a post with any, so they must be fixed before it can go out.
+		"""
+		from erpnext_enhancements.marketing.publish import validation
+		from erpnext_enhancements.marketing.publish.sweeper import account_networks, post_parts
+
+		targets, media = post_parts(self)
+		networks = account_networks([t["social_account"] for t in targets])
+		problems = validation.post_problems(self.as_dict(), targets, media, networks)
+		self.network_check = "\n".join(problems)
 
 	def _refuse_duplicate_accounts(self):
 		seen = set()

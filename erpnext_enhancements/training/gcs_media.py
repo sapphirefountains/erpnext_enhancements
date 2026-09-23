@@ -121,13 +121,15 @@ def _encode_path(object_name):
 	return "/".join(urllib.parse.quote(part, safe="") for part in object_name.split("/"))
 
 
-def generate_signed_url(object_name, expires_in=None, method="GET", now=None, headers=None):
+def generate_signed_url(object_name, expires_in=None, method="GET", now=None, headers=None, bucket=None):
 	"""A V4 signed URL for one object, or ``None`` if signing is not configured.
 
 	``now`` is injectable purely so the tests can pin a timestamp; nothing in
-	the app passes it.
+	the app passes it. ``bucket`` defaults to the training bucket; marketing media
+	(v1.511.0) passes its own, signed with the same service-account key, which must
+	be able to read it.
 	"""
-	bucket = _bucket()
+	bucket = (bucket or "").strip() or _bucket()
 	credentials = _credentials()
 	if not bucket or credentials is None or not object_name:
 		return None

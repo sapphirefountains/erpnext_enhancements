@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.511.0] - 2026-09-22
+
+**Marketing P2: the Meta publisher, for Facebook Page and Instagram.** TASK-2026-01483. This is the
+first code in the app that can put something in public. It still cannot do so on prod:
+- nothing approves a post yet (TASK-2026-01486);
+- every switch is off;
+- Meta App Review has not cleared.
+
+The Graph API details were checked against Meta's official references on 2026-09-22. Where Meta
+contradicts itself, the code reads the live answer: Instagram's daily limit is 50 in the reference
+and 100 in one place in the guide.
+
+### Added
+
+- **`publish/publishers/meta.py`,** registered for Facebook and Instagram. Media goes by URL, and
+  Meta fetches it.
+  - **Facebook, prepare:** each photo is uploaded **unpublished**, which is not visible.
+  - **Facebook, send:** one public call, `/feed` (text, link, or the photos as `attached_media`) or
+    `/videos` with `file_url` for a video. Beside photos, the link goes into the text, because
+    Facebook shows a link preview *or* photos.
+  - **Instagram, prepare:** read the live `content_publishing_limit`, hand it to the rate limiter,
+    and wait as a 429 if it is used up. Then build the **container**: one image; a **Reel** for a
+    single video (Meta retired feed video on 2023-11-09); or up to 10 children plus a CAROUSEL
+    parent, photos and videos mixed. Wait until it is FINISHED: polls 30 s apart, 5 minutes at most,
+    as Meta recommends. ERROR/EXPIRED is a refusal; still processing is retried later.
+  - **Instagram, send:** `media_publish`. **If it times out or returns a 5xx, the container is asked
+    whether it published:**
+    - PUBLISHED: it is live, found among recent media by its caption, and recorded as success with
+      a note.
+    - FINISHED: it is provably not live, so `NotPublished` and the outbox retries.
+    - Anything else stays ambiguous and becomes Unconfirmed.
+
+    Meta does not document `media_publish` as idempotent, so this check, not a resend, is what
+    settles it. Instagram's "daily limit reached" (a 400, subcode 2207042) is read as a 429.
+  - **Nothing after the public step raises.** A failed first comment or permalink read is a
+    `warning` on a success, kept in the job's *Last Error*. Raising there would turn a live post
+    into Unconfirmed.
+- **The publisher contract is two-phase** (`publishers/__init__.py`). `prepare()` does everything
+  non-public and is retried freely; `send()` does only the public step. The outbox records
+  `dispatched_at` between the two.
+- **`publish/validation.py`: before approval, not at publish time,** using Meta's figures.
+  - **Instagram:** at least one and at most 10 items; a caption of at most 2,200 characters, 30
+    hashtags and 20 @mentions; photos JPEG only, 4:5 to 1.91:1; videos MP4/MOV, 3 s to 15 min,
+    ratio 0.01 to 10.
+  - **Facebook:** text, a link or media; one video per post, never with photos.
+  - **Both:** every file must be fetchable.
+  - An unknown dimension or type is a problem for Instagram, which refuses what it cannot handle,
+    and not for Facebook.
+- **Social Post → *Network Check*** (read-only), filled on every save. `outbox.enqueue` refuses a
+  post with any problem, so one that slipped past the form still cannot reach the network.
+- **`publish/media.py`:** a URL each asset can be fetched from.
+  - A **public** file: the site URL.
+  - **Google Cloud Storage:** a **6-hour signed URL**, from the training module's hand-rolled V4
+    signer and its key. `generate_signed_url` gained an optional `bucket`; training's calls are
+    unchanged. The bucket stays private.
+  - **Private** files and **Drive** are refused before approval: Meta cannot fetch them.
+- **First comments:** `pages_manage_engagement` and `instagram_manage_comments` added to what Meta
+  Publishing requests, and to the approvals packet (Nik's call, 2026-09-22). Neither can touch spend.
+  They were added now because the submission is not filed yet, and adding them later would mean a
+  second review round.
+- The publishing allowlist gains Meta's publishing calls. It still names no ad endpoint, deletes
+  nothing, and accepts only numeric IDs.
+- `tests/test_marketing_meta_publisher.py`: 23 tests, stub-free, in the marketing CI step. The
+  publisher runs against a scripted Graph API that records every call.
+  - Nothing public happens in prepare; every flow is covered; the ambiguity is settled all three
+    ways; post-publish failures are only warnings; and the validation rules hold.
+  - Mutation-checked: making every ambiguity "not published", letting the first comment raise, or
+    making the photo uploads public each fails the suite.
+
+### Changed
+
+- **`outbox.classify_failure`: a 4xx other than 408/429 is a refusal before dispatch too.** A
+  container Meta would not build is not built on the fifth try, and each try leaves an orphan.
+- The outbox honors a publisher's `NotPublished` (retry, not Unconfirmed) and keeps its `warning`
+  on a success.
+
 ## [1.510.0] - 2026-09-22
 
 **Marketing P2: publishing rate limits, as pure Python mirrored in Redis Lua.** TASK-2026-01482.

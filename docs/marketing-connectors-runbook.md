@@ -163,7 +163,8 @@ All three use the same redirect URI as the ad connectors (above).
 
 **Needs first:** Meta App Review for the publishing permissions: `pages_show_list`,
 `pages_manage_posts`, `pages_read_engagement`, `read_insights`, `instagram_basic`,
-`instagram_content_publish`, `instagram_manage_insights`, plus `ads_read`
+`instagram_content_publish`, `instagram_manage_insights`, `pages_manage_engagement` and
+`instagram_manage_comments` (the first comment, since v1.511.0), plus `ads_read`
 ([approvals](marketing-platform-approvals.md), gate 2). Until review clears, only people with a role on
 the app can connect.
 
@@ -337,3 +338,61 @@ says why, for example "Instagram's 25 posts per 24 hours for this account is use
 *Posts Remaining Today* on each Social Account shows what the limiter last saw. The limiter only
 avoids asking for what would be refused. If it is wrong, the network's own 429 still pauses the
 connection and the job retries later: nothing is lost either way.
+
+### Facebook and Instagram (v1.511.0)
+
+Since TASK-2026-01483 a Facebook Page or Instagram account can be published to. That happens once
+all of these are true:
+
+- **Enabled** in Marketing Settings, and the network's switch;
+- Meta Publishing *Connected*;
+- the post approved (TASK-2026-01486).
+
+**Before approval: Network Check.** Every save of a Social Post fills **Network Check** with
+whatever Facebook or Instagram would refuse. A post with anything there cannot be queued. The
+checks use Meta's own figures:
+
+- **Instagram:**
+  - at least one photo or video, and at most 10;
+  - a caption of at most 2,200 characters, 30 hashtags and 20 @mentions;
+  - photos **JPEG only**, between 4:5 and 1.91:1;
+  - videos MP4 or MOV, 3 seconds to 15 minutes.
+- **Facebook:** text, a link or media; one video per post, never mixed with photos.
+- **Both:** every file must be fetchable by Meta.
+
+Instagram needs the width and height (and a video's duration) on the Marketing Media Asset to
+check the ratio, so fill those in when you add the asset.
+
+**Media must be reachable by Meta,** which fetches it from a URL when the post is made:
+
+| Source on the asset | Works? |
+|---|---|
+| File, uploaded as **public** | Yes |
+| File, **private** | No: re-upload it as public |
+| Google Cloud Storage (`bucket/path`) | Yes: a link that expires after 6 hours, signed with the key in Training Settings. The bucket stays private |
+| Google Drive | No: Meta cannot fetch it without sharing it with everyone |
+
+**What goes out:**
+
+- **Facebook:** text and link as a normal post. Photos are uploaded hidden first, then posted
+  together as one post; the link goes into the text, because Facebook shows a link preview *or*
+  photos. A single video posts as a video.
+- **Instagram:**
+  - one photo is a photo post;
+  - one video is a **Reel**, also shown in the feed (Meta retired plain feed video in 2023);
+  - several items make a **carousel**, and photos and videos may mix.
+  - Links in Instagram captions are not clickable, so the post's link is not added.
+- **First comment**, if set, is posted after the post.
+
+**A timeout on Instagram is usually settled automatically.** If the final publish call times out
+or errors, the publisher asks Instagram whether that post went live. **Yes:** it is recorded as
+Published, with a note. **Provably no:** it is retried. Only when Instagram cannot say does the job
+become **Unconfirmed**. Facebook has no such check, so a Facebook timeout goes to Unconfirmed as
+described above.
+
+**Things that fail after the post is live** never turn it into a failure. For example, the first
+comment is refused because the permission was not granted. The job reads **Published**, and *Last
+Error* says what did not happen.
+
+**Instagram's daily limit** is read live from Instagram before each post, and handed to the rate
+limiter. Meta's docs say 50 in one place and 100 in another.
