@@ -56,6 +56,11 @@ The feed used to substitute the requested quantity when no Purchase Order line j
 **Nothing is clamped.** Over-ordering and over-receipt get their own statuses and their
 percentages exceed 100. The defect being fixed was a number quietly substituted to make
 a line look complete; clamping anywhere in here would repeat it in a new place.
+
+One document-level question lives here too: whether a document is still **open**
+(:func:`document_is_open`), which the tracker's print dialog offers as a choice beside All.
+It sits here for the same no-``frappe`` reason, and because the Purchase Order half of it is
+the "still to receive" rule this module's callers already share.
 """
 
 # Ordered vocabulary, in workflow order — worst first. The order is the contract:
@@ -383,3 +388,79 @@ def plan_receipt(order_lines, typed):
 			continue
 		lines.append({"purchase_order_item": name, "qty": arriving})
 	return lines, problems
+
+
+# ---------------------------------------------------------------------------
+# Which documents are still open — the tracker's "Print → Open" choice
+# ---------------------------------------------------------------------------
+
+#: A Purchase Order with nothing left to chase, whatever ``per_received`` says. ``Closed`` is
+#: a deliberate "stop chasing this" and ``Delivered`` is a drop-ship. Defined here rather than
+#: in ``procurement_project`` (which re-exports it under the same name) so that this module can
+#: answer "is this order still open" without importing ``frappe``: the Project form's
+#: "+ Purchase Receipt" picker, the Supplier Pickup List and the tracker's Print → Open all
+#: have to agree on it, and three copies of one rule is how two of them stop agreeing.
+SETTLED_PO_STATUSES = ("Closed", "Delivered")
+
+#: A request is open until its material has arrived, not merely until it is ordered: the job
+#: is still waiting on an ``Ordered`` request. ``Stopped`` is a deliberate stop, and
+#: ``Received`` / ``Transferred`` / ``Issued`` / ``Manufactured`` are the four ways ERPNext
+#: says a request is done, one per request type.
+_OPEN_MATERIAL_REQUEST_STATUSES = frozenset({"Pending", "Partially Ordered", "Ordered", "Partially Received"})
+
+#: Money still owed. ERPNext derives all three from ``outstanding_amount`` on every save and
+#: payment, so the label is the number here, unlike on a Purchase Order.
+_OPEN_PURCHASE_INVOICE_STATUSES = frozenset({"Unpaid", "Overdue", "Partly Paid"})
+
+#: The doctypes that have an "open", and what it means for each, in the words the print
+#: dialog shows. A doctype absent from this map has no Open choice at all, and each absence
+#: is a decision rather than an oversight:
+#:
+#: * **Request for Quotation** has no status past ``Submitted``, so "open" would mean "every
+#:   submitted RFQ", which is just All with the drafts removed.
+#: * **Supplier Quotation** has no status for "we bought from this quote" — an accepted quote
+#:   and an ignored one both read ``Submitted`` until they read ``Expired``.
+#: * **Purchase Receipt** is only ever outstanding for *billing* (``To Bill``), and billing
+#:   lives in QuickBooks: on 2026-09-23, 28 of the 96 submitted receipts on production sat at
+#:   ``To Bill`` with no Purchase Invoice ever coming in ERPNext. An Open that means "most
+#:   receipts since go-live" is worse than none. Worth revisiting once purchase invoicing
+#:   moves into ERPNext, when ``To Bill`` starts meaning something.
+#:
+#: The same billing fact is why the Purchase Order rule reads ``per_received`` and not the
+#: status: 70 fully received orders sat at ``To Bill`` on the same day, and a label-based
+#: rule would have called every one of them open.
+OPEN_RULES = {
+	"Material Request": "Submitted, and the material has not all arrived yet "
+	"(Pending, Partially Ordered, Ordered or Partially Received).",
+	"Purchase Order": "Submitted, not Closed or Delivered, and not fully received.",
+	"Purchase Invoice": "Submitted, with money still owed (Unpaid, Overdue or Partly Paid).",
+}
+
+
+def document_is_open(doctype, docstatus, status, per_received=None):
+	"""Whether one procurement document is still open, by the rule in :data:`OPEN_RULES`.
+
+	Returns ``None`` — not ``False`` — for a doctype that has no rule: "this Request for
+	Quotation is not open" and "a Request for Quotation cannot be open" are different
+	answers, and the client shows the Open choice only for the second kind of doctype.
+
+	Drafts are never open. An unsubmitted order has not been placed, and a printed pack of
+	"open orders" that included one would put an order in front of a supplier or a crew that
+	nobody has actually committed to.
+
+	The Purchase Order branch is the rule ``procurement_project.get_receivable_purchase_orders``
+	applies, so Open on the tracker lists exactly the orders its Receive button offers.
+	"""
+	if doctype not in OPEN_RULES:
+		return None
+	try:
+		submitted = int(docstatus or 0) == 1
+	except (TypeError, ValueError):
+		submitted = False
+	if not submitted:
+		return False
+	if doctype == "Purchase Order":
+		return status not in SETTLED_PO_STATUSES and _qty(per_received) < 100
+	if doctype == "Material Request":
+		return status in _OPEN_MATERIAL_REQUEST_STATUSES
+	return status in _OPEN_PURCHASE_INVOICE_STATUSES

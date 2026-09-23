@@ -82,7 +82,11 @@ def purchase_order_projects(doc):
 #: can hide an order whose goods never turned up, and ``To Bill`` means they are already
 #: here. Kept identical on purpose; two different answers to "is there anything still to
 #: collect" on the same Project form would be worse than either answer alone.
-SETTLED_PO_STATUSES = ("Closed", "Delivered")
+#:
+#: Defined in ``procurement_quantities`` and re-exported here under the name the Supplier
+#: Pickup List already imports: the Procurement Tracker's Print → Open applies the same rule
+#: from that frappe-free module, and one definition cannot drift from itself.
+from erpnext_enhancements.procurement_quantities import SETTLED_PO_STATUSES
 
 
 @frappe.whitelist()

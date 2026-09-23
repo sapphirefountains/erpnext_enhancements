@@ -81,6 +81,251 @@ function procurementCompare(a, b, column) {
 	return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 }
 
+/**
+ * Printing from the tracker: a whole DocType group as one PDF (All, or Open where the
+ * doctype has an "open"), or one document in Frappe's own print view.
+ *
+ * The group PDF is Frappe's multi-document print, the one behind the list view's
+ * Actions -> Print, reached through erpnext_enhancements.procurement_print only so the file
+ * is named for the job. Declared out here, beside the sort helpers, to keep the Vue
+ * options object about the tracker rather than about a dialog.
+ */
+
+// Frappe's list view forces background printing above this many documents, and for the
+// same reason: a synchronous render of that many PDFs is a request long enough to meet
+// the worker timeout. No project on production has more than 23 of any one doctype today.
+const PROCUREMENT_BACKGROUND_PRINT_THRESHOLD = 25;
+
+function procurementPrintSettings() {
+	return frappe.model.get_doc(":Print Settings", "Print Settings") || {};
+}
+
+/**
+ * Why Frappe will refuse to print this document, or null if it will print.
+ *
+ * Asked here, before the request, because the multi-document PDF never says. printview
+ * throws on a draft or cancelled document the Print Settings forbid, and
+ * download_multi_pdf catches that and moves on — so the document is simply missing from
+ * the PDF, with no message, no Error Log, and a page count nobody checks. On production
+ * today drafts may be printed and cancelled documents may not, and a cancelled Purchase
+ * Receipt or Invoice can still reach the tracker through the chain join.
+ */
+function procurementPrintBlocker(doc) {
+	const settings = procurementPrintSettings();
+	if (doc.docstatus === 0 && !cint(settings.allow_print_for_draft)) {
+		return __("draft, and Print Settings do not allow printing drafts");
+	}
+	if (doc.docstatus === 2 && !cint(settings.allow_print_for_cancelled)) {
+		return __("cancelled, and Print Settings do not allow printing cancelled documents");
+	}
+	return null;
+}
+
+/**
+ * The format the dialog starts on.
+ *
+ * The doctype's configured default when there is one. There is none on any procurement
+ * doctype on this site, and Frappe then falls back to "Standard" — but where the site has
+ * built exactly one format of its own for the doctype, that is the one it prints.
+ * "Purchase Order - Sapphire" is the only Purchase Order format left enabled besides
+ * Standard; the three it superseded are disabled on every migrate precisely so nobody
+ * prints them. Two home-built formats is a choice for a person, so that falls back too.
+ */
+function procurementDefaultPrintFormat(doctype, formats) {
+	const configured = frappe.get_meta(doctype).default_print_format;
+	if (configured && formats.includes(configured)) return configured;
+	const own = formats.filter((name) => {
+		const pf = locals[":Print Format"] && locals[":Print Format"][name];
+		return pf && pf.standard === "No";
+	});
+	return own.length === 1 ? own[0] : "Standard";
+}
+
+/**
+ * Frappe's print-view rule for which PDF backend renders a format (print.js,
+ * get_pdf_generator): the format's own, else Print Settings'. It matters for "Standard",
+ * which has no Print Format record to carry a backend — left alone it renders on
+ * wkhtmltopdf while the same document's PDF button in the print view uses chrome.
+ */
+function procurementPdfGenerator(format) {
+	const pf = locals[":Print Format"] && locals[":Print Format"][format];
+	return (pf && pf.pdf_generator) || procurementPrintSettings().pdf_generator || "wkhtmltopdf";
+}
+
+function procurementPrintInBackground(doctype, names, format, letterhead) {
+	// Frappe's own background route, glued exactly as its list view glues it. It keeps
+	// Frappe's filename and cannot be handed a PDF backend (a queued job has no request to
+	// read one from), which is the price of not reimplementing it for a size no job has
+	// reached yet.
+	frappe
+		.call("frappe.utils.print_format.download_multi_pdf_async", {
+			doctype: doctype,
+			name: JSON.stringify(names),
+			format: format,
+			no_letterhead: letterhead ? "0" : "1",
+			letterhead: letterhead || "",
+		})
+		.then((r) => {
+			const task_id = r.message && r.message.task_id;
+			if (!task_id) return;
+			frappe.show_alert({ message: __("Building the PDF in the background..."), indicator: "blue" });
+			frappe.realtime.task_subscribe(task_id);
+			frappe.realtime.on(`task_complete:${task_id}`, (data) => {
+				frappe.msgprint({
+					title: __("PDF ready"),
+					message: __("The PDF of {0} documents is ready to download.", [names.length]),
+					primary_action: {
+						label: __("Download PDF"),
+						client_action: "window.open",
+						args: data.file_url,
+					},
+				});
+				frappe.realtime.task_unsubscribe(task_id);
+				frappe.realtime.off(`task_complete:${task_id}`);
+			});
+		});
+}
+
+function openProcurementPrintDialog(project, group) {
+	const doctype = group.doctype;
+	// Loads the doctype's meta and, with it, its enabled print formats into locals. The
+	// Project form has neither for a Purchase Order until something asks.
+	frappe.model.with_doctype(doctype, () => {
+		const formats = frappe.meta.get_print_formats(doctype);
+		const documents = group.documents || [];
+		const open = documents.filter((d) => d.is_open === true);
+
+		const scopes = [{ value: "all", label: __("All ({0})", [documents.length]) }];
+		if (group.open_rule) {
+			scopes.push({ value: "open", label: __("Open ({0})", [open.length]) });
+		}
+
+		const pick = (scope) => {
+			const printable = [];
+			const skipped = [];
+			(scope === "open" ? open : documents).forEach((d) => {
+				const why = procurementPrintBlocker(d);
+				if (why) skipped.push({ name: d.name, why: why });
+				else printable.push(d.name);
+			});
+			return { printable: printable, skipped: skipped };
+		};
+
+		// Declared before it is built: a field's onchange can fire while its default is
+		// being set, inside the constructor, and a `const` read there is a ReferenceError.
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
+			title: __("Print {0}", [__(doctype)]),
+			fields: [
+				{
+					fieldtype: "Select",
+					fieldname: "scope",
+					label: __("Documents"),
+					options: scopes,
+					default: "all",
+					onchange: () => render_summary(),
+				},
+				{ fieldtype: "HTML", fieldname: "summary" },
+				{
+					fieldtype: "Select",
+					fieldname: "print_format",
+					label: __("Print Format"),
+					options: formats,
+					default: procurementDefaultPrintFormat(doctype, formats),
+				},
+				{
+					fieldtype: "Link",
+					fieldname: "letterhead",
+					label: __("Letter Head"),
+					options: "Letter Head",
+					description: __("Leave blank to print without one."),
+				},
+			],
+			primary_action_label: __("Print"),
+			primary_action(values) {
+				const scope = values.scope || "all";
+				const printable = pick(scope).printable;
+				if (!printable.length) {
+					frappe.msgprint(__("Nothing to print."));
+					return;
+				}
+				const format = values.print_format || "Standard";
+				const letterhead = values.letterhead || "";
+
+				if (printable.length > PROCUREMENT_BACKGROUND_PRINT_THRESHOLD) {
+					procurementPrintInBackground(doctype, printable, format, letterhead);
+				} else {
+					const params = new URLSearchParams({
+						project: project,
+						doctype: doctype,
+						name: JSON.stringify(printable),
+						scope: scope,
+						format: format,
+						no_letterhead: letterhead ? "0" : "1",
+						pdf_generator: procurementPdfGenerator(format),
+					});
+					if (letterhead) params.set("letterhead", letterhead);
+					const w = window.open(
+						"/api/method/erpnext_enhancements.procurement_print.download_procurement_pdf?" +
+							params.toString()
+					);
+					if (!w) frappe.msgprint(__("Please enable pop-ups"));
+				}
+				dialog.hide();
+			},
+		});
+
+		// Says exactly what will be on the paper before anyone presses Print: which
+		// documents, in the tracker's newest-first order, and which were left out and why.
+		// The PDF itself cannot say that, so this is the only place it can be said.
+		function render_summary() {
+			if (!dialog) return;
+			const scope = dialog.get_value("scope") || "all";
+			const { printable, skipped } = pick(scope);
+			const esc = frappe.utils.escape_html;
+			const parts = [];
+			if (scope === "open") {
+				parts.push(`<p class="text-muted small">${esc(__("Open means: {0}", [group.open_rule]))}</p>`);
+			}
+			if (printable.length) {
+				parts.push(
+					`<p class="small">${esc(
+						__("{0} to print, newest first: {1}", [printable.length, printable.join(", ")])
+					)}</p>`
+				);
+			} else {
+				parts.push(`<p class="small">${esc(__("Nothing to print."))}</p>`);
+			}
+			if (skipped.length) {
+				const list = skipped.map((s) => `<li>${esc(s.name)}: ${esc(s.why)}</li>`).join("");
+				parts.push(`<p class="small text-warning">${esc(__("Left out:"))}</p><ul class="small">${list}</ul>`);
+			}
+			if (printable.length > PROCUREMENT_BACKGROUND_PRINT_THRESHOLD) {
+				parts.push(
+					`<p class="text-muted small">${esc(
+						__("More than {0} documents are printed in the background; a download link appears when the PDF is ready.", [
+							PROCUREMENT_BACKGROUND_PRINT_THRESHOLD,
+						])
+					)}</p>`
+				);
+			}
+			dialog.fields_dict.summary.$wrapper.html(parts.join(""));
+		}
+
+		dialog.show();
+		render_summary();
+
+		// Same default as the print view's: the enabled default Letter Head.
+		frappe.db
+			.get_value("Letter Head", { disabled: 0, is_default: 1 }, "name")
+			.then(({ message }) => {
+				if (message && message.name && !dialog.get_value("letterhead")) {
+					dialog.set_value("letterhead", message.name);
+				}
+			});
+	});
+}
+
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {
@@ -280,6 +525,28 @@ frappe.ui.form.on("Project", {
 											freeze_message: __('Building the receipt...'),
 										});
 									},
+									// Hidden, not disabled, without print permission on the doctype —
+									// the same test Frappe's own form uses for its print icon.
+									canPrintDoctype(doctype) {
+										return frappe.model.can_print(doctype);
+									},
+									canPrintDoc(doctype, doc) {
+										return frappe.model.can_print(doctype) && !procurementPrintBlocker(doc);
+									},
+									printGroup(doctype) {
+										// From `groups`, not `filteredGroups`: the header being
+										// clicked may be showing a search-narrowed subset, and
+										// "All" on paper has to mean all of them.
+										const group = this.groups.find(g => g.doctype === doctype);
+										if (group) openProcurementPrintDialog(frm.doc.name, group);
+									},
+									printDoc(doctype, name) {
+										// Frappe's print view, in a new tab: format, letter head,
+										// PDF and Print are all there, and the Project form keeps
+										// whatever the user had expanded.
+										const w = window.open(frappe.router.make_url(['print', doctype, name]));
+										if (!w) frappe.msgprint(__('Please enable pop-ups'));
+									},
 									sortFor(doctype, name) {
 										return this.sortByDoc[this.docKey(doctype, name)] || null;
 									},
@@ -456,6 +723,10 @@ frappe.ui.form.on("Project", {
 													</svg>
 													<span>{{ group.doctype }} ({{ group.documents.length }})</span>
 												</div>
+												<!-- @click.stop: the header's own click toggles the group. -->
+												<button v-if="canPrintDoctype(group.doctype)" type="button" class="btn-print btn-print-group"
+														@click.stop="printGroup(group.doctype)"
+														:title="'Print these ' + group.doctype + ' documents as one PDF' + (group.open_rule ? ' — all, or only the open ones' : '')">Print</button>
 											</div>
 
 											<div v-if="!collapsedGroups[group.doctype]" class="group-content">
@@ -482,6 +753,10 @@ frappe.ui.form.on("Project", {
 														<button v-if="canReceive(group.doctype, doc)" type="button" class="btn-receive"
 																@click.stop="receiveAgainst(doc.name)"
 																:title="'Create a Purchase Receipt against ' + doc.name">Receive</button>
+														<!-- Only where Frappe would actually print it; see procurementPrintBlocker. -->
+														<button v-if="canPrintDoc(group.doctype, doc)" type="button" class="btn-print"
+																@click.stop="printDoc(group.doctype, doc.name)"
+																:title="'Open the print view for ' + doc.name + ' in a new tab'">Print</button>
 													</div>
 
 													<!-- Level 3: items inside the document -->

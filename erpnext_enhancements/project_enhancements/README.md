@@ -436,6 +436,15 @@ Buying), which is unrelated and not in this repo.
   `mr.custom_project` or `rfq.custom_project`) plus direct Purchase Orders with no MR link — then a
   per-doctype sweep for documents linked to the project that never appeared in a chain.
 - **No caching**, server or client: a fresh round-trip on every form refresh.
+- **Printing (v1.517.0):** every document row has **Print** (Frappe's print view, new tab) and
+  every group header has **Print**, which prints the group as one PDF — **All**, or **Open**
+  where the doctype has one (Material Request, Purchase Order, Purchase Invoice). "Open" is
+  `procurement_quantities.document_is_open`, sent down as `is_open`; for Purchase Orders it is
+  the Receive rule exactly. The PDF is Frappe's own `download_multi_pdf` behind
+  [`procurement_print.py`](../procurement_print.py), which only adds the Project read gate and
+  names the file for the job (`PRJ-00706-Open-Purchase-Orders.pdf`). Documents Frappe would
+  refuse to print are filtered out in the browser and named in the dialog, because Frappe's
+  multi-PDF drops them without a word.
 
 Anything beyond a passing change here wants
 [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md) first — it maps the
