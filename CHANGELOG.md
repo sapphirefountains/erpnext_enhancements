@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.517.1] - 2026-09-23
+
+**The Desk home grid shows each tile's full name.** CSS only.
+
+### Fixed
+
+- **Every two-word tile on `/desk` was cut off with an ellipsis.** Examples: "Inventory E…",
+  "Process Do…", "KPI Dashbo…", and two "Production …" tiles side by side with nothing to tell
+  them apart.
+  - **Cause.** The truncation is Frappe v16's own page stylesheet
+    (`frappe/desk/page/desktop/desktop.css`), not ours. It sets
+    `.icon-title { white-space: nowrap; text-overflow: ellipsis }` inside a 127px tile, and
+    after the padding and border that leaves 93px of text. Nearly every name we ship is two
+    words, and the second word never fit.
+  - **What changes.** `desk_enhancements.bundle.css` lets the name wrap, balanced so
+    "Inventory Enhancements" splits one word per line. It also widens the caption from 93px to
+    117px by spilling it into the tile's side padding, so the longest single word on the grid
+    ("Documentation", about 104px) never breaks mid-word.
+  - **Tile size.** Frappe's caption box already holds two lines, so on the desktop grid no
+    tile changes size. A name long enough for a third line grows its tile through
+    `min-height: max-content` and does not clip.
+  - **Phones.** Frappe's 117px and 100px phone tiles only ever had room for one line. A row
+    with a two-line name is now about 16px taller. Under 380px wide the name drops to 12px,
+    because the 100px tile leaves about 90px, less than "Documentation" needs at 14px.
+  - **Why `min-height` and not `height: auto`.** Frappe sets the tile's `height` at three
+    different specificities: grid, folder modal and phone. It sets no `min-height` anywhere.
+    So there is no cascade contest to lose, and each breakpoint keeps its own tile size as the
+    floor.
+  - **Specificity.** Frappe injects the page stylesheet after the app bundles load, so an
+    equal-specificity override would lose on source order. Each rule here outranks the one it
+    replaces by a class. `:has(> .icon-caption)` keeps the uncaptioned thumbnails inside a
+    folder tile out of it.
+  - **How it was checked.** All 44 tile labels in `setup/desktop_icon_map.py` were rendered
+    against Frappe's `version-16` stylesheet at 1024px, 414px and 375px. Every label fits in
+    two lines with no clipping or overflow, and no page scrolls sideways. The same page
+    without this change reproduces the truncated grid.
+
 ## [1.517.0] - 2026-09-23
 
 **Print from the Procurement Tracker.** The tracker on the Project form lists a job's Material
