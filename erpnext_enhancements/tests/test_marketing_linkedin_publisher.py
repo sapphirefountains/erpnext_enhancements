@@ -414,7 +414,7 @@ class ValidationTests(unittest.TestCase):
 class WiringTests(unittest.TestCase):
 	def test_registered(self):
 		self.assertIs(publisher_for("LinkedIn"), L)
-		self.assertIsNone(publisher_for("YouTube"))
+		self.assertIsNot(publisher_for("YouTube"), L, "YouTube has its own publisher (v1.513.0)")
 
 	def test_the_token_never_leaves_linkedin(self):
 		api = LinkedIn({})

@@ -147,7 +147,7 @@ marketing/
 │   ├── accounts.py      ← Social Account rows from what a connection reaches  (01481, shipped)
 │   ├── ratelimit.py     ← pure decision functions + Redis Lua, run against each other (01482, shipped)
 │   ├── validation.py, media.py ← pre-approval checks; fetchable media URLs     (01483, shipped)
-│   └── publishers/      ← meta.py (01483), linkedin.py (01484), shipped; youtube.py      (01485)
+│   └── publishers/      ← meta.py (01483), linkedin.py (01484), youtube.py (01485): shipped
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md

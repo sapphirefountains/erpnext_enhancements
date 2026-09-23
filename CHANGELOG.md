@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.513.0] - 2026-09-22
+
+**Marketing P2: the YouTube uploader.** TASK-2026-01485. This covers a resumable upload with title,
+description, tags, thumbnail and playlist assignment. Nothing can publish on prod yet:
+- nothing approves a post (01486);
+- every switch is off;
+- **until the YouTube API audit passes, every API upload is locked private, and that lock cannot
+  be appealed.**
+
+The Google references were checked on 2026-09-22.
+
+### Added
+
+- **`publish/publishers/youtube.py`,** registered for YouTube.
+  - **prepare** opens a resumable upload session (`POST /upload/youtube/v3/videos`,
+    `uploadType=resumable`). The session URI comes from `Location`. **No video exists until the
+    last byte arrives,** so a refused title or a spent quota here costs nothing.
+  - **send** PUTs the file in **32 MiB chunks** (a multiple of 256 KiB, as the protocol requires).
+    A local file is read from disk by seeking and a GCS object by ranged GETs, never whole.
+  - **A failed chunk is settled by asking the session** (`Content-Range: bytes */TOTAL`):
+    - 308 resumes from YouTube's `Range`, so nothing it already has is resent;
+    - 200/201 means it had finished, and that response *is* the video;
+    - a session that cannot be asked stays ambiguous and becomes Unconfirmed;
+    - after 5 incomplete resumes, `NotPublished`. The outbox retries with a new session, and the
+      abandoned one never becomes a video.
+
+    Google documents that a finished session answers with its original response, so a resumed
+    upload can never make a second video.
+  - **A spent quota waits, never fails.** `quotaExceeded`/`dailyLimitExceeded` (403, the project's
+    quota), `uploadLimitExceeded` (400, the channel's own limit) and `uploadRateLimitExceeded` are
+    re-raised as 429.
+  - **Thumbnail** (`thumbnails.set`; custom thumbnails need a verified channel, 50 MB since
+    2026-09-14) **and playlist** (`playlistItems.insert`) come after the video exists. A failure is
+    a warning on a success, as is a video the audit lock kept private.
+- **Social Post → YouTube section:** **Video Title** (the public title, up to 100 characters),
+  **Tags**, **Thumbnail** (an image asset) and **Playlist ID**. All are part of what approval locks.
+  The post text is the description.
+- **Validation for YouTube:**
+  - exactly one video and nothing else;
+  - a Video Title of up to 100 characters;
+  - a description of up to **5,000 bytes**;
+  - no `<` or `>` in either;
+  - tags up to 500 characters **as YouTube counts them** (commas count; a tag with a space counts
+    two quotes);
+  - a JPEG/PNG thumbnail;
+  - a playlist ID of the right shape;
+  - no first comment yet.
+- **`media.byte_source`:** reads a large file in pieces, local or GCS, with no bearer token on GCS.
+- **The publish transport:** it **never follows a redirect** (one could carry the bearer token off
+  the allowlist). It also gains `full` (a `Reply` with the status, since YouTube's 308 means "keep
+  going"), a per-request `timeout`, and Google's error `reason` on failures.
+- The allowlist gains YouTube's upload, thumbnail and playlist calls. **PUT reaches only the upload
+  path;** the session URI shares it.
+- `tests/test_marketing_youtube_publisher.py`: 19 tests. Mutation-checked: a status check that always
+  says "incomplete from 0", resuming from byte 0, assuming "not published" without asking, or letting
+  a spent quota fail each fails the suite.
+
+### Where the task's text was out of date
+
+- **"1,600 units per insert, about six uploads a day."** Since 2025-12-04 an upload costs about 100,
+  and since 2026-06-01 `videos.insert` has its own bucket of 100 calls a day. The rate limiter
+  (v1.510.0) already accounts for it.
+
 ## [1.512.0] - 2026-09-22
 
 **Marketing P2: the LinkedIn publisher, posting as the Company Page.** TASK-2026-01484. Covers

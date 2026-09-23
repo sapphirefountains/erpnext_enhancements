@@ -121,6 +121,17 @@ def post_parts(post):
 	return targets, media
 
 
+def post_dict(post):
+	"""A Social Post as a dict, with its YouTube thumbnail's asset fields under
+	``video_thumbnail_asset`` (TASK-2026-01485) -- what the checks and the publisher read."""
+	values = post.as_dict()
+	thumbnail = post.get("video_thumbnail")
+	if thumbnail:
+		rows = frappe.get_all(ASSET, filters={"name": thumbnail}, fields=ASSET_FIELDS)
+		values["video_thumbnail_asset"] = dict(rows[0]) if rows else {"name": thumbnail}
+	return values
+
+
 def account_networks(names):
 	"""``{account name: network}`` for the given Social Accounts."""
 	names = [n for n in names if n]
@@ -137,7 +148,7 @@ class FrappeStore:
 
 	def load_post(self, name):
 		post = frappe.get_doc(POST, name)
-		return post.as_dict(), *post_parts(post)
+		return post_dict(post), *post_parts(post)
 
 	def accounts(self, names):
 		names = [n for n in names if n]
@@ -301,7 +312,7 @@ def publish_context(job):
 	media = [frappe.get_doc(ASSET, row.asset).as_dict() for row in post.media]
 	return {
 		"job": dict(job),
-		"post": post.as_dict(),
+		"post": post_dict(post),
 		"target": target.as_dict() if target else {},
 		"account": frappe.get_doc(ACCOUNT, job["social_account"]).as_dict(),
 		"media": media,

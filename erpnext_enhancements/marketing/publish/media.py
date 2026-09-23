@@ -128,6 +128,64 @@ def read_bytes(asset, http=None):
 	return response.content
 
 
+class ByteSource:
+	"""A file read in pieces: ``size``, and ``read(start, end)`` for bytes ``start..end`` inclusive.
+
+	For a video too large to hold in memory (YouTube, TASK-2026-01485): a local file is read from
+	disk by seeking, a GCS object by ranged GETs on a signed URL -- never the whole thing at once.
+	"""
+
+	def __init__(self, size, reader):
+		self.size = size
+		self._reader = reader
+
+	def read(self, start, end):
+		return self._reader(start, end)
+
+
+def byte_source(asset, http=None):
+	"""A ``ByteSource`` for ``asset``. Raises ``MediaNotReachable`` with the reason."""
+	problem = bytes_problem(asset)
+	if problem:
+		raise MediaNotReachable(problem)
+	name = asset.get("name") or "An asset"
+	if (asset.get("source") or "File") == "File":
+		import os
+
+		import frappe
+
+		file_name = frappe.db.get_value("File", {"file_url": asset["file"].strip()}, "name")
+		if not file_name:
+			raise MediaNotReachable(f"{name}: no File record for {asset['file']}")
+		path = frappe.get_doc("File", file_name).get_full_path()
+
+		def read_local(start, end):
+			with open(path, "rb") as handle:
+				handle.seek(start)
+				return handle.read(end - start + 1)
+
+		return ByteSource(os.path.getsize(path), read_local)
+
+	url = public_url(asset)
+	if http is None:
+		import requests
+
+		http = requests
+
+	def read_range(start, end):
+		# No bearer token: this reads our own bucket through a signed URL.
+		response = http.get(url, headers={"Range": f"bytes={start}-{end}"}, timeout=300)
+		if response.status_code not in (200, 206):
+			raise MediaNotReachable(f"{name}: Google Cloud Storage answered {response.status_code}")
+		return response.content
+
+	probe = http.get(url, headers={"Range": "bytes=0-0"}, timeout=60)
+	total = (probe.headers.get("Content-Range") or "").rpartition("/")[2]
+	if probe.status_code not in (200, 206) or not total.isdigit():
+		raise MediaNotReachable(f"{name}: could not read its size from Google Cloud Storage")
+	return ByteSource(int(total), read_range)
+
+
 def public_url(asset):
 	"""The URL a network fetches ``asset`` from. Raises ``MediaNotReachable`` with the reason."""
 	problem = url_problem(asset)

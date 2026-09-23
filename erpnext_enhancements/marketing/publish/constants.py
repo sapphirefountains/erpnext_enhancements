@@ -202,6 +202,13 @@ PUBLISH_ALLOWLIST = tuple(
 		(CONNECTION_LINKEDIN, "PUT", "www.linkedin.com", r"^/dms-uploads/"),
 		(CONNECTION_LINKEDIN, "PUT", LINKEDIN_HOST, r"^/mediaUpload/"),
 		(CONNECTION_YOUTUBE, "GET", YOUTUBE_HOST, r"^/youtube/v3/channels$"),
+		# YouTube publishing (TASK-2026-01485): a resumable upload session is opened (POST), the
+		# bytes PUT to its session URI -- the same path, with an upload_id -- then a thumbnail and a
+		# playlist item. PUT reaches the upload path only.
+		(CONNECTION_YOUTUBE, "POST", YOUTUBE_HOST, r"^/upload/youtube/v3/videos$"),
+		(CONNECTION_YOUTUBE, "PUT", YOUTUBE_HOST, r"^/upload/youtube/v3/videos$"),
+		(CONNECTION_YOUTUBE, "POST", YOUTUBE_HOST, r"^/upload/youtube/v3/thumbnails/set$"),
+		(CONNECTION_YOUTUBE, "POST", YOUTUBE_HOST, r"^/youtube/v3/playlistItems$"),
 	)
 )
 
@@ -300,3 +307,29 @@ LINKEDIN_RESERVED = "\\|{}@[]()<>#*_~"
 #: Waiting for an uploaded image or document to read AVAILABLE.
 LINKEDIN_ASSET_POLL_SECONDS = 5
 LINKEDIN_ASSET_POLL_ATTEMPTS = 24
+
+# ---------------------------------------------------------------- YouTube publishing (TASK-2026-01485)
+# From Google's official references, checked 2026-09-22.
+
+#: Snippet limits. Title and description may not contain "<" or ">".
+YOUTUBE_TITLE_MAX = 100
+YOUTUBE_DESCRIPTION_MAX_BYTES = 5000
+#: Tags: 500 characters in all, commas counted, and a tag with a space counted with two quotes.
+YOUTUBE_TAGS_MAX = 500
+#: Google's own sample default ("People & Blogs"); the API documents none.
+YOUTUBE_CATEGORY_ID = "22"
+#: Custom thumbnails: JPEG or PNG (50 MB since 2026-09-14; needs a verified channel).
+YOUTUBE_THUMBNAIL_TYPES = ("image/jpeg", "image/png")
+#: Upload chunk: a multiple of 256 KiB, as the protocol requires. 32 MiB keeps memory bounded
+#: for a video of hundreds of MB, in a handful of requests.
+YOUTUBE_CHUNK_BYTES = 32 * 1024 * 1024
+YOUTUBE_CHUNK_TIMEOUT_SECONDS = 300
+#: Transient failures while uploading are resumed from where the session says it got to;
+#: this many times, with backoff, before settling.
+YOUTUBE_RESUME_ATTEMPTS = 5
+#: Error reasons that mean "not today": re-raised as a 429 so the job waits, never fails.
+#: quotaExceeded/dailyLimitExceeded are the project's quota (403); uploadLimitExceeded (400) is
+#: the channel's own daily upload limit; uploadRateLimitExceeded (429) is "try again later".
+YOUTUBE_WAIT_REASONS = frozenset(
+	{"quotaExceeded", "dailyLimitExceeded", "uploadLimitExceeded", "uploadRateLimitExceeded"}
+)

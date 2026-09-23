@@ -63,6 +63,28 @@ def error_codes(response):
 	return error.get("code"), error.get("error_subcode")
 
 
+def error_reason(response):
+	"""Google's error ``reason`` (``quotaExceeded``, ``uploadLimitExceeded`` ...), or None. Pure."""
+	try:
+		body = response.json()
+	except ValueError:
+		return None
+	error = body.get("error") if isinstance(body, dict) else None
+	errors = error.get("errors") if isinstance(error, dict) else None
+	if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+		return errors[0].get("reason")
+	return None
+
+
+class Reply:
+	"""A whole response, for a caller that needs the status (YouTube's 308 means "keep going")."""
+
+	def __init__(self, status, body, headers):
+		self.status = status
+		self.body = body
+		self.headers = headers
+
+
 def allowed(connection, method, url):
 	"""True if ``method url`` is on the publishing allowlist for ``connection``."""
 	parts = urlsplit(url)
@@ -124,14 +146,28 @@ class PublishTransport:
 		except Exception:
 			pass  # an optimisation failing must not fail the request (see ratelimit.py)
 
-	def request(self, method, url, *, params=None, json=None, data=None, headers=None, with_headers=False):
+	def request(
+		self,
+		method,
+		url,
+		*,
+		params=None,
+		json=None,
+		data=None,
+		headers=None,
+		with_headers=False,
+		full=False,
+		timeout=None,
+	):
 		"""Send one request and return the parsed JSON body (``{}`` for an empty one).
 
 		``headers`` are added for this request only (LinkedIn's ``X-RestLi-Method: FINDER``);
 		``data`` may be raw bytes (an upload PUT). ``with_headers`` returns ``(body, headers)``,
 		for a network that answers in a header (LinkedIn's new post URN is in ``x-restli-id``).
 		The bearer token goes on every request, which is why the allowlist pins hosts: it can
-		reach only the network it belongs to, upload hosts included.
+		reach only the network it belongs to, upload hosts included -- and why redirects are never
+		followed. ``full`` returns a ``Reply`` with the status (YouTube's 308); ``timeout`` overrides
+		the transport's for one request (a large upload chunk).
 		"""
 		method = method.upper()
 		if not allowed(self.connection, method, url):
@@ -151,7 +187,9 @@ class PublishTransport:
 					json=json,
 					data=data,
 					headers={**self._headers(), **(headers or {})},
-					timeout=self.timeout,
+					timeout=timeout or self.timeout,
+					# A redirect could carry the bearer token to a host the allowlist never saw.
+					allow_redirects=False,
 				)
 			except Exception as exc:  # requests.RequestException and friends
 				error = MarketingAPIError(self.connection, f"transport error: {type(exc).__name__}")
@@ -172,8 +210,11 @@ class PublishTransport:
 							raise MarketingAPIError(
 								self.connection, "response was not JSON", status=status
 							) from None
+				headers_out = {str(k).lower(): v for k, v in (response.headers or {}).items()}
+				if full:
+					return Reply(status, body, headers_out)
 				if with_headers:
-					return body, {str(k).lower(): v for k, v in (response.headers or {}).items()}
+					return body, headers_out
 				return body
 
 			if status == 401 and self._refresh and not refreshed:
@@ -188,6 +229,7 @@ class PublishTransport:
 			# The network's own error codes, for a publisher that needs them (Instagram's
 			# "daily limit reached" is a 400 with a subcode, and must be read as a 429).
 			error.code, error.subcode = error_codes(response)
+			error.reason = error_reason(response)  # Google's: quotaExceeded is a 403, not a 429
 			if method not in RETRYABLE_METHODS or not error.retryable or attempt > self.max_retries:
 				raise error from None
 			self.sleep(backoff_seconds(attempt, response.headers.get("Retry-After")))

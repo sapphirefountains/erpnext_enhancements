@@ -192,6 +192,11 @@ def content_signature(post, targets, media):
 		# The link preview LinkedIn shows is part of what goes out (v1.512.0).
 		_text(post.get("link_title")),
 		_text(post.get("link_description")),
+		# So is everything YouTube shows (v1.513.0).
+		_text(post.get("video_title")),
+		_text(post.get("video_tags")),
+		_text(post.get("video_thumbnail")),
+		_text(post.get("youtube_playlist_id")),
 		str(post.get("scheduled_at") or ""),
 		tuple(_text(m.get("asset")) for m in media),
 		tuple(
