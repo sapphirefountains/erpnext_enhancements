@@ -315,6 +315,26 @@
  },
  {
   "doctype": "Role Profile",
+  "name": "Marketing",
+  "role_profile": "Marketing",
+  "roles": [
+   {
+    "role": "Marketing Team"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Marketing Approvers",
+  "role_profile": "Marketing Approvers",
+  "roles": [
+   {
+    "role": "Marketing Manager"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
   "name": "PO Approvers",
   "role_profile": "PO Approvers",
   "roles": [

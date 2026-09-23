@@ -147,7 +147,8 @@ marketing/
 │   ├── accounts.py      ← Social Account rows from what a connection reaches  (01481, shipped)
 │   ├── ratelimit.py     ← pure decision functions + Redis Lua, run against each other (01482, shipped)
 │   ├── validation.py, media.py ← pre-approval checks; fetchable media URLs     (01483, shipped)
-│   └── publishers/      ← meta.py (01483), linkedin.py (01484), youtube.py (01485): shipped
+│   ├── publishers/      ← meta.py (01483), linkedin.py (01484), youtube.py (01485): shipped
+│   └── workflow.py, approval.py ← draft → approve → publish, who may do each   (01486, shipped)
 ├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md
@@ -328,6 +329,10 @@ only one where "scheduled for 9am Tuesday" is a promise rather than a hope.
   Connections at send time, so there is one answer to "does this still work".
 - **Approved content is locked.**
 - **Media must be *Cleared for social*.**
+
+*As built (v1.514.0, TASK-2026-01486):* Marketing Team drafts, Marketing Manager approves (never
+the author or last editor), and only from a signed-in browser, so no token can approve. Approval
+writes the jobs in the same transaction. Each job keeps an attempt log.
 
 See [the connectors runbook](marketing-connectors-runbook.md#the-publishing-outbox).
 

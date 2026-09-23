@@ -1,0 +1,87 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-22 22:00:00.000000",
+ "description": "One entry in a Social Publish Job's attempt log.",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "at",
+  "attempt",
+  "outcome",
+  "http_status",
+  "column_break_attempt",
+  "sent",
+  "by_user",
+  "message"
+ ],
+ "fields": [
+  {
+   "fieldname": "at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attempt",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Attempt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Outcome",
+   "options": "\nPublished\nWill retry\nHeld\nFailed\nUnconfirmed\nNot sent\nResolved\nCanceled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "http_status",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "HTTP Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_attempt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Whether the request may have left ERPNext.",
+   "fieldname": "sent",
+   "fieldtype": "Check",
+   "label": "Sent",
+   "read_only": 1
+  },
+  {
+   "description": "The person who decided this outcome; blank when the outbox did.",
+   "fieldname": "by_user",
+   "fieldtype": "Link",
+   "label": "By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Message",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-22 22:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Social Publish Attempt",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

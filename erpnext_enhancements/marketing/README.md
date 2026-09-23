@@ -13,8 +13,10 @@ below once a platform is switched on and connected; setup, checks and troublesho
 Since v1.507.0 the **publishing switches and their gate** exist too (Phase 2's scaffold; see
 [Publishing](#publishing-phase-2) below). They switch nothing on by themselves: no publisher
 is installed yet. Since v1.508.0 the publishing connections, and since v1.509.0 the posts,
-accounts, media and the outbox that will publish them. Nothing can publish until a network
-has a publisher (TASK-2026-01483 to 01485) and a post can be approved (01486).
+accounts, media and the outbox that will publish them. Every network has had a publisher since
+v1.513.0 (TASK-2026-01483 to 01485), and since v1.514.0 a post can be approved (01486; see
+[Roles and approval](#roles-and-approval)). Nothing goes out until the switches are on and a
+network's platform approval has cleared.
 
 ## Files
 
@@ -35,8 +37,10 @@ has a publisher (TASK-2026-01483 to 01485) and a post can be approved (01486).
 | `publish/client.py` | The publishing transport: its own allowlist (never an ad endpoint), reads retry, **writes never retry on their own**, one retry after a 401 with a refreshed token |
 | `publish/oauth.py` | The three publishing connections: Connect (Meta keeps only the Page token and refuses a login that grants a spend-capable permission), token use and refresh, and the per-connection daily upkeep that clears a dead credential instead of retrying it |
 | `publish/tasks.py` | Scheduler shim for that upkeep: master switch, then only *Connected* connections |
-| `publish/outbox.py` | **The outbox state machine**, pure over a store: enqueue an approved post, claim, dispatch, retry or hold, and the rule that a job which may have sent goes to **Unconfirmed**, never back to Pending (TASK-2026-01481) |
-| `publish/sweeper.py` | The five-minute sweep and `FrappeStore`: reclaim expired leases, claim due jobs atomically, hand each to `run_dispatch` on `long`; `resolve_job` (POST, System Manager) for a person's answer on an Unconfirmed or Failed job |
+| `publish/outbox.py` | **The outbox state machine**, pure over a store: enqueue an approved post, claim, dispatch, retry or hold, and the rule that a job which may have sent goes to **Unconfirmed**, never back to Pending (TASK-2026-01481). Since v1.514.0 every outcome adds an **attempt-log** entry in the same write as the state, and `cancel_post` stops what has not gone out |
+| `publish/sweeper.py` | The five-minute sweep and `FrappeStore`: reclaim expired leases, claim due jobs atomically, hand each to `run_dispatch` on `long`; `resolve_job` (POST; a Marketing Manager or System Manager, from a signed-in browser) for a person's answer on an Unconfirmed or Failed job |
+| `publish/workflow.py` | **Pure:** draft → approve → publish and who may do each (TASK-2026-01486). Approver ≠ author or last editor; only from a signed-in browser (`signed_in_browser`: a token, job or console request has `sid == user`); status, approver and approval time move only through the actions |
+| `publish/approval.py` | The four Social Post actions, all POST: **Submit for Approval**, **Approve** (writes the outbox rows in the same transaction, and refuses a post edited since the approver opened it), **Send Back**, **Cancel** |
 | `publish/accounts.py` | Social Account rows from what a publishing connection reaches, written on Connect |
 | `publish/ratelimit.py` | Rate limits (TASK-2026-01482): each rule a **pure** function (the spec) plus a **Redis Lua** script printed next to it, run against each other in CI. Instagram's rolling 24 h per account (live limit when known, 25 until then), YouTube's Pacific-day budgets, and connection pauses from Meta's usage headers or a 429's Retry-After. The sweep asks it before claiming; the publish transport reports every response to it. **The bucket is an optimisation; backoff is the correctness mechanism** |
 | `publish/publishers/` | The per-network publisher registry and its **two-phase contract**: `prepare()` does everything non-public (retried freely), `send()` only the public step (never re-sent on an ambiguous failure). Networks without a module are not sendable |
@@ -54,8 +58,8 @@ has a publisher (TASK-2026-01483 to 01485) and a post can be approved (01486).
 | `doctype/marketing_raw_payload/` | Append-only verbatim response archive, pruned on retention |
 | `doctype/marketing_settings/` | Single: master switch, ad-platform and publishing switches, sync dials. Change-tracked, so the Version log shows who turned a switch on |
 | `doctype/social_account/` | One Page, Instagram account, Company Page or channel. Identity (network, platform ID), set by Connect; a person only ticks **Enabled**. Token status is read from Marketing Connections, not copied here |
-| `doctype/social_post/` (+ `social_post_target/`, `social_post_media/`) | The post, the accounts it goes to, its media in order. **Locked once approved** (`SocialPost.validate` compares `outbox.content_signature`). Change-tracked |
-| `doctype/social_publish_job/` | The outbox row. `external_post_id` is **unique**; indexes on (state, available_at) and (state, lease_expires_at) for the sweep; form buttons to resolve an Unconfirmed job |
+| `doctype/social_post/` (+ `social_post_target/`, `social_post_media/`) | The post, the accounts it goes to, its media in order. **Locked once approved** (`SocialPost.validate` compares `outbox.content_signature`); status, approver and approval time refused in an ordinary save; deletable only before anything was queued. Form buttons for the four actions. Change-tracked |
+| `doctype/social_publish_job/` (+ `social_publish_attempt/`) | The outbox row. `external_post_id` is **unique**; indexes on (state, available_at) and (state, lease_expires_at) for the sweep; form buttons to resolve an Unconfirmed job. Its **Attempt Log** keeps every attempt and every person's answer |
 | `doctype/social_post_metric/` | Job × day engagement, named from (job, date) so a restated day upserts (TASK-2026-01488 fills it) |
 | `doctype/marketing_media_asset/` | A photo or video: where it lives, the Project it shows, and **usage rights**. Only *Cleared for social* can be queued; new assets start as *Needs client approval* |
 
@@ -80,6 +84,27 @@ spend, and the first two are enforced by `tests/test_marketing_publishing.py`:
    whose allowlist holds only the identity reads the Connect flow needs until the publishers
    (TASK-2026-01483 to 01485) add their writes. It never lists an ad endpoint, and each
    transport refuses the other's paths.
+
+### Roles and approval
+
+Since v1.514.0 (TASK-2026-01486), decided by Nik on 2026-09-22:
+
+| Role | Can | Role profile |
+|---|---|---|
+| **Marketing Team** | Draft and edit posts, upload media, submit for approval, send back, cancel; read accounts, jobs and metrics. **Nothing outside this module**: no customers, invoices or financials | `Marketing` (it alone: what a marketing hire gets) |
+| **Marketing Manager** | The same, plus **approve**, and resolve an Unconfirmed or Failed job | `Marketing Approvers` (a single-role add-on, like the PO profiles) |
+| System Manager | Everything, including the credentials and switches, which neither marketing role can see. **Cannot approve** without Marketing Manager | n/a |
+
+Approval is never by the post's author or its last editor, and only from a signed-in browser: an
+API key, an OAuth token, a background job or the console is refused whatever roles it holds.
+Triton's service account holds Marketing Manager, and this is what keeps it from approving. A
+post edited after the approver opened it is refused too, so what is approved is what was reviewed.
+Stopping is never gated like that: anyone who may edit a post may cancel it.
+
+The Marketing department's dashboard gate (`api/kpi.py`, `DEPARTMENT_ROLES`) already names
+Marketing Manager; the approver is the same role. A Campaign link on a post needs read access to
+ERPNext's Campaign, which neither marketing role has: granting it would take a Custom DocPerm,
+and that replaces Campaign's standard permissions wholesale.
 
 The publishing **connections** (v1.508.0) are separate from the ad ones: their own Connect,
 their own fields (`meta_publishing_*`, `linkedin_publishing_*`, `youtube_publishing_*`, a

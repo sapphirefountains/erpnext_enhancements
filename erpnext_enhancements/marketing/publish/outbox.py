@@ -31,6 +31,11 @@ never be recorded on two jobs. A collision is read as "already recorded" -- succ
 than an error. Frappe raises ``UniqueValidationError`` for a non-primary unique index, not
 ``DuplicateEntryError``, and the store catches both: catching only one fails open.
 
+**Every attempt stays on the row** (TASK-2026-01486). Each outcome -- published, retried, held,
+failed, unconfirmed, not sent, and a person's resolve or cancel -- adds one entry to the job's
+attempt log, in the same write as the state change, so the log cannot disagree with the state.
+``last_error`` still says only the latest.
+
 The functions above the line are **pure** (the bench-free CI tier tests them). The operations
 below take a *store* -- ``sweeper.FrappeStore`` in production, an in-memory one in tests -- so the
 state machine is tested end to end without a database.
@@ -83,6 +88,28 @@ SWEEP_BATCH = 20
 
 #: Usage rights a Marketing Media Asset must have to be published.
 CLEARED_FOR_SOCIAL = "Cleared for social"
+
+#: What a job's attempt log (``Social Publish Attempt.outcome``, TASK-2026-01486) says happened.
+#: One row per attempt and per person's answer, so the row keeps its history instead of only
+#: the last error.
+LOG_PUBLISHED = "Published"
+LOG_RETRY = "Will retry"
+LOG_HELD = "Held"
+LOG_FAILED = "Failed"
+LOG_UNCONFIRMED = "Unconfirmed"
+LOG_NOT_SENT = "Not sent"
+LOG_RESOLVED = "Resolved"
+LOG_CANCELED = "Canceled"
+LOG_OUTCOMES = (
+	LOG_PUBLISHED,
+	LOG_RETRY,
+	LOG_HELD,
+	LOG_FAILED,
+	LOG_UNCONFIRMED,
+	LOG_NOT_SENT,
+	LOG_RESOLVED,
+	LOG_CANCELED,
+)
 
 
 class DuplicatePostId(Exception):
@@ -155,6 +182,23 @@ def lease_expired(job, now):
 	return job.get("state") == IN_PROGRESS and (expires is None or expires <= now)
 
 
+def log_entry(at, job, outcome, message=None, status=None, sent=False, user=None):
+	"""One row for a job's attempt log. Pure.
+
+	``sent`` is whether the request may have left ERPNext; ``user`` is set only when a person,
+	not the sweep, decided the outcome.
+	"""
+	return {
+		"at": at,
+		"attempt": int(job.get("attempts") or 0),
+		"outcome": outcome,
+		"http_status": status,
+		"sent": 1 if sent else 0,
+		"by_user": user,
+		"message": (message or "")[:1000] or None,
+	}
+
+
 def post_status(job_states):
 	"""A Social Post's status from its jobs' states. Pure.
 
@@ -220,6 +264,16 @@ def enqueue_problems(post, targets, media, accounts):
 		problems.append("it has no recorded approver")
 	elif post.get("approver") == post.get("owner"):
 		problems.append("it was approved by the person who wrote it")
+	return problems + content_problems(post, targets, media, accounts)
+
+
+def content_problems(post, targets, media, accounts):
+	"""What is wrong with the post itself, whoever approved it. Pure.
+
+	Checked when it is submitted for approval (TASK-2026-01486), so an approver is never asked to
+	approve something the outbox would refuse, and again when it is queued.
+	"""
+	problems = []
 	if not targets:
 		problems.append("it has no accounts to go to")
 	seen = set()
@@ -296,13 +350,16 @@ def reclaim_expired(store, now):
 			store.update_job(
 				job["name"],
 				{"state": PENDING, "lease_id": None, "lease_expires_at": None, "available_at": now},
+				log=log_entry(now, job, LOG_NOT_SENT, "The lease ran out before anything was sent."),
 			)
 		else:
+			message = "The worker stopped after the request was sent; the post may be live."
 			_finish(
 				store,
 				job,
 				UNCONFIRMED,
-				{"last_error": "The worker stopped after the request was sent; the post may be live."},
+				{"last_error": message},
+				log=log_entry(now, job, LOG_UNCONFIRMED, message, sent=True),
 			)
 			store.notify(job, "may already be published: check the network, then resolve it")
 		moved[target].append(job["name"])
@@ -365,6 +422,7 @@ def dispatch(store, job_name, lease_id, now_fn, sendable, prepare, notify_auth_f
 				"lease_expires_at": None,
 				"attempts": max(int(job.get("attempts") or 1) - 1, 0),
 			},
+			log=log_entry(now_fn(), job, LOG_NOT_SENT, "Switched off before it was sent."),
 		)
 		return PENDING
 
@@ -374,7 +432,7 @@ def dispatch(store, job_name, lease_id, now_fn, sendable, prepare, notify_auth_f
 		kind = classify_failure(
 			exc.status, dispatched=False, refused_by_allowlist=isinstance(exc, PublishViolation)
 		)
-		return _record_failure(store, job, kind, str(exc), now_fn(), notify_auth_failure)
+		return _record_failure(store, job, kind, str(exc), now_fn(), notify_auth_failure, exc.status)
 	except Exception as exc:
 		# A bug before anything was sent. Counted as an attempt so it ends in Failed after
 		# MAX_ATTEMPTS, instead of escaping and being reclaimed every lease, forever.
@@ -386,16 +444,16 @@ def dispatch(store, job_name, lease_id, now_fn, sendable, prepare, notify_auth_f
 	except NotPublished as exc:
 		# The publisher checked with the network after an ambiguous failure and it is NOT live
 		# (an Instagram container still FINISHED, not PUBLISHED): safe to try again.
-		return _record_failure(store, job, RETRY, str(exc), now_fn(), notify_auth_failure)
+		return _record_failure(store, job, RETRY, str(exc), now_fn(), notify_auth_failure, exc.status, True)
 	except MarketingAPIError as exc:
 		kind = classify_failure(
 			exc.status, dispatched=True, refused_by_allowlist=isinstance(exc, PublishViolation)
 		)
-		return _record_failure(store, job, kind, str(exc), now_fn(), notify_auth_failure)
+		return _record_failure(store, job, kind, str(exc), now_fn(), notify_auth_failure, exc.status, True)
 	except Exception as exc:
 		# A bug in a publisher, after the request may have gone out: treat like a timeout.
 		return _record_failure(
-			store, job, AMBIGUOUS, f"{type(exc).__name__} in the publisher", now_fn(), None
+			store, job, AMBIGUOUS, f"{type(exc).__name__} in the publisher", now_fn(), None, sent=True
 		)
 	return record_success(store, job, result or {}, now_fn())
 
@@ -409,17 +467,24 @@ def record_success(store, job, result, now):
 		# never raised -- raising after the public step would turn success into Unconfirmed.
 		"last_error": (result.get("warning") or "")[:1000] or None,
 	}
+	message = " ".join(filter(None, [result.get("permalink"), result.get("warning")]))
 	try:
-		_finish(store, job, PUBLISHED, values)
+		_finish(store, job, PUBLISHED, values, log=log_entry(now, job, LOG_PUBLISHED, message, sent=True))
 	except DuplicatePostId:
 		# Already recorded on another job: the post exists, which is what success means.
 		values.pop("external_post_id")
 		values["last_error"] = f"Post {result.get('external_post_id')} was already recorded on another job."
-		_finish(store, job, PUBLISHED, values)
+		_finish(
+			store,
+			job,
+			PUBLISHED,
+			values,
+			log=log_entry(now, job, LOG_PUBLISHED, values["last_error"], sent=True),
+		)
 	return PUBLISHED
 
 
-def _record_failure(store, job, kind, message, now, notify_auth_failure):
+def _record_failure(store, job, kind, message, now, notify_auth_failure, status=None, sent=False):
 	attempts = int(job.get("attempts") or 1)
 	if kind == HOLD:
 		if notify_auth_failure:
@@ -435,6 +500,7 @@ def _record_failure(store, job, kind, message, now, notify_auth_failure):
 				"available_at": now + datetime.timedelta(minutes=HOLD_MINUTES),
 				"last_error": message[:1000],
 			},
+			log=log_entry(now, job, LOG_HELD, message, status, sent),
 		)
 		return PENDING
 	if kind == RETRY and attempts < MAX_ATTEMPTS:
@@ -448,12 +514,21 @@ def _record_failure(store, job, kind, message, now, notify_auth_failure):
 				"available_at": retry_at(now, attempts),
 				"last_error": message[:1000],
 			},
+			log=log_entry(now, job, LOG_RETRY, message, status, sent),
 		)
 		return PENDING
 	state = UNCONFIRMED if kind == AMBIGUOUS else FAILED
 	if kind == RETRY:
 		message = f"Gave up after {attempts} attempts: {message}"
-	_finish(store, job, state, {"last_error": message[:1000]})
+	_finish(
+		store,
+		job,
+		state,
+		{"last_error": message[:1000]},
+		log=log_entry(
+			now, job, LOG_UNCONFIRMED if state == UNCONFIRMED else LOG_FAILED, message, status, sent
+		),
+	)
 	store.notify(
 		job,
 		"may already be published: check the network, then resolve it"
@@ -463,9 +538,11 @@ def _record_failure(store, job, kind, message, now, notify_auth_failure):
 	return state
 
 
-def _finish(store, job, state, values):
+def _finish(store, job, state, values, log=None):
 	"""Put a job in ``state`` and roll the result up to its target row and post."""
-	store.update_job(job["name"], {"state": state, "lease_id": None, "lease_expires_at": None, **values})
+	store.update_job(
+		job["name"], {"state": state, "lease_id": None, "lease_expires_at": None, **values}, log=log
+	)
 	target_values = {"status": state}
 	for key in ("external_post_id", "permalink", "published_at"):
 		if values.get(key):
@@ -499,8 +576,11 @@ def resolve(store, job_name, outcome, user, now, external_post_id=None, permalin
 			"published_at": now,
 			"resolved_by": user,
 		}
+		note = " ".join(
+			filter(None, ["Recorded as published.", values["permalink"], values["external_post_id"]])
+		)
 		try:
-			_finish(store, job, PUBLISHED, values)
+			_finish(store, job, PUBLISHED, values, log=log_entry(now, job, LOG_RESOLVED, note, user=user))
 		except DuplicatePostId:
 			raise ValueError(f"post {external_post_id} is already recorded on another job") from None
 		return PUBLISHED
@@ -516,11 +596,48 @@ def resolve(store, job_name, outcome, user, now, external_post_id=None, permalin
 				"lease_expires_at": None,
 				"resolved_by": user,
 			},
+			log=log_entry(now, job, LOG_RESOLVED, "Sent again.", user=user),
 		)
 		store.update_target(job["social_post"], job["target"], {"status": "Queued"})
 		store.set_post_status(
 			job["social_post"], post_status(j["state"] for j in store.jobs_for_post(job["social_post"]))
 		)
 		return PENDING
-	_finish(store, job, CANCELED, {"resolved_by": user})
+	_finish(
+		store,
+		job,
+		CANCELED,
+		{"resolved_by": user},
+		log=log_entry(now, job, LOG_CANCELED, "Canceled.", user=user),
+	)
 	return CANCELED
+
+
+def cancel_post(store, post_name, user, now):
+	"""Stop a post: every Pending job is canceled. Returns the post's new status (TASK-2026-01486).
+
+	Canceling stops what has not gone out; it never takes anything down. So it is refused while
+	a job is In Progress -- that request may be leaving right now, and nothing here can call it
+	back -- and it leaves Published jobs published and Unconfirmed or Failed ones for a person
+	to resolve. A post with no jobs yet (a draft, or one waiting for approval) is simply Canceled.
+	"""
+	jobs = store.jobs_for_post(post_name)
+	if any(j["state"] == IN_PROGRESS for j in jobs):
+		raise ValueError(
+			f"{post_name} is being published right now; wait for that to finish, then cancel what is left"
+		)
+	if not jobs:
+		store.set_post_status(post_name, POST_CANCELED)
+		return POST_CANCELED
+	for row in jobs:
+		if row["state"] != PENDING:
+			continue
+		job = store.get_job(row["name"])
+		_finish(
+			store,
+			job,
+			CANCELED,
+			{"resolved_by": user},
+			log=log_entry(now, job, LOG_CANCELED, "The post was canceled.", user=user),
+		)
+	return post_status(j["state"] for j in store.jobs_for_post(post_name))

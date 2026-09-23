@@ -3,7 +3,8 @@
 
 // A person's answer for a job the outbox could not settle on its own (TASK-2026-01481).
 // Unconfirmed means the request went out and nobody knows whether the post is live: check the
-// network first. Every call is a POST to sweeper.resolve_job (System Manager only).
+// network first. Every call is a POST to sweeper.resolve_job: a Marketing Manager or System Manager,
+// from a signed-in browser (TASK-2026-01486).
 
 const SOCIAL_RESOLVE = "erpnext_enhancements.marketing.publish.sweeper.resolve_job";
 

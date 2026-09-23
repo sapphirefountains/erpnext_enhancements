@@ -379,8 +379,15 @@ jobs:
       # session and uploads nothing; a failed chunk is settled by asking the session (308 resumes
       # from YouTube's Range, 201 is the video, unanswerable stays ambiguous, endless incomplete is
       # NotPublished); a spent quota waits as a 429; thumbnail and playlist are warnings only.
-      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + publishers
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
+      # test_marketing_approval (TASK-2026-01486, v1.514.0), stub-free (the rules live in the
+      # frappe-free publish/workflow.py): a Marketing Manager approves, never the author or last
+      # editor, and only from a signed-in browser -- a token, job or console request is refused
+      # whatever roles it holds (Triton holds Marketing Manager); a post edited after it was
+      # opened is refused; a save cannot type "Approved"; Marketing Team is granted on five
+      # Marketing doctypes and nowhere else; every action is POST-only and checks edit permission
+      # first. test_marketing_outbox covers the other half: the attempt log and cancel.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + publishers
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's
