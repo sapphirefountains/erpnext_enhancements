@@ -1,5 +1,7 @@
 {# Sent to a traveler newly added to an already-moving trip (status != Planning).
-   Context: trip, trip_url, itinerary_url, recipient.
+   Context: trip, trip_url, itinerary_url, recipient, bookings + bookings_title
+   (travel_management/itinerary_text.booking_lines: this person's own bookings, each
+   with their confirmation number or a note that it is missing).
 
    A FRAGMENT — chrome comes from email_style.wrap() in travel_management/
    notifications.py. NOTE: no autoescape in frappe's Jinja env; the macros
@@ -11,7 +13,12 @@
 	("Type", trip.travel_type)
 ] + ([("For", trip.travel_for_doctype ~ " " ~ trip.travel_for_name)] if trip.travel_for_name else [])) }}
 
-{{ ee.p("The attached calendar file adds the trip dates and any flights or hotel stays that apply to you.") }}
+{% if bookings %}
+{{ ee.h(bookings_title) }}
+{{ ee.bullets(bookings) }}
+{% endif %}
+
+{{ ee.p("The attached calendar file adds the trip dates and your flights, hotel stays, drives and deliveries.") }}
 
 {{ ee.links([
 	(itinerary_url, "Open your mobile itinerary"),

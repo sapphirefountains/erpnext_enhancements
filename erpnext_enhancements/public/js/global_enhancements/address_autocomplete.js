@@ -467,12 +467,13 @@
 	function pick(state, index) {
 		var item = state.items[index];
 		if (!item) return;
-		var place = item.placePrediction.toPlace();
+		var prediction = item.placePrediction;
+		var place = prediction.toPlace();
 		close_box(state);
 		place
 			.fetchFields({ fields: ["addressComponents", "formattedAddress", "location", "id"] })
 			.then(function () {
-				return apply(state, place);
+				return apply(state, place, prediction);
 			})
 			.catch(function (err) {
 				warn("could not read the selected address", err);
@@ -500,7 +501,12 @@
 		return typeof value === "number" ? value : null;
 	}
 
-	function place_meta(place) {
+	function prediction_text(value) {
+		if (!value) return "";
+		return typeof value === "string" ? value : value.text || "";
+	}
+
+	function place_meta(place, prediction) {
 		return {
 			// Google exempts the place ID from its no-caching rule — it is the
 			// one field we are allowed to store indefinitely.
@@ -508,10 +514,17 @@
 			formatted_address: place.formattedAddress || "",
 			latitude: coord(place.location, "lat"),
 			longitude: coord(place.location, "lng"),
+			// The suggestion the user clicked, as the list showed it: "Hilton
+			// Las Vegas, Paradise Road, Las Vegas, NV, USA", and its first part.
+			// Read off the prediction rather than fetching `displayName`, which
+			// would move every pick onto a dearer Place Details tier. Plan a Trip
+			// uses these for place-name fields; the Address callers ignore them.
+			label: prediction_text(prediction && prediction.text),
+			name: prediction_text(prediction && prediction.mainText),
 		};
 	}
 
-	function apply(state, place) {
+	function apply(state, place, prediction) {
 		var components = place.addressComponents || [];
 		// Nothing to apply, and blanking fields off an empty response would be
 		// pure loss.
@@ -539,7 +552,7 @@
 			if (country) values.country = country;
 
 			if (state.destroyed) return;
-			if (state.options.on_pick) state.options.on_pick(values, place_meta(place));
+			if (state.options.on_pick) state.options.on_pick(values, place_meta(place, prediction));
 		});
 	}
 

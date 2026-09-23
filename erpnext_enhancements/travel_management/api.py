@@ -190,6 +190,20 @@ def _gather_claimable(doc, employee, settings):
 				row.billable,
 			)
 
+	# Freight has no Expense Claim Type of its own in Travel Settings; a shipment an
+	# employee paid for is a misc expense, like the Other Costs rows below.
+	for row in doc.get("freight") or []:
+		if row.paid_by == "Employee" and row.paid_by_traveler == employee and flt(row.cost) > 0 and not row.expense_claim:
+			add(
+				"Trip Freight",
+				row,
+				_resolve_expense_type(settings, "misc_expense_type"),
+				f"Freight: {row.carrier} {row.tracking_number or ''} {row.ship_from or ''} → {row.deliver_to or ''}".strip(),
+				getdate(row.delivery_from or row.pickup_from) if (row.delivery_from or row.pickup_from) else None,
+				flt(row.cost),
+				row.billable,
+			)
+
 	for row in doc.other_costs:
 		if row.paid_by == "Employee" and row.paid_by_traveler == employee and flt(row.cost) > 0 and not row.expense_claim:
 			expense_type = row.expense_claim_type or _resolve_expense_type(

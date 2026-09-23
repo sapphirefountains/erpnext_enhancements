@@ -1145,6 +1145,9 @@ erpnext_enhancements.patches.restore_customer_groups_after_qbo_sweep
 # existing Single's row; this fills ONLY the six fields that release added, only where no
 # tabSingles row exists (a stored 0 is kept). Direct writes, no validate; safe twice.
 erpnext_enhancements.patches.backfill_lead_triage_settings_defaults
+# Plan a Trip: the Travel workspace's "New Travel Trip" tile is now "Plan a Trip". A Workspace
+# JSON is age-gated on import; force it past the gate. Quiet on failure; safe twice.
+erpnext_enhancements.patches.reload_travel_workspace_for_plan_a_trip
 # v1.521.0: the Stock Scan page's settings on Inventory Scanner Settings. A new field's default never
 # reaches an existing Single's row; this fills ONLY the fields that release added, only where no
 # tabSingles row exists (a stored 0 -- undo switched off -- is kept). Direct writes, no validate; safe twice.

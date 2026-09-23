@@ -1,8 +1,8 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Travel Spend by Category — flights / accommodation / ground / other /
-per diem / mileage, pivoted per Trip, Project or Employee.
+"""Travel Spend by Category — flights / accommodation / ground / freight /
+other / per diem / mileage, pivoted per Trip, Project or Employee.
 
 Grouping semantics:
 	- **Trip / Project**: every cost row of the trip counts (company- and
@@ -20,10 +20,11 @@ CATEGORY_TABLES = (
 	("flights", "Trip Flight", "flights"),
 	("accommodation", "Trip Accommodation", "accommodations"),
 	("ground", "Trip Ground Transport", "ground_transport"),
+	("freight", "Trip Freight", "freight"),
 	("other", "Trip Expense", "other_costs"),
 )
 
-CATEGORIES = ("flights", "accommodation", "ground", "other", "per_diem", "mileage")
+CATEGORIES = ("flights", "accommodation", "ground", "freight", "other", "per_diem", "mileage")
 
 
 def execute(filters=None):
@@ -45,6 +46,7 @@ def get_columns(group_by):
 		{"label": _("Flights"), "fieldname": "flights", "fieldtype": "Currency", "width": 110},
 		{"label": _("Accommodation"), "fieldname": "accommodation", "fieldtype": "Currency", "width": 120},
 		{"label": _("Ground Transport"), "fieldname": "ground", "fieldtype": "Currency", "width": 130},
+		{"label": _("Freight"), "fieldname": "freight", "fieldtype": "Currency", "width": 110},
 		{"label": _("Other"), "fieldname": "other", "fieldtype": "Currency", "width": 110},
 		{"label": _("Per Diem"), "fieldname": "per_diem", "fieldtype": "Currency", "width": 110},
 		{"label": _("Mileage"), "fieldname": "mileage", "fieldtype": "Currency", "width": 110},

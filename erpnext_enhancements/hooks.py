@@ -390,6 +390,10 @@ doctype_list_js = {
 	"Document Intake": "public/js/accounting_intake/document_intake_list.js",
 	# fountain_move — "Send Intake Link" / "Copy Public Link" + status indicators
 	"Fountain Move Request": "public/js/crm_enhancements/fountain_move_request_list.js",
+	# travel_management — "+ Add Travel Trip" opens the Plan a Trip page (the
+	# step-by-step entry, travel_management/page/plan_a_trip) instead of a blank
+	# form, via frappe's own listview_settings.primary_action hook.
+	"Travel Trip": "public/js/travel/travel_trip_list.js",
 }
 doctype_calendar_js = {
 	"Asset Booking": "public/js/asset_booking_calendar.js",

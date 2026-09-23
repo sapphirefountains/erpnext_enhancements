@@ -1,0 +1,29 @@
+{
+ "content": "",
+ "creation": "2026-09-23 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "modified": "2026-09-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "plan-a-trip",
+ "owner": "Administrator",
+ "page_name": "plan-a-trip",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Travel Coordinator"
+  },
+  {
+   "role": "HR Manager"
+  },
+  {
+   "role": "Employee"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Plan a Trip"
+}
