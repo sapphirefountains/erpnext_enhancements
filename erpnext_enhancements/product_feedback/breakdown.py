@@ -36,11 +36,13 @@ Indentation is tabs, per ``CLAUDE.md``.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
 from frappe.utils import cint, now_datetime
 
+from erpnext_enhancements.product_feedback.code_anchors import build_anchors, parse_path
 from erpnext_enhancements.product_feedback.codemap import build_codemap
 from erpnext_enhancements.product_feedback.doctype.product_feedback_settings.product_feedback_settings import (
 	get_settings,
@@ -87,6 +89,12 @@ CLOSED_TASK_STATUSES = ("Completed", "Canceled", "Invoiced", "Template")
 MAX_METHODOLOGY_CHARS = 4000
 
 MAX_DESCRIPTION_CHARS = 20000
+
+#: The request shape Triton reads. 2 (WI-079 slice 3) adds ``anchors``, sends the context path
+#: without its query string or record, and drops the document name. Today's Triton (v1)
+#: ignores keys it does not know and already defaults ``context.docname``, so this ships first
+#: and degrades to the old prompt until Triton v0.80.0 renders the anchors.
+SCHEMA_VERSION = 2
 
 
 def enqueue_breakdown(request_name: str) -> None:
@@ -162,6 +170,8 @@ def run_breakdown(request_name: str) -> None:
 		_log("Enhancement Request payload assembly failed")
 		return
 
+	sizes = payload_sizes(payload)
+
 	from erpnext_enhancements.product_feedback import triton_client
 
 	try:
@@ -186,7 +196,8 @@ def run_breakdown(request_name: str) -> None:
 		known_tasks=known_tasks,
 		max_tasks=cint(settings["max_proposed_tasks"]),
 	)
-	_record_usage(body, breakdown.model)
+	_record_usage(body, breakdown.model, request_name)
+	stats = breakdown_stats(sizes, body)
 
 	# **No tasks is not automatically a failure.** The prompt explicitly tells the model that a
 	# request already covered by open work should come back as duplicates and few or no tasks —
@@ -210,13 +221,17 @@ def run_breakdown(request_name: str) -> None:
 				+ (f" Model finish reason: {detail}." if detail else "")
 				+ " Re-running usually clears it."
 			)
-		_fail(request_name, reasons or summary)
+		# The call was answered and paid for, so its size is recorded even though the plan
+		# is not: a failed prompt is as much a data point as a working one.
+		_fail(request_name, reasons or summary, stats=stats)
 		return
 
 	try:
-		_apply(request_name, breakdown)
+		_apply(request_name, breakdown, stats=stats)
 	except Exception:
-		_fail(request_name, "Could not save the proposal; see the Error Log.")
+		# Answered and paid for, and `_record_usage` has already written its usage row, so the
+		# stats go too: left out, the row would pair with the previous run's sizes.
+		_fail(request_name, "Could not save the proposal; see the Error Log.", stats=stats)
 		_log("Enhancement Request proposal save failed")
 		return
 
@@ -300,6 +315,13 @@ def build_payload(
 	ERPNext sends **facts**; Triton owns the prompt. The one piece of style that travels is
 	each Project's own ``notes`` field, because that is where the methodology for its task
 	tree is already written and where it will keep being edited.
+
+	**No document name, anywhere** (ADR 0016, WI-079 slice 3). ``context_docname`` is not even
+	selected, so no later edit can put it back by accident, and the path is sent as
+	:func:`code_anchors.parse_path` reduces it: no query string (a Desk filter is somebody's
+	data), and no record segment (``/desk/item/PUMP-001`` carries the name the field used to).
+	The stored ``context_url`` is read whole only by ``build_anchors``, which turns it into
+	schema and code facts and never sends it.
 	"""
 	doc = frappe.db.get_value(
 		"Enhancement Request",
@@ -313,13 +335,17 @@ def build_payload(
 			"steps_to_reproduce",
 			"context_url",
 			"context_doctype",
-			"context_docname",
 			"context_app_version",
 		],
 		as_dict=True,
 	)
 
+	context_url = doc.get("context_url") or ""
+	context_doctype = doc.get("context_doctype") or ""
+	path, _kind = parse_path(context_url)
+
 	return {
+		"schema_version": SCHEMA_VERSION,
 		"request": {
 			"name": doc.get("name"),
 			"title": doc.get("title") or "",
@@ -328,9 +354,8 @@ def build_payload(
 			"description": (doc.get("description") or "")[:MAX_DESCRIPTION_CHARS],
 			"steps_to_reproduce": (doc.get("steps_to_reproduce") or "")[:MAX_DESCRIPTION_CHARS],
 			"context": {
-				"url": doc.get("context_url") or "",
-				"doctype": doc.get("context_doctype") or "",
-				"docname": doc.get("context_docname") or "",
+				"url": path,
+				"doctype": context_doctype,
 				"app_version": doc.get("context_app_version") or "",
 			},
 		},
@@ -341,6 +366,10 @@ def build_payload(
 		# half it can actually observe. Without this the model plans blind and names modules
 		# and files that do not exist. See product_feedback/codemap.py.
 		"codebase": {"erpnext": build_codemap()},
+		# The codemap is the same for every request; this is the part that is not: the route,
+		# doctype, controller, README and CHANGELOG lines this request is about. `{}` when
+		# nothing could be anchored, and it never raises. See product_feedback/code_anchors.py.
+		"anchors": {"erpnext": build_anchors(context_url, context_doctype)},
 		"open_tasks": [
 			{
 				"name": name,
@@ -385,14 +414,74 @@ def _targets(row: dict[str, Any]) -> list[str]:
 	return targets
 
 
+# ------------------------------------------------------------------------------ measurement
+
+
+def payload_sizes(payload: dict[str, Any]) -> dict[str, int]:
+	"""How big the request was, and how much of it the code map and the anchors were.
+
+	Measured the way ``code_anchors`` defines its cap (compact JSON), so ``anchors_chars`` and
+	the anchors' own ``chars`` agree. Never raises: a measurement must not cost a breakdown.
+	"""
+	try:
+		return {
+			"payload_chars": _json_chars(payload),
+			"anchors_chars": _json_chars(((payload or {}).get("anchors") or {}).get("erpnext")),
+			"codebase_chars": _json_chars(((payload or {}).get("codebase") or {}).get("erpnext")),
+		}
+	except Exception:
+		return {}
+
+
+def breakdown_stats(sizes: dict[str, int], body: Any) -> str:
+	"""The ``breakdown_stats`` JSON: the request's size, the prompt's, and what it cost.
+
+	WI-079 slice 3 is judged on it: prompt size and tokens over the next ten requests, against
+	the ``AI Model Usage`` rows from before. ``schema``, ``prompt_chars`` and ``attempts`` come
+	from Triton, which reports them from v0.80.0; an older Triton reads as schema 1 with no
+	prompt size and no attempt count (``null``).
+
+	``attempts`` is 2 when Triton's empty-plan retry ran. Its usage is then summed across both
+	calls, while ``prompt_chars`` is the first attempt's prompt, so such a row is not comparable
+	with a single-call one and the WI's query leaves it out.
+
+	Never raises, and ``""`` if it cannot be built.
+	"""
+	try:
+		body = body if isinstance(body, dict) else {}
+		usage = body.get("usage") or {}
+		return json.dumps(
+			{
+				"schema": cint(body.get("schema_version")) or 1,
+				"payload_chars": cint((sizes or {}).get("payload_chars")),
+				"anchors_chars": cint((sizes or {}).get("anchors_chars")),
+				"codebase_chars": cint((sizes or {}).get("codebase_chars")),
+				"prompt_chars": cint(body.get("prompt_chars")) or None,
+				"prompt_tokens": cint(usage.get("prompt_tokens")),
+				"total_tokens": cint(usage.get("total_tokens")),
+				"attempts": cint(body.get("attempts")) or None,
+			},
+			separators=(",", ":"),
+		)
+	except Exception:
+		return ""
+
+
+def _json_chars(value: Any) -> int:
+	if not value:
+		return 0
+	return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str))
+
+
 # ------------------------------------------------------------------------------ writing
 
 
-def _apply(request_name: str, breakdown: Breakdown) -> None:
+def _apply(request_name: str, breakdown: Breakdown, *, stats: str = "") -> None:
 	"""Replace the proposal on the request and move it to ``Breakdown Ready``.
 
 	The child tables are replaced wholesale rather than appended to, so a re-run leaves one
-	proposal rather than two interleaved ones.
+	proposal rather than two interleaved ones. ``breakdown_stats`` is replaced with them: it
+	describes the call that produced this proposal, not an earlier one.
 	"""
 	doc = frappe.get_doc("Enhancement Request", request_name)
 	doc.set("proposed_tasks", [])
@@ -429,26 +518,33 @@ def _apply(request_name: str, breakdown: Breakdown) -> None:
 	# Not an error: the proposal is usable. This is the record of what was thrown away on the
 	# way, which is the difference between a thin proposal and a thin model.
 	doc.breakdown_error = " ".join(breakdown.dropped)[:1000]
+	doc.breakdown_stats = stats or ""
 	doc.status = RequestState.BREAKDOWN_READY.value
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
 
 
-def _fail(request_name: str, message: str) -> None:
+def _fail(request_name: str, message: str, *, stats: str | None = None) -> None:
 	"""Move the request to ``Breakdown Failed`` with a legible reason. Never raises.
 
 	``db.set_value`` rather than a ``save()``: this runs on the failure path, where the
 	document may be exactly what could not be loaded, and a writer that can fail while
 	recording a failure turns a legible error into an empty Error Log.
+
+	``stats`` only when Triton answered: a failure before the call leaves the last run's
+	measurement where it is rather than blanking it.
 	"""
+	values = {
+		"status": RequestState.BREAKDOWN_FAILED.value,
+		"breakdown_error": (message or "")[:1000],
+	}
+	if stats is not None:
+		values["breakdown_stats"] = stats
 	try:
 		frappe.db.set_value(
 			"Enhancement Request",
 			request_name,
-			{
-				"status": RequestState.BREAKDOWN_FAILED.value,
-				"breakdown_error": (message or "")[:1000],
-			},
+			values,
 			update_modified=False,
 		)
 		frappe.db.commit()
@@ -467,11 +563,15 @@ def _notify_reviewer(request_name: str, *, ready: bool) -> None:
 		_log(f"Enhancement Request breakdown notification failed for {request_name}")
 
 
-def _record_usage(body: Any, model: str) -> None:
+def _record_usage(body: Any, model: str, request_name: str = "") -> None:
 	"""Best-effort ``AI Model Usage`` row, mirroring ``api/gemini.py::_record_usage``.
 
 	Token accounting must never fail the breakdown that triggered it, and the switch is the
 	same one every other AI feature in this app reads.
+
+	The row names its request (``reference_doctype``/``reference_name``, both Data fields
+	that stood empty until v1.527.0), so the cost of one request's breakdowns is a filter
+	rather than a guess from timestamps, and the rows from before are exactly the empty ones.
 	"""
 	try:
 		enabled = frappe.db.get_single_value("ERPNext Enhancements Settings", "ai_usage_tracking_enabled")
@@ -493,6 +593,8 @@ def _record_usage(body: Any, model: str) -> None:
 				"thoughts_tokens": cint(usage.get("thoughts_tokens")),
 				"total_tokens": cint(usage.get("total_tokens")),
 				"timestamp": now_datetime(),
+				"reference_doctype": "Enhancement Request" if request_name else "",
+				"reference_name": request_name or "",
 			}
 		).insert(ignore_permissions=True)
 	except Exception:

@@ -43,6 +43,7 @@ Indentation is tabs, per ``CLAUDE.md``.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Any
@@ -180,14 +181,21 @@ def _doctypes(package: str, totals: dict[str, Any] | None = None) -> dict[str, l
 
 	Read from the filesystem rather than from ``tabDocType`` on purpose: this is a map of the
 	*app*, and a site-level Custom DocType somebody made in the desk is not part of it.
+
+	**Each name is the ``name`` in the doctype's own JSON, never its folder title-cased.** From
+	v1.321.0 until v1.527.0 it was ``entry.replace("_", " ").title()``, which is wrong for 27 of
+	this app's doctypes: ``Project Scope Of Work`` for ``Project Scope of Work`` (the one-letter
+	controller-class trap in CLAUDE.md), ``Ai Model Usage``, ``Quickbooks Sync Log``, ``Month End
+	Close`` for ``Month-End Close``. A folder with no JSON is skipped rather than guessed at:
+	``project_enhancements/doctype/project/`` holds only a form script and a controller override
+	for ERPNext's own ``Project``, which this app does not define, so listing it here was false
+	too. Nothing noticed while Triton ignored this key; Triton v0.80.0 renders it, under a heading
+	that tells the model a doctype not named here does not exist.
 	"""
 	out: dict[str, list[str]] = {}
 	try:
-		modules = [
-			line.strip()
-			for line in open(os.path.join(package, "modules.txt"), encoding="utf-8")
-			if line.strip()
-		]
+		with open(os.path.join(package, "modules.txt"), encoding="utf-8") as handle:
+			modules = [line.strip() for line in handle if line.strip()]
 	except Exception:
 		return {}
 
@@ -196,18 +204,27 @@ def _doctypes(package: str, totals: dict[str, Any] | None = None) -> dict[str, l
 		if not os.path.isdir(folder):
 			continue
 		try:
-			names = sorted(
-				entry.replace("_", " ").title()
-				for entry in os.listdir(folder)
-				if os.path.isdir(os.path.join(folder, entry)) and not entry.startswith("_")
-			)
+			entries = os.listdir(folder)
 		except Exception:
 			continue
+		names = sorted(name for name in (_doctype_name(folder, entry) for entry in entries) if name)
 		if names:
 			out[module] = names[:MAX_DOCTYPES_PER_MODULE]
 			if totals is not None:
 				totals["doctypes"][module] = len(names)
 	return out
+
+
+def _doctype_name(folder: str, entry: str) -> str:
+	"""The ``name`` in ``<entry>/<entry>.json``, or ``""`` when the folder defines no doctype."""
+	if entry.startswith("_") or not os.path.isdir(os.path.join(folder, entry)):
+		return ""
+	try:
+		with open(os.path.join(folder, entry, f"{entry}.json"), encoding="utf-8") as handle:
+			name = json.load(handle).get("name")
+	except Exception:
+		return ""
+	return name if isinstance(name, str) and name.strip() else ""
 
 
 def _modules(package: str, repo_root: str) -> list[dict[str, str]]:
