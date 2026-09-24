@@ -850,3 +850,910 @@ def test_posting_date_from_arrival_reads_epoch_as_utc():
 	assert posting_date_from_arrival("1721088000") == _dt.date(2024, 7, 16)  # tolerate string epoch
 	assert posting_date_from_arrival(None) == "2026-06-18"  # stub today()
 	assert posting_date_from_arrival("garbage") == "2026-06-18"  # falls back, no raise
+
+
+# --- a paid or settling invoice is never offered a second card payment ------
+
+
+def _ledger(monkeypatch, rows, pi_status=None, cancel=None):
+	"""Point card_element at a fake Stripe Payment ledger and a fake Stripe.
+
+	``rows`` are what ``get_all`` returns; ``pi_status`` maps a PaymentIntent id to its
+	status at Stripe (an id not in it raises, like a failed lookup); ``cancel`` maps an id
+	to what a cancel returns (an id not in it raises, as Stripe does for a PaymentIntent
+	that has already succeeded). Returns the module and the recorded writes.
+	"""
+	frappe_stub = install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import card_element
+
+	writes = {"set_value": [], "stamps": [], "cancels": [], "lookups": [], "commits": 0, "filters": []}
+
+	def get_all(doctype, filters=None, fields=None, **kwargs):
+		writes["filters"].append((doctype, filters))
+		return [types.SimpleNamespace(**row) for row in rows]
+
+	def retrieve(pi_id):
+		writes["lookups"].append(pi_id)
+		if pi_id not in (pi_status or {}):
+			raise Exception("Stripe unreachable")
+		return {"id": pi_id, "status": pi_status[pi_id]}
+
+	def cancel_pi(pi_id):
+		writes["cancels"].append(pi_id)
+		if pi_id not in (cancel or {}):
+			raise Exception("This PaymentIntent's status is succeeded")
+		return {"id": pi_id, "status": cancel[pi_id]}
+
+	def commit():
+		writes["commits"] += 1
+
+	monkeypatch.setattr(frappe_stub, "get_all", get_all, raising=False)
+	monkeypatch.setattr(
+		frappe_stub,
+		"db",
+		types.SimpleNamespace(
+			get_value=lambda *a, **k: None,
+			exists=lambda *a, **k: None,
+			set_value=lambda doctype, name, values, *a, **k: writes["set_value"].append(
+				(doctype, name, values)
+			),
+			commit=commit,
+		),
+	)
+	monkeypatch.setattr(card_element, "retrieve_payment_intent", retrieve)
+	monkeypatch.setattr(card_element, "_cancel_payment_intent", cancel_pi)
+	monkeypatch.setattr(
+		card_element, "_stamp_invoice", lambda inv, status, *a: writes["stamps"].append((inv, status))
+	)
+	return card_element, writes
+
+
+def _card_attempt(name="SP-OLD", pi="pi_old", status="Processing", invoice="SINV-1"):
+	"""A Payment Element attempt: it carries its ConfirmationToken and a PaymentIntent."""
+	return {
+		"name": name,
+		"sales_invoice": invoice,
+		"status": status,
+		"stripe_payment_intent": pi,
+		"confirmation_token": "ct_old",
+	}
+
+
+def _hosted_payment(name="SP-ACH", pi="pi_ach", status="Processing", invoice="SINV-1"):
+	"""A hosted Checkout (bank or card) or off-session payment: no ConfirmationToken."""
+	return {
+		"name": name,
+		"sales_invoice": invoice,
+		"status": status,
+		"stripe_payment_intent": pi,
+		"confirmation_token": None,
+	}
+
+
+def _charge_settings():
+	return types.SimpleNamespace(enabled=1, enable_card=1, success_route=None, statement_descriptor=None)
+
+
+def _payable_sp(**fields):
+	values = dict(
+		status="Draft",
+		confirmation_token="ct_new",
+		amount=200,
+		surcharge_amount=0,
+		sales_invoice="SINV-1",
+		channel="Portal",
+		description="Invoice SINV-1",
+		stripe_customer_id="cus_1",
+	)
+	values.update(fields)
+	sp = _fake_sp(**values)
+	sp.reload = lambda: None
+	return sp
+
+
+def test_invoice_payment_block_reads_the_ledger_like_dunning(monkeypatch):
+	"""Paid or Processing blocks, as in dunning / saved_methods; nothing else does."""
+	card_element, writes = _ledger(monkeypatch, [])
+	assert card_element.invoice_payment_block("SINV-1") is None
+	assert writes["filters"] == [
+		("Stripe Payment", {"sales_invoice": "SINV-1", "status": ["in", ["Processing", "Paid"]]})
+	]
+	assert card_element.invoice_payment_block(None) is None
+
+	card_element, writes = _ledger(monkeypatch, [_card_attempt(status="Paid")])
+	assert card_element.invoice_payment_block("SINV-1") == "Paid"
+	assert writes["lookups"] == []  # Paid needs no question to Stripe
+
+	# Hosted Checkout, ACH and off-session charges carry no ConfirmationToken: they settle on
+	# their own and are in flight until they do. Stripe is not asked about them — an ACH
+	# microdeposit verification sits in requires_action for days and must not be canceled.
+	hosted = {
+		"name": "SP-ACH",
+		"status": "Processing",
+		"stripe_payment_intent": "pi_ach",
+		"confirmation_token": None,
+	}
+	card_element, writes = _ledger(monkeypatch, [hosted], pi_status={"pi_ach": "requires_action"})
+	assert card_element.invoice_payment_block("SINV-1", release=True) == "Processing"
+	assert writes["lookups"] == [] and writes["cancels"] == []
+
+	# The row being confirmed never blocks itself.
+	card_element, writes = _ledger(monkeypatch, [_card_attempt(name="SP-SELF")])
+	assert card_element.invoice_payment_block("SINV-1", exclude="SP-SELF") is None
+
+
+def test_a_card_attempt_blocks_until_stripe_proves_it_never_charged(monkeypatch):
+	"""After 3-D Secure the PI is succeeded (or processing) while the row still says
+	Processing until the webhook posts it — the Back-from-/stripe-return case — and it must
+	block. A lookup that fails proves nothing, so it blocks too."""
+	for pi_status in ("succeeded", "processing"):
+		card_element, writes = _ledger(monkeypatch, [_card_attempt()], pi_status={"pi_old": pi_status})
+		assert card_element.invoice_payment_block("SINV-1") == "Processing", pi_status
+		assert card_element.invoice_payment_block("SINV-1", release=True) == "Processing", pi_status
+		assert writes["cancels"] == [] and writes["set_value"] == [], pi_status
+
+	card_element, writes = _ledger(monkeypatch, [_card_attempt()], pi_status={})
+	assert card_element.invoice_payment_block("SINV-1", release=True) == "Processing"
+	assert writes["cancels"] == []
+
+
+def test_an_abandoned_card_attempt_never_strands_the_invoice(monkeypatch):
+	"""3-D Secure left unfinished (Back, or a closed tab) leaves the PI in requires_action for
+	good — poll_pending settles only succeeded and canceled. It must not block the invoice
+	for ever; and before anything new is charged it is canceled at Stripe, so the old
+	attempt and the new one can never both charge."""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import card_element as module
+
+	assert set(module.ABANDONED_PI_STATES) == {
+		"requires_action",
+		"requires_payment_method",
+		"requires_confirmation",
+	}
+	for pi_status in module.ABANDONED_PI_STATES:
+		card_element, writes = _ledger(
+			monkeypatch, [_card_attempt()], pi_status={"pi_old": pi_status}, cancel={"pi_old": "canceled"}
+		)
+		# The page render asks, and changes nothing.
+		assert card_element.invoice_payment_block("SINV-1") is None, pi_status
+		assert writes["cancels"] == [] and writes["set_value"] == [] and writes["stamps"] == [], pi_status
+		# The POSTs release it: cancel at Stripe, fail the row, un-stamp the invoice.
+		assert card_element.invoice_payment_block("SINV-1", release=True) is None, pi_status
+		assert writes["cancels"] == ["pi_old"], pi_status
+		assert writes["set_value"][0][:2] == ("Stripe Payment", "SP-OLD"), pi_status
+		assert writes["set_value"][0][2]["status"] == "Failed", pi_status
+		assert writes["stamps"] == [("SINV-1", "Unpaid")], pi_status
+		assert writes["commits"] >= 1, pi_status
+
+	# Already canceled at Stripe: nothing to cancel; the row is brought up to date.
+	card_element, writes = _ledger(monkeypatch, [_card_attempt()], pi_status={"pi_old": "canceled"})
+	assert card_element.invoice_payment_block("SINV-1", release=True) is None
+	assert writes["cancels"] == [] and writes["set_value"][0][2]["status"] == "Failed"
+
+	# The payer finished 3-D Secure in another tab a moment ago: the cancel is refused, so
+	# the attempt is not provably dead and nothing new may start.
+	card_element, writes = _ledger(
+		monkeypatch, [_card_attempt()], pi_status={"pi_old": "requires_action"}, cancel={}
+	)
+	assert card_element.invoice_payment_block("SINV-1", release=True) == "Processing"
+	assert writes["set_value"] == [] and writes["stamps"] == []
+
+	# A cancel that answers with anything but "canceled" is no proof either.
+	card_element, writes = _ledger(
+		monkeypatch,
+		[_card_attempt()],
+		pi_status={"pi_old": "requires_action"},
+		cancel={"pi_old": "processing"},
+	)
+	assert card_element.invoice_payment_block("SINV-1", release=True) == "Processing"
+	assert writes["set_value"] == []
+
+
+def test_the_cancel_goes_through_the_sdk_free_client(monkeypatch):
+	"""No Stripe SDK: the cancel is one POST through client._request. Unkeyed: Stripe never
+	cancels twice anyway, and a key would replay a transient error for a day."""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import card_element
+
+	seen = []
+	monkeypatch.setattr(
+		card_element, "_request", lambda *a, **k: seen.append((a, k)) or {"status": "canceled"}
+	)
+	assert card_element._cancel_payment_intent("pi_1") == {"status": "canceled"}
+	((args, kwargs),) = seen
+	assert args == ("POST", "/payment_intents/pi_1/cancel")
+	assert kwargs == {"data": {"cancellation_reason": "abandoned"}}
+
+
+def test_price_card_payment_refuses_a_settling_invoice_before_reading_the_card(monkeypatch):
+	"""The quote is where a second payment would start after Back from /stripe-return; it
+	must refuse before the ConfirmationToken is even read."""
+	for row, message in (
+		(_card_attempt(), "MSG_IN_FLIGHT"),
+		# A Paid row on an invoice that still shows a balance (_resolve_target has already
+		# refused a paid one): received, never "paid".
+		(_card_attempt(status="Paid"), "MSG_ALREADY_RECEIVED"),
+	):
+		card_element, writes = _ledger(monkeypatch, [row], pi_status={"pi_old": "succeeded"})
+		monkeypatch.setattr(card_element, "get_settings", _charge_settings)
+		monkeypatch.setattr(card_element, "is_enabled", lambda s=None: True)
+		monkeypatch.setattr(
+			card_element, "_resolve_target", lambda *a: ("CUST-1", 200.0, "USD", "Invoice SINV-1")
+		)
+		read = []
+		monkeypatch.setattr(
+			card_element, "_confirmation_token_method", lambda t: read.append(t) or ("card", "credit")
+		)
+		try:
+			card_element.price_card_payment(confirmation_token="ct_new", sales_invoice="SINV-1")
+			raise AssertionError(f"expected {row['status']} to refuse a new quote")
+		except Exception as exc:
+			assert str(exc) == getattr(card_element, message)
+		assert read == []
+
+
+def test_confirm_card_payment_rechecks_the_invoice_where_the_money_moves(monkeypatch):
+	"""Between the quote and Pay, another tab, a bank payment or Accounts may have paid the
+	invoice. The charge re-checks the outstanding amount and the ledger."""
+	import frappe as frappe_stub
+
+	card_element, writes = _ledger(monkeypatch, [_card_attempt()], pi_status={"pi_old": "succeeded"})
+	monkeypatch.setattr(card_element, "get_settings", _charge_settings)
+	monkeypatch.setattr(card_element, "is_enabled", lambda s=None: True)
+	charged = []
+	monkeypatch.setattr(
+		card_element, "create_payment_intent", lambda *a, **k: charged.append(a) or {"id": "pi_x"}
+	)
+	sp = _payable_sp()
+	monkeypatch.setattr(frappe_stub, "get_doc", lambda doctype, name=None: sp, raising=False)
+
+	# Another attempt is still settling: refused, nothing charged.
+	frappe_stub.db.get_value = lambda *a, **k: 200
+	try:
+		card_element.confirm_card_payment(stripe_payment=sp.name, confirmation_token="ct_new")
+		raise AssertionError("expected an invoice with a payment in flight to be refused")
+	except Exception as exc:
+		assert str(exc) == card_element.MSG_IN_FLIGHT
+	# Paid meanwhile by other means: refused too.
+	frappe_stub.db.get_value = lambda *a, **k: 0
+	try:
+		card_element.confirm_card_payment(stripe_payment=sp.name, confirmation_token="ct_new")
+		raise AssertionError("expected a paid invoice to be refused")
+	except Exception as exc:
+		assert str(exc) == card_element.MSG_ALREADY_PAID
+	# Paid in part meanwhile (a $120 cheque against the $200 quote), or credited: the quote is
+	# the whole outstanding as it stood, so charging it now would overpay. Refused, and the
+	# ledger is not even asked; a balance that grew is refused the same way.
+	for outstanding in (80, 199.99, 250):
+		frappe_stub.db.get_value = lambda *a, _o=outstanding, **k: _o
+		try:
+			card_element.confirm_card_payment(stripe_payment=sp.name, confirmation_token="ct_new")
+			raise AssertionError(f"expected an outstanding of {outstanding} against 200 to be refused")
+		except Exception as exc:
+			assert str(exc) == card_element.MSG_AMOUNT_CHANGED, outstanding
+	assert charged == [] and sp.status == "Draft"
+	# Same amount at a different precision is the same amount: past the amount check, to the
+	# ledger (which still has the other attempt settling).
+	frappe_stub.db.get_value = lambda *a, **k: 200.001
+	try:
+		card_element.confirm_card_payment(stripe_payment=sp.name, confirmation_token="ct_new")
+		raise AssertionError("expected the ledger, not the amount, to refuse it")
+	except Exception as exc:
+		assert str(exc) == card_element.MSG_IN_FLIGHT
+
+	# The row being confirmed is excluded from its own guard, which may release.
+	seen = []
+	monkeypatch.setattr(
+		card_element,
+		"invoice_payment_block",
+		lambda inv, exclude=None, release=False: seen.append((inv, exclude, release)),
+	)
+	monkeypatch.setattr(
+		card_element,
+		"create_payment_intent",
+		lambda *a, **k: {"id": "pi_x", "status": "requires_action", "client_secret": "s"},
+	)
+	frappe_stub.db.get_value = lambda *a, **k: 200
+	result = card_element.confirm_card_payment(stripe_payment=sp.name, confirmation_token="ct_new")
+	assert seen == [("SINV-1", sp.name, True)]
+	assert result["requires_action"] is True and sp.status == "Processing"
+
+
+def test_a_succeeded_charge_is_in_flight_before_its_payment_entry_posts(monkeypatch):
+	"""If posting the Payment Entry fails (no deposit account, a closed period), the charged
+	row must not be left Draft — invisible to every guard while the page offers Pay again."""
+	import frappe as frappe_stub
+
+	card_element, writes = _ledger(monkeypatch, [])
+	from erpnext_enhancements.stripe_payments.core import reconcile
+
+	monkeypatch.setattr(card_element, "get_settings", _charge_settings)
+	monkeypatch.setattr(card_element, "is_enabled", lambda s=None: True)
+	monkeypatch.setattr(
+		card_element, "create_payment_intent", lambda *a, **k: {"id": "pi_ok", "status": "succeeded"}
+	)
+	frappe_stub.db.get_value = lambda *a, **k: 200
+	sp = _payable_sp()
+	monkeypatch.setattr(frappe_stub, "get_doc", lambda doctype, name=None: sp, raising=False)
+	order = []
+
+	def finalize(doc, pi):
+		order.append((doc.status, writes["commits"]))
+		raise Exception("Stripe Deposit / Clearing Account is not set")
+
+	monkeypatch.setattr(reconcile, "finalize_payment", finalize)
+	try:
+		card_element.confirm_card_payment(stripe_payment=sp.name, confirmation_token="ct_new")
+		raise AssertionError("expected the posting failure to surface")
+	except Exception as exc:
+		assert "Deposit" in str(exc)
+	# Committed as Processing, carrying its PaymentIntent, before the post was attempted.
+	assert order == [("Processing", 1)]
+	assert sp.stripe_payment_intent == "pi_ok"
+	assert writes["stamps"] == [("SINV-1", "Processing")]
+
+
+def _load_pay_card_page():
+	import importlib.util
+	from pathlib import Path
+
+	path = Path(__file__).resolve().parents[1] / "www" / "pay_card.py"
+	spec = importlib.util.spec_from_file_location("ee_test_pay_card_page", path)
+	module = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(module)
+	return module
+
+
+def test_pay_card_page_shows_paid_or_processing_instead_of_a_form(monkeypatch):
+	"""Back from /stripe-return re-downloads /pay-card (no-store). A paid invoice, or one
+	whose payment is still settling, gets "paid / being processed — back to invoices" and
+	never a working card form; and only its owner learns which."""
+	frappe_stub = install_frappe_stub()
+	page = _load_pay_card_page()
+	settings = types.SimpleNamespace(enabled=1, enable_card=1, enable_ach=0, publishable_key="pk_test_x")
+	monkeypatch.setattr(page, "get_settings", lambda: settings)
+	monkeypatch.setattr(page, "is_enabled", lambda s=None: True)
+	monkeypatch.setattr(page, "get_portal_customers", lambda: ["CUST-1"])
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="jane@example.com"))
+	monkeypatch.setattr(
+		frappe_stub, "sessions", types.SimpleNamespace(get_csrf_token=lambda: "tok"), raising=False
+	)
+	monkeypatch.setattr(frappe_stub, "form_dict", {"invoice": "SINV-1"}, raising=False)
+	asked = []
+
+	def render(customer="CUST-1", outstanding=200.0, block=None, is_return=0):
+		invoice = types.SimpleNamespace(
+			name="SINV-1",
+			customer=customer,
+			outstanding_amount=outstanding,
+			currency="USD",
+			docstatus=1,
+			is_return=is_return,
+		)
+		monkeypatch.setattr(
+			frappe_stub,
+			"db",
+			types.SimpleNamespace(exists=lambda *a, **k: True, get_value=lambda *a, **k: invoice),
+		)
+		monkeypatch.setattr(page, "invoice_payment_block", lambda name: asked.append(name) or block)
+		context = types.SimpleNamespace()
+		page.get_context(context)
+		return context
+
+	ctx = render()
+	assert ctx.settled is None and ctx.invoice.name == "SINV-1"  # payable: the form
+	ctx = render(outstanding=0)
+	assert (ctx.settled, ctx.invoice, ctx.settled_invoice) == ("paid", None, "SINV-1")
+	ctx = render(outstanding=-15)  # overpaid is paid
+	assert (ctx.settled, ctx.invoice) == ("paid", None)
+	ctx = render(block="Processing")
+	assert (ctx.settled, ctx.invoice) == ("processing", None)
+	# A Paid Stripe row on an invoice that still shows a balance (its Payment Entry canceled,
+	# say): still blocked, but "paid" would be untrue, so it says the payment was received.
+	ctx = render(block="Paid")
+	assert (ctx.settled, ctx.invoice, ctx.settled_invoice) == ("received", None, "SINV-1")
+
+	# A return (credit note) is not the customer's to pay, and its negative outstanding is
+	# not "paid": "not available", as before this page learned about settled invoices.
+	asked.clear()
+	ctx = render(outstanding=-200, is_return=1)
+	assert (ctx.settled, ctx.invoice) == (None, None)
+	assert asked == []
+
+	# Someone else's invoice: "not available", as ever, and the ledger is never asked.
+	ctx = render(customer="CUST-OTHER", outstanding=0, block="Paid")
+	assert (ctx.settled, ctx.invoice) == (None, None)
+	assert asked == []
+
+
+def test_pay_card_template_renders_the_settled_states():
+	"""Every settled state links back to the invoice list and loads no card-form script."""
+	from pathlib import Path
+
+	html = (Path(__file__).resolve().parents[1] / "www" / "pay-card.html").read_text(encoding="utf-8")
+	received = html.split('{% elif settled == "received" %}', 1)[1].split("{% elif", 1)[0]
+	assert "is paid" not in received and "already received" in received
+	for state in ("paid", "received", "processing"):
+		marker = '{% elif settled == "' + state + '" %}'
+		assert marker in html, state
+		branch = html.split(marker, 1)[1].split("{% elif", 1)[0]
+		assert 'href="/pay"' in branch, state
+		assert "<script" not in branch, state
+	# Ahead of the "not available" branch: a settled render carries no invoice.
+	assert html.index('settled == "paid"') < html.index("{% elif not invoice %}")
+
+
+def test_pay_card_back_and_forward_harness():
+	"""scripts/test_web_flow_history.js drives the page's real inline script through Back,
+	Forward, a charge in flight and 3-D Secure, over a fake session history."""
+	import shutil
+	import subprocess
+	from pathlib import Path
+
+	import pytest
+
+	node = shutil.which("node")
+	if not node:
+		pytest.skip("node is not on PATH")
+	harness = Path(__file__).resolve().parents[2] / "scripts" / "test_web_flow_history.js"
+	result = subprocess.run(
+		[node, str(harness), "pay-card"], capture_output=True, text=True, timeout=120, check=False
+	)
+	assert result.returncode == 0, result.stdout + result.stderr
+
+
+# --- the bank path (hosted Checkout) and /pay run the same guard --------------
+
+
+def _refusal(call, **kwargs):
+	"""The message ``call(**kwargs)`` is refused with; fails the test if it goes through."""
+	try:
+		call(**kwargs)
+	except Exception as exc:
+		return str(exc)
+	raise AssertionError(f"expected {call.__name__}({kwargs}) to be refused")
+
+
+def _hosted_checkout(monkeypatch, writes):
+	"""Fake everything ``checkout.create_payment`` touches after its guard.
+
+	Each step records ``(step, PaymentIntents canceled so far)`` in ``writes["events"]``, so
+	a test sees both whether anything was created and whether a release came first.
+	"""
+	import frappe as frappe_stub
+
+	from erpnext_enhancements.stripe_payments.core import checkout
+
+	writes["events"] = []
+
+	def step(name):
+		writes["events"].append((name, list(writes["cancels"])))
+
+	settings = types.SimpleNamespace(
+		enabled=1,
+		enable_card=1,
+		enable_ach=1,
+		surcharge_enabled=0,
+		surcharge_label=None,
+		surcharge_disclosure=None,
+		statement_descriptor=None,
+		success_route=None,
+		cancel_route=None,
+		company="Sapphire Fountains",
+	)
+
+	def resolve(sales_invoice, customer, amount, description, settings):
+		if sales_invoice:
+			return "CUST-1", 200.0, "USD", f"Invoice {sales_invoice}"
+		return customer, amount, "USD", description or "Payment"
+
+	def get_doc(values, *args, **kwargs):
+		step("ledger row")
+		sp = _fake_sp(status=values["status"], sales_invoice=values.get("sales_invoice"))
+		sp.insert = lambda **kw: sp
+		return sp
+
+	monkeypatch.setattr(checkout, "get_settings", lambda: settings)
+	monkeypatch.setattr(checkout, "is_enabled", lambda s=None: True)
+	monkeypatch.setattr(checkout, "_resolve_target", resolve)
+	monkeypatch.setattr(
+		checkout, "ensure_stripe_customer", lambda customer, s=None: step("stripe customer") or "cus_1"
+	)
+	monkeypatch.setattr(
+		checkout,
+		"create_checkout_session",
+		lambda params, idempotency_key=None: step("checkout session")
+		or {"id": "cs_1", "url": "https://checkout.stripe.com/c/cs_1"},
+	)
+	monkeypatch.setattr(
+		checkout, "_stamp_invoice", lambda inv, status, *a: writes["stamps"].append((inv, status))
+	)
+	monkeypatch.setattr(frappe_stub, "get_doc", get_doc, raising=False)
+	return checkout
+
+
+def test_a_bank_checkout_cannot_start_while_a_card_payment_settles(monkeypatch):
+	"""The review's sequence: /pay loaded in one tab; the invoice paid by card in another,
+	3-D Secure done and the row Processing until the webhook lands; then Bank in the first
+	tab. Hosted Checkout used to check only the outstanding amount, so the payer could go on
+	to complete an ACH debit for an invoice the card had already paid: two payments. The
+	desk's "Pay with Stripe" link is the same function and is refused the same way."""
+	for pi_status in ("succeeded", "processing"):
+		card_element, writes = _ledger(monkeypatch, [_card_attempt()], pi_status={"pi_old": pi_status})
+		checkout = _hosted_checkout(monkeypatch, writes)
+		for channel, method in (("Portal", "ach"), ("Portal", None), ("Desk", None)):
+			message = _refusal(checkout.create_payment, sales_invoice="SINV-1", channel=channel, method=method)
+			assert message == card_element.MSG_IN_FLIGHT, (pi_status, channel, method)
+		# Refused before anything exists at Stripe or on the ledger, and nothing canceled.
+		assert writes["events"] == [], pi_status
+		assert writes["cancels"] == [] and writes["set_value"] == [] and writes["stamps"] == [], pi_status
+
+	# A Stripe payment already received on an invoice that still shows a balance: refused
+	# too — worded for the customer on the portal, and for Accounts on the desk.
+	card_element, writes = _ledger(monkeypatch, [_card_attempt(status="Paid")])
+	checkout = _hosted_checkout(monkeypatch, writes)
+	assert (
+		_refusal(checkout.create_payment, sales_invoice="SINV-1", channel="Portal", method="ach")
+		== card_element.MSG_ALREADY_RECEIVED
+	)
+	desk = _refusal(checkout.create_payment, sales_invoice="SINV-1", channel="Desk")
+	assert desk == card_element.MSG_ALREADY_RECEIVED_DESK and "contact us" not in desk
+	assert writes["events"] == []
+
+	# An ad hoc payment has no invoice to guard, and the ledger is not asked.
+	card_element, writes = _ledger(monkeypatch, [_card_attempt(status="Paid")])
+	checkout = _hosted_checkout(monkeypatch, writes)
+	result = checkout.create_payment(customer="CUST-1", amount=50, channel="Desk")
+	assert result["checkout_url"] and writes["filters"] == []
+
+
+def test_a_bank_checkout_releases_an_abandoned_card_attempt_first(monkeypatch):
+	"""A card attempt whose 3-D Secure was abandoned does not strand the invoice on the bank
+	path either — and its PaymentIntent is canceled at Stripe before the Checkout Session
+	exists, so the card attempt and the bank debit can never both charge."""
+	card_element, writes = _ledger(
+		monkeypatch,
+		[_card_attempt()],
+		pi_status={"pi_old": "requires_action"},
+		cancel={"pi_old": "canceled"},
+	)
+	checkout = _hosted_checkout(monkeypatch, writes)
+	result = checkout.create_payment(sales_invoice="SINV-1", channel="Portal", method="ach")
+	assert result["checkout_url"] == "https://checkout.stripe.com/c/cs_1"
+	assert writes["cancels"] == ["pi_old"]
+	assert [name for name, _ in writes["events"]] == ["stripe customer", "ledger row", "checkout session"]
+	assert all(canceled == ["pi_old"] for _, canceled in writes["events"])
+	assert writes["set_value"][0][:2] == ("Stripe Payment", "SP-OLD")
+	assert writes["set_value"][0][2]["status"] == "Failed"
+	assert writes["stamps"] == [("SINV-1", "Unpaid"), ("SINV-1", "Link Sent")]
+
+	# The payer finished 3-D Secure in the other tab a moment ago: the cancel is refused, so
+	# the card attempt may have charged, and no bank Checkout starts.
+	card_element, writes = _ledger(
+		monkeypatch, [_card_attempt()], pi_status={"pi_old": "requires_action"}, cancel={}
+	)
+	checkout = _hosted_checkout(monkeypatch, writes)
+	message = _refusal(checkout.create_payment, sales_invoice="SINV-1", channel="Portal", method="ach")
+	assert message == card_element.MSG_IN_FLIGHT
+	assert writes["events"] == [] and writes["set_value"] == [] and writes["stamps"] == []
+
+
+def test_a_pending_ach_debit_is_waited_on_and_never_canceled(monkeypatch):
+	"""An ACH debit waiting on microdeposit verification sits in requires_action for days —
+	one of the states that marks an abandoned *card* attempt. It must block every new payment
+	for the invoice, bank or card, on every path, and never be looked up or canceled: it
+	carries no ConfirmationToken, so nothing releases it."""
+	card_element, writes = _ledger(
+		monkeypatch,
+		[_hosted_payment()],
+		pi_status={"pi_ach": "requires_action"},
+		cancel={"pi_ach": "canceled"},
+	)
+	checkout = _hosted_checkout(monkeypatch, writes)
+	for channel, method in (("Portal", "ach"), ("Desk", None)):
+		message = _refusal(checkout.create_payment, sales_invoice="SINV-1", channel=channel, method=method)
+		assert message == card_element.MSG_IN_FLIGHT, channel
+
+	monkeypatch.setattr(card_element, "get_settings", _charge_settings)
+	monkeypatch.setattr(card_element, "is_enabled", lambda s=None: True)
+	monkeypatch.setattr(card_element, "_resolve_target", lambda *a: ("CUST-1", 200.0, "USD", "Invoice SINV-1"))
+	message = _refusal(card_element.price_card_payment, confirmation_token="ct_new", sales_invoice="SINV-1")
+	assert message == card_element.MSG_IN_FLIGHT
+
+	# /pay's list and /pay-card's render read the same verdict.
+	assert card_element.invoice_payment_blocks(["SINV-1"]) == {"SINV-1": "Processing"}
+	assert card_element.invoice_payment_block("SINV-1") == "Processing"
+
+	assert writes["lookups"] == [] and writes["cancels"] == []
+	assert writes["set_value"] == [] and writes["stamps"] == [] and writes["events"] == []
+
+	# Beside an abandoned card attempt, whichever comes first on the ledger: the debit in
+	# flight decides, before Stripe is asked anything, so the card attempt is not released
+	# either — nothing new may start, so there is nothing to release it for.
+	for rows in (
+		[_card_attempt(), _hosted_payment()],
+		[_hosted_payment(), _card_attempt()],
+	):
+		card_element, writes = _ledger(
+			monkeypatch,
+			rows,
+			pi_status={"pi_old": "requires_action", "pi_ach": "requires_action"},
+			cancel={"pi_old": "canceled", "pi_ach": "canceled"},
+		)
+		checkout = _hosted_checkout(monkeypatch, writes)
+		message = _refusal(checkout.create_payment, sales_invoice="SINV-1", channel="Portal", method="ach")
+		assert message == card_element.MSG_IN_FLIGHT
+		assert card_element.invoice_payment_block("SINV-1", release=True) == "Processing"
+		assert card_element.invoice_payment_blocks(["SINV-1"]) == {"SINV-1": "Processing"}
+		assert writes["lookups"] == [] and writes["cancels"] == [] and writes["set_value"] == []
+		assert writes["stamps"] == [] and writes["events"] == []
+
+
+def test_invoice_payment_blocks_is_the_same_verdict_for_a_list(monkeypatch):
+	"""/pay asks for every invoice it lists at once: one ledger query, Stripe asked only about
+	card attempts, and a render never cancels or re-stamps anything."""
+	rows = [
+		_card_attempt(name="SP-A", status="Paid", invoice="SINV-A"),
+		_hosted_payment(name="SP-B", pi="pi_b", invoice="SINV-B"),
+		_card_attempt(name="SP-C", pi="pi_c", invoice="SINV-C"),
+		_card_attempt(name="SP-D", pi="pi_d", invoice="SINV-D"),
+		_card_attempt(name="SP-E", pi="pi_e", invoice="SINV-E"),
+		# One abandoned attempt and one still settling on the same invoice: settling wins.
+		_card_attempt(name="SP-F1", pi="pi_f1", invoice="SINV-F"),
+		_card_attempt(name="SP-F2", pi="pi_f2", invoice="SINV-F"),
+	]
+	card_element, writes = _ledger(
+		monkeypatch,
+		rows,
+		pi_status={
+			"pi_b": "requires_action",
+			"pi_c": "requires_action",  # 3-D Secure abandoned: payable
+			"pi_d": "succeeded",  # the webhook has not posted it yet
+			"pi_f1": "canceled",
+			"pi_f2": "processing",
+			# pi_e is missing: the lookup fails, which proves nothing
+		},
+		cancel={"pi_c": "canceled", "pi_f1": "canceled"},
+	)
+	names = ["SINV-A", "SINV-B", "SINV-C", "SINV-D", "SINV-E", "SINV-F", "SINV-G"]
+	assert card_element.invoice_payment_blocks(names) == {
+		"SINV-A": "Paid",
+		"SINV-B": "Processing",
+		"SINV-D": "Processing",
+		"SINV-E": "Processing",
+		"SINV-F": "Processing",
+	}
+	assert writes["filters"] == [
+		("Stripe Payment", {"sales_invoice": ["in", names], "status": ["in", ["Processing", "Paid"]]})
+	]
+	# Each card attempt once; the paid invoice and the bank debit need no question to Stripe.
+	assert sorted(writes["lookups"]) == ["pi_c", "pi_d", "pi_e", "pi_f1", "pi_f2"]
+	assert writes["cancels"] == [] and writes["set_value"] == [] and writes["stamps"] == []
+	assert writes["commits"] == 0
+
+	card_element, writes = _ledger(monkeypatch, rows)
+	assert card_element.invoice_payment_blocks([]) == {} and card_element.invoice_payment_blocks(None) == {}
+	assert writes["filters"] == []
+
+
+def _load_www_page(filename, module_name):
+	import importlib.util
+	from pathlib import Path
+
+	path = Path(__file__).resolve().parents[1] / "www" / filename
+	spec = importlib.util.spec_from_file_location(module_name, path)
+	module = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(module)
+	return module
+
+
+def test_every_path_that_starts_a_payment_runs_the_guard_exactly_once(monkeypatch):
+	"""Each request that can start a payment for an invoice consults
+	``invoice_payment_block`` once, releasing; each page render once, never releasing; an ad
+	hoc payment never. Twice would cancel and re-check in one request for no gain; never is
+	the gap the hosted path had."""
+	card_element, writes = _ledger(monkeypatch, [])
+	_hosted_checkout(monkeypatch, writes)
+	import frappe as frappe_stub
+	import frappe.utils as frappe_utils
+
+	from erpnext_enhancements.stripe_payments.core import api
+
+	calls = []
+	monkeypatch.setattr(
+		card_element,
+		"invoice_payment_block",
+		lambda inv, exclude=None, release=False: calls.append((inv, exclude, release)),
+	)
+	monkeypatch.setattr(
+		card_element, "invoice_payment_blocks", lambda names: calls.append(("list", list(names))) or {}
+	)
+
+	invoice = types.SimpleNamespace(
+		name="SINV-1", customer="CUST-1", outstanding_amount=200.0, currency="USD", docstatus=1, is_return=0
+	)
+
+	def get_value(doctype, name=None, fieldname=None, *args, **kwargs):
+		if kwargs.get("as_dict"):
+			return invoice
+		return {"customer": "CUST-1", "outstanding_amount": 200}.get(fieldname)
+
+	quoted = _payable_sp()
+	quoted.name = "SP-Q"
+
+	def get_doc(doctype_or_values, name=None, *args, **kwargs):
+		if isinstance(doctype_or_values, dict):
+			sp = _fake_sp(status="Draft", sales_invoice=doctype_or_values.get("sales_invoice"))
+			sp.insert = lambda **kw: sp
+			return sp
+		return quoted
+
+	frappe_stub.db.get_value = get_value
+	frappe_stub.db.exists = lambda *a, **k: True
+	monkeypatch.setattr(frappe_stub, "get_doc", get_doc, raising=False)
+	monkeypatch.setattr(api, "get_portal_customers", lambda user=None: ["CUST-1"])
+	monkeypatch.setattr(card_element, "get_settings", _charge_settings)
+	monkeypatch.setattr(card_element, "is_enabled", lambda s=None: True)
+	monkeypatch.setattr(card_element, "_resolve_target", lambda *a: ("CUST-1", 200.0, "USD", "Invoice SINV-1"))
+	monkeypatch.setattr(card_element, "_confirmation_token_method", lambda token: ("card", "debit"))
+	monkeypatch.setattr(card_element, "_compute_surcharge", lambda *a, **k: 0.0)
+	monkeypatch.setattr(card_element, "ensure_stripe_customer", lambda customer, s=None: "cus_1")
+	monkeypatch.setattr(
+		card_element,
+		"create_payment_intent",
+		lambda *a, **k: {"id": "pi_q", "status": "requires_action", "client_secret": "s"},
+	)
+
+	def once(label, call, expected):
+		calls.clear()
+		call()
+		assert calls == expected, (label, calls)
+
+	# The POSTs: desk link, portal Bank, card quote, card charge.
+	once("desk link", lambda: api.create_invoice_payment("SINV-1"), [("SINV-1", None, True)])
+	once("portal bank", lambda: api.portal_create_payment("SINV-1", method="ach"), [("SINV-1", None, True)])
+	once(
+		"card quote",
+		lambda: api.portal_price_card_payment("SINV-1", "ct_new"),
+		[("SINV-1", None, True)],
+	)
+	once(
+		"card charge",
+		lambda: api.portal_confirm_card_payment("SP-Q", "ct_new"),
+		[("SINV-1", "SP-Q", True)],
+	)
+	once("ad hoc", lambda: api.create_adhoc_payment("CUST-1", 50), [])
+
+	# The page renders: read-only.
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="jane@example.com"))
+	monkeypatch.setattr(
+		frappe_stub, "sessions", types.SimpleNamespace(get_csrf_token=lambda: "tok"), raising=False
+	)
+	monkeypatch.setattr(frappe_stub, "form_dict", {"invoice": "SINV-1"}, raising=False)
+	monkeypatch.setattr(frappe_utils, "formatdate", lambda value=None, *a, **k: str(value), raising=False)
+	pages = {
+		"pay_card": _load_www_page("pay_card.py", "ee_test_pay_card_page_once"),
+		"pay": _load_www_page("pay.py", "ee_test_pay_page_once"),
+	}
+	settings = types.SimpleNamespace(
+		enabled=1, enable_card=1, enable_ach=1, publishable_key="pk_test_x", company="Sapphire Fountains"
+	)
+	for page in pages.values():
+		monkeypatch.setattr(page, "get_settings", lambda: settings)
+		monkeypatch.setattr(page, "is_enabled", lambda s=None: True)
+		monkeypatch.setattr(page, "get_portal_customers", lambda: ["CUST-1"])
+	monkeypatch.setattr(pages["pay"], "autopay_consent_text", lambda s: "")
+	monkeypatch.setattr(
+		frappe_stub,
+		"get_all",
+		lambda doctype, **kwargs: [
+			{"name": name, "posting_date": None, "due_date": None, "outstanding_amount": 200, "currency": "USD"}
+			for name in ("SINV-1", "SINV-2")
+		],
+		raising=False,
+	)
+	once(
+		"/pay-card render",
+		lambda: pages["pay_card"].get_context(types.SimpleNamespace()),
+		[("SINV-1", None, False)],
+	)
+	once(
+		"/pay render",
+		lambda: pages["pay"].get_context(types.SimpleNamespace()),
+		[("list", ["SINV-1", "SINV-2"])],
+	)
+
+
+def test_pay_page_offers_what_the_endpoints_accept_not_what_the_stamp_says(monkeypatch):
+	"""/pay hid Card and Bank whenever the invoice's stamp said Processing — for good after
+	an abandoned or failed 3-D Secure, since nothing un-stamps those — and otherwise offered
+	both, even for an invoice with a Stripe payment already received. It now shows exactly
+	what the endpoints behind the buttons accept: the verdict of invoice_payment_block."""
+	from pathlib import Path
+
+	import pytest
+
+	jinja2 = pytest.importorskip("jinja2")  # CI installs it
+	frappe_stub = install_frappe_stub()
+	import frappe.utils as frappe_utils
+
+	monkeypatch.setattr(frappe_utils, "formatdate", lambda value=None, *a, **k: str(value), raising=False)
+	page = _load_www_page("pay.py", "ee_test_pay_page")
+	settings = types.SimpleNamespace(enabled=1, enable_card=1, enable_ach=1, company="Sapphire Fountains")
+	monkeypatch.setattr(page, "get_settings", lambda: settings)
+	monkeypatch.setattr(page, "is_enabled", lambda s=None: True)
+	monkeypatch.setattr(page, "get_portal_customers", lambda: ["CUST-1"])
+	monkeypatch.setattr(page, "autopay_consent_text", lambda s: "")
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="jane@example.com"))
+	monkeypatch.setattr(
+		frappe_stub, "sessions", types.SimpleNamespace(get_csrf_token=lambda: "tok"), raising=False
+	)
+	listed = [
+		# 3-D Secure abandoned: the stamp still says Processing, the verdict says payable.
+		("SINV-ABANDONED", "Processing", None),
+		("SINV-SETTLING", "Processing", "Processing"),
+		# A bank debit settling on an invoice whose stamp says nothing of it.
+		("SINV-ACH", None, "Processing"),
+		("SINV-RECEIVED", "Paid", "Paid"),
+		("SINV-OPEN", None, None),
+	]
+	asked = {}
+
+	def get_all(doctype, **kwargs):
+		asked["fields"] = kwargs.get("fields")
+		# No stamp on the rows: the page no longer asks for it.
+		return [
+			{"name": name, "posting_date": None, "due_date": None, "outstanding_amount": 200, "currency": "USD"}
+			for name, _stamp, _verdict in listed
+		]
+
+	monkeypatch.setattr(frappe_stub, "get_all", get_all, raising=False)
+	monkeypatch.setattr(
+		page,
+		"invoice_payment_blocks",
+		lambda names: {name: verdict for name, _stamp, verdict in listed if verdict and name in names},
+	)
+	context = page.get_context(types.SimpleNamespace())
+	assert "custom_stripe_payment_status" not in asked["fields"]
+	assert {inv["name"]: inv["payment_block"] for inv in context.invoices} == {
+		name: verdict for name, _stamp, verdict in listed
+	}
+
+	source = (Path(__file__).resolve().parents[1] / "www" / "pay.html").read_text(encoding="utf-8")
+	assert "custom_stripe_payment_status" not in source
+	env = jinja2.Environment(
+		loader=jinja2.DictLoader(
+			{"templates/web.html": "{% block page_content %}{% endblock %}", "pay.html": source}
+		)
+	)
+	env.globals["_"] = lambda text, *a, **k: text
+	html = env.get_template("pay.html").render(
+		enabled=True,
+		invoices=[
+			# Rendered with the stale stamp put back on each row: it must change nothing.
+			dict(inv, custom_stripe_payment_status=stamp)
+			for inv, (_name, stamp, _verdict) in zip(context.invoices, listed, strict=True)
+		],
+		enable_card=True,
+		enable_ach=True,
+		autopay_consent="",
+		autopay_enrolled=False,
+		csrf_token="tok",
+	)
+	rows = {}
+	for chunk in html.split("<tr>")[2:]:  # past the header row
+		name = chunk.split("<td>", 1)[1].split("</td>", 1)[0].strip()
+		rows[name] = chunk.split("</tr>", 1)[0]
+
+	def offers(name):
+		row = rows[name]
+		card = f"/pay-card?invoice={name}" in row
+		bank = f'data-invoice="{name}"' in row
+		assert card == bank, name
+		return card
+
+	assert offers("SINV-ABANDONED") and offers("SINV-OPEN")
+	for name in ("SINV-SETTLING", "SINV-ACH"):
+		assert not offers(name) and "Processing…" in rows[name], name
+	assert not offers("SINV-RECEIVED")
+	assert "Payment received" in rows["SINV-RECEIVED"] and "Processing" not in rows["SINV-RECEIVED"]

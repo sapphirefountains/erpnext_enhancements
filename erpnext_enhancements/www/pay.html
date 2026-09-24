@@ -29,8 +29,13 @@
 						<td>{{ inv.due_display }}</td>
 						<td class="text-right">{{ inv.amount_display }}</td>
 						<td class="text-right">
-							{% if inv.custom_stripe_payment_status == "Processing" %}
+							{# payment_block is the verdict every payment path enforces
+							   (card_element.invoice_payment_block, see pay.py), so no button
+							   shows here that its endpoint would refuse. #}
+							{% if inv.payment_block == "Processing" %}
 								<span class="text-muted">{{ _("Processing…") }}</span>
+							{% elif inv.payment_block == "Paid" %}
+								<span class="text-muted">{{ _("Payment received — please contact us") }}</span>
 							{% else %}
 								{# Card and bank go to genuinely different implementations, not to
 								   different prices: cards are collected on our own page so the card's

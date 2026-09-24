@@ -15,6 +15,15 @@
  * the user taps "Map" (same source as location_timeline.js); each day section
  * gets its own small map with that day's POI stops. "Open in Maps" deep links
  * are the no-tiles fallback.
+ *
+ * Back / Forward: the trip on screen is in the address as ?trip=<name> (same
+ * path, so a reload, Back from /travel_guidelines and the login redirect all
+ * keep it). A trip chip tap pushes one entry, from the tap itself; Back and
+ * Forward arrive as popstate and load that entry's trip without pushing. The
+ * entry the page opened on is replaced (only when ?trip= is missing or is not
+ * one of this person's trips), never pushed, so Back from it leaves the page.
+ * "Report a problem" (capture/panel.js) owns its own entry: popstate is left
+ * to it while window.ee_capture.isOpen().
  */
 (function () {
 	'use strict';
@@ -303,7 +312,11 @@
 				var chip = el('button', 'ti-trip-chip' + (trip.name === state.currentTrip ? ' active' : ''));
 				chip.appendChild(el('span', 'ti-chip-title', trip.purpose));
 				chip.appendChild(el('span', 'ti-chip-sub', trip.start_date + ' → ' + trip.end_date));
-				chip.addEventListener('click', function () { loadTrip(trip.name); });
+				chip.addEventListener('click', function () {
+					// A different trip is a new entry; the one on screen just reloads.
+					if (trip.name !== state.currentTrip) writeTripEntry(true, trip.name);
+					loadTrip(trip.name);
+				});
 				switcher.appendChild(chip);
 			});
 			root.appendChild(switcher);
@@ -370,6 +383,8 @@
 		root.appendChild(footer);
 	}
 
+	// Never pushes: popstate calls this too, and a push from there would eat the
+	// Forward entries and spend no tap (Chrome then skips the entry on Back).
 	function loadTrip(name) {
 		state.currentTrip = name;
 		state.itinerary = null;
@@ -381,19 +396,90 @@
 				render();
 			})
 			.catch(function (err) {
+				if (state.currentTrip !== name) return; // not the trip on screen any more
 				root.appendChild(el('div', 'ti-error', 'Could not load the trip: ' + err.message));
 			});
 	}
 
-	// -- Boot --------------------------------------------------------------------
-	if (state.trips.length) {
+	// -- History (Back / Forward) ------------------------------------------------
+	function defaultTrip() {
 		// Prefer the trip happening now, else the next upcoming, else the first.
 		var todayIso = new Date().toISOString().slice(0, 10);
 		var current = state.trips.find(function (t) {
 			return t.start_date <= todayIso && todayIso <= t.end_date;
 		});
 		var upcoming = state.trips.find(function (t) { return t.start_date >= todayIso; });
-		loadTrip((current || upcoming || state.trips[0]).name);
+		return (current || upcoming || state.trips[0]).name;
+	}
+
+	// ?trip= from the address, but only when it names one of this person's active
+	// trips (an old link to a finished trip, or someone else's, is ignored).
+	function tripFromUrl() {
+		var name = null;
+		try {
+			name = new URLSearchParams(window.location.search).get('trip');
+		} catch (e) {
+			return null;
+		}
+		for (var i = 0; name && i < state.trips.length; i++) {
+			if (state.trips[i].name === name) return name;
+		}
+		return null;
+	}
+
+	function tripUrl(name) {
+		var params = new URLSearchParams(window.location.search);
+		params.set('trip', name);
+		return window.location.pathname + '?' + params.toString() + window.location.hash;
+	}
+
+	function writeTripEntry(push, name) {
+		try {
+			if (push) window.history.pushState({ itin_trip: name }, '', tripUrl(name));
+			else window.history.replaceState({ itin_trip: name }, '', tripUrl(name));
+		} catch (e) {
+			// Safari refuses bursts of history calls: lose the entry, never the page.
+		}
+	}
+
+	// True while "Report a problem" is open, and until the popstate of its own
+	// closing Back has arrived (capture/panel.js, isPanelOpen).
+	function captureOpen() {
+		try {
+			var cap = window.ee_capture;
+			return !!(cap && typeof cap.isOpen === 'function' && cap.isOpen());
+		} catch (e) {
+			return false;
+		}
+	}
+
+	function showTripFromUrl() {
+		var name = tripFromUrl() || defaultTrip();
+		if (name !== state.currentTrip) loadTrip(name);
+	}
+
+	window.addEventListener('popstate', function () {
+		if (!state.trips.length) return;
+		if (captureOpen()) {
+			// This Back is the report panel's to answer. Once it has (the panel's own
+			// listener runs after this one), show the trip of the entry it left us on,
+			// which is nearly always the trip already on screen.
+			setTimeout(function () {
+				if (!captureOpen()) showTripFromUrl();
+			}, 0);
+			return;
+		}
+		showTripFromUrl();
+	});
+
+	// -- Boot --------------------------------------------------------------------
+	if (state.trips.length) {
+		var first = tripFromUrl();
+		if (!first) {
+			first = defaultTrip();
+			writeTripEntry(false, first);
+		}
+		loadTrip(first);
 	} else {
 		render();
 	}

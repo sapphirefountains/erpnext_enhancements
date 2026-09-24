@@ -8,6 +8,21 @@
 
 	{% if not enabled %}
 		<div class="alert alert-warning">{{ _("Card payments are not available right now. Please contact us.") }}</div>
+	{# Paid, a payment already received, or one still settling (pay_card.py). Most often reached
+	   by Back from the thank-you page; never a second card form for the same invoice. #}
+	{% elif settled == "paid" %}
+		<div class="alert alert-success">{{ _("Invoice") }} <b>{{ settled_invoice }}</b> {{ _("is paid. Thank you!") }}</div>
+		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+	{% elif settled == "received" %}
+		<div class="alert alert-info">
+			{{ _("A payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("was already received, so it cannot be paid again here. Please contact us about the balance.") }}
+		</div>
+		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+	{% elif settled == "processing" %}
+		<div class="alert alert-info">
+			{{ _("A payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("is being processed, so there is nothing to pay here. It will show as paid once it clears.") }}
+		</div>
+		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
 	{% elif not invoice %}
 		<div class="alert alert-warning">{{ _("That invoice is not available to pay.") }}</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
@@ -53,7 +68,6 @@
 		</table>
 		<div id="review-disclosure" class="alert alert-info small" style="display:none;"></div>
 		<div id="review-nofee" class="text-muted small" style="display:none; margin-bottom:12px;"></div>
-		<div id="review-error" class="text-danger small" style="margin-bottom:12px;"></div>
 		<button id="pay-btn" class="btn btn-primary btn-block"></button>
 		<button id="back-btn" class="btn btn-link btn-block">{{ _("Back — use a different payment method") }}</button>
 	</div>
@@ -80,20 +94,81 @@
 			currency: CURRENCY.toLowerCase(),
 			paymentMethodTypes: ["card"],
 		});
-		elements.create("payment").mount("#payment-element");
+		const payment_element = elements.create("payment");
+		payment_element.mount("#payment-element");
 
 		const $ = (id) => document.getElementById(id);
 		let quote = null;
 		let token = null;
+		// Bumped each time the card step is shown again, so a price that lands after the
+		// payer has moved on is dropped rather than shown.
+		let attempt = 0;
+		// From the Pay tap until the charge has an answer (the server call, then 3-D Secure).
+		let charging = false;
+		// A Back pressed while charging. Never acted on mid-charge; honoured once the charge
+		// has failed (a charge that succeeds leaves the page anyway).
+		let back_pending = false;
+
+		// Browser Back and Forward. The review step is a history entry of its own, so the
+		// phone's Back returns to the card step instead of leaving the page, which lost the
+		// card and stranded the quote. Every call passes no URL, so the address and its
+		// ?invoice= never change. A review entry names the quote it was pushed for, and a
+		// Forward onto it shows that review again only while this page's memory still holds
+		// that same quote. A quote is bound to a ConfirmationToken that nothing else holds, so
+		// history.state never supplies one, and nothing is restored after a reload.
+		const REVIEW = "review";
+
+		// The current entry's state when it is a review entry, else null.
+		function review_entry() {
+			try {
+				const state = history.state;
+				return state && state.payCard === REVIEW ? state : null;
+			} catch (e) {
+				return null;
+			}
+		}
+
+		// On the review entry of the quote this page still holds.
+		function on_live_review() {
+			const entry = review_entry();
+			return !!(entry && quote && entry.quote === quote.stripe_payment);
+		}
+
+		function write_entry(push, state) {
+			try {
+				if (push) history.pushState(state, "");
+				else history.replaceState(state, "");
+			} catch (e) {
+				// Safari refuses bursts of history calls: lose the entry, never the payment.
+			}
+		}
+
+		// The entry the page opened on is the card step: replaced, never pushed, so Back from
+		// it leaves the page as before. After a reload on the review step this rewrites that
+		// entry too, since the quote it pointed at is gone. (The entry beneath it then belongs
+		// to the document before the reload, so one Back downloads the card step again first.)
+		write_entry(false, { payCard: "card" });
 
 		function busy(button, on, label) {
 			button.disabled = on;
 			button.textContent = on ? WAIT : label;
 		}
 
+		// A quote is for the card as it was entered: any change to the card voids it, so a
+		// Forward can never bring back a total priced for a different card. Ignored while the
+		// review is up, where the Element is hidden and the quote on screen is what Pay charges.
+		payment_element.on("change", function () {
+			if ($("step-card").style.display === "none") return;
+			discard_quote();
+		});
+
 		$("continue-btn").addEventListener("click", async function () {
 			$("card-error").textContent = "";
 			busy(this, true, CONTINUE);
+			const mine = ++attempt;
+			// One quote per Continue: the last one, which a Forward could have shown again,
+			// is done with whether or not this one is priced.
+			discard_quote();
 
 			// Validates the form and collects wallet details; required before a
 			// ConfirmationToken can be created.
@@ -110,16 +185,20 @@
 				busy(this, false, CONTINUE);
 				return;
 			}
-			token = created.confirmationToken.id;
+			const created_token = created.confirmationToken.id;
 
 			frappe.call({
 				method: "erpnext_enhancements.stripe_payments.core.api.portal_price_card_payment",
-				args: { sales_invoice: INVOICE, confirmation_token: token },
+				args: { sales_invoice: INVOICE, confirmation_token: created_token },
 				callback: function (r) {
 					busy($("continue-btn"), false, CONTINUE);
 					if (!r || r.exc || !r.message) return;
+					if (mine !== attempt) return; // the payer moved on while it was priced
+					token = created_token;
 					quote = r.message;
-					render_review(quote);
+					show_review(quote);
+					// Pushed from the Continue tap, so Chrome's Back never skips it.
+					write_entry(true, { payCard: REVIEW, quote: quote.stripe_payment });
 				},
 				error: function () {
 					busy($("continue-btn"), false, CONTINUE);
@@ -127,7 +206,21 @@
 			});
 		});
 
-		function render_review(q) {
+		function discard_quote() {
+			quote = null;
+			token = null;
+		}
+
+		function hide_fee_lines() {
+			$("review-fee-row").style.display = "none";
+			$("review-disclosure").style.display = "none";
+			$("review-nofee").style.display = "none";
+		}
+
+		function show_review(q) {
+			// Nothing of an earlier quote may show under this one: a debit card quoted after a
+			// credit card must never sit beside the credit card's fee line.
+			hide_fee_lines();
 			$("review-amount").textContent = q.amount_display;
 			$("review-total").textContent = q.total_display;
 
@@ -151,28 +244,110 @@
 			$("step-review").style.display = "";
 		}
 
-		$("back-btn").addEventListener("click", function () {
-			// The quote is bound to the card that was entered, so going back discards
-			// it — a different card gets its own quote and its own fee decision.
-			quote = null;
-			token = null;
-			$("review-error").textContent = "";
+		// The card step, with the card still in the Element. The quote is kept: until the card
+		// changes or a new Continue starts, a Forward may show its review again, and a
+		// different card always gets its own quote and its own fee decision.
+		function show_card() {
+			attempt += 1;
+			hide_fee_lines();
 			$("step-review").style.display = "none";
 			$("step-card").style.display = "";
+		}
+
+		// From the review to the card step. On screen at once, so no tap can reach a Pay
+		// button on its way out, and then through the history when this is the review's entry,
+		// so the in-page Back and the phone's are one and the same. The traversal's popstate
+		// then finds the card step already showing.
+		function leave_review() {
+			show_card();
+			if (!review_entry()) return;
+			try {
+				history.back();
+			} catch (e) {
+				// Stay on this entry, but let it say what is on screen.
+				write_entry(false, { payCard: "card" });
+			}
+		}
+
+		$("back-btn").addEventListener("click", function () {
+			if (charging) return; // never mid-charge (the button is disabled then, too)
+			leave_review();
+		});
+
+		window.addEventListener("popstate", function () {
+			const live = on_live_review();
+			if (charging) {
+				// Back never interrupts a charge in flight; a Forward again takes it back.
+				back_pending = !live;
+				return;
+			}
+			if (live) {
+				// Forward (or Back from an entry above) onto the review of the quote still held.
+				show_review(quote);
+				return;
+			}
+			show_card();
+			if (review_entry()) {
+				// A review whose quote is gone: spent by a failed charge, voided by a changed
+				// card or a new Continue, or from before a reload. It has nothing to show, so
+				// step back off it onto the card entry beneath. Forward then changes nothing, and
+				// one Back from the card step still leaves the page. Re-stamping it in place
+				// instead would leave two card entries, and a Back that did nothing visible.
+				try {
+					history.back();
+				} catch (e) {
+					write_entry(false, { payCard: "card" });
+				}
+			}
+		});
+
+		// Restored from the back-forward cache (after /stripe-return, say): this copy may
+		// show a form for an invoice that has since been paid. Ask the server again.
+		window.addEventListener("pageshow", function (event) {
+			if (event.persisted) window.location.reload();
 		});
 
 		$("pay-btn").addEventListener("click", function () {
-			if (!quote) return;
-			$("review-error").textContent = "";
+			// Only from the review on screen: a tap that lands as the page steps off it (the
+			// in-page Back, say) charges nothing.
+			if (!quote || charging || $("step-review").style.display === "none") return;
 			const label = this.textContent;
 			busy(this, true, label);
+			charging = true;
+			back_pending = false;
+			$("back-btn").disabled = true;
+
+			// Whatever failed, this quote is spent. By the time the server answers, it has
+			// usually created the PaymentIntent (a decline is one; 3-D Secure has always run
+			// against one), and Pay again would send the same row and token: refused as
+			// "already Processing", or replayed through the idempotency key, which re-stamps
+			// the invoice Processing and hands back the same dead PaymentIntent. The refusals
+			// that come before one exists (paid meanwhile, another payment in flight) are no
+			// more worth retrying. So back to the card step, with the card still in the Element:
+			// Continue prices a new quote, and the server cancels the abandoned attempt first.
+			const failed = function (message) {
+				if (!charging) return; // one answer per charge
+				charging = false;
+				$("back-btn").disabled = false;
+				busy($("pay-btn"), false, label);
+				discard_quote();
+				if (back_pending) {
+					// The payer pressed Back while it ran, and the browser is already on the
+					// card entry: show the card step in place.
+					back_pending = false;
+					show_card();
+				} else {
+					leave_review();
+				}
+				if (message) $("card-error").textContent = message;
+			};
 
 			frappe.call({
 				method: "erpnext_enhancements.stripe_payments.core.api.portal_confirm_card_payment",
 				args: { stripe_payment: quote.stripe_payment, confirmation_token: token },
 				callback: async function (r) {
 					if (!r || r.exc) {
-						busy($("pay-btn"), false, label);
+						failed(null);
 						return;
 					}
 					const res = r.message || {};
@@ -181,16 +356,19 @@
 						// the payer complete the challenge without leaving the flow.
 						const done = await stripe.handleNextAction({ clientSecret: res.client_secret });
 						if (done.error) {
-							$("review-error").textContent = done.error.message;
-							busy($("pay-btn"), false, label);
+							failed(done.error.message);
 							return;
 						}
 					}
-					window.location.href =
-						"/stripe-return?status=success&sp=" + encodeURIComponent(res.stripe_payment || "");
+					// Replace, not push: this page-initiated navigation takes the review's
+					// entry, so Back from the thank-you page skips the payment form. It lands
+					// on the card entry, which the server now renders as paid / processing.
+					window.location.replace(
+						"/stripe-return?status=success&sp=" + encodeURIComponent(res.stripe_payment || "")
+					);
 				},
 				error: function () {
-					busy($("pay-btn"), false, label);
+					failed(null);
 				},
 			});
 		});

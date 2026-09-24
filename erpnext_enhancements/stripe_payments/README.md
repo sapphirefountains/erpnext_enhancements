@@ -102,6 +102,94 @@ amount is fixed. All GA API — no preview version, no third-party surcharge app
 later only via the compliance checklist in
 [`docs/stripe_surcharging_compliance.md`](../../docs/stripe_surcharging_compliance.md).
 
+### The card page (`/pay-card`): Back, Forward, and paying twice
+
+`www/pay-card.html` has two steps, the card and the review (the true total). **The review is
+a history entry of its own**, pushed from the Continue tap with no URL (`?invoice=` never
+changes), so the phone's Back returns to the card step instead of leaving the page. The entry
+names its quote, and Forward shows that review again for as long as the page's memory still
+holds that quote — until the card in the Payment Element changes (its `change` event) or a
+new Continue starts. A quote is bound to its ConfirmationToken, which only that memory holds,
+so `history.state` never supplies one and nothing is restored after a reload. A review entry
+whose quote is gone is stepped back off (`history.back()`) rather than re-stamped as the card
+step: re-stamping left two card entries, and a Back from the card step that did nothing
+visible. The one place that still costs an extra Back is a reload on the review step, where
+the entry beneath belongs to the document before the reload. The page's own "Back — use a
+different payment method" shows the card step at once (so a Pay tap before the traversal
+lands charges nothing) and goes through the same history. Back while a charge is in flight
+(the server call, then 3-D Secure) changes nothing until the charge has an answer. **Any
+failed charge spends its quote** and returns to the card step with the card still entered:
+by then the server has usually created the PaymentIntent, and Pay again would resend the same
+row and token — refused as "already Processing", or replayed by the `ee-element-<row>`
+idempotency key, which re-stamps the invoice `Processing` around the same dead PaymentIntent.
+Continue prices a fresh quote instead, and the POSTs cancel the abandoned attempt first (below).
+Success goes to `/stripe-return` with `location.replace`, and a page restored from the
+back-forward cache reloads. `scripts/test_web_flow_history.js` drives the page's real script
+through all of this (`test_stripe_payments.py` runs it).
+
+**A paid invoice, or one with a payment still settling, is never offered a second card
+payment.** Back from `/stripe-return` downloads `/pay-card` again (no-store), and a card
+payment finished through 3-D Secure stays `Processing` — outstanding unchanged — until the
+webhook posts it, so the page used to show a working form for it. `card_element.invoice_payment_block`
+is the invoice-level verdict, read by `www/pay_card.py` (which then renders "paid", "received"
+or "being processed", with a link back to `/pay`), by `price_card_payment` before the card is
+read, by `confirm_card_payment` where the money moves, and by `checkout.create_payment` — the
+Bank button on `/pay` and the desk's "Pay with Stripe" — before anything exists at Stripe. It reads the
+ledger as `dunning` and `saved_methods` do (a `Processing` or `Paid` row blocks), with one
+difference: a Payment Element attempt (the only kind carrying a ConfirmationToken, and the only
+kind whose 3-D Secure runs in our page, where a Back abandons it) is asked of Stripe, and one
+whose PaymentIntent is `requires_action` / `requires_payment_method` / `requires_confirmation`
+or `canceled` does not block. Without that, an abandoned 3-D Secure — which `poll_pending` never
+settles — would block the invoice for good. Before anything new is charged, the POSTs cancel
+such a PaymentIntent at Stripe (`POST /payment_intents/:id/cancel` through `client._request`),
+fail its row and re-stamp the invoice `Unpaid`; a PaymentIntent that succeeded meanwhile
+cannot be canceled, so the refusal keeps blocking and two charges can never both land. A
+Stripe lookup that fails blocks too.
+
+Two cases the ledger alone gets wrong. A `Paid` Stripe row on an invoice that still shows a
+balance (Accounts canceled its Payment Entry, most often; nothing resets the row) stays
+blocked, as dunning and autopay block it, but the page renders "received" and the RPCs say the
+payment was received and to contact us — never that the invoice is paid. And
+`confirm_card_payment` re-checks the outstanding amount against the quote, refusing when it
+has changed at all: an invoice quote is always the whole outstanding (`_resolve_target`), so a
+cheque or credit note posted between Continue and Pay would otherwise leave the difference as
+an unallocated overpayment. A return (credit note) is "not available" on the page, as before;
+its negative outstanding is not "paid".
+
+Also, `confirm_card_payment` now commits a `succeeded` charge as `Processing` before posting its
+Payment Entry. If the post failed (no deposit account, a closed period), the row used to be
+rolled back to Draft with no PaymentIntent on it — invisible to every guard while the page
+offered Pay again. `poll_pending` retries the post from `Processing`.
+
+**The bank path and `/pay` use the same verdict.** Hosted Checkout used to check only the
+outstanding amount, so a `/pay` tab loaded before a card payment could still open a bank
+Checkout for an invoice whose card charge was settling (3-D Secure done, the webhook not yet
+landed), and the payer could complete an ACH debit for an invoice the card had already paid.
+`create_payment` now refuses it the way the card endpoints do — Accounts get their own wording
+for a received payment, since "contact us" means them — and, like them, cancels an abandoned
+card attempt before a new payment starts. `www/pay.py` decides which invoices get Card and Bank
+from `invoice_payment_blocks`, the same verdict for a whole list (one ledger query, Stripe asked
+only about card attempts, never releasing), instead of the invoice's
+`custom_stripe_payment_status` stamp: that stamp hid both buttons for good after an abandoned or
+failed 3-D Secure, which nothing un-stamps, and said nothing of a payment already received.
+An invoice with a payment settling shows "Processing…", one with a payment received on a
+balance still owing shows "Payment received — please contact us", and every other one both
+buttons. Every path that starts a payment for an invoice runs the guard exactly once, with
+release; each page render once, without; an ad hoc payment never
+(`test_every_path_that_starts_a_payment_runs_the_guard_exactly_once`).
+
+**A pending ACH payment is never canceled.** Only a row that carries a ConfirmationToken — a
+Payment Element card attempt — is ever looked up at Stripe or canceled. A hosted Checkout, ACH
+or off-session payment in `Processing` blocks until it settles on its own; an ACH debit waiting
+on microdeposit verification sits in `requires_action` for days, which for a card attempt would
+read as abandoned.
+
+Still open, by design of this change: a hosted Checkout that is only `Link Sent` (the payer is on
+Stripe's page, or has the link) is not in flight, so a card payment can start beside it — the
+rule dunning and autopay use too. Closing that means expiring the Session first. The desk's
+`charge_saved_method` (off-session, `saved_methods.py`) does not consult the guard either;
+autopay on submit and dunning check the ledger themselves.
+
 ## DocTypes
 
 | DocType | Role |

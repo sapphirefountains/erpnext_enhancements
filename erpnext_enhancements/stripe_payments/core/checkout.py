@@ -51,7 +51,9 @@ def create_payment(
 	enabled methods are offered. **No session created here ever carries a surcharge**
 	— see the note at the ``_compute_surcharge`` call below. Returns
 	``{"stripe_payment", "checkout_url", "session_id"}``. The caller is responsible
-	for permission checks (operator role for desk; ownership for portal).
+	for permission checks (operator role for desk; ownership for portal). An invoice
+	with a Stripe payment already received or still settling is refused here, by the
+	rule every payment path shares (``card_element.invoice_payment_block``).
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
@@ -60,6 +62,16 @@ def create_payment(
 	customer, amount, currency, description = _resolve_target(
 		sales_invoice, customer, amount, description, settings
 	)
+	if sales_invoice:
+		# The same invoice-level guard as the card page, before anything exists at Stripe.
+		# Without it a /pay tab loaded before a card payment could open a bank Checkout for
+		# an invoice whose card charge was still settling (3-D Secure done, the webhook not
+		# yet landed): two payments for one invoice. It releases an abandoned card attempt —
+		# cancels its PaymentIntent — and never touches a hosted Checkout or ACH payment,
+		# which are only ever waited on. Imported here: card_element imports this module.
+		from erpnext_enhancements.stripe_payments.core.card_element import _refuse_if_in_flight
+
+		_refuse_if_in_flight(sales_invoice, desk=channel == "Desk")
 
 	payment_method_types = _methods_for(settings, method)
 	# Always 0 on this path, by construction: hosted Checkout fixes its line items

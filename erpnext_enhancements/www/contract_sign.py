@@ -150,7 +150,47 @@ def _boot(request, state, ref):
 		"consent_text": settings.get("contract_esign_consent_text") or "",
 		"disclosure_text": settings.get("contract_esign_disclosure_text") or "",
 		"company": frappe.defaults.get_global_default("company") or "Sapphire Fountains",
+		"autopay_resumable": _autopay_resumable(request) if state == "signed" else False,
 	}
+
+
+def _autopay_resumable(request):
+	"""Whether a card enrolment offered at signing was started and has not finished.
+
+	Back from Stripe's card page, after "Save a card", reloads this link, which by then
+	renders "Already signed", and that notice had no way back into the enrolment the
+	customer had just left. The page now offers it again, but only with the Stripe link
+	*this browser tab* was handed when it started (``contract_sign.js`` keeps it in
+	``sessionStorage``), and only while this says yes. So nothing is ever minted or
+	fetched from the link alone: a forwarded link still cannot open a card enrolment
+	(``esign.portal._signed_session``), and the only thing the link discloses is this one
+	yes-or-no.
+
+	The same preconditions ``esign.portal.start_autopay`` re-derives: offered, outcome
+	"Started" (never "Enrolled" — Stripe said it finished), a Customer party, and no card
+	already on file. Never raises: this page tells someone their agreement is executed.
+	"""
+	try:
+		if not request.get("autopay_offered") or request.get("autopay_outcome") != "Started":
+			return False
+		party_type, party = frappe.db.get_value(
+			"Project Contract", request.project_contract, ["party_type", "party"]
+		) or (None, None)
+		if party_type != "Customer" or not party:
+			return False
+		enrolled = frappe.db.get_value(
+			"Customer",
+			party,
+			["custom_stripe_autopay_enabled", "custom_stripe_default_payment_method"],
+			as_dict=True,
+		)
+		return not (
+			enrolled
+			and enrolled.custom_stripe_autopay_enabled
+			and enrolled.custom_stripe_default_payment_method
+		)
+	except Exception:
+		return False
 
 
 def _mask(email):

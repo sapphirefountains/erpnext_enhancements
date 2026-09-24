@@ -11,12 +11,24 @@ the logged-in user's Customer. This controller only renders the form — pricing
 charging live behind ``core.api.portal_price_card_payment`` /
 ``portal_confirm_card_payment``, which re-check ownership themselves. No card data
 touches this server; the Element posts it straight to Stripe.
+
+**A paid invoice, or one with a payment still settling, gets no form.** It gets
+``settled`` ("paid" / "received" / "processing") and a way back to the invoice list
+instead; "received" is a Stripe payment on the ledger for an invoice that still shows a
+balance, which is blocked but must not be called paid. The
+common way here is the phone's Back from ``/stripe-return`` straight after paying:
+the page is ``no-store``, so Back downloads it again, and a card payment finished
+through 3-D Secure is still "Processing" — outstanding unchanged — until the webhook
+posts it. It used to show a working card form for that invoice. The verdict is
+``card_element.invoice_payment_block``, the same one both RPCs enforce; an abandoned
+3-D Secure attempt does not count, so such an invoice can still be paid.
 """
 
 import frappe
 from frappe.utils import flt, fmt_money
 
 from erpnext_enhancements.stripe_payments.core.api import get_portal_customers
+from erpnext_enhancements.stripe_payments.core.card_element import invoice_payment_block
 from erpnext_enhancements.stripe_payments.core.utils import get_settings, is_enabled
 
 no_cache = 1
@@ -37,6 +49,7 @@ def get_context(context):
 	context.publishable_key = settings.publishable_key
 	context.enable_ach = bool(settings.enable_ach)
 	context.invoice = None
+	context.settled = None
 
 	if not context.enabled or not settings.publishable_key:
 		# Without a publishable key the Element cannot mount at all; say so rather
@@ -51,14 +64,28 @@ def get_context(context):
 	invoice = frappe.db.get_value(
 		"Sales Invoice",
 		name,
-		["name", "customer", "outstanding_amount", "currency", "docstatus"],
+		["name", "customer", "outstanding_amount", "currency", "docstatus", "is_return"],
 		as_dict=True,
 	)
 	# Same ownership rule the RPCs enforce; failing closed here just avoids rendering
-	# a form that the server would reject anyway.
-	if invoice.customer not in get_portal_customers() or invoice.docstatus != 1:
+	# a form that the server would reject anyway. A return (credit note) is never the
+	# customer's to pay, and its negative outstanding is not "paid" either.
+	if invoice.customer not in get_portal_customers() or invoice.docstatus != 1 or invoice.is_return:
 		return context
+	# Only after the ownership check: whether an invoice is paid is its owner's business.
 	if flt(invoice.outstanding_amount) <= 0:
+		context.settled = "paid"
+	else:
+		block = invoice_payment_block(invoice.name)
+		if block == "Paid":
+			# A Stripe payment for it was received, yet it still shows a balance (its Payment
+			# Entry was canceled, most often). Another card payment could be a second one, so
+			# it stays blocked, as dunning and autopay block it; but "paid" would be untrue.
+			context.settled = "received"
+		elif block:
+			context.settled = "processing"
+	if context.settled:
+		context.settled_invoice = invoice.name
 		return context
 
 	context.invoice = invoice
