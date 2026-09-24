@@ -26,6 +26,8 @@ model, the pure rules and the label reads.
 | `warehouse_labels.py` | The reads behind `/warehouse-labels`: which warehouses get a label, their breadcrumbs, their QR codes |
 | `item_naming_rules.py` | The Item naming schema as executable rules. No Frappe, no I/O |
 | `item_naming.py` | The reads behind it — corpus, brands, reserved codes, and the audit |
+| `item_naming_guard.py` | The `Item` → `validate` doc_event: refuses a *new* Item for two findings only |
+| `item_naming_digest.py` | Monday's email of last week's new Items that fail the rules |
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 
@@ -250,16 +252,62 @@ reads.
 `item_name` schema, the four Item Code families, and the approved category vocabulary.
 `item_naming.py` does the reads; `assistant_tools/item_naming_check.py` is the MCP surface.
 
-**It is advisory and there is no `Item` doc_event.** The SOP says so itself — compliance is
-procedural because ERPNext applies no naming series to Item — and a third of the live
-catalogue would fail the comma rule, so anything that blocked a save would fire constantly on
+**It is advisory, except for two findings on a new Item.** The SOP says compliance is
+procedural, because ERPNext applies no naming series to Item, and a third of the live
+catalogue would fail the comma rule, so a block on the full rule set would fire constantly on
 legitimate edits to records that were already there.
+
+### What refuses a save (v1.532.0)
+
+Nik decided on 2026-09-24 (TASK-2026-02238; POL-0602 v1.0, effective 2026-10-01) that the
+app's first `Item` doc_event, `item_naming_guard.validate_new_item` on `validate`, refuses
+saving a **new** Item for exactly two findings, both from `item_naming_rules.blocking_findings`:
+
+- **`duplicate_code_normalised`**: the code matches an existing Item's code once case and
+  punctuation are ignored (`806020` against `806-020`). The Item's own code is excluded
+  exactly, never by its normalised form, for the reason given under *A proposal and a saved
+  record* below. An exact duplicate is ERPNext's to refuse; `item_code` is the primary key.
+- **`name_equals_code`**: the name is just the code. A blank name counts, because ERPNext's
+  `Item.validate` copies the code into a blank name before any doc_event runs.
+
+**Why only two.** Refusing every STOP was the obvious rule and was rejected. The STOP set
+includes `name_category_unapproved`, and several category words are still waiting on a ruling
+(TASK-2026-02215: PLMB, BRUSH, BOTTLE), so it would refuse legitimate new items for as long as
+a ruling is open. Neither of the two chosen findings depends on a ruling.
+
+**When it runs.** Only on `is_new()`, so an existing Item is never refused whatever its name.
+Only inside a web request, and never while `frappe.flags` has `in_import`, `in_migrate`,
+`in_install`, `in_patch`, `in_test` or `in_setup_wizard` set. A background job has nobody to
+read the message: the QuickBooks sync creates Items on the scheduler, and a refusal there would
+park the record for manual review. A save is also skipped when `doc.flags.ignore_naming_guard`
+is set, which only callers that generate the name from the code inside a request set:
+
+| In-request Item creator | Guard |
+|---|---|
+| `product_configurator.erp_integration._ensure_product_item`, the configured product | **Off**. The configurator allocates the part number and builds the name from it |
+| `product_configurator.erp_integration.ensure_component_items` | On. Component names are the product definition's own words, and a required field |
+| `quickbooks_online.core.mapping` create path, for Items | **Off**. A QBO Item with no SKU is name == code by construction, and the dashboard's per-entity Sync runs it inside a request |
+| `accounting_intake.review._create_item` (Approve Items) | On. A person approves the Item. It uses the proposed name as code *and* name, so the guard refuses every Item it would create: create the Item properly and set it as the line's Matched Item |
+| `water_engineering.setup` catalogue seeds | On, but they run from `after_migrate`, where the guard is skipped |
+
+The message names the clashing codes, or asks for a descriptive name in schema order, and says
+that nothing else stops the save.
+
+### The weekly digest (v1.532.0)
+
+`item_naming_digest.send_weekly_digest`, Monday 07:00 site time (`0 7 * * 1`), emails the Items
+created in the last seven days that do not PASS, `(deleted)` tombstones excluded, with their
+STOP and FIX findings, who created each one and a link to it. The recipients are *Weekly Naming
+Digest Recipients* in Inventory Scanner Settings, which has no default;
+`patches/seed_naming_digest_recipient` writes the Purchasing Agent's address once, only where
+the field has never been stored. Blank sends nothing, and so does a week with nothing failing.
+It goes through `email_style` like every other sender.
 
 The rules module lives here rather than under `assistant_tools/` because nothing in the app
 outside `assistant_tools/` and `tests/` may import that package (`TestFacOptionalInvariant`),
 and Item-master vocabulary has to stay reachable from a report or a patch.
 
-### Four callers, one engine
+### Six callers, one engine
 
 `item_naming_rules.py` is the only place a naming judgement is made. Everything else is a thin
 caller, and that is load-bearing rather than tidy: two definitions of "compliant" that disagree
@@ -269,8 +317,14 @@ by one row is a bug report nobody can close.
 |---|---|---|
 | **Item Naming Audit** report | `report/item_naming_audit/` | The work list. Worst-first, tombstones hidden by default |
 | **Item form** | `public/js/item_naming_advisor.js` | Headline on refresh, two buttons under *Naming* |
-| **KPI** `item_naming_compliance_pct` | `kpi_dashboards/snapshots.py` | Nightly, on the Product dashboard |
+| **KPIs** `item_naming_compliance_pct`, `item_naming_new_compliance_pct` | `kpi_dashboards/snapshots.py` | Nightly, on the Product dashboard. The second covers items created on or after `NAMING_GO_LIVE` (2026-10-01) |
 | **MCP** `item_naming_check` | `assistant_tools/item_naming_check.py` | For Triton and any MCP client |
+| **New-Item guard** | `item_naming_guard.py` | Two findings only; see above |
+| **Weekly digest** | `item_naming_digest.py` | Last week's new Items that fail |
+
+The KPI for new items and the digest both audit the **whole** catalogue and then keep the rows
+they want (`restrict_to`). Auditing only the new items would miss a new item named exactly like
+an old one.
 
 Two costs worth knowing before editing the form script. `refresh` calls `check_item(mode="record")`,
 which reads **no corpus** — a full check on every form open would read the whole catalogue every
@@ -346,6 +400,8 @@ Bench-free:
 
 ```bash
 python -m unittest erpnext_enhancements.tests.test_item_naming_rules -v
+python -m unittest erpnext_enhancements.tests.test_item_naming_guard -v   # frappe stub
+python -m unittest erpnext_enhancements.tests.test_item_naming_digest -v  # frappe stub
 python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v    # needs PyQRCode~=1.2.1 for the QR half
 python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v

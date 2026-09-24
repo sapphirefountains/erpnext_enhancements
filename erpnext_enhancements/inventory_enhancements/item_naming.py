@@ -4,10 +4,12 @@
 """Reads for the Item naming advisor. :mod:`item_naming_rules` holds every judgement.
 
 This module does I/O and nothing else — it decides no rule, and it writes nothing at all.
-There is deliberately no ``Item`` doc_event anywhere in this app: the SOP's compliance is
-procedural (*"nothing in this schema is enforced by the system"*, §3), and a third of the
-live catalogue would fail the comma rule today, so anything that blocked a save would fire
-constantly on legitimate edits to records that were already there.
+Nothing here blocks a save: the SOP's compliance is procedural (*"nothing in this schema is
+enforced by the system"*, §3), and a third of the live catalogue would fail the comma rule
+today, so anything that blocked on the full rule set would fire constantly on legitimate
+edits to records that were already there. The one exception is narrow and lives elsewhere:
+since v1.532.0 :mod:`item_naming_guard` refuses a *new* Item for two findings only (a code
+duplicating an existing one after normalisation, a name that is just the code).
 
 --------------------------------------------------------------------------------------
 Why this reads the whole corpus instead of a narrowed query

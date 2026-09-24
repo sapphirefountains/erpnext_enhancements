@@ -5,9 +5,14 @@ whether one already exists, asks what to call it, or asks which `PDT-` /
 `SRV-` number is free. The standard is the *ERPNext Item Naming Schema*
 SOP v1.0; `docs/item-naming-schema.md` is the citable copy.
 
-This is advisory. Nothing in ERPNext enforces the schema and no hook
-blocks a save — you produce a corrected code and name that a human
-applies by hand.
+This is advisory — you produce a corrected code and name that a human
+applies by hand. Since v1.532.0 ERPNext refuses a *new* Item for two
+findings only: a code that duplicates an existing one after
+normalisation (`duplicate_code_normalised`) and a name that is just the
+code (`name_equals_code`, which a blank name also triggers). Say so when
+either appears on a proposed new Item, because saving it will fail until
+it is fixed. An Item that already exists is never refused. Every other
+finding, STOPs included, is advice and does not block.
 
 ## The tool
 

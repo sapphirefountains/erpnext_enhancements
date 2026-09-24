@@ -47,6 +47,17 @@ def approve_items(docname):
 
 
 def _create_item(row):
+	"""Create the Item a reviewer approved. The Item naming guard stays ON here, deliberately.
+
+	This is a person (the Stock Manager) approving a new Item inside a web request, which is
+	exactly what the guard (``inventory_enhancements.item_naming_guard``, v1.532.0; Nik,
+	2026-09-24, TASK-2026-02238) exists for, so ``ignore_naming_guard`` is not set. Know the
+	consequence before changing that: this uses the proposed name as BOTH code and name, so
+	every Item it would create is "name is just the code" and the guard refuses it, and
+	Approve Items stops with the guard's message. The way through is the SOP's own: create
+	the Item from the Item list with a real code and a descriptive name, then set it as the
+	row's Matched Item — a matched row never reaches this function.
+	"""
 	name = (row.proposed_item_name or row.description or "Item")[:140]
 	if frappe.db.exists("Item", name):
 		return name

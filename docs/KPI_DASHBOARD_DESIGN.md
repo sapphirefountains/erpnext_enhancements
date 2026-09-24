@@ -935,6 +935,21 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 - Crew clock-in on builds: have field crews clock in/out against Build project Tasks via the existing Time Kiosk PWA (requires extending Job Interval to accept build Tasks). No new data entry beyond the clock-in they already do for maintenance.
 
 ---
+## Product — item naming compliance (v1.337.0, split in v1.532.0)
+
+> The Product department's catalogue data-quality set is computed by `_product_metrics`; this catalog never had a Product section, so only the naming pair is written down here. Both are computed by the rules the Item Naming Audit report uses (`item_naming_rules.audit`), never by a second SQL definition of "compliant".
+
+### 1. Item Naming Compliance — 🟢 Auto
+- **Definition:** Live Items (no `(deleted)` suffix) whose naming findings leave a PASS verdict, as a share of all live Items. Key `item_naming_compliance_pct`.
+- **Target:** The backlog measure. Its KPI Target row is site data (`patches/seed_item_naming_kpi_target`).
+
+### 2. Item Naming Compliance (New Items) — 🟢 Auto
+- **Definition:** The same, restricted to Items created on or after `NAMING_GO_LIVE` (2026-10-01, POL-0602's effective date). The whole catalogue is audited first and then restricted, so a new Item named like an old one still counts as a collision. Key `item_naming_new_compliance_pct`.
+- **Why it matters:** Nik, 2026-09-24 (TASK-2026-02238): new Items are held to 100% while the backlog is worked down. Splitting the figure stops a clean week of new Items from hiding in a catalogue-wide number that moves a fraction of a point.
+- **Target:** 100%. Not published until the first Item is created on or after the go-live date, because 100% of nothing would read as the target met. No KPI Target row ships with the code.
+- **Refresh:** Nightly.
+
+---
 ## Operations (Inventory & Purchasing) — v1.530.0
 
 > Operations became the inventory dashboard on 2026-09-24, when maintenance moved to its own **Service** department (the next section, listed under Production in the dashboards sidebar). The trigger was store runs: 206 card transactions at Home Depot and Lowe's in the 12 months to September 2026 (2 of them returns), $16.3k, roughly four a week, mostly for small PVC fittings. The set answers three questions — are we making store runs, is the shelf stocked, and is the record true — and it is computed nightly by `_operations_metrics`. A **stocked item** is an Item with a positive reorder level, ERPNext's own marker and the one that drives its automatic Material Requests. Catalog items 9–12 below (devices, time sync, count accuracy, stockout risk) now belong here; the rest of the old Operations catalog is Service. Device compliance, unsynced time logs and project naming compliance stayed on Operations.
@@ -965,7 +980,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ### 5. Unpriced PO Lines (90d) — 🟢 Auto
 - **Definition:** Submitted Purchase Order lines dated in the last 90 days with a rate of 0.
 - **Why it matters:** A $0 line receives its stock at $0. 281 of 327 lines were $0 in the 90 days to 2026-09-24.
-- **Target:** 0 on new POs.
+- **Target:** 0 on new POs. Since v1.532.0 submitting an order with a $0 line shows an orange warning listing the lines (`po_price_check`, POL-0602 §4.6). It warns and never blocks.
 
 ### 6. Stocked Items Counted (90d) — 🟢 Auto
 - **Definition:** Share of stocked items with a submitted Stock Reconciliation entry in the stock ledger in the last 90 days. Count sessions finalize into Stock Reconciliations, and the opening stock went in as four, so the ledger is the one place every count shows up.

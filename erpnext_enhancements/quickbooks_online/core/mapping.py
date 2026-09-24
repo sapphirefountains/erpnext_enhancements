@@ -440,6 +440,14 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		}
 
 	doc = frappe.new_doc(erpnext_doctype)
+	if erpnext_doctype == "Item":
+		# An imported QuickBooks Item takes its code from the SKU, else from its Name, and its
+		# name from that same Name (_map_item) -- so a QBO item with no SKU is name == code by
+		# construction. The Item naming guard (v1.532.0) refuses that for a person creating an
+		# Item, and already skips every save outside a web request, which is how this sync
+		# normally runs. The dashboard's per-entity Sync button runs it INSIDE a request, and an
+		# import must not park or pass depending on which door started it.
+		doc.flags.ignore_naming_guard = True
 	apply_values(doc, values)
 	review = _insert_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
 	if review:

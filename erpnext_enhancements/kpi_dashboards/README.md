@@ -106,6 +106,20 @@ gap is uncategorized QuickBooks data, not an improvement, until bookkeeping says
 
 `tests/test_kpi_departments.py` checks that the seven places a department is named agree.
 
+## Item naming, split into backlog and new items (v1.532.0)
+
+Product carries two naming KPIs, both from `inventory_enhancements.item_naming_rules.audit`
+(the Item Naming Audit report's own call, so the three cannot disagree):
+`item_naming_compliance_pct` over the whole live catalogue, the backlog measure, and
+`item_naming_new_compliance_pct`, *Item Naming Compliance (New Items)*, over Items created on
+or after `item_naming_rules.NAMING_GO_LIVE` (2026-10-01, POL-0602's effective date). Nik set
+the new-items target at 100% on 2026-09-24 (TASK-2026-02238). The second audits the whole
+catalogue and then keeps the new rows (`restrict_to`), so a new Item named like an old one
+still counts as a collision. It is not published until the first such Item exists, since
+`add()` drops `None`. It reuses the backlog figure's audit but has its own `try`, so its
+failure cannot take the backlog figure or the Product department with it. No KPI Target row
+ships for it: targets are site data.
+
 ## Marketing spend and value-stream reporting (WP-4, v1.243.0)
 
 `marketing_spend_import.py` + the **Marketing Spend Rollup** and **Value Stream

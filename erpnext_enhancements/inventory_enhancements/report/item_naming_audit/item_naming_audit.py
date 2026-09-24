@@ -90,8 +90,9 @@ def _message(result):
 	corpus = result.get("corpus") or {}
 	notes = [
 		_("Sorted worst-first: STOP before FIX before NOTE. A STOP is a record that should not "
-		  "be transacted against; a FIX is one that is merely untidy. Nothing here is enforced — "
-		  "there is no Item hook and nothing blocks a save."),
+		  "be transacted against; a FIX is one that is merely untidy. None of this blocks a save of "
+		  "an existing Item; a new Item is refused only for a duplicate code or a name that is "
+		  "just its code."),
 	]
 
 	live = summary.get("live_rows") or 0

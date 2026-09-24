@@ -257,6 +257,12 @@ def _ensure_product_item(cfg):
 			"custom_source_configuration": cfg.name,
 		}
 	)
+	# The configurator allocates this part number itself and builds the name from it, so the
+	# Item naming guard (v1.532.0) has nothing to add: the "Item Code Taken" check above owns
+	# collisions on the code, and the name is generated, not typed. Component Items in
+	# ensure_component_items keep the guard -- their names are the product definition's
+	# human-written component names.
+	item.flags.ignore_naming_guard = True
 	item.insert()
 	return item_code
 

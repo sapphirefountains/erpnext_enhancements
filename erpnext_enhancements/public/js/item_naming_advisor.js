@@ -3,11 +3,13 @@
 // Targets: the "Item" doctype form.
 // Loaded via: hooks.py `doctype_js["Item"]` (alongside item.js).
 //
-// Advisory only, and that is a design decision rather than an omission: there is no Item
-// doc_event anywhere in this app, nothing here calls `frappe.validated = false`, and a save is
-// never interrupted. The SOP says compliance is procedural, and a third of the live catalogue
-// would fail the comma rule today — anything that blocked would fire constantly on legitimate
-// edits to records that were already there.
+// Advisory only, and that is a design decision rather than an omission: nothing here calls
+// `frappe.validated = false`, and this script never interrupts a save. The SOP says compliance
+// is procedural, and a third of the live catalogue would fail the comma rule today — anything
+// that blocked on the full rule set would fire constantly on legitimate edits to records that
+// were already there. The server's Item doc_event (v1.532.0, item_naming_guard.py) refuses a
+// NEW Item for two findings only: a duplicate code after normalisation, a name that is just
+// the code.
 //
 // Two round-trip costs worth knowing before editing:
 //   * `refresh` calls mode="record", which reads NO corpus. A full check on every form open

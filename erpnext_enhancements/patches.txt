@@ -1179,3 +1179,9 @@ erpnext_enhancements.patches.enable_ai_write_gate
 # and eleven sidebars, then deletes the three retired "Operations ..." block records once nothing
 # links to them. Each step commits alone; cannot raise, safe twice.
 erpnext_enhancements.patches.split_service_kpi_dashboard
+# v1.532.0: the Monday Item naming digest (Nik, 2026-09-24, TASK-2026-02238) goes to the Purchasing
+# Agent. Inventory Scanner Settings.naming_digest_recipients has no default on purpose, so this writes
+# parker.bailey@sapphirefountains.com ONLY where tabSingles has no row for the field (an edited or
+# emptied list is a decision and is kept) and never on a never-saved Single. Reads tabSingles by its own
+# shape, never db.get_value("Singles"). Direct write, no validate; cannot raise, safe twice.
+erpnext_enhancements.patches.seed_naming_digest_recipient

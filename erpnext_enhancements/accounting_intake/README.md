@@ -55,7 +55,11 @@ independent approvals into one and puts AI-extracted figures straight into the l
 Approval is deliberately split by competence, not merged into one button:
 
 1. **Stock Manager** — `approve_items`, approving any proposed new Items. An accountant
-   should not be inventing Item codes.
+   should not be inventing Item codes. Since v1.532.0 the Item naming guard applies here,
+   because a person is creating the Item: `_create_item` uses the proposed name as both code
+   and name, and the guard refuses a new Item whose name is just its code. Create the Item
+   from the Item list with a real code and a descriptive name, then set it as the line's
+   *Matched Item*; a matched line is never created again.
 2. **Accounts Manager** — `approve_document`, which moves the record to `Approved` and
    triggers posting.
 
