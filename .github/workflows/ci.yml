@@ -400,6 +400,34 @@ jobs:
       # installs a frappe stub.
       - name: Work-breakdown code anchors (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_feedback_code_anchors -v
+      # WI-079 slice 4, the Claude Code brief: the work-item headings in order, leaves grouped
+      # under their group Task, one acceptance box per open leaf plus the Bug line and the exact
+      # `Refs:` line, printed bare in its own block and checked with release_sync.refs_in itself
+      # (closed leaves kept off it, a backticked copy ignored), no requester, approver, docname
+      # or query string anywhere (sentinels planted, the group Task's origin note included),
+      # HTML stripped from Task descriptions (<pre> indentation kept), and the 60,000-character
+      # cap for any input with its cut order and a truthful note. The renderer is pure; its own
+      # step because it installs an empty `frappe` placeholder (code_anchors and release_sync
+      # import frappe at module level).
+      - name: Feedback Claude Code brief (bench-free, frappe placeholder)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_brief -v
+      # WI-079 slice 4, the status return: a CHANGELOG `Refs:` line moves feedback Tasks to
+      # Pending Review, only at or below the version tabInstalled Application records, never
+      # to Completed, only Tasks carrying custom_enhancement_request and only from
+      # Open/Working/Overdue (not an Overdue a person had canceled), only a Task of a request the
+      # line names; a second run changes nothing; the marker moves to installed only on a clean
+      # run and an absent marker replays everything; 500 save attempts a run, skips free. Also
+      # runs refs_in over the REAL CHANGELOG.md: a Refs line naming a Task fails the build
+      # unless SHIPPED_REFS lists it, so an example can never move a real Task. Its own step: a
+      # frappe stub whose savepoint really rolls back.
+      - name: Feedback release sync + mark_shipped (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_release_sync -v
+      # ERPNext's daily set_tasks_as_overdue exempts only Cancelled and Completed; this site's
+      # Canceled, Invoiced and Template Tasks were flipped to Overdue. The Task override returns
+      # early for finished statuses and leaves the core rule to everything else. Its own step:
+      # it stubs erpnext's Task base class.
+      - name: Task overdue guard (bench-free, erpnext stub)
+        run: python -m unittest erpnext_enhancements.tests.test_task_overdue_guard -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the

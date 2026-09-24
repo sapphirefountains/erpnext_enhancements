@@ -41,7 +41,19 @@ MODULE = APP / "product_feedback"
 
 #: Whitelisted endpoints the SPA's ``M`` map deliberately does not carry. Each needs a reason
 #: that survives somebody reading it.
-NOT_DIALLED_BY_THE_SPA: dict[str, str] = {}
+NOT_DIALLED_BY_THE_SPA: dict[str, str] = {
+	"claude_code_brief": (
+		"Desk only (WI-079 slice 4): the 'Claude Code Brief' button on the Enhancement Request "
+		"form, product_feedback/doctype/enhancement_request/enhancement_request.js, which calls it "
+		"by dotted path through frappe.call. The SPA has no copy affordance to put it behind yet."
+	),
+}
+
+#: The Desk scripts that dial an endpoint the SPA does not. Each exemption above must be dialled
+#: by one of them, or it is an endpoint nothing calls.
+DESK_CALLERS = {
+	"claude_code_brief": APP / "product_feedback" / "doctype" / "enhancement_request" / "enhancement_request.js",
+}
 
 
 def _tree():
@@ -153,6 +165,15 @@ class TestEndpointSurface(unittest.TestCase):
 		stale = sorted(set(NOT_DIALLED_BY_THE_SPA) - endpoints)
 		self.assertEqual(stale, [], "NOT_DIALLED_BY_THE_SPA names functions that no longer exist")
 
+	def test_every_exemption_is_dialled_by_its_desk_caller(self):
+		"""An endpoint the SPA does not dial is still dialled by something, by its full path."""
+		self.assertEqual(set(DESK_CALLERS), set(NOT_DIALLED_BY_THE_SPA))
+		for name, script in DESK_CALLERS.items():
+			with self.subTest(endpoint=name):
+				source = re.sub(r"/\*.*?\*/", "", script.read_text(encoding="utf-8"), flags=re.S)
+				source = re.sub(r"//.*$", "", source, flags=re.M)
+				self.assertIn(f'"erpnext_enhancements.api.feedback.{name}"', source)
+
 
 class TestOnlyOneWriterCreatesTasks(unittest.TestCase):
 	"""The boundary the whole feature exists to hold.
@@ -233,6 +254,40 @@ class TestOnlyOneWriterCreatesTasks(unittest.TestCase):
 				keys,
 				f"the Task built at task_writer.py:{node.lineno} does not stamp its request",
 			)
+
+
+class TestOnlyTheWriterShipsTasks(unittest.TestCase):
+	"""``mark_shipped`` is the second Task writer and lives in ``task_writer`` too (ADR 0016 §5).
+
+	``release_sync`` finds the Tasks a release shipped and hands each one over; it never moves
+	one itself. Asserted as: outside ``task_writer`` nothing in the scanned code names the
+	``Pending Review`` status as a value, and nothing calls ``set_value`` on a Task.
+	"""
+
+	WRITER = "task_writer.py"
+
+	def test_the_writer_really_names_the_shipped_status(self):
+		"""Control: the scan below must be able to see the constant it forbids elsewhere."""
+		self.assertIn("Pending Review", _code_strings((MODULE / self.WRITER).read_text(encoding="utf-8")))
+
+	def test_no_other_module_moves_a_task_to_pending_review(self):
+		offenders = []
+		for path in _scanned_files():
+			if path.name == self.WRITER:
+				continue
+			source = path.read_text(encoding="utf-8")
+			if "Pending Review" in _code_strings(source) or _task_set_values(source):
+				offenders.append(str(path.relative_to(APP)))
+		self.assertEqual(offenders, [], "Only task_writer.mark_shipped moves a feedback Task's status")
+
+	def test_release_sync_hands_tasks_to_the_writer(self):
+		source = (MODULE / "release_sync.py").read_text(encoding="utf-8")
+		calls = [
+			node
+			for node in ast.walk(ast.parse(source))
+			if isinstance(node, ast.Call) and _callee_name(node) == "mark_shipped"
+		]
+		self.assertTrue(calls, "release_sync no longer calls task_writer.mark_shipped")
 
 
 class WriterResultShape(unittest.TestCase):
@@ -357,6 +412,34 @@ def _task_constructions(source: str) -> list[int]:
 			elif name in ("get_doc", "dict", "_dict") and not node.args and doctype_kw:
 				lines.add(node.lineno)
 	return sorted(lines)
+
+
+def _code_strings(source: str) -> set[str]:
+	"""Every string constant in ``source`` that is code, not a docstring."""
+	tree = ast.parse(source)
+	docstrings = set()
+	for node in ast.walk(tree):
+		if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+			body = getattr(node, "body", None)
+			if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+				docstrings.add(id(body[0].value))
+	return {
+		node.value
+		for node in ast.walk(tree)
+		if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+	}
+
+
+def _task_set_values(source: str) -> list[int]:
+	"""Lines calling ``set_value("Task", ...)`` (``frappe.db.set_value`` and ``frappe.set_value``)."""
+	return [
+		node.lineno
+		for node in ast.walk(ast.parse(source))
+		if isinstance(node, ast.Call)
+		and _callee_name(node) == "set_value"
+		and node.args
+		and _is_task_const(node.args[0])
+	]
 
 
 def _strip_prose(source: str) -> str:

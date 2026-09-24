@@ -23,6 +23,10 @@ wired through ``doc_events``), not in this controller.
 import frappe
 from erpnext.projects.doctype.task.task import Task as BaseTask
 
+#: Statuses a Task never leaves by itself. Both spellings of Canceled: this site's
+#: Property Setter offers "Canceled", ERPNext's own code writes "Cancelled".
+FINISHED_STATUSES = ("Completed", "Canceled", "Cancelled", "Invoiced", "Template")
+
 
 class Task(BaseTask):
     """ERPNext Task controller override (installed via override_doctype_class).
@@ -56,6 +60,25 @@ class Task(BaseTask):
         simply calls ``super().on_update()``.
         """
         super().on_update()
+
+    def update_status(self):
+        """Never flip a finished Task to Overdue.
+
+        ERPNext v16's daily ``set_tasks_as_overdue`` calls this on every Task whose
+        status is not ``Cancelled`` or ``Completed``, and the core method sets
+        ``Overdue`` (with ``db_set``, so no Version records it) once
+        ``exp_end_date`` has passed. This site spells the status ``Canceled`` (a
+        Property Setter), and ``Invoiced`` and ``Template`` are finished too, so
+        ERPNext kept moving all three back to Overdue: on 2026-09-24 not one
+        Canceled, Invoiced or Template Task with a past end date was left, while
+        47 Overdue Tasks had a Version showing one of those statuses (more were
+        canceled from the Task Tree, which writes no Version). WI-079's release
+        sync would then have treated such a Task as open work and marked it
+        shipped.
+        """
+        if self.status in FINISHED_STATUSES:
+            return
+        super().update_status()
 
 @frappe.whitelist()
 def get_child_tasks_html(task_name):

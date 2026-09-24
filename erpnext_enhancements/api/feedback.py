@@ -18,6 +18,10 @@ The lifecycle, and where each part lives:
 3. ``save_proposal`` / ``create_tasks`` — the reviewer edits the proposal and confirms it.
    ``create_tasks`` is the human review in the sense ``api/training_ai.py`` established: the
    accept call is what stamps a named person against a model's output.
+4. ``claude_code_brief`` — once Tasks exist, the reviewer takes the work to a Claude Code
+   session as a brief in the work-item shape (WI-079 slice 4). A release whose CHANGELOG
+   section carries the brief's ``Refs:`` line moves those Tasks to ``Pending Review``:
+   :mod:`product_feedback.release_sync`, hourly.
 
 --------------------------------------------------------------------------------------
 Things this module is careful about
@@ -828,6 +832,129 @@ def create_tasks(name, rows=None):
         "complete": result["complete"],
         "rejected": rejected,
     }
+
+
+# -------------------------------------------------------------------------------- brief
+
+
+#: Fields read off each Task for the brief. `description` is the Text Editor's HTML; the pure
+#: renderer reduces it to plain text, so the bench-free test covers the stripping. `status` keeps
+#: a Completed, Canceled or Invoiced leaf off the brief's Refs line and acceptance boxes.
+_BRIEF_TASK_FIELDS = ["name", "subject", "description", "parent_task", "project", "is_group", "status"]
+
+#: A request writes at most MAX_PROPOSED_TASKS_CEILING (50) leaves plus their groups. This is a
+#: bound on a query, not a rule about requests.
+MAX_BRIEF_TASKS = 200
+
+
+@frappe.whitelist(methods=["POST"])
+def claude_code_brief(name):
+    """The Claude Code brief for a request whose Tasks exist (WI-079 slice 4, ADR 0016 §5).
+
+    Returns ``{"markdown": str, "data": dict}``: the work-item-shaped brief a reviewer hands to
+    a Claude Code session, and the object its ``## Data`` block holds. Reviewer-only.
+
+    **It needs Tasks, not a status.** A confirm that partly failed leaves the request in
+    ``Breakdown Ready`` with real Tasks on the board (``task_writer`` moves it to ``Tasks
+    Created`` only when nothing is outstanding), and those Tasks are worth a brief. A request
+    in ``Tasks Created`` whose Tasks were all deleted has nothing to build. So the check is the
+    Tasks themselves: ``created_task`` on the proposal, and every Task whose
+    ``custom_enhancement_request`` names the request, which is how the group Tasks are found.
+
+    **Not a Triton or assistant tool**, deliberately (ADR 0016 §5): an assistant tool is in
+    every employee's tool list and costs context on every chat. Rendering is
+    :func:`product_feedback.brief.render_brief`, which is pure; this only gathers its inputs,
+    and never reads ``requested_by`` or ``context_docname``.
+    """
+    _require_reviewer()
+    from erpnext_enhancements.product_feedback import brief, code_anchors
+
+    doc = frappe.get_doc(DOCTYPE, name)
+    tasks = _brief_tasks(doc)
+    if not tasks:
+        frappe.throw(
+            _("{0} has no Tasks yet. A brief is written from the Tasks a confirmed request created.").format(
+                doc.name
+            ),
+            frappe.ValidationError,
+        )
+
+    request = {
+        "name": doc.name,
+        "title": doc.title,
+        "request_type": doc.request_type,
+        "impact": doc.impact,
+        "description": doc.description,
+        "steps_to_reproduce": doc.steps_to_reproduce,
+        # Read whole here and reduced by the renderer (`code_anchors.parse_path`), the same rule
+        # the Triton payload uses: no query string, no record segment.
+        "context_url": doc.get("context_url") or "",
+        "context_doctype": doc.get("context_doctype") or "",
+    }
+    duplicates = [
+        {
+            "task": row.task,
+            "task_subject": row.task_subject,
+            "confidence": row.confidence,
+            "why": row.why,
+        }
+        for row in (doc.get("duplicate_candidates") or [])
+    ]
+    # `{}` when nothing could be anchored or the build failed; it never raises.
+    anchors = code_anchors.build_anchors(request["context_url"], request["context_doctype"])
+    # Design notes arrive with Design Review (WI-079 slice 5).
+    markdown, data = brief.render_brief(request, tasks, duplicates, anchors, [])
+    return {"markdown": markdown, "data": data}
+
+
+def _brief_tasks(doc):
+    """The request's Tasks, read **live**: the proposal's in its order, then every other Task
+    back-linked to it (the groups ``task_writer`` creates), oldest first.
+
+    A Task whose parent is not one of them (an existing epic the model nested it under) gets
+    ``parent_subject``, so the brief can name the heading it sits under.
+    """
+    names = []
+    for row in doc.get("proposed_tasks") or []:
+        task = (row.created_task or "").strip()
+        if task and task not in names:
+            names.append(task)
+    # Guarded like every other custom-field read: the column arrives with a fixture.
+    if frappe.db.has_column("Task", "custom_enhancement_request"):
+        for task in frappe.get_all(
+            "Task",
+            filters={"custom_enhancement_request": doc.name},
+            order_by="creation asc",
+            pluck="name",
+            limit=MAX_BRIEF_TASKS,
+        ):
+            if task not in names:
+                names.append(task)
+    if not names:
+        return []
+
+    live = {
+        t["name"]: t
+        for t in frappe.get_all(
+            "Task", filters={"name": ["in", names]}, fields=_BRIEF_TASK_FIELDS, limit=len(names)
+        )
+    }
+    rows = [dict(live[name]) for name in names if name in live]
+
+    outside = sorted(
+        {row.get("parent_task") for row in rows if row.get("parent_task") and row["parent_task"] not in live}
+    )
+    if outside:
+        subjects = {
+            t["name"]: t.get("subject") or ""
+            for t in frappe.get_all(
+                "Task", filters={"name": ["in", outside]}, fields=["name", "subject"], limit=len(outside)
+            )
+        }
+        for row in rows:
+            if row.get("parent_task") in subjects:
+                row["parent_subject"] = subjects[row["parent_task"]]
+    return rows
 
 
 # -------------------------------------------------------------------------------- gates

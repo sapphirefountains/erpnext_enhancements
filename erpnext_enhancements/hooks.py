@@ -1410,6 +1410,16 @@ scheduler_events = {
 		# 0/15 cron, with owner = scheduler and creation = flush time -- so it matches on the
 		# row's metadata (user, verb, path) inside the flush window. Idempotent per Error Log.
 		"erpnext_enhancements.product_feedback.capture_jobs.match_capture_error_logs",
+		# product_feedback release sync (WI-079 slice 4, ADR 0016 §5): a CHANGELOG section that
+		# carries `Refs: ER-..., TASK-...` moves each named Task to Pending Review with
+		# review_date +14 days and a comment naming the release -- only Tasks the feedback
+		# pipeline created, only from Open/Working/Overdue, never to Completed. Acts only on
+		# sections at or below the version tabInstalled Application records, which v16 writes
+		# near the end of a migrate that got that far (frappe/migrate.py, update_versions), so a
+		# half-installed deploy's CHANGELOG is never believed. Idempotent, and nothing is queued:
+		# a deploy FLUSHDB costs an hour, never a transition. The marker is
+		# Product Feedback Settings.release_sync_last_version, absent = process everything.
+		"erpnext_enhancements.product_feedback.release_sync.sync_shipped_tasks",
 		# workforce (v1.480.0): close clock-ins nobody clocked out of. An interval still
 		# Open/Paused auto_close_after_hours (Time Kiosk Settings, 14) after it started
 		# is closed at the pause time, else the last location fix, else start + limit,
