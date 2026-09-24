@@ -81,9 +81,14 @@ def _proposed_code_and_name(row):
 
 
 def _existing_item(code, name):
-	"""An Item this line already names, by code, by its name used as a code, or by name."""
+	"""An Item this line already names, by code, by its name used as a code, or by name.
+
+	The filter-dict form of ``db.exists`` on purpose: given a bare name equal to the doctype,
+	v16 returns it unchecked (the Single shortcut), so ``exists("Item", "Item")`` -- reachable
+	through the ``"Item"`` name fallback -- would claim an Item that does not exist.
+	"""
 	for candidate in dict.fromkeys((code, name)):
-		if frappe.db.exists("Item", candidate):
+		if frappe.db.exists("Item", {"name": candidate}):
 			return candidate
 	return frappe.db.get_value("Item", {"item_name": name}, "name")
 
@@ -97,7 +102,10 @@ def _naming_problems(rows):
 	rule, is what lets the refusal name the intake line and the field to fix instead of an
 	Item form nobody opened, and it refuses the whole batch before the first insert rather
 	than part way through. Codes approved earlier in the same batch count as existing, the way
-	they would at the second insert. Silent before the guard is in force.
+	they would at the second insert. The same code typed on two lines with different names is
+	refused too: the second insert would silently link to the first line's new Item, which is
+	right for one part bought twice and wrong for a mistyped code. Silent before the guard is
+	in force.
 	"""
 	from erpnext_enhancements.inventory_enhancements import item_naming_guard as guard
 	from erpnext_enhancements.inventory_enhancements import item_naming_rules as rules
@@ -105,16 +113,28 @@ def _naming_problems(rows):
 	if not rows or not guard.in_force():
 		return []
 	existing = frappe.get_all("Item", pluck="name")
+	claimed = {}
 	problems = []
 	for row in rows:
 		code, name = _proposed_code_and_name(row)
 		if _existing_item(code, name):
 			continue
+		label = _("Line {0} ({1}):").format(row.idx, html.escape(name))
+		earlier = claimed.get(code)
+		if earlier and earlier[1] != name:
+			problems.append(
+				_(
+					"{0} has the same Proposed Item Code as line {1} ({2}), <b>{3}</b>. One code makes "
+					"one Item: if they are the same part, give both lines the same name; if not, give "
+					"this line its own code."
+				).format(label, earlier[0], html.escape(earlier[1]), html.escape(code))
+			)
+			continue
 		findings = rules.blocking_findings(code, name, existing)
 		if not findings:
 			existing.append(code)
+			claimed.setdefault(code, (row.idx, name))
 			continue
-		label = _("Line {0} ({1}):").format(row.idx, html.escape(name))
 		if not (row.get("proposed_item_code") or "").strip():
 			problems.append(
 				_(

@@ -105,7 +105,9 @@
                 const statusClass = status ? `status-${status}` : "";
                 const trend = fmtTrend(v.trend_pct);
                 const target =
-                    v.target_value !== null && v.target_value !== undefined && v.target_value !== 0
+                    // A zero target is shown when it grades (e.g. "0 unpriced PO lines"); an
+                    // ungraded 0 is how an unset target has always come through.
+                    v.target_value !== null && v.target_value !== undefined && (v.target_value !== 0 || status)
                         ? `<span class="kpi-target">${__("Target")}: ${esc(String(v.target_value))}</span>`
                         : "<span></span>";
                 const stale = v.is_stale ? `<span class="kpi-stale">${__("stale source")}</span>` : "";

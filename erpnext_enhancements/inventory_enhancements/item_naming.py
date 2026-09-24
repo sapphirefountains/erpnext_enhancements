@@ -8,8 +8,9 @@ Nothing here blocks a save: the SOP's compliance is procedural (*"nothing in thi
 enforced by the system"*, §3), and a third of the live catalogue would fail the comma rule
 today, so anything that blocked on the full rule set would fire constantly on legitimate
 edits to records that were already there. The one exception is narrow and lives elsewhere:
-since v1.532.0 :mod:`item_naming_guard` refuses a *new* Item for two findings only (a code
-duplicating an existing one after normalisation, a name that is just the code).
+from 2026-10-01 (POL-0602; shipped in v1.532.0) :mod:`item_naming_guard` refuses a *new*
+Item for two findings only (a code duplicating an existing one after normalisation, a name
+that is just the code).
 
 --------------------------------------------------------------------------------------
 Why this reads the whole corpus instead of a narrowed query

@@ -957,7 +957,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ### 1. Store Runs (30d) — 🟡 Semi
 - **Definition:** Count of unscheduled counter purchases from Suppliers ticked *Store-Run Vendor*, in the last 30 days. Today: QuickBooks card purchases (vendor recovered from the raw payload's `EntityRef`, type Vendor, refunds excluded). After cutover also: submitted Purchase Receipts and Purchase Invoices from those suppliers with no PO behind them.
 - **Why it matters:** A run costs drive time and a stopped crew, not just the parts. Every run for a stocked item is a reorder level set too low; every repeat run for an unstocked item is a candidate for the shelf.
-- **Target:** 4 or fewer a month by 2027-01-01 (proposed; set with owner).
+- **Target:** 4 or fewer a month, with 2027-01-01 as the date to reach it. Approved by Nik on 2026-09-24 (TASK-2026-02238) and seeded as a KPI Target row by `patches/seed_inventory_kpi_targets` (v1.532.0). The row grades from the day it lands, so the card reads Bad until the kit and the buy day bring the count down; the date is in the row's notes.
 - **Data source:** Supplier.custom_store_run_vendor; QuickBooks Sync Mapping + QuickBooks Raw Payload + Journal Entry; Purchase Receipt; Purchase Invoice.
 - **Implementation:** `_store_runs` in `kpi_dashboards/snapshots.py`. Semi because a person decides which suppliers are counters. Not published until one is ticked — 0 by construction would read as the goal met.
 - **Refresh:** Nightly. As current as QuickBooks categorization: uncategorized card charges are invisible to it.
@@ -969,13 +969,13 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ### 3. Stocked Items Below Reorder / Out of Stock — 🟢 Auto
 - **Definition:** Items with a positive reorder level whose total on-hand is below it / is zero or less.
 - **Why it matters:** The leading indicator for the next store run.
-- **Target:** 5 or fewer below reorder; 0 out of stock.
+- **Target:** 5 or fewer below reorder; 0 out of stock. Approved 2026-09-24 and seeded by `patches/seed_inventory_kpi_targets` (v1.532.0).
 - **Data source:** Item Reorder, Bin. *Below Reorder* moved here from Product unchanged (key `items_below_reorder`).
 
 ### 4. Stock at Placeholder Cost — 🟢 Auto
 - **Definition:** Bin rows holding stock at a valuation rate of $0.01 or less.
 - **Why it matters:** The 2026-09-23 opening stock went in at a $0.01 placeholder, so 439 of 448 stocked rows were valued at a cent and the store read $787. Job costs and COGS drawn from that stock are wrong until it is costed.
-- **Target:** 0 by 2026-11-01 (proposed).
+- **Target:** 0, with 2026-11-01 as the date to reach it. Approved 2026-09-24 and seeded by `patches/seed_inventory_kpi_targets` (v1.532.0); it reads Bad until the opening stock is costed (TASK-2026-02214), and the date is in the row's notes.
 
 ### 5. Unpriced PO Lines (90d) — 🟢 Auto
 - **Definition:** Submitted Purchase Order lines dated in the last 90 days with a rate of 0.

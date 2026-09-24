@@ -31,7 +31,8 @@ TARGETS = (
 		4,
 		"count",
 		"Lower is better",
-		"About one planned counter trip a week. 202 in the 12 months to 2026-09-24, roughly 17 a month.",
+		"About one planned counter trip a week, to be reached by 2027-01-01. 202 in the 12 months to "
+		"2026-09-24, roughly 17 a month, so it grades Bad until then.",
 	),
 	(
 		"Operations",
@@ -67,7 +68,8 @@ TARGETS = (
 		0,
 		"count",
 		"Lower is better",
-		"Opening stock went in at a $0.01 placeholder rate on 2026-09-23; every line needs a real cost.",
+		"Opening stock went in at a $0.01 placeholder rate on 2026-09-23; every line needs a real "
+		"cost, to be reached by 2026-11-01 (costing with Lisa, TASK-2026-02214).",
 	),
 	(
 		"Operations",

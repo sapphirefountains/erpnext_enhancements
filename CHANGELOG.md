@@ -64,8 +64,10 @@ broke the schema unless somebody opened the Item Naming Audit.
     allocates the part number and the person generating a configuration cannot change it. Its name
     is `<product> <code>`, which can never read as just the code, so the flag's one real effect is
     to exempt configurator part numbers from the case- and punctuation-blind duplicate check, on
-    purpose: its "Item Code Taken" check still refuses an exact clash, and a near-clash reaches
-    Monday's digest.
+    purpose: its "Item Code Taken" check still refuses an exact clash. Nothing reports a
+    configurator near-clash automatically, since the digest's `audit` compares names across
+    records and never codes; the Item form's *Naming → Check naming* and the MCP tool show one on
+    request.
   - The `quickbooks_online.core.mapping` create path sets it for Items. A QuickBooks Item with no
     SKU gets its code from its Name, so name equals code by construction. The dashboard's
     per-entity Sync button (`api.sync_entity`) runs that path inside a request, and an import must
@@ -80,8 +82,12 @@ broke the schema unless somebody opened the Item Naming Audit.
     `_naming_problems` checks every approved line with `blocking_findings` before the first insert.
     A line with no code (its name would be its code) or a near-duplicate code refuses the whole
     batch with one message naming each line and what to fix, so nothing is half-created. Codes
-    approved earlier in the batch count as existing. A line whose code or name already matches an
-    Item links to it, as before. Document Intake had no rows on production on 2026-09-24.
+    approved earlier in the batch count as existing, and the same code typed on two lines with
+    different names is refused, because the second line would otherwise link to the first line's
+    new Item without a word. A line whose code or name already matches an Item links to it, as
+    before; the lookup uses `db.exists`'s filter form, because v16 returns `exists("Item", "Item")`
+    unchecked and the `"Item"` name fallback could reach it. Document Intake had no rows on
+    production on 2026-09-24.
   - The `water_engineering.setup` catalogue seeds keep the guard. They run from `after_migrate`,
     where it is skipped.
   - Tests and patches run under `in_test` and `in_patch`.
@@ -120,7 +126,9 @@ broke the schema unless somebody opened the Item Naming Audit.
   ("go with your recommendations", TASK-2026-02238). Operations: `store_runs_30` 4 (the 12
   months to 2026-09-24 had 202, about 17 a month), `items_below_reorder` 5, `stocked_items_out`
   0, `stocked_items_counted_90` 100%, `placeholder_cost_stock_lines` 0 and `unpriced_po_lines_90`
-  0. Product: `item_naming_new_compliance_pct` 100%. All Daily. Without a target a KPI renders as
+  0. Product: `item_naming_new_compliance_pct` 100%. All Daily. The store-run target is to be
+  reached by 2027-01-01 and the placeholder-cost one by 2026-11-01; `_targets` has no notion of a
+  date, so both grade from the day they land and each row's notes carry its date. Without a target a KPI renders as
   an ungraded grey number, the failure `seed_item_naming_kpi_target` (v1.337.0) avoided for the
   backlog figure. These are the business's numbers, so a row that exists, seeded earlier or set on
   purpose, is never touched. Each row commits alone; the patch cannot raise.
@@ -145,6 +153,10 @@ broke the schema unless somebody opened the Item Naming Audit.
   word. PLMB, BRUSH and BOTTLE stay unapproved while TASK-2026-02215 is open.
   `docs/item-naming-schema.md` Appendix A records the ruling as a dated **Decided** note. The SOP's
   own tables are left as written.
+- **The KPI cockpit shows a zero target when it grades.** `kpi_cockpit.js` hid every
+  `target_value` of 0, because an unset target used to come through as 0. Three of the seeded
+  targets are 0 (out of stock, placeholder-cost lines, unpriced PO lines), so their cards would
+  turn red with no target shown. A 0 is now shown when the value carries a status.
 - Statements that "there is no Item doc_event" or that "nothing blocks a save" were corrected
   where they are now false: `item_naming_rules`, `item_naming`, the Item form script's header, the
   `hooks.py` annotations, the MCP tool's description and README row, the AI-gate comment, the

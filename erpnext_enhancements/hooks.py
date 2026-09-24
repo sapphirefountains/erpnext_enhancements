@@ -224,7 +224,8 @@ doctype_js = {
 		"public/js/item.js",
 		# v1.337.0 -- the naming advisor. Advisory only: a headline on refresh (record-only
 		# checks, no corpus read) plus two on-demand buttons; nothing in the script blocks a
-		# save. Since v1.532.0 the server refuses a NEW Item for two of its findings only --
+		# save. From 2026-10-01 (POL-0602; shipped in v1.532.0) the server refuses a NEW Item
+		# for two of its findings only --
 		# see the "Item" doc_event (inventory_enhancements.item_naming_guard).
 		"public/js/item_naming_advisor.js",
 		"public/js/water_engineering/pump_curve_chart.js",

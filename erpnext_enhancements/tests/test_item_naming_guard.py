@@ -26,7 +26,14 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1]
 HOOKS = APP / "hooks.py"
 
-STATE = {"existing": [], "get_all_calls": 0, "today": "2026-10-01", "names": {}}
+STATE = {
+	"existing": [],
+	"get_all_calls": 0,
+	"today": "2026-10-01",
+	"names": {},
+	"inserted": [],
+	"intake": None,
+}
 guard = None
 review = None
 
@@ -51,7 +58,28 @@ def _install_frappe_stub():
 
 	def exists(doctype, name=None):
 		assert doctype == "Item", doctype
-		return name in STATE["existing"]
+		if isinstance(name, str) and name == doctype:
+			# v16's Single shortcut: `exists(dt, dn)` returns dn unchecked when dn == dt.
+			return name
+		key = name.get("name") if isinstance(name, dict) else name
+		return key if key in STATE["existing"] else None
+
+	class _NewItem:
+		def __init__(self, data):
+			self.data = data
+			self.name = data["item_code"]
+			self.flags = types.SimpleNamespace()
+
+		def insert(self, ignore_permissions=False):
+			STATE["inserted"].append(self.data)
+			STATE["existing"].append(self.name)
+
+	def get_doc(arg, name=None):
+		if isinstance(arg, dict):
+			assert arg["doctype"] == "Item", arg
+			return _NewItem(arg)
+		assert arg == "Document Intake", arg
+		return STATE["intake"]
 
 	def get_value(doctype, filters, fieldname):
 		assert doctype == "Item" and fieldname == "name", (doctype, fieldname)
@@ -61,6 +89,9 @@ def _install_frappe_stub():
 	frappe.get_all = get_all
 	frappe._ = lambda s: s
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
+	frappe.get_doc = get_doc
+	frappe.get_roles = lambda *a: ["Stock Manager"]
+	frappe.session = types.SimpleNamespace(user="stock.manager@example.com")
 	frappe.db = types.SimpleNamespace(exists=exists, get_value=get_value)
 	frappe.flags = types.SimpleNamespace()
 	frappe.local = types.SimpleNamespace(request=object())
@@ -85,6 +116,7 @@ def setUpModule():
 
 	guard = mod
 	review = intake_review
+	review.log_intake = lambda *a, **k: None
 
 
 class _Item:
@@ -117,6 +149,8 @@ class _Base(unittest.TestCase):
 		STATE["get_all_calls"] = 0
 		STATE["today"] = "2026-10-01"
 		STATE["names"] = {}
+		STATE["inserted"] = []
+		STATE["intake"] = None
 
 	def assertRefused(self, doc):
 		with self.assertRaises(StubThrow) as ctx:
@@ -242,6 +276,12 @@ class _Row:
 		self.proposed_item_name = name
 		self.description = name
 		self._data = {"proposed_item_code": code}
+		self.new_item_proposed = 1
+		self.item_review_status = "Approved"
+		self.matched_item = None
+		self.proposed_item_group = "PVC Fittings"
+		self.proposed_uom = "Unit"
+		self.is_stock_item = 1
 
 	def get(self, key, default=None):
 		return self._data.get(key, default)
@@ -295,6 +335,25 @@ class IntakeNamingProblemsTest(_Base):
 		STATE["today"] = "2026-09-30"
 		self.assertEqual(review._naming_problems([_Row(1, self.NAME)]), [])
 
+	def test_the_same_code_on_two_lines_with_different_names_is_refused(self):
+		"""Framework review: the second insert would link to the first line's new Item, silently."""
+		problems = review._naming_problems(
+			[_Row(1, self.NAME, code="ACME-1"), _Row(2, 'CAP, SOC, PVC, 2", SCH40', code="ACME-1")]
+		)
+		self.assertEqual(len(problems), 1)
+		self.assertIn("Line 2", problems[0])
+		self.assertIn("same Proposed Item Code as line 1", problems[0])
+
+	def test_the_same_part_on_two_lines_is_one_item(self):
+		self.assertEqual(
+			review._naming_problems([_Row(1, self.NAME, code="ACME-1"), _Row(4, self.NAME, code="ACME-1")]),
+			[],
+		)
+
+	def test_a_name_equal_to_the_doctype_is_not_an_existing_item(self):
+		"""v16 returns `exists("Item", "Item")` unchecked; the "Item" fallback name must not link to it."""
+		self.assertIsNone(review._existing_item("Item", "Item"))
+
 	def test_the_code_falls_back_to_the_name(self):
 		self.assertEqual(review._proposed_code_and_name(_Row(1, self.NAME)), (self.NAME, self.NAME))
 		self.assertEqual(
@@ -340,6 +399,51 @@ class WiringTest(unittest.TestCase):
 		self.assertIn(
 			"erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item", handlers
 		)
+
+
+class _Intake:
+	def __init__(self, rows):
+		self.line_items = rows
+		self.status = "Needs Item Review"
+		self.item_reviewed_by = None
+		self.saved = False
+
+	def save(self, ignore_permissions=False):
+		self.saved = True
+
+
+class ApproveItemsTest(_Base):
+	"""The insert itself: the proposed code reaches the Item, and a refusal comes before any insert.
+
+	Fidelity review: without these, reverting ``item_code`` to the name, or moving the check
+	inside the insert loop, would pass every other test here.
+	"""
+
+	NAME = 'COUPLING, SOC, PVC, 2", SCH40'
+
+	def test_the_item_gets_the_proposed_code_and_the_name(self):
+		self.assertEqual(review._create_item(_Row(1, self.NAME, code="429-020")), "429-020")
+		self.assertEqual(len(STATE["inserted"]), 1)
+		self.assertEqual(STATE["inserted"][0]["item_code"], "429-020")
+		self.assertEqual(STATE["inserted"][0]["item_name"], self.NAME)
+
+	def test_one_bad_line_refuses_the_batch_before_any_insert(self):
+		STATE["intake"] = _Intake([_Row(1, self.NAME, code="429-020"), _Row(2, 'TEE, SOC, PVC, 2", SCH40')])
+		with self.assertRaises(StubThrow) as ctx:
+			review.approve_items("DI-0001")
+		self.assertEqual(STATE["inserted"], [])
+		self.assertFalse(STATE["intake"].saved)
+		self.assertIn("Line 2", ctx.exception.msg)
+		self.assertIn("Nothing was created", ctx.exception.msg)
+
+	def test_a_clean_batch_creates_each_item_and_advances(self):
+		rows = [_Row(1, self.NAME, code="429-020"), _Row(2, 'TEE, SOC, PVC, 2", SCH40', code="401-020")]
+		STATE["intake"] = _Intake(rows)
+		out = review.approve_items("DI-0001")
+		self.assertEqual(out["created"], 2)
+		self.assertEqual([d["item_code"] for d in STATE["inserted"]], ["429-020", "401-020"])
+		self.assertEqual([r.matched_item for r in rows], ["429-020", "401-020"])
+		self.assertEqual(STATE["intake"].status, "Needs Review")
 
 
 if __name__ == "__main__":

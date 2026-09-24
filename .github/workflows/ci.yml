@@ -249,8 +249,9 @@ jobs:
       # The new-Item naming guard (v1.532.0), the app's first Item doc_event. Its own step
       # because it installs a frappe stub in setUpModule, and the suite above must stay
       # stub-free. It guards the skips more than the refusal: an existing Item, a Data Import,
-      # a migrate, a background job (the QuickBooks sync creates Items on the scheduler) and an
-      # in-request caller that generates the name from the code must all save. Get one wrong
+      # a migrate, a background job (the QuickBooks sync creates Items on the scheduler), a
+      # variant, any save before the 2026-10-01 go-live, and an in-request caller whose user
+      # cannot choose the code or name must all save. Get one wrong
       # and a legitimate save fails with a naming message nobody at that door can act on.
       - name: Item naming guard (two findings refuse a NEW Item; every skip holds)
         run: python -m unittest erpnext_enhancements.tests.test_item_naming_guard -v
@@ -266,7 +267,7 @@ jobs:
       # department's snapshot publishes, graded the same way -- a misspelt key grades nothing, silently.
       - name: Inventory seed patches (digest recipient, approved KPI targets)
         run: python -m unittest erpnext_enhancements.tests.test_inventory_seed_patches -v
-      # Its own step for the same reason as the one above: this suite imports no frappe at
+      # Its own step for the same reason as the Item naming schema step: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.
       #
