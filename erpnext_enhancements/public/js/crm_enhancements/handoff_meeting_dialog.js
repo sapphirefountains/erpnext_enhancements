@@ -17,8 +17,12 @@
  * type. Both halves matter — picking stops
  * `firstname.lastname@sapphirefountains.com` being mistyped into a silent
  * non-delivery, and typing is how a one-off attendee (a subcontractor, a
- * customer's PM) gets into the room at all. Anything typed that is not an
- * address is flagged before submit, because the server would drop it silently.
+ * customer's PM) gets into the room at all. Typed text that is not an address
+ * is flagged before submit, because the server's _dedupe() drops it. That check
+ * uses the browser's email regex, which lets a few odd shapes through that the
+ * server then rejects (an accented or quoted local part, an IP literal, a
+ * hyphen at the edge of a domain label), so the server also returns what it
+ * dropped as `not_invited` and the dialog says so after booking (1.529.1).
  *
  * Why typing works without `ignore_validation` (checked against v16, 1.529.0):
  * MultiSelect.validate does return "" for a value it doesn't recognise, but
@@ -181,8 +185,9 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 					}
 
 					// The server's _dedupe() drops anything that is not an address,
-					// without a word, so a typo would simply not be invited. Say so
-					// here instead, while it can still be fixed.
+					// so a typo would simply not be invited. Catch what the browser
+					// regex can here, while it can still be fixed; the server's
+					// `not_invited` covers the rest after booking.
 					const invalid = attendees.filter(function (address) {
 						return !frappe.utils.validate_type(address, "email");
 					});
@@ -203,7 +208,22 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 						duration_minutes: values.duration_minutes,
 						attendees: attendees,
 					})
-						.then(() => dialog.hide())
+						.then((result) => {
+							dialog.hide();
+							// What the server dropped as not an address. The meeting is
+							// booked either way; this is so nobody assumes they were invited.
+							const not_invited = (result && result.not_invited) || [];
+							if (not_invited.length) {
+								frappe.msgprint({
+									title: __("Not invited"),
+									message: __(
+										"The meeting was booked, but these are not valid email addresses and were left off the invite: {0}",
+										[frappe.utils.escape_html(not_invited.join(", "))]
+									),
+									indicator: "orange",
+								});
+							}
+						})
 						// Re-enable rather than leaving a dead button: a failed send is
 						// usually a fixable address, and the user should get to retry
 						// without rebuilding the whole dialog.
