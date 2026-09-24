@@ -5,7 +5,7 @@
  * Why the page scans for itself rather than sending people back to the phone's camera app:
  * iOS asks for camera permission again on every page load, and a technician working down a
  * shelf would answer that prompt once per bin. Inside the page it is asked once per visit.
- * The same reason is why `app.js` never changes the URL.
+ * The same reason is why the page never changes the URL: its history entries carry none (nav.js).
  *
  * Two decoders:
  *
@@ -23,7 +23,7 @@
  */
 
 import { append, button, el, icon, input } from "./dom.js";
-import { buzz, sheet } from "./ui.js";
+import { buzz, notOurs, sheet } from "./ui.js";
 
 const FORMATS = ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "upc_e"];
 
@@ -360,9 +360,10 @@ export function openScanner(opts) {
 
 	// A scanner gun "types" into whatever has focus. Keep the camera view clear of the phone's
 	// keyboard by not focusing the box up front, and move focus into it on the first keystroke
-	// instead; the rest of the code and its Enter then land in the box.
+	// instead; the rest of the code and its Enter then land in the box. Not a key typed into
+	// something over the page, such as the report form (`notOurs`).
 	function onKeydown(ev) {
-		if (finished || ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+		if (finished || ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey || notOurs(ev.target)) return;
 		if (ev.key && ev.key.length === 1 && document.activeElement !== codeInput) codeInput.focus();
 	}
 

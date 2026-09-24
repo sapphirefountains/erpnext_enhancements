@@ -17,7 +17,9 @@
  * Layout: a state-coloured hero (idle / working / break / day complete), one
  * panel per bottom tab (Clock · My Day · Map · Settings) and a tab bar. The
  * Clock panel lives here; the other three are modules on window.KioskViews that
- * receive a small context object (api, state, pickers) from init().
+ * receive a small context object (api, state, pickers) from init(). A tab tap is
+ * a browser-history entry, so Back walks the tabs (KioskUI.nav); the clock state
+ * never is one.
  *
  * Every interruption is a KioskUI bottom sheet (ui.js) — the project picker,
  * the break presets, the off-site warning, the shift summary, the maintenance
@@ -327,9 +329,12 @@
   // -- Tabs ----------------------------------------------------------------
   function views() { return window.KioskViews || {}; }
 
-  function setTab(name) {
+  // fromHistory: Back / Forward (or boot) is showing a tab its entry already
+  // records, so nothing is pushed. A tap pushes one, so Back returns here.
+  function setTab(name, fromHistory) {
     var prev = app.tab;
     app.tab = name;
+    if (!fromHistory && UI.nav) UI.nav.go(name);
     TABS.forEach(function (t) {
       var panel = $('tk-panel-' + t.id);
       var btn = $('tk-tab-' + t.id);
@@ -1748,7 +1753,13 @@
         try { v[t.id].mount($('tk-panel-' + t.id), ctx); } catch (e) { /* a broken view must not take the clock down */ }
       }
     });
-    setTab('clock');
+    // Browser Back / Forward (ui.js, "History"). The entry the page loaded into
+    // is stamped as Clock, never pushed, and a traversal shows its tab through
+    // setTab(name, true) so it pushes nothing of its own.
+    // Time Kiosk Settings "Turn Off Browser Back in the Kiosk" leaves history alone: no
+    // start, no popstate listener, and ui.js then pushes nothing for sheets either.
+    if (UI.nav && !(+SETTINGS.disable_browser_back)) UI.nav.start('clock', TABS.map(function (t) { return t.id; }), function (name) { setTab(name, true); });
+    setTab('clock', true);
 
     setDraftProject(null);
     loadOptions();

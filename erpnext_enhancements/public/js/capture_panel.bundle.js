@@ -21,12 +21,15 @@
  * `tests/test_feedback_capture_surface.py` forbids that prefix in the action.
  */
 
-import { openPanel, sendSavedDrafts, clearSavedDrafts, offerSavedDraftsOnLoad } from "./capture/panel.js";
+import { openPanel, isPanelOpen, sendSavedDrafts, clearSavedDrafts, offerSavedDraftsOnLoad } from "./capture/panel.js";
 
 try {
 	if (typeof window !== "undefined") {
 		window.ee_capture_panel = {
 			open: openPanel,
+			// Pages with history of their own leave `popstate` to the panel while this is true.
+			// They read it through `window.ee_capture.isOpen()`, which is false before this loads.
+			isOpen: isPanelOpen,
 			// Not called by the recorder. For surfaces that want to offer or discard saved
 			// reports themselves — e.g. clearing them when somebody signs out of the kiosk.
 			sendDrafts: sendSavedDrafts,

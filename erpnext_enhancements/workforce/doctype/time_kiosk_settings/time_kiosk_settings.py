@@ -56,6 +56,9 @@ DEFAULTS = {
 	"min_photos_per_interval": 1,
 	"allow_photo_skip": 1,
 	"require_skip_reason": 1,
+	# The off switch for browser Back/Forward in the kiosk (v1.534.0). 0 is also what a site that
+	# never saved the field reads, so no backfill is needed.
+	"disable_browser_back": 0,
 }
 
 

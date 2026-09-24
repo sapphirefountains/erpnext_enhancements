@@ -25,6 +25,10 @@
  * owns the keyboard. `ask()` and `askText()` are the promise-shaped replacements
  * for confirm() and prompt().
  *
+ * HISTORY. Browser Back / Forward walk the bottom tabs and close sheets, one per
+ * Back, through the same dismiss path as Escape (`nav`, below the sheets). No
+ * URL ever changes, and the clock state is never an entry.
+ *
  * Style: ES5 (var, function), promises only — this runs on older Android
  * WebViews in the field. No optional chaining, no class fields, no arrows.
  */
@@ -307,6 +311,7 @@
         closed = true;
         var idx = sheetStack.indexOf(handle);
         if (idx !== -1) sheetStack.splice(idx, 1);
+        queueReconcile();
         layer.classList.remove('is-open');
         var done = function () {
           if (layer.parentNode) layer.parentNode.removeChild(layer);
@@ -334,6 +339,7 @@
 
     host.appendChild(layer);
     sheetStack.push(handle);
+    queueReconcile();
     document.body.style.overflow = 'hidden';
     // Next frame so the transform transition runs from the off-screen state.
     requestAnimationFrame(function () {
@@ -350,6 +356,219 @@
 
   function closeAllSheets() {
     sheetStack.slice().reverse().forEach(function (s) { s.close('programmatic'); });
+  }
+
+  // -- History: browser Back / Forward --------------------------------------
+  //
+  // The kiosk is one document at one URL, and until this existed it owned one
+  // history entry whatever was on screen: Android's Back closed the installed
+  // app from any tab, with any sheet open, and took what was typed in it along.
+  //
+  //   * A TAB change is an entry, pushed from the tap (go(), from app.js
+  //     setTab). Back returns to the previous tab, Forward restores it.
+  //   * An open SHEET STACK is one more entry over its tab's: the marker. Back
+  //     pops it and closes the top sheet with close('dismiss'), the path Escape
+  //     takes, which every gate already reads as "cancel" (ask, askText, the
+  //     photo gate, the maintenance warning, the attachments nudge). While
+  //     sheets remain the marker goes back on, so each Back closes exactly one.
+  //     A `dismissible: false` sheet stays, and so does its marker.
+  //   * Nothing else. Idle / working / break / day complete are the server's,
+  //     so Back can neither undo nor repeat a clock action, and never reopens a
+  //     sheet (a Forward onto a spent marker steps straight back off it).
+  //
+  // Rules, each paid for somewhere:
+  //   - No URL, ever: every call is two-argument. iOS Safari asks for camera
+  //     and location again when the URL changes, and kiosk-sw.js serves the
+  //     offline shell for the exact path /kiosk. So a reload lands on Clock.
+  //   - The boot entry is REPLACED (start()) and nothing is pushed on load:
+  //     Back from the first entry must still leave the page, and Chrome skips
+  //     entries a page adds before anyone has touched it.
+  //   - Sheets replace each other in bursts (picker row -> confirm, photo gate
+  //     -> "Why no photo?", detail -> edit), synchronously or in a microtask.
+  //     So the history is reconciled on a macrotask, where a burst is a stack
+  //     that never emptied. The marker is consumed with ONE back(), only once
+  //     the last sheet has gone and the marker is still the current entry, and
+  //     the popstate it causes is counted off, never read as the person's Back.
+  //     Nothing is pushed until it has landed: back() is asynchronous, and a
+  //     push in between would move the entry it is aimed at.
+  //   - Only a tap adds an entry. Chrome's history intervention lets each push
+  //     use up the activation of the tap before it, and a push without one
+  //     marks every entry of this page skippable until the next tap, so the
+  //     next Back leaves the app from wherever it is. Hence a tab entry is
+  //     pushed only for a tab tap (nav.tapped, even when the push has to wait
+  //     for a back() in flight), and a screen that disagrees with its entry for
+  //     any other reason gets that entry re-stamped, never a new one. The
+  //     marker's re-push after Back closes the top of two stacked sheets spends
+  //     the tap that stacked the second, which pushed nothing. A stack three
+  //     deep, a `dismissible: false` sheet refusing Back, or a sheet opened by
+  //     a timer would push without a tap: none exists today, and
+  //     scripts/test_kiosk_history.js counts every push made without one.
+  //   - "Report a problem" (capture/panel.js) owns its own entry: popstate is
+  //     left to it while window.ee_capture.isOpen(), and nothing is pushed for
+  //     it here. A state that is not ours (the panel's once it has closed, one
+  //     left by an earlier load of this page) is never interpreted: the screen
+  //     stays as it is, and the entry is re-stamped to say so. So is one of
+  //     ours that the person reached while the panel had the popstate (a jump
+  //     several entries back with it open): they were answering the panel.
+  var nav = {
+    on: false,        // start() ran and the History API answered
+    doc: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), // this load
+    seq: 0,
+    tabs: [],
+    tab: null,        // the tab on screen
+    onTab: null,      // app.js: show a tab WITHOUT pushing, i.e. setTab(name, true)
+    cur: 0,           // id of our entry that is current (under any foreign one)
+    curTab: null,     //   the tab it records
+    sheet: false,     //   whether it is the sheet marker
+    backs: 0,         // our own back() calls whose popstate has not arrived yet
+    backTimer: null,
+    queued: null,
+    tapped: false,    // a tab tap whose entry is not pushed yet: the only licence to push one
+  };
+  // A back() lands within milliseconds. After this long, stop waiting for it.
+  var NAV_BACK_SETTLE_MS = 2000;
+
+  function historyState() {
+    try { return window.history.state; } catch (e) { return null; }
+  }
+
+  function isOurs(s) {
+    return !!(s && typeof s === 'object' && s.tk_nav === nav.doc && !('ee_capture' in s) &&
+      typeof s.id === 'number' && nav.tabs.indexOf(s.tab) !== -1);
+  }
+
+  function adopt(s) {
+    nav.cur = s.id;
+    nav.curTab = s.tab;
+    nav.sheet = !!s.sheet;
+  }
+
+  // True while the report panel is open, and until the popstate of its own
+  // closing back() has arrived as well (capture/panel.js, isPanelOpen).
+  function captureOpen() {
+    try {
+      var cap = window.ee_capture;
+      return !!(cap && typeof cap.isOpen === 'function' && cap.isOpen());
+    } catch (e) { return false; }
+  }
+
+  // push true: a new entry; false: re-stamp the current one. Two arguments.
+  function writeEntry(push, sheet) {
+    var s = { tk_nav: nav.doc, id: ++nav.seq, tab: nav.tab, sheet: sheet ? 1 : 0 };
+    try {
+      if (push) window.history.pushState(s, '');
+      else window.history.replaceState(s, '');
+    } catch (e) {
+      return false; // Safari throws past 100 calls in 10 s: lose the entry, never the app
+    }
+    adopt(s);
+    return true;
+  }
+
+  function stepBack() {
+    nav.backs++;
+    clearTimeout(nav.backTimer);
+    nav.backTimer = setTimeout(function () {
+      if (!nav.backs) return;
+      nav.backs = 0;
+      reconcile(); // takes whatever entry is current as it finds it
+    }, NAV_BACK_SETTLE_MS);
+    try { window.history.back(); } catch (e) { nav.backs--; }
+  }
+
+  // Bring the history in line with the screen: the tab's entry, plus the
+  // marker while any sheet is open. Idempotent: it runs whenever something may
+  // have changed and does nothing when nothing has.
+  function reconcile() {
+    if (nav.queued) { clearTimeout(nav.queued); nav.queued = null; }
+    if (!nav.on || nav.backs) return;
+    var s = historyState();
+    if (!isOurs(s) || s.id !== nav.cur) {
+      // The report panel's entry is on top: wait until it goes. Anything else
+      // arrived while the panel had the popstate (a jump several entries back
+      // with it open); once the panel is done, take that entry as it is, and
+      // below, re-stamp it with the tab on screen unless a tap is waiting.
+      if (captureOpen() || (s && typeof s === 'object' && 'ee_capture' in s)) return;
+      if (isOurs(s)) adopt(s);
+      else if (!writeEntry(false, sheetStack.length > 0)) return;
+    }
+    var want = sheetStack.length > 0;
+    if (nav.sheet) {
+      if (!want) stepBack(); // the last sheet has gone: consume the marker
+      return;
+    }
+    // A new entry for a tab tap; otherwise the current entry takes the screen's
+    // tab, because a push without a tap would make Chrome skip them all.
+    if (nav.curTab !== nav.tab) writeEntry(nav.tapped, false);
+    nav.tapped = false;
+    if (want) writeEntry(true, true);
+  }
+
+  function queueReconcile() {
+    if (nav.on && !nav.queued) nav.queued = setTimeout(reconcile, 0);
+  }
+
+  function onPopState() {
+    var own = nav.backs > 0;
+    if (own) {
+      nav.backs--;
+      if (!nav.backs) clearTimeout(nav.backTimer);
+    } else if (captureOpen()) {
+      queueReconcile(); // settles whatever the panel's closing leaves current
+      return;           // this Back is the report panel's to answer
+    }
+    var s = historyState();
+    if (!isOurs(s)) {
+      if (!captureOpen()) writeEntry(false, sheetStack.length > 0);
+    } else if (s.id !== nav.cur) {
+      adopt(s);
+      if (!own && sheetStack.length) {
+        // Back with a sheet open closes that sheet and nothing else. Should the
+        // browser have skipped an entry on the way, the tab still stays put.
+        var top = sheetStack[sheetStack.length - 1];
+        if (top.opts.dismissible !== false) top.close('dismiss');
+        if (s.tab !== nav.tab) writeEntry(false, nav.sheet);
+      } else if (nav.sheet && !sheetStack.length) {
+        // A marker whose sheets are gone: Forward after Back closed them.
+        // Nothing reopens. Step off it, or, when our own back() brought us here,
+        // make it a plain tab entry rather than stepping again.
+        if (!own) { stepBack(); return; }
+        writeEntry(false, false);
+      } else if (!own && s.tab !== nav.tab) {
+        nav.tab = s.tab;
+        if (nav.onTab) { try { nav.onTab(s.tab); } catch (e) { /* the view's problem */ } }
+      }
+      // (Landing from our own back() onto another tab means a tab was tapped
+      // while it was in flight: the screen is right, and reconcile pushes it.)
+    }
+    queueReconcile();
+  }
+
+  // Boot: stamp the entry the page loaded into as `tab`. Never a push.
+  function startNav(tab, tabs, onTab) {
+    nav.tabs = (tabs || []).slice();
+    nav.tab = tab;
+    nav.onTab = onTab || null;
+    if (!window.history || typeof window.history.pushState !== 'function') return;
+    // The kiosk decides where a tab scrolls to (the top, as a tap does). A
+    // browser restoring an old offset after popstate would fight a view that
+    // re-renders on show().
+    try { if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'; } catch (e) { /* noop */ }
+    if (!writeEntry(false, false)) return; // no working History API: the app runs as it always has
+    if (!nav.on) {
+      nav.on = true;
+      window.addEventListener('popstate', onPopState);
+    }
+    queueReconcile();
+  }
+
+  // A tab tap. Pushes from the tap itself, while the gesture still counts, or,
+  // with a back() of ours in flight, once it has landed (nav.tapped).
+  function goTab(name) {
+    if (nav.tabs.length && nav.tabs.indexOf(name) === -1) return;
+    nav.tab = name;
+    nav.tapped = true;
+    reconcile();
   }
 
   // Promise<boolean>. Replaces window.confirm: resolves true on `ok`, false on
@@ -529,6 +748,7 @@
     toast: toast,
     theme: theme,
     sheet: { open: openSheet, closeAll: closeAllSheets, depth: function () { return sheetStack.length; } },
+    nav: { start: startNav, go: goTab },
     ask: ask,
     askText: askText,
     armAudio: armAudio,
