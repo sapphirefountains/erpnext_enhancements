@@ -72,6 +72,7 @@ things are spelled the same and they disagree the first time somebody reopens a 
 | [`states.py`](states.py) | The transition table. Pure, stdlib only, bench-free tier |
 | [`proposal.py`](proposal.py) | Parses and validates what the model returned. Pure, stdlib only |
 | [`breakdown.py`](breakdown.py) | The background worker: builds the payload, calls Triton, writes the proposal. Also the hourly sweeper |
+| [`code_anchors.py`](code_anchors.py) | Where in the code one request points (WI-079 slice 3): the `www/` page behind its route, its doctype's fields (restricted ones flagged), controller outline and this app's hooks on it, the module README and the CHANGELOG lines that name them. Sent as `anchors` in payload schema 2 beside `codemap.py`'s whole-repo map. Schema and code facts only, never a docname or a value; deterministic, 40,000 characters at most, `{}` when it cannot build |
 | [`triton_client.py`](triton_client.py) | HTTP to `POST /api/v1/planning/work-breakdown`, as the approving reviewer |
 | [`task_writer.py`](task_writer.py) | **The only `Task` creator.** Runs after the reviewer confirms |
 | [`notify.py`](notify.py) | Bell row + email. Four events, one audience each |

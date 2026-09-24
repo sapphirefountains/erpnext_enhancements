@@ -377,6 +377,14 @@ jobs:
       # Its own step because it installs a frappe stub.
       - name: Work-breakdown code map (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_feedback_codemap -v
+      # The code anchors (WI-079 slice 3): where in the code one request points, sent as payload
+      # schema 2. No docname, query string or field value ever reaches the payload (sentinels
+      # planted in each place one could come from), the only tables read are DocType and
+      # Property Setter, two builds are byte-identical, and the 40,000-character cap holds for any
+      # input. The pure helpers run against the real repository files. Its own step because it
+      # installs a frappe stub.
+      - name: Work-breakdown code anchors (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_code_anchors -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the

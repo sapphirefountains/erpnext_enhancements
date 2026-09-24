@@ -199,6 +199,91 @@ retention; and Error Log matching. Deviations and gaps:
 - Payload v2 to Triton (Triton release in Preconditions).
 - Measure prompt size and cost before and after on the next ten requests.
 
+**Status, v1.527.0 (2026-09-24).** The ERPNext half shipped. Triton v0.80.0 renders it; until
+that deploys, Triton v0.79 ignores the new keys and the prompt is unchanged.
+
+- `product_feedback/code_anchors.py` builds the anchors from the stored `context_url` and
+  `context_doctype`. For a web route: the `www/` controller and template (through
+  `website_route_rules`), the controller's outline and the `www/README.md` paragraphs that name
+  the path. For a doctype: its fields with permlevel > 0 and Password fields listed as
+  restricted, the controller outline, this app's `doc_events`, `doctype_js`, class override and
+  property setters. Then the module README and the CHANGELOG lines that name any of it. It is
+  deterministic, capped at 40,000 characters with each cut named in `truncated`, and a failed
+  build sends `{}`.
+- The payload is schema 2. It carries `anchors`, no `docname` key, and the path without its query
+  string **or its record**: the widget stores `location.pathname`, so `/desk/item/PUMP-001`
+  would have carried the name that the dropped field used to. A Desk path keeps its doctype
+  slug, a web path its first segment.
+- `Enhancement Request.breakdown_stats` records the latest call's payload, anchors, code map
+  and prompt size, its tokens, and `attempts`: 1, or 2 when Triton's empty-plan retry ran, in
+  which case the tokens are summed across both calls but the prompt size is the first
+  attempt's. An older Triton writes `schema` 1 and `null` for `prompt_chars` and `attempts`. It
+  is written on the proposal and on either failure after Triton answered. The breakdown's `AI
+  Model Usage` row now carries `reference_doctype`/`reference_name`; every earlier row has
+  neither, which is the baseline.
+- The code map's doctype names now come from each doctype's JSON. Title-casing the folder had
+  sent 27 wrong names since v1.321.0 (`Project Scope Of Work`, `Ai Model Usage`), plus four
+  override-only folders listed as doctypes. That was harmless until Triton v0.80.0 started
+  rendering the list.
+- **Measurement, not run yet.** After ten requests have been broken down on v1.527.0 with
+  Triton v0.80.0 live, run these two queries. They are read-only, so `run_database_query` can
+  run them. Put the time Triton v0.80.0 deployed in place of the placeholder, in site-local
+  time, which is how `now_datetime()` writes `u.timestamp`. After:
+
+  ```sql
+  SELECT er.name, u.timestamp, u.model,
+         JSON_VALUE(er.breakdown_stats, '$.payload_chars')  AS payload_chars,
+         JSON_VALUE(er.breakdown_stats, '$.anchors_chars')  AS anchors_chars,
+         JSON_VALUE(er.breakdown_stats, '$.codebase_chars') AS codebase_chars,
+         JSON_VALUE(er.breakdown_stats, '$.prompt_chars')   AS prompt_chars,
+         u.prompt_tokens, u.total_tokens
+  FROM `tabAI Model Usage` u
+  JOIN `tabEnhancement Request` er ON er.name = u.reference_name
+  WHERE u.feature = 'feedback_work_breakdown'
+    AND u.reference_doctype = 'Enhancement Request'
+    AND u.timestamp >= '<Triton v0.80.0 deploy time>'
+    AND JSON_VALUE(er.breakdown_stats, '$.schema') = 2
+    AND JSON_VALUE(er.breakdown_stats, '$.attempts') = 1
+    AND u.timestamp = (
+          SELECT MAX(u2.timestamp)
+          FROM `tabAI Model Usage` u2
+          WHERE u2.feature = 'feedback_work_breakdown'
+            AND u2.reference_doctype = 'Enhancement Request'
+            AND u2.reference_name = er.name
+        )
+  ORDER BY u.timestamp
+  LIMIT 10;
+  ```
+
+  Every filter sits inside the query, ahead of `ORDER BY` and `LIMIT`, so the ten rows are ten
+  schema-2 calls rather than the first ten rows, most of which would have been Triton v0.79
+  calls made between the two deploys. `breakdown_stats` is per request, not per call: a re-run
+  overwrites it. So only each request's latest usage row is kept, the `MAX(timestamp)`
+  subquery, because that is the one call the stored sizes describe. An earlier call on the
+  same request would otherwise show the latest call's sizes beside its own tokens. A retried
+  breakdown (`attempts` 2) is left out, because its tokens are two calls' worth against one
+  prompt's size. To see how often that happens, run the query again with `= 2` in place of
+  `= 1`. Run it soon after the tenth request: a request re-run later shows only its newer call,
+  which can push it past the first ten.
+
+  Before, the last ten from the releases before v1.527.0:
+
+  ```sql
+  SELECT timestamp, model, prompt_tokens, total_tokens
+  FROM `tabAI Model Usage`
+  WHERE feature = 'feedback_work_breakdown'
+    AND IFNULL(reference_name, '') = ''
+  ORDER BY timestamp DESC
+  LIMIT 10;
+  ```
+
+  Compare the average `prompt_tokens` and `total_tokens` of the two sets. Only the after set
+  has a prompt size in characters (`prompt_chars`), because Triton reported none before
+  v0.80.0. The before set cannot leave out retried calls the way the after set does, because
+  those rows carry no attempt count. A breakdown answered by a Triton older than v0.80.0 after
+  v1.527.0 deployed has a reference but `schema` 1, so it belongs to neither set, and the
+  after query's filters already skip it.
+
 ### Slice 4 — Claude Code brief and the status return [M]
 
 - A reviewer-only endpoint and a Desk button that render a confirmed request as a brief: Markdown in

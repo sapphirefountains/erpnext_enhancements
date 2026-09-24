@@ -17,6 +17,7 @@ Its own CI step: it installs a ``frappe`` stub in ``setUpModule`` (codemap impor
 module level), and a stub must not leak into the stub-free suites.
 """
 
+import json
 import os
 import re
 import sys
@@ -199,6 +200,86 @@ class TestListingsAndTotals(unittest.TestCase):
 		for group in ("packages", "doctypes"):
 			for value in totals[group].values():
 				self.assertIsInstance(value, int)
+
+
+class TestDoctypeNames(unittest.TestCase):
+	"""Each listed doctype is spelled as its own JSON spells it.
+
+	The names used to be the folder title-cased, which is wrong for 27 doctypes here
+	(``Project Scope Of Work``, ``Ai Model Usage``, ``Quickbooks Sync Log``…), and listed four
+	folders that define no doctype at all. Harmless while Triton dropped the key; Triton v0.80.0
+	renders it and tells the model an unlisted doctype does not exist. The expected names are read
+	here straight from the JSON files, independently of the code under test.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.totals = {"packages": {}, "doctypes": {}, "gotchas": 0}
+		cls.listed = codemap._doctypes(str(APP_DIR), cls.totals)
+		cls.expected = {}
+		cls.no_json = []
+		modules = [
+			line.strip() for line in (APP_DIR / "modules.txt").read_text(encoding="utf-8").splitlines()
+		]
+		for module in filter(None, modules):
+			folder = APP_DIR / module.replace(" ", "_").replace("-", "_").lower() / "doctype"
+			if not folder.is_dir():
+				continue
+			names = []
+			for entry in folder.iterdir():
+				if not entry.is_dir() or entry.name.startswith("_"):
+					continue
+				schema = entry / f"{entry.name}.json"
+				if schema.is_file():
+					names.append(json.loads(schema.read_text(encoding="utf-8"))["name"])
+				else:
+					cls.no_json.append(entry.name)
+			if names:
+				cls.expected[module] = sorted(names)
+		cls.all_listed = {name for names in cls.listed.values() for name in names}
+
+	def test_every_module_lists_exactly_its_json_names_sorted(self):
+		self.assertGreater(len(self.expected), 10, "found almost no doctype JSON; the walk is broken")
+		self.assertEqual(set(self.listed), set(self.expected))
+		for module, names in self.expected.items():
+			self.assertEqual(self.listed[module], names[: codemap.MAX_DOCTYPES_PER_MODULE], module)
+			self.assertEqual(self.totals["doctypes"][module], len(names), module)
+
+	def test_names_a_title_cased_folder_gets_wrong_appear_verbatim(self):
+		for right, wrong in (
+			("Project Scope of Work", "Project Scope Of Work"),
+			("AI Model Usage", "Ai Model Usage"),
+			("QuickBooks Sync Log", "Quickbooks Sync Log"),
+		):
+			self.assertIn(right, self.all_listed)
+			self.assertNotIn(wrong, self.all_listed)
+
+	def test_a_folder_with_no_doctype_json_is_not_listed(self):
+		# address, opportunity, project and task hold only form scripts and controller overrides
+		# for ERPNext's own doctypes. This app does not define them, whatever the folder says.
+		for folder in self.no_json:
+			self.assertNotIn(folder.replace("_", " ").title(), self.all_listed, folder)
+		for stock in ("Address", "Opportunity", "Project", "Task"):
+			self.assertNotIn(stock, self.all_listed)
+
+	def test_a_folder_without_a_usable_name_is_skipped(self):
+		import tempfile
+
+		root = Path(tempfile.mkdtemp())
+		(root / "modules.txt").write_text("Demo\n", encoding="utf-8")
+		doctype = root / "demo" / "doctype"
+		for folder, schema in (
+			("good_one", {"name": "GOOD One"}),
+			("no_name", {"module": "Demo"}),
+			("list_json", ["not", "a", "doctype"]),
+			("no_json", None),
+		):
+			(doctype / folder).mkdir(parents=True)
+			if schema is not None:
+				(doctype / folder / f"{folder}.json").write_text(json.dumps(schema), encoding="utf-8")
+		totals = {"packages": {}, "doctypes": {}, "gotchas": 0}
+		self.assertEqual(codemap._doctypes(str(root), totals), {"Demo": ["GOOD One"]})
+		self.assertEqual(totals["doctypes"], {"Demo": 1})
 
 
 if __name__ == "__main__":

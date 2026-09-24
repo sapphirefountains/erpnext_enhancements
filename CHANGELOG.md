@@ -7,6 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.527.0] - 2026-09-24
+
+**WI-079 slice 3, the ERPNext half: the work breakdown reads the code a request points at, and
+no document name leaves ERPNext.** Until now every request got the same code map (ADR 0016 §3),
+so a request filed from the Enhancement Request form was planned against the module list and
+the house rules, never against that doctype's fields or controller. Request schema 2 adds
+`anchors`: for the route and doctype the request came from, the facts a contributor opens
+first. Today's Triton (v0.79) ignores keys it does not know, so this ships first and changes
+nothing until Triton v0.80.0 renders them.
+
+### Added
+
+- **`product_feedback/code_anchors.py`**, read from the installed app.
+  - **A web route:** the `www/` controller and template, the controller's outline, and the
+    `www/README.md` paragraphs that name the path. `website_route_rules` is applied, so
+    `/feedback/request/ER-…` is the `feedback` page, and the underscored controller is the one
+    looked for, because Frappe never imports a hyphenated one.
+  - **A doctype**, from `context_doctype` or the Desk path's slug, confirmed against
+    `tabDocType`:
+    - its owning app, module and flags;
+    - its data fields (type, options up to 300 characters, required, read-only, permlevel,
+      custom), with the permlevel > 0 and Password fields listed as restricted;
+    - its controller's outline;
+    - what this app does to it: `doc_events`, `doctype_js` and `doctype_list_js`,
+      `override_doctype_class` (the last registered, which is the one Frappe imports), and up
+      to 40 property setters, sorted.
+  - **The module README**, up to 6,000 characters. For a core doctype it is the README of the
+    module whose handler the doctype runs.
+  - **CHANGELOG lines:** of the newest 200 sections, the five newest that name the doctype, the
+    route or the controller. Only the paragraphs and bullets that name them are kept, a bullet
+    with its nested bullets, because here the lead bullet names the thing and its children say
+    what changed. 2,500 characters each. A term matches as a whole word with a plural allowed,
+    so `Item` finds `Items` and `Item Group` but not a YouTube `playlistItems.insert` bullet,
+    which a plain substring test quoted as Item's history. A one-word doctype is matched only
+    as written: its folder and controller basename are its name lowercased, and matched
+    case-insensitively they would have made `Project` match every "project" in prose.
+
+  Outlines come from `ast`: the module docstring's first paragraph, then classes with their
+  bases and methods, then functions, each with the first line of its docstring and its
+  decorators (`@frappe.whitelist` is what marks an endpoint). 6,000 characters for this app's
+  files, 4,000 for a core app's.
+
+  The object is deterministic: no timestamps, and sorted wherever order carries no meaning, so
+  the same request on the same deploy gives the same bytes. It is at most 40,000 characters of
+  compact JSON. Over that it cuts in a fixed order (the oldest changelog entries, the README,
+  the outlines, the field lists to 60 then 30, property setters, the route's README) and names
+  each cut in `truncated`, so a partial list is not read as the whole. When the property setters
+  were a doctype's only customization, the emptied `customizations` goes with them, because an
+  empty one reads as "this app does nothing to it". Every step has its own `try`; a build that
+  fails sends `{}` and the breakdown runs as it did before.
+- **`Enhancement Request.breakdown_stats`**, read-only JSON in the breakdown section. It holds
+  the payload's size, how much of it was the code map and how much the anchors, the prompt's
+  size as Triton reports it, the tokens, and `attempts`: how many model calls the breakdown
+  took. Triton v0.80.0 reports the prompt size and the attempts, and makes a second attempt only
+  when the first came back an empty plan. The tokens are then summed across both calls while the
+  prompt size is the first attempt's, so the work item's measurement leaves such rows out. An
+  older Triton gives `schema` 1 and `null` for both. Written with the proposal, and also on
+  either failure after Triton answered (an empty plan, or a proposal that could not be saved),
+  since that call was paid for too and its `AI Model Usage` row already exists. It has no
+  default, because on a normal doctype the ALTER writes a default into every existing row, and
+  it is in neither `SUBMIT_ALLOWED_FIELDS` nor `_FROZEN_FIELDS`.
+- **The breakdown's `AI Model Usage` row names its request** (`reference_doctype`,
+  `reference_name`). Both fields existed and were never set. So every earlier row is one
+  without a reference, which gives the work item's before/after query its baseline.
+
+### Changed
+
+- **The breakdown payload is schema 2**: `schema_version: 2` and `anchors: {"erpnext": …}`.
+- **No document name reaches Triton.** `request.context.docname` is gone, the key and not just
+  its value, and `build_payload` no longer reads `context_docname` at all. The path goes
+  without its scheme, host, query string and fragment, and without its record. The capture
+  widget stores `location.pathname`, which on a Desk form is `/desk/item/PUMP-001`, so dropping
+  the query string alone would still have sent the name. A Desk path keeps its doctype slug
+  (and a `/view/<type>`), and a web path keeps its first segment: `/feedback/request/ER-…` goes
+  as `/feedback`. A value that is neither a path nor an absolute URL, such as
+  `erp.example.com/desk/item`, sends an empty path, because read as a path its first segment
+  is the host. The whole stored URL is read only inside ERPNext, to find the anchors. Triton's
+  `RequestContext` already defaults `docname`, so v0.79 accepts the new shape.
+
+### Fixed
+
+- **The code map had sent 27 wrong doctype names since v1.321.0.** `codemap._doctypes`
+  title-cased each folder name instead of reading the doctype's JSON, which gives `Project
+  Scope Of Work` for `Project Scope of Work` (the one-letter controller-class trap in
+  CLAUDE.md), `Ai Model Usage`, `Quickbooks Sync Log`, `Month End Close` for `Month-End Close`,
+  and likewise for the MDM, KPI, HR, PPE, NCR, GA4, Travel POI and Control IO doctypes. It also
+  listed `Address`, `Opportunity`, `Project` and `Task` as doctypes this app defines, because
+  their folders exist, though they hold only form scripts and controller overrides for
+  ERPNext's own. That was harmless while Triton dropped the list. It became wrong the moment
+  Triton started rendering it: v0.80.0 does, under a heading that tells the model a doctype not
+  named there does not exist. Names now come from `<folder>/<folder>.json`, and a folder with
+  no JSON or no name is skipped rather than guessed at. The per-module totals count only real
+  doctypes.
+
+### Tests
+
+- `test_feedback_code_anchors`, bench-free with a frappe stub, in its own CI step. It runs the
+  pure helpers against the real repository: it outlines `breakdown.py`, resolves a real `www/`
+  controller and a route rule, and finds the CHANGELOG sections naming Enhancement Request. It
+  checks that `build_payload` sends schema 2 with no docname key and a path-only URL; that no
+  query string, docname or field value reaches the payload, with a sentinel planted in each
+  place one could come from; that the anchors query no table but DocType and Property Setter;
+  that two builds are byte-identical; and that the 40,000 cap holds for any input. The tests
+  that read the real CHANGELOG pass only the sections that name the feature, or a fixture, so
+  they do not start failing when 200 releases go by without a mention.
+- `test_feedback_codemap` walks `modules.txt` and asserts each module lists exactly the sorted
+  `name` values of its doctype JSON files, with `Project Scope of Work`, `AI Model Usage` and
+  `QuickBooks Sync Log` spelled as their JSON spells them, and no override-only folder listed.
+
 ## [1.526.0] - 2026-09-23
 
 **WI-079 slice 2: "Report a problem" from any Desk screen, the kiosk, and a short list of
