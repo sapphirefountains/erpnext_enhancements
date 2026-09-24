@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.526.1] - 2026-09-23
+
+**Kiosk camera photos are saved again. Until now none were: the capture time the phone
+sent was rejected by the database, so no camera capture on prod ever produced a photo
+row.**
+
+### Fixed
+
+- **`record_job_photo` wrote a tz-aware `captured_on`, and MariaDB refuses an offset.** The
+  kiosk registers a capture with `captured_on = new Date().toISOString()`, for example
+  `2026-09-24T03:04:24.049Z`. `_parse_timestamp` handed it to `get_datetime`. On v16 that is
+  `datetime.fromisoformat`, which returns an **aware** value for a trailing `Z`. Frappe inserts
+  `str(value)`, which is `2026-09-24 03:04:24.049000+00:00`, and MariaDB rejected it with
+  `(1292, "Incorrect datetime value ...")`. The whole save rolled back. It had been like this
+  since the camera path shipped in v1.241.0, and it showed up once the kiosk pilot began.
+- **The offset is converted, not stripped.** Every Datetime column holds a naive value on
+  the site's clock (`America/Denver`), the same clock as `now_datetime()`. Dropping the
+  `+00:00` would store 03:04. That is six hours after the photo was taken, and on the next
+  day. The new `workforce/client_time.py` moves an aware value into
+  `get_system_timezone()` and only then drops the tzinfo. A naive value is left alone,
+  because it is already site-local: `geo.js` sends `nowLocal()`, the device's wall clock.
+  `_parse_timestamp` now calls it, so the two geolocation endpoints get the same fix. They
+  had not failed, because nothing sends them an offset.
+- **An epoch-milliseconds stamp is read as UTC.** Plain `datetime.fromtimestamp()` reads it in
+  the **server process's** zone, which on prod is UTC and not the site's. That is the same
+  six-hour shift by another route. Nothing sends epoch values today, but the parser accepts
+  them.
+- The fix is on the server, not in `app.js`, on purpose. The captures that already failed are
+  sitting in each phone's `tk_photo_queue_v1` in localStorage with their `…Z` stamps. The
+  server has to accept those as they are, whatever the JS sends in future.
+
+### What was lost (prod, SELECT-only audit)
+
+The first Job Interval on prod is from 2026-09-18, and Error Log goes back to June. So the
+10 `record_job_photo` errors are every failure there has been:
+
+- **Five camera captures, all failed.** Two by Jesse Griffin on `JOB-INT-00019` (Sep 21,
+  16:22–16:23) and three by James Harris on `JOB-INT-00021` (Sep 23, 20:30, 20:32 and 21:04).
+  The other five errors are the device queue retrying the same captures. It retries only
+  when the app opens, when the signal returns, or on a manual flush. There is no timer, so
+  there was no retry storm. There are no `Job Interval
+  Photo` rows and no `File`s for either interval. The two photo rows that do exist, from
+  Sep 18–19, came through the attach path, which sends no `captured_on`.
+- **The image bytes are almost certainly gone.** The upload only starts after a successful
+  registration, so it never ran. The queue only replays the **registration**, because a `File`
+  does not survive a reload. And an `<input capture>` photo is not saved to the camera roll on
+  iOS, or usually on Android. After this deploys, each phone's queue registers its captures the
+  next time the kiosk opens with a signal. They land as **Pending rows with no image**, with the
+  right site-local capture times. That is honest: the job was photographed, and the photo never
+  arrived.
+- **The gate lied in the technician's favour and then blocked them.** The phone counts a
+  capture before the server has confirmed it, and on refresh it keeps `max(server, local)`.
+  So it believed the gate was met and never offered the skip-reason sheet. The server counted
+  0 and refused Stop/Switch (`require_job_photos` and `require_skip_reason` are both on).
+  `JOB-INT-00019` was later auto-closed by the sweeper, marked Skipped. `JOB-INT-00021` is
+  Paused, so its Stop is refused until this deploys and James's phone replays the queue.
+
+### Tests
+
+- `tests/test_workforce_client_time.py` (bench-free, `frappe` stub, its own CI step). It
+  checks the exact prod payload, that the result stringifies to a value MariaDB accepts,
+  summer and winter offsets, a non-UTC offset, the zone read from System Settings, naive
+  passthrough, and epoch ms as number and string. It also checks the source of
+  `api/time_kiosk.py`: `_parse_timestamp` delegates, `record_job_photo` parses `captured_on`,
+  and there is no naive `fromtimestamp`. It fails against the old code (10 tests) and against
+  a fix that only strips the offset (11).
+
 ## [1.526.0] - 2026-09-23
 
 **WI-079 slice 2: "Report a problem" from any Desk screen, the kiosk, and a short list of
