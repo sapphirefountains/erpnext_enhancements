@@ -358,7 +358,19 @@ jobs:
           python -m unittest
           erpnext_enhancements.tests.test_feedback_states
           erpnext_enhancements.tests.test_feedback_endpoint_surface
-          erpnext_enhancements.tests.test_feedback_task_backlink -v
+          erpnext_enhancements.tests.test_feedback_task_backlink
+          erpnext_enhancements.tests.test_feedback_capture_surface -v
+      # WI-079 slice 2, the capture widget's server half. Intake: file_request is the one way
+      # in (the /feedback form and the widget both), provenance is never client input, ten
+      # filings a minute per person, System Users only for the widget, the snapshot a private
+      # File and never a field. Jobs: screenshots + context file go 180 days after a request
+      # closes and nothing else does; a failed request is matched to its deferred Error Log by
+      # metadata user/verb/path inside the flush window, and noted once. Each installs its own
+      # frappe stub, so each has its own step.
+      - name: Feedback capture intake (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_capture_intake -v
+      - name: Feedback capture retention + Error Log matching (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_capture_jobs -v
       # The code map the breakdown sends Triton (ADR 0016 §3): every CLAUDE.md gotcha headline
       # reaches the model (the old 6,000-character prefix dropped 11 of 21), and Triton's type
       # contracts hold — conventions a str, packages lists of strings, totals under their own key.
@@ -2182,6 +2194,28 @@ jobs:
       # plausible bug in a four-line function.
       - name: Feedback derived status label (bench-free, node)
         run: node scripts/test_feedback_status.js
+      # v16 serves the Desk under /desk/ and redirects /app/ there, so every report filed from a
+      # Desk screen since the upgrade arrived with an empty doctype and document -- and a blank
+      # reads as "not filed from a form", so nothing failed (WI-079 slice 2).
+      - name: Feedback captured-context parser (bench-free, node)
+        run: node scripts/test_feedback_context.js
+      # The capture widget's browser half (WI-079 slice 2). The recorder must never change what
+      # the page sees: fetch hands back the same Response and rejection and never reads the
+      # page's body, console.error still calls through, and the rings (20/20/10) collapse
+      # repeats and keep paths only. The scrubber turns emails and token-shaped strings into
+      # placeholders and leaves ordinary Frappe text alone. The panel's payload stays inside
+      # SUBMIT_ALLOWED_FIELDS (read from api/feedback.py, so a server-side change breaks this
+      # step instead of every report), blur and crop change the exported pixels, and a draft is
+      # never sent as anyone but the user the server says is signed in.
+      - name: Capture recorder + scrubber (bench-free, node)
+        run: |
+          node scripts/test_capture_scrub.js
+          node scripts/test_capture_recorder.js
+      - name: Capture panel, annotator + offline drafts (bench-free, node)
+        run: |
+          node scripts/test_capture_panel.js
+          node scripts/test_capture_annotate.js
+          node scripts/test_capture_drafts.js
       # The /marketing app's client (TASK-2026-01487, v1.515.0). The pure half -- the router,
       # the calendar arithmetic, the composer's rules -- is checked directly, and the calendar
       # again under three other TZ values: day arithmetic that leaned on the device's clock would

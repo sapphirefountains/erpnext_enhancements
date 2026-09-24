@@ -35,6 +35,9 @@ import {
 } from "../triton/citations.js";
 import { isComposingKey } from "../triton/keys.js";
 import { renderMarkdown } from "../triton/markdown.js";
+// Shared with the capture recorder (WI-079 slice 2), so the two widgets read the page one way.
+// The ref it returns is Triton's wire format and is unchanged by the move.
+import { detectPageContext } from "../capture/page_context.js";
 
 (function () {
 	const METHOD = "erpnext_enhancements.triton_chat";
@@ -980,54 +983,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 	}
 
 	// ---- context chips ---------------------------------------------------
-	function detectPageContext() {
-		const route = frappe.get_route();
-		if (!route || !route.length) return null;
-		const r0 = route[0];
-		const hash = "#" + (frappe.get_route_str ? frappe.get_route_str() : route.join("/"));
-
-		if (r0 === "Form" && route[1] && route[2]) {
-			const ref = {
-				type: "document",
-				doctype: route[1],
-				name: route[2],
-				title: `${route[1]}: ${route[2]}`,
-				route: hash,
-			};
-			try {
-				if (window.cur_frm && cur_frm.doc && cur_frm.docname === route[2] && cur_frm.is_dirty && cur_frm.is_dirty()) {
-					ref.unsaved = true;
-				}
-			} catch (e) {
-				// cur_frm can be mid-teardown during a route change; unsaved stays false.
-			}
-			return ref;
-		}
-		if (r0 === "List" || r0 === "list") {
-			const doctype = route[1];
-			const view = route[2];
-			let filters = null;
-			try {
-				if (window.cur_list && cur_list.get_filters_for_args) filters = cur_list.get_filters_for_args();
-			} catch (e) {
-				// cur_list may not expose filters yet; they stay null.
-			}
-			if (view === "Report") {
-				return { type: "report", report_name: doctype, name: doctype, filters, title: `${doctype} (Report)`, route: hash };
-			}
-			return { type: "list", doctype, filters, title: `${doctype} list`, route: hash };
-		}
-		if (r0 === "query-report" && route[1]) {
-			let filters = null;
-			try {
-				if (frappe.query_report && frappe.query_report.get_filter_values) filters = frappe.query_report.get_filter_values();
-			} catch (e) {
-				// query_report may not be loaded; filters stay null.
-			}
-			return { type: "report", report_name: route[1], name: route[1], filters, title: `Report: ${route[1]}`, route: hash };
-		}
-		return { type: "page", title: document.title.replace(/\s*\|.*/, "").trim() || r0, route: hash };
-	}
+	// detectPageContext() is imported from ../capture/page_context.js (see the imports).
 
 	function refKey(r) {
 		return [r.type, r.doctype, r.name, r.report_name, r.route].filter(Boolean).join("::");

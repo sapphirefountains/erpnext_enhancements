@@ -73,6 +73,22 @@
       ]),
     ]));
 
+    // Help (WI-079 slice 2). The capture widget's kiosk entry point: no floating button here,
+    // the clock screen has no room for one. Hidden when the capture code is not on the page
+    // (an offline cold start, since its bundle is not precached).
+    if (window.ee_capture && typeof window.ee_capture.open === 'function') {
+      container.appendChild(h('div', { class: 'tk-card' }, [
+        h('p', { class: 'tk-card-title', text: 'Help' }),
+        h('button', { type: 'button', class: 'tk-btn tk-btn-primary', text: 'Report a problem', on: { click: function () {
+          // open() reports a failed load by rejecting, never by throwing, so the toast hangs off
+          // the promise.
+          var failed = function () { UI.toast('Could not open the report form.', 'red', 3000); };
+          try { window.ee_capture.open({ surface: 'kiosk' }).catch(failed); } catch (e) { failed(); }
+        } } }),
+        h('p', { class: 'tk-note', style: { marginTop: '12px' }, text: 'Describe what went wrong and add a screenshot if you have one. You see everything that will be sent, and it stays in ERPNext.' }),
+      ]));
+    }
+
     // Install
     el.install = h('div', { class: 'tk-stack' });
     container.appendChild(h('div', { class: 'tk-card' }, [h('p', { class: 'tk-card-title', text: 'Install' }), el.install]));

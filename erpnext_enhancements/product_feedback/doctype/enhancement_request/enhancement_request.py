@@ -32,6 +32,7 @@ import frappe
 from frappe.model.document import Document
 
 from erpnext_enhancements.product_feedback.states import (
+	TERMINAL_STATES,
 	IllegalTransition,
 	RequestState,
 	assert_transition,
@@ -47,6 +48,12 @@ _FROZEN_FIELDS = (
 	"context_docname",
 	"context_user_agent",
 	"context_app_version",
+	# ADR 0016 §1: how it arrived and on which release. Set by `api.feedback.file_request`,
+	# never by the client.
+	"source",
+	"source_doctype",
+	"source_ref",
+	"context_release",
 )
 
 
@@ -55,6 +62,7 @@ class EnhancementRequest(Document):
 		if self.is_new():
 			self._default_requester()
 			return
+		self._stamp_terminal_at()
 		before = self.get_doc_before_save()
 		if before is None:
 			# A reload path with no prior copy. Nothing to compare against, and refusing here
@@ -73,6 +81,19 @@ class EnhancementRequest(Document):
 			self.requested_by = frappe.session.user
 		if not self.get("requested_at"):
 			self.requested_at = frappe.utils.now_datetime()
+
+	def _stamp_terminal_at(self) -> None:
+		"""When the request closed: the clock the capture retention job runs on (WI-079).
+
+		Every path into a terminal state today assigns ``doc.status`` and saves
+		(``review_decision``, ``task_writer``), so this sees them all. A future
+		``db.set_value`` into a terminal state would skip it; the retention job then falls
+		back to ``modified``, which is never earlier than the real closing time, so the
+		failure direction is keeping files longer, not deleting them early. Terminal states
+		are terminal, so nothing ever clears it.
+		"""
+		if (self.get("status") or "") in TERMINAL_STATES and not self.get("terminal_at"):
+			self.terminal_at = frappe.utils.now_datetime()
 
 	def _refuse_provenance_edits(self, before: Document) -> None:
 		changed = [f for f in _FROZEN_FIELDS if (self.get(f) or "") != (before.get(f) or "")]

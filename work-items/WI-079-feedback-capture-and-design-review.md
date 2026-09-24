@@ -164,6 +164,30 @@ and the `NEVER_EXEMPT` guard are in `_gate.py` and dormant while the flag is 0. 
   (`public/js/gantt_widget/gantt_export.js:8-23`). Ship automatic capture only if it passes; otherwise
   paste and upload remain the method. Maps, Stripe frames and video render blank and that is accepted.
 
+**Status, v1.526.0 (2026-09-23).** Shipped: `file_request` and `submit_capture`; the four
+provenance fields plus `terminal_at`; the per-person limit; the `/desk/` parser; the recorder,
+page state and `registerCaptureState` (the kiosk registers clock status, queues, last sync and
+location permission); the panel with annotation; kiosk offline drafts; the three entry points;
+retention; and Error Log matching. Deviations and gaps:
+
+- **Error Log matching is an hourly job, not a "few seconds' window" at filing.** v16 writes a
+  5xx's Error Log through `deferred_insert`, flushed every 15 minutes with `owner` = scheduler
+  and `creation` = flush time. So it matches on `metadata` user, verb and path inside that
+  window, and notes each match as a Comment on the request.
+- **The screenshot spike has not been run.** It needs a signed-in browser on the six screens.
+  Paste and upload are the method until it passes. Masking permlevel > 0 and Password fields,
+  and switching capture off on pay, labor-cost, payments and QuickBooks pages, belong to
+  automatic capture and arrive with it.
+- The spike's sixth screen, `/stock-scan`, is not on the capture allowlist. It is either added
+  (after classification) or swapped for another screen when the spike runs.
+- "Point at it" (ADR 0016 §4) and a "Report a problem" button in the Server Error dialog are not
+  built.
+- **Kiosk drafts are not dropped at sign-out.** The kiosk has no sign-out of its own to hook.
+  Another user's drafts are dropped when the next person's kiosk loads the panel (it preloads
+  it once idle) or opens it, and never sent as them: the server says who is signed in.
+- Drafts are offered at page load on the kiosk only. On the Desk and web pages the panel bundle
+  loads on the first open, so a draft saved before a reload is offered there.
+
 ### Slice 3 — Repo-aware breakdown [M]
 
 - `product_feedback/code_anchors.py`: from a request's context, pick the `www/` controller for a

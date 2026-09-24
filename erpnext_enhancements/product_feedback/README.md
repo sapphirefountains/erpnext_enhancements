@@ -75,12 +75,59 @@ things are spelled the same and they disagree the first time somebody reopens a 
 | [`triton_client.py`](triton_client.py) | HTTP to `POST /api/v1/planning/work-breakdown`, as the approving reviewer |
 | [`task_writer.py`](task_writer.py) | **The only `Task` creator.** Runs after the reviewer confirms |
 | [`notify.py`](notify.py) | Bell row + email. Four events, one audience each |
+| [`capture_jobs.py`](capture_jobs.py) | The capture widget's scheduled work: daily retention of screenshots + context files (and of screenshot uploads that never reached a request), hourly Error Log matching (WI-079 slice 2) |
 | `doctype/` | `Enhancement Request`, its two child tables, the reviewer child table, and the settings Single |
 
-Elsewhere: [`api/feedback.py`](../api/feedback.py) (seven POST-only endpoints),
+Elsewhere: [`api/feedback.py`](../api/feedback.py) (ten POST-only endpoints, `file_request` among its helpers),
 [`www/feedback.py`](../www/feedback.py) + `feedback.html` (the shell),
 [`public/js/feedback/`](../public/js/feedback/) and `public/css/feedback.bundle.css` (the SPA),
 [`patches/seed_product_feedback_settings.py`](../patches/seed_product_feedback_settings.py).
+
+## The capture widget (WI-079 slice 2)
+
+A "Report a problem" that works from any Desk screen, the kiosk, and a short list of signed-in
+web pages. It files an ordinary Enhancement Request with `source = Capture`, and everything
+downstream (review, breakdown, confirm) is unchanged. ADR 0016 §4 holds the rules; these are
+the ones that shape the code.
+
+- **One way in.** `api.feedback.file_request` is the only code that creates a request. It holds
+  the validation, the provenance stamps and the per-person limit: ten a minute, keyed on the
+  session user, a 429 after that. `submit_request` (the `/feedback` form) and `submit_capture`
+  (the widget) both call it, and Design Review promotion will too.
+- **Provenance is never client input.** `source`, `source_doctype`, `source_ref` and
+  `context_release` are set by the endpoint, absent from `SUBMIT_ALLOWED_FIELDS`, and in
+  `_FROZEN_FIELDS`. `source` defaults to `Feedback form`, so the ALTER labeled the existing rows
+  with no patch.
+- **An allowlist, never `web_include_js`.** The recorder is the first import of the Desk
+  bundle, and `capture.bundle.js` is included only by `www/kiosk.html`, `feedback.html`,
+  `itinerary.html` and `travel_guidelines.html`. Guest, token and customer pages load neither.
+  `tests/test_feedback_capture_surface.py` checks every template in the app as text and follows
+  every bundle's imports, so a bundle that pulled the recorder in would fail it too.
+- **System Users only**, on the server. The launcher's `system_user` cookie check is a hint.
+- **The snapshot is a private File, not a field.** It holds page state, the last 20 console
+  errors, the last 20 failed or slow requests (never bodies) and the last 10 routes, and it is
+  stored as `capture-context-<ER>.json`, because Triton's bulk sync reads the request's fields.
+  The person sees all of it before sending.
+- **Error Logs are matched later, by a job.** v16 writes a 5xx's Error Log through
+  `deferred_insert`, flushed every 15 minutes with the scheduler as owner and the flush time as
+  `creation`. So `capture_jobs.match_capture_error_logs` runs hourly and matches on the row's
+  `metadata` (user, verb, path) inside that window, correcting for the browser's clock from the
+  `sent_at` the panel stamps as it sends. It notes
+  each match as a Comment on the request, which outlives Error Log's 14-day clearing.
+- **Retention.** `capture_jobs.purge_expired_capture_files` deletes the screenshots and the
+  context file 180 days after the request closed, and keeps the request, its text and its Task
+  links. The clock is `terminal_at`, which the controller stamps on entering a terminal state,
+  falling back to `modified`, which can only keep files longer. The join is on the capture
+  artifacts only, so a cleaned request drops out even when it keeps a PDF. The same run deletes
+  the panel's screenshot uploads (`capture-shot-*`) still unattached after a day, from filings
+  that failed after the upload.
+- **A resend is not a second report.** Each report carries an id (`client_id`). A lost response
+  looks offline to the panel, which saves a draft; when the draft is sent, `submit_capture`
+  returns the request it already filed. The id is remembered per user, after commit, for 8
+  days. A pause raises `FeedbackPausedError`, so a saved draft survives it.
+- **The screenshot is pasted or uploaded, then annotated in the browser.** The tools are box,
+  arrow, pen, text, blur and crop. Blur is burned in, and only the flattened image is uploaded.
+  Automatic capture of the page waits for the spike the WI describes.
 
 ## DocTypes
 

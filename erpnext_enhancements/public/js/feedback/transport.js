@@ -31,6 +31,9 @@ export const M = {
 	RERUN: "erpnext_enhancements.api.feedback.rerun_breakdown",
 	SAVE_PROPOSAL: "erpnext_enhancements.api.feedback.save_proposal",
 	CREATE_TASKS: "erpnext_enhancements.api.feedback.create_tasks",
+	// Dialled by the capture panel (public/js/capture/panel.js), which reuses this transport
+	// on the Desk, the kiosk and the allowlisted web pages rather than growing a second one.
+	CAPTURE: "erpnext_enhancements.api.feedback.submit_capture",
 };
 
 /** A refusal the SPA can recognise, so a 403 degrades into a sentence rather than a stack. */
@@ -51,7 +54,18 @@ export class FeedbackCallError extends Error {
 }
 
 function csrfToken() {
-	return BOOT.csrf_token || "";
+	// The /feedback page boots with its own token. The capture panel reuses this module on
+	// pages that do not. Each allowlisted template mints the session's token and passes it in
+	// `EE_CAPTURE.csrf_token`; the Desk carries `frappe.csrf_token`. Read at call time, not
+	// import time, because on a website page the token is written after the bundle loads.
+	//
+	// A website page's `frappe.csrf_token` is written from the session whether or not a token
+	// was ever minted, and an unminted one renders as the string "None". That is truthy, and
+	// it fails the moment another tab mints the real token, so it counts as no token.
+	if (BOOT.csrf_token) return BOOT.csrf_token;
+	const w = typeof window !== "undefined" ? window : {};
+	const usable = (value) => (value && value !== "None" ? String(value) : "");
+	return usable(w.EE_CAPTURE && w.EE_CAPTURE.csrf_token) || usable(w.frappe && w.frappe.csrf_token);
 }
 
 export async function call(method, args, options) {

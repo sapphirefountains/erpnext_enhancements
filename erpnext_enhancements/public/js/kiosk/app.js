@@ -554,11 +554,15 @@
   }
 
   var statusFetchedAt = 0;
+  // When the server last answered a status fetch (not when one was started: statusFetchedAt
+  // is stamped before the request, so it cannot say whether the kiosk is actually in touch).
+  // Reported by "Report a problem" (WI-079 slice 2).
+  var lastSyncOkAt = null;
   function fetchStatus() {
     statusFetchedAt = Date.now();
     setLoading(true);
     return api(API + 'get_current_status', {}, { method: 'GET' })
-      .then(applyStatus)
+      .then(function (res) { lastSyncOkAt = new Date().toISOString(); return applyStatus(res); })
       .catch(function (e) { toast(humanError(e), 'red'); })
       .then(function () { setLoading(false); });
   }
@@ -1732,6 +1736,12 @@
       setBadge: setBadge,
       setTab: setTab,
     };
+    registerCaptureState();
+    setTimeout(preloadCapturePanel, 8000);
+    // Offline at 8 s is the case the preload exists for, so it tries again when the signal
+    // returns. It does nothing once the form is on the page.
+    window.addEventListener('online', function () { setTimeout(preloadCapturePanel, 2000); });
+
     var v = views();
     TABS.forEach(function (t) {
       if (t.id !== 'clock' && v[t.id] && v[t.id].mount) {
@@ -1750,6 +1760,60 @@
     // no 'online' event, so without this the queue never registers those captures — the Job
     // Photo Compliance report then under-counts and photo_count stays low.
     if (navigator.onLine) flushPhotoQueue();
+  }
+
+  // WI-079 slice 2: what a report from the kiosk says about the kiosk, collected when someone
+  // opens "Report a problem" (Settings). Status and counts only, never a position. The
+  // capture recorder comes from capture.bundle.js, which is not precached, so on an offline
+  // cold start it is absent and this quietly does nothing.
+  var locationQueueSeen = null;
+  function registerCaptureState() {
+    var cap = window.ee_capture;
+    if (!cap || typeof cap.registerCaptureState !== 'function') return;
+    cap.registerCaptureState(function () {
+      // The worker answers the location-queue count asynchronously, so report the last
+      // answer and ask again for the next report. A missing answer reads as null, not 0.
+      try {
+        if (window.KioskGeo && window.KioskGeo.queuedCount) {
+          window.KioskGeo.queuedCount().then(function (n) { locationQueueSeen = n; }).catch(function () { /* noop */ });
+        }
+      } catch (e) { /* the report must never break the kiosk */ }
+      var diag = {};
+      try { diag = (window.KioskGeo && window.KioskGeo.getDiagnostics && window.KioskGeo.getDiagnostics()) || {}; } catch (e) { diag = {}; }
+      var queued = null;
+      try { queued = photoQueue().length; } catch (e) { queued = null; }
+      return {
+        kiosk: {
+          clock_status: app.status || null,
+          interval_open: !!(app.currentInterval && app.currentInterval.name),
+          photo_queue: queued,
+          location_queue: locationQueueSeen,
+          last_sync_ok_at: lastSyncOkAt,
+          location_permission: diag.permission || null,
+          location_status: diag.status || null,
+          build: BUILD || null,
+        },
+      };
+    });
+  }
+
+  // The report form is lazy everywhere else. The kiosk loads it once it is idle and online,
+  // because neither capture bundle is precached: if the signal drops later, "Report a
+  // problem" must still open, so the report can be saved on the device and sent on the next
+  // tap once it is back. The recorder's own loader sees the global and does not load it twice.
+  var capturePanelLoading = false;
+  function preloadCapturePanel() {
+    try {
+      var cfg = window.EE_CAPTURE || {};
+      if (!window.ee_capture || window.ee_capture_panel || capturePanelLoading || !cfg.panel_url || !navigator.onLine) return;
+      capturePanelLoading = true;
+      var s = document.createElement('script');
+      s.src = cfg.panel_url;
+      s.async = true;
+      s.onload = function () { capturePanelLoading = false; };
+      s.onerror = function () { capturePanelLoading = false; try { s.remove(); } catch (e) { /* retried on the next online */ } };
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) { /* a missing report form must never cost the clock */ }
   }
 
   if (document.readyState === 'loading') {

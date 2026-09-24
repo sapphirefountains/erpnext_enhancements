@@ -37,8 +37,11 @@
   therefore gives the browser brand-new URLs, and window.KIOSK_BUILD versions
   the service-worker registration so its cache rotates too. The icons stay
   unversioned on purpose: their content never changes (same rationale as the
-  vendored libraries in hooks.py). Every js/css URL here must also be in the
-  worker's PRECACHE (tests/test_kiosk_frontend.py checks both directions).
+  vendored libraries in hooks.py). Every raw `?v=` js/css URL here must also be
+  in the worker's PRECACHE (tests/test_kiosk_frontend.py checks both directions).
+  The two capture bundles (WI-079) are the deliberate exception: content-hashed
+  `bundled_asset()` URLs, not precached and not seen by that test. app.js
+  preloads the report form once it is idle and online instead.
 #}
 {% extends "templates/web.html" %}
 
@@ -97,6 +100,12 @@
 {# Boot payload + front-end scripts. Order matters: ui.js first (theme, sheets),
    geo.js, then the view modules, then app.js which mounts everything. #}
 {% block script %}
+{# Capture widget (WI-079 slice 2). This page is on its allowlist; the recorder goes first so it
+   sees errors from the page's own scripts. Never in web_include_js. #}
+<script>
+  window.EE_CAPTURE = {surface: "kiosk", launcher: false, build: {{ deploy_version | tojson }}, user: {{ frappe.session.user | tojson }}, csrf_token: {{ (csrf_token or "") | tojson }}, panel_url: {{ bundled_asset('capture_panel.bundle.js') | tojson }}};
+</script>
+<script src="{{ bundled_asset('capture.bundle.js') }}"></script>
 <script>
   // Server-injected boot payload (employee, current interval, settings, csrf).
   window.KIOSK_BOOT = {{ boot_json | safe }};
