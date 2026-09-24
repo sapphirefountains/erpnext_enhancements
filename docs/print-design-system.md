@@ -23,8 +23,14 @@ Top to bottom, on white:
    to the constant in `enhancements_core/company_contact.py`; the phone *is* the constant.
 3. An **eyebrow** naming the pillar and the document — `SERVICE · MAINTENANCE VISIT
    REPORT` — in the pillar's closing stop, over a **display-face title** in deep-sea-blue.
-   A meta block at the right: number, date, status.
-4. A **facts row** under a deep-sea-blue rule: who, where, when.
+   A meta block at the right: number, date, status (and a red `DRAFT` / `CANCELLED` where it
+   applies). **An eyebrow that only repeats the title is not printed** (v1.535.0): a neutral
+   document has no pillar to name, so from v1.494.0 every sales and buying document printed
+   `INVOICE` over `INVOICE`, the display face being all capitals. With a pillar, its name
+   stays on its own.
+4. A **facts row** under a deep-sea-blue rule: who, where, when. The party — the customer
+   or supplier — is a block of name, address, `Attn:`, phone and email, drawn by
+   `ps_party` (see *Content helpers and lookups* below).
 5. **Sections** with display-face headings in bahama-blue and **ruled tables**: a 2px rule
    in the pillar's opening stop under the header row, hairlines between rows, no zebra
    fills, numbers right-aligned.
@@ -58,6 +64,20 @@ for the order's reason — a job can belong to any pillar — and each is its do
 **default** format (Property Setter fixtures), so the print view and the email composer open
 on them. ERPNext's stock formats for those doctypes are disabled on every migrate
 (`setup_print_formats.SUPERSEDED_PROCUREMENT_FORMATS`), as the order's three are.
+
+**Since v1.535.0 the three sales formats are their doctypes' defaults too**, and Sales
+Invoice prints on nothing else: `SUPERSEDED_SALES_FORMATS` disables Sales Invoice Standard,
+with Item Image, Return, Print, PD Format v2, Sales Auditing Voucher and the leftover Point of
+Sale row (plus Sales Order PD v2), and keeps the three Regional formats disabled. Three of
+those printed nothing at all — Sales Invoice Print lost its template in ERPNext v16.19 and
+the two PD v2 formats belong to Print Designer, which is not installed — and the Sapphire
+invoice now prints a return as a **Credit Note** itself, so ERPNext's return format has no
+job left. Checked first on production: no Notification, Auto Repeat, POS Profile, statement
+run, script or default referenced any of them. Quotation's and Sales Order's stock formats
+are left enabled — not asked for, and they still render. A disable holds through a migrate
+(`frappe/modules/import_file.py` keeps a standard format's `disabled` when it re-imports);
+the pass re-runs every migrate because it is idempotent and re-disables anything an admin
+turned back on.
 
 ## How a format consumes it
 
@@ -223,11 +243,21 @@ Everything the app prints is now on the chrome.
 
 ## Before you push
 
+Each suite installs its own `frappe` stub, so run them one process at a time, as CI does:
+
 ```bash
-python -m unittest erpnext_enhancements.tests.test_print_style erpnext_enhancements.tests.test_sales_print_formats -v
+python -m unittest erpnext_enhancements.tests.test_print_style -v
+python -m unittest erpnext_enhancements.tests.test_print_lookup -v
+python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
+python -m unittest erpnext_enhancements.tests.test_purchase_order_print_formats -v
+python -m unittest erpnext_enhancements.tests.test_procurement_print_formats -v
 ```
 
 `test_print_style` renders the Maintenance Record Print fixture against sample records —
 per-site and single-feature, signed and unsigned, with an out-of-range reading, with
 every table empty — because nothing else compiles a fixture's html before a customer is
-holding the PDF.
+holding the PDF. The format suites render every Sapphire format under `StrictUndefined`
+with the real `ps_*` helpers, and check the sums: the Amount column adds up to Subtotal,
+and Subtotal − Discount + taxes to the total. Before v1.535.0 a discounted invoice
+subtracted its discount twice (Subtotal printed `net_total`, which is already net of it)
+and nothing noticed.
