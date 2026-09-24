@@ -5,9 +5,9 @@ defect is found by whoever is holding the paper. So, as for the sales formats, t
 compiles and renders every template against sample documents and checks what fails
 silently — plus two things particular to this family:
 
-* **they match the Purchase Order.** The totals, the dash and the table rules are held equal
-  to the order's own, and the chrome is the same neutral stripe, so the family cannot drift
-  apart one edit at a time;
+* **they match the Purchase Order.** The totals are `print_style`'s shared totals styles in
+  both modules, the dash and the table rules are held equal to the order's own, and the
+  chrome is the same neutral stripe, so the family cannot drift apart one edit at a time;
 * **they are the defaults.** A format nobody reaches is a format nobody prints: the six
   Property Setters that make each "<Doctype> - Sapphire" the doctype's default are checked
   against the formats this app actually ships, and the after_migrate hook against its
@@ -51,6 +51,11 @@ def formats():
 
 def html_for(doctype):
 	return {d: h for _n, d, h in formats()}[doctype]
+
+
+def buying_formats():
+	"""The five here plus the Purchase Order, as (name, doctype, html)."""
+	return (*formats(), (_PO_NS["PURCHASE_ORDER_FORMAT"], "Purchase Order", _PO_NS["_HTML"]))
 
 
 class _Doc:
@@ -138,6 +143,40 @@ def _sample(doctype, rows=2, **overrides):
 	return _Doc(**fields)
 
 
+def _fake_party(doc):
+	"""Stands in for `print_lookup.ps_party`, which needs a bench (it follows the Contact,
+	Address and Supplier records). Built on the real `print_style.party_block` from the
+	document's own fields, so the block looks exactly as it does on production."""
+	ps = _NS["ps"]
+	return ps.party_block(
+		doc.get("supplier_name") or doc.get("supplier") or "",
+		doc.get("address_display") or "",
+		doc.get("contact_display") or "",
+		doc.get("contact_mobile") or "",
+		doc.get("contact_email") or "",
+	)
+
+
+def _fake_rfq_suppliers(doc):
+	"""Stands in for `print_lookup.ps_rfq_suppliers` with its rule: `vendor` alone when ERPNext
+	set it, else every supplier row; a dash when there are none."""
+	ps = _NS["ps"]
+	rows = list(doc.get("suppliers") or [])
+	vendor = doc.get("vendor")
+	if vendor:
+		rows = [r for r in rows if r.supplier == vendor] or [_Doc(supplier=vendor)]
+	blocks = [ps.party_block(r.supplier_name or r.supplier or "") for r in rows]
+	return "<br>".join(b for b in blocks if b) or _NS["_DASH"]
+
+
+def _jinja_globals():
+	"""Every `ps_*` global hooks.py registers: print_style's for real, print_lookup's faked."""
+	ps = _NS["ps"]
+	methods = {name: getattr(ps, name) for name in dir(ps) if name.startswith("ps_")}
+	methods.update(ps_party=_fake_party, ps_rfq_suppliers=_fake_rfq_suppliers)
+	return methods
+
+
 def _render(doctype, doc=None, **overrides):
 	from jinja2 import Environment
 
@@ -145,7 +184,10 @@ def _render(doctype, doc=None, **overrides):
 		Environment()
 		.from_string(html_for(doctype))
 		.render(
-			doc=doc or _sample(doctype, **overrides), frappe=_frappe(), letter_head="<div>LETTERHEAD</div>"
+			doc=doc or _sample(doctype, **overrides),
+			frappe=_frappe(),
+			letter_head="<div>LETTERHEAD</div>",
+			**_jinja_globals(),
 		)
 	)
 
@@ -251,12 +293,53 @@ class TestSilentFailureModes(unittest.TestCase):
 				self.assertIn("Sapphire Fountains, LLC", html)
 				self.assertNotIn("{{ letter_head }}", html)
 
-	def test_description_unescaped_item_name_escaped(self):
+	def test_description_through_ps_rich_item_name_escaped(self):
+		"""Markup from the Item master passes through; plain text keeps its line breaks.
+		Neither the raw field nor an escaped one."""
 		for name, _d, html in formats():
 			with self.subTest(name):
-				self.assertIn("{{ row.description }}", html)
+				self.assertIn("{{ ps_rich(row.description) }}", html)
+				self.assertNotIn("{{ row.description }}", html)
 				self.assertNotIn("row.description | e", html)
 				self.assertIn("{{ row.item_name | e }}", html)
+
+	def test_quantities_units_and_codes_print_as_a_person_writes_them(self):
+		for name, _d, html in formats():
+			with self.subTest(name):
+				self.assertIn("{{ ps_qty(row.qty) }}", html)
+				self.assertNotIn("{{ row.qty }}", html)
+				self.assertIn("{{ ps_uom(row.uom) }}", html)
+				self.assertNotIn("row.uom or", html)
+				self.assertIn('white-space:nowrap;">{{ row.item_code | e }}</td>', html)
+
+	def test_no_link_is_printed_where_a_rendered_twin_exists(self):
+		"""A Link holds a record's NAME. `Purchase Order.shipping_address` printed "Sapphire
+		Fountain-Billing" on 221 orders; these are the Links with a `*_display` beside them."""
+		links = (
+			r"doc\.(shipping_address|supplier_address|billing_address|dispatch_address"
+			r"|company_address|contact_person)\b"
+		)
+		for name, _d, html in buying_formats():
+			with self.subTest(name):
+				self.assertIsNone(re.search(links, html))
+
+	def test_every_address_display_goes_through_ps_address(self):
+		"""Every US address ends in `<br>`; printed raw it leaves a blank line under it."""
+		for name, _d, html in buying_formats():
+			with self.subTest(name):
+				self.assertIsNone(re.search(r"\{\{\s*doc\.\w*address_display", html))
+
+	def test_supplier_blocks_are_the_lookup_helpers(self):
+		"""This site keeps a supplier's address, phone and email on its Contact, Address and
+		Supplier records, not on the document -- only `print_lookup` can find them."""
+		for doctype in ("Supplier Quotation", "Purchase Receipt", "Purchase Invoice"):
+			with self.subTest(doctype):
+				self.assertIn("{{ ps_party(doc) }}", html_for(doctype))
+				self.assertNotIn("doc.address_display", html_for(doctype))
+		rfq = html_for("Request for Quotation")
+		self.assertIn("{{ ps_rfq_suppliers(doc) }}", rfq)
+		self.assertNotIn('get_value("Supplier"', rfq)
+		self.assertNotIn("doc.suppliers", rfq)
 
 	def test_print_safe_css(self):
 		for name, _d, html in formats():
@@ -283,10 +366,30 @@ class TestSilentFailureModes(unittest.TestCase):
 class TestMatchesThePurchaseOrder(unittest.TestCase):
 	"""The brief was the order's design. These hold the shared pieces to the order's own."""
 
-	def test_totals_and_dash_styles_are_the_orders(self):
-		for key in ("_TOTAL_LABEL_TD", "_TOTAL_VALUE_TD", "_GRAND_TD", "_DASH"):
-			with self.subTest(key):
-				self.assertEqual(_NS[key], _PO_NS[key])
+	def test_the_dash_is_the_orders(self):
+		self.assertEqual(_NS["_DASH"], _PO_NS["_DASH"])
+
+	def test_both_modules_total_in_the_print_style_constants(self):
+		"""No module-local copy of the totals styles left to drift: both use `print_style`'s
+		TOTAL_SPACER / TOTAL_LABEL / TOTAL_VALUE / GRAND, whose padding carries the inline
+		`!important` that frappe's print stylesheets otherwise override."""
+		ps = _NS["ps"]
+		for namespace, label in ((_NS, "procurement"), (_PO_NS, "order")):
+			for local in ("_TOTAL_LABEL_TD", "_TOTAL_VALUE_TD", "_GRAND_TD"):
+				with self.subTest(f"{label}/{local}"):
+					self.assertNotIn(local, namespace)
+		priced = [html_for(d) for d in ("Supplier Quotation", "Purchase Invoice")] + [_PO_NS["_HTML"]]
+		for html in priced:
+			for style in (ps.TOTAL_SPACER, ps.TOTAL_LABEL, ps.TOTAL_VALUE, ps.GRAND):
+				with self.subTest(style[:30]):
+					self.assertIn(style, html)
+
+	def test_an_extra_top_padding_beats_the_important_one(self):
+		"""In one style attribute an ordinary `padding-top` loses to TOTAL_LABEL's
+		`padding:... !important`, whatever the order; Amount due's must be important too."""
+		html = html_for("Purchase Invoice")
+		self.assertNotRegex(html, r"padding-top:6px(?! !important)")
+		self.assertIn("padding-top:6px !important", html)
 
 	def test_same_table_rules_and_stripe_as_the_order(self):
 		ps = _NS["ps"]
@@ -321,15 +424,58 @@ class TestMatchesThePurchaseOrder(unittest.TestCase):
 
 class TestDocumentSpecifics(_JinjaCase):
 	def test_rfq_is_addressed_to_the_vendor_being_sent(self):
-		"""ERPNext renders an RFQ once per supplier with `vendor` set."""
-		out = _render("Request for Quotation", vendor="SUP-0042")
-		self.assertIn("Harrington Industrial Plastics", out)
-		self.assertNotIn("B Supplier", out)
+		"""ERPNext renders an RFQ once per supplier with `vendor` set; `ps_rfq_suppliers`
+		gets the document and decides, so the vendor's block alone reaches the page."""
+		out = _render("Request for Quotation", vendor="SUP-0002")
+		self.assertIn("B Supplier", out)
+		self.assertNotIn("A Supplier", out)
 
 	def test_rfq_without_a_vendor_lists_every_supplier(self):
 		out = _render("Request for Quotation", vendor=None)
 		self.assertIn("A Supplier", out)
 		self.assertIn("B Supplier", out)
+
+	def test_rfq_deliver_to_is_the_rendered_address_without_its_trailing_break(self):
+		out = _render(
+			"Request for Quotation", shipping_address_display="85 W 300 S<br>Bountiful, UT 84010<br>"
+		)
+		deliver_to = out.split(">DELIVER TO<", 1)[1].split(">PROJECT<", 1)[0]
+		self.assertIn("85 W 300 S<br>Bountiful, UT 84010</div>", deliver_to)
+		self.assertIn("Not specified", _render("Request for Quotation", shipping_address_display=None))
+
+	def test_quantities_print_without_a_trailing_zero(self):
+		"""`{{ row.qty }}` printed the raw float -- "12.0" -- on every line."""
+		for name, doctype, _h in formats():
+			with self.subTest(name):
+				body = _render(doctype, items=_items(1, qty=12.0)).split("<tbody>", 1)[1]
+				self.assertIn(">12</td>", body)
+				self.assertNotIn("12.0", body)
+				self.assertIn(">ea</td>", body, '"Nos" prints as "ea"')
+
+	def test_a_plain_text_description_keeps_its_line_breaks(self):
+		for name, doctype, _h in formats():
+			with self.subTest(name):
+				out = _render(doctype, items=_items(1, description="Pump, 3/4 HP\n50 ft cord & bracket"))
+				self.assertIn("Pump, 3/4 HP<br>50 ft cord &amp; bracket", out)
+
+	def test_invoice_net_30_is_printed_once(self):
+		"""The template's name is also its one schedule row's label."""
+		out = _render(
+			"Purchase Invoice",
+			payment_terms_template="Net 30",
+			payment_schedule=[
+				_Doc(payment_term="Net 30", description=None, payment_amount=107.25, due_date="2026-10-23")
+			],
+		)
+		self.assertEqual(out.count("Net 30"), 1)
+		self.assertIn("USD 107.25 due DATE(2026-10-23)", out)
+
+	def test_invoice_amount_due_is_styled_like_the_totals(self):
+		ps = _NS["ps"]
+		out = _render("Purchase Invoice", outstanding_amount=50.0)
+		row = out.split(">Amount due<", 1)[0].rsplit("<tr>", 1)[1]
+		self.assertIn(ps.TOTAL_LABEL, row)
+		self.assertIn(ps.TOTAL_SPACER, row)
 
 	def test_rfq_carries_no_prices_and_shows_a_supplier_part_number(self):
 		html = html_for("Request for Quotation")
@@ -348,7 +494,9 @@ class TestDocumentSpecifics(_JinjaCase):
 		self.assertNotIn(">Rejected<", clean)
 		rejected = _render("Purchase Receipt", items=_items(2, rejected_qty=3.0))
 		self.assertIn(">Rejected<", rejected)
-		self.assertIn("3.0", rejected)
+		lines = rejected.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+		self.assertIn(">3</td>", lines)
+		self.assertNotIn("3.0", lines)
 
 	def test_receipt_empty_state_spans_the_columns_actually_drawn(self):
 		self.assertIn('colspan="6"', _render("Purchase Receipt", rows=0))
@@ -427,8 +575,10 @@ class TestWiring(unittest.TestCase):
 
 class TestTheStockFormatsAreDisabled(unittest.TestCase):
 	"""The Sapphire formats are the defaults; the stock ones leave the dropdown, as the
-	order's three did. Through the order module's every-migrate pass, because ERPNext's
-	own formats re-sync from its JSON on every migrate and a one-shot patch undoes itself."""
+	order's three did. Disabled rather than deleted, because a deleted standard format is
+	imported again from ERPNext's JSON; the disable survives that import (frappe keeps
+	`disabled` through it), and the order module's every-migrate pass re-applies it anyway,
+	which is idempotent and re-disables anything an admin switched back on."""
 
 	STOCK = {
 		"Request for Quotation Print Template",
@@ -445,20 +595,28 @@ class TestTheStockFormatsAreDisabled(unittest.TestCase):
 
 	def test_no_format_we_ship_is_on_it(self):
 		ours = {n for n, _d, _h in formats()} | {_PO_NS["PURCHASE_ORDER_FORMAT"]}
-		listed = set(_PO_NS["SUPERSEDED_PROCUREMENT_FORMATS"]) | set(
-			_PO_NS["SUPERSEDED_PURCHASE_ORDER_FORMATS"]
+		listed = (
+			set(_PO_NS["SUPERSEDED_PROCUREMENT_FORMATS"])
+			| set(_PO_NS["SUPERSEDED_PURCHASE_ORDER_FORMATS"])
+			| set(_PO_NS["SUPERSEDED_SALES_FORMATS"])
 		)
 		self.assertEqual(ours & listed, set())
 
 	def test_the_pass_disables_them_with_the_low_level_write(self):
 		"""Run the real function against a fake database: every enabled stock format is
-		disabled, an already-disabled one and a missing one are left alone, and nothing is
-		touched through the ORM (Print Format.validate refuses standard formats)."""
+		disabled -- procurement's and, since v1.533.0, the Sales Invoice ones -- an
+		already-disabled one and a missing one are left alone, a stock format nobody listed
+		(`Quotation Standard`) is untouched, and nothing goes through the ORM (Print
+		Format.validate refuses standard formats)."""
 		state = {
 			"Purchase Invoice Standard": 0,
 			"Request for Quotation Print Template": 0,
 			"Purchase eInvoice": 1,
 			"Purchase Order Standard": 1,
+			"Sales Invoice Standard": 0,
+			"Sales Invoice Print": 0,
+			"Tax Invoice": 1,
+			"Quotation Standard": 0,
 		}
 		writes = []
 		fake = types.SimpleNamespace(
@@ -486,6 +644,8 @@ class TestTheStockFormatsAreDisabled(unittest.TestCase):
 			[
 				("Purchase Invoice Standard", "disabled", 1),
 				("Request for Quotation Print Template", "disabled", 1),
+				("Sales Invoice Print", "disabled", 1),
+				("Sales Invoice Standard", "disabled", 1),
 			],
 		)
 

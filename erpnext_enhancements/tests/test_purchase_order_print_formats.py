@@ -15,15 +15,18 @@ that reason.
 * ``Test Purchase Order Format`` and ``PO Test Print Format`` are custom
   (``standard = "No"``). Deleting them is real and permanent.
 * ``Purchase Order Standard``, ``Purchase Order with Item Image`` and
-  ``Drop Shipping Format`` ship with ERPNext. **Standard formats re-sync from
-  their app's JSON on migrate**, which is the same fact that forced
-  ``ensure_chrome_pdf_generator`` to be an every-migrate hook rather than the
-  one-off data fix somebody tried first. A patch that deleted them would appear
-  to work and undo itself at the next ``bench migrate`` — the worst shape of
-  failure, because nobody looks again until they print a PO weeks later.
+  ``Drop Shipping Format`` ship with ERPNext. A deleted standard format has no row,
+  so the next ``bench migrate`` imports it again from the app's JSON: a patch that
+  deleted them would appear to work and undo itself — the worst shape of failure,
+  because nobody looks again until they print a PO weeks later. They are disabled
+  instead, which that import keeps (frappe v16 ``import_file.ignore_values``).
 
 So the split is the design, and this pins it. Getting it backwards is invisible
 until production.
+
+**The Sales Invoice cleanup** (v1.533.0) rides the same disable pass —
+``SUPERSEDED_SALES_FORMATS`` — and the three sales doctypes default to their
+Sapphire formats through Property Setter fixtures; both are pinned here too.
 
 Bench-free: reads the sources as text, and execs the setup module against a `frappe`
 stub to get at the composed template. Own CI step, because that stub is process-wide.
@@ -32,6 +35,8 @@ Run: python -m unittest erpnext_enhancements.tests.test_purchase_order_print_for
 """
 
 import ast
+import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -41,7 +46,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # The two constants live in `company_contact` now, shared with the sales formats.
-# Importable without a bench: that module is pure strings and has no frappe import.
+# Importable without a bench: that module is pure strings and has no frappe import. So is
+# the print design system, whose real `ps_*` globals are passed to the renders.
+from erpnext_enhancements import print_style as ps
 from erpnext_enhancements.enhancements_core.company_contact import (
     COMPANY_ADDRESS_HTML,
     COMPANY_PHONE,
@@ -49,9 +56,12 @@ from erpnext_enhancements.enhancements_core.company_contact import (
 
 APP = REPO_ROOT / "erpnext_enhancements"
 SETUP = APP / "enhancements_core/setup_print_formats.py"
+SALES_SETUP = APP / "enhancements_core/setup_sales_print_formats.py"
 PATCH = APP / "patches/purge_purchase_order_print_formats.py"
 PATCHES_TXT = APP / "patches.txt"
 HOOKS = APP / "hooks.py"
+PROPERTY_SETTERS = APP / "fixtures/property_setter.json"
+PRINT_FORMAT_FIXTURES = APP / "fixtures/print_format.json"
 
 KEEP = "Purchase Order - Sapphire"
 DELETABLE = ("Test Purchase Order Format", "PO Test Print Format")
@@ -134,17 +144,38 @@ def _stub_frappe(project_name=None):
     )
 
 
-def _render(doc, letter_head="<div>LETTERHEAD</div>", project_name=None):
+def _fake_party(doc):
+    """Stands in for `print_lookup.ps_party`, which needs a bench: it follows the document's
+    Contact, Address and Supplier records. Built on the real `print_style.party_block` from
+    the document's own fields, so the block looks exactly as it does on production."""
+    return ps.party_block(
+        doc.get("supplier_name") or doc.get("supplier") or "",
+        doc.get("address_display") or "",
+        doc.get("contact_display") or "",
+        doc.get("contact_mobile") or "",
+        doc.get("contact_email") or "",
+    )
+
+
+def _jinja_globals(party=None):
+    """Every `ps_*` global hooks.py registers: print_style's for real, print_lookup's faked."""
+    methods = {name: getattr(ps, name) for name in dir(ps) if name.startswith("ps_")}
+    methods["ps_party"] = party or _fake_party
+    return methods
+
+
+def _render(doc, letter_head="<div>LETTERHEAD</div>", project_name=None, party=None):
     """Render the composed template with every jinja method the hook registers.
 
     One helper rather than three copies: a template gaining a method it can call is a
     template that raises `UndefinedError` at render time in every test that forgot to pass
     it, and the useful failure is the one that says the *format* is wrong.
 
-    The methods are the real ones, not stand-ins. They are what decide which project the
-    sheet names when the header and item rows disagree, and what makes the printed
-    identifier the same string as the PDF's filename; a stub answering either differently
-    from production would make this suite worse than no suite.
+    The project methods are the real ones, not stand-ins. They are what decide which
+    project the sheet names when the header and item rows disagree, and what makes the
+    printed identifier the same string as the PDF's filename; a stub answering either
+    differently from production would make this suite worse than no suite. So are the
+    `print_style` globals. Only `ps_party` is faked, because it reads the database.
     """
     from jinja2 import Environment
 
@@ -160,6 +191,7 @@ def _render(doc, letter_head="<div>LETTERHEAD</div>", project_name=None):
             letter_head=letter_head,
             purchase_order_projects=purchase_order_projects,
             purchase_order_document_id=purchase_order_document_id,
+            **_jinja_globals(party),
         )
     )
 
@@ -172,6 +204,7 @@ def _sample(**overrides):
         supplier="SUP-0001",
         supplier_name="A Supplier",
         owner="buyer@example.com",
+        docstatus=1,
         status="To Receive and Bill",
         transaction_date="2026-08-14",
         billing_address_display="85 W 300 S<br>\nBountiful, UT 84010<br>\n",
@@ -289,6 +322,205 @@ class TestTheHeaderNamesTheJob(unittest.TestCase):
                 self.assertIn(method, hooks)
         self.assertIn("purchase_order_document_id(doc)", _NAMESPACE["_HTML"])
 
+    def test_every_ps_global_the_template_calls_is_registered(self):
+        """Same failure, for the print design system's globals: each `ps_*` the order calls
+        must be a registered `print_style` or `print_lookup` function."""
+        hooks = HOOKS.read_text(encoding="utf-8")
+        called = set(re.findall(r"\b(ps_\w+)\(", _NAMESPACE["_HTML"]))
+        self.assertTrue({"ps_party", "ps_address", "ps_qty", "ps_uom", "ps_rich"} <= called, called)
+        for name in sorted(called):
+            with self.subTest(name):
+                self.assertTrue(
+                    f'"erpnext_enhancements.print_style.{name}"' in hooks
+                    or f'"erpnext_enhancements.print_lookup.{name}"' in hooks,
+                    f"{name} is called by the template but not registered in hooks.py jinja methods",
+                )
+
+
+def _fact(out, label, next_label):
+    """The markup printed under one fact label, up to the next label."""
+    return out.split(f">{label}<", 1)[1].split(f">{next_label}<", 1)[0]
+
+
+def _visible(fragment):
+    """A fragment's text: tags dropped (including the ones `_fact` cut in half), whitespace
+    collapsed."""
+    return " ".join(re.sub(r"<[^>]*>|^[^<]*>|<[^>]*$", " ", fragment).split())
+
+
+class TestWhatTheSupplierReads(unittest.TestCase):
+    """The facts a supplier acts on (v1.533.0): who the order is to, where it goes, whether
+    it is an order at all, and the lines as a person would write them."""
+
+    def setUp(self):
+        try:
+            import jinja2
+        except ImportError:  # pragma: no cover
+            self.skipTest("jinja2 not installed")
+
+    def render(self, **overrides):
+        return _render(_sample(**overrides), letter_head="")
+
+    # --- SUPPLIER --------------------------------------------------------------------
+
+    def test_the_supplier_block_is_the_party_helper(self):
+        """Name, address, Attn, phone and email come from `print_lookup.ps_party`: this site
+        keeps them on the Contact, Address and Supplier, not on the order."""
+        self.assertIn("{{ ps_party(doc) }}", _NAMESPACE["_HTML"])
+        self.assertNotIn("doc.address_display", _NAMESPACE["_HTML"])
+        out = _render(_sample(), "", party=lambda doc: "PARTY-BLOCK-FOR-" + doc.name)
+        self.assertIn("PARTY-BLOCK-FOR-PO-2026-00262", _fact(out, "SUPPLIER", "REQUIRED BY"))
+
+    def test_the_supplier_name_is_escaped(self):
+        out = self.render(supplier_name="Wasatch Stone & Tile")
+        self.assertIn("Wasatch Stone &amp; Tile", _fact(out, "SUPPLIER", "REQUIRED BY"))
+
+    # --- DELIVER TO ------------------------------------------------------------------
+
+    def test_deliver_to_never_reads_the_address_link(self):
+        """`shipping_address` is the Link to the Address record. Printing it put the record's
+        name, "Sapphire Fountain-Billing", in front of the supplier on 221 of 230 orders."""
+        html = _NAMESPACE["_HTML"]
+        self.assertIsNone(re.search(r"doc\.shipping_address\b", html))
+        self.assertIsNone(re.search(r"""get\(\s*["']shipping_address["']""", html))
+
+    def test_deliver_to_prints_the_rendered_address_without_its_trailing_break(self):
+        """Production's shape exactly: the Link set, and the display ending in `<br>`."""
+        out = self.render(
+            shipping_address="Sapphire Fountain-Billing",
+            shipping_address_display="85 W 300 S<br>Bountiful, UT 84010<br>",
+        )
+        deliver_to = _fact(out, "DELIVER TO", "ORDER STATUS")
+        self.assertIn("85 W 300 S<br>Bountiful, UT 84010</div>", deliver_to)
+        self.assertNotIn("Sapphire Fountain-Billing", out)
+
+    def test_deliver_to_falls_back_to_collection(self):
+        for link in (None, "Sapphire Fountain-Billing"):
+            with self.subTest(link=link):
+                out = self.render(shipping_address=link, shipping_address_display=None)
+                self.assertIn(
+                    "Collection &mdash; see instructions below", _fact(out, "DELIVER TO", "ORDER STATUS")
+                )
+
+    # --- ORDER STATUS ----------------------------------------------------------------
+
+    def status(self, **overrides):
+        return _fact(self.render(**overrides), "ORDER STATUS", "APPROVED BY")
+
+    def test_a_draft_says_it_is_not_an_order(self):
+        """30 drafts on production; a supplier holding one must not ship against it."""
+        out = self.status(docstatus=0, status="Draft")
+        self.assertIn("Draft &mdash; not an order until approved", out)
+        self.assertIn(ps.FAIL, out)
+
+    def test_an_order_on_hold_says_do_not_ship(self):
+        out = self.status(status="On Hold")
+        self.assertIn("On hold &mdash; please do not ship yet", out)
+        self.assertIn(ps.FAIL, out)
+
+    def test_a_cancelled_order_says_do_not_supply(self):
+        out = self.status(docstatus=2, status="Cancelled")
+        self.assertIn("Cancelled &mdash; do not supply", out)
+        self.assertIn(ps.FAIL, out)
+
+    def test_every_other_submitted_order_is_issued(self):
+        """ERPNext's words are ours: a supplier reads "Closed" (104 orders) as cancelled
+        and "To Bill" (73) as a prompt to invoice."""
+        for status in ("Closed", "To Bill", "To Receive and Bill", "To Receive", "Completed", "Delivered"):
+            with self.subTest(status):
+                out = self.status(status=status)
+                self.assertEqual(_visible(out), "Issued")
+                self.assertNotIn(status, out)
+                self.assertNotIn(ps.FAIL, out)
+
+    def test_the_label_is_still_order_status(self):
+        self.assertIn(">ORDER STATUS<", self.render())
+        self.assertNotIn("{{ doc.status }}", _NAMESPACE["_HTML"])
+
+    # --- payment terms ---------------------------------------------------------------
+
+    def test_net_30_is_printed_once(self):
+        """The template's name is also its one schedule row's label."""
+        out = self.render(
+            payment_terms_template="Net 30",
+            payment_schedule=[
+                _Doc(payment_term="Net 30", description=None, payment_amount=106.25, due_date="2026-09-13")
+            ],
+        )
+        self.assertEqual(out.count("Net 30"), 1)
+        self.assertIn("USD 106.25 due 2026-09-13", out)
+
+    def test_a_row_label_that_says_something_else_is_kept(self):
+        out = self.render(
+            payment_terms_template="Deposit and Balance",
+            payment_schedule=[
+                _Doc(payment_term="50% Deposit", description=None, payment_amount=53.13, due_date=None),
+                _Doc(payment_term="Balance", description=None, payment_amount=53.12, due_date=None),
+            ],
+        )
+        self.assertIn("Deposit and Balance", out)
+        self.assertIn("50% Deposit &mdash; USD 53.13", out)
+        self.assertIn("Balance &mdash; USD 53.12", out)
+
+    # --- the line table --------------------------------------------------------------
+
+    def line(self, **fields):
+        row = dict(
+            item_code="ITEM-1",
+            item_name="Pump",
+            description=None,
+            qty=1.0,
+            uom="Nos",
+            rate=1.0,
+            amount=1.0,
+            project="PRJ-00001",
+        )
+        row.update(fields)
+        return self.render(items=[_Doc(**row)]).split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+
+    def test_a_quantity_prints_as_a_person_writes_it(self):
+        out = self.line(qty=12.0)
+        self.assertIn(">12</td>", out)
+        self.assertNotIn("12.0", out)
+        self.assertIn(">62.5</td>", self.line(qty=62.5))
+
+    def test_nos_prints_as_ea(self):
+        self.assertIn(">ea</td>", self.line(uom="Nos"))
+        self.assertIn(">Ft</td>", self.line(uom="Ft"))
+        self.assertNotIn("None", self.line(uom=None))
+
+    def test_a_plain_text_description_keeps_its_line_breaks(self):
+        out = self.line(description="Submersible pump\n50 ft cord & bracket")
+        self.assertIn("Submersible pump<br>50 ft cord &amp; bracket", out)
+
+    def test_description_markup_passes_through(self):
+        self.assertIn(
+            "<b>from the item master</b>", self.line(description="<p>Markup <b>from the item master</b></p>")
+        )
+        self.assertIn("{{ ps_rich(row.description) }}", _NAMESPACE["_HTML"])
+        self.assertNotIn("{{ row.description }}", _NAMESPACE["_HTML"])
+
+    def test_no_description_falls_back_to_the_escaped_item_name(self):
+        self.assertIn("Pump &amp; vault", self.line(item_name="Pump & vault", description=None))
+
+    def test_the_item_code_is_kept_and_never_wraps(self):
+        """Receiving and the supplier's counter staff work from it."""
+        self.assertIn('white-space:nowrap;">{{ row.item_code | e }}</td>', _NAMESPACE["_HTML"])
+        self.assertIn(">Item</th>", _NAMESPACE["_HTML"])
+
+    # --- totals ----------------------------------------------------------------------
+
+    def test_the_totals_use_the_shared_print_style_constants(self):
+        """The one set of totals styles, with the inline `!important` frappe's print CSS
+        demands; no module-local copy left to drift."""
+        html = _NAMESPACE["_HTML"]
+        for style in (ps.TOTAL_SPACER, ps.TOTAL_LABEL, ps.TOTAL_VALUE, ps.GRAND):
+            with self.subTest(style[:30]):
+                self.assertIn(style, html)
+        for local in ("_TOTAL_LABEL_TD", "_TOTAL_VALUE_TD", "_GRAND_TD"):
+            with self.subTest(local):
+                self.assertNotIn(local, _NAMESPACE)
+
 
 class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
     """A supplier holding this PDF must be able to reach us without the buyer's inbox.
@@ -402,6 +634,121 @@ class TestTheSplitIsRight(unittest.TestCase):
         self.assertIn(f'PURCHASE_ORDER_FORMAT = "{KEEP}"', SETUP.read_text(encoding="utf-8"))
 
 
+def _shipped_format_names():
+    """Every Print Format this app ships: each `*_FORMAT` / `*_PF` string constant in a
+    `setup*print_format*.py` module, plus the Print Format fixtures."""
+    names = set()
+    for path in APP.rglob("setup*print_format*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and re.search(r"(_FORMAT|_PF)$", node.targets[0].id)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                names.add(node.value.value)
+    names.update(row["name"] for row in json.loads(PRINT_FORMAT_FIXTURES.read_text(encoding="utf-8")))
+    return names
+
+
+class TestTheSalesInvoiceCleanup(unittest.TestCase):
+    """Nik: "clean up all the print formats for Sales Invoice and make the default of the
+    print formats these new ones" (v1.533.0)."""
+
+    EXPECTED = {
+        # Broken today: TemplateNotFoundError, a blank preview.
+        "Sales Invoice Print",
+        "Sales Invoice PD Format v2",
+        "Sales Order PD v2",
+        # A leftover JS format; 0 POS Profiles, 0 POS invoices.
+        "Point of Sale",
+        # Superseded by Sales Invoice - Sapphire.
+        "Sales Invoice Standard",
+        "Sales Invoice with Item Image",
+        "Sales Invoice Return",
+        "Sales Auditing Voucher",
+        # Regional, already disabled; listed so they stay so.
+        "Detailed Tax Invoice",
+        "Simplified Tax Invoice",
+        "Tax Invoice",
+    }
+
+    def test_the_list_is_exactly_the_agreed_set(self):
+        listed = literal(SETUP, "SUPERSEDED_SALES_FORMATS")
+        self.assertEqual(set(listed), self.EXPECTED)
+        self.assertEqual(len(listed), len(set(listed)), "a name listed twice")
+
+    def test_the_quotation_and_sales_order_stock_formats_are_left_alone(self):
+        """Not asked for, and they still render."""
+        listed = set(literal(SETUP, "SUPERSEDED_SALES_FORMATS"))
+        for name in (
+            "Quotation Standard",
+            "Quotation with Item Image",
+            "Sales Order Standard",
+            "Sales Order with Item Image",
+        ):
+            with self.subTest(name):
+                self.assertNotIn(name, listed)
+
+    def test_no_format_this_app_ships_is_on_any_disable_list(self):
+        """Disabling one of our own would take it out of the dropdown on every migrate."""
+        shipped = _shipped_format_names()
+        # The discovery must actually find them, or this test passes on nothing.
+        for name in (
+            KEEP,
+            "Sales Invoice - Sapphire",
+            "Purchase Invoice - Sapphire",
+            "Maintenance Record Print",
+        ):
+            self.assertIn(name, shipped)
+        for listname in (
+            "SUPERSEDED_PURCHASE_ORDER_FORMATS",
+            "SUPERSEDED_PROCUREMENT_FORMATS",
+            "SUPERSEDED_SALES_FORMATS",
+        ):
+            with self.subTest(listname):
+                self.assertEqual(shipped & set(literal(SETUP, listname)), set())
+
+    def test_the_disable_pass_covers_the_sales_list(self):
+        source = SETUP.read_text(encoding="utf-8")
+        start = source.index("def disable_superseded_print_formats(")
+        end = source.index("\ndef ", start + 1)
+        self.assertIn("SUPERSEDED_SALES_FORMATS", source[start:end])
+
+    def test_the_sales_doctypes_default_to_their_sapphire_formats(self):
+        """Exactly the shape of the Purchase Order's own default, which has worked since
+        v1.519.0 -- and naming the formats the sales module actually ships."""
+        rows = {row["name"]: row for row in json.loads(PROPERTY_SETTERS.read_text(encoding="utf-8"))}
+        reference = rows["Purchase Order-main-default_print_format"]
+        for doctype, constant in (
+            ("Quotation", "QUOTATION_FORMAT"),
+            ("Sales Order", "SALES_ORDER_FORMAT"),
+            ("Sales Invoice", "SALES_INVOICE_FORMAT"),
+        ):
+            with self.subTest(doctype):
+                name = f"{doctype}-main-default_print_format"
+                self.assertIn(name, rows)
+                expected = dict(reference, doc_type=doctype, name=name, value=f"{doctype} - Sapphire")
+                self.assertEqual(rows[name], expected)
+                self.assertEqual(rows[name]["value"], literal(SALES_SETUP, constant))
+
+    def test_the_fixture_export_keeps_them(self):
+        """hooks.py exports every Property Setter with is_system_generated = 0, minus a short
+        exclusion list; one of these on that list would silently drop out of the fixtures on
+        the next export."""
+        hooks = HOOKS.read_text(encoding="utf-8")
+        block = hooks[hooks.index('"dt": "Property Setter"') :]
+        block = block[: block.index("},")]
+        self.assertIn('["is_system_generated", "=", 0]', block)
+        for doctype in ("Quotation", "Sales Order", "Sales Invoice"):
+            with self.subTest(doctype):
+                self.assertNotIn(f"{doctype}-main-default_print_format", block)
+
+
 class TestItIsWiredUp(unittest.TestCase):
     def test_the_patch_is_registered(self):
         self.assertIn(
@@ -421,8 +768,10 @@ class TestItIsWiredUp(unittest.TestCase):
         so the ORM cannot touch these at all."""
         source = SETUP.read_text(encoding="utf-8")
         start = source.index("def disable_superseded_print_formats(")
-        body = source[start : start + 1400]
-        self.assertIn("frappe.db.set_value", body)
+        # This function's body only: past its end the next function's docstring talks
+        # about `doc.save()`, which is not a call this pass makes.
+        body = source[start : start + 1400].split("\ndef ", 1)[0]
+        self.assertIn('frappe.db.set_value("Print Format"', body)
         self.assertNotIn(".save(", body)
 
 

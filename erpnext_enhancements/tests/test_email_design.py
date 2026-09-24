@@ -129,8 +129,13 @@ def test_shell_is_fluid_and_capped():
 	shell = _strip_comments(_read(EMAIL_DIR, "_shell.html"))
 	assert 'width="100%"' in shell, "the shell must be fluid"
 	assert "max-width:840px" in shell, "the measure cap moved without updating this test"
-	assert "[if mso]" in shell, "Outlook ignores max-width; the ghost table is what pins it"
-	assert shell.count("[if mso]") == 2, "the ghost table must be opened and closed"
+	# Outlook ignores max-width; the ghost table is what pins it, and it must be
+	# both opened and closed. The third conditional is the Outlook font block,
+	# asserted on its own in test_outlook_gets_a_deterministic_face.
+	assert '<!--[if mso]><table role="presentation" width="840"' in shell, "the ghost table must be opened"
+	assert "<!--[if mso]></td></tr></table><![endif]-->" in shell, "the ghost table must be closed"
+	assert "<!--[if mso]><style" in shell, "the Outlook font block is missing"
+	assert shell.count("[if mso]") == 3, "expected the ghost table's two halves and the font block only"
 	assert "<html" not in shell.lower(), "frappe's standard.html supplies the document"
 	assert "<body" not in shell.lower()
 
@@ -349,6 +354,60 @@ def test_the_button_still_fills_for_outlook():
 	assert "mso-padding-alt:12px 30px" in body
 
 
+# Every property frappe's email.bundle.scss sets in its `.btn` rule. Premailer
+# inlines that rule onto any element carrying class="btn" and lets only the
+# element's own inline declarations beat it, property by property.
+FRAPPE_BTN_PROPERTIES = (
+	"text-decoration",
+	"padding",
+	"font-size",
+	"font-weight",
+	"border",
+	"border-radius",
+	"color",
+	"background-color",
+	"display",
+	"line-height",
+	"margin",
+)
+
+
+def _declares(style, prop):
+	"""True when ``style`` declares ``prop`` itself — ``border`` is not
+	``border-radius``, and ``color`` is not ``background-color``."""
+	return re.search(rf"(?<![-\w]){re.escape(prop)}\s*:", style) is not None
+
+
+def test_every_macro_link_opts_out_of_frappes_link_rule(macros):
+	"""frappe's `.email-body a:not(.btn){color:$gray-900;font-weight:600;
+	text-decoration:underline}` cannot be inlined — premailer leaves any
+	pseudo-class selector in <head>, marked !important — so in Apple Mail it beats
+	every inline style we write: the CTA label turned near-black, semibold and
+	underlined, and links lost bahama-blue.
+
+	class="btn" takes an anchor out of that rule. It also pulls frappe's `.btn`
+	rule onto the anchor, and premailer 3.10 was run on exactly this: with the
+	class but without margin/border/background-color declared, the CTA came out
+	grey-filled (plus a bgcolor attribute), bordered and 8px off. So every anchor
+	that carries the class must declare every property `.btn` sets.
+	"""
+	shell = _render_shell(body="")
+	anchors = [
+		("button", str(macros.button("https://x.test", "OPEN"))),
+		("links", str(macros.links([("https://x.test", "A link")]))),
+		("table", str(macros.table(["H"], [[("https://x.test", "A link")]]))),
+		("shell footer", shell),
+	]
+	seen = 0
+	for where, html in anchors:
+		for tag, style in _tags(html, "a"):
+			seen += 1
+			assert re.search(r'class="[^"]*\bbtn\b', tag), f"{where}: anchor without class=btn: {tag}"
+			missing = [p for p in FRAPPE_BTN_PROPERTIES if not _declares(style, p)]
+			assert not missing, f"{where}: frappe's .btn would supply {missing} to {tag}"
+	assert seen == 4, f"expected one anchor per source, found {seen} — has the scan broken?"
+
+
 # ---------------------------------------------------------------------------
 # The pillars. A pillar's closing stop carries small text and its opening stop is
 # a fill, so each has its own bar to clear; and paper and email must agree on
@@ -392,11 +451,133 @@ def test_the_shell_carries_the_pillar_stripe():
 
 
 # ---------------------------------------------------------------------------
+# Type. Email is set in the reader's own platform face, declared once. premailer
+# drops @font-face, so the design system's display face never reached an inbox
+# and its stack fell to Arial Narrow, which read squashed; Nik's call on
+# 2026-09-24 was a well-designed system face over a look-alike.
+
+SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
+MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+MSO_SANS = "'Segoe UI',Arial,sans-serif"
+MSO_MONO = "Consolas,'Courier New',monospace"
+STACKS = {"SANS": SANS, "MONO": MONO, "MSO_SANS": MSO_SANS, "MSO_MONO": MSO_MONO}
+
+OLD_FACES = re.compile(r"big\s*noodle|arial\s*narrow|\blato\b", re.IGNORECASE)
+FONT_FAMILY = re.compile(r"font-family\s*:\s*([^;\"}]+)")
+# In template source a value is usually a Jinja expression, whose braces the
+# rendered-HTML pattern above would stop at.
+SOURCE_FONT_FAMILY = re.compile(r"font-family\s*:\s*(\{\{[^}]*\}\}(?:\s*!important)?|[^;\"}]+)")
+
+
+def _render_shell(**context):
+	"""The shell rendered bench-free, as email_style.wrap() would render it."""
+	context.setdefault("title", "A title")
+	context.setdefault("eyebrow", "An eyebrow")
+	context.setdefault("site_url", "https://erp.example.com")
+	return _env().get_template(SHELL_REL).render(**context)
+
+
+@pytest.mark.parametrize("rel,src", ALL_TEMPLATES, ids=_ids(ALL_TEMPLATES))
+def test_no_email_template_names_the_old_faces(rel, src):
+	"""Big Noodle Titling, its Arial Narrow stand-in and Lato are gone from email.
+
+	Comments are stripped: the headers explain what was replaced and why."""
+	found = OLD_FACES.search(_strip_comments(src))
+	assert not found, f"{rel} names {found.group(0)!r}; email type is the declared SANS stack"
+
+
+def test_font_stacks_are_declared_once():
+	"""The stacks live in _components.html and nowhere else. The shell imports
+	them; neither file may spell a stack out in a style."""
+	components = _strip_comments(_read(EMAIL_DIR, "_components.html"))
+	for name, value in STACKS.items():
+		assert f'{{%- set {name} = "{value}" -%}}' in components, f"{name} is not declared as expected"
+	assert "system-ui" not in SANS
+
+	names = "|".join(STACKS)
+	allowed = re.compile(rf"\{{\{{ (?:ee\.)?(?:{names}) \}}\}}(?: !important)?")
+	for rel in (SHELL_REL, COMPONENTS_REL):
+		src = _strip_comments(_read(REPO_ROOT, *rel.split("/")))
+		for name in STACKS:
+			assert f"set {name} " not in src or rel == COMPONENTS_REL, f"{rel} re-declares {name}"
+		values = SOURCE_FONT_FAMILY.findall(src)
+		assert len(values) >= 8, f"only {len(values)} font-family declarations in {rel} — scan broken?"
+		for value in values:
+			assert allowed.fullmatch(value.strip()), (
+				f"{rel} writes font-family:{value.strip()} — use SANS or MONO from _components.html"
+			)
+
+
+def test_rendered_type_is_only_the_declared_stacks(macros):
+	"""The same rule, checked on what actually comes out: the shell around a body
+	that uses every macro that sets type."""
+	body = "".join(
+		str(x)
+		for x in (
+			macros.h("Heading"),
+			macros.p("Para"),
+			macros.note("Note"),
+			macros.prose("Prose"),
+			macros.code("Code"),
+			macros.kv([("L", "V")]),
+			macros.table(["H"], [["C", ("https://x.test", "L")]]),
+			macros.kpis([{"label": "L", "value": "1", "tone": "success"}]),
+			macros.callout("Info: x", "info"),
+			macros.bullets(["x"]),
+			macros.links([("https://x.test", "L")]),
+			macros.button("https://x.test", "GO"),
+			macros.button_fallback("https://x.test"),
+			macros.pill("OK", "success"),
+		)
+	)
+	html = _render_shell(body=body, logo_url="https://x.test/logo.png", tagline=True)
+	used = {v.strip().removesuffix(" !important") for v in FONT_FAMILY.findall(html)}
+	assert used == set(STACKS.values()), f"unexpected font stacks: {sorted(used - set(STACKS.values()))}"
+
+	# Headings are the body face in bold — no condensed display face.
+	title = next(s for tag, s in _tags(html, "h1"))
+	assert f"font-family:{SANS}" in title and "font-weight:700" in title
+	for _tag, style in _tags(str(macros.h("x")), "h2"):
+		assert f"font-family:{SANS}" in style and "font-weight:700" in style
+
+
+def test_text_cells_name_their_face(macros):
+	"""premailer inlines frappe's `.body-table td{font-family:…}` onto every td in
+	the message, so a text-bearing cell that does not name SANS itself is set in
+	frappe's stack instead of ours."""
+	for tag, style in [
+		*_tags(str(macros.kv([("L", "V")])), "td"),
+		*_tags(str(macros.table(["H"], [["C", ("https://x.test", "L")]])), "td"),
+		*_tags(str(macros.table(["H"], [["C"]])), "th"),
+	]:
+		assert f"font-family:{SANS}" in style, f"cell leaves its face to frappe: {tag}"
+
+
+def test_outlook_gets_a_deterministic_face(macros):
+	"""Outlook's Word engine can drop to Times New Roman on a stack whose first
+	family it lacks, and -apple-system is never on Windows. The conditional block
+	pins Segoe UI (and Consolas for code) there. It must follow the main <style>:
+	test_media_selectors_are_namespaced slices from @media to the first </style>."""
+	html = _render_shell(body=str(macros.code("x")))
+	main_end = html.index("</style>")
+	block = re.search(r"<!--\[if mso\]><style[^>]*>(.*?)</style><!\[endif\]-->", html, re.S)
+	assert block, "the Outlook font block is missing"
+	assert block.start() > main_end, "the Outlook font block must come after the main <style>"
+	rules = block.group(1)
+	assert f"body,table,td,th,div,p,span,a,li,h1,h2,h3,h4{{font-family:{MSO_SANS} !important}}" in rules
+	assert f".ee-mono,pre,code{{font-family:{MSO_MONO} !important}}" in rules
+	assert 'class="ee-mono"' in str(macros.code("x")), "code() lost the hook the Outlook block keys on"
+
+
+# ---------------------------------------------------------------------------
 # Responsiveness is a progressive enhancement, never a dependency.
 
 
 def test_media_selectors_are_namespaced():
-	shell = _read(EMAIL_DIR, "_shell.html")
+	# Comments stripped first: the header comment talks about @media, and a slice
+	# that started there would begin in prose rather than in the style block.
+	shell = _strip_comments(_read(EMAIL_DIR, "_shell.html"))
+	assert shell.index("@media") < shell.index("</style>"), "the @media block is not inside the main <style>"
 	block = shell[shell.index("@media") : shell.index("</style>")]
 	selectors = re.findall(r"^\s*([.#][\w\-.,\s]+)\s*\{", block, re.MULTILINE)
 	for group in selectors:
@@ -404,6 +585,20 @@ def test_media_selectors_are_namespaced():
 			selector = selector.strip()
 			if selector:
 				assert selector.startswith(".ee-"), f"un-namespaced selector in @media: {selector}"
+
+
+def test_markdown_links_outrank_frappes_link_rule():
+	"""frappe's `.email-body a:not(.btn){color:#171717;font-weight:600}` survives premailer
+	as an !important head rule and recolours every link it matches in Apple Mail. The
+	briefing's md_to_html() links cannot carry class="btn", so the shell answers with a
+	rule one element MORE specific (td + class + element + :not beats class + element +
+	:not), which wins whichever order the two <style> blocks land in — and :not(.btn)
+	keeps it off the CTA, whose label must stay navy-900 on the fresh-blue fill."""
+	shell = _strip_comments(_read(EMAIL_DIR, "_shell.html"))
+	match = re.search(r"td\.ee-md a:not\(\.btn\)\{([^}]*)\}", shell)
+	assert match, "the markdown link rule is gone"
+	assert "color:#00609c !important" in match.group(1)
+	assert "font-weight:400 !important" in match.group(1)
 
 
 @pytest.mark.parametrize("rel,src", ALL_TEMPLATES, ids=_ids(ALL_TEMPLATES))

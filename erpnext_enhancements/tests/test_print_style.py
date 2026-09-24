@@ -16,6 +16,14 @@ What it pins, in order of how silently each would fail:
 * the display font and the wordmark are in the repo and read as what they claim to be;
 * every `ps_*` global the fixture calls is registered in hooks.py, and nothing
   un-prefixed from the module is — get_jinja_hooks would put it in every template;
+* every table-cell style forces its geometry with an inline `!important` — frappe's
+  own print stylesheet and the site's Print Style force theirs, and an ordinary inline
+  style loses to both without a word;
+* the content helpers (v1.533.0) print production-shaped values the way a person
+  writes them: `8015550100` as `(801) 555-0100`, `1.0` as `1`, `Nos` as `ea`, an
+  address without the break the US Address Template ends on, a line whose description
+  only repeats its name as the name alone, a party block with no dangling breaks and
+  no phone or email printed twice, and a red DRAFT on a draft;
 * the fixture compiles, renders per-site and single-feature records, with and without
   a signature, with an out-of-range reading, with nothing but a header, and never
   prints `None` or a raw brace.
@@ -158,30 +166,79 @@ class TestChrome(unittest.TestCase):
         self.assertIn("META", html)
         self.assertIn("<svg", html)
         self.assertIn(COMPANY_PHONE, html)
-        neutral = ps.letterhead(None, "QUOTATION", "Quotation", "")
-        self.assertIn(">QUOTATION<", neutral)
-        self.assertNotIn("&middot; QUOTATION", neutral, "a neutral document names no pillar")
+        neutral = ps.letterhead(None, "TRAINING &middot; CERTIFICATE", "Certificate of Completion", "")
+        self.assertIn(">TRAINING &middot; CERTIFICATE<", neutral, "an eyebrow that adds something stays")
 
-    def test_letterhead_address_prefers_the_document_and_falls_back(self):
+    def test_an_eyebrow_that_only_repeats_the_title_is_dropped(self):
+        """From v1.494.0 every neutral document printed its own name twice, one line
+        apart -- `INVOICE` over `INVOICE`, the display face being all capitals -- because
+        the eyebrow exists to name a pillar and a neutral document has none. Nik spotted
+        it on 2026-09-24."""
+        neutral = ps.letterhead(None, "QUOTATION", "Quotation", "")
+        self.assertNotIn(">QUOTATION<", neutral)
+        self.assertEqual(neutral.count("QUOTATION"), 0, neutral[-600:])
+        self.assertIn(">Quotation</h1>", neutral)
+        self.assertIn("margin:0 0 0", neutral, "no eyebrow, no gap above the title")
+
+    def test_a_jinja_eyebrow_repeating_a_jinja_title_is_dropped(self):
+        """The credit-note / debit-note pairs are Jinja; the comparison is on the raw
+        strings, case-insensitively, so the pair counts as a repeat."""
+        html = ps.letterhead(
+            None,
+            "{% if doc.is_return %}CREDIT NOTE{% else %}INVOICE{% endif %}",
+            "{% if doc.is_return %}Credit Note{% else %}Invoice{% endif %}",
+            "",
+        )
+        self.assertNotIn("CREDIT NOTE", html)
+        self.assertNotIn(">INVOICE", html)
+
+    def test_a_pillar_keeps_its_name_when_the_eyebrow_repeats_the_title(self):
+        html = ps.letterhead("service", "VISIT REPORT", "Visit Report", "")
+        self.assertIn(">SERVICE<", html)
+        self.assertNotIn("&middot; VISIT REPORT", html)
+
+    def _render_letterhead(self, html, doc):
+        """Render under the ps_* globals hooks.py registers -- the document's address
+        now goes through `ps_address`, so a bare Environment cannot render it."""
         from jinja2 import Environment
 
+        env = Environment()
+        env.globals.update(_globals())
+        return env.from_string(html).render(doc=doc)
+
+    def test_letterhead_address_prefers_the_document_and_falls_back(self):
         html = ps.letterhead(None, "X", "T", "", address_field="company_address_display")
         self.assertIn("doc.company_address_display", html)
+        self.assertIn("ps_address(doc.company_address_display)", html)
 
         class Doc:
             company_address_display = "2 Other Street"
 
-        rendered = Environment().from_string(html).render(doc=Doc())
+        rendered = self._render_letterhead(html, Doc())
         self.assertIn("2 Other Street", rendered)
         self.assertNotIn(COMPANY_ADDRESS_HTML, rendered)
 
         Doc.company_address_display = None
-        rendered = Environment().from_string(html).render(doc=Doc())
+        rendered = self._render_letterhead(html, Doc())
         self.assertIn(COMPANY_ADDRESS_HTML, rendered)
 
         plain = ps.letterhead("service", "X", "T", "")
         self.assertIn(COMPANY_ADDRESS_HTML, plain)
         self.assertNotIn("{%", plain)
+
+    def test_the_us_templates_trailing_break_is_not_a_blank_line(self):
+        """Every company address on the site ends `<br>\\n` (the United States Address
+        Template). Printed raw, followed by the letterhead's own `<br>`, it left a blank
+        line between the address and our phone number."""
+
+        class Doc:
+            company_address_display = "85 W 300 S<br>\nBountiful, UT 84010<br>\n"
+
+        rendered = self._render_letterhead(
+            ps.letterhead(None, "X", "T", "", address_field="company_address_display"), Doc()
+        )
+        self.assertIn("Bountiful, UT 84010<br>" + COMPANY_PHONE, rendered)
+        self.assertNotRegex(rendered, r"<br>\s*<br>")
 
     def test_print_safe_css_only(self):
         """The PDF backends on this host do not lay out flex or grid."""
@@ -212,6 +269,467 @@ class TestHooksRegistration(unittest.TestCase):
         same trade the ee_ prefix refused."""
         for name in self._registered():
             self.assertTrue(name.startswith("ps_"), name)
+
+    def test_every_registered_name_exists(self):
+        """A hooks.py path to a function that is not there is a migrate-time crash."""
+        for name in self._registered():
+            self.assertTrue(callable(getattr(ps, name, None)), f"hooks.py registers print_style.{name}")
+
+
+# ---------------------------------------------------------------------------
+# Cell styles.
+
+CELL_STYLES = ("TH", "TH_RIGHT", "TD", "TD_RIGHT", "TOTAL_LABEL", "TOTAL_VALUE", "GRAND", "TOTAL_SPACER")
+
+
+def _declarations(style):
+    """`{property: value}` for an inline style string."""
+    out = {}
+    for decl in style.split(";"):
+        if decl.strip():
+            prop, _, value = decl.partition(":")
+            out[prop.strip()] = value.strip()
+    return out
+
+
+class TestCellStylesOutrankTheStylesheets(unittest.TestCase):
+    """Why every cell style carries `!important` on its geometry.
+
+    Frappe appends two stylesheets to every print format, custom formats included:
+    `templates/styles/standard.css` sets `.print-format td, .print-format th
+    {padding: 6px !important; vertical-align: top !important}`, and this site's
+    "Redesign" Print Style sets `padding: 10px !important` and
+    `border-bottom-width: 1px !important` on `th`. A stylesheet `!important` beats an
+    ordinary inline style, so before v1.533.0 not one of these paddings, alignments or
+    the 2px header rule reached a page — the rows printed looser than designed and a
+    six-line invoice pushed its totals onto page 2, with nothing anywhere to say so.
+    Only an inline `!important` outranks a stylesheet `!important`, so dropping one of
+    these is a silent regression that looks fine in every code review.
+    """
+
+    def test_every_cell_forces_its_padding(self):
+        for name in CELL_STYLES:
+            with self.subTest(name):
+                decls = _declarations(getattr(ps, name))
+                self.assertIn("padding", decls, f"{name} sets no padding; standard.css's 6px wins")
+                self.assertTrue(decls["padding"].endswith("!important"), f"{name}: {decls['padding']}")
+
+    def test_the_header_cell_forces_its_alignment_and_its_rule(self):
+        for name in ("TH", "TH_RIGHT"):
+            with self.subTest(name):
+                decls = _declarations(getattr(ps, name))
+                self.assertEqual(decls["vertical-align"], "bottom !important")
+                self.assertEqual(decls["border-bottom"], "2px solid __OPEN__ !important")
+        for key in (None, "service", "build", "design", "rent"):
+            with self.subTest(key):
+                decls = _declarations(ps.th(key))
+                self.assertEqual(decls["border-bottom"], f"2px solid {ps.pillar(key)['open']} !important")
+                self.assertEqual(decls["padding"], "5px 8px !important")
+
+    def test_the_body_cell_forces_its_alignment_and_its_hairline(self):
+        for name in ("TD", "TD_RIGHT"):
+            with self.subTest(name):
+                decls = _declarations(getattr(ps, name))
+                self.assertEqual(decls["vertical-align"], "top !important")
+                self.assertEqual(decls["border-bottom"], f"1px solid {ps.BORDER_100} !important")
+        self.assertEqual(_declarations(ps.TD_RIGHT)["text-align"], "right")
+        self.assertEqual(ps.ps_td(), ps.TD)
+        self.assertEqual(ps.ps_td(True), ps.TD_RIGHT)
+        self.assertEqual(ps.ps_style("td"), ps.TD)
+
+    def test_the_totals_are_borderless_by_force(self):
+        """A site that switches Print Style must not grow rules between the totals."""
+        for name in ("TOTAL_LABEL", "TOTAL_VALUE", "GRAND", "TOTAL_SPACER"):
+            with self.subTest(name):
+                self.assertEqual(_declarations(getattr(ps, name))["border"], "0 !important")
+        self.assertEqual(_declarations(ps.GRAND)["border-top"], f"2px solid {ps.DEEP_SEA_BLUE} !important")
+        self.assertEqual(_declarations(ps.TOTAL_SPACER)["padding"], "0 !important")
+        self.assertEqual(_declarations(ps.TOTAL_VALUE)["white-space"], "nowrap")
+
+    def test_every_important_is_a_whole_declaration(self):
+        """`!important` must end a `property:value` pair; a stray one after a `;` is
+        dropped by the parser and silently takes nothing with it."""
+        for name in CELL_STYLES:
+            for decl in getattr(ps, name).split(";"):
+                if "!important" in decl:
+                    with self.subTest(f"{name}: {decl}"):
+                        self.assertRegex(decl.strip(), r"^[a-z-]+:[^:!]+ !important$")
+
+    def test_colour_and_weight_are_left_ordinary(self):
+        """Neither stylesheet forces them, so nothing here needs to."""
+        for name in CELL_STYLES:
+            decls = _declarations(getattr(ps, name))
+            for prop in ("color", "font-weight"):
+                if prop in decls:
+                    with self.subTest(f"{name}.{prop}"):
+                        self.assertNotIn("!important", decls[prop])
+
+
+# ---------------------------------------------------------------------------
+# Content helpers.
+
+
+class TestEscapeHtml(unittest.TestCase):
+    def test_the_five_characters(self):
+        self.assertEqual(ps.escape_html("""<a href="x">Tom & Jerry's</a>"""),
+                         "&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#x27;s&lt;/a&gt;")
+
+    def test_an_entity_is_escaped_not_trusted(self):
+        self.assertEqual(ps.escape_html("&lt;"), "&amp;lt;")
+
+    def test_non_strings(self):
+        self.assertEqual(ps.escape_html(12.5), "12.5")
+
+
+class TestAddressHtml(unittest.TestCase):
+    def test_the_us_template_trailing_break_is_trimmed(self):
+        """The United States Address Template ends every address with `<br>` and a
+        newline -- 1,629 of 1,629 Sales Invoices carry one."""
+        self.assertEqual(
+            ps.address_html("85 W 300 S<br>\nBountiful, UT 84010<br>\n"), "85 W 300 S<br>\nBountiful, UT 84010"
+        )
+
+    def test_leading_breaks_and_nbsp_are_trimmed(self):
+        self.assertEqual(ps.address_html("<br>\n&nbsp;<BR/> 85 W 300 S<br />&nbsp; "), "85 W 300 S")
+
+    def test_internal_markup_is_the_templates_and_is_kept(self):
+        self.assertEqual(ps.address_html("<b>Suite 4</b><br>85 W 300 S<br>"), "<b>Suite 4</b><br>85 W 300 S")
+
+    def test_empty(self):
+        for value in (None, "", "<br>", "&nbsp;", "  <br>\n  "):
+            with self.subTest(value):
+                self.assertEqual(ps.address_html(value), "")
+
+    def test_the_jinja_global_is_the_same_function(self):
+        self.assertEqual(ps.ps_address("X<br>\n"), "X")
+
+
+class TestPlainText(unittest.TestCase):
+    def test_tags_dropped_and_whitespace_collapsed(self):
+        self.assertEqual(ps.plain_text('<div class="ql-editor"><p>Pump</p>\n<p>Motor</p></div>'), "Pump Motor")
+        self.assertEqual(ps.plain_text("a<br>b&nbsp;&nbsp;c"), "a b c")
+
+    def test_entities_read_as_the_characters_they_print(self):
+        """Visible text: `&quot;` is an inch mark on the page, so it is one here."""
+        self.assertEqual(ps.plain_text("2&quot; JET &amp; Owner&#x27;s &lt;1&gt;"), "2\" JET & Owner's <1>")
+
+    def test_empty(self):
+        self.assertEqual(ps.plain_text(None), "")
+        self.assertEqual(ps.plain_text(""), "")
+
+
+class TestFormatPhone(unittest.TestCase):
+    def test_ten_bare_digits(self):
+        """How this site stores about half its numbers."""
+        self.assertEqual(ps.format_phone("8015550100"), "(801) 555-0100")
+
+    def test_already_formatted_north_american_shapes(self):
+        for value in ("801-555-0100", "(801) 555-0100", "801.555.0100", " 801 555 0100 ",
+                      "+1 801-555-0100", "1-801-555-0100", "+18015550100", "+1 (801)-555-0100"):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), "(801) 555-0100")
+
+    def test_an_extension_prints_as_stored(self):
+        for value in ("801-555-0100 ext 12", "(801) 555-0100 x12", "8015550100 ext. 4"):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), value)
+
+    def test_an_international_number_prints_as_stored(self):
+        """A reformat that guessed wrong would print a number nobody can dial. `+65 6123
+        4567` (Singapore) and `+49 89 123456` (Munich) are ten digits each -- the count
+        alone would make them `(656) 123-4567`, so a `+` that is not `+1` settles it."""
+        for value in ("+44 20 7946 0958", "+52 55 1234 5678", "+65 6123 4567", "+49 89 123456"):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), value)
+
+    def test_anything_else_prints_as_stored(self):
+        for value in ("555-0100", "911", "28015550100", "Front desk", "801-555-010"):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), value)
+
+    def test_empty(self):
+        for value in ("", None, "   "):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), "")
+
+    def test_the_jinja_global_escapes(self):
+        self.assertEqual(ps.ps_phone("8015550100"), "(801) 555-0100")
+        self.assertEqual(ps.ps_phone("<b>call</b>"), "&lt;b&gt;call&lt;/b&gt;")
+        self.assertEqual(ps.ps_phone(None), "")
+
+
+class TestQtyText(unittest.TestCase):
+    def test_whole_numbers_lose_the_float(self):
+        """`{{ row.qty }}` printed `1.0` on every line of every format."""
+        self.assertEqual(ps.qty_text(1.0), "1")
+        self.assertEqual(ps.qty_text(2.0), "2")
+        self.assertEqual(ps.qty_text(-12.0), "-12")
+        self.assertEqual(ps.qty_text(0), "0")
+
+    def test_thousands_are_grouped(self):
+        self.assertEqual(ps.qty_text(1200), "1,200")
+        self.assertEqual(ps.qty_text(1234567.5), "1,234,567.5")
+
+    def test_fractions_keep_three_places_and_no_trailing_zeros(self):
+        self.assertEqual(ps.qty_text(2.5), "2.5")
+        self.assertEqual(ps.qty_text(0.25), "0.25")
+        self.assertEqual(ps.qty_text(0.3333333), "0.333")
+        self.assertEqual(ps.qty_text(-0.5), "-0.5")
+        self.assertEqual(ps.qty_text(10.0001), "10")
+
+    def test_numeric_strings_and_decimals(self):
+        from decimal import Decimal
+
+        self.assertEqual(ps.qty_text("2.50"), "2.5")
+        self.assertEqual(ps.qty_text(Decimal("3.000")), "3")
+
+    def test_none_is_zero(self):
+        self.assertEqual(ps.qty_text(None), "0")
+        self.assertEqual(ps.qty_text(""), "0")
+
+    def test_nan_and_infinity_print_as_given_not_raise(self):
+        """`int()` of either raises; a print that raises is a blank page."""
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value):
+                self.assertEqual(ps.qty_text(value), str(value))
+
+    def test_a_non_number_is_escaped_not_raised(self):
+        self.assertEqual(ps.qty_text("a few"), "a few")
+        self.assertEqual(ps.qty_text("<b>2</b>"), "&lt;b&gt;2&lt;/b&gt;")
+
+    def test_the_jinja_global_is_the_same_function(self):
+        self.assertEqual(ps.ps_qty(1.0), "1")
+
+
+QUILL = '<div class="ql-editor read-mode"><p>{}</p></div>'
+
+
+class TestRichText(unittest.TestCase):
+    def test_plain_text_keeps_its_line_breaks_and_is_escaped(self):
+        """1,657 of 6,148 Sales Invoice lines carry newlines and no tag; as HTML they
+        ran together into one paragraph."""
+        self.assertEqual(ps.rich_text("Line 1\nLine 2"), "Line 1<br>Line 2")
+        self.assertEqual(ps.rich_text("Line 1\r\nLine 2"), "Line 1<br>Line 2")
+        self.assertEqual(ps.rich_text("  padded\n"), "padded")
+        self.assertEqual(ps.rich_text("Tom & Jerry's\n3 > 2"), "Tom &amp; Jerry&#x27;s<br>3 &gt; 2")
+
+    def test_quill_markup_passes_through_unchanged(self):
+        """An escaped Text Editor value put a literal `&lt;div&gt;` in front of a supplier."""
+        markup = QUILL.format("x")
+        self.assertEqual(ps.rich_text(markup), markup)
+        self.assertEqual(ps.rich_text("<p>a</p>\n<p>b</p>"), "<p>a</p>\n<p>b</p>")
+
+    def test_a_less_than_sign_is_text_not_markup(self):
+        self.assertEqual(ps.rich_text("a < b"), "a &lt; b")
+        self.assertEqual(ps.rich_text("pipe <1 in"), "pipe &lt;1 in")
+
+    def test_empty(self):
+        self.assertEqual(ps.rich_text(None), "")
+        self.assertEqual(ps.rich_text(""), "")
+
+    def test_the_jinja_global_is_the_same_function(self):
+        self.assertEqual(ps.ps_rich("a\nb"), "a<br>b")
+
+
+class TestLineHtml(unittest.TestCase):
+    def head(self, name):
+        return f'<span style="{ps.STRONG}">{name}</span>'
+
+    def test_a_description_that_repeats_the_name_is_dropped(self):
+        """ERPNext copies the name into the description for any Item without one."""
+        for description in (
+            "Pump Motor",
+            "PUMP MOTOR",
+            "  Pump   Motor \n",
+            "Pump\nMotor",
+            QUILL.format("Pump Motor"),
+            "<p>pump&nbsp;motor</p>",
+        ):
+            with self.subTest(description):
+                self.assertEqual(ps.line_html("Pump Motor", description), self.head("Pump Motor"))
+
+    def test_an_identical_copy_is_dropped_whatever_it_contains(self):
+        """The copy is character-for-character the name, so it must never stutter: not
+        with an inch mark or apostrophe (escaped on the way in), and not with the double
+        space an imported name carries into its copy."""
+        for name in ('NOZZLE, 2" JET', "Owner's Manual", "PIPE <1 IN", "Pump  Motor", "Pump & Motor"):
+            with self.subTest(name):
+                self.assertEqual(ps.line_html(name, name), self.head(ps.escape_html(name)))
+
+    def test_a_different_description_prints_under_the_name(self):
+        out = ps.line_html("Pump Motor", "1/2 HP, 115V\nTEFC")
+        self.assertEqual(out, self.head("Pump Motor") + '<div style="margin-top:1px">1/2 HP, 115V<br>TEFC</div>')
+
+    def test_the_description_alone_when_there_is_no_name(self):
+        self.assertEqual(ps.line_html(None, "Service call"), "Service call")
+        self.assertEqual(ps.line_html("  ", QUILL.format("x")), QUILL.format("x"))
+
+    def test_the_name_alone_when_there_is_no_description(self):
+        self.assertEqual(ps.line_html("Pump Motor", None), self.head("Pump Motor"))
+        self.assertEqual(ps.line_html("Pump Motor", ""), self.head("Pump Motor"))
+        self.assertEqual(ps.line_html(None, None), "")
+
+    def test_the_name_is_escaped_and_the_markup_is_not(self):
+        out = ps.line_html("<b>Pump</b> & Co", QUILL.format("<strong>1/2 HP</strong>"))
+        self.assertIn("&lt;b&gt;Pump&lt;/b&gt; &amp; Co", out)
+        self.assertIn(QUILL.format("<strong>1/2 HP</strong>"), out)
+
+    def test_the_jinja_global_is_the_same_function(self):
+        self.assertEqual(ps.ps_line("Pump"), self.head("Pump"))
+        self.assertEqual(ps.ps_line("Pump", "Pump"), self.head("Pump"))
+
+
+class TestUomText(unittest.TestCase):
+    def test_nos_reads_as_each(self):
+        """ERPNext's default unit, on every one of the 6,148 Sales Invoice lines here."""
+        for value in ("Nos", "nos", "NOS", " Nos ", "Nos."):
+            with self.subTest(value):
+                self.assertEqual(ps.uom_text(value), "ea")
+
+    def test_everything_else_as_stored(self):
+        self.assertEqual(ps.uom_text("Gallon"), "Gallon")
+        self.assertEqual(ps.uom_text("lb"), "lb")
+        self.assertEqual(ps.uom_text("<ft>"), "&lt;ft&gt;")
+        self.assertEqual(ps.uom_text(None), "")
+        self.assertEqual(ps.ps_uom("Nos"), "ea")
+
+
+class TestCleanLabel(unittest.TestCase):
+    def test_the_company_suffix_goes(self):
+        self.assertEqual(ps.clean_label("UT SPECIAL - SF", "SF"), "UT SPECIAL")
+
+    def test_the_inactive_marker_goes_too(self):
+        """On 51 invoices."""
+        self.assertEqual(ps.clean_label("Utah Sales Tax - Inactive - SF", "SF"), "Utah Sales Tax")
+        self.assertEqual(ps.clean_label("Utah Sales Tax - inactive", "SF"), "Utah Sales Tax")
+
+    def test_a_label_without_a_suffix_is_untouched(self):
+        self.assertEqual(ps.clean_label("Sales Tax", "SF"), "Sales Tax")
+        self.assertEqual(ps.clean_label("Davis County - SFX", "SF"), "Davis County - SFX")
+        self.assertEqual(ps.clean_label("  Sales Tax  ", "SF"), "Sales Tax")
+
+    def test_without_the_abbreviation_only_what_is_certain_goes(self):
+        """No company, no way to know `- SF` is a suffix; and `Inactive` is then not
+        the last word, so it stays too."""
+        self.assertEqual(ps.clean_label("UT SPECIAL - SF", None), "UT SPECIAL - SF")
+        self.assertEqual(ps.clean_label("Utah Sales Tax - Inactive - SF", None), "Utah Sales Tax - Inactive - SF")
+        self.assertEqual(ps.clean_label("Utah Sales Tax - Inactive", None), "Utah Sales Tax")
+        self.assertEqual(ps.clean_label(None, "SF"), "")
+
+
+class TestPartyBlock(unittest.TestCase):
+    ADDRESS = "1450 E Canyon Rd<br>\nSalt Lake City, UT 84108<br>\n"
+
+    def head(self, name):
+        return f'<span style="{ps.STRONG}">{name}</span>'
+
+    def test_the_sparsest_party_prints_its_name_and_nothing_else(self):
+        self.assertEqual(ps.party_block("Canyon Ridge HOA"), self.head("Canyon Ridge HOA"))
+
+    def test_every_line_in_order(self):
+        out = ps.party_block("Canyon Ridge HOA", self.ADDRESS, "Dana Whitaker", "8015550142", "ap@canyonridge.test")
+        self.assertEqual(
+            out,
+            "<br>".join(
+                (
+                    self.head("Canyon Ridge HOA"),
+                    "1450 E Canyon Rd<br>\nSalt Lake City, UT 84108",
+                    "Attn: Dana Whitaker",
+                    "(801) 555-0142",
+                    "ap@canyonridge.test",
+                )
+            ),
+        )
+
+    def test_no_dangling_or_doubled_breaks_in_any_combination(self):
+        import itertools
+
+        values = ("Canyon Ridge HOA", self.ADDRESS, "Dana Whitaker", "8015550142", "ap@canyonridge.test")
+        for mask in itertools.product((True, False), repeat=len(values)):
+            args = [v if keep else "" for v, keep in zip(values, mask, strict=True)]
+            out = ps.party_block(*args)
+            with self.subTest(mask):
+                self.assertFalse(out.startswith("<br>"), out)
+                self.assertFalse(out.endswith("<br>"), out)
+                self.assertNotRegex(out, r"<br>\s*<br>")
+                self.assertEqual(out == "", not any(mask))
+
+    def test_an_address_of_nothing_but_breaks_is_no_line(self):
+        self.assertEqual(ps.party_block("X", "<br>\n&nbsp;<br>"), self.head("X"))
+
+    def test_text_is_escaped_and_the_address_is_not(self):
+        out = ps.party_block("<Acme & Sons>", "<b>Suite 4</b><br>", "<i>Pat</i>", "", "a<b>@x.test")
+        self.assertIn(self.head("&lt;Acme &amp; Sons&gt;"), out)
+        self.assertIn("<b>Suite 4</b>", out)
+        self.assertIn("Attn: &lt;i&gt;Pat&lt;/i&gt;", out)
+        self.assertIn("a&lt;b&gt;@x.test", out)
+
+    def test_a_phone_the_address_already_prints_is_not_repeated(self):
+        """The stock Address Template prints `Phone:` itself."""
+        address = self.ADDRESS + "Phone: 801-555-0142<br>"
+        out = ps.party_block("Canyon Ridge HOA", address, "", "8015550142", "")
+        self.assertEqual(out.count("555-0142"), 1, out)
+        self.assertNotIn("(801) 555-0142", out)
+
+    def test_the_same_number_with_its_country_code_is_not_repeated(self):
+        """`+1 801 555 0142` and `801-555-0142` are one number; the leading 1 must not
+        make the digits differ."""
+        address = self.ADDRESS + "Phone: 801-555-0142<br>"
+        out = ps.party_block("Canyon Ridge HOA", address, "", "+1 801 555 0142", "")
+        self.assertEqual(out.count("555-0142"), 1, out)
+        out = ps.party_block("Canyon Ridge HOA", address, "", "18015550142", "")
+        self.assertEqual(out.count("555-0142"), 1, out)
+
+    def test_a_different_phone_is_printed(self):
+        address = self.ADDRESS + "Phone: 801-555-0142<br>"
+        out = ps.party_block("Canyon Ridge HOA", address, "", "801-555-0199", "")
+        self.assertIn("(801) 555-0199", out)
+
+    def test_an_email_the_address_already_prints_is_not_repeated(self):
+        address = self.ADDRESS + "Email: AP@CanyonRidge.test<br>"
+        out = ps.party_block("Canyon Ridge HOA", address, "", "", " ap@canyonridge.TEST ")
+        self.assertEqual(out.lower().count("ap@canyonridge.test"), 1, out)
+
+    def test_a_short_phone_is_printed_even_when_its_digits_appear(self):
+        """Seven digits or fewer could match a street number or a ZIP by accident."""
+        out = ps.party_block("Front Gate", "911 Main St<br>", "", "911", "")
+        self.assertTrue(out.endswith("<br>911"), out)
+
+    def test_ps_party_lives_in_print_lookup(self):
+        self.assertFalse(hasattr(ps, "ps_party"), "the lookup needs frappe; print_style must not")
+
+
+class TestStateMarker(unittest.TestCase):
+    """Frappe prints "Draft" only through the standard macros a custom format never
+    calls, so a draft invoice left the building looking final."""
+
+    def test_a_draft_says_so_in_red(self):
+        for status in (0, "0", None, ""):
+            with self.subTest(status):
+                out = ps.state_marker(status)
+                self.assertIn(">DRAFT<", out)
+                self.assertIn(ps.FAIL, out)
+
+    def test_a_submitted_document_prints_nothing(self):
+        for status in (1, "1"):
+            with self.subTest(status):
+                self.assertEqual(ps.state_marker(status), "")
+
+    def test_a_cancelled_document_says_so(self):
+        for status in (2, "2"):
+            with self.subTest(status):
+                self.assertIn(">CANCELLED<", ps.state_marker(status))
+        self.assertIn(">VOID &amp; REISSUED<", ps.state_marker(2, "VOID & REISSUED"))
+
+    def test_garbage_reads_as_a_draft(self):
+        """Printing DRAFT on something final is recoverable; printing nothing on a draft
+        is the bug this exists for."""
+        self.assertIn(">DRAFT<", ps.state_marker("submitted"))
+
+    def test_the_jinja_global_is_the_same_function(self):
+        self.assertEqual(ps.ps_state(1), "")
+        self.assertIn(">DRAFT<", ps.ps_state(0))
+        self.assertIn(">CANCELLED<", ps.ps_state(2, "CANCELLED"))
 
 
 # ---------------------------------------------------------------------------
