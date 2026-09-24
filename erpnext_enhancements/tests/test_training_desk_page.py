@@ -379,7 +379,7 @@ class TestTheLessonPreview(unittest.TestCase):
 
 
 class TestBackAndForwardWalkTheSteps(unittest.TestCase):
-    """Browser Back returns to the previous screen and Forward restores it (v1.535.2).
+    """Browser Back returns to the previous screen and Forward restores it (v1.536.1).
 
     The textual asserts above could not see the bug this replaces, and it passed them
     all: the player reports the lesson it last had even on the course outline, and

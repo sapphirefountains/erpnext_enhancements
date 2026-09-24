@@ -323,6 +323,18 @@ export function saveKey(parts) {
 		p.without_po ? 1 : 0,
 		p.project || "",
 		plain(p.qty),
+		// A store-run line (v1.536.0): the run, the store, the price, the reason, the receipt and
+		// its day, the job decision and a new item's code are all part of what it posts.
+		p.run || "",
+		p.supplier || "",
+		plain(p.rate),
+		p.reason || "",
+		p.receipt_photo || "",
+		p.bought || "",
+		p.receipt_number || "",
+		plain(p.receipt_total),
+		p.no_job ? 1 : 0,
+		(p.new_item && p.new_item.item_code) || "",
 	]);
 }
 
@@ -343,9 +355,219 @@ export function keptRef(entry, nowMs) {
 
 /** What a save was, for a message raised after the person has moved on: "Take 3 Each of Widget". */
 export function saveLabel(action, qty, uom, itemName) {
-	const verb = action === "take" ? "Take" : action === "move" ? "Move" : "Add";
+	const verb = action === "take" ? "Take" : action === "move" ? "Move" : action === "store_run" ? "Record buying" : "Add";
 	const amount = `${plain(qty)} ${uom || ""}`.trim();
 	return `${verb} ${amount} of ${itemName || "this item"}`;
+}
+
+// ---------------------------------------------------------------------------
+// Store runs (v1.536.0): "Bought on a store run"
+// ---------------------------------------------------------------------------
+
+/** The reasons, as stored (`stock_scan_rules.STORE_RUN_REASONS`). */
+export const REASON_OUT_OF_STOCK = "A stocked item was out";
+export const REASON_NOT_STOCKED = "Not something we stock";
+export const REASON_ONLY_THIS_JOB = "Only for this job";
+
+/** The dearest one part a counter sells (`stock_scan_rules.MAX_UNIT_PRICE`): a barcode typed into the price, not a rule. */
+export const MAX_UNIT_PRICE = 100000;
+export const MAX_RECEIPT_TOTAL = 1000000;
+
+/**
+ * A run id: `sr-<time>-<random>`, the client_ref shape with its own prefix. Minted ONCE per new
+ * run and kept with the pending save, because it is part of `saveKey`: a retry that minted a
+ * second id would be a different save with a fresh client_ref, and post the line twice.
+ */
+export function mintRunId(now, random) {
+	return `sr-${mintRef(now, random).slice(3)}`;
+}
+
+/** "Lowes" and "Lowe's" are one store (`stock_scan_rules.store_key`). */
+export function storeKey(name) {
+	return String(name || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "");
+}
+
+function moneyNumber(text) {
+	const cleaned = String(text === null || text === undefined ? "" : text).replace(/[\s,$]/g, "");
+	if (!cleaned) return null;
+	if (!/^\d*\.?\d+$|^\d+\.$/.test(cleaned)) return NaN;
+	return Number(cleaned);
+}
+
+/** "$4.97"; four places when a unit price needs them ("$0.4970"). `stock_scan_rules.money`. */
+export function money(value) {
+	const n = toNumber(value);
+	if (n === null) return "";
+	const cents = n * 100;
+	const places = Math.abs(cents - Math.round(cents)) > 1e-6 ? 4 : 2;
+	return `$${n.toLocaleString("en-US", { minimumFractionDigits: places, maximumFractionDigits: places })}`;
+}
+
+/** The price each, before tax, typed on the page: `{rate, problem}` (`stock_scan_rules.check_price`). */
+export function validPrice(text) {
+	const n = moneyNumber(text);
+	if (n === null) return { rate: null, problem: "Enter the price each, before tax, as it is on the receipt." };
+	if (Number.isNaN(n)) return { rate: null, problem: "Numbers only, like 4.97." };
+	if (!(n > EPSILON)) return { rate: null, problem: "The price must be more than zero." };
+	if (n > MAX_UNIT_PRICE) return { rate: null, problem: `${money(n)} each is more than a counter sells anything for. Check the price.` };
+	return { rate: n, problem: null };
+}
+
+/** The receipt's total, tax included: `{total, problem}` (`stock_scan_rules.check_receipt_total`). */
+export function validTotal(text) {
+	const n = moneyNumber(text);
+	if (n === null) return { total: null, problem: "Enter the receipt's total, tax included." };
+	if (Number.isNaN(n)) return { total: null, problem: "Numbers only, like 23.41." };
+	if (!(n > EPSILON)) return { total: null, problem: "The receipt total must be more than zero." };
+	if (n > MAX_RECEIPT_TOTAL) return { total: null, problem: `${money(n)} is more than one receipt. Check the total.` };
+	return { total: n, problem: null };
+}
+
+/**
+ * Whether a run still takes lines: on the day it was started (`stock_scan_rules.run_is_open`),
+ * by anyone. `today` is the site's date from the boot. The server decides again on every save.
+ */
+export function runIsOpen(run, today) {
+	if (!run || typeof run !== "object" || !run.run) return false;
+	if (run.open === false) return false;
+	return !!today && String(run.started_on || "").slice(0, 10) === String(today).slice(0, 10);
+}
+
+/** How long after its last line another person's run is still offered as "Add to ‹name›'s run". */
+export const OTHERS_RUN_HOURS = 3;
+
+/**
+ * A server time ("2026-09-24 10:42:00.123456", the site's own clock and zone) as milliseconds
+ * on one scale, or null. Read as UTC fields on purpose: only differences between two such
+ * times are ever taken, so the phone's zone never enters into it.
+ */
+export function siteTimeMs(value) {
+	const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(value || ""));
+	if (!m) return null;
+	return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0));
+}
+
+/**
+ * Whether the page offers "Add to …" for an open run. The person's own runs, always (an emptied
+ * one included: it reopens with its header to correct). Another person's only while it has a
+ * line and that line is under OTHERS_RUN_HOURS old by the site's clock (`siteNowMs`, from
+ * `boot.now` plus the time since the page loaded): Finish is kept on the starter's phone only,
+ * so without this a second trip to the same store that afternoon would be one tap from being
+ * added to the morning's run — its receipt, its total — and the KPI would merge the two trips.
+ * No clock, no offer: starting a new run is the safe side. The server takes a line for any run
+ * all day; this is only what the page puts under the thumb.
+ */
+export function runOffered(run, user, siteNowMs) {
+	if (!run || !run.run) return false;
+	if (run.started_by && run.started_by === user) return true;
+	if (!(Number(run.lines) > 0)) return false;
+	const last = siteTimeMs(run.last_at);
+	if (last === null || typeof siteNowMs !== "number" || !Number.isFinite(siteNowMs)) return false;
+	return siteNowMs - last <= OTHERS_RUN_HOURS * 3600 * 1000;
+}
+
+/**
+ * The new-run header for a run whose every line was undone (`lines` 0): its old store, day,
+ * photo, total and number, to correct and record again under the same run id. The server takes
+ * a run's header from its first Posted line, so with none left the next line's header is the
+ * run's (`api.stock_scan._run_head`).
+ */
+export function reopenedDraft(run, today) {
+	const r = run || {};
+	const total = Number(r.receipt_total);
+	return {
+		run: r.run,
+		supplier: r.supplier || "",
+		bought: boughtLabel(r.bought, today) === "yesterday" ? "yesterday" : "today",
+		photo: r.receipt_photo || "",
+		receipt_number: r.receipt_number || "",
+		receipt_total: total > 0 ? String(total) : "",
+		reopened: true,
+	};
+}
+
+/** A receipt total more than this much above the lines is flagged: the KPI's own band (metrics.STORE_RUN_TAX_ALLOWANCE). */
+export const RECEIPT_CHECK_ABOVE = 0.15;
+/** Utah's combined sales tax, roughly: the band the page shows as "about $X–$Y with tax". */
+export const TAX_BAND = [0.06, 0.09];
+
+/**
+ * `{low, high}` — the lines plus tax — when a run's receipt total is more than
+ * RECEIPT_CHECK_ABOVE above what its lines cost before tax, else null. A mistyped total (234.10
+ * for 23.41) rides on every receipt of the run and into the KPI, so Finish says "Check the
+ * receipt total". Only Finish: mid-run it nearly always means lines still to come, so the joined
+ * run's header shows progress instead. Nothing recorded yet, nothing to compare.
+ */
+export function receiptCheck(total, amount) {
+	const t = toNumber(total);
+	const a = toNumber(amount);
+	if (t === null || a === null || !(a > EPSILON)) return null;
+	if (t <= a * (1 + RECEIPT_CHECK_ABOVE) + 0.05) return null;
+	const round = (n) => Math.round(n * 100) / 100;
+	return { low: round(a * (1 + TAX_BAND[0])), high: round(a * (1 + TAX_BAND[1])) };
+}
+
+/** "Home Depot run · 2 items · $14.91 before tax" — the run bar and the "Add to…" rows. */
+export function runSummary(run) {
+	const r = run || {};
+	const lines = Number(r.lines || 0);
+	const parts = [`${r.supplier_name || r.supplier || "Store"} run`, `${lines} ${lines === 1 ? "item" : "items"}`];
+	if (Number(r.amount) > 0) parts.push(`${money(r.amount)} before tax`);
+	return parts.join(" · ");
+}
+
+/** "Today" / "Yesterday" / "Sep 21" for a run's day bought. */
+export function boughtLabel(bought, today) {
+	const day = String(bought || "").slice(0, 10);
+	if (!day) return "";
+	if (today && day === String(today).slice(0, 10)) return "today";
+	const t = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(today || ""));
+	if (t) {
+		const prev = new Date(Date.UTC(Number(t[1]), Number(t[2]) - 1, Number(t[3]) - 1)).toISOString().slice(0, 10);
+		if (day === prev) return "yesterday";
+	}
+	return shortDate(day);
+}
+
+/**
+ * The reason to start on. An item with a reorder level above 0 is a stocked item (the KPI's own
+ * definition), so buying it at a counter means "A stocked item was out"; anything else, a new
+ * item included, is "Not something we stock".
+ */
+export function suggestedReason(reorderLevel, isNewItem) {
+	return !isNewItem && Number(reorderLevel) > 0 ? REASON_OUT_OF_STOCK : REASON_NOT_STOCKED;
+}
+
+/**
+ * A reason that contradicts the item, or `null`. Purchasing raises a minimum on "A stocked item
+ * was out" and considers the kit on "Not something we stock", so a wrong one sends them the
+ * wrong way. A warning, never a refusal: the technician may know better.
+ */
+export function reasonWarning(reason, reorderLevel, isNewItem) {
+	const level = Number(reorderLevel) || 0;
+	if (reason === REASON_NOT_STOCKED && !isNewItem && level > 0) {
+		return `ERPNext keeps a minimum of ${plain(level)} of this item, so it is a stocked item. "${REASON_OUT_OF_STOCK}" is probably the reason.`;
+	}
+	if (reason === REASON_OUT_OF_STOCK && (isNewItem || level <= 0)) {
+		return isNewItem
+			? `A new item is not stocked yet. "${REASON_NOT_STOCKED}" is probably the reason.`
+			: `This item has no minimum in ERPNext, so it is not a stocked item yet. "${REASON_NOT_STOCKED}" is probably the reason.`;
+	}
+	return null;
+}
+
+/** The item's open purchase-order lines at the chosen store: a store run for one is the pickup. */
+export function ordersAtStore(item, store) {
+	const key = storeKey(store && (store.supplier_name || store.supplier));
+	const alt = storeKey(store && store.supplier);
+	if (!key) return [];
+	return ((item && item.open_orders) || []).filter((line) => {
+		const k1 = storeKey(line.supplier_name);
+		const k2 = storeKey(line.supplier);
+		return k1 === key || k2 === key || k1 === alt || k2 === alt;
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +651,8 @@ export function logHeadline(log) {
 			return log.project ? `Returned ${amount}` : `Added ${amount}`;
 		case "Move":
 			return `Moved ${amount}`;
+		case "Store Run":
+			return `Bought ${amount}`;
 		default:
 			return amount;
 	}
@@ -460,6 +684,15 @@ export function undoQuestion(log) {
 				: `Undo: added ${amount} of ${item} to ${here}?`;
 		case "Move":
 			return `Undo: moved ${amount} of ${item} from ${l.from_warehouse_name || l.from_warehouse || "another location"} to ${here}?`;
+		case "Store Run": {
+			// One line is one receipt: undoing it cancels that receipt and leaves the rest of the run.
+			let text = `Undo buying ${amount} of ${item} at ${l.supplier || "the store"}? Its receipt is canceled.`;
+			if (l.created_item) text += " The new item stays for Purchasing to review.";
+			if (l.store_run_reason === REASON_ONLY_THIS_JOB && !l.non_stock_item) {
+				text += " If you already took them to the job, undo that take first.";
+			}
+			return text;
+		}
 		default:
 			return `Undo this save of ${amount} of ${item}?`;
 	}

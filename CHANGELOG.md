@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.535.2] - 2026-09-24
+## [1.536.1] - 2026-09-24
 
 **Browser Back and Forward now work on the Inspection Wizard, the Visit Wizard, Plan a Trip and
 the training Desk pages.** Batch 2 of Nik's rule from v1.534.0: *we shouldn't break basic browser
@@ -85,6 +85,230 @@ screen leaves it.
   router (read from `origin/version-16`) and a fake history. They are wrapped by the Python suites
   and have their own CI step.
 - 453 Python tests across the affected suites pass. Nothing ran in a real browser.
+
+## [1.536.0] - 2026-09-24
+
+**"Bought on a store run" on the Stock Scan page.** A technician back from Home Depot scans the
+bin, presses +, chooses *Bought on a store run*, picks the store, photographs the receipt, enters
+the receipt total, the quantity, the price each and why, and picks the job — or says there was
+none. Each line is saved at once as a submitted Purchase Receipt with no purchase order, flagged
+for Purchasing to review. A part that is not in ERPNext is created as a quick Item on the same
+save, with its name checked live against the naming rules and the nearest existing items shown
+first, so nobody makes a duplicate.
+
+### Why
+
+Crews make about 19 unplanned counter purchases a month (231 QuickBooks card charges at the
+flagged stores in the 12 months to 2026-09-24, $19,551.55), and until now the only record of one
+was that card charge, reaching QuickBooks about four weeks later with no item, no job and no
+reason. Nik approved option B of the inventory plan on 2026-09-24, and POL-0602 §4.7 says to
+record every run **the same day, on this page**: the store, the items, the quantities, the
+prices, the job and the reason, with a photo of the receipt. §4.8 lets a technician create a
+quick Item while doing it, reviewed weekly by the Purchasing Agent. Without the reason, Purchasing
+cannot tell a minimum set too low ("A stocked item was out") from a part the kit should carry
+("Not something we stock", twice in 60 days) from a one-off ("Only for this job").
+
+### Added
+
+- **`api.stock_scan.store_run`** (POST): one line of a run as a submitted Purchase Receipt with no
+  PO, from a Supplier ticked *Store-Run Vendor*, at the price on the receipt (`rate` and
+  `price_list_rate`, in the stock UOM). The price survives because neither field is one of v16's
+  `force_item_fields` and production has no buying Pricing Rule. `ignore_pricing_rule` is set as
+  well but guarantees nothing: on v16 it is a permlevel-1 field only Stock Manager may write, so for
+  a scanner who is only a Stock User it is reset to 0 on insert, and a buying Pricing Rule added
+  later would apply to those lines. One save is one line, with its own Undo and the page's usual
+  `client_ref` idempotency: no cart to lose when the phone drops the tab. A **run id**
+  (`sr-<time>-<random>`) ties one trip's receipts together. The run's **header** — store, day,
+  receipt number, receipt total, photo — is its **first Posted line's**, and later lines take it
+  from there; undone lines do not count, so a run whose every line was undone starts again from the
+  next line's header (how a mistyped total is corrected: the receipts carrying it are submitted and
+  the log is immutable). Anyone may add to a run on the day it was started (two people on one trip
+  is one trip), and nobody may on a later day. Today or yesterday only; yesterday is posted at 23:59
+  and flagged *Recorded Late*. Each line carries the page's own day (`page_today`): a page left open
+  overnight still calls yesterday *Today*, so it is refused with "Reload the page" as
+  `StalePageError`, which the page answers with a Reload button. Every refusal comes before the log
+  row.
+- **Non-stock Items can be a line.** 660 of 1,086 Items are non-stock (524 live), and counters
+  sell mostly tools and consumables. Refusing them left one way to finish: a duplicate Item. Their
+  card now has *Bought it on a store run*; the receipt posts no stock and no GL for them
+  (provisional accounting is off). QuickBooks tombstones ("(deleted)") are refused.
+- **Quick Items** (`check_new_item`, POST, and the `new_item` argument): part or model number as
+  printed (the SKU if none) as the code, a name, a leaf group (most used first, starting from the
+  nearest existing item's) and `Unit`, `FT` or `Gallon`. The check runs 500 ms after typing stops:
+  up to five neighbours (tombstones dropped; *Use this one*, or *Record against it (not stocked)*),
+  an exact code match (Save off), and the naming guard's two refusals from **its exact call**
+  (`blocking_findings` over every Item code), in red once POL-0602 is in force on 1 October. The
+  Item is created in the save's own transaction, as the user, through `item_naming_guard` — no
+  `ignore_permissions`, no `ignore_naming_guard` — with `is_stock_item = 1` and an Item Default of
+  the bin it went into (ERPNext would otherwise default it to `Stores - SF`).
+- **Stock Scan Log fields**: store, unit price, receipt total, receipt number, receipt photo, day
+  bought, *Recorded Late*, run id (indexed), reason, *No Job (Safety or Shop)*, the item's minimum
+  when bought, *Not a Stock Item*, *Created the Item*, and *Unstocked, Bought Twice in 60 Days*
+  (counted by distinct runs, the current one excluded, so one part split over two bins is not a
+  repeat). Action `Store Run` is appended last to the Select; the reason Select starts with a blank
+  so every other action's row stays valid. Production had 0 rows, so no migration.
+- **Three Purchase Receipt fields** (`patches/add_store_run_receipt_fields`, `create_custom_fields`,
+  also in `after_install` because install-app marks every patch as run): *Store Run* (the run id,
+  `no_copy`, indexed), *Receipt Photo* (`Attach Image`, so Frappe's own `attach_files_to_document`
+  attaches the upload to the first receipt and a copy to each later one), and *Receipt Total (Tax
+  Included)*.
+- **On the page**: open purchase-order lines are offered **first** under + (a planned pickup
+  recorded as a store run would be received twice), then *Add to your ‹store› run* for each run
+  open today, then *Bought on a store run*. Another person's run is offered only while its last line
+  is under **three hours** old by the site's clock (`boot.now`, `logic.runOffered`): *Finish* is
+  kept on the starter's phone only, so a second trip to the same store that afternoon was one tap
+  from being added to the morning's run, its receipt and its total, and the KPI would have merged
+  the two. The non-stock card's *Bought it on a store run* and search's *Not in ERPNext?* ask
+  *Which store run?* when one is open — *Add to your ‹store› run* first, *A different store run*
+  below — instead of always starting a new run, which split a trip with a tool or a new part into
+  several runs, each typed again and each counted by the KPI. Choosing a store that has this item on
+  order says so and offers *Receive on PO-…*, which receives it on the order — a non-stock item too:
+  that branch of `add` checks the item with the store-run rule, because every PO line ever placed
+  at a store-run vendor on production is for a non-stock item, so the button was otherwise always a
+  dead end (every other path of `add`, and Take and Move, still refuse one). The receipt photo is
+  shrunk to 1,600 px and sent as soon as it is taken (Save waits for it; no `capture`, so a photo
+  already taken can be chosen); when it lands only the photo field is redrawn, so a total being
+  typed keeps its field and the phone its keyboard, and a store or day tap mid-upload leaves the
+  progress bar alone. A job is required on every line unless the technician picks *No job: safety
+  or shop*; *Only for this job* requires one and then offers *Take 3 Unit to ‹job› now?* (Take is
+  the default), so parts bought for a job do not sit in the bin as stock. The reason starts from
+  the item's reorder level and a contradiction is pointed out. A run bar stays above every view
+  while the run is open; *Finish* compares the lines with the receipt total and says to hand the
+  paper receipt to Accounting within 2 business days. *Finish* says **"Check the receipt total"**
+  when it is more than 15% above the lines, with the lines plus 6–9% tax as the band, and says how
+  to start again (undo the lines; the run reopens with its header prefilled to correct). A joined
+  run's header shows only the progress ("Lines so far: $X before tax, of a $Y receipt"): mid-run the
+  lines are nearly always short of the receipt, so a warning there would be ignored by Finish.
+- **Inventory Scanner Settings**: *New Items From Store Runs* (Stock Scan Log, created an Item, not
+  reviewed).
+
+### Changed
+
+- **The Store Runs (30d) KPI counts a trip once, whichever record holds it**
+  (`metrics.combine_store_runs`). Recorded trips (receipts grouped by run id, or by receipt number
+  at a store on a day) are paired one-to-one with card charges at the same store dated on the
+  trip's day or up to 3 days after — never before — and **only on the amount**: a charge equal to
+  the receipt total, else one the lines plus up to 15% tax could make. QuickBooks holds some
+  purchases twice, from a receipt email and from the bank feed, and a bank-feed entry carries the
+  bank's posting date (Lowes $16.60 on the Capital One card: `ACC-JV-2026-27340` from the receipt
+  email, 2026-02-07; `ACC-JV-2026-27137`, "LOWES #02662* - 2486", from the feed, 2026-02-09). The
+  window lets a trip pair with a feed charge when that is its only charge. A purchase QuickBooks
+  holds twice, as that one is, still counts twice whether it was recorded or not, as in the
+  baseline. A charge of any other amount is never
+  taken, however near: 163 of the 231 store charges in the 12 months to 2026-09-24 have another at
+  the same store within 3 days, so a recorded trip whose own charge never arrives (cash, a personal
+  card, a Bill, an unflagged vendor) would take the next trip's charge and two trips would count as
+  one. Lowes and Lowe's are one store. Charges now also include submitted Journal Entries
+  **crediting** a store's payable (`metrics.journal_store_charges`), so the count does not go
+  silent after the QuickBooks cutover. A debit to the store is a payment and never counts, and
+  **Payment Entries are not a source at all**: a bill and its payment booked as two unlinked
+  entries — the shape QuickBooks' own Bill/BillPayment imports already have at the flagged stores —
+  would otherwise count as two runs until someone reconciled them, and every nightly snapshot in
+  between would keep the doubled figure. The source is *Purchase Receipt + QuickBooks* with no
+  freshness entry: a stale sync no longer greys out runs recorded today. **Expect the 30-day count
+  to rise from 3 toward about 19 a month once technicians start recording.** That is the
+  measurement catching up with trips QuickBooks has not categorized yet, not more trips. With
+  nothing recorded it returns the old figure exactly.
+- **The review-queue KPI** is now *Stock Scan Saves Awaiting Review* (key unchanged), and the
+  settings button *Added Without PO to Review* is *Stock Scan Saves to Review*: store-run lines join
+  the queue.
+- **Undo of a store-run line is narrower than any other save.** One line is one receipt: Undo
+  cancels that receipt only, and a quick Item stays. Once reviewed it cannot be undone from the page;
+  before that, the person who recorded it may inside the window, and Purchase or Accounts Manager
+  (10 of the people who scan, on 2026-09-24) at any time. Stock Manager no longer bypasses the window here: 15 of the
+  16 people who scan hold it, every technician among them, so a technician could cancel a receipt
+  weeks later, after Accounting matched it. Nobody can tick *Reviewed* on a store run they
+  recorded.
+
+### For Accounting (Lisa)
+
+1. **What posts.** Each store-run line's receipt posts Dr `1410 - Stock In Hand - SF` / Cr `2210 -
+   Stock Received But Not Billed - SF` at quantity × the price before tax, cost center `Main - SF`,
+   no project. A non-stock line posts nothing (provisional accounting is off), so 2210 holds the
+   stock lines only. **Nothing clears 2210 automatically**: the page never bills. Before cutover it is
+   cleared by the QuickBooks draft for the same purchase (2); after cutover by the Purchase Invoice
+   made from the receipts (3).
+2. **At cutover, a QuickBooks draft that matches a recorded trip is submitted with its goods moved
+   to 2210.** Until then there is no double count: a card charge reaches ERPNext only as a draft
+   Purchase Journal Entry — Dr the expense account QuickBooks coded, Cr the card account (22500 or
+   22600), no party — which posts nothing, and QuickBooks never sees the receipt. But that draft is
+   the only record of the card liability, so it must be submitted, and submitted as it stands it
+   would expense goods the receipt already put into stock (Dr 1410 and Dr expense for one purchase)
+   and leave 2210 open for good. So for a draft that matches a trip — same store, dated on the
+   trip's day or up to three days after, for the receipt total (or the lines plus tax): **change
+   the goods' debit to `2210 - Stock Received But Not Billed - SF`** — the amount the trip's
+   receipts credited there, its stock lines before tax, splitting a line if need be — **and submit
+   it.** That clears 2210 and still books the card liability. The difference between the receipt
+   total and those lines (the tax, and any non-stock line, which the receipts did not post) stays
+   on the expense account QuickBooks used, or wherever you decide tax goes (4). Every other draft is
+   reviewed and submitted as the runbook says. Step S-D of `docs/migration/backlog-gl-posting-runbook.md`,
+   which submits the 2026 drafts, and `quickbooks_online/MIGRATION_NOTES.md` at its bulk-submit step
+   both carry this exception. The trips are listed by the Stock Scan Log (*Store Run*) and
+   the Purchase Receipt field *Store Run*. **Follow-up, not built here:** a read-only list pairing
+   each trip with its draft, made with the KPI's own pairing (`metrics.combine_store_runs`).
+3. **After cutover, a card charge at a flagged store is booked so the KPI can see it.** For a
+   recorded trip: a Purchase Invoice from its receipts (*Get Items From → Purchase Receipt*,
+   filtered on *Store Run*), which clears 2210 and is the same trip, not a second one. For a charge
+   with no recorded trip: a **standalone Purchase Invoice** from the store (or a Journal Entry
+   **crediting the store's payable**, party set), with `bill_no` = the receipt number and
+   `bill_date` = the day bought. Pay it from the card as you like — a Payment Entry (the card account
+   must be type Bank or Cash) or a Journal Entry Dr `2110 Creditors` (party, against the invoice) /
+   Cr the card: **payments are never counted** as runs. A charge booked straight to an expense with
+   no party is invisible to the Store Runs KPI and would let the target be met by not recording.
+4. **Tax is not on the receipt, on purpose.** The company's default purchase template, `US ST 6%
+   - SF`, is the setup wizard's placeholder: 6% is not the Utah rate, and its account `ST 6% - SF`
+   (Liability, under 2300 Duties and Taxes) has never been posted to. On these store purchases
+   QuickBooks books the tax into the goods' own expense accounts (Build Materials, Shop Supplies),
+   not to `66200 - Sales Tax Expense - Utah`. So the receipt carries the real total with tax
+   instead (*Receipt Total*), and the tax is the difference. Before billing in ERPNext, set up a
+   real purchase-tax template: an Actual charge to 66200 if tax is expensed, or a Valuation (or
+   Valuation and Total) row if you want it in the stock value — which needs the Company's
+   *Expenses Included In Valuation* set (5118 exists; the field is blank). Your call — and it also
+   decides where the tax in (2) goes.
+
+### For Purchasing (Parker)
+
+- **Weekly**: Inventory Scanner Settings → *Stock Scan Saves to Review* (every unreviewed store-run
+  line and Add Without PO) and *New Items From Store Runs* (Items technicians created, which survive
+  an Undo). Tick *Reviewed* once the purchase and the Item are checked. *Unstocked, Bought Twice in
+  60 Days* marks kit candidates; *A stocked item was out* means the minimum is too low (the
+  minimum at the time is on the line). The Monday naming digest keeps flagging new Items that fail
+  the naming rules.
+- **Lowes and Lowe's** are two ticked Suppliers (QuickBooks vendors 1015 and 2720). The page shows
+  the newer usable one and the KPI counts both as one store. Whether to merge them is your call.
+- **Standard Buying prices.** When someone who can write Item Price records the first store-run
+  purchase of an Item with no Standard Buying price, ERPNext inserts one at the store's retail rate
+  (Stock Settings *auto_insert_price_list_rate_if_missing* is on). Standard Buying is company-wide,
+  so it pre-fills every later PO line for that item from any supplier. On 2026-09-24 the Purchase
+  Master Manager role that allows this is held by Cedrik, James, Lisa, Logan, Nathan, Nikolas,
+  Parker and Triton. Submitting a receipt also updates the Item's *Last Purchase Rate*.
+- **Item Manager** is needed to create a quick Item; Shellyce and Lisa lack it and are told to ask
+  you.
+
+### Notes
+
+- **Checks that need a bench** (there is no Frappe integration job in CI): the entered rate
+  survives `set_missing_values` when a Standard Buying price exists; the photo is linked to the first
+  receipt and copied to the second; a concurrent retry that creates an Item gets a 409 and then
+  "already saved"; an Amend keeps *Store Run*; a non-stock item received on its order line from the
+  run sheet submits through `receive_order_line`.
+- **Known limits**: *Only for this job* followed by *Take them now* issues FIFO, so where the bin
+  already held the item at the $0.01 opening placeholder the job is charged that layer first; an
+  Undo of the store-run line after the Take is refused on negative stock until the Take is undone
+  (the Undo question says so). Two identical QuickBooks charges on one store-day still count twice.
+  A card charge more than 3 days after its trip counts as a second trip (bank-feed entries carry
+  the bank's posting date; same-amount, same-store pairs turn up 5, 7 and 11 days apart), and so
+  does one that matches neither the receipt total nor the lines plus 15%. Another person's run is
+  still taken by the server all day; only the page stops offering it after three hours. The Desk
+  still lets a Stock User cancel a store-run receipt directly.
+- Tests: `test_stock_scan_rules` (store-run rules, the stale page), `test_stock_scan_surface`
+  (thirteen endpoints, the receipt's shape, the photo check, the quick Item, the patch, the boot
+  that never raises, the undo and review limits, *Receive on PO-…* for a non-stock item, and
+  `TestTheRunHeader`: `_run_head` / `_same_run` / `_run_summary` executed against an in-memory log),
+  `test_kpi_metrics` (`TestCombineStoreRuns`, 19 cases; `TestJournalStoreCharges`, 6), and
+  `scripts/test_stock_scan_client.mjs` (the store-run flows on the real `app.js`: joining a run from
+  the non-stock and quick-item doors, *Check the receipt total*, an emptied run reopened, a stale
+  page, the photo field). No new CI steps: every suite extended an existing one.
 
 ## [1.535.1] - 2026-09-24
 
