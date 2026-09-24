@@ -7,6 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.535.0] - 2026-09-24
+
+**Print and email, round two of the Pillar Stripe chrome: every customer and supplier block
+prints the party's address, phone and email; email type is the reader's own system font instead
+of a squished stand-in; Sales Invoice keeps one designed format (plus frappe's built-in
+Standard, which no record can disable), and the three sales formats become their doctypes'
+defaults.** Nik's three asks of 2026-09-24. A read-only field audit of the nine
+Sapphire formats against ERPNext v16 and production data, run the same day, found the rest:
+two formats printed wrong numbers or the wrong thing, and none of the designed table spacing had
+ever reached a page. Tracked as TASK-2026-02277 (subtasks 02278–02283) on PRJ-00580.
+
+### Added
+
+- **`print_lookup.py`: the party block, found the way this site actually stores it.** New
+  `ps_party(doc)` / `ps_rfq_suppliers(doc)` Jinja globals draw the customer or supplier as name,
+  address, `Attn:`, phone and email on every Sapphire format that has a party (Quotation, Sales
+  Order, Sales Invoice, Purchase Order, Request for Quotation per supplier, Supplier Quotation,
+  Purchase Receipt, Purchase Invoice). The document alone could
+  not do it: `address_display` is on 17 of 230 Purchase Orders and 0 of 10 Purchase Invoices, and
+  `contact_mobile` / `contact_email` are blank on every Purchase Order and on all but 12 of 1,629
+  Sales Invoices. The numbers exist, in this app's own fields — `Contact.custom_email` (1,741 of
+  2,792 contacts), `custom_mobile_number`, `custom_phone_number`; `Supplier.custom_phone_number` /
+  `custom_email`; `Customer.custom_accounts_phone_number` / `custom_accounts_email_address` — and
+  ERPNext's `get_contact_details` reads only the stock ones, so it copies blanks onto every
+  document. Each value now takes the first of the document, the Contact it names (else the
+  party's primary contact), the Address it prints, and the party's own record; the address
+  falls back to the document's own Address link, then the party's primary address, rendered
+  through the site's template with `check_permissions=False` as frappe's `get_company_address`
+  does. `Attn:` is only ever the contact the document names. Every custom field is checked
+  against the doctype's meta before it is read (`get_value` raises on a missing column, and
+  inside a Jinja global that is a blank page), and any failure logs and prints what the
+  document itself carries. A phone or email the address already prints is not printed twice
+  (the stock Address Template prints both; this site's United States template does not, today).
+- **Content helpers in `print_style`**, frappe-free, as `ps_*` globals: `ps_address` (trims the
+  trailing `<br>` every United States address ends with), `ps_phone` (bare ten digits print as
+  `(801) 555-0100`; anything international or with an extension prints as stored), `ps_qty`
+  (`1`, not `1.0`), `ps_rich` (markup passes through; plain text is escaped and keeps its line
+  breaks — 1,657 of 6,148 invoice lines are plain text with newlines and ran together as one
+  paragraph), `ps_line` (bold item name, description only when it adds something), `ps_uom`
+  (`Nos` prints `ea`), `ps_state` (red `DRAFT` / `CANCELLED`: frappe's Draft heading comes from
+  macros a custom format never calls, and there are 305 draft invoices).
+- **`ps_charge_rows` / `ps_tax_rows`: billable expenses print as lines, tax as tax.** The
+  QuickBooks sync books a billable expense (a QBO invoice line with no Item) as an `Actual`
+  charge in the taxes table, because there is no Item to put on a line
+  (`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 155
+  invoices, the material on a Cost of Goods Sold account and its markup on an Income account.
+  Printed whole, they sat under Subtotal looking like tax, up to 98 deep. The sales formats now
+  print them under a **Billable expenses** heading in the line table; the tax rows print
+  without the ` - SF` company suffix and QuickBooks' ` - Inactive` marker (51 invoices carried
+  a retired code: 33 "Utah Sales Tax - Inactive - SF", 18 "Utah - Weber - Ogden - Inactive - SF").
+- **Default print formats for Quotation, Sales Order and Sales Invoice** (`default_print_format`
+  Property Setter fixtures, in the procurement setters' exact shape), so Print, bulk print and the
+  email composer open on the Sapphire format rather than Standard. None of the three had one.
+- **Sales Invoice states.** A return prints as a **Credit Note** — title, "Against invoice",
+  "Credit total", and no payment section — since ERPNext's own return format is now disabled
+  and there is none to fall back on (0 returns yet; QBO credit memos import as Journal
+  Entries). A submitted invoice with a payment against it prints "Payments received" and
+  "Amount due"; paid in full (1,162 of 1,324) it says so instead of printing "How to pay" over
+  $0.00 due. "Due on receipt" replaces a due date equal to the invoice date (1,583 of 1,629),
+  with the payment terms template under it when there is one.
+- **The email's Outlook-only font block** after the shell's `<style>`: classic Outlook's Word
+  engine can fall back to Times New Roman, so an MSO conditional pins Segoe UI / Consolas. It
+  survives premailer as a comment node, the same way the ghost table does.
+- `tests/test_print_lookup.py` (own CI step: it installs its own frappe stub, including
+  `frappe.contacts.doctype.address.address`), and new coverage in the print-style, sales,
+  purchase-order, procurement and email suites.
+
+### Changed
+
+- **Email type is the platform's own UI face — San Francisco, Segoe UI, Roboto — for headings
+  and body alike.** Nik: the design system's font does not reach email, "so instead of a
+  similar font, let's just use better fonts that are designed better and don't have a squished
+  look". It cannot reach it: frappe inlines every email through premailer 3.10, which drops
+  `@font-face` (its `_parse_style_rules` keeps `@media` and nothing else), so titles named Big
+  Noodle Titling and rendered in Arial Narrow, a condensed face; body text named Lato, almost
+  never installed; and frappe's own stylesheet put a third, system stack on every `<td>`. One
+  stack now (`-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial`),
+  declared once in `_components.html`, with sizes re-set for a normal-width face (title 26/32px,
+  sub-heads 19/25px, eyebrow tracked +1px) and a guard test that no email names the old faces.
+  Premailer's `data-premailer="ignore"` escape hatch would let a web font through; it is left
+  unused on purpose, since Gmail ignores web fonts anyway.
+- **Sales line table leads with the item's name, not its code.** Item | Qty | Unit | Rate |
+  Amount; customers do not know `SF-BASALT-3COL`. Buying documents keep the code column, which
+  receiving and a supplier's counter use, and no longer wrap it at the hyphen.
+- **The Purchase Order's ORDER STATUS speaks to the supplier:** Issued, or in red "Draft — not an
+  order until approved", "On hold — please do not ship yet", "Cancelled — do not supply".
+  ERPNext's internal statuses read wrong at a supplier's desk: "Closed" (104 orders) as
+  cancelled, "To Bill" (73) as an invitation to bill.
+- **Quotation:** "Valid until the date above" printed over a dash on all 673 quotations
+  (`valid_till` is never set); the sentence and the fact now appear only with a date, and
+  PAYMENT TERMS takes the slot otherwise. PREPARED BY says Sapphire Fountains rather than
+  "Administrator" (24 quotations). Sales Order / Sales Invoice print the project's name under
+  its number, and "Your ref." only when there is one (`po_no` is empty on every invoice).
+- **Superseded Sales Invoice formats are disabled on every migrate** (`SUPERSEDED_SALES_FORMATS`):
+  Standard, with Item Image, Return, Sales Auditing Voucher, Print, PD Format v2, the leftover
+  Point of Sale row and Sales Order PD v2, with the three Regional formats kept disabled. Three
+  printed nothing: Sales Invoice Print lost its template in ERPNext v16.19, and the PD v2
+  formats belong to Print Designer, which is not installed — all raise `TemplateNotFoundError`.
+  Checked first: no Notification, Auto Repeat, POS Profile, statement run, Payment Request,
+  Dunning, Web Form, script or default references any of them, and no sales document has ever
+  been emailed from ERPNext. Quotation's and Sales Order's stock formats stay enabled.
+- **Corrected a wrong claim the old comments made:** a disabled standard print format does *not*
+  come back on migrate — `frappe/modules/import_file.py` (v16, `ignore_values`) keeps the site's
+  `disabled` when it re-imports. The every-migrate pass stays because it is idempotent and
+  re-disables anything an admin turned back on; the `pdf_generator` pass really does need it.
+
+### Fixed
+
+- **Purchase Order DELIVER TO printed the Address record's name.** It read `shipping_address`,
+  a Link, before `shipping_address_display`, so 221 of 221 orders with a ship-to printed
+  "Sapphire Fountain-Billing" instead of 85 W 300 S. It reads only the display field now.
+- **Discounted sales documents subtracted the discount twice.** Subtotal printed `net_total`,
+  which under `apply_discount_on = "Net Total"` (all 47 discounted invoices) already has the
+  discount off, and the Discount row took it off again, so the column did not reach the total.
+  Subtotal is `total` now, plus any billable-expense lines; the suites check the page adds up.
+- **And on a document with no tax rows the Discount row read `-$ -425.28`** (ACC-SINV-2026-01569,
+  and 26 other invoices). ERPNext's own `AccountsController.before_print` (v16) runs before the
+  template and flips `discount_amount` negative when the taxes table is empty, for the stock
+  formats' benefit; printed with a minus of our own it became a double negative and the rows
+  added the discount instead of taking it off. The template undoes the flip under the same
+  condition, so the stored sign decides: a sale's discount comes off, a credit note's goes back
+  on. It predates this release — the old row made the same mistake.
+- **Four notification emails would have been dropped.** "Maintenance Finalized" and "Maintenance
+  Contract Renewal Due" called `ee_p()`, "High Escalation Risk Call" and "Compliance Flag on
+  Call" called `ee_h()`, from v1.331.0 — and neither was ever defined. Calling an undefined Jinja
+  global raises, and `Notification.send()` catches it, writes an Error Log and sends nothing.
+  None had fired yet (no maintenance record has been finalized since). `ee_h` / `ee_p` now exist
+  and are registered, and `test_email_design` fails the build on any `ee_*` a Notification
+  fixture calls that is not.
+- **"Due on receipt" printed under a date it contradicted.** Production's Payment Terms Template
+  of that name is set to 1 day after the *end of the invoice month*, so its 22 invoices fall due
+  on the 1st of the next month. A template reading "Due on receipt" is never printed under a date
+  now; the date, which Overdue and dunning go by, stands alone.
+- **A drop-ship Purchase Order would head its SUPPLIER block with our customer's name**: the
+  block took whichever of `customer_name` / `supplier_name` was filled, and ERPNext keeps the end
+  customer's on a PO whose lines ship direct. It reads the field for the party type now.
+- **Plain-text descriptions holding an entity printed it literally** (`POOL &amp; FOUNTAIN …`,
+  item PDT-0014): `ps_rich` decodes before it escapes. **A foreign number without its `+`**
+  (`65-688-000-88`) was reshaped as `(656) 880-0088`; only North American grouping is reshaped.
+- **None of the designed table spacing reached a page.** Frappe appends `standard.css`
+  (`td, th {padding: 6px !important; vertical-align: top !important}`) and this site's *Redesign*
+  Print Style (`padding: 10px !important`, a 1px `th` rule) to every print format, custom ones
+  included; a stylesheet `!important` beats an ordinary inline style, so rows printed at nearly
+  twice their designed height and a six-line invoice spilled its totals onto page 2. Cell
+  geometry is inline `!important` now, the one thing that outranks it. A 28-line invoice drops
+  from 4 pages to 3.
+- **Every document printed its name twice**, one line apart: the eyebrow exists to name a
+  pillar, and a neutral document has none, so it held only the document name — `INVOICE` over
+  `INVOICE`, the display face being all capitals — from v1.494.0 on every sales and buying
+  document and on the Crew Qualification Roster sheet. An eyebrow that only repeats its title
+  is dropped (case-insensitively, so the Credit Note / Invoice Jinja pair counts); a pillar
+  keeps its name.
+- A blank line after every address (the letterhead's, the party block's, Remit to) from the
+  United States template's trailing `<br>`; quantities printed as `1.0`; the Purchase Order's
+  payment terms printed "Net 30" twice; customer and supplier names were not escaped;
+  Quotation's fallback read `doc.customer`, a field Quotation does not have (on production that
+  prints Jinja debug text rather than nothing).
+- **Email: the button label and links lost their colour in Apple Mail.** frappe's
+  `.email-body a:not(.btn){color:#171717;font-weight:600;text-decoration:underline}` survives
+  premailer as an `!important` head rule. The button and the component links now carry
+  `class="btn"` and declare every property frappe's `.btn` rule would otherwise inline (premailer
+  merges property by property and the element's own declaration wins — without them the button
+  came out filled grey with a border and a margin); markdown links in the morning briefing get
+  `td.ee-md a:not(.btn)`, one element more specific than frappe's rule.
+
 ## [1.534.1] - 2026-09-24
 
 **Fixes from an independent review of 1.529.0.** 1.529.0 merged while the review was still

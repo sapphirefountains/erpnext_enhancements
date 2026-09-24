@@ -3,9 +3,9 @@
    an email <td>; docs/email-design-system.md is the guide.
 
    Since v1.494.0 the palette is the Sapphire Fountains design system's own
-   tokens, applied as the "Pillar Stripe" concept: the body is ink-700 Lato on
-   white, labels and links are bahama-blue, the display face carries every
-   heading, the primary button is the sapphire fill with a navy-900 label (the
+   tokens, applied as the "Pillar Stripe" concept: the body is ink-700 on
+   white, labels and links are bahama-blue, headings are the body face in bold,
+   the primary button is the sapphire fill with a navy-900 label (the
    off-white label the website uses reads 2.8:1 and is the one pairing the
    design system itself flags), and rules do the separating — no tinted cards,
    no shadows, square structure. The chrome around the body, including the
@@ -28,12 +28,21 @@
    Styling is inline and already correct at 320px. The @media block in
    _shell.html only improves it; nothing here may depend on that block.
 
-   The display face is named first in DISPLAY but will almost never arrive:
-   frappe inlines every email through premailer, whose _parse_style_rules keeps
-   @media rules and drops every other at-rule — @font-face included (verified
-   against premailer 3.10). So a heading renders in Arial Narrow bold where the
-   client has it and Arial bold where it does not; the sizes below are chosen
-   to look right in that fallback, not in Big Noodle. #}
+   TYPE. Email is set in the reader's own platform face — San Francisco on
+   Apple, Segoe UI on Windows, Roboto on Android — and headings are the same
+   stack at weight 700. Not the design system's faces, and deliberately not a
+   look-alike of them. frappe inlines every email through premailer, whose
+   _parse_style_rules keeps @media and drops every other at-rule (premailer
+   3.10), so an @font-face never arrives; the stacks this replaced therefore
+   fell to Arial Narrow for the display face, which read squashed, and to
+   Helvetica/Arial for Lato. Nik's call on 2026-09-24: a well-designed face the
+   reader already has, over a similar-looking one. The sizes below are set for
+   a normal-width face, not a condensed one.
+
+   SANS, MONO and the two MSO_ stacks are the only font stacks in email. The
+   shell imports them from here rather than repeating them, and
+   tests/test_email_design.py fails the build on a literal stack in either
+   file, or on any of the old faces coming back. #}
 
 {%- set TONES = {
 	"primary": {"fg": "#00609c", "bg": "#f8f8f8", "br": "#00a0df", "fill": "#00a0df", "label": "#00111c"},
@@ -48,16 +57,29 @@
 {%- set ACCENT = "#00609c" -%}
 {%- set RULE = "#dadbdd" -%}
 {%- set SURFACE = "#f8f8f8" -%}
-{%- set SANS = "Lato,Helvetica,Arial,sans-serif" -%}
-{%- set DISPLAY = "'Big Noodle Titling','Arial Narrow',Arial,Helvetica,sans-serif" -%}
+{#- The type. No system-ui: on a Windows machine set to a Chinese or Japanese
+    display language it resolves to that language's UI font, not Segoe UI.
+    The MSO_ pair is for Outlook's Word engine only — see the conditional
+    block in _shell.html. -#}
+{%- set SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif" -%}
 {%- set MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" -%}
+{%- set MSO_SANS = "'Segoe UI',Arial,sans-serif" -%}
+{%- set MSO_MONO = "Consolas,'Courier New',monospace" -%}
 {%- set WRAP = "word-break:break-word;overflow-wrap:anywhere" -%}
+{#- What a TEXT link must declare because it carries class="btn". The why is
+    at button(); the short of it is that premailer inlines frappe's .btn rule
+    onto the anchor and lets only the anchor's own declarations beat it. Every
+    property that rule sets is here, or beside it on the anchor (colour,
+    text-decoration). `inherit` is safe in a client that ignores it: the .btn
+    value is already gone from the merged style, so plain inheritance is what
+    is left either way. -#}
+{%- set LINK_RESET = "display:inline;margin:0;padding:0;border:0;border-radius:0;background-color:transparent;font-size:inherit;font-weight:inherit;line-height:inherit" -%}
 
 
-{# A sub-heading inside the body: the display face, bahama-blue on the light
-   ground, as the design system sets every h2 on white. #}
+{# A sub-heading inside the body: the body face in bold, bahama-blue on the
+   light ground, as the design system sets every h2 on white. #}
 {% macro h(text) -%}
-<h2 style="margin:24px 0 8px;font-family:{{ DISPLAY }};font-size:22px;line-height:1.1;font-weight:700;color:{{ ACCENT }}">{{ text|e }}</h2>
+<h2 style="margin:24px 0 8px;font-family:{{ SANS }};font-size:19px;line-height:25px;letter-spacing:-0.2px;font-weight:700;color:{{ ACCENT }}">{{ text|e }}</h2>
 {%- endmacro %}
 
 
@@ -102,22 +124,29 @@
 
 {# Machine output — a traceback, a transcript, a backup log. Scrolls inside its
    own container so a 300-character line cannot force the whole email sideways.
-   frappe's .body-table is table-layout:fixed, which makes that a real risk. #}
+   frappe's .body-table is table-layout:fixed, which makes that a real risk.
+
+   `ee-mono` is the hook the shell's Outlook-only block uses to keep this
+   monospaced in Word, where every div is otherwise forced to MSO_SANS. #}
 {% macro code(text) -%}
-<div style="margin:14px 0;padding:12px 14px;background:{{ SURFACE }};border:1px solid {{ RULE }};font-family:{{ MONO }};font-size:13px;line-height:1.45;color:{{ BODY_INK }};white-space:pre-wrap;{{ WRAP }};overflow-x:auto">{{ text|e }}</div>
+<div class="ee-mono" style="margin:14px 0;padding:12px 14px;background:{{ SURFACE }};border:1px solid {{ RULE }};font-family:{{ MONO }};font-size:13px;line-height:1.45;color:{{ BODY_INK }};white-space:pre-wrap;{{ WRAP }};overflow-x:auto">{{ text|e }}</div>
 {%- endmacro %}
 
 
 {# Label/value facts. Percentage split so it stays usable unstacked at 320px;
    the @media block stacks it when it can. `rows` is [(label, value), ...].
    Labels in bahama-blue, values in ink, a hairline between rows — no tinted
-   label column: the design system separates with rules, not grounds. #}
+   label column: the design system separates with rules, not grounds.
+
+   The cells name the face themselves, as table()'s do: premailer inlines
+   frappe's `.body-table td{font-family:…}` onto every td in the message, and
+   only a declaration on the cell itself outranks it. #}
 {% macro kv(rows) -%}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:16px 0;font-family:{{ SANS }};font-size:14px">
 {%- for label, value in rows %}
 	<tr>
-		<td class="ee-kv-l" width="32%" valign="top" style="width:32%;padding:8px 12px 8px 0;border-bottom:1px solid {{ RULE }};color:{{ ACCENT }};font-weight:700;{{ WRAP }}">{{ label|e }}</td>
-		<td class="ee-kv-v" valign="top" style="padding:8px 0;border-bottom:1px solid {{ RULE }};color:{{ BODY_INK }};{{ WRAP }}">{{ (value if value not in (None, "") else "—")|e }}</td>
+		<td class="ee-kv-l" width="32%" valign="top" style="width:32%;padding:8px 12px 8px 0;border-bottom:1px solid {{ RULE }};font-family:{{ SANS }};color:{{ ACCENT }};font-weight:700;{{ WRAP }}">{{ label|e }}</td>
+		<td class="ee-kv-v" valign="top" style="padding:8px 0;border-bottom:1px solid {{ RULE }};font-family:{{ SANS }};color:{{ BODY_INK }};{{ WRAP }}">{{ (value if value not in (None, "") else "—")|e }}</td>
 	</tr>
 {%- endfor %}
 </table>
@@ -128,21 +157,22 @@
    stacked; if you need more, link to the report instead.
 
    A cell may be a plain value, or a ``(url, label)`` pair to render as a link.
-   The label is escaped; the URL, as everywhere here, is not. #}
+   The label is escaped; the URL, as everywhere here, is not. A link carries
+   class="btn" and LINK_RESET for the reason given at button(). #}
 {% macro table(headers, rows) -%}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:16px 0;font-family:{{ SANS }};font-size:14px">
 	<tr>
 {%- for head in headers %}
-		<th align="left" style="padding:8px 10px 8px 0;border-bottom:2px solid {{ INK }};color:{{ ACCENT }};font-size:12px;font-weight:700;{{ WRAP }}">{{ head|e }}</th>
+		<th align="left" style="padding:8px 10px 8px 0;border-bottom:2px solid {{ INK }};font-family:{{ SANS }};color:{{ ACCENT }};font-size:12px;font-weight:700;{{ WRAP }}">{{ head|e }}</th>
 {%- endfor %}
 	</tr>
 {%- for row in rows %}
 	<tr>
 {%- for cell in row %}
 {%- if cell is not string and cell is iterable and cell|length == 2 %}
-		<td valign="top" style="padding:9px 10px 9px 0;border-bottom:1px solid {{ RULE }};{{ WRAP }}"><a href="{{ cell[0] }}" style="color:{{ ACCENT }};text-decoration:underline">{{ cell[1]|e }}</a></td>
+		<td valign="top" style="padding:9px 10px 9px 0;border-bottom:1px solid {{ RULE }};font-family:{{ SANS }};{{ WRAP }}"><a class="btn" href="{{ cell[0] }}" style="{{ LINK_RESET }};color:{{ ACCENT }};text-decoration:underline">{{ cell[1]|e }}</a></td>
 {%- else %}
-		<td valign="top" style="padding:9px 10px 9px 0;border-bottom:1px solid {{ RULE }};color:{{ BODY_INK }};{{ WRAP }}">{{ (cell if cell not in (None, "") else "—")|e }}</td>
+		<td valign="top" style="padding:9px 10px 9px 0;border-bottom:1px solid {{ RULE }};font-family:{{ SANS }};color:{{ BODY_INK }};{{ WRAP }}">{{ (cell if cell not in (None, "") else "—")|e }}</td>
 {%- endif %}
 {%- endfor %}
 	</tr>
@@ -162,7 +192,7 @@
 {%- set t = TONES.get(card.get("tone")) or TONES["info"] %}
 		<td class="ee-kpi" valign="top" width="{{ (100 / (cards|length))|round|int }}%" style="width:{{ (100 / (cards|length))|round|int }}%;padding:12px 14px;background:{{ t.bg }};border:0;border-top:3px solid {{ t.br }};font-family:{{ SANS }}">
 			<div style="font-size:12px;font-weight:700;color:{{ ACCENT }};{{ WRAP }}">{{ card.get("label")|e }}</div>
-			<div style="margin-top:4px;font-size:22px;font-weight:700;line-height:1.15;color:{{ t.fg }};{{ WRAP }}">{{ card.get("value")|e }}</div>
+			<div style="margin-top:4px;font-size:22px;font-weight:700;line-height:26px;letter-spacing:-0.3px;color:{{ t.fg }};{{ WRAP }}">{{ card.get("value")|e }}</div>
 		</td>
 {%- endfor %}
 	</tr>
@@ -194,11 +224,14 @@
 
    `border:0` for the same reason as button(): premailer inlines the shell's
    `.ee-md td{border-bottom:1px solid #dadbdd}` onto this cell, which drew a rule
-   under every link in the list. Declaring padding is not enough — declare both. #}
+   under every link in the list. Declaring padding is not enough — declare both.
+
+   The anchors carry class="btn" and LINK_RESET for the reason given at
+   button(). #}
 {% macro links(items) -%}
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:auto;margin:14px 0;border-collapse:collapse">
 {%- for url, label in items %}
-	<tr><td style="padding:3px 0;border:0;font-family:{{ SANS }};font-size:14px;line-height:1.5"><a href="{{ url }}" style="color:{{ ACCENT }};text-decoration:underline;{{ WRAP }}">{{ label|e }}</a></td></tr>
+	<tr><td style="padding:3px 0;border:0;font-family:{{ SANS }};font-size:14px;line-height:1.5"><a class="btn" href="{{ url }}" style="{{ LINK_RESET }};color:{{ ACCENT }};text-decoration:underline;{{ WRAP }}">{{ label|e }}</a></td></tr>
 {%- endfor %}
 </table>
 {%- endmacro %}
@@ -232,12 +265,31 @@
    client makes clickable. `mso-padding-alt` hands Outlook's Word engine the same
    padding, since it ignores inline-block — the fill is then the right size there,
    though only the text is the hit target. A <v:roundrect> with <w:anchorlock/>
-   would fix that too, at the cost of a hard-coded pixel width per label. #}
+   would fix that too, at the cost of a hard-coded pixel width per label.
+
+   `class="btn"` on the anchor is frappe's opt-out, not a style of ours.
+   frappe's email stylesheet carries
+   `.email-body a:not(.btn){color:$gray-900;font-weight:600;text-decoration:underline}`.
+   Premailer cannot inline a :not() selector, so it leaves the rule in the
+   <head> and marks every declaration !important — and a head !important beats
+   a plain inline style. So in any client that reads a head stylesheet (Apple
+   Mail, iOS Mail) an unclassed anchor turns near-black, semibold and
+   underlined, this label included. The class takes the anchor out of that
+   rule. The price is frappe's own `.btn` rule, which has no pseudo-class and so
+   IS inlined onto the anchor: grey fill, a 1px border, 4px 20px padding, an
+   8px margin, 13px type. Premailer merges property by property and lets the
+   element's own inline declaration win (merge_styles, premailer 3.10), so the
+   anchor declares every property .btn sets. Run through premailer 3.10 with
+   frappe's rules: with the class and without margin/border/background-color,
+   the anchor came out filled in frappe's $gray-100 (and given a matching
+   bgcolor attribute), bordered and 8px off; with them, nothing of .btn
+   survives but a border-color on a zero-width border. Drop one and frappe's
+   value comes back. #}
 {% macro button(url, label, tone="primary") -%}
 {%- set t = TONES.get(tone) or TONES["primary"] %}
 <table role="presentation" class="ee-btn" cellpadding="0" cellspacing="0" border="0" style="width:auto;margin:20px 0;border-collapse:separate">
 	<tr><td align="center" bgcolor="{{ t.fill }}" style="padding:0;border:0;border-radius:10px;background:{{ t.fill }};mso-padding-alt:12px 30px">
-		<a href="{{ url }}" style="display:inline-block;padding:12px 30px;font-family:{{ SANS }};font-size:15px;font-weight:700;line-height:1;color:{{ t.label }};text-decoration:none;border-radius:10px">{{ label|e }}</a>
+		<a class="btn" href="{{ url }}" style="display:inline-block;margin:0;padding:12px 30px;border:0;border-radius:10px;background-color:transparent;font-family:{{ SANS }};font-size:15px;font-weight:700;line-height:1;letter-spacing:0.5px;color:{{ t.label }};text-decoration:none">{{ label|e }}</a>
 	</td></tr>
 </table>
 {%- endmacro %}

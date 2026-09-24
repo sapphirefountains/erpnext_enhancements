@@ -3,8 +3,8 @@
    Since v1.494.0 this is the "Pillar Stripe" chrome from the design canvas Nik
    picked on 2026-09-21: a stripe in the pillar's left-to-right gradient along
    the top edge, the wordmark on white with the pillar's name beside it, an
-   eyebrow in the pillar's closing stop over a display-face title in
-   deep-sea-blue, a ruled footer, and a thinner stripe along the bottom. A mail
+   eyebrow in the pillar's closing stop over a bold title in deep-sea-blue, a
+   ruled footer, and a thinner stripe along the bottom. A mail
    that belongs to no pillar — an Error Log alert, the morning briefing — takes
    the brand's dark navy stripe and no pillar word. The pillar arrives from
    email_style.wrap(pillar=...) as a dict: name, open, deep, stripe.
@@ -37,15 +37,33 @@
    rules survive premailer into a <style> tag. Outlook's Word engine ignores
    both, which is why the inline styles have to stand alone.
 
-   No @font-face here, and that is not an oversight: premailer keeps @media and
-   drops every other at-rule (its _parse_style_rules, premailer 3.10), so the
-   display face cannot reach a mail client from this pipeline. The title's stack
-   names it first and falls to Arial Narrow bold, which is the same shape.
+   TYPE. Every face here is the reader's own platform face — San Francisco,
+   Segoe UI, Roboto — with the title in the same stack at 700. The stacks are
+   declared once, in _components.html, and imported below as `ee`; the reasons
+   are there. No @font-face, deliberately: premailer keeps @media and drops
+   every other at-rule (its _parse_style_rules, premailer 3.10), so a web font
+   declared here would be silently removed. premailer does skip any <style>
+   carrying data-premailer="ignore", so the display face COULD be smuggled
+   through; it is not, because Gmail ignores web fonts anyway and the design
+   call (Nik, 2026-09-24) is a well-made system face rather than a look-alike
+   of the brand's.
+
+   OUTLOOK. Right after the main style block sits a second one inside an
+   [if mso] conditional comment, forcing MSO_SANS on every text element and
+   MSO_MONO on code. Outlook's Word engine does not reliably walk a font
+   stack: given a list whose first family it does not have, it can drop to
+   Times New Roman instead, and -apple-system is never installed on Windows.
+   The !important block makes Outlook's face a certainty rather than a
+   fallback. Premailer leaves it alone — a conditional comment is a comment
+   node to lxml, so no selector reaches the <style> inside it (verified on
+   mail sent from this site). It must stay AFTER the main block: the guard
+   suite slices the main block from its @media to the first closing style tag.
 
    The stripe is a gradient over a flat bgcolor: Gmail, Apple Mail and the
    Outlook apps paint the gradient, Outlook's Word engine paints the flat
    opening stop. Either is the pillar's colour. #}
 
+{%- import "erpnext_enhancements/templates/emails/_components.html" as ee -%}
 {%- set _logo = logo_url if logo_url is defined and logo_url else (ee_email_logo_url() if ee_email_logo_url is defined else "") -%}
 {%- set _title = title|default("", true) -%}
 {%- set _eyebrow = eyebrow|default("", true) -%}
@@ -58,19 +76,20 @@
 {%- endif %}
 
 <style>
-	.ee-md h1,.ee-md h2{margin:22px 0 6px;font-family:'Big Noodle Titling','Arial Narrow',Arial,Helvetica,sans-serif;font-size:22px;line-height:1.1;font-weight:700;color:#00609c}
-	.ee-md h3,.ee-md h4{margin:18px 0 4px;font-family:Lato,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#00263e}
-	.ee-md p,.ee-md li{margin:0 0 10px;font-family:Lato,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#363636}
+	.ee-md h1,.ee-md h2{margin:22px 0 6px;font-family:{{ ee.SANS }};font-size:19px;line-height:25px;letter-spacing:-0.2px;font-weight:700;color:#00609c}
+	.ee-md h3,.ee-md h4{margin:18px 0 4px;font-family:{{ ee.SANS }};font-size:15px;line-height:21px;font-weight:700;color:#00263e}
+	.ee-md p,.ee-md li{margin:0 0 10px;font-family:{{ ee.SANS }};font-size:15px;line-height:1.55;color:#363636}
 	.ee-md a{color:#00609c}
-	.ee-md code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:#f8f8f8;padding:1px 4px}
-	.ee-md pre{margin:14px 0;padding:12px 14px;background:#f8f8f8;border:1px solid #dadbdd;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+	td.ee-md a:not(.btn){color:#00609c !important;font-weight:400 !important}
+	.ee-md code{font-family:{{ ee.MONO }};font-size:13px;background:#f8f8f8;padding:1px 4px}
+	.ee-md pre{margin:14px 0;padding:12px 14px;background:#f8f8f8;border:1px solid #dadbdd;font-family:{{ ee.MONO }};font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
 	.ee-md blockquote{margin:14px 0;padding:2px 0 2px 14px;border-left:3px solid #dadbdd;color:#363636}
 	.ee-md table{width:100%;border-collapse:collapse;font-size:14px}
 	.ee-md th{text-align:left;border-bottom:2px solid #00263e;padding:8px 10px 8px 0;color:#00609c;font-size:12px}
 	.ee-md td{border-bottom:1px solid #dadbdd;padding:9px 10px 9px 0;color:#363636}
 	@media only screen and (max-width:600px){
 		.ee-pad{padding-left:18px !important;padding-right:18px !important}
-		.ee-h1{font-size:26px !important;line-height:1.1 !important}
+		.ee-h1{font-size:22px !important;line-height:28px !important}
 		.ee-kv-l,.ee-kv-v{display:block !important;width:100% !important;padding:3px 0 !important;border:0 !important}
 		.ee-kv-l{font-size:12px !important}
 		.ee-kv-v{padding-bottom:10px !important;border-bottom:1px solid #dadbdd !important}
@@ -78,6 +97,10 @@
 		.ee-kpi{display:block !important;width:100% !important;margin-bottom:8px}
 	}
 </style>
+<!--[if mso]><style type="text/css">
+body,table,td,th,div,p,span,a,li,h1,h2,h3,h4{font-family:{{ ee.MSO_SANS }} !important}
+.ee-mono,pre,code{font-family:{{ ee.MSO_MONO }} !important}
+</style><![endif]-->
 
 {#- Outlook's Word engine ignores max-width, so a ghost table pins the measure
     for Outlook only. Verified to survive premailer's lxml round-trip on this
@@ -99,12 +122,12 @@
 			<tr>
 				<td align="left" valign="middle" style="padding:0;border:0">
 					{%- if _logo %}
-					<img src="{{ _logo }}" width="150" height="67" alt="Sapphire Fountains" style="display:block;border:0;outline:none;width:150px;height:auto;max-width:150px;font-family:Lato,Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;color:#00263e;text-decoration:none">
+					<img src="{{ _logo }}" width="150" height="67" alt="Sapphire Fountains" style="display:block;border:0;outline:none;width:150px;height:auto;max-width:150px;font-family:{{ ee.SANS }};font-size:17px;font-weight:700;color:#00263e;text-decoration:none">
 					{%- else %}
-					<div style="font-family:Lato,Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;color:#00263e">Sapphire Fountains</div>
+					<div style="font-family:{{ ee.SANS }};font-size:17px;font-weight:700;color:#00263e">Sapphire Fountains</div>
 					{%- endif %}
 				</td>
-				<td align="right" valign="middle" style="padding:0 0 0 16px;border:0;font-family:Lato,Helvetica,Arial,sans-serif;font-size:13px;font-weight:700;color:{{ _p.deep }}">{{ _p.name }}</td>
+				<td align="right" valign="middle" style="padding:0 0 0 16px;border:0;font-family:{{ ee.SANS }};font-size:12px;line-height:16px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{ _p.deep }}">{{ _p.name }}</td>
 			</tr>
 		</table>
 	</td></tr>
@@ -112,19 +135,19 @@
 	{%- if _eyebrow or _title %}
 	<tr><td class="ee-pad" align="left" style="padding:24px 32px 0">
 		{%- if _eyebrow %}
-		<div style="font-family:Lato,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;color:{{ _p.deep }};word-break:break-word">{{ _eyebrow|e }}</div>
+		<div style="font-family:{{ ee.SANS }};font-size:12px;line-height:16px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{ _p.deep }};word-break:break-word">{{ _eyebrow|e }}</div>
 		{%- endif %}
 		{%- if _title %}
-		<h1 class="ee-h1" style="margin:6px 0 0;font-family:'Big Noodle Titling','Arial Narrow',Arial,Helvetica,sans-serif;font-size:30px;line-height:1.1;font-weight:700;color:#00263e;word-break:break-word">{{ _title|e }}</h1>
+		<h1 class="ee-h1" style="margin:6px 0 0;font-family:{{ ee.SANS }};font-size:26px;line-height:32px;letter-spacing:-0.3px;font-weight:700;color:#00263e;word-break:break-word">{{ _title|e }}</h1>
 		{%- endif %}
 	</td></tr>
 	{%- endif %}
 
-	<tr><td class="ee-pad ee-md" align="left" style="padding:20px 32px 30px;font-family:Lato,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#363636">
+	<tr><td class="ee-pad ee-md" align="left" style="padding:20px 32px 30px;font-family:{{ ee.SANS }};font-size:15px;line-height:1.55;color:#363636">
 {% block body %}{{ body if body is defined else "" }}{% endblock %}
 	</td></tr>
 
-	<tr><td class="ee-pad" align="left" style="padding:18px 32px 22px;border-top:1px solid #dadbdd;font-family:Lato,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#363636">
+	<tr><td class="ee-pad" align="left" style="padding:18px 32px 22px;border-top:1px solid #dadbdd;font-family:{{ ee.SANS }};font-size:12px;line-height:1.5;color:#363636">
 {%- block footer %}
 		{%- if tagline is defined and tagline %}
 		<div style="margin-bottom:6px;font-size:13px;font-weight:700;color:{{ _p.deep }}">Add Water. Make Magic.</div>
@@ -133,7 +156,7 @@
 		<div style="margin-bottom:8px">{{ footer_note|e }}</div>
 		{%- endif %}
 		Sapphire Fountains, LLC &middot; 85 W 300 S, Bountiful, UT 84010<br>
-		Automated notification from <a href="{{ site_url if site_url is defined and site_url else 'https://erp.sapphirefountains.com' }}" style="color:#00609c;text-decoration:none">Sapphire Fountains ERP</a>.
+		Automated notification from <a class="btn" href="{{ site_url if site_url is defined and site_url else 'https://erp.sapphirefountains.com' }}" style="{{ ee.LINK_RESET }};color:#00609c;text-decoration:none">Sapphire Fountains ERP</a>.
 {%- endblock %}
 	</td></tr>
 
