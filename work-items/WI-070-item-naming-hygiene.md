@@ -97,6 +97,13 @@ should be `FILAMENT, PRINTER`; `SHARPIES` (2) — a brand and a plural; `UNI-INS
 replacement fails its own Step 4.1. Route all of it to the Process Owner; do not invent
 categories to close it.
 
+*Partly ruled 2026-09-24 (Nik, TASK-2026-02238; applied in v1.532.0):* `INSERT`, `SHIM` and
+`PANEL` are approved, and `UNI-INSERT` → `INSERT, UNI`, `UNI-SHIM` → `SHIM, UNI` are Tier 3 rows,
+which also makes `SUBPANELT → PANEL, SUB` valid. Still open: `PRINTER FILAMENT` and `SHARPIES`
+have no Tier 3 row, and TASK-2026-02215 holds further rulings (`PLMB`, `BRUSH`, `BOTTLE`). The
+four plurals already get a named singular from `name_category_plural`, but they are not SOP Tier
+3 rows either.
+
 Execution: batched `frappe.db.set_value` / `frappe.delete_doc`, commit every 100, Triton target
 paused — the WI-025 / WI-026 / WI-028 house pattern.
 

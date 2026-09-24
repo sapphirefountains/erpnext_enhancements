@@ -223,8 +223,10 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/item.js",
 		# v1.337.0 -- the naming advisor. Advisory only: a headline on refresh (record-only
-		# checks, no corpus read) plus two on-demand buttons. There is deliberately no Item
-		# doc_event to pair it with; nothing here blocks a save.
+		# checks, no corpus read) plus two on-demand buttons; nothing in the script blocks a
+		# save. From 2026-10-01 (POL-0602; shipped in v1.532.0) the server refuses a NEW Item
+		# for two of its findings only --
+		# see the "Item" doc_event (inventory_enhancements.item_naming_guard).
 		"public/js/item_naming_advisor.js",
 		"public/js/water_engineering/pump_curve_chart.js",
 	],
@@ -655,6 +657,27 @@ doc_events = {
 	"Vehicle Log": {
 		"on_trash": "erpnext_enhancements.travel_management.integrations.sync_vehicle_log_unlink",
 	},
+	# inventory (v1.532.0): the app's first Item doc_event. Refuses a NEW Item for exactly two
+	# naming findings -- a code that matches an existing code once case and punctuation are
+	# ignored, and a name that is just the code (a blank name counts: ERPNext copies the code
+	# into it before this runs). Every other naming finding stays advice on the form, the
+	# Item Naming Audit and the KPI. Nik, 2026-09-24 (TASK-2026-02238; POL-0602): the full STOP
+	# set was rejected because it includes unapproved category words, and several words are
+	# still awaiting a ruling (TASK-2026-02215), so it would refuse legitimate items.
+	#
+	# Skips: any save before item_naming_rules.NAMING_GO_LIVE (2026-10-01, POL-0602's
+	# effective date); an existing Item (never refused, whatever its name); a variant (ERPNext
+	# derives its code and name from the template); import, migrate, install, patch, test and
+	# setup-wizard flags; ANY save outside a web request -- the QuickBooks sync creates Items
+	# on the scheduler, and a refusal there parks a record with nobody told why; and
+	# `doc.flags.ignore_naming_guard`, set by the in-request callers whose user cannot choose
+	# the code or name (configured-product Items, the QuickBooks upsert's per-entity Sync
+	# button). Document Intake's Approve Items keeps the guard: the Stock Manager enters a
+	# Proposed Item Code, and accounting_intake.review checks every line first. `validate`
+	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
+	"Item": {
+		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",
+	},
 	# WI-013: block submitting a Purchase Order above the configurable approval
 	# threshold (ERPNext Enhancements Settings.po_approval_threshold, default 500;
 	# 0 disables) unless the user holds the "PO Approver" role — the CEO sign-off
@@ -693,11 +716,18 @@ doc_events = {
 		"before_submit": [
 			"erpnext_enhancements.po_segregation.enforce_requester_separation",
 			"erpnext_enhancements.po_approval.enforce_threshold",
-			# Last, deliberately: the stamp records that this order cleared BOTH gates
-			# in this person's hands. The supplier-facing print format reads it, and
+			# After both gates, deliberately: the stamp records that this order cleared BOTH
+			# gates in this person's hands. The supplier-facing print format reads it, and
 			# there is nowhere else truthful to read an approver from — Purchase Order
 			# has no approver field and `modified_by` is whoever touched it last.
 			"erpnext_enhancements.po_approval.stamp_approval",
+			# v1.532.0 (Nik, 2026-09-24, TASK-2026-02238; POL-0602 §4.6): an orange message
+			# listing any $0 line, because stock received against it comes in at $0. WARN,
+			# never block -- 281 of 327 submitted lines in the 90 days to 2026-09-24 were $0,
+			# so a refusal would have stopped purchasing on the day it shipped. After the gates
+			# so a refused order is never also lectured about prices; silent outside a web
+			# request and during import/migrate/install/patch. Never raises.
+			"erpnext_enhancements.po_price_check.warn_zero_rate_lines",
 		],
 		# The submit gates above are bypassable without this. ERPNext's "Update Items"
 		# button (`update_child_qty_rate`) edits qty/rate/rows on a SUBMITTED PO,
@@ -1147,6 +1177,14 @@ scheduler_events = {
 		# weekday, and the 2026-08-06 meeting asked for Friday mornings
 		# specifically. :30 keeps it clear of the 07:00/07:15 cluster above.
 		"30 7 * * 5": ["erpnext_enhancements.process_steps.send_weekly_sla_digest"],
+		# inventory (v1.532.0): Monday 07:00 site time, last week's new Items that fail the
+		# Item Naming Schema, to the Purchasing Agent (Nik, 2026-09-24, TASK-2026-02238). Its own
+		# key, used nowhere else in this dict ("0 7 * * *" above is a different key); a repeated
+		# key would silently replace the entry it collided with. Judged by the same
+		# item_naming_rules.audit the report and the KPI use. Recipients are Inventory Scanner
+		# Settings.naming_digest_recipients; blank, or a week with nothing failing, sends
+		# nothing. Reads only, so a deploy FLUSHDB costs at most one Monday's email.
+		"0 7 * * 1": ["erpnext_enhancements.inventory_enhancements.item_naming_digest.send_weekly_digest"],
 		# workforce (v1.480.0): the supervisor digest -- yesterday's hours per person,
 		# auto-closed intervals, tracking gaps, off-site clock-ins and pending time
 		# correction requests, per team (Employee.reports_to) and company-wide for HR
@@ -2490,9 +2528,11 @@ assistant_tools = [
 	# v1.93.0 Water Engineering controls — read-only control-panel reader.
 	"erpnext_enhancements.assistant_tools.control_panel_status.ControlPanelStatus",
 	# v1.335.0 Inventory -- read-only Item naming advisor, implementing the ERPNext Item
-	# Naming Schema SOP (docs/item-naming-schema.md). ADVISORY ONLY: there is no Item
-	# doc_event anywhere in this app and nothing here blocks a save -- the SOP itself says
-	# compliance is procedural, and a third of the live catalogue would fail the comma rule.
+	# Naming Schema SOP (docs/item-naming-schema.md). ADVISORY ONLY: nothing this tool does
+	# blocks a save -- the SOP itself says compliance is procedural, and a third of the live
+	# catalogue would fail the comma rule. The one thing that does refuse is the v1.532.0
+	# Item doc_event above, and only for a NEW Item whose code duplicates an existing one
+	# after normalisation or whose name is just its code.
 	#
 	# All judgement lives in the pure inventory_enhancements.item_naming_rules (no frappe,
 	# so CI actually executes it); inventory_enhancements.item_naming does the reads. That

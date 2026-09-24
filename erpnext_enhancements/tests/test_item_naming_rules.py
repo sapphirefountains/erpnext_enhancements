@@ -178,13 +178,58 @@ class VocabularyTest(unittest.TestCase):
 		for category in ("PIPE CLAMP", "TERMINAL BLOCK", "LINK SEAL", "WATERSTOP FITTING"):
 			self.assertIn(category, rules.APPROVED_CATEGORIES, category)
 
-	def test_the_sop_replacement_that_points_at_an_undeclared_category_is_flagged(self):
-		"""SOP Appendix A Tier 3 sends `SUBPANELT` to `PANEL, SUB`, and `PANEL` is on
-		neither Tier 1 nor Tier 2. Computed, not listed, so it stays true if Appendix A
-		changes — the point being that a validator must never hand somebody a correction
-		that fails its own check."""
-		self.assertIn("SUBPANELT", rules.TIER3_REPLACEMENT_UNAPPROVED)
-		self.assertNotIn("BREAKER", rules.TIER3_REPLACEMENT_UNAPPROVED)
+	def test_every_tier3_replacement_now_leads_with_an_approved_category(self):
+		"""SOP Appendix A Tier 3 sends `SUBPANELT` to `PANEL, SUB`, and until 2026-09-24
+		`PANEL` was on neither Tier 1 nor Tier 2, so this set held SUBPANELT. The Process
+		Owner declared PANEL that day (TASK-2026-02238), and the set is computed rather than
+		listed precisely so that a ruling empties it without anybody editing it — the point
+		being that a validator must never hand somebody a correction that fails its own
+		check."""
+		self.assertEqual(rules.TIER3_REPLACEMENT_UNAPPROVED, frozenset())
+		for bad, good in rules.TIER3_REPLACEMENTS.items():
+			leading = " ".join(good.split(",")[0].split())
+			self.assertIn(leading, rules.APPROVED_CATEGORIES, f"{bad} -> {good}")
+
+	def test_subpanelt_correction_no_longer_carries_the_caveat(self):
+		findings = [f for f in rules.check_name("SUBPANELT, 200A") if f["code"] == rules.NAME_CATEGORY_TIER3]
+		self.assertEqual(len(findings), 1)
+		self.assertEqual(findings[0]["suggestion"], "PANEL, SUB")
+		self.assertNotIn("replacement_is_unapproved", findings[0])
+		self.assertNotIn("not itself on Tier 1", findings[0]["message"])
+
+
+class ProcessOwnerRulingTest(unittest.TestCase):
+	"""The 2026-09-24 vocabulary ruling (TASK-2026-02238): INSERT, SHIM and PANEL declared,
+	and the vendor product line UNI moved out of the category position."""
+
+	def test_the_three_words_are_approved_and_served_as_tier1(self):
+		for word in ("INSERT", "SHIM", "PANEL"):
+			self.assertIn(word, rules.APPROVED_CATEGORIES, word)
+			self.assertIn(word, rules.TIER1, f"{word} must reach the served reference vocabulary")
+
+	def test_uni_product_line_words_name_their_replacement(self):
+		for leading, replacement in (("UNI-INSERT", "INSERT, UNI"), ("UNI-SHIM", "SHIM, UNI")):
+			findings = rules.check_name(f"{leading}, PVC, 2\"")
+			tier3 = [f for f in findings if f["code"] == rules.NAME_CATEGORY_TIER3]
+			self.assertEqual(len(tier3), 1, leading)
+			self.assertEqual(tier3[0]["suggestion"], replacement, leading)
+			# A FIX with a named correction, never a STOP-unapproved: the ruling is the fix.
+			self.assertNotIn(rules.NAME_CATEGORY_UNAPPROVED, codes_of(findings), leading)
+
+	def test_the_corrected_forms_pass(self):
+		for name in ('INSERT, UNI, PVC, 2"', "SHIM, UNI, PLASTIC", "PANEL, SUB, 200A"):
+			self.assertEqual(rules.check_name(name), [], name)
+
+	def test_plurals_of_the_new_words_are_a_fix_not_a_stop(self):
+		for plural, singular in (("INSERTS", "INSERT"), ("SHIMS", "SHIM"), ("PANELS", "PANEL")):
+			findings = [f for f in rules.check_name(f"{plural}, UNI") if f["code"] == rules.NAME_CATEGORY_PLURAL]
+			self.assertEqual([f["suggestion"] for f in findings], [singular], plural)
+
+	def test_words_still_awaiting_a_ruling_stay_unapproved(self):
+		"""TASK-2026-02215 is open on these. Declaring one here ahead of the ruling would be
+		this module amending the SOP."""
+		for word in ("PLMB", "BRUSH", "BOTTLE"):
+			self.assertNotIn(word, rules.APPROVED_CATEGORIES, word)
 
 
 class NameCheckTest(unittest.TestCase):
@@ -685,6 +730,110 @@ class SelfDuplicateTest(unittest.TestCase):
 		it, so the answer carries the flag."""
 		self.assertTrue(rules.evaluate(self.SAVED, CORPUS, BRANDS, existing=True)["existing"])
 		self.assertFalse(rules.evaluate(self.SAVED, CORPUS, BRANDS)["existing"])
+
+
+class BlockingFindingsTest(unittest.TestCase):
+	"""The two findings that refuse a NEW Item (Nik, 2026-09-24, TASK-2026-02238), and the
+	much longer list of findings that must NOT."""
+
+	EXISTING = [row["item_code"] for row in CORPUS]
+
+	def test_only_the_two_codes_can_block(self):
+		self.assertEqual(
+			rules.BLOCKING_CODES, {rules.DUPLICATE_CODE_NORMALISED, rules.NAME_EQUALS_CODE}
+		)
+
+	def test_punctuation_and_case_variants_of_an_existing_code_block(self):
+		for variant in ("806020", "806 020", "806_020", "806.020", "806/020", " 806--020 "):
+			found = rules.blocking_findings(variant, 'ELBOW, 90, SOC, PVC, 2" SCH80', self.EXISTING)
+			self.assertEqual(codes_of(found), {rules.DUPLICATE_CODE_NORMALISED}, variant)
+			self.assertEqual(found[0]["matches"], ["806-020"], variant)
+		found = rules.blocking_findings("XYH100GM-3X1W", "LIGHT, SUBMERSIBLE", self.EXISTING)
+		self.assertEqual(found[0]["matches"], ["xyh100gm-3x1w"], "case alone is a duplicate")
+
+	def test_the_items_own_code_does_not_collide_with_itself(self):
+		"""Exact self-exclusion. Were the existing list ever to hold the candidate itself, it
+		must not report that it is identical to itself."""
+		self.assertEqual(
+			rules.blocking_findings("806-020", 'ELBOW, 90, SOC, PVC, 2" SCH80', self.EXISTING), []
+		)
+
+	def test_self_exclusion_is_exact_so_a_real_sibling_still_blocks(self):
+		"""Excluding by the normalised form would also drop the sibling — the one collision
+		this finding is for."""
+		found = rules.blocking_findings("806-020", 'ELBOW, 90, SOC, PVC, 2" SCH80', [*self.EXISTING, "806020"])
+		self.assertEqual(found[0]["matches"], ["806020"])
+
+	def test_a_code_that_normalises_to_nothing_matches_nothing(self):
+		self.assertEqual(rules.blocking_findings("---", "VALVE, BALL", ["...", "//"]), [])
+
+	def test_a_name_that_is_just_the_code_blocks(self):
+		for name in ("PDT-00XX", "pdt 00xx", "PDT00XX"):
+			found = rules.blocking_findings("PDT-00XX", name, [])
+			self.assertEqual(codes_of(found), {rules.NAME_EQUALS_CODE}, name)
+
+	def test_a_blank_name_blocks_because_erpnext_fills_it_with_the_code(self):
+		for name in (None, "", "   "):
+			self.assertEqual(
+				codes_of(rules.blocking_findings("22-1044", name, [])), {rules.NAME_EQUALS_CODE}, repr(name)
+			)
+
+	def test_both_can_fire_at_once(self):
+		found = rules.blocking_findings("806020", "806020", self.EXISTING)
+		self.assertEqual(codes_of(found), {rules.DUPLICATE_CODE_NORMALISED, rules.NAME_EQUALS_CODE})
+
+	def test_every_other_finding_is_advice_including_the_stops(self):
+		"""The point of the decision. An unapproved category is a STOP in the advisor and must
+		not refuse a save while rulings are open (TASK-2026-02215); nor may a slot collision,
+		a duplicate NAME, mixed case, a missing comma or a root item group."""
+		cases = [
+			("NEW-0001", "PLMB, FITTING, 1\""),  # name_category_unapproved (STOP)
+			("NEW-0002", "PROTE, SUPPLEMENTARY, MINIATURE, GLADIATOR"),  # duplicate name (STOP in evaluate)
+			("PDT-0008", "CONTROLLER, VFD BYPASS, 5HP"),  # code_slot_occupied (STOP in evaluate)
+			("NEW-0003", "Valve, ball"),  # not uppercase (FIX)
+			("NEW-0004", "WIDGET"),  # no comma + unapproved (STOP)
+		]
+		for code, name in cases:
+			self.assertEqual(rules.blocking_findings(code, name, self.EXISTING), [], code)
+			self.assertNotEqual(
+				rules.evaluate({"item_code": code, "item_name": name}, CORPUS)["verdict"],
+				rules.VERDICT_PASS,
+				f"{code} should still be reported by the advisor",
+			)
+
+	def test_a_blank_code_is_left_to_erpnext(self):
+		self.assertEqual(rules.blocking_findings("", "VALVE, BALL", self.EXISTING), [])
+		self.assertEqual(rules.blocking_findings(None, None, self.EXISTING), [])
+
+	def test_findings_carry_their_registered_severity_and_evidence(self):
+		for finding in rules.blocking_findings("806020", "806020", self.EXISTING):
+			self.assertEqual(finding["severity"], rules.SEVERITY[finding["code"]])
+			self.assertFalse(rules.missing_evidence(finding["code"]))
+
+
+class NewItemSubsetTest(unittest.TestCase):
+	def test_go_live_is_the_policy_effective_date(self):
+		self.assertEqual(rules.NAMING_GO_LIVE, "2026-10-01")
+
+	def test_restrict_keeps_input_order_and_only_the_named_codes(self):
+		rows = rules.audit(CORPUS, BRANDS)
+		kept = rules.restrict_to(rows, {"806-020", "GMCB-1B-6", "NOT-THERE"})
+		self.assertEqual([r["item_code"] for r in kept], ["GMCB-1B-6", "806-020"])
+		self.assertEqual(rules.restrict_to(rows, set()), [])
+
+	def test_a_new_item_still_collides_with_an_old_one(self):
+		"""Why the subset is restricted AFTER auditing the whole corpus: audited alone, a new
+		item named like an old one would look clean."""
+		new = {"item_code": "GMCB-1B-2", "item_name": "PROTE, SUPPLEMENTARY, MINIATURE, GLADIATOR",
+			"item_group": "Electrical", "stock_uom": "Nos"}
+		whole = rules.restrict_to(rules.audit([*CORPUS, new], BRANDS), {"GMCB-1B-2"})
+		alone = rules.audit([new], BRANDS)
+		self.assertIn(rules.DUPLICATE_NAME_NORMALISED, codes_of(whole[0]["findings"]))
+		self.assertNotIn(rules.DUPLICATE_NAME_NORMALISED, codes_of(alone[0]["findings"]))
+
+	def test_a_subset_with_no_live_rows_has_no_compliance_figure(self):
+		rows = rules.restrict_to(rules.audit(CORPUS, BRANDS), {"PDT-00000 (deleted)"})
+		self.assertIsNone(rules.summarise(rows)["compliance_pct"])
 
 
 if __name__ == "__main__":

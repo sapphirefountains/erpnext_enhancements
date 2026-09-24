@@ -16,6 +16,12 @@ center, whether a take needs a job, and the undo window. Those fields were added
 Single that already existed, so ``patches/backfill_stock_scan_settings_defaults`` writes
 their declared defaults where no ``tabSingles`` row exists — and ``DEFAULTS`` below falls
 back the same way, so the page is right even before that patch has run.
+
+The **Item Naming** section (v1.532.0) holds ``naming_digest_recipients``, who gets
+``inventory_enhancements.item_naming_digest``'s Monday email. It has no default on purpose:
+blank means nobody. ``patches/seed_naming_digest_recipient`` writes the Purchasing Agent's
+address once, only where ``tabSingles`` has no row for the field, so a list somebody has
+edited or deliberately emptied is never overwritten.
 """
 
 import frappe
@@ -42,6 +48,8 @@ DEFAULTS = {
 	# site that never saved the field reads None, which api.stock_scan's cint() takes as off. So
 	# there is nothing for the backfill patch to write.
 	"stock_scan_disable_browser_back": None,
+	# Item naming digest. None: no recipients, no email.
+	"naming_digest_recipients": None,
 }
 
 
