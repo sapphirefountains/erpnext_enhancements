@@ -1,7 +1,7 @@
-// Labor Capture Gaps — Operations Dashboard Custom HTML Block.
+// Labor Capture Gaps — Service Dashboard Custom HTML Block.
 //
 // Completed visits that closed with no labour captured, from
-// erpnext_enhancements.api.operations_dashboard.get_labor_capture.
+// erpnext_enhancements.api.service_dashboard.get_labor_capture.
 //
 // Shadow-DOM sandbox: `root_element` is the shadow root, and the workspace
 // re-runs this whole script with a fresh root on every navigation — so nothing
@@ -10,7 +10,7 @@
 
 (function () {
     const MAX_ATTEMPTS = 50;
-    const METHOD = "erpnext_enhancements.api.operations_dashboard.get_labor_capture";
+    const METHOD = "erpnext_enhancements.api.service_dashboard.get_labor_capture";
     let attempts = 0;
 
     function getContainer() {

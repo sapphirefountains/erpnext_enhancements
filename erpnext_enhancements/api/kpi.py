@@ -18,10 +18,15 @@ AVAILABLE_DEPARTMENTS = tuple(snapshots.AGGREGATORS)
 DEPARTMENT_ROLES = {
 	"Finance": {"Accounts Manager", "Accounts User"},
 	"Sales": {"Sales Manager", "Sales User"},
-	"Operations": {"Projects Manager", "Maintenance Manager", "Projects User"},
+	# Operations is the inventory dashboard since v1.529.0, so the Stock Manager joins
+	# the roles that could already see it. Maintenance moved to Service, below.
+	"Operations": {"Projects Manager", "Maintenance Manager", "Projects User", "Stock Manager"},
 	"Marketing": {"Sales Manager", "Marketing Manager"},
 	"Design": {"Projects Manager"},
 	"Production": {"Projects Manager"},
+	# Field service / maintenance, listed under Production in the dashboards sidebar.
+	# The same three roles that saw these numbers when they sat on Operations.
+	"Service": {"Maintenance Manager", "Projects Manager", "Projects User"},
 	"Product": {"Item Manager", "Stock Manager", "Sales Manager"},
 	# HR Team is an instance-defined role (seeded by patches.seed_hr_team_role);
 	# deliberately NOT "HR User", which every employee on this site holds.

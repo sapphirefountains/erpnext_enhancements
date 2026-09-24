@@ -62,7 +62,7 @@ python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v
 
 One per department, plus the module workspace: `executive_dashboard`, `finance_dashboard`,
 `sales_dashboard`, `marketing_dashboard`, `operations_dashboard`, `production_dashboard`,
-`design_dashboard`, `product_dashboard`, `hr_dashboard`, `kpi_dashboards`.
+`service_dashboard`, `design_dashboard`, `product_dashboard`, `hr_dashboard`, `kpi_dashboards`.
 
 Each carries the KPI Cockpit plus that department's **operational widgets** — live worklists
 that sit above the snapshot numbers and say what to do about them. They are Custom HTML
@@ -72,6 +72,39 @@ Blocks; their sources and the live-vs-snapshot split are documented in
 widgets yet — its dashboard's three roles (Item Manager, Stock Manager, Sales Manager) want
 three different boards, and that has not been decided.
 
+
+## Service split off Operations; Operations is inventory (v1.529.0)
+
+Nik, 2026-09-24: maintenance belongs under Production, not Operations, and anything inventory
+belongs on Operations. So:
+
+- **Service** is a tenth department. `_service_metrics` carries the six maintenance KPIs that
+  opened Operations, keys unchanged, and the Day Board, Chemistry Alerts and Labor Capture
+  widgets moved with them. In the sidebar it sits in a Production group beside the Production
+  Dashboard (see [`docs/workspace-sidebars.md`](../../docs/workspace-sidebars.md) for why a
+  group). `_EXEC_ROLLUP` reads its two maintenance numbers from Service now; left on
+  Operations they would have dropped off the Executive dashboard without an error.
+- **Operations** is inventory and purchasing: store runs and their spend, stocked items below
+  reorder and out of stock, stock at a placeholder cost, unpriced PO lines, the share of stocked
+  items counted in 90 days, and the Stock Scan review queue. The three stock-level KPIs moved
+  here from Product unchanged. Device compliance, unsynced time logs and project naming stayed.
+
+**A "stocked item" is an Item with a positive reorder level.** That is ERPNext's own marker for
+"we keep this on the shelf", and it is what drives the automatic Material Requests, so there is
+no second list to drift from it.
+
+**A "store run" is a purchase from a Supplier ticked *Store-Run Vendor*** (a Check created by
+the patch; Home Depot and Lowes are ticked to start). Today the only record of a run is a
+QuickBooks card purchase, which the sync imports as a draft Journal Entry with no party, so
+`_store_runs` recovers the vendor from the newest raw payload's `EntityRef` (type Vendor only,
+card refunds excluded). After the cutover it also counts submitted Purchase Receipts and
+Purchase Invoices from those suppliers with no PO behind them. With no supplier ticked the KPI
+is not published at all, because the count would be 0 by construction and read as the goal met.
+Measured on 2026-09-24: 206 Home Depot and Lowe's card transactions in 12 months (2 of them
+returns), $16.3k, and almost none since July 7 on the Amex card that carried 168 of them. That
+gap is uncategorized QuickBooks data, not an improvement, until bookkeeping says otherwise.
+
+`tests/test_kpi_departments.py` checks that the seven places a department is named agree.
 
 ## Marketing spend and value-stream reporting (WP-4, v1.243.0)
 

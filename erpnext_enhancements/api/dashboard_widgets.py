@@ -49,8 +49,13 @@ WIDGETS = {
 		"renewal_radar": "sales_renewal_radar_enabled",
 	},
 	"Operations": {
-		"day_board": "operations_day_board_enabled",
 		"fleet_health": "operations_fleet_health_enabled",
+	},
+	# The three maintenance worklists moved here from Operations in v1.529.0. Their
+	# toggles keep the operations_* fieldnames: renaming a field on a Single drops the
+	# value every site has already stored, and nobody would notice the widget go dark.
+	"Service": {
+		"day_board": "operations_day_board_enabled",
 		"chemistry_alerts": "operations_chemistry_alerts_enabled",
 		"labor_capture": "operations_labor_capture_enabled",
 	},

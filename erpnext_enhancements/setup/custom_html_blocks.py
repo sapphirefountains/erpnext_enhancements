@@ -65,10 +65,7 @@ BLOCKS = [
 	("Sales Stalled Deals", "sales_stalled_deals"),
 	("Sales Handoff Backlog", "sales_handoff_backlog"),
 	("Sales Renewal Radar", "sales_renewal_radar"),
-	("Operations Day Board", "operations_day_board"),
 	("Operations Fleet Health", "operations_fleet_health"),
-	("Operations Chemistry Alerts", "operations_chemistry_alerts"),
-	("Operations Labor Capture", "operations_labor_capture"),
 	("Design WIP Board", "design_wip_board"),
 	("Design Signoff Queue", "design_signoff_queue"),
 	("Design Handoff Readiness", "design_handoff_readiness"),
@@ -77,6 +74,12 @@ BLOCKS = [
 	("Production Milestone Slippage", "production_milestone_slippage"),
 	("Production Material Readiness", "production_material_readiness"),
 	("Production Hours Variance", "production_hours_variance"),
+	# The maintenance worklists, which sat on Operations as "Operations Day Board" etc.
+	# until v1.529.0. The seeder never deletes, so the three old records are removed by
+	# patches/split_service_kpi_dashboard once no workspace points at them.
+	("Service Day Board", "service_day_board"),
+	("Service Chemistry Alerts", "service_chemistry_alerts"),
+	("Service Labor Capture", "service_labor_capture"),
 	("Marketing Funnel Cascade", "marketing_funnel_cascade"),
 	("Marketing Channel Spend", "marketing_channel_spend"),
 	("Marketing Unsourced Leads", "marketing_unsourced_leads"),
@@ -113,6 +116,7 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Operations Dashboard",
 	"Design Dashboard",
 	"Production Dashboard",
+	"Service Dashboard",
 	"Marketing Dashboard",
 	"Product Dashboard",
 	"HR Dashboard",
@@ -143,12 +147,7 @@ DEPARTMENT_DASHBOARD_BLOCKS = {
 		"Sales Handoff Backlog",
 		"Sales Renewal Radar",
 	),
-	"Operations Dashboard": (
-		"Operations Day Board",
-		"Operations Fleet Health",
-		"Operations Chemistry Alerts",
-		"Operations Labor Capture",
-	),
+	"Operations Dashboard": ("Operations Fleet Health",),
 	"Design Dashboard": (
 		"Design WIP Board",
 		"Design Signoff Queue",
@@ -160,6 +159,11 @@ DEPARTMENT_DASHBOARD_BLOCKS = {
 		"Production Milestone Slippage",
 		"Production Material Readiness",
 		"Production Hours Variance",
+	),
+	"Service Dashboard": (
+		"Service Day Board",
+		"Service Chemistry Alerts",
+		"Service Labor Capture",
 	),
 	"Marketing Dashboard": (
 		"Marketing Funnel Cascade",

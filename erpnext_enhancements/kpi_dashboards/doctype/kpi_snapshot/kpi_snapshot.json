@@ -24,7 +24,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Department",
-   "options": "Finance\nSales\nMarketing\nDesign\nProduction\nOperations\nProduct\nHR\nExecutive",
+   "options": "Finance\nSales\nMarketing\nDesign\nProduction\nService\nOperations\nProduct\nHR\nExecutive",
    "reqd": 1,
    "search_index": 1
   },
@@ -96,7 +96,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-25 12:00:00.000000",
+ "modified": "2026-09-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "KPI Snapshot",

@@ -68,12 +68,20 @@ single block: the KPI Cockpit. Finance was the exception, with six operational w
 This adds four widgets to each of the other seven — Sales, Operations, Design, Production,
 Marketing, HR and Executive — so a dashboard shows what to *do*, not only how things went.
 
+**v1.529.0 split Operations.** Maintenance moved to a tenth dashboard, **Service**, listed
+under Production in the sidebar, and Operations became the inventory dashboard. The three
+maintenance widgets went with it and were renamed `Service …` (block records, source files
+and feed module); `patches/split_service_kpi_dashboard` deletes the three old
+`Operations …` block records, because this seeder never deletes. Their settings toggles
+keep the `operations_*` fieldnames: renaming a field on a Single drops the stored value.
+
 | Department | Blocks | Feed |
 |---|---|---|
 | Sales | Speed to Lead · Stalled Deals · Hand-Off Backlog · Renewal Radar | [`api/sales_dashboard.py`](../api/sales_dashboard.py) |
-| Operations | Today's Visits · Fleet & Device Health · Chemistry Alerts · Labor Capture Gaps | [`api/operations_dashboard.py`](../api/operations_dashboard.py) |
+| Operations | Fleet & Device Health | [`api/operations_dashboard.py`](../api/operations_dashboard.py) |
 | Design | Design WIP · Awaiting Sign-Off · Hand-Off Readiness · Hydraulic Headroom | [`api/design_dashboard.py`](../api/design_dashboard.py) |
 | Production | Build WIP & Aging · Milestone Slippage · Material Readiness · Hours vs Budget | [`api/production_dashboard.py`](../api/production_dashboard.py) |
+| Service | Today's Visits · Chemistry Alerts · Labor Capture Gaps | [`api/service_dashboard.py`](../api/service_dashboard.py) |
 | Marketing | Funnel Cascade · Channel Spend & CPL · Unsourced Leads · Source Health | [`api/marketing_dashboard.py`](../api/marketing_dashboard.py) |
 | HR | Training Compliance · Time Capture · Headcount Movement · People Calendar | [`api/hr_dashboard.py`](../api/hr_dashboard.py) |
 | Executive | Company Scorecard · Cash & Receivables · Bookings & Backlog · Risk Queue | [`api/executive_dashboard.py`](../api/executive_dashboard.py) |

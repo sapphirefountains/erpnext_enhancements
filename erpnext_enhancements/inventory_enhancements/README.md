@@ -235,7 +235,13 @@ and no Item has a barcode or an image, so items are found by location, by name, 
 and show a monogram tile.
 
 **Watch** the `needs_review` queue (Stock Scan Log, *Needs Review* ticked, *Reviewed* not): it is
-every unit that entered stock without an order, at a cost the page chose.
+every unit that entered stock without an order, at a cost the page chose. Since v1.529.0 it is a
+KPI, *Adds Without PO Awaiting Review*, on the Operations dashboard, which is now the inventory
+dashboard: store runs, stocked items below reorder or out, stock at a placeholder cost,
+unpriced PO lines and count coverage. See
+[`kpi_dashboards/README.md`](../kpi_dashboards/README.md#service-split-off-operations-operations-is-inventory-v15290)
+for the definitions, and for the *Store-Run Vendor* flag on Supplier that the store-run KPI
+reads.
 
 ## Item naming
 

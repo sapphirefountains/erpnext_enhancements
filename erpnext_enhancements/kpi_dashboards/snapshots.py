@@ -10,8 +10,10 @@ Maintenance Record / Contract, etc.) — it never calls QBO/Stripe live; freshne
 of those syncs is recorded in ``source_freshness_json`` so a stale upstream shows
 a Watch badge instead of a silently-wrong number.
 
-Phase 1 ships aggregators for Finance, Sales, and Operations. Adding a department
-is one entry in ``AGGREGATORS`` returning ``{"values": [...], "freshness": {...}}``.
+Adding a department is one entry in ``AGGREGATORS`` returning
+``{"values": [...], "freshness": {...}}``, plus its name in the ``department``
+Select on KPI Snapshot and KPI Target and a role set in ``api.kpi.DEPARTMENT_ROLES``;
+``tests/test_kpi_departments.py`` fails the build when those disagree.
 
 Settings: the "KPI Dashboards" section of ERPNext Enhancements Settings —
 ``kpi_dashboards_enabled`` master switch (default off, the app's staged-rollout
@@ -257,7 +259,303 @@ def _party_naming_pct(doctype):
 		return None
 
 
+# Supplier checkbox that marks a walk-in counter (Home Depot, Lowe's). Created by
+# patches/split_service_kpi_dashboard with create_custom_fields, like the procurement fields
+# on Purchase Order, and read here with a has_column guard because doc_events and this job
+# can run on a site whose migrate has not reached the patch yet.
+STORE_RUN_FIELD = "custom_store_run_vendor"
+
+
+def _store_run_suppliers():
+	"""Names of the Suppliers ticked as store-run vendors, or [] when none are (or the
+	field does not exist yet)."""
+	if not frappe.db.has_column("Supplier", STORE_RUN_FIELD):
+		return []
+	return frappe.get_all("Supplier", filters={STORE_RUN_FIELD: 1}, pluck="name")
+
+
+def _store_runs(suppliers, since):
+	"""(count, spend) of unscheduled counter purchases from ``suppliers`` since ``since``.
+
+	Two sources, because a store run is recorded in a different place before and after the
+	QuickBooks cutover:
+
+	* **QuickBooks card purchases** (today). The sync imports a QBO ``Purchase`` as a draft
+	  Journal Entry with no party on any line, so the vendor is only in the raw payload. The
+	  newest payload per purchase gives ``EntityRef``; its id maps to a Supplier through the
+	  Vendor sync mapping. ``EntityRef.type`` must be Vendor, because QBO ids are unique per
+	  entity type and a Customer 55 and a Vendor 55 can both exist. ``Credit`` purchases are
+	  card refunds and are not runs. Cancelled Journal Entries are out; drafts are in, because
+	  every synced QBO Journal Entry is a draft.
+	* **ERPNext documents** (after cutover, and from the store-run screen when it exists): a
+	  submitted Purchase Receipt with no PO line, and a submitted Purchase Invoice with no PO
+	  and no receipt behind any line, so an invoice made from such a receipt is not a second
+	  run. Returns are out.
+
+	During the transition a run recorded in ERPNext whose card charge also reaches QuickBooks
+	would count twice. Nothing records one in ERPNext yet; the store-run screen has to link the
+	charge when it ships.
+	"""
+	count = 0
+	spend = 0.0
+	params = {"since": since, "suppliers": tuple(suppliers)}
+
+	if _exists("QuickBooks Sync Mapping") and _exists("QuickBooks Raw Payload"):
+		row = frappe.db.sql(
+			"""
+			select count(*), sum(je.total_debit)
+			from `tabQuickBooks Sync Mapping` m
+			join `tabJournal Entry` je
+				on je.name = m.erpnext_name and je.docstatus < 2 and je.posting_date >= %(since)s
+			join `tabQuickBooks Raw Payload` rp on rp.name = (
+				select rp2.name from `tabQuickBooks Raw Payload` rp2
+				where rp2.qbo_entity_type = 'Purchase' and rp2.qbo_id = m.qbo_id
+				order by rp2.received_at desc limit 1
+			)
+			join `tabQuickBooks Sync Mapping` vm
+				on vm.qbo_entity_type = 'Vendor' and vm.erpnext_doctype = 'Supplier'
+				and vm.qbo_id = json_value(rp.payload, '$.EntityRef.value')
+			where m.qbo_entity_type = 'Purchase' and m.erpnext_doctype = 'Journal Entry'
+				and coalesce(m.deleted, 0) = 0
+				and json_value(rp.payload, '$.EntityRef.type') = 'Vendor'
+				and coalesce(json_value(rp.payload, '$.Credit'), '0') not in ('1', 'true')
+				and vm.erpnext_name in %(suppliers)s
+			""",
+			params,
+		)
+		count += cint(row[0][0]) if row else 0
+		spend += flt(row[0][1]) if row else 0.0
+
+	row = frappe.db.sql(
+		"""
+		select count(*), sum(pr.base_grand_total) from `tabPurchase Receipt` pr
+		where pr.docstatus = 1 and pr.is_return = 0 and pr.posting_date >= %(since)s
+			and pr.supplier in %(suppliers)s
+			and not exists (
+				select 1 from `tabPurchase Receipt Item` i
+				where i.parent = pr.name and coalesce(i.purchase_order, '') <> ''
+			)
+		""",
+		params,
+	)
+	count += cint(row[0][0]) if row else 0
+	spend += flt(row[0][1]) if row else 0.0
+
+	row = frappe.db.sql(
+		"""
+		select count(*), sum(pi.base_grand_total) from `tabPurchase Invoice` pi
+		where pi.docstatus = 1 and pi.is_return = 0 and pi.posting_date >= %(since)s
+			and pi.supplier in %(suppliers)s
+			and not exists (
+				select 1 from `tabPurchase Invoice Item` i
+				where i.parent = pi.name
+					and (coalesce(i.purchase_order, '') <> '' or coalesce(i.purchase_receipt, '') <> '')
+			)
+		""",
+		params,
+	)
+	count += cint(row[0][0]) if row else 0
+	spend += flt(row[0][1]) if row else 0.0
+	return count, spend
+
+
 def _operations_metrics():
+	"""Operations — inventory and purchasing, since v1.529.0.
+
+	The maintenance KPIs that used to open this dashboard moved to ``_service_metrics``
+	(the Service dashboard, listed under Production), and the three stock-level KPIs moved
+	here from Product: stock quantities and cost are Operations' to manage, catalogue data
+	quality stays with Product. Device compliance, unsynced time logs and project naming
+	stay here because they are neither maintenance nor catalogue.
+
+	The inventory set answers the plan's three questions. *Are we making store runs?* (store
+	runs and their spend.) *Is the shelf stocked?* (stocked items below reorder or out.) *Is
+	the record true?* (stock at a placeholder cost, unpriced PO lines, count coverage, and the
+	queue of adds nobody has reviewed.) "Stocked item" means an Item with a positive reorder
+	level: that is ERPNext's own marker for "we keep this on the shelf", so no second list
+	exists to drift from it.
+	"""
+	today = getdate(nowdate())
+	d30 = add_days(today, -30)
+	d90 = add_days(today, -90)
+	values, add = _collector()
+	freshness = {}
+
+	# --- store runs. Not published at all until a supplier is flagged: with nothing flagged
+	#     the count is 0 by construction, and a 0 here reads as the goal met. ---
+	suppliers = _store_run_suppliers()
+	if suppliers:
+		runs, spend = _store_runs(suppliers, d30)
+		add("store_runs_30", "Store Runs (30d)", runs, "count", "QuickBooks Sync Mapping", metrics.LOWER)
+		add("store_run_spend_30", "Store-Run Spend (30d)", spend, "USD", "QuickBooks Sync Mapping", metrics.LOWER)
+		freshness.update(_qbo_freshness())
+
+	# --- stock levels (moved from Product, definitions unchanged) ---
+	if _exists("Item Reorder") and _exists("Bin") and frappe.db.has_column("Item Reorder", "warehouse_reorder_level"):
+		add(
+			"items_below_reorder",
+			"Stocked Items Below Reorder",
+			_scalar(
+				"select count(distinct r.parent) from `tabItem Reorder` r "
+				"where coalesce(r.warehouse_reorder_level,0) > 0 and "
+				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) < r.warehouse_reorder_level"
+			),
+			"count",
+			"Item Reorder",
+			metrics.LOWER,
+		)
+		add(
+			"stocked_items_out",
+			"Stocked Items Out of Stock",
+			_scalar(
+				"select count(distinct r.parent) from `tabItem Reorder` r "
+				"where coalesce(r.warehouse_reorder_level,0) > 0 and "
+				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) <= 0"
+			),
+			"count",
+			"Item Reorder",
+			metrics.LOWER,
+		)
+		# Share of stocked items counted in the last 90 days. A count reaches the ledger as a
+		# Stock Reconciliation (the count page finalizes into one, and the opening stock went in
+		# as four), so the stock ledger is the one place every count shows up.
+		stocked = flt(
+			_scalar(
+				"select count(distinct parent) from `tabItem Reorder` where coalesce(warehouse_reorder_level,0) > 0"
+			)
+		)
+		if stocked:
+			counted = flt(
+				_scalar(
+					"select count(distinct r.parent) from `tabItem Reorder` r "
+					"where coalesce(r.warehouse_reorder_level,0) > 0 and exists ("
+					"select 1 from `tabStock Ledger Entry` sle where sle.item_code = r.parent "
+					"and sle.voucher_type = 'Stock Reconciliation' and sle.is_cancelled = 0 "
+					"and sle.posting_date >= %(d)s)",
+					{"d": d90},
+				)
+			)
+			add(
+				"stocked_items_counted_90",
+				"Stocked Items Counted (90d)",
+				counted / stocked * 100.0,
+				"%",
+				"Stock Ledger Entry",
+				metrics.HIGHER,
+			)
+	if _exists("Bin"):
+		add(
+			"inventory_stock_value",
+			"Inventory Stock Value",
+			_scalar("select sum(stock_value) from `tabBin`"),
+			"USD",
+			"Bin",
+			metrics.HIGHER,
+		)
+		add(
+			"out_of_stock_sellable",
+			"Out-of-Stock Sellable Items",
+			_scalar(
+				"select count(*) from `tabItem` i where i.is_sales_item=1 and i.is_stock_item=1 and i.disabled=0 "
+				"and coalesce((select sum(actual_qty) from `tabBin` b where b.item_code=i.name),0) <= 0"
+			),
+			"count",
+			"Item",
+			metrics.LOWER,
+		)
+		# The opening stock of 2026-09-23 went in at a $0.01 placeholder rate, so 439 of 448
+		# stocked bin rows were valued at a cent and the whole store read $787. Anything at or
+		# under a cent is treated as not yet costed; zero is the same problem one step worse.
+		add(
+			"placeholder_cost_stock_lines",
+			"Stock at Placeholder Cost",
+			_scalar("select count(*) from `tabBin` where actual_qty > 0 and coalesce(valuation_rate,0) <= 0.01"),
+			"count",
+			"Bin",
+			metrics.LOWER,
+		)
+
+	# --- purchasing data. A $0 PO line receives its stock at $0, which is how a shelf ends up
+	#     worth nothing on paper. 281 of 327 lines were $0 in the 90 days to 2026-09-24. ---
+	add(
+		"unpriced_po_lines_90",
+		"Unpriced PO Lines (90d)",
+		_scalar(
+			"select count(*) from `tabPurchase Order Item` poi "
+			"join `tabPurchase Order` po on po.name = poi.parent "
+			"where po.docstatus = 1 and po.transaction_date >= %(d)s and coalesce(poi.rate,0) = 0",
+			{"d": d90},
+		),
+		"count",
+		"Purchase Order",
+		metrics.LOWER,
+	)
+
+	# --- the Stock Scan page's own review queue: stock added without a PO, at a cost the page
+	#     chose, that a Stock Manager has not looked at. Undone saves need no review. ---
+	if _exists("Stock Scan Log"):
+		add(
+			"stock_scan_review_queue",
+			"Adds Without PO Awaiting Review",
+			_scalar(
+				"select count(*) from `tabStock Scan Log` "
+				"where needs_review = 1 and coalesce(reviewed,0) = 0 and status = 'Posted'"
+			),
+			"count",
+			"Stock Scan Log",
+			metrics.LOWER,
+		)
+	if _exists("Inventory Count Session"):
+		add(
+			"inventory_open_counts",
+			"Open Inventory Counts",
+			_scalar(
+				"select count(*) from `tabInventory Count Session` "
+				"where coalesce(status,'') not in ('Completed','Cancelled','')"
+			),
+			"count",
+			"Inventory Count Session",
+			metrics.LOWER,
+		)
+
+	# --- not inventory, not maintenance: these stayed on Operations ---
+	# naming compliance, per the party-naming rules (v1.339.0)
+	add(
+		"project_naming_compliance_pct",
+		"Project Naming Compliance",
+		_party_naming_pct("Project"),
+		"%",
+		"Project",
+		metrics.HIGHER,
+	)
+	if _exists("Managed Device"):
+		add(
+			"device_noncompliant",
+			"Non-Compliant Devices",
+			_scalar(
+				"select count(*) from `tabManaged Device` where coalesce(compliance_status,'') not in ('Compliant','')"
+			),
+			"count",
+			"Managed Device",
+			metrics.LOWER,
+		)
+	if _exists("Job Interval") and frappe.db.has_column("Job Interval", "sync_status"):
+		add(
+			"time_unsynced",
+			"Unsynced Time Logs",
+			_scalar("select count(*) from `tabJob Interval` where coalesce(sync_status,'') not in ('Synced','')"),
+			"count",
+			"Job Interval",
+			metrics.LOWER,
+		)
+	return {"values": values, "freshness": freshness}
+
+
+def _service_metrics():
+	"""Service — field service and maintenance, listed under Production in the dashboards
+	sidebar. These six KPIs were the first half of Operations until v1.529.0 and moved
+	unchanged, keys included, so a KPI Target set against one follows it (the patch moves the
+	row) and ``_EXEC_ROLLUP`` reads two of them from here."""
 	today = getdate(nowdate())
 	d30 = add_days(today, -30)
 	values, add = _collector()
@@ -268,15 +566,6 @@ def _operations_metrics():
 		{"d": d30},
 	)
 	add("visits_completed_30", "Visits Completed (30d)", completed_30, "count", "Sapphire Maintenance Record", metrics.HIGHER)
-	# --- naming compliance, per the party-naming rules (v1.339.0) ---
-	add(
-		"project_naming_compliance_pct",
-		"Project Naming Compliance",
-		_party_naming_pct("Project"),
-		"%",
-		"Project",
-		metrics.HIGHER,
-	)
 	add(
 		"visits_open",
 		"Open Visit Drafts",
@@ -317,38 +606,6 @@ def _operations_metrics():
 		"Sapphire Maintenance Contract",
 		metrics.LOWER,
 	)
-	if _exists("Managed Device"):
-		add(
-			"device_noncompliant",
-			"Non-Compliant Devices",
-			_scalar(
-				"select count(*) from `tabManaged Device` where coalesce(compliance_status,'') not in ('Compliant','')"
-			),
-			"count",
-			"Managed Device",
-			metrics.LOWER,
-		)
-	if _exists("Job Interval") and frappe.db.has_column("Job Interval", "sync_status"):
-		add(
-			"time_unsynced",
-			"Unsynced Time Logs",
-			_scalar("select count(*) from `tabJob Interval` where coalesce(sync_status,'') not in ('Synced','')"),
-			"count",
-			"Job Interval",
-			metrics.LOWER,
-		)
-	if _exists("Inventory Count Session"):
-		add(
-			"inventory_open_counts",
-			"Open Inventory Counts",
-			_scalar(
-				"select count(*) from `tabInventory Count Session` "
-				"where coalesce(status,'') not in ('Completed','Cancelled','')"
-			),
-			"count",
-			"Inventory Count Session",
-			metrics.LOWER,
-		)
 	return {"values": values, "freshness": {}}
 
 
@@ -986,8 +1243,10 @@ _EXEC_ROLLUP = (
 	("win_rate_90", "Win Rate (90d)", "Sales", "win_rate_90", "%", metrics.HIGHER),
 	("backlog_value", "Backlog (Open Project Value)", "Production", "backlog_value", "USD", metrics.HIGHER),
 	("on_time_milestone_rate", "On-Time Milestone Rate", "Production", "on_time_milestone_rate", "%", metrics.HIGHER),
-	("active_contracts", "Active Maintenance Contracts", "Operations", "active_contracts", "count", metrics.HIGHER),
-	("chem_oor_rate", "Maintenance Out-of-Range Rate", "Operations", "chem_oor_rate", "%", metrics.LOWER),
+	# Service since v1.529.0. Left pointing at Operations, these two would vanish from the
+	# Executive dashboard without an error: a key a department no longer emits is skipped.
+	("active_contracts", "Active Maintenance Contracts", "Service", "active_contracts", "count", metrics.HIGHER),
+	("chem_oor_rate", "Maintenance Out-of-Range Rate", "Service", "chem_oor_rate", "%", metrics.LOWER),
 	("turnover_rate_12m", "Turnover Rate (12m)", "HR", "turnover_rate_12m", "%", metrics.LOWER),
 )
 
@@ -1115,29 +1374,9 @@ def _product_metrics():
 				metrics.HIGHER,
 			)
 
-	# --- inventory. Bin.stock_value is the stock ledger's own valuation (per-
-	#     warehouse moving average) — the canonical on-hand value. The Item-master
-	#     valuation_rate is a single static rate that under-reports materially. ---
-	if _exists("Bin"):
-		add(
-			"inventory_stock_value",
-			"Inventory Stock Value",
-			_scalar("select sum(stock_value) from `tabBin`"),
-			"USD",
-			"Bin",
-			metrics.HIGHER,
-		)
-		add(
-			"out_of_stock_sellable",
-			"Out-of-Stock Sellable Items",
-			_scalar(
-				"select count(*) from `tabItem` i where i.is_sales_item=1 and i.is_stock_item=1 and i.disabled=0 "
-				"and coalesce((select sum(actual_qty) from `tabBin` b where b.item_code=i.name),0) <= 0"
-			),
-			"count",
-			"Item",
-			metrics.LOWER,
-		)
+	# --- inventory: Inventory Stock Value and Out-of-Stock Sellable Items moved to
+	#     _operations_metrics in v1.529.0 with their definitions unchanged. Stock quantity
+	#     and cost are Operations' to manage; catalogue data quality stays here. ---
 
 	# --- catalog data-quality completeness % ---
 	total_sellable = flt(_scalar("select count(*) from `tabItem` where is_sales_item=1 and disabled=0"))
@@ -1203,21 +1442,6 @@ def _product_metrics():
 		)
 		if rev_365 and cogs_365:
 			add("gross_margin_pct", "Gross Margin (1y)", (flt(rev_365) - flt(cogs_365)) / flt(rev_365) * 100.0, "%", "Sales Invoice", metrics.HIGHER)
-
-	# --- SEMI: items whose on-hand qty is below a configured reorder level. ---
-	if _exists("Item Reorder") and _exists("Bin") and has("Item Reorder", "warehouse_reorder_level"):
-		add(
-			"items_below_reorder",
-			"Items Below Reorder",
-			_scalar(
-				"select count(distinct r.parent) from `tabItem Reorder` r "
-				"where coalesce(r.warehouse_reorder_level,0) > 0 and "
-				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) < r.warehouse_reorder_level"
-			),
-			"count",
-			"Item Reorder",
-			metrics.LOWER,
-		)
 
 	# --- SEMI: design fountain-type mix (only if Water Feature Design carries it). ---
 	if _exists("Water Feature Design") and has("Water Feature Design", "fountain_type"):
@@ -1437,6 +1661,9 @@ AGGREGATORS = {
 	"Operations": _operations_metrics,
 	"Design": _design_metrics,
 	"Production": _production_metrics,
+	# Service is built before Executive so the exec rollup reads today's contract and
+	# chemistry figures (see _EXEC_ROLLUP).
+	"Service": _service_metrics,
 	"Marketing": _marketing_metrics,
 	# Product is built before Executive so a future exec rollup can read it.
 	"Product": _product_metrics,
