@@ -45,6 +45,14 @@
  *     entry that is not ours.
  *   - **"Report a problem" shows only where it can work.** `reportAvailable` wants the recorder
  *     and the `system_user=yes` cookie, the same test as the floating launcher's.
+ *   - **A store-run line is the same line on every retry** (v1.535.0). `saveKey` covers what a
+ *     line posts (run, store, price, reason, photo, day, total, the job decision, a new item's
+ *     code), a new run's id is minted once and outlives its sheet, and `upload()` turns a 403 into
+ *     "signed out". On the real app.js: the door appears only with `boot.store_run`, "Where did
+ *     these come from?" lists open orders FIRST, a filled sheet posts the line the server
+ *     expects, the quick item's live check draws its neighbours and "Use this one" switches the
+ *     line, an order at the chosen store is received on the order instead, "Only for this job"
+ *     offers the Take, and Finish ends the bar.
  *   - **Nothing opens or moves under the report form.** The real `app.js`, mounted on a small
  *     fake DOM with a fake recorder whose form arrives only when told (a slow first download):
  *     tapped, every door — Scan, Search, the job chip, a Recent row, Undo, a scanner gun, How
@@ -677,6 +685,306 @@ async function appUnderTheReportForm() {
 	}
 }
 
+/**
+ * "Bought on a store run" (v1.535.0) on the real app.js: the door appears only when the boot
+ * carries `store_run`; "Where did these come from?" lists the open order lines FIRST, then the
+ * open runs and "Bought on a store run"; a new run's id is minted once and survives closing the
+ * sheet (it is part of saveKey — a second id would be a second save); a filled sheet posts the
+ * line the server expects; the run bar follows the run; and none of the new doors opens while
+ * the report form is on its way.
+ */
+async function appStoreRuns() {
+	const page = fakePage();
+	const rec = fakeRecorder(page);
+	const today = "2026-09-24";
+	const samRun = {
+		run: "sr-kf3z9a1-8qz0x4m2ab", supplier: "Home Depot", supplier_name: "Home Depot", started_by: "sam@example.com",
+		started_by_name: "Sam Smith", started_on: today, bought: today, lines: 2, amount: 14.91, receipt_total: 16.1,
+		receipt_photo: "/private/files/r.jpg", receipt_number: null, last_at: `${today} 10:42:00`, open: true,
+	};
+	const storeRun = {
+		suppliers: [
+			{ supplier: "Home Depot", supplier_name: "Home Depot", key: "homedepot" },
+			{ supplier: "Lowe's", supplier_name: "Lowe's", key: "lowes" },
+		],
+		reasons: [
+			{ value: "A stocked item was out", hint: "The minimum is too low" },
+			{ value: "Not something we stock", hint: "Twice in 60 days means add it to the kit" },
+			{ value: "Only for this job", hint: "Fine" },
+		],
+		item_groups: ["Products", "Electrical", "PVC Fittings", "Plumbing"],
+		uoms: ["Unit", "FT", "Gallon"],
+		can_create_items: true,
+		can_record: true,
+		open_runs: [samRun],
+	};
+	const boot = { user: "tina@example.com", today, recent: [], settings: {}, initial: null, decoder_url: "/jsqr.js", csrf_token: "tok" };
+	const item = {
+		item_code: "406-020", item_name: "ELBOW, 90, SOC, PVC, 2 IN", warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", stock_uom: "Unit",
+		on_hand: 5, available: 5, open_orders: [], elsewhere: [], is_stock_item: 1, store_run_ok: true, reorder_level: 0, whole_number: true,
+	};
+	const realFetch = globalThis.fetch;
+	const posted = [];
+	globalThis.window = page.win;
+	globalThis.document = page.doc;
+	page.win.ee_capture = rec;
+	page.win.EE_STOCK_SCAN_BOOT = boot;
+	globalThis.fetch = async (url, init) => {
+		const body = JSON.parse((init && init.body) || "{}");
+		posted.push({ url: String(url), body });
+		let message = null;
+		if (String(url).endsWith(".check_new_item")) {
+			message = {
+				checked: true,
+				exists: null,
+				similar: [
+					{ item_code: "SB-075", item_name: "COUPLING, SHARKBITE, 3/4 IN", item_group: "Plumbing", score: 0.8, stocked: 1, usable: true, refusal: null },
+					{ item_code: "SB-TOOL", item_name: "TOOL, SHARKBITE, DISCONNECT", item_group: "Products", score: 0.5, stocked: 0, usable: true, refusal: null },
+					{ item_code: "SB-OLD", item_name: "SHARKBITE, KIT", item_group: "Products", score: 0.4, stocked: 1, usable: false, refusal: "SHARKBITE, KIT is disabled." },
+				],
+				blocking: [{ code: "name_equals_code", message: "The name is just the code." }],
+				advice: [{ code: "name_no_comma", severity: "FIX", message: "Separate the parts of the name with commas." }],
+				will_refuse: false,
+				refuse_from: "2026-10-01",
+				suggested_group: "Plumbing",
+			};
+		} else if (String(url).endsWith(".get_item")) {
+			message = { ...item, item_code: body.item_code, item_name: "COUPLING, SHARKBITE, 3/4 IN", reorder_level: 4, warehouse: body.warehouse, warehouse_name: "Bin A1" };
+		} else if (String(url).endsWith(".take")) {
+			message = {
+				log: { name: "SCAN-2026-00002", action: "Take", status: "Posted", item_code: body.item_code, item_name: item.item_name, qty: body.qty, stock_uom: "Unit", warehouse: body.warehouse, warehouse_name: "Bin A1", project: body.project, can_undo: 1 },
+				item: { ...item, on_hand: 5, available: 5 },
+				message: "Took it.",
+				repeated: false,
+				run: null,
+			};
+		} else if (String(url).endsWith(".store_run")) {
+			const run = { ...samRun, run: body.run, started_by: boot.user, started_by_name: "Tina Tech", lines: 1, amount: 9.94, receipt_total: body.receipt_total };
+			message = {
+				log: { name: "SCAN-2026-00001", action: "Store Run", status: "Posted", item_code: body.item_code, item_name: item.item_name, qty: body.qty, stock_uom: "Unit", warehouse: body.warehouse, warehouse_name: "Bin A1", store_run: body.run, supplier: body.supplier, rate: body.rate, can_undo: 1 },
+				item: { ...item, on_hand: 7, available: 7 },
+				message: "Recorded 2 Unit of ELBOW from Home Depot at $4.97 each. Purchasing will review it.",
+				repeated: false,
+				run,
+			};
+		}
+		return new Response(JSON.stringify({ message }), { status: 200, headers: { "Content-Type": "application/json" } });
+	};
+	try {
+		const A = await load("app.js");
+		const U = await load("ui.js");
+		const host = () => page.doc.getElementById("ee-ss-sheets");
+		const sheetText = () => (host() ? host().textContent : "");
+		const inSheets = (test) => {
+			const h = host();
+			if (!h) return null;
+			for (const n of h.walk()) if (test(n)) return n;
+			return null;
+		};
+		const buttonSaying = (text) => inSheets((n) => n.tagName === "BUTTON" && n.textContent.trim() === text);
+		const mountApp = (extra) => {
+			const root = page.doc.createElement("div");
+			root.className = "ee-ss-root";
+			page.doc.body.appendChild(root);
+			const app = new A.StockScanApp(root, Object.assign({}, boot, extra));
+			app.mount();
+			return app;
+		};
+
+		console.log("\nstock scan store runs\n");
+
+		// 1. No store_run in the boot: the page is as it was.
+		const off = mountApp({ store_run: null });
+		off.showItem({ ...item }, {});
+		off.nudge(2);
+		off.save();
+		truthy("store run off: + with no order and no job asks 'Not on a purchase order'", /Not on a purchase order/.test(sheetText()) && !/store run/i.test(sheetText()), sheetText());
+		U.closeAllSheets();
+		await settle();
+		off.showItem({ ...item, is_stock_item: 0, blocked: "Not tracked in inventory.", store_run_ok: true }, {});
+		truthy("store run off: a non-stock item has no store-run button", !/Bought it on a store run/.test(off.main.textContent));
+
+		// 2. On: the order lines first, then the runs, then "Bought on a store run", then the rest.
+		const on = mountApp({ store_run: storeRun });
+		const order = { purchase_order: "PO-0091", purchase_order_item: "poi-1", supplier: "Home Depot", supplier_name: "Home Depot", pending_stock_qty: 3, ordered_qty: 3, conversion_factor: 1 };
+		on.showItem({ ...item, open_orders: [order] }, {});
+		on.nudge(2);
+		on.save();
+		const where = sheetText();
+		const at = (text) => where.indexOf(text);
+		truthy(
+			"store run on: order line, then Sam's open run, then 'Bought on a store run', then 'Not on a purchase order'",
+			at("PO-0091") !== -1 && at("PO-0091") < at("Add to Sam's Home Depot run") && at("Add to Sam's Home Depot run") < at("Bought on a store run") && at("Bought on a store run") < at("Not on a purchase order"),
+			where
+		);
+		U.closeAllSheets();
+		await settle();
+
+		// 3. A new run's id is minted once and outlives the sheet.
+		on.showItem({ ...item }, {});
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 2 });
+		const minted = on.newRun && on.newRun.run;
+		truthy("run sheet: a new run's id is minted, sr-…", typeof minted === "string" && minted.startsWith("sr-"), String(minted));
+		truthy("run sheet: it asks for the store, the photo, the total and the job", ["Home Depot", "Lowe's", "Take the receipt photo", "Receipt total, tax included", "No job: safety or shop", "Twice in 60 days means add it to the kit"].every((t) => sheetText().includes(t)), sheetText());
+		U.closeAllSheets();
+		await settle();
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 2 });
+		check("run sheet: reopened, the same run id (a new one would post the line twice on a retry)", on.newRun.run, minted);
+
+		// 4. Filled in and saved: the line the server expects, and the bar follows the run.
+		on.newRun.photo = "/private/files/receipt.jpg";
+		on.newRun.receipt_total = "10.53";
+		buttonSaying("Home Depot").click();
+		const price = inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Price each, before tax, as on the receipt");
+		price.value = "4.97";
+		buttonSaying("No job: safety or shop").click();
+		buttonSaying("Save to the run").click();
+		await settle();
+		const sent = posted.filter((p) => p.url.endsWith(".store_run")).map((p) => p.body)[0] || {};
+		check(
+			"save: posts the line — run, store, bin, qty, price, reason, photo, day, total, no job",
+			[sent.run, sent.supplier, sent.warehouse, sent.qty, sent.rate, sent.reason, sent.receipt_photo, sent.bought, sent.receipt_total, sent.no_job, sent.item_code, sent.project],
+			[minted, "Home Depot", "Bin A1 - SF", 2, 4.97, "Not something we stock", "/private/files/receipt.jpg", "today", 10.53, 1, "406-020", undefined]
+		);
+		truthy("save: with a client_ref and no page-only keys", typeof sent.client_ref === "string" && !("action" in sent), JSON.stringify(sent));
+		check("save: the sheet closed and the draft is spent", [U.sheetDepth(), on.newRun], [0, null]);
+		check("save: the run bar shows the run", [on.runBar.hidden, /Home Depot run · 1 item/.test(on.runBar.textContent)], [false, true]);
+		check("save: the run is this phone's current one", on.runState.current, minted);
+
+		// 5. Only for this job: the job is needed, and "No job" is not offered.
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1, run: on.currentRun() });
+		truthy("an open run's sheet shows its header on one line", /Home Depot · today · receipt ✓ · \$10\.53 with tax/.test(sheetText()), sheetText());
+		const only = inSheets((n) => n.tagName === "BUTTON" && n.textContent.startsWith("Only for this job"));
+		only.click();
+		truthy("only for this job: 'No job' is gone and the job is asked for", !buttonSaying("No job: safety or shop") && /the job is needed/.test(sheetText()), sheetText());
+		U.closeAllSheets();
+		await settle();
+
+		// 6. A non-stock item: its own door on the item card.
+		on.showItem({ ...item, is_stock_item: 0, blocked: "Not tracked in inventory.", store_run_ok: true }, {});
+		truthy("non-stock item: 'Bought it on a store run' on the card", /Bought it on a store run/.test(on.main.textContent), on.main.textContent);
+
+		// 7. Finish: the paper receipt goes to Accounting; Done ends the bar.
+		on.finishRun();
+		truthy("finish: says where the receipt goes", /within 2 business days/.test(sheetText()), sheetText());
+		buttonSaying("Done").click();
+		await settle();
+		check("finish: Done ends the run on this phone", [on.runBar.hidden, on.runState.current, on.runState.finished.includes(minted)], [true, null, true]);
+
+		// 7b. A part not in ERPNext: the quick item, checked live, and "Use this one".
+		const fire = (node, type) => {
+			for (const fn of (node.listeners[type] || []).slice()) fn({ type, target: node, preventDefault() {} });
+		};
+		on.showLocation({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", items: [] }, {});
+		on.openQuickItem({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", name: "SHARKBITE COUPLING" });
+		truthy("quick item: the form asks for the part number as printed, the group and the unit", ["Part or model number, exactly as printed", "Group", "Unit", "Fixed once saved"].every((t) => sheetText().includes(t)), sheetText());
+		const codeBox = inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Part or model number");
+		codeBox.value = "U-008LF";
+		fire(codeBox, "input");
+		fire(codeBox, "blur");
+		await settle();
+		const checked = posted.filter((p) => p.url.endsWith(".check_new_item")).map((p) => p.body);
+		check("quick item: one check on blur, with what was typed", checked.slice(-1).map((b) => [b.item_code, b.item_name]), [["U-008LF", "SHARKBITE COUPLING"]]);
+		truthy(
+			"quick item: 'Is it one of these?' with Use this one / Record against it (not stocked) / the refusal",
+			["Is it one of these?", "Use this one", "Record against it (not stocked)", "SHARKBITE, KIT is disabled.", "From Oct 1 this will be refused: The name is just the code.", "1 naming tip"].every((t) => sheetText().includes(t)),
+			sheetText()
+		);
+		const groupBox = inSheets((n) => n.tagName === "SELECT" && n.getAttribute("aria-label") === "Group");
+		check("quick item: the group starts from the nearest item's", groupBox && groupBox.value, "Plumbing");
+		buttonSaying("Use this one").click();
+		await settle();
+		truthy("quick item: 'Use this one' switches the line to that item, and the reason to 'was out' (it has a minimum)", /What was bought/.test(sheetText()) && /SB-075/.test(sheetText()) && !/Part or model number/.test(sheetText()), sheetText());
+		const reasonOn = inSheets((n) => n.tagName === "BUTTON" && n.getAttribute("aria-checked") === "true" && /stocked item was out/.test(n.textContent));
+		truthy("quick item: ... the reason follows the item's minimum", !!reasonOn);
+		U.closeAllSheets();
+		await settle();
+
+		// 7c. The receipt photo: picked, shrunk (no canvas in node: sent as is) and sent at once.
+		const realXhr = globalThis.XMLHttpRequest;
+		globalThis.XMLHttpRequest = class {
+			constructor() {
+				this.upload = {};
+			}
+			open() {}
+			setRequestHeader() {}
+			send() {
+				setImmediate(() => {
+					this.status = 200;
+					this.responseText = JSON.stringify({ message: { name: "f1", file_url: "/private/files/receipt-new.jpg" } });
+					this.onload();
+				});
+			}
+		};
+		try {
+			on.showItem({ ...item }, {});
+			on.openStoreRun({ v: on.view, item: on.view.item, qty: 1 });
+			const fileBox = inSheets((n) => n.tagName === "INPUT" && n.type === "file");
+			check("photo: a file input for images, with no capture (the photo library is allowed)", fileBox && [fileBox.getAttribute("accept"), fileBox.hasAttribute("capture")], ["image/*", false]);
+			fileBox.files = [new Blob(["jpeg"], { type: "image/jpeg" })];
+			fire(fileBox, "change");
+			await settle();
+			check("photo: sent at once and kept on the run's draft", on.newRun && on.newRun.photo, "/private/files/receipt-new.jpg");
+			truthy("photo: the sheet shows it is in", /Receipt photo ✓/.test(sheetText()), sheetText());
+		} finally {
+			globalThis.XMLHttpRequest = realXhr;
+		}
+
+		// 7d. Only for this job, saved: "Take these to the job now?", Take preselected. The header
+		// typed so far (store, total, photo) is the run's draft and survives the sheet closing.
+		on.newRun.receipt_total = "5.40";
+		buttonSaying("Lowe's").click();
+		U.closeAllSheets();
+		await settle();
+		on.setJob({ project: "PRJ-00598", project_name: "City Hall Plaza Fountain" });
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1 });
+		inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Price each, before tax, as on the receipt").value = "4.97";
+		inSheets((n) => n.tagName === "BUTTON" && n.textContent.startsWith("Only for this job")).click();
+		truthy("only for this job: the phone's job is the line's", /Job: City Hall Plaza Fountain/.test(sheetText()), sheetText());
+		buttonSaying("Save to the run").click();
+		await settle();
+		const second = posted.filter((p) => p.url.endsWith(".store_run")).map((p) => p.body).slice(-1)[0] || {};
+		check("only for this job: posts the job, not 'no job'", [second.reason, second.project, second.no_job, second.supplier], ["Only for this job", "PRJ-00598", 0, "Lowe's"]);
+		truthy("only for this job: then asks to take them to the job now", /Take these 1 to City Hall Plaza Fountain now\?/.test(sheetText()), sheetText());
+		inSheets((n) => n.tagName === "BUTTON" && /Take them now/.test(n.textContent)).click();
+		await settle();
+		const took = posted.filter((p) => p.url.endsWith(".take")).map((p) => p.body).slice(-1)[0] || {};
+		check("only for this job: Take posts the issue to the job", [took.item_code, took.qty, took.project, took.warehouse], ["406-020", 1, "PRJ-00598", "Bin A1 - SF"]);
+		U.closeAllSheets();
+		await settle();
+
+		// 7e. An order for this item at the chosen store: the pickup, received on its order instead.
+		on.showItem({ ...item, open_orders: [order], elsewhere: [{ warehouse: "Stores - SF", warehouse_name: "Stores", on_hand: 4, available: 4 }] }, {});
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 2 });
+		truthy("before buying: ERPNext's stock elsewhere is pointed out", /ERPNext shows 4 at Stores/.test(sheetText()), sheetText());
+		truthy("before choosing a store: no order warning", !/on order from/.test(sheetText()));
+		buttonSaying("Home Depot").click();
+		truthy("Home Depot chosen: its order for this item is pointed out", /PO-0091 has 3 Unit of these on order from Home Depot/.test(sheetText()), sheetText());
+		buttonSaying("Receive on PO-0091").click();
+		await settle();
+		const received = posted.filter((p) => p.url.endsWith(".add")).map((p) => p.body).slice(-1)[0] || {};
+		check("'Receive on PO-0091' receives against the order line, not as a store run", [received.purchase_order_item, received.qty, received.warehouse], ["poi-1", 2, "Bin A1 - SF"]);
+		U.closeAllSheets();
+		await settle();
+
+		// 8. The new doors stay shut while the report form is on its way.
+		on.setCurrentRun(samRun.run);
+		on.reportBtn.click();
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1 });
+		on.openQuickItem({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", name: "SHARKBITE" });
+		on.finishRun();
+		check("while the report form loads, the run sheet, the quick item and Finish open nothing", U.sheetDepth(), 0);
+		rec.fail();
+		await settle();
+		U.closeAllSheets();
+		await settle();
+	} finally {
+		globalThis.fetch = realFetch;
+		delete globalThis.window;
+		delete globalThis.document;
+	}
+}
+
 (async () => {
 	if (typeof globalThis.window !== "undefined") {
 		console.error("a window global exists before the modules load; this test must load them without one");
@@ -693,8 +1001,11 @@ async function appUnderTheReportForm() {
 		"scanFailure", "rememberedJob", "saveLabel",
 		// "Report a problem" in the header.
 		"reportAvailable",
+		// "Bought on a store run" (v1.535.0).
+		"mintRunId", "runIsOpen", "runSummary", "validPrice", "validTotal", "money", "suggestedReason", "reasonWarning",
+		"ordersAtStore", "boughtLabel", "storeKey",
 	]);
-	exported(T, "transport.js", ["M", "call", "StockScanCallError", "errorMessage", "isSignedOut", "SIGNED_OUT"]);
+	exported(T, "transport.js", ["M", "call", "upload", "StockScanCallError", "errorMessage", "isSignedOut", "SIGNED_OUT"]);
 	exported(N, "nav.js", ["NavHistory", "MAX_ENTRIES", "TRAVERSE_TIMEOUT_MS"]);
 
 	console.log("stock scan client\n");
@@ -900,6 +1211,69 @@ async function appUnderTheReportForm() {
 	check("logHeadline: an add without one reads as an add", L.logHeadline({ ...returned, project: null }), "Added 2 Each");
 	check("undoQuestion: a return names the job", L.undoQuestion(returned), "Undo: returned 2 Each of Widget to Bin A1-3-1 from PRJ-00598?");
 	check("undoQuestion: found stock does not", L.undoQuestion({ ...returned, project: null }), "Undo: added 2 Each of Widget to Bin A1-3-1?");
+
+	// ------------------------------------------------------------------ store runs (v1.535.0)
+	// saveKey: everything a store-run line posts is part of it, so a changed price or reason is
+	// a new save and a retry of the same line is the same one.
+	const line = {
+		action: "store_run", run: "sr-kf3z9a1-8qz0x4m2ab", supplier: "Home Depot", warehouse: "Bin A1 - SF", item_code: "406-020",
+		qty: 3, rate: 4.97, reason: "Not something we stock", receipt_photo: "/private/files/receipt.jpg", bought: "today",
+		receipt_number: "H-1", receipt_total: 16.1, project: "PRJ-00598",
+	};
+	check("saveKey: the same store-run line is the same key", L.saveKey({ ...line }), L.saveKey({ ...line }));
+	check("saveKey: an existing save's key ignores the store-run parts it does not have", L.saveKey(base) === L.saveKey({ ...base, rate: undefined, run: undefined }), true);
+	for (const [label, change] of [
+		["the run", { run: "sr-kf3z9a1-000000000a" }],
+		["the store", { supplier: "Lowe's" }],
+		["the price", { rate: 5.97 }],
+		["the reason", { reason: "Only for this job" }],
+		["the receipt photo", { receipt_photo: "/private/files/other.jpg" }],
+		["the day bought", { bought: "yesterday" }],
+		["the receipt number", { receipt_number: "H-2" }],
+		["the receipt total", { receipt_total: 17.1 }],
+		["no job", { project: undefined, no_job: 1 }],
+		["a new item's code", { item_code: undefined, new_item: { item_code: "ABC-1" } }],
+	]) {
+		truthy(`saveKey: changing ${label} makes a different store-run line`, L.saveKey({ ...line, ...change }) !== L.saveKey(line));
+	}
+	check("saveKey: price noise is the same line", L.saveKey({ ...line, rate: 4.9700000001 }), L.saveKey(line));
+	const runIds = new Set();
+	let runIdsOk = true;
+	for (let i = 0; i < 500; i += 1) {
+		const id = L.mintRunId();
+		if (!id.startsWith("sr-") || !SERVER.test(id)) runIdsOk = false;
+		runIds.add(id);
+	}
+	truthy("mintRunId: sr-<time>-<random>, a client_ref the server accepts", runIdsOk);
+	check("mintRunId: no two alike", runIds.size, 500);
+	const openRun = { run: "sr-kf3z9a1-8qz0x4m2ab", started_on: "2026-09-24", lines: 2, amount: 14.91, supplier_name: "Home Depot" };
+	check("runIsOpen: started today", L.runIsOpen(openRun, "2026-09-24"), true);
+	check("runIsOpen: started yesterday is closed", L.runIsOpen(openRun, "2026-09-25"), false);
+	check("runIsOpen: the server said closed", L.runIsOpen({ ...openRun, open: false }, "2026-09-24"), false);
+	check("runIsOpen: nothing, or no id", [L.runIsOpen(null, "2026-09-24"), L.runIsOpen({ started_on: "2026-09-24" }, "2026-09-24")], [false, false]);
+	check("runSummary", L.runSummary(openRun), "Home Depot run · 2 items · $14.91 before tax");
+	check("runSummary: one item, nothing priced yet", L.runSummary({ supplier_name: "Lowe's", lines: 1, amount: 0 }), "Lowe's run · 1 item");
+	check("boughtLabel", [L.boughtLabel("2026-09-24", "2026-09-24"), L.boughtLabel("2026-09-30", "2026-10-01"), L.boughtLabel("2026-09-20", "2026-09-24")], ["today", "yesterday", "Sep 20"]);
+	check("validPrice: as on the receipt", [L.validPrice("4.97").rate, L.validPrice("$1,234.50").rate, L.validPrice(" 0.125 ").rate], [4.97, 1234.5, 0.125]);
+	for (const bad of ["", "   ", "abc", "0", "-4", "4.9.7", "4006381333931"]) {
+		truthy(`validPrice(${JSON.stringify(bad)}) is refused in words`, L.validPrice(bad).rate === null && /\w/.test(L.validPrice(bad).problem || ""));
+	}
+	check("validTotal", [L.validTotal("23.41").total, L.validTotal("").total, L.validTotal("0").total], [23.41, null, null]);
+	check("money (stock_scan_rules.money)", [L.money(4.97), L.money(1234.5), L.money(0.497), L.money(null)], ["$4.97", "$1,234.50", "$0.4970", ""]);
+	check("suggestedReason: a stocked item was out; anything else is not stocked", [L.suggestedReason(5, false), L.suggestedReason(0, false), L.suggestedReason(5, true)], [L.REASON_OUT_OF_STOCK, L.REASON_NOT_STOCKED, L.REASON_NOT_STOCKED]);
+	truthy("reasonWarning: 'not something we stock' for an item with a minimum", /minimum of 4/.test(L.reasonWarning(L.REASON_NOT_STOCKED, 4, false) || ""));
+	truthy("reasonWarning: 'a stocked item was out' for a new item", /new item/i.test(L.reasonWarning(L.REASON_OUT_OF_STOCK, 0, true) || ""));
+	truthy("reasonWarning: 'a stocked item was out' for an item with no minimum", /no minimum/.test(L.reasonWarning(L.REASON_OUT_OF_STOCK, 0, false) || ""));
+	check("reasonWarning: agreement and 'only for this job' are quiet", [L.reasonWarning(L.REASON_OUT_OF_STOCK, 2, false), L.reasonWarning(L.REASON_NOT_STOCKED, 0, false), L.reasonWarning(L.REASON_ONLY_THIS_JOB, 9, false)], [null, null, null]);
+	const withOrders = { open_orders: [{ purchase_order: "PO-1", supplier: "Lowes", supplier_name: "Lowes" }, { purchase_order: "PO-2", supplier: "Home Depot", supplier_name: "Home Depot" }] };
+	check("ordersAtStore: the order at the chosen store, Lowe's being Lowes", L.ordersAtStore(withOrders, { supplier: "Lowe's", supplier_name: "Lowe's" }).map((o) => o.purchase_order), ["PO-1"]);
+	check("ordersAtStore: none elsewhere", L.ordersAtStore(withOrders, { supplier: "AutoZone", supplier_name: "AutoZone" }), []);
+	check("logHeadline: a store-run line", L.logHeadline({ action: "Store Run", qty: 3, stock_uom: "Unit" }), "Bought 3 Unit");
+	const runLog = { action: "Store Run", qty: 3, stock_uom: "Unit", item_name: "Widget", supplier: "Home Depot" };
+	check("undoQuestion: a store-run line cancels its receipt only", L.undoQuestion(runLog), "Undo buying 3 Unit of Widget at Home Depot? Its receipt is canceled.");
+	truthy("undoQuestion: a created item stays", /new item stays/.test(L.undoQuestion({ ...runLog, created_item: 1 })));
+	truthy("undoQuestion: bought for a job says to undo the take first", /undo that take first/.test(L.undoQuestion({ ...runLog, store_run_reason: L.REASON_ONLY_THIS_JOB })));
+	check("saveLabel: a store-run line", L.saveLabel("store_run", 3, "Unit", "Widget"), "Record buying 3 Unit of Widget");
 
 	// ------------------------------------------------------------------ reportAvailable
 	// The header's "Report a problem": the recorder on the page AND the System User cookie
@@ -1351,9 +1725,9 @@ async function appUnderTheReportForm() {
 	}
 
 	// ------------------------------------------------------------------ M
-	check("M carries exactly the eleven endpoints", Object.keys(T.M).sort(), [
-		"ADD", "ITEM", "LOCATION", "MOVE", "RECENT", "RESOLVE", "SEARCH_ITEMS", "SEARCH_LOCATIONS",
-		"SEARCH_PROJECTS", "TAKE", "UNDO",
+	check("M carries exactly the thirteen endpoints", Object.keys(T.M).sort(), [
+		"ADD", "CHECK_NEW_ITEM", "ITEM", "LOCATION", "MOVE", "RECENT", "RESOLVE", "SEARCH_ITEMS", "SEARCH_LOCATIONS",
+		"SEARCH_PROJECTS", "STORE_RUN", "TAKE", "UNDO",
 	]);
 	truthy(
 		"every M value is a method of api/stock_scan.py",
@@ -1587,12 +1961,70 @@ async function appUnderTheReportForm() {
 			slow && !slow.timedOut && typeof slow.message === "string" && slow.message.trim().length > 0 && !/abort/i.test(slow.message),
 			slow && slow.message,
 		);
+
+		// upload(): the receipt photo, over a stubbed XMLHttpRequest.
+		const realXhr = globalThis.XMLHttpRequest;
+		class FakeXhr {
+			constructor() {
+				this.upload = {};
+				this.headers = {};
+				FakeXhr.last = this;
+			}
+			open(method, url) {
+				this.method = method;
+				this.url = url;
+			}
+			setRequestHeader(name, value) {
+				this.headers[name] = value;
+			}
+			send(form) {
+				this.form = form;
+				setImmediate(() => {
+					if (FakeXhr.fail) return this.onerror();
+					if (this.upload.onprogress) this.upload.onprogress({ lengthComputable: true, loaded: 5, total: 10 });
+					this.status = FakeXhr.status;
+					this.responseText = FakeXhr.body;
+					this.onload();
+				});
+			}
+		}
+		globalThis.XMLHttpRequest = FakeXhr;
+		try {
+			const photo = new Blob(["jpeg bytes"], { type: "image/jpeg" });
+			FakeXhr.fail = false;
+			FakeXhr.status = 200;
+			FakeXhr.body = JSON.stringify({ message: { name: "f0a1", file_url: "/private/files/receipt.jpg", is_private: 1 } });
+			const shares = [];
+			const up = await T.upload(photo, (share) => shares.push(share));
+			check("upload(): resolves the File's name and private url", up, { name: "f0a1", file_url: "/private/files/receipt.jpg" });
+			check("upload(): POSTs to upload_file with the boot's CSRF token", [FakeXhr.last.method, FakeXhr.last.url, FakeXhr.last.headers["X-Frappe-CSRF-Token"]], ["POST", "/api/method/upload_file", "tok-123"]);
+			check("upload(): private, into Home/Attachments, attached to nothing", [FakeXhr.last.form.get("is_private"), FakeXhr.last.form.get("folder"), FakeXhr.last.form.has("doctype"), FakeXhr.last.form.has("docname")], ["1", "Home/Attachments", false, false]);
+			check("upload(): reports progress", shares, [0.5]);
+			const refusal = async (status, body) => {
+				FakeXhr.status = status;
+				FakeXhr.body = body === undefined ? "" : JSON.stringify(body);
+				return T.upload(photo).then(() => null, (e) => e);
+			};
+			const signedOut = await refusal(403, { exc_type: "PermissionError" });
+			check("upload(): a 403 is a lapsed session (every page user may upload), said as signed out", signedOut && [signedOut.status, signedOut.signedOut, signedOut.needsReload, signedOut.message], [401, true, true, T.SIGNED_OUT]);
+			const csrf = await refusal(400, { exc_type: "CSRFTokenError", _server_messages: serverMessages({ message: "Invalid Request", raise_exception: 1 }) });
+			check("upload(): a stale CSRF token says to reload", csrf && [csrf.needsReload, /reload/i.test(csrf.message)], [true, true]);
+			const tooBig = await refusal(417, { exc_type: "ValidationError", _server_messages: serverMessages({ message: "File size exceeded the maximum allowed size of 10.0 MB", raise_exception: 1 }) });
+			check("upload(): any other refusal is its own sentence, not a sign-out", tooBig && [tooBig.signedOut, /File size/.test(tooBig.message)], [false, true]);
+			FakeXhr.fail = true;
+			const dropped = await T.upload(photo).then(() => null, (e) => e);
+			check("upload(): no answer is status 0, in words", dropped && [dropped.status, /signal/.test(dropped.message)], [0, true]);
+		} finally {
+			if (realXhr) globalThis.XMLHttpRequest = realXhr;
+			else delete globalThis.XMLHttpRequest;
+		}
 	} finally {
 		globalThis.fetch = realFetch;
 		delete globalThis.window;
 	}
 
 	await appUnderTheReportForm();
+	await appStoreRuns();
 
 	console.log(`\n${passes} passed, ${failures} failed`);
 	process.exit(failures ? 1 : 0);

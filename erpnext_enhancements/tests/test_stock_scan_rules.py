@@ -252,6 +252,180 @@ class TestWords(unittest.TestCase):
 		self.assertEqual(tuple(options), rules.ACTIONS)
 
 
+class TestStoreRuns(unittest.TestCase):
+	""""Bought on a store run" (v1.535.0, POL-0602 §4.7-4.8): the pure half of ``store_run``."""
+
+	def log_field(self, fieldname):
+		import json
+
+		path = REPO_ROOT / "erpnext_enhancements" / "inventory_enhancements" / "doctype" / "stock_scan_log"
+		meta = json.loads((path / "stock_scan_log.json").read_text(encoding="utf-8"))
+		return next(f for f in meta["fields"] if f["fieldname"] == fieldname)
+
+	def test_store_run_is_the_last_action(self):
+		"""Appended, so every stored action keeps its place in the Select."""
+		self.assertEqual(rules.ACTIONS[-1], rules.ACTION_STORE_RUN)
+		self.assertEqual(rules.ACTIONS[:4], ("Take", "Receive", "Add Without PO", "Move"))
+
+	def test_the_reasons_are_the_selects_options_after_its_blank(self):
+		options = self.log_field("store_run_reason")["options"].split("\n")
+		self.assertEqual(options[0], "")
+		self.assertEqual(tuple(options[1:]), rules.STORE_RUN_REASONS)
+		self.assertEqual(
+			rules.STORE_RUN_REASONS,
+			("A stocked item was out", "Not something we stock", "Only for this job"),
+		)
+		self.assertEqual(set(rules.REASON_HINTS), set(rules.STORE_RUN_REASONS))
+
+	def test_check_price(self):
+		self.assertEqual(rules.check_price("4.97"), (4.97, None))
+		self.assertEqual(rules.check_price("$1,234.50"), (1234.5, None))
+		self.assertEqual(rules.check_price(0.125), (0.125, None))
+		for bad in (None, "", "  ", "abc", "nan", "inf", 0, "0", -1, "-4.97"):
+			with self.subTest(value=bad):
+				rate, problem = rules.check_price(bad)
+				self.assertIsNone(rate)
+				self.assertTrue(problem)
+		rate, problem = rules.check_price("4006381333931")
+		self.assertIsNone(rate)
+		self.assertIn("Check the price", problem)
+
+	def test_check_receipt_total(self):
+		self.assertEqual(rules.check_receipt_total("23.41"), (23.41, None))
+		for bad in (None, "", "x", 0, -2):
+			with self.subTest(value=bad):
+				self.assertIsNone(rules.check_receipt_total(bad)[0])
+
+	def test_purchase_date(self):
+		import datetime
+
+		today = datetime.date(2026, 9, 24)
+		self.assertEqual(rules.purchase_date("today", today), today)
+		self.assertEqual(rules.purchase_date("Yesterday", "2026-09-24"), datetime.date(2026, 9, 23))
+		self.assertEqual(rules.purchase_date("yesterday", datetime.date(2026, 10, 1)), datetime.date(2026, 9, 30))
+		for other in ("", None, "2026-09-20", "last week", "tomorrow"):
+			with self.subTest(bought=other):
+				self.assertIsNone(rules.purchase_date(other, today))
+		self.assertIsNone(rules.purchase_date("today", None))
+
+	def test_recorded_late_and_open(self):
+		self.assertTrue(rules.recorded_late("2026-09-23", "2026-09-24"))
+		self.assertFalse(rules.recorded_late("2026-09-24", "2026-09-24"))
+		self.assertTrue(rules.run_is_open("2026-09-24 07:15:00", "2026-09-24"))
+		self.assertFalse(rules.run_is_open("2026-09-23 18:00:00", "2026-09-24"))
+		self.assertFalse(rules.run_is_open(None, "2026-09-24"))
+
+	def test_repeat_unstocked_counts_runs(self):
+		self.assertFalse(rules.repeat_unstocked(rules.REASON_NOT_STOCKED, 0))
+		self.assertTrue(rules.repeat_unstocked(rules.REASON_NOT_STOCKED, 1))
+		self.assertTrue(rules.repeat_unstocked(rules.REASON_NOT_STOCKED, 3))
+		for reason in (rules.REASON_OUT_OF_STOCK, rules.REASON_ONLY_THIS_JOB, ""):
+			with self.subTest(reason=reason):
+				self.assertFalse(rules.repeat_unstocked(reason, 5))
+		self.assertEqual((rules.REPEAT_WINDOW_DAYS, rules.REPEAT_THRESHOLD), (60, 2))
+
+	def test_store_key(self):
+		self.assertEqual(rules.store_key("Lowes"), rules.store_key("Lowe's"))
+		self.assertEqual(rules.store_key("Home Depot"), rules.store_key("THE HOME-DEPOT")[3:])
+		self.assertNotEqual(rules.store_key("Home Depot"), rules.store_key("Lowes"))
+		self.assertEqual(rules.store_key(None), "")
+
+	def test_store_picker_keeps_the_newest_usable_supplier(self):
+		rows = [
+			{"name": "Lowes", "supplier_name": "Lowes", "creation": "2026-02-03 07:54:24"},
+			{"name": "Lowe's", "supplier_name": "Lowe's", "creation": "2026-09-18 09:20:05"},
+			{"name": "Home Depot", "supplier_name": "Home Depot", "creation": "2026-06-18 12:03:19"},
+			{"name": "Bolt & Nut Supply", "supplier_name": "Bolt & Nut Supply", "creation": "2026-06-18", "disabled": 1},
+		]
+		picked = rules.store_picker(rows)
+		self.assertEqual([p["supplier"] for p in picked], ["Home Depot", "Lowe's"])
+		# On hold or disabled is dropped BEFORE collapsing: the older usable record is kept.
+		rows[1]["on_hold"] = 1
+		self.assertEqual([p["supplier"] for p in rules.store_picker(rows)], ["Home Depot", "Lowes"])
+		self.assertEqual(rules.store_picker([]), [])
+
+	def test_quick_item_problem(self):
+		groups, uoms = {"PVC Fittings", "Plumbing"}, ["Unit", "FT", "Gallon"]
+		good = {"item_code": "406-020", "item_name": "ELBOW, 90, SOC, PVC, 2 IN", "item_group": "PVC Fittings", "stock_uom": "Unit"}
+		self.assertIsNone(rules.quick_item_problem(good, groups, uoms))
+		for change, words in (
+			({"item_code": " "}, "part or model number"),
+			({"item_name": ""}, "name"),
+			({"item_code": "x" * 141}, "140"),
+			({"item_name": "y" * 141}, "140"),
+			({"item_code": "A<B>"}, "<"),
+			({"item_group": "All Item Groups"}, "group"),
+			({"stock_uom": "Box"}, "units"),
+		):
+			with self.subTest(change=change):
+				problem = rules.quick_item_problem({**good, **change}, groups, uoms)
+				self.assertTrue(problem)
+				self.assertIn(words.lower(), problem.lower())
+		self.assertTrue(rules.quick_item_problem(None, groups, uoms))
+
+	def test_a_non_stock_item_can_be_a_store_run_line(self):
+		"""660 of 1,086 Items were non-stock on 2026-09-24, and counters sell exactly those."""
+		tool = {"name": "DRILL-BIT-1/4", "item_name": "DRILL BIT, 1/4 IN", "is_stock_item": 0}
+		self.assertIsNotNone(rules.item_refusal(tool))
+		self.assertIsNone(rules.store_run_item_refusal(tool))
+		self.assertIn("disabled", rules.store_run_item_refusal({**tool, "disabled": 1}))
+		self.assertIn("template", rules.store_run_item_refusal({**tool, "has_variants": 1}))
+		self.assertIn("end of life", rules.store_run_item_refusal({**tool, "end_of_life": "2026-01-01"}, "2026-09-24"))
+		tomb = {"name": "PVC GLUE (deleted)", "item_name": "PVC GLUE", "is_stock_item": 0}
+		self.assertIn("QuickBooks deleted", rules.store_run_item_refusal(tomb))
+		stocked = {"name": "406-020", "item_name": "ELBOW", "is_stock_item": 1, "has_serial_no": 1}
+		self.assertIn("serial", rules.store_run_item_refusal(stocked))
+		self.assertIsNone(rules.store_run_item_refusal({**stocked, "has_serial_no": 0}))
+
+	def test_the_run_ref(self):
+		self.assertTrue(rules.is_run_ref("sr-kf3z9a1-8qz0x4m2ab"))
+		self.assertFalse(rules.is_run_ref("ss-kf3z9a1-8qz0x4m2ab"))
+		self.assertFalse(rules.is_run_ref("sr-a b"))
+		self.assertFalse(rules.is_run_ref(None))
+
+	def test_money(self):
+		self.assertEqual(rules.money(4.97), "$4.97")
+		self.assertEqual(rules.money(1234.5), "$1,234.50")
+		self.assertEqual(rules.money(0.497), "$0.4970")
+
+	def test_remark_for_a_store_run(self):
+		text = rules.remark(
+			rules.ACTION_STORE_RUN,
+			"Tina Tech",
+			"Bin A1 - SF",
+			3,
+			"Unit",
+			project="PRJ-00598",
+			supplier="Home Depot",
+			reason=rules.REASON_ONLY_THIS_JOB,
+			run="sr-kf3z9a1-8qz0x4m2ab",
+		)
+		self.assertEqual(
+			text,
+			"Stock Scan: Tina Tech bought 3 Unit at Home Depot on a store run, into Bin A1 - SF. "
+			"Reason: Only for this job. Job: PRJ-00598. Run sr-kf3z9a1-8qz0x4m2ab, flagged for review.",
+		)
+		plain_run = rules.remark(
+			rules.ACTION_STORE_RUN, "J", "Bin", 1, "Unit", supplier="Lowe's", reason="x", run="sr-1", non_stock=True
+		)
+		self.assertIn("No job (safety or shop).", plain_run)
+		self.assertIn("(not a stock item)", plain_run)
+
+	def test_undo_of_a_store_run(self):
+		"""Stock Manager is every technician here, so it does not bypass the window on a store run;
+		Purchasing and Accounts do; nobody undoes a reviewed one."""
+		store = {"store_run": True}
+		self.assertIsNone(rules.undo_refusal("Posted", True, True, 5, 30, **store))
+		self.assertIn("30 minutes", rules.undo_refusal("Posted", True, True, 45, 30, **store))
+		self.assertIn("Purchasing", rules.undo_refusal("Posted", True, True, 45, 30, **store))
+		self.assertIn("Only the person", rules.undo_refusal("Posted", False, True, 1, 30, **store))
+		self.assertIsNone(rules.undo_refusal("Posted", False, False, 9999, 30, is_purchasing=True, **store))
+		self.assertIn("reviewed", rules.undo_refusal("Posted", True, True, 1, 30, is_purchasing=True, reviewed=True, **store))
+		self.assertIn("already been undone", rules.undo_refusal("Undone", True, True, 1, 30, **store))
+		# Every other save is unchanged: a supervisor may undo any at any time.
+		self.assertIsNone(rules.undo_refusal("Posted", False, True, 9999, 30, reviewed=True))
+
+
 class TestQrSvg(unittest.TestCase):
 	def test_matrix_to_svg_draws_runs_as_one_path(self):
 		matrix = [

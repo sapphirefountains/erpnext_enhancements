@@ -1654,6 +1654,11 @@ after_install = [
 	# `sync_for` (frappe v16 `installer.py`: sync_for, then after_install).
 	"erpnext_enhancements.patches.seed_positions_from_designations.execute",
 	"erpnext_enhancements.patches.seed_credential_types.execute",
+	# Stock Scan "Bought on a store run" (v1.535.0): the three Purchase Receipt fields a store-run
+	# line writes (run id, receipt photo, receipt total). Same reason again -- the patch never runs
+	# on a fresh site, and without the fields the page keeps the door shut and says "being set
+	# up" for ever. create_custom_fields(update=True): idempotent, and the patch never raises.
+	"erpnext_enhancements.patches.add_store_run_receipt_fields.execute",
 ]
 
 # Run at the END of `bench install-app`, after fixtures have synced.

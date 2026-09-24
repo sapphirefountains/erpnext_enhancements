@@ -11,7 +11,8 @@ three things the voucher cannot:
 
 * **Undo.** The page lists the caller's recent rows and cancels the voucher behind one.
 * **The review queue.** Stock added without a purchase order sets ``needs_review``; a
-  Stock Manager ticks ``reviewed`` once they know where it came from.
+  Stock Manager ticks ``reviewed`` once they know where it came from. A store-run line
+  (v1.535.0) is reviewed by Purchasing, and never by the person who recorded it.
 * **Idempotency.** ``client_ref`` is unique, so a save retried after a dropped connection
   cannot post twice (see ``api.stock_scan``).
 
@@ -34,6 +35,9 @@ EDITABLE_AFTER_INSERT = frozenset({"reviewed", "review_note"})
 
 #: Fields undo writes. ``api.stock_scan.undo`` sets ``flags.stock_scan_undo`` to pass them.
 UNDO_FIELDS = frozenset({"status", "undone_by", "undone_at"})
+
+#: ``stock_scan_rules.ACTION_STORE_RUN``, spelled here so the controller imports nothing of the page's.
+STORE_RUN = "Store Run"
 
 
 class StockScanLog(Document):
@@ -78,6 +82,11 @@ class StockScanLog(Document):
 			return
 		before = None if self.is_new() else self.get_doc_before_save()
 		if not (before and before.reviewed):
+			# A store run is a purchase, and the review is Purchasing checking it (POL-0602 §4.8).
+			# Stock Manager -- every technician -- has write on this log, so without this a
+			# technician could tick Reviewed on their own run, which also ends their Undo.
+			if self.action == STORE_RUN and self.posted_by == frappe.session.user:
+				frappe.throw(_("You recorded this store run, so someone else reviews it (POL-0602 §4.8)."))
 			self.reviewed_by = frappe.session.user
 			self.reviewed_on = now_datetime()
 

@@ -184,8 +184,25 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   downloads on first use, and a camera opened under it on a slow connection would keep
   decoding, navigate under the form and take the letters typed into it. What a report carries from
   here: the path `/stock-scan` (never the `?w=` query), the recorder's scrubbed rings, and
-  `registerCaptureState` codes and counts — view, warehouse, item code, stack depth, sheets open —
-  no names, quantities, suppliers or jobs. The page is never sent a cost or a price.
+  `registerCaptureState` codes and counts — view, warehouse, item code, stack depth, sheets open,
+  whether a store run is open and how many lines it has — no names, quantities, suppliers, prices
+  or jobs. The page is never sent a stock cost; since v1.535.0 it shows store-run prices the
+  technician typed, and those stay out of a report.
+- **"Bought on a store run"** (v1.535.0; what it posts is in
+  [`inventory_enhancements/README.md`](../inventory_enhancements/README.md#bought-on-a-store-run-v15350)).
+  `boot.store_run` carries the stores (one per `store_key`, the newest usable Supplier), the
+  reasons, the quick-item groups and units, two permissions and the runs still open today; it is
+  `None` where store runs are not set up, and then the page is exactly as before. The **run
+  sheet** is a full-height sheet like Move: a new run's header (store, today or yesterday, the
+  receipt photo, the total with tax, the receipt number), then the line (item or quick item, how
+  many, price each before tax, why, the job or "No job: safety or shop"). The **receipt photo** is
+  shrunk on the phone (`dom.shrinkPhoto`, 1,600 px JPEG) and sent at once through
+  `transport.upload` (XHR for progress; a 403 there can only be a lapsed session and says so);
+  there is no `capture` attribute, so a photo already taken can be picked. The **run id** is
+  minted once per new run and kept on the app with the header typed so far until a line posts, so
+  a retry or a reopened sheet is the same save. The **run bar** sits at the top of every view while
+  this phone's run is open; `localStorage` (`ee-ss-store-run:<user>`) holds only which run is
+  current and which were finished here — lose it and the run is still offered on the next +.
 - **The camera.** `getUserMedia` needs https. The browser's `BarcodeDetector` is used only
   where `getSupportedFormats()` lists `qr_code` (Chrome on Android); everywhere else — every
   iPhone — the vendored **jsQR** decodes frames drawn to a canvas at most 480 px wide, about

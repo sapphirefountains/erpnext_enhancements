@@ -1566,6 +1566,237 @@ body .page-footer {
 }
 
 /* ------------------------------------------------------------------------ */
+/* Store runs (v1.535.0): the run bar, the run sheet, the quick item        */
+/* Palette tokens only: every color below already has its dark twin.        */
+/* ------------------------------------------------------------------------ */
+
+.ee-ss-runbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 0 0 12px;
+	padding: 10px 12px;
+	border: 2px solid var(--ss-warn);
+	border-radius: var(--ss-radius-sm);
+	background: var(--ss-warn-soft);
+	color: var(--ss-text);
+}
+.ee-ss-runbar-text {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.ee-ss-runbar-title {
+	font-weight: 800;
+	overflow-wrap: anywhere;
+}
+.ee-ss-runbar-sub {
+	color: var(--ss-text-2);
+	font-size: 0.88rem;
+}
+.ee-ss-btn.ee-ss-runbar-finish {
+	flex: none;
+	min-height: 48px;
+	padding: 0 16px;
+}
+
+.ee-ss-run-sheet .ee-ss-sheet-body {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.ee-ss-run-head,
+.ee-ss-run-item,
+.ee-ss-run-hints,
+.ee-ss-run-reasons,
+.ee-ss-run-job,
+.ee-ss-quick,
+.ee-ss-check {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.ee-ss-run-hints:empty,
+.ee-ss-check:empty {
+	display: none;
+}
+.ee-ss-run-line {
+	margin: 0;
+	padding: 10px 12px;
+	border-radius: var(--ss-radius-sm);
+	background: var(--ss-surface-2);
+	color: var(--ss-text);
+	font-weight: 700;
+	overflow-wrap: anywhere;
+}
+.ee-ss-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+}
+.ee-ss-field-label {
+	color: var(--ss-text-2);
+	font-size: 0.9rem;
+	font-weight: 700;
+}
+.ee-ss-root select {
+	font-family: inherit;
+}
+.ee-ss-select {
+	padding-right: 36px;
+	background-image: linear-gradient(45deg, transparent 50%, var(--ss-text-2) 50%),
+		linear-gradient(135deg, var(--ss-text-2) 50%, transparent 50%);
+	background-position:
+		calc(100% - 20px) 50%,
+		calc(100% - 14px) 50%;
+	background-size: 6px 6px;
+	background-repeat: no-repeat;
+}
+
+/* A set of choices that behaves like radio buttons: a store, a day. */
+.ee-ss-choices {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.ee-ss-choice {
+	flex: 1 1 40%;
+	min-height: 52px;
+	padding: 6px 12px;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 12px;
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	font-size: 1rem;
+	font-weight: 700;
+	cursor: pointer;
+	touch-action: manipulation;
+	overflow-wrap: anywhere;
+}
+.ee-ss-choice.is-on {
+	border-color: var(--ss-accent);
+	background: var(--ss-accent-soft);
+	color: var(--ss-text);
+}
+.ee-ss-choices.is-two .ee-ss-choice {
+	flex-basis: 45%;
+}
+.ee-ss-reason .ee-ss-row-title {
+	font-size: 1rem;
+}
+
+/* The receipt photo: a thumbnail once it is up, a bar while it goes. */
+.ee-ss-photo {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+}
+.ee-ss-photo-thumb {
+	flex: none;
+	width: 72px;
+	height: 72px;
+	object-fit: cover;
+	border: 1px solid var(--ss-border);
+	border-radius: 10px;
+}
+.ee-ss-photo-side {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.ee-ss-photo-ok {
+	color: var(--ss-add);
+	font-weight: 800;
+}
+.ee-ss-photo-status {
+	flex: 1 1 100%;
+}
+.ee-ss-photo-status:empty {
+	display: none;
+}
+.ee-ss-upload {
+	flex: 1 1 100%;
+	height: 8px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: var(--ss-surface-2);
+}
+.ee-ss-upload-fill {
+	display: block;
+	width: 0;
+	height: 100%;
+	background: var(--ss-progress);
+	transition: width 120ms linear;
+}
+
+.ee-ss-run-job-state {
+	margin: 0;
+	color: var(--ss-text-2);
+	font-weight: 700;
+}
+.ee-ss-run-job-state.is-set {
+	color: var(--ss-text);
+}
+.ee-ss-btn.ee-ss-nojob.is-on {
+	border-color: var(--ss-accent);
+	background: var(--ss-accent-soft);
+	color: var(--ss-text);
+}
+
+.ee-ss-item-head.is-compact .ee-ss-item-name {
+	margin: 0;
+	font-size: 1.1rem;
+}
+.ee-ss-po-warning p {
+	margin: 0 0 10px;
+}
+.ee-ss-exists p {
+	margin: 0 0 8px;
+}
+
+/* The quick item's neighbours: "Is it one of these?" */
+.ee-ss-similar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px;
+	border: 1px solid var(--ss-border);
+	border-radius: 14px;
+	background: var(--ss-surface);
+}
+.ee-ss-btn.ee-ss-similar-use {
+	flex: none;
+	min-height: 48px;
+}
+.ee-ss-advice summary {
+	min-height: 44px;
+	padding: 10px 0;
+	color: var(--ss-accent);
+	font-weight: 700;
+	cursor: pointer;
+}
+.ee-ss-advice-list {
+	margin: 0;
+	padding-left: 20px;
+	color: var(--ss-text-2);
+}
+.ee-ss-run-lines {
+	margin: 0;
+	padding-left: 20px;
+	color: var(--ss-text);
+}
+.ee-ss-linkbtn.ee-ss-newitem-door {
+	margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Motion                                                                   */
 /* ------------------------------------------------------------------------ */
 

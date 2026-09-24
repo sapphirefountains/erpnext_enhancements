@@ -17,6 +17,14 @@
  * "Report a problem" (the capture panel, WI-079) opens from the header on every view. The panel
  * owns its own history entry and its own Back; this page stands aside while it is open.
  *
+ * STORE RUNS (v1.535.0, POL-0602 §4.7-4.8): "Bought on a store run" on + records a part bought
+ * at a walk-in counter — one line per save, a submitted Purchase Receipt with no PO — with the
+ * store, the price, the reason, the job and the receipt photo; a run id ties one trip's lines
+ * together and the run bar keeps it in view while the technician scans the next bin. A part
+ * not in ERPNext gets a quick Item, its name checked live against the naming rules with the
+ * nearest existing items shown first. `boot.store_run` is null wherever that is not set up, and
+ * then none of it appears.
+ *
  * SAVES post immediately (submitted vouchers) and can be undone for a while. Each intended
  * save carries a `client_ref`; a retry after no answer reuses it (for `RETRY_WINDOW_MS`), so
  * the server returns the first save instead of posting twice (`logic.saveKey` /
@@ -25,9 +33,11 @@
  * item rather than written into whatever is on screen now (`post`).
  */
 
-import { M, call } from "./transport.js";
+import { M, call, upload } from "./transport.js";
 import {
 	MAX_QTY,
+	REASON_ONLY_THIS_JOB,
+	boughtLabel,
 	clampChange,
 	describeChange,
 	formatWhen,
@@ -36,17 +46,26 @@ import {
 	logHeadline,
 	mayHaveSaved,
 	mintRef,
+	mintRunId,
+	money,
+	ordersAtStore,
 	parseQty,
 	plain,
+	reasonWarning,
 	rememberedJob,
 	reportAvailable,
+	runIsOpen,
+	runSummary,
 	saveKey,
 	saveLabel,
 	scanFailure,
 	shortDate,
+	suggestedReason,
 	undoQuestion,
+	validPrice,
+	validTotal,
 } from "./logic.js";
-import { append, button, el, fill, glyph, icon, input, thumb } from "./dom.js";
+import { append, button, el, fill, glyph, icon, img, input, select, shrinkPhoto, thumb } from "./dom.js";
 import {
 	ask,
 	busy,
@@ -148,6 +167,58 @@ function writeJob(job) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Store runs (v1.535.0): which run this phone is adding to, and which it has finished. Only
+// markers live here. The runs themselves come from the server (boot.store_run.open_runs and
+// every store-run save's `run`), so a cleared or blocked storage loses nothing but the bar:
+// the run is still offered as "Add to your … run" when + is pressed.
+// ---------------------------------------------------------------------------
+
+const RUN_KEY_PREFIX = "ee-ss-store-run:";
+
+function readRunState(user) {
+	const empty = { current: null, finished: [] };
+	try {
+		const raw = window.localStorage.getItem(RUN_KEY_PREFIX + (user || ""));
+		if (!raw) return empty;
+		const value = JSON.parse(raw) || {};
+		return {
+			current: typeof value.current === "string" ? value.current : null,
+			finished: Array.isArray(value.finished) ? value.finished.filter((id) => typeof id === "string").slice(-20) : [],
+		};
+	} catch (e) {
+		return empty;
+	}
+}
+
+function writeRunState(user, state) {
+	try {
+		window.localStorage.setItem(RUN_KEY_PREFIX + (user || ""), JSON.stringify(state));
+	} catch (e) {
+		/* storage blocked: the bar holds until the page reloads, and the run is still offered */
+	}
+}
+
+/** A form row: a caption over its control. `group` for a set of buttons, which a <label> must not wrap. */
+function field(caption, control, note, group) {
+	const node = el(group ? "div" : "label", "ee-ss-field");
+	const title = el("span", "ee-ss-field-label", caption);
+	if (group && control && control.setAttribute) control.setAttribute("aria-label", caption);
+	return append(node, title, control, note || null);
+}
+
+/** One option of a set that behaves like radio buttons (a store, a day). */
+function choiceButton(label, on, onClick) {
+	const node = button(label, `ee-ss-choice${on ? " is-on" : ""}`, onClick);
+	node.setAttribute("role", "radio");
+	node.setAttribute("aria-checked", on ? "true" : "false");
+	return node;
+}
+
+function firstName(full) {
+	return String(full || "").trim().split(/\s+/)[0] || "someone";
+}
+
 /** "Stores - SF · 12 on hand" pieces for a place an item is recorded. */
 function placeAmount(place, uom) {
 	const onHand = `${plain(place.on_hand)} ${uom || ""}`.trim();
@@ -188,6 +259,17 @@ export class StockScanApp {
 		this.report = null; // the capture panel's handle while it is open
 		this.reportWanted = false; // "Report a problem" tapped, the panel still on its way
 		this.reportLoading = false; // capture.open() asked and not answered yet (Back may have unwanted it)
+		// "Bought on a store run" (v1.535.0): null unless a store is flagged and the fields exist.
+		const storeRun = this.boot.store_run;
+		this.storeRun = storeRun && Array.isArray(storeRun.suppliers) && storeRun.suppliers.length ? storeRun : null;
+		this.runs = this.storeRun && Array.isArray(this.storeRun.open_runs) ? this.storeRun.open_runs.slice() : [];
+		this.runState = readRunState(this.boot.user);
+		// The run not saved yet: its id is minted once and kept with its photo and header until a
+		// line posts, so a retry after no answer (or reopening the sheet) sends the SAME run id.
+		this.newRun = null;
+		// The last line's reason and job, offered again on the next line of the same run.
+		this.lastLine = null;
+		this.runBar = null;
 	}
 
 	// -----------------------------------------------------------------------
@@ -213,6 +295,10 @@ export class StockScanApp {
 		this.top = append(el("header", "ee-ss-top"), this.titleEl, this.jobChip, this.reportBtn, this.progress);
 
 		this.main = el("main", "ee-ss-main");
+		// The open store run on this phone, above every view while it lasts (render keeps it first).
+		this.runBar = el("div", "ee-ss-runbar");
+		this.runBar.setAttribute("role", "status");
+		this.runBar.hidden = true;
 
 		this.scanLabel = el("span", null, "Scan");
 		this.scanBtn = button([icon("scan"), this.scanLabel], "ee-ss-btn ee-ss-btn-primary ee-ss-bar-scan", () => this.scan());
@@ -225,6 +311,7 @@ export class StockScanApp {
 		append(root, this.top, this.main, bar);
 		mountToasts();
 		this.renderJobChip();
+		this.renderRunBar();
 		syncThemeMeta();
 		try {
 			const dark = window.matchMedia("(prefers-color-scheme: dark)");
@@ -608,7 +695,7 @@ export class StockScanApp {
 		else if (v.name === "item") node = this.renderItem(v);
 		else if (v.name === "free") node = this.renderFree(v);
 		else node = this.renderStart();
-		fill(this.main, node);
+		fill(this.main, this.runBar, node);
 		if (navigated) {
 			window.scrollTo(0, 0);
 			const heading = this.main.querySelector("h1, h2");
@@ -666,7 +753,13 @@ export class StockScanApp {
 		const row = el("li", `ee-ss-recent-row${undone ? " is-undone" : ""}`);
 		const kind = log.action === "Take" ? "take" : log.action === "Move" ? "move" : "add";
 		const mark = glyph(kind === "take" ? "−" : kind === "move" ? "→" : "+", `ee-ss-recent-mark is-${kind}`);
-		const where = log.action === "Move" ? `${log.from_warehouse_name} → ${log.warehouse_name}` : log.warehouse_name;
+		// A store run names the store it came from: "Home Depot → Bin A1".
+		const where =
+			log.action === "Move"
+				? `${log.from_warehouse_name} → ${log.warehouse_name}`
+				: log.action === "Store Run" && log.supplier
+					? `${log.supplier} → ${log.warehouse_name}`
+					: log.warehouse_name;
 		const when = formatWhen(log.posted_at, this.boot.today);
 		const open = button(
 			[
@@ -805,6 +898,15 @@ export class StockScanApp {
 			const notice = el("p", "ee-ss-notice", item.blocked);
 			notice.setAttribute("role", "note");
 			view.appendChild(notice);
+			// Not kept in stock, but a part the crew does buy at a counter (most tools and
+			// consumables are): the store run is still recorded, with no stock added.
+			if (item.store_run_ok && this.storeRunReady()) {
+				view.appendChild(
+					button([glyph("+"), el("span", null, "Bought it on a store run")], "ee-ss-btn ee-ss-btn-add is-lg ee-ss-nonstock-run", () =>
+						this.openStoreRun({ v, item, qty: 1 })
+					)
+				);
+			}
 		} else {
 			view.appendChild(this.buildStepper(item));
 			if (item.elsewhere && item.elsewhere.length) {
@@ -1028,13 +1130,17 @@ export class StockScanApp {
 			});
 			return;
 		}
-		if ((item.open_orders && item.open_orders.length) || this.job) this.askWhereFrom(v, qty);
+		const storeRun = this.storeRunReady() && item.store_run_ok !== false;
+		if ((item.open_orders && item.open_orders.length) || this.job || storeRun) this.askWhereFrom(v, qty);
 		else this.confirmWithoutOrder(v, qty);
 	}
 
 	/**
-	 * "Where did these come from?" — each open order line; then, only while a job is picked,
-	 * "Returned from <job>"; then "Not on a purchase order" (found, or not from a job).
+	 * "Where did these come from?" — each open order line FIRST (a planned pickup recorded as a
+	 * store run would leave its order open and be received twice); then, where store runs are
+	 * on, "Add to your <store> run" for each run still open today (anyone's: two people on one
+	 * trip is one run) and "Bought on a store run"; then, only while a job is picked, "Returned
+	 * from <job>"; then "Not on a purchase order" (found, or not from a job).
 	 *
 	 * The job goes on an add ONLY when the person says the parts came back from it:
 	 * `api/stock_scan.add` books a without-PO add that names a job as a RETURN from that job
@@ -1047,6 +1153,8 @@ export class StockScanApp {
 		const uom = item.stock_uom;
 		const job = this.job;
 		const orders = item.open_orders || [];
+		const storeRun = this.storeRunReady() && item.store_run_ok !== false;
+		const runs = storeRun ? this.openRuns().slice(0, 3) : [];
 		const send = (extra) =>
 			this.post(
 				v,
@@ -1097,6 +1205,30 @@ export class StockScanApp {
 					});
 					list.appendChild(append(el("li"), row));
 				}
+				if (storeRun) {
+					const go = (title, sub, run) =>
+						append(
+							el("li"),
+							button(
+								[append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", title), el("span", "ee-ss-row-sub", sub)), icon("next", "ee-ss-row-go")],
+								"ee-ss-row ee-ss-order ee-ss-run-choice",
+								() => {
+									handle.close("action");
+									this.openStoreRun({ v, item, qty, run });
+								}
+							)
+						);
+					for (const run of runs) {
+						const mine = run.started_by === this.boot.user;
+						const title = mine ? `Add to your ${run.supplier_name} run` : `Add to ${firstName(run.started_by_name)}'s ${run.supplier_name} run`;
+						const lines = Number(run.lines || 0);
+						const when = formatWhen(run.last_at, this.boot.today);
+						list.appendChild(go(title, [`${lines} ${lines === 1 ? "item" : "items"}`, when].filter(Boolean).join(" · "), run));
+					}
+					const names = this.storeRun.suppliers.map((s) => s.supplier_name);
+					const stores = `${names.slice(0, 2).join(", ")}${names.length > 2 ? "…" : ""}`;
+					list.appendChild(go("Bought on a store run", `${stores} · with the receipt photo`, null));
+				}
 				if (job) {
 					list.appendChild(
 						choice(handle, `Returned from ${job.project_name || job.project}`, `Parts back from this job · ${job.project}`, {
@@ -1107,7 +1239,7 @@ export class StockScanApp {
 				}
 				list.appendChild(choice(handle, "Not on a purchase order", "Found, or not from a job", { without_po: 1 }));
 				body.appendChild(list);
-				body.appendChild(el("p", "ee-ss-note", "A stock manager reviews anything added without a purchase order."));
+				body.appendChild(el("p", "ee-ss-note", "Anything added without a purchase order is reviewed: store runs by Purchasing, the rest by a stock manager."));
 			},
 			actions: [{ label: "Cancel", kind: "ghost" }],
 		});
@@ -1178,6 +1310,16 @@ export class StockScanApp {
 			if (sheetUi) busy(sheetUi.button, false);
 			if (ui && ui.onDone) ui.onDone();
 			this.afterSave(v, result, keepChange);
+			// A store-run line has more to do once it is in (the run bar, the item at its bin,
+			// "take them to the job now?"). Caught on its own: a failure there is not the save's,
+			// and must never be reported as "did not save".
+			if (ui && ui.after) {
+				try {
+					ui.after(result);
+				} catch (err) {
+					/* the save is in; what follows is a convenience */
+				}
+			}
 		} catch (e) {
 			this.saving = false;
 			this.savingView = null;
@@ -1198,7 +1340,7 @@ export class StockScanApp {
 				// view is plainly in front of the person the toast says it too.
 				if (onStepper()) this.showSaveError(...line);
 				if (!onStepper() || sheetDepth()) {
-					const again = retry ? () => this.post(v, method, args, keepChange ? { keepChange: true } : undefined) : null;
+					const again = retry ? () => this.post(v, method, args, { keepChange, after: ui && ui.after }) : null;
 					this.saveFailedElsewhere(v, args, e, text, again);
 				}
 			}
@@ -1212,8 +1354,13 @@ export class StockScanApp {
 	 * that helps. Held until no sheet covers the toast.
 	 */
 	saveFailedElsewhere(v, args, error, text, again) {
-		const item = (v && v.item) || {};
-		const what = saveLabel(args.action, args.qty, item.stock_uom, item.item_name || item.item_code);
+		const viewItem = (v && v.item) || {};
+		// The save's own item: a store-run line may be for a new item, or for one picked in its
+		// sheet, while the view that sent it shows a location or another item.
+		const created = args.new_item || null;
+		const item = created ? {} : !args.item_code || viewItem.item_code === args.item_code ? viewItem : { item_code: args.item_code };
+		const name = created ? created.item_name || created.item_code : item.item_name || item.item_code;
+		const what = saveLabel(args.action, args.qty, created ? created.stock_uom : item.stock_uom, name);
 		const opts = { kind: "error", ms: 15000 };
 		let message = `${what} did not save: ${text}`;
 		if (needsReload(error)) {
@@ -1396,6 +1543,8 @@ export class StockScanApp {
 			const result = await call(M.UNDO, { log: log.name });
 			const fresh = result && result.log;
 			if (fresh) this.recent = this.recent.map((r) => (r.name === fresh.name ? fresh : r));
+			// A store-run line: its run's count and total change (the rest of the run stays).
+			if (result && result.run) this.noteRun(result.run);
 			toast((result && result.message) || "Undone.", { kind: "ok" });
 			buzz(30);
 			this.afterUndo(fresh || log, result && result.item);
@@ -1457,11 +1606,15 @@ export class StockScanApp {
 		this.renderJobChip();
 	}
 
-	/** Pick the job parts are taken for. `opts.then` continues a take that needed one. */
+	/**
+	 * Pick the job parts are taken for. `opts.then` continues a take that needed one.
+	 * `opts.reason` "store_run": a store-run line's job, where "No job" is the line's own choice
+	 * ("No job: safety or shop"), so the picker offers jobs only.
+	 */
 	pickJob(opts) {
 		if (this.reportBusy()) return;
 		const o = opts || {};
-		const required = o.reason === "take";
+		const required = o.reason === "take" || o.reason === "store_run";
 		const search = input({ placeholder: "Search jobs", label: "Search jobs", enterkeyhint: "search", type: "search" });
 		const status = el("p", "ee-ss-search-status");
 		status.setAttribute("role", "status");
@@ -1526,7 +1679,7 @@ export class StockScanApp {
 		});
 
 		handle = sheet({
-			title: required ? "Which job are these parts for?" : "Which job?",
+			title: o.reason === "store_run" ? "Which job were these bought for?" : required ? "Which job are these parts for?" : "Which job?",
 			full: true,
 			// Do not raise the keyboard over the list: most runs pick a recent job with one tap.
 			initialFocus: "sheet",
@@ -1537,6 +1690,821 @@ export class StockScanApp {
 			},
 		});
 		load("");
+	}
+
+	// -----------------------------------------------------------------------
+	// Store runs: "Bought on a store run" (v1.535.0, POL-0602 §4.7-4.8)
+	//
+	// One save is one line: a submitted Purchase Receipt with no PO, posted at once with its own
+	// Undo, like every other save here. A run id ties the lines of one trip together; the lines
+	// may go to different bins, so the run bar stays up while the technician scans the next bin,
+	// opens the item and presses + ("Add to your … run"). There is no cart to lose when the phone
+	// drops the tab.
+	// -----------------------------------------------------------------------
+
+	/** Store runs are on here: a flagged store, the receipt fields, and create + submit on a receipt. */
+	storeRunReady() {
+		return !!(this.storeRun && this.storeRun.can_record);
+	}
+
+	/** Runs still taking lines today, anyone's, the one this phone is adding to first. */
+	openRuns() {
+		const current = this.runState.current;
+		return this.runs
+			.filter((r) => runIsOpen(r, this.boot.today) && this.runState.finished.indexOf(r.run) === -1)
+			.sort((a, b) => (a.run === current ? -1 : b.run === current ? 1 : 0));
+	}
+
+	/** The run this phone is adding to, while it is open and not finished here. */
+	currentRun() {
+		const id = this.runState.current;
+		if (!id || this.runState.finished.indexOf(id) !== -1) return null;
+		const run = this.runs.find((r) => r.run === id);
+		return run && runIsOpen(run, this.boot.today) ? run : null;
+	}
+
+	/** Keep the server's latest word on a run (every store-run save and undo returns it). */
+	noteRun(run) {
+		if (!run || !run.run) return;
+		const at = this.runs.findIndex((r) => r.run === run.run);
+		if (at === -1) this.runs.unshift(run);
+		else this.runs[at] = run;
+		this.runs = this.runs.slice(0, 12);
+		this.renderRunBar();
+	}
+
+	setCurrentRun(id) {
+		this.runState = { current: id || null, finished: this.runState.finished.slice() };
+		writeRunState(this.boot.user, this.runState);
+		this.renderRunBar();
+	}
+
+	/** "Home Depot run · 2 items · $14.91 before tax   [Finish]", above every view while a run is open. */
+	renderRunBar() {
+		const bar = this.runBar;
+		if (!bar) return;
+		const run = this.currentRun();
+		fill(bar);
+		bar.hidden = !run;
+		if (!run) return;
+		append(
+			bar,
+			append(
+				el("div", "ee-ss-runbar-text"),
+				el("span", "ee-ss-runbar-title", runSummary(run)),
+				el("span", "ee-ss-runbar-sub", `Receipt ${money(run.receipt_total)} with tax · press + on an item to add to it`)
+			),
+			button("Finish", "ee-ss-btn ee-ss-btn-outline ee-ss-runbar-finish", () => this.finishRun())
+		);
+	}
+
+	/** "Not in ERPNext?": the run sheet with a quick Item instead of an item, into this location. */
+	openQuickItem(opts) {
+		if (this.reportBusy()) return;
+		const o = opts || {};
+		this.openStoreRun({ warehouse: o.warehouse, warehouse_name: o.warehouse_name, qty: 1, newItem: { item_name: o.name || "" } });
+	}
+
+	/**
+	 * The run sheet: one line of a store run. `ctx`: `{v, item, qty, run, warehouse,
+	 * warehouse_name, newItem}` — `run` to add to an open run (its header comes from the server
+	 * and is shown on one line), none to start one; `item` an Item payload, or `newItem` for the
+	 * quick-item form.
+	 *
+	 * A new run's header is the store, the day bought, the receipt photo (required, sent as soon
+	 * as it is taken), its total with tax (required) and its number (optional). The line is the
+	 * item, how many, the price each before tax, why, and the job — or an explicit "No job: safety
+	 * or shop", so a blank is a decision (POL-0602 §4.7 asks for the job). The reason starts from
+	 * the item: a stocked item (a reorder level above 0) "was out", anything else is "not
+	 * something we stock", and a contradiction is pointed out, not refused.
+	 */
+	openStoreRun(ctx) {
+		if (this.reportBusy() || !this.storeRunReady()) return;
+		const c = ctx || {};
+		const v = c.v || this.view;
+		const cfg = this.storeRun;
+		const today = this.boot.today;
+		const warehouse = c.warehouse || (c.item && c.item.warehouse) || null;
+		if (!warehouse) {
+			toast("Scan the bin these went into, then record the store run from there.", { kind: "info" });
+			return;
+		}
+		const run = c.run && runIsOpen(c.run, today) ? c.run : null;
+		if (!run && !this.newRun) {
+			this.newRun = { run: mintRunId(), supplier: "", bought: "today", photo: "", receipt_number: "", receipt_total: "" };
+		}
+		const draft = run ? null : this.newRun;
+		const runId = run ? run.run : draft.run;
+		const last = this.lastLine && this.lastLine.run === runId ? this.lastLine : null;
+		const uoms = cfg.uoms && cfg.uoms.length ? cfg.uoms : ["Unit"];
+		const groups = cfg.item_groups || [];
+		const s = {
+			item: c.item || null,
+			newItem: c.item
+				? null
+				: {
+						item_code: "",
+						item_name: (c.newItem && c.newItem.item_name) || "",
+						item_group: groups[0] || "",
+						stock_uom: uoms[0],
+						groupTouched: false,
+					},
+			check: null,
+			checkedKey: null,
+			checkSeq: 0,
+			checking: false,
+			checkAgain: false,
+			checkTimer: null,
+			reason: last && last.reason === REASON_ONLY_THIS_JOB ? last.reason : suggestedReason(c.item ? c.item.reorder_level : 0, !c.item),
+			reasonTouched: false,
+			job: last ? last.job : this.job ? { project: this.job.project, project_name: this.job.project_name } : null,
+			noJob: last ? !!last.noJob : false,
+			linePhoto: "",
+			uploading: false,
+		};
+		let handle = null;
+		let closed = false;
+		let quick = null;
+
+		const headBox = el("div", "ee-ss-run-head");
+		const itemTitle = el("h3", "ee-ss-section-title");
+		const itemBox = el("div", "ee-ss-run-item");
+		const hintBox = el("div", "ee-ss-run-hints");
+		const reasonBox = el("div", "ee-ss-run-reasons");
+		const jobBox = el("div", "ee-ss-run-job");
+		const unitLabel = el("span", "ee-ss-qty-unit");
+		const qtyField = input({
+			className: "ee-ss-input ee-ss-run-qty",
+			inputmode: "decimal",
+			enterkeyhint: "next",
+			label: "How many",
+			value: plain(c.qty || 1),
+		});
+		const priceField = input({ inputmode: "decimal", enterkeyhint: "done", label: "Price each, before tax, as on the receipt", placeholder: "4.97" });
+		const error = errorLine("ee-ss-field-error");
+		const showError = (text, action) => error.show(text, action);
+		const saveBtn = () => (handle ? handle.el.querySelector(".ee-ss-sheet-foot .ee-ss-btn-primary") : null);
+		const blockedByCheck = () => !!(s.newItem && s.check && (s.check.exists || s.check.will_refuse));
+		const refreshSave = () => {
+			const btn = saveBtn();
+			if (btn && !this.saving) btn.disabled = s.uploading || blockedByCheck();
+		};
+		const unit = () => (s.item ? s.item.stock_uom : s.newItem.stock_uom);
+		const storeOf = () => {
+			const id = run ? run.supplier : draft.supplier;
+			if (!id) return null;
+			return cfg.suppliers.find((x) => x.supplier === id) || { supplier: id, supplier_name: (run && run.supplier_name) || id };
+		};
+		const jobOf = () => (this.job ? { project: this.job.project, project_name: this.job.project_name } : null);
+
+		// --- the receipt photo: shrunk, then sent at once, so Save is not a 5 MB upload ---------
+		const photoPicker = (label, current, onDone) => {
+			const wrap = el("div", "ee-ss-photo");
+			// No `capture`: a phone then offers the camera AND the photo library, so a receipt
+			// photographed in the store, or last night, can be used.
+			const file = input({ type: "file", accept: "image/*", className: "ee-ss-file", label });
+			file.hidden = true;
+			const url = current();
+			const status = el("p", "ee-ss-note ee-ss-photo-status");
+			status.setAttribute("role", "status");
+			const meter = el("div", "ee-ss-upload");
+			const level = el("span", "ee-ss-upload-fill");
+			meter.appendChild(level);
+			meter.hidden = true;
+			const pick = button(
+				[icon("camera"), el("span", null, url ? "Retake" : label)],
+				`ee-ss-btn ${url ? "ee-ss-btn-outline" : "ee-ss-btn-primary"} ee-ss-photo-btn`,
+				() => {
+					if (!s.uploading) file.click();
+				}
+			);
+			file.addEventListener("change", async () => {
+				const chosen = file.files && file.files[0];
+				if (!chosen) return;
+				s.uploading = true;
+				pick.disabled = true;
+				meter.hidden = false;
+				level.style.width = "0%";
+				status.textContent = "Getting the photo ready…";
+				refreshSave();
+				try {
+					const small = await shrinkPhoto(chosen);
+					status.textContent = "Sending the photo…";
+					const res = await upload(small, (share) => {
+						level.style.width = `${Math.round(share * 100)}%`;
+					});
+					onDone(res.file_url);
+					status.textContent = "";
+					if (!closed) drawHead();
+				} catch (e) {
+					const text = (e && e.message) || "The photo did not go through. Try again.";
+					status.textContent = text;
+					if (needsReload(e)) showError(text, RELOAD);
+				} finally {
+					s.uploading = false;
+					pick.disabled = false;
+					meter.hidden = true;
+					try {
+						file.value = "";
+					} catch (err) {
+						/* some browsers refuse; the next choice still fires change */
+					}
+					refreshSave();
+				}
+			});
+			const shot = url ? img(url, "ee-ss-photo-thumb") : null;
+			append(wrap, file, shot, append(el("div", "ee-ss-photo-side"), url ? el("span", "ee-ss-photo-ok", "Receipt photo ✓") : null, pick), meter, status);
+			return wrap;
+		};
+
+		// --- the header: a new run's, or the run's on one line ----------------------------------
+		const drawHead = () => {
+			fill(headBox);
+			if (run) {
+				const photo = s.linePhoto || run.receipt_photo;
+				const whose = run.started_by && run.started_by !== this.boot.user ? ` · ${firstName(run.started_by_name)}'s run` : "";
+				append(
+					headBox,
+					el(
+						"p",
+						"ee-ss-run-line",
+						`${run.supplier_name} · ${boughtLabel(run.bought, today)} · receipt ${photo ? "✓" : "missing"} · ${money(run.receipt_total)} with tax${whose}`
+					),
+					photoPicker("Another photo (a long receipt)", () => s.linePhoto, (url) => (s.linePhoto = url))
+				);
+				return;
+			}
+			const stores = el("div", "ee-ss-choices");
+			stores.setAttribute("role", "radiogroup");
+			for (const store of cfg.suppliers) {
+				stores.appendChild(
+					choiceButton(store.supplier_name, draft.supplier === store.supplier, () => {
+						draft.supplier = store.supplier;
+						showError("");
+						drawHead();
+						drawHints();
+					})
+				);
+			}
+			const days = el("div", "ee-ss-choices is-two");
+			days.setAttribute("role", "radiogroup");
+			for (const [value, label] of [
+				["today", "Today"],
+				["yesterday", "Yesterday"],
+			]) {
+				days.appendChild(
+					choiceButton(label, draft.bought === value, () => {
+						draft.bought = value;
+						drawHead();
+					})
+				);
+			}
+			const total = input({ inputmode: "decimal", label: "Receipt total, tax included", placeholder: "23.41", value: draft.receipt_total });
+			total.addEventListener("input", () => {
+				draft.receipt_total = total.value;
+				showError("");
+			});
+			const number = input({ label: "Receipt number", placeholder: "Optional", value: draft.receipt_number, maxlength: 140 });
+			number.addEventListener("input", () => {
+				draft.receipt_number = number.value;
+			});
+			append(
+				headBox,
+				field("Store", stores, null, true),
+				field(
+					"Bought",
+					days,
+					draft.bought === "yesterday" ? el("p", "ee-ss-note", "The policy asks for the same day, so the log notes it was recorded late.") : null,
+					true
+				),
+				field("Receipt photo", photoPicker("Take the receipt photo", () => draft.photo, (url) => (draft.photo = url)), null, true),
+				field("Receipt total, tax included", total),
+				field("Receipt number (optional)", number)
+			);
+		};
+
+		// --- the item: a summary, or the quick-item form --------------------------------------
+		const drawItem = () => {
+			fill(itemBox);
+			itemTitle.textContent = s.item ? "What was bought" : "A part not in ERPNext";
+			if (s.item) {
+				const it = s.item;
+				const text = append(el("div", "ee-ss-item-text"), el("h3", "ee-ss-item-name", it.item_name), el("p", "ee-ss-item-code", it.item_code));
+				if (!it.is_stock_item) text.appendChild(el("span", "ee-ss-badge", "not a stock item"));
+				append(itemBox, append(el("div", "ee-ss-item-head is-compact"), thumb(it), text));
+				if (!it.is_stock_item) {
+					itemBox.appendChild(el("p", "ee-ss-note", "Not kept in stock: the receipt records the purchase, and no stock is added."));
+				}
+				return;
+			}
+			itemBox.appendChild(quick ? quick.node : buildQuick());
+		};
+
+		const buildQuick = () => {
+			const ni = s.newItem;
+			const code = input({ label: "Part or model number", placeholder: "As printed on the package", value: ni.item_code, maxlength: 140 });
+			const name = input({ label: "Name", placeholder: "e.g. ELBOW, 90, SOC, PVC, 2 IN", value: ni.item_name, maxlength: 140 });
+			code.setAttribute("autocapitalize", "characters");
+			name.setAttribute("autocapitalize", "characters");
+			const group = select(groups, ni.item_group, "Group");
+			const uom = select(uoms, ni.stock_uom, "Unit");
+			const results = el("div", "ee-ss-check");
+			results.setAttribute("aria-live", "polite");
+			code.addEventListener("input", () => {
+				ni.item_code = code.value;
+				showError("");
+				scheduleCheck();
+			});
+			name.addEventListener("input", () => {
+				ni.item_name = name.value;
+				showError("");
+				scheduleCheck();
+			});
+			code.addEventListener("blur", () => runCheck());
+			name.addEventListener("blur", () => runCheck());
+			group.addEventListener("change", () => {
+				ni.item_group = group.value;
+				ni.groupTouched = true;
+			});
+			uom.addEventListener("change", () => {
+				ni.stock_uom = uom.value;
+				unitLabel.textContent = uom.value;
+			});
+			const node = append(
+				el("div", "ee-ss-quick"),
+				el("p", "ee-ss-sheet-text", "Not in ERPNext yet. Describe it once; Purchasing reviews every new item."),
+				field(
+					"Part or model number, exactly as printed",
+					code,
+					el("p", "ee-ss-note", "The manufacturer's number from the package. If there is none, the store's SKU from the receipt.")
+				),
+				field("Name", name),
+				field("Group", group),
+				field("Unit", uom, el("p", "ee-ss-note", "Fixed once saved: ERPNext can't change an item's unit after stock moves.")),
+				results
+			);
+			quick = { node, code, name, group, results };
+			if (ni.item_name) scheduleCheck();
+			return node;
+		};
+
+		// --- the live name check: 500 ms after typing stops, and on leaving a field ------------
+		const scheduleCheck = () => {
+			if (s.checkTimer) clearTimeout(s.checkTimer);
+			s.checkTimer = setTimeout(() => runCheck(), 500);
+		};
+		const runCheck = async () => {
+			if (s.checkTimer) {
+				clearTimeout(s.checkTimer);
+				s.checkTimer = null;
+			}
+			const ni = s.newItem;
+			if (!ni || closed) return;
+			const key = JSON.stringify([ni.item_code.trim(), ni.item_name.trim()]);
+			if (key === s.checkedKey) return;
+			// One request at a time; a change made meanwhile is checked when it answers.
+			if (s.checking) {
+				s.checkAgain = true;
+				return;
+			}
+			if (!ni.item_code.trim() && !ni.item_name.trim()) {
+				s.check = null;
+				s.checkedKey = key;
+				drawCheck();
+				refreshSave();
+				return;
+			}
+			s.checking = true;
+			const mine = ++s.checkSeq;
+			try {
+				const res = await call(M.CHECK_NEW_ITEM, {
+					item_code: ni.item_code.trim(),
+					item_name: ni.item_name.trim() || undefined,
+					item_group: ni.item_group || undefined,
+					stock_uom: ni.stock_uom || undefined,
+				});
+				if (mine === s.checkSeq && !closed && s.newItem === ni) {
+					s.check = res || null;
+					s.checkedKey = key;
+					const suggested = res && res.suggested_group;
+					if (suggested && !ni.groupTouched && groups.indexOf(suggested) !== -1 && quick) {
+						ni.item_group = suggested;
+						quick.group.value = suggested;
+					}
+					drawCheck();
+				}
+			} catch (e) {
+				if (mine === s.checkSeq && !closed && s.newItem === ni) {
+					s.check = { checked: false, error: (e && e.message) || "no answer" };
+					s.checkedKey = null;
+					drawCheck();
+				}
+			} finally {
+				s.checking = false;
+				refreshSave();
+				if (s.checkAgain && !closed) {
+					s.checkAgain = false;
+					runCheck();
+				}
+			}
+		};
+
+		const useExisting = async (code) => {
+			showError("");
+			try {
+				const found = await call(M.ITEM, { item_code: code, warehouse });
+				if (closed) return;
+				s.item = found;
+				s.newItem = null;
+				s.check = null;
+				quick = null;
+				if (!s.reasonTouched) s.reason = suggestedReason(found.reorder_level, false);
+				drawItem();
+				drawHints();
+				drawQty();
+				drawReason();
+				refreshSave();
+			} catch (e) {
+				showError((e && e.message) || "Could not open that item.", needsReload(e) ? RELOAD : undefined);
+			}
+		};
+
+		const similarRow = (row) => {
+			const li = el("li", "ee-ss-similar");
+			append(
+				li,
+				append(
+					el("span", "ee-ss-row-main"),
+					el("span", "ee-ss-row-title", row.item_name),
+					el("span", "ee-ss-row-sub", [row.item_code, row.item_group, row.stocked ? "" : "not a stock item"].filter(Boolean).join(" · "))
+				)
+			);
+			if (row.usable) {
+				li.appendChild(
+					button(row.stocked ? "Use this one" : "Record against it (not stocked)", "ee-ss-btn ee-ss-btn-outline ee-ss-similar-use", () =>
+						useExisting(row.item_code)
+					)
+				);
+			} else {
+				li.appendChild(el("p", "ee-ss-note", row.refusal || "This one can't be used here."));
+			}
+			return li;
+		};
+
+		const drawCheck = () => {
+			if (!quick) return;
+			const box = quick.results;
+			fill(box);
+			const res = s.check;
+			if (!res) return;
+			if (res.error) {
+				box.appendChild(el("p", "ee-ss-note", `Couldn't check the name (${res.error}). You can still save: the naming check runs on save.`));
+				return;
+			}
+			if (!res.checked) box.appendChild(el("p", "ee-ss-note", "Couldn't check the name; you can still save."));
+			if (res.similar && res.similar.length) {
+				box.appendChild(el("h4", "ee-ss-group-title", "Is it one of these?"));
+				box.appendChild(append(el("ul", "ee-ss-list ee-ss-similar-list"), ...res.similar.map(similarRow)));
+			}
+			if (res.exists) {
+				const ex = res.exists;
+				const line = append(el("div", "ee-ss-notice ee-ss-exists"), el("p", null, `Already in ERPNext: ${ex.item_name} (${ex.item_code}).`));
+				if (ex.usable) {
+					line.appendChild(button(ex.stocked ? "Use it" : "Record against it (not stocked)", "ee-ss-btn ee-ss-btn-outline", () => useExisting(ex.item_code)));
+				} else if (ex.refusal) {
+					line.appendChild(el("p", "ee-ss-note", ex.refusal));
+				}
+				box.appendChild(line);
+			}
+			for (const finding of res.blocking || []) {
+				const now = !!res.will_refuse;
+				const when = now ? "This will be refused" : `From ${shortDate(res.refuse_from) || "October 1"} this will be refused`;
+				box.appendChild(el("p", now ? "ee-ss-alert" : "ee-ss-notice", `${when}: ${finding.message}`));
+			}
+			if (res.advice && res.advice.length) {
+				const tips = el("details", "ee-ss-advice");
+				tips.appendChild(el("summary", null, `${res.advice.length} naming ${res.advice.length === 1 ? "tip" : "tips"}`));
+				tips.appendChild(append(el("ul", "ee-ss-advice-list"), ...res.advice.map((a) => el("li", null, a.message))));
+				box.appendChild(tips);
+			}
+		};
+
+		// --- what to check before buying: stock elsewhere, and an order at this store ----------
+		const receiveOnOrder = (line) => {
+			const q = parseQty(qtyField.value, !!s.item.whole_number, s.item.stock_uom);
+			if (q.problem) return showError(q.problem);
+			handle.close("action");
+			this.post(v, M.ADD, {
+				action: "add",
+				item_code: s.item.item_code,
+				warehouse,
+				qty: q.qty,
+				purchase_order_item: line.purchase_order_item,
+				scanned_code: (v && v.scannedCode) || undefined,
+			});
+			return undefined;
+		};
+		const drawHints = () => {
+			fill(hintBox);
+			const it = s.item;
+			if (!it) return;
+			const where = (it.elsewhere || []).filter((p) => Number(p.on_hand) > 0);
+			if (where.length && it.is_stock_item) {
+				const more = where.length > 1 ? `, and ${where.length - 1} more ${where.length === 2 ? "place" : "places"}` : "";
+				hintBox.appendChild(el("p", "ee-ss-notice", `ERPNext shows ${plain(where[0].on_hand)} at ${where[0].warehouse_name}${more}. Check there before buying more.`));
+			}
+			const store = storeOf();
+			const lines = store ? ordersAtStore(it, store) : [];
+			if (lines.length && it.warehouse === warehouse) {
+				const line = lines[0];
+				append(
+					hintBox,
+					append(
+						el("div", "ee-ss-notice ee-ss-po-warning"),
+						el(
+							"p",
+							null,
+							`${line.purchase_order} has ${plain(line.pending_stock_qty)} ${it.stock_uom} of these on order from ${line.supplier_name || line.supplier}. If this is that pickup, receive it on the order, or it will be received twice.`
+						),
+						button(`Receive on ${line.purchase_order}`, "ee-ss-btn ee-ss-btn-outline", () => receiveOnOrder(line))
+					)
+				);
+			}
+		};
+
+		const drawQty = () => {
+			unitLabel.textContent = unit() || "";
+			qtyField.setAttribute("inputmode", s.item && s.item.whole_number ? "numeric" : "decimal");
+		};
+
+		// --- why, and for which job -----------------------------------------------------------
+		const drawReason = () => {
+			fill(reasonBox);
+			const group = el("div", "ee-ss-reasons");
+			group.setAttribute("role", "radiogroup");
+			group.setAttribute("aria-label", "Why were these bought?");
+			for (const r of cfg.reasons || []) {
+				const on = s.reason === r.value;
+				const row = button(
+					[append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", r.value), el("span", "ee-ss-row-sub", r.hint)), on ? glyph("✓", "ee-ss-row-check") : null],
+					`ee-ss-row ee-ss-reason${on ? " is-current" : ""}`,
+					() => {
+						s.reason = r.value;
+						s.reasonTouched = true;
+						if (r.value === REASON_ONLY_THIS_JOB) s.noJob = false;
+						showError("");
+						drawReason();
+						drawJob();
+					}
+				);
+				row.setAttribute("role", "radio");
+				row.setAttribute("aria-checked", on ? "true" : "false");
+				group.appendChild(row);
+			}
+			reasonBox.appendChild(group);
+			const warning = reasonWarning(s.reason, s.item ? s.item.reorder_level : 0, !s.item);
+			if (warning) reasonBox.appendChild(el("p", "ee-ss-notice", warning));
+		};
+
+		const drawJob = () => {
+			fill(jobBox);
+			const only = s.reason === REASON_ONLY_THIS_JOB;
+			if (only) s.noJob = false;
+			const said = s.job ? `Job: ${s.job.project_name || s.job.project}` : s.noJob ? "No job: safety or shop" : "No job chosen yet";
+			const pick = button([icon("job"), el("span", null, s.job ? "Change the job" : "Pick the job")], "ee-ss-btn ee-ss-btn-outline", () =>
+				this.pickJob({
+					reason: "store_run",
+					then: () => {
+						s.job = jobOf();
+						s.noJob = false;
+						showError("");
+						drawJob();
+					},
+				})
+			);
+			append(jobBox, el("p", `ee-ss-run-job-state${s.job || s.noJob ? " is-set" : ""}`, said), pick);
+			if (only) {
+				jobBox.appendChild(el("p", "ee-ss-note", "Bought only for this job, so the job is needed."));
+			} else {
+				const none = button("No job: safety or shop", `ee-ss-btn ee-ss-btn-ghost ee-ss-nojob${s.noJob ? " is-on" : ""}`, () => {
+					s.noJob = true;
+					s.job = null;
+					showError("");
+					drawJob();
+				});
+				none.setAttribute("aria-pressed", s.noJob ? "true" : "false");
+				jobBox.appendChild(none);
+			}
+		};
+
+		// --- Save to the run -------------------------------------------------------------------
+		const go = () => {
+			showError("");
+			if (s.uploading) return showError("Wait for the photo to finish sending.");
+			const store = storeOf();
+			if (!store) return showError("Pick the store.");
+			const photo = run ? s.linePhoto || run.receipt_photo : draft.photo;
+			if (!photo) return showError("Take the receipt photo first.");
+			let total = null;
+			if (!run) {
+				const t = validTotal(draft.receipt_total);
+				if (t.problem) return showError(t.problem);
+				total = t.total;
+			}
+			let itemArgs;
+			let uom;
+			if (s.item) {
+				itemArgs = { item_code: s.item.item_code };
+				uom = s.item.stock_uom;
+			} else {
+				const ni = s.newItem;
+				if (!ni.item_code.trim()) return showError("Enter the part or model number, exactly as printed.");
+				if (!ni.item_name.trim()) return showError("Enter a name for the item.");
+				if (s.check && s.check.exists) return showError(`${s.check.exists.item_code} is already in ERPNext. Use it instead.`);
+				if (s.check && s.check.will_refuse) return showError("This part number or name would be refused. Change it first.");
+				itemArgs = {
+					new_item: { item_code: ni.item_code.trim(), item_name: ni.item_name.trim(), item_group: ni.item_group, stock_uom: ni.stock_uom },
+				};
+				uom = ni.stock_uom;
+			}
+			const q = parseQty(qtyField.value, !!(s.item && s.item.whole_number), uom);
+			if (q.problem) return showError(q.problem);
+			const price = validPrice(priceField.value);
+			if (price.problem) return showError(price.problem);
+			if (!s.reason) return showError("Pick why these were bought.");
+			if (!s.job && (s.reason === REASON_ONLY_THIS_JOB || !s.noJob)) {
+				// No job and no "No job" decision: ask for the job rather than refuse the tap.
+				this.pickJob({
+					reason: "store_run",
+					then: () => {
+						s.job = jobOf();
+						s.noJob = false;
+						drawJob();
+					},
+				});
+				return undefined;
+			}
+			const job = s.job;
+			const noJob = !job;
+			const args = Object.assign(
+				{
+					action: "store_run",
+					run: runId,
+					supplier: store.supplier,
+					warehouse,
+					qty: q.qty,
+					rate: price.rate,
+					reason: s.reason,
+					receipt_photo: photo,
+					bought: run ? (boughtLabel(run.bought, today) === "yesterday" ? "yesterday" : "today") : draft.bought,
+					receipt_number: run ? run.receipt_number || undefined : (draft.receipt_number || "").trim() || undefined,
+					receipt_total: run ? run.receipt_total : total,
+					project: job ? job.project : undefined,
+					no_job: noJob ? 1 : 0,
+					scanned_code: (v && v.scannedCode) || undefined,
+				},
+				itemArgs
+			);
+			this.post(v, M.STORE_RUN, args, {
+				button: saveBtn(),
+				showError,
+				isOpen: () => !closed,
+				onDone: () => handle.close("action"),
+				after: (result) => this.afterStoreRun(args, result, { job, noJob }),
+			});
+			return undefined;
+		};
+
+		handle = sheet({
+			title: run ? `Add to the ${run.supplier_name} run` : "Bought on a store run",
+			full: true,
+			className: "ee-ss-run-sheet",
+			initialFocus: "sheet",
+			body: (body) =>
+				append(
+					body,
+					headBox,
+					itemTitle,
+					itemBox,
+					hintBox,
+					field("How many", append(el("div", "ee-ss-qty-row"), qtyField, unitLabel)),
+					field("Price each, before tax, as on the receipt", priceField),
+					el("h3", "ee-ss-section-title", "Why"),
+					reasonBox,
+					el("h3", "ee-ss-section-title", "Job"),
+					jobBox,
+					el("p", "ee-ss-note", `Location: ${c.warehouse_name || (c.item && c.item.warehouse_name) || warehouse}`),
+					error.node
+				),
+			actions: [
+				{ label: "Save to the run", kind: "primary", large: true, close: false, onClick: go },
+				{ label: "Cancel", kind: "ghost" },
+			],
+			onClose: () => {
+				closed = true;
+				if (s.checkTimer) clearTimeout(s.checkTimer);
+				s.checkSeq += 1;
+			},
+		});
+		drawHead();
+		drawItem();
+		drawHints();
+		drawQty();
+		drawReason();
+		drawJob();
+		refreshSave();
+	}
+
+	/**
+	 * A store-run line is in. The run becomes this phone's current one (the bar), the next line
+	 * of it starts from this one's reason and job, and a save made from a location or a search
+	 * goes on to the item at its bin with its new on-hand. "Only for this job" then offers to
+	 * take the parts to the job now, which is the default: left in the bin, parts that went to
+	 * the job would read as shelf stock.
+	 */
+	afterStoreRun(args, result, line) {
+		const run = result && result.run;
+		if (run) {
+			if (this.newRun && this.newRun.run === run.run) this.newRun = null;
+			this.noteRun(run);
+			this.setCurrentRun(run.run);
+		}
+		this.lastLine = { run: args.run, reason: args.reason, job: (line && line.job) || null, noJob: !!(line && line.noJob) };
+		const fresh = result && result.item;
+		const cur = this.view;
+		const onIt = !!fresh && cur.name === "item" && cur.item.item_code === fresh.item_code && cur.item.warehouse === fresh.warehouse;
+		if (fresh && fresh.warehouse && !onIt) this.showItem(fresh);
+		const posted = result && !result.repeated && result.log && result.log.status === "Posted";
+		if (posted && args.reason === REASON_ONLY_THIS_JOB && args.project && fresh && fresh.is_stock_item) {
+			this.offerTakeNow(args, fresh, line && line.job);
+		}
+	}
+
+	/** "Take these 3 to <job> now?" after a line bought only for that job. Take is the default. */
+	async offerTakeNow(args, item, job) {
+		if (this.reportBusy()) return;
+		const name = (job && (job.project_name || job.project)) || args.project;
+		const ok = await ask({
+			title: `Take these ${plain(args.qty)} to ${name} now?`,
+			body: "They were bought only for this job. Taking them now charges them to it; left in the bin they would read as stock on the shelf.",
+			ok: "Take them now",
+			okKind: "take",
+			okGlyph: "−",
+			cancel: "Leave them in the bin",
+		});
+		if (!ok) return;
+		const cur = this.view;
+		const target = cur.name === "item" && cur.item.item_code === item.item_code && cur.item.warehouse === item.warehouse ? cur : { name: "item", item };
+		this.post(target, M.TAKE, {
+			action: "take",
+			item_code: item.item_code,
+			warehouse: item.warehouse,
+			qty: args.qty,
+			project: args.project,
+		});
+	}
+
+	/** The run bar's Finish: what was recorded, against the paper total, and where the receipt goes. */
+	finishRun() {
+		if (this.reportBusy()) return;
+		const run = this.currentRun();
+		if (!run) return;
+		const mine = this.recent.filter((r) => r.store_run === run.run && r.status === "Posted");
+		sheet({
+			title: `Finish the ${run.supplier_name} run`,
+			body: (body) => {
+				if (mine.length) {
+					body.appendChild(
+						append(
+							el("ul", "ee-ss-run-lines"),
+							...mine.map((r) => el("li", null, `${logHeadline(r)} · ${r.item_name}${r.rate ? ` · ${money(r.rate)} each` : ""}`))
+						)
+					);
+				}
+				const lines = Number(run.lines || 0);
+				const gap = Number(run.receipt_total || 0) - Number(run.amount || 0);
+				append(
+					body,
+					el("p", "ee-ss-sheet-text", `${lines} ${lines === 1 ? "line" : "lines"} recorded, ${money(run.amount)} before tax.`),
+					el("p", "ee-ss-sheet-text", `Receipt total with tax: ${money(run.receipt_total)}.`),
+					gap > 0.005 ? el("p", "ee-ss-note", `The difference, ${money(gap)}, is the tax and anything on the receipt not recorded yet.`) : null,
+					gap < -0.005 ? el("p", "ee-ss-notice", "The lines add up to more than the receipt total. Check the prices, or tell Purchasing.") : null,
+					el("p", "ee-ss-notice", "Hand the paper receipt to Accounting within 2 business days (POL-0602 §4.7).")
+				);
+			},
+			actions: [
+				{ label: "Done", kind: "primary", large: true, onClick: () => this.markRunFinished(run.run) },
+				{ label: "Keep adding", kind: "ghost" },
+			],
+		});
+	}
+
+	markRunFinished(id) {
+		const finished = this.runState.finished.indexOf(id) === -1 ? this.runState.finished.concat([id]).slice(-20) : this.runState.finished;
+		this.runState = { current: this.runState.current === id ? null : this.runState.current, finished };
+		writeRunState(this.boot.user, this.runState);
+		this.renderRunBar();
+		toast("Run finished. Don't forget the paper receipt.", { kind: "ok" });
 	}
 
 	// -----------------------------------------------------------------------
@@ -1681,6 +2649,10 @@ export class StockScanApp {
 						saving: this.saving,
 						retries_kept: this.pending.size,
 						job_picked: !!this.job,
+						// A store run on this phone: open or not, and how many lines. Never the store
+						// or a price: a report is read by people who never saw the receipt.
+						run_open: !!this.currentRun(),
+						run_lines: this.currentRun() ? Number(this.currentRun().lines || 0) : 0,
 						build: this.boot.build || null,
 					},
 				};
@@ -1753,6 +2725,19 @@ export class StockScanApp {
 				)
 			);
 		};
+		// "Add an item here" with store runs on: a part that is not in ERPNext at all is recorded
+		// as bought on a store run, with a quick Item (POL-0602 §4.8). Offered under the results
+		// and when nothing matches, never before a search: search first, so no duplicate is made.
+		const newItemDoor = (query) => {
+			if (!(o.addHere && here && this.storeRunReady())) return null;
+			if (!this.storeRun.can_create_items) {
+				return el("p", "ee-ss-note", "Not in ERPNext? Ask Purchasing to add it, then record the purchase here.");
+			}
+			return button([glyph("+"), el("span", null, "Not in ERPNext? Record it as bought on a store run")], "ee-ss-linkbtn ee-ss-newitem-door", () => {
+				handle.close("action");
+				this.openQuickItem({ warehouse: here.warehouse, warehouse_name: here.warehouse_name, name: query });
+			});
+		};
 		const locationRow = (row) =>
 			append(
 				el("li"),
@@ -1791,6 +2776,8 @@ export class StockScanApp {
 					if (wantLocations) results.appendChild(el("h3", "ee-ss-group-title", "Items"));
 					results.appendChild(append(el("ul", "ee-ss-list"), ...lastItems.map(itemRow)));
 				}
+				const door = newItemDoor(query);
+				if (door) results.appendChild(door);
 				setStatus((locations && locations.length) || lastItems.length ? "" : `Nothing matches "${query}".`);
 			} catch (e) {
 				if (mine === seq) setStatus((e && e.message) || "Search failed. Try again.", true);

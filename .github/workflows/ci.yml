@@ -1154,6 +1154,8 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_contract_style -v
       # test_kpi_departments: the seven places a KPI department is named must agree
       # (v1.530.0, when Service split off Operations). All three are ast/JSON only.
+      # test_kpi_metrics also pins combine_store_runs (v1.535.0): a store run recorded on the
+      # Stock Scan page and its card charge (dated up to 3 days later) count as ONE trip.
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants
         run: >-
           python -m unittest
@@ -2149,6 +2151,10 @@ jobs:
       # (v1.523.0): a Link tile with no same-named Workspace Sidebar is dropped from the grid
       # without a word, so the seed patch, the sidebar JSON, the artwork and the page's real
       # route are pinned to one label and one URL, and both doors carry the page's own roles.
+      # v1.535.0 adds "Bought on a store run": the one Purchase Receipt builder (rate and
+      # price-list rate, stock UOM, no project, no tax), the quick Item through the naming guard,
+      # the receipt-photo ownership check, the patch's fields = the code's, the boot that never
+      # raises, and the undo/review limits a store run has that other saves do not.
       - name: Stock Scan endpoint surface, voucher shape, shell, settings and desk tile (bench-free)
         run: >-
           python -m unittest
@@ -2334,7 +2340,9 @@ jobs:
       # mayHaveSaved keeps the ref for 0/409/502-504 (409 is the server saying this very ref is
       # still being posted), keptRef only for ten minutes (the server keeps refs forever, so a
       # later identical save would post nothing), saveKey mints a new one only when what the
-      # save would post changes. Plain node, no npm install.
+      # save would post changes. Plain node, no npm install. v1.535.0: store runs on the real
+      # app.js -- the run id minted once per run, upload() mapping a 403 to "signed out", open
+      # orders offered before "Bought on a store run", the quick item's live name check.
       - name: Stock Scan client logic (bench-free, node)
         run: node scripts/test_stock_scan_client.mjs
       # Google address components -> Frappe Address fields. Every rule in that
