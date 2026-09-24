@@ -17,7 +17,13 @@
  * type. Both halves matter — picking stops
  * `firstname.lastname@sapphirefountains.com` being mistyped into a silent
  * non-delivery, and typing is how a one-off attendee (a subcontractor, a
- * customer's PM) gets into the room at all.
+ * customer's PM) gets into the room at all. Anything typed that is not an
+ * address is flagged before submit, because the server would drop it silently.
+ *
+ * Why typing works without `ignore_validation` (checked against v16, 1.529.0):
+ * MultiSelect.validate does return "" for a value it doesn't recognise, but
+ * set_formatted_input("") returns early, so only the control's internal value
+ * is blanked. The text stays in the box, and Dialog.get_values() reads the box.
  *
  * Loaded globally via erpnext_enhancements.bundle.js rather than as a
  * doctype_js: the Closed-Won prompt in create_project_prompt.js opens this on the
@@ -169,6 +175,23 @@ erpnext_enhancements.handoff_meeting_dialog = (function () {
 						frappe.msgprint({
 							title: __("No attendees"),
 							message: __("Add at least one attendee before creating the meeting."),
+							indicator: "orange",
+						});
+						return;
+					}
+
+					// The server's _dedupe() drops anything that is not an address,
+					// without a word, so a typo would simply not be invited. Say so
+					// here instead, while it can still be fixed.
+					const invalid = attendees.filter(function (address) {
+						return !frappe.utils.validate_type(address, "email");
+					});
+					if (invalid.length) {
+						frappe.msgprint({
+							title: __("Not an email address"),
+							message: __("Fix or remove: {0}", [
+								frappe.utils.escape_html(invalid.join(", ")),
+							]),
 							indicator: "orange",
 						});
 						return;

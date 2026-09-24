@@ -317,10 +317,10 @@ class TestChangelogVersions(unittest.TestCase):
 		self.assertEqual(sections[0][0], current, "the newest section is the version being released")
 
 	def test_this_releases_refs_line_names_nothing_to_move(self):
-		"""v1.529.0 is the convention's first example. Its Tasks are tracked outside Enhancement
+		"""v1.530.0 is the convention's first example. Its Tasks are tracked outside Enhancement
 		Requests, so the line must name none: the first run on production replays everything."""
 		text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-		body = dict(rs.changelog_versions(text))["1.529.0"]
+		body = dict(rs.changelog_versions(text))["1.530.0"]
 		self.assertRegex(body, r"(?m)^Refs: ")
 		self.assertEqual(rs.refs_in(body), [])
 
@@ -371,9 +371,9 @@ class TestTheRealChangelogCannotMoveATaskByAccident(unittest.TestCase):
 		self.assertEqual(lines - listed, set())
 
 	def test_this_releases_own_examples_are_written_so_that_they_do_not_match(self):
-		"""The 1.529.0 entry shows the convention with real-looking ids. Control: without the
+		"""The 1.530.0 entry shows the convention with real-looking ids. Control: without the
 		code spans they would parse, so it is the spans that keep them inert."""
-		body = dict(rs.changelog_versions(self.text))["1.529.0"]
+		body = dict(rs.changelog_versions(self.text))["1.530.0"]
 		examples = re.findall(r"`(Refs: [^`]*TASK-[^`]*)`", body)
 		self.assertTrue(examples, "the entry documents the convention with an example")
 		for example in examples:

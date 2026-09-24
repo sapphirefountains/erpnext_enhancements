@@ -299,7 +299,7 @@ that deploys, Triton v0.79 ignores the new keys and the prompt is unchanged.
   `Pending Review`. With those rules, replaying the whole history is harmless, so the last release
   processed is kept on the settings Single, named so that an absent row means "process everything".
 
-**Status, v1.529.0 (2026-09-24).** Shipped: the brief, its endpoint and Desk button, the `Refs:`
+**Status, v1.530.0 (2026-09-24).** Shipped: the brief, its endpoint and Desk button, the `Refs:`
 convention, `mark_shipped` and the hourly `release_sync`. Deviations and gaps:
 
 - **The brief works from Tasks, not from a status.** `api.feedback.claude_code_brief` needs
@@ -343,9 +343,9 @@ convention, `mark_shipped` and the hourly `release_sync`. Deviations and gaps:
 - **The `/feedback` SPA has no "Copy brief" link.** It has no clipboard or notification helper,
   so the Desk button is the one way in. `test_feedback_endpoint_surface` records the exemption.
 - **Still to see on production.** The acceptance criteria need a release that carries a real
-  `Refs: TASK-…` for a feedback Task. v1.529.0's own line is `Refs: WI-079`, which moves
+  `Refs: TASK-…` for a feedback Task. v1.530.0's own line is `Refs: WI-079`, which moves
   nothing. The first hourly run after the deploy replays the whole CHANGELOG (the marker is
-  absent), finds no Task ids, and moves the marker to 1.529.0.
+  absent), finds no Task ids, and moves the marker to 1.530.0.
 - Noticed while reading ERPNext `version-16`, guarded here and not fixed at the root:
   `set_tasks_as_overdue` and `Task.update_status` exempt only `Cancelled` and `Completed`, so
   this site's `Canceled` and `Invoiced` Tasks whose expected end has passed are flipped to

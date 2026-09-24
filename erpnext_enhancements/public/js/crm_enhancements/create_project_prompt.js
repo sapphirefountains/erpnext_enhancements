@@ -17,7 +17,7 @@
  *     the booking dialog (shared with the Hand-Off Process tab).
  *   - otherwise               -> "Create project now?", Yes opens the "Create
  *     Project" dialog (Project Template + Users to Notify, defaulting to the
- *     Account Executive + Project Manager role holders) and then the same
+ *     billing, operations, production and sales inboxes) and then the same
  *     background creation the old button used.
  *
  * No is unchanged and means the same thing for both questions — mode
@@ -37,8 +37,8 @@ frappe.provide("erpnext_enhancements.crm");
 	const open_prompts = {}; // opportunity_name -> true while a prompt/dialog is showing
 
 	// The "Create Project" dialog (template + users to notify), defaulting the
-	// notify list to the Account Executive + Project Manager role holders. Mirrors
-	// the dialog the old "Create Project" button used to show.
+	// notify list to the group inboxes. Mirrors the dialog the old "Create
+	// Project" button used to show.
 	/**
 	 * Gate check before the create-project dialog opens (PRO-0204, 2026-08-06).
 	 *
@@ -93,9 +93,19 @@ frappe.provide("erpnext_enhancements.crm");
 			}),
 		]).then(function (results) {
 			const default_users = results[0] || [];
-			const user_options = (results[1] || []).map(function (u) {
-				return u.name;
-			});
+			// The inboxes are not Users, so they are offered alongside the desk
+			// users rather than found among them.
+			const user_options = default_users.concat(
+				(results[1] || [])
+					.map(function (u) {
+						return u.name;
+					})
+					.filter(function (name) {
+						return (
+							!default_users.includes(name) && !["Administrator", "Guest"].includes(name)
+						);
+					})
+			);
 
 			const dialog = new frappe.ui.Dialog({
 				title: __("Create Project"),
@@ -112,15 +122,41 @@ frappe.provide("erpnext_enhancements.crm");
 						fieldname: "users_to_notify",
 						fieldtype: "MultiSelect",
 						options: user_options,
-						default: default_users,
+						// A string, not the array: v16's MultiSelect.validate calls
+						// value.replace() on the default, so an array threw and the
+						// field opened empty. ignore_validation because that validate
+						// returns "" for any entry outside `options` or after a ", ";
+						// the text stays in the box (and is what gets submitted), but
+						// the control's own value goes blank, and on a reqd field
+						// that can outline it red while it plainly has addresses in it.
+						default: default_users.join(", "),
+						ignore_validation: 1,
 						reqd: 1,
 						description: __(
-							"Defaults to the Account Executive and Project Manager role holders. Notified when the project is created."
+							"Defaults to the billing, operations, production and sales inboxes. Pick from the list or type any address. Everyone listed is emailed when the project is created."
 						),
 					},
 				],
 				primary_action_label: __("Create Project"),
 				primary_action: function (values) {
+					// The field takes free text, so check the addresses here, while
+					// the dialog can still be corrected; the server refuses them too.
+					const invalid = frappe.utils
+						.split_emails(values.users_to_notify || "")
+						.filter(function (address) {
+							return !frappe.utils.validate_type(address, "email");
+						});
+					if (invalid.length) {
+						frappe.msgprint({
+							title: __("Not an email address"),
+							indicator: "orange",
+							message: __("Fix or remove: {0}", [
+								frappe.utils.escape_html(invalid.join(", ")),
+							]),
+						});
+						return;
+					}
+
 					dialog.get_primary_btn().prop("disabled", true).html(__("Queuing..."));
 					dialog.body.innerHTML = `
 						<div class="progress">

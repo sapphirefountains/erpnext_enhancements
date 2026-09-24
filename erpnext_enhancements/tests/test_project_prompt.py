@@ -7,12 +7,17 @@
   bulk/migrate context.
 * ``revert_won_status`` (the popup's "No") restores the prior status, clears the
   won-date stamp, and refuses once a Project exists.
-* ``default_project_notify_users`` resolves the Account Executive + Project
-  Manager role holders, skips a missing role, and falls back to the current user.
+* ``default_project_notify_users`` returns the four group inboxes as addresses,
+  without looking any of them up as a User.
 * ``crm_enhancements.api._notify_recipients`` — tested here rather than beside its
   module because it exists to clean up what *this* dialog submits — drops the empty
   element a trailing MultiSelect separator leaves behind, which used to reach
   ``frappe.sendmail`` as a blank recipient and get the message refused by Gmail.
+  ``enqueue_project_creation`` refuses anything that is not an email address, now
+  that the field takes free text.
+* ``create_project_from_opportunity_background`` sends its realtime status to the
+  requester as well as the listed recipients, since the default list is inboxes
+  with no desk session to receive it.
 
 These fake the document / DB calls; full delivery + creation run against a bench.
 """
@@ -24,6 +29,7 @@ from frappe.tests.utils import FrappeTestCase
 
 from erpnext_enhancements.crm_enhancements.api import (
 	_notify_recipients,
+	create_project_from_opportunity_background,
 	enqueue_project_creation,
 )
 from erpnext_enhancements.crm_enhancements.project_prompt import (
@@ -139,52 +145,30 @@ class TestRevertWonStatus(FrappeTestCase):
 		self.assertFalse(doc._saved)
 
 
+INBOXES = [
+	"billing@sapphirefountains.com",
+	"operations@sapphirefountains.com",
+	"production@sapphirefountains.com",
+	"sales@sapphirefountains.com",
+]
+
+
 class TestDefaultNotifyUsers(FrappeTestCase):
-	def test_returns_role_holders_deduped(self):
-		holders = {
-			"Account Executive": ["ae@example.com", "shared@example.com"],
-			"Project Manager": ["pm@example.com", "shared@example.com"],
-		}
+	def test_returns_the_group_inboxes(self):
+		self.assertEqual(default_project_notify_users(), INBOXES)
 
-		def fake_get_all(doctype, **kwargs):
-			if doctype == "Has Role":
-				return holders.get(kwargs["filters"]["role"], [])
-			if doctype == "User":
-				return list(kwargs["filters"]["name"][1])  # echo requested names as enabled
-			return []
-
+	def test_never_resolves_them_through_user(self):
+		# None of the four is an enabled System User on prod, so any User lookup
+		# would filter every one of them out.
 		with (
-			patch.object(frappe.db, "exists", return_value=True),
-			patch.object(frappe, "get_all", side_effect=fake_get_all),
+			patch.object(frappe, "get_all", side_effect=AssertionError("queried")),
+			patch.object(frappe.db, "exists", side_effect=AssertionError("queried")),
 		):
-			users = default_project_notify_users()
-		self.assertEqual(set(users), {"ae@example.com", "pm@example.com", "shared@example.com"})
+			self.assertEqual(default_project_notify_users(), INBOXES)
 
-	def test_skips_absent_role(self):
-		def fake_exists(doctype, name):
-			return name != "Account Executive"
-
-		def fake_get_all(doctype, **kwargs):
-			if doctype == "Has Role":
-				return ["pm@example.com"] if kwargs["filters"]["role"] == "Project Manager" else []
-			if doctype == "User":
-				return list(kwargs["filters"]["name"][1])
-			return []
-
-		with (
-			patch.object(frappe.db, "exists", side_effect=fake_exists),
-			patch.object(frappe, "get_all", side_effect=fake_get_all),
-		):
-			users = default_project_notify_users()
-		self.assertEqual(users, ["pm@example.com"])
-
-	def test_fallback_to_current_user_when_empty(self):
-		with (
-			patch.object(frappe.db, "exists", return_value=True),
-			patch.object(frappe, "get_all", return_value=[]),
-		):
-			users = default_project_notify_users()
-		self.assertEqual(users, [frappe.session.user])
+	def test_returns_a_fresh_list(self):
+		default_project_notify_users().append("someone@example.com")
+		self.assertEqual(default_project_notify_users(), INBOXES)
 
 
 class TestOpportunityHandoffSteps(FrappeTestCase):
@@ -250,3 +234,42 @@ class TestNotifyRecipients(FrappeTestCase):
 				"OPP-0001", users="a@x.com, b@y.com, ", project_template="PT-0001"
 			)
 		self.assertEqual(enqueue.call_args.kwargs["users"], ["a@x.com", "b@y.com"])
+
+	def test_enqueue_accepts_the_default_inboxes(self):
+		with patch.object(frappe, "enqueue") as enqueue:
+			enqueue_project_creation("OPP-0001", users=", ".join(INBOXES), project_template="PT-0001")
+		self.assertEqual(enqueue.call_args.kwargs["users"], INBOXES)
+
+	def test_enqueue_refuses_something_that_is_not_an_address(self):
+		# The field is free text now; a typo must not reach the queue.
+		for raw in ("billing@sapphirefountains.com, Nik Bradshaw", "sales@", "Administrator"):
+			with patch.object(frappe, "enqueue") as enqueue:
+				with self.assertRaises(frappe.ValidationError, msg=raw):
+					enqueue_project_creation("OPP-0001", users=raw, project_template="PT-0001")
+			enqueue.assert_not_called()
+
+
+class TestCreationStatusRecipients(FrappeTestCase):
+	"""Who hears how the background creation went."""
+
+	def _run_failing_job(self, users):
+		# get_doc raising sends the job straight to its generic failure path, which
+		# is all this needs: the notification block runs the same for every outcome.
+		with (
+			patch.object(frappe, "set_user"),
+			patch.object(frappe, "get_doc", side_effect=RuntimeError("boom")),
+			patch.object(frappe, "log_error"),
+			patch.object(frappe, "publish_realtime") as publish,
+			patch.object(frappe, "sendmail") as sendmail,
+		):
+			create_project_from_opportunity_background("OPP-0001", users, "PT-0001")
+		return [c.kwargs["user"] for c in publish.call_args_list], sendmail
+
+	def test_requester_hears_back_when_only_inboxes_are_listed(self):
+		recipients, sendmail = self._run_failing_job(INBOXES)
+		self.assertEqual(recipients, [*INBOXES, frappe.session.user])
+		sendmail.assert_not_called()  # no project, so no email
+
+	def test_listed_requester_is_not_told_twice(self):
+		recipients, _ = self._run_failing_job([frappe.session.user, *INBOXES])
+		self.assertEqual(recipients.count(frappe.session.user), 1)

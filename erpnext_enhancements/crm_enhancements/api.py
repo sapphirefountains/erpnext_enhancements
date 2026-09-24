@@ -60,8 +60,9 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		dict: ``{"status": "queued"}`` once the job is enqueued.
 
 	Raises:
-		frappe.ValidationError: via ``frappe.throw`` if ``users`` is missing or
-			resolves to nobody, or if ``project_template`` is missing.
+		frappe.ValidationError: via ``frappe.throw`` if ``users`` is missing,
+			resolves to nobody, or names something that is not an email address,
+			or if ``project_template`` is missing.
 
 	Side effects:
 		Enqueues :func:`create_project_from_opportunity_background` (queue
@@ -72,6 +73,13 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	users = _notify_recipients(users)
 	if not users:
 		frappe.throw("Please select at least one user to notify.")
+
+	# The dialog's field takes free text since v1.529.0 (its default is group
+	# inboxes, which are not Users), so a typo can now get this far. Refused here
+	# rather than left to become a dead Email Queue row after the project exists.
+	invalid = [user for user in users if not frappe.utils.validate_email_address(user)]
+	if invalid:
+		frappe.throw(f"Not a valid email address: {frappe.utils.escape_html(', '.join(invalid))}")
 
 	if not project_template:
 		frappe.throw("Please select a Project Template.")
@@ -492,41 +500,48 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	# blank recipient poisons the whole message at the SMTP layer.
 	users = _notify_recipients(users)
 
-	for user in users:
-		message_payload = {
-			"status": "success" if project_doc else ("blocked" if blocked_reason else "failed"),
-			"project_doc": project_doc,
-			"opportunity_name": opportunity_name,
-		}
-		if blocked_reason:
-			message_payload["blocked_reason"] = blocked_reason
+	message_payload = {
+		"status": "success" if project_doc else ("blocked" if blocked_reason else "failed"),
+		"project_doc": project_doc,
+		"opportunity_name": opportunity_name,
+	}
+	if blocked_reason:
+		message_payload["blocked_reason"] = blocked_reason
 
-		if project_doc:
-			message_payload["drive_success"] = drive_success
-			if drive_error_details:
-				message_payload["drive_error"] = str(drive_error_details)
+	if project_doc:
+		message_payload["drive_success"] = drive_success
+		if drive_error_details:
+			message_payload["drive_error"] = str(drive_error_details)
 
+	# The requester always gets the realtime status, listed or not. Since v1.529.0
+	# the list defaults to group inboxes, which are not Users and have no desk
+	# session to receive it — so without this the person who clicked Create
+	# Project would hear nothing back, the hand-off gate's refusal included. The
+	# session is theirs again here: the ``finally`` above restored it.
+	realtime_to = list(dict.fromkeys([*users, frappe.session.user]))
+	for user in realtime_to:
 		frappe.publish_realtime(
 			event="project_creation_status",
 			message=message_payload,
 			user=user,
 		)
 
-		if project_doc:
-			subject = f"New Project Created: {project_doc.get('project_name')}"
-			message = email_style.wrap(
-				email_style.rich(
-					"A new project has been created from Opportunity <b>"
-					+ frappe.utils.escape_html(opportunity_name)
-					+ "</b>."
-				)
-				+ email_style.kv(
-					[("Project", project_doc.get("project_name")), ("Opportunity", opportunity_name)]
-				)
-				+ email_style.button(
-					frappe.utils.get_url_to_form("Project", project_doc.get("name")), "View the project"
-				),
-				title=subject,
-				eyebrow="Projects",
+	if project_doc:
+		subject = f"New Project Created: {project_doc.get('project_name')}"
+		message = email_style.wrap(
+			email_style.rich(
+				"A new project has been created from Opportunity <b>"
+				+ frappe.utils.escape_html(opportunity_name)
+				+ "</b>."
 			)
+			+ email_style.kv(
+				[("Project", project_doc.get("project_name")), ("Opportunity", opportunity_name)]
+			)
+			+ email_style.button(
+				frappe.utils.get_url_to_form("Project", project_doc.get("name")), "View the project"
+			),
+			title=subject,
+			eyebrow="Projects",
+		)
+		for user in users:
 			frappe.sendmail(recipients=[user], subject=subject, message=message)
