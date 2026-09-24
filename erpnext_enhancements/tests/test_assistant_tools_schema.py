@@ -82,6 +82,10 @@ def install_stubs():
     """
     frappe = sys.modules.get("frappe") or types.ModuleType("frappe")
     frappe._ = getattr(frappe, "_", None) or (lambda msg, *a, **k: msg)
+    # A request without the header asked for. gating_api._require_desk_session reads
+    # Authorization through this (and only inside a web request, which the stub is not).
+    if not hasattr(frappe, "get_request_header"):
+        frappe.get_request_header = lambda key, default=None: default
     frappe_utils = sys.modules.get("frappe.utils") or types.ModuleType("frappe.utils")
     for name in (
         "add_days", "date_diff", "nowdate", "now", "get_datetime",

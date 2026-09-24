@@ -214,6 +214,21 @@ jobs:
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
           erpnext_enhancements.tests.test_drive_match -v
+      # Batch decisions on AI Pending Actions (v1.528.0). Its own step because it installs
+      # its own patches over the shared stub. It pins what makes a batch safe rather than
+      # merely convenient: only the caller's own actions, even for a System Manager; expired
+      # and decided ones skipped; one failure rolled back without stopping the rest; the
+      # sealed values never read by the list endpoint; a time budget; every gating_api
+      # endpoint POST-only and refusing token auth; nothing reachable from MCP.
+      - name: AI gate batch approval (own actions only, one failure never stops the rest)
+        run: python -m unittest erpnext_enhancements.tests.test_ai_gate_batch -v
+      # The list view's half: rows with a review reason never start ticked, at most 50 are
+      # ticked or sent, one action per request oldest first, a failed or out-of-time request
+      # stops the rest, and
+      # every server string is escaped. Runs the real list script inside `new Function`,
+      # the way Frappe loads it.
+      - name: AI gate batch list view helpers (executed, not grepped)
+        run: node scripts/test_ai_pending_batch.mjs
       - name: Assistant tool redaction (what the read tools must never return)
         run: python -m unittest erpnext_enhancements.tests.test_assistant_tools_redaction -v
       # Its own step, and NOT appended to the assistant-tool step above, because that

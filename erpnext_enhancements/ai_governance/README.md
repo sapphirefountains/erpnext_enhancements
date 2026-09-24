@@ -52,6 +52,47 @@ path. The model can only *read* the outcome afterwards, via `check_ai_pending_ac
 Do not add a confirm tool. Do not relax the direct-status-edit block on `AI Pending Action` —
 blocking desk status edits is what keeps the lifecycle honest.
 
+## Deciding in batches (v1.528.0)
+
+The AI Pending Action list has a **Review My Pending (N)** button, shown only when N is above
+zero, and two actions-menu items for ticked rows, **Confirm & Execute Selected** and **Cancel
+Selected** (`ai_pending_action_list.js`). The button recounts on full list refreshes and on the
+list's realtime updates, and its page-menu twin (the only entry point on a phone) keeps the same
+count. They call three endpoints in `gating_api`:
+
+- `my_pending_actions` lists your own Pending, unexpired actions, oldest first, at most 100. It
+  says whether each has hidden values without reading or decrypting them. A row starts unticked
+  (`batch_default` false, with a `review_reason`) for High risk, hidden values, a submit or cancel
+  (`_gate._changes_docstatus`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
+  It reads the redacted `arguments` for that and never returns them.
+- `confirm_actions` / `cancel_actions` take up to 50 names. The actions run oldest first, through
+  the same `_confirm_one` / `_cancel_one` the form's buttons use. An action that is not yours, not
+  Pending or expired is skipped with the reason. A failure is rolled back and recorded and the
+  batch carries on. Messages are muted per action, so the outcome is one results table.
+
+**A batch is not atomic.** `_confirm_one` commits Confirmed before it runs the tool, so a worker
+killed mid-tool leaves that action Confirmed with its write rolled back, and nothing re-drives or
+fails it. So a request starts no new action after `BATCH_TIME_BUDGET_SECONDS` (45) and returns the
+rest as Skipped, and the list sends one action per request, oldest first, stopping at the first
+request that fails or runs out of time. The dialog ticks at most 50 and refuses more.
+
+**All six `gating_api` endpoints are POST-only and refuse a request with an `Authorization`
+header** (`_require_desk_session`). A GET skips Frappe's CSRF check, so a link to `confirm_action`
+in an assistant reply used to run the action on one click. And an OAuth client holding the
+user's token, such as an MCP client, must never decide its own proposals.
+
+**A batch only covers your own actions, even for a System Manager.** On a single card
+`_check_identity` lets a System Manager decide anybody's action. That is the exception, for a card
+that has to be decided while its requester is away, and it is decided after reading it. A
+confirmed action runs as the person who confirms it, so bulk-confirming someone else's queue would
+run every proposal in it with System Manager rights, and any of those proposals could have been
+planted by a prompt injection in that person's session. Another person's action is skipped
+without its tool or summary being read out, and a System Manager can still decide it from its form.
+
+Every batch asks a second time and says how many actions will run and how many of them are
+high-risk. The batch path adds no MCP tool and nothing to FAC's configuration. It is the same
+desk-only door with a wider frame, and the door now checks that it is the desk.
+
 ## Confirming runs what was proposed, not what the card shows
 
 `AI Pending Action.arguments` is the copy people read, and credential-like keys in it show as
@@ -95,7 +136,7 @@ placeholder into real records.
 
 | DocType | Role |
 |---|---|
-| `AI Pending Action` | A proposed AI mutation awaiting human confirmation. Created by the gate; transitions only via `gating_api`. Direct status edits in the desk are blocked. `sealed_arguments` holds the redacted values while Pending (see above) |
+| `AI Pending Action` | A proposed AI mutation awaiting human confirmation. Created by the gate; transitions only via `gating_api`. Direct status edits in the desk are blocked. `sealed_arguments` holds the redacted values while Pending (see above). The list view decides your own actions in batches (see above) |
 | `AI Action Log` | Append-only record of AI actions |
 | `AI Model Usage` | Model usage accounting |
 | `AI Confirmation Exempt Doctype` | Doctypes exempted from the confirmation requirement: permanent rows, or time-boxed windows via `exempt_until` (see above) |

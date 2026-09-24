@@ -77,6 +77,17 @@ MUST_STAY_WHITELISTED = {
         "link_existing_record",
         "sync_entity",
     ),
+    # The AI write gate's only door (v1.528.0 added the batch half). `_confirm_one` and
+    # `_cancel_one` now sit directly above the endpoints that wrap them, and losing a decorator
+    # here would leave every AI proposal undecidable from the desk.
+    "assistant_tools/gating_api.py": (
+        "confirm_action",
+        "cancel_action",
+        "reveal_sealed",
+        "my_pending_actions",
+        "confirm_actions",
+        "cancel_actions",
+    ),
 }
 
 
