@@ -1561,7 +1561,7 @@ class TestTheCourseIsEditableOnTheCanvas(unittest.TestCase):
 
 
 class TestTheRouteSaysWhereTheAuthorIs(unittest.TestCase):
-    """/desk/training-canvas[/new | /<course>/<lesson>] (v1.535.0).
+    """/desk/training-canvas[/new | /<course>/<lesson>] (v1.534.2).
 
     The course used to ride in `route_options`, which v16's push_state never writes to
     the address bar, so every canvas screen shared one URL: Back was a dead press and
@@ -1601,7 +1601,7 @@ class TestTheRouteSaysWhereTheAuthorIs(unittest.TestCase):
 
     def test_the_old_doors_still_open(self):
         """training_course.js, training_course_list.js and training_review.js hand the
-        course over in route_options; a pre-v1.535.0 bookmark carries ?course=."""
+        course over in route_options; a pre-v1.534.2 bookmark carries ?course=."""
         src = _canvas()
         body = src[src.index("\thandle_route() {") :][:1600]
         self.assertIn("frappe.route_options.course", body)

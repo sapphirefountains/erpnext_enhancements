@@ -197,7 +197,7 @@ flag is how the Desk would have ended up answering browser Back by running
 `queryParam("course")` against a route that has no query string. The preview harness passes
 `history: false` and no adapter, which is the third arrangement of the same two switches.
 
-**Browser Back walks the screens and Forward restores them** (v1.535.0). Every screen a
+**Browser Back walks the screens and Forward restores them** (v1.534.2). Every screen a
 learner moves between is its own history entry: the catalogue, a course's outline
 (`/desk/learn/<COURSE>`), each lesson, and a lesson's quiz (`/desk/learn/<COURSE>/<LESSON>/quiz`).
 Quiz results share the quiz's entry — they are the outcome of a submit, not a place to return
@@ -372,7 +372,7 @@ run *count* only — a reset is "have another go", not "lose what you earned".
 Open a Training Course and press **Edit Visually**, or go straight to
 `/desk/training-canvas/TRN-CRS-00001`. That is the authoring surface.
 
-**The route says where the author is** (v1.535.0): `/desk/training-canvas` is the home
+**The route says where the author is** (v1.534.2): `/desk/training-canvas` is the home
 screen, `/desk/training-canvas/new` the starter gallery, and
 `/desk/training-canvas/<COURSE>/<LESSON>` the editor on that lesson. So browser Back walks
 lessons, courses, the gallery and the home screen, Forward restores them, and a reload lands
@@ -715,7 +715,7 @@ words teaches a learner that Help is unreliable, where one that states the rule 
 served by [`glossary_review.py`](glossary_review.py)) is where the seeded entries get a reviewer's
 name. Its tab is in the route — the bare page is the queue, `.../traps` the queue narrowed to
 trade traps, `.../collisions` the "same word, two entries" tab — so browser Back returns to the
-previous tab (v1.535.0). Returning to the page reloads nothing, and anything typed into a card is
+previous tab (v1.534.2). Returning to the page reloads nothing, and anything typed into a card is
 kept until Accept sends it — across a tab switch, a page turn, Back and Forward — so a trip to
 "Open the record" and back loses no correction. The primary **Refresh** is the one rebuild that
 drops it: it puts the saved text back into the cards on screen, as it always did, and asks first

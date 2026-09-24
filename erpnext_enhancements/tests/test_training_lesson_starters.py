@@ -434,7 +434,7 @@ class TestTheDeadEndIsGone(unittest.TestCase):
 		self.assertIn("save_then", code[at : at + 700])
 
 	def test_leaving_a_course_clears_the_query_string(self):
-		"""Leaving routes to the bare page. Since v1.535.0 the course is a route
+		"""Leaving routes to the bare page. Since v1.534.2 the course is a route
 		segment, so that route differs from the course's and is a real history step:
 		Back returns to the lesson just left. `_home` is set first so the route change
 		coming back through `handle_route` does not draw the home screen twice.
