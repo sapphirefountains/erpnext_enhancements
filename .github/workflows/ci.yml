@@ -1096,11 +1096,14 @@ jobs:
       # and the one rule that keeps that footer off every non-PDF surface.
       - name: Contract branding (letterhead, footer, print CSS)
         run: python -m unittest erpnext_enhancements.tests.test_contract_style -v
+      # test_kpi_departments: the seven places a KPI department is named must agree
+      # (v1.530.0, when Service split off Operations). All three are ast/JSON only.
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_kpi_metrics
-          erpnext_enhancements.tests.test_custom_html_blocks -v
+          erpnext_enhancements.tests.test_custom_html_blocks
+          erpnext_enhancements.tests.test_kpi_departments -v
       # Department dashboard widgets: the registry, the settings toggles, the
       # seeder's placement map and the shipped workspace JSONs must agree. A
       # placement naming an unseeded block renders an empty div with no error, so

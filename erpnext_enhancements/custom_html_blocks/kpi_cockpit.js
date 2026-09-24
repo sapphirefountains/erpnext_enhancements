@@ -40,6 +40,7 @@
         "operations dashboard": "Operations",
         "design dashboard": "Design",
         "production dashboard": "Production",
+        "service dashboard": "Service",
         "marketing dashboard": "Marketing",
         "product dashboard": "Product",
         "hr dashboard": "HR",

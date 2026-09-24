@@ -1,6 +1,6 @@
 # Sapphire Fountains — Department KPI Dashboard Catalog
 
-_Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto** = computable now from existing data; **Semi-Auto** = needs one light new field/input; **Manual** = needs human entry or an un-integrated external system._
+_Auto-generated design reference. 131 KPIs across 8 departments, plus the Operations inventory set added in v1.530.0, when maintenance moved to its own Service department (10 departments in the snapshot engine). Tiers: **Auto** = computable now from existing data; **Semi-Auto** = needs one light new field/input; **Manual** = needs human entry or an un-integrated external system._
 
 ## Automation summary
 
@@ -12,7 +12,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 | Marketing | 17 | 7 | 9 | 1 |
 | Executive | 15 | 7 | 8 | 0 |
 | Production (Build) | 15 | 10 | 5 | 0 |
-| Operations (Field-Service / Maintenance / Workforce) | 17 | 11 | 5 | 1 |
+| Service (Field-Service / Maintenance / Workforce), formerly Operations | 17 | 11 | 5 | 1 |
 | HR (People) | 17 | 12 | 3 | 2 |
 | **TOTAL** | **131** | **80** | **44** | **7** |
 
@@ -935,7 +935,54 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 - Crew clock-in on builds: have field crews clock in/out against Build project Tasks via the existing Time Kiosk PWA (requires extending Job Interval to accept build Tasks). No new data entry beyond the clock-in they already do for maintenance.
 
 ---
-## Operations (Field-Service / Maintenance / Workforce)
+## Operations (Inventory & Purchasing) — v1.530.0
+
+> Operations became the inventory dashboard on 2026-09-24, when maintenance moved to its own **Service** department (the next section, listed under Production in the dashboards sidebar). The trigger was store runs: 206 card transactions at Home Depot and Lowe's in the 12 months to September 2026 (2 of them returns), $16.3k, roughly four a week, mostly for small PVC fittings. The set answers three questions — are we making store runs, is the shelf stocked, and is the record true — and it is computed nightly by `_operations_metrics`. A **stocked item** is an Item with a positive reorder level, ERPNext's own marker and the one that drives its automatic Material Requests. Catalog items 9–12 below (devices, time sync, count accuracy, stockout risk) now belong here; the rest of the old Operations catalog is Service. Device compliance, unsynced time logs and project naming compliance stayed on Operations.
+
+### 1. Store Runs (30d) — 🟡 Semi
+- **Definition:** Count of unscheduled counter purchases from Suppliers ticked *Store-Run Vendor*, in the last 30 days. Today: QuickBooks card purchases (vendor recovered from the raw payload's `EntityRef`, type Vendor, refunds excluded). After cutover also: submitted Purchase Receipts and Purchase Invoices from those suppliers with no PO behind them.
+- **Why it matters:** A run costs drive time and a stopped crew, not just the parts. Every run for a stocked item is a reorder level set too low; every repeat run for an unstocked item is a candidate for the shelf.
+- **Target:** 4 or fewer a month by 2027-01-01 (proposed; set with owner).
+- **Data source:** Supplier.custom_store_run_vendor; QuickBooks Sync Mapping + QuickBooks Raw Payload + Journal Entry; Purchase Receipt; Purchase Invoice.
+- **Implementation:** `_store_runs` in `kpi_dashboards/snapshots.py`. Semi because a person decides which suppliers are counters. Not published until one is ticked — 0 by construction would read as the goal met.
+- **Refresh:** Nightly. As current as QuickBooks categorization: uncategorized card charges are invisible to it.
+
+### 2. Store-Run Spend (30d) — 🟡 Semi
+- **Definition:** Dollars on the runs above (Journal Entry total, receipt or invoice grand total).
+- **Target:** Track only.
+
+### 3. Stocked Items Below Reorder / Out of Stock — 🟢 Auto
+- **Definition:** Items with a positive reorder level whose total on-hand is below it / is zero or less.
+- **Why it matters:** The leading indicator for the next store run.
+- **Target:** 5 or fewer below reorder; 0 out of stock.
+- **Data source:** Item Reorder, Bin. *Below Reorder* moved here from Product unchanged (key `items_below_reorder`).
+
+### 4. Stock at Placeholder Cost — 🟢 Auto
+- **Definition:** Bin rows holding stock at a valuation rate of $0.01 or less.
+- **Why it matters:** The 2026-09-23 opening stock went in at a $0.01 placeholder, so 439 of 448 stocked rows were valued at a cent and the store read $787. Job costs and COGS drawn from that stock are wrong until it is costed.
+- **Target:** 0 by 2026-11-01 (proposed).
+
+### 5. Unpriced PO Lines (90d) — 🟢 Auto
+- **Definition:** Submitted Purchase Order lines dated in the last 90 days with a rate of 0.
+- **Why it matters:** A $0 line receives its stock at $0. 281 of 327 lines were $0 in the 90 days to 2026-09-24.
+- **Target:** 0 on new POs.
+
+### 6. Stocked Items Counted (90d) — 🟢 Auto
+- **Definition:** Share of stocked items with a submitted Stock Reconciliation entry in the stock ledger in the last 90 days. Count sessions finalize into Stock Reconciliations, and the opening stock went in as four, so the ledger is the one place every count shows up.
+- **Target:** 100%.
+
+### 7. Adds Without PO Awaiting Review — 🟢 Auto
+- **Definition:** Stock Scan Log rows flagged `needs_review`, not reviewed and not undone.
+- **Target:** None older than a week.
+
+### 8. Inventory Stock Value, Out-of-Stock Sellable Items, Open Inventory Counts — 🟢 Auto
+- Moved from Product (the first two) unchanged, keys included. Track only.
+
+---
+## Service (Field-Service / Maintenance / Workforce) — formerly Operations
+
+> **Renamed in v1.530.0.** This catalog was written as "Operations". Its field-service and maintenance KPIs now live on the **Service** dashboard (`_service_metrics`), listed under Production in the sidebar; items 9–12 (devices, time sync, count accuracy, stockout risk) belong to the Operations inventory set above. The text below is unchanged from the original catalog.
+
 
 > A 17-KPI catalog covering the full Operations scope for a fountain design-build-maintain business: contract fulfillment and visit completion, seasonal/SLA adherence, technician utilization and route/drive efficiency, water-quality (chemistry) compliance, callback/redo rate, fleet/device uptime and compliance, inventory accuracy and stockouts, travel cost, field safety, timesheet/labor capture, and asset booking utilization. Of the 17, 9 are Auto (computable today from Sapphire Maintenance Record, Sapphire Chemistry Reading, Job Interval, Managed Device, Travel Trip, Asset Booking, Inventory Count Session via SQL + a nightly snapshot cron modeled on the existing Daily Briefing pattern), 6 are Semi-Auto (each needs one new field or light tagging — a scheduled-date stamp on Maintenance Record, an idle-radius geofence on Job Interval GPS, an item min-level, a callback flag, a route-sequence stamp, or odometer capture), and only 2 are Manual (field-incident safety reporting and a per-visit photo/QA spot-check), each with the lightest-weight capture specified. The single highest-leverage build is one new field — a planned/scheduled visit date on the Maintenance Record draft — which unlocks both SLA on-time adherence and seasonal-window adherence as Auto KPIs. Recommend deploying these as a fixtures-based "Operations" Dashboard plus a pre-computed nightly KPI snapshot (Daily Briefing operations variant) so the numbers are durable, trendable, and TV-wall/email deliverable, since most metrics today require runtime SQL with no historical series.
 

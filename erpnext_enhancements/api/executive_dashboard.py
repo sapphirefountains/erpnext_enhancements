@@ -28,7 +28,7 @@ from erpnext_enhancements.kpi_dashboards import snapshots
 
 # Departments shown on the scorecard, in reading order. Executive is excluded —
 # it is a rollup of these, so scoring it alongside them double-counts.
-SCORECARD_DEPARTMENTS = ("Finance", "Sales", "Marketing", "Operations", "Design", "Production", "HR")
+SCORECARD_DEPARTMENTS = ("Finance", "Sales", "Marketing", "Operations", "Design", "Production", "Service", "HR")
 
 # A snapshot older than this is called out. The engine runs nightly, so two days
 # means at least one run did not land.

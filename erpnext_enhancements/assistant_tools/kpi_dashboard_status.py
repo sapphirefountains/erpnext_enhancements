@@ -6,7 +6,7 @@ hook; see the package docstring for the FAC-optional invariant.
 Two deliberate shapes:
 
 * **No department named** — every department the caller may see, but only the
-  values that are *not* Good. Nine departments' full KPI sets is a context bomb:
+  values that are *not* Good. Ten departments' full KPI sets is a context bomb:
   a hundred-odd rows of numbers that are fine, burying the four that are not.
   "What needs attention" is the question somebody asks without naming a
   department, so that is what an unqualified call answers.
@@ -41,8 +41,8 @@ class KpiDashboardStatus(BaseTool):
             "department, it returns every department the user may see but only the "
             "values that are Watch or Bad — the answer to 'what needs attention' "
             "without dumping a hundred healthy numbers. Called with a department "
-            "(Finance, Sales, Operations, Marketing, Design, Production, Product, HR, "
-            "Executive) it returns that department in full, Good values included. "
+            "(Finance, Sales, Operations, Marketing, Design, Production, Service, Product, "
+            "HR, Executive) it returns that department in full, Good values included. "
             "Every reply carries source_freshness, which says how current each "
             "underlying feed was when the snapshot was built — a KPI computed from a "
             "stale feed is a plausible number that is not true today, and the figure "
