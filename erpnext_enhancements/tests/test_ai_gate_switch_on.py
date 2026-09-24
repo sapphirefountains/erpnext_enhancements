@@ -35,7 +35,6 @@ CHOSEN = (
     "ToDo",
     "Sapphire Maintenance Template",
     "Sapphire Maintenance Section",
-    "Sapphire Maintenance Profile",
     "Serial No",
     "Training Lesson",
 )
@@ -130,8 +129,8 @@ class TestEnableAiWriteGate(unittest.TestCase):
 
     def test_a_doctype_the_site_lacks_is_skipped(self):
         settings = FakeSettings()
-        self._run(settings, missing_doctypes=("Sapphire Maintenance Profile",))
-        self.assertNotIn("Sapphire Maintenance Profile", settings.inserted)
+        self._run(settings, missing_doctypes=("Sapphire Maintenance Section",))
+        self.assertNotIn("Sapphire Maintenance Section", settings.inserted)
         self.assertIn("Comment", settings.inserted)
 
     def test_a_failed_seed_leaves_the_gate_off_and_does_not_raise(self):
@@ -165,7 +164,8 @@ class TestTheChosenList(unittest.TestCase):
     def test_money_stock_contracts_and_items_are_not_in_it(self):
         for doctype in (
             "Item", "Item Price", "Price List", "Stock Reconciliation", "Stock Entry",
-            "Sapphire Maintenance Contract", "Project Contract", "Bank Account", "Bank",
+            "Sapphire Maintenance Contract", "Sapphire Maintenance Profile", "Project Contract",
+            "Bank Account", "Bank",
             "User", "Role", "Company", "Training Course", "Enhancement Request",
         ):
             self.assertNotIn(doctype, CHOSEN)
@@ -189,6 +189,20 @@ class TestWiring(unittest.TestCase):
         self.assertEqual(field["fieldtype"], "Datetime")
         self.assertFalse(field.get("reqd"))
         self.assertIsNone(field.get("default"))  # empty means permanent; a default would change that
+
+    def test_the_bench_suite_gates_a_doctype_that_is_not_exempt(self):
+        # test_ai_gating_integration writes through the gate and expects a card. It used ToDo until
+        # this release exempted ToDo, which would have made every "gated" case execute at once.
+        import ast
+
+        source = (REPO_ROOT / "erpnext_enhancements/tests/test_ai_gating_integration.py").read_text(encoding="utf-8")
+        gated = None
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "GATED_DOCTYPE" for t in node.targets):
+                gated = ast.literal_eval(node.value)
+        self.assertIsNotNone(gated, "test_ai_gating_integration must name its GATED_DOCTYPE")
+        self.assertNotIn(gated, CHOSEN)
+        self.assertNotIn('"ToDo"', source)
 
     def test_the_gates_own_records_are_never_exempt(self):
         for doctype in ("Task", "ERPNext Enhancements Settings", "AI Confirmation Exempt Doctype",

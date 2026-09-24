@@ -460,6 +460,33 @@ class TestTimeBoxedExemptions(GateHarness):
         _, calls = self._run("create_document", {"doctype": "Comment", "data": {"content": "x"}}, exempt_rows=rows)
         self.assertEqual((calls["executed"], calls["proposed"]), (1, 0))
 
+    def test_a_window_never_carries_a_submit_or_cancel(self):
+        # create_document(submit=True) submits; update_document with docstatus in data submits or
+        # cancels. Neither is a plain create/update, so an exemption does not cover it.
+        window = (("Stock Reconciliation", "2026-09-23 18:00:00"),)
+        cases = (
+            ("create_document", {"doctype": "Stock Reconciliation", "data": {"purpose": "Stock Reconciliation"}, "submit": True}),
+            ("update_document", {"doctype": "Stock Reconciliation", "name": "MAT-RECO-1", "data": {"docstatus": 1}}),
+            ("update_document", {"doctype": "Stock Reconciliation", "name": "MAT-RECO-1", "data": {"docstatus": 2}}),
+        )
+        for tool, args in cases:
+            with self.subTest(tool=tool, args=args):
+                _, calls = self._run(tool, args, exempt_rows=window)
+                self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+        # ...while the plain create in the same window still goes through.
+        _, calls = self._run(
+            "create_document",
+            {"doctype": "Stock Reconciliation", "data": {"purpose": "Stock Reconciliation"}},
+            exempt_rows=window,
+        )
+        self.assertEqual((calls["executed"], calls["proposed"]), (1, 0))
+
+    def test_a_permanent_exemption_does_not_carry_a_docstatus_change_either(self):
+        _, calls = self._run(
+            "update_document", {"doctype": "Comment", "name": "c1", "data": {"docstatus": 2}}, exempt_rows=("Comment",)
+        )
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
     def test_the_gates_own_records_can_never_be_exempted(self):
         # An assistant that could write these could open its own window, rewrite a card after a
         # human read it, or edit its own audit trail.

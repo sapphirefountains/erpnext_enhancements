@@ -43,8 +43,9 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   exemption list, a pending TTL (default 1 h, hourly expiry sweep) and an
   optional retention window.
 - **Exemptions are permanent or time-boxed (v1.525.0).** A row with no
-  `exempt_until` is permanent. The patch seeds Comment, ToDo, the maintenance
-  catalog, Serial No and Training Lesson. A row with a time is a window for a
+  `exempt_until` is permanent. The patch seeds Comment, ToDo, Sapphire
+  Maintenance Template and Section, Serial No and Training Lesson. A create
+  that submits, or an update that sets `docstatus`, is never exempt. A row with a time is a window for a
   bulk job: a human opens it on the settings page and it closes itself, because
   `_exempt_doctypes()` compares it with the current time on every call.
   `NEVER_EXEMPT` covers Task and the gate's own records: its settings, the

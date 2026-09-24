@@ -29,13 +29,15 @@ import frappe
 SETTINGS = "ERPNext Enhancements Settings"
 TABLE_FIELD = "ai_exempt_doctypes"
 
-#: Chosen by Nik on 2026-09-23 from the 30-day audit log (the "broad low-risk list").
+#: Chosen by Nik on 2026-09-23 from the 30-day audit log (the "broad low-risk list"), less
+#: Sapphire Maintenance Profile. It was offered as maintenance catalog data and is not: it holds
+#: a site's access codes, the Time Kiosk geofence coordinates and the default technician. So it
+#: stays gated unless Nik adds it on the settings page.
 PERMANENT = (
 	"Comment",
 	"ToDo",
 	"Sapphire Maintenance Template",
 	"Sapphire Maintenance Section",
-	"Sapphire Maintenance Profile",
 	"Serial No",
 	"Training Lesson",
 )

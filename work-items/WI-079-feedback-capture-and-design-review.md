@@ -1,7 +1,7 @@
 # WI-079: Capture anywhere, Design Review, and a repo-aware task generator
 
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (five slices, M to L)
-**Blocked by:** nothing for slice 1 except the gate decision named there; slice 3 needs a Triton release (prompt repair, schema v2)
+**Blocked by:** nothing for slice 1 (the gate switched on in v1.525.0); slice 3 needs a Triton release (prompt repair, schema v2)
 **Blocks:** nothing
 **Decision record:** [ADR 0016](../decisions/adr/0016-every-source-files-an-enhancement-request.md), amending [ADR 0010](../decisions/adr/0010-employee-feedback-to-tasks.md)
 
@@ -59,7 +59,7 @@ Checked against Frappe and ERPNext `version-16` (`git show origin/version-16:…
   doctypes and environment it drops, a test pinning the rendered prompt) and the v2 request schema.
   The ERPNext side ships first and degrades to today's behavior when Triton answers v1.
 - Slice 5's frame rendering depends on the viewer spike's outcome (below).
-- The gate patch in slice 1 waits for Nik's call on `run_python_code` (below).
+- The gate patch in slice 1 shipped in v1.525.0, with `run_python_code` gated (below).
 
 ## Scope
 
@@ -111,8 +111,8 @@ and the `NEVER_EXEMPT` guard are in `_gate.py` and dormant while the flag is 0. 
   arguments stored on the Pending Action, so a confirmed write whose data key contains a sensitive
   substring (for example `author`) would write `***REDACTED***`.
   - **Update, v1.525.0:** the gate switches on (patch `enable_ai_write_gate`). Nik chose
-    exemptions: permanent for Comment, ToDo, the maintenance catalog, Serial No and Training
-    Lesson, plus time-boxed windows (`exempt_until`) for bulk jobs. `NEVER_EXEMPT` now also covers
+    exemptions: permanent for Comment, ToDo, Sapphire Maintenance Template and Section, Serial No
+    and Training Lesson (Maintenance Profile dropped on review: site access codes and geofence), plus time-boxed windows (`exempt_until`) for bulk jobs. `NEVER_EXEMPT` now also covers
     the gate's own records. `run_python_code` stays gated, and AI sessions move their diagnostics
     to `run_database_query`.
   - **Update, v1.524.1:** `confirm_action` is fixed. The redacted values are sealed in a Password

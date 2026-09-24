@@ -247,7 +247,9 @@ settled:
 Nik chose to carry the remaining load with exemptions. Because the 30-day inventory showed that
 nearly all non-Task volume was one-day bulk work, there are two kinds:
 - **Permanent** exemptions for the low-risk records assistants write: Comment, ToDo, the maintenance
-  catalog (Template, Section, Profile), Serial No and Training Lesson.
+  checklists (Sapphire Maintenance Template and Section), Serial No and Training Lesson. Sapphire
+  Maintenance Profile was proposed as catalog data and dropped on review: it holds a site's access
+  codes, the Time Kiosk geofence coordinates and the default technician.
 - **Time-boxed windows** (`exempt_until`) that a person opens on the settings page for a bulk job,
   and that close by themselves.
 

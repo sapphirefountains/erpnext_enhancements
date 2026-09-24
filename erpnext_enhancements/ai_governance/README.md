@@ -20,11 +20,15 @@ The field defaults to **off**. On production the v1.525.0 patch `enable_ai_write
 
 A row in **Confirmation-Exempt Doctypes** lets an assistant's `create_document` and
 `update_document` on that doctype execute without a card. It is still logged in AI Action Log as
-Auto Approved. Delete, submit, workflow and code execution are never exempt.
+Auto Approved. Delete, submit, workflow and code execution are never exempt. That includes a
+submit dressed as a create or update: `create_document` with `submit`, or `update_document`
+with `docstatus` in its data, always goes to a card (`_changes_docstatus`).
 
 - **Permanent** means **Exempt Until** is empty. The patch seeds Comment, ToDo, Sapphire
-  Maintenance Template/Section/Profile, Serial No and Training Lesson: low-risk records that
-  assistants actually write. Money, stock, contracts, permissions, Items and Item Prices stay
+  Maintenance Template and Section (checklists and their instructions), Serial No and Training
+  Lesson: low-risk records that assistants actually write. Sapphire Maintenance Profile is not
+  on the list, because it holds a site's access codes, the Time Kiosk geofence coordinates and
+  the default technician. Money, stock, contracts, permissions, Items and Item Prices stay
   gated. Item stays gated because creating one with a `standard_rate` also writes an Item Price.
 - **A window** means **Exempt Until** holds a time. This is how a bulk job is carried, for example
   "Item until 18:00" for an inventory session. Without a window, 328 Items would mean 328 cards.

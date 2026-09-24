@@ -17,8 +17,11 @@ redacted card, which v1.524.1 fixed. On 2026-09-23 Nik chose to carry the load w
 ### Added
 
 - **Patch `enable_ai_write_gate`** seeds the permanent exemptions and then sets
-  `ai_write_gating_enabled`. The list is Comment, ToDo, Sapphire Maintenance Template, Section and
-  Profile, Serial No, and Training Lesson.
+  `ai_write_gating_enabled`. The list is Comment, ToDo, Sapphire Maintenance Template and Section
+  (maintenance checklists and their instructions), Serial No, and Training Lesson. Sapphire
+  Maintenance Profile was left out on review. It is not catalog data: it is per-project site data
+  holding the site's access codes, the Time Kiosk geofence coordinates and the default technician.
+  Nik can add it with one row on the settings page.
   - Rows are appended to the Single's child table and inserted row by row with `db_insert`, because
     saving the Single would run its whole `validate()`.
   - Rows already present are left alone, and a doctype missing from the site is skipped.
@@ -41,6 +44,23 @@ redacted card, which v1.524.1 fixed. On 2026-09-23 Nik chose to carry the load w
   exemptible AI Pending Action would have let it rewrite a card's arguments after a human read it
   but before they confirmed. An exemptible AI Action Log would have let it edit its audit trail. A
   row for any of these is ignored, and the field help says so.
+- **A submit or cancel dressed as a create or update is never exempt.** FAC's `create_document`
+  submits when `submit` is true, and its `update_document` sets `docstatus` from `data`. Step 4
+  now sends either to a card even on an exempt doctype (`_changes_docstatus`). Without this, a
+  bulk window on a submittable doctype would have carried submits past a human, and the settings
+  help, which says submit never skips, would have been wrong.
+- **The cards that became live say what confirming does.**
+  - `create_document` with `submit` reads "Create and SUBMIT <doctype>".
+  - With `validate_only` it reads "Validate <doctype> only (creates nothing)".
+  - On-behalf `workforce_clock_out` reads "Clock out <employee> (the interval ends when this is
+    confirmed)". The tool stamps the time it runs, and that was never visible until the ADR 0014
+    decider went live with this flag.
+- **`test_ai_gating_integration` gates a Note, not a ToDo.** ToDo is now exempt, so every case in
+  that bench suite that expects a card would have executed at once. `test_ai_gate_switch_on`
+  pins the suite's `GATED_DOCTYPE` outside the seeded list.
+- The WI-051 cutover runbook's §1.5 no longer says to switch the flag on at W1 and revert it
+  afterwards. The flag is on, bulk writes use a window, and a smoke-test write must target a
+  doctype that isn't exempt.
 
 ### Why this list, and what stays gated
 
@@ -54,8 +74,8 @@ was one user's writes.
 - **Almost everything else was one-day bulk work:**
   - 328 Items, 165 Item Prices, 38 ToDos and 5 Stock Reconciliations on 2026-09-23, from a
     warehouse session;
-  - 80 maintenance contracts, 51 sections, 40 templates, 24 Serial Nos and 20 Project Contracts
-    on 9–10 Sep;
+  - 80 maintenance contracts, 51 sections, 40 templates, 17 maintenance profiles, 24 Serial Nos
+    and 20 Project Contracts on 9–10 Sep;
   - 49 Training Lessons on 14 Sep.
 
 Exemptions cannot reach the two largest loads. Task creates and closes are excluded by design.
@@ -64,6 +84,10 @@ diagnostics to the read-only `run_database_query`. So the permanent list takes t
 records, and bulk jobs on higher-risk doctypes get windows. Money, stock, contracts, permissions,
 Items and Item Prices stay gated. Item is included in that because creating one with a
 `standard_rate` also writes an Item Price.
+
+The ToDo exemption covers only the generic `create_document` and `update_document`. This app's
+`create_followup_task` is a tool of its own, not a doctype write, so the exemption does not reach
+it. It stays a card.
 
 ### Tests
 
@@ -74,8 +98,15 @@ Items and Item Prices stay gated. Item is included in that because creating one 
   - a failed seed leaves the gate off and raises nothing;
   - the patch is registered after `[post_model_sync]`;
   - the column has no default.
-- `test_ai_gate_per_call` gains window cases (open, closed, closing at the exact moment, one
-  doctype only, unreadable) and the never-exempt gate records.
+- `test_ai_gate_per_call` gains:
+  - window cases: open, closed, closing at the exact moment, one doctype only, unreadable;
+  - the submit and cancel guard, under a window and under a permanent exemption;
+  - the never-exempt gate records.
+- `test_ai_gate_unit` pins the new card wording.
+- `test_ai_gate_switch_on` pins the bench suite's gated doctype outside the list.
+- Break-it-on-purpose checks:
+  - removing the submit guard fails 4 cases;
+  - ignoring `exempt_until` fails 3.
 
 ## [1.524.1] - 2026-09-23
 
