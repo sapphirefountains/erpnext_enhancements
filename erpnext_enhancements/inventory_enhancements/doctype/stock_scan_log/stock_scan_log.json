@@ -24,6 +24,22 @@
   "purchase_order_item",
   "voucher_type",
   "voucher_no",
+  "store_run_section",
+  "supplier",
+  "rate",
+  "receipt_total",
+  "receipt_number",
+  "receipt_photo",
+  "bought_on",
+  "recorded_late",
+  "column_break_store_run",
+  "store_run",
+  "store_run_reason",
+  "no_job",
+  "reorder_level_seen",
+  "non_stock_item",
+  "created_item",
+  "repeat_unstocked",
   "review_section",
   "needs_review",
   "reviewed",
@@ -62,7 +78,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Action",
-   "options": "Take\nReceive\nAdd Without PO\nMove",
+   "options": "Take\nReceive\nAdd Without PO\nMove\nStore Run",
    "read_only": 1,
    "reqd": 1
   },
@@ -183,13 +199,131 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval:doc.action=='Store Run'",
+   "fieldname": "store_run_section",
+   "fieldtype": "Section Break",
+   "label": "Store Run"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Store",
+   "options": "Supplier",
+   "read_only": 1
+  },
+  {
+   "description": "Each, before tax, as printed on the receipt.",
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "label": "Unit Price",
+   "read_only": 1
+  },
+  {
+   "description": "The paper receipt's total, tax included, as the technician entered it. Every line of one run carries the same total; it is what the card is charged.",
+   "fieldname": "receipt_total",
+   "fieldtype": "Currency",
+   "label": "Receipt Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "receipt_number",
+   "fieldtype": "Data",
+   "label": "Receipt Number",
+   "read_only": 1
+  },
+  {
+   "description": "The receipt photo this line was saved with. The same file is attached to the line's Purchase Receipt.",
+   "fieldname": "receipt_photo",
+   "fieldtype": "Data",
+   "label": "Receipt Photo",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bought_on",
+   "fieldtype": "Date",
+   "label": "Bought On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Recorded on a later day than it was bought. POL-0602 §4.7 asks for the same day.",
+   "fieldname": "recorded_late",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Recorded Late",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_store_run",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The run id. Every line, and every Purchase Receipt, from one trip carries the same value.",
+   "fieldname": "store_run",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Store Run",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "store_run_reason",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Reason",
+   "options": "\nA stocked item was out\nNot something we stock\nOnly for this job",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The technician chose No job: bought for safety or for the shop.",
+   "fieldname": "no_job",
+   "fieldtype": "Check",
+   "label": "No Job (Safety or Shop)",
+   "read_only": 1
+  },
+  {
+   "description": "The item's reorder level in ERPNext when the run was recorded. Above 0 means a stocked item, which is what the reason is read against.",
+   "fieldname": "reorder_level_seen",
+   "fieldtype": "Float",
+   "label": "Minimum When Bought",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Maintain Stock is off on the item, so the receipt added no stock.",
+   "fieldname": "non_stock_item",
+   "fieldtype": "Check",
+   "label": "Not a Stock Item",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The technician created this Item while recording the store run (POL-0602 §4.8). It survives an Undo.",
+   "fieldname": "created_item",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Created the Item",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Consider adding it to the kit (POL-0602 §4.7).",
+   "fieldname": "repeat_unstocked",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Unstocked, Bought Twice in 60 Days",
+   "read_only": 1
+  },
+  {
    "fieldname": "review_section",
    "fieldtype": "Section Break",
    "label": "Review"
   },
   {
    "default": "0",
-   "description": "Stock added without a purchase order. A Stock Manager should confirm where it came from.",
+   "description": "Stock added without a purchase order (Add Without PO or Store Run). Purchasing confirms the source, the price and any Item created with it.",
    "fieldname": "needs_review",
    "fieldtype": "Check",
    "in_standard_filter": 1,
@@ -270,7 +404,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-23 12:00:00.000000",
+ "modified": "2026-09-24 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Stock Scan Log",
