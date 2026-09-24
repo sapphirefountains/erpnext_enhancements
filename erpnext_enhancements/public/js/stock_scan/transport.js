@@ -27,7 +27,7 @@ export const M = {
 	MOVE: "erpnext_enhancements.api.stock_scan.move_here",
 	UNDO: "erpnext_enhancements.api.stock_scan.undo",
 	RECENT: "erpnext_enhancements.api.stock_scan.get_recent",
-	// "Bought on a store run" (v1.535.0): one line of a run, and the quick-item name check.
+	// "Bought on a store run" (v1.536.0): one line of a run, and the quick-item name check.
 	STORE_RUN: "erpnext_enhancements.api.stock_scan.store_run",
 	CHECK_NEW_ITEM: "erpnext_enhancements.api.stock_scan.check_new_item",
 };

@@ -131,7 +131,7 @@ def _key(name):
 
 class TestCombineStoreRuns(unittest.TestCase):
 	"""``metrics.combine_store_runs``: a trip recorded on the Stock Scan page and its card charge
-	count once (v1.535.0). Before that, only charges existed, and adding recorded receipts to
+	count once (v1.536.0). Before that, only charges existed, and adding recorded receipts to
 	them would have counted most trips twice."""
 
 	SINCE = "2026-09-01"
@@ -261,7 +261,7 @@ class TestCombineStoreRuns(unittest.TestCase):
 class TestJournalStoreCharges(unittest.TestCase):
 	"""``metrics.journal_store_charges``: from a Journal Entry only a credit to the store's
 	payable is a purchase. A debit is a payment, and counting it too made a bill and its payment,
-	booked as two unlinked entries, two store runs (v1.535.0 review). Payment Entries are not a
+	booked as two unlinked entries, two store runs (v1.536.0 review). Payment Entries are not a
 	source at all (``snapshots._store_run_rows``)."""
 
 	def line(self, entry, credit=0.0, debit=0.0, day="2026-09-03", supplier="Bolt & Nut Supply", reference_type=""):

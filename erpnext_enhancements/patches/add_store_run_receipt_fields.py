@@ -1,4 +1,4 @@
-"""Three Purchase Receipt fields for "Bought on a store run" on the Stock Scan page (v1.535.0).
+"""Three Purchase Receipt fields for "Bought on a store run" on the Stock Scan page (v1.536.0).
 
 Every line a technician records on a store run posts one submitted Purchase Receipt with no
 purchase order (``api.stock_scan.store_run``). One trip is usually several lines, so the

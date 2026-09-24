@@ -45,7 +45,7 @@
  *     entry that is not ours.
  *   - **"Report a problem" shows only where it can work.** `reportAvailable` wants the recorder
  *     and the `system_user=yes` cookie, the same test as the floating launcher's.
- *   - **A store-run line is the same line on every retry** (v1.535.0). `saveKey` covers what a
+ *   - **A store-run line is the same line on every retry** (v1.536.0). `saveKey` covers what a
  *     line posts (run, store, price, reason, photo, day, total, the job decision, a new item's
  *     code), a new run's id is minted once and outlives its sheet, and `upload()` turns a 403 into
  *     "signed out". On the real app.js: the door appears only with `boot.store_run`, "Where did
@@ -691,7 +691,7 @@ async function appUnderTheReportForm() {
 }
 
 /**
- * "Bought on a store run" (v1.535.0) on the real app.js: the door appears only when the boot
+ * "Bought on a store run" (v1.536.0) on the real app.js: the door appears only when the boot
  * carries `store_run`; "Where did these come from?" lists the open order lines FIRST, then the
  * open runs and "Bought on a store run"; a new run's id is minted once and survives closing the
  * sheet (it is part of saveKey — a second id would be a second save); a filled sheet posts the
@@ -1196,10 +1196,10 @@ async function appStoreRuns() {
 		"scanFailure", "rememberedJob", "saveLabel",
 		// "Report a problem" in the header.
 		"reportAvailable",
-		// "Bought on a store run" (v1.535.0).
+		// "Bought on a store run" (v1.536.0).
 		"mintRunId", "runIsOpen", "runSummary", "validPrice", "validTotal", "money", "suggestedReason", "reasonWarning",
 		"ordersAtStore", "boughtLabel", "storeKey",
-		// The v1.535.0 review fixes: other people's runs only while recent, an emptied run reopened,
+		// The v1.536.0 review fixes: other people's runs only while recent, an emptied run reopened,
 		// and "Check the receipt total".
 		"siteTimeMs", "runOffered", "OTHERS_RUN_HOURS", "reopenedDraft", "receiptCheck", "RECEIPT_CHECK_ABOVE", "TAX_BAND",
 	]);
@@ -1410,7 +1410,7 @@ async function appStoreRuns() {
 	check("undoQuestion: a return names the job", L.undoQuestion(returned), "Undo: returned 2 Each of Widget to Bin A1-3-1 from PRJ-00598?");
 	check("undoQuestion: found stock does not", L.undoQuestion({ ...returned, project: null }), "Undo: added 2 Each of Widget to Bin A1-3-1?");
 
-	// ------------------------------------------------------------------ store runs (v1.535.0)
+	// ------------------------------------------------------------------ store runs (v1.536.0)
 	// saveKey: everything a store-run line posts is part of it, so a changed price or reason is
 	// a new save and a retry of the same line is the same one.
 	const line = {

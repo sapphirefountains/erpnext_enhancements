@@ -323,7 +323,7 @@ export function saveKey(parts) {
 		p.without_po ? 1 : 0,
 		p.project || "",
 		plain(p.qty),
-		// A store-run line (v1.535.0): the run, the store, the price, the reason, the receipt and
+		// A store-run line (v1.536.0): the run, the store, the price, the reason, the receipt and
 		// its day, the job decision and a new item's code are all part of what it posts.
 		p.run || "",
 		p.supplier || "",
@@ -361,7 +361,7 @@ export function saveLabel(action, qty, uom, itemName) {
 }
 
 // ---------------------------------------------------------------------------
-// Store runs (v1.535.0): "Bought on a store run"
+// Store runs (v1.536.0): "Bought on a store run"
 // ---------------------------------------------------------------------------
 
 /** The reasons, as stored (`stock_scan_rules.STORE_RUN_REASONS`). */

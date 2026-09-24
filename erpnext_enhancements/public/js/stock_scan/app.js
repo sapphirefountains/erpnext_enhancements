@@ -17,7 +17,7 @@
  * "Report a problem" (the capture panel, WI-079) opens from the header on every view. The panel
  * owns its own history entry and its own Back; this page stands aside while it is open.
  *
- * STORE RUNS (v1.535.0, POL-0602 §4.7-4.8): "Bought on a store run" on + records a part bought
+ * STORE RUNS (v1.536.0, POL-0602 §4.7-4.8): "Bought on a store run" on + records a part bought
  * at a walk-in counter — one line per save, a submitted Purchase Receipt with no PO — with the
  * store, the price, the reason, the job and the receipt photo; a run id ties one trip's lines
  * together and the run bar keeps it in view while the technician scans the next bin. A part
@@ -175,7 +175,7 @@ function writeJob(job) {
 }
 
 // ---------------------------------------------------------------------------
-// Store runs (v1.535.0): which run this phone is adding to, and which it has finished. Only
+// Store runs (v1.536.0): which run this phone is adding to, and which it has finished. Only
 // markers live here. The runs themselves come from the server (boot.store_run.open_runs and
 // every store-run save's `run`), so a cleared or blocked storage loses nothing but the bar:
 // the run is still offered as "Add to your … run" when + is pressed.
@@ -266,7 +266,7 @@ export class StockScanApp {
 		this.report = null; // the capture panel's handle while it is open
 		this.reportWanted = false; // "Report a problem" tapped, the panel still on its way
 		this.reportLoading = false; // capture.open() asked and not answered yet (Back may have unwanted it)
-		// "Bought on a store run" (v1.535.0): null unless a store is flagged and the fields exist.
+		// "Bought on a store run" (v1.536.0): null unless a store is flagged and the fields exist.
 		const storeRun = this.boot.store_run;
 		this.storeRun = storeRun && Array.isArray(storeRun.suppliers) && storeRun.suppliers.length ? storeRun : null;
 		this.runs = this.storeRun && Array.isArray(this.storeRun.open_runs) ? this.storeRun.open_runs.slice() : [];
@@ -1688,7 +1688,7 @@ export class StockScanApp {
 	}
 
 	// -----------------------------------------------------------------------
-	// Store runs: "Bought on a store run" (v1.535.0, POL-0602 §4.7-4.8)
+	// Store runs: "Bought on a store run" (v1.536.0, POL-0602 §4.7-4.8)
 	//
 	// One save is one line: a submitted Purchase Receipt with no PO, posted at once with its own
 	// Undo, like every other save here. A run id ties the lines of one trip together; the lines

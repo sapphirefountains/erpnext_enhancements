@@ -186,9 +186,9 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   here: the path `/stock-scan` (never the `?w=` query), the recorder's scrubbed rings, and
   `registerCaptureState` codes and counts — view, warehouse, item code, stack depth, sheets open,
   whether a store run is open and how many lines it has — no names, quantities, suppliers, prices
-  or jobs. The page is never sent a stock cost; since v1.535.0 it shows store-run prices the
+  or jobs. The page is never sent a stock cost; since v1.536.0 it shows store-run prices the
   technician typed, and those stay out of a report.
-- **"Bought on a store run"** (v1.535.0; what it posts is in
+- **"Bought on a store run"** (v1.536.0; what it posts is in
   [`inventory_enhancements/README.md`](../inventory_enhancements/README.md#bought-on-a-store-run-v15350)).
   `boot.store_run` carries the stores (one per `store_key`, the newest usable Supplier), the
   reasons, the quick-item groups and units, two permissions and the runs still open today; it is

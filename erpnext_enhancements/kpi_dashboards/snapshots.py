@@ -462,14 +462,14 @@ def _operations_metrics():
 	freshness = {}
 
 	# --- store runs. Not published at all until a supplier is flagged: with nothing flagged
-	#     the count is 0 by construction, and a 0 here reads as the goal met. Since v1.535.0 a
+	#     the count is 0 by construction, and a 0 here reads as the goal met. Since v1.536.0 a
 	#     trip recorded on the Stock Scan page and its card charge count once (_store_runs). ---
 	suppliers = _store_run_suppliers()
 	if suppliers:
 		runs, spend = _store_runs(suppliers, d30)
 		# One source label for both halves, and deliberately no freshness entry for it: the
 		# QuickBooks half lags weeks by nature, and a stale-sync badge would grey out the runs
-		# technicians recorded today on the Stock Scan page (v1.535.0).
+		# technicians recorded today on the Stock Scan page (v1.536.0).
 		add("store_runs_30", "Store Runs (30d)", runs, "count", STORE_RUN_SOURCE, metrics.LOWER)
 		add("store_run_spend_30", "Store-Run Spend (30d)", spend, "USD", STORE_RUN_SOURCE, metrics.LOWER)
 
@@ -575,7 +575,7 @@ def _operations_metrics():
 	)
 
 	# --- the Stock Scan page's own review queue: stock added without a PO -- an Add Without PO
-	#     at a cost the page chose, or (v1.535.0) a store-run line at the receipt's price -- that
+	#     at a cost the page chose, or (v1.536.0) a store-run line at the receipt's price -- that
 	#     nobody has looked at. Undone saves need no review. The key is unchanged, so a KPI
 	#     Target set against it keeps grading; the label now covers both. ---
 	if _exists("Stock Scan Log"):

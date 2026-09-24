@@ -18,7 +18,7 @@ model, the pure rules and the label reads.
 | `doctype/inventory_count_line/` | One counted row |
 | `doctype/storage_location/` | Sub-warehouse storage locations |
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
-| `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.535.0, every store-run line), and the idempotency key |
+| `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | Desk audit view over count sessions |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
@@ -101,7 +101,7 @@ Undo exists.
 | **+** returned from the run's job | `Add Without PO` (with the job) | Stock Entry, **Material Receipt** at the item's current cost, tagged with the job | Offsets to the *Parts Taken* account, so the credit reverses the account the take charged and the job nets by project in the ledger. Flagged `needs_review` |
 | **+** found, or not from a job | `Add Without PO` (no job) | Stock Entry, **Material Receipt** at the item's current cost | Offsets to the *Added Without PO* account. Flagged `needs_review` for a Stock Manager |
 | **Move here from…** | `Move` | Stock Entry, **Material Transfer** into the scanned location | Put-away: from wherever the stock is recorded |
-| **+** bought on a store run (v1.535.0) | `Store Run` | **Purchase Receipt**, no PO, one per line, from a Supplier ticked *Store-Run Vendor* | At the price on the paper receipt, before tax; no tax row and no project on the receipt. Carries the run id, the receipt photo and the receipt total. Flagged `needs_review` for Purchasing. See [Bought on a store run](#bought-on-a-store-run-v15350) |
+| **+** bought on a store run (v1.536.0) | `Store Run` | **Purchase Receipt**, no PO, one per line, from a Supplier ticked *Store-Run Vendor* | At the price on the paper receipt, before tax; no tax row and no project on the receipt. Carries the run id, the receipt photo and the receipt total. Flagged `needs_review` for Purchasing. See [Bought on a store run](#bought-on-a-store-run-v15350) |
 
 **"+" is PO-first, and the fallback is a choice, never a default.** The item's open order
 lines are offered first, oldest promise first (`order_line_sort_key`). "Open" is ERPNext's own
@@ -208,7 +208,7 @@ only** (`logic.keptRef`, `RETRY_WINDOW_MS`): the same numbers saved later are a 
 "That save was already recorded — nothing new was posted" — and the dialled change stays, so a
 person who did mean a second one taps Save again and gets a fresh reference.
 
-**A store-run line is one row and one receipt** (v1.535.0). Undo cancels that line's receipt only;
+**A store-run line is one row and one receipt** (v1.536.0). Undo cancels that line's receipt only;
 the other lines of the run are untouched, and a quick Item created with the line **stays**, for
 Purchasing's review. The run id (`sr-<time>-<random>`) is part of the line's `saveKey`, so the page
 mints it **once** per new run and keeps it with the run's draft (store, photo, total) until a line
@@ -251,15 +251,15 @@ and show a monogram tile.
 
 **Watch** the `needs_review` queue (Stock Scan Log, *Needs Review* ticked, *Reviewed* not): it is
 every unit that entered stock without an order — an Add Without PO at a cost the page chose, or
-(v1.535.0) a store-run line at the receipt's price. Since v1.530.0 it is a KPI on the Operations
-dashboard, renamed *Stock Scan Saves Awaiting Review* in v1.535.0 (key unchanged), beside store
+(v1.536.0) a store-run line at the receipt's price. Since v1.530.0 it is a KPI on the Operations
+dashboard, renamed *Stock Scan Saves Awaiting Review* in v1.536.0 (key unchanged), beside store
 runs, stocked items below reorder or out, stock at a placeholder cost, unpriced PO lines and count
 coverage. See
 [`kpi_dashboards/README.md`](../kpi_dashboards/README.md#service-split-off-operations-operations-is-inventory-v15300)
 for the definitions, and for the *Store-Run Vendor* flag on Supplier that the store-run KPI
 reads.
 
-### Bought on a store run (v1.535.0)
+### Bought on a store run (v1.536.0)
 
 Nik approved option B of the inventory plan on 2026-09-24: *scan the bin, press +, choose the
 store, enter the price and quantity, photograph the receipt, and pick a reason; save a Purchase

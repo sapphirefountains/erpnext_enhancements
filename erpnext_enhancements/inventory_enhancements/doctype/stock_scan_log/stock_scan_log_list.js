@@ -8,7 +8,7 @@
  * Undone first, because an undone row moved nothing and should read as history. Then the
  * review queue — stock added without a purchase order that nobody has confirmed yet — in
  * orange, since that is the one state that asks for someone's attention (a store run recorded a
- * day late says so, v1.535.0). The rest say which way the stock moved.
+ * day late says so, v1.536.0). The rest say which way the stock moved.
  */
 frappe.listview_settings["Stock Scan Log"] = {
 	add_fields: ["status", "action", "needs_review", "reviewed", "recorded_late"],

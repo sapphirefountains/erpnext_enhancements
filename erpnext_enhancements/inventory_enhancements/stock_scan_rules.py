@@ -75,14 +75,14 @@ ACTION_TAKE = "Take"
 ACTION_RECEIVE = "Receive"
 ACTION_ADD_WITHOUT_PO = "Add Without PO"
 ACTION_MOVE = "Move"
-#: "Bought on a store run" (v1.535.0, POL-0602 §4.7): a submitted Purchase Receipt with no
+#: "Bought on a store run" (v1.536.0, POL-0602 §4.7): a submitted Purchase Receipt with no
 #: purchase order, one per line, flagged for review. Appended LAST: the Select's order is
 #: this tuple's, and the existing values keep their positions.
 ACTION_STORE_RUN = "Store Run"
 ACTIONS = (ACTION_TAKE, ACTION_RECEIVE, ACTION_ADD_WITHOUT_PO, ACTION_MOVE, ACTION_STORE_RUN)
 
 # ---------------------------------------------------------------------------
-# Store runs (v1.535.0)
+# Store runs (v1.536.0)
 # ---------------------------------------------------------------------------
 
 #: The three reasons a technician gives for a store run, stored verbatim in
@@ -370,7 +370,7 @@ def pending_stock_qty(line):
 
 
 # ---------------------------------------------------------------------------
-# Store runs (v1.535.0, POL-0602 §4.7-4.8)
+# Store runs (v1.536.0, POL-0602 §4.7-4.8)
 # ---------------------------------------------------------------------------
 
 #: What QuickBooks leaves on an Item it deleted: the code gains this suffix and the record

@@ -80,7 +80,7 @@ Other prerequisites:
   ERPNext rejects a posting whose date has no Fiscal Year.
 - **Imported transactions are created as drafts** (`docstatus = 0`) — they do not hit
   the GL/Trial Balance until submitted. Review, then bulk-submit when ready — **except the
-  QuickBooks purchases that match a store run recorded on the Stock Scan page** (v1.535.0):
+  QuickBooks purchases that match a store run recorded on the Stock Scan page** (v1.536.0):
   - Each recorded line is already a **submitted** Purchase Receipt posting Dr
     `1410 - Stock In Hand - SF` / Cr `2210 - Stock Received But Not Billed - SF` at quantity ×
     the price before tax (a non-stock line posts nothing). QuickBooks holds the same purchase as a

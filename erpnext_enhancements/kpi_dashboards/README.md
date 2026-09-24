@@ -104,7 +104,7 @@ Measured on 2026-09-24: 206 Home Depot and Lowe's card transactions in 12 months
 returns), $16.3k, and almost none since July 7 on the Amex card that carried 168 of them. That
 gap is uncategorized QuickBooks data, not an improvement, until bookkeeping says otherwise.
 
-**Since v1.535.0 a trip is counted once, whichever records it** (`metrics.combine_store_runs`,
+**Since v1.536.0 a trip is counted once, whichever records it** (`metrics.combine_store_runs`,
 pure and tested bench-free). The Stock Scan page records a run the same day as Purchase Receipts
 carrying a run id (`custom_store_run`) and the receipt total; the card charge arrives in QuickBooks
 about four weeks later. *Charges* are the money records — QuickBooks card purchases, standalone

@@ -1191,7 +1191,7 @@ erpnext_enhancements.patches.seed_naming_digest_recipient
 # on the format: name; a row that exists (seeded or set on purpose) is never touched. Each row commits
 # alone; cannot raise, safe twice.
 erpnext_enhancements.patches.seed_inventory_kpi_targets
-# v1.535.0: "Bought on a store run" on the Stock Scan page. Creates three Purchase Receipt fields with
+# v1.536.0: "Bought on a store run" on the Stock Scan page. Creates three Purchase Receipt fields with
 # create_custom_fields (is_system_generated, not fixtures): custom_store_run (the run id every receipt of one
 # trip carries; no_copy, indexed), custom_receipt_photo (Attach Image, so Frappe's attach_files_to_document
 # links the upload) and custom_receipt_total (the paper receipt's total with tax). Also in after_install, since

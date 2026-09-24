@@ -34,7 +34,7 @@ bench-free CI cannot otherwise see:
    whose buttons open the two pages with the query key the page understands; the log's
    ``client_ref`` unique and the log unwritable by hand; every new setting's default mirrored in
    ``DEFAULTS`` and backfilled onto the existing Single (a new field's default never reaches it).
-8. **Store runs** (v1.535.0): ``_store_run_receipt`` is the one Purchase Receipt builder, with
+8. **Store runs** (v1.536.0): ``_store_run_receipt`` is the one Purchase Receipt builder, with
    the price as both rate and price-list rate, the stock unit, no project and no tax; the quick
    Item is created as the user, through the naming guard; the receipt photo must be the
    caller's own unclaimed upload or already on the run; the three receipt fields the code
@@ -110,7 +110,7 @@ CONTRACT = {
 	),
 	"UNDO": ("undo", {"log"}, set()),
 	"RECENT": ("get_recent", set(), set()),
-	# "Bought on a store run" (v1.535.0).
+	# "Bought on a store run" (v1.536.0).
 	"STORE_RUN": (
 		"store_run",
 		{"run", "supplier", "warehouse", "qty", "rate", "reason", "receipt_photo", "client_ref"},
@@ -123,7 +123,7 @@ CONTRACT = {
 			"receipt_number",
 			"receipt_total",
 			"scanned_code",
-			# The page's own day (v1.535.0 review): a page left open overnight is told to reload.
+			# The page's own day (v1.536.0 review): a page left open overnight is told to reload.
 			"page_today",
 		},
 	),
@@ -1134,7 +1134,7 @@ class TestPayloadShapes(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Store runs (v1.535.0): the receipt, the photo, the quick Item, the KPI's read
+# Store runs (v1.536.0): the receipt, the photo, the quick Item, the KPI's read
 # ---------------------------------------------------------------------------
 
 
@@ -1221,7 +1221,7 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 		"""The store-run sheet's *Receive on PO-…* posts ``add`` with ``purchase_order_item``, and at
 		the store-run vendors every PO line on production is for a non-stock item: that branch is
 		checked with the store-run item rule (non-stock allowed). Every other path of ``add``, and
-		``take`` and ``move_here``, keeps ``_stock_item``'s refusal (v1.535.0 review)."""
+		``take`` and ``move_here``, keeps ``_stock_item``'s refusal (v1.536.0 review)."""
 		add = ast.unparse(self.fn("add"))
 		self.assertIn("receive = bool(cstr(purchase_order_item).strip())", add)
 		self.assertIn("item = _store_run_item(item_code) if receive else _stock_item(item_code)", add)
@@ -1300,7 +1300,7 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 		self.assertIn("metrics.combine_store_runs(", ast.unparse(_functions(SNAPSHOTS)["_store_runs"]))
 
 	def test_the_kpi_counts_journal_credits_and_never_payments(self):
-		"""A payment is never a store run (v1.535.0 review): Journal Entry lines go through
+		"""A payment is never a store run (v1.536.0 review): Journal Entry lines go through
 		``metrics.journal_store_charges`` (credits only, tested in test_kpi_metrics), and no
 		Payment Entry is read at all -- an unallocated one next to its bill counted the trip twice."""
 		rows = _body_after_docstring(_functions(SNAPSHOTS)["_store_run_rows"])
@@ -1363,7 +1363,7 @@ class _Refused(Exception):
 
 
 class TestTheRunHeader(unittest.TestCase):
-	"""A store run's header is its **first Posted line** (v1.535.0 review), executed.
+	"""A store run's header is its **first Posted line** (v1.536.0 review), executed.
 
 	``_run_head``, ``_same_run`` and ``_run_summary`` are compiled out of ``api/stock_scan.py`` and
 	run against an in-memory Stock Scan Log behind a fake ``frappe`` that lives only in this
@@ -1836,7 +1836,7 @@ class TestReportAProblem(unittest.TestCase):
 		"openLocation",
 		"resolve",
 		"onWedgeKey",
-		# "Bought on a store run" (v1.535.0): the run sheet, the quick-item door, the run bar's
+		# "Bought on a store run" (v1.536.0): the run sheet, the quick-item door, the run bar's
 		# Finish, and "take them to the job now?".
 		"openStoreRun",
 		"openQuickItem",

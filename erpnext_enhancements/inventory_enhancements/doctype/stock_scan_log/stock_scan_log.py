@@ -12,7 +12,7 @@ three things the voucher cannot:
 * **Undo.** The page lists the caller's recent rows and cancels the voucher behind one.
 * **The review queue.** Stock added without a purchase order sets ``needs_review``; a
   Stock Manager ticks ``reviewed`` once they know where it came from. A store-run line
-  (v1.535.0) is reviewed by Purchasing, and never by the person who recorded it.
+  (v1.536.0) is reviewed by Purchasing, and never by the person who recorded it.
 * **Idempotency.** ``client_ref`` is unique, so a save retried after a dropped connection
   cannot post twice (see ``api.stock_scan``).
 

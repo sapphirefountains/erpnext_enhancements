@@ -253,7 +253,7 @@ class TestWords(unittest.TestCase):
 
 
 class TestStoreRuns(unittest.TestCase):
-	""""Bought on a store run" (v1.535.0, POL-0602 §4.7-4.8): the pure half of ``store_run``."""
+	""""Bought on a store run" (v1.536.0, POL-0602 §4.7-4.8): the pure half of ``store_run``."""
 
 	def log_field(self, fieldname):
 		import json

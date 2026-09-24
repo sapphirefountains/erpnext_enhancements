@@ -20,7 +20,7 @@ What a Save posts, by what the person did:
 * **Move** (put-away) → a submitted **Stock Entry, Material Transfer** from wherever the
   stock is recorded into the scanned location. On the day this shipped every bin on
   production was empty and all stock sat in ``Stores - SF``, so this is how the bins fill.
-* **Store Run** (+, "Bought on a store run", v1.535.0) → a submitted **Purchase Receipt**
+* **Store Run** (+, "Bought on a store run", v1.536.0) → a submitted **Purchase Receipt**
   with no purchase order, one per line, from a Supplier ticked *Store-Run Vendor*, at the
   price on the paper receipt, flagged ``needs_review`` for Purchasing. Every receipt of one
   trip carries the same run id (``custom_store_run``), the receipt photo and the receipt's
@@ -934,7 +934,7 @@ def _checked_qty(value, item):
 
 
 # ---------------------------------------------------------------------------
-# Store runs: "Bought on a store run" (v1.535.0, POL-0602 §4.7-4.8)
+# Store runs: "Bought on a store run" (v1.536.0, POL-0602 §4.7-4.8)
 # ---------------------------------------------------------------------------
 
 
@@ -995,7 +995,7 @@ def _run_head(run, posted_only=True):
 	"""A run's header: its first **Posted** line -- the store, the day bought, the receipt total
 	and number, and the receipt photo, which every later line of the run takes from it.
 
-	Undone lines do not count (v1.535.0 review). Undoing a run's first line frees its header,
+	Undone lines do not count (v1.536.0 review). Undoing a run's first line frees its header,
 	and a run whose every line is undone has no header at all, so its next line starts it again
 	with a header of its own: that is how a mistyped receipt total is corrected, since the
 	receipts that carry it are submitted and the log is immutable. ``posted_only=False`` gives
@@ -1659,7 +1659,7 @@ def _log_row(doc, names=None, settings=None):
 		"reviewed": cint(doc.get("reviewed")),
 		"can_undo": refusal is None,
 		"undo_refusal": refusal,
-		# Store runs (v1.535.0); None / 0 on every other action.
+		# Store runs (v1.536.0); None / 0 on every other action.
 		"supplier": doc.get("supplier"),
 		"rate": flt(doc.get("rate")) or None,
 		"receipt_total": flt(doc.get("receipt_total")) or None,

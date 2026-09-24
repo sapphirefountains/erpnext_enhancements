@@ -416,6 +416,23 @@ def ee_pill(label, tone="info"):
 	return pill(label, tone)
 
 
+# `ee_h` and `ee_p` were called by four enabled Notification bodies from v1.331.0 --
+# "Maintenance Finalized" and "Maintenance Contract Renewal Due" (ee_p), "High Escalation
+# Risk Call" and "Compliance Flag on Call" (ee_h) -- but never defined. Calling an undefined
+# Jinja global raises, and Notification.send() catches it, writes an Error Log and sends
+# nothing, so each of those emails would have been dropped the first time it fired (none
+# had yet, 2026-09-24). test_email_design now fails the build on any `ee_*` a fixture calls
+# that hooks.py does not register.
+
+
+def ee_h(text):
+	return h(text)
+
+
+def ee_p(text):
+	return p(text)
+
+
 def ee_email_logo_url():
 	""":func:`logo_url` under a prefixed name.
 
