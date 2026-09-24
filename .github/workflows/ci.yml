@@ -2313,7 +2313,7 @@ jobs:
           node scripts/test_capture_panel.js
           node scripts/test_capture_annotate.js
           node scripts/test_capture_drafts.js
-      # Browser Back/Forward on the Desk wizards and training pages (v1.535.1). Each harness runs
+      # Browser Back/Forward on the Desk wizards and training pages (v1.535.2). Each harness runs
       # the real page against a port of v16's router and a fake browser history: Back steps back
       # a section/step/lesson, Forward restores it, Back from the first screen leaves the page,
       # and a save pending when the screen changes is neither lost nor sent for the wrong record.
