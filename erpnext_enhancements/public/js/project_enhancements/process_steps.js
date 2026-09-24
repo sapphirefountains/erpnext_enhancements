@@ -209,6 +209,8 @@
 									indicator: result.invited ? "green" : "orange",
 								});
 								frm.reload_doc();
+								// The dialog reads `not_invited` off this.
+								return result;
 							});
 					},
 				});

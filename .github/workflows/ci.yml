@@ -208,6 +208,7 @@ jobs:
           erpnext_enhancements.tests.test_assistant_tools_schema
           erpnext_enhancements.tests.test_ai_gate_unit
           erpnext_enhancements.tests.test_ai_gate_per_call
+          erpnext_enhancements.tests.test_ai_gate_precheck
           erpnext_enhancements.tests.test_ai_gate_sealed_arguments
           erpnext_enhancements.tests.test_ai_gate_switch_on
           erpnext_enhancements.tests.test_integrations_health

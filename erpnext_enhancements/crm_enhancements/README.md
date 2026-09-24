@@ -150,8 +150,10 @@ email wins, else the holders of a Role; Sales additionally picks up the deal own
 configuration, so changing who attends is never a deploy. That resolution is only the
 *prefill*: the dialog's three attendee fields are `MultiSelect`, autocompleting over
 `attendee_options` (every desk user plus every configured address) while still accepting
-anything typed, so a one-off attendee needs no configuration change. Typed text that is not an
-email address is flagged before booking, because `_dedupe()` on the server drops it silently. Note `Event
+anything typed, so a one-off attendee needs no configuration change. `_dedupe()` on the server
+drops anything that is not an email address, so the dialog flags what the browser's regex can
+before booking, and both schedule endpoints return the rest as `not_invited`, which the dialog
+shows after booking. Note `Event
 Participants` marks both reference fields `reqd`, so a group address like `production@`
 cannot be a participant row at all; those attendees get the invite email, which is the part
 that matters.

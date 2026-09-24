@@ -249,14 +249,25 @@ class TestNotifyRecipients(FrappeTestCase):
 			enqueue.assert_not_called()
 
 
+REQUESTER = "requester@example.com"
+
+
 class TestCreationStatusRecipients(FrappeTestCase):
 	"""Who hears how the background creation went."""
+
+	def setUp(self):
+		# A requester who is not Administrator, and the real set_user. The job runs
+		# as Administrator and switches back in a ``finally``; FrappeTestCase's own
+		# user IS Administrator, so only a distinct requester shows the status went
+		# to the restored identity rather than the elevated one. (set_user does not
+		# check that the user exists.)
+		frappe.set_user(REQUESTER)
+		self.addCleanup(frappe.set_user, "Administrator")
 
 	def _run_failing_job(self, users):
 		# get_doc raising sends the job straight to its generic failure path, which
 		# is all this needs: the notification block runs the same for every outcome.
 		with (
-			patch.object(frappe, "set_user"),
 			patch.object(frappe, "get_doc", side_effect=RuntimeError("boom")),
 			patch.object(frappe, "log_error"),
 			patch.object(frappe, "publish_realtime") as publish,
@@ -267,9 +278,10 @@ class TestCreationStatusRecipients(FrappeTestCase):
 
 	def test_requester_hears_back_when_only_inboxes_are_listed(self):
 		recipients, sendmail = self._run_failing_job(INBOXES)
-		self.assertEqual(recipients, [*INBOXES, frappe.session.user])
+		self.assertEqual(recipients, [*INBOXES, REQUESTER])
+		self.assertNotIn("Administrator", recipients)
 		sendmail.assert_not_called()  # no project, so no email
 
 	def test_listed_requester_is_not_told_twice(self):
-		recipients, _ = self._run_failing_job([frappe.session.user, *INBOXES])
-		self.assertEqual(recipients.count(frappe.session.user), 1)
+		recipients, _ = self._run_failing_job([REQUESTER, *INBOXES])
+		self.assertEqual(recipients.count(REQUESTER), 1)

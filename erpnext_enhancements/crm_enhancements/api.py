@@ -75,8 +75,11 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		frappe.throw("Please select at least one user to notify.")
 
 	# The dialog's field takes free text since v1.529.0 (its default is group
-	# inboxes, which are not Users), so a typo can now get this far. Refused here
-	# rather than left to become a dead Email Queue row after the project exists.
+	# inboxes, which are not Users), so a typo can get this far. frappe.sendmail
+	# would refuse it too, but only after the project exists, as an "Invalid email
+	# address" Error Log, and that recipient simply gets nothing. Refused here while
+	# it can still be fixed. This is the authority: the dialog's own check uses
+	# the looser browser regex, so a few odd shapes are only caught here.
 	invalid = [user for user in users if not frappe.utils.validate_email_address(user)]
 	if invalid:
 		frappe.throw(f"Not a valid email address: {frappe.utils.escape_html(', '.join(invalid))}")
@@ -222,6 +225,12 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	"""
 	project_doc = None
 	blocked_reason = None
+	# Initialised here, not where the Drive block first assigns them: project_doc is
+	# set before that block, so a failure in between (opp.save, the commit, the
+	# alert enqueue) reached the broadcast with these unbound, and the
+	# UnboundLocalError killed the job before anyone heard the project existed.
+	drive_success = False
+	drive_error_details = None
 	try:
 		original_user = frappe.session.user
 		try:
@@ -513,11 +522,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		if drive_error_details:
 			message_payload["drive_error"] = str(drive_error_details)
 
-	# The requester always gets the realtime status, listed or not. Since v1.529.0
-	# the list defaults to group inboxes, which are not Users and have no desk
-	# session to receive it — so without this the person who clicked Create
+	# Whenever a status goes out, the requester gets it too, listed or not. Since
+	# v1.529.0 the list defaults to group inboxes, which are not Users and have no
+	# desk session to receive it — so without this the person who clicked Create
 	# Project would hear nothing back, the hand-off gate's refusal included. The
-	# session is theirs again here: the ``finally`` above restored it.
+	# session is theirs again here: the ``finally`` above restored it. (The one
+	# path that sends nothing is the early return for an opportunity that already
+	# has a project — a second job queued before the first finished.)
 	realtime_to = list(dict.fromkeys([*users, frappe.session.user]))
 	for user in realtime_to:
 		frappe.publish_realtime(

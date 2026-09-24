@@ -36,7 +36,9 @@
   "min_photos_per_interval",
   "column_break_photo",
   "allow_photo_skip",
-  "require_skip_reason"
+  "require_skip_reason",
+  "navigation_section",
+  "disable_browser_back"
  ],
  "fields": [
   {
@@ -242,6 +244,18 @@
    "label": "Skip Reason is Mandatory"
   },
   {
+   "fieldname": "navigation_section",
+   "fieldtype": "Section Break",
+   "label": "Phone Navigation"
+  },
+  {
+   "default": "0",
+   "description": "Leave unticked. Tick it only if the kiosk misbehaves on a phone's Back button (for example, iPhones asking for location or camera permission again): it turns off Back and Forward between kiosk tabs and sheets and in the Report a problem form, so Back leaves the kiosk as it did before v1.534.0. Takes effect the next time the kiosk is opened.",
+   "fieldname": "disable_browser_back",
+   "fieldtype": "Check",
+   "label": "Turn Off Browser Back in the Kiosk"
+  },
+  {
    "fieldname": "default_time_category",
    "fieldtype": "Link",
    "label": "Default Time Category",
@@ -251,7 +265,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-17 10:00:00.000000",
+ "modified": "2026-09-24 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Time Kiosk Settings",

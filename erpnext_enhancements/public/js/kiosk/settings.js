@@ -75,7 +75,9 @@
 
     // Help (WI-079 slice 2). The capture widget's kiosk entry point: no floating button here,
     // the clock screen has no room for one. Hidden when the capture code is not on the page
-    // (an offline cold start, since its bundle is not precached).
+    // (an offline cold start, since its bundle is not precached). The panel pushes its own
+    // history entry and answers Back itself; the kiosk's history layer stands aside while
+    // ee_capture.isOpen() (ui.js, "History").
     if (window.ee_capture && typeof window.ee_capture.open === 'function') {
       container.appendChild(h('div', { class: 'tk-card' }, [
         h('p', { class: 'tk-card-title', text: 'Help' }),

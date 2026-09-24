@@ -41,6 +41,9 @@ def get_context(context):
 	  contains ``maps`` (API key and Map IDs).
 	* ``csrf_token`` -- the same CSRF token, injected as ``window.KIOSK_CSRF`` and
 	  forwarded to the service worker so it can authenticate batch uploads.
+	* ``capture_history`` -- False when Time Kiosk Settings' "Turn Off Browser
+	  Back in the Kiosk" is ticked; handed to the report panel as
+	  ``EE_CAPTURE.history`` so it pushes no history entry either.
 	* ``deploy_version`` -- the per-deploy cache-bust token (see
 	  :func:`get_deploy_version`), appended as ``?v=`` to the shell's asset
 	  URLs and injected as ``window.KIOSK_BUILD`` for the service-worker
@@ -58,6 +61,8 @@ def get_context(context):
 	context.no_cache = 1
 	context.boot_json = frappe.as_json(boot)
 	context.csrf_token = boot.get("csrf_token") or ""
+	# Time Kiosk Settings.disable_browser_back also keeps the report panel out of the history.
+	context.capture_history = not frappe.utils.cint((boot.get("settings") or {}).get("disable_browser_back"))
 	context.deploy_version = get_deploy_version()
 	return context
 

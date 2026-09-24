@@ -686,6 +686,52 @@ class TestAttendeeResolution(unittest.TestCase):
 		self.assertEqual(handoff.resolve_attendees(_opportunity())["Billing"], ["billing@sf.com"])
 
 
+class TestNotInvited(unittest.TestCase):
+	"""An attendee the server drops must come back to the dialog, not vanish.
+
+	The dialog's pre-submit check is the browser's email regex, which accepts a few
+	shapes ``validate_email_address`` rejects, so ``_dedupe()`` could still leave
+	someone off the invite while the alert said it was sent.
+	"""
+
+	def setUp(self):
+		_reset()
+
+	def test_reports_only_what_dedupe_drops(self):
+		raw = "a@sf.com, not-an-address, , A@sf.com,\nalso bad"
+		self.assertEqual(handoff._not_invited(raw), ["not-an-address", "also bad"])
+		self.assertEqual(handoff._parse_attendees(raw), ["a@sf.com"])
+
+	def test_accepts_every_shape_parse_attendees_does(self):
+		self.assertEqual(handoff._not_invited(["ok@sf.com", "nope"]), ["nope"])
+		self.assertEqual(handoff._not_invited('["ok@sf.com", "nope"]'), ["nope"])
+		self.assertEqual(handoff._not_invited({"Sales": ["ok@sf.com", "nope"], "Billing": None}), ["nope"])
+		self.assertEqual(handoff._not_invited(None), [])
+
+	def _book(self, endpoint, name, attendees):
+		from unittest import mock
+
+		with (
+			mock.patch.object(handoff, "_create_event", return_value=types.SimpleNamespace(name="EV-1")),
+			mock.patch.object(handoff, "_send_invite", return_value=True),
+		):
+			return endpoint(name, starts_on="2026-08-07 10:00:00", attendees=attendees)
+
+	def test_handoff_meeting_returns_not_invited(self):
+		result = self._book(handoff.schedule_handoff_meeting, _opportunity(), "ok@sf.com, typo")
+		self.assertEqual(result["attendees"], ["ok@sf.com"])
+		self.assertEqual(result["not_invited"], ["typo"])
+
+	def test_launch_meeting_returns_not_invited(self):
+		result = self._book(handoff.schedule_project_meeting, _project(), ["ok@sf.com", "typo"])
+		self.assertEqual(result["attendees"], ["ok@sf.com"])
+		self.assertEqual(result["not_invited"], ["typo"])
+
+	def test_nothing_dropped_means_an_empty_list(self):
+		result = self._book(handoff.schedule_handoff_meeting, _opportunity(), "ok@sf.com")
+		self.assertEqual(result["not_invited"], [])
+
+
 # ---------------------------------------------------------------------------
 # Step-4 billing routing and invoice terms
 # ---------------------------------------------------------------------------

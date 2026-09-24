@@ -27,9 +27,26 @@
  * session on a shared tablet. Each report carries its own id, so a draft of a report whose
  * response was lost, but which did arrive, is not filed twice.
  *
+ * **Back closes the panel, on the web and the kiosk.** On a phone the panel fills the screen,
+ * so Back is how people expect to close it. Without an entry of its own, Back left the page
+ * and took the typed report with it, without asking "Discard this report?". So the panel
+ * pushes one history entry, `{ee_capture: <panel id>}` with no URL. A Back pops it and asks
+ * the same question the Close button asks. When the panel closes any other way, it removes the
+ * entry again. Pages with history of their own (the kiosk, Stock Scan) leave `popstate` alone
+ * while `ee_capture.isOpen()` is true. This is not done on the Desk, where frappe's router
+ * owns `popstate`, nor yet on /feedback, whose router re-renders on every `popstate` (see
+ * `wantsHistoryEntry`). See `takeHistoryEntry`.
+ *
+ * A closed panel's entry can stay behind. After a Back has closed the panel, a Forward steps
+ * onto the entry again. After a reload with the panel open, the page starts on it. The entry
+ * never reopens the panel, and it has the page's own address. Pages with history of their own
+ * re-stamp it as the screen they are showing. On a page without (/itinerary,
+ * /travel_guidelines), leaving it costs one Back that changes nothing on screen. Re-stamping
+ * would not save that Back: `replaceState` rewrites an entry but cannot remove it.
+ *
  * The pure pieces (payload, validation, error wording, snapshot fitting) are exported and
- * tested in plain node by `scripts/test_capture_panel.js`. Nothing touches `document` at
- * import time.
+ * tested in plain node by `scripts/test_capture_panel.js`, which also mounts the panel on a
+ * fake DOM to drive its history entry. Nothing touches `document` at import time.
  */
 
 import { call, upload, M } from "../feedback/transport.js";
@@ -66,6 +83,15 @@ const WHOAMI_TIMEOUT_MS = 15000;
 /** The `online` event fires when the interface comes up, a moment before requests succeed. */
 const ONLINE_SETTLE_MS = 1500;
 const SURFACES = ["desk", "web", "kiosk"];
+/**
+ * The key of the panel's own history entry, `{ee_capture: <panel id>}`. Pages with history of
+ * their own read any state that carries it as "not one of my screens".
+ */
+export const HISTORY_KEY = "ee_capture";
+/** The panel's own `history.back()` lands within milliseconds. After this long it stops waiting. */
+export const BACK_SETTLE_MS = 1500;
+/** Nobody reads and answers a confirm() this fast. A quicker `false` means it was never shown. */
+const CONFIRM_UNSHOWN_MS = 50;
 
 // ------------------------------------------------------------------ pure helpers
 
@@ -804,6 +830,12 @@ class CapturePanel {
 		this.id = ++sequence;
 		// Reused by every try of this report, so a retry after a lost response is not a second one.
 		this.clientId = newClientId();
+		// The id in the panel's history entry. Random rather than `id`, which restarts at 1 on a
+		// reload, while an entry pushed before the reload is still in the history.
+		this.historyId = newClientId();
+		this.historyWanted = wantsHistoryEntry(this.surface, window);
+		// True while the panel's entry is in the history and has not been popped.
+		this.historyArmed = false;
 		this.annotator = null;
 		this.busy = false;
 		this.closed = false;
@@ -830,6 +862,7 @@ class CapturePanel {
 		document.body.appendChild(this.root);
 		this.lockScroll();
 		this.bindEvents();
+		this.takeHistoryEntry();
 		this.syncType();
 		this.updateCounter();
 		try {
@@ -1165,6 +1198,10 @@ class CapturePanel {
 
 		on(window, "online", () => this.refreshDrafts());
 		on(window, "offline", () => this.refreshDrafts());
+
+		// Back while the panel is open. Removed on close with the rest, so a Forward onto the
+		// dead entry later reaches nothing here and cannot reopen the panel.
+		if (this.historyWanted) on(window, "popstate", (ev) => this.onPopState(ev));
 	}
 
 	onKeydown(ev) {
@@ -1561,18 +1598,25 @@ class CapturePanel {
 		if (document.body) document.body.style.overflow = body;
 	}
 
+	/**
+	 * Close, asking first when a typed report would be lost. Returns true when the panel closed
+	 * and false when the person chose to keep it. Returns null when the browser refused to
+	 * show the question: dialogs blocked for this page answer `false` at once.
+	 */
 	requestClose() {
-		if (this.closed) return;
+		if (this.closed) return true;
 		if (this.result.status === "canceled" && (this.busy || this.hasContent())) {
 			let ok = true;
+			const asked = Date.now();
 			try {
 				ok = window.confirm(this.busy ? "The report is still sending. Close anyway?" : "Discard this report?");
 			} catch (e) {
 				ok = true;
 			}
-			if (!ok) return;
+			if (!ok) return Date.now() - asked < CONFIRM_UNSHOWN_MS ? null : false;
 		}
 		this.close();
+		return true;
 	}
 
 	close() {
@@ -1601,7 +1645,72 @@ class CapturePanel {
 				// The element that opened the panel may no longer accept focus.
 			}
 		}
-		this.resolveClosed(this.result);
+		// `closed` waits until the panel's own Back has landed. A page that pushes a screen of
+		// its own when the report closes then pushes it after that Back, not under it.
+		const pending = this.releaseHistoryEntry();
+		if (pending) pending.after.push(() => this.resolveClosed(this.result));
+		else this.resolveClosed(this.result);
+	}
+
+	// ---- history: Back closes the panel
+
+	/**
+	 * Push the panel's own history entry, so that Back pops it instead of leaving the page. The
+	 * call passes no URL, so the address never changes. iOS asks for the camera again when it
+	 * does, and a web page's query string belongs to the page. If a previous panel's
+	 * cleanup Back is still on its way, the push waits for it. Otherwise that Back would take
+	 * this entry instead.
+	 */
+	takeHistoryEntry() {
+		if (!this.historyWanted || this.historyArmed || this.closed) return;
+		if (pendingBack) {
+			pendingBack.after.push(() => this.takeHistoryEntry());
+			return;
+		}
+		try {
+			window.history.pushState({ [HISTORY_KEY]: this.historyId }, "");
+			this.historyArmed = true;
+		} catch (e) {
+			// A sandboxed frame may refuse. The panel still works, but Back does not close it.
+			safeWarn(e);
+		}
+	}
+
+	/** Back, or any other traversal, while the panel is open. */
+	onPopState(ev) {
+		if (this.closed || !this.historyArmed || ev === cleanupEvent) return;
+		const state = ev && ev.state;
+		// Back onto the panel's own entry, after the page pushed one over it: still on top.
+		if (state && state[HISTORY_KEY] === this.historyId) return;
+		// The browser has already left the entry, so closing has nothing to remove.
+		this.historyArmed = false;
+		// Asked as the Close button asks. If the person stays, the entry goes back, so the next
+		// Back asks again. A question the browser never showed does not re-arm it. Otherwise,
+		// with dialogs blocked, Back could never leave the page.
+		if (this.requestClose() === false) this.takeHistoryEntry();
+	}
+
+	/**
+	 * Remove the panel's entry when it closes any way but Back: ×, Cancel, Escape, Done or
+	 * `handle.close()`. Otherwise the next Back lands on the entry and appears to do nothing.
+	 * Only while the entry is still the current one. If the page has moved on, a Back now would
+	 * undo the page's own step. At most once per panel. Returns the wait for that Back, if any.
+	 */
+	releaseHistoryEntry() {
+		if (!this.historyArmed) return null;
+		this.historyArmed = false;
+		let pending = null;
+		try {
+			const state = window.history.state;
+			if (!state || state[HISTORY_KEY] !== this.historyId) return null;
+			pending = awaitCleanupBack(this.historyId);
+			window.history.back();
+			return pending;
+		} catch (e) {
+			safeWarn(e);
+			settleBack(pending);
+			return null;
+		}
 	}
 
 	focus() {
@@ -1609,6 +1718,99 @@ class CapturePanel {
 			this.dialog.focus({ preventScroll: true });
 		} catch (e) {
 			// Courtesy.
+		}
+	}
+}
+
+// ------------------------------------------------------------------ Back closes the panel
+
+/**
+ * Whether the panel takes a history entry of its own (see `takeHistoryEntry`).
+ *
+ * Not on the Desk. frappe's router re-routes on every `popstate`, so the panel's own Back would
+ * re-render the form underneath. A Desk tab also has a mouse and a Close button.
+ *
+ * Not on /feedback yet. Its SPA router re-renders the current view on every `popstate`
+ * (`feedback/app.js`, `mount`), so each close would clear a half-written request under the
+ * panel. There, Back with the panel open still moves the page underneath, as it always has.
+ * Remove this exception once that router ignores `popstate` while `ee_capture.isOpen()` is
+ * true, and keeps its view on a state that carries `ee_capture`, as the kiosk and Stock Scan
+ * do. Then flip the "/feedback" checks in `scripts/test_capture_panel.js`.
+ *
+ * Not where the template says `EE_CAPTURE.history: false`. /stock-scan and /kiosk set it from
+ * their settings' "Turn Off Browser Back" box, the off switch in case an iPhone re-prompts for
+ * the camera or location after a history entry, so one box turns off the page's entries and
+ * this one together.
+ */
+export function wantsHistoryEntry(surface, win) {
+	if (surface === "desk") return false;
+	try {
+		if (!win || !win.history || typeof win.history.pushState !== "function") return false;
+		if (win.EE_CAPTURE && win.EE_CAPTURE.history === false) return false;
+		return !win.EE_FEEDBACK_BOOT;
+	} catch (e) {
+		return false;
+	}
+}
+
+/** The panel's own `history.back()` in flight: `{id, after, timer, listener, forwarded}`. */
+let pendingBack = null;
+/** The popstate that the panel's own Back caused. A panel opened meanwhile must not read it as a Back. */
+let cleanupEvent = null;
+
+/**
+ * True while the panel is open. Also true until the `popstate` from its own closing
+ * `history.back()` has been delivered. Pages with history of their own do nothing while this
+ * is true. They therefore never read the panel's entry, going or coming, as a Back of their own.
+ */
+export function isPanelOpen() {
+	return !!((active && !active.closed) || pendingBack);
+}
+
+/**
+ * Wait for the `popstate` of the `history.back()` the caller is about to make. `after`
+ * callbacks run once it has arrived, or after BACK_SETTLE_MS if it never does. They are the
+ * panel's `closed`, and the entry of a panel opened in the meantime.
+ */
+function awaitCleanupBack(id) {
+	settleBack(pendingBack);
+	const pending = { id, after: [], timer: null, listener: null, forwarded: false };
+	pending.listener = (ev) => {
+		cleanupEvent = ev;
+		const state = ev && ev.state;
+		if (!pending.forwarded && state && state[HISTORY_KEY] === id) {
+			// The page added an entry between back() and the traversal, so the Back landed on the
+			// panel's dead entry instead of the page's. Step forward to where the page is, once.
+			pending.forwarded = true;
+			try {
+				window.history.forward();
+				return;
+			} catch (e) {
+				// Settle where it is.
+			}
+		}
+		settleBack(pending);
+	};
+	pending.timer = setTimeout(() => settleBack(pending), BACK_SETTLE_MS);
+	window.addEventListener("popstate", pending.listener);
+	pendingBack = pending;
+	return pending;
+}
+
+function settleBack(pending) {
+	if (!pending || pendingBack !== pending) return;
+	pendingBack = null;
+	clearTimeout(pending.timer);
+	try {
+		window.removeEventListener("popstate", pending.listener);
+	} catch (e) {
+		// Gone with the page.
+	}
+	for (const fn of pending.after.splice(0)) {
+		try {
+			fn();
+		} catch (e) {
+			safeWarn(e);
 		}
 	}
 }
@@ -1718,8 +1920,10 @@ function showDraftsToast(n) {
  * `opts.surface` is "desk", "web" or "kiosk" (kiosk: larger touch targets, no links out).
  *
  * Resolves once the panel is on screen with `{close(), closed, surface}`; `closed` resolves
- * with `{status: "sent" | "saved" | "canceled", name}` when it is dismissed. A second call
- * while it is open brings the open one forward rather than stacking another.
+ * with `{status: "sent" | "saved" | "canceled", name}` when it is dismissed. On the web and
+ * the kiosk, that happens after the panel's history entry is gone. A second call while it is
+ * open brings the open one forward rather than stacking another. `isPanelOpen()` reports
+ * whether one is open.
  */
 export function openPanel(snapshot, opts) {
 	try {

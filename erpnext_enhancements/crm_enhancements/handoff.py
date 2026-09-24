@@ -393,7 +393,13 @@ def schedule_project_meeting(project, starts_on=None, attendees=None, duration_m
 			frappe.utils.format_datetime(start), ", ".join(addresses)
 		),
 	)
-	return {"event": event.name, "starts_on": str(start), "attendees": addresses, "invited": sent}
+	return {
+		"event": event.name,
+		"starts_on": str(start),
+		"attendees": addresses,
+		"invited": sent,
+		"not_invited": _not_invited(attendees),
+	}
 
 
 @frappe.whitelist()
@@ -807,10 +813,16 @@ def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, durati
 			frappe.utils.format_datetime(start), ", ".join(addresses)
 		),
 	)
-	return {"event": event.name, "starts_on": str(start), "attendees": addresses, "invited": sent}
+	return {
+		"event": event.name,
+		"starts_on": str(start),
+		"attendees": addresses,
+		"invited": sent,
+		"not_invited": _not_invited(attendees),
+	}
 
 
-def _parse_attendees(attendees):
+def _attendee_entries(attendees):
 	"""Accept a list, a JSON array, or a comma/newline-separated string."""
 	if not attendees:
 		return []
@@ -821,7 +833,33 @@ def _parse_attendees(attendees):
 			attendees = attendees.replace("\n", ",").split(",")
 	if isinstance(attendees, dict):
 		attendees = [a for value in attendees.values() for a in (value or [])]
-	return _dedupe(list(attendees))
+	return list(attendees)
+
+
+def _parse_attendees(attendees):
+	"""The valid, de-duplicated addresses in ``attendees``."""
+	return _dedupe(_attendee_entries(attendees))
+
+
+def _not_invited(attendees):
+	"""Entries in ``attendees`` that :func:`_dedupe` drops for not being an address.
+
+	Returned by both schedule endpoints so the dialog can say who was left off.
+	The dialog checks addresses before submit, but with the browser's regex, which
+	is looser than ``validate_email_address`` (an accented or quoted local part, an
+	IP literal, a hyphen at the edge of a domain label), so without this a few
+	shapes still vanished from the invite while the alert said it was sent.
+	"""
+	rejected = []
+	for entry in _attendee_entries(attendees):
+		entry = (entry or "").strip()
+		if not entry:
+			continue
+		try:
+			validate_email_address(entry, throw=True)
+		except Exception:
+			rejected.append(entry)
+	return rejected
 
 
 # ---------------------------------------------------------------------------

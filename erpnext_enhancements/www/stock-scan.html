@@ -3,13 +3,16 @@
 
   Every warehouse QR label (/warehouse-labels) encodes <site>/stock-scan?w=<warehouse>, so a
   phone's own camera app opens this page on that location. From there the page scans the next
-  label itself (public/js/stock_scan/scanner.js), and it never changes its own URL afterwards:
-  iOS asks for camera permission again whenever the URL changes.
+  label itself (public/js/stock_scan/scanner.js), and it never changes its URL afterwards; its
+  browser history entries carry none (nav.js): iOS asks for camera permission again whenever
+  the URL changes.
 
   This template's jobs, and only these:
 
     * set the stored theme on <html> BEFORE the stylesheet is parsed, so the first paint is
       in the right palette (the three-way system / light / dark switch, as on the kiosk);
+    * load the capture recorder (capture.bundle.js, "Report a problem") FIRST in the script
+      block, so it sees errors from the page's own bundle;
     * load stock_scan.bundle.css and stock_scan.bundle.js — BUNDLES, resolved through
       assets.json to content-hashed files. A raw /assets path is cached for a year with no
       content hash, so an edit would never reach a phone that already has it. The QR decoder
@@ -64,6 +67,15 @@
 {% endblock %}
 
 {% block script %}
+{# Capture widget (WI-079 slice 2). On its allowlist since classification: login-required, and
+   stock_scan.py sends a guest to log in and refuses anyone without a stock role. The recorder
+   goes first so it sees errors from the page's own bundle. launcher: false, because the
+   floating button would sit on Scan; the page draws its own "Report a problem" in the header
+   (public/js/stock_scan/app.js). Never in web_include_js. #}
+<script>
+	window.EE_CAPTURE = {surface: "web", launcher: false, history: {{ (boot.settings.browser_history != 0) | tojson }}, build: {{ deploy_version | tojson }}, user: {{ frappe.session.user | tojson }}, csrf_token: {{ (csrf_token or "") | tojson }}, panel_url: {{ bundled_asset('capture_panel.bundle.js') | tojson }}};
+</script>
+<script src="{{ bundled_asset('capture.bundle.js') }}"></script>
 <script>
 	window.EE_STOCK_SCAN_BOOT = {{ boot | tojson }};
 </script>
