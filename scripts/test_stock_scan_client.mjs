@@ -3,10 +3,10 @@
  * The Stock Scan page's pure client logic, executed — not grepped.
  *
  * `/stock-scan` is a phone page that posts submitted stock vouchers, one tap per save. The
- * decisions it makes before it asks the server anything live in two plain ES modules with no
- * DOM, `public/js/stock_scan/logic.js` and `public/js/stock_scan/transport.js`, and this runs
- * them directly. Plain node, no runner and no npm install, the shape of the repo's other JS
- * guards (`scripts/test_marketing_client.js`).
+ * decisions it makes before it asks the server anything live in plain ES modules with no DOM,
+ * `public/js/stock_scan/logic.js`, `transport.js` and `nav.js`, and this runs them directly.
+ * Plain node, no runner and no npm install, the shape of the repo's other JS guards
+ * (`scripts/test_marketing_client.js`).
  *
  * The assertions worth the most:
  *
@@ -35,6 +35,24 @@
  *   - **A dropped connection is retryable, a refusal is not.** `call()` over a stubbed `fetch`:
  *     a network error or a timeout is `StockScanCallError` with status 0 and `retryable`, a 417
  *     is not, and the CSRF token is read from the boot when the call is made, not at import.
+ *   - **Back and Forward never change the URL.** `nav.js` runs against a fake session history
+ *     that REFUSES any `pushState`/`replaceState` without exactly `(state, "")` — a URL change is
+ *     a camera prompt per shelf on an iPhone. Over it: the first screen is a replace (Back from
+ *     it leaves the page), a sheet is one marker that Back closes and × steps back off once, a
+ *     screen reached from a sheet takes the marker's entry, an entry the page did not write
+ *     (the report form's, an earlier load's) is re-stamped rather than restored, the report
+ *     form opens only once nothing of ours is in flight, and `back()` is never called onto an
+ *     entry that is not ours.
+ *   - **"Report a problem" shows only where it can work.** `reportAvailable` wants the recorder
+ *     and the `system_user=yes` cookie, the same test as the floating launcher's.
+ *   - **Nothing opens or moves under the report form.** The real `app.js`, mounted on a small
+ *     fake DOM with a fake recorder whose form arrives only when told (a slow first download):
+ *     tapped, every door — Scan, Search, the job chip, a Recent row, Undo, a scanner gun, How
+ *     many?, Save, Move, the back link — does nothing until the form has closed; a form that
+ *     lands over a sheet anyway, or after Back un-wanted it, is closed again, not kept; a second
+ *     tap while the first is loading asks once; and keys aimed at the form never reach the
+ *     camera's code box or a sheet's Escape. Loaded last, after every pure module has proved it
+ *     imports without a window.
  *
  * Loads the modules by file URL. If one grows a DOM or `window` access at import time this
  * fails loudly (exit 2) rather than asserting nothing.
@@ -120,6 +138,545 @@ function withTimeout(promise, ms, label) {
 	return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
 }
 
+// ------------------------------------------------------------------ app.js on a fake DOM
+
+/**
+ * Just enough DOM to mount the real `StockScanApp` under node: elements nest, carry classes,
+ * attributes and listeners, take focus, and find their `.class` ancestor. Nothing is laid out.
+ * The one selector anything here asks `closest` for is a class.
+ */
+class FakeNode {
+	constructor(doc, tag, ns) {
+		this.ownerDocument = doc;
+		this.tagName = String(tag).toUpperCase();
+		this.namespaceURI = ns || null;
+		this.childNodes = [];
+		this.parentNode = null;
+		this.attrs = {};
+		this.style = {};
+		this.dataset = {};
+		this.listeners = {};
+		this.className = "";
+		this.id = "";
+		this.hidden = false;
+		this.disabled = false;
+		this.value = "";
+		this.data = "";
+		const names = () => String(this.className).split(/\s+/).filter(Boolean);
+		this.classList = {
+			add: (...list) => {
+				for (const name of list) if (!names().includes(name)) this.className = `${this.className} ${name}`.trim();
+			},
+			remove: (...list) => {
+				this.className = names()
+					.filter((c) => !list.includes(c))
+					.join(" ");
+			},
+			toggle: (name, on) => {
+				const want = on === undefined ? !names().includes(name) : !!on;
+				if (want) this.classList.add(name);
+				else this.classList.remove(name);
+				return want;
+			},
+			contains: (name) => names().includes(name),
+		};
+	}
+	get firstChild() {
+		return this.childNodes[0] || null;
+	}
+	get children() {
+		return this.childNodes.filter((n) => n.tagName !== "#TEXT");
+	}
+	get textContent() {
+		return this.data + this.childNodes.map((n) => n.textContent).join("");
+	}
+	set textContent(value) {
+		for (const n of this.childNodes) n.parentNode = null;
+		this.childNodes = [];
+		this.data = String(value);
+	}
+	get isConnected() {
+		let n = this;
+		while (n.parentNode) n = n.parentNode;
+		return n === this.ownerDocument.documentElement;
+	}
+	get offsetParent() {
+		return this.isConnected ? this.ownerDocument.body : null;
+	}
+	get offsetHeight() {
+		return 0;
+	}
+	get offsetWidth() {
+		return 0;
+	}
+	appendChild(node) {
+		if (node.parentNode) node.parentNode.removeChild(node);
+		node.parentNode = this;
+		this.childNodes.push(node);
+		return node;
+	}
+	insertBefore(node, ref) {
+		if (node.parentNode) node.parentNode.removeChild(node);
+		node.parentNode = this;
+		const i = this.childNodes.indexOf(ref);
+		if (i === -1) this.childNodes.push(node);
+		else this.childNodes.splice(i, 0, node);
+		return node;
+	}
+	removeChild(node) {
+		const i = this.childNodes.indexOf(node);
+		if (i !== -1) this.childNodes.splice(i, 1);
+		node.parentNode = null;
+		return node;
+	}
+	remove() {
+		if (this.parentNode) this.parentNode.removeChild(this);
+	}
+	contains(other) {
+		for (let n = other; n; n = n.parentNode) if (n === this) return true;
+		return false;
+	}
+	closest(selector) {
+		const cls = String(selector).startsWith(".") ? selector.slice(1) : null;
+		for (let n = this; n && n.classList; n = n.parentNode) if (cls && n.classList.contains(cls)) return n;
+		return null;
+	}
+	querySelector() {
+		return null;
+	}
+	querySelectorAll() {
+		return [];
+	}
+	setAttribute(name, value) {
+		this.attrs[name] = String(value);
+		if (name === "class") this.className = String(value);
+	}
+	getAttribute(name) {
+		return name in this.attrs ? this.attrs[name] : null;
+	}
+	hasAttribute(name) {
+		return name in this.attrs;
+	}
+	removeAttribute(name) {
+		delete this.attrs[name];
+	}
+	addEventListener(type, fn) {
+		(this.listeners[type] = this.listeners[type] || []).push(fn);
+	}
+	removeEventListener(type, fn) {
+		const list = this.listeners[type] || [];
+		const i = list.indexOf(fn);
+		if (i !== -1) list.splice(i, 1);
+	}
+	focus() {
+		this.ownerDocument.activeElement = this;
+	}
+	blur() {}
+	/** A tap. A disabled button, like a browser's, does nothing. */
+	click() {
+		if (this.disabled) return;
+		const ev = { type: "click", target: this, preventDefault() {}, stopPropagation() {} };
+		for (const fn of (this.listeners.click || []).slice()) fn(ev);
+	}
+	*walk() {
+		for (const n of this.childNodes) {
+			yield n;
+			yield* n.walk();
+		}
+	}
+}
+
+function fakePage() {
+	const doc = { cookie: "sid=abc; system_user=yes", hidden: false, readyState: "complete", keyListeners: [] };
+	doc.createElement = (tag) => new FakeNode(doc, tag);
+	doc.createElementNS = (ns, tag) => new FakeNode(doc, tag, ns);
+	doc.createTextNode = (text) => {
+		const n = new FakeNode(doc, "#text");
+		n.data = String(text);
+		return n;
+	};
+	doc.documentElement = new FakeNode(doc, "html");
+	doc.head = new FakeNode(doc, "head");
+	doc.body = new FakeNode(doc, "body");
+	doc.documentElement.appendChild(doc.head);
+	doc.documentElement.appendChild(doc.body);
+	doc.activeElement = doc.body;
+	doc.getElementById = (id) => {
+		for (const n of doc.documentElement.walk()) if (n.id === id) return n;
+		return null;
+	};
+	doc.querySelector = () => null;
+	const capturing = (opt) => opt === true || !!(opt && opt.capture);
+	doc.addEventListener = (type, fn, opt) => doc.keyListeners.push({ type, fn, capture: capturing(opt) });
+	doc.removeEventListener = (type, fn, opt) => {
+		const i = doc.keyListeners.findIndex((l) => l.type === type && l.fn === fn && l.capture === capturing(opt));
+		if (i !== -1) doc.keyListeners.splice(i, 1);
+	};
+	/** A key pressed with focus on `target`: document capture listeners, then bubble ones. */
+	doc.key = (key, target) => {
+		const ev = {
+			type: "keydown",
+			key,
+			target: target || doc.activeElement,
+			defaultPrevented: false,
+			ctrlKey: false,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault() {
+				this.defaultPrevented = true;
+			},
+			stopPropagation() {},
+		};
+		for (const phase of [true, false]) {
+			for (const l of doc.keyListeners.slice()) {
+				if (l.type === "keydown" && l.capture === phase && doc.keyListeners.includes(l)) l.fn(ev);
+			}
+		}
+		return ev;
+	};
+
+	// Session history as a browser keeps it: pushState drops the forward entries, a script's
+	// back() lands on a later task, the person's Back lands at once, and every write with a URL
+	// argument is refused.
+	const listeners = {};
+	const entries = [{ state: null }];
+	let index = 0;
+	const calls = [];
+	const clone = (v) => (v === undefined ? null : structuredClone(v));
+	const dispatch = (type, ev) => {
+		for (const fn of (listeners[type] || []).slice()) if ((listeners[type] || []).includes(fn)) fn(ev);
+	};
+	const traverse = (delta) => {
+		const target = index + delta;
+		if (target < 0 || target >= entries.length) return false;
+		index = target;
+		dispatch("popstate", { type: "popstate", state: clone(entries[index].state) });
+		return true;
+	};
+	const history = {
+		scrollRestoration: "auto",
+		get state() {
+			return entries[index].state;
+		},
+		get length() {
+			return entries.length;
+		},
+		pushState(state, title) {
+			calls.push("push");
+			if (arguments.length !== 2 || title !== "") throw new Error(`pushState with ${arguments.length} arguments`);
+			entries.splice(index + 1);
+			entries.push({ state: clone(state) });
+			index = entries.length - 1;
+		},
+		replaceState(state, title) {
+			calls.push("replace");
+			if (arguments.length !== 2 || title !== "") throw new Error(`replaceState with ${arguments.length} arguments`);
+			entries[index] = { state: clone(state) };
+		},
+		back() {
+			calls.push("back");
+			setImmediate(() => traverse(-1));
+		},
+		forward() {
+			calls.push("forward");
+			setImmediate(() => traverse(1));
+		},
+	};
+	const store = new Map();
+	const win = {
+		history,
+		location: { href: "https://erp.example.com/stock-scan", pathname: "/stock-scan", reload() {} },
+		localStorage: {
+			getItem: (k) => (store.has(k) ? store.get(k) : null),
+			setItem: (k, v) => store.set(k, String(v)),
+			removeItem: (k) => store.delete(k),
+		},
+		// Reduced motion: a closing sheet leaves the DOM at once instead of after its animation.
+		matchMedia: (query) => ({ matches: /reduce/.test(query), addEventListener() {} }),
+		scrollTo() {},
+		addEventListener(type, fn) {
+			(listeners[type] = listeners[type] || []).push(fn);
+		},
+		removeEventListener(type, fn) {
+			const list = listeners[type] || [];
+			const i = list.indexOf(fn);
+			if (i !== -1) list.splice(i, 1);
+		},
+	};
+	const kinds = () =>
+		entries.map((e) => (!e.state ? "-" : e.state.ee_capture ? "P" : e.state.marker ? "M" : e.state.ee_ss ? "S" : "?"));
+	return { doc, win, entries, calls, index: () => index, here: () => kinds()[index], kinds, userBack: () => traverse(-1) };
+}
+
+/**
+ * The capture recorder's `window.ee_capture`, as far as this page uses it. `open()` answers
+ * only when the test says the panel bundle has arrived (`arrive`), like a first download on a
+ * slow connection. The panel it "mounts" keeps a history entry the way capture/panel.js does:
+ * pushed on open; Back while open closes it; closed any other way while its entry is current,
+ * it steps back off it and `isOpen()` stays true until that popstate has been delivered.
+ */
+function fakeRecorder(page) {
+	let seq = 0;
+	const rec = {
+		opens: 0,
+		waiting: [],
+		panel: null,
+		registerCaptureState() {},
+		open(opts) {
+			rec.opens += 1;
+			rec.lastOpts = opts;
+			return new Promise((resolve, reject) => rec.waiting.push({ resolve, reject }));
+		},
+		isOpen() {
+			return !!(rec.panel && (!rec.panel.closed || rec.panel.pendingBack));
+		},
+		arrive() {
+			const waiting = rec.waiting.splice(0);
+			if (!rec.panel || rec.panel.closed) rec.panel = mount();
+			for (const w of waiting) w.resolve(rec.panel.handle);
+		},
+		fail() {
+			for (const w of rec.waiting.splice(0)) w.reject(new Error("The report form could not be loaded."));
+		},
+	};
+	function mount() {
+		const p = { id: `cap-${++seq}`, closed: false, pendingBack: false, closeCalls: 0 };
+		let resolveClosed = null;
+		const closed = new Promise((resolve) => (resolveClosed = resolve));
+		page.win.history.pushState({ ee_capture: p.id }, "");
+		const finish = (removeEntry) => {
+			p.closed = true;
+			page.win.removeEventListener("popstate", onPop);
+			const state = page.win.history.state;
+			if (removeEntry && state && state.ee_capture === p.id) {
+				p.pendingBack = true;
+				const landed = () => {
+					page.win.removeEventListener("popstate", landed);
+					p.pendingBack = false;
+					resolveClosed({ status: "canceled" });
+				};
+				page.win.addEventListener("popstate", landed);
+				page.win.history.back();
+			} else resolveClosed({ status: "canceled" });
+		};
+		const onPop = (ev) => {
+			if (!p.closed && !(ev.state && ev.state.ee_capture === p.id)) finish(false);
+		};
+		page.win.addEventListener("popstate", onPop);
+		p.handle = {
+			surface: "web",
+			closed,
+			close() {
+				p.closeCalls += 1;
+				if (!p.closed) finish(true);
+			},
+		};
+		return p;
+	}
+	return rec;
+}
+
+/** Let timers, script traversals and promise callbacks run. */
+async function settle() {
+	for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+}
+
+/**
+ * The review's sequence, run on the real app.js: on a slow connection "Report a problem" is
+ * tapped, and Scan is tapped before the form appears. The camera sheet opened under the form,
+ * kept decoding, navigated the page under it — writing its screen over the form's own history
+ * entry — and took every letter typed into the form. From the tap until the form closes the
+ * page now opens nothing and goes nowhere; a form that arrives over a sheet anyway is closed
+ * again rather than kept; and keys aimed at the form never reach a sheet or the camera.
+ */
+async function appUnderTheReportForm() {
+	const page = fakePage();
+	const rec = fakeRecorder(page);
+	const log = {
+		name: "SSL-0001",
+		action: "Take",
+		status: "Posted",
+		item_code: "PDT-0008",
+		item_name: "Widget",
+		warehouse: "Bin A1 - SF",
+		warehouse_name: "Bin A1",
+		qty: 1,
+		stock_uom: "Each",
+		posted_at: "2026-09-24 09:00:00",
+		can_undo: 1,
+	};
+	const boot = { user: "tina@example.com", today: "2026-09-24", recent: [log], settings: {}, initial: null, decoder_url: "/jsqr.js" };
+	const realFetch = globalThis.fetch;
+	const fetched = [];
+	globalThis.window = page.win;
+	globalThis.document = page.doc;
+	page.win.ee_capture = rec;
+	page.win.EE_STOCK_SCAN_BOOT = Object.assign({ csrf_token: "tok" }, boot);
+	globalThis.fetch = async (url) => {
+		fetched.push(String(url));
+		return new Response(JSON.stringify({ message: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+	};
+	try {
+		const A = await load("app.js");
+		const U = await load("ui.js");
+		const root = page.doc.createElement("div");
+		root.id = "ee-stock-scan-root";
+		root.className = "ee-ss-root";
+		page.doc.body.appendChild(root);
+		const app = new A.StockScanApp(root, boot);
+		app.mount();
+		const find = (cls) => {
+			for (const n of page.doc.body.walk()) if (n.classList && n.classList.contains(cls)) return n;
+			return null;
+		};
+		const pushes = () => page.calls.filter((c) => c === "push").length;
+
+		console.log("\nstock scan app under the report form\n");
+		check("app: the page boots onto the entry it opened (one replace, no push)", [page.kinds(), pushes()], [["S"], 0]);
+		check("app: the header door is drawn for a System User with the recorder on the page", app.reportBtn.hidden, false);
+
+		// 1. Tapped, still downloading: every door on the page is shut.
+		app.reportBtn.click();
+		check("app: Report asks the recorder once, as surface web", [rec.opens, rec.lastOpts], [1, { surface: "web" }]);
+		check("app: ... and the button says it is busy", app.reportBtn.getAttribute("aria-busy"), "true");
+		app.scanBtn.click();
+		find("ee-ss-hero").click();
+		app.searchBtn.click();
+		find("ee-ss-searchbox").click();
+		app.jobChip.click();
+		find("ee-ss-recent-main").click();
+		find("ee-ss-undo-btn").click();
+		for (const k of ["P", "D", "T", "Enter"]) page.doc.key(k, page.doc.body); // a scanner gun
+		await settle();
+		check("app: while the form loads, Scan, Search, the job chip, a Recent row, Undo and a scanner gun open nothing", [U.sheetDepth(), app.scanner], [0, null]);
+		check("app: ... look nothing up", fetched, []);
+		check("app: ... and add no history entry", [page.kinds(), pushes()], [["S"], 0]);
+
+		// 2. It arrives on an untouched page and is kept; the page stays shut while it is open.
+		rec.arrive();
+		await settle();
+		truthy("app: the form that arrives is kept", app.report === rec.panel.handle && !rec.panel.closed);
+		check("app: ... its own entry is on top of the screen, nothing of ours over it", page.kinds(), ["S", "P"]);
+		check("app: ... and the button is no longer busy", app.reportBtn.getAttribute("aria-busy"), null);
+		app.scanBtn.click();
+		app.searchBtn.click();
+		check("app: with the form open, Scan and Search still open nothing", [U.sheetDepth(), app.scanner, page.kinds()], [0, null, ["S", "P"]]);
+
+		// 3. Back closes the form (the panel answers it); the page does not move.
+		page.userBack();
+		await settle();
+		check("app: Back with the form open is the form's: it closes, the page stays on its screen", [rec.panel.closed, app.report, app.view.name, page.here()], [true, null, "start", "S"]);
+		app.scanBtn.click();
+		check("app: once it has closed, Scan opens the camera again (one marker)", [U.sheetDepth(), app.scanner !== null, page.kinds()], [1, true, ["S", "M"]]);
+
+		// 4. Keys aimed at something over the page (the report form's textarea) are not the
+		// camera's or the sheet's; keys aimed at the page still are.
+		const formField = page.doc.createElement("textarea"); // mounted on <body>, like the panel
+		page.doc.body.appendChild(formField);
+		formField.focus();
+		page.doc.key("a", formField);
+		check("app: a letter typed into the form stays there (the camera does not take focus)", page.doc.activeElement === formField, true);
+		page.doc.key("Escape", formField);
+		check("app: ... and Escape in the form does not close the sheet under it", U.sheetDepth(), 1);
+		page.doc.body.focus();
+		page.doc.key("b", page.doc.body);
+		const box = page.doc.activeElement;
+		check("app: a scanner gun on the page still lands in the camera's code box", [box.tagName, box.placeholder], ["INPUT", "Type a code"]);
+		page.doc.key("Escape", box);
+		await settle();
+		check("app: ... and Escape on the page still closes the camera, stepping back off its marker", [U.sheetDepth(), app.scanner, page.here()], [0, null, "S"]);
+		formField.remove();
+
+		// 5. A door that forgot to check: a sheet opens while the form loads, and the form lands
+		// over it. It must not be kept (the sheet would keep its keys, its marker would sit under
+		// the form's entry): it is closed again, which leaves the sheet and its marker as they were.
+		const before = rec.opens;
+		app.reportBtn.click();
+		check("app: Report tapped again", rec.opens, before + 1);
+		const forgot = U.sheet({ title: "A door that forgot" });
+		check("app: ... a sheet opened anyway pushes its marker", page.kinds(), ["S", "M"]);
+		rec.arrive();
+		await settle();
+		check("app: a form that lands over a sheet is closed again, not kept", [rec.panel.closeCalls, rec.panel.closed, app.report], [1, true, null]);
+		check("app: ... its entry is gone and the browser is back on the sheet's marker", [page.here(), U.sheetDepth()], ["M", 1]);
+		forgot.close();
+		await settle();
+		check("app: ... and closing the sheet then steps back onto the screen: nothing orphaned", [page.here(), page.index()], ["S", 0]);
+
+		// 6. Back while it loads un-wants it: it is closed when it lands, on the screen Back chose.
+		app.showLocation({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", items: [] }, {});
+		check("app: a location is a new entry", [page.kinds(), app.view.name], [["S", "S"], "location"]);
+		app.reportBtn.click();
+		page.userBack();
+		await settle();
+		check("app: Back while the form loads goes back", app.view.name, "start");
+		rec.arrive();
+		await settle();
+		check("app: ... and the form that lands afterwards is closed again", [rec.panel.closed, app.report, page.here(), page.index()], [true, null, "S", 0]);
+
+		// 7. Back un-wants it, then Report is tapped again before it lands: the one open() in flight
+		// is wanted again — no second open(), whose unwanted answer would close the same panel.
+		app.showLocation({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", items: [] }, {});
+		const opensBefore = rec.opens;
+		app.reportBtn.click();
+		page.userBack();
+		await settle();
+		app.reportBtn.click();
+		check("app: Report, Back, Report again while loading asks the recorder once", rec.opens, opensBefore + 1);
+		rec.arrive();
+		await settle();
+		truthy("app: ... and the form that lands is kept", app.report === rec.panel.handle && !rec.panel.closed);
+		app.report.close();
+		await settle();
+		check("app: closed from its own ×, it takes its entry with it", [app.report, page.here()], [null, "S"]);
+
+		// 8. An item view's doors: the stepper's quantity sheet, Save and Move.
+		app.showItem(
+			{
+				item_code: "PDT-0008",
+				item_name: "Widget",
+				warehouse: "Bin A1 - SF",
+				warehouse_name: "Bin A1",
+				stock_uom: "Each",
+				on_hand: 5,
+				available: 5,
+				open_orders: [],
+				elsewhere: [{ warehouse: "Stores - SF", warehouse_name: "Stores", on_hand: 3 }],
+			},
+			{}
+		);
+		check("app: an item view", app.view.name, "item");
+		const entriesBefore = page.entries.length;
+		app.reportBtn.click();
+		app.nudge(1);
+		// Called, not only tapped: a tap on a disabled button would pass for the wrong reason.
+		find("ee-ss-step-value").click();
+		app.askQuantity();
+		app.save();
+		app.openMove();
+		app.goBack();
+		await settle();
+		check("app: while the form loads, How many?, Save, Move and the back link do nothing", [U.sheetDepth(), app.view.name, page.entries.length, fetched], [0, "item", entriesBefore, []]);
+		rec.fail();
+		await settle();
+		check("app: a form that fails to load leaves the page usable", [app.reportWanted, app.reportBusy()], [false, false]);
+		find("ee-ss-step-value").click();
+		check("app: ... How many? opens again", U.sheetDepth(), 1);
+		U.closeAllSheets();
+		await settle();
+
+		// The Inventory Scanner Settings off switch reaches the page as settings.browser_history = 0.
+		const off = new A.StockScanApp(page.doc.createElement("div"), Object.assign({}, boot, { settings: { browser_history: 0 } }));
+		const on = new A.StockScanApp(page.doc.createElement("div"), Object.assign({}, boot, { settings: {} }));
+		check("app: settings.browser_history 0 (the off switch) gives the page no history; absent keeps it", [off.nav.enabled, on.nav.enabled], [false, true]);
+	} finally {
+		globalThis.fetch = realFetch;
+		delete globalThis.window;
+		delete globalThis.document;
+	}
+}
+
 (async () => {
 	if (typeof globalThis.window !== "undefined") {
 		console.error("a window global exists before the modules load; this test must load them without one");
@@ -127,14 +684,18 @@ function withTimeout(promise, ms, label) {
 	}
 	const L = await load("logic.js");
 	const T = await load("transport.js");
+	const N = await load("nav.js");
 	exported(L, "logic.js", [
 		"parseScan", "plain", "clampChange", "describeChange", "mintRef", "CLIENT_REF_RE", "isSafeImage", "jobExpired",
 		// Not in the spec's list, but app.js's retry rule is these; they are tested below.
 		"mayHaveSaved", "saveKey", "keptRef", "RETRY_WINDOW_MS",
 		// The review fixes: the offline scan error, the per-user job, the moved-on save message.
 		"scanFailure", "rememberedJob", "saveLabel",
+		// "Report a problem" in the header.
+		"reportAvailable",
 	]);
 	exported(T, "transport.js", ["M", "call", "StockScanCallError", "errorMessage", "isSignedOut", "SIGNED_OUT"]);
+	exported(N, "nav.js", ["NavHistory", "MAX_ENTRIES", "TRAVERSE_TIMEOUT_MS"]);
 
 	console.log("stock scan client\n");
 
@@ -339,6 +900,455 @@ function withTimeout(promise, ms, label) {
 	check("logHeadline: an add without one reads as an add", L.logHeadline({ ...returned, project: null }), "Added 2 Each");
 	check("undoQuestion: a return names the job", L.undoQuestion(returned), "Undo: returned 2 Each of Widget to Bin A1-3-1 from PRJ-00598?");
 	check("undoQuestion: found stock does not", L.undoQuestion({ ...returned, project: null }), "Undo: added 2 Each of Widget to Bin A1-3-1?");
+
+	// ------------------------------------------------------------------ reportAvailable
+	// The header's "Report a problem": the recorder on the page AND the System User cookie
+	// (capture/launcher.js's own test, which this bundle may not import).
+	const recorder = { open: () => Promise.resolve() };
+	check("reportAvailable: no recorder on the page", L.reportAvailable(undefined, "system_user=yes"), false);
+	check("reportAvailable: a recorder without open()", L.reportAvailable({ open: 1 }, "system_user=yes"), false);
+	check("reportAvailable: a System User", L.reportAvailable(recorder, "system_user=yes"), true);
+	check("reportAvailable: among other cookies", L.reportAvailable(recorder, "sid=abc; system_user=yes; full_name=Tina"), true);
+	check("reportAvailable: a website user", L.reportAvailable(recorder, "sid=abc; system_user=no"), false);
+	check("reportAvailable: a look-alike cookie name", L.reportAvailable(recorder, "xsystem_user=yes"), false);
+	check("reportAvailable: no cookie at all", [L.reportAvailable(recorder, null), L.reportAvailable(recorder, "")], [false, false]);
+
+	// ------------------------------------------------------------------ nav.js: Back and Forward
+	// NavHistory against a fake session history that behaves like a browser's: pushState drops
+	// the forward entries, back() is asynchronous (land() delivers its popstate), and every
+	// write is REFUSED unless it has exactly two arguments, the second "" — a third argument is
+	// a URL, and on an iPhone a URL change is a camera prompt per shelf.
+	function fakeHistory() {
+		const h = {
+			entries: [{ state: null }],
+			index: 0,
+			pending: [],
+			pushes: 0,
+			replaces: 0,
+			backs: 0,
+			refuse: false,
+			scrollRestoration: "auto",
+			get state() {
+				return h.entries[h.index].state;
+			},
+			pushState(state, title) {
+				if (arguments.length !== 2 || title !== "") throw new Error(`pushState with ${arguments.length} arguments`);
+				if (h.refuse) throw Object.assign(new Error("too many calls"), { name: "SecurityError" });
+				h.pushes += 1;
+				h.entries.splice(h.index + 1);
+				h.entries.push({ state: structuredClone(state) });
+				h.index = h.entries.length - 1;
+			},
+			replaceState(state, title) {
+				if (arguments.length !== 2 || title !== "") throw new Error(`replaceState with ${arguments.length} arguments`);
+				if (h.refuse) throw Object.assign(new Error("too many calls"), { name: "SecurityError" });
+				h.replaces += 1;
+				h.entries[h.index] = { state: structuredClone(state) };
+			},
+			back() {
+				h.backs += 1;
+				h.pending.push(-1);
+			},
+			/** Deliver the next script traversal: the state its popstate carries, or undefined. */
+			land() {
+				const delta = h.pending.shift();
+				if (delta === undefined || h.index + delta < 0 || h.index + delta >= h.entries.length) return undefined;
+				h.index += delta;
+				return h.entries[h.index].state;
+			},
+			/** The phone's own Back / Forward: synchronous here, never counted as the page's back(). */
+			userBack() {
+				h.index -= 1;
+				return h.entries[h.index].state;
+			},
+			userForward() {
+				h.index += 1;
+				return h.entries[h.index].state;
+			},
+			/** The capture panel pushing its own entry over whatever is current (capture/panel.js). */
+			foreignPush(state) {
+				h.entries.splice(h.index + 1);
+				h.entries.push({ state });
+				h.index = h.entries.length - 1;
+			},
+		};
+		return h;
+	}
+
+	function manualClock() {
+		let now = 0;
+		let nextId = 1;
+		const timers = new Map();
+		return {
+			later(fn, ms) {
+				const id = nextId++;
+				timers.set(id, { at: now + (ms || 0), fn });
+				return id;
+			},
+			cancel(id) {
+				timers.delete(id);
+			},
+			tick(ms) {
+				now += ms || 0;
+				for (;;) {
+					const due = [...timers].filter(([, t]) => t.at <= now).sort((a, b) => a[1].at - b[1].at || a[0] - b[0]);
+					if (!due.length) return;
+					timers.delete(due[0][0]);
+					due[0][1].fn();
+				}
+			},
+		};
+	}
+
+	function rig(opts) {
+		const o = opts || {};
+		const h = fakeHistory();
+		const clock = manualClock();
+		const load = { busy: false };
+		const nav = new N.NavHistory(h, o.key || "doc-1", { busy: () => load.busy, later: clock.later, cancel: clock.cancel });
+		return { h, clock, load, nav };
+	}
+
+	const START_V = { name: "start" };
+	const BIN = { name: "location", location: { warehouse: "Bin A1 - SF" } };
+	const ITEM = { name: "item", item: { item_code: "PDT-0008", warehouse: "Bin A1 - SF" } };
+	const snapOf = (view, back) => ({ view, back: back.slice() });
+	const states = (h) => h.entries.map((e) => (e.state ? (e.state.marker ? "M" : e.state.ee_capture ? "P" : "S") : "-"));
+
+	{
+		// 1. The first screen replaces the entry the phone opened: Back from it leaves the page.
+		const { h, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		check("nav: the first screen is stamped with replaceState, never pushed", [h.entries.length, h.pushes, h.replaces], [1, 0, 1]);
+		check("nav: ... carrying this document's key and no URL", [h.state.ee_ss, typeof h.state.id], ["doc-1", "number"]);
+		check("nav: ... and render() owns scrolling", h.scrollRestoration, "manual");
+		check("nav: Back from the first screen is not the page's to answer (no in-page parent behind it)", nav.behindIs(START_V, []), false);
+		nav.screen(snapOf(BIN, [START_V]), "replace");
+		check("nav: a 'replace' on the first entry stays one entry", [h.entries.length, h.pushes], [1, 0]);
+	}
+
+	{
+		// 2. Back and Forward restore the screens, from memory.
+		const { h, nav } = rig();
+		const s0 = snapOf(START_V, []);
+		const s1 = snapOf(BIN, [START_V]);
+		nav.screen(s0);
+		nav.screen(s1);
+		check("nav: a tapped screen is a new entry", [h.entries.length, h.pushes], [2, 1]);
+		check("nav: item names never go into history.state", Object.keys(h.state).sort(), ["ee_ss", "id"]);
+		check("nav: Back restores the screen before", nav.popped(h.userBack()).snap, s0);
+		check("nav: Forward restores the one after", nav.popped(h.userForward()).snap, s1);
+		truthy("nav: ... the very snapshot, not a copy", nav.snaps.get(h.state.id) === s1);
+	}
+
+	{
+		// 3. A sheet: one marker, pushed in the tap; closed from the UI, one back() off it.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.screen(snapOf(BIN, [START_V]));
+		nav.overlayOpened();
+		check("nav: opening a sheet pushes one marker", states(h), ["S", "S", "M"]);
+		nav.overlayOpened();
+		check("nav: a second sheet on top shares it", h.pushes, 2);
+		nav.overlayClosed();
+		nav.overlayClosed();
+		clock.tick(0);
+		check("nav: closing the last sheet from the UI steps back off the marker once", h.backs, 1);
+		const out = nav.popped(h.land());
+		check("nav: ... and that popstate changes nothing on screen", out, { close: false, cancel: false });
+		check("nav: ... leaving the browser on the screen", [h.index, states(h)[h.index]], [1, "S"]);
+	}
+
+	{
+		// 4. The phone's Back while a sheet is open closes it, and nothing steps back again.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.screen(snapOf(BIN, [START_V]));
+		nav.overlayOpened();
+		const out = nav.popped(h.userBack());
+		check("nav: Back over a sheet says close (and cancel whatever it started)", [out.close, out.cancel, "snap" in out], [true, true, false]);
+		nav.overlayClosed(); // closeAllSheets() in app.js
+		clock.tick(0);
+		check("nav: ... and the close that follows issues no back()", h.backs, 0);
+	}
+
+	{
+		// 5. A sheet that closes INTO a navigation (a camera read, a search pick) keeps its marker
+		// until the screen lands, which then takes the marker's entry: nothing added without a tap.
+		const { h, clock, load, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.overlayOpened();
+		nav.overlayClosed();
+		load.busy = true;
+		clock.tick(0);
+		check("nav: no back() while the lookup the sheet started is loading", h.backs, 0);
+		nav.screen(snapOf(BIN, [START_V]));
+		check("nav: the screen the lookup opened replaces the marker", [states(h), h.pushes], [["S", "S"], 1]);
+		load.busy = false;
+		nav.settled();
+		clock.tick(0);
+		check("nav: ... so settling issues no back()", h.backs, 0);
+	}
+
+	{
+		// 6. Closed and reopened in one tick (job picker -> "Where did these come from?").
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.overlayOpened();
+		nav.overlayClosed();
+		nav.overlayOpened();
+		clock.tick(0);
+		check("nav: close + reopen reuses the marker: one push, no back()", [h.pushes, h.backs, states(h)], [1, 0, ["S", "M"]]);
+	}
+
+	{
+		// 7. A screen that lands while our own back() is in flight waits for it: [S, N], never [S, M, N].
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.overlayOpened();
+		nav.overlayClosed();
+		clock.tick(0);
+		nav.screen(snapOf(BIN, [START_V]));
+		check("nav: a write during our traversal is queued", states(h), ["S", "M"]);
+		nav.popped(h.land());
+		check("nav: ... and made once it lands", [states(h), h.index], [["S", "S"], 1]);
+	}
+
+	{
+		// 8. Two quick Backs: each popstate is read for where the browser IS, not counted.
+		const { h, nav } = rig();
+		const s0 = snapOf(START_V, []);
+		nav.screen(s0);
+		nav.screen(snapOf(BIN, [START_V]));
+		nav.screen(snapOf(ITEM, [START_V, BIN]));
+		const a = h.userBack();
+		const b = h.userBack();
+		nav.popped(a);
+		check("nav: Back, Back lands on the grandparent", nav.popped(b).snap, s0);
+		check("nav: ... with no back() of the page's own", h.backs, 0);
+	}
+
+	{
+		// 9. Entries this document never wrote: the report form's, an earlier load's, none at all.
+		for (const [label, foreign] of [
+			["null state", null],
+			["another document's key", { ee_ss: "doc-0", id: 1 }],
+			["an unknown id", { ee_ss: "doc-1", id: 999 }],
+			["the report form's entry", { ee_capture: 3 }],
+			["the report form's key beside ours", { ee_ss: "doc-1", id: 2, ee_capture: 3 }],
+		]) {
+			const { h, nav } = rig();
+			const s1 = snapOf(BIN, [START_V]);
+			nav.screen(snapOf(START_V, []));
+			nav.screen(s1);
+			h.foreignPush(foreign);
+			let out = null;
+			let threw = null;
+			try {
+				out = nav.popped(foreign);
+			} catch (e) {
+				threw = e;
+			}
+			truthy(`nav: ${label}: does not throw`, !threw, threw && threw.message);
+			check(`nav: ${label}: stays on the current screen`, out && "snap" in out, false);
+			check(`nav: ${label}: the entry is re-stamped as this document's current screen`, [h.state.ee_ss, !!h.state.ee_capture, nav.snaps.get(h.state.id)], ["doc-1", false, s1]);
+		}
+	}
+
+	{
+		// 10. Forward onto a marker whose sheet is gone: it becomes the screen under it.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		const s1 = snapOf(BIN, [START_V]);
+		nav.screen(s1);
+		nav.overlayOpened();
+		nav.popped(h.userBack());
+		nav.overlayClosed();
+		clock.tick(0);
+		const out = nav.popped(h.userForward());
+		check("nav: Forward onto a dead marker re-stamps it as its screen", [states(h), "snap" in out, nav.snaps.get(h.state.id)], [["S", "S", "S"], false, s1]);
+	}
+
+	{
+		// 11. The in-page back link is the browser's Back only when the entry behind is its parent.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.screen(snapOf(BIN, [START_V]));
+		check("nav: behindIs: the parent over the same stack", nav.behindIs(START_V, []), true);
+		check("nav: behindIs: some other view is not it", nav.behindIs(BIN, []), false);
+		nav.screen(snapOf(ITEM, [START_V])); // a "root" scan from elsewhere: Start is the parent now
+		check("nav: behindIs: after a root scan, the entry behind is not the parent", nav.behindIs(START_V, []), false);
+		nav.back();
+		check("nav: behindIs: never while a traversal is in flight", nav.behindIs(BIN, [START_V]), false);
+		nav.popped(h.land());
+		clock.tick(0);
+		const r = rig();
+		r.nav.screen(snapOf(START_V, []));
+		r.nav.screen(snapOf(BIN, [START_V]));
+		r.h.foreignPush({ ee_capture: 1 });
+		check("nav: behindIs: never while something else's entry is on top", r.nav.behindIs(START_V, []), false);
+	}
+
+	{
+		// 12. Bounded like a browser's own session history.
+		const { nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		for (let i = 0; i < 200; i += 1) nav.screen(snapOf({ name: "item", n: i }, [START_V]));
+		check("nav: at most MAX_ENTRIES remembered", [nav.trail.length <= N.MAX_ENTRIES, nav.snaps.size <= N.MAX_ENTRIES, N.MAX_ENTRIES], [true, true, 50]);
+		// Foreign entries reset the trail but keep the snapshots Back may still need; still bounded.
+		const r = rig();
+		r.nav.screen(snapOf(START_V, []));
+		for (let i = 0; i < 300; i += 1) {
+			r.nav.screen(snapOf({ name: "item", n: i }, [START_V]));
+			if (i % 3 === 0) r.nav.popped({ ee_capture: i });
+		}
+		truthy("nav: snapshots stay bounded across foreign entries", r.nav.snaps.size <= 2 * N.MAX_ENTRIES, String(r.nav.snaps.size));
+	}
+
+	{
+		// 13. A traversal whose popstate never comes: the queued writes go out after the timeout.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.overlayOpened();
+		nav.overlayClosed();
+		clock.tick(0);
+		h.pending.length = 0; // the popstate is lost
+		nav.screen(snapOf(BIN, [START_V]));
+		const queued = h.pushes + h.replaces;
+		clock.tick(N.TRAVERSE_TIMEOUT_MS - 1);
+		check("nav: still waiting just before TRAVERSE_TIMEOUT_MS", h.pushes + h.replaces, queued);
+		clock.tick(1);
+		check("nav: ... and written once it passes", h.pushes + h.replaces, queued + 1);
+		check("nav: TRAVERSE_TIMEOUT_MS is 1.5 s", N.TRAVERSE_TIMEOUT_MS, 1500);
+	}
+
+	{
+		// 14. The kill switch: no history object, nothing happens, and the page's own stack rules.
+		const off = new N.NavHistory(null, "doc-1", {});
+		let ran = 0;
+		let threw = null;
+		try {
+			off.screen(snapOf(START_V, []));
+			off.screen(snapOf(BIN, [START_V]));
+			off.overlayOpened();
+			off.overlayClosed();
+			off.settled();
+			off.whenQuiet(() => (ran += 1));
+		} catch (e) {
+			threw = e;
+		}
+		truthy("nav: switched off (BROWSER_HISTORY = false), every call is a no-op", !threw && !off.enabled, threw && threw.message);
+		check("nav: ... popped() says nothing", off.popped({ ee_ss: "doc-1", id: 1 }), {});
+		check("nav: ... behindIs() is always false, so the back link walks the page's own stack", off.behindIs(START_V, []), false);
+		check("nav: ... whenQuiet() runs at once", ran, 1);
+	}
+
+	{
+		// 15. Safari throttles bursts of history calls with a SecurityError: the entry is lost, not the screen.
+		const { h, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		h.refuse = true;
+		let threw = null;
+		try {
+			nav.screen(snapOf(BIN, [START_V]));
+			nav.overlayOpened();
+		} catch (e) {
+			threw = e;
+		}
+		truthy("nav: a refused pushState does not throw", !threw, threw && threw.message);
+		check("nav: ... and the model did not move", [nav.trail.length, nav.marker], [1, null]);
+	}
+
+	{
+		// 16. The report form owns its entry: it pushes over our screen and backs off it itself.
+		// app.js ignores popstate while the form is open; the one after it closes changes nothing.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.screen(snapOf(BIN, [START_V]));
+		h.foreignPush({ ee_capture: 1 });
+		h.back(); // the panel's own history.back() on closing from its × or Send
+		const backsBefore = h.backs;
+		const out = nav.popped(h.land());
+		clock.tick(0);
+		check("nav: the form backing off its own entry lands on our screen with nothing to do", [out, states(h)[h.index]], [{}, "S"]);
+		check("nav: ... and the page issues no back() of its own", h.backs, backsBefore);
+		// Forward onto the dead form entry: stamped as our screen, then Back is still a plain Back.
+		const fwd = nav.popped(h.userForward());
+		check("nav: Forward onto the closed form's entry stays put and re-stamps it", ["snap" in fwd, states(h)], [false, ["S", "S", "S"]]);
+		const back = nav.popped(h.userBack());
+		check("nav: ... Back from there is the same screen, drawn once", "snap" in back, false);
+	}
+
+	{
+		// 17. whenQuiet: the report form opens only on a screen of ours, never over our marker.
+		const { h, clock, load, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.screen(snapOf(BIN, [START_V]));
+		let opened = 0;
+		nav.whenQuiet(() => (opened += 1));
+		check("nav: whenQuiet with nothing in flight runs at once, with no back()", [opened, h.backs], [1, 0]);
+		// The camera read a code and closed; its lookup is loading, so the marker is held.
+		nav.overlayOpened();
+		nav.overlayClosed();
+		load.busy = true;
+		clock.tick(0);
+		nav.whenQuiet(() => {
+			opened += 1;
+			h.foreignPush({ ee_capture: 2 });
+		});
+		check("nav: whenQuiet steps back off a held marker first (the caller dropped the lookup)", [h.backs, opened], [1, 1]);
+		nav.popped(h.land());
+		clock.tick(0);
+		check("nav: ... and runs once that lands, so the form's entry sits on our screen", [opened, states(h)], [2, ["S", "S", "P"]]);
+		load.busy = false;
+		nav.settled();
+		clock.tick(0);
+		check("nav: ... and nothing steps back again afterwards", h.backs, 1);
+	}
+
+	{
+		// 18. Never back() off an entry that is not ours, even when the model thinks it is.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.overlayOpened();
+		h.foreignPush({ ee_capture: 1 });
+		nav.overlayClosed();
+		clock.tick(0);
+		check("nav: something pushed over our marker: the release does not step back off it", h.backs, 0);
+	}
+
+	{
+		// 19. A bfcache restore (pageshow) on the entry we are on: nothing moves.
+		const { h, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.screen(snapOf(BIN, [START_V]));
+		check("nav: a popstate for the current entry is nothing", nav.popped(h.state), {});
+		check("nav: ... not even a write", [h.pushes, h.replaces], [1, 1]);
+	}
+
+	{
+		// 20. The review's sequence, at nav's level: a sheet's marker, the report form pushed over
+		// it, then a screen lands (a camera read under the form). Taking over "the marker" by the
+		// model alone wrote the screen over the FORM's entry, [S, M, S] with P gone, and left M
+		// orphaned under it. The form's entry is never ours to write over.
+		const { h, clock, nav } = rig();
+		nav.screen(snapOf(START_V, []));
+		nav.overlayOpened();
+		h.foreignPush({ ee_capture: 1 });
+		nav.screen(snapOf(BIN, [START_V]));
+		check("nav: a screen landing with the form's entry over our marker goes on top, never over it", states(h), ["S", "M", "P", "S"]);
+		check("nav: ... and the marker under it was not taken over", nav.marker !== null, true);
+		nav.overlayClosed();
+		clock.tick(0);
+		check("nav: ... so closing the sheet then steps back off nothing", [h.backs, nav.marker], [0, null]);
+		const r = rig();
+		r.nav.screen(snapOf(START_V, []));
+		r.h.foreignPush({ ee_capture: 2 });
+		r.nav.screen(snapOf(ITEM, [START_V]), "replace");
+		check("nav: a 'replace' (a bin that opened its one item) with the form's entry on top is a push too", states(r.h), ["S", "P", "S"]);
+		r.nav.screen(snapOf(BIN, [START_V]), "replace");
+		check("nav: ... and once the browser is on ours again, a replace is a replace", [states(r.h), r.h.index], [["S", "P", "S"], 2]);
+	}
 
 	// ------------------------------------------------------------------ M
 	check("M carries exactly the eleven endpoints", Object.keys(T.M).sort(), [
@@ -581,6 +1591,8 @@ function withTimeout(promise, ms, label) {
 		globalThis.fetch = realFetch;
 		delete globalThis.window;
 	}
+
+	await appUnderTheReportForm();
 
 	console.log(`\n${passes} passed, ${failures} failed`);
 	process.exit(failures ? 1 : 0);

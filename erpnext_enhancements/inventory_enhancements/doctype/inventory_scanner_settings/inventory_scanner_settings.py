@@ -43,6 +43,11 @@ DEFAULTS = {
 	"require_project_for_take": 0,
 	# A stored 0 is a deliberate "undo off" and is kept; only a missing row falls back.
 	"undo_window_minutes": 30,
+	# The off switch for the page's browser Back/Forward (v1.534.0), in case iPhones re-prompt for
+	# the camera. It declares no default on purpose: unticked is the answer for every site, and a
+	# site that never saved the field reads None, which api.stock_scan's cint() takes as off. So
+	# there is nothing for the backfill patch to write.
+	"stock_scan_disable_browser_back": None,
 	# Item naming digest. None: no recipients, no email.
 	"naming_digest_recipients": None,
 }

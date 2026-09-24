@@ -549,6 +549,19 @@ export function install(win) {
 				return Promise.reject(e);
 			}
 		},
+		/**
+		 * Whether the report panel is open, or is still removing its history entry. Pages with
+		 * history of their own ignore `popstate` while this is true, because the panel handles it
+		 * (panel.js, `isPanelOpen`). False until the panel has loaded, and false if asking fails.
+		 */
+		isOpen() {
+			try {
+				const panel = win.ee_capture_panel;
+				return !!(panel && typeof panel.isOpen === "function" && panel.isOpen());
+			} catch (e) {
+				return false;
+			}
+		},
 	};
 
 	try {

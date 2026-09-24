@@ -22,7 +22,27 @@ const FOCUSABLE =
 
 const stack = [];
 const onClear = [];
+const onChange = [];
 let keyListening = false;
+
+/**
+ * `fn(opened)` whenever a sheet opens (true) or closes (false). app.js keeps the phone's Back in
+ * step with them (nav.js): Back closes the open sheets (all of them, as one marker covers the
+ * stack) instead of leaving the screen.
+ */
+export function onSheetChange(fn) {
+	onChange.push(fn);
+}
+
+function tell(opened) {
+	for (const fn of onChange.slice()) {
+		try {
+			fn(opened);
+		} catch (e) {
+			/* the sheet still opens and closes */
+		}
+	}
+}
 
 export function reducedMotion() {
 	try {
@@ -57,9 +77,23 @@ function focusables(node) {
 		.filter((n) => n.offsetParent !== null || n === document.activeElement);
 }
 
+/**
+ * Is `target` something that is not this page's? The page, its sheets and its toasts all sit
+ * inside an `.ee-ss-root`; `<body>` is where focus falls when nothing has it, and counts as the
+ * page's. Anything else is another layer over the page — the report form mounts on `<body>` —
+ * and a key aimed there is not a sheet's or the camera's to act on: Escape would close a sheet
+ * under the form, Tab would pull focus into it, and the camera would move every letter typed
+ * into the form into its own code box. app.js opens no sheet under the form; this is the
+ * backstop.
+ */
+export function notOurs(target) {
+	if (!target || target === document.body || target === document.documentElement) return false;
+	return typeof target.closest === "function" && !target.closest(".ee-ss-root");
+}
+
 function onKeydown(ev) {
 	const top = stack[stack.length - 1];
-	if (!top) return;
+	if (!top || notOurs(ev.target)) return;
 	if (ev.key === "Escape" || ev.key === "Esc") {
 		if (top.dismissible) {
 			ev.preventDefault();
@@ -168,7 +202,10 @@ export function sheet(opts) {
 			if (closed) return;
 			closed = true;
 			const at = stack.indexOf(handle);
-			if (at !== -1) stack.splice(at, 1);
+			if (at !== -1) {
+				stack.splice(at, 1);
+				tell(false);
+			}
 			layer.classList.remove("is-open");
 			const done = () => {
 				if (layer.parentNode) layer.parentNode.removeChild(layer);
@@ -222,6 +259,7 @@ export function sheet(opts) {
 
 	host.appendChild(layer);
 	stack.push(handle);
+	tell(true);
 	document.body.classList.add("ee-ss-locked");
 
 	// Focus now, inside the tap, so iOS raises the keyboard for an input; then animate in.

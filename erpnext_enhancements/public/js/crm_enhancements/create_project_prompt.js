@@ -139,13 +139,17 @@ frappe.provide("erpnext_enhancements.crm");
 				],
 				primary_action_label: __("Create Project"),
 				primary_action: function (values) {
-					// The field takes free text, so check the addresses here, while
-					// the dialog can still be corrected; the server refuses them too.
-					const invalid = frappe.utils
-						.split_emails(values.users_to_notify || "")
-						.filter(function (address) {
-							return !frappe.utils.validate_type(address, "email");
-						});
+					// The field takes free text, so the common typos are caught here
+					// while the dialog can still be corrected. This is the browser's
+					// email regex, which is looser than the server's in a few odd
+					// shapes (accented or quoted local parts, IP literals, a hyphen
+					// at the edge of a domain label), so the server check stays the
+					// authority, and the error handler below keeps its refusal
+					// recoverable as well.
+					const addresses = frappe.utils.split_emails(values.users_to_notify || "");
+					const invalid = addresses.filter(function (address) {
+						return !frappe.utils.validate_type(address, "email");
+					});
 					if (invalid.length) {
 						frappe.msgprint({
 							title: __("Not an email address"),
@@ -157,21 +161,29 @@ frappe.provide("erpnext_enhancements.crm");
 						return;
 					}
 
-					dialog.get_primary_btn().prop("disabled", true).html(__("Queuing..."));
-					dialog.body.innerHTML = `
-						<div class="progress">
-							<div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
-						</div>
-						<div class="text-center" style="margin-top: 10px;">
-							${__("Adding job to the queue...")}
-						</div>`;
+					const primary_btn = dialog.get_primary_btn();
+					const primary_label = primary_btn.html();
+					primary_btn.prop("disabled", true).html(__("Queuing..."));
+					// set_message hides the fields rather than replacing them (this
+					// used to overwrite dialog.body), so a refusal from the server
+					// can hand the form back exactly as it was.
+					dialog.set_message(__("Adding job to the queue..."));
 
 					frappe.call({
 						method: "erpnext_enhancements.crm_enhancements.api.enqueue_project_creation",
 						args: {
 							opportunity_name: opportunity_name,
-							users: values.users_to_notify,
+							// The list that was checked, not the raw field, so the
+							// server validates exactly what passed here.
+							users: addresses.join(", "),
 							project_template: values.project_template,
+						},
+						// v16 runs only this, never `callback`, on a frappe.throw
+						// (HTTP 417). Without it the dialog sat on "Queuing..." with
+						// the fields gone.
+						error: function () {
+							dialog.clear_message();
+							primary_btn.prop("disabled", false).html(primary_label);
 						},
 						callback: function (r) {
 							dialog.hide();

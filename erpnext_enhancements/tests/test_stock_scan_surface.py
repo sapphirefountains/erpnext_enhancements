@@ -26,7 +26,10 @@ bench-free CI cannot otherwise see:
    ``| tojson``, ``no_cache``, and a signed-out visitor sent to log in *before* the role check,
    with the scanned label's query string intact.
 6. **The client never renders HTML, never calls ``frappe.*``** (a website route has no Desk),
-   and never changes the URL (iOS Safari asks for the camera again when it does).
+   and never changes the URL (iOS Safari asks for the camera again when it does): its history
+   entries carry none — ``nav.js`` only, every call with exactly two arguments — and nothing
+   assigns ``location``. "Report a problem" reaches the capture panel through the
+   ``window.ee_capture`` global, and the page stands aside while the panel owns Back.
 7. **The Desk door, the log doctype and the settings**: one ``doctype_js["Warehouse"]`` entry
    whose buttons open the two pages with the query key the page understands; the log's
    ``client_ref`` unique and the log unwritable by hand; every new setting's default mirrored in
@@ -111,7 +114,12 @@ SAVES = ("take", "add", "move_here")
 IGNORE_PERMISSIONS_ALLOWED = {"_begin_log", "undo"}
 
 #: The client modules the spec names. ``lib/`` is vendored and excluded from every rule here.
-CLIENT_MODULES = ("transport.js", "logic.js", "dom.js", "ui.js", "scanner.js", "app.js")
+CLIENT_MODULES = ("transport.js", "logic.js", "dom.js", "ui.js", "scanner.js", "nav.js", "app.js")
+
+#: The one module allowed to write browser history (and only ever without a URL).
+NAV = CLIENT / "nav.js"
+APP_JS = CLIENT / "app.js"
+UI_JS = CLIENT / "ui.js"
 
 # The payload shapes the page reads (the spec's "Shapes"). Asserted as subsets: a key the
 # server adds is harmless, a key it drops is ``undefined`` on a phone.
@@ -431,6 +439,54 @@ def _split_entries(body):
 	return [entry.strip() for entry in entries if entry.strip()]
 
 
+def _call_args(code, open_paren):
+	"""The top-level arguments of the call whose ``(`` is at ``open_paren``, as stripped text.
+
+	Commas inside ``()``, ``[]``, ``{}`` or a string do not split: ``f(a, {b: 1, c: 2}, "x,y")``
+	is three arguments.
+	"""
+	args, current, depth, quote, i = [], [], 0, None, open_paren + 1
+	while i < len(code):
+		ch = code[i]
+		if quote:
+			current.append(ch)
+			if ch == "\\":
+				current.append(code[i + 1 : i + 2])
+				i += 2
+				continue
+			if ch == quote:
+				quote = None
+		elif ch in "\"'`":
+			quote = ch
+			current.append(ch)
+		elif ch in "([{":
+			depth += 1
+			current.append(ch)
+		elif ch in ")]}":
+			if depth == 0:
+				last = "".join(current).strip()
+				if last or args:
+					args.append(last)
+				return args
+			depth -= 1
+			current.append(ch)
+		elif ch == "," and depth == 0:
+			args.append("".join(current).strip())
+			current = []
+		else:
+			current.append(ch)
+		i += 1
+	raise AssertionError(f"a call's parenthesis at offset {open_paren} never closes")
+
+
+def _method_body(code, name):
+	"""The body of class method ``name`` in comment-stripped ``code`` (``app.js``'s methods)."""
+	match = re.search(r"^\t(?:async\s+)?" + re.escape(name) + r"\s*\([^)]*\)\s*\{", code, re.M)
+	if not match:
+		raise AssertionError(f"no method {name}() found")
+	return _object_body(code, match.end() - 1)
+
+
 def _js_string(expr, consts):
 	"""Resolve an ``M`` value: a string literal, `` `${PREFIX}.name` ``, or ``PREFIX + ".name"``."""
 	expr = expr.strip()
@@ -487,7 +543,7 @@ def _client_sources():
 	missing = [name for name in CLIENT_MODULES if not (CLIENT / name).is_file()]
 	if missing:
 		raise AssertionError(
-			f"public/js/stock_scan/ is missing {missing}. The spec names six client modules; "
+			f"public/js/stock_scan/ is missing {missing}. The spec names seven client modules; "
 			"these checks cannot run until the front end has written them."
 		)
 	out = {
@@ -1119,12 +1175,50 @@ class TestClientSourceRules(unittest.TestCase):
 		"""A website route does not load the Desk; ``frappe.*`` is undefined or a stub there."""
 		self.assertNoLineMatches(r"\bfrappe\s*\.", "reaches for frappe.*")
 
-	def test_the_url_never_changes(self):
-		"""iOS Safari asks for the camera again whenever the URL changes, so the page keeps an
-		in-memory back stack instead of history entries."""
+	def test_the_url_is_never_assigned(self):
+		"""iOS Safari asks for the camera again whenever the URL changes. Nothing may navigate
+		the document or touch its hash; reading ``location.href`` (the boot label) is fine."""
 		self.assertNoLineMatches(
-			r"\b(pushState|replaceState)\s*\(|\blocation\.hash\s*=(?!=)", "changes the URL"
+			r"\blocation\.(hash|href|search|pathname)\s*=(?!=)|\blocation\.(assign|replace)\s*\("
+			r"|\b(window|document)\.location\s*=(?!=)",
+			"changes the URL",
 		)
+
+	def test_history_entries_never_carry_a_url(self):
+		"""The stricter rule that replaced "no history calls at all" when Back/Forward arrived.
+
+		Every ``pushState``/``replaceState`` is in ``nav.js``, and every one has exactly two
+		arguments, the second ``""``: a third argument is a URL, and a URL change is a camera
+		prompt per shelf on an iPhone. There must be at least one, or this passes on nothing.
+		"""
+		calls = []
+		for path, code in _client_sources().items():
+			for match in re.finditer(r"\b(pushState|replaceState)\s*\(", code):
+				line = code.count("\n", 0, match.start()) + 1
+				calls.append((path, line, match.group(1), _call_args(code, match.end() - 1)))
+		self.assertTrue(
+			calls, "no pushState/replaceState found: Back/Forward is not wired, or the scan is broken"
+		)
+		for path, line, name, args in calls:
+			with self.subTest(call=f"{path}: line {line}"):
+				self.assertEqual(
+					path,
+					"public/js/stock_scan/nav.js",
+					f"{name} outside nav.js; every history write goes through NavHistory.write",
+				)
+				self.assertEqual(len(args), 2, f"{name}({', '.join(args)}) must take exactly (state, \"\")")
+				self.assertIn(
+					args[1], ('""', "''"), f'{name}: the second argument must be "" (a title, ignored)'
+				)
+
+	def test_the_call_argument_splitter(self):
+		# The rule above is only as good as this; a splitter that never split would pass anything.
+		code = 'h.pushState({ a: 1, b: [2, 3] }, "", "/x?y=1,2")'
+		self.assertEqual(_call_args(code, code.index("(")), ["{ a: 1, b: [2, 3] }", '""', '"/x?y=1,2"'])
+		code = 'h.replaceState(Object.assign({ ee_ss: k, id }, extra), "")'
+		self.assertEqual(len(_call_args(code, code.index("("))), 2)
+		code = "h.back()"
+		self.assertEqual(_call_args(code, code.index("(")), [])
 
 	def test_no_random_uuid(self):
 		"""Older Android WebViews lack ``crypto.randomUUID``; ``mintRef`` uses time + random."""
@@ -1142,6 +1236,195 @@ class TestClientSourceRules(unittest.TestCase):
 						spec.startswith("./"),
 						f"{path} imports {spec}; the client is self-contained (no npm, no other app's modules)",
 					)
+
+
+class TestBackAndForward(unittest.TestCase):
+	"""The phone's Back walks the screens and closes a sheet first (nav.js). What runs is in
+	``scripts/test_stock_scan_client.mjs``; this pins the wiring that no node test can reach."""
+
+	def app(self):
+		return _strip_js_comments(_read(APP_JS))
+
+	def test_back_is_wired(self):
+		app = self.app()
+		for needle in (
+			'addEventListener("popstate"',
+			'addEventListener("pageshow"',
+			"new NavHistory(",
+			"onSheetChange(",
+		):
+			with self.subTest(needle=needle):
+				self.assertIn(needle, app)
+		self.assertIn(
+			"this.nav.screen(", _method_body(app, "enter"), "every screen must reach the history mirror"
+		)
+		self.assertIn("this.nav.settled()", _method_body(app, "setLoading"))
+
+	def test_the_settings_off_switch_reaches_both_layers(self):
+		"""Inventory Scanner Settings' "Turn Off Browser Back on Stock Scan" is the no-deploy way
+		back if an iPhone re-prompts for the camera: the boot says browser_history 0, the page
+		builds its NavHistory with no history object, and the template tells the report panel."""
+		defaults = ast.literal_eval(_module_constant(SETTINGS_DIR / "inventory_scanner_settings.py", "DEFAULTS"))
+		self.assertIn("stock_scan_disable_browser_back", defaults)
+		self.assertIn(
+			'"browser_history": 0 if cint(settings.get("stock_scan_disable_browser_back")) else 1,', _read(API)
+		)
+		app = self.app()
+		self.assertIn("BROWSER_HISTORY && this.settings.browser_history !== 0 ? window.history : null", app)
+		self.assertIn("new NavHistory(history,", app)
+		self.assertIn("history: {{ (boot.settings.browser_history != 0) | tojson }}", _read(PAGE_HTML))
+
+	def test_the_sheets_tell_the_history_mirror(self):
+		ui = _strip_js_comments(_read(UI_JS))
+		self.assertRegex(
+			ui, r"stack\.push\(handle\);\s*tell\(true\);", "a sheet opening must push the marker in the tap"
+		)
+		self.assertRegex(
+			ui,
+			r"stack\.splice\(at, 1\);\s*tell\(false\);",
+			"a sheet closing must say so once, inside close()'s own guard",
+		)
+
+	def test_the_kill_switch_is_one_line(self):
+		"""If an iPhone ever re-prompts for the camera, the settings box (``browser_history`` 0) or
+		``BROWSER_HISTORY = false`` is the whole fix. So the constant must exist exactly once, be a
+		literal, and be, with the setting, what decides the history object."""
+		app = self.app()
+		self.assertEqual(len(re.findall(r"^const BROWSER_HISTORY = (?:true|false);$", app, re.M)), 1)
+		self.assertRegex(
+			app,
+			r"const history = BROWSER_HISTORY && this\.settings\.browser_history !== 0 \? window\.history : null;"
+			r"\s*this\.nav = new NavHistory\(history,",
+		)
+		self.assertEqual(
+			len(re.findall(r"\bwindow\.history\b(?!\.state)", app)),
+			1,
+			"window.history reaches nav.js only through the kill switch (reading .state is fine)",
+		)
+
+	def test_nav_writes_over_only_the_entry_the_browser_is_on(self):
+		"""The model can be behind the browser: the report form pushes an entry nav never sees.
+		Taking over "the marker" or replacing "the current entry" by the model alone wrote a
+		screen over the FORM's entry. ``screen()`` asks the browser first."""
+		body = _method_body(_strip_js_comments(_read(NAV)), "screen")
+		self.assertIn("this.onEntry(this.current())", body)
+		self.assertLess(body.index("this.onEntry(this.current())"), body.index('kind = "replace"'))
+
+	def test_nav_is_dom_free(self):
+		nav = _strip_js_comments(_read(NAV))
+		self.assertNotRegex(nav, r"\b(window|document|location|navigator)\b", "nav.js runs in plain node")
+		self.assertNotRegex(nav, r"\bimport\b", "nav.js stands alone")
+
+
+class TestReportAProblem(unittest.TestCase):
+	"""The capture panel (WI-079) on this page: its door, and who owns Back while it is open."""
+
+	def app(self):
+		return _strip_js_comments(_read(APP_JS))
+
+	def test_the_door_is_in_the_header(self):
+		app = self.app()
+		self.assertIn('setAttribute("aria-label", "Report a problem")', app)
+		self.assertIn("this.reportBtn", _method_body(app, "mount"))
+		self.assertRegex(app, r'append\(el\("header", "ee-ss-top"\)[^;]*this\.reportBtn')
+
+	def test_it_opens_through_the_global_as_web(self):
+		"""The recorder is the template's, never this bundle's (test_feedback_capture_surface
+		follows every bundle's imports). The kiosk opens it the same way."""
+		body = _method_body(self.app(), "openReport")
+		self.assertIn("window.ee_capture", body)
+		self.assertRegex(body, r"\.open\(\s*\{\s*surface:\s*\"web\"\s*\}\s*\)")
+		self.assertIn("reportFailed()", body, "a form that did not open must say what to do")
+		for path, code in _client_sources().items():
+			with self.subTest(file=path):
+				self.assertNotRegex(
+					code, r"\bimport\b[^;]*capture/", "the recorder arrives as window.ee_capture"
+				)
+
+	def test_the_panel_owns_its_history_entry(self):
+		"""The panel pushes and removes its own entry and answers Back itself. This page must not
+		cover it with a marker, and must not act on a popstate while it is open."""
+		app = self.app()
+		self.assertNotIn("overlayOpened", _method_body(app, "openReport"))
+		pop = _method_body(app, "onPopState")
+		self.assertIn("this.reportOpen()", pop)
+		self.assertLess(
+			pop.index("this.reportOpen()"), pop.index("this.nav.popped("), "stand aside BEFORE moving"
+		)
+		self.assertIn("isOpen()", _method_body(app, "reportOpen"))
+
+	#: Every door on the page: each opens a sheet (the camera is one) or starts a navigation.
+	DOORS = (
+		"scan",
+		"openSearch",
+		"pickJob",
+		"openMove",
+		"askQuantity",
+		"save",
+		"confirmUndo",
+		"goBack",
+		"openItem",
+		"openLocation",
+		"resolve",
+		"onWedgeKey",
+	)
+
+	def test_no_door_opens_under_the_form(self):
+		"""The form downloads on first use, and on a slow connection the page is still there to
+		tap. A camera opened then kept decoding under the form, navigated the page under it (its
+		history write landing where the form's own entry was) and took every letter typed into
+		the form. So from the tap until the form has closed, every door checks ``reportBusy()``
+		before it does anything. ``scripts/test_stock_scan_client.mjs`` runs that sequence on the
+		real app.js; this keeps the next door honest."""
+		app = self.app()
+		self.assertIn("this.reportWanted || this.reportOpen()", _method_body(app, "reportBusy"))
+		for name in self.DOORS:
+			with self.subTest(door=name):
+				body = _method_body(app, name)
+				guard = body.find("this.reportBusy()")
+				self.assertNotEqual(guard, -1, f"{name}() must check reportBusy()")
+				acts = (
+					"sheet(",
+					"ask(",
+					"openScanner(",
+					"call(",
+					"this.nav.",
+					"this.enter(",
+					"this.show(",
+					"this.post(",
+				)
+				for act in acts:
+					at = body.find(act)
+					if at != -1:
+						self.assertLess(guard, at, f"{name}() checks reportBusy() only after {act}")
+
+	def test_a_form_that_lands_over_a_sheet_is_not_kept(self):
+		"""A door that forgot the check: the form then mounts over a sheet whose marker sits under
+		the form's entry, and the sheet keeps its keys. Closing the form removes its entry again."""
+		body = _method_body(self.app(), "openReport")
+		self.assertRegex(
+			body, r"if \(!wanted \|\| sheetDepth\(\) \|\| this\.scanner\) \{\s*if \(typeof handle\.close"
+		)
+
+	def test_keys_aimed_at_the_form_are_not_a_sheets(self):
+		"""The backstop for the same trap: a key aimed outside every ``.ee-ss-root`` (the form
+		mounts on <body>) is not the camera's to steal, nor a sheet's Escape or Tab."""
+		ui = _strip_js_comments(_read(UI_JS))
+		self.assertRegex(ui, r"closest\(\"\.ee-ss-root\"\)")
+		self.assertRegex(
+			ui,
+			r"function onKeydown\(ev\) \{\s*const top = stack\[stack\.length - 1\];"
+			r"\s*if \(!top \|\| notOurs\(ev\.target\)\) return;",
+		)
+		scanner = _strip_js_comments(_read(CLIENT / "scanner.js"))
+		self.assertRegex(scanner, r"function onKeydown\(ev\) \{\s*if \([^)]*notOurs\(ev\.target\)\) return;")
+
+	def test_the_capture_state_is_codes_and_counts(self):
+		body = _method_body(self.app(), "registerCaptureState")
+		self.assertIn("registerCaptureState(", body)
+		for leak in ("item_name", "supplier", "project", "qty", "warehouse_name", "customer"):
+			with self.subTest(field=leak):
+				self.assertNotIn(leak, body)
 
 
 # ---------------------------------------------------------------------------

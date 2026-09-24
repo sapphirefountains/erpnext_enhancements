@@ -73,6 +73,8 @@ const ICONS = {
 	undo: ["M9 14L4 9l5-5", "M4 9h10.5a5.5 5.5 0 0 1 0 11H11"],
 	bolt: ["M13 3L5 14h6l-1 7 8-11h-6z"],
 	close: ["M6 6l12 12", "M18 6L6 18"],
+	// "Report a problem": a speech bubble, not a flag — Recent's "Review" pill already uses ⚑.
+	report: ["M4 5h16v11H10l-4 4v-4H4z", "M12 8v3.5", "M12 13.5v.01"],
 };
 
 /** A small line icon, `aria-hidden` (the words beside it carry the meaning). */

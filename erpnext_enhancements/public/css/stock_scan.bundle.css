@@ -333,6 +333,45 @@ body .page-footer {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+/* "Report a problem" (the WI-079 capture panel): beside the job chip on every view, because the
+   floating launcher would sit on Scan. Icon-only on a narrow phone; the word shows where there
+   is room. The accessible name is its aria-label either way. */
+.ee-ss-top-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	flex: none;
+	min-width: 48px;
+	min-height: 48px;
+	padding: 0 12px;
+	border: 1px solid var(--ss-border);
+	border-radius: 999px;
+	background: var(--ss-chip-bg);
+	color: var(--ss-text-2);
+	font-size: 0.95rem;
+	font-weight: 700;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.ee-ss-top-btn[aria-busy="true"] {
+	opacity: 0.6;
+	cursor: progress;
+}
+.ee-ss-top-btn-text {
+	display: none;
+}
+@media (min-width: 420px) {
+	.ee-ss-top-btn-text {
+		display: inline;
+	}
+}
+/* At 320 px the title keeps ~80 px: title + chip + the 48 px button + gaps in 292 px. */
+@media (max-width: 359px) {
+	.ee-ss-job-chip {
+		max-width: 50%;
+	}
+}
 .ee-ss-progress {
 	position: absolute;
 	left: 0;

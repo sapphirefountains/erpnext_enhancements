@@ -19,6 +19,7 @@
   "column_break_stock_scan",
   "require_project_for_take",
   "undo_window_minutes",
+  "stock_scan_disable_browser_back",
   "item_naming_section",
   "naming_digest_recipients"
  ],
@@ -113,6 +114,12 @@
    "non_negative": 1
   },
   {
+   "description": "Leave unticked. Tick it only if iPhones start asking for camera permission again on Stock Scan: it turns off the phone's Back and Forward between Stock Scan screens and in the Report a problem form, so Back leaves the page as it did before v1.534.0. Takes effect the next time the page is opened.",
+   "fieldname": "stock_scan_disable_browser_back",
+   "fieldtype": "Check",
+   "label": "Turn Off Browser Back on Stock Scan"
+   },
+   {
    "description": "New Items are refused only when their code duplicates an existing one or their name is just the code. For everything else the naming rules find on a new Item, a weekly list goes to the addresses below.",
    "fieldname": "item_naming_section",
    "fieldtype": "Section Break",
@@ -128,7 +135,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-24 12:00:00.000000",
+ "modified": "2026-09-24 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Scanner Settings",

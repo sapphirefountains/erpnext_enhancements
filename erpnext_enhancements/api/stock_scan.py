@@ -1278,6 +1278,8 @@ def boot_payload(args=None):
 		"settings": {
 			"require_project_for_take": cint(settings.get("require_project_for_take")),
 			"undo_window_minutes": cint(settings.get("undo_window_minutes")),
+			# 0 only when a Stock Manager ticked the off switch (Inventory Scanner Settings).
+			"browser_history": 0 if cint(settings.get("stock_scan_disable_browser_back")) else 1,
 		},
 		"recent": _recent(),
 		"initial": initial,
