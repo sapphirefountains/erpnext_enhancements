@@ -45,6 +45,12 @@ Instead of a result, the tool returns:
    spam retries to "make it work".
 6. Actions expire (default 1 hour). If expired, propose again only when the
    user still wants it.
+7. **A refused write was not queued.** A `create_document` or `update_document`
+   can come back as `success: false` with `error_type: AIGateValidationError`.
+   That happens when a Select value is not one of the field's options (the error
+   lists the valid ones; this site spells it "Canceled"), or when the DocType
+   does not exist. Nothing ran and no card exists. Correct the value, then call
+   again. That is a corrected call, not a retry of the same one.
 
 ## When the gate is off
 

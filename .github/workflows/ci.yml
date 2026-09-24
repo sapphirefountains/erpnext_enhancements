@@ -208,6 +208,7 @@ jobs:
           erpnext_enhancements.tests.test_assistant_tools_schema
           erpnext_enhancements.tests.test_ai_gate_unit
           erpnext_enhancements.tests.test_ai_gate_per_call
+          erpnext_enhancements.tests.test_ai_gate_precheck
           erpnext_enhancements.tests.test_ai_gate_sealed_arguments
           erpnext_enhancements.tests.test_ai_gate_switch_on
           erpnext_enhancements.tests.test_integrations_health
@@ -246,7 +247,28 @@ jobs:
       # character and a paraphrased fixture rounds exactly those off.
       - name: Item naming schema (the block-occupancy boundary, on the real strings)
         run: python -m unittest erpnext_enhancements.tests.test_item_naming_rules -v
-      # Its own step for the same reason as the one above: this suite imports no frappe at
+      # The new-Item naming guard (v1.532.0), the app's first Item doc_event. Its own step
+      # because it installs a frappe stub in setUpModule, and the suite above must stay
+      # stub-free. It guards the skips more than the refusal: an existing Item, a Data Import,
+      # a migrate, a background job (the QuickBooks sync creates Items on the scheduler), a
+      # variant, any save before the 2026-10-01 go-live, and an in-request caller whose user
+      # cannot choose the code or name must all save. Get one wrong
+      # and a legitimate save fails with a naming message nobody at that door can act on.
+      - name: Item naming guard (two findings refuse a NEW Item; every skip holds)
+        run: python -m unittest erpnext_enhancements.tests.test_item_naming_guard -v
+      # The Monday naming digest (v1.532.0). Own step: stubs frappe, email_style and the
+      # item_naming reads, but runs the REAL rules module, because the property worth guarding
+      # is that the week's rows come from auditing the whole catalogue and restricting after --
+      # restrict first and a new Item named exactly like an old one reads as clean. Also: no
+      # recipients, no new Items or nothing failing sends nothing.
+      - name: Item naming digest (whole-corpus audit, then the week; silent when clean)
+        run: python -m unittest erpnext_enhancements.tests.test_item_naming_digest -v
+      # The two v1.532.0 seed patches. Own step: stubs frappe. The recipient seed must never write
+      # to a never-saved Single or over an existing row; each KPI Target must land on a key its
+      # department's snapshot publishes, graded the same way -- a misspelt key grades nothing, silently.
+      - name: Inventory seed patches (digest recipient, approved KPI targets)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_seed_patches -v
+      # Its own step for the same reason as the Item naming schema step: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.
       #
@@ -400,6 +422,34 @@ jobs:
       # installs a frappe stub.
       - name: Work-breakdown code anchors (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_feedback_code_anchors -v
+      # WI-079 slice 4, the Claude Code brief: the work-item headings in order, leaves grouped
+      # under their group Task, one acceptance box per open leaf plus the Bug line and the exact
+      # `Refs:` line, printed bare in its own block and checked with release_sync.refs_in itself
+      # (closed leaves kept off it, a backticked copy ignored), no requester, approver, docname
+      # or query string anywhere (sentinels planted, the group Task's origin note included),
+      # HTML stripped from Task descriptions (<pre> indentation kept), and the 60,000-character
+      # cap for any input with its cut order and a truthful note. The renderer is pure; its own
+      # step because it installs an empty `frappe` placeholder (code_anchors and release_sync
+      # import frappe at module level).
+      - name: Feedback Claude Code brief (bench-free, frappe placeholder)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_brief -v
+      # WI-079 slice 4, the status return: a CHANGELOG `Refs:` line moves feedback Tasks to
+      # Pending Review, only at or below the version tabInstalled Application records, never
+      # to Completed, only Tasks carrying custom_enhancement_request and only from
+      # Open/Working/Overdue (not an Overdue a person had canceled), only a Task of a request the
+      # line names; a second run changes nothing; the marker moves to installed only on a clean
+      # run and an absent marker replays everything; 500 save attempts a run, skips free. Also
+      # runs refs_in over the REAL CHANGELOG.md: a Refs line naming a Task fails the build
+      # unless SHIPPED_REFS lists it, so an example can never move a real Task. Its own step: a
+      # frappe stub whose savepoint really rolls back.
+      - name: Feedback release sync + mark_shipped (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_release_sync -v
+      # ERPNext's daily set_tasks_as_overdue exempts only Cancelled and Completed; this site's
+      # Canceled, Invoiced and Template Tasks were flipped to Overdue. The Task override returns
+      # early for finished statuses and leaves the core rule to everything else. Its own step:
+      # it stubs erpnext's Task base class.
+      - name: Task overdue guard (bench-free, erpnext stub)
+        run: python -m unittest erpnext_enhancements.tests.test_task_overdue_guard -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the
@@ -1084,6 +1134,12 @@ jobs:
       # keeps them from cross-talking.
       - name: PO separation of duties (WI-066, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_segregation -v
+      # The $0 line warning on Purchase Order submit (v1.532.0, POL-0602 §4.6). Own step: it
+      # installs its own frappe stub. It must WARN and never block -- 281 of 327 submitted
+      # lines in the 90 days to 2026-09-24 were $0, so a raise here would stop purchasing --
+      # and it must sit after the two submit gates on before_submit.
+      - name: PO $0 line warning (never raises; after the gates)
+        run: python -m unittest erpnext_enhancements.tests.test_po_price_check -v
       # Guards the seeded mermaid charts (must start with "graph ", no raw "<",
       # no pre-escaped entities). It existed but ran nowhere until WI-066.
       - name: Seeded process documents (mermaid contract)

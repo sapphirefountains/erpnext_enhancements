@@ -95,6 +95,8 @@ function fakeWindow(options) {
 	};
 
 	const move = (url) => {
+		// As a browser does: a history call with no URL leaves the address alone.
+		if (url === undefined || url === null) return;
 		const u = new URL(url, loc.origin);
 		loc.pathname = u.pathname;
 		loc.search = u.search;
@@ -452,6 +454,25 @@ function fakeWindow(options) {
 		check('a snapshot is a copy, not a live reference', [api.snapshot().console.length, api.snapshot().app.clock], [0, 'in']);
 		stop();
 		check('an unregistered state stops contributing', api.snapshot().app.queue, 2);
+	}
+
+	console.log('\nisOpen(): pages with history of their own ask it on every popstate');
+	{
+		const f = fakeWindow({ boot: { surface: 'web' }, fetchImpl: () => null });
+		const api = R.install(f.win);
+		check('false before the panel has loaded', api.isOpen(), false);
+		let open = true;
+		f.win.ee_capture_panel = { open: () => null, isOpen: () => open };
+		check('the panel\'s own answer once it has', api.isOpen(), true);
+		open = false;
+		check('read at call time, not cached', api.isOpen(), false);
+		f.win.ee_capture_panel = { open: () => null, isOpen: () => 'yes' };
+		check('always a boolean', api.isOpen(), true);
+		f.win.ee_capture_panel = { open: () => null };
+		check('a panel without isOpen reads as closed', api.isOpen(), false);
+		f.win.ee_capture_panel = { open: () => null, isOpen: () => { throw new Error('boom'); } };
+		check('a throwing isOpen reads as closed, never throws into the page', api.isOpen(), false);
+		check('the history wrappers still return what the originals did', [f.win.history.pushState({ ee_capture: 'x' }, ''), f.win.history.replaceState({}, '')], ['push-result', 'replace-result']);
 	}
 
 	console.log('\nopen() on a web page: script tag from panel_url');

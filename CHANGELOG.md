@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.530.1] - 2026-09-24
+## [1.534.1] - 2026-09-24
 
 **Fixes from an independent review of 1.529.0.** 1.529.0 merged while the review was still
 running. Seven findings survived an adversarial check. All were low severity, and three were
-false statements in the 1.529.0 entry, now marked *(Corrected in v1.530.1)* in place. The
+false statements in the 1.529.0 entry, now marked *(Corrected in v1.534.1)* in place. The
 common thread: the browser's email regex (`frappe.utils.validate_type(..., "email")`, v16
 `utils.js`) is looser than the server's `validate_email_address` / `EMAIL_MATCH_PATTERN`. It
 also accepts accented and quoted local parts (`josé@…`, `"a b"@…`), IP literals
@@ -72,6 +72,637 @@ and each path had to handle a server refusal properly.
 - `tests/test_handoff_gate.py` (bench-free, in CI) gains `TestNotInvited`, five cases, which
   fail against 1.529.0's `handoff.py` and pass now. `tests/test_project_prompt.py` needs a
   bench and was not run.
+## [1.534.0] - 2026-09-24
+
+**The phone's Back button now works inside Stock Scan and the Time Kiosk, and Stock Scan gets
+"Report a problem".** Back returns to the previous screen or tab, and Forward brings it back. When
+a sheet, the camera or the report form is open, Back closes that first. At the first screen,
+Back leaves the page as it always did.
+
+### Why
+
+Nik reported that pressing Back on `/stock-scan` "just takes you out of the app", and set the
+rule: *we shouldn't break basic browser functionality with back or forward navigation.* The
+cause was the same on both pages. Every screen change was an in-memory swap with no history
+entry, so the page owned exactly one entry, and Back always left it. On the kiosk that also
+threw away any open form and draft, and could background the app mid-shift.
+
+A survey of every custom page found the same problem elsewhere. Worst are the Inspection Wizard
+(Back can lose an answer still in its autosave debounce) and the Visit Wizard (Back skips every
+step, and its hard-coded `/app/` URLs land Back or Forward on "Page not found"). Those follow in
+later releases; this one fixes the two pages field staff use on phones, plus the report panel
+they share.
+
+### Added
+
+- **Stock Scan Back and Forward: `public/js/stock_scan/nav.js`.** Each screen is a history entry.
+  A sheet or the camera gets one marker entry, so Back closes it. The in-app back link calls
+  `history.back()` when its target is the entry behind; otherwise, for example after a scan
+  made Start the parent, it goes up as a new entry.
+- **Time Kiosk Back and Forward: `KioskUI.nav` in `public/js/kiosk/ui.js`.** A tab tap pushes one
+  entry. An open stack of sheets adds one more, and each Back closes the top sheet through
+  `close('dismiss')`, the path Escape takes, which every gate already reads as cancel. The clock
+  state (idle, working, break, day complete) is server truth and is never an entry, so Back
+  cannot undo or repeat a clock action.
+- **"Report a problem" on `/stock-scan`**: a header button on every screen. `stock-scan.html` joins
+  the capture allowlist with surface `web` and `launcher: false`, because the floating launcher
+  would sit on the Scan bar. While the form loads or is open, every other door on the page is
+  shut, so nothing opens underneath it.
+- **The report panel owns a history entry on the web and the kiosk** (`capture/panel.js`). Back
+  asks "Discard this report?" instead of unloading the page and silently losing the typed report
+  and annotated screenshot. Every other close path removes the entry with one `history.back()`.
+  `window.ee_capture.isOpen()` is new, so pages with their own history stand aside while it is
+  open.
+- **Off switches, no deploy needed:**
+  - Inventory Scanner Settings: "Turn Off Browser Back on Stock Scan"
+    (`stock_scan_disable_browser_back`).
+  - Time Kiosk Settings: "Turn Off Browser Back in the Kiosk" (`disable_browser_back`).
+
+  Ticked, each page and its report panel go back to pushing no history at all. They exist for
+  iPhones (see below).
+
+### Workarounds and platform limits, recorded here on purpose
+
+- **No history call carries a URL.** Every call is `pushState(state, "")` or
+  `replaceState(state, "")`, so `location.href` never changes. iOS Safari asks for camera
+  permission again when a page's URL changes, and Stock Scan uses the camera on every shelf. The
+  kiosk service worker serves its offline shell only for the exact path `/kiosk`. Tests on both
+  pages fail the build on a third argument.
+- **Whether iOS re-prompts for a same-URL `pushState` is unverified.** WebKit resets grants on a
+  load commit, not a same-document entry, so it should not. But home-screen web apps have had
+  bugs of this kind, and nobody has tested it on an iPhone yet. That is what the two settings
+  boxes are for.
+- **Chrome's history-manipulation intervention.** Back skips an entry the page pushed without a
+  user tap since the entry before it, and one tap-less push can make Back skip every entry the
+  page owns. So entries are pushed only from taps. A navigation the page makes by itself writes
+  over an entry that a tap already pushed: a camera read or a lookup result takes over the entry
+  the camera or search sheet pushed when it was tapped open, and the automatic open of a bin
+  holding one item replaces the bin's entry.
+- **The panel's entry is not used on the Desk**, where Frappe's router re-routes on every
+  `popstate`. **Nor yet on `/feedback`**, whose router re-renders the current view on every
+  `popstate`, which would clear a half-written request under the panel.
+- A screen's data is kept in memory keyed by an id in `history.state`, never in the state
+  itself, because browsers write that to disk. An entry from an earlier load of the page, or
+  one the page did not write, is never restored from: the page keeps its screen and re-stamps
+  the entry. A reload still opens the label in the URL on Stock Scan, and Clock on the kiosk.
+- **Both settings fields need no backfill patch.** Unticked is right for every site, and a site
+  that never saved the field reads it as unticked.
+
+### Tests
+
+- `scripts/test_stock_scan_client.mjs`: 273 checks, run against the real `nav.js` and `app.js`.
+- `scripts/test_kiosk_history.js`, new: 230 checks in 21 scenarios. It drives the real kiosk
+  scripts against a fake history that models Chrome's intervention and fails on any push made
+  without a tap. `tests/test_kiosk_frontend.py` runs it.
+- `scripts/test_capture_panel.js`: every close path, "stay" and re-arm, blocked dialogs,
+  Forward onto a dead entry, both races, and the off switch.
+- The Python surface suites pin the wiring that no node test can reach: `test_stock_scan_surface`,
+  `test_kiosk_frontend` and `test_feedback_capture_surface`.
+- Everything above runs against fake DOMs and fake histories, not a real phone.
+
+## [1.533.0] - 2026-09-24
+
+**The AI write gate refuses a write that can't run before asking anyone to confirm it.** When an
+assistant's `create_document` or `update_document` carries a Select value that isn't an option,
+or names a DocType that doesn't exist, the assistant gets the error back at once. No AI Pending
+Action is created.
+
+### Why
+
+On 2026-09-24 an assistant queued 21 `update_document` cards (AI-PA-2026-798956 and
+798978–798997). Each set a Task's status to **"Cancelled"**, which is ERPNext core's spelling.
+This site's options are Open, Working, Invoiced, Completed, **Canceled**, Pending Review, Overdue
+and Template.
+
+- Nik confirmed all 21 in one batch at 11:20, and every one failed on execution with
+  `Status cannot be "Cancelled"`.
+- The same cancels were queued again with the correct spelling (AI-PA-2026-799036–799056) and
+  confirmed a second time.
+
+The gate decided *whether* a write needed a human, but never whether it *could* run. ADR 0016 §6
+says a Task update executes unless it closes the Task. The gate implements that as an allowlist
+(`_TASK_STATUSES_THAT_RUN`: Open, Working, Pending Review, Overdue), so every other status became
+a card, including one that isn't an option at all.
+
+A card spends a person's attention, and a batch confirm makes the waste worse: one approval
+covered 21 writes, none of which could succeed.
+
+### Added
+
+- **Check before queueing: `_gate._precheck_refusal`.** It runs just before `_propose`, and only
+  for `create_document` and `update_document`.
+  - It checks each Select value in `data` against the DocType meta, child-table rows included.
+  - It uses frappe v16's own comparison from `BaseDocument._validate_selects`, read from
+    `origin/version-16`, applied only to the values in the call:
+    - the value is stripped, and the options are not;
+    - `naming_series` and falsy values are skipped;
+    - the whole-options placeholders `[Select]` and `Loading...` are skipped, as in
+      `Meta.get_select_fields()`.
+  - It keeps one Frappe quirk. Frappe's "only empty options" guard, `if not filter(None,
+    options)`, never fires on Python 3 because a filter object is always truthy. So a field whose
+    options are all blank lines refuses any non-empty value, here as in Frappe.
+- **The refusal is a plain error, with error type `AIGateValidationError`.**
+  - It uses Frappe's wording, prefixed with the DocType, or with the table and row.
+  - It ends "Nothing was queued for confirmation: correct the value and call … again".
+  - A credential-like field's value is shown as `***REDACTED***`, as in the card's own arguments.
+    The message goes back to the model and into AI Action Log. The confirm path masks for the same
+    reason.
+  - It lists at most five problems, then "…and N more like these". Otherwise every bad child row
+    would repeat the field's whole options list.
+  - It is recorded in AI Action Log as a failed row, "Not queued, invalid value", the same way the
+    denylist refusal is recorded. A model proposing values that don't exist is worth seeing.
+  - `_error_response` now takes an optional `error_type`.
+- **A DocType that doesn't exist is refused the same way.** Such a call could never become a card:
+  the card's own `target_doctype` is a Link to DocType, so the insert failed. The gate then blocked
+  it with "internal error" and wrote an Error Log. Now the model gets `DocType "…" does not
+  exist`, and no Error Log is written.
+- **The `ee-ai-write-confirmation` skill** (`data/skills/ai_write_confirmation.md`, synced to FAC
+  on migrate) gains rule 7: an `AIGateValidationError` means nothing was queued, so correct the
+  value and call again.
+- **`tests/test_ai_gate_precheck.py`: 26 bench-free tests, in the existing AI gate CI step.** They
+  cover:
+  - the incident exactly as the assistant sent it: refused, no card, logged;
+  - a refused create, the five-problem cap, and the unknown-DocType refusal;
+  - a valid close ("Canceled") and a valid create, which still create a card;
+  - a check that raises, which still creates the card and writes an Error Log;
+  - that other mutating tools aren't checked, and that an auto-approved Task update (ADR 0016 §6)
+    still runs;
+  - the Frappe mirror itself: stripping, falsy values, `naming_series`, placeholders, blank-only
+    options, child rows, `_delete` handling per tool, `fetch_from`, cancels and redaction.
+
+  Verified against `origin/main`'s `_gate.py`: all five refusal tests fail there, along with the
+  failing-check test. The two valid-card tests, the other-tool test and the auto-approved test
+  pass on both versions. The helper tests error there, because the helpers don't exist yet.
+
+### Deliberately not done
+
+- **No full validation run.** `doc.validate()` and FAC's `create_document(validate_only=True)`
+  run controller hooks, and those send email, enqueue jobs and write rows for a write nobody has
+  confirmed. FAC's `validate_only` would not have caught this incident either. It calls
+  `run_method("validate")`, and Frappe checks Select values in `_validate_selects`, inside
+  `_validate()` during insert and save.
+- **No Link-target check.** "Create Item Group X" and then "move these Items into X" is a
+  legitimate pair of cards, and X doesn't exist until the first one is confirmed. Select options
+  change only through a schema write (a Property Setter or Custom Field). A model that queues
+  "add this option" has to wait for that confirmation before it can use the new option.
+- **Where it can't be sure, it queues the card.**
+  - A Select with `fetch_from` and no `fetch_if_empty` is skipped, because Frappe overwrites it
+    from the linked record in `_validate_links` before it validates Selects. Three ERPNext Selects
+    are like this, including `Stock Entry.purpose`.
+  - A cancel (`update_document` with `docstatus` 2) is skipped, because Frappe skips `_validate()`
+    on cancel.
+  - An `update_document` row marked `_delete` with a `name` is skipped, because FAC removes it
+    without validating it. On `create_document`, FAC appends every row, so every row is checked.
+  - If the check itself raises, the write is queued exactly as before and the failure goes to the
+    Error Log.
+- **Known gap:** the check sees the proposed value, not what a controller might change it to.
+  Frappe runs the controller's `validate` before `_validate()`, so a controller that rewrote an
+  off-options value into a valid one would get past Frappe but be refused here. The refusal lists
+  the valid options, so the model can send one of them.
+
+### Changed
+
+- The `_TASK_STATUSES_THAT_RUN` comment no longer says "Cancelled" waits for a human, because it
+  is now refused before a card exists.
+- `assistant_tools/README.md` (the write-gate bullets) and `ai_governance/README.md` (the new
+  section "A write that cannot run gets no card") document the check.
+
+## [1.532.0] - 2026-09-24
+
+**Inventory guardrails: from 2026-10-01 two naming defects refuse a new Item, the rest go to
+the Purchasing Agent weekly, a $0 Purchase Order line warns on submit, and the inventory KPIs get
+their approved targets.** Nik decided each rule on 2026-09-24. They are recorded on
+TASK-2026-02238 and in policy POL-0602 v1.0, effective 2026-10-01. Before this release the naming
+rules were advice everywhere. There was no `Item` doc_event, and nothing reported new Items that
+broke the schema unless somebody opened the Item Naming Audit.
+
+### Added
+
+- **The app's first `Item` doc_event, `inventory_enhancements.item_naming_guard.validate_new_item`
+  on `validate`.** It refuses saving a new Item for exactly two findings, both returned by the new
+  pure `item_naming_rules.blocking_findings(code, name, existing_codes)`:
+  - `duplicate_code_normalised`: the code matches an existing Item's code once case and
+    punctuation are ignored (`806020`, `806 020` or `806.020` against `806-020`). It comes from
+    `find_duplicates`'s own result. The Item's own code is excluded by exact match, never by its
+    normalised form, so a real punctuation-variant sibling still counts. An exact duplicate is
+    left to ERPNext, because `item_code` is the primary key.
+  - `name_equals_code`: the name is just the code, from `check_name`'s own finding. A blank name
+    counts. ERPNext's `Item.validate` copies the code into a blank `item_name`, and doc_events run
+    after the controller method, so a blank name has become the code by the time the guard sees it.
+    The helper also reads a blank name as the code.
+
+  **Why only these two.** Refusing every STOP was the obvious rule and was rejected. The STOP set
+  includes `name_category_unapproved`, and several category words are still waiting on a ruling
+  (TASK-2026-02215: PLMB, BRUSH, BOTTLE). Blocking on it would refuse legitimate new items until
+  each ruling lands. Neither of the two chosen findings depends on a ruling.
+  `item_naming_rules.BLOCKING_CODES` records the pair and the reason. Every other finding, STOPs
+  included, stays advice on the Item form, in the report, in the KPI and in the MCP tool.
+
+  **Not before 2026-10-01.** The refusal starts on `item_naming_rules.NAMING_GO_LIVE`, POL-0602's
+  effective date, not on the day this deploys (`item_naming_guard.in_force`, against the site-local
+  `nowdate()`). The policy is what a refused person is pointed at, the conventions were still being
+  finalized the week this shipped, and the new-items KPI counts from the same day. The digest and
+  the KPI need no gate; the digest has always been advice.
+
+  **Why only inside a web request.** The guard runs only when `frappe.local.request` is set, and
+  never while `frappe.flags` has `in_import`, `in_migrate`, `in_install`, `in_patch`, `in_test` or
+  `in_setup_wizard` set. The question is who can act on the refusal. A person saving in the Desk,
+  through the REST API or through an MCP tool can rename the Item and save again. A background job
+  cannot. The QuickBooks sync creates Items on the scheduler, and a refusal there would park the
+  record for manual review with nobody told why. Data Import normally runs as a background job
+  too (`start_import` enqueues unless in tests or developer mode), so the request check already
+  skips it; `in_import` covers the inline runs. The guard also runs only on `is_new()`, so an
+  existing Item is never refused, whatever its name. The catalogue has hundreds of records that
+  predate the SOP, and refusing an edit to one would stop somebody fixing its stock UOM over a
+  name they did not write. **Variants are skipped** (`variant_of` set): ERPNext derives a variant's
+  code and name from its template, a manufacturer variant copies no name at all so its name
+  becomes its code, and *Make Variants* saves fewer than ten inline, inside the request.
+
+  **In-request callers, audited.** A caller sets `doc.flags.ignore_naming_guard` only when the
+  person at the screen can choose neither the code nor the name:
+  - `product_configurator.erp_integration._ensure_product_item` sets it. The configurator
+    allocates the part number and the person generating a configuration cannot change it. Its name
+    is `<product> <code>`, which can never read as just the code, so the flag's one real effect is
+    to exempt configurator part numbers from the case- and punctuation-blind duplicate check, on
+    purpose: its "Item Code Taken" check still refuses an exact clash. Nothing reports a
+    configurator near-clash automatically, since the digest's `audit` compares names across
+    records and never codes; the Item form's *Naming → Check naming* and the MCP tool show one on
+    request.
+  - The `quickbooks_online.core.mapping` create path sets it for Items. A QuickBooks Item with no
+    SKU gets its code from its Name, so name equals code by construction. The dashboard's
+    per-entity Sync button (`api.sync_entity`) runs that path inside a request, and an import must
+    not park or pass depending on which door started it.
+  - `ensure_component_items` keeps the guard. Component names are the product definition's own
+    words and a required field.
+  - `accounting_intake.review` (Document Intake's *Create Approved Items*) keeps the guard,
+    because a person is approving the Item, and now gives that person the code to set. It used
+    the proposed name as both code and name, which the guard refuses every time: review found the
+    button would have failed on every new line from go-live. A new **Proposed Item Code** on
+    Document Intake Line takes the vendor's part number or a CON-/PDT-/SRV- code, and
+    `_naming_problems` checks every approved line with `blocking_findings` before the first insert.
+    A line with no code (its name would be its code) or a near-duplicate code refuses the whole
+    batch with one message naming each line and what to fix, so nothing is half-created. Codes
+    approved earlier in the batch count as existing, and the same code typed on two lines with
+    different names is refused, because the second line would otherwise link to the first line's
+    new Item without a word. A line whose code or name already matches an Item links to it, as
+    before; the lookup uses `db.exists`'s filter form, because v16 returns `exists("Item", "Item")`
+    unchecked and the `"Item"` name fallback could reach it. Document Intake had no rows on
+    production on 2026-09-24.
+  - The `water_engineering.setup` catalogue seeds keep the guard. They run from `after_migrate`,
+    where it is skipped.
+  - Tests and patches run under `in_test` and `in_patch`.
+- **Monday's naming digest, `inventory_enhancements.item_naming_digest.send_weekly_digest`**,
+  on cron `0 7 * * 1` (a new key, so it replaces no other entry). It lists the Items created in
+  the last seven days that do not PASS, with `(deleted)` tombstones excluded. Each row shows a link
+  to the Item, its name, who created it and its STOP and FIX messages; NOTEs are left out. It
+  audits the **whole** catalogue with `item_naming_rules.audit`, the Item Naming Audit report's own
+  call, and then keeps the week's rows with the new `item_naming_rules.restrict_to`. Auditing only
+  the week would pass a new Item named exactly like an old one. The email is capped at 50 rows and
+  says how many more there are. It is sent through `email_style` like every other sender.
+  - **Recipients:** a new Small Text field, *Weekly Naming Digest Recipients*
+    (`naming_digest_recipients`), in a new *Item Naming* section of Inventory Scanner Settings. It
+    takes addresses separated by commas or new lines, and it has **no default**. A default would put
+    a person's address in the DocType JSON and reach every fresh install. Blank sends nothing.
+  - **A week with nothing failing sends nothing.** An "all clear" every Monday trains its reader
+    to delete the email unread, and the week that matters would go the same way.
+- **`patches/seed_naming_digest_recipient`** writes `parker.bailey@sapphirefountains.com`, the
+  Purchasing Agent, into that field **only where `tabSingles` has no row for it**. This is the
+  CLAUDE.md Singles rule: a new field's default never reaches an existing Single's row. The rule
+  applies here even though the field has no default, because the one-time value has to be written
+  as data. An edited or deliberately emptied list is a decision and is never overwritten. A
+  never-saved Single is skipped: one written row would stop it loading its declared defaults, and
+  its default-1 Checks would read 0 (the count page's camera button among them). Production's was
+  saved on 2026-06-13. The patch reads `tabSingles` with a plain `select field`, never
+  `db.get_value("Singles")`, which cannot succeed. It writes with `set_single_value`, runs no
+  validate and cannot raise.
+- **KPI `item_naming_new_compliance_pct`, "Item Naming Compliance (New Items)"**, on the Product
+  snapshot. It uses the same audit restricted to Items created on or after the new
+  `item_naming_rules.NAMING_GO_LIVE = "2026-10-01"`, POL-0602's effective date, defined once. New
+  items are held to 100%, and `item_naming_compliance_pct` stays the backlog measure. It is
+  unpublished (None) until the first such Item exists, because 100% of nothing would read as the
+  target met. It reuses the backlog figure's audit and has its own `try`, so its failure cannot
+  sink that figure or the department. Its 100% target is seeded, below.
+- **`patches/seed_inventory_kpi_targets`: the KPI Targets Nik approved on 2026-09-24**
+  ("go with your recommendations", TASK-2026-02238). Operations: `store_runs_30` 4 (the 12
+  months to 2026-09-24 had 202, about 17 a month), `items_below_reorder` 5, `stocked_items_out`
+  0, `stocked_items_counted_90` 100%, `placeholder_cost_stock_lines` 0 and `unpriced_po_lines_90`
+  0. Product: `item_naming_new_compliance_pct` 100%. All Daily. The store-run target is to be
+  reached by 2027-01-01 and the placeholder-cost one by 2026-11-01; `_targets` has no notion of a
+  date, so both grade from the day they land and each row's notes carry its date. Without a target a KPI renders as
+  an ungraded grey number, the failure `seed_item_naming_kpi_target` (v1.337.0) avoided for the
+  backlog figure. These are the business's numbers, so a row that exists, seeded earlier or set on
+  purpose, is never touched. Each row commits alone; the patch cannot raise.
+- **The $0 Purchase Order line warning, `po_price_check.warn_zero_rate_lines`**, last on Purchase
+  Order `before_submit`, after both submit gates and the approval stamp. A refused order never
+  reaches it. It shows an orange "Unpriced lines" message listing each line with a rate below half
+  a cent, with its row number, item code and quantity. The message says that stock received
+  against those lines comes in at $0 and that POL-0602 section 4.6 requires a price, and it points
+  to Update Items. It **warns and never blocks**: 281 of 327 submitted lines in the 90 days to
+  2026-09-24 were $0, so a refusal would have stopped purchasing on the day it shipped. It is
+  silent during import, migrate, install and patch and outside a web request, and it never raises.
+  The pure `zero_rate_rows` counts a blank or unreadable rate as unpriced.
+
+### Changed
+
+- **Category vocabulary: Nik approved `INSERT`, `SHIM` and `PANEL`** (Tier 1, as
+  `_TIER1_APPROVED_2026_09_24`, so they reach the reference vocabulary served to the MCP tool). UNI
+  is a vendor product line, not a category, so two Tier 3 rows send `UNI-INSERT` to `INSERT, UNI`
+  and `UNI-SHIM` to `SHIM, UNI`. Declaring `PANEL` also makes the SOP's own `SUBPANELT` →
+  `PANEL, SUB` replacement valid, so the computed `TIER3_REPLACEMENT_UNAPPROVED` is now empty. The
+  test that pinned `SUBPANELT` in it now asserts that every Tier 3 replacement leads with an approved
+  word. PLMB, BRUSH and BOTTLE stay unapproved while TASK-2026-02215 is open.
+  `docs/item-naming-schema.md` Appendix A records the ruling as a dated **Decided** note. The SOP's
+  own tables are left as written.
+- **The KPI cockpit shows a zero target when it grades.** `kpi_cockpit.js` hid every
+  `target_value` of 0, because an unset target used to come through as 0. Three of the seeded
+  targets are 0 (out of stock, placeholder-cost lines, unpriced PO lines), so their cards would
+  turn red with no target shown. A 0 is now shown when the value carries a status.
+- Statements that "there is no Item doc_event" or that "nothing blocks a save" were corrected
+  where they are now false: `item_naming_rules`, `item_naming`, the Item form script's header, the
+  `hooks.py` annotations, the MCP tool's description and README row, the AI-gate comment, the
+  `ee-item-naming-validator` skill and the Item Naming Audit report's note. The skill now tells the
+  model which two findings will fail a save.
+- Documentation: `inventory_enhancements/README.md` gains "What refuses a save" (the two
+  findings, the skips, and the table of in-request Item creators) and "The weekly digest".
+  `docs/KPI_DASHBOARD_DESIGN.md` gains the two naming KPIs and a note on Unpriced PO Lines, and the
+  KPI, intake, patches and tests READMEs and WI-070's bucket G record the rest.
+
+### Tests
+
+- `test_item_naming_rules` (unittest, existing step) adds the ruling, `blocking_findings`
+  (punctuation and case variants, exact self-exclusion, a real sibling surviving it, a blank name,
+  and every advisory STOP staying non-blocking) and `restrict_to`.
+- New bench-free unittest suites, each on its own CI step because each installs a `frappe` stub:
+  `test_item_naming_guard` (both refusals, every skip including the go-live date and variants,
+  the code remedy, escaping, the `doc_events` wiring, and Document Intake's pre-insert line check),
+  `test_item_naming_digest` (recipients, whole-corpus-then-restrict with the real rules module,
+  silence, the cap, the cron key), `test_po_price_check` (the zero rule, the message, never
+  raising, bulk and no-request silence, last on `before_submit` after the gates) and
+  `test_inventory_seed_patches` (the recipient seed's two no-write branches and that it cannot
+  raise; the targets seed's values, insert-only behaviour, one-row failure, and that each key is
+  published by its department's snapshot and graded in the same direction).
+
+## [1.531.0] - 2026-09-24
+
+**WI-079 slice 4: a confirmed request becomes a Claude Code brief, and a release that ships its
+Tasks moves them to Pending Review.** Both ends of the feedback route were manual. A reviewer read
+the request and its Tasks and retyped them into a coding session, and somebody had to remember to
+move each Task once the fix deployed. ADR 0016 §5 closes both. ERPNext now writes the brief from
+records it already holds, and the brief's last acceptance criterion is a `Refs:` line. When a
+release's CHANGELOG section carries that line, an hourly job moves the named Tasks to
+`Pending Review` once the deploy has installed. It never moves them to `Completed`: a person
+closes shipped work.
+
+Refs: WI-079
+
+That line is the convention's first use. It names no Enhancement Request and no Task, because the
+work items' own Tasks are tracked on the board by WI number and none of them was created from an
+Enhancement Request, so none carries the back-link the sync requires. The sync reads only `ER-…`
+and `TASK-…` ids, so this line moves nothing.
+
+### Added
+
+- **`api.feedback.claude_code_brief(name)`**, POST-only and reviewer-only (`_require_reviewer`,
+  like the other review endpoints). It returns `{"markdown", "data"}`.
+  - **It needs Tasks, not a status.** It looks for `created_task` on the proposal and for Tasks
+    whose `custom_enhancement_request` names the request, which is how it finds the group Tasks.
+    A confirm that partly failed leaves real Tasks on the board while the request stays in
+    `Breakdown Ready` (`task_writer` moves it to `Tasks Created` only when nothing is left), and
+    those Tasks deserve a brief. A request in `Tasks Created` whose Tasks were all deleted has
+    nothing to build, so it is refused.
+  - **Not a Triton or assistant tool.** An assistant tool appears in every employee's tool list
+    and costs context on every chat.
+- **`product_feedback/brief.py`**, the renderer: `render_brief(request, tasks, duplicates,
+  anchors, design_notes) -> (markdown, data)`. It is pure and imports no frappe. The endpoint
+  gathers its inputs.
+  - **The work-item shape** of `work-items/*.md`: a `#` title, then `## Why`, `## Scope`,
+    `## Acceptance criteria`, `## Explicitly NOT in this work item` and `## Data`. The
+    out-of-scope heading is the one every work item and the `work-item` skill use, so a session
+    that looks for it by name finds it.
+  - **Why:** the type, impact, page path and doctype, then the requester's description and steps
+    to reproduce. The requester's text is block-quoted, so a heading or a code fence typed into it
+    stays inside the quote and cannot break the brief's structure.
+  - **Scope:** each Task as `TASK-… — subject` with its description as plain text. A leaf sits
+    under its group Task, and a leaf the model nested under an existing epic sits under that epic,
+    marked as a Task this request did not create. Ungrouped leaves come first.
+  - **Acceptance criteria:** one box per open leaf Task, `The steps to reproduce no longer
+    reproduce it` for a Bug, and always a last box: the CHANGELOG entry for the release carries
+    the brief's exact Refs line, the request id followed by the open leaf Task ids.
+  - **The Refs line is printed bare, alone in a fenced block under that box**, with the note
+    "Paste this line into the release's CHANGELOG section exactly as it is, on its own line,
+    without backticks or bold." The release sync ignores a line that starts with a backtick or
+    `**`, on purpose (see the convention below), and this repository's house style would put an
+    identifier in a code span. Shown inline in a code span, which is how the first draft showed
+    it, the line would have been pasted that way and then ignored in silence: no Error Log, the
+    marker moving on, and the Tasks left `Open`.
+  - **Closed leaves stay off the Refs line.** A leaf that is `Completed`, `Canceled`,
+    `Cancelled` or `Invoiced` is still listed under Scope, marked "(canceled)", "(completed)" or
+    "(invoiced)", but it gets no acceptance box and no place on the Refs line. The endpoint now
+    reads each Task's `status` for this.
+  - **Explicitly NOT in this work item:** each duplicate candidate the breakdown flagged, with its
+    confidence and reason, then "Anything not listed under Scope".
+  - **Data:** one `json` block holding `request`, `tasks` (name, subject, parent, project),
+    `anchors` (slice 3's `build_anchors` output, or `{}`), `design_notes` (`[]` until Design
+    Review fills it in slice 5) and `refs`.
+  - **What it leaves out.** The requester's identity is never read. The group Task's
+    description is the origin note `task_writer` writes, which names the requester and the
+    approver, so that line is removed. `context_docname` is never read, and the page path goes
+    through `code_anchors.parse_path`, the same rule the Triton payload uses: `/desk/item/PUMP-001?x=1`
+    becomes `/desk/item`. Screenshots and the capture context file never appear (ADR 0016 §4).
+  - **HTML is stripped with the standard library** (`html.parser`) rather than
+    `frappe.utils.strip_html`, so the bench-free suite covers it. List items become bullets,
+    scripts and styles vanish, entities are decoded, and text with no markup (a model-written Task
+    description) keeps its line breaks. A `<pre>` block keeps its indentation, so a Quill code
+    block reaches the brief as code rather than flattened lines. Text counts as HTML only when a
+    tag name follows `<` directly, as `HTMLParser` itself requires, so a plain description that
+    says `a < b` keeps its line breaks.
+  - **At most 60,000 characters, for any input.** Over that it drops the anchors' CHANGELOG
+    excerpts, then their README, then their field lists, in that order, recording each one in the
+    anchors' own `truncated` list and in a note under `## Data`. Then it drops the anchors, cuts
+    each description down to 120 characters, drops the Task descriptions under Scope, and cuts
+    each Task subject to 80 and then 40 characters. The note names every step it took. That fits
+    the most one confirmed proposal can create (50 leaves under 50 groups, 140-character
+    subjects, duplicates and anchors) and twice that, both tested. Past those, the brief is cut at
+    a line boundary, an open fence is closed, and it ends by saying what is missing: the Data
+    block, and the Refs line too when the cut came before it. Cutting on a line boundary means a
+    Refs line is never half there. The first draft stopped cutting at the descriptions and
+    returned 60,965 characters for the 50-under-50 case, with a note saying it had fit.
+- **A "Claude Code Brief" button on the Enhancement Request form**, in a new
+  `enhancement_request.js` (the doctype had no form script, so it is written with tabs like the
+  other doctype scripts). It shows to System Managers, which is the reviewer role, when the
+  request is `Tasks Created` or a proposal row has `created_task`. It opens a dialog with a
+  read-only Code field (Markdown) holding the brief and a Copy button that calls
+  `frappe.utils.copy_to_clipboard`. On `version-16` that uses `navigator.clipboard` in a secure
+  context and falls back to a textarea otherwise.
+- **`task_writer.mark_shipped(task_name, version, refs_line="", requests=None)`**, the second
+  Task writer, in the one module that writes Tasks.
+  - It acts only on a Task that carries `custom_enhancement_request`. A Refs line naming any
+    other Task changes nothing.
+  - **The request ids on the line are a cross-check.** When the line names one or more `ER-…`
+    ids, a Task whose `custom_enhancement_request` is none of them is skipped
+    (`skipped:belongs to <ER>, not on the Refs line`). Task ids run in sequence and feedback
+    Tasks from different requests sit next to each other, so a one-digit typo lands on another
+    request's Open Task. A line that names no request keeps the plain rule.
+  - **A Task id that does not exist is `skipped:no such Task`, never `failed`**, including a Task
+    deleted between the existence check and the read. A typo on a Refs line is permanent, and a
+    failure would hold the marker behind it for good.
+  - It acts only from `Open`, `Working` or `Overdue`, and it is an allowlist. It never touches
+    `Completed`, `Canceled` (this site's Property Setter) or `Cancelled` (ERPNext v16's own
+    options), `Invoiced`, `Template`, `Pending Review`, or a status added later.
+  - **An `Overdue` that was really `Canceled` is skipped.** ERPNext v16's daily
+    `set_tasks_as_overdue` and `Task.update_status` exempt only `Cancelled` and `Completed`, so
+    this site's `Canceled` and `Invoiced` Tasks become `Overdue` once their expected end passes
+    (fixed at the source in this release; see Fixed). The flip is a `db_set`, which writes no
+    `Version` row on `version-16` (`db_set` goes straight to `frappe.db.set_value`; only `save`
+    calls `save_version`). A cancel from the form writes one, because Task tracks changes, but
+    a cancel from the Project form's Task Tree does not: its status picker writes with
+    `frappe.db.set_value` too. So this check only covers Tasks flipped before this release,
+    and only those canceled from the form. For an
+    `Overdue` Task it reads the newest 20 Version rows (`ref_doctype`, `docname`, newest first,
+    on the index Version declares) and finds the latest `status` change in their `changed`
+    entries. If that set `Canceled`, `Cancelled`, `Invoiced`, `Completed` or `Template`, the
+    result is `skipped:overdue after <status>`. With no status change on record it ships the Task
+    as before.
+  - It sets `Pending Review` and a `review_date` 14 days out. ERPNext's daily
+    `set_tasks_as_overdue` passes over a `Pending Review` Task only while its `review_date` is in
+    the future. Otherwise, once the Task's expected end has passed, it flips the Task to `Overdue`.
+  - It adds a Comment: `Shipped in erpnext_enhancements <version> (<refs line>)`.
+  - It saves through `doc.save(ignore_permissions=True)`, so this app's Task override and the
+    `doc_events` run as they do for a person's edit. The save and the Comment share one
+    savepoint, so a failure leaves the Task exactly as it was.
+  - It also skips a Task that already carries this version's shipped Comment. So when a release
+    is processed again after a failed run, a Task that a person reopened is not moved back.
+  - It returns `marked`, `skipped:<reason>` or `failed:<message>` and never raises.
+- **`product_feedback/release_sync.py`**, hourly (`sync_shipped_tasks`, in
+  `scheduler_events["hourly"]`).
+  - **The ceiling is the installed version**, read from `tabInstalled Application` with bound
+    parameters. v16 rewrites that table near the end of every migrate that gets far enough
+    ("Updating installed applications...", `frappe/migrate.py` line 198 on `version-16`). A
+    section above it is never acted on. The deploy resets the checkout before `bench migrate`
+    runs, so a migrate that aborts leaves the new CHANGELOG sitting over old code: the v1.395.0
+    half-install in `CLAUDE.md`. If two rows ever exist, the lower version wins.
+  - **It processes sections with `last processed < version <= installed`, oldest first**,
+    comparing versions as tuples of ints, because `"1.99.0" < "1.100.0"` is false as text.
+  - **The marker is a new field, `Product Feedback Settings.release_sync_last_version`**
+    (read-only Data). It has no default, on purpose. `CLAUDE.md`'s Single-default gotcha says a
+    new Single field's default never reaches the existing row, and here that is the behavior
+    wanted: no row means "never run", which means process everything. That is safe because
+    `mark_shipped` makes replay a no-op. The marker is read with `get_single_value` and written
+    with `set_single_value(update_modified=False)`, never through `tabSingles`, and it never
+    moves backwards: the write re-reads the stored value and refuses anything at or below it,
+    and a read that fails (as opposed to finding nothing) stops the run until the next hour,
+    because a replay from an unknown marker that then failed would write a lower one back.
+  - **It moves to the installed version only after a clean run**, where every call came back
+    `marked` or `skipped`. Otherwise it moves only as far as the last release the run finished
+    before its first failure, and the next hour retries from there. The run's failures go into
+    one Error Log, and the message is passed explicitly: without one, v16's `log_error` fills it
+    from `get_traceback(with_context=True)`, which prints every frame local.
+  - **A run makes at most 500 save attempts.** A `skipped` result does not count: it costs a few
+    reads, and a replay is made almost entirely of skips. The first draft counted every call,
+    and review found the trap in that. One Task that can never save (ERPNext refuses a leaf whose
+    expected end is later than its parent's) kept the marker below its release. Each hour's run
+    then replayed the same 499 skips, stopped at the same place, and left every Task named after
+    that point `Open` for good. Now a capped run is followed by one that gets further. A single
+    release naming more than 500 Tasks simply finishes over two runs. When a run is both capped
+    and failing, the Error Log ends `run capped at 500 calls; releases after <version> not
+    reached`, so the Tasks waiting behind the failure are visible.
+  - **Each transition is committed on its own, and nothing is queued.** The deploy's `FLUSHDB`
+    therefore costs at most an hour, never a transition.
+- **The `Refs:` convention.** One line anywhere in a release's CHANGELOG section, for example
+  `Refs: ER-2026-00012, TASK-2026-00345, TASK-2026-00346`. It is documented in the
+  `release-prep` skill, in `product_feedback/README.md` and in the brief's acceptance criteria.
+  - **The parser is strict on purpose, because this file documents the convention with
+    examples**, and the example Task ids are real Tasks on production (`TASK-2026-00345` and
+    `-00346`, both `Completed` and not born from a request, checked 2026-09-24). `Refs:` is
+    case-sensitive
+    and must start its line, after at most three spaces and an optional list marker (`- `, `* `,
+    `+ `, `1. `). So a line that starts with a backtick or `**` is not a Refs line; neither is
+    one indented four spaces or a tab (a code block), one inside a fenced block (three or more
+    backticks or tildes, closed only by the same character at least as many times, so a shorter
+    fence inside a longer one does not end it), or one inside an HTML comment. Prose that mentions the convention
+    mid-sentence is not one either. Every example in this entry is in a code span for that
+    reason.
+  - **`test_feedback_release_sync` runs the parser over this real file** and fails the build on
+    any Refs line that names a Task unless the test's `SHIPPED_REFS` lists that release. When a
+    release really ships feedback Tasks, the same change adds its line there, which is one
+    deliberate edit beside the CHANGELOG line. When the failure is an example, write the example
+    in a code span or a fence.
+  - Only `TASK-…` ids move Tasks. `ER-…` ids are the cross-check described under `mark_shipped`:
+    a release that ships part of a request names the Tasks it shipped, and naming the request
+    alone moves nothing. Anything else on the line, such as a `WI-079`, is ignored.
+  - An id has five or more digits after the year. The naming rules pad to five
+    (`TASK-.YYYY.-.#####`, `ER-{YYYY}-{#####}`), but production's request counter already runs
+    to six (`ER-2026-458194`).
+
+### Changed
+
+- `Product Feedback Settings` gains a "Release Sync" section holding the marker. Its JSON
+  `modified` is bumped so the field syncs.
+
+### Tests
+
+- `test_feedback_brief`, bench-free, in its own CI step. It pins the headings and their order,
+  the grouping, one box per leaf, the Bug line and the exact Refs line. It plants a requester,
+  an approver, a docname and a query string, and checks that none of them appears in the brief
+  or its data. It also checks that the path is reduced, that HTML is stripped from Task
+  descriptions (a `<pre>` keeping its indentation, `a < b` staying plain text), and the size
+  cap with its cut order and note. The worst case, 50 leaves under 50 groups with
+  140-character subjects, duplicates and anchors, fits with a whole Data block and a note that
+  names exactly what was cut, and so does twice that; 125 and 300 leaves end in the
+  last-resort cut, still at most 60,000 characters with every fence closed. The Refs line is
+  checked with `release_sync.refs_in` itself: the copy block yields exactly the brief's line
+  (bare or as a bullet), the same line in backticks or bold yields nothing, the brief as a whole
+  moves nothing, and a Canceled, Cancelled, Completed or Invoiced leaf is marked in Scope and
+  kept off the line and the boxes. It checks the endpoint on its code, with AST:
+  `_require_reviewer()` comes first, neither function reads `requested_by` or
+  `context_docname`, and the Task fields include `status`. `brief.py` imports
+  `code_anchors.parse_path`, and `code_anchors` imports frappe at module level (so does
+  `release_sync`, which calls it only inside its job), so the suite installs an empty `frappe`
+  module with no attributes. That proves the renderer and `refs_in` call nothing on it.
+- `test_feedback_release_sync`, bench-free with a frappe stub whose savepoint really rolls
+  back, in its own CI step. It covers version parsing and comparison; Refs extraction with list
+  markers, up to three spaces and no more, the wrong case, mid-line mentions, backticks and
+  bold, fences of both kinds and lengths, HTML comments and six-digit ids; sections above the
+  installed version being ignored; the marker moving only after a clean run, and only as far as
+  the release before the first failure otherwise; an absent marker processing everything;
+  running twice changing nothing; a full replay leaving a `Completed` Task `Completed`; a Refs
+  line naming a Task without the back-link changing nothing; the 500-save cap, including skips
+  costing nothing, one release over the cap finishing over two runs, the review's starvation
+  case (one Task that never saves ahead of 600 more) draining on the second run, and a capped,
+  failing run naming the cap in its Error Log; and `mark_shipped`'s rules (every other status
+  skipped, only Tasks the pipeline created, a missing Task and another request's Task skipped,
+  `Overdue` after each closed status skipped by its Version history, `review_date` +14, the
+  comment text, rollback on failure). It also checks that this release's own Refs line names
+  nothing to move.
+- **`TestTheRealChangelogCannotMoveATaskByAccident`**, in the same suite, runs `refs_in` over
+  the real `CHANGELOG.md`, section by section and whole. It fails the build on any Refs line
+  that names a Task unless `SHIPPED_REFS` lists it, and checks that this entry's own examples
+  would parse if they were not in code spans, so the spans are what keeps them inert.
+- `test_feedback_endpoint_surface` lists `claude_code_brief` as not dialled by the SPA, with its
+  reason, and checks that the Desk script dials it by its full path. It also asserts that outside
+  `task_writer`, no scanned code names `Pending Review` as a value or calls `set_value` on a Task.
+
+### Not done
+
+- The optional "Copy brief" link on the `/feedback` SPA's request page. The SPA has no clipboard
+  or notification helper to put it behind, so the Desk button is the one way in for now.
+
+### Fixed
+
+- **ERPNext's daily overdue job no longer reopens finished Tasks.** `set_tasks_as_overdue`
+  selects Tasks whose status is not `Cancelled` or `Completed`, and `Task.update_status` checks
+  the same pair before it writes `Overdue`. Both use ERPNext's double-l spelling, while this
+  site's Property Setter offers `Canceled`, and `Invoiced` and `Template` are finished too. So
+  every such Task whose expected end had passed was flipped to `Overdue`, daily and silently (a
+  `db_set`, so no Version). Measured on production 2026-09-24: not one `Canceled` (13),
+  `Invoiced` (2) or `Template` (71) Task had a past end date left, and 47 of the 1,135 `Overdue`
+  Tasks had a Version showing one of those statuses, which undercounts, since the Task Tree's
+  cancels leave no Version. This app's Task override (`task_enhancements/doctype/task/task.py`)
+  now returns early from `update_status` for `Completed`, `Canceled`, `Cancelled`, `Invoiced`
+  and `Template`, and hands everything else to the core rule unchanged. It stops future flips
+  and does **not** restore the Tasks already flipped: which status each one had is only partly
+  recorded, so that repair is a separate decision. New suite `test_task_overdue_guard`.
+
 ## [1.530.0] - 2026-09-24
 
 **Maintenance moves to a Service dashboard under Production, and Operations becomes the
@@ -191,16 +822,16 @@ clean, but found that it silently dropped malformed attendees.
   the listed recipients plus `frappe.session.user`, de-duplicated. The `finally` has restored
   the requester's session by that point. Email is still sent only to the listed recipients. The
   email body is now built once and sent to each recipient separately, as before. *(Corrected
-  in v1.530.1: "always" was too strong. It holds whenever a status goes out, but two paths
+  in v1.534.1: "always" was too strong. It holds whenever a status goes out, but two paths
   sent none: the early return for an opportunity that already has a project, and an
-  `UnboundLocalError` on `drive_success`, which 1.530.1 fixes.)*
+  `UnboundLocalError` on `drive_success`, which 1.534.1 fixes.)*
 - **The field takes free text, and `enqueue_project_creation` refuses anything that is not an
   email address.** The dialog checks each entry with `frappe.utils.validate_type(..., "email")`
   before it replaces its body with the progress bar, so a typo can be corrected in place. The
   server checks again with `frappe.utils.validate_email_address` for other callers. A bad
   address would otherwise have surfaced only after the project existed, as a dead Email Queue
   row. `Administrator` and `Guest` are no longer offered as options, since neither is an
-  address. *(Corrected in v1.530.1: the browser regex is looser than the server's, and an
+  address. *(Corrected in v1.534.1: the browser regex is looser than the server's, and an
   address it passed but the server refused left the dialog stuck on "Queuing...", not
   correctable in place. The server check is the authority for every caller, the dialog
   included, not only "for other callers". And a malformed address never became a dead Email Queue row: `frappe.sendmail`
@@ -237,10 +868,10 @@ clean, but found that it silently dropped malformed attendees.
   client regex needs a TLD of two or more letters, and the server's `EMAIL_MATCH_PATTERN` needs a
   dotted domain. So what the dialog accepts, `_dedupe()` keeps. The server is unchanged:
   `_dedupe()` also filters the *suggested* attendees, where quietly skipping a bad configured
-  address is the right call. *(Corrected in v1.530.1: the two checks do not agree. The browser
+  address is the right call. *(Corrected in v1.534.1: the two checks do not agree. The browser
   regex also passes accented and quoted local parts, IP literals and hyphen-edged domain
   labels, all of which `_dedupe()` drops, so for those the silent drop was not closed.
-  1.530.1 closes it by having the server report what it dropped.)*
+  1.534.1 closes it by having the server report what it dropped.)*
 
 ### Notes
 

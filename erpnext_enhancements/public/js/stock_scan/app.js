@@ -9,8 +9,13 @@
  *
  * VIEWS. `start` → `location` → `item` (an item at a location, with the stepper), plus `free`
  * (an item found by search with no location open: "Where is it?"). Navigation is an in-memory
- * back stack. The URL NEVER changes — no history entries, no hash: iOS Safari asks for camera
- * permission again whenever the URL changes, and the camera is used on every shelf.
+ * back stack, mirrored into browser history entries that carry NO URL (nav.js), so the phone's
+ * Back and Forward walk the screens and Back closes a sheet first. The URL itself never
+ * changes — no URL argument, no hash: iOS Safari asks for camera permission again whenever the
+ * URL changes, and the camera is used on every shelf. `BROWSER_HISTORY` switches the mirror off.
+ *
+ * "Report a problem" (the capture panel, WI-079) opens from the header on every view. The panel
+ * owns its own history entry and its own Back; this page stands aside while it is open.
  *
  * SAVES post immediately (submitted vouchers) and can be undone for a while. Each intended
  * save carries a `client_ref`; a retry after no answer reuses it (for `RETRY_WINDOW_MS`), so
@@ -34,6 +39,7 @@ import {
 	parseQty,
 	plain,
 	rememberedJob,
+	reportAvailable,
 	saveKey,
 	saveLabel,
 	scanFailure,
@@ -47,6 +53,7 @@ import {
 	buzz,
 	closeAllSheets,
 	mountToasts,
+	onSheetChange,
 	readTheme,
 	setTheme,
 	sheet,
@@ -56,6 +63,18 @@ import {
 	whenNoSheets,
 } from "./ui.js";
 import { openScanner } from "./scanner.js";
+import { NavHistory } from "./nav.js";
+
+/**
+ * Browser Back/Forward (nav.js). `false` turns off the page's OWN history entries — screens and
+ * sheet markers — and puts it back on its in-memory stack alone (NavHistory with no history
+ * object does nothing). The switch people actually use is the "Turn Off Browser Back on Stock
+ * Scan" box in Inventory Scanner Settings, which reaches the page as `settings.browser_history`
+ * = 0 and does the same without a deploy, if an iPhone ever re-prompts for the camera. The
+ * report form pushes an entry of its own while it is open; the template hands the same setting
+ * to capture/panel.js as `EE_CAPTURE.history` (`wantsHistoryEntry`), so the box turns off both.
+ */
+const BROWSER_HISTORY = true;
 
 const JOB_KEY = "ee_ss_job";
 const RECENT_LIMIT = 12;
@@ -142,7 +161,7 @@ export class StockScanApp {
 	constructor(root, boot) {
 		this.root = root;
 		this.boot = boot || {};
-		this.settings = Object.assign({ require_project_for_take: 0, undo_window_minutes: 0 }, this.boot.settings || {});
+		this.settings = Object.assign({ require_project_for_take: 0, undo_window_minutes: 0, browser_history: 1 }, this.boot.settings || {});
 		this.recent = Array.isArray(this.boot.recent) ? this.boot.recent.slice(0, RECENT_LIMIT) : [];
 		this.recentAt = Date.now();
 		this.view = START;
@@ -164,6 +183,11 @@ export class StockScanApp {
 		this.wedge = "";
 		this.wedgeAt = 0;
 		this.stepper = null;
+		const history = BROWSER_HISTORY && this.settings.browser_history !== 0 ? window.history : null;
+		this.nav = new NavHistory(history, mintRef(), { busy: () => this.loads > 0 });
+		this.report = null; // the capture panel's handle while it is open
+		this.reportWanted = false; // "Report a problem" tapped, the panel still on its way
+		this.reportLoading = false; // capture.open() asked and not answered yet (Back may have unwanted it)
 	}
 
 	// -----------------------------------------------------------------------
@@ -179,7 +203,14 @@ export class StockScanApp {
 		this.progress.setAttribute("aria-hidden", "true");
 		this.titleEl = el("div", "ee-ss-top-title", "Stock Scan");
 		this.jobChip = button("", "ee-ss-job-chip", () => this.pickJob());
-		this.top = append(el("header", "ee-ss-top"), this.titleEl, this.jobChip, this.progress);
+		// "Report a problem" (the capture panel, WI-079), in the header on every view: the floating
+		// launcher would sit on Scan. Hidden when the recorder is not on the page or the viewer is
+		// not a System User (the server checks again).
+		this.reportBtn = button([icon("report"), el("span", "ee-ss-top-btn-text", "Report")], "ee-ss-top-btn", () => this.openReport());
+		this.reportBtn.setAttribute("aria-label", "Report a problem");
+		this.reportBtn.setAttribute("aria-haspopup", "dialog");
+		this.reportBtn.hidden = !reportAvailable(window.ee_capture, document.cookie);
+		this.top = append(el("header", "ee-ss-top"), this.titleEl, this.jobChip, this.reportBtn, this.progress);
 
 		this.main = el("main", "ee-ss-main");
 
@@ -205,6 +236,16 @@ export class StockScanApp {
 		}
 		document.addEventListener("keydown", (ev) => this.onWedgeKey(ev));
 
+		onSheetChange((opened) => (opened ? this.nav.overlayOpened() : this.nav.overlayClosed()));
+		window.addEventListener("popstate", (ev) => this.onPopState(ev.state));
+		// Back from another page restored this one whole (bfcache): check the entry anyway.
+		window.addEventListener("pageshow", (ev) => {
+			if (ev.persisted) this.onPopState(window.history.state);
+		});
+		this.registerCaptureState();
+
+		// The first screen is stamped onto the entry the phone opened (replaceState, nav.js), so
+		// Back from it leaves the page as it always has.
 		this.openInitial(this.boot.initial);
 	}
 
@@ -225,6 +266,8 @@ export class StockScanApp {
 		this.loads = Math.max(0, this.loads + (on ? 1 : -1));
 		this.root.classList.toggle("is-loading", this.loads > 0);
 		this.root.setAttribute("aria-busy", this.loads > 0 ? "true" : "false");
+		// A sheet that closed into a navigation keeps its marker until that navigation lands (nav.js).
+		if (!this.loads) this.nav.settled();
 	}
 
 	renderJobChip() {
@@ -261,23 +304,68 @@ export class StockScanApp {
 	 * the SAME save gets the first one back from the server instead of posting it twice. Each
 	 * is kept for `RETRY_WINDOW_MS` only (`keptRef`), so the same numbers much later are a new
 	 * save rather than an "already saved" that posts nothing.
+	 *
+	 * `entry`: the browser history entry the view gets (nav.js). "push" (the default) for every
+	 * screen the person asked for, "replace" for one the page opened by itself. The document's
+	 * first screen, and one reached from a sheet or the camera, replace whatever `entry` says.
 	 */
-	enter(view, mode) {
+	enter(view, mode, entry) {
 		if (mode === "push") this.back.push(this.view);
 		else if (mode === "root") this.back = view.name === "start" ? [] : [START];
 		this.view = view;
 		this.change = 0;
+		this.nav.screen(this.snapshot(), entry || "push");
 		this.render(true);
 	}
 
+	/** What a history entry remembers of a screen. Kept in memory by nav.js, never in `history.state`. */
+	snapshot() {
+		return { view: this.view, back: this.back.slice() };
+	}
+
 	goBack() {
-		const prev = this.back.pop() || START;
+		if (this.reportBusy()) return;
+		const parent = this.back[this.back.length - 1] || START;
+		if (this.nav.behindIs(parent, this.back.slice(0, -1))) {
+			// The entry behind this one IS the parent: step back onto it, so this link and the
+			// phone's Back walk the same list. popstate draws it (onPopState). A lookup still
+			// loading must not land in the meantime.
+			++this.seq;
+			this.nav.back();
+			return;
+		}
+		// Otherwise (a scan made Start the parent, a shelf was put in between, history is off)
+		// go up as a NEW entry, so the phone's Back still retraces the steps actually taken.
+		this.back.pop();
+		this.show(parent, this.back, "push");
+	}
+
+	/** Put a remembered view back: the back link, Back, Forward. What it showed may be stale. */
+	show(view, back, entry) {
 		++this.seq;
-		this.view = prev;
+		this.view = view;
+		this.back = back.slice();
 		this.change = 0;
+		if (entry) this.nav.screen(this.snapshot(), entry);
 		this.render(true);
 		// What was on screen before may be stale: a save just changed its numbers.
-		this.refreshView(prev);
+		this.refreshView(view);
+	}
+
+	/** The browser moved to another entry: Back, Forward, our own nav.back(), or a bfcache restore. */
+	onPopState(state) {
+		// The report form pushed that entry and answers Back itself (capture/panel.js): it asks
+		// before throwing a typed report away. Nothing here moves while it is open.
+		if (this.reportOpen()) return;
+		const step = this.nav.popped(state);
+		// Back while a lookup started from the camera or a search was loading: never mind it.
+		if (step.cancel) ++this.seq;
+		// Back closes what covers the page, as its × would. The browser already stepped off the
+		// marker, so nothing here steps back again.
+		if (step.close) closeAllSheets();
+		if (step.snap) this.show(step.snap.view, step.snap.back);
+		// Back or Forward while the report form was still on its way: never mind it either.
+		if (step.snap || step.close) this.reportWanted = false;
 	}
 
 	backLabel() {
@@ -328,25 +416,35 @@ export class StockScanApp {
 		this.enter(view, "root");
 		const items = location.items || [];
 		if (o.scanned && items.length === 1) {
-			this.openItem(items[0].item_code, location.warehouse, { code: o.code });
+			// Opened FOR the person: the item takes over this location's history entry, so the
+			// phone's Back does not stop on a list they never looked at, and no entry is added
+			// without a tap (nav.js).
+			this.openItem(items[0].item_code, location.warehouse, { code: o.code, auto: true });
 		}
 	}
 
 	/**
 	 * An item payload. At a location it sits on top of that location (so its back link reads
 	 * "All items at …"); without one it is "Where is it?".
+	 *
+	 * `opts.auto`: the page opened it by itself (a scanned bin holding one item), so it replaces
+	 * the current history entry. Otherwise it is a new entry, even where the in-page stack
+	 * swaps: after a camera scan the marker's entry is on top and a new one is taken anyway, so
+	 * the scanner gun and the camera build the same history — and the phone's Back is
+	 * chronological, "the item I just looked at".
 	 */
 	showItem(item, opts) {
 		const o = opts || {};
+		const entry = o.auto ? "replace" : "push";
 		if (!item.warehouse) {
-			this.enter({ name: "free", item, scannedCode: o.code || "" }, "root");
+			this.enter({ name: "free", item, scannedCode: o.code || "" }, "root", entry);
 			return;
 		}
 		const view = { name: "item", item, scannedCode: o.code || "" };
 		const cur = this.view;
 		if (cur.name === "item" && cur.item.warehouse === item.warehouse) {
 			// The next item on the same shelf: swap it in, keep the way back to the shelf.
-			this.enter(view, "replace");
+			this.enter(view, "replace", entry);
 			return;
 		}
 		const curLoc = cur.name === "location" ? cur.location || cur.stub : null;
@@ -360,11 +458,12 @@ export class StockScanApp {
 				stub: { warehouse: item.warehouse, warehouse_name: item.warehouse_name || item.warehouse },
 			});
 		}
-		this.enter(view, "replace");
+		this.enter(view, "replace", entry);
 	}
 
 	/** Fetch an item (at `warehouse` when given) and show it. `row` shows a spinner meanwhile. */
 	async openItem(itemCode, warehouse, opts) {
+		if (this.reportBusy()) return;
 		const o = opts || {};
 		const seq = ++this.seq;
 		if (o.row) o.row.classList.add("is-loading");
@@ -372,7 +471,7 @@ export class StockScanApp {
 		try {
 			const item = await call(M.ITEM, { item_code: itemCode, warehouse: warehouse || undefined });
 			if (seq !== this.seq) return;
-			this.showItem(item, { code: o.code });
+			this.showItem(item, { code: o.code, auto: o.auto });
 		} catch (e) {
 			if (seq === this.seq) this.fail(e, { retry: () => this.openItem(itemCode, warehouse, o) });
 		} finally {
@@ -382,6 +481,7 @@ export class StockScanApp {
 	}
 
 	async openLocation(warehouse, opts) {
+		if (this.reportBusy()) return;
 		const seq = ++this.seq;
 		this.setLoading(true);
 		try {
@@ -412,7 +512,7 @@ export class StockScanApp {
 	// -----------------------------------------------------------------------
 
 	scan() {
-		if (this.scanner) return;
+		if (this.scanner || this.reportBusy()) return;
 		closeAllSheets();
 		this.scanner = openScanner({
 			decoderUrl: this.boot.decoder_url,
@@ -436,6 +536,7 @@ export class StockScanApp {
 	 * full-height sheet while the sheet said "Nothing matches".
 	 */
 	async resolve(code, opts) {
+		if (this.reportBusy()) return null;
 		const o = opts || {};
 		const here = this.here();
 		const seq = ++this.seq;
@@ -472,7 +573,7 @@ export class StockScanApp {
 	 * Outside any text box, a burst like that ending in Enter is a scan.
 	 */
 	onWedgeKey(ev) {
-		if (sheetDepth() || this.scanner || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+		if (sheetDepth() || this.scanner || this.reportBusy() || ev.ctrlKey || ev.metaKey || ev.altKey) return;
 		const t = ev.target;
 		if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 		const now = Date.now();
@@ -823,7 +924,7 @@ export class StockScanApp {
 	/** "How many?" — for a box of 200 nobody taps + two hundred times. */
 	askQuantity() {
 		const item = this.view.item;
-		if (!item || this.savingHere()) return;
+		if (!item || this.savingHere() || this.reportBusy()) return;
 		const available = Math.max(item.available || 0, 0);
 		const field = input({
 			className: "ee-ss-input ee-ss-qty-input",
@@ -901,7 +1002,7 @@ export class StockScanApp {
 
 	save() {
 		const v = this.view;
-		if (v.name !== "item") return;
+		if (v.name !== "item" || this.reportBusy()) return;
 		if (this.saving) {
 			// Save is disabled meanwhile; this is a take continuing after the job picker.
 			toast(STILL_SAVING, { kind: "info" });
@@ -1169,7 +1270,7 @@ export class StockScanApp {
 	openMove() {
 		const v = this.view;
 		const item = v.item;
-		if (!item || !item.elsewhere || !item.elsewhere.length) return;
+		if (!item || !item.elsewhere || !item.elsewhere.length || this.reportBusy()) return;
 		const uom = item.stock_uom;
 		let handle = null;
 		// A Move in flight outlives its sheet if the person closes it; its answer then goes to a
@@ -1284,6 +1385,7 @@ export class StockScanApp {
 	// --- Undo ---------------------------------------------------------------------------
 
 	async confirmUndo(log) {
+		if (this.reportBusy()) return;
 		const ok = await ask({ title: "Undo this?", body: undoQuestion(log), ok: "Undo it", okKind: "primary" });
 		if (ok) this.undo(log);
 	}
@@ -1357,6 +1459,7 @@ export class StockScanApp {
 
 	/** Pick the job parts are taken for. `opts.then` continues a take that needed one. */
 	pickJob(opts) {
+		if (this.reportBusy()) return;
 		const o = opts || {};
 		const required = o.reason === "take";
 		const search = input({ placeholder: "Search jobs", label: "Search jobs", enterkeyhint: "search", type: "search" });
@@ -1437,6 +1540,157 @@ export class StockScanApp {
 	}
 
 	// -----------------------------------------------------------------------
+	// Report a problem (the capture panel, WI-079)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Open the capture panel over whatever is on screen, as the kiosk's Settings row does
+	 * (`kiosk/settings.js`). Through the `window.ee_capture` global only: this bundle may not
+	 * import the recorder (tests/test_feedback_capture_surface.py).
+	 *
+	 * The panel pushes and removes its OWN history entry and answers the phone's Back itself —
+	 * "Discard this report?" before a typed report is thrown away — so this page adds no marker
+	 * for it and stands aside while it is open (`onPopState`). Two things are settled first:
+	 *  - a lookup still loading is dropped: its screen would be drawn under the form, and its
+	 *    history entry pushed on top of the form's own;
+	 *  - a sheet's marker still waiting for that lookup is stepped back over (`nav.whenQuiet`),
+	 *    so the form's entry sits on a screen of ours.
+	 * And from the tap until the form has closed, the page opens nothing and goes nowhere
+	 * (`reportBusy`): the form downloads on first use, and on a slow connection the page is
+	 * still there to tap in the meantime.
+	 */
+	openReport() {
+		if (this.report || this.reportWanted || sheetDepth() || this.scanner) return;
+		const capture = window.ee_capture;
+		if (!capture || typeof capture.open !== "function") {
+			// The recorder never loaded (the button is hidden then; this is its Try again).
+			toast("The report form is not on this page. Reload the page, then try again.", {
+				kind: "error",
+				actionLabel: RELOAD.label,
+				onAction: RELOAD.onClick,
+			});
+			return;
+		}
+		this.reportWanted = true;
+		++this.seq;
+		this.reportBtn.setAttribute("aria-busy", "true");
+		// Back un-wanted an earlier tap's form while it was still loading: that one is wanted
+		// again. A second open() would be answered with the same panel, and the first answer,
+		// no longer wanted, would close it.
+		if (this.reportLoading) return;
+		this.reportLoading = true;
+		const settle = () => {
+			const wanted = this.reportWanted;
+			this.reportWanted = false;
+			this.reportLoading = false;
+			this.reportBtn.removeAttribute("aria-busy");
+			return wanted;
+		};
+		this.nav.whenQuiet(() => {
+			if (!this.reportWanted) {
+				settle();
+				return;
+			}
+			let opening;
+			try {
+				// open() reports a failed load by rejecting; a throw is caught the same way.
+				opening = Promise.resolve(capture.open({ surface: "web" }));
+			} catch (e) {
+				opening = Promise.reject(e);
+			}
+			opening.then(
+				(handle) => {
+					const wanted = settle();
+					if (!handle) return;
+					if (!wanted || sheetDepth() || this.scanner) {
+						// Not to be kept: Back was pressed while it loaded, or a sheet or the camera
+						// opened under it after all (every door here checks `reportBusy`, so one that
+						// forgot to). A sheet under the form keeps its keys — the camera's code box
+						// takes every letter typed into the form — and its marker sits under the
+						// form's entry. Closing the form removes that entry again (capture/panel.js)
+						// and leaves the sheet, its marker and the screen exactly as they were.
+						if (typeof handle.close === "function") handle.close();
+						return;
+					}
+					this.report = handle;
+					const done = () => {
+						if (this.report === handle) this.report = null;
+					};
+					if (handle.closed && typeof handle.closed.then === "function") handle.closed.then(done, done);
+					else done();
+				},
+				() => {
+					if (settle()) this.reportFailed();
+				}
+			);
+		});
+	}
+
+	/** The form did not open: say what to do, with the one thing that helps. */
+	reportFailed() {
+		toast("The report form did not open. Check your signal, then tap Try again.", {
+			kind: "error",
+			actionLabel: "Try again",
+			onAction: () => this.openReport(),
+		});
+	}
+
+	/** The report form is open over the page, so Back is its to answer (capture/panel.js). */
+	reportOpen() {
+		try {
+			const capture = window.ee_capture;
+			if (capture && typeof capture.isOpen === "function") return !!capture.isOpen();
+		} catch (e) {
+			/* a broken recorder is a closed form */
+		}
+		return !!this.report;
+	}
+
+	/**
+	 * The report form is on its way or open, so the page opens no sheet and starts no
+	 * navigation: every door on it checks this (the scanner gun's `onWedgeKey` included). Under
+	 * the form, a sheet would keep acting on keys — the camera moves focus into its code box on
+	 * every letter, Escape and Tab reach the sheet — and a screen that landed would write its
+	 * history entry where the form's own is. Back while it loads still works (`onPopState`) and
+	 * un-wants it.
+	 */
+	reportBusy() {
+		return this.reportWanted || this.reportOpen();
+	}
+
+	/**
+	 * What a report from this page says about it, beside the recorder's own rings: codes and
+	 * counts only. No item or supplier names, quantities or jobs — a report is read by people
+	 * who never saw the shelf, and the page has no cost or price to leak.
+	 */
+	registerCaptureState() {
+		try {
+			const capture = window.ee_capture;
+			if (!capture || typeof capture.registerCaptureState !== "function") return;
+			capture.registerCaptureState(() => {
+				const v = this.view;
+				const here = this.here();
+				return {
+					stock_scan: {
+						view: v.name,
+						warehouse: here ? here.warehouse : null,
+						item_code: v.item ? v.item.item_code : null,
+						back_depth: this.back.length,
+						history_entries: this.nav.trail.length,
+						sheets_open: sheetDepth(),
+						saving: this.saving,
+						retries_kept: this.pending.size,
+						job_picked: !!this.job,
+						build: this.boot.build || null,
+					},
+				};
+			});
+		} catch (e) {
+			/* a report is a convenience; the page is not */
+		}
+	}
+
+	// -----------------------------------------------------------------------
 	// Search
 	// -----------------------------------------------------------------------
 
@@ -1446,6 +1700,7 @@ export class StockScanApp {
 	 * `opts.locationsOnly` + `opts.onLocation` pick a location for "Where is it?".
 	 */
 	openSearch(opts) {
+		if (this.reportBusy()) return;
 		const o = opts || {};
 		const here = o.locationsOnly ? null : this.here();
 		const wantLocations = !here;

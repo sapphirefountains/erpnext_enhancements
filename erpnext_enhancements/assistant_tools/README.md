@@ -50,6 +50,17 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   audit row, through `_wrap_log_execution`. The approver can view the hidden values with
   `reveal_sealed`. Before v1.524.1 it executed the redacted card. See
   [`ai_governance/README.md`](../ai_governance/README.md#confirming-runs-what-was-proposed-not-what-the-card-shows).
+- **A write that cannot run gets no card (v1.533.0).** Before `_propose`, `_precheck_refusal`
+  checks each Select value in a `create_document` or `update_document` call's `data`, including
+  child-table rows. It uses the same comparison as Frappe v16's `_validate_selects`, applied only
+  to the values in the call. An off-options value, or a DocType that does not exist, returns an
+  error with error type `AIGateValidationError`. The error uses Frappe's wording, masks
+  credential-like fields and lists at most five problems. It is recorded in AI Action Log, and no
+  card is created. The check reads metadata only, so it runs no controller hooks. It never checks
+  Link targets, because a later card may depend on a record an earlier card creates. Where it
+  can't be sure it queues the card: `fetch_from` Selects, cancels, and any failure of the check
+  itself, which also goes to the Error Log. See
+  [`ai_governance/README.md`](../ai_governance/README.md#a-write-that-cannot-run-gets-no-card-v15330).
 - The model retrieves the real outcome afterwards via the read-only
   `check_ai_pending_action` tool; the `ee-ai-write-confirmation` skill teaches
   connected assistants the flow.
@@ -265,7 +276,7 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `water_design_status` | Water Engineering | a Water Feature Design's rollups, completion %, `next_inputs_needed`, typed issues, readiness gates and calc audit trail; lists designs when `design` is omitted |
 | `save_water_design` | Water Engineering | **write (gated)** — creates/updates a Water Feature Design (child tables replaced wholesale), then recomputes |
 | `control_panel_status` | Water Engineering | a Control Panel Design's power/nameplate, UI screens, I/O points, interlock checklist and lighting/solenoid rollups |
-| `item_naming_check` | Inventory | a proposed Item Code/Name against the naming SOP — duplicates, scored neighbours, code family, `PDT-`/`SRV-` block occupancy, every mechanical name defect, and a STOP/FIX/PASS verdict. Advisory: there is no `Item` doc_event and nothing blocks a save |
+| `item_naming_check` | Inventory | a proposed Item Code/Name against the naming SOP — duplicates, scored neighbours, code family, `PDT-`/`SRV-` block occupancy, every mechanical name defect, and a STOP/FIX/PASS verdict. Advisory: nothing this tool reports blocks a save by itself. From 2026-10-01 (POL-0602; shipped in v1.532.0) the `Item` doc_event refuses a *new* Item for two of these findings only (a code duplicating an existing one after normalisation, a name that is just the code) |
 | `party_naming_check` | CRM | whether a Project, Opportunity or Address is named after the party it belongs to — one record, or the whole doctype audited. Advisory; out of scope is NOT a pass, and the payload says which. Spans three doctypes, so it gates visibility on `Address` and re-checks the one asked for inside `execute` |
 
 ## Classification is mandatory

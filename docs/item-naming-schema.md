@@ -11,8 +11,10 @@
 >
 > Content below is the SOP's, restructured into Markdown tables and otherwise unaltered.
 > Blockquotes marked **Verified 2026-08-19** are *not* part of the SOP: they record
-> where a live check of ERPNext Production disagreed with it, and are the only editorial
-> additions in this file.
+> where a live check of ERPNext Production disagreed with it. Blockquotes marked
+> **Decided** are not part of SOP v1.0 either: they record a Process Owner ruling made
+> after it, which `item_naming_rules.py` already applies. Those two kinds are the only
+> editorial additions in this file.
 
 ## 1. Purpose
 
@@ -352,6 +354,31 @@ appearing on two or more records, plus the outright errors.
 > `FILAMENT, PRINTER`; `SHARPIES` (2) — a brand *and* a plural, should be `MARKER, …`; and
 > `UNI-INSERT` (2) / `UNI-SHIM` (2) — vendor product-line names used as categories. Tracked
 > in WI-070.
+
+> **Decided 2026-09-24 (Nik, recorded on TASK-2026-02238 and in POL-0602 v1.0, effective
+> 2026-10-01).** Three category words are added to Tier 1, and two Tier 3 rows follow from
+> them:
+>
+> | Ruling | Effect in `item_naming_rules.py` |
+> |---|---|
+> | `INSERT` and `SHIM` are approved categories | Tier 1 (`_TIER1_APPROVED_2026_09_24`) |
+> | `UNI` is a vendor product line, not a category, so it moves to a later segment | Tier 3: `UNI-INSERT` → `INSERT, UNI`; `UNI-SHIM` → `SHIM, UNI` |
+> | `PANEL` is an approved category | Tier 1. This resolves the first defect above: `SUBPANELT` → `PANEL, SUB` is now a valid correction, and `TIER3_REPLACEMENT_UNAPPROVED` is empty |
+>
+> Rulings are still open on other leading words (TASK-2026-02215: `PLMB`, `BRUSH`, `BOTTLE`).
+> They stay unapproved until the Process Owner rules. The rest of the second defect above
+> (`BATTERIES`, `FERRULES`, `PENS`, `SCOURING PADS`, `PRINTER FILAMENT`, `SHARPIES`) is
+> unchanged by this ruling.
+>
+> The same decision made two findings enforceable on a **new** Item, which §3's "nothing in
+> this schema is enforced by the system" no longer fully describes. From 2026-10-01
+> (v1.532.0) ERPNext refuses to save a new Item whose Item Code matches an existing one once case and
+> punctuation are ignored, or whose Item Name is just its Item Code. Every other rule in this
+> document, including Step 4.1's unapproved-category stop, stays procedural. Blocking an
+> unapproved category would refuse legitimate items while the rulings above are open. New
+> Items created from 2026-10-01 are expected to be 100% compliant. The whole-catalogue figure
+> remains the backlog measure. A weekly list of new Items that fail these rules goes to the
+> Purchasing Agent.
 
 ## Appendix B — Current-State Measurement
 

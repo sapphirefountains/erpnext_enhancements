@@ -434,6 +434,15 @@ export function logHeadline(log) {
 	}
 }
 
+/**
+ * Draw "Report a problem"? The capture recorder is on the page (`window.ee_capture`) and Frappe's
+ * login cookie says System User — the same cookie test as capture/launcher.js, which this bundle
+ * may not import. Only a hint: the server checks again on submit.
+ */
+export function reportAvailable(capture, cookie) {
+	return !!(capture && typeof capture.open === "function") && /(?:^|;\s*)system_user=yes(?:;|$)/.test(String(cookie || ""));
+}
+
 /** The Undo confirmation: "Undo: took 3 Unit of Widget from Bin A1-3-1?" */
 export function undoQuestion(log) {
 	const l = log || {};

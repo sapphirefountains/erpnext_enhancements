@@ -24,15 +24,26 @@ Four things, none of which a browser would report as an error:
    boot globals, a ``theme-color`` meta, ``?v={{ deploy_version }}`` on every
    mutable asset and none on the icons.
 
+5. **Browser Back / Forward walk the tabs and close sheets, and change no URL.**
+   ``ui.js`` is the only file that touches the History API, every call is
+   two-argument (iOS Safari asks for camera and location again when the URL
+   changes; the worker serves the offline shell for the exact path ``/kiosk``),
+   and nothing traps Back. The behaviour itself is driven, not grepped, by
+   ``scripts/test_kiosk_history.js``, which loads the real scripts over a fake
+   DOM and history; it runs from here so it runs wherever this suite does.
+
 Run: python -m unittest erpnext_enhancements.tests.test_kiosk_frontend
 """
 
 import ast
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
+HISTORY_HARNESS = APP.parent / "scripts" / "test_kiosk_history.js"
 JS_DIR = APP / "public" / "js" / "kiosk"
 CSS_DIR = APP / "public" / "css" / "kiosk"
 HTML = APP / "www" / "kiosk.html"
@@ -234,6 +245,122 @@ class TestTheShellKeepsItsContract(unittest.TestCase):
         self.assertIn("getDiagnostics:", code)
         for status in ("'insecure'", "'unavailable'", "'hidden'", "'denied'", "'ready'", "'on'", "'off'"):
             self.assertIn(status, code)
+
+
+def call_arguments(code, name):
+    """The top-level arguments of every ``name(...)`` call in ``code``, as source strings."""
+    calls = []
+    for m in re.finditer(re.escape(name) + r"\s*\(", code):
+        depth, start, args = 1, m.end(), []
+        i = start
+        while i < len(code) and depth:
+            ch = code[i]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif ch == "," and depth == 1:
+                args.append(code[start:i].strip())
+                start = i + 1
+            i += 1
+        args.append(code[start : i - 1].strip())
+        calls.append([a for a in args if a])
+    return calls
+
+
+class TestBrowserHistory(unittest.TestCase):
+    """Back / Forward walk the tabs and close sheets (ui.js, "History"). The rules here
+    are the ones a quiet edit breaks without anything looking wrong on a desktop.
+
+    Read raw, not through ``strip_js_comments``: that stripper does not know strings,
+    and app.js's ``accept: 'image/*'`` opens a "comment" that swallows half the file.
+    So every search below is for a call shape that prose does not produce."""
+
+    HISTORY_CALLS = re.compile(
+        r"\.(?:pushState|replaceState)\s*\(|['\"]popstate['\"]|\bhistory\.(?:back|forward|go)\s*\("
+    )
+
+    def code(self, name):
+        return (JS_DIR / name).read_text(encoding="utf-8")
+
+    def test_only_ui_js_touches_the_history(self):
+        """One owner. A second pushState anywhere else lands between the marker and the
+        entry its back() is aimed at, and the next Back closes the wrong thing."""
+        owners = sorted(p.name for p in js_files() if self.HISTORY_CALLS.search(self.code(p.name)))
+        self.assertEqual(owners, ["ui.js"])
+
+    def test_no_history_call_carries_a_url(self):
+        """iOS Safari asks for camera and location again when the URL changes, and
+        kiosk-sw.js serves the offline shell for the exact path /kiosk."""
+        code = self.code("ui.js")
+        seen = 0
+        for name in ("history.pushState", "history.replaceState"):
+            for args in call_arguments(code, name):
+                seen += 1
+                self.assertEqual(len(args), 2, f"{name}({', '.join(args)}) must be two-argument: no URL")
+        self.assertGreaterEqual(seen, 2, "anti-vacuity: the history layer's calls were not found")
+
+    URL_WRITES = (r"location\.hash\s*=", r"location\.href\s*=", r"location\.(?:assign|replace)\s*\(")
+
+    def test_the_url_is_never_written(self):
+        for path in js_files():
+            code = self.code(path.name)
+            for pattern in self.URL_WRITES:
+                self.assertIsNone(re.search(pattern, code), f"{path.name}: {pattern}")
+
+    def test_nothing_traps_back(self):
+        """Back from the first entry must still leave the page: no leave-page prompt."""
+        for path in js_files():
+            self.assertNotIn("beforeunload", self.code(path.name), path.name)
+
+    def test_the_report_panel_is_left_its_own_back(self):
+        """capture/panel.js owns its entry: popstate is its while ee_capture.isOpen(), and
+        an entry carrying its key is never read as one of the kiosk's screens."""
+        code = self.code("ui.js")
+        self.assertIn("typeof cap.isOpen === 'function' && cap.isOpen()", code)
+        self.assertIn("'ee_capture' in s", code)
+
+    def test_only_a_tap_pushes_a_tab_entry(self):
+        """Chrome's history intervention: a push with no tap behind it marks every entry of
+        the page skippable, and the next Back leaves the app. A tab entry is pushed only for
+        a tab tap; any other disagreement between screen and entry re-stamps the entry."""
+        code = self.code("ui.js")
+        self.assertIn("writeEntry(nav.tapped, false);", code)
+        self.assertNotIn("writeEntry(true, false)", code, "a tab entry pushed with no tap behind it")
+
+    def test_app_js_pushes_from_the_tap_and_stamps_the_boot_entry(self):
+        code = self.code("app.js")
+        self.assertIn("function setTab(name, fromHistory) {", code)
+        self.assertIn("if (!fromHistory && UI.nav) UI.nav.go(name);", code)
+        self.assertIn("UI.nav.start('clock', TABS.map(", code)
+        self.assertIn("function (name) { setTab(name, true); }", code)
+        self.assertIn("setTab('clock', true);", code)
+        self.assertNotIn("setTab('clock');", code, "boot must not push a Clock entry of its own")
+
+    def test_the_settings_off_switch_turns_off_both_layers(self):
+        """Time Kiosk Settings.disable_browser_back is the no-deploy way back if an iPhone
+        re-prompts: app.js never starts the history layer (no listener, so ui.js pushes
+        nothing for sheets either), and the template tells the report panel the same."""
+        self.assertIn("if (UI.nav && !(+SETTINGS.disable_browser_back)) UI.nav.start('clock',", self.code("app.js"))
+        self.assertIn("if (!nav.on || nav.backs) return;", self.code("ui.js"), "reconcile must do nothing before start")
+        self.assertIn("history: {{ capture_history | tojson }}", HTML.read_text(encoding="utf-8"))
+        kiosk_py = (APP / "www" / "kiosk.py").read_text(encoding="utf-8")
+        self.assertIn('context.capture_history = not frappe.utils.cint((boot.get("settings") or {}).get("disable_browser_back"))', kiosk_py)
+        settings_py = (APP / "workforce" / "doctype" / "time_kiosk_settings" / "time_kiosk_settings.py").read_text(encoding="utf-8")
+        self.assertIn('"disable_browser_back": 0,', settings_py, "get_settings only returns keys listed in DEFAULTS")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class TestBrowserHistoryBehaviour(unittest.TestCase):
+    """Runs scripts/test_kiosk_history.js: the real scripts, a fake DOM and a fake history."""
+
+    def test_the_history_harness_passes(self):
+        result = subprocess.run(
+            [shutil.which("node"), str(HISTORY_HARNESS)], capture_output=True, text=True, timeout=120
+        )
+        output = (result.stdout + result.stderr)[-4000:]
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("checks passed", result.stdout, output)
 
 
 if __name__ == "__main__":

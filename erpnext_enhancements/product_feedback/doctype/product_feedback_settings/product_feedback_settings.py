@@ -21,6 +21,12 @@ Two things follow, and both are load-bearing:
    else. ``patches/seed_product_feedback_settings.py`` writes the row so the values are
    visible and editable in the desk, but the code does not depend on that patch having run.
 
+   The one exception is ``release_sync_last_version`` (WI-079 slice 4), which is not a
+   setting but the release sync's own marker. It has no default and needs no fallback,
+   because its absent row is the state wanted: "never run", so process every release.
+   ``product_feedback/release_sync.py`` reads it with ``get_single_value`` and writes it with
+   ``set_single_value``, and ``validate`` below leaves it alone.
+
 ``validate()`` clamps and never throws on an empty value, deliberately — a controller that
 *rejects* the zeros a never-saved Single presents is exactly what made the Chat Settings
 page unsaveable, and the settings that bite are the ones for dormant features, where the

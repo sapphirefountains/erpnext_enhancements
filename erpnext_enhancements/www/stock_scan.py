@@ -58,4 +58,6 @@ def get_context(context):
 	boot["build"] = context.deploy_version
 	boot["decoder_url"] = DECODER_PATH
 	context.boot = boot
+	# The capture recorder's EE_CAPTURE reads it ("Report a problem"), as on /kiosk and /feedback.
+	context.csrf_token = boot["csrf_token"]
 	return context

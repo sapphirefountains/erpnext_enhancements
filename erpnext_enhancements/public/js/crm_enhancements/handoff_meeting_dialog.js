@@ -22,7 +22,7 @@
  * uses the browser's email regex, which lets a few odd shapes through that the
  * server then rejects (an accented or quoted local part, an IP literal, a
  * hyphen at the edge of a domain label), so the server also returns what it
- * dropped as `not_invited` and the dialog says so after booking (1.530.1).
+ * dropped as `not_invited` and the dialog says so after booking (1.534.1).
  *
  * Why typing works without `ignore_validation` (checked against v16, 1.529.0):
  * MultiSelect.validate does return "" for a value it doesn't recognise, but

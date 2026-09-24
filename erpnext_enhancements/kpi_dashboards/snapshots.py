@@ -1400,12 +1400,14 @@ def _product_metrics():
 	# catches per department, not per metric. A naming figure is worth less than the eight
 	# metrics above it.
 	if _exists("Item"):
+		naming_rows = None
 		try:
 			from erpnext_enhancements.inventory_enhancements import item_naming
 			from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming
 
 			corpus, _corpus_meta = item_naming.read_corpus()
-			summary = naming.summarise(naming.audit(corpus, brands=item_naming.read_brands()))
+			naming_rows = naming.audit(corpus, brands=item_naming.read_brands())
+			summary = naming.summarise(naming_rows)
 			# `compliance_pct` is None on an empty catalogue, and `add` drops None rather than
 			# publishing a 0% that reads as a catastrophe or a 100% that reads as a triumph.
 			add(
@@ -1418,6 +1420,31 @@ def _product_metrics():
 			)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Item naming compliance KPI failed")
+
+		# --- the same audit, restricted to items created since POL-0602 took effect (v1.532.0) ---
+		#
+		# Nik, 2026-09-24 (TASK-2026-02238): new items are held to 100%; the whole-catalogue figure
+		# above stays the backlog measure. Restricted AFTER auditing the whole corpus rather than by
+		# auditing the new items alone, so a new item named like an old one still counts as a
+		# collision (item_naming_rules.restrict_to). None until the first item is created on or
+		# after NAMING_GO_LIVE, and `add` drops None -- a 100% of nothing would read as the target
+		# met. Its own try: a failure here must not take the backlog figure with it.
+		if naming_rows is not None:
+			try:
+				new_codes = frappe.get_all(
+					"Item", filters={"creation": [">=", naming.NAMING_GO_LIVE]}, pluck="item_code"
+				)
+				new_summary = naming.summarise(naming.restrict_to(naming_rows, new_codes))
+				add(
+					"item_naming_new_compliance_pct",
+					"Item Naming Compliance (New Items)",
+					new_summary.get("compliance_pct"),
+					"%",
+					"Item",
+					metrics.HIGHER,
+				)
+			except Exception:
+				frappe.log_error(frappe.get_traceback(), "Item naming compliance (new items) KPI failed")
 
 	if has("Item", "custom_rated_gpm") and has("Item", "custom_pump_hp"):
 		pumps = flt(_scalar("select count(*) from `tabItem` where item_group='Pumps'"))

@@ -16,6 +16,12 @@ center, whether a take needs a job, and the undo window. Those fields were added
 Single that already existed, so ``patches/backfill_stock_scan_settings_defaults`` writes
 their declared defaults where no ``tabSingles`` row exists — and ``DEFAULTS`` below falls
 back the same way, so the page is right even before that patch has run.
+
+The **Item Naming** section (v1.532.0) holds ``naming_digest_recipients``, who gets
+``inventory_enhancements.item_naming_digest``'s Monday email. It has no default on purpose:
+blank means nobody. ``patches/seed_naming_digest_recipient`` writes the Purchasing Agent's
+address once, only where ``tabSingles`` has no row for the field, so a list somebody has
+edited or deliberately emptied is never overwritten.
 """
 
 import frappe
@@ -37,6 +43,13 @@ DEFAULTS = {
 	"require_project_for_take": 0,
 	# A stored 0 is a deliberate "undo off" and is kept; only a missing row falls back.
 	"undo_window_minutes": 30,
+	# The off switch for the page's browser Back/Forward (v1.534.0), in case iPhones re-prompt for
+	# the camera. It declares no default on purpose: unticked is the answer for every site, and a
+	# site that never saved the field reads None, which api.stock_scan's cint() takes as off. So
+	# there is nothing for the backfill patch to write.
+	"stock_scan_disable_browser_back": None,
+	# Item naming digest. None: no recipients, no email.
+	"naming_digest_recipients": None,
 }
 
 
