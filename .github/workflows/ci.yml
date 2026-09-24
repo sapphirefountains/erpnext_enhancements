@@ -1773,6 +1773,12 @@ jobs:
       # alone. Wrong in any direction pays hours nobody worked or drops hours somebody did.
       - name: Workforce sweeper (auto-close end-time rule)
         run: python -m unittest erpnext_enhancements.tests.test_workforce_sweeper -v
+      # Its own step too (frappe stub). A browser stamp such as toISOString()'s
+      # "...Z" must reach a Datetime column as a NAIVE site-local value: aware, MariaDB
+      # refuses it (1292) and the kiosk photo row is never written; offset merely
+      # stripped, the photo is stored six hours late (v1.526.1).
+      - name: Workforce client timestamps (browser ISO -> site-local naive)
+        run: python -m unittest erpnext_enhancements.tests.test_workforce_client_time -v
       # Semi-monthly commission periods. Every failure mode here is a *plausible*
       # statement -- right shape, wrong rows -- which nothing downstream can
       # notice: a boundary day in neither period (the live report was dropping
