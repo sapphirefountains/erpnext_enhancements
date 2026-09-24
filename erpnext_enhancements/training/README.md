@@ -708,6 +708,24 @@ Three properties are load-bearing:
   and somebody's compliance record. The endpoint set is pinned by set equality so adding one fails
   the build first. Making the work fast is the goal; making it skippable is not.
 
+**Where the reviewer is working is in the route**, so the browser's Back returns to the course or
+lesson they were on and Forward goes back to it. `training-review` is the whole queue,
+`training-review/course/<course>` is the *Working through* filter and `training-review/lesson/<lesson>`
+is *Open a specific lesson*. They are path segments, never `route_options`: v16's `push_state`
+writes the path alone, so anything in `route_options` is gone after Back, Forward or a reload. Only
+the reviewer's own moves are entries. The next lesson the queue hands out when one empties is not,
+because that lesson is finished and Back into it would open nothing. A jumped-to lesson that empties
+steps back onto the view it was opened from. The page marks that lesson's entry in `history.state`,
+with no URL. A lesson that was not opened from the page, such as a pasted link, hands its entry to
+the queue instead. A route change that would repaint over a question being edited asks first. If
+the reviewer stays, the edit stays and the address is left where Back put it, so Forward returns to
+the entry that matches. A Back pressed while a lesson is loading is caught up when the load lands.
+One pressed while a verdict is in flight waits for the last verdict to land, then follows the
+route. Loading sooner could hand back the lesson being emptied with its question still pending, the
+double accept the auto-advance waits to avoid. It would also miss a save-and-accept whose card is
+out of the pane until its reply comes: if that save is refused, the card comes back with its
+corrections, and the route change asks before painting over them.
+
 ### Batches (cohorts)
 
 A **Training Batch** is a cohort — a set of learners moving through a set of courses

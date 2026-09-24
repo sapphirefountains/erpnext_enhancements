@@ -1,5 +1,5 @@
 /**
- * @file Client controller for the "Sales Pipeline" desk page (/app/sales-pipeline).
+ * @file Client controller for the "Sales Pipeline" desk page (/desk/sales-pipeline).
  * @description
  * TV-friendly realtime funnel board. Columns and cards come fully shaped from
  * the whitelisted `get_pipeline_data` (sales_pipeline.py) — this file only
@@ -10,9 +10,16 @@
  *    burst of saves causes one refetch.
  *  - Fallback polling every 5 minutes (wall TVs can miss socket reconnects),
  *    skipped while the tab is hidden or routed away from this page.
- *  - TV mode: /app/sales-pipeline/tv (or the header button) hides the desk
+ *  - TV mode: /desk/sales-pipeline/tv (or the header button) hides the desk
  *    chrome and scales typography for across-the-room reading. The Raspberry
- *    Pi kiosk should bookmark the /tv route.
+ *    Pi kiosk should bookmark the /tv route. The route IS the mode: the button
+ *    routes to /tv, and on_page_show reads the route on every show, so Back
+ *    from TV mode returns to the board with its navbar and Forward goes back
+ *    into TV mode. Escape (leaving the fullscreen the button asked for) steps
+ *    back the same way, because TV mode hides the button that would.
+ *
+ * Card and hand-off links are frappe.utils.get_form_link paths (/desk/...), which
+ * the desk routes in place; an /app/... href is a full page load on v16.
  *
  * Staleness: cards carry `stale` 0/1/2 from the server (days-in-stage vs the
  * thresholds in ERPNext Enhancements Settings); this maps to amber/red card
@@ -31,6 +38,9 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 		timer: null,
 		refresh_inflight: false,
 		tv_mode: false,
+		// This page asked for fullscreen on the way into TV mode (a click, the only
+		// time it may). Cleared by on_page_show whenever the route is not /tv.
+		fullscreen_asked: false,
 	};
 	wrapper.sales_pipeline_state = state;
 
@@ -40,17 +50,28 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 	$(page.body).addClass("sales-pipeline-page").append(board).append(rail).append(footer);
 
 	page.set_secondary_action(__("Refresh"), () => refresh(), "refresh");
-	page.add_inner_button(__("TV Mode"), () => set_tv_mode(!state.tv_mode));
-
-	function set_tv_mode(on) {
-		state.tv_mode = on;
-		$("body").toggleClass("sales-pipeline-tv", on);
-		if (on && document.documentElement.requestFullscreen) {
+	// The button only routes; on_page_show sets the mode from the route. Fullscreen is
+	// asked for here because it needs this click; leaving it needs no gesture, so
+	// on_page_show and the "hide" handler do that part.
+	page.add_inner_button(__("TV Mode"), () => {
+		if (!state.tv_mode && document.documentElement.requestFullscreen) {
+			state.fullscreen_asked = true;
 			document.documentElement.requestFullscreen().catch(() => {});
-		} else if (!on && document.fullscreenElement) {
-			document.exitFullscreen().catch(() => {});
 		}
-	}
+		frappe.set_route(state.tv_mode ? ["sales-pipeline"] : ["sales-pipeline", "tv"]);
+	});
+
+	// Escape ends the fullscreen and leaves TV mode's chrome on, and the TV Mode button
+	// is hidden with the page head, so there would be no way out but Back. So leaving the
+	// fullscreen this page asked for IS Back: the entry behind /tv is the board it was
+	// pushed from. A kiosk that loads /tv directly never asks for fullscreen, so this
+	// never moves it.
+	document.addEventListener("fullscreenchange", () => {
+		if (document.fullscreenElement || !state.fullscreen_asked) return;
+		state.fullscreen_asked = false;
+		const route = frappe.get_route() || [];
+		if (route[0] === "sales-pipeline" && route[1] === "tv") window.history.back();
+	});
 
 	function is_visible() {
 		return !document.hidden && frappe.get_route()[0] === "sales-pipeline";
@@ -100,7 +121,7 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 				const days_label =
 					opp.days_in_stage === 1 ? __("1 day") : __("{0} days", [opp.days_in_stage]);
 				cards.append(`
-					<a class="pipeline-card ${stale_class}" href="/app/opportunity/${encodeURIComponent(opp.name)}">
+					<a class="pipeline-card ${stale_class}" href="${frappe.utils.get_form_link("Opportunity", opp.name)}">
 						<div class="pipeline-card-top">
 							<span class="pipeline-card-customer">${esc(opp.customer)}</span>
 							<span class="pipeline-card-days" title="${__("Time in this stage")}">${days_label}</span>
@@ -144,7 +165,7 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 		rail.append(`<span class="rail-title">${__("Hand-off in progress")}</span>`);
 		handoff.projects.forEach((p) => {
 			rail.append(`
-				<a class="rail-chip ${p.overdue ? "rail-overdue" : ""}" href="/app/project/${encodeURIComponent(p.project)}">
+				<a class="rail-chip ${p.overdue ? "rail-overdue" : ""}" href="${frappe.utils.get_form_link("Project", p.project)}">
 					<span class="rail-chip-label">${esc(p.label)}</span>
 					<span class="rail-chip-step">${__("Step {0}/{1}", [p.step_number, p.total])} · ${esc(p.step_title)}</span>
 				</a>
@@ -193,15 +214,34 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 };
 
 frappe.pages["sales-pipeline"].on_page_show = function (wrapper) {
-	// Returning to the page (or kiosk auto-reload landing on /tv): re-read the
-	// route for TV mode and repaint with fresh data.
+	// Every show — the TV Mode button, Back, Forward, a kiosk auto-reload landing on
+	// /tv — sets TV mode from the route and from nothing else. It used to be
+	// `tv || state.tv_mode`, which kept the chrome-less TV view (no navbar, so no way
+	// out) on the plain board after Back from /tv, until a reload.
 	const route = frappe.get_route();
 	const tv = route[1] === "tv";
 	const state = wrapper.sales_pipeline_state;
 	if (state) {
-		state.tv_mode = tv || state.tv_mode;
-		$("body").toggleClass("sales-pipeline-tv", state.tv_mode);
+		state.tv_mode = tv;
+		if (!tv) state.fullscreen_asked = false;
 	}
-	// Leaving the page must always drop the TV chrome class.
-	$(wrapper).one("hide", () => $("body").removeClass("sales-pipeline-tv"));
+	$("body").toggleClass("sales-pipeline-tv", tv);
+	if (!tv) sales_pipeline_exit_fullscreen();
+	// Leaving the page must always drop the TV chrome class, and the fullscreen with
+	// it. Namespaced so each show replaces the handler rather than adding another.
+	$(wrapper)
+		.off("hide.sales_pipeline_tv")
+		.one("hide.sales_pipeline_tv", () => {
+			if (state) state.fullscreen_asked = false;
+			$("body").removeClass("sales-pipeline-tv");
+			sales_pipeline_exit_fullscreen();
+		});
 };
+
+// Only the fullscreen TV mode asked for: the whole document. Anything else that is
+// fullscreen (a video, say) is not this page's to end.
+function sales_pipeline_exit_fullscreen() {
+	if (document.fullscreenElement === document.documentElement && document.exitFullscreen) {
+		document.exitFullscreen().catch(() => {});
+	}
+}

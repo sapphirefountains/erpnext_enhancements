@@ -59,3 +59,31 @@ and `public/js/device_management/employee_devices.js` (Employee panel).
 - The Employee panel field is provisioned in code (`setup.py`), not in
   `fixtures/custom_field.json`. If it is later exported to fixtures, the fixture
   owns it and the after-migrate hook becomes a no-op for it.
+- **The Device Console's sheets are route segments, so the phone's Back button closes
+  them.** Camera Scan is `device-console/camera` and Choose Employee is
+  `device-console/employee`. Frappe v16's router owns `popstate` on the Desk and closes
+  the open dialog on every route change, so a sheet with no entry of its own made Back
+  leave the console. Now Back closes the sheet and stays, and Forward opens it again
+  (Choose Employee only for the same device). Three things are deliberate. First, a
+  sheet is shown only after its route has settled, because the route change would
+  otherwise close it. Second, a sheet closed any other way (a read, a pick, X) steps back
+  off its own entry, and the scan or pick runs only once that has landed, so the enroll
+  prompt is not closed by the step. Third, a reload on a sheet's URL opens the console,
+  never the camera. Only an entry the console pushed itself is a sheet's: it marks each
+  one in `history.state` (no URL) as it pushes it. Frappe's Route History records every
+  route with a second segment, and the awesome bar offers the most used as links, so the
+  same URL can arrive from another page; the sheet would then open with that page behind
+  it, and X, or a camera read's step back, would land there. An unmarked sheet URL becomes
+  the console, as a reload's does. Back or Forward onto a sheet's entry that cannot be
+  opened again steps back onto the console's own entry; it used to replace the entry with
+  a second copy of the console, so the next Back seemed to do nothing. The picker cannot
+  be opened again for a device scanned since, after a pick has been made (Forward used to
+  offer a second Check Out, or a second Transfer), or once the device's status no longer
+  allows the action (a Check Out picker for a device since marked lost). A scan is never
+  a history entry. A late reply to an unknown scan puts the
+  enroll prompt up only while the console itself is showing; anywhere else (another
+  page, a sheet opened since) the code is only reported. The picker checks out the device
+  it was opened for, not whatever a scan still in flight puts on the card. "Open full record" is a
+  `get_form_link` /desk path: an /app href is a full page load on v16, and Back from it
+  used to rebuild the console with the scanned device gone. Behaviour tests:
+  `scripts/test_desk_page_history.js`, run by `tests/test_desk_page_history.py`.

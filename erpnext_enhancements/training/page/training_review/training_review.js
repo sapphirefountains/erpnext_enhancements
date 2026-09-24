@@ -62,6 +62,35 @@ frappe.pages["training-review"].on_page_show = function (wrapper) {
 	if (wrapper.training_review) wrapper.training_review.refresh();
 };
 
+// --------------------------------------------------------------------- the route
+//
+// Where the reviewer is working is carried in the route, so Back returns to the course
+// or the lesson they were on before and Forward goes back to it:
+//
+//     training-review                    the whole queue
+//     training-review/course/<course>    one course's queue (the "Working through" filter)
+//     training-review/lesson/<lesson>    one lesson, from "Open a specific lesson"
+//
+// Segments, never route_options: v16's push_state writes the path alone, so anything
+// held in route_options is gone after Back, Forward or a reload. Course and lesson
+// names come from naming series, so they are safe as path segments.
+//
+// Only the moves the reviewer makes are entries. The next lesson the queue hands out
+// when one empties is not: that lesson is finished, and Back into it would open onto
+// nothing. The moves only route; on_page_show (refresh) reads the route and loads.
+const TQ_ROUTE = "training-review";
+
+function tq_view_key(view) {
+	if (!view) return "";
+	return view.lesson ? "lesson:" + view.lesson : "course:" + (view.course || "");
+}
+
+function tq_view_route(view) {
+	if (view && view.lesson) return [TQ_ROUTE, "lesson", view.lesson];
+	if (view && view.course) return [TQ_ROUTE, "course", view.course];
+	return [TQ_ROUTE];
+}
+
 function tq_mount_nav(page) {
 	// Guarded, and the guard is the point: a missing global bundle must cost the
 	// sidebar and nothing else. An uncaught TypeError here would put an error where
@@ -374,6 +403,11 @@ class TrainingReview {
 		this.cards = [];
 		this.focused = -1;
 		this.course_filter = null;
+		// The view the last load was for, {lesson, course}: what refresh compares the route
+		// against. See "the route" above.
+		this.view = null;
+		// The route the reviewer chose not to follow, to keep an edit (follow).
+		this.declined = null;
 		this.loading = false;
 		this.loaded = false;
 		this.syncing = false;
@@ -417,9 +451,18 @@ class TrainingReview {
 		// takes it away, and on_page_show is the only thing that runs on the way back in.
 		this.bind_keys();
 
+		// A show that finds a load running is picked up when it ends (load's finally), and one
+		// that finds a verdict in flight when the last of them lands (follow, maybe_advance).
 		if (this.loading) return;
+		// The route names a different course or lesson from the one on screen: Back, Forward,
+		// a pasted link, or a move made on this page (see "the route").
+		const wanted = this.route_view();
+		if (wanted && (!this.loaded || tq_view_key(wanted) !== tq_view_key(this.view))) {
+			this.follow(wanted);
+			return;
+		}
 		if (force || !this.loaded) {
-			this.load({ course: this.course_filter });
+			this.load(this.view_args(this.view));
 			return;
 		}
 		// A lesson is already open. on_page_show fires on every route change back into
@@ -466,6 +509,92 @@ class TrainingReview {
 		$(document).off("keydown.tq-review");
 	}
 
+	// The view the route asks for, or null while this page is not the one on screen.
+	route_view() {
+		const route = frappe.get_route() || [];
+		if (route[0] !== TQ_ROUTE) return null;
+		if (route[1] === "lesson" && route[2]) return { lesson: route[2], course: null };
+		if (route[1] === "course" && route[2]) return { lesson: null, course: route[2] };
+		return { lesson: null, course: null };
+	}
+
+	view_args(view) {
+		return view && view.lesson ? { lesson: view.lesson } : { course: this.course_filter };
+	}
+
+	// A move to another course or lesson. The reviewer's own moves are history entries;
+	// `replace` is for the one the page makes by itself (leave_lesson). The show the route
+	// fires does the loading. A move to the view the route already names loads it again,
+	// the way "Look again" does.
+	go(view, replace) {
+		if (tq_view_key(view) === tq_view_key(this.route_view())) {
+			this.follow(view);
+			return;
+		}
+		if (replace) frappe.route_flags.replace_route = true;
+		frappe.set_route(tq_view_route(view));
+		// set_route has written the entry by the time it returns (push_state runs before its
+		// promise does). A lesson's entry is marked as pushed from this page, so leaving the
+		// lesson can step back onto the view it was opened from rather than add one.
+		if (view.lesson && !replace) {
+			try {
+				window.history.replaceState({ tq_opened: view.lesson }, "");
+			} catch (e) {
+				// Without the mark, leave_lesson hands the entry over instead.
+			}
+		}
+	}
+
+	// Out of a lesson opened by name, to the queue: a finished lesson is not somewhere Back
+	// should reopen. When this page pushed the lesson's entry, the one behind it is the view
+	// the reviewer opened it from, and that is where this goes. Otherwise (a pasted link, a
+	// reload) the lesson's entry is handed to the queue.
+	leave_lesson() {
+		const here = this.route_view();
+		let state = null;
+		try {
+			state = window.history.state;
+		} catch (e) {
+			state = null;
+		}
+		if (here && here.lesson && state && state.tq_opened === here.lesson) {
+			window.history.back();
+			return;
+		}
+		this.go({ lesson: null, course: this.course_filter }, true);
+	}
+
+	follow(view) {
+		// Not while a verdict is in flight: maybe_advance catches up with the route once the
+		// last one lands. A load now could be handed back the lesson that verdict is emptying,
+		// its question still pending, which is the double accept maybe_advance waits to avoid.
+		// And a save-and-accept's card is out of `cards` until its reply comes, so the edit
+		// check below cannot see the typed corrections a refusal would put back on screen.
+		if (this.inflight > 0) return;
+		const open = () => {
+			this.declined = null;
+			if (!view.lesson) this.course_filter = view.course || null;
+			this.load(this.view_args(view));
+		};
+		// A load paints a new lesson over the questions pane, and a question being edited is
+		// half-written work that nothing else holds. Back must not throw it away unasked.
+		if (!this.cards.some((rec) => rec.editing)) {
+			open();
+			return;
+		}
+		frappe.confirm(
+			__("You are part-way through editing a question. Leave the edit and go?"),
+			open,
+			() => {
+				// Staying: the lesson and the edit stay on screen, under the entry Back moved
+				// to. The address is left alone, because writing over that entry would lose it,
+				// and Forward returns to the one that matches. load() does not chase it later.
+				this.declined = tq_view_key(view);
+				this.paint_courses();
+			}
+		);
+	}
+
 	load(args) {
 		if (this.loading) return;
 		this.loading = true;
@@ -474,6 +603,7 @@ class TrainingReview {
 		const params = {};
 		if (args && args.lesson) params.lesson = args.lesson;
 		if (args && args.course) params.course = args.course;
+		this.view = { lesson: params.lesson || null, course: params.lesson ? null : params.course || null };
 
 		tq_call("erpnext_enhancements.training.review.get_review_lesson", params)
 			.then((data) => {
@@ -485,6 +615,12 @@ class TrainingReview {
 			.catch((err) => this.fail(err))
 			.finally(() => {
 				this.loading = false;
+				// A Back or Forward that came while this was loading found `loading` set and
+				// was dropped by refresh. The route is the truth: catch up with it now —
+				// unless the reviewer has already said to stay (follow).
+				const wanted = this.route_view();
+				const key = tq_view_key(wanted);
+				if (wanted && key !== tq_view_key(this.view) && key !== this.declined) this.follow(wanted);
 			});
 	}
 
@@ -534,7 +670,7 @@ class TrainingReview {
 			.append(
 				$('<button type="button" class="tq-linkish"></button>')
 					.text(__("Try again"))
-					.on("click", () => this.load({ course: this.course_filter }))
+					.on("click", () => this.load(this.view_args(this.view)))
 			)
 			.show();
 	}
@@ -550,7 +686,9 @@ class TrainingReview {
 				fieldname: "lesson",
 				reqd: 1,
 			},
-			(values) => this.load({ lesson: values.lesson }),
+			// The prompt has closed by now (frappe.prompt hides, then calls back), so the
+			// route change cannot take it with it.
+			(values) => this.go({ lesson: values.lesson, course: null }),
 			__("Which lesson?"),
 			__("Open")
 		);
@@ -713,9 +851,9 @@ class TrainingReview {
 		this.$course.val(current);
 	}
 
+	// Routes only: the show that follows sets course_filter and loads (follow).
 	pick_course(value) {
-		this.course_filter = value || null;
-		this.load({ course: this.course_filter });
+		this.go({ lesson: null, course: value || null });
 	}
 
 	// ----------------------------------------------------------------- the lesson
@@ -872,7 +1010,7 @@ class TrainingReview {
 			);
 			$('<button type="button" class="btn btn-primary btn-sm"></button>')
 				.text(__("Back to the queue"))
-				.on("click", () => this.load({ course: this.course_filter }))
+				.on("click", () => this.leave_lesson())
 				.appendTo($empty);
 			return;
 		}
@@ -1644,8 +1782,25 @@ class TrainingReview {
 		// would be handed back the lesson they just finished, with its last question on
 		// it, and would accept it twice.
 		if (this.inflight > 0) return;
-		if (this.cards.length) return;
 		if (this.loading) return;
+		// A Back or Forward that came while verdicts were in flight was held (follow). The
+		// route is the truth: catch up with it now, unless the reviewer has already said to
+		// stay. A refused save-and-accept is back in `cards` by now (restore runs first), so
+		// follow asks before it paints over the corrections.
+		const wanted = this.route_view();
+		const key = tq_view_key(wanted);
+		if (wanted && key !== tq_view_key(this.view) && key !== this.declined) {
+			this.follow(wanted);
+			return;
+		}
+		if (this.cards.length) return;
+		// A lesson opened by name has emptied: back to the queue, without leaving a history
+		// entry for Back to reopen it by. Only while the page is on screen: a verdict landing
+		// after the reviewer has left must not route them back.
+		if (this.view && this.view.lesson && this.route_view()) {
+			this.leave_lesson();
+			return;
+		}
 		this.load({ course: this.course_filter });
 	}
 

@@ -8,7 +8,7 @@
  */
 
 import { call, M } from "./transport.js";
-import { VIEW_POST, buildRoute } from "./routes.js";
+import { VIEW_POST, VIEW_QUEUE, buildRoute } from "./routes.js";
 import { whenLabel } from "./calendar.js";
 import { append, button, dialog, el, field, fill, link, networkTag, textarea } from "./dom.js";
 
@@ -86,7 +86,11 @@ function sendBack(app, post) {
 					await call(M.SEND_BACK, { post: post.name, reason: reason.value });
 					app.say("Sent back to Draft.", "ok");
 					app.refreshBootstrap();
-					renderQueue(app);
+					// Drawn again only while the queue is the screen. A reply that lands after Back
+					// must not paint the queue over wherever the person went; one that lands after
+					// Back and then Forward onto the queue again redraws it, so the post it sent back
+					// is not left listed by a load that finished first.
+					if (app.route.view === VIEW_QUEUE) renderQueue(app);
 				} catch (e) {
 					app.fail(e);
 				}

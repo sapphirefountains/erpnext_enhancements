@@ -223,3 +223,15 @@ export function dialog(title, body, actions) {
 	node.showModal();
 	return { node, close };
 }
+
+/**
+ * Close every open dialog, as Escape would: the router calls this on every screen change. A
+ * dialog is bound to the screen that opened it, and Back does not close one by itself on iOS or a
+ * desktop. No history entry per dialog: Android's Back already closes a modal `<dialog>` without
+ * moving the history, so an entry pushed for one would be left behind there.
+ */
+export function closeDialogs() {
+	for (const node of document.querySelectorAll("dialog.ee-mk-dialog")) {
+		if (node.open) node.close();
+	}
+}

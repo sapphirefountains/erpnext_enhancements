@@ -277,11 +277,15 @@
 
 		// -------------------------------------------------------------- routing
 
-		// replaceState rather than pushState: the player is one page with one
-		// place in history. Pushing would mean the back button walked backwards
-		// through every block card a learner scrolled past, and on a phone that
-		// reads as "back is broken". Replacing keeps refresh landing where they
-		// were and lets back mean "leave the course".
+		// The portal branch below (no router, history on) REPLACES on every view, so
+		// Back from any view left the page. That was once the intent -- "back means
+		// leave the course" -- and it is now the opposite of the rule every page here
+		// keeps: Back returns to the previous screen and Forward restores it. Nothing
+		// reaches that branch any more (/training redirects to the Desk, both hosts
+		// pass a router), so it is left as it was rather than rewritten untested. A
+		// host that brings it back must push one entry per VIEW, never per block card,
+		// and restore every view from `event.state.tr`, not only course and lesson --
+		// or pass a router, as /desk/learn and /training_preview do.
 		// Which views are ABOUT a course. The URL is derived from this, not from
 		// whatever `state.courseName` happens to still hold.
 		//
@@ -316,8 +320,10 @@
 		//     on_page_show. Nothing below runs, and neither does the popstate handler,
 		//     because the desk's own router already is the popstate handler.
 		//   * no router and `b.history === false` -- nothing touches the address bar at
-		//     all. The preview harness, and the Desk page before v1.432.2.
-		//   * neither -- the portal's own replaceState, unchanged since v1.427.1.
+		//     all. The Desk page before v1.432.2, and the preview harness until it
+		//     passed a router of its own (www/training_preview.html, `writeRoute`).
+		//   * neither -- the portal's own replaceState, unchanged since v1.427.1, and
+		//     with no host left (see above).
 		//
 		// The adapter is checked FIRST and independently of `b.history`, and that is the
 		// load-bearing part: it lets the Desk host keep `history: false` -- so this file

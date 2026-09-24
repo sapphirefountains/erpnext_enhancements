@@ -13,6 +13,12 @@
 // Safari has no BarcodeDetector, and before v1.521.0 the camera button simply never
 // appeared there. jsQR reads QR only, so on an iPhone an item BARCODE still needs the
 // wedge scanner or "Find item" — the location labels are QR, which is what matters.
+//
+// The phone's Back button: each sheet (Camera Scan, Find Item) is a route segment of
+// its own — inventory-scanner-audit/camera, inventory-scanner-audit/find — so Back
+// closes the sheet and stays on the count, and Forward opens it again. A scan is never
+// a history entry, and neither is the pending-item card: it is part of this one
+// screen. See "sheets and the phone's Back button" below.
 
 frappe.pages['inventory-scanner-audit'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -24,10 +30,14 @@ frappe.pages['inventory-scanner-audit'].on_page_load = function (wrapper) {
 };
 
 frappe.pages['inventory-scanner-audit'].on_page_show = function (wrapper) {
-	if (wrapper.inventory_scanner) wrapper.inventory_scanner.focusScan();
+	if (wrapper.inventory_scanner) wrapper.inventory_scanner.onShow();
 };
 
 const ISA_METHOD = 'erpnext_enhancements.api.inventory_scanner.';
+const ISA_ROUTE = 'inventory-scanner-audit';
+const ISA_SHEETS = ['camera', 'find'];
+// How long to wait for the router to land our own history.back() before going on without it.
+const ISA_BACK_TIMEOUT_MS = 1500;
 // The QR decoder for browsers without a QR-capable BarcodeDetector. The version is in the
 // filename and the file is never edited, so the year-immutable /assets cache cannot serve
 // a stale copy; frappe.require loads it once and adds its own ?v= on top.
@@ -41,6 +51,14 @@ class InventoryScanner {
 		this.page = page;
 		this.wrapper = wrapper;
 		this.state = { settings: {}, session: null, activeLocation: null, pendingItem: null };
+		this.sheet = null; // {name, dialog} while a sheet is open
+		this.opening = null; // the sheet whose route is being pushed
+		this.shownSheet = undefined; // the sheet segment at the last show; undefined before the first
+		this.shows = 0; // every show, counted: a lookup's reply compares it to see whether the clerk has moved
+		this.lastSearch = ''; // Find Item's pre-fill, so Forward can reopen it as it was
+		// 'camera' while the camera's entry holds no sheet: its read is being looked up there,
+		// or the lookup failed. Such an entry is taken over by the next sheet, never reopened.
+		this.leftover = null;
 		this.injectStyles();
 		this.buildSkeleton();
 		this.boot();
@@ -72,6 +90,160 @@ class InventoryScanner {
 
 	clearScan() {
 		if (this.$scan) this.$scan.val('');
+	}
+
+	// ----- sheets and the phone's Back button -----
+	//
+	// A sheet's route is pushed from the tap that opens it, and the sheet is shown only
+	// once the route has settled: every route change closes the open dialog (the router's
+	// set_history and container.change_to both do), this one included. Back then pops the
+	// segment and the router closes the sheet with nothing more from here. A sheet closed
+	// any other way (a read, a pick, X, Escape) steps back off its own entry, so Back never
+	// lands on a sheet that is already shut. The entry behind a sheet's is always the
+	// count's own: one on the first show — a reload or a pasted link — is replaced, and one
+	// Back or Forward lands on that cannot be opened again is stepped back off.
+	//
+	// A camera read is not a tap. Its lookup runs on the camera's entry, and what it leads
+	// to either takes that entry over (Find Item, for an unknown code) or steps back off it
+	// before the result is drawn (see handleScan). Chrome skips on Back an entry a page
+	// pushed with no tap since the one before, so the page never pushes on its own.
+	//
+	// Only an entry this page pushed is a sheet's. Each is marked in history.state as it is
+	// pushed (markSheet), because the same URL also arrives from outside: frappe records every
+	// route with a second segment in Route History, and the awesome bar offers the most used as
+	// links. A sheet opened from one of those would have another page behind it, so X, or a
+	// camera read's step back, would land there. An unmarked sheet URL is handed to the
+	// count, as a reload's is.
+
+	sheetRoute() {
+		const route = frappe.get_route() || [];
+		return route[0] === ISA_ROUTE && ISA_SHEETS.includes(route[1]) ? route[1] : null;
+	}
+
+	// The mark goes on the current entry, with no URL, and keeps whatever else it holds.
+	markSheet(name) {
+		try {
+			window.history.replaceState(Object.assign({}, window.history.state, { isa_sheet: name }), '');
+		} catch (e) {
+			// Unmarked, the entry is handed to the count on its next show rather than reopened.
+		}
+	}
+
+	ownSheet(name) {
+		try {
+			const state = window.history.state;
+			return !!state && state.isa_sheet === name;
+		} catch (e) {
+			return false;
+		}
+	}
+
+	// `reopen`: Forward landed on the sheet's entry; show it there, and push nothing.
+	openSheet(name, show, reopen) {
+		const on = this.sheetRoute();
+		if (reopen || (on === name && !this.sheet)) {
+			if (on === name && !this.sheet) {
+				this.leftover = null;
+				show();
+			}
+			return;
+		}
+		this.opening = name;
+		this.leftover = null;
+		// An entry left behind by a sheet that has closed (the camera's, while its read is
+		// looked up) is taken over, not stacked on.
+		if (on) frappe.route_flags.replace_route = true;
+		const settled = frappe.set_route(ISA_ROUTE, name);
+		// set_route has written the entry by the time it returns (push_state runs before its
+		// promise does), so the mark lands on the sheet's own entry.
+		this.markSheet(name);
+		settled.then(() => {
+			if (this.opening !== name) return;
+			this.opening = null;
+			// Back pressed before the route settled took the entry, and the sheet with it.
+			if (this.sheetRoute() === name && !this.sheet) show();
+		});
+	}
+
+	// Bootstrap ignores hide() on a modal still fading in, so that waits for it to be shown.
+	hideSheet(d) {
+		if (d.display) d.hide();
+		else d.$wrapper.one('shown.bs.modal', () => d.hide());
+	}
+
+	// Every sheet's onhide calls this.
+	sheetGone(d) {
+		if (this.sheet && this.sheet.dialog === d) this.sheet = null;
+	}
+
+	// Step back off a sheet's entry. `then` runs once the count is back on its own entry, so
+	// a dialog it opens is not closed by that route change. When Back closed the sheet the
+	// route has already moved off the segment, and there is nothing to step over.
+	leaveSheet(name, then) {
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			if (then) then();
+		};
+		if (this.sheetRoute() !== name) {
+			finish();
+			return;
+		}
+		frappe.router.once('change', finish);
+		setTimeout(finish, ISA_BACK_TIMEOUT_MS);
+		window.history.back();
+	}
+
+	onShow() {
+		const sheet = this.sheetRoute();
+		const first = this.shownSheet === undefined;
+		const came = this.shownSheet;
+		this.shownSheet = sheet;
+		this.shows += 1;
+		// A sheet whose entry is no longer current. The router closes the open dialog on
+		// every route change, but not one still fading in: it is not cur_dialog yet.
+		if (this.sheet && this.sheet.name !== sheet) this.hideSheet(this.sheet.dialog);
+		if (sheet) {
+			if (this.opening === sheet || (this.sheet && this.sheet.name === sheet)) return;
+			if (first || !this.ownSheet(sheet)) {
+				// A reload, a pasted link, or a sheet URL reached from another page (never start a
+				// camera nobody asked for, over a page it would step back to): the entry becomes
+				// the count.
+				this.shownSheet = null;
+				frappe.route_flags.replace_route = true;
+				frappe.set_route(ISA_ROUTE);
+			} else if (this.leftover === sheet) {
+				// The camera's entry while its read is looked up, or while the lookup's failure is
+				// on screen: not a sheet to reopen, and no camera started by a Back or Forward
+				// nobody tapped for. handleScan steps off it, or hands it to Find Item, once either
+				// is over.
+			} else if (!this.reopenSheet(sheet)) {
+				// Back or Forward onto a sheet that cannot be opened again (the camera, with
+				// camera scanning since turned off): step back onto the count's own entry,
+				// which is always the one behind a sheet's. Replacing this entry instead would
+				// leave two count entries in a row, and the next Back would seem to do nothing.
+				window.history.back();
+			}
+			return;
+		}
+		// A sheet has just closed: focus stays where closing it left it (the counted-qty box,
+		// after a read of an item). The wedge scanner's focus comes back with the next scan.
+		if (came) return;
+		this.focusScan();
+	}
+
+	// Forward onto a sheet Back closed: open it again on its entry. False when it cannot be.
+	reopenSheet(name) {
+		if (name === 'camera' && this.state.settings.enable_camera_scan && this.cameraAvailable()) {
+			this.openCamera(true);
+			return true;
+		}
+		if (name === 'find') {
+			this.openItemSearch(this.lastSearch, true);
+			return true;
+		}
+		return false;
 	}
 
 	// ----- skeleton -----
@@ -276,17 +448,93 @@ class InventoryScanner {
 		});
 	}
 
-	handleScan(raw) {
+	// `fromCamera`: the read is looked up on the camera's own history entry (see "sheets and
+	// the phone's Back button"). Find Item for an unknown code takes that entry over; any
+	// other result is drawn once the count has stepped back off it. If the lookup fails, the
+	// count steps back off it once frappe's error message has closed (afterFrappeMessage):
+	// stepping off sooner would close the message, and leaving the entry would make the
+	// clerk's next Back change nothing on screen.
+	//
+	// Find Item opens only where the scan was made. A reply that lands after the clerk has
+	// moved — Back or Forward, a sheet tapped open, another Desk page — would otherwise route
+	// them back onto the count from wherever they went, or push an entry nobody tapped for
+	// (which Chrome then skips on Back). There the unknown code is only reported.
+	handleScan(raw, fromCamera) {
 		const code = (raw || '').trim();
 		this.clearScan();
-		if (!code) return;
+		if (!code) {
+			if (fromCamera) this.leaveSheet('camera');
+			return;
+		}
+		if (fromCamera) this.leftover = 'camera';
+		const shows = this.shows;
 		const ensure = this.state.session ? Promise.resolve() : this.startSession();
-		ensure.then(() =>
-			this.call('resolve_scan', { code, warehouse: this.activeWarehouse() }).then((res) => this.onResolved(res, code))
+		ensure
+			.then(() => this.call('resolve_scan', { code, warehouse: this.activeWarehouse() }))
+			.then(
+				(res) => {
+					const search =
+						this.shows === shows &&
+						(frappe.get_route() || [])[0] === ISA_ROUTE &&
+						(!fromCamera || this.sheetRoute() === 'camera');
+					if (fromCamera && !(search && this.unknownOpensSearch(res))) {
+						if (this.leftover === 'camera') this.leftover = null;
+						this.leaveSheet('camera', () => this.onResolved(res, code));
+						return;
+					}
+					this.onResolved(res, code, search);
+				},
+				() => {
+					// frappe has already said why the lookup failed, in a dialog that stepping
+					// off the camera's entry would close. The entry stays `leftover` until that
+					// dialog has gone. A sheet opened on it since has taken it over; one Back has
+					// already moved off it, and leaveSheet then steps over nothing.
+					if (!fromCamera) return;
+					this.afterFrappeMessage(() => {
+						if (this.leftover !== 'camera') return;
+						this.leftover = null;
+						this.leaveSheet('camera');
+					});
+				}
+			);
+	}
+
+	// `then` runs once frappe's own error message is gone, or at once when none is up. frappe
+	// puts a refusal up in msgprint's dialog and a crash in its Server Error dialog, and has
+	// called show() on it before a call's promise rejects. `is_visible` is set by that show(),
+	// so it is true through the fade-in, when `display` is not yet. It stays true on a dialog
+	// closed by its own X, which never calls hide(); such a stale one only delays the step, and
+	// the step checks where the clerk is when it comes.
+	afterFrappeMessage(then) {
+		const up = [frappe.msg_dialog, frappe.error_dialog].filter((d) => d && d.is_visible && d.$wrapper);
+		if (!up.length) {
+			then();
+			return;
+		}
+		let done = false;
+		up.forEach((d) =>
+			d.$wrapper.one('hidden.bs.modal', () => {
+				if (done) return;
+				done = true;
+				then();
+			})
 		);
 	}
 
-	onResolved(res, code) {
+	// An unknown code the server gives no reason for opens Find Item, where the settings allow it.
+	unknownOpensSearch(res) {
+		return (
+			!!res &&
+			res.type !== 'location' &&
+			res.type !== 'item' &&
+			!res.message &&
+			!!this.state.settings.allow_unknown_item
+		);
+	}
+
+	// `search`: the reply landed where the scan was made, so an unknown code may open Find
+	// Item (see handleScan). A Find Item pick's own lookup never reopens it.
+	onResolved(res, code, search) {
 		if (!res) return;
 		// Everything the server sends back can carry text off a scanned code, and
 		// frappe.show_alert and __() both interpolate into HTML. A QR label is a string anyone
@@ -328,7 +576,7 @@ class InventoryScanner {
 			this.focusScan();
 			return;
 		}
-		if (this.state.settings.allow_unknown_item) {
+		if (search && this.unknownOpensSearch(res)) {
 			this.openItemSearch(shown);
 		} else {
 			frappe.show_alert({ message: __('Unknown barcode: {0}', [esc(shown)]), indicator: 'red' });
@@ -388,11 +636,13 @@ class InventoryScanner {
 		frappe.confirm(__('Finalize this count and create a draft Stock Reconciliation for review?'), () => {
 			this.call('finalize_session', { session: this.state.session.name }).then((res) => {
 				this.resetSession();
+				// get_form_link is a /desk path, which the desk's link handler routes in place.
+				// The server's reconciliation_url is an /app path: a full page load on v16.
 				frappe.msgprint({
 					title: __('Count Finalized'),
 					indicator: 'green',
 					message: __('Draft Stock Reconciliation {0} created with {1} line(s) for a Stock Manager to review.', [
-						`<a href="${res.reconciliation_url}">${frappe.utils.escape_html(res.stock_reconciliation)}</a>`,
+						`<a href="${frappe.utils.get_form_link('Stock Reconciliation', res.stock_reconciliation)}">${frappe.utils.escape_html(res.stock_reconciliation)}</a>`,
 						res.rows,
 					]),
 				});
@@ -409,9 +659,15 @@ class InventoryScanner {
 	}
 
 	// ----- manual item search -----
-	openItemSearch(prefill) {
+	openItemSearch(prefill, reopen) {
+		this.lastSearch = prefill || '';
+		this.openSheet('find', () => this.showItemSearch(prefill), reopen);
+	}
+
+	showItemSearch(prefill) {
 		const app = this;
 		const d = new frappe.ui.Dialog({ title: __('Find Item'), size: 'small' });
+		let picked = null;
 		d.$body.html(`
 			<input type="text" class="form-control isa-search" placeholder="${__('Item code or name')}" value="${frappe.utils.escape_html(prefill || '')}" />
 			<div class="isa-results" style="margin-top:10px;max-height:50vh;overflow:auto;"></div>
@@ -441,10 +697,18 @@ class InventoryScanner {
 		}, 250);
 		$search.on('input', run);
 		$results.on('click', '.isa-pick', (e) => {
-			const itemCode = $(e.currentTarget).data('item');
-			d.hide();
-			app.call('resolve_scan', { code: itemCode, warehouse: app.activeWarehouse() }).then((res) => app.onResolved(res, itemCode));
+			picked = $(e.currentTarget).data('item');
+			app.hideSheet(d);
 		});
+		d.onhide = () => {
+			app.sheetGone(d);
+			app.leaveSheet('find', () => {
+				if (!picked) return;
+				const itemCode = picked;
+				app.call('resolve_scan', { code: itemCode, warehouse: app.activeWarehouse() }).then((res) => app.onResolved(res, itemCode));
+			});
+		};
+		this.sheet = { name: 'find', dialog: d };
 		d.show();
 		setTimeout(() => {
 			run();
@@ -508,8 +772,7 @@ class InventoryScanner {
 		});
 	}
 
-	openCamera() {
-		const app = this;
+	openCamera(reopen) {
 		if (!this.cameraAvailable()) {
 			frappe.msgprint(
 				__('The camera needs a secure (https) connection and a browser that allows camera access. Use a hardware/Bluetooth scanner or “Find item”.')
@@ -523,73 +786,89 @@ class InventoryScanner {
 				);
 				return;
 			}
-			const hint = reader.qrOnly
-				? __('Point the camera at a QR code. For an item barcode, use a scanner or “Find item”.')
-				: __('Point the camera at a barcode or QR code.');
-			const d = new frappe.ui.Dialog({ title: __('Camera Scan'), size: 'small' });
-			d.$body.html(
-				`<video class="isa-video" playsinline muted autoplay></video><div class="text-muted" style="margin-top:6px;">${hint}</div>`
-			);
-			const video = d.$body.find('video')[0];
-			video.muted = true; // iOS plays inline, unprompted, only when muted
-			let stream = null;
-			let stopped = false;
-			let timer = null;
-			const later = (fn, ms) => {
-				if (!stopped) timer = setTimeout(fn, ms);
-			};
-			// A phone that locks with the dialog open must not keep the camera running.
-			const onHidden = () => {
-				if (document.hidden) d.hide();
-			};
-			const cleanup = () => {
-				stopped = true;
-				clearTimeout(timer);
-				document.removeEventListener('visibilitychange', onHidden);
-				if (stream) stream.getTracks().forEach((t) => t.stop());
-			};
-			const tick = () => {
-				if (stopped) return;
-				if (video.readyState < 2) {
-					later(tick, 200);
+			this.openSheet('camera', () => this.showCamera(reader), reopen);
+		});
+	}
+
+	showCamera(reader) {
+		const app = this;
+		const hint = reader.qrOnly
+			? __('Point the camera at a QR code. For an item barcode, use a scanner or “Find item”.')
+			: __('Point the camera at a barcode or QR code.');
+		const d = new frappe.ui.Dialog({ title: __('Camera Scan'), size: 'small' });
+		d.$body.html(
+			`<video class="isa-video" playsinline muted autoplay></video><div class="text-muted" style="margin-top:6px;">${hint}</div>`
+		);
+		const video = d.$body.find('video')[0];
+		video.muted = true; // iOS plays inline, unprompted, only when muted
+		let stream = null;
+		let stopped = false;
+		let timer = null;
+		let read = null; // what the camera read, handed on once the sheet has closed
+		let failed = false;
+		const later = (fn, ms) => {
+			if (!stopped) timer = setTimeout(fn, ms);
+		};
+		// A phone that locks with the dialog open must not keep the camera running.
+		const onHidden = () => {
+			if (document.hidden) app.hideSheet(d);
+		};
+		const cleanup = () => {
+			stopped = true;
+			clearTimeout(timer);
+			document.removeEventListener('visibilitychange', onHidden);
+			if (stream) stream.getTracks().forEach((t) => t.stop());
+		};
+		const tick = () => {
+			if (stopped) return;
+			if (video.readyState < 2) {
+				later(tick, 200);
+				return;
+			}
+			Promise.resolve()
+				.then(() => reader.read(video))
+				.then((val) => {
+					if (stopped) return;
+					if (val) {
+						read = val;
+						cleanup();
+						app.hideSheet(d);
+					} else {
+						later(tick, 180);
+					}
+				})
+				.catch(() => later(tick, 300));
+		};
+		d.onhide = () => {
+			cleanup();
+			app.sheetGone(d);
+			// A read is looked up on this sheet's entry (see handleScan). A failure is said
+			// once the count is back on its own entry: stepping off this one would close it.
+			if (read) app.handleScan(read, true);
+			else app.leaveSheet('camera', () => failed && frappe.msgprint(__('Could not access the camera.')));
+		};
+		this.sheet = { name: 'camera', dialog: d };
+		d.show();
+		document.addEventListener('visibilitychange', onHidden);
+		// Started after the sheet is up, never before the route has settled.
+		navigator.mediaDevices
+			.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+			.then((s) => {
+				if (stopped) {
+					// Closed while the permission prompt was up.
+					s.getTracks().forEach((t) => t.stop());
 					return;
 				}
-				Promise.resolve()
-					.then(() => reader.read(video))
-					.then((val) => {
-						if (stopped) return;
-						if (val) {
-							cleanup();
-							d.hide();
-							app.handleScan(val);
-						} else {
-							later(tick, 180);
-						}
-					})
-					.catch(() => later(tick, 300));
-			};
-			d.onhide = cleanup;
-			d.show();
-			document.addEventListener('visibilitychange', onHidden);
-			navigator.mediaDevices
-				.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
-				.then((s) => {
-					if (stopped) {
-						// Closed while the permission prompt was up.
-						s.getTracks().forEach((t) => t.stop());
-						return;
-					}
-					stream = s;
-					video.srcObject = s;
-					const playing = video.play();
-					if (playing && playing.catch) playing.catch(() => {});
-					tick();
-				})
-				.catch(() => {
-					frappe.msgprint(__('Could not access the camera.'));
-					d.hide();
-				});
-		});
+				stream = s;
+				video.srcObject = s;
+				const playing = video.play();
+				if (playing && playing.catch) playing.catch(() => {});
+				tick();
+			})
+			.catch(() => {
+				failed = true;
+				app.hideSheet(d);
+			});
 	}
 
 	// ----- styles (theme-aware; semantic variance colours literal) -----

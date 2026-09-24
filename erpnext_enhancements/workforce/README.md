@@ -130,6 +130,17 @@ as nothing. Opened pre-filled via `frappe.route_options {employee, from_date, to
 Job Interval form's **View on Timeline** button and the Employee form's **Location Timeline**
 button.
 
+**The mode is in the route**, so the browser's Back and Forward move between Trail and Live.
+Trail is the bare route, which every way in opens, and Live is
+`/desk/location-timeline/live`. A tap on a mode is an entry, and so is a tap on a Live row, so
+Back from that person's trail returns to the Live list. Frappe v16's router owns `popstate` on
+the Desk, so modes switched in place had no entries and Back left the page. The tap sets the
+mode as well as routing, and the router's show then finds it set: `setMode` returns early on
+the mode it is in, so the show cannot redraw the previous trail over one that is loading.
+`onShow` reads the route only once `init()` has settled, so a Back pressed while the map was
+still loading is not lost. A reload keeps Live. The filters are not in the URL, because
+`route_options` never reach it on v16, so a reloaded Trail still starts empty.
+
 One thing worth knowing about the "not permitted" state: a `PermissionError` arrives as HTTP
 403, and frappe's handler calls the error callback with **no argument**, so `frappe.xcall`
 rejects with `undefined`. The page reads the status off the jqXHR that `frappe.call` returns

@@ -46,6 +46,19 @@ const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 /** Mirrors `api.feedback.draft_description`'s own guard. The server stays the authority. */
 const MIN_TITLE_FOR_DRAFT = 8;
 
+/** The state of this page's own history entries. */
+const HISTORY_KEY = "ee_fb";
+/**
+ * The report panel's (`capture/panel.js`, `HISTORY_KEY`). While it is open the panel pushes
+ * `{ee_capture: <id>}` with no URL over this page, and answers Back itself.
+ */
+const CAPTURE_KEY = "ee_capture";
+/**
+ * The sessionStorage key the New form's draft is mirrored under, with the user after a colon
+ * (`storeDraft`). Per tab, so it outlives Back off the page and a reload, and no other tab sees it.
+ */
+const DRAFT_KEY = "ee_fb_new_draft";
+
 export class FeedbackApp {
 	constructor(root, boot) {
 		this.root = root;
@@ -66,8 +79,19 @@ export class FeedbackApp {
 			// Admin-view filters. Not in the URL: a filtered admin list is something you scan,
 			// not something you link somebody to.
 			allFilters: { search: "", status: "", request_type: "", start: 0 },
+			// What is typed into the New form, kept until it is sent (`newDraft`).
+			newDraft: null,
 			busy: false,
 		};
+		// The path the pane was last drawn for.
+		this.here = "";
+		// Bumped on every screen change and every fetch-then-draw. A reply that lands after it
+		// moved on draws nothing: Back while a request loads must not paint the request over the
+		// list the person went back to.
+		this.renderToken = 0;
+		// The New form on screen: the draft it was drawn from, the `renderToken` it was drawn for,
+		// and its description box. A late "Expand with AI" writes into it through here.
+		this.newForm = null;
 		// Captured once, at load, from the page they came *from*. Reading it later would
 		// capture this page instead.
 		this.captured = captureContext({
@@ -80,7 +104,7 @@ export class FeedbackApp {
 
 	async mount() {
 		this.buildLayout();
-		window.addEventListener("popstate", () => this.routeTo(window.location.pathname));
+		window.addEventListener("popstate", (ev) => this.onPopState(ev));
 		try {
 			const data = await call(M.BOOTSTRAP);
 			this.applyBootstrap(data);
@@ -96,7 +120,10 @@ export class FeedbackApp {
 			this.state.isReviewer,
 			this.state.myRequests.length > 0
 		);
-		if (preferred) window.history.replaceState({}, "", buildRoute(preferred));
+		// The entry the page opened on is stamped as this page's, never pushed over, so Back from
+		// the first screen leaves the page as it always has. Not while the report panel is open
+		// over the page: the entry on top is the panel's then.
+		if (!captureOpen()) writeEntry(false, preferred ? buildRoute(preferred) : undefined);
 
 		this.routeTo(window.location.pathname);
 	}
@@ -157,8 +184,39 @@ export class FeedbackApp {
 	// ------------------------------------------------------------------ routing
 
 	navigate(href) {
-		window.history.pushState({}, "", href);
+		// The report panel's entry is on top while it is open (`onPopState`). An entry pushed now
+		// would sit over it: the panel's own Back would land on this page's entry and leave the
+		// panel open over the wrong address. Nothing moves until it has closed.
+		if (captureOpen()) return;
+		if (href === window.location.pathname) {
+			// Already here: no second entry, or the next Back would appear to do nothing. The New
+			// form is left as it is; a list is drawn again, which is what a second tap asks for.
+			if (parseRoute(href).view !== VIEW_NEW) this.routeTo(href);
+			return;
+		}
+		writeEntry(true, href);
 		this.routeTo(href);
+	}
+
+	/**
+	 * Back or Forward. The screen follows the address, except around the report panel
+	 * (`capture/panel.js`), which puts an entry of its own over this page while it is open:
+	 *
+	 *   - While the panel is open, and until the popstate of its own closing Back has landed,
+	 *     Back is the panel's to answer ("Discard this report?"). Nothing here moves, so a
+	 *     half-written request under it is not cleared by the answer.
+	 *   - An entry it left behind (Forward onto it after Back closed the panel, or a reload with
+	 *     the panel open) is not a screen of this page. It is re-stamped as this page's, and on
+	 *     the address already on screen the view, and whatever is typed in it, stays.
+	 */
+	onPopState(ev) {
+		if (captureOpen()) return;
+		const state = ev && ev.state;
+		if (state && typeof state === "object" && CAPTURE_KEY in state) {
+			writeEntry(false);
+			if (window.location.pathname === this.here) return;
+		}
+		this.routeTo(window.location.pathname);
 	}
 
 	/**
@@ -171,9 +229,11 @@ export class FeedbackApp {
 	 * that keeps overriding the view somebody just clicked is not routing.
 	 */
 	routeTo(pathname) {
-		const route = parseRoute(String(pathname).split("?")[0]);
+		this.here = String(pathname).split("?")[0];
+		const route = parseRoute(this.here);
 		this.state.view = route.view;
 		this.state.name = route.name;
+		this.renderToken += 1;
 		this.renderNav();
 		this.clearBanner();
 
@@ -202,12 +262,27 @@ export class FeedbackApp {
 		const form = el("form", "ee-fb-form");
 		form.addEventListener("submit", (ev) => ev.preventDefault());
 
-		const typeInput = select(this.state.requestTypes, "Bug");
-		const titleInput = input("text", "One line: what is wrong, or what you want", "");
+		// Drawn from what was typed last time, so Back, Forward or a tab never wipes a
+		// half-written request; each keystroke is kept as it happens, and mirrored (`storeDraft`).
+		const kept = this.newDraft();
+		const token = this.renderToken;
+		const typeInput = select(this.state.requestTypes, kept.request_type);
+		const titleInput = input("text", "One line: what is wrong, or what you want", kept.title);
 		titleInput.maxLength = 200;
-		const impactInput = select(this.state.impacts, this.state.impacts[1] || this.state.impacts[0]);
-		const descInput = textarea("What happened, and what you expected instead.", "", 7);
-		const stepsInput = textarea("1. Open …\n2. Click …\n3. It does …", "", 5);
+		const impactInput = select(this.state.impacts, kept.impact);
+		const descInput = textarea("What happened, and what you expected instead.", kept.description, 7);
+		const stepsInput = textarea("1. Open …\n2. Click …\n3. It does …", kept.steps, 5);
+		this.newForm = { kept, token, description: descInput };
+		const keep = (node, key, type) =>
+			node.addEventListener(type || "input", () => {
+				kept[key] = node.value;
+				this.storeDraft(kept);
+			});
+		keep(typeInput, "request_type", "change");
+		keep(titleInput, "title");
+		keep(impactInput, "impact", "change");
+		keep(descInput, "description");
+		keep(stepsInput, "steps");
 
 		const stepsField = field(
 			"Steps to reproduce",
@@ -224,21 +299,40 @@ export class FeedbackApp {
 		// submitting anything — the requester edits it and is still the author.
 		const draft = button("Expand with AI", "ee-fb-btn ee-fb-btn-small", async () => {
 			this.setBusy(draft, true, "Drafting…");
+			// What the description said when it was asked. It takes up to 90 s.
+			const sent = descInput.value;
 			try {
 				const result = await call(
 					M.DRAFT,
 					{
 						title: titleInput.value,
-						description: descInput.value,
+						description: sent,
 						request_type: typeInput.value,
 					},
 					{ timeout: 90000 }
 				);
-				descInput.value = result.description;
-				descInput.focus();
-				this.showBanner("Drafted from your title. Edit anything that is not right — you are the author.", "ok");
+				if (token === this.renderToken) {
+					kept.description = result.description;
+					descInput.value = result.description;
+					this.storeDraft(kept);
+					descInput.focus();
+					this.showBanner("Drafted from your title. Edit anything that is not right — you are the author.", "ok");
+					return;
+				}
+				// The person left the form, or it was drawn again, while it drafted. Asked for, so
+				// kept, but only if nothing has been typed into the description since: a late
+				// reply never replaces newer typing. On a form drawn again and still on screen, its
+				// box shows it too, or the next redraw would change the text under them.
+				if (kept.description !== sent) return;
+				kept.description = result.description;
+				this.storeDraft(kept);
+				const live = this.newForm;
+				if (live && live.kept === kept && live.token === this.renderToken) {
+					live.description.value = result.description;
+					this.showBanner("Drafted from your title. Edit anything that is not right — you are the author.", "ok");
+				}
 			} catch (e) {
-				this.showBanner(e.message, "bad");
+				if (token === this.renderToken) this.showBanner(e.message, "bad");
 			} finally {
 				this.setBusy(draft, false, "Expand with AI");
 				// `setBusy` re-enables unconditionally; re-apply the title rule so a cleared
@@ -270,7 +364,7 @@ export class FeedbackApp {
 		titleInput.addEventListener("input", syncDraft);
 		syncDraft();
 
-		const attachments = this.buildAttachmentPicker();
+		const attachments = this.buildAttachmentPicker(kept);
 
 		const submit = button("Submit", "ee-fb-btn ee-fb-btn-primary", async () => {
 			await this.submitRequest({
@@ -299,7 +393,109 @@ export class FeedbackApp {
 			append(el("div", "ee-fb-actions"), submit)
 		);
 		append(this.pane, form);
-		titleInput.focus();
+		// Not under the report panel: focus belongs to what the person is typing into there.
+		if (!captureOpen()) titleInput.focus();
+	}
+
+	/**
+	 * What is typed into the New form, kept across screens until it is sent: Back, Forward and
+	 * the tabs redraw the form from it. Uploaded files are kept by the name submit sends, with the
+	 * file name the list shows.
+	 *
+	 * Mirrored to this tab's sessionStorage too (`storeDraft`), because memory does not outlive
+	 * the page. When `/feedback/new` is the tab's first entry (a link from an email), Back leaves
+	 * the page and Forward loads it again — `no_cache` keeps it out of the back-forward cache — so
+	 * an empty memory is filled from the mirror before it starts a blank form.
+	 */
+	newDraft() {
+		if (!this.state.newDraft) {
+			this.state.newDraft = {
+				request_type: "Bug",
+				title: "",
+				impact: this.state.impacts[1] || this.state.impacts[0],
+				description: "",
+				steps: "",
+				attachments: [],
+				labels: {},
+				...this.restoreDraft(),
+			};
+		}
+		return this.state.newDraft;
+	}
+
+	/** This user's sessionStorage key for the draft, or "" when the page does not know who it is. */
+	draftKey() {
+		return this.state.user ? `${DRAFT_KEY}:${this.state.user}` : "";
+	}
+
+	/**
+	 * Mirror `kept` to sessionStorage, if it is still the draft (one already sent is not written
+	 * back). The typed fields and each uploaded file's name and label: never a file's contents,
+	 * which are on the server already. Storage that refuses (a private window, a full quota) leaves
+	 * the draft in memory, as it was before there was a mirror.
+	 */
+	storeDraft(kept) {
+		const key = this.draftKey();
+		if (!key || !kept || kept !== this.state.newDraft) return;
+		const labels = {};
+		for (const name of kept.attachments) if (kept.labels[name]) labels[name] = String(kept.labels[name]);
+		try {
+			window.sessionStorage.setItem(
+				key,
+				JSON.stringify({
+					request_type: kept.request_type,
+					title: kept.title,
+					impact: kept.impact,
+					description: kept.description,
+					steps: kept.steps,
+					attachments: kept.attachments.slice(),
+					labels,
+				})
+			);
+		} catch (e) {
+			// Kept in memory only.
+		}
+	}
+
+	/**
+	 * The mirrored draft (`storeDraft`), as fields to lay over a blank one: only what is well
+	 * formed, and a Type or Impact only while it is still one of the choices. Empty when there is
+	 * none or storage cannot be read.
+	 */
+	restoreDraft() {
+		const key = this.draftKey();
+		if (!key) return {};
+		let saved;
+		try {
+			saved = JSON.parse(window.sessionStorage.getItem(key) || "null");
+		} catch (e) {
+			return {};
+		}
+		if (!saved || typeof saved !== "object") return {};
+		const out = {};
+		const offered = (options, value) => options.some((o) => (o && typeof o === "object" ? o.value : o) === value);
+		if (offered(this.state.requestTypes, saved.request_type)) out.request_type = saved.request_type;
+		if (offered(this.state.impacts, saved.impact)) out.impact = saved.impact;
+		for (const prop of ["title", "description", "steps"]) {
+			if (typeof saved[prop] === "string") out[prop] = saved[prop];
+		}
+		const names = Array.isArray(saved.attachments) ? saved.attachments : [];
+		out.attachments = names.filter((name) => typeof name === "string" && name).slice(0, 5);
+		out.labels = {};
+		const labels = saved.labels && typeof saved.labels === "object" ? saved.labels : {};
+		for (const name of out.attachments) if (typeof labels[name] === "string") out.labels[name] = labels[name];
+		return out;
+	}
+
+	/** Drop the mirror: the draft was sent. */
+	forgetDraft() {
+		const key = this.draftKey();
+		if (!key) return;
+		try {
+			window.sessionStorage.removeItem(key);
+		} catch (e) {
+			// Nothing to drop.
+		}
 	}
 
 	contextSummary() {
@@ -323,7 +519,7 @@ export class FeedbackApp {
 		return node;
 	}
 
-	buildAttachmentPicker() {
+	buildAttachmentPicker(kept) {
 		const picker = document.createElement("input");
 		picker.type = "file";
 		picker.accept = "image/*,.pdf,.txt,.log";
@@ -331,7 +527,12 @@ export class FeedbackApp {
 		picker.className = "ee-fb-input";
 
 		const list = el("div", "ee-fb-attachments");
-		const uploaded = [];
+		// The draft's own list (`newDraft`), so an upload that finishes while the person is on
+		// another screen is still attached when they come back.
+		const uploaded = kept.attachments;
+		for (const name of uploaded) {
+			list.appendChild(el("div", "ee-fb-attachment ee-fb-attachment-ok", `${kept.labels[name] || name} — ready`));
+		}
 
 		picker.addEventListener("change", async () => {
 			const files = Array.from(picker.files || []);
@@ -347,6 +548,8 @@ export class FeedbackApp {
 						row.textContent = `${file.name} — ${Math.round(fraction * 100)}%`;
 					}).promise;
 					uploaded.push(result.name);
+					kept.labels[result.name] = file.name;
+					this.storeDraft(kept);
 					row.textContent = `${file.name} — ready`;
 					row.classList.add("ee-fb-attachment-ok");
 				} catch (e) {
@@ -366,12 +569,28 @@ export class FeedbackApp {
 		this.setBusy(submit, true, "Submitting…");
 		try {
 			const result = await call(M.SUBMIT, { payload: values, attachments: attachments.names });
+			// Filed: the next New form starts empty, here and after a reload.
+			this.state.newDraft = null;
+			this.forgetDraft();
 			const refreshed = await call(M.BOOTSTRAP);
 			this.applyBootstrap(refreshed);
 			if (result && result.rejected && result.rejected.length) {
 				// Reported rather than swallowed — see `api/feedback.py`. A field the server
 				// refused is a bug in this file, and a silent one is found weeks later.
 				this.showBanner(`Filed, but some fields were not saved: ${result.rejected.join(", ")}`, "warn");
+			}
+			if (this.state.view !== VIEW_NEW || captureOpen()) {
+				// They went to another screen while it was sent, or opened the report panel over
+				// the form, whose entry is on top of this page's now: a push would bury it
+				// (`navigate`). It was filed all the same: say so where they are, rather than pull
+				// them to it. A form still under the panel is drawn again empty, so what was just
+				// filed cannot be sent a second time from it.
+				if (this.state.view === VIEW_NEW) {
+					this.renderToken += 1;
+					this.renderNew();
+				}
+				this.showBanner(`Filed as ${result.name}.`, "ok");
+				return;
 			}
 			this.navigate(buildRoute(VIEW_REQUEST, result.name));
 		} catch (e) {
@@ -420,6 +639,9 @@ export class FeedbackApp {
 	 * putting it in the URL would mean reconciling it with the router on every keystroke.
 	 */
 	async renderAll() {
+		// Only while this list is the screen, and only the newest fetch draws: see `renderToken`.
+		if (this.state.view !== VIEW_ALL) return;
+		const token = ++this.renderToken;
 		clear(this.pane);
 		if (!this.state.isReviewer) {
 			append(this.pane, this.notice("Not for you", "Only a System Manager can see every request."));
@@ -431,10 +653,12 @@ export class FeedbackApp {
 		try {
 			data = await call(M.ALL, this.state.allFilters);
 		} catch (e) {
+			if (token !== this.renderToken) return;
 			clear(this.pane);
 			append(this.pane, this.notice("Could not load", e.message));
 			return;
 		}
+		if (token !== this.renderToken) return;
 
 		clear(this.pane);
 		append(this.pane, this.allFilterBar(data), this.allTally(data), this.allTable(data));
@@ -608,16 +832,23 @@ export class FeedbackApp {
 	// ------------------------------------------------------------------ detail
 
 	async renderRequest(name) {
+		// Only while that request is the screen. A Refresh, decision or re-run that finishes
+		// after the person moved on must not draw it over where they went; and only the newest
+		// fetch draws (`renderToken`).
+		if (this.state.view !== VIEW_REQUEST || this.state.name !== name) return;
+		const token = ++this.renderToken;
 		clear(this.pane);
 		append(this.pane, el("div", "ee-fb-loading", "Loading…"));
 		let detail;
 		try {
 			detail = await call(M.GET, { name });
 		} catch (e) {
+			if (token !== this.renderToken) return;
 			clear(this.pane);
 			append(this.pane, this.notice("Cannot open that", e.message));
 			return;
 		}
+		if (token !== this.renderToken) return;
 		this.state.detail = detail;
 		clear(this.pane);
 
@@ -1093,5 +1324,34 @@ export class FeedbackApp {
 				? error.message
 				: "Something went wrong loading this page.";
 		append(this.pane, this.notice("Could not load", message));
+	}
+}
+
+/**
+ * Push an entry for `href`, or re-stamp the current one: with `href` when given, else in place
+ * with two arguments, keeping the address.
+ */
+function writeEntry(push, href) {
+	const state = { [HISTORY_KEY]: 1 };
+	try {
+		if (push) window.history.pushState(state, "", href);
+		else if (href) window.history.replaceState(state, "", href);
+		else window.history.replaceState(state, "");
+	} catch (e) {
+		// Safari refuses past 100 calls in 10 s. The screen still changes; only the entry is lost.
+	}
+}
+
+/**
+ * True while the report panel is open over the page, and until the popstate of its own closing
+ * Back has landed (`capture/panel.js`, `isPanelOpen`). Read through the recorder's global only:
+ * this bundle does not load the panel.
+ */
+function captureOpen() {
+	try {
+		const capture = window.ee_capture;
+		return !!(capture && typeof capture.isOpen === "function" && capture.isOpen());
+	} catch (e) {
+		return false; // a broken recorder is a closed panel
 	}
 }
