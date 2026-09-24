@@ -31,8 +31,8 @@ frappe = None
 TASK_STATUS_OPTIONS = "Open\nWorking\nInvoiced\nCompleted\nCanceled\nPending Review\nOverdue\nTemplate"
 
 
-def _df(fieldname, fieldtype, options=None, label=None):
-    return SimpleNamespace(fieldname=fieldname, fieldtype=fieldtype, options=options, label=label)
+def _df(fieldname, fieldtype, options=None, label=None, **extra):
+    return SimpleNamespace(fieldname=fieldname, fieldtype=fieldtype, options=options, label=label, **extra)
 
 
 METAS = {
@@ -43,7 +43,15 @@ METAS = {
             _df("priority", "Select", "Low\nMedium\nHigh\nUrgent", "Priority"),
             _df("naming_series", "Select", "TASK-.YYYY.-", "Series"),
             _df("depends_on", "Table", "Task Depends On", "Dependencies"),
+            # Frappe overwrites this from the linked Project before it validates Selects.
+            _df("project_status", "Select", "Open\nCompleted", "Project Status",
+                fetch_from="project.status"),
+            _df("fetched_if_empty", "Select", "A\nB", "Fetched If Empty",
+                fetch_from="project.x", fetch_if_empty=1),
         ]
+    ),
+    "System Settings": SimpleNamespace(
+        fields=[_df("minimum_password_score", "Select", "2\n3\n4", "Minimum Password Score")]
     ),
     "Task Depends On": SimpleNamespace(
         fields=[
@@ -149,6 +157,48 @@ class TestSelectProblems(unittest.TestCase):
         """Frappe's `if not filter(None, options)` never fires on Python 3, so it refuses."""
         self.assertEqual(len(self.problems("Quirks", {"blank_only": "x"})), 1)
 
+    def test_a_fetch_from_select_is_skipped_but_fetch_if_empty_is_checked(self):
+        """Frappe overwrites a plain fetch_from field before validating it; erring to a card."""
+        self.assertEqual(self.problems("Task", {"project_status": "Whatever"}), [])
+        self.assertEqual(len(self.problems("Task", {"fetched_if_empty": "Z"})), 1)
+
+    def test_a_cancel_is_not_checked(self):
+        """Frappe skips _validate() on cancel, so an off-options value would not stop it."""
+        self.assertEqual(self.problems("Task", {"docstatus": 2, "status": "Cancelled"}), [])
+        # A submit (docstatus 1) does run _validate().
+        self.assertEqual(len(self.problems("Task", {"docstatus": 1, "status": "Cancelled"})), 1)
+
+    def test_a_credential_like_field_is_redacted_in_the_message(self):
+        found = self.problems("System Settings", {"minimum_password_score": "hunter2"})
+        self.assertEqual(len(found), 1)
+        self.assertNotIn("hunter2", found[0])
+        self.assertIn(_gate.REDACTED, found[0])
+
+    def test_delete_rows_are_skipped_only_where_fac_deletes_them(self):
+        row = {"name": "row-1", "link_type": "Nonsense", "_delete": True}
+        # update_document with a name: FAC removes the row unvalidated.
+        self.assertEqual(
+            _gate._precheck_problems(
+                {"doctype": "Task", "data": {"depends_on": [row]}}, fake_get_meta, "update_document"
+            ),
+            [],
+        )
+        # create_document appends every dict row and Frappe validates it.
+        self.assertEqual(
+            len(_gate._precheck_problems(
+                {"doctype": "Task", "data": {"depends_on": [row]}}, fake_get_meta, "create_document"
+            )),
+            1,
+        )
+        # update_document with _delete but no name: FAC refuses the call, so the row is checked.
+        nameless = {"link_type": "Nonsense", "_delete": True}
+        self.assertEqual(
+            len(_gate._precheck_problems(
+                {"doctype": "Task", "data": {"depends_on": [nameless]}}, fake_get_meta, "update_document"
+            )),
+            1,
+        )
+
     def test_unrecognised_shapes_yield_nothing(self):
         for arguments in (None, [], {}, {"doctype": "Task"}, {"doctype": "Task", "data": "x"},
                           {"doctype": "", "data": {"status": "Cancelled"}}):
@@ -227,6 +277,32 @@ class TestGateRefusesBeforeQueueing(_GateHarness):
         self.assertEqual(self.calls["proposed"], 0)
         self.assertEqual(response["error_type"], "AIGateValidationError")
 
+    def test_a_long_refusal_is_capped(self):
+        rows = [{"link_type": f"Bad{i}"} for i in range(40)]
+        # create_document, because a Task update that leaves status alone runs without a card
+        # (ADR 0016 §6) and never reaches the check.
+        response = self.run_tool("create_document", {"doctype": "Task", "data": {"depends_on": rows}})
+        self.assertEqual(self.calls["proposed"], 0)
+        self.assertEqual(response["error"].count("cannot be"), _gate.MAX_REPORTED_PROBLEMS)
+        self.assertIn(f"...and {40 - _gate.MAX_REPORTED_PROBLEMS} more like these.", response["error"])
+
+    def test_an_unknown_doctype_is_refused_plainly(self):
+        """No card could be created for it anyway: the card's own Link to DocType fails."""
+
+        class DoesNotExistError(Exception):
+            pass
+
+        def missing(doctype):
+            raise DoesNotExistError(doctype)
+
+        with mock.patch.object(frappe, "DoesNotExistError", DoesNotExistError, create=True), \
+                mock.patch.object(frappe, "get_meta", missing, create=True):
+            response = self.run_tool("update_document", {"doctype": "Taks", "name": "X", "data": {"a": 1}})
+        self.assertEqual(self.calls["proposed"], 0)
+        self.assertEqual(response["error_type"], "AIGateValidationError")
+        self.assertIn('DocType "Taks" does not exist', response["error"])
+        self.assertEqual(self.calls["errors"], [], "a model's typo is not an Error Log entry")
+
 
 class TestGateStillQueuesWhatCanRun(_GateHarness):
     def test_a_valid_close_still_creates_a_card(self):
@@ -257,19 +333,6 @@ class TestGateStillQueuesWhatCanRun(_GateHarness):
         self.assertEqual(response, {"success": True, "result": "card queued"})
         self.assertEqual(len(self.calls["errors"]), 1)
         self.assertIn("queued for confirmation anyway", self.calls["errors"][0][0])
-
-    def test_an_unknown_doctype_goes_on_to_propose_without_an_error_log(self):
-        class DoesNotExistError(Exception):
-            pass
-
-        def missing(doctype):
-            raise DoesNotExistError(doctype)
-
-        with mock.patch.object(frappe, "DoesNotExistError", DoesNotExistError, create=True), \
-                mock.patch.object(frappe, "get_meta", missing, create=True):
-            self.run_tool("update_document", {"doctype": "Taks", "name": "X", "data": {"a": 1}})
-        self.assertEqual(self.calls["proposed"], 1)
-        self.assertEqual(self.calls["errors"], [])
 
     def test_other_mutating_tools_are_not_pre_checked(self):
         looked_up = []

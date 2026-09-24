@@ -9,89 +9,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.533.0] - 2026-09-24
 
-**The AI write gate refuses a write that cannot run, before anyone is asked to confirm it.** An
-assistant's `create_document` or `update_document` with a Select value that is not an option now
-gets Frappe's own error back at once. No AI Pending Action is created.
+**The AI write gate refuses a write that can't run before asking anyone to confirm it.** When an
+assistant's `create_document` or `update_document` carries a Select value that isn't an option,
+or names a DocType that doesn't exist, the assistant gets the error back at once. No AI Pending
+Action is created.
 
 ### Why
 
-- **What happened:**
-  - On 2026-09-24 an assistant queued 21 `update_document` cards (AI-PA-2026-798956 and
-    798978–798997). Each set a Task's status to **"Cancelled"**, which is ERPNext core's spelling.
-  - This site's options are Open, Working, Invoiced, Completed, **Canceled**, Pending Review,
-    Overdue and Template.
-  - Nik confirmed all 21 in one batch at 11:20, and every one failed on execution with
-    `Status cannot be "Cancelled"`. The same cancels were queued again, correctly spelled
-    (AI-PA-2026-799036–799056), and confirmed a second time.
-- **Why the gate let it through:**
-  - The gate decides *whether* a write needs a human. It never asked whether the write *could*
-    run.
-  - ADR 0016 §6 sends every Task status outside Open/Working/Pending Review/Overdue to a card, so
-    "Cancelled" became a card.
-- **What that cost:** a card spends a person's attention, and a batch confirm makes the waste
-  worse. The one approval covered 21 writes, none of which could succeed.
+On 2026-09-24 an assistant queued 21 `update_document` cards (AI-PA-2026-798956 and
+798978–798997). Each set a Task's status to **"Cancelled"**, which is ERPNext core's spelling.
+This site's options are Open, Working, Invoiced, Completed, **Canceled**, Pending Review, Overdue
+and Template.
+
+- Nik confirmed all 21 in one batch at 11:20, and every one failed on execution with
+  `Status cannot be "Cancelled"`.
+- The same cancels were queued again with the correct spelling (AI-PA-2026-799036–799056) and
+  confirmed a second time.
+
+The gate decided *whether* a write needed a human, but never whether it *could* run. ADR 0016 §6
+says a Task update executes unless it closes the Task. The gate implements that as an allowlist
+(`_TASK_STATUSES_THAT_RUN`: Open, Working, Pending Review, Overdue), so every other status became
+a card, including one that isn't an option at all.
+
+A card spends a person's attention, and a batch confirm makes the waste worse: one approval
+covered 21 writes, none of which could succeed.
 
 ### Added
 
-- **Check before queueing (`_gate._precheck_refusal`).** It runs immediately before `_propose`, for
-  `create_document` and `update_document` only.
-  - It checks each Select value in `data` against the DocType meta, and does the same for every
-    child-table row. Rows marked `_delete` are skipped.
-  - It mirrors frappe v16's `BaseDocument._validate_selects` (read from `origin/version-16`):
-    - the value is stripped, the options are not;
+- **Check before queueing: `_gate._precheck_refusal`.** It runs just before `_propose`, and only
+  for `create_document` and `update_document`.
+  - It checks each Select value in `data` against the DocType meta, child-table rows included.
+  - It uses frappe v16's own comparison from `BaseDocument._validate_selects`, read from
+    `origin/version-16`, applied only to the values in the call:
+    - the value is stripped, and the options are not;
     - `naming_series` and falsy values are skipped;
-    - the whole-options placeholders `[Select]` and `Loading...` are skipped, as
-      `Meta.get_select_fields()` does;
-    - the error uses Frappe's own wording, prefixed with the DocType, or with the table and row.
-  - It also mirrors one quirk: Frappe's "only empty options" guard, `if not filter(None, options)`,
-    never fires on Python 3, because a filter object is always truthy. So a field whose options
-    are only blank lines refuses any non-empty value. The check does the same. Refusing less than
-    Frappe queues a card that fails; refusing more drops a write that could have run.
-- **A refusal returns `AIGateValidationError`** with the error ending "Nothing was queued for
-  confirmation: correct the value and call … again". It is recorded in AI Action Log as a failed
-  "Not queued, invalid value" row, like the denylist refusal, because a model proposing values
-  that don't exist is worth seeing. `_error_response` takes an optional `error_type` for this.
-- **`tests/test_ai_gate_precheck.py`, 21 bench-free tests, in the existing AI gate CI step.**
-  - They cover the incident exactly as the assistant sent it:
-    - an off-options update or create is refused;
-    - no card is created;
-    - the refusal is logged.
-  - A valid close ("Canceled") and a valid create still create a card.
-  - A pre-check that raises still creates the card and logs to the Error Log.
-  - An unknown DocType goes on to `_propose` without an Error Log entry.
-  - Other mutating tools are not checked.
-  - An auto-approved Task update (ADR 0016 §6) still runs.
-  - Verified against the pre-change `_gate.py`: the three incident tests fail there because a
-    card was created, and the valid-card tests pass on both versions.
+    - the whole-options placeholders `[Select]` and `Loading...` are skipped, as in
+      `Meta.get_select_fields()`.
+  - It keeps one Frappe quirk. Frappe's "only empty options" guard, `if not filter(None,
+    options)`, never fires on Python 3 because a filter object is always truthy. So a field whose
+    options are all blank lines refuses any non-empty value, here as in Frappe.
+- **The refusal is a plain error, with error type `AIGateValidationError`.**
+  - It uses Frappe's wording, prefixed with the DocType, or with the table and row.
+  - It ends "Nothing was queued for confirmation: correct the value and call … again".
+  - A credential-like field's value is shown as `***REDACTED***`, as in the card's own arguments.
+    The message goes back to the model and into AI Action Log. The confirm path masks for the same
+    reason.
+  - It lists at most five problems, then "…and N more like these". Otherwise every bad child row
+    would repeat the field's whole options list.
+  - It is recorded in AI Action Log as a failed row, "Not queued, invalid value", the same way the
+    denylist refusal is recorded. A model proposing values that don't exist is worth seeing.
+  - `_error_response` now takes an optional `error_type`.
+- **A DocType that doesn't exist is refused the same way.** Such a call could never become a card:
+  the card's own `target_doctype` is a Link to DocType, so the insert failed. The gate then blocked
+  it with "internal error" and wrote an Error Log. Now the model gets `DocType "…" does not
+  exist`, and no Error Log is written.
+- **The `ee-ai-write-confirmation` skill** (`data/skills/ai_write_confirmation.md`, synced to FAC
+  on migrate) gains rule 7: an `AIGateValidationError` means nothing was queued, so correct the
+  value and call again.
+- **`tests/test_ai_gate_precheck.py`: 26 bench-free tests, in the existing AI gate CI step.** They
+  cover:
+  - the incident exactly as the assistant sent it: refused, no card, logged;
+  - a refused create, the five-problem cap, and the unknown-DocType refusal;
+  - a valid close ("Canceled") and a valid create, which still create a card;
+  - a check that raises, which still creates the card and writes an Error Log;
+  - that other mutating tools aren't checked, and that an auto-approved Task update (ADR 0016 §6)
+    still runs;
+  - the Frappe mirror itself: stripping, falsy values, `naming_series`, placeholders, blank-only
+    options, child rows, `_delete` handling per tool, `fetch_from`, cancels and redaction.
+
+  Verified against `origin/main`'s `_gate.py`: all five refusal tests fail there, along with the
+  failing-check test. The two valid-card tests, the other-tool test and the auto-approved test
+  pass on both versions. The helper tests error there, because the helpers don't exist yet.
 
 ### Deliberately not done
 
-- **No full validation run.** `doc.validate()` and FAC's own `create_document(validate_only=True)`
-  run controller hooks. Those send email, enqueue jobs and write rows, and here they would do it
-  for a write nobody has confirmed. FAC's `validate_only` also wouldn't catch this incident:
-  - it calls `run_method("validate")`, the controller method;
-  - Frappe checks Select values in `_validate_selects`, which runs inside `_validate()` during
-    insert and save.
-- **No Link-target check.** Cards can depend on each other in order: "create Item Group X", then
-  "move these Items into X". X doesn't exist until the first card is confirmed, so a queue-time
-  Link check would refuse the second, legitimate card. Select options come from metadata, which
-  no pending card changes.
+- **No full validation run.** `doc.validate()` and FAC's `create_document(validate_only=True)`
+  run controller hooks, and those send email, enqueue jobs and write rows for a write nobody has
+  confirmed. FAC's `validate_only` would not have caught this incident either. It calls
+  `run_method("validate")`, and Frappe checks Select values in `_validate_selects`, inside
+  `_validate()` during insert and save.
+- **No Link-target check.** "Create Item Group X" and then "move these Items into X" is a
+  legitimate pair of cards, and X doesn't exist until the first one is confirmed. Select options
+  change only through a schema write (a Property Setter or Custom Field). A model that queues
+  "add this option" has to wait for that confirmation before it can use the new option.
+- **Where it can't be sure, it queues the card.**
+  - A Select with `fetch_from` and no `fetch_if_empty` is skipped, because Frappe overwrites it
+    from the linked record in `_validate_links` before it validates Selects. Three ERPNext Selects
+    are like this, including `Stock Entry.purpose`.
+  - A cancel (`update_document` with `docstatus` 2) is skipped, because Frappe skips `_validate()`
+    on cancel.
+  - An `update_document` row marked `_delete` with a `name` is skipped, because FAC removes it
+    without validating it. On `create_document`, FAC appends every row, so every row is checked.
+  - If the check itself raises, the write is queued exactly as before and the failure goes to the
+    Error Log.
 - **Known gap:** the check sees the proposed value, not what a controller might change it to.
   Frappe runs the controller's `validate` before `_validate()`, so a controller that rewrote an
-  off-options value into a valid one would get past Frappe but be refused here. Only a value that
-  is not an option at all can be refused, and the refusal lists the valid options, so the model can
-  resend. Closing the gap would mean running hooks.
-- **The gate still fails toward a card.** If the check itself raises, the write is queued exactly
-  as before and the failure goes to the Error Log. The check may refuse a write, but it must never
-  be the reason a legitimate one is lost. An unknown DocType is a typo, not a check failure, so it
-  goes on to the old path with no Error Log entry from the check.
+  off-options value into a valid one would get past Frappe but be refused here. The refusal lists
+  the valid options, so the model can send one of them.
 
 ### Changed
 
-- The `_TASK_STATUSES_THAT_RUN` comment no longer says "Cancelled" waits for a human: it is now
-  refused before a card exists.
-- `assistant_tools/README.md` (write-gate bullets) and `ai_governance/README.md` (new section "A
-  write that cannot run gets no card") document the check.
+- The `_TASK_STATUSES_THAT_RUN` comment no longer says "Cancelled" waits for a human, because it
+  is now refused before a card exists.
+- `assistant_tools/README.md` (the write-gate bullets) and `ai_governance/README.md` (the new
+  section "A write that cannot run gets no card") document the check.
 
 ## [1.532.0] - 2026-09-24
 
