@@ -1,0 +1,58 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\": \"ee_chb_service_day_board\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Service Day Board\", \"col\": 12}}, {\"id\": \"ee_chb_service_chemistry_alerts\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Service Chemistry Alerts\", \"col\": 12}}, {\"id\": \"ee_chb_service_labor_capture\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Service Labor Capture\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "creation": "2026-09-24 12:00:00.000000",
+ "custom_blocks": [
+  {
+   "custom_block_name": "Service Day Board",
+   "label": "Service Day Board"
+  },
+  {
+   "custom_block_name": "Service Chemistry Alerts",
+   "label": "Service Chemistry Alerts"
+  },
+  {
+   "custom_block_name": "Service Labor Capture",
+   "label": "Service Labor Capture"
+  },
+  {
+   "custom_block_name": "KPI Cockpit",
+   "label": "KPI Cockpit"
+  }
+ ],
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "dashboard",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Service Dashboard",
+ "links": [],
+ "modified": "2026-09-24 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "Service Dashboard",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Maintenance Manager"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Projects User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 54.5,
+ "shortcuts": [],
+ "title": "Service Dashboard",
+ "type": "Workspace"
+}

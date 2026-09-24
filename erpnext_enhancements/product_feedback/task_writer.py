@@ -75,7 +75,7 @@ SHIPPABLE_STATUSES = frozenset({"Open", "Working", "Overdue"})
 #: ``frappe.db.set_value``; only ``save`` calls ``save_version``), while a save from the form
 #: does, because Task tracks changes (the ``Task-main-track_changes`` Property Setter). A cancel
 #: from the Project form's Task Tree does not: its status picker writes with ``set_value`` too.
-#: Since v1.530.0 this app's Task override stops the flip at the source
+#: Since v1.531.0 this app's Task override stops the flip at the source
 #: (``task_enhancements/doctype/task/task.py``), so this check is the backstop for Tasks flipped
 #: before that, and it only sees the ones canceled from the form.
 OVERDUE_NOT_SHIPPABLE_AFTER = frozenset({"Canceled", "Cancelled", "Invoiced", "Completed", "Template"})

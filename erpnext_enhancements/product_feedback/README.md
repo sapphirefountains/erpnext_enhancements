@@ -19,7 +19,7 @@ groups from their origin note, never from their children); the code map sends ev
 gotcha headline instead of a 6,000-character prefix, plus the real size of each capped listing
 under `totals`; and the one-writer test is an AST check that also catches `frappe.new_doc("Task")`.
 Slices 2 to 4 are in as well: the capture widget (section below), the code anchors
-(`code_anchors.py` in the file map), and, in v1.530.0, the Claude Code brief and the hourly release sync that moves shipped Tasks to
+(`code_anchors.py` in the file map), and, in v1.531.0, the Claude Code brief and the hourly release sync that moves shipped Tasks to
 `Pending Review` (see "The brief and the status return").
 
 ## The one rule

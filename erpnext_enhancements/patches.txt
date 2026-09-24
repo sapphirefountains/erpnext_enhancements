@@ -1172,3 +1172,10 @@ erpnext_enhancements.patches.backfill_task_enhancement_request
 # row with db_insert, never saving the Single; then sets ai_write_gating_enabled. If seeding fails
 # the flag stays off. Cannot raise, safe twice.
 erpnext_enhancements.patches.enable_ai_write_gate
+# v1.530.0: maintenance KPIs move from Operations to a new Service dashboard listed under
+# Production; Operations becomes the inventory dashboard. Creates Supplier.custom_store_run_vendor
+# (the store-run KPI's vendor flag) and ticks Home Depot and Lowes only if nothing is ticked yet,
+# moves any KPI Target rows to the moved KPIs' new departments, force-resyncs the two workspaces
+# and eleven sidebars, then deletes the three retired "Operations ..." block records once nothing
+# links to them. Each step commits alone; cannot raise, safe twice.
+erpnext_enhancements.patches.split_service_kpi_dashboard

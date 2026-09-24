@@ -1,7 +1,7 @@
-// Chemistry Alerts — Operations Dashboard Custom HTML Block.
+// Chemistry Alerts — Service Dashboard Custom HTML Block.
 //
 // Recent visits flagged with out-of-range chemistry readings, from
-// erpnext_enhancements.api.operations_dashboard.get_chemistry_alerts.
+// erpnext_enhancements.api.service_dashboard.get_chemistry_alerts.
 //
 // Shadow-DOM sandbox: `root_element` is the shadow root, and the workspace
 // re-runs this whole script with a fresh root on every navigation — so nothing
@@ -10,7 +10,7 @@
 
 (function () {
     const MAX_ATTEMPTS = 50;
-    const METHOD = "erpnext_enhancements.api.operations_dashboard.get_chemistry_alerts";
+    const METHOD = "erpnext_enhancements.api.service_dashboard.get_chemistry_alerts";
     let attempts = 0;
 
     function getContainer() {

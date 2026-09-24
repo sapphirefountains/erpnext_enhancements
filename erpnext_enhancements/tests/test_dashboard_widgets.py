@@ -43,6 +43,7 @@ FEED_MODULES = {
 	"Operations": "operations_dashboard",
 	"Design": "design_dashboard",
 	"Production": "production_dashboard",
+	"Service": "service_dashboard",
 	"Marketing": "marketing_dashboard",
 	"HR": "hr_dashboard",
 	"Executive": "executive_dashboard",

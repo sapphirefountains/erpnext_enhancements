@@ -364,8 +364,10 @@ def _wall_settings():
 
 
 # Departments whose latest KPI snapshot rotates on the wall (the natural TV
-# content per the dashboard design: an exec rollup + the operations board).
-WALL_KPI_DEPARTMENTS = ("Executive", "Operations")
+# content per the dashboard design: an exec rollup + the field-service board).
+# The field-service numbers moved from Operations to Service in v1.530.0; Operations
+# stays on the wall too, because its store-run and stock numbers are the shop's own.
+WALL_KPI_DEPARTMENTS = ("Executive", "Service", "Operations")
 
 
 def _wall_kpi_block():
