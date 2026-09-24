@@ -7,11 +7,39 @@ this module holds the records it creates and the configuration it reads.
 ## What the gate does
 
 When **ERPNext Enhancements Settings → AI Governance → Require Confirmation for AI Writes**
-is on (default **off** — it ships dormant), `assistant_tools/_gate.py` wraps
+is on, `assistant_tools/_gate.py` wraps
 `BaseTool._safe_execute`, the single choke point both Frappe Assistant Core execution paths
 converge on. A mutating tool then does not execute: an **AI Pending Action** is recorded, a
 desk notification goes out, and the model receives an anti-fabrication envelope telling it
 the action has **not** run and how a human confirms it.
+
+The field defaults to **off**. On production the v1.525.0 patch `enable_ai_write_gate` turns it
+**on**, after seeding the permanent exemptions Nik chose on 2026-09-23 from the 30-day audit log.
+
+## Exemptions: permanent, or a window that closes itself
+
+A row in **Confirmation-Exempt Doctypes** lets an assistant's `create_document` and
+`update_document` on that doctype execute without a card. It is still logged in AI Action Log as
+Auto Approved. Delete, submit, workflow and code execution are never exempt. That includes a
+submit dressed as a create or update: `create_document` with `submit`, or `update_document`
+with `docstatus` in its data, always goes to a card (`_changes_docstatus`).
+
+- **Permanent** means **Exempt Until** is empty. The patch seeds Comment, ToDo, Sapphire
+  Maintenance Template and Section (checklists and their instructions), Serial No and Training
+  Lesson: low-risk records that assistants actually write. Sapphire Maintenance Profile is not
+  on the list, because it holds a site's access codes, the Time Kiosk geofence coordinates and
+  the default technician. Money, stock, contracts, permissions, Items and Item Prices stay
+  gated. Item stays gated because creating one with a `standard_rate` also writes an Item Price.
+- **A window** means **Exempt Until** holds a time. This is how a bulk job is carried, for example
+  "Item until 18:00" for an inventory session. Without a window, 328 Items would mean 328 cards.
+  The window closes by itself: `_exempt_doctypes()` compares it with the current time on every
+  call, in site-local time on both sides. A window that can't be read counts as closed. Delete
+  the row afterwards to keep the table tidy.
+- **Only a person can open one.** An assistant would have to update the settings or the exemption
+  table, and both are in `NEVER_EXEMPT`, so that update is itself a card. AI Pending Action and AI
+  Action Log are in `NEVER_EXEMPT` too. Otherwise an assistant could rewrite a card's arguments
+  after someone had read it, or edit its own audit trail. Task is there because exempting it would
+  ungate Task creation along with its updates (ADR 0016 §6).
 
 ## Confirmation is desk-only, on purpose
 
@@ -70,7 +98,7 @@ placeholder into real records.
 | `AI Pending Action` | A proposed AI mutation awaiting human confirmation. Created by the gate; transitions only via `gating_api`. Direct status edits in the desk are blocked. `sealed_arguments` holds the redacted values while Pending (see above) |
 | `AI Action Log` | Append-only record of AI actions |
 | `AI Model Usage` | Model usage accounting |
-| `AI Confirmation Exempt Doctype` | Doctypes exempted from the confirmation requirement |
+| `AI Confirmation Exempt Doctype` | Doctypes exempted from the confirmation requirement: permanent rows, or time-boxed windows via `exempt_until` (see above) |
 | `Triton Settings` | Single — connection settings for the Triton assistant |
 | `Triton Assistant Settings` | Assistant behaviour configuration |
 | `Triton Allowed User` | Per-user access to the assistant |

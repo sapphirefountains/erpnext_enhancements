@@ -565,7 +565,7 @@
   },
   {
    "depends_on": "ai_write_gating_enabled",
-   "description": "Doctypes whose AI create/update skips confirmation (still logged, marked Auto Approved). Delete / submit / workflow / code execution never skip.",
+   "description": "Doctypes whose AI create/update skips confirmation (still logged, marked Auto Approved). Leave Exempt Until empty for a permanent exemption, or set it to open a window for a bulk job that closes by itself. Delete / submit / workflow / code execution never skip, and Task and the gate's own records are never exempt.",
    "fieldname": "ai_exempt_doctypes",
    "fieldtype": "Table",
    "label": "Confirmation-Exempt Doctypes",
@@ -1452,7 +1452,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-07-21 09:00:00.000000",
+ "modified": "2026-09-23 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

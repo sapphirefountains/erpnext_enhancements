@@ -118,6 +118,23 @@ class TestSummaries(unittest.TestCase):
             _gate.summarize_tool_call("some_custom_writer", {}), "Some custom writer"
         )
 
+    def test_the_card_says_what_confirming_will_actually_do(self):
+        # v1.525.0: these became live cards when the gate switched on.
+        self.assertEqual(
+            _gate.summarize_tool_call("create_document", {"doctype": "Sales Invoice", "submit": True}),
+            "Create and SUBMIT Sales Invoice",
+        )
+        self.assertEqual(
+            _gate.summarize_tool_call("create_document", {"doctype": "Item", "validate_only": True}),
+            "Validate Item only (creates nothing)",
+        )
+        self.assertEqual(
+            _gate.summarize_tool_call("workforce_clock_out", {"employee": "HR-EMP-00012"}),
+            "Clock out HR-EMP-00012 (the interval ends when this is confirmed)",
+        )
+        # Self-service clock-out never becomes a card, so it keeps the generic line.
+        self.assertEqual(_gate.summarize_tool_call("workforce_clock_out", {}), "Workforce clock out")
+
     def test_followup_task_summary(self):
         plain = _gate.summarize_tool_call(
             "create_followup_task", {"description": "Call the customer back"}

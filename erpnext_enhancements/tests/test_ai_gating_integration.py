@@ -29,7 +29,11 @@ if _HAS_FRAPPE:
 else:
     _HAS_FAC = False
 
-TODO_MARKER = "_Test AI gate todo"
+#: The doctype these tests write through the gate. It must be one that is never exempt. It was
+#: ToDo until v1.525.0 made ToDo a permanent exemption, after which every "gated" case here would
+#: have executed at once. tests/test_ai_gate_switch_on pins this against the seeded list.
+GATED_DOCTYPE = "Note"
+TODO_MARKER = "_Test AI gate note"
 
 
 @unittest.skipUnless(_HAS_FRAPPE and _HAS_FAC, "needs a bench with frappe_assistant_core installed")
@@ -61,8 +65,8 @@ class TestAIGatingIntegration(unittest.TestCase):
         frappe.db.commit()
 
     def _cleanup(self):
-        for name in frappe.get_all("ToDo", filters={"description": ("like", f"%{TODO_MARKER}%")}, pluck="name"):
-            frappe.delete_doc("ToDo", name, force=True, ignore_permissions=True)
+        for name in frappe.get_all(GATED_DOCTYPE, filters={"title": ("like", f"%{TODO_MARKER}%")}, pluck="name"):
+            frappe.delete_doc(GATED_DOCTYPE, name, force=True, ignore_permissions=True)
         frappe.flags.ai_log_purge = True
         try:
             for doctype in ("AI Action Log", "AI Pending Action"):
@@ -80,7 +84,7 @@ class TestAIGatingIntegration(unittest.TestCase):
         return get_tool_registry()
 
     def _todo_args(self, suffix="1"):
-        return {"doctype": "ToDo", "data": {"description": f"{TODO_MARKER} {suffix}"}}
+        return {"doctype": GATED_DOCTYPE, "data": {"title": f"{TODO_MARKER} {suffix}"}}
 
     # ------------------------------------------------------------------ tests
 
@@ -98,7 +102,7 @@ class TestAIGatingIntegration(unittest.TestCase):
         result = self._registry().execute_tool("create_document", self._todo_args("direct"))
         self.assertTrue(isinstance(result, dict))
         self.assertTrue(
-            frappe.db.exists("ToDo", {"description": ("like", f"%{TODO_MARKER} direct%")})
+            frappe.db.exists(GATED_DOCTYPE, {"title": ("like", f"%{TODO_MARKER} direct%")})
         )
         self.assertFalse(frappe.db.exists("AI Pending Action", {"tool_name": "create_document"}))
 
@@ -112,7 +116,7 @@ class TestAIGatingIntegration(unittest.TestCase):
         self.assertTrue(frappe.db.exists("AI Pending Action", action_id))
         # nothing executed
         self.assertFalse(
-            frappe.db.exists("ToDo", {"description": ("like", f"%{TODO_MARKER} gated%")})
+            frappe.db.exists(GATED_DOCTYPE, {"title": ("like", f"%{TODO_MARKER} gated%")})
         )
         # identical retry → same action, no duplicate card
         raw2 = self._registry().execute_tool("create_document", self._todo_args("gated"))
@@ -136,7 +140,7 @@ class TestAIGatingIntegration(unittest.TestCase):
         self.assertEqual(action.status, "Executed")
         self.assertTrue(action.action_log)
         self.assertTrue(
-            frappe.db.exists("ToDo", {"description": ("like", f"%{TODO_MARKER} confirm%")})
+            frappe.db.exists(GATED_DOCTYPE, {"title": ("like", f"%{TODO_MARKER} confirm%")})
         )
         log = frappe.get_doc("AI Action Log", action.action_log)
         self.assertTrue(log.success)
@@ -161,7 +165,7 @@ class TestAIGatingIntegration(unittest.TestCase):
         cancel_action(action_id)
         self.assertEqual(frappe.db.get_value("AI Pending Action", action_id, "status"), "Cancelled")
         self.assertFalse(
-            frappe.db.exists("ToDo", {"description": ("like", f"%{TODO_MARKER} cancel%")})
+            frappe.db.exists(GATED_DOCTYPE, {"title": ("like", f"%{TODO_MARKER} cancel%")})
         )
 
     def test_expired_action_cannot_confirm(self):
