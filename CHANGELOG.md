@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.534.1] - 2026-09-24
+
+**Fixes from an independent review of 1.529.0.** 1.529.0 merged while the review was still
+running. Seven findings survived an adversarial check. All were low severity, and three were
+false statements in the 1.529.0 entry, now marked *(Corrected in v1.534.1)* in place. The
+common thread: the browser's email regex (`frappe.utils.validate_type(..., "email")`, v16
+`utils.js`) is looser than the server's `validate_email_address` / `EMAIL_MATCH_PATTERN`. It
+also accepts accented and quoted local parts (`josé@…`, `"a b"@…`), IP literals
+(`a@[1.2.3.4]`) and domain labels with a hyphen at the edge (`nik@sapphirefountains-.com`),
+all of which the server rejects. So the new client-side checks were never the whole answer,
+and each path had to handle a server refusal properly.
+
+### Fixed
+
+- **The Create Project dialog got stuck on "Queuing..." when the server refused an
+  address.** `primary_action` overwrote `dialog.body.innerHTML` with a progress bar before
+  calling `enqueue_project_creation`, and passed only `callback`. In v16, a `frappe.throw` is
+  an HTTP 417, and `frappe.request`'s 417 handler calls only `error_callback` (from the
+  `error` option), never `callback`. So the dialog kept a disabled button, the fields were
+  gone, and the msgprint appeared over it. The dialog now hides its fields with
+  `set_message()` rather than overwriting them, and an `error` handler runs
+  `clear_message()` and re-enables the button, so a refusal hands the form back as it was. It
+  also sends the list it checked (`split_emails`, trimmed, re-joined) rather than the raw
+  field, so the server validates exactly what passed in the browser.
+- **The hand-off and launch meeting dialogs could still silently drop an attendee.**
+  `schedule_handoff_meeting` and `schedule_project_meeting` now return `not_invited`: the
+  entries `_dedupe()` discarded for not being an address, from the new
+  `handoff._not_invited()`. It uses the same `validate_email_address(..., throw=True)` test,
+  over the same parsing, now factored out as `_attendee_entries()`. `handoff_meeting_dialog.js`
+  shows them after booking ("left off the invite"). The meeting itself is still booked. For
+  the launch meeting, `process_steps.js`'s `on_submit` now returns the server result so the
+  dialog can read it. The pre-submit check stays, for the common typos.
+- **A failure after the project was committed killed the job before anyone was told.**
+  `drive_success` and `drive_error_details` were first assigned in the Drive block, but
+  `project_doc` was set before it. Anything raising in between (`opp.save`, the commit, the
+  Closed-Won alert enqueue, say during a deploy's redis flush) was logged by the generic
+  `except`. Then `message_payload["drive_success"] = drive_success` raised
+  `UnboundLocalError` outside any `try`, so no realtime status and no email went out for a
+  project that existed. Both are now initialized at the top of the function. This predates
+  1.529.0.
+
+### Changed
+
+- **`TestCreationStatusRecipients` runs as a real non-admin requester.** It had patched
+  `frappe.set_user` out. Under `FrappeTestCase` the session user is Administrator anyway, so
+  the test could not tell the requester from the Administrator identity the job switches to,
+  and moving the broadcast inside the elevated block would still have passed. It now sets
+  `requester@example.com` with the real `set_user` and asserts Administrator is not among the
+  recipients.
+- Comments in `api.py`, both dialogs and `crm_enhancements/README.md` now state the looser
+  client check and the server's role plainly.
+
+### Notes
+
+- **Still silent: a second job for an opportunity that already has a project.** The job
+  returns early when `custom_created_project` is set, and publishes nothing. That takes two
+  jobs queued before the first finishes, and whoever queued the first still hears back from
+  it. Left as is.
+- Two findings were refuted: that the server check lets malformed strings reach `sendmail` as
+  dead queue rows, and that the requester's status is lost on the Kanban board. The first was
+  refuted on v16's queue path. For the second, the only listener is on the Opportunity form,
+  which predates 1.529.0 and is not something it claimed to change.
+- `tests/test_handoff_gate.py` (bench-free, in CI) gains `TestNotInvited`, five cases, which
+  fail against 1.529.0's `handoff.py` and pass now. `tests/test_project_prompt.py` needs a
+  bench and was not run.
 ## [1.534.0] - 2026-09-24
 
 **The phone's Back button now works inside Stock Scan and the Time Kiosk, and Stock Scan gets
@@ -756,14 +821,22 @@ clean, but found that it silently dropped malformed attendees.
   alert and no "Hand-Off Required" message if the gate refused. The job now sends the event to
   the listed recipients plus `frappe.session.user`, de-duplicated. The `finally` has restored
   the requester's session by that point. Email is still sent only to the listed recipients. The
-  email body is now built once and sent to each recipient separately, as before.
+  email body is now built once and sent to each recipient separately, as before. *(Corrected
+  in v1.534.1: "always" was too strong. It holds whenever a status goes out, but two paths
+  sent none: the early return for an opportunity that already has a project, and an
+  `UnboundLocalError` on `drive_success`, which 1.534.1 fixes.)*
 - **The field takes free text, and `enqueue_project_creation` refuses anything that is not an
   email address.** The dialog checks each entry with `frappe.utils.validate_type(..., "email")`
   before it replaces its body with the progress bar, so a typo can be corrected in place. The
   server checks again with `frappe.utils.validate_email_address` for other callers. A bad
   address would otherwise have surfaced only after the project existed, as a dead Email Queue
   row. `Administrator` and `Guest` are no longer offered as options, since neither is an
-  address.
+  address. *(Corrected in v1.534.1: the browser regex is looser than the server's, and an
+  address it passed but the server refused left the dialog stuck on "Queuing...", not
+  correctable in place. The server check is the authority for every caller, the dialog
+  included, not only "for other callers". And a malformed address never became a dead Email Queue row: `frappe.sendmail`
+  refuses it at queue time with an "Invalid email address" Error Log, so that recipient simply
+  got nothing. Only `Administrator` and `Guest` reached the queue.)*
 
 ### Fixed
 
@@ -795,7 +868,10 @@ clean, but found that it silently dropped malformed attendees.
   client regex needs a TLD of two or more letters, and the server's `EMAIL_MATCH_PATTERN` needs a
   dotted domain. So what the dialog accepts, `_dedupe()` keeps. The server is unchanged:
   `_dedupe()` also filters the *suggested* attendees, where quietly skipping a bad configured
-  address is the right call.
+  address is the right call. *(Corrected in v1.534.1: the two checks do not agree. The browser
+  regex also passes accented and quoted local parts, IP literals and hyphen-edged domain
+  labels, all of which `_dedupe()` drops, so for those the silent drop was not closed.
+  1.534.1 closes it by having the server report what it dropped.)*
 
 ### Notes
 
