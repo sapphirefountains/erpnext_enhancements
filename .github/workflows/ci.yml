@@ -1097,7 +1097,7 @@ jobs:
       - name: Contract branding (letterhead, footer, print CSS)
         run: python -m unittest erpnext_enhancements.tests.test_contract_style -v
       # test_kpi_departments: the seven places a KPI department is named must agree
-      # (v1.529.0, when Service split off Operations). All three are ast/JSON only.
+      # (v1.530.0, when Service split off Operations). All three are ast/JSON only.
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants
         run: >-
           python -m unittest

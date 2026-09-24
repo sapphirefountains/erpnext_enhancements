@@ -360,7 +360,7 @@ def _store_runs(suppliers, since):
 
 
 def _operations_metrics():
-	"""Operations — inventory and purchasing, since v1.529.0.
+	"""Operations — inventory and purchasing, since v1.530.0.
 
 	The maintenance KPIs that used to open this dashboard moved to ``_service_metrics``
 	(the Service dashboard, listed under Production), and the three stock-level KPIs moved
@@ -553,7 +553,7 @@ def _operations_metrics():
 
 def _service_metrics():
 	"""Service — field service and maintenance, listed under Production in the dashboards
-	sidebar. These six KPIs were the first half of Operations until v1.529.0 and moved
+	sidebar. These six KPIs were the first half of Operations until v1.530.0 and moved
 	unchanged, keys included, so a KPI Target set against one follows it (the patch moves the
 	row) and ``_EXEC_ROLLUP`` reads two of them from here."""
 	today = getdate(nowdate())
@@ -1243,7 +1243,7 @@ _EXEC_ROLLUP = (
 	("win_rate_90", "Win Rate (90d)", "Sales", "win_rate_90", "%", metrics.HIGHER),
 	("backlog_value", "Backlog (Open Project Value)", "Production", "backlog_value", "USD", metrics.HIGHER),
 	("on_time_milestone_rate", "On-Time Milestone Rate", "Production", "on_time_milestone_rate", "%", metrics.HIGHER),
-	# Service since v1.529.0. Left pointing at Operations, these two would vanish from the
+	# Service since v1.530.0. Left pointing at Operations, these two would vanish from the
 	# Executive dashboard without an error: a key a department no longer emits is skipped.
 	("active_contracts", "Active Maintenance Contracts", "Service", "active_contracts", "count", metrics.HIGHER),
 	("chem_oor_rate", "Maintenance Out-of-Range Rate", "Service", "chem_oor_rate", "%", metrics.LOWER),
@@ -1375,7 +1375,7 @@ def _product_metrics():
 			)
 
 	# --- inventory: Inventory Stock Value and Out-of-Stock Sellable Items moved to
-	#     _operations_metrics in v1.529.0 with their definitions unchanged. Stock quantity
+	#     _operations_metrics in v1.530.0 with their definitions unchanged. Stock quantity
 	#     and cost are Operations' to manage; catalogue data quality stays here. ---
 
 	# --- catalog data-quality completeness % ---

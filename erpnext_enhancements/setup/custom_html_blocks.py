@@ -75,7 +75,7 @@ BLOCKS = [
 	("Production Material Readiness", "production_material_readiness"),
 	("Production Hours Variance", "production_hours_variance"),
 	# The maintenance worklists, which sat on Operations as "Operations Day Board" etc.
-	# until v1.529.0. The seeder never deletes, so the three old records are removed by
+	# until v1.530.0. The seeder never deletes, so the three old records are removed by
 	# patches/split_service_kpi_dashboard once no workspace points at them.
 	("Service Day Board", "service_day_board"),
 	("Service Chemistry Alerts", "service_chemistry_alerts"),

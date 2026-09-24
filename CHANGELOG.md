@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.529.0] - 2026-09-24
+## [1.530.0] - 2026-09-24
 
 **Maintenance moves to a Service dashboard under Production, and Operations becomes the
 inventory dashboard, with a KPI for store runs.** Nik, 2026-09-24: maintenance does not belong
@@ -99,6 +99,86 @@ logged without stopping the migrate:
 - With no supplier ticked, the KPI is **not published** rather than shown as 0. A 0 there is
   true by construction and would read as the goal met, the same shape as the trailing-space
   checks that reported clean forever.
+
+## [1.529.0] - 2026-09-24
+
+**A project created from an Opportunity now notifies the billing, operations, production and
+sales inboxes by default.** Nik asked on 2026-09-24 for those four group inboxes to be the default
+"Users to Notify" in the Create Project dialog, replacing the Account Executive + Project Manager
+role holders. None of them is a desk user: on prod, `operations@` and `production@` have no User
+at all, `sales@` is a Website User and `billing@` is a disabled System User. So the default is
+four literal addresses, not a User lookup, which would have dropped all four. Making that work
+turned up a default that had never been displayed (fixed below) and a gap in who hears back
+from the job. Checking the hand-off meeting dialog for the same MultiSelect problem found it
+clean, but found that it silently dropped malformed attendees.
+
+### Changed
+
+- **`project_prompt.default_project_notify_users`** returns the four inboxes from a module
+  constant, `DEFAULT_NOTIFY_RECIPIENTS`. It no longer queries `Has Role` or `User` and no
+  longer falls back to the session user. `NOTIFY_ROLES` is gone. The endpoint keeps its name,
+  because the dialog calls it and a site Client Script may too.
+- **The requester always gets the realtime `project_creation_status`.**
+  `create_project_from_opportunity_background` sent the realtime event only to the people on
+  the list, because until now that list was made of desk users. Inboxes have no desk session,
+  so the person who clicked Create Project would have heard nothing back: no "Project created"
+  alert and no "Hand-Off Required" message if the gate refused. The job now sends the event to
+  the listed recipients plus `frappe.session.user`, de-duplicated. The `finally` has restored
+  the requester's session by that point. Email is still sent only to the listed recipients. The
+  email body is now built once and sent to each recipient separately, as before.
+- **The field takes free text, and `enqueue_project_creation` refuses anything that is not an
+  email address.** The dialog checks each entry with `frappe.utils.validate_type(..., "email")`
+  before it replaces its body with the progress bar, so a typo can be corrected in place. The
+  server checks again with `frappe.utils.validate_email_address` for other callers. A bad
+  address would otherwise have surfaced only after the project existed, as a dead Email Queue
+  row. `Administrator` and `Guest` are no longer offered as options, since neither is an
+  address.
+
+### Fixed
+
+- **The "Users to Notify" default never appeared. The field opened empty.** The dialog passed
+  its default as an array, and v16's `ControlMultiSelect.validate` starts with
+  `value.replace(/,\s*$/, "")`, which throws a `TypeError` on an array. That happened inside
+  `FieldGroup.set_value`'s promise, so `set_input` never ran. The control's
+  `inside_change_event` flag was also left stuck at `true`, which (by accident) switched off
+  that validation for the rest of the dialog's life. The default is now passed as a
+  `", "`-joined string.
+- **`ignore_validation: 1` on the Users to Notify field.** Unless that flag is set, `validate`
+  returns `""` for the whole value if any entry is not in `options`. It splits on `","` without
+  trimming, so every entry after a `", "` has a leading space and never matches, and `", "` is
+  the separator Frappe's own picker inserts. What that blanks is the control's **internal**
+  value only. `ControlMultiSelect.set_formatted_input("")` returns early, so the text stays in
+  the box, and `Dialog.get_values()` reads the box, so typed and picked addresses are never
+  lost. The flag keeps the control's value in step with what it shows. That matters here
+  because the field is `reqd`: after the primary button is clicked, `get_values` runs
+  `refresh_input()` on a reqd field whose value is blank, which can outline it red while it
+  plainly has addresses in it. The inboxes are also added to the option list so they can be
+  picked back after being removed.
+- **A hand-off meeting attendee that is not an address was silently left off the invite.**
+  `schedule_handoff_meeting` and `schedule_project_meeting` pass the dialog's attendees through
+  `_parse_attendees` → `_dedupe()`, which skips anything `validate_email_address` rejects. Nothing
+  reported it: the alert said "Meeting created and invites sent", and a typo such as
+  `nik@sapphirefountains` (no TLD) meant that person was never invited. `primary_action` in
+  `handoff_meeting_dialog.js` now checks each attendee with `frappe.utils.validate_type(...,
+  "email")` and lists the bad ones before anything is sent, with the dialog still open. The
+  client regex needs a TLD of two or more letters, and the server's `EMAIL_MATCH_PATTERN` needs a
+  dotted domain. So what the dialog accepts, `_dedupe()` keeps. The server is unchanged:
+  `_dedupe()` also filters the *suggested* attendees, where quietly skipping a bad configured
+  address is the right call.
+
+### Notes
+
+- **No `ignore_validation` on the hand-off dialog's attendee fields.** The worry was that the
+  `validate` behavior above would wipe a multi-address prefill, a typed subcontractor or a
+  second pick in the Sales / Production / Billing fields. It doesn't: the text survives for the
+  reason given above, and these fields are not `reqd`, so the blank internal value has no
+  visible effect either. The file's header comment now records this, so the next reader does
+  not have to re-derive it.
+- **How the MultiSelect claims were checked.** v16's real control classes (`base_control`,
+  `base_input`, `data`, `autocomplete`, `multiselect`, `field_group`, all from
+  `origin/version-16`) were loaded into node over a fake input and driven through a prefill, a
+  blur, typing and a dropdown pick. Not checked against a live desk: prod's browser session was
+  not logged in, and beta was down.
 
 ## [1.528.0] - 2026-09-24
 

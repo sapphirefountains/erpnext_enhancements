@@ -5,7 +5,7 @@
 
 Device fleet compliance, live. The three maintenance worklists that used to sit
 here (today's visit board, out-of-range chemistry, labour-capture gaps) moved to
-``api/service_dashboard.py`` in v1.529.0, when maintenance became its own Service
+``api/service_dashboard.py`` in v1.530.0, when maintenance became its own Service
 department and Operations became the inventory dashboard.
 
 Gating is the shared department contract in ``api/dashboard_widgets.py``:

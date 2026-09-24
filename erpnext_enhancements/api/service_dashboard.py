@@ -6,7 +6,7 @@
 Field-service worklists, live: today's visit board, out-of-range chemistry, and
 visits that closed without any labour captured.
 
-These three lived on the Operations Dashboard until v1.529.0, when maintenance
+These three lived on the Operations Dashboard until v1.530.0, when maintenance
 moved to its own Service department (listed under Production in the dashboards
 sidebar) and Operations became the inventory dashboard. The feeds are unchanged
 apart from their department; their toggles on ERPNext Enhancements Settings keep

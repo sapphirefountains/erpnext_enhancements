@@ -73,7 +73,7 @@ widgets yet — its dashboard's three roles (Item Manager, Stock Manager, Sales 
 three different boards, and that has not been decided.
 
 
-## Service split off Operations; Operations is inventory (v1.529.0)
+## Service split off Operations; Operations is inventory (v1.530.0)
 
 Nik, 2026-09-24: maintenance belongs under Production, not Operations, and anything inventory
 belongs on Operations. So:

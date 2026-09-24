@@ -11,7 +11,7 @@ grouping and ordering that appears alongside each dashboard.
 | `marketing_dashboard.json` | Marketing |
 | `operations_dashboard.json` | Operations |
 | `production_dashboard.json` | Production |
-| `service_dashboard.json` | Service (v1.529.0) — maintenance, listed under Production |
+| `service_dashboard.json` | Service (v1.530.0) — maintenance, listed under Production |
 | `design_dashboard.json` | Design |
 | `product_dashboard.json` | Product |
 | `hr_dashboard.json` | HR |
@@ -19,7 +19,7 @@ grouping and ordering that appears alongside each dashboard.
 | `time_kiosk.json` | Not a workspace at all: the one-item sidebar (a URL link to `/kiosk`) that lets the **Time Kiosk** desk tile render — see the section below, and `patches/seed_time_kiosk_desktop_icon` for the tile itself (v1.482.0) |
 
 All eleven KPI sidebars carry one identical item list, which `tests/test_kpi_departments.py`
-asserts. Since v1.529.0 that list has a **Production group**: a `Section Break` with `indent: 1`
+asserts. Since v1.530.0 that list has a **Production group**: a `Section Break` with `indent: 1`
 holding *Overview* (the Production Dashboard) and *Service* as `child: 1` links. That is the
 only way to nest in a v16 sidebar — `sidebar.js` `find_nested_items` attaches `child` items to
 the preceding Section Break and never to a Link — so "Service under Production" is a group, not

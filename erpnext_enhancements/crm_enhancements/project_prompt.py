@@ -16,8 +16,8 @@ This module is the server half:
 * :func:`revert_won_status` (whitelisted) — the popup's "No": rolls the status
   back to its previous value and clears the won-date stamp.
 * :func:`default_project_notify_users` (whitelisted) — the popup's "Yes" dialog
-  defaults its "Users to Notify" to the Account Executive + Project Manager role
-  holders.
+  defaults its "Users to Notify" to the billing, operations, production and sales
+  group inboxes.
 
 The Closed-Won team SMS is deferred to actual project creation (see
 :func:`erpnext_enhancements.crm_enhancements.api.create_project_from_opportunity_background`),
@@ -31,7 +31,15 @@ from erpnext_enhancements.status_alerts import _in_maintenance_context
 
 EVENT = "ee_prompt_create_project"
 WON_STATUS = "Closed Won"
-NOTIFY_ROLES = ("Account Executive", "Project Manager")
+# Group inboxes, not Users: on prod (checked 2026-09-24) two of these have no User
+# at all and the other two are not enabled System Users, so resolving them through
+# User would drop every one. They are addresses, and are returned as addresses.
+DEFAULT_NOTIFY_RECIPIENTS = (
+	"billing@sapphirefountains.com",
+	"operations@sapphirefountains.com",
+	"production@sapphirefountains.com",
+	"sales@sapphirefountains.com",
+)
 
 
 def prompt_create_project_on_won(doc, method=None):
@@ -88,38 +96,13 @@ def revert_won_status(opportunity_name, previous_status=None):
 
 @frappe.whitelist()
 def default_project_notify_users():
-	"""Enabled System Users holding the Account Executive or Project Manager role.
+	"""The default for the "Users to Notify" field in the create-project dialog.
 
-	The default for the "Users to Notify" field in the create-project dialog.
-	Falls back to the current user when neither role resolves to anyone, so the
-	(required) field is never empty. A role that doesn't exist is skipped.
+	The billing, operations, production and sales group inboxes (replacing the
+	Account Executive + Project Manager role holders in v1.529.0). Only the
+	prefill: the dialog accepts any address.
 	"""
-	names = set()
-	for role in NOTIFY_ROLES:
-		if not frappe.db.exists("Role", role):
-			continue
-		holders = frappe.get_all(
-			"Has Role",
-			filters={"role": role, "parenttype": "User"},
-			pluck="parent",
-		)
-		names.update(holders)
-
-	if names:
-		users = frappe.get_all(
-			"User",
-			filters={
-				"name": ("in", list(names)),
-				"enabled": 1,
-				"user_type": "System User",
-			},
-			pluck="name",
-		)
-		users = [u for u in users if u not in ("Administrator", "Guest")]
-		if users:
-			return sorted(users)
-
-	return [frappe.session.user]
+	return list(DEFAULT_NOTIFY_RECIPIENTS)
 
 
 @frappe.whitelist()

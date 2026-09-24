@@ -3,7 +3,7 @@
 A department is named in seven places: the snapshot engine's ``AGGREGATORS``, the
 ``department`` Select on KPI Snapshot and on KPI Target, the role map in ``api/kpi.py``,
 the cockpit's route map, the dashboards sidebar, and the Executive rollup's source
-departments. v1.529.0 added Service (maintenance, under Production) and turned
+departments. v1.530.0 added Service (maintenance, under Production) and turned
 Operations into the inventory dashboard, which touched all seven. Every one of them fails
 quietly when it disagrees with the others:
 

@@ -1,4 +1,4 @@
-"""Split maintenance out of the Operations KPI dashboard into Service (v1.529.0).
+"""Split maintenance out of the Operations KPI dashboard into Service (v1.530.0).
 
 Nik, 2026-09-24: maintenance does not belong under Operations but under Production, as a
 Service dashboard, and Operations becomes the inventory dashboard, with a KPI for

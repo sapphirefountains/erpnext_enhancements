@@ -18,7 +18,7 @@ AVAILABLE_DEPARTMENTS = tuple(snapshots.AGGREGATORS)
 DEPARTMENT_ROLES = {
 	"Finance": {"Accounts Manager", "Accounts User"},
 	"Sales": {"Sales Manager", "Sales User"},
-	# Operations is the inventory dashboard since v1.529.0, so the Stock Manager joins
+	# Operations is the inventory dashboard since v1.530.0, so the Stock Manager joins
 	# the roles that could already see it. Maintenance moved to Service, below.
 	"Operations": {"Projects Manager", "Maintenance Manager", "Projects User", "Stock Manager"},
 	"Marketing": {"Sales Manager", "Marketing Manager"},

@@ -51,7 +51,7 @@ WIDGETS = {
 	"Operations": {
 		"fleet_health": "operations_fleet_health_enabled",
 	},
-	# The three maintenance worklists moved here from Operations in v1.529.0. Their
+	# The three maintenance worklists moved here from Operations in v1.530.0. Their
 	# toggles keep the operations_* fieldnames: renaming a field on a Single drops the
 	# value every site has already stored, and nobody would notice the widget go dark.
 	"Service": {

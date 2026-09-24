@@ -68,7 +68,7 @@ single block: the KPI Cockpit. Finance was the exception, with six operational w
 This adds four widgets to each of the other seven — Sales, Operations, Design, Production,
 Marketing, HR and Executive — so a dashboard shows what to *do*, not only how things went.
 
-**v1.529.0 split Operations.** Maintenance moved to a tenth dashboard, **Service**, listed
+**v1.530.0 split Operations.** Maintenance moved to a tenth dashboard, **Service**, listed
 under Production in the sidebar, and Operations became the inventory dashboard. The three
 maintenance widgets went with it and were renamed `Service …` (block records, source files
 and feed module); `patches/split_service_kpi_dashboard` deletes the three old

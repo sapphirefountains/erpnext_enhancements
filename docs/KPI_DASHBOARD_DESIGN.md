@@ -1,6 +1,6 @@
 # Sapphire Fountains — Department KPI Dashboard Catalog
 
-_Auto-generated design reference. 131 KPIs across 8 departments, plus the Operations inventory set added in v1.529.0, when maintenance moved to its own Service department (10 departments in the snapshot engine). Tiers: **Auto** = computable now from existing data; **Semi-Auto** = needs one light new field/input; **Manual** = needs human entry or an un-integrated external system._
+_Auto-generated design reference. 131 KPIs across 8 departments, plus the Operations inventory set added in v1.530.0, when maintenance moved to its own Service department (10 departments in the snapshot engine). Tiers: **Auto** = computable now from existing data; **Semi-Auto** = needs one light new field/input; **Manual** = needs human entry or an un-integrated external system._
 
 ## Automation summary
 
@@ -935,7 +935,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 - Crew clock-in on builds: have field crews clock in/out against Build project Tasks via the existing Time Kiosk PWA (requires extending Job Interval to accept build Tasks). No new data entry beyond the clock-in they already do for maintenance.
 
 ---
-## Operations (Inventory & Purchasing) — v1.529.0
+## Operations (Inventory & Purchasing) — v1.530.0
 
 > Operations became the inventory dashboard on 2026-09-24, when maintenance moved to its own **Service** department (the next section, listed under Production in the dashboards sidebar). The trigger was store runs: 206 card transactions at Home Depot and Lowe's in the 12 months to September 2026 (2 of them returns), $16.3k, roughly four a week, mostly for small PVC fittings. The set answers three questions — are we making store runs, is the shelf stocked, and is the record true — and it is computed nightly by `_operations_metrics`. A **stocked item** is an Item with a positive reorder level, ERPNext's own marker and the one that drives its automatic Material Requests. Catalog items 9–12 below (devices, time sync, count accuracy, stockout risk) now belong here; the rest of the old Operations catalog is Service. Device compliance, unsynced time logs and project naming compliance stayed on Operations.
 
@@ -981,7 +981,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ---
 ## Service (Field-Service / Maintenance / Workforce) — formerly Operations
 
-> **Renamed in v1.529.0.** This catalog was written as "Operations". Its field-service and maintenance KPIs now live on the **Service** dashboard (`_service_metrics`), listed under Production in the sidebar; items 9–12 (devices, time sync, count accuracy, stockout risk) belong to the Operations inventory set above. The text below is unchanged from the original catalog.
+> **Renamed in v1.530.0.** This catalog was written as "Operations". Its field-service and maintenance KPIs now live on the **Service** dashboard (`_service_metrics`), listed under Production in the sidebar; items 9–12 (devices, time sync, count accuracy, stockout risk) belong to the Operations inventory set above. The text below is unchanged from the original catalog.
 
 
 > A 17-KPI catalog covering the full Operations scope for a fountain design-build-maintain business: contract fulfillment and visit completion, seasonal/SLA adherence, technician utilization and route/drive efficiency, water-quality (chemistry) compliance, callback/redo rate, fleet/device uptime and compliance, inventory accuracy and stockouts, travel cost, field safety, timesheet/labor capture, and asset booking utilization. Of the 17, 9 are Auto (computable today from Sapphire Maintenance Record, Sapphire Chemistry Reading, Job Interval, Managed Device, Travel Trip, Asset Booking, Inventory Count Session via SQL + a nightly snapshot cron modeled on the existing Daily Briefing pattern), 6 are Semi-Auto (each needs one new field or light tagging — a scheduled-date stamp on Maintenance Record, an idle-radius geofence on Job Interval GPS, an item min-level, a callback flag, a route-sequence stamp, or odometer capture), and only 2 are Manual (field-incident safety reporting and a per-visit photo/QA spot-check), each with the lightest-weight capture specified. The single highest-leverage build is one new field — a planned/scheduled visit date on the Maintenance Record draft — which unlocks both SLA on-time adherence and seasonal-window adherence as Auto KPIs. Recommend deploying these as a fixtures-based "Operations" Dashboard plus a pre-computed nightly KPI snapshot (Daily Briefing operations variant) so the numbers are durable, trendable, and TV-wall/email deliverable, since most metrics today require runtime SQL with no historical series.
