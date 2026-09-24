@@ -19,7 +19,7 @@ What it pins, in order of how silently each would fail:
 * every table-cell style forces its geometry with an inline `!important` — frappe's
   own print stylesheet and the site's Print Style force theirs, and an ordinary inline
   style loses to both without a word;
-* the content helpers (v1.533.0) print production-shaped values the way a person
+* the content helpers (v1.535.0) print production-shaped values the way a person
   writes them: `8015550100` as `(801) 555-0100`, `1.0` as `1`, `Nos` as `ea`, an
   address without the break the US Address Template ends on, a line whose description
   only repeats its name as the name alone, a party block with no dangling breaks and
@@ -300,7 +300,7 @@ class TestCellStylesOutrankTheStylesheets(unittest.TestCase):
     {padding: 6px !important; vertical-align: top !important}`, and this site's
     "Redesign" Print Style sets `padding: 10px !important` and
     `border-bottom-width: 1px !important` on `th`. A stylesheet `!important` beats an
-    ordinary inline style, so before v1.533.0 not one of these paddings, alignments or
+    ordinary inline style, so before v1.535.0 not one of these paddings, alignments or
     the 2px header rule reached a page — the rows printed looser than designed and a
     six-line invoice pushed its totals onto page 2, with nothing anywhere to say so.
     Only an inline `!important` outranks a stylesheet `!important`, so dropping one of
@@ -442,6 +442,30 @@ class TestFormatPhone(unittest.TestCase):
             with self.subTest(value):
                 self.assertEqual(ps.format_phone(value), value)
 
+    def test_a_foreign_number_without_its_plus_prints_as_stored(self):
+        """A Singapore contact on this site is stored `65-688-000-88`: ten digits, no `+`.
+        Only North American grouping is reshaped."""
+        for value in ("65-688-000-88", "44 20 7946 0958", "852-2345-6789"):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), value)
+
+    def test_every_north_american_shape_on_production_is_reshaped(self):
+        """The shapes production actually holds (2026-09-24), each to the same form."""
+        for value, expected in (
+            ("(208)-283-2638", "(208) 283-2638"),
+            ("786-5361357", "(786) 536-1357"),
+            ("(801)5968500", "(801) 596-8500"),
+            ("1 (650) 353-0758", "(650) 353-0758"),
+            ("+1-8012680093", "(801) 268-0093"),
+            ("888) 885-0228", "(888) 885-0228"),
+            ("954. 579-9476", "(954) 579-9476"),
+            ("1800 407 6657", "(800) 407-6657"),
+            ("13852899055", "(385) 289-9055"),
+            ("\t8016826997", "(801) 682-6997"),
+        ):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), expected)
+
     def test_anything_else_prints_as_stored(self):
         for value in ("555-0100", "911", "28015550100", "Front desk", "801-555-010"):
             with self.subTest(value):
@@ -505,6 +529,19 @@ QUILL = '<div class="ql-editor read-mode"><p>{}</p></div>'
 
 
 class TestRichText(unittest.TestCase):
+    def test_an_entity_in_plain_text_is_not_escaped_twice(self):
+        """Item PDT-0014's description is `POOL &amp; FOUNTAIN CENTER MINI CONTROLLER`,
+        with no tag. Escaped as it stood, the page read `POOL &amp; FOUNTAIN`."""
+        self.assertEqual(ps.rich_text("POOL &amp; FOUNTAIN"), "POOL &amp; FOUNTAIN")
+        self.assertEqual(ps.plain_text(ps.rich_text("2&quot; JET &amp; Co")), '2" JET & Co')
+        self.assertEqual(ps.rich_text("A & B"), "A &amp; B", "a bare ampersand is still escaped")
+        name = "POOL & FOUNTAIN CENTER MINI CONTROLLER"
+        self.assertEqual(
+            ps.line_html(name, "POOL &amp; FOUNTAIN CENTER MINI CONTROLLER"),
+            f'<span style="{ps.STRONG}">POOL &amp; FOUNTAIN CENTER MINI CONTROLLER</span>',
+            "the description only repeats the name once decoded",
+        )
+
     def test_plain_text_keeps_its_line_breaks_and_is_escaped(self):
         """1,657 of 6,148 Sales Invoice lines carry newlines and no tag; as HTML they
         ran together into one paragraph."""
@@ -599,8 +636,9 @@ class TestCleanLabel(unittest.TestCase):
         self.assertEqual(ps.clean_label("UT SPECIAL - SF", "SF"), "UT SPECIAL")
 
     def test_the_inactive_marker_goes_too(self):
-        """On 51 invoices."""
+        """On 51 invoices: 33 of this one, 18 of the Weber - Ogden code."""
         self.assertEqual(ps.clean_label("Utah Sales Tax - Inactive - SF", "SF"), "Utah Sales Tax")
+        self.assertEqual(ps.clean_label("Utah - Weber - Ogden - Inactive - SF", "SF"), "Utah - Weber - Ogden")
         self.assertEqual(ps.clean_label("Utah Sales Tax - inactive", "SF"), "Utah Sales Tax")
 
     def test_a_label_without_a_suffix_is_untouched(self):

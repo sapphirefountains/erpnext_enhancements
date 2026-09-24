@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Print and email, round two of the Pillar Stripe chrome: every customer and supplier block
 prints the party's address, phone and email; email type is the reader's own system font instead
-of a squished stand-in; Sales Invoice prints on one format, and the three sales formats become
-their doctypes' defaults.** Nik's three asks of 2026-09-24. A read-only field audit of the nine
+of a squished stand-in; Sales Invoice keeps one designed format (plus frappe's built-in
+Standard, which no record can disable), and the three sales formats become their doctypes'
+defaults.** Nik's three asks of 2026-09-24. A read-only field audit of the nine
 Sapphire formats against ERPNext v16 and production data, run the same day, found the rest:
 two formats printed wrong numbers or the wrong thing, and none of the designed table spacing had
 ever reached a page. Tracked as TASK-2026-02277 (subtasks 02278–02283) on PRJ-00580.
@@ -50,12 +51,12 @@ ever reached a page. Tracked as TASK-2026-02277 (subtasks 02278–02283) on PRJ-
 - **`ps_charge_rows` / `ps_tax_rows`: billable expenses print as lines, tax as tax.** The
   QuickBooks sync books a billable expense (a QBO invoice line with no Item) as an `Actual`
   charge in the taxes table, because there is no Item to put on a line
-  (`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 154
+  (`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 155
   invoices, the material on a Cost of Goods Sold account and its markup on an Income account.
   Printed whole, they sat under Subtotal looking like tax, up to 98 deep. The sales formats now
   print them under a **Billable expenses** heading in the line table; the tax rows print
-  without the ` - SF` company suffix and QuickBooks' ` - Inactive` marker (51 invoices said
-  "Utah Sales Tax - Inactive - SF").
+  without the ` - SF` company suffix and QuickBooks' ` - Inactive` marker (51 invoices carried
+  a retired code: 33 "Utah Sales Tax - Inactive - SF", 18 "Utah - Weber - Ogden - Inactive - SF").
 - **Default print formats for Quotation, Sales Order and Sales Invoice** (`default_print_format`
   Property Setter fixtures, in the procurement setters' exact shape), so Print, bulk print and the
   email composer open on the Sapphire format rather than Standard. None of the three had one.
@@ -121,6 +122,30 @@ ever reached a page. Tracked as TASK-2026-02277 (subtasks 02278–02283) on PRJ-
   which under `apply_discount_on = "Net Total"` (all 47 discounted invoices) already has the
   discount off, and the Discount row took it off again, so the column did not reach the total.
   Subtotal is `total` now, plus any billable-expense lines; the suites check the page adds up.
+- **And on a document with no tax rows the Discount row read `-$ -425.28`** (ACC-SINV-2026-01569,
+  and 26 other invoices). ERPNext's own `AccountsController.before_print` (v16) runs before the
+  template and flips `discount_amount` negative when the taxes table is empty, for the stock
+  formats' benefit; printed with a minus of our own it became a double negative and the rows
+  added the discount instead of taking it off. The template undoes the flip under the same
+  condition, so the stored sign decides: a sale's discount comes off, a credit note's goes back
+  on. It predates this release — the old row made the same mistake.
+- **Four notification emails would have been dropped.** "Maintenance Finalized" and "Maintenance
+  Contract Renewal Due" called `ee_p()`, "High Escalation Risk Call" and "Compliance Flag on
+  Call" called `ee_h()`, from v1.331.0 — and neither was ever defined. Calling an undefined Jinja
+  global raises, and `Notification.send()` catches it, writes an Error Log and sends nothing.
+  None had fired yet (no maintenance record has been finalized since). `ee_h` / `ee_p` now exist
+  and are registered, and `test_email_design` fails the build on any `ee_*` a Notification
+  fixture calls that is not.
+- **"Due on receipt" printed under a date it contradicted.** Production's Payment Terms Template
+  of that name is set to 1 day after the *end of the invoice month*, so its 22 invoices fall due
+  on the 1st of the next month. A template reading "Due on receipt" is never printed under a date
+  now; the date, which Overdue and dunning go by, stands alone.
+- **A drop-ship Purchase Order would head its SUPPLIER block with our customer's name**: the
+  block took whichever of `customer_name` / `supplier_name` was filled, and ERPNext keeps the end
+  customer's on a PO whose lines ship direct. It reads the field for the party type now.
+- **Plain-text descriptions holding an entity printed it literally** (`POOL &amp; FOUNTAIN …`,
+  item PDT-0014): `ps_rich` decodes before it escapes. **A foreign number without its `+`**
+  (`65-688-000-88`) was reshaped as `(656) 880-0088`; only North American grouping is reshaped.
 - **None of the designed table spacing reached a page.** Frappe appends `standard.css`
   (`td, th {padding: 6px !important; vertical-align: top !important}`) and this site's *Redesign*
   Print Style (`padding: 10px !important`, a 1px `th` rule) to every print format, custom ones

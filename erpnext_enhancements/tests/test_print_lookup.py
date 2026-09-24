@@ -486,8 +486,9 @@ class TestPartyDetails(_Case):
         self.assertEqual(details["phone"], "801-555-0124")
 
     def test_the_address_falls_back_to_the_suppliers_primary_address(self):
-        """35 suppliers on this site's orders have a primary address on their own record
-        and none on the order. It is rendered, and its phone is read from the record."""
+        """35 of this site's address-less orders, from 4 suppliers, can take a primary
+        address from the supplier's own record. It is rendered, and its phone is read from
+        the record."""
         STATE["records"]["Supplier"]["Wasatch Pool Supply"].update(
             supplier_primary_address="Wasatch Pool Supply-Billing", custom_phone_number=None, custom_email=None
         )
@@ -560,6 +561,16 @@ class TestPartyDetails(_Case):
     def test_the_documents_title_wins(self):
         details = pl.party_details(purchase_order(supplier="Desert Pump Co", supplier_name="Desert Pump (St. George)"))
         self.assertEqual(details["name"], "Desert Pump (St. George)")
+
+    def test_a_drop_ship_orders_customer_never_heads_the_supplier_block(self):
+        """ERPNext's make_purchase_order keeps the end customer's customer_name on a PO
+        whenever a line is delivered by the supplier. The SUPPLIER block reads the
+        supplier's name by party type, never whichever name field is filled."""
+        details = pl.party_details(purchase_order(customer="Canyon Ridge HOA", customer_name="Canyon Ridge HOA"))
+        self.assertEqual(details["name"], "Wasatch Pool Supply")
+        self.assertNotIn("Canyon Ridge", pl.ps_party(purchase_order(customer_name="Canyon Ridge HOA")))
+        blank = pl.party_details(purchase_order(supplier_name=None, customer_name="Canyon Ridge HOA"))
+        self.assertEqual(blank["name"], "Wasatch Pool Supply", "from the Supplier record, not the customer")
 
 
 class TestQuotation(_Case):
@@ -803,7 +814,7 @@ class TestChargesAndTaxes(_Case):
         return _Doc(**fields)
 
     def test_actual_rows_on_non_tax_accounts_are_charges(self):
-        """1,030 of them on 154 invoices, up to 98 deep, printed as tax until now."""
+        """1,030 of them on 155 invoices, up to 98 deep, printed as tax until now."""
         charges = pl.ps_charge_rows(self.doc())
         self.assertEqual(
             charges,

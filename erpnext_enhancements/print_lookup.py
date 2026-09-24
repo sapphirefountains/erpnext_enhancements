@@ -15,8 +15,9 @@ carries a snapshot of its party's address and a contact's phone and email, but o
 site the snapshot is mostly empty:
 
 * ``address_display`` is set on 17 of 230 Purchase Orders and 0 of 10 Purchase
-  Invoices. Suppliers are rarely given an Address on the order; 35 of the suppliers on
-  those orders have a primary address on their own record.
+  Invoices. Suppliers are rarely given an Address on the order, and rarely have one of
+  their own: 35 of the 213 address-less orders, all from 4 suppliers, can take a primary
+  address from the supplier's record (24 of 1,187 suppliers have one at all).
 * ``contact_mobile`` and ``contact_email`` are empty on every Purchase Order and on all
   but 12 of 1,629 Sales Invoices -- not because nobody has a phone, but because this
   app keeps them in its own fields (``Contact.custom_email``, ``custom_mobile_number``,
@@ -150,7 +151,11 @@ def party_details(doc):
 	win at every step, so a print never contradicts the form it was printed from.
 	"""
 	party_type, party = party_of(doc)
-	title = (doc.get("customer_name") or doc.get("supplier_name") or "").strip()
+	# By party type, never "whichever is filled": a drop-ship Purchase Order carries the end
+	# customer's `customer_name` too (make_purchase_order keeps it when a line is delivered
+	# by the supplier), and its SUPPLIER block must not head with our customer's name.
+	title_field = "supplier_name" if party_type == "Supplier" else "customer_name"
+	title = (doc.get(title_field) or "").strip()
 	details = {
 		"name": title or (party or ""),
 		"address": doc.get("address_display") or "",
@@ -297,7 +302,7 @@ def ps_rfq_suppliers(doc):
 # billable expense onto an invoice as a line with no Item, and the QBO sync books each one
 # as an `Actual` charge in the taxes table (quickbooks_online/core/mapping.py,
 # `_sales_passthrough_charges`) because there is no Item to put on a line: on production
-# 154 invoices carry 1,030 of them -- the material ("HAS15841 HASA MURIATIC ACID") and its
+# 155 invoices carry 1,030 of them -- the material ("HAS15841 HASA MURIATIC ACID") and its
 # markup ("25% markup for HAS15841"), booked to Cost of Goods Sold and Income accounts.
 # Printed as taxes they sat under "Subtotal" looking like tax, up to 98 rows deep. The
 # customer was billed for them as lines, which is how QuickBooks printed them, so that is

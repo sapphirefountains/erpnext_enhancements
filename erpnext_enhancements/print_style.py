@@ -182,7 +182,7 @@ PAGE_STYLE = f"font-family:{SANS_FONT};color:{INK_700};font-size:12.5px;line-hei
 # `.print-format td, .print-format th {padding:6px !important; vertical-align:top
 # !important}` and this site's "Redesign" Print Style sets `padding:10px !important` and
 # `border-bottom-width:1px !important` on `th`. An `!important` in a stylesheet beats an
-# ordinary inline style, so until v1.533.0 none of the padding, alignment or 2px header
+# ordinary inline style, so until v1.535.0 none of the padding, alignment or 2px header
 # rule below ever reached a page: the rows printed half as dense again as designed and a
 # six-line invoice pushed its totals onto page 2. An inline `!important` is the one thing
 # that outranks a stylesheet `!important`. Colour and weight are not forced by either
@@ -398,14 +398,23 @@ def plain_text(html):
 	return _WHITESPACE.sub(" ", text).strip()
 
 
+# A North American number as people write it: optional +1 / 1, an area code with or
+# without parentheses, then 3 + 4 digits, with spaces, dots or dashes between. Checked
+# against every phone-shaped value on production (2026-09-24), `(208)-283-2638`,
+# `954. 579-9476` and `1800 407 6657` included.
+_NANP_SHAPE = re.compile(r"(\+?1[-. ]?)?\(?\d{3}\)?[-. ]*\d{3}[-. ]?\d{4}")
+
+
 def format_phone(value):
 	"""A phone number for print: North American ten digits as ``(801) 555-0100``.
 
 	This site stores numbers as bare digits (``8015550100``) about as often as it stores
 	them formatted, and a run of ten digits is hard to read back over the phone. A
-	leading ``1`` or ``+1`` is dropped for the same shape. Anything else — an
-	international number, an extension, text — prints exactly as stored, because a
-	reformat that guessed wrong would print a number nobody can dial.
+	leading ``1`` or ``+1`` is dropped for the same shape. Only a number already grouped
+	the North American way is reshaped; anything else — an international number (with or
+	without its ``+``: a Singapore contact here is stored ``65-688-000-88``, ten digits), an
+	extension, text — prints exactly as stored, because a reformat that guessed wrong
+	would print a number nobody can dial.
 	"""
 	text = str(value or "").strip()
 	if not text:
@@ -415,7 +424,7 @@ def format_phone(value):
 	# `+65 6123 4567` is ten digits, and would otherwise print as `(656) 123-4567`.
 	if text.startswith("+") and not digits.startswith("1"):
 		return text
-	if re.fullmatch(r"[\d\s().+-]+", text):
+	if _NANP_SHAPE.fullmatch(text):
 		if len(digits) == 11 and digits.startswith("1"):
 			digits = digits[1:]
 		if len(digits) == 10:
@@ -455,7 +464,10 @@ def rich_text(value):
 	text = str(value)
 	if _TAG.search(text):
 		return text
-	return escape_html(text.strip()).replace("\r\n", "\n").replace("\n", "<br>")
+	# Decoded first: a plain line can still carry an entity from wherever it was typed
+	# (`POOL &amp; FOUNTAIN CENTER MINI CONTROLLER`, item PDT-0014), and escaping it as it
+	# stands printed a literal `&amp;` on the page.
+	return escape_html(_unescape(text.strip())).replace("\r\n", "\n").replace("\n", "<br>")
 
 
 def line_html(item_name, description):
@@ -493,8 +505,9 @@ def clean_label(label, company_abbr=None):
 
 	Tax rows print their description, which on this site is the account name QuickBooks
 	gave the tax code plus ERPNext's company suffix: ``UT SPECIAL - SF``, and on 51
-	invoices ``Utah Sales Tax - Inactive - SF``. The suffix and the ``Inactive`` marker
-	are bookkeeping, not something a customer owes.
+	invoices a retired code — ``Utah Sales Tax - Inactive - SF`` on 33, ``Utah - Weber -
+	Ogden - Inactive - SF`` on 18. The suffix and the ``Inactive`` marker are bookkeeping,
+	not something a customer owes.
 	"""
 	text = str(label or "").strip()
 	if company_abbr:
@@ -606,7 +619,7 @@ def ps_style(name):
 	return {"label": LABEL, "strong": STRONG, "fail": FAIL, "td": TD, "td_right": TD_RIGHT}.get(name, "")
 
 
-# The content helpers, for the Python-composed formats' templates (v1.533.0). Same
+# The content helpers, for the Python-composed formats' templates (v1.535.0). Same
 # prefix, same reason.
 
 

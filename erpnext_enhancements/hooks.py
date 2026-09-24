@@ -1567,6 +1567,10 @@ jinja = {
 		"erpnext_enhancements.email_style.ee_code",
 		"erpnext_enhancements.email_style.ee_prose",
 		"erpnext_enhancements.email_style.ee_pill",
+		# v1.535.0: four Notification bodies called these from v1.331.0 but they were
+		# never defined, so each of those emails would raise and be dropped.
+		"erpnext_enhancements.email_style.ee_h",
+		"erpnext_enhancements.email_style.ee_p",
 		# The letterhead logo URL. Computed in Python because it must be
 		# absolute (an email client has no site origin) and cache-busted with
 		# the deploy token, which is www/ page context, not a Jinja global.
@@ -1586,7 +1590,7 @@ jinja = {
 		"erpnext_enhancements.print_style.ps_facts_close",
 		"erpnext_enhancements.print_style.ps_signature_lines",
 		"erpnext_enhancements.print_style.ps_style",
-		# v1.533.0: how a value looks on paper -- an address without its trailing break,
+		# v1.535.0: how a value looks on paper -- an address without its trailing break,
 		# a bare-digit phone as (801) 555-0100, a quantity as 1 rather than 1.0, a plain
 		# description that keeps its line breaks, "Nos" as "ea", the DRAFT marker.
 		"erpnext_enhancements.print_style.ps_address",
@@ -1596,7 +1600,7 @@ jinja = {
 		"erpnext_enhancements.print_style.ps_line",
 		"erpnext_enhancements.print_style.ps_uom",
 		"erpnext_enhancements.print_style.ps_state",
-		# v1.533.0: what a format cannot find for itself. The party block (name, address,
+		# v1.535.0: what a format cannot find for itself. The party block (name, address,
 		# Attn, phone, email) walks the document -> its Contact -> its Address -> the party
 		# record, because this site keeps phones and emails in the app's own custom fields
 		# that ERPNext never copies onto a document; and the taxes table is split into the
@@ -1848,7 +1852,7 @@ after_migrate = [
 	# already pointed at chrome costs nothing, and the reverse order would leave a
 	# disabled format skipped by the chrome filter, with a stale generator waiting for
 	# whoever re-enables it. Since v1.519.0 it also disables the stock formats of the
-	# other five procurement doctypes (SUPERSEDED_PROCUREMENT_FORMATS), and since v1.533.0
+	# other five procurement doctypes (SUPERSEDED_PROCUREMENT_FORMATS), and since v1.535.0
 	# the Sales Invoice formats and two strays (SUPERSEDED_SALES_FORMATS) -- the Sapphire
 	# sales formats are now those doctypes' defaults, through Property Setter fixtures.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.disable_superseded_print_formats",

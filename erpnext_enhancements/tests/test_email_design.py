@@ -719,6 +719,22 @@ def test_every_fixtured_notification_is_listed_in_hooks():
 		)
 
 
+def test_every_ee_global_a_notification_calls_exists_and_is_registered():
+	"""Four enabled Notification bodies called `ee_p` / `ee_h` from v1.331.0 to v1.535.0,
+	and neither existed. Calling an undefined Jinja global raises; Notification.send()
+	catches it, writes an Error Log and sends nothing. Nothing else would ever notice."""
+	hooks = _read(REPO_ROOT, APP, "hooks.py")
+	style = _read(REPO_ROOT, APP, "email_style.py")
+	for rec in _notification_fixtures():
+		for name in sorted(set(re.findall(r"\b(ee_\w+)\s*\(", rec.get("message") or ""))):
+			assert f'"erpnext_enhancements.email_style.{name}"' in hooks, (
+				f"{rec['name']} calls {name}(), which hooks.py does not register"
+			)
+			assert re.search(rf"^def {name}\(", style, re.MULTILINE), (
+				f"{rec['name']} calls {name}(), which email_style.py does not define"
+			)
+
+
 def test_hooks_registers_the_jinja_globals():
 	"""Individually and prefixed — a module-valued hook entry exports every
 	function in the module into the global Jinja namespace of every Print Format

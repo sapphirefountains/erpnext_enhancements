@@ -14,7 +14,7 @@ So this suite checks the things that fail silently:
   text — the template never prints it raw and never escapes it itself; get this wrong
   and the customer reads raw `&lt;div&gt;` markup, or 1,657 imported lines run together;
 * the page **adds up**: the Amount column sums to the Subtotal, and Subtotal − Discount +
-  taxes is the grand total (until v1.533.0 the Subtotal was `net_total`, which already had
+  taxes is the grand total (until v1.535.0 the Subtotal was `net_total`, which already had
   the discount taken off, so every discounted document subtracted it twice);
 * QuickBooks **billable expenses** print as lines, not as tax;
 * the invoice's **payment state** — credit note, draft, cancelled, unpaid, part-paid,
@@ -403,7 +403,7 @@ class TestTemplatesRender(_RenderCase):
 
 
 class TestTheTotalsAddUp(_RenderCase):
-    """The page is a sum a customer can check, and until v1.533.0 it did not check out."""
+    """The page is a sum a customer can check, and until v1.535.0 it did not check out."""
 
     def test_subtotal_is_the_total_and_the_page_adds_up(self):
         """All 47 discounted invoices apply the discount to the Net Total, so `net_total`
@@ -426,8 +426,43 @@ class TestTheTotalsAddUp(_RenderCase):
                     else:
                         self.assertNotIn("Discount", labels)
 
+    def test_a_discount_with_no_tax_rows_is_subtracted_once(self):
+        """ERPNext's AccountsController.before_print (v16) runs before the template and flips
+        discount_amount negative when the taxes table is empty. Printed as-is the row read
+        `-$ -425.28` on 27 production invoices (ACC-SINV-2026-01569: 1,000.00 less 425.28 is
+        574.72). The format undoes the flip, so the page still adds up."""
+        for name, doctype, html in formats():
+            with self.subTest(name):
+                doc = _sample(doctype, 3, discount=5.0)
+                doc.taxes = []
+                doc.net_total = doc.grand_total = round(doc.total - 5.0, 2)
+                doc.discount_amount = -doc.discount_amount  # what before_print does
+                rows = _totals(_render(html, doc))
+                self.assertIn(("Discount", -5.0), rows)
+                grand = next(i for i, (label, _v) in enumerate(rows) if label.endswith(" total"))
+                self.assertAlmostEqual(sum(v for _l, v in rows[:grand]), doc.grand_total, places=2)
+                self.assertNotIn("-USD -", _render(html, doc), "a double negative")
+
+    def test_a_credit_notes_discount_goes_back_on(self):
+        """On a return every amount is stored negative, the discount included, and
+        before_print leaves a taxed one alone: the discount row must ADD, or the rows miss
+        the (negative) credit total."""
+        html = dict((n, h) for n, _d, h in formats())["Sales Invoice - Sapphire"]
+        doc = _sample("Sales Invoice", 3, discount=5.0)
+        doc.is_return = 1
+        doc.total, doc.discount_amount = -doc.total, -doc.discount_amount
+        for row in doc.items:
+            row.qty, row.amount = -row.qty, -row.amount
+        for tax in doc.taxes:
+            tax.tax_amount = -tax.tax_amount
+        doc.net_total, doc.grand_total = -doc.net_total, -doc.grand_total
+        rows = _totals(_render(html, doc))
+        self.assertIn(("Discount", 5.0), rows)
+        grand = next(i for i, (label, _v) in enumerate(rows) if label.endswith(" total"))
+        self.assertAlmostEqual(sum(v for _l, v in rows[:grand]), doc.grand_total, places=2)
+
     def test_billable_expenses_print_as_lines_not_as_tax(self):
-        """154 invoices carry 1,030 QuickBooks billable-expense rows in the taxes table; they
+        """155 invoices carry 1,030 QuickBooks billable-expense rows in the taxes table; they
         printed under Subtotal looking like tax."""
         charges = (("HAS15841 HASA MURIATIC ACID", 70.26), ("25% markup for HAS15841", 17.57))
         for name, doctype, html in formats():
@@ -557,6 +592,17 @@ class TestInvoiceStates(_RenderCase):
             with self.subTest(terms):
                 out = self.render(due_date="2026-08-03", payment_terms_template=terms)
                 self.assertEqual(out.lower().count("due on receipt") + out.lower().count("due upon receipt"), 1)
+
+    def test_a_due_on_receipt_template_never_contradicts_a_later_date(self):
+        """Production's "Due on receipt" template is set to 1 day after the END of the
+        invoice month, so its 22 invoices fall due on the 1st of the next month. Printed
+        under that date the name contradicted it; the date, which Overdue goes by, wins."""
+        for terms in ("Due on receipt", "Due Upon Receipt"):
+            with self.subTest(terms):
+                out = self.render(posting_date="2026-08-28", due_date="2026-09-01", payment_terms_template=terms)
+                self.assertIn("2026-09-01", out)
+                self.assertNotIn("due on receipt", out.lower())
+                self.assertNotIn("due upon receipt", out.lower())
 
 
 class TestDraftMarker(_RenderCase):

@@ -24,7 +24,7 @@ that reason.
 So the split is the design, and this pins it. Getting it backwards is invisible
 until production.
 
-**The Sales Invoice cleanup** (v1.533.0) rides the same disable pass —
+**The Sales Invoice cleanup** (v1.535.0) rides the same disable pass —
 ``SUPERSEDED_SALES_FORMATS`` — and the three sales doctypes default to their
 Sapphire formats through Property Setter fixtures; both are pinned here too.
 
@@ -349,7 +349,7 @@ def _visible(fragment):
 
 
 class TestWhatTheSupplierReads(unittest.TestCase):
-    """The facts a supplier acts on (v1.533.0): who the order is to, where it goes, whether
+    """The facts a supplier acts on (v1.535.0): who the order is to, where it goes, whether
     it is an order at all, and the lines as a person would write them."""
 
     def setUp(self):
@@ -657,7 +657,7 @@ def _shipped_format_names():
 
 class TestTheSalesInvoiceCleanup(unittest.TestCase):
     """Nik: "clean up all the print formats for Sales Invoice and make the default of the
-    print formats these new ones" (v1.533.0)."""
+    print formats these new ones" (v1.535.0)."""
 
     EXPECTED = {
         # Broken today: TemplateNotFoundError, a blank preview.

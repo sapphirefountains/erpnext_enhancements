@@ -33,7 +33,7 @@ the totals, the terms and the document-specific tail. Same `after_migrate` upser
 - **Every cell style carries `!important`, through `ps.TD`, `ps.TD_RIGHT`, `ps.th()` and
   the shared `ps.TOTAL_*` / `ps.GRAND`.** Frappe's `standard.css` and the site's
   "Redesign" Print Style force `td`/`th` padding and alignment with `!important`, which
-  beats an ordinary inline style — so until v1.533.0 this module's own totals styles
+  beats an ordinary inline style — so until v1.535.0 this module's own totals styles
   never reached a page. Only an inline `!important` outranks them; `print_style` says
   more. The totals styles are that module's now, not copies here.
 - **Print-safe CSS only** — no flexbox, no grid, `page-break-inside: avoid` on rows, and a
@@ -50,7 +50,7 @@ the totals, the terms and the document-specific tail. Same `after_migrate` upser
   rather than guessing. Deriving the pillar from the linked project's value stream is
   the obvious next step and is deliberately not this one.
 
-What v1.533.0 changed, and why (production, measured 2026-09-24: 1,629 Sales Invoices,
+What v1.535.0 changed, and why (production, measured 2026-09-24: 1,629 Sales Invoices,
 673 Quotations, 0 Sales Orders):
 
 - **The party block is `ps_party(doc)`** (`print_lookup`). The document's own contact
@@ -62,7 +62,7 @@ What v1.533.0 changed, and why (production, measured 2026-09-24: 1,629 Sales Inv
   The columns are Item, Qty, Unit, Rate, Amount — quantities as a person writes them
   (`1`, not `1.0`) and ERPNext's `Nos`, the unit on every one of the 6,148 invoice lines,
   as `ea`.
-- **QuickBooks billable expenses print as lines, not as tax.** 154 invoices carry 1,030
+- **QuickBooks billable expenses print as lines, not as tax.** 155 invoices carry 1,030
   of them in the taxes table (up to 98 on one invoice): the material and its markup,
   booked as `Actual` charges on Cost of Goods Sold and Income accounts because there was
   no Item to put on a line. They printed under "Subtotal" looking like tax. They now
@@ -72,14 +72,17 @@ What v1.533.0 changed, and why (production, measured 2026-09-24: 1,629 Sales Inv
   invoices apply the discount to the Net Total, so `net_total` is already net of it:
   printing it as Subtotal and then subtracting the Discount again took the discount off
   twice, and the page did not add up to its own grand total. Tax rows print the account
-  name without ` - SF` or ` - Inactive` (51 invoices said "Utah Sales Tax - Inactive - SF").
+  name without ` - SF` or ` - Inactive` (51 invoices carried a retired code: 33 "Utah
+  Sales Tax - Inactive - SF", 18 "Utah - Weber - Ogden - Inactive - SF").
 - **Sales Order and Sales Invoice say DRAFT or CANCELLED** under their number. A custom
   format never calls Frappe's draft heading, and this site prints drafts — 305 invoices
   are drafts. Quotation does not: all 673 are drafts, and a stamp on every one is noise.
 - **PAYMENT DUE reads "Due on receipt"** when the due date is the invoice date, as it is
   on 1,583 of 1,629 — the invoice's own date printed a second time, under a heading that
   asks the customer to work out what it means. The payment terms template (44 invoices)
-  prints under a later date, or under "Due on receipt" unless it says the same thing.
+  prints under it, except a template named "Due on receipt", which never prints: the one on
+  production falls due on the 1st of the next month, and "Due on receipt" under that date
+  contradicted it.
 - **Payments.** 1,162 of 1,324 submitted invoices are paid in full and 94 part-paid. A
   submitted invoice whose outstanding differs from its total prints Payments received and
   Amount due under the total; a paid one prints "Paid in full — thank you." in place of
@@ -271,7 +274,20 @@ _TOTALS_OPEN = (
 	'      <td style="width:18%;' + ps.TOTAL_VALUE + '">' + _money("subtotal") + "</td>\n"
 	"    </tr>\n"
 	"    {%- if doc.discount_amount %}\n"
-	+ _total_row("Discount", "-" + _money("doc.discount_amount"))
+	"    {#- ERPNext's own before_print (AccountsController, v16) runs before this template and\n"
+	"        flips discount_amount negative when the taxes table is empty, for the stock formats'\n"
+	"        benefit. Undo it, so the stored sign decides: a sale's discount comes off, a credit\n"
+	"        note's goes back on. Printed as-is it read `-$ -425.28` on 27 invoices. -#}\n"
+	"    {%- set stored_discount = -doc.discount_amount if not doc.taxes else doc.discount_amount %}\n"
+	"    {%- set shown_discount = -stored_discount %}\n"
+	+ _total_row(
+		"Discount",
+		"{% if shown_discount < 0 %}-"
+		+ _money("-shown_discount")
+		+ "{% else %}"
+		+ _money("shown_discount")
+		+ "{% endif %}",
+	)
 	+ "    {%- endif %}\n"
 	"    {#- The real tax rows, labelled by account without the company suffix. Utah taxability\n"
 	"        is settled per document by the tax template, so this needs no change for WI-036. -#}\n"
@@ -386,12 +402,16 @@ _SALES_ORDER_HTML = _compose(
 # it an invoice asks first.
 
 # "Due on receipt" when the due date is the invoice date (1,583 of 1,629), and the payment
-# terms under it unless they say the same thing in other words.
+# terms under it -- except a template that itself reads "Due on receipt", which is never
+# printed at all. Production's template of that name is set to 1 day after the END of the
+# invoice month, so its 22 invoices fall due on the 1st of the next month: printed under
+# that date it read "09-01-2026 / Due on receipt", which contradicts itself. The date is
+# what ERPNext's Overdue status and dunning go by, so the date is what prints.
 _PAYMENT_DUE = (
 	"{%- set due_on_receipt = not doc.due_date or doc.due_date == doc.posting_date %}"
 	"{%- if due_on_receipt %}Due on receipt{% else %}" + _date("doc.due_date") + "{% endif %}"
 	'{%- set terms_name = (doc.get("payment_terms_template") or "") | trim %}'
-	'{%- if terms_name and not (due_on_receipt and (terms_name | lower | replace("upon", "on")) == "due on receipt") %}'
+	'{%- if terms_name and (terms_name | lower | replace("upon", "on")) != "due on receipt" %}'
 	'<br><span style="font-size:11.5px">{{ terms_name | e }}</span>{% endif %}'
 )
 

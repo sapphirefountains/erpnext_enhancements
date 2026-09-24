@@ -282,11 +282,18 @@ Links this app does not draw itself — the `md_to_html()` output in the morning
 and any `<a>` written into `rich()`, `note_rich()` or an HTML string handed to `wrap()` —
 cannot carry the class, so the shell answers frappe's rule with one of its own:
 `td.ee-md a:not(.btn){color:#00609c !important;font-weight:400 !important}`. Premailer
-keeps it as a head rule for the same reason it keeps frappe's (the `:not()`), and the
-`td` makes it one element more specific than `.email-body a:not(.btn)`, so it wins
-whichever order the two `<style>` blocks land in. Verified by rendering the sample mail
-through premailer 3.10: the briefing's markdown link prints bahama-blue at normal weight.
-It does not touch the button, whose anchor carries `class="btn"`.
+cannot inline it either (the `:not()`), so it stays as an `!important` rule in the shell's
+own `<style>`, which sits in the body; only frappe's `email_css` leftovers reach `<head>`.
+The `td` makes it one element more specific than `.email-body a:not(.btn)`, so it wins
+wherever both apply, whichever order they land in — Apple Mail and the other clients that
+honour a body `<style>`. **Gmail drops a `<style>` in the body, so this rule does not
+reach it**; whether frappe's `<head>` rule does depends on Gmail's handling of `:not()`,
+which has not been checked in a real inbox. If it does, markdown links in Gmail still
+print near-black; moving the rule into an app `email_css` bundle (which premailer writes
+to `<head>`) is the fix, and was deliberately left for a change of its own. Verified by
+rendering the sample mail through premailer 3.10: the briefing's markdown link prints
+bahama-blue at normal weight. It does not touch the button, whose anchor carries
+`class="btn"`.
 
 **`prose()` and `code()` are not interchangeable.** Four senders used to emit their whole
 body as `<pre>`; two of them (offsite backup, call transcripts) really are machine

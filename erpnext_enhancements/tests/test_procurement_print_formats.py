@@ -604,7 +604,7 @@ class TestTheStockFormatsAreDisabled(unittest.TestCase):
 
 	def test_the_pass_disables_them_with_the_low_level_write(self):
 		"""Run the real function against a fake database: every enabled stock format is
-		disabled -- procurement's and, since v1.533.0, the Sales Invoice ones -- an
+		disabled -- procurement's and, since v1.535.0, the Sales Invoice ones -- an
 		already-disabled one and a missing one are left alone, a stock format nobody listed
 		(`Quotation Standard`) is untouched, and nothing goes through the ORM (Print
 		Format.validate refuses standard formats)."""

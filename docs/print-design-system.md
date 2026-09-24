@@ -66,7 +66,9 @@ on them. ERPNext's stock formats for those doctypes are disabled on every migrat
 (`setup_print_formats.SUPERSEDED_PROCUREMENT_FORMATS`), as the order's three are.
 
 **Since v1.535.0 the three sales formats are their doctypes' defaults too**, and Sales
-Invoice prints on nothing else: `SUPERSEDED_SALES_FORMATS` disables Sales Invoice Standard,
+Invoice has one designed format left — the only other choice in its dropdown is frappe's
+generated "Standard", which is not a Print Format record, so no disable pass can remove it.
+`SUPERSEDED_SALES_FORMATS` disables Sales Invoice Standard,
 with Item Image, Return, Print, PD Format v2, Sales Auditing Voucher and the leftover Point of
 Sale row (plus Sales Order PD v2), and keeps the three Regional formats disabled. Three of
 those printed nothing at all — Sales Invoice Print lost its template in ERPNext v16.19 and
@@ -192,7 +194,7 @@ it is read, and any failure prints what the document itself carries rather than 
 
 **The taxes table holds more than tax.** QuickBooks puts a billable expense on an invoice
 as a line with no Item, and the sync books each as an `Actual` charge
-(`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 154
+(`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 155
 invoices, booked to Cost of Goods Sold (the material) and Income (its markup). Printed as
 taxes they sat under Subtotal, up to 98 deep. `ps_charge_rows` returns those — `Actual`
 rows on a non-Tax account — and the sales formats print them as lines under **Billable
@@ -256,8 +258,12 @@ python -m unittest erpnext_enhancements.tests.test_procurement_print_formats -v
 `test_print_style` renders the Maintenance Record Print fixture against sample records —
 per-site and single-feature, signed and unsigned, with an out-of-range reading, with
 every table empty — because nothing else compiles a fixture's html before a customer is
-holding the PDF. The format suites render every Sapphire format under `StrictUndefined`
-with the real `ps_*` helpers, and check the sums: the Amount column adds up to Subtotal,
-and Subtotal − Discount + taxes to the total. Before v1.535.0 a discounted invoice
-subtracted its discount twice (Subtotal printed `net_total`, which is already net of it)
-and nothing noticed.
+holding the PDF. The format suites render every Sapphire format with the real `ps_*`
+helpers. The sales suite renders under `StrictUndefined`, against a document stub that
+raises on a field the doctype lacks on production, and checks the sums: the Amount column
+adds up to Subtotal, and Subtotal − Discount + taxes to the total — including a document
+with no tax rows, whose discount ERPNext's own `before_print` flips negative before the
+template sees it. Before v1.535.0 a discounted invoice subtracted its discount twice
+(Subtotal printed `net_total`, which is already net of it) and nothing noticed. The
+Purchase Order and procurement suites use Jinja's default `Undefined` against a
+permissive stub, so they do not catch a template that reads a missing field.

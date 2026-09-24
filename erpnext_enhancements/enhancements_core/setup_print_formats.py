@@ -380,7 +380,7 @@ SUPERSEDED_PROCUREMENT_FORMATS = (
 )
 
 # The Sales Invoice formats, and two strays beside them, superseded by the "<Doctype> -
-# Sapphire" sales formats (v1.533.0). Nik: "clean up all the print formats for Sales Invoice
+# Sapphire" sales formats (v1.535.0). Nik: "clean up all the print formats for Sales Invoice
 # and make the default of the print formats these new ones" -- the defaults are the Quotation,
 # Sales Order and Sales Invoice `default_print_format` Property Setter fixtures. Checked on
 # production on 2026-09-24: no Notification, Auto Repeat, POS Profile, Process Statement Of
