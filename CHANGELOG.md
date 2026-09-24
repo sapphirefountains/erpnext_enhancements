@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.525.0] - 2026-09-23
+
+**The AI write gate switches on, with exemptions that carry the routine work: permanent ones for
+low-risk records, and time-boxed windows for bulk jobs.** ADR 0016 §6, WI-079. It was held since
+v1.524.0. `run_python_code` proved not read-only, so it stays gated, and `confirm_action` ran the
+redacted card, which v1.524.1 fixed. On 2026-09-23 Nik chose to carry the load with exemptions.
+
+### Added
+
+- **Patch `enable_ai_write_gate`** seeds the permanent exemptions and then sets
+  `ai_write_gating_enabled`. The list is Comment, ToDo, Sapphire Maintenance Template, Section and
+  Profile, Serial No, and Training Lesson.
+  - Rows are appended to the Single's child table and inserted row by row with `db_insert`, because
+    saving the Single would run its whole `validate()`.
+  - Rows already present are left alone, and a doctype missing from the site is skipped.
+  - If seeding fails, the flag is not set: the gate stays off, as it is today, and the Error Log
+    says why.
+  - It cannot raise, so a failure never aborts the deploy.
+- **Time-boxed exemption windows.** `AI Confirmation Exempt Doctype` gains **Exempt Until**
+  (Datetime, empty means permanent). A person opens a window for a bulk job on the settings page,
+  for example "Item until 18:00", and it closes by itself: `_exempt_doctypes()` compares it with
+  the current time on every call, in site-local time on both sides. So a cached settings doc
+  cannot hold it open.
+  - A window that can't be read counts as closed, for that row only. It does not take the other
+    exemptions down with it.
+
+### Changed
+
+- **`NEVER_EXEMPT` now covers the gate's own records**, not just Task: ERPNext Enhancements
+  Settings, AI Confirmation Exempt Doctype, AI Pending Action and AI Action Log. With windows in
+  place, an exemptible settings doctype would have let an assistant open its own window. An
+  exemptible AI Pending Action would have let it rewrite a card's arguments after a human read it
+  but before they confirmed. An exemptible AI Action Log would have let it edit its audit trail. A
+  row for any of these is ignored, and the field help says so.
+
+### Why this list, and what stays gated
+
+The inventory is the Assistant Audit Log from 2026-08-28, when it starts, to 2026-09-23. All of it
+was one user's writes.
+- **Task** accounted for 246 creates, 235 closes and 200 other updates. Creates and closes stay
+  gated by design: that is the gate's purpose. Other updates already run through the per-call
+  decider.
+- **Comment** accounted for 226 writes, and is the only other doctype written on most days (15 of
+  26).
+- **Almost everything else was one-day bulk work:**
+  - 328 Items, 165 Item Prices, 38 ToDos and 5 Stock Reconciliations on 2026-09-23, from a
+    warehouse session;
+  - 80 maintenance contracts, 51 sections, 40 templates, 24 Serial Nos and 20 Project Contracts
+    on 9–10 Sep;
+  - 49 Training Lessons on 14 Sep.
+
+Exemptions cannot reach the two largest loads. Task creates and closes are excluded by design.
+`run_python_code` (1,880 calls) is high-risk and never exemptible, and AI sessions are moving their
+diagnostics to the read-only `run_database_query`. So the permanent list takes the low-risk
+records, and bulk jobs on higher-risk doctypes get windows. Money, stock, contracts, permissions,
+Items and Item Prices stay gated. Item is included in that because creating one with a
+`standard_rate` also writes an Item Price.
+
+### Tests
+
+- New `tests/test_ai_gate_switch_on.py`, run in the AI-gate CI step, covers:
+  - the chosen list, exactly;
+  - the patch seeds only missing rows, never saves the Single, and sets the flag only after
+    seeding;
+  - a failed seed leaves the gate off and raises nothing;
+  - the patch is registered after `[post_model_sync]`;
+  - the column has no default.
+- `test_ai_gate_per_call` gains window cases (open, closed, closing at the exact moment, one
+  doctype only, unreadable) and the never-exempt gate records.
+
 ## [1.524.1] - 2026-09-23
 
 **A confirmed AI action now runs what the assistant proposed, not the redacted copy shown on the

@@ -239,6 +239,23 @@ Second, the exemption mechanism must never be used for `Task`: `_gated_execute`'
 (`name in EXEMPTABLE_TOOLS and doctype in _exempt_doctypes()`) applies one exemption to
 `create_document` and `update_document` alike, so exempting `Task` would ungate creation too.
 
+**Decided 2026-09-23, when the gate was switched on (v1.525.0).** Both open questions are
+settled:
+- `run_python_code` stays gated. Its sandbox is arbitrary code, not a read.
+- Task is never exempt, enforced by `NEVER_EXEMPT`.
+
+Nik chose to carry the remaining load with exemptions. Because the 30-day inventory showed that
+nearly all non-Task volume was one-day bulk work, there are two kinds:
+- **Permanent** exemptions for the low-risk records assistants write: Comment, ToDo, the maintenance
+  catalog (Template, Section, Profile), Serial No and Training Lesson.
+- **Time-boxed windows** (`exempt_until`) that a person opens on the settings page for a bulk job,
+  and that close by themselves.
+
+`NEVER_EXEMPT` grows to the gate's own records: its settings, the exemption table, AI Pending
+Action and AI Action Log. That way no assistant can open its own window, alter a card after it was
+read, or edit its audit trail. Money, stock, contracts, permissions, Items and Item Prices stay
+behind a card.
+
 The gate covers MCP tool calls only. Writes over REST — Triton's
 `/api/v1/integrations/erpnext/{doctype}` route, or any API-key call — never pass through it. ADR
 0014 already says the gate is the human-in-the-loop layer, not the authorization.

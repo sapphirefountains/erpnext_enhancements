@@ -273,7 +273,20 @@ PER_CALL_GATED = {
 #: Doctypes the settings allowlist may never exempt, whatever a row says. The exemption step
 #: applies to create_document and update_document alike, so exempting Task would ungate Task
 #: creation along with its updates — the one write ADR 0016 §6 exists to confirm.
-NEVER_EXEMPT = frozenset({"Task"})
+#:
+#: The rest are the gate's own records. Exempting the settings or its exemption table would let
+#: an assistant open its own exemption window (v1.525.0). Exempting AI Pending Action would let
+#: it rewrite a card's arguments after a human had read it but before they confirmed. Exempting
+#: AI Action Log would let it edit its own audit trail.
+NEVER_EXEMPT = frozenset(
+    {
+        "Task",
+        "ERPNext Enhancements Settings",
+        "AI Confirmation Exempt Doctype",
+        "AI Pending Action",
+        "AI Action Log",
+    }
+)
 
 # ------------------------------------------------- private-context denylist
 #
@@ -827,12 +840,36 @@ def is_mutating(tool):
 
 
 def _exempt_doctypes():
+    """Doctypes whose create/update skips confirmation right now.
+
+    A row with no ``exempt_until`` is permanent. A row with one is a window for a bulk job,
+    which a human opens on the settings page and which closes by itself: it stops counting the
+    moment ``exempt_until`` is not in the future. That comparison runs on every call, so a
+    cached settings doc can't hold a window open. Both sides are site-local time. A window that
+    can't be read counts as closed, for that row only. Failing to read the settings at all
+    returns nothing exempt. Both fail closed.
+    """
     try:
         settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
-        rows = {row.document_type for row in settings.get("ai_exempt_doctypes") or []}
-        return rows - NEVER_EXEMPT
+        rows = settings.get("ai_exempt_doctypes") or []
     except Exception:
         return set()
+    now = None
+    exempt = set()
+    for row in rows:
+        until = getattr(row, "exempt_until", None)
+        if until:
+            try:
+                if now is None:
+                    now = frappe.utils.now_datetime()
+                if frappe.utils.get_datetime(until) <= now:
+                    continue
+            except Exception:
+                continue
+        doctype = getattr(row, "document_type", None)
+        if doctype:
+            exempt.add(doctype)
+    return exempt - NEVER_EXEMPT
 
 
 # ------------------------------------------------------------------ logging

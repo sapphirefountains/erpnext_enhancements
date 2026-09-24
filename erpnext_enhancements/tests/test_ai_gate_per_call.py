@@ -1,7 +1,9 @@
 """test_ai_gate_per_call.py"""
+import datetime
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -293,8 +295,8 @@ class TestUpdateDocumentDecider(unittest.TestCase):
         self.assertIs(_gate.PER_CALL_GATED["update_document"], _gate._update_document_needs_human)
 
 
-class TestTheScopedGateEndToEnd(unittest.TestCase):
-    """The flag on, the three outcomes ADR 0016 §6 promises, through `_gated_execute` itself."""
+class GateHarness(unittest.TestCase):
+    """Runs `_gated_execute` itself with the flag on and a stubbed settings doc."""
 
     def _run(self, tool_name, arguments, exempt_rows=()):
         import frappe
@@ -315,10 +317,15 @@ class TestTheScopedGateEndToEnd(unittest.TestCase):
 
         def _rows(self, key):
             # Only the real table field answers, so a renamed field fails these tests instead of
-            # being papered over by a stub that returns rows for any key.
+            # being papered over by a stub that returns rows for any key. A row is a doctype
+            # (permanent) or a (doctype, exempt_until) pair (a time-boxed window, v1.525.0).
             if key != "ai_exempt_doctypes":
                 return []
-            return [type("Row", (), {"document_type": d})() for d in exempt_rows]
+            rows = []
+            for d in exempt_rows:
+                doctype, until = (d, None) if isinstance(d, str) else d
+                rows.append(type("Row", (), {"document_type": doctype, "exempt_until": until})())
+            return rows
 
         settings = type("Settings", (), {"get": _rows})()
 
@@ -348,6 +355,10 @@ class TestTheScopedGateEndToEnd(unittest.TestCase):
             else:
                 gate_frappe.get_cached_doc = saved["cached"]
         return response, calls
+
+
+class TestTheScopedGateEndToEnd(GateHarness):
+    """The flag on, the three outcomes ADR 0016 §6 promises, through `_gated_execute` itself."""
 
     def test_a_task_moved_to_working_executes_once_and_is_logged(self):
         response, calls = self._run(
@@ -396,6 +407,75 @@ class TestTheScopedGateEndToEnd(unittest.TestCase):
     def test_task_creation_is_proposed(self):
         response, calls = self._run("create_document", {"doctype": "Task", "data": {"subject": "x"}})
         self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
+
+class TestTimeBoxedExemptions(GateHarness):
+    """v1.525.0: an exemption row with exempt_until is a window that closes by itself."""
+
+    NOW = datetime.datetime(2026, 9, 23, 15, 0, 0)
+
+    def setUp(self):
+        import frappe
+
+        patches = [
+            mock.patch.object(frappe.utils, "now_datetime", lambda: self.NOW, create=True),
+            mock.patch.object(
+                frappe.utils,
+                "get_datetime",
+                lambda v: v if isinstance(v, datetime.datetime) else datetime.datetime.fromisoformat(str(v)),
+                create=True,
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    ITEM = {"doctype": "Item", "data": {"item_code": "PUMP-001", "item_name": "PUMP"}}
+
+    def test_an_open_window_lets_a_bulk_create_through(self):
+        _, calls = self._run("create_document", self.ITEM, exempt_rows=(("Item", "2026-09-23 18:00:00"),))
+        self.assertEqual((calls["executed"], calls["proposed"]), (1, 0))
+        self.assertEqual(calls["logged"][0]["auto_approved"], 1)
+
+    def test_a_closed_window_is_a_card_again(self):
+        _, calls = self._run("create_document", self.ITEM, exempt_rows=(("Item", "2026-09-23 14:59:59"),))
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
+    def test_the_window_closes_at_the_exact_moment(self):
+        _, calls = self._run("create_document", self.ITEM, exempt_rows=((("Item", self.NOW)),))
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
+    def test_a_window_for_one_doctype_leaves_the_others_gated(self):
+        _, calls = self._run(
+            "create_document",
+            {"doctype": "Item Price", "data": {"item_code": "PUMP-001", "price_list_rate": 1}},
+            exempt_rows=(("Item", "2026-09-23 18:00:00"),),
+        )
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+
+    def test_an_unreadable_window_counts_as_closed_for_that_row_only(self):
+        rows = (("Item", "not a date"), "Comment")
+        _, calls = self._run("create_document", self.ITEM, exempt_rows=rows)
+        self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
+        _, calls = self._run("create_document", {"doctype": "Comment", "data": {"content": "x"}}, exempt_rows=rows)
+        self.assertEqual((calls["executed"], calls["proposed"]), (1, 0))
+
+    def test_the_gates_own_records_can_never_be_exempted(self):
+        # An assistant that could write these could open its own window, rewrite a card after a
+        # human read it, or edit its own audit trail.
+        for doctype in (
+            "ERPNext Enhancements Settings",
+            "AI Confirmation Exempt Doctype",
+            "AI Pending Action",
+            "AI Action Log",
+        ):
+            with self.subTest(doctype=doctype):
+                _, calls = self._run(
+                    "update_document",
+                    {"doctype": doctype, "name": "x", "data": {"note": "y"}},
+                    exempt_rows=(doctype, (doctype, "2026-09-23 18:00:00")),
+                )
+                self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
 
 
 if __name__ == "__main__":

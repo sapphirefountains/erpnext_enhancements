@@ -12,7 +12,8 @@ Since v1.14.0 this package also carries the **AI write-confirmation gate**
 ## Write gate (AI Governance, v1.14.0)
 
 When **ERPNext Enhancements Settings → AI Governance → Require Confirmation
-for AI Writes** is ON (default OFF — ships dormant):
+for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
+`enable_ai_write_gate` switches it ON on production (ADR 0016 §6):
 
 - Importing this package (which FAC does on every MCP request before
   dispatch) wraps `BaseTool._safe_execute` — the single choke point both FAC
@@ -41,6 +42,15 @@ for AI Writes** is ON (default OFF — ships dormant):
   append-only **AI Action Log**; settings allow a per-doctype create/update
   exemption list, a pending TTL (default 1 h, hourly expiry sweep) and an
   optional retention window.
+- **Exemptions are permanent or time-boxed (v1.525.0).** A row with no
+  `exempt_until` is permanent. The patch seeds Comment, ToDo, the maintenance
+  catalog, Serial No and Training Lesson. A row with a time is a window for a
+  bulk job: a human opens it on the settings page and it closes itself, because
+  `_exempt_doctypes()` compares it with the current time on every call.
+  `NEVER_EXEMPT` covers Task and the gate's own records: its settings, the
+  exemption table, AI Pending Action and AI Action Log. That means an
+  assistant can't open its own window, rewrite a card after it was read, or
+  edit its audit trail.
 - **FAC-upgrade risk**: `_safe_execute` is private FAC API. `apply_gate()`
   logs an Error Log entry when the seam is missing, and the integration
   canary test (`test_ai_gating_integration.test_gate_marker_present`) fails
@@ -156,13 +166,14 @@ For the same reason, do **not** add `frappe_assistant_core` to
   update executes unless it closes the Task — an allowlist of Open, Working, Pending Review
   and Overdue, so Completed, Canceled, core's "Cancelled" and anything unrecognised wait —
   and every other doctype falls through to the exempt allowlist and then a proposal.
-  `NEVER_EXEMPT` strips Task from the settings allowlist whatever a row says, because that
-  allowlist ungates `create_document` and `update_document` together. **No decider is ever
+  `NEVER_EXEMPT` strips Task, and since v1.525.0 the gate's own records, from the settings
+  allowlist whatever a row says, because that allowlist ungates `create_document` and
+  `update_document` together. **No decider is ever
   registered for a `HIGH_RISK` tool** (`test_ai_gate_per_call` pins the sets disjoint): step 3b
   does not consult `HIGH_RISK`, so a decider would run it unconfirmed. `run_python_code` is
   the case in point — as deployed it hands the caller the whole `frappe` module on a read-write
-  connection, so it is arbitrary code, not a read (verified 2026-09-23). These deciders are
-  dormant while `ai_write_gating_enabled` is 0. The exception is `create_followup_task`
+  connection, so it is arbitrary code, not a read (verified 2026-09-23). The deciders are
+  live once `ai_write_gating_enabled` is 1, which the v1.525.0 patch sets. The exception is `create_followup_task`
   (v1.29.0) — the first *write* tool. **Every write tool MUST be added to
   `_gate.py`'s `APP_MUTATING` set** so the AI write gate confirms it through a
   human (when gating is on) instead of relying on the fail-closed fallback;

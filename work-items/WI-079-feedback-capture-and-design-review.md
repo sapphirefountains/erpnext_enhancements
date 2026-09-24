@@ -110,6 +110,11 @@ and the `NEVER_EXEMPT` guard are in `_gate.py` and dormant while the flag is 0. 
   by anyone who can read that log; and `gating_api.confirm_action` re-executes the *sanitized*
   arguments stored on the Pending Action, so a confirmed write whose data key contains a sensitive
   substring (for example `author`) would write `***REDACTED***`.
+  - **Update, v1.525.0:** the gate switches on (patch `enable_ai_write_gate`). Nik chose
+    exemptions: permanent for Comment, ToDo, the maintenance catalog, Serial No and Training
+    Lesson, plus time-boxed windows (`exempt_until`) for bulk jobs. `NEVER_EXEMPT` now also covers
+    the gate's own records. `run_python_code` stays gated, and AI sessions move their diagnostics
+    to `run_database_query`.
   - **Update, v1.524.1:** `confirm_action` is fixed. The redacted values are sealed in a Password
     field and restored at confirm, and the action fails closed if they can't be. This blocker to
     switching the gate on is gone. The same hash is also in `ASST-AUDIT-2026-09-23-00365`, the
