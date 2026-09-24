@@ -1039,6 +1039,15 @@ jobs:
       # else compiles a fixture's html before a customer is holding the PDF.
       - name: Print design system + Maintenance Record Print (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_print_style -v
+      # What a print format cannot find for itself (print_lookup.py): the party block walks
+      # the document -> its Contact -> its Address -> the party record, reading this app's
+      # custom phone/email fields that ERPNext never copies onto a document, and never asks
+      # for a column the site's meta lacks (get_value raises, and inside a Jinja global that
+      # is a blank page); the taxes table splits into QuickBooks billable-expense lines and
+      # the tax, as a partition of its non-zero rows. Own step: installs its own frappe stub
+      # (incl. frappe.contacts.doctype.address.address) in setUpModule.
+      - name: Print party + taxes lookup (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_print_lookup -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
       # Purchase Order Order Stage. Pins the backfill rule, which CANNOT key on an empty
@@ -2304,7 +2313,7 @@ jobs:
           node scripts/test_capture_panel.js
           node scripts/test_capture_annotate.js
           node scripts/test_capture_drafts.js
-      # Browser Back/Forward on the Desk wizards and training pages (v1.534.2). Each harness runs
+      # Browser Back/Forward on the Desk wizards and training pages (v1.535.1). Each harness runs
       # the real page against a port of v16's router and a fake browser history: Back steps back
       # a section/step/lesson, Forward restores it, Back from the first screen leaves the page,
       # and a save pending when the screen changes is neither lost nor sent for the wrong record.

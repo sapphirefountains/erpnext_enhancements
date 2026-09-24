@@ -1567,6 +1567,10 @@ jinja = {
 		"erpnext_enhancements.email_style.ee_code",
 		"erpnext_enhancements.email_style.ee_prose",
 		"erpnext_enhancements.email_style.ee_pill",
+		# v1.535.0: four Notification bodies called these from v1.331.0 but they were
+		# never defined, so each of those emails would raise and be dropped.
+		"erpnext_enhancements.email_style.ee_h",
+		"erpnext_enhancements.email_style.ee_p",
 		# The letterhead logo URL. Computed in Python because it must be
 		# absolute (an email client has no site origin) and cache-busted with
 		# the deploy token, which is www/ page context, not a Jinja global.
@@ -1586,6 +1590,25 @@ jinja = {
 		"erpnext_enhancements.print_style.ps_facts_close",
 		"erpnext_enhancements.print_style.ps_signature_lines",
 		"erpnext_enhancements.print_style.ps_style",
+		# v1.535.0: how a value looks on paper -- an address without its trailing break,
+		# a bare-digit phone as (801) 555-0100, a quantity as 1 rather than 1.0, a plain
+		# description that keeps its line breaks, "Nos" as "ea", the DRAFT marker.
+		"erpnext_enhancements.print_style.ps_address",
+		"erpnext_enhancements.print_style.ps_phone",
+		"erpnext_enhancements.print_style.ps_qty",
+		"erpnext_enhancements.print_style.ps_rich",
+		"erpnext_enhancements.print_style.ps_line",
+		"erpnext_enhancements.print_style.ps_uom",
+		"erpnext_enhancements.print_style.ps_state",
+		# v1.535.0: what a format cannot find for itself. The party block (name, address,
+		# Attn, phone, email) walks the document -> its Contact -> its Address -> the party
+		# record, because this site keeps phones and emails in the app's own custom fields
+		# that ERPNext never copies onto a document; and the taxes table is split into the
+		# QuickBooks billable-expense lines it also holds and the tax it is named for.
+		"erpnext_enhancements.print_lookup.ps_party",
+		"erpnext_enhancements.print_lookup.ps_rfq_suppliers",
+		"erpnext_enhancements.print_lookup.ps_charge_rows",
+		"erpnext_enhancements.print_lookup.ps_tax_rows",
 	],
 }
 
@@ -1816,17 +1839,22 @@ after_migrate = [
 	# above have just created. See setup_print_formats.ensure_chrome_pdf_generator.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_chrome_pdf_generator",
 	# Keep the three superseded ERPNext Purchase Order formats out of the print
-	# dropdown -- "Purchase Order - Sapphire" is the only one we print. On EVERY
-	# migrate for exactly the reason above: they are standard formats and re-sync
-	# from erpnext's JSON, so a one-shot patch would come undone at the next
-	# migrate and look like it had worked until somebody printed a PO. The two
-	# CUSTOM PO formats are genuinely deleted, once, by
-	# patches/purge_purchase_order_print_formats.py -- nothing recreates those.
-	# After the chrome pass on purpose: disabling a format it has already pointed
-	# at chrome costs nothing, and the reverse order would leave a disabled format
-	# skipped by the chrome filter and then re-enabled by a future migrate with a
-	# stale generator. Since v1.519.0 it also disables the stock formats of the other five
-	# procurement doctypes (SUPERSEDED_PROCUREMENT_FORMATS), for the same reason.
+	# dropdown -- "Purchase Order - Sapphire" is the only one we print. Disabled, not
+	# deleted: they are standard formats, and a deleted one is imported again from
+	# erpnext's JSON. A disable is NOT undone by that sync -- this comment used to say it
+	# was. frappe v16 keeps the site's `disabled` when a standard format re-imports
+	# (`ignore_values` in frappe/modules/import_file.py, lines 28-30, applied by
+	# `delete_old_doc` at 261-264). It still runs on EVERY migrate because that is
+	# idempotent (an already-disabled format is skipped) and because it re-disables
+	# anything an admin has switched back on. The two CUSTOM PO formats are genuinely
+	# deleted, once, by patches/purge_purchase_order_print_formats.py -- nothing
+	# recreates those. After the chrome pass on purpose: disabling a format it has
+	# already pointed at chrome costs nothing, and the reverse order would leave a
+	# disabled format skipped by the chrome filter, with a stale generator waiting for
+	# whoever re-enables it. Since v1.519.0 it also disables the stock formats of the
+	# other five procurement doctypes (SUPERSEDED_PROCUREMENT_FORMATS), and since v1.535.0
+	# the Sales Invoice formats and two strays (SUPERSEDED_SALES_FORMATS) -- the Sapphire
+	# sales formats are now those doctypes' defaults, through Property Setter fixtures.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.disable_superseded_print_formats",
 	# The eight chat backstops that stood here from v1.261.0 went with the module in
 	# v1.426.0 (ADR 0011). THE PATTERN THEY DEMONSTRATED IS STILL THE HOUSE RULE and is

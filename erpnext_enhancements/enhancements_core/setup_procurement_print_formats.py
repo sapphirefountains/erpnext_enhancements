@@ -14,10 +14,11 @@ whole group at once, made the difference hard to miss. These are the five:
 
 The chrome is `print_style`'s, exactly as the Purchase Order uses it (docs/print-design-system.md):
 neutral stripe, the wordmark with our address and phone, eyebrow over a display-face title,
-two ruled rows of facts, a ruled line table, and the totals block in the order's own styles
-— `tests/test_procurement_print_formats.py` holds those styles equal to the order's, so the
-family cannot drift apart one edit at a time. Same `after_migrate` upsert and the same
-self-contained `_upsert_print_format` as the order and the sales formats.
+two ruled rows of facts, a ruled line table, and the totals block in `print_style`'s shared
+totals styles — the order uses the same ones, and `tests/test_procurement_print_formats.py`
+holds both modules to them, so the family cannot drift apart one edit at a time. Same
+`after_migrate` upsert and the same self-contained `_upsert_print_format` as the order and
+the sales formats.
 
 Decisions, each for a reason:
 
@@ -29,8 +30,11 @@ Decisions, each for a reason:
 - **The RFQ is addressed to `doc.vendor`.** ERPNext prints an RFQ once per supplier: before
   emailing each one it sets `vendor` (and each line's `supplier_part_no`) and renders
   again, and `before_print` does the same with the first supplier for the preview. With no
-  vendor set, every supplier on the request is listed instead. No prices on it — the
-  supplier supplies those.
+  vendor set, every supplier on the request is listed instead (`print_lookup.ps_rfq_suppliers`
+  decides which). No prices on it — the supplier supplies those.
+- **The supplier block is `print_lookup.ps_party`'s**, as on the order: name, address, Attn,
+  phone and email, looked up past the document because this site keeps them on the Contact,
+  the Address and the Supplier rather than on the document.
 - **The receipt prints quantities, not money.** It is the paper a receiver signs against a
   delivery, and it is read at a tailgate. The rejected column appears only when something
   was rejected, which on production has never happened.
@@ -38,8 +42,11 @@ Decisions, each for a reason:
   printed under the ordinary title reads as a second delivery or a second bill.
 - **Nothing is invented.** A blank date or reference prints a dash, not a guess; the
   invoice prints Amount due only when it differs from the total, like the sales invoice.
-- **`description` is rendered unescaped and `item_name` escaped**, as on every format here:
-  the description is a Text Editor field holding markup from the Item master.
+- **`description` goes through `ps_rich` and `item_name` is escaped**, as on the order: the
+  description is a Text Editor field, so markup from the Item master passes through, while
+  the plain-text descriptions most lines carry keep their line breaks. Quantities print
+  through `ps_qty` ("12", not "12.0") and units through `ps_uom` ("Nos" is "ea"). The item
+  code stays, unwrapped: receiving and a supplier's counter staff work from it.
 """
 
 import frappe
@@ -57,16 +64,12 @@ PURCHASE_INVOICE_FORMAT = "Purchase Invoice - Sapphire"
 #: Our address on the four supplier-facing buying doctypes — the Purchase Order's field.
 ADDRESS_FIELD = "billing_address_display"
 
-# --- the Purchase Order's own styles ------------------------------------------------
-# The same values as `setup_print_formats` (the order). Restated rather than imported
-# because that module's names are private; the format suite holds them equal.
+# --- the Purchase Order's own dash ---------------------------------------------------
+# The same value as `setup_print_formats` (the order). Restated rather than imported
+# because that module's names are private; the format suite holds them equal. The totals
+# styles are not restated: both modules use `print_style`'s TOTAL_* and GRAND directly.
 
 _DASH = '<span style="color:' + ps.INK_700 + ';">&mdash;</span>'
-_TOTAL_LABEL_TD = "text-align:right; padding:3px 8px; color:" + ps.INK_700 + ";"
-_TOTAL_VALUE_TD = "text-align:right; padding:3px 8px; white-space:nowrap; color:" + ps.INK_700 + ";"
-_GRAND_TD = (
-	"text-align:right; padding:8px 8px 4px; border-top:2px solid " + ps.DEEP_SEA_BLUE + "; " + ps.STRONG
-)
 
 # --- fragments ----------------------------------------------------------------------
 # Concatenated, never interpolated: the markup is full of Jinja braces.
@@ -93,13 +96,8 @@ _OWNER = '{{ frappe.db.get_value("User", doc.owner, "full_name") or doc.owner }}
 
 
 def _supplier(label):
-	return ps.fact(
-		label,
-		'<span style="' + ps.STRONG + '">{{ (doc.supplier_name or doc.supplier) | e }}</span>'
-		"{% if doc.address_display %}<br>{{ doc.address_display }}{% endif %}"
-		"{% if doc.contact_display %}<br>Attn: {{ doc.contact_display }}{% endif %}",
-		width="40%",
-	)
+	"""The order's SUPPLIER block: name, address, Attn, phone and email, from `ps_party`."""
+	return ps.fact(label, "{{ ps_party(doc) }}", width="40%")
 
 
 def _project(expr, width="30%"):
@@ -121,13 +119,17 @@ def _th(label, right=False):
 	return '        <th style="' + style + '">' + label + "</th>\n"
 
 
-_ITEM_CELL = '        <td style="' + ps.TD + "; " + ps.STRONG + '">{{ row.item_code | e }}</td>\n'
+# Never wrapped: a code broken over two lines reads as two codes.
+_ITEM_CELL = (
+	'        <td style="' + ps.TD + "; " + ps.STRONG + '; white-space:nowrap;">{{ row.item_code | e }}</td>\n'
+)
 
-# Rendered as HTML, NOT escaped: a Text Editor field holding markup from the Item master.
-# Escaping it printed a literal "&lt;div&gt;&lt;p&gt;" at the supplier on the order.
+# Through `ps_rich`, NOT `| e`: a Text Editor field, so markup from the Item master passes
+# through (escaping it printed a literal "&lt;div&gt;&lt;p&gt;" at the supplier on the order),
+# and a plain-text description -- most imported lines -- keeps its line breaks.
 _DESCRIPTION_CELL = (
 	'        <td style="' + ps.TD + '">\n'
-	"          {%- if row.description %}{{ row.description }}{% else %}{{ row.item_name | e }}{% endif -%}\n"
+	"          {%- if row.description %}{{ ps_rich(row.description) }}{% else %}{{ row.item_name | e }}{% endif -%}\n"
 	"__DESCRIPTION_EXTRA__"
 	"        </td>\n"
 )
@@ -135,6 +137,12 @@ _DESCRIPTION_CELL = (
 
 def _td(expr_html, right=False):
 	return '        <td style="' + (ps.TD_RIGHT if right else ps.TD) + '">' + expr_html + "</td>\n"
+
+
+def _code_td(expr_html):
+	"""A cell holding a document number, unwrapped like the item code: at its hyphens
+	"PO-2026-00263" broke into "PO-2026-" over "00263", which reads as two numbers."""
+	return '        <td style="' + ps.TD + '; white-space:nowrap;">' + expr_html + "</td>\n"
 
 
 def _money(expr):
@@ -170,29 +178,32 @@ def _items(headers, cells, colspan, empty_text, description_extra="", preamble="
 
 
 def _totals(grand_label, tail=""):
-	"""The order's totals block: net, each non-zero tax, then the grand total under a rule."""
+	"""The order's totals block: net, each non-zero tax, then the grand total under a rule.
+
+	In `print_style`'s shared totals styles, whose padding carries the inline `!important`
+	that frappe's print stylesheets would otherwise override."""
 	return (
 		'<table style="width:100%; border-collapse:collapse; margin-top:10px; page-break-inside:avoid;">\n'
 		"    <tr>\n"
-		'      <td style="width:56%;"></td>\n'
-		'      <td style="width:26%; ' + _TOTAL_LABEL_TD + '">Net total</td>\n'
-		'      <td style="width:18%; ' + _TOTAL_VALUE_TD + '">' + _money("doc.net_total") + "</td>\n"
+		'      <td style="width:56%;' + ps.TOTAL_SPACER + '"></td>\n'
+		'      <td style="width:26%;' + ps.TOTAL_LABEL + '">Net total</td>\n'
+		'      <td style="width:18%;' + ps.TOTAL_VALUE + '">' + _money("doc.net_total") + "</td>\n"
 		"    </tr>\n"
 		"    {%- for tax in doc.taxes %}\n"
 		"    {%- if tax.tax_amount %}\n"
 		"    <tr>\n"
-		"      <td></td>\n"
-		'      <td style="' + _TOTAL_LABEL_TD + '">{{ tax.description | e }}</td>\n'
-		'      <td style="' + _TOTAL_VALUE_TD + '">' + _money("tax.tax_amount") + "</td>\n"
+		'      <td style="' + ps.TOTAL_SPACER + '"></td>\n'
+		'      <td style="' + ps.TOTAL_LABEL + '">{{ tax.description | e }}</td>\n'
+		'      <td style="' + ps.TOTAL_VALUE + '">' + _money("tax.tax_amount") + "</td>\n"
 		"    </tr>\n"
 		"    {%- endif %}\n"
 		"    {%- endfor %}\n"
 		"    <tr>\n"
-		"      <td></td>\n"
-		'      <td style="' + _GRAND_TD + '">' + grand_label + "</td>\n"
+		'      <td style="' + ps.TOTAL_SPACER + '"></td>\n'
+		'      <td style="' + ps.GRAND + '">' + grand_label + "</td>\n"
 		'      <td style="'
-		+ _GRAND_TD
-		+ '; white-space:nowrap; font-size:14px;">'
+		+ ps.GRAND
+		+ ';white-space:nowrap;font-size:14px">'
 		+ _money("doc.grand_total")
 		+ "</td>\n"
 		"    </tr>\n" + tail + "  </table>\n"
@@ -259,8 +270,8 @@ _MATERIAL_REQUEST_HTML = _compose(
 			_th("Warehouse"),
 		],
 		[
-			_td("{{ row.qty }}", right=True),
-			_td('{{ (row.uom or "") | e }}'),
+			_td("{{ ps_qty(row.qty) }}", right=True),
+			_td("{{ ps_uom(row.uom) }}"),
 			_td(_date_or_dash("row.schedule_date")),
 			_td('{{ (row.warehouse or "") | e }}'),
 		],
@@ -274,19 +285,9 @@ _MATERIAL_REQUEST_HTML = _compose(
 # Goes to suppliers. ERPNext renders it once per supplier with `vendor` set; the listing
 # fallback covers a render with none.
 
-_RFQ_SUPPLIER = ps.fact(
-	"SUPPLIER",
-	'{%- if doc.get("vendor") %}'
-	'<span style="' + ps.STRONG + '">'
-	'{{ (frappe.db.get_value("Supplier", doc.vendor, "supplier_name") or doc.vendor) | e }}</span>'
-	"{%- else %}"
-	"{%- for s in doc.suppliers %}"
-	'<span style="' + ps.STRONG + '">{{ (s.supplier_name or s.supplier) | e }}</span>'
-	"{% if not loop.last %}<br>{% endif %}"
-	"{%- else %}" + _DASH + "{%- endfor %}"
-	"{%- endif %}",
-	width="40%",
-)
+# `vendor` when ERPNext set it, else every supplier row -- `print_lookup.ps_rfq_suppliers`
+# decides, and prints each one's whole block (name, address, Attn, phone, email), or a dash.
+_RFQ_SUPPLIER = ps.fact("SUPPLIER", "{{ ps_rfq_suppliers(doc) }}", width="40%")
 
 _RFQ_FACTS = (
 	ps.facts_open()
@@ -294,7 +295,9 @@ _RFQ_FACTS = (
 	+ ps.fact("REQUIRED BY", _date_or_dash("doc.schedule_date"), width="30%")
 	+ ps.fact(
 		"DELIVER TO",
-		"{% if doc.shipping_address_display %}{{ doc.shipping_address_display }}{% else %}Not specified{% endif %}",
+		# Through `ps_address`, which trims the trailing break every US address ends with.
+		"{% if doc.shipping_address_display %}{{ ps_address(doc.shipping_address_display) }}"
+		"{% else %}Not specified{% endif %}",
 		width="30%",
 	)
 	+ ps.facts_close()
@@ -336,8 +339,8 @@ _REQUEST_FOR_QUOTATION_HTML = _compose(
 	+ _items(
 		[_th("Item"), _th("Description"), _th("Qty", right=True), _th("UOM"), _th("Required by")],
 		[
-			_td("{{ row.qty }}", right=True),
-			_td('{{ (row.uom or "") | e }}'),
+			_td("{{ ps_qty(row.qty) }}", right=True),
+			_td("{{ ps_uom(row.uom) }}"),
 			_td(_date_or_dash("row.schedule_date")),
 		],
 		"5",
@@ -372,8 +375,8 @@ _PRICED_HEADERS = [
 	_th("Amount", right=True),
 ]
 _PRICED_CELLS = [
-	_td("{{ row.qty }}", right=True),
-	_td('{{ (row.uom or "") | e }}'),
+	_td("{{ ps_qty(row.qty) }}", right=True),
+	_td("{{ ps_uom(row.uom) }}"),
 	_td(_money("row.rate"), right=True),
 	_td(_money("row.amount"), right=True),
 ]
@@ -430,12 +433,12 @@ _PURCHASE_RECEIPT_ITEMS = _items(
 		_th("Warehouse"),
 	],
 	[
-		_td('{{ (row.purchase_order or "") | e }}'),
-		_td("{{ row.qty }}", right=True),
+		_code_td('{{ (row.purchase_order or "") | e }}'),
+		_td("{{ ps_qty(row.qty) }}", right=True),
 		"        {%- if has_rejected %}\n"
-		+ _td("{% if row.rejected_qty %}{{ row.rejected_qty }}{% endif %}", right=True)
+		+ _td("{% if row.rejected_qty %}{{ ps_qty(row.rejected_qty) }}{% endif %}", right=True)
 		+ "        {%- endif %}\n",
-		_td('{{ (row.uom or "") | e }}'),
+		_td("{{ ps_uom(row.uom) }}"),
 		_td('{{ (row.warehouse or "") | e }}'),
 	],
 	"{{ 7 if has_rejected else 6 }}",
@@ -480,15 +483,17 @@ _PURCHASE_INVOICE_FACTS = (
 	+ ps.facts_close()
 )
 
-# Amount due only when it differs from the total — the sales invoice's rule.
+# Amount due only when it differs from the total — the sales invoice's rule. The extra top
+# padding carries `!important` because TOTAL_LABEL's `padding` does: in one style attribute an
+# ordinary declaration loses to an important one whatever the order.
 _AMOUNT_DUE = (
 	"    {%- if doc.outstanding_amount is not none and doc.outstanding_amount != doc.grand_total %}\n"
 	"    <tr>\n"
-	"      <td></td>\n"
-	'      <td style="' + _TOTAL_LABEL_TD + ' padding-top:6px;">Amount due</td>\n'
+	'      <td style="' + ps.TOTAL_SPACER + '"></td>\n'
+	'      <td style="' + ps.TOTAL_LABEL + ';padding-top:6px !important">Amount due</td>\n'
 	'      <td style="'
-	+ _TOTAL_VALUE_TD
-	+ " padding-top:6px; "
+	+ ps.TOTAL_VALUE
+	+ ";padding-top:6px !important;"
 	+ ps.STRONG
 	+ '">'
 	+ _money("doc.outstanding_amount")
@@ -497,7 +502,9 @@ _AMOUNT_DUE = (
 	"    {%- endif %}\n"
 )
 
-# The order's payment-terms section, unchanged in substance.
+# The order's payment-terms section, unchanged in substance -- including its rule that a
+# schedule row's label is not printed when it only repeats the template's name ("Net 30"
+# twice).
 _PAYMENT_TERMS = (
 	'  <div style="page-break-inside:avoid;">\n'
 	+ ps.section_title("Payment terms")
@@ -506,7 +513,7 @@ _PAYMENT_TERMS = (
       {%- for term in doc.payment_schedule %}
       {%- set term_label = (term.description or term.payment_term or "") %}
       <div>
-        {%- if term_label %}{{ term_label | e }} &mdash; {% endif %}
+        {%- if term_label and term_label != doc.payment_terms_template %}{{ term_label | e }} &mdash; {% endif %}
         {{- frappe.utils.fmt_money(term.payment_amount, currency=doc.currency) }}
         {%- if term.due_date %} due {{ frappe.format(term.due_date, {"fieldtype": "Date"}) }}{% endif %}
       </div>
@@ -534,7 +541,7 @@ _PURCHASE_INVOICE_HTML = _compose(
 			_th("Rate", right=True),
 			_th("Amount", right=True),
 		],
-		[_td('{{ (row.purchase_order or "") | e }}'), *_PRICED_CELLS],
+		[_code_td('{{ (row.purchase_order or "") | e }}'), *_PRICED_CELLS],
 		"7",
 		"No items on this invoice.",
 	)

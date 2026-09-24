@@ -737,7 +737,7 @@ class TestThePage(unittest.TestCase):
 
 
 class TestBackAndForwardWalkTheTabs(unittest.TestCase):
-    """The tab is in the route (v1.534.2): /desk/training-glossary-review, .../traps,
+    """The tab is in the route (v1.535.1): /desk/training-glossary-review, .../traps,
     .../collisions.
 
     Before, the tabs, the trap toggle and the pager were instance state under one URL,

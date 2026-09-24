@@ -23,8 +23,14 @@ Top to bottom, on white:
    to the constant in `enhancements_core/company_contact.py`; the phone *is* the constant.
 3. An **eyebrow** naming the pillar and the document — `SERVICE · MAINTENANCE VISIT
    REPORT` — in the pillar's closing stop, over a **display-face title** in deep-sea-blue.
-   A meta block at the right: number, date, status.
-4. A **facts row** under a deep-sea-blue rule: who, where, when.
+   A meta block at the right: number, date, status (and a red `DRAFT` / `CANCELLED` where it
+   applies). **An eyebrow that only repeats the title is not printed** (v1.535.0): a neutral
+   document has no pillar to name, so from v1.494.0 every sales and buying document printed
+   `INVOICE` over `INVOICE`, the display face being all capitals. With a pillar, its name
+   stays on its own.
+4. A **facts row** under a deep-sea-blue rule: who, where, when. The party — the customer
+   or supplier — is a block of name, address, `Attn:`, phone and email, drawn by
+   `ps_party` (see *Content helpers and lookups* below).
 5. **Sections** with display-face headings in bahama-blue and **ruled tables**: a 2px rule
    in the pillar's opening stop under the header row, hairlines between rows, no zebra
    fills, numbers right-aligned.
@@ -58,6 +64,22 @@ for the order's reason — a job can belong to any pillar — and each is its do
 **default** format (Property Setter fixtures), so the print view and the email composer open
 on them. ERPNext's stock formats for those doctypes are disabled on every migrate
 (`setup_print_formats.SUPERSEDED_PROCUREMENT_FORMATS`), as the order's three are.
+
+**Since v1.535.0 the three sales formats are their doctypes' defaults too**, and Sales
+Invoice has one designed format left — the only other choice in its dropdown is frappe's
+generated "Standard", which is not a Print Format record, so no disable pass can remove it.
+`SUPERSEDED_SALES_FORMATS` disables Sales Invoice Standard,
+with Item Image, Return, Print, PD Format v2, Sales Auditing Voucher and the leftover Point of
+Sale row (plus Sales Order PD v2), and keeps the three Regional formats disabled. Three of
+those printed nothing at all — Sales Invoice Print lost its template in ERPNext v16.19 and
+the two PD v2 formats belong to Print Designer, which is not installed — and the Sapphire
+invoice now prints a return as a **Credit Note** itself, so ERPNext's return format has no
+job left. Checked first on production: no Notification, Auto Repeat, POS Profile, statement
+run, script or default referenced any of them. Quotation's and Sales Order's stock formats
+are left enabled — not asked for, and they still render. A disable holds through a migrate
+(`frappe/modules/import_file.py` keeps a standard format's `disabled` when it re-imports);
+the pass re-runs every migrate because it is idempotent and re-disables anything an admin
+turned back on.
 
 ## How a format consumes it
 
@@ -124,6 +146,61 @@ lay those out and the format suites forbid them. The stripe is a `background-col
 *before* a `background-image: linear-gradient(...)`, so a renderer with no gradient
 support still paints the pillar's flat colour.
 
+**Cell geometry is inline `!important`, and it has to be (v1.535.0).** Frappe appends two
+stylesheets to every print format, custom ones included: `templates/styles/standard.css`
+sets `.print-format td, .print-format th {padding: 6px !important; vertical-align: top
+!important}`, and this site's *Redesign* Print Style sets `padding: 10px !important` and
+`border-bottom-width: 1px !important` on `th`. A stylesheet `!important` beats an
+ordinary inline style, so until v1.535.0 none of `TH`/`TD`'s padding, bottom-aligned
+headers or 2px header rule reached a page: rows printed at nearly twice the designed
+height and a six-line invoice pushed its totals onto page 2. Only an inline `!important`
+outranks a stylesheet one, so `TH`, `TD`, `TD_RIGHT` and the totals styles
+(`TOTAL_LABEL`, `TOTAL_VALUE`, `GRAND`, `TOTAL_SPACER`, shared by every priced format)
+carry it on padding, alignment and borders. Colour and weight are not forced by either
+sheet and stay ordinary.
+
+## Content helpers and lookups (v1.535.0)
+
+What a value *looks like* on paper lives in `print_style` (frappe-free, `ps_*` globals);
+where a value *comes from*, when the template cannot find it itself, lives in
+`print_lookup.py` (frappe, also `ps_*` globals). Both are registered in `hooks.py`.
+
+| Global | Does | Because |
+|---|---|---|
+| `ps_address(html)` | Trims the leading/trailing `<br>` | The `United States` Address Template ends every address with one, and the formats added another: a blank line under every address, and above our phone |
+| `ps_qty(value)` | `1`, `2.5`, `-12`, `1,200` | `{{ row.qty }}` printed `1.0` on every line |
+| `ps_rich(text)` | Markup passes through; plain text is escaped and keeps its line breaks | 1,657 of 6,148 invoice lines are plain text with newlines, which ran together as HTML |
+| `ps_line(name, description)` | Bold item name, description under it only when it adds something | ERPNext copies the name into an empty description; printing both stutters |
+| `ps_uom(uom)` | `Nos` → `ea` | "Nos" (ERPNext's "numbers") is on every sales line and means nothing to a customer |
+| `ps_phone(value)` | Ten North American digits → `(801) 555-0100`; anything else as stored | Phones are stored as bare digits about as often as formatted |
+| `ps_state(docstatus)` | Red `DRAFT` / `CANCELLED`, nothing when submitted | Frappe's Draft heading comes from macros a custom format never calls |
+| `ps_party(doc)` | The party block: name, address, `Attn:`, phone, email | See below |
+| `ps_rfq_suppliers(doc)` | One party block per supplier the RFQ is addressed to | An RFQ names its suppliers in a child table |
+| `ps_charge_rows(doc)` / `ps_tax_rows(doc)` | Splits the taxes table into billable-expense lines and real tax | See below |
+
+**The party block walks four records.** A document carries a snapshot of its party's
+address and contact, but on this site it is mostly empty: `address_display` is on 17 of
+230 Purchase Orders, and `contact_mobile` / `contact_email` are blank on every Purchase
+Order and all but 12 of 1,629 Sales Invoices. The numbers exist — in this app's own
+fields (`Contact.custom_email`, `custom_mobile_number`, `custom_phone_number`;
+`Supplier.custom_phone_number` / `custom_email`; `Customer.custom_accounts_phone_number` /
+`custom_accounts_email_address`), which ERPNext's `get_contact_details` never reads. So each
+value takes the first of: the document, the Contact it names (else the party's primary
+contact), the Address it prints, the party's own record. The address falls back to the
+document's own Address link, then the party's primary address, rendered through the site's
+template. `Attn:` is only ever the contact the document names. A phone or email the address
+already prints is not printed twice. Every custom field is checked against the meta before
+it is read, and any failure prints what the document itself carries rather than raising.
+
+**The taxes table holds more than tax.** QuickBooks puts a billable expense on an invoice
+as a line with no Item, and the sync books each as an `Actual` charge
+(`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 155
+invoices, booked to Cost of Goods Sold (the material) and Income (its markup). Printed as
+taxes they sat under Subtotal, up to 98 deep. `ps_charge_rows` returns those — `Actual`
+rows on a non-Tax account — and the sales formats print them as lines under **Billable
+expenses**; `ps_tax_rows` returns the rest, labelled without the ` - SF` company suffix
+and the ` - Inactive` marker QuickBooks' tax codes carry.
+
 ## What is on it, and what is not
 
 | Document | Module | Pillar |
@@ -168,11 +245,25 @@ Everything the app prints is now on the chrome.
 
 ## Before you push
 
+Each suite installs its own `frappe` stub, so run them one process at a time, as CI does:
+
 ```bash
-python -m unittest erpnext_enhancements.tests.test_print_style erpnext_enhancements.tests.test_sales_print_formats -v
+python -m unittest erpnext_enhancements.tests.test_print_style -v
+python -m unittest erpnext_enhancements.tests.test_print_lookup -v
+python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
+python -m unittest erpnext_enhancements.tests.test_purchase_order_print_formats -v
+python -m unittest erpnext_enhancements.tests.test_procurement_print_formats -v
 ```
 
 `test_print_style` renders the Maintenance Record Print fixture against sample records —
 per-site and single-feature, signed and unsigned, with an out-of-range reading, with
 every table empty — because nothing else compiles a fixture's html before a customer is
-holding the PDF.
+holding the PDF. The format suites render every Sapphire format with the real `ps_*`
+helpers. The sales suite renders under `StrictUndefined`, against a document stub that
+raises on a field the doctype lacks on production, and checks the sums: the Amount column
+adds up to Subtotal, and Subtotal − Discount + taxes to the total — including a document
+with no tax rows, whose discount ERPNext's own `before_print` flips negative before the
+template sees it. Before v1.535.0 a discounted invoice subtracted its discount twice
+(Subtotal printed `net_total`, which is already net of it) and nothing noticed. The
+Purchase Order and procurement suites use Jinja's default `Undefined` against a
+permissive stub, so they do not catch a template that reads a missing field.
