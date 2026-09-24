@@ -12,8 +12,12 @@ those modules give: there is no Frappe integration-test job in CI, so bench-free
 is the only code that runs on every push.
 
 Nothing here raises, and nothing here decides what a finding *means*. Callers decide.
-This module is **advisory** by design: there is no ``Item`` doc_event anywhere in this
-app and nothing blocks a save. It reports; a human acts.
+This module is **advisory** by design. It reports; a human acts. The one caller that
+refuses anything is :mod:`item_naming_guard`, and it refuses a *new* Item for exactly the
+two findings :func:`blocking_findings` returns — a code that duplicates an existing one
+after :func:`normalise`, and a name that is just the code (Nik, 2026-09-24,
+TASK-2026-02238, POL-0602). Every other finding here stays advice, including the STOPs;
+see :data:`BLOCKING_CODES` for why.
 
 --------------------------------------------------------------------------------------
 The two occupancy traps, which is why block arithmetic lives in Python and not in SQL
@@ -185,7 +189,16 @@ _TIER2: Final[tuple[str, ...]] = (
 	"STRUT NUT", "STRUT WASHER", "SWITCHGEAR", "TRANSISTOR", "WET NICHE",
 )
 
-TIER1: Final[tuple[str, ...]] = _TIER1_FROM_SHEET + _TIER1_PROMOTED
+#: Tier 1, approved by the Process Owner on 2026-09-24 (TASK-2026-02238, POL-0602) — the
+#: first additions since SOP v1.0. INSERT and SHIM give a category to the four records led
+#: by the vendor product-line words UNI-INSERT and UNI-SHIM: the category leads, and the
+#: product line moves to a later segment (see TIER3_REPLACEMENTS). PANEL is here because the SOP's own
+#: Tier 3 row sends SUBPANELT to `PANEL, SUB`, and until PANEL was declared that replacement
+#: failed Step 4.1 itself. Rulings still open on other words (TASK-2026-02215: PLMB, BRUSH,
+#: BOTTLE) are deliberately NOT here — a word waiting on a ruling is unapproved.
+_TIER1_APPROVED_2026_09_24: Final[tuple[str, ...]] = ("INSERT", "SHIM", "PANEL")
+
+TIER1: Final[tuple[str, ...]] = _TIER1_FROM_SHEET + _TIER1_PROMOTED + _TIER1_APPROVED_2026_09_24
 TIER2: Final[tuple[str, ...]] = _TIER2
 
 
@@ -226,11 +239,12 @@ APPROVED_CATEGORIES: Final[frozenset[str]] = frozenset(
 #: the form to use instead. Keys are matched against the whole first segment.
 #:
 #: Two of these are worth knowing about before you trust the replacement column:
-#: `SUBPANELT -> PANEL, SUB` points at `PANEL`, which is on neither Tier 1 nor Tier 2,
-#: so the SOP's own replacement would itself be rejected; and `WIRE CONNECCTORS ->
-#: CONNECTOR, WIRE` is fine only because `CONNECTOR` is Tier 1. Both are reported to
-#: the caller as-written rather than silently repaired — this module quotes the SOP, it
-#: does not amend it.
+#: `SUBPANELT -> PANEL, SUB` pointed at `PANEL`, which was on neither Tier 1 nor Tier 2
+#: until the Process Owner declared it on 2026-09-24, so for five weeks the SOP's own
+#: replacement was itself rejected; and `WIRE CONNECCTORS -> CONNECTOR, WIRE` is fine only
+#: because `CONNECTOR` is Tier 1. Replacements are reported to the caller as-written rather
+#: than silently repaired — this module quotes the SOP and the Process Owner's rulings, it
+#: does not amend them. The last two rows are those rulings, not SOP v1.0 text.
 TIER3_REPLACEMENTS: Final[dict[str, str]] = {
 	"PROTE": "CIRCUIT BREAKER, SUPPLEMENTARY, ...",
 	"BREAKER": "CIRCUIT BREAKER",
@@ -249,11 +263,17 @@ TIER3_REPLACEMENTS: Final[dict[str, str]] = {
 	"EDISION FUSE": "FUSE, EDISON",
 	"WIRE CONNECCTORS": "CONNECTOR, WIRE",
 	"SUBPANELT": "PANEL, SUB",
+	# Process Owner, 2026-09-24 (TASK-2026-02238): UNI is a vendor product line, not a
+	# category. The category leads and the product line moves to the sub-category.
+	"UNI-INSERT": "INSERT, UNI",
+	"UNI-SHIM": "SHIM, UNI",
 }
 
 #: Categories whose SOP-prescribed replacement is not itself on Tier 1 or Tier 2. The
 #: caller is told, so a validator never hands somebody a correction that fails its own
-#: check. Computed rather than listed so it stays true if Appendix A changes.
+#: check. Computed rather than listed so it stays true if Appendix A changes — which it did:
+#: this held SUBPANELT until PANEL was declared on 2026-09-24, and is empty since. It stays
+#: computed so the next Tier 3 row that names an undeclared word is caught the same way.
 TIER3_REPLACEMENT_UNAPPROVED: Final[frozenset[str]] = frozenset(
 	bad
 	for bad, good in TIER3_REPLACEMENTS.items()
@@ -1275,6 +1295,61 @@ def evaluate(
 	}
 
 
+# --- what refuses a new Item ---------------------------------------------------
+
+#: The two findings that stop a NEW Item being saved. Every other finding is advice.
+#:
+#: Nik's decision of 2026-09-24 (TASK-2026-02238, POL-0602). The obvious rule — refuse any
+#: STOP — was considered and rejected, and the reason is in the vocabulary rather than in
+#: the code: the STOP set includes `name_category_unapproved`, and several category words
+#: are still waiting on a ruling (TASK-2026-02215: PLMB, BRUSH, BOTTLE). Blocking the whole
+#: STOP set would refuse legitimate new items for as long as a ruling is open, and a guard
+#: people cannot satisfy is a guard they learn to route around.
+#:
+#: These two are the ones nobody can argue with. A code that matches an existing one once
+#: case and punctuation are ignored is the duplicate the SOP opens with (§5 Step 1.1), and a
+#: name that is just its code is a record nobody can find by description (its EVIDENCE entry
+#: has the 2026-08-19 count). Neither depends on a vocabulary ruling.
+#:
+#: `duplicate_code_exact` is absent on purpose: `item_code` is the primary key, so ERPNext
+#: refuses an exact duplicate on insert without any help from this module.
+BLOCKING_CODES: Final[frozenset[str]] = frozenset({DUPLICATE_CODE_NORMALISED, NAME_EQUALS_CODE})
+
+
+def blocking_findings(code: str | None, name: str | None, existing_codes) -> list[dict]:
+	"""The :data:`BLOCKING_CODES` findings for one proposed new Item, or ``[]``.
+
+	``existing_codes`` is every Item code already saved — any iterable of strings. It is
+	passed in rather than read, like every other count in this module.
+
+	Both findings come from the functions the advisor already uses, so the guard and the
+	advisor cannot disagree about what a duplicate or a code-only name is:
+
+	* the duplicate is :func:`find_duplicates`'s ``normalised_code`` result, with the
+	  candidate's own code excluded **exactly** — a code does not collide with itself, and
+	  excluding by the normalised form would also drop the punctuation-variant sibling this
+	  check exists to find (see :func:`find_duplicates`);
+	* the code-only name is :func:`check_name`'s ``name_equals_code``.
+
+	A blank name is read as the code, because that is what ERPNext stores: ``Item.validate``
+	fills a blank ``item_name`` from ``item_code`` before any doc_event runs. Without this a
+	caller running ahead of that fill would pass a nameless Item.
+
+	Returns ``[]`` for a blank code — there is nothing to compare, and ERPNext refuses a
+	blank Item Code itself.
+	"""
+	text = (code or "").strip()
+	if not text:
+		return []
+	corpus = [{"item_code": str(c)} for c in existing_codes or () if c]
+	duplicates = find_duplicates(text, None, corpus, exclude_code=text)
+	out = duplicate_findings({"normalised_code": duplicates["normalised_code"]})
+
+	effective_name = name if (name or "").strip() else text
+	out.extend(f for f in check_name(effective_name, text) if f["code"] == NAME_EQUALS_CODE)
+	return [f for f in out if f["code"] in BLOCKING_CODES]
+
+
 # --- the corpus audit ----------------------------------------------------------
 
 #: Worst first. Used to sort an audit so the records that must not be transacted against
@@ -1414,3 +1489,27 @@ def summarise(rows) -> dict:
 		"findings_by_code": dict(sorted(by_code.items(), key=lambda kv: (-kv[1], kv[0]))),
 		"normalisation": NORMALISATION,
 	}
+
+
+# --- new items -----------------------------------------------------------------
+
+#: Items created on or after this date are held to 100% compliance; the whole-catalogue
+#: KPI stays the backlog measure. It is POL-0602's effective date (v1.0, effective
+#: 2026-10-01; Nik's decision of 2026-09-24, TASK-2026-02238). One constant, because two
+#: surfaces that disagree about which items are "new" would report two different figures
+#: for the same week. Compared against ``Item.creation``, which is site-local time.
+NAMING_GO_LIVE: Final[str] = "2026-10-01"
+
+
+def restrict_to(rows, codes) -> list[dict]:
+	"""The :func:`audit` rows whose ``item_code`` is in ``codes``, in input order.
+
+	The way to judge a subset — this week's new items, everything since
+	:data:`NAMING_GO_LIVE` — is to audit the **whole** corpus and then restrict, never to
+	audit the subset. Name collisions are measured across the corpus: a new item named
+	exactly like a five-year-old one collides with it, and an audit of the new items alone
+	cannot see the old one. Restricting afterwards keeps that finding and costs nothing, since
+	the audit is linear.
+	"""
+	wanted = {str(c) for c in codes or () if c}
+	return [row for row in rows or () if str(row.get("item_code") or "") in wanted]

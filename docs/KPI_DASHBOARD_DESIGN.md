@@ -935,6 +935,21 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 - Crew clock-in on builds: have field crews clock in/out against Build project Tasks via the existing Time Kiosk PWA (requires extending Job Interval to accept build Tasks). No new data entry beyond the clock-in they already do for maintenance.
 
 ---
+## Product — item naming compliance (v1.337.0, split in v1.532.0)
+
+> The Product department's catalogue data-quality set is computed by `_product_metrics`; this catalog never had a Product section, so only the naming pair is written down here. Both are computed by the rules the Item Naming Audit report uses (`item_naming_rules.audit`), never by a second SQL definition of "compliant".
+
+### 1. Item Naming Compliance — 🟢 Auto
+- **Definition:** Live Items (no `(deleted)` suffix) whose naming findings leave a PASS verdict, as a share of all live Items. Key `item_naming_compliance_pct`.
+- **Target:** The backlog measure. Its KPI Target row is site data (`patches/seed_item_naming_kpi_target`).
+
+### 2. Item Naming Compliance (New Items) — 🟢 Auto
+- **Definition:** The same, restricted to Items created on or after `NAMING_GO_LIVE` (2026-10-01, POL-0602's effective date). The whole catalogue is audited first and then restricted, so a new Item named like an old one still counts as a collision. Key `item_naming_new_compliance_pct`.
+- **Why it matters:** Nik, 2026-09-24 (TASK-2026-02238): new Items are held to 100% while the backlog is worked down. Splitting the figure stops a clean week of new Items from hiding in a catalogue-wide number that moves a fraction of a point.
+- **Target:** 100%. Not published until the first Item is created on or after the go-live date, because 100% of nothing would read as the target met. Its KPI Target row is seeded by `patches/seed_inventory_kpi_targets` (v1.532.0), with the Operations inventory targets Nik approved the same day.
+- **Refresh:** Nightly.
+
+---
 ## Operations (Inventory & Purchasing) — v1.530.0
 
 > Operations became the inventory dashboard on 2026-09-24, when maintenance moved to its own **Service** department (the next section, listed under Production in the dashboards sidebar). The trigger was store runs: 206 card transactions at Home Depot and Lowe's in the 12 months to September 2026 (2 of them returns), $16.3k, roughly four a week, mostly for small PVC fittings. The set answers three questions — are we making store runs, is the shelf stocked, and is the record true — and it is computed nightly by `_operations_metrics`. A **stocked item** is an Item with a positive reorder level, ERPNext's own marker and the one that drives its automatic Material Requests. Catalog items 9–12 below (devices, time sync, count accuracy, stockout risk) now belong here; the rest of the old Operations catalog is Service. Device compliance, unsynced time logs and project naming compliance stayed on Operations.
@@ -942,7 +957,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ### 1. Store Runs (30d) — 🟡 Semi
 - **Definition:** Count of unscheduled counter purchases from Suppliers ticked *Store-Run Vendor*, in the last 30 days. Today: QuickBooks card purchases (vendor recovered from the raw payload's `EntityRef`, type Vendor, refunds excluded). After cutover also: submitted Purchase Receipts and Purchase Invoices from those suppliers with no PO behind them.
 - **Why it matters:** A run costs drive time and a stopped crew, not just the parts. Every run for a stocked item is a reorder level set too low; every repeat run for an unstocked item is a candidate for the shelf.
-- **Target:** 4 or fewer a month by 2027-01-01 (proposed; set with owner).
+- **Target:** 4 or fewer a month, with 2027-01-01 as the date to reach it. Approved by Nik on 2026-09-24 (TASK-2026-02238) and seeded as a KPI Target row by `patches/seed_inventory_kpi_targets` (v1.532.0). The row grades from the day it lands, so the card reads Bad until the kit and the buy day bring the count down; the date is in the row's notes.
 - **Data source:** Supplier.custom_store_run_vendor; QuickBooks Sync Mapping + QuickBooks Raw Payload + Journal Entry; Purchase Receipt; Purchase Invoice.
 - **Implementation:** `_store_runs` in `kpi_dashboards/snapshots.py`. Semi because a person decides which suppliers are counters. Not published until one is ticked — 0 by construction would read as the goal met.
 - **Refresh:** Nightly. As current as QuickBooks categorization: uncategorized card charges are invisible to it.
@@ -954,18 +969,18 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ### 3. Stocked Items Below Reorder / Out of Stock — 🟢 Auto
 - **Definition:** Items with a positive reorder level whose total on-hand is below it / is zero or less.
 - **Why it matters:** The leading indicator for the next store run.
-- **Target:** 5 or fewer below reorder; 0 out of stock.
+- **Target:** 5 or fewer below reorder; 0 out of stock. Approved 2026-09-24 and seeded by `patches/seed_inventory_kpi_targets` (v1.532.0).
 - **Data source:** Item Reorder, Bin. *Below Reorder* moved here from Product unchanged (key `items_below_reorder`).
 
 ### 4. Stock at Placeholder Cost — 🟢 Auto
 - **Definition:** Bin rows holding stock at a valuation rate of $0.01 or less.
 - **Why it matters:** The 2026-09-23 opening stock went in at a $0.01 placeholder, so 439 of 448 stocked rows were valued at a cent and the store read $787. Job costs and COGS drawn from that stock are wrong until it is costed.
-- **Target:** 0 by 2026-11-01 (proposed).
+- **Target:** 0, with 2026-11-01 as the date to reach it. Approved 2026-09-24 and seeded by `patches/seed_inventory_kpi_targets` (v1.532.0); it reads Bad until the opening stock is costed (TASK-2026-02214), and the date is in the row's notes.
 
 ### 5. Unpriced PO Lines (90d) — 🟢 Auto
 - **Definition:** Submitted Purchase Order lines dated in the last 90 days with a rate of 0.
 - **Why it matters:** A $0 line receives its stock at $0. 281 of 327 lines were $0 in the 90 days to 2026-09-24.
-- **Target:** 0 on new POs.
+- **Target:** 0 on new POs. Since v1.532.0 submitting an order with a $0 line shows an orange warning listing the lines (`po_price_check`, POL-0602 §4.6). It warns and never blocks.
 
 ### 6. Stocked Items Counted (90d) — 🟢 Auto
 - **Definition:** Share of stocked items with a submitted Stock Reconciliation entry in the stock ledger in the last 90 days. Count sessions finalize into Stock Reconciliations, and the opening stock went in as four, so the ledger is the one place every count shows up.

@@ -10,6 +10,8 @@ Approving a document enqueues ``actions.base.post_document``, the per-type posti
 handler that turns it into a **draft** (docstatus 0) ERPNext record — so approval has
 posting side effects (an enqueued background job); nothing is *submitted* here."""
 
+import html
+
 import frappe
 from frappe import _
 
@@ -31,12 +33,31 @@ def approve_items(docname):
 	document to Needs Review once no proposed Item is still Pending."""
 	_require(_ITEM_ROLES)
 	doc = frappe.get_doc("Document Intake", docname)
+	to_create = [
+		r
+		for r in doc.line_items
+		if r.new_item_proposed and r.item_review_status == "Approved" and not r.matched_item
+	]
+	problems = _naming_problems(to_create)
+	if problems:
+		frappe.throw(
+			"<br><br>".join(
+				[
+					*problems,
+					_(
+						"Nothing was created. Fix these lines and press <b>Create Approved Items</b> "
+						"again, or create the Item from the Item list and set it as the line's "
+						"<b>Matched Item</b>."
+					),
+				]
+			),
+			title=_("Item naming"),
+		)
 	created = 0
-	for row in doc.line_items:
-		if row.new_item_proposed and row.item_review_status == "Approved" and not row.matched_item:
-			row.matched_item = _create_item(row)
-			row.new_item_proposed = 0
-			created += 1
+	for row in to_create:
+		row.matched_item = _create_item(row)
+		row.new_item_proposed = 0
+		created += 1
 	pending = [r for r in doc.line_items if r.new_item_proposed and (r.item_review_status or "Pending") == "Pending"]
 	doc.item_reviewed_by = frappe.session.user
 	if not pending:
@@ -46,17 +67,102 @@ def approve_items(docname):
 	return {"created": created, "status": doc.status, "pending": len(pending)}
 
 
-def _create_item(row):
+def _proposed_code_and_name(row):
+	"""The code and name a line's new Item would get.
+
+	The code is the Stock Manager's *Proposed Item Code* (v1.532.0). Without one it falls
+	back to the name, which is what this module always did and which the Item naming guard
+	refuses from POL-0602's effective date: a receipt line carries a description and no part
+	number, so only the reviewer can supply the code the SOP asks for.
+	"""
 	name = (row.proposed_item_name or row.description or "Item")[:140]
-	if frappe.db.exists("Item", name):
-		return name
-	existing = frappe.db.get_value("Item", {"item_name": name}, "name")
+	code = (row.get("proposed_item_code") or "").strip()[:140] or name
+	return code, name
+
+
+def _existing_item(code, name):
+	"""An Item this line already names, by code, by its name used as a code, or by name.
+
+	The filter-dict form of ``db.exists`` on purpose: given a bare name equal to the doctype,
+	v16 returns it unchecked (the Single shortcut), so ``exists("Item", "Item")`` -- reachable
+	through the ``"Item"`` name fallback -- would claim an Item that does not exist.
+	"""
+	for candidate in dict.fromkeys((code, name)):
+		if frappe.db.exists("Item", {"name": candidate}):
+			return candidate
+	return frappe.db.get_value("Item", {"item_name": name}, "name")
+
+
+def _naming_problems(rows):
+	"""One message per line the Item naming guard would refuse, before anything is created.
+
+	The guard (``inventory_enhancements.item_naming_guard``; Nik, 2026-09-24, TASK-2026-02238)
+	applies here, because a person is approving a new Item inside a web request, so
+	``ignore_naming_guard`` is not set on the insert. Checking first, with the guard's own
+	rule, is what lets the refusal name the intake line and the field to fix instead of an
+	Item form nobody opened, and it refuses the whole batch before the first insert rather
+	than part way through. Codes approved earlier in the same batch count as existing, the way
+	they would at the second insert. The same code typed on two lines with different names is
+	refused too: the second insert would silently link to the first line's new Item, which is
+	right for one part bought twice and wrong for a mistyped code. Silent before the guard is
+	in force.
+	"""
+	from erpnext_enhancements.inventory_enhancements import item_naming_guard as guard
+	from erpnext_enhancements.inventory_enhancements import item_naming_rules as rules
+
+	if not rows or not guard.in_force():
+		return []
+	existing = frappe.get_all("Item", pluck="name")
+	claimed = {}
+	problems = []
+	for row in rows:
+		code, name = _proposed_code_and_name(row)
+		if _existing_item(code, name):
+			continue
+		label = _("Line {0} ({1}):").format(row.idx, html.escape(name))
+		earlier = claimed.get(code)
+		if earlier and earlier[1] != name:
+			problems.append(
+				_(
+					"{0} has the same Proposed Item Code as line {1} ({2}), <b>{3}</b>. One code makes "
+					"one Item: if they are the same part, give both lines the same name; if not, give "
+					"this line its own code."
+				).format(label, earlier[0], html.escape(earlier[1]), html.escape(code))
+			)
+			continue
+		findings = rules.blocking_findings(code, name, existing)
+		if not findings:
+			existing.append(code)
+			claimed.setdefault(code, (row.idx, name))
+			continue
+		if not (row.get("proposed_item_code") or "").strip():
+			problems.append(
+				_(
+					"{0} enter the vendor's part number, or the right CON-, PDT- or SRV- code, in "
+					"<b>Proposed Item Code</b>. Without one the name would also be the code, which "
+					"POL-0602 does not allow for a new Item."
+				).format(label)
+			)
+			continue
+		problems.extend(f"{label} {guard.finding_message(code, f)}" for f in findings)
+	return problems
+
+
+def _create_item(row):
+	"""Create the Item a reviewer approved, or return the one the line already names.
+
+	The Item naming guard stays on for the insert; :func:`_naming_problems` has already
+	checked every line against it, so it is a second lock rather than the message a person
+	sees.
+	"""
+	code, name = _proposed_code_and_name(row)
+	existing = _existing_item(code, name)
 	if existing:
 		return existing
 	item = frappe.get_doc(
 		{
 			"doctype": "Item",
-			"item_code": name,
+			"item_code": code,
 			"item_name": name,
 			"item_group": row.proposed_item_group or _default_group(),
 			"stock_uom": row.proposed_uom or "Nos",

@@ -7,6 +7,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.532.0] - 2026-09-24
+
+**Inventory guardrails: from 2026-10-01 two naming defects refuse a new Item, the rest go to
+the Purchasing Agent weekly, a $0 Purchase Order line warns on submit, and the inventory KPIs get
+their approved targets.** Nik decided each rule on 2026-09-24. They are recorded on
+TASK-2026-02238 and in policy POL-0602 v1.0, effective 2026-10-01. Before this release the naming
+rules were advice everywhere. There was no `Item` doc_event, and nothing reported new Items that
+broke the schema unless somebody opened the Item Naming Audit.
+
+### Added
+
+- **The app's first `Item` doc_event, `inventory_enhancements.item_naming_guard.validate_new_item`
+  on `validate`.** It refuses saving a new Item for exactly two findings, both returned by the new
+  pure `item_naming_rules.blocking_findings(code, name, existing_codes)`:
+  - `duplicate_code_normalised`: the code matches an existing Item's code once case and
+    punctuation are ignored (`806020`, `806 020` or `806.020` against `806-020`). It comes from
+    `find_duplicates`'s own result. The Item's own code is excluded by exact match, never by its
+    normalised form, so a real punctuation-variant sibling still counts. An exact duplicate is
+    left to ERPNext, because `item_code` is the primary key.
+  - `name_equals_code`: the name is just the code, from `check_name`'s own finding. A blank name
+    counts. ERPNext's `Item.validate` copies the code into a blank `item_name`, and doc_events run
+    after the controller method, so a blank name has become the code by the time the guard sees it.
+    The helper also reads a blank name as the code.
+
+  **Why only these two.** Refusing every STOP was the obvious rule and was rejected. The STOP set
+  includes `name_category_unapproved`, and several category words are still waiting on a ruling
+  (TASK-2026-02215: PLMB, BRUSH, BOTTLE). Blocking on it would refuse legitimate new items until
+  each ruling lands. Neither of the two chosen findings depends on a ruling.
+  `item_naming_rules.BLOCKING_CODES` records the pair and the reason. Every other finding, STOPs
+  included, stays advice on the Item form, in the report, in the KPI and in the MCP tool.
+
+  **Not before 2026-10-01.** The refusal starts on `item_naming_rules.NAMING_GO_LIVE`, POL-0602's
+  effective date, not on the day this deploys (`item_naming_guard.in_force`, against the site-local
+  `nowdate()`). The policy is what a refused person is pointed at, the conventions were still being
+  finalized the week this shipped, and the new-items KPI counts from the same day. The digest and
+  the KPI need no gate; the digest has always been advice.
+
+  **Why only inside a web request.** The guard runs only when `frappe.local.request` is set, and
+  never while `frappe.flags` has `in_import`, `in_migrate`, `in_install`, `in_patch`, `in_test` or
+  `in_setup_wizard` set. The question is who can act on the refusal. A person saving in the Desk,
+  through the REST API or through an MCP tool can rename the Item and save again. A background job
+  cannot. The QuickBooks sync creates Items on the scheduler, and a refusal there would park the
+  record for manual review with nobody told why. Data Import normally runs as a background job
+  too (`start_import` enqueues unless in tests or developer mode), so the request check already
+  skips it; `in_import` covers the inline runs. The guard also runs only on `is_new()`, so an
+  existing Item is never refused, whatever its name. The catalogue has hundreds of records that
+  predate the SOP, and refusing an edit to one would stop somebody fixing its stock UOM over a
+  name they did not write. **Variants are skipped** (`variant_of` set): ERPNext derives a variant's
+  code and name from its template, a manufacturer variant copies no name at all so its name
+  becomes its code, and *Make Variants* saves fewer than ten inline, inside the request.
+
+  **In-request callers, audited.** A caller sets `doc.flags.ignore_naming_guard` only when the
+  person at the screen can choose neither the code nor the name:
+  - `product_configurator.erp_integration._ensure_product_item` sets it. The configurator
+    allocates the part number and the person generating a configuration cannot change it. Its name
+    is `<product> <code>`, which can never read as just the code, so the flag's one real effect is
+    to exempt configurator part numbers from the case- and punctuation-blind duplicate check, on
+    purpose: its "Item Code Taken" check still refuses an exact clash. Nothing reports a
+    configurator near-clash automatically, since the digest's `audit` compares names across
+    records and never codes; the Item form's *Naming → Check naming* and the MCP tool show one on
+    request.
+  - The `quickbooks_online.core.mapping` create path sets it for Items. A QuickBooks Item with no
+    SKU gets its code from its Name, so name equals code by construction. The dashboard's
+    per-entity Sync button (`api.sync_entity`) runs that path inside a request, and an import must
+    not park or pass depending on which door started it.
+  - `ensure_component_items` keeps the guard. Component names are the product definition's own
+    words and a required field.
+  - `accounting_intake.review` (Document Intake's *Create Approved Items*) keeps the guard,
+    because a person is approving the Item, and now gives that person the code to set. It used
+    the proposed name as both code and name, which the guard refuses every time: review found the
+    button would have failed on every new line from go-live. A new **Proposed Item Code** on
+    Document Intake Line takes the vendor's part number or a CON-/PDT-/SRV- code, and
+    `_naming_problems` checks every approved line with `blocking_findings` before the first insert.
+    A line with no code (its name would be its code) or a near-duplicate code refuses the whole
+    batch with one message naming each line and what to fix, so nothing is half-created. Codes
+    approved earlier in the batch count as existing, and the same code typed on two lines with
+    different names is refused, because the second line would otherwise link to the first line's
+    new Item without a word. A line whose code or name already matches an Item links to it, as
+    before; the lookup uses `db.exists`'s filter form, because v16 returns `exists("Item", "Item")`
+    unchecked and the `"Item"` name fallback could reach it. Document Intake had no rows on
+    production on 2026-09-24.
+  - The `water_engineering.setup` catalogue seeds keep the guard. They run from `after_migrate`,
+    where it is skipped.
+  - Tests and patches run under `in_test` and `in_patch`.
+- **Monday's naming digest, `inventory_enhancements.item_naming_digest.send_weekly_digest`**,
+  on cron `0 7 * * 1` (a new key, so it replaces no other entry). It lists the Items created in
+  the last seven days that do not PASS, with `(deleted)` tombstones excluded. Each row shows a link
+  to the Item, its name, who created it and its STOP and FIX messages; NOTEs are left out. It
+  audits the **whole** catalogue with `item_naming_rules.audit`, the Item Naming Audit report's own
+  call, and then keeps the week's rows with the new `item_naming_rules.restrict_to`. Auditing only
+  the week would pass a new Item named exactly like an old one. The email is capped at 50 rows and
+  says how many more there are. It is sent through `email_style` like every other sender.
+  - **Recipients:** a new Small Text field, *Weekly Naming Digest Recipients*
+    (`naming_digest_recipients`), in a new *Item Naming* section of Inventory Scanner Settings. It
+    takes addresses separated by commas or new lines, and it has **no default**. A default would put
+    a person's address in the DocType JSON and reach every fresh install. Blank sends nothing.
+  - **A week with nothing failing sends nothing.** An "all clear" every Monday trains its reader
+    to delete the email unread, and the week that matters would go the same way.
+- **`patches/seed_naming_digest_recipient`** writes `parker.bailey@sapphirefountains.com`, the
+  Purchasing Agent, into that field **only where `tabSingles` has no row for it**. This is the
+  CLAUDE.md Singles rule: a new field's default never reaches an existing Single's row. The rule
+  applies here even though the field has no default, because the one-time value has to be written
+  as data. An edited or deliberately emptied list is a decision and is never overwritten. A
+  never-saved Single is skipped: one written row would stop it loading its declared defaults, and
+  its default-1 Checks would read 0 (the count page's camera button among them). Production's was
+  saved on 2026-06-13. The patch reads `tabSingles` with a plain `select field`, never
+  `db.get_value("Singles")`, which cannot succeed. It writes with `set_single_value`, runs no
+  validate and cannot raise.
+- **KPI `item_naming_new_compliance_pct`, "Item Naming Compliance (New Items)"**, on the Product
+  snapshot. It uses the same audit restricted to Items created on or after the new
+  `item_naming_rules.NAMING_GO_LIVE = "2026-10-01"`, POL-0602's effective date, defined once. New
+  items are held to 100%, and `item_naming_compliance_pct` stays the backlog measure. It is
+  unpublished (None) until the first such Item exists, because 100% of nothing would read as the
+  target met. It reuses the backlog figure's audit and has its own `try`, so its failure cannot
+  sink that figure or the department. Its 100% target is seeded, below.
+- **`patches/seed_inventory_kpi_targets`: the KPI Targets Nik approved on 2026-09-24**
+  ("go with your recommendations", TASK-2026-02238). Operations: `store_runs_30` 4 (the 12
+  months to 2026-09-24 had 202, about 17 a month), `items_below_reorder` 5, `stocked_items_out`
+  0, `stocked_items_counted_90` 100%, `placeholder_cost_stock_lines` 0 and `unpriced_po_lines_90`
+  0. Product: `item_naming_new_compliance_pct` 100%. All Daily. The store-run target is to be
+  reached by 2027-01-01 and the placeholder-cost one by 2026-11-01; `_targets` has no notion of a
+  date, so both grade from the day they land and each row's notes carry its date. Without a target a KPI renders as
+  an ungraded grey number, the failure `seed_item_naming_kpi_target` (v1.337.0) avoided for the
+  backlog figure. These are the business's numbers, so a row that exists, seeded earlier or set on
+  purpose, is never touched. Each row commits alone; the patch cannot raise.
+- **The $0 Purchase Order line warning, `po_price_check.warn_zero_rate_lines`**, last on Purchase
+  Order `before_submit`, after both submit gates and the approval stamp. A refused order never
+  reaches it. It shows an orange "Unpriced lines" message listing each line with a rate below half
+  a cent, with its row number, item code and quantity. The message says that stock received
+  against those lines comes in at $0 and that POL-0602 section 4.6 requires a price, and it points
+  to Update Items. It **warns and never blocks**: 281 of 327 submitted lines in the 90 days to
+  2026-09-24 were $0, so a refusal would have stopped purchasing on the day it shipped. It is
+  silent during import, migrate, install and patch and outside a web request, and it never raises.
+  The pure `zero_rate_rows` counts a blank or unreadable rate as unpriced.
+
+### Changed
+
+- **Category vocabulary: Nik approved `INSERT`, `SHIM` and `PANEL`** (Tier 1, as
+  `_TIER1_APPROVED_2026_09_24`, so they reach the reference vocabulary served to the MCP tool). UNI
+  is a vendor product line, not a category, so two Tier 3 rows send `UNI-INSERT` to `INSERT, UNI`
+  and `UNI-SHIM` to `SHIM, UNI`. Declaring `PANEL` also makes the SOP's own `SUBPANELT` →
+  `PANEL, SUB` replacement valid, so the computed `TIER3_REPLACEMENT_UNAPPROVED` is now empty. The
+  test that pinned `SUBPANELT` in it now asserts that every Tier 3 replacement leads with an approved
+  word. PLMB, BRUSH and BOTTLE stay unapproved while TASK-2026-02215 is open.
+  `docs/item-naming-schema.md` Appendix A records the ruling as a dated **Decided** note. The SOP's
+  own tables are left as written.
+- **The KPI cockpit shows a zero target when it grades.** `kpi_cockpit.js` hid every
+  `target_value` of 0, because an unset target used to come through as 0. Three of the seeded
+  targets are 0 (out of stock, placeholder-cost lines, unpriced PO lines), so their cards would
+  turn red with no target shown. A 0 is now shown when the value carries a status.
+- Statements that "there is no Item doc_event" or that "nothing blocks a save" were corrected
+  where they are now false: `item_naming_rules`, `item_naming`, the Item form script's header, the
+  `hooks.py` annotations, the MCP tool's description and README row, the AI-gate comment, the
+  `ee-item-naming-validator` skill and the Item Naming Audit report's note. The skill now tells the
+  model which two findings will fail a save.
+- Documentation: `inventory_enhancements/README.md` gains "What refuses a save" (the two
+  findings, the skips, and the table of in-request Item creators) and "The weekly digest".
+  `docs/KPI_DASHBOARD_DESIGN.md` gains the two naming KPIs and a note on Unpriced PO Lines, and the
+  KPI, intake, patches and tests READMEs and WI-070's bucket G record the rest.
+
+### Tests
+
+- `test_item_naming_rules` (unittest, existing step) adds the ruling, `blocking_findings`
+  (punctuation and case variants, exact self-exclusion, a real sibling surviving it, a blank name,
+  and every advisory STOP staying non-blocking) and `restrict_to`.
+- New bench-free unittest suites, each on its own CI step because each installs a `frappe` stub:
+  `test_item_naming_guard` (both refusals, every skip including the go-live date and variants,
+  the code remedy, escaping, the `doc_events` wiring, and Document Intake's pre-insert line check),
+  `test_item_naming_digest` (recipients, whole-corpus-then-restrict with the real rules module,
+  silence, the cap, the cron key), `test_po_price_check` (the zero rule, the message, never
+  raising, bulk and no-request silence, last on `before_submit` after the gates) and
+  `test_inventory_seed_patches` (the recipient seed's two no-write branches and that it cannot
+  raise; the targets seed's values, insert-only behaviour, one-row failure, and that each key is
+  published by its department's snapshot and graded in the same direction).
+
 ## [1.531.0] - 2026-09-24
 
 **WI-079 slice 4: a confirmed request becomes a Claude Code brief, and a release that ships its
