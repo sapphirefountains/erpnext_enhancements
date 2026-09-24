@@ -50,6 +50,15 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   audit row, through `_wrap_log_execution`. The approver can view the hidden values with
   `reveal_sealed`. Before v1.524.1 it executed the redacted card. See
   [`ai_governance/README.md`](../ai_governance/README.md#confirming-runs-what-was-proposed-not-what-the-card-shows).
+- **A write that cannot run gets no card (v1.533.0).** Before `_propose`, `_precheck_refusal`
+  checks each Select value in a `create_document` or `update_document` call's `data`, including
+  child-table rows, against the DocType meta, exactly as Frappe's `_validate_selects` would on
+  save. An off-options value returns Frappe's own error, with error type `AIGateValidationError`,
+  and is recorded in AI Action Log. No card is created. The check reads metadata only, so it runs
+  no controller hooks. It never checks Link targets, because a later card may depend on a record
+  an earlier card creates. If the check itself raises, the card is queued as before and the
+  failure goes to the Error Log. See
+  [`ai_governance/README.md`](../ai_governance/README.md#a-write-that-cannot-run-gets-no-card-v15330).
 - The model retrieves the real outcome afterwards via the read-only
   `check_ai_pending_action` tool; the `ee-ai-write-confirmation` skill teaches
   connected assistants the flow.

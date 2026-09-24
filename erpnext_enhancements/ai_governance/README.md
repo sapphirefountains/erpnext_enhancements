@@ -16,6 +16,33 @@ the action has **not** run and how a human confirms it.
 The field defaults to **off**. On production the v1.525.0 patch `enable_ai_write_gate` turns it
 **on**, after seeding the permanent exemptions Nik chose on 2026-09-23 from the 30-day audit log.
 
+## A write that cannot run gets no card (v1.533.0)
+
+A card spends a person's attention, so the gate refuses a `create_document` or `update_document`
+before queueing it when Frappe would refuse it on save. On 2026-09-24 an assistant queued 21
+cards that each set a Task's status to "Cancelled". This site's option is "Canceled". All 21 were
+confirmed in one batch, and all 21 failed on execution.
+
+`_gate._precheck_refusal` checks each Select value in the call's `data` against the DocType meta,
+including child-table rows (a row marked `_delete` is skipped). It mirrors Frappe v16's
+`_validate_selects`: the value is stripped, `naming_series` and empty values are skipped, and the
+error message uses Frappe's own wording. On an off-options value:
+
+- the model gets that error back at once, with error type `AIGateValidationError`;
+- the refusal is recorded in AI Action Log as a failed, not-queued row;
+- no AI Pending Action is created.
+
+What it deliberately doesn't do:
+
+- **It runs no validation code.** Calling `doc.validate()`, or FAC's `validate_only`, would run
+  controller hooks that send email and enqueue jobs for a write nobody has confirmed.
+- **It doesn't check Link targets.** A card that moves Items into a new Item Group can depend on
+  an earlier card that creates the group, and the group doesn't exist until that card is
+  confirmed.
+- **It never blocks a write by failing.** If the check itself raises, the card is queued exactly
+  as before and the failure goes to the Error Log. An unknown DocType is a typo, not a check
+  failure, so it goes on to the old path with no Error Log entry from the check.
+
 ## Exemptions: permanent, or a window that closes itself
 
 A row in **Confirmation-Exempt Doctypes** lets an assistant's `create_document` and
