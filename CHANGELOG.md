@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.527.0] - 2026-09-24
+## [1.527.0] - 2026-09-23
 
 **WI-079 slice 3, the ERPNext half: the work breakdown reads the code a request points at, and
 no document name leaves ERPNext.** Until now every request got the same code map (ADR 0016 §3),

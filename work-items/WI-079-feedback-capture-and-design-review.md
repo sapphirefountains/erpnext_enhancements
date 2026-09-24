@@ -199,7 +199,7 @@ retention; and Error Log matching. Deviations and gaps:
 - Payload v2 to Triton (Triton release in Preconditions).
 - Measure prompt size and cost before and after on the next ten requests.
 
-**Status, v1.527.0 (2026-09-24).** The ERPNext half shipped. Triton v0.80.0 renders it; until
+**Status, v1.527.0 (2026-09-23).** The ERPNext half shipped. Triton v0.80.0 renders it; until
 that deploys, Triton v0.79 ignores the new keys and the prompt is unchanged.
 
 - `product_feedback/code_anchors.py` builds the anchors from the stored `context_url` and
