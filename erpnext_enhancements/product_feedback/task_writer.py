@@ -3,6 +3,11 @@
 
 """The only code in this module that creates a ``Task``. Runs after a human confirms.
 
+It is also the only code in the app that changes a feedback Task's status on its own:
+:func:`mark_shipped`, the second writer, moves a Task a release shipped to ``Pending Review``
+(WI-079 slice 4, ADR 0016 §5). People, AI clients through the gate, and ERPNext's own overdue
+job still change it too.
+
 Everything upstream — the model, :mod:`product_feedback.breakdown`, the proposal child
 table — produces a *suggestion*. This is where suggestions become work, and the call that
 reaches it (``api.feedback.create_tasks``) is the human review, in the sense
@@ -36,10 +41,12 @@ Indentation is tabs, per ``CLAUDE.md``.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 import frappe
-from frappe.utils import cint, flt
+from frappe.utils import add_days, cint, flt, today
 
 from erpnext_enhancements.product_feedback.doctype.product_feedback_settings.product_feedback_settings import (
 	allowed_projects,
@@ -50,6 +57,44 @@ from erpnext_enhancements.product_feedback.states import RequestState
 #: up has not been started, and seeding a board with Working tasks makes the "what is actually
 #: in flight" question unanswerable.
 NEW_TASK_STATUS = "Open"
+
+#: The only statuses :func:`mark_shipped` moves a Task from. Everything else is left alone,
+#: and that is what makes replaying the whole CHANGELOG harmless: ``Completed``, both
+#: spellings of cancelled (this site's Property Setter offers ``Canceled``, ERPNext v16's own
+#: options say ``Cancelled``), ``Invoiced``, ``Template``, and ``Pending Review`` itself, so a
+#: Task already moved is never moved again. An allowlist, so a status added later is skipped
+#: until somebody decides otherwise.
+SHIPPABLE_STATUSES = frozenset({"Open", "Working", "Overdue"})
+
+#: An ``Overdue`` Task whose last status a person set was one of these is not shippable.
+#: ERPNext v16's daily ``set_tasks_as_overdue`` and ``Task.update_status`` exempt only
+#: ``Cancelled`` and ``Completed``, the double-l spelling, so this site's ``Canceled`` and its
+#: ``Invoiced`` Tasks are flipped to ``Overdue`` once their expected end passes, and ``Overdue``
+#: alone cannot tell that from real overdue work. The flip is a ``db_set``, which writes no
+#: ``Version`` row (``frappe/model/document.py`` on ``version-16``: ``db_set`` goes straight to
+#: ``frappe.db.set_value``; only ``save`` calls ``save_version``), while a save from the form
+#: does, because Task tracks changes (the ``Task-main-track_changes`` Property Setter). A cancel
+#: from the Project form's Task Tree does not: its status picker writes with ``set_value`` too.
+#: Since v1.531.0 this app's Task override stops the flip at the source
+#: (``task_enhancements/doctype/task/task.py``), so this check is the backstop for Tasks flipped
+#: before that, and it only sees the ones canceled from the form.
+OVERDUE_NOT_SHIPPABLE_AFTER = frozenset({"Canceled", "Cancelled", "Invoiced", "Completed", "Template"})
+
+#: How many of a Task's newest ``Version`` rows are read to find its last status change.
+VERSION_LOOKBACK = 20
+
+#: Native to ERPNext's Task (``task.json``), kept by the site's ``Task-status-options``
+#: Property Setter. Shipped, not verified: a person sets ``Completed`` (ADR 0016 §5).
+SHIPPED_STATUS = "Pending Review"
+
+#: ``review_date`` goes this far out. ERPNext's daily ``set_tasks_as_overdue`` skips a
+#: ``Pending Review`` Task only while its ``review_date`` is in the future, and flips it to
+#: ``Overdue`` otherwise when its expected end has passed. Two weeks is the review window.
+REVIEW_DAYS = 14
+
+#: The Comment every shipped Task gets. :func:`_already_noted` looks for it, so a replay of
+#: the same release never moves a Task a person has since reopened.
+SHIPPED_NOTE = "Shipped in erpnext_enhancements {version}"
 
 
 class ProjectRefused(frappe.PermissionError):
@@ -284,6 +329,158 @@ def _link_dependencies(doc: Any, rows: list[Any], failures: list[str]) -> None:
 		except Exception:
 			failures.append(f"Could not link {task_name} to depend on {target}.")
 			_log(f"Enhancement Request dependency link failed for {task_name}")
+
+
+# ------------------------------------------------------------------------------- shipped
+
+
+def mark_shipped(task_name: str, version: str, refs_line: str = "", requests: Any = None) -> str:
+	"""Move one Task a release shipped to ``Pending Review``. Never raises.
+
+	Called by :mod:`product_feedback.release_sync` for each ``TASK-…`` id on a ``Refs:`` line
+	of a CHANGELOG section at or below the installed version, with the ``ER-…`` ids on the same
+	line as ``requests``. Returns ``"marked"``, ``"skipped:<reason>"`` or
+	``"failed:<message>"``; the caller writes the one Error Log.
+
+	It acts only on a Task carrying ``custom_enhancement_request`` (work this pipeline created;
+	a ``Refs:`` naming any other Task changes nothing), and only from
+	:data:`SHIPPABLE_STATUSES`. It sets ``Pending Review`` and ``review_date``
+	:data:`REVIEW_DAYS` days out, and adds a Comment naming the version and the Refs line. It
+	never sets ``Completed``: a person closes shipped work.
+
+	Four more skips, each a way a Refs line could otherwise move the wrong Task:
+
+	* **A Task id that does not exist** is ``skipped:no such Task``, never ``failed``: a typo on
+	  a Refs line is permanent, and a failure would hold the marker behind it forever.
+	* **Another request's Task.** When the line names one or more requests, a Task that belongs
+	  to none of them is skipped: a one-digit slip in a Task id lands on a neighbor, and the
+	  neighbor is usually another request's. A line that names no request keeps the old rule.
+	* **``Overdue`` that was really ``Canceled``** (:data:`OVERDUE_NOT_SHIPPABLE_AFTER`,
+	  :func:`_last_status_change`).
+	* **Already marked for this version and since reopened by a person**
+	  (:func:`_already_noted`), so replaying a release never undoes their decision.
+
+	Saved through ``doc.save(ignore_permissions=True)``, so the Task controller, this app's
+	override and the ``doc_events`` run exactly as they do for a person's edit. The save and the
+	Comment share one savepoint, so a failure leaves the Task as it was and the next run
+	retries it.
+	"""
+	name = " ".join(str(task_name or "").split())
+	version = " ".join(str(version or "").split())
+	if not name:
+		return "skipped:no task id"
+	if not version:
+		return "skipped:no version"
+	named = [" ".join(str(r).split()) for r in (requests or []) if str(r or "").strip()]
+
+	savepoint = None
+	try:
+		if not frappe.db.exists("Task", name):
+			return "skipped:no such Task"
+		try:
+			doc = frappe.get_doc("Task", name)
+		except frappe.DoesNotExistError:
+			# Deleted between the two reads. Still a missing Task, not a failure to retry.
+			return "skipped:no such Task"
+		# `doc.get`, not the attribute: on a site whose migrate has not added the column yet
+		# the key is simply absent, and an absent back-link means "not ours".
+		request = (doc.get("custom_enhancement_request") or "").strip()
+		if not request:
+			return "skipped:not from an Enhancement Request"
+		if named and request not in named:
+			return f"skipped:belongs to {request}, not on the Refs line"
+		status = (doc.get("status") or "").strip()
+		if status not in SHIPPABLE_STATUSES:
+			return f"skipped:status is {status or 'unset'}"
+		if status == "Overdue":
+			before = _last_status_change(name)
+			if before in OVERDUE_NOT_SHIPPABLE_AFTER:
+				return f"skipped:overdue after {before}"
+		if _already_noted(name, version):
+			return f"skipped:already noted as shipped in {version}"
+
+		savepoint = "ee_mark_shipped"
+		frappe.db.savepoint(savepoint)
+		doc.status = SHIPPED_STATUS
+		doc.review_date = add_days(today(), REVIEW_DAYS)
+		doc.save(ignore_permissions=True)
+		doc.add_comment("Comment", text=shipped_note(version, refs_line))
+		frappe.db.release_savepoint(savepoint)
+		return "marked"
+	except Exception as exc:
+		if savepoint:
+			try:
+				frappe.db.rollback(save_point=savepoint)
+			except Exception:
+				pass
+		return f"failed:{_describe(exc)}"
+
+
+def shipped_note(version: str, refs_line: str = "") -> str:
+	"""``Shipped in erpnext_enhancements 1.529.0 (Refs: ER-…, TASK-…)``."""
+	note = SHIPPED_NOTE.format(version=version)
+	refs = " ".join(str(refs_line or "").split())
+	return f"{note} ({refs})" if refs else note
+
+
+def _already_noted(task_name: str, version: str) -> bool:
+	"""Does the Task already carry this version's shipped Comment?
+
+	Only asked of a Task in a shippable status, so it matters in one case: a person moved a
+	marked Task back to Open or Working, and the same release is processed again (the marker
+	stayed behind after a failed run). The version must end where the note does, so 1.52.0
+	does not match a note for 1.52.01.
+	"""
+	prefix = SHIPPED_NOTE.format(version=version)
+	contents = frappe.get_all(
+		"Comment",
+		filters={
+			"reference_doctype": "Task",
+			"reference_name": task_name,
+			"comment_type": "Comment",
+			"content": ["like", f"%{prefix}%"],
+		},
+		pluck="content",
+		limit=20,
+	)
+	pattern = re.compile(re.escape(prefix) + r"(?![\d.])")
+	return any(pattern.search(str(content or "")) for content in contents or [])
+
+
+def _last_status_change(task_name: str) -> str:
+	"""The status the newest ``Version`` that changed ``status`` set, or ``""`` for none.
+
+	Asked only of an ``Overdue`` Task. ERPNext's flip to ``Overdue`` is a ``db_set`` and leaves
+	no Version (see :data:`OVERDUE_NOT_SHIPPABLE_AFTER`), so this is the last status a save set:
+	a person's, or this writer's own. A Version's ``data`` is JSON whose ``changed`` holds
+	``[field, old, new]`` entries (``frappe/core/doctype/version/version.py``, ``get_diff``).
+	Only the newest :data:`VERSION_LOOKBACK` rows are read, on the ``(ref_doctype, docname)``
+	index Version declares; none found means today's rule, and the Task is shipped.
+	"""
+	rows = frappe.get_all(
+		"Version",
+		filters={"ref_doctype": "Task", "docname": task_name},
+		pluck="data",
+		order_by="creation desc",
+		limit=VERSION_LOOKBACK,
+	)
+	for raw in rows or []:
+		try:
+			diff = json.loads(raw) if isinstance(raw, str) else raw
+		except ValueError:
+			continue
+		if not isinstance(diff, dict):
+			continue
+		for change in diff.get("changed") or []:
+			if isinstance(change, (list, tuple)) and len(change) >= 3 and change[0] == "status":
+				return " ".join(str(change[2] or "").split())
+	return ""
+
+
+def _describe(exc: BaseException) -> str:
+	"""The exception's class and first 300 characters, never its traceback or frame locals."""
+	message = " ".join(str(exc or "").split())[:300]
+	return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
 
 
 # ------------------------------------------------------------------------------- shared

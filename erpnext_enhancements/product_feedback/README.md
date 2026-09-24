@@ -18,6 +18,9 @@ Slice 1 (v1.524.0) is in: every Task the writer creates, groups included, carrie
 groups from their origin note, never from their children); the code map sends every CLAUDE.md
 gotcha headline instead of a 6,000-character prefix, plus the real size of each capped listing
 under `totals`; and the one-writer test is an AST check that also catches `frappe.new_doc("Task")`.
+Slices 2 to 4 are in as well: the capture widget (section below), the code anchors
+(`code_anchors.py` in the file map), and, in v1.531.0, the Claude Code brief and the hourly release sync that moves shipped Tasks to
+`Pending Review` (see "The brief and the status return").
 
 ## The one rule
 
@@ -74,12 +77,15 @@ things are spelled the same and they disagree the first time somebody reopens a 
 | [`breakdown.py`](breakdown.py) | The background worker: builds the payload, calls Triton, writes the proposal. Also the hourly sweeper |
 | [`code_anchors.py`](code_anchors.py) | Where in the code one request points (WI-079 slice 3): the `www/` page behind its route, its doctype's fields (restricted ones flagged), controller outline and this app's hooks on it, the module README and the CHANGELOG lines that name them. Sent as `anchors` in payload schema 2 beside `codemap.py`'s whole-repo map. Schema and code facts only, never a docname or a value; deterministic, 40,000 characters at most, `{}` when it cannot build |
 | [`triton_client.py`](triton_client.py) | HTTP to `POST /api/v1/planning/work-breakdown`, as the approving reviewer |
-| [`task_writer.py`](task_writer.py) | **The only `Task` creator.** Runs after the reviewer confirms |
+| [`task_writer.py`](task_writer.py) | **The only `Task` creator.** Runs after the reviewer confirms. Also `mark_shipped`, the second writer: a shipped feedback Task goes to `Pending Review` (WI-079 slice 4) |
+| [`brief.py`](brief.py) | The Claude Code brief for a request whose Tasks exist (WI-079 slice 4): Markdown in the work-item shape (Why, Scope, Acceptance criteria, Explicitly NOT in this work item) plus a `json` Data block with the Task ids, the anchors, the design notes and the exact `Refs:` line, which is also printed bare in a block of its own to paste. Closed leaves are marked and kept off that line. Pure, imports no frappe; no requester, no docname; at most 60,000 characters, whatever the input. Served by `api.feedback.claude_code_brief` and the form's "Claude Code Brief" button |
+| [`release_sync.py`](release_sync.py) | Hourly. Reads the installed `CHANGELOG.md` and hands every `TASK-…` on a `Refs:` line of a release at or below the installed version (`tabInstalled Application`) to `task_writer.mark_shipped`, with the line's `ER-…` ids as a cross-check. The parser is strict so the CHANGELOG's own examples stay inert. Marker: `Product Feedback Settings.release_sync_last_version`, no default, absent = process everything |
 | [`notify.py`](notify.py) | Bell row + email. Four events, one audience each |
 | [`capture_jobs.py`](capture_jobs.py) | The capture widget's scheduled work: daily retention of screenshots + context files (and of screenshot uploads that never reached a request), hourly Error Log matching (WI-079 slice 2) |
 | `doctype/` | `Enhancement Request`, its two child tables, the reviewer child table, and the settings Single |
 
-Elsewhere: [`api/feedback.py`](../api/feedback.py) (ten POST-only endpoints, `file_request` among its helpers),
+Elsewhere: [`api/feedback.py`](../api/feedback.py) (eleven POST-only endpoints, `file_request` among its helpers),
+[`doctype/enhancement_request/enhancement_request.js`](doctype/enhancement_request/enhancement_request.js) (the "Claude Code Brief" button),
 [`www/feedback.py`](../www/feedback.py) + `feedback.html` (the shell),
 [`public/js/feedback/`](../public/js/feedback/) and `public/css/feedback.bundle.css` (the SPA),
 [`patches/seed_product_feedback_settings.py`](../patches/seed_product_feedback_settings.py).
@@ -130,6 +136,61 @@ the ones that shape the code.
   arrow, pen, text, blur and crop. Blur is burned in, and only the flattened image is uploaded.
   Automatic capture of the page waits for the spike the WI describes.
 
+## The brief and the status return (WI-079 slice 4)
+
+ADR 0016 §5. The far end of the route: confirmed Tasks go to a Claude Code session as a brief,
+and a release that ships them reports back on the board.
+
+- **The brief.** A reviewer presses "Claude Code Brief" on the Enhancement Request form, or calls
+  `api.feedback.claude_code_brief`. It needs Tasks, not a status: `created_task` rows, or Tasks
+  back-linked through `custom_enhancement_request`. The Markdown follows `work-items/*.md`,
+  headings included (`## Explicitly NOT in this work item`), and its last acceptance criterion
+  is the exact `Refs:` line, printed bare in a fenced block of its own with a note to paste it
+  without backticks or bold. A leaf that is `Completed`, `Canceled`, `Cancelled` or `Invoiced`
+  is marked in Scope and left off that line and the boxes. It never carries the requester or the
+  docname. The group Task's origin note is removed because it names both the requester and the
+  approver, and the path goes through `code_anchors.parse_path`. It is not a Triton or assistant
+  tool.
+- **The `Refs:` convention.** To mark feedback Tasks shipped, a release's CHANGELOG section
+  carries one line anywhere in it:
+
+  ```
+  Refs: ER-2026-00012, TASK-2026-00345, TASK-2026-00346
+  ```
+
+  **The parser is strict on purpose**: the CHANGELOG documents this convention with examples,
+  and its example Task ids are real Tasks on production (checked 2026-09-24). `Refs:` is
+  case-sensitive and starts
+  its line, after at most three spaces and an optional list marker (`- `, `* `, `+ `, `1. `).
+  A line that starts with a backtick or `**`, one indented four spaces or a tab, one inside a
+  fenced block (backticks or tildes, closed only by the same character at least as many times,
+  like the one above) or inside an HTML comment, and a mention mid-sentence, are none of them
+  Refs lines. `tests/test_feedback_release_sync.py` runs the parser over the real CHANGELOG and
+  fails the build on a Refs line naming a Task unless its `SHIPPED_REFS` lists the release, so a
+  release that really ships feedback Tasks adds its line there in the same change.
+  Only `TASK-…` ids move Tasks, so a release that ships part of a request names only the Tasks it
+  shipped. `ER-…` ids are a cross-check: when the line names any, a Task that belongs to another
+  request is skipped, so a typo cannot move a neighbor's Task. Anything else on the line, such as
+  a `WI-079`, is ignored. The brief writes the line for you: the request plus its open leaf
+  Tasks.
+- **`release_sync`, hourly.** It acts only on sections at or below the version
+  `tabInstalled Application` records. v16 writes that near the end of a migrate that got far
+  enough, so a half-installed deploy's CHANGELOG is never believed. Each `TASK-…` goes to
+  `task_writer.mark_shipped`, which moves a Task this pipeline created from `Open`, `Working` or
+  `Overdue` to `Pending Review`, sets `review_date` 14 days out (so ERPNext's overdue job leaves
+  it alone), and comments with the version. It never moves a Task to `Completed`: a person closes
+  shipped work. It skips a Task id that does not exist (a typo must not hold the marker), a Task
+  of a request the line does not name, and an `Overdue` Task whose last status change on record
+  (its newest `Version` rows) was to `Canceled`, `Cancelled`, `Invoiced`, `Completed` or
+  `Template`: ERPNext v16's overdue job exempts only `Cancelled` and `Completed`, so it flips
+  this site's `Canceled` to `Overdue`, and that flip is a `db_set` that leaves no Version. With
+  those rules a replay is harmless, and that is why the marker (`release_sync_last_version`)
+  has no default: absent means "process everything". The marker moves to the installed version
+  only after a clean run, and otherwise only as far as the last release before the first
+  failure; one Error Log records the failures. A run makes at most 500 save attempts, and a skip
+  is not one, so a replay costs nothing and a capped run is followed by one that gets further.
+  The next hour retries, so a deploy's `FLUSHDB` costs an hour, not a transition.
+
 ## DocTypes
 
 | DocType | Role |
@@ -138,7 +199,7 @@ the ones that shape the code.
 | `Enhancement Request Proposed Task` | One proposed task. Nothing here has been written anywhere until `created_task` is stamped |
 | `Enhancement Request Duplicate Candidate` | An existing `Task` the model thinks already covers this. Advisory |
 | `Product Feedback Reviewer` | Who is *told* a request arrived. Grants nothing |
-| `Product Feedback Settings` | Single: `paused`, the two board ids, the caps, the notify list |
+| `Product Feedback Settings` | Single: `paused`, the two board ids, the caps, the notify list, and `release_sync_last_version` (the release sync's marker, no default) |
 
 Permissions on `Enhancement Request`: `System Manager` full; `{"role": "All", "read": 1,
 "if_owner": 1}`. **The requester deliberately has no write.** Write would let them move
@@ -200,7 +261,10 @@ intake.
 python -m unittest erpnext_enhancements.tests.test_feedback_states -v
 python -m unittest erpnext_enhancements.tests.test_feedback_endpoint_surface -v
 python -m pytest erpnext_enhancements/tests/test_feedback_breakdown_parse.py -q
+python -m unittest erpnext_enhancements.tests.test_feedback_brief -v
+python -m unittest erpnext_enhancements.tests.test_feedback_release_sync -v
 ```
 
-All three are bench-free and in CI. The parse suite is **pytest-style** and has its own step —
+All of them are bench-free and in CI. The last two each have their own step: the brief suite
+installs an empty `frappe` placeholder, and the release sync suite installs a `frappe` stub. The parse suite is **pytest-style** and has its own step —
 `python -m unittest` collects nothing from plain `def test_*` functions and reports success.

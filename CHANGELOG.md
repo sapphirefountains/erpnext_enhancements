@@ -7,6 +7,267 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.531.0] - 2026-09-24
+
+**WI-079 slice 4: a confirmed request becomes a Claude Code brief, and a release that ships its
+Tasks moves them to Pending Review.** Both ends of the feedback route were manual. A reviewer read
+the request and its Tasks and retyped them into a coding session, and somebody had to remember to
+move each Task once the fix deployed. ADR 0016 §5 closes both. ERPNext now writes the brief from
+records it already holds, and the brief's last acceptance criterion is a `Refs:` line. When a
+release's CHANGELOG section carries that line, an hourly job moves the named Tasks to
+`Pending Review` once the deploy has installed. It never moves them to `Completed`: a person
+closes shipped work.
+
+Refs: WI-079
+
+That line is the convention's first use. It names no Enhancement Request and no Task, because the
+work items' own Tasks are tracked on the board by WI number and none of them was created from an
+Enhancement Request, so none carries the back-link the sync requires. The sync reads only `ER-…`
+and `TASK-…` ids, so this line moves nothing.
+
+### Added
+
+- **`api.feedback.claude_code_brief(name)`**, POST-only and reviewer-only (`_require_reviewer`,
+  like the other review endpoints). It returns `{"markdown", "data"}`.
+  - **It needs Tasks, not a status.** It looks for `created_task` on the proposal and for Tasks
+    whose `custom_enhancement_request` names the request, which is how it finds the group Tasks.
+    A confirm that partly failed leaves real Tasks on the board while the request stays in
+    `Breakdown Ready` (`task_writer` moves it to `Tasks Created` only when nothing is left), and
+    those Tasks deserve a brief. A request in `Tasks Created` whose Tasks were all deleted has
+    nothing to build, so it is refused.
+  - **Not a Triton or assistant tool.** An assistant tool appears in every employee's tool list
+    and costs context on every chat.
+- **`product_feedback/brief.py`**, the renderer: `render_brief(request, tasks, duplicates,
+  anchors, design_notes) -> (markdown, data)`. It is pure and imports no frappe. The endpoint
+  gathers its inputs.
+  - **The work-item shape** of `work-items/*.md`: a `#` title, then `## Why`, `## Scope`,
+    `## Acceptance criteria`, `## Explicitly NOT in this work item` and `## Data`. The
+    out-of-scope heading is the one every work item and the `work-item` skill use, so a session
+    that looks for it by name finds it.
+  - **Why:** the type, impact, page path and doctype, then the requester's description and steps
+    to reproduce. The requester's text is block-quoted, so a heading or a code fence typed into it
+    stays inside the quote and cannot break the brief's structure.
+  - **Scope:** each Task as `TASK-… — subject` with its description as plain text. A leaf sits
+    under its group Task, and a leaf the model nested under an existing epic sits under that epic,
+    marked as a Task this request did not create. Ungrouped leaves come first.
+  - **Acceptance criteria:** one box per open leaf Task, `The steps to reproduce no longer
+    reproduce it` for a Bug, and always a last box: the CHANGELOG entry for the release carries
+    the brief's exact Refs line, the request id followed by the open leaf Task ids.
+  - **The Refs line is printed bare, alone in a fenced block under that box**, with the note
+    "Paste this line into the release's CHANGELOG section exactly as it is, on its own line,
+    without backticks or bold." The release sync ignores a line that starts with a backtick or
+    `**`, on purpose (see the convention below), and this repository's house style would put an
+    identifier in a code span. Shown inline in a code span, which is how the first draft showed
+    it, the line would have been pasted that way and then ignored in silence: no Error Log, the
+    marker moving on, and the Tasks left `Open`.
+  - **Closed leaves stay off the Refs line.** A leaf that is `Completed`, `Canceled`,
+    `Cancelled` or `Invoiced` is still listed under Scope, marked "(canceled)", "(completed)" or
+    "(invoiced)", but it gets no acceptance box and no place on the Refs line. The endpoint now
+    reads each Task's `status` for this.
+  - **Explicitly NOT in this work item:** each duplicate candidate the breakdown flagged, with its
+    confidence and reason, then "Anything not listed under Scope".
+  - **Data:** one `json` block holding `request`, `tasks` (name, subject, parent, project),
+    `anchors` (slice 3's `build_anchors` output, or `{}`), `design_notes` (`[]` until Design
+    Review fills it in slice 5) and `refs`.
+  - **What it leaves out.** The requester's identity is never read. The group Task's
+    description is the origin note `task_writer` writes, which names the requester and the
+    approver, so that line is removed. `context_docname` is never read, and the page path goes
+    through `code_anchors.parse_path`, the same rule the Triton payload uses: `/desk/item/PUMP-001?x=1`
+    becomes `/desk/item`. Screenshots and the capture context file never appear (ADR 0016 §4).
+  - **HTML is stripped with the standard library** (`html.parser`) rather than
+    `frappe.utils.strip_html`, so the bench-free suite covers it. List items become bullets,
+    scripts and styles vanish, entities are decoded, and text with no markup (a model-written Task
+    description) keeps its line breaks. A `<pre>` block keeps its indentation, so a Quill code
+    block reaches the brief as code rather than flattened lines. Text counts as HTML only when a
+    tag name follows `<` directly, as `HTMLParser` itself requires, so a plain description that
+    says `a < b` keeps its line breaks.
+  - **At most 60,000 characters, for any input.** Over that it drops the anchors' CHANGELOG
+    excerpts, then their README, then their field lists, in that order, recording each one in the
+    anchors' own `truncated` list and in a note under `## Data`. Then it drops the anchors, cuts
+    each description down to 120 characters, drops the Task descriptions under Scope, and cuts
+    each Task subject to 80 and then 40 characters. The note names every step it took. That fits
+    the most one confirmed proposal can create (50 leaves under 50 groups, 140-character
+    subjects, duplicates and anchors) and twice that, both tested. Past those, the brief is cut at
+    a line boundary, an open fence is closed, and it ends by saying what is missing: the Data
+    block, and the Refs line too when the cut came before it. Cutting on a line boundary means a
+    Refs line is never half there. The first draft stopped cutting at the descriptions and
+    returned 60,965 characters for the 50-under-50 case, with a note saying it had fit.
+- **A "Claude Code Brief" button on the Enhancement Request form**, in a new
+  `enhancement_request.js` (the doctype had no form script, so it is written with tabs like the
+  other doctype scripts). It shows to System Managers, which is the reviewer role, when the
+  request is `Tasks Created` or a proposal row has `created_task`. It opens a dialog with a
+  read-only Code field (Markdown) holding the brief and a Copy button that calls
+  `frappe.utils.copy_to_clipboard`. On `version-16` that uses `navigator.clipboard` in a secure
+  context and falls back to a textarea otherwise.
+- **`task_writer.mark_shipped(task_name, version, refs_line="", requests=None)`**, the second
+  Task writer, in the one module that writes Tasks.
+  - It acts only on a Task that carries `custom_enhancement_request`. A Refs line naming any
+    other Task changes nothing.
+  - **The request ids on the line are a cross-check.** When the line names one or more `ER-…`
+    ids, a Task whose `custom_enhancement_request` is none of them is skipped
+    (`skipped:belongs to <ER>, not on the Refs line`). Task ids run in sequence and feedback
+    Tasks from different requests sit next to each other, so a one-digit typo lands on another
+    request's Open Task. A line that names no request keeps the plain rule.
+  - **A Task id that does not exist is `skipped:no such Task`, never `failed`**, including a Task
+    deleted between the existence check and the read. A typo on a Refs line is permanent, and a
+    failure would hold the marker behind it for good.
+  - It acts only from `Open`, `Working` or `Overdue`, and it is an allowlist. It never touches
+    `Completed`, `Canceled` (this site's Property Setter) or `Cancelled` (ERPNext v16's own
+    options), `Invoiced`, `Template`, `Pending Review`, or a status added later.
+  - **An `Overdue` that was really `Canceled` is skipped.** ERPNext v16's daily
+    `set_tasks_as_overdue` and `Task.update_status` exempt only `Cancelled` and `Completed`, so
+    this site's `Canceled` and `Invoiced` Tasks become `Overdue` once their expected end passes
+    (fixed at the source in this release; see Fixed). The flip is a `db_set`, which writes no
+    `Version` row on `version-16` (`db_set` goes straight to `frappe.db.set_value`; only `save`
+    calls `save_version`). A cancel from the form writes one, because Task tracks changes, but
+    a cancel from the Project form's Task Tree does not: its status picker writes with
+    `frappe.db.set_value` too. So this check only covers Tasks flipped before this release,
+    and only those canceled from the form. For an
+    `Overdue` Task it reads the newest 20 Version rows (`ref_doctype`, `docname`, newest first,
+    on the index Version declares) and finds the latest `status` change in their `changed`
+    entries. If that set `Canceled`, `Cancelled`, `Invoiced`, `Completed` or `Template`, the
+    result is `skipped:overdue after <status>`. With no status change on record it ships the Task
+    as before.
+  - It sets `Pending Review` and a `review_date` 14 days out. ERPNext's daily
+    `set_tasks_as_overdue` passes over a `Pending Review` Task only while its `review_date` is in
+    the future. Otherwise, once the Task's expected end has passed, it flips the Task to `Overdue`.
+  - It adds a Comment: `Shipped in erpnext_enhancements <version> (<refs line>)`.
+  - It saves through `doc.save(ignore_permissions=True)`, so this app's Task override and the
+    `doc_events` run as they do for a person's edit. The save and the Comment share one
+    savepoint, so a failure leaves the Task exactly as it was.
+  - It also skips a Task that already carries this version's shipped Comment. So when a release
+    is processed again after a failed run, a Task that a person reopened is not moved back.
+  - It returns `marked`, `skipped:<reason>` or `failed:<message>` and never raises.
+- **`product_feedback/release_sync.py`**, hourly (`sync_shipped_tasks`, in
+  `scheduler_events["hourly"]`).
+  - **The ceiling is the installed version**, read from `tabInstalled Application` with bound
+    parameters. v16 rewrites that table near the end of every migrate that gets far enough
+    ("Updating installed applications...", `frappe/migrate.py` line 198 on `version-16`). A
+    section above it is never acted on. The deploy resets the checkout before `bench migrate`
+    runs, so a migrate that aborts leaves the new CHANGELOG sitting over old code: the v1.395.0
+    half-install in `CLAUDE.md`. If two rows ever exist, the lower version wins.
+  - **It processes sections with `last processed < version <= installed`, oldest first**,
+    comparing versions as tuples of ints, because `"1.99.0" < "1.100.0"` is false as text.
+  - **The marker is a new field, `Product Feedback Settings.release_sync_last_version`**
+    (read-only Data). It has no default, on purpose. `CLAUDE.md`'s Single-default gotcha says a
+    new Single field's default never reaches the existing row, and here that is the behavior
+    wanted: no row means "never run", which means process everything. That is safe because
+    `mark_shipped` makes replay a no-op. The marker is read with `get_single_value` and written
+    with `set_single_value(update_modified=False)`, never through `tabSingles`, and it never
+    moves backwards: the write re-reads the stored value and refuses anything at or below it,
+    and a read that fails (as opposed to finding nothing) stops the run until the next hour,
+    because a replay from an unknown marker that then failed would write a lower one back.
+  - **It moves to the installed version only after a clean run**, where every call came back
+    `marked` or `skipped`. Otherwise it moves only as far as the last release the run finished
+    before its first failure, and the next hour retries from there. The run's failures go into
+    one Error Log, and the message is passed explicitly: without one, v16's `log_error` fills it
+    from `get_traceback(with_context=True)`, which prints every frame local.
+  - **A run makes at most 500 save attempts.** A `skipped` result does not count: it costs a few
+    reads, and a replay is made almost entirely of skips. The first draft counted every call,
+    and review found the trap in that. One Task that can never save (ERPNext refuses a leaf whose
+    expected end is later than its parent's) kept the marker below its release. Each hour's run
+    then replayed the same 499 skips, stopped at the same place, and left every Task named after
+    that point `Open` for good. Now a capped run is followed by one that gets further. A single
+    release naming more than 500 Tasks simply finishes over two runs. When a run is both capped
+    and failing, the Error Log ends `run capped at 500 calls; releases after <version> not
+    reached`, so the Tasks waiting behind the failure are visible.
+  - **Each transition is committed on its own, and nothing is queued.** The deploy's `FLUSHDB`
+    therefore costs at most an hour, never a transition.
+- **The `Refs:` convention.** One line anywhere in a release's CHANGELOG section, for example
+  `Refs: ER-2026-00012, TASK-2026-00345, TASK-2026-00346`. It is documented in the
+  `release-prep` skill, in `product_feedback/README.md` and in the brief's acceptance criteria.
+  - **The parser is strict on purpose, because this file documents the convention with
+    examples**, and the example Task ids are real Tasks on production (`TASK-2026-00345` and
+    `-00346`, both `Completed` and not born from a request, checked 2026-09-24). `Refs:` is
+    case-sensitive
+    and must start its line, after at most three spaces and an optional list marker (`- `, `* `,
+    `+ `, `1. `). So a line that starts with a backtick or `**` is not a Refs line; neither is
+    one indented four spaces or a tab (a code block), one inside a fenced block (three or more
+    backticks or tildes, closed only by the same character at least as many times, so a shorter
+    fence inside a longer one does not end it), or one inside an HTML comment. Prose that mentions the convention
+    mid-sentence is not one either. Every example in this entry is in a code span for that
+    reason.
+  - **`test_feedback_release_sync` runs the parser over this real file** and fails the build on
+    any Refs line that names a Task unless the test's `SHIPPED_REFS` lists that release. When a
+    release really ships feedback Tasks, the same change adds its line there, which is one
+    deliberate edit beside the CHANGELOG line. When the failure is an example, write the example
+    in a code span or a fence.
+  - Only `TASK-…` ids move Tasks. `ER-…` ids are the cross-check described under `mark_shipped`:
+    a release that ships part of a request names the Tasks it shipped, and naming the request
+    alone moves nothing. Anything else on the line, such as a `WI-079`, is ignored.
+  - An id has five or more digits after the year. The naming rules pad to five
+    (`TASK-.YYYY.-.#####`, `ER-{YYYY}-{#####}`), but production's request counter already runs
+    to six (`ER-2026-458194`).
+
+### Changed
+
+- `Product Feedback Settings` gains a "Release Sync" section holding the marker. Its JSON
+  `modified` is bumped so the field syncs.
+
+### Tests
+
+- `test_feedback_brief`, bench-free, in its own CI step. It pins the headings and their order,
+  the grouping, one box per leaf, the Bug line and the exact Refs line. It plants a requester,
+  an approver, a docname and a query string, and checks that none of them appears in the brief
+  or its data. It also checks that the path is reduced, that HTML is stripped from Task
+  descriptions (a `<pre>` keeping its indentation, `a < b` staying plain text), and the size
+  cap with its cut order and note. The worst case, 50 leaves under 50 groups with
+  140-character subjects, duplicates and anchors, fits with a whole Data block and a note that
+  names exactly what was cut, and so does twice that; 125 and 300 leaves end in the
+  last-resort cut, still at most 60,000 characters with every fence closed. The Refs line is
+  checked with `release_sync.refs_in` itself: the copy block yields exactly the brief's line
+  (bare or as a bullet), the same line in backticks or bold yields nothing, the brief as a whole
+  moves nothing, and a Canceled, Cancelled, Completed or Invoiced leaf is marked in Scope and
+  kept off the line and the boxes. It checks the endpoint on its code, with AST:
+  `_require_reviewer()` comes first, neither function reads `requested_by` or
+  `context_docname`, and the Task fields include `status`. `brief.py` imports
+  `code_anchors.parse_path`, and `code_anchors` imports frappe at module level (so does
+  `release_sync`, which calls it only inside its job), so the suite installs an empty `frappe`
+  module with no attributes. That proves the renderer and `refs_in` call nothing on it.
+- `test_feedback_release_sync`, bench-free with a frappe stub whose savepoint really rolls
+  back, in its own CI step. It covers version parsing and comparison; Refs extraction with list
+  markers, up to three spaces and no more, the wrong case, mid-line mentions, backticks and
+  bold, fences of both kinds and lengths, HTML comments and six-digit ids; sections above the
+  installed version being ignored; the marker moving only after a clean run, and only as far as
+  the release before the first failure otherwise; an absent marker processing everything;
+  running twice changing nothing; a full replay leaving a `Completed` Task `Completed`; a Refs
+  line naming a Task without the back-link changing nothing; the 500-save cap, including skips
+  costing nothing, one release over the cap finishing over two runs, the review's starvation
+  case (one Task that never saves ahead of 600 more) draining on the second run, and a capped,
+  failing run naming the cap in its Error Log; and `mark_shipped`'s rules (every other status
+  skipped, only Tasks the pipeline created, a missing Task and another request's Task skipped,
+  `Overdue` after each closed status skipped by its Version history, `review_date` +14, the
+  comment text, rollback on failure). It also checks that this release's own Refs line names
+  nothing to move.
+- **`TestTheRealChangelogCannotMoveATaskByAccident`**, in the same suite, runs `refs_in` over
+  the real `CHANGELOG.md`, section by section and whole. It fails the build on any Refs line
+  that names a Task unless `SHIPPED_REFS` lists it, and checks that this entry's own examples
+  would parse if they were not in code spans, so the spans are what keeps them inert.
+- `test_feedback_endpoint_surface` lists `claude_code_brief` as not dialled by the SPA, with its
+  reason, and checks that the Desk script dials it by its full path. It also asserts that outside
+  `task_writer`, no scanned code names `Pending Review` as a value or calls `set_value` on a Task.
+
+### Not done
+
+- The optional "Copy brief" link on the `/feedback` SPA's request page. The SPA has no clipboard
+  or notification helper to put it behind, so the Desk button is the one way in for now.
+
+### Fixed
+
+- **ERPNext's daily overdue job no longer reopens finished Tasks.** `set_tasks_as_overdue`
+  selects Tasks whose status is not `Cancelled` or `Completed`, and `Task.update_status` checks
+  the same pair before it writes `Overdue`. Both use ERPNext's double-l spelling, while this
+  site's Property Setter offers `Canceled`, and `Invoiced` and `Template` are finished too. So
+  every such Task whose expected end had passed was flipped to `Overdue`, daily and silently (a
+  `db_set`, so no Version). Measured on production 2026-09-24: not one `Canceled` (13),
+  `Invoiced` (2) or `Template` (71) Task had a past end date left, and 47 of the 1,135 `Overdue`
+  Tasks had a Version showing one of those statuses, which undercounts, since the Task Tree's
+  cancels leave no Version. This app's Task override (`task_enhancements/doctype/task/task.py`)
+  now returns early from `update_status` for `Completed`, `Canceled`, `Cancelled`, `Invoiced`
+  and `Template`, and hands everything else to the core rule unchanged. It stops future flips
+  and does **not** restore the Tasks already flipped: which status each one had is only partly
+  recorded, so that repair is a separate decision. New suite `test_task_overdue_guard`.
+
 ## [1.530.0] - 2026-09-24
 
 **Maintenance moves to a Service dashboard under Production, and Operations becomes the

@@ -17,7 +17,9 @@
   "column_break_breakdown",
   "breakdown_timeout",
   "notify_section",
-  "reviewer_recipients"
+  "reviewer_recipients",
+  "release_sync_section",
+  "release_sync_last_version"
  ],
  "fields": [
   {
@@ -98,12 +100,24 @@
    "label": "Notify On New Request",
    "options": "Product Feedback Reviewer",
    "description": "Bell entry plus email when a request is filed. Empty means nobody is told and the review queue is the only surface — which is a valid choice, not an error."
+  },
+  {
+   "fieldname": "release_sync_section",
+   "fieldtype": "Section Break",
+   "label": "Release Sync"
+  },
+  {
+   "fieldname": "release_sync_last_version",
+   "fieldtype": "Data",
+   "label": "Last Release Synced",
+   "read_only": 1,
+   "description": "The newest erpnext_enhancements release whose CHANGELOG Refs: lines the hourly release sync has processed (product_feedback/release_sync.py). It has NO default, deliberately: a new Single field's default never reaches the existing row (CLAUDE.md), and here the absent value is the right one, because empty means \"never run\", which means process every release up to the installed version. Replaying is harmless: a Task already moved is never moved again. Written by the job, never by hand; clearing it makes the next run replay everything."
   }
  ],
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-17 12:00:00.000000",
+ "modified": "2026-09-24 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Product Feedback",
  "name": "Product Feedback Settings",

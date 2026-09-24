@@ -287,7 +287,7 @@ that deploys, Triton v0.79 ignores the new keys and the prompt is unchanged.
 ### Slice 4 — Claude Code brief and the status return [M]
 
 - A reviewer-only endpoint and a Desk button that render a confirmed request as a brief: Markdown in
-  the work-item shape (Why, Scope, Acceptance criteria, NOT in scope) plus a JSON block with the Task
+  the work-item shape (Why, Scope, Acceptance criteria, Explicitly NOT in this work item) plus a JSON block with the Task
   ids, the anchors and any accepted design notes by element code. **Not** a Triton assistant tool.
 - The changelog convention `Refs: ER-…, TASK-…`, documented in the `release-prep` skill.
 - An hourly, idempotent `release_sync` that reads the installed `CHANGELOG.md`, acts only on sections
@@ -298,6 +298,61 @@ that deploys, Triton v0.79 ignores the new keys and the prompt is unchanged.
   the version. It never touches `Completed`, `Canceled`, `Invoiced`, `Template` or a Task already in
   `Pending Review`. With those rules, replaying the whole history is harmless, so the last release
   processed is kept on the settings Single, named so that an absent row means "process everything".
+
+**Status, v1.531.0 (2026-09-24).** Shipped: the brief, its endpoint and Desk button, the `Refs:`
+convention, `mark_shipped` and the hourly `release_sync`. Deviations and gaps:
+
+- **The brief works from Tasks, not from a status.** `api.feedback.claude_code_brief` needs
+  `created_task` rows or Tasks back-linked through `custom_enhancement_request`. A confirm that
+  partly failed leaves real Tasks while the request stays in `Breakdown Ready`, and those get a
+  brief too. The Desk button shows for `Tasks Created`, or when a proposal row has
+  `created_task`.
+- **The brief's Refs line names the request and its open leaf Tasks, not the group Tasks.** A
+  group is a container. It stays open for a person to close once its children are reviewed. A
+  `Completed`, `Canceled`, `Cancelled` or `Invoiced` leaf is marked in Scope and left off the
+  line and the acceptance boxes.
+- **The brief prints the Refs line bare, in a fenced block of its own**, with a note to paste it
+  without backticks or bold. The parser ignores a backticked or bolded line on purpose, so shown
+  inline in a code span the line would have been pasted that way and silently ignored.
+- **The Refs parser is strict, and a test holds the real CHANGELOG to it.** `Refs:` at the start
+  of its line after at most three spaces and a list marker; never inside a fence (either kind,
+  closed only by the same character at least as long) or an HTML comment. The CHANGELOG
+  documents the convention with examples, and its example Task ids are real Tasks on production
+  (checked 2026-09-24), so
+  `test_feedback_release_sync` fails the build on a Refs line naming a Task unless its
+  `SHIPPED_REFS` lists the release. A release that really ships feedback Tasks adds its line
+  there in the same change.
+- **Only `TASK-…` ids move anything; an `ER-…` id is a cross-check.** A release that ships part
+  of a request moves only the Tasks it names, and when the line names a request, a Task of any
+  other request is skipped, so a mistyped Task id cannot move a neighbor's work. A Task id that
+  does not exist is skipped, never failed, so a typo cannot hold the marker. Ids have five or
+  more digits: production's request counter already runs to six (`ER-2026-458194`).
+- **`mark_shipped` also skips a Task that already has this version's shipped comment.** A
+  replay after a failed run cannot undo a person reopening a marked Task.
+- **`mark_shipped` skips an `Overdue` Task a person had closed.** See the last bullet: when the
+  newest `Version` that changed `status` set `Canceled`, `Cancelled`, `Invoiced`, `Completed`
+  or `Template`, the `Overdue` is ERPNext's flip, not real work, and the result is
+  `skipped:overdue after <status>`. The flip is a `db_set`, which writes no Version on
+  `version-16`.
+- **The 500 cap counts save attempts, not skips.** Counting skips let one Task that could never
+  save starve every release behind it: each hour replayed the same 499 skips and stopped at the
+  same place. The marker moves to the installed version after a clean run, and otherwise to the
+  last release finished before the first failure. A release naming more than 500 Tasks finishes
+  over two runs, and a run that is both capped and failing says so in its Error Log.
+- **Design notes are `[]` in the brief's Data block.** Slice 5 fills them.
+- **The `/feedback` SPA has no "Copy brief" link.** It has no clipboard or notification helper,
+  so the Desk button is the one way in. `test_feedback_endpoint_surface` records the exemption.
+- **Still to see on production.** The acceptance criteria need a release that carries a real
+  `Refs: TASK-…` for a feedback Task. v1.531.0's own line is `Refs: WI-079`, which moves
+  nothing. The first hourly run after the deploy replays the whole CHANGELOG (the marker is
+  absent), finds no Task ids, and moves the marker to 1.531.0.
+- Noticed while reading ERPNext `version-16`, guarded here and not fixed at the root:
+  `set_tasks_as_overdue` and `Task.update_status` exempt only `Cancelled` and `Completed`, so
+  this site's `Canceled` and `Invoiced` Tasks whose expected end has passed are flipped to
+  `Overdue` daily. The brief and `mark_shipped` now guard the feedback pipeline against it (see
+  their bullets above), but every other `Canceled` Task on the site is still flipped. The lasting
+  fix is a `Canceled`/`Invoiced` guard in this app's Task override, a separate change. Not
+  checked against production.
 
 ### Slice 5 — Design Review [L]
 
