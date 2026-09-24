@@ -150,6 +150,14 @@ function check(label, actual, expected) {
 	check('null', scrubPath(null), '');
 	check('long path clipped', scrubPath('/' + 'segment/'.repeat(80)).length, 300);
 
+	console.log('\npercent-encoded emails and emoji at the cut');
+	check('an encoded email is an email', S.scrubText('owner=bob%40acme.com', 200), 'owner=[email]');
+	check('a multi-label encoded email too', S.scrubText('to bob%40acme.co.uk now', 200), 'to [email] now');
+	{
+		const out = S.scrubText('ab\ud83d\ude00cd', 4);
+		check('a clip never leaves half an emoji', /[\ud800-\udbff](?![\udc00-\udfff])/.test(out), false);
+	}
+
 	console.log('');
 	if (failures) {
 		console.error(failures + ' assertion(s) failed');

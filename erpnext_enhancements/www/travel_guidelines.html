@@ -163,7 +163,7 @@
 {# Capture widget (WI-079 slice 2). This page is on its allowlist; the recorder goes first so it
    sees errors from the page's own scripts. Never in web_include_js. #}
 <script>
-	window.EE_CAPTURE = {surface: "web", launcher: true, user: {{ frappe.session.user | tojson }}, panel_url: {{ bundled_asset('capture_panel.bundle.js') | tojson }}};
+	window.EE_CAPTURE = {surface: "web", launcher: true, user: {{ frappe.session.user | tojson }}, csrf_token: {{ (csrf_token or "") | tojson }}, panel_url: {{ bundled_asset('capture_panel.bundle.js') | tojson }}};
 </script>
 <script src="{{ bundled_asset('capture.bundle.js') }}"></script>
 {% endblock %}

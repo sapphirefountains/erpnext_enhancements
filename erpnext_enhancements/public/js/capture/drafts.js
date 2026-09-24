@@ -231,6 +231,9 @@ export async function saveDraft(draft) {
 		payload: plain(d.payload) || {},
 		snapshot: plain(d.snapshot),
 		image: d.image || null,
+		// The report's id (panel.js newClientId), so a resend of a report that did arrive is
+		// recognized by the server rather than filed twice.
+		client_id: typeof d.client_id === "string" ? d.client_id.slice(0, 64) : "",
 	};
 	try {
 		return await add(record);

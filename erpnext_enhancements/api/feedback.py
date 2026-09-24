@@ -133,6 +133,16 @@ FILING_RATE_WINDOW_SECONDS = 60
 MAX_CONTEXT_BYTES = 200_000
 CAPTURE_CONTEXT_PREFIX = "capture-context-"
 
+#: How long `submit_capture` remembers a report id: a kiosk draft lives 7 days, plus a day.
+CLIENT_ID_TTL_SECONDS = 8 * 24 * 3600
+
+
+class FeedbackPausedError(frappe.ValidationError):
+    """Intake is paused. Still a 417 with the same message; the class name is what reaches the
+    browser as ``exc_type``, so the capture panel keeps a saved draft instead of deleting it as
+    a permanent refusal."""
+
+
 MAX_TITLE_CHARS = 200
 MAX_BODY_CHARS = 20000
 MIN_DESCRIPTION_CHARS = 20
@@ -461,7 +471,7 @@ def submit_request(payload=None, attachments=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def submit_capture(payload=None, context=None, attachments=None):
+def submit_capture(payload=None, context=None, attachments=None, client_id=None):
     """File a request from the capture widget (WI-079 slice 2): the Desk, the kiosk, or an
     allowlisted web page.
 
@@ -473,10 +483,22 @@ def submit_capture(payload=None, context=None, attachments=None):
     **System Users only.** The widget mounts on signed-in pages, but a Website User signed in
     to ``/itinerary`` is signed in too, and the ``system_user`` cookie that hides the launcher
     outlives the session: the check that counts is this one.
+
+    ``client_id`` is the panel's id for this one report, kept with an offline draft. A
+    response lost on a bad connection looks like "offline" to the panel, which saves a draft
+    and sends it again later; the id makes that second send return the first request instead
+    of filing it twice.
+
+    A pause raises :class:`FeedbackPausedError`, so the panel can tell a temporary refusal
+    from a permanent one and keep a saved draft rather than deleting it.
     """
     _require_system_user()
+    client_id = _capture_client_id(client_id)
+    already = _already_filed(client_id)
+    if already:
+        return {"name": already, "rejected": [], "attachments": [], "duplicate": True}
     if get_settings()["paused"]:
-        frappe.throw(_("New requests are paused right now."), frappe.ValidationError)
+        frappe.throw(_("New requests are paused right now."), FeedbackPausedError)
 
     values, rejected = _filter_payload(_as_dict(payload), SUBMIT_ALLOWED_FIELDS)
     # Before anything is written: an oversized or malformed snapshot is refused whole rather
@@ -484,6 +506,7 @@ def submit_capture(payload=None, context=None, attachments=None):
     content = _capture_context_json(context)
 
     doc = file_request(values, frappe.session.user, SOURCE_CAPTURE)
+    _remember_filed(client_id, doc.name)
 
     problems = []
     if not _attach_capture_context(doc.name, content):
@@ -554,6 +577,56 @@ def _deployed_release():
         return str(__version__)[:140]
     except Exception:
         return ""
+
+
+def _capture_client_id(value):
+    """The panel's report id, or "" when it is absent or not the shape the panel makes."""
+    text = value.strip() if isinstance(value, str) else ""
+    if 8 <= len(text) <= 64 and all(c.isascii() and (c.isalnum() or c == "-") for c in text):
+        return text
+    return ""
+
+
+def _client_id_key(client_id):
+    # No make_key here: get_value and set_value add the site prefix themselves.
+    return f"ee_capture_filed:{frappe.session.user}:{client_id}"
+
+
+def _already_filed(client_id):
+    """The request this report id already filed for the session user, or "".
+
+    Confirmed against the table, so a name remembered for a filing that was rolled back
+    afterwards is not taken for proof that the report arrived.
+    """
+    if not client_id:
+        return ""
+    name = frappe.cache.get_value(_client_id_key(client_id))
+    if not name:
+        return ""
+    if frappe.db.exists(DOCTYPE, {"name": name, "requested_by": frappe.session.user, "source": SOURCE_CAPTURE}):
+        return name
+    return ""
+
+
+def _remember_filed(client_id, name):
+    """Remember the filing once it is committed, for as long as a draft can live.
+
+    After commit, not now: a remembered name for a request that then rolled back would turn
+    the draft's resend into a silent no-op. The deploy's FLUSHDB forgets every id, which
+    costs at worst the duplicate this exists to prevent.
+    """
+    if not client_id:
+        return
+    key = _client_id_key(client_id)
+
+    def remember():
+        frappe.cache.set_value(key, name, expires_in_sec=CLIENT_ID_TTL_SECONDS)
+
+    after_commit = getattr(frappe.db, "after_commit", None)
+    if after_commit is not None and hasattr(after_commit, "add"):
+        after_commit.add(remember)
+    else:
+        remember()
 
 
 def _capture_context_json(context):

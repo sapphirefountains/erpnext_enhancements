@@ -80,7 +80,10 @@
       container.appendChild(h('div', { class: 'tk-card' }, [
         h('p', { class: 'tk-card-title', text: 'Help' }),
         h('button', { type: 'button', class: 'tk-btn tk-btn-primary', text: 'Report a problem', on: { click: function () {
-          try { window.ee_capture.open({ surface: 'kiosk' }); } catch (e) { UI.toast('Could not open the report form.', 'red', 3000); }
+          // open() reports a failed load by rejecting, never by throwing, so the toast hangs off
+          // the promise.
+          var failed = function () { UI.toast('Could not open the report form.', 'red', 3000); };
+          try { window.ee_capture.open({ surface: 'kiosk' }).catch(failed); } catch (e) { failed(); }
         } } }),
         h('p', { class: 'tk-note', style: { marginTop: '12px' }, text: 'Describe what went wrong and add a screenshot if you have one. You see everything that will be sent, and it stays in ERPNext.' }),
       ]));

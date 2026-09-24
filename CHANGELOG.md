@@ -26,12 +26,14 @@ annotated screenshot. They see all of it before it is sent, and it never leaves 
       path, status, duration and Frappe's `exc_type`, and never a body;
     - the last 10 routes.
 
-    Text is scrubbed of emails and token-shaped strings. Everything is wrapped so that a
-    recorder fault cannot break the page, and the fetch wrapper hands back the page's own
-    Response and never reads its body.
-  - **Page state.** Desk route, query string and title. On a form: doctype, name, `docstatus`,
-    the unsaved flag and the names (never the values) of the fields changed since load. List and
-    report filters. Service-worker version, online state and device facts.
+    Text is scrubbed of emails (percent-encoded ones too) and token-shaped strings, and is
+    never cut in the middle of an emoji: a lone surrogate makes Frappe refuse the whole
+    body. Everything is wrapped so that a recorder fault cannot break the page, and the
+    fetch wrapper hands back the page's own Response and never reads its body.
+  - **Page state.** Desk route, query string (decoded, then scrubbed) and title. On a form: doctype, name, `docstatus`,
+    the unsaved flag and the names (never the values) of the fields changed since load. The form
+    hook that takes the baseline returns a settled promise, so no form waits on it. List
+    and report filters. Service-worker version, online state and device facts.
     `ee_capture.registerCaptureState(fn)` lets a single-page app or PWA add its own. The Desk
     page detection is lifted out of `triton_widget.js` into `capture/page_context.js`, and the
     Triton widget imports it back with its reference shape unchanged.
@@ -41,19 +43,39 @@ annotated screenshot. They see all of it before it is sent, and it never leaves 
     - a screenshot by paste or upload, then **annotated** (box, arrow, pen, text, blur, crop,
       undo, retake). Blur and crop change the exported pixels, and only the flattened image is
       uploaded. The original never leaves the browser;
-    - touch-sized controls on the kiosk, light and dark themes, and a focus-trapped dialog.
+    - touch-sized controls on the kiosk, light and dark themes, and a focus-trapped dialog
+      whose keys never reach the Desk underneath, even after a click on the backdrop;
+    - the form is locked while it sends, and a file dropped anywhere on the panel is
+      either the screenshot or refused, never opened in the tab.
+
+    On the Desk it loads through a `<script>` for the hashed URL that
+    `frappe.assets.bundled_asset` resolves, not `frappe.require`. In v16 that resolves even
+    when the script fails and records the path as executed, so after one failed load every
+    later click would do nothing, and it freezes the Desk while it loads.
   - **Offline on the kiosk.** A report made offline is saved in its own IndexedDB store
     (`ee-capture`), not in Cache Storage, which both service workers clear. It is keyed to the
-    user, expires after 7 days, and is offered for sending when the signal returns. It is only
-    ever sent as the user the server says is signed in; another user's drafts are dropped. The
-    kiosk preloads the panel once it is idle and online, because neither capture bundle is
-    precached.
+    user and expires after 7 days.
+    - It is offered, never sent without a tap: when the signal returns, on the next open, and
+      on the kiosk whenever the page loads, because the kiosk loads the panel on its own.
+    - It is only ever sent as the user the server says is signed in. Another user's drafts
+      are dropped when the next person's kiosk loads or they open the panel, not at sign-out:
+      the kiosk has no sign-out of its own to hook.
+    - Each report carries an id. A report whose response was lost looks offline and becomes
+      a draft; when the draft is sent, the server returns the request it already filed.
+    - A paused intake or a stale page (CSRF) keeps the draft. Only a real refusal deletes it.
+    - The kiosk preloads the panel once it is idle and online, and again when the signal
+      returns, because neither capture bundle is precached.
   - **Entry points:**
     - a **Report a Problem** item in the Desk's Help menu (`standard_help_items`,
       `is_standard: 1`);
     - a small "Report a problem" button on `/feedback`, `/itinerary` and `/travel_guidelines`,
       shown only to System Users;
     - a **Help** card in the kiosk's Settings tab.
+
+    If the form cannot load, the Help item opens `/feedback` and the kiosk says so, instead
+    of doing nothing. Each allowlisted template hands the panel the session's CSRF token.
+    `/travel_guidelines` now mints one: v16 creates a token only when something asks, and
+    until then the base template's `frappe.csrf_token` is the string `None`.
 - **`api.feedback.submit_capture`** (POST). It takes the same allowlisted fields as the form plus
   the snapshot, which is stored as the private JSON File `capture-context-<ER>.json` and never
   as a field, because Triton's bulk sync reads the request's fields.
@@ -61,6 +83,11 @@ annotated screenshot. They see all of it before it is sent, and it never leaves 
     only a hint.
   - An oversized or malformed snapshot (200 KB at most) is refused before anything is written.
     A snapshot that cannot be saved never loses the report.
+  - `client_id`, the panel's id for the report. It is remembered per user for 8 days, from
+    after the filing commits, and a repeat returns the first request with
+    `duplicate: true`. A repeat is not counted toward the limit.
+  - A pause raises `FeedbackPausedError`, still a 417 with the same message, so the panel can
+    tell it from a permanent refusal.
 - **`api.feedback.file_request`**, the one way a request is created. `submit_request` and
   `submit_capture` both call it, and Design Review promotion will (slice 5). It holds the
   validation, the provenance stamps and the new per-person limit: **ten filings a minute**,
@@ -81,7 +108,15 @@ annotated screenshot. They see all of it before it is sent, and it never leaves 
   2026-09-23). The request, its text and its Task links stay.
   - The clock is `terminal_at`, falling back to `modified`, which is never earlier than the real
     close, so the fallback can only keep files longer.
-  - It joins to File, so a cleaned request never comes back, and it commits per deletion.
+  - It joins to File on the capture artifacts only, so a request with nothing left to delete
+    drops out even when it keeps a PDF from the form, and it commits per deletion. The
+    status values are bound as plain strings: the driver escapes an enum member inside a
+    tuple as `'RequestState.REJECTED'`, which would match no row, and a test that compares
+    with `==` cannot see the difference.
+  - The same run deletes the panel's screenshot uploads (`capture-shot-*`) that are still
+    unattached a day later. The panel uploads first and files second, so a filing that fails
+    after the upload (a 429, a pause, a dropped connection, a closed tab) would otherwise
+    leave a private screenshot outside the 180-day rule forever.
 - **Error Log matching.** `product_feedback.capture_jobs.match_capture_error_logs` runs hourly
   and pairs each failed request in a snapshot with the Error Log the server wrote for it. It
   notes each match once, as a Comment on the request that keeps the facts, because Error Log
@@ -89,7 +124,9 @@ annotated screenshot. They see all of it before it is sent, and it never leaves 
   - It is a job, and not a lookup at filing time, because Frappe v16 writes a 5xx's Error Log
     through `deferred_insert`. That insert is flushed every 15 minutes with the scheduler as
     `owner` and the flush time as `creation`. So the match uses the row's `metadata` (user,
-    verb, path) inside the flush window, with the browser's clock skew removed.
+    verb, path) inside the flush window, with the browser's clock skew removed. The skew is
+    measured from `sent_at`, which the panel stamps as it sends. `captured_at` is when the
+    panel opened, minutes earlier for a typed report and days earlier for a draft.
   - This is wider than the "few seconds" the work item imagined, which cannot work against a
     deferred insert.
 
@@ -115,14 +152,16 @@ annotated screenshot. They see all of it before it is sent, and it never leaves 
 ### Tests
 
 - Bench-free Python:
-  - `test_feedback_capture_surface`, stub-free: the allowlist, never in `web_include_js`, the
-    never-list pages clean, the recorder first in the Desk bundle, the help item, the jobs, and
-    field provenance.
-  - `test_feedback_capture_intake`, stubbed, 16 tests: one way in, provenance refused, the
+  - `test_feedback_capture_surface`, stub-free: the allowlist, never in `web_include_js`, every
+    template in the app clean (doctype web views included), every bundle's imports followed
+    so only the Desk bundle and `capture.bundle.js` reach the recorder, the recorder first in
+    the Desk bundle, the help item, the jobs, and field provenance.
+  - `test_feedback_capture_intake`, stubbed, 23 tests: one way in, provenance refused, the
     eleventh filing refused, System Users only, the snapshot as a private File, oversized
-    refused.
-  - `test_feedback_capture_jobs`, stubbed, 15 tests: the retention cutoff and clock, artifacts
-    only, per-row commit, and matching by metadata and window, skew and idempotence.
+    refused, a resend returning the first request, and the pause's own exception.
+  - `test_feedback_capture_jobs`, stubbed, 23 tests: the retention cutoff and clock, plain
+    string binds, the artifact-only join, artifacts only, per-row commit, unfiled
+    screenshots, and matching by metadata and window, skew from `sent_at` and idempotence.
 - Node:
   - `test_feedback_context`
   - `test_capture_scrub` and `test_capture_recorder`

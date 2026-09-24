@@ -95,6 +95,11 @@ function keysDeep(value, out) {
 		"normalizeSurface",
 		"sendSavedDrafts",
 		"clearSavedDrafts",
+		"offerSavedDraftsOnLoad",
+		"wellFormed",
+		"cut",
+		"newClientId",
+		"contextToSend",
 	];
 	for (const name of needed) {
 		if (typeof P[name] !== "function") {
@@ -294,6 +299,65 @@ function keysDeep(value, out) {
 	check("413 names the screenshot", P.classifyError({ status: 413 }).kind, "refused");
 	check("a plain Error keeps its message", P.classifyError(new Error("odd")), { kind: "error", message: "odd" });
 	check("nothing at all", P.classifyError(null).kind, "error");
+
+	console.log("\ntemporary refusals keep a saved draft");
+	check(
+		"a pause is its own kind, not a refusal",
+		P.classifyError({ status: 417, message: "New requests are paused right now.", payload: { exc_type: "FeedbackPausedError" } }).kind,
+		"paused"
+	);
+	check(
+		"a stale CSRF token is its own kind, not a refusal",
+		P.classifyError({ status: 400, payload: { exc_type: "CSRFTokenError" } }).kind,
+		"stale"
+	);
+	{
+		const src = fs.readFileSync(TARGET, "utf8");
+		const run = src.slice(src.indexOf("async function runDrafts"), src.indexOf("export function clearSavedDrafts"));
+		check(
+			"runDrafts deletes a draft only on refused or forbidden",
+			run.includes('outcome.kind === "refused" || outcome.kind === "forbidden"') && !/kind === "(paused|stale|session|offline|throttled)"/.test(run),
+			true
+		);
+		const api = fs.readFileSync(FEEDBACK_API, "utf8");
+		truthy("the server raises FeedbackPausedError from submit_capture", /def submit_capture[\s\S]*?FeedbackPausedError/.test(api));
+	}
+
+	console.log("\nno half an emoji reaches the server");
+	check("a lone high surrogate is replaced", P.wellFormed("ok \ud83d"), "ok \ufffd");
+	check("a lone low surrogate is replaced", P.wellFormed("\ude00x"), "\ufffdx");
+	check("a whole pair is kept", P.wellFormed("a \ud83d\ude00 b"), "a \ud83d\ude00 b");
+	check("cut never splits a pair", P.cut("ab\ud83d\ude00", 3), "ab");
+	check("cut keeps a whole pair", P.cut("ab\ud83d\ude00c", 4), "ab\ud83d\ude00");
+	{
+		const fitted = P.fitSnapshot({ console: [{ message: "boom \ud83d" }] }).snapshot;
+		check("the fitted snapshot is well formed", JSON.stringify(fitted).includes("\\ud83d"), false);
+		const big = { console: [{ message: "x".repeat(2999) + "\ud83d\ude00" + "y".repeat(5000) }], app: { pad: "z".repeat(400000) } };
+		const clipped = JSON.stringify(P.fitSnapshot(big).snapshot);
+		check("clipping leaves no lone surrogate", /\\ud83d(?!\\ude00)/.test(clipped), false);
+	}
+
+	console.log("\none id per report, and sent_at for the skew correction");
+	{
+		const a = P.newClientId();
+		truthy("the id has the shape submit_capture accepts", /^[A-Za-z0-9-]{8,64}$/.test(a));
+		check("two reports, two ids", a === P.newClientId(), false);
+		const snap = { schema: 1, captured_at: "2026-09-23T10:00:00.000Z" };
+		const sent = P.contextToSend(snap, new Date("2026-09-23T10:05:00.000Z"));
+		check("sent_at is stamped", sent.sent_at, "2026-09-23T10:05:00.000Z");
+		check("captured_at is kept", sent.captured_at, "2026-09-23T10:00:00.000Z");
+		check("the reviewed snapshot is not changed", "sent_at" in snap, false);
+		check("no snapshot still sends an object", Object.keys(P.contextToSend(null, new Date(0))), ["sent_at"]);
+	}
+
+	console.log("\nthe screenshot prefix is the one the retention job deletes");
+	{
+		const jobs = fs.readFileSync(path.join(__dirname, "..", "erpnext_enhancements", "product_feedback", "capture_jobs.py"), "utf8");
+		const m = jobs.match(/CAPTURE_SHOT_PREFIX = "([^"]+)"/);
+		check("capture_jobs.CAPTURE_SHOT_PREFIX == panel SHOT_PREFIX", m && m[1], P.SHOT_PREFIX);
+		const src = fs.readFileSync(TARGET, "utf8");
+		truthy("the upload is named with it", src.includes("asFile(image, `${SHOT_PREFIX}${fileStamp()}.png`)"));
+	}
 
 	console.log("\nsaved drafts: labels and outcomes");
 	check("one", P.sendDraftsLabel(1), "Send 1 saved report");

@@ -19,11 +19,15 @@ def get_context(context):
 	"""Route: ``/travel_guidelines`` (rendered by ``travel_guidelines.html``).
 
 	Guests are redirected to ``/login?redirect-to=/travel_guidelines`` —
-	internal policy, signed-in employees only. No dynamic data beyond that.
+	internal policy, signed-in employees only. The only dynamic data is the
+	session's CSRF token, for the capture widget's POSTs (WI-079 slice 2).
+	v16 mints a token only when something asks for one, and the base
+	template's ``frappe.csrf_token`` otherwise renders the string ``None``.
 	"""
 	if frappe.session.user == "Guest":
 		frappe.local.flags.redirect_location = "/login?redirect-to=/travel_guidelines"
 		raise frappe.Redirect
 
 	context.no_cache = 1
+	context.csrf_token = frappe.sessions.get_csrf_token()
 	return context

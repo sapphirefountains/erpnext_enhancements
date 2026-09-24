@@ -7,7 +7,8 @@ Two jobs, both idempotent, both safe to run late or twice:
 
 - :func:`purge_expired_capture_files` (daily). It deletes a request's screenshots and its
   capture-context file 180 days after the request closed, and keeps the request itself: its
-  text, decision and Task links. Nik decided this on 2026-09-23.
+  text, decision and Task links. Nik decided this on 2026-09-23. The same run deletes
+  screenshots the panel uploaded for a report that was never filed.
 - :func:`match_capture_error_logs` (hourly). It links a failed request in a capture snapshot to
   the ``Error Log`` row the server wrote for it.
 
@@ -48,6 +49,9 @@ from erpnext_enhancements.product_feedback.states import TERMINAL_STATES
 DOCTYPE = "Enhancement Request"
 SOURCE_CAPTURE = "Capture"
 CAPTURE_CONTEXT_PREFIX = "capture-context-"
+#: The panel names its screenshot uploads with this prefix (capture/panel.js). Nothing else in
+#: the app does, which is what makes an unattached one safe to delete.
+CAPTURE_SHOT_PREFIX = "capture-shot-"
 
 #: Decided with the item (WI-079): 180 days after the request reaches a terminal state.
 RETENTION_DAYS = 180
@@ -58,6 +62,11 @@ SCREENSHOT_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "bmp", "
 
 #: Bounded runs, so one bad day cannot turn into a job that never finishes.
 MAX_REQUESTS_PER_RUN = 200
+
+#: The panel uploads the screenshot and then files the report, seconds apart. An upload that
+#: is still unattached a day later belongs to a filing that failed or was abandoned (a 429, a
+#: pause, a dropped connection, a closed tab), and a draft resend uploads a fresh copy.
+ORPHAN_SHOT_AGE = timedelta(days=1)
 
 #: Matching looks at captures filed between 36 hours ago and 20 minutes ago. The lower bound
 #: gives the deferred-insert flush (every 15 min) time to write the row. The upper bound covers
@@ -89,8 +98,10 @@ def purge_expired_capture_files() -> dict[str, int]:
 
 	The clock is ``terminal_at``. For a request with no ``terminal_at`` it falls back to
 	``modified``, which is never earlier than when the request really closed, so the fallback
-	can only keep files longer. The query joins to ``File`` and returns only requests that
-	still have attachments, so a request already cleaned never comes back.
+	can only keep files longer. The query joins to ``File`` on the capture artifacts only, the
+	same test :func:`is_capture_artifact` applies, so a cleaned request drops out even when it
+	keeps a PDF or a log from the /feedback form, and the batch cannot fill up with requests
+	that have nothing left to delete.
 
 	Each deletion commits on its own. ``File.on_trash`` removes the bytes before the
 	transaction commits, and a rollback would leave a row pointing at nothing.
@@ -103,13 +114,21 @@ def purge_expired_capture_files() -> dict[str, int]:
 		join `tabFile` f
 			on f.attached_to_doctype = %(doctype)s and f.attached_to_name = er.name
 		where er.status in %(terminal)s
+			and (
+				(lower(f.file_name) like %(context_like)s and lower(f.file_name) like '%%.json')
+				or lower(substring_index(f.file_name, '.', -1)) in %(extensions)s
+			)
 			and coalesce(er.terminal_at, er.modified) < %(cutoff)s
 		order by er.name
 		limit %(limit)s
 		""",
 		{
 			"doctype": DOCTYPE,
-			"terminal": tuple(sorted(TERMINAL_STATES)),
+			# `.value`, not the members: the driver escapes a tuple item by item with str(), and
+			# str() of a (str, Enum) member is 'RequestState.REJECTED', which matches no row.
+			"terminal": tuple(sorted(s.value for s in TERMINAL_STATES)),
+			"context_like": f"{CAPTURE_CONTEXT_PREFIX}%",
+			"extensions": tuple(sorted(SCREENSHOT_EXTENSIONS)),
 			"cutoff": cutoff,
 			"limit": MAX_REQUESTS_PER_RUN,
 		},
@@ -135,7 +154,44 @@ def purge_expired_capture_files() -> dict[str, int]:
 				frappe.db.rollback()
 				failed += 1
 				frappe.log_error(title=f"Capture retention could not delete {f.name} on {row.name}")
-	return {"requests": len(requests), "deleted": deleted, "failed": failed}
+	orphans = purge_orphan_screenshots()
+	return {"requests": len(requests), "deleted": deleted, "failed": failed, "orphans": orphans}
+
+
+def purge_orphan_screenshots() -> int:
+	"""Delete the panel's screenshot uploads that never reached a request.
+
+	The panel uploads first and files second, and ``submit_capture`` links the upload only
+	when filing succeeds. Everything else would stay private and unattached for good, outside
+	the 180-day rule. Only files with the panel's own prefix, private, unattached and a day
+	old are touched.
+	"""
+	cutoff = frappe.utils.now_datetime() - ORPHAN_SHOT_AGE
+	rows = frappe.db.sql(
+		"""
+		select name
+		from `tabFile`
+		where coalesce(attached_to_doctype, '') = ''
+			and is_private = 1
+			and is_folder = 0
+			and file_name like %(prefix)s
+			and creation < %(cutoff)s
+		order by creation
+		limit %(limit)s
+		""",
+		{"prefix": f"{CAPTURE_SHOT_PREFIX}%", "cutoff": cutoff, "limit": MAX_REQUESTS_PER_RUN},
+		as_dict=True,
+	)
+	deleted = 0
+	for row in rows:
+		try:
+			frappe.delete_doc("File", row.name, ignore_permissions=True, delete_permanently=True)
+			frappe.db.commit()
+			deleted += 1
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Capture retention could not delete unfiled screenshot {row.name}")
+	return deleted
 
 
 # --------------------------------------------------------------------------- error logs
@@ -168,13 +224,25 @@ def failed_server_requests(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 	return out
 
 
+def reference_time(snapshot: dict[str, Any]) -> Any:
+	"""The browser moment that pairs with the server's ``requested_at``.
+
+	``sent_at`` is stamped by the panel just before it calls ``submit_capture``, for a live
+	report and a draft resend alike. ``captured_at`` is when the panel opened, which can be
+	minutes (composing) or days (an offline draft) earlier, so it is only the fallback.
+	"""
+	snap = snapshot or {}
+	return snap.get("sent_at") or snap.get("captured_at")
+
+
 def estimate_server_time(request_at: Any, captured_at: Any, filed_at: datetime) -> datetime:
 	"""When a failure happened, in the server's frame.
 
-	The browser's clock can be minutes off. The snapshot says how long before capture the
-	failure happened (``captured_at - request_at``), and the server knows when the report
-	arrived (``filed_at``). Subtracting the first from the second removes the skew. When
-	either browser timestamp is unreadable, it assumes the failure happened at filing.
+	The browser's clock can be minutes off. The snapshot says how long before its reference
+	moment the failure happened (``captured_at - request_at``, where ``captured_at`` is what
+	:func:`reference_time` returns), and the server knows when the report arrived
+	(``filed_at``). Subtracting the first from the second removes the skew. When either
+	browser timestamp is unreadable, it assumes the failure happened at filing.
 	"""
 	r_at = _parse_iso(request_at)
 	c_at = _parse_iso(captured_at)
@@ -309,9 +377,8 @@ def match_capture_error_logs() -> dict[str, int]:
 			if not failed:
 				continue
 			filed_at = frappe.utils.get_datetime(req_row.requested_at)
-			windows = [
-				estimate_server_time(r.get("at"), snapshot.get("captured_at"), filed_at) for r in failed
-			]
+			browser_at = reference_time(snapshot)
+			windows = [estimate_server_time(r.get("at"), browser_at, filed_at) for r in failed]
 			lo = min(windows) - FLUSH_BEFORE
 			hi = max(windows) + FLUSH_AFTER
 			rows = frappe.db.sql(
@@ -327,7 +394,7 @@ def match_capture_error_logs() -> dict[str, int]:
 				as_dict=True,
 			)
 			for req, row in match_error_logs(
-				failed, rows, req_row.requested_by, snapshot.get("captured_at"), filed_at
+				failed, rows, req_row.requested_by, browser_at, filed_at
 			):
 				if _already_noted(req_row.name, row["name"]):
 					continue

@@ -17,7 +17,8 @@ const REPLACED_TOKEN = "[token]";
 const REPLACED_EMAIL = "[email]";
 
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+// `%40` too: an email percent-encoded into a URL or a console message is still an email.
+const EMAIL = /[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 // Frappe's `Authorization: token <api_key>:<api_secret>`. Each half is 15 hex characters, so
 // neither half is long enough for the run rule below.
 const KEY_PAIR = /\b([A-Za-z0-9]{10,}):([A-Za-z0-9]{10,})\b/g;
@@ -61,7 +62,12 @@ export function looksLikeToken(run) {
 }
 
 function clip(s, max) {
-	return s.length > max ? s.slice(0, Math.max(0, max - 1)) + "…" : s;
+	if (s.length <= max) return s;
+	let end = Math.max(0, max - 1);
+	// Never half an emoji: a lone surrogate makes the server refuse the whole report.
+	const last = end > 0 ? s.charCodeAt(end - 1) : 0;
+	if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+	return s.slice(0, end) + "…";
 }
 
 /**

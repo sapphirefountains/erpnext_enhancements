@@ -14,7 +14,7 @@
  * How it runs without a browser: `recorder.js` installs itself only when a global `window`
  * exists, and exports `install(win)`, which reads everything off the window it is given. This
  * script imports it under node, where nothing installs, then hands `install` hand-built fake
- * windows. The fakes are small and explicit on purpose, so a failure points at one behaviour.
+ * windows. The fakes are small and explicit on purpose, so a failure points at one behavior.
  *
  * If an export this depends on disappears, it exits 2 rather than passing vacuously.
  */
@@ -544,7 +544,9 @@ function fakeWindow(options) {
 		// In a browser `window` IS the global object; under node the two are set separately.
 		f.win.cur_frm = frm;
 		globalThis.cur_frm = frm;
-		formHooks[0][2](frm);
+		const hookResult = formHooks[0][2](frm);
+		// Anything else makes ScriptManager wait on every frappe.call in flight (after_server_call).
+		check('the refresh hook returns a settled promise', hookResult instanceof Promise, true);
 		frm.doc.status = 'Closed';
 		frm.doc.priority = '';
 		frm.doc.modified = 't2';
@@ -584,8 +586,12 @@ function fakeWindow(options) {
 		snap = api.snapshot();
 		check('report facts', snap.page.report, { name: 'General Ledger', filters: { company: 'Sapphire', from_date: '2026-01-01' } });
 
-		check('open() on the Desk goes through frappe.require', await api.open({}), 'desk-panel');
+		check('open() on the Desk falls back to frappe.require when the name cannot be resolved', await api.open({}), 'desk-panel');
 		check('by bundle name', required, ['capture_panel.bundle.js']);
+
+		route = ['List', 'ToDo', 'List'];
+		f.win.location.search = '?owner=bob%40acme.com&status=Open+Now';
+		check('the Desk query is decoded, then scrubbed', api.snapshot().page.query, '?owner=[email]&status=Open Now');
 
 		console.log('\ndetectPageContext keeps the Triton ref shape exactly');
 		route = ['Form', 'ToDo', 'TD-0001'];
@@ -617,6 +623,50 @@ function fakeWindow(options) {
 		delete globalThis.cur_list;
 		delete globalThis.cur_frm;
 		check('off the Desk it returns null instead of throwing', P.detectPageContext(), null);
+	}
+
+	console.log('\nopen() on the Desk: a script for the resolved bundle, and a retry after a failure');
+	{
+		let fail = true;
+		const required = [];
+		const frappe = {
+			boot: {},
+			session: { user: 'nik@example.com' },
+			get_route: () => ['Workspaces', 'Home'],
+			ui: { form: { on: () => {} } },
+			router: { on: () => {} },
+			assets: { bundled_asset: (name) => (name === 'capture_panel.bundle.js' ? '/assets/erpnext_enhancements/dist/js/capture_panel.bundle.XYZ.js' : name) },
+			require: (name) => {
+				required.push(name);
+				return Promise.resolve();
+			},
+		};
+		const f = fakeWindow({
+			frappe,
+			path: '/desk',
+			fetchImpl: () => null,
+			onScript: (el, win) => {
+				setImmediate(() => {
+					if (fail) return el.onerror();
+					win.ee_capture_panel = { open: () => 'desk-script' };
+					el.onload();
+				});
+			},
+		});
+		const prevWindow = globalThis.window;
+		globalThis.window = f.win;
+		const api = R.install(f.win);
+		let message = '';
+		await api.open({}).catch((e) => {
+			message = e.message;
+		});
+		check('a failed Desk load rejects with a sentence', message, 'The report form could not be loaded.');
+		check('from the hashed bundle URL', f.head[0].src, '/assets/erpnext_enhancements/dist/js/capture_panel.bundle.XYZ.js');
+		fail = false;
+		check('the next Desk click really loads it again', await api.open({}), 'desk-script');
+		check('with a fresh script', f.head.length, 2);
+		check('frappe.require is not used when the name resolves', required, []);
+		globalThis.window = prevWindow;
 	}
 
 	console.log('\nthe launcher gate');
@@ -672,7 +722,7 @@ function fakeWindow(options) {
 		};
 		check('mounts', L.mountLauncher(win), true);
 		const button = appended.find((n) => n.tagName === 'BUTTON');
-		check('a real, labelled button', [button.type, button.textContent, button.id], ['button', 'Report a problem', 'ee-cap-launcher']);
+		check('a real, labeled button', [button.type, button.textContent, button.id], ['button', 'Report a problem', 'ee-cap-launcher']);
 		L.mountLauncher(win);
 		check('mounted once', appended.filter((n) => n.tagName === 'BUTTON').length, 1);
 		button.handlers.click();

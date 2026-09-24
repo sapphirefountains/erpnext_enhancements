@@ -55,12 +55,17 @@ export class FeedbackCallError extends Error {
 
 function csrfToken() {
 	// The /feedback page boots with its own token. The capture panel reuses this module on
-	// pages that do not: the Desk and every website page carry `frappe.csrf_token` (base.html
-	// writes it), and the kiosk's page does too. Read at call time, not import time, because
-	// on a website page the token is written after the bundle loads.
+	// pages that do not. Each allowlisted template mints the session's token and passes it in
+	// `EE_CAPTURE.csrf_token`; the Desk carries `frappe.csrf_token`. Read at call time, not
+	// import time, because on a website page the token is written after the bundle loads.
+	//
+	// A website page's `frappe.csrf_token` is written from the session whether or not a token
+	// was ever minted, and an unminted one renders as the string "None". That is truthy, and
+	// it fails the moment another tab mints the real token, so it counts as no token.
 	if (BOOT.csrf_token) return BOOT.csrf_token;
 	const w = typeof window !== "undefined" ? window : {};
-	return (w.frappe && w.frappe.csrf_token) || (w.EE_CAPTURE && w.EE_CAPTURE.csrf_token) || "";
+	const usable = (value) => (value && value !== "None" ? String(value) : "");
+	return usable(w.EE_CAPTURE && w.EE_CAPTURE.csrf_token) || usable(w.frappe && w.frappe.csrf_token);
 }
 
 export async function call(method, args, options) {

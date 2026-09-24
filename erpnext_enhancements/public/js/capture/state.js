@@ -58,15 +58,20 @@ export function installFormBaseline(win) {
 		// Set before the call, not after: frappe.ui.form.on pushes the handler before it does
 		// anything that could throw, so retrying after a throw would register it twice.
 		formHookInstalled = true;
+		// It returns a settled promise, always. A handler that returns nothing makes ScriptManager
+		// wait on `frappe.after_server_call()`, i.e. on every frappe.call in flight, before the
+		// form moves past refresh; that would slow every form in the Desk for a feature that
+		// must not change the page.
 		form.on("*", "refresh", (frm) => {
 			try {
-				if (!frm || !frm.doc) return;
+				if (!frm || !frm.doc) return Promise.resolve();
 				const same = baseline && baseline.doctype === frm.doctype && baseline.name === frm.docname;
-				if (same && frm.is_dirty && frm.is_dirty()) return;
+				if (same && frm.is_dirty && frm.is_dirty()) return Promise.resolve();
 				baseline = { doctype: frm.doctype, name: frm.docname, values: scalars(frm.doc) };
 			} catch (e) {
 				baseline = null;
 			}
+			return Promise.resolve();
 		});
 	} catch (e) {
 		return false;
@@ -93,6 +98,27 @@ export function changedFields(frm) {
 	}
 }
 
+/**
+ * The query string decoded before it is scrubbed. `?owner=bob%40acme.com` is how the Desk
+ * writes an email into a filter, and the scrubber's patterns look for the decoded form.
+ * Kept decoded: `context_url` is for reading, never followed.
+ */
+export function decodeQuery(search) {
+	const text = String(search || "").replace(/\+/g, " ");
+	try {
+		return decodeURIComponent(text);
+	} catch (e) {
+		// A malformed escape: decode what can be, piece by piece.
+		return text.replace(/(%[0-9A-Fa-f]{2})+/g, (m) => {
+			try {
+				return decodeURIComponent(m);
+			} catch (e2) {
+				return m;
+			}
+		});
+	}
+}
+
 /** The `page` block of the snapshot. */
 export function collectPage(win, surface) {
 	const page = { path: "", query: null, route: null, title: "", form: null, list: null, report: null };
@@ -102,7 +128,7 @@ export function collectPage(win, surface) {
 		page.title = scrubText((win.document && win.document.title) || "", 200);
 		if (surface !== "desk") return page;
 
-		page.query = loc.search ? scrubText(loc.search, 500) : null;
+		page.query = loc.search ? scrubText(decodeQuery(loc.search), 500) : null;
 		const route = currentRoute();
 		if (!route) return page;
 		page.route = route;

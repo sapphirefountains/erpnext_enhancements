@@ -21,9 +21,11 @@
  * **Offline, a report becomes a draft, never a lost report.** On a kiosk in a basement the
  * network is the thing most likely to fail. A network failure (or `navigator.onLine` false)
  * saves the flattened screenshot, the fields and the snapshot to IndexedDB (drafts.js), keyed
- * to the user. The panel offers to send them on the next open and when the browser comes back
- * online — after asking the server who is signed in, so one person's draft is never filed
- * under another's session on a shared tablet.
+ * to the user. They are offered for sending on the next open, when the browser comes back
+ * online, and when this bundle loads (which the kiosk does on its own once it is idle), after
+ * asking the server who is signed in, so one person's draft is never filed under another's
+ * session on a shared tablet. Each report carries its own id, so a draft of a report whose
+ * response was lost, but which did arrive, is not filed twice.
  *
  * The pure pieces (payload, validation, error wording, snapshot fitting) are exported and
  * tested in plain node by `scripts/test_capture_panel.js`. Nothing touches `document` at
@@ -46,9 +48,15 @@ export const SNAPSHOT_MAX_BYTES = 190 * 1024;
 
 export const MSG_THROTTLED = "You've sent several reports just now. Try again in a minute.";
 export const MSG_FORBIDDEN = "Only staff accounts can send reports.";
-export const MSG_SAVED = "Saved on this device. It will be sent when you're back online.";
+// Offered, not sent: nothing leaves the device without a tap, and after a reload the offer comes
+// back only when this bundle loads again.
+export const MSG_SAVED =
+	"Saved on this device. When you're back online, open Report a problem again to send it.";
 export const MSG_SESSION_SAVED =
-	"Your session has ended. The report is saved on this device and will be sent after you sign in again.";
+	"Your session has ended. The report is saved on this device. Sign in again, then open Report a problem to send it.";
+export const MSG_STALE_SAVED =
+	"This page is out of date. The report is saved on this device. Reload the page, then open Report a problem to send it.";
+export const MSG_PAUSED = "New requests are paused right now. Try again later.";
 const MSG_SERVER = "The server had a problem. Try again in a minute.";
 
 const STYLE_ID = "ee-cap-style";
@@ -211,8 +219,58 @@ function byteLength(text) {
 	return text.length * 3;
 }
 
+/**
+ * The string with every lone UTF-16 surrogate replaced by U+FFFD. A console message cut in
+ * the middle of an emoji leaves half of it behind; JSON.stringify writes that as `\ud83d`,
+ * and Frappe's orjson refuses the whole body with a 417. A loop rather than a lookbehind
+ * regex, which older kiosk WebViews cannot even parse.
+ */
+export function wellFormed(text) {
+	if (typeof text !== "string") return text;
+	if (typeof text.toWellFormed === "function") return text.toWellFormed();
+	let out = "";
+	for (let i = 0; i < text.length; i++) {
+		const c = text.charCodeAt(i);
+		if (c >= 0xd800 && c <= 0xdbff) {
+			const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				out += text[i] + text[i + 1];
+				i++;
+			} else {
+				out += "\ufffd";
+			}
+		} else if (c >= 0xdc00 && c <= 0xdfff) {
+			out += "\ufffd";
+		} else {
+			out += text[i];
+		}
+	}
+	return out;
+}
+
+/** `text` cut to `max` UTF-16 units without splitting a surrogate pair. */
+export function cut(text, max) {
+	let end = Math.max(0, max);
+	if (end > 0 && end < text.length) {
+		const last = text.charCodeAt(end - 1);
+		if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+	}
+	return text.slice(0, end);
+}
+
+function deepWellFormed(value) {
+	if (typeof value === "string") return wellFormed(value);
+	if (Array.isArray(value)) return value.map(deepWellFormed);
+	if (value && typeof value === "object") {
+		const out = {};
+		for (const key of Object.keys(value)) out[wellFormed(key)] = deepWellFormed(value[key]);
+		return out;
+	}
+	return value;
+}
+
 function clipStrings(value, max) {
-	if (typeof value === "string") return value.length > max ? `${value.slice(0, max)}…` : value;
+	if (typeof value === "string") return value.length > max ? `${cut(value, max)}…` : value;
 	if (Array.isArray(value)) return value.map((item) => clipStrings(item, max));
 	if (value && typeof value === "object") {
 		const out = {};
@@ -238,6 +296,8 @@ export function fitSnapshot(snapshot, maxBytes) {
 		snap = null;
 	}
 	if (!snap || typeof snap !== "object" || Array.isArray(snap)) return { snapshot: null, trimmed: false };
+	// Before measuring and before showing: the person reviews exactly the bytes that are sent.
+	snap = deepWellFormed(snap);
 
 	const fits = () => byteLength(JSON.stringify(snap)) <= limit;
 	if (fits()) return { snapshot: snap, trimmed: false };
@@ -325,6 +385,10 @@ export function classifyError(err) {
 	const excType = payload && typeof payload.exc_type === "string" ? payload.exc_type : "";
 	if (status === 0) return { kind: "offline", message: MSG_SAVED };
 	if (status === 401 || excType === "SessionExpired") return { kind: "session", message: MSG_SESSION_SAVED };
+	// Both arrive as refusals (417 and 400) and neither is permanent: an admin lifts a pause, and
+	// a reload mints a new token. A saved draft must survive them, so they get kinds of their own.
+	if (excType === "FeedbackPausedError") return { kind: "paused", message: MSG_PAUSED };
+	if (excType === "CSRFTokenError") return { kind: "stale", message: MSG_STALE_SAVED };
 	if (status === 429) return { kind: "throttled", message: MSG_THROTTLED };
 	if (status === 403) return { kind: "forbidden", message: MSG_FORBIDDEN };
 	if (status === 413) return { kind: "refused", message: "The screenshot is too large. Crop it or use a smaller image." };
@@ -403,6 +467,36 @@ function fileStamp() {
 }
 
 /**
+ * The screenshot's upload name. The prefix is load-bearing: the daily retention job deletes a
+ * private, unattached File with it once it is a day old (a filing that failed after the upload),
+ * and nothing else in the app uses it.
+ */
+export const SHOT_PREFIX = "capture-shot-";
+
+/** One id per report, kept with its draft, so the server can tell a resend from a new report. */
+export function newClientId() {
+	try {
+		if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+	} catch (e) {
+		// Not a secure context, or no crypto; fall through.
+	}
+	let id = "";
+	for (let i = 0; i < 32; i++) id += Math.floor(Math.random() * 16).toString(16);
+	return id;
+}
+
+/**
+ * The snapshot as sent: the reviewed snapshot plus `sent_at`, the browser's clock at the moment
+ * of sending. The server pairs it with its own arrival time to remove clock skew when it matches
+ * Error Logs (product_feedback/capture_jobs.py); `captured_at` is when the panel opened, which
+ * can be minutes or, for a draft, days earlier.
+ */
+export function contextToSend(snapshot, now) {
+	const snap = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
+	return { ...snap, sent_at: (now || new Date()).toISOString() };
+}
+
+/**
  * The server's idea of who is signed in — "" for Guest or an ended session. Throws only when
  * the server cannot be reached, which callers treat as "try later", never as "nobody".
  */
@@ -437,7 +531,7 @@ async function whoAmI() {
  * file the report. Used for a live report and for each saved draft alike, so both paths send
  * the same thing.
  */
-async function sendReport({ payload, snapshot, image, onProgress }) {
+async function sendReport({ payload, snapshot, image, clientId, onProgress }) {
 	const method = M && M.CAPTURE;
 	if (!method) {
 		const err = new Error("Reporting is not available on this page.");
@@ -446,14 +540,16 @@ async function sendReport({ payload, snapshot, image, onProgress }) {
 	}
 	const attachments = [];
 	if (image) {
-		const handle = upload(asFile(image, `screenshot-${fileStamp()}.png`), onProgress);
+		const handle = upload(asFile(image, `${SHOT_PREFIX}${fileStamp()}.png`), onProgress);
 		// transport.upload has no timeout of its own, and a stalled tether would otherwise
 		// leave the panel "Uploading…" forever. The abort rejects with status 0, which the
 		// caller treats as offline and saves a draft.
 		const uploaded = await withTimeout(handle.promise, UPLOAD_TIMEOUT_MS, () => handle.abort());
 		if (uploaded && uploaded.name) attachments.push(uploaded.name);
 	}
-	const result = await call(method, { payload, context: snapshot, attachments }, { timeout: CALL_TIMEOUT_MS });
+	const args = { payload, context: contextToSend(snapshot), attachments };
+	if (clientId) args.client_id = clientId;
+	const result = await call(method, args, { timeout: CALL_TIMEOUT_MS });
 	return { result: result || {}, uploaded: attachments.length };
 }
 
@@ -519,14 +615,21 @@ async function runDrafts() {
 			continue;
 		}
 		try {
-			const { result } = await sendReport({ payload: draft.payload, snapshot: draft.snapshot, image: draft.image });
+			const { result } = await sendReport({
+				payload: draft.payload,
+				snapshot: draft.snapshot,
+				image: draft.image,
+				clientId: draft.client_id,
+			});
 			sentDraftIds.add(draft.id);
 			await deleteDraft(draft.id).catch(() => {});
 			sent.push(result && result.name ? String(result.name) : "");
 		} catch (err) {
 			const outcome = classifyError(err);
 			// A refusal will be a refusal every time. Keeping it would offer "Send 1 saved
-			// report" for a week and fail each time, so it is dropped — and said so.
+			// report" for a week and fail each time, so it is dropped — and said so. A pause and
+			// a stale token are not refusals (classifyError gives them their own kinds): they
+			// stop the run and keep the draft, as a 429 does.
 			if (outcome.kind === "refused" || outcome.kind === "forbidden") {
 				await deleteDraft(draft.id).catch(() => {});
 				refused.push(outcome.message);
@@ -699,6 +802,8 @@ class CapturePanel {
 		});
 
 		this.id = ++sequence;
+		// Reused by every try of this report, so a retry after a lost response is not a second one.
+		this.clientId = newClientId();
 		this.annotator = null;
 		this.busy = false;
 		this.closed = false;
@@ -921,13 +1026,8 @@ class CapturePanel {
 			section.classList.add("ee-cap-drop");
 		});
 		section.addEventListener("dragleave", () => section.classList.remove("ee-cap-drop"));
-		section.addEventListener("drop", (ev) => {
-			section.classList.remove("ee-cap-drop");
-			const file = imageFromTransfer(ev.dataTransfer);
-			if (!file) return;
-			ev.preventDefault();
-			this.useImage(file);
-		});
+		// The file itself is handled on the root (bindEvents), for a drop anywhere on the panel.
+		section.addEventListener("drop", () => section.classList.remove("ee-cap-drop"));
 		return section;
 	}
 
@@ -994,6 +1094,47 @@ class CapturePanel {
 		// `focusin` outside it. Opened over a Desk dialog, the panel's inputs would be
 		// unusable without this.
 		on(root, "focusin", (ev) => ev.stopPropagation());
+
+		// A press on the dimmed backdrop would move focus to <body>, outside the panel, with no
+		// focusin to pull it back; Escape and Ctrl+S would then reach the Desk underneath.
+		on(root, "mousedown", (ev) => {
+			if (ev.target === root) ev.preventDefault();
+		});
+		// And if focus gets out some other way, keys still do not reach the page: capture phase on
+		// document runs before the Desk's window-level handler would see the event bubble.
+		on(
+			document,
+			"keydown",
+			(ev) => {
+				if (this.closed || root.contains(ev.target)) return;
+				ev.stopPropagation();
+				if (ev.key === "Escape") {
+					ev.preventDefault();
+					this.requestClose();
+					return;
+				}
+				// The browser's own Save Page, which the Desk would have prevented. Other keys keep
+				// their defaults, so a paste still arrives (the window paste handler takes images).
+				if ((ev.ctrlKey || ev.metaKey) && (ev.key === "s" || ev.key === "S")) ev.preventDefault();
+				this.focus();
+			},
+			true
+		);
+
+		// A dropped file anywhere on the panel: an image becomes the screenshot, anything else is
+		// refused here. Left alone, the browser would open the file in this tab and the report
+		// would be gone without the discard question.
+		on(root, "dragover", (ev) => {
+			if (hasFiles(ev.dataTransfer)) ev.preventDefault();
+		});
+		on(root, "drop", (ev) => {
+			if (!hasFiles(ev.dataTransfer)) return;
+			ev.preventDefault();
+			if (this.busy) return;
+			const file = imageFromTransfer(ev.dataTransfer);
+			if (file) this.useImage(file);
+			else this.showAlert("That file is not an image.", "bad");
+		});
 
 		// Focus that escapes the panel (a script, a click on the page behind) comes back.
 		on(document, "focusin", (ev) => {
@@ -1102,6 +1243,7 @@ class CapturePanel {
 	// ---- screenshot
 
 	pickImage() {
+		if (this.busy) return;
 		try {
 			this.fileInput.click();
 		} catch (e) {
@@ -1115,7 +1257,7 @@ class CapturePanel {
 	}
 
 	useImage(file) {
-		if (this.closed) return;
+		if (this.closed || this.busy) return;
 		if (!file || (file.type && !/^image\//i.test(file.type))) {
 			this.showAlert("That file is not an image.", "bad");
 			return;
@@ -1149,6 +1291,7 @@ class CapturePanel {
 	}
 
 	removeImage() {
+		if (this.busy) return;
 		this.destroyAnnotator();
 		this.shotEditor.hidden = true;
 		this.shotEmpty.hidden = false;
@@ -1225,6 +1368,7 @@ class CapturePanel {
 				payload,
 				snapshot: this.snapshot,
 				image,
+				clientId: this.clientId,
 				onProgress: (fraction) => {
 					if (this.closed) return;
 					this.progress.textContent =
@@ -1247,8 +1391,8 @@ class CapturePanel {
 				await this.saveOffline(payload, image, MSG_SAVED);
 				return;
 			}
-			if (outcome.kind === "session") {
-				await this.saveOffline(payload, image, MSG_SESSION_SAVED);
+			if (outcome.kind === "session" || outcome.kind === "stale") {
+				await this.saveOffline(payload, image, outcome.message);
 				return;
 			}
 			this.setBusy(false);
@@ -1258,7 +1402,14 @@ class CapturePanel {
 
 	async saveOffline(payload, image, message) {
 		try {
-			await saveDraft({ user: this.user, payload, snapshot: this.snapshot, image, surface: this.surface });
+			await saveDraft({
+				user: this.user,
+				payload,
+				snapshot: this.snapshot,
+				image,
+				surface: this.surface,
+				client_id: this.clientId,
+			});
 		} catch (e) {
 			if (this.closed) return;
 			this.setBusy(false);
@@ -1324,6 +1475,14 @@ class CapturePanel {
 	setBusy(busy, label) {
 		this.busy = busy;
 		this.sendButton.disabled = busy;
+		// The image was exported when sending began; a Remove, Retake or new mark now would not
+		// change what is uploaded, so the form is frozen until the send settles. `inert` where
+		// the browser has it; the image actions also check `busy` themselves.
+		try {
+			if (this.form) this.form.inert = busy;
+		} catch (e) {
+			// No `inert`; the guards in pickImage, useImage and removeImage still hold.
+		}
 		this.sendButton.textContent = busy ? "Sending…" : "Send report";
 		this.progress.textContent = busy ? label || "" : "";
 		this.dialog.setAttribute("aria-busy", busy ? "true" : "false");
@@ -1351,7 +1510,7 @@ class CapturePanel {
 		}
 		const online = typeof navigator === "undefined" || navigator.onLine !== false;
 		const saved = n === 1 ? "You have 1 report saved on this device." : `You have ${n} reports saved on this device.`;
-		const later = n === 1 ? " It will be sent when you're back online." : " They will be sent when you're back online.";
+		const later = n === 1 ? " You can send it when you're back online." : " You can send them when you're back online.";
 		this.draftsBar.append(h("span", "ee-cap-drafts-text", online ? saved : saved + later));
 		if (online) {
 			const send = btn(sendDraftsLabel(n), "ee-cap-btn", async () => {
@@ -1478,8 +1637,30 @@ async function backOnline() {
 	if (active && !active.closed) return; // the open panel refreshes its own offer
 	const user = resolveUser({}, window);
 	if (!user) return;
+	// Someone else signed in on this device: their drafts go before anything is offered.
+	await pruneForUser(user);
+	if (active && !active.closed) return;
 	const drafts = await listDrafts(user);
-	if (drafts.length) showDraftsToast(drafts.length);
+	if (drafts.length && !(active && !active.closed)) showDraftsToast(drafts.length);
+}
+
+/**
+ * Called once when the panel bundle loads. The online listener lives only as long as the page,
+ * and the kiosk reloads itself after an update, so a draft saved before a reload would
+ * otherwise wait, unoffered, until somebody opened the panel again. The kiosk preloads this
+ * bundle once it is idle, so there it is offered at load; on the Desk the bundle loads on the
+ * first open, which shows the offer in the panel anyway.
+ */
+export function offerSavedDraftsOnLoad() {
+	try {
+		installOnlineListener();
+		if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+		setTimeout(() => {
+			backOnline().catch(safeWarn);
+		}, ONLINE_SETTLE_MS);
+	} catch (e) {
+		safeWarn(e);
+	}
 }
 
 function removeToast() {

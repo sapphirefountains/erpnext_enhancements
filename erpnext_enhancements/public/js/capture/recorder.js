@@ -17,8 +17,10 @@
  *     exactly as the original did, rejections included. Listeners never call preventDefault.
  *   - It never keeps a body. A failed JSON response is read once, from a clone, to pull out
  *     Frappe's `exc_type` string. Nothing else from it is kept.
- *   - It never reads the page's query string. Only `location.pathname` is kept, and request
- *     paths lose their query string before they are stored.
+ *   - On web and kiosk pages it never reads the page's query string: only
+ *     `location.pathname` is kept. On the Desk the query string is kept, decoded and then
+ *     scrubbed (state.js), because list filters live there. Request paths always lose their
+ *     query string before they are stored.
  *
  * Installs once per window, however many bundles include it.
  */
@@ -454,10 +456,16 @@ export function install(win) {
 	}
 
 	/**
-	 * Load the panel once. The Desk asks frappe.require, which resolves the hashed bundle
-	 * name. A web page cannot (its frappe.require does not know bundle names), so the template
-	 * gives the resolved URL in `EE_CAPTURE.panel_url`. A failed load clears the memo so the
-	 * next click tries again.
+	 * Load the panel once. The Desk resolves the hashed bundle name with
+	 * `frappe.assets.bundled_asset`; a web page cannot, so its template gives the resolved URL
+	 * in `EE_CAPTURE.panel_url`. Both then inject a <script>.
+	 *
+	 * Not `frappe.require` on the Desk, although it would resolve the name itself: v16 resolves
+	 * it even when the script fails and records the path as executed either way, so after one
+	 * failed load every later click would "succeed" without fetching anything. It also freezes
+	 * the whole Desk while it loads. It stays only as the fallback when the name cannot be
+	 * resolved. A failed load removes its <script> and clears `loading`, so the next click tries
+	 * again.
 	 */
 	function loadPanel() {
 		const ready = () => win.ee_capture_panel && typeof win.ee_capture_panel.open === "function";
@@ -472,18 +480,37 @@ export function install(win) {
 			};
 			try {
 				const frappe = win.frappe;
-				if (config.surface === "desk" && frappe && typeof frappe.require === "function") {
-					const pending = frappe.require("capture_panel.bundle.js", () => done());
-					if (pending && typeof pending.then === "function") pending.then(() => done(), done);
-					return;
+				let url = config.panel_url || "";
+				if (config.surface === "desk" && !url) {
+					const name = "capture_panel.bundle.js";
+					let resolved = "";
+					try {
+						resolved = frappe && frappe.assets && typeof frappe.assets.bundled_asset === "function" ? frappe.assets.bundled_asset(name) : "";
+					} catch (e) {
+						resolved = "";
+					}
+					if (resolved && resolved !== name) {
+						url = resolved;
+					} else if (frappe && typeof frappe.require === "function") {
+						const pending = frappe.require(name, () => done());
+						if (pending && typeof pending.then === "function") pending.then(() => done(), done);
+						return;
+					}
 				}
-				if (!config.panel_url) return done(new Error("The report form is not available on this page."));
+				if (!url) return done(new Error("The report form is not available on this page."));
 				const doc = win.document;
 				const script = doc.createElement("script");
-				script.src = config.panel_url;
+				script.src = url;
 				script.async = true;
 				script.onload = () => done();
-				script.onerror = () => done(new Error("The report form could not be loaded."));
+				script.onerror = () => {
+					try {
+						script.remove();
+					} catch (e) {
+						// A stray failed <script> costs nothing; the next try adds a fresh one.
+					}
+					done(new Error("The report form could not be loaded."));
+				};
 				(doc.head || doc.documentElement).appendChild(script);
 			} catch (e) {
 				done(e);

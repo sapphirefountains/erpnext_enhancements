@@ -7,6 +7,12 @@ Several standalone web pages live here, separate from the heavy desk app:
 - the **traveler itinerary** at **`/itinerary`** — chrome-free (see [its section below](#itinerary--traveler-itinerary-page));
 - the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails.
 - the **fountain move intake form** at **`/fountain-move`** — the public, guest-accessible Cactus & Tropicals intake form (`fountain_move.py` + `fountain-move.html`; note the underscored controller — see [Controller filenames](#controller-filenames-hyphens-are-silently-fatal)). See [its section below](#fountain-move--public-intake-form).
+- the capture widget's recorder (`capture.bundle.js`, WI-079 slice 2) is included by exactly
+  four templates here: `kiosk.html`, `feedback.html`, `itinerary.html` and
+  `travel_guidelines.html`. Each sets `window.EE_CAPTURE` (surface, user, CSRF token, the panel's
+  hashed URL) first in its script block. No other page loads any capture code, and
+  `tests/test_feedback_capture_surface.py` fails the build if one does
+  ([`public/README.md`](../public/README.md), `capture/`);
 - the **feedback SPA** at **`/feedback`** — employee bug/feature intake and the reviewer's
   queue ([ADR 0010](../../decisions/adr/0010-employee-feedback-to-tasks.md)), chrome-free and
   login-gated (`feedback.py` + `feedback.html`; front end in

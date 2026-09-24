@@ -182,6 +182,11 @@ retention; and Error Log matching. Deviations and gaps:
   (after classification) or swapped for another screen when the spike runs.
 - "Point at it" (ADR 0016 §4) and a "Report a problem" button in the Server Error dialog are not
   built.
+- **Kiosk drafts are not dropped at sign-out.** The kiosk has no sign-out of its own to hook.
+  Another user's drafts are dropped when the next person's kiosk loads the panel (it preloads
+  it once idle) or opens it, and never sent as them: the server says who is signed in.
+- Drafts are offered at page load on the kiosk only. On the Desk and web pages the panel bundle
+  loads on the first open, so a draft saved before a reload is offered there.
 
 ### Slice 3 — Repo-aware breakdown [M]
 

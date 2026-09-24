@@ -51,6 +51,15 @@ NEVER = (
 
 CAPTURE_MARKERS = ("capture.bundle", "capture_panel.bundle", "EE_CAPTURE", "ee_capture")
 
+#: Never-list pages that are doctype web views rather than www/ templates.
+NEVER_WEB_VIEWS = ("sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.html",)
+
+#: The only esbuild entries allowed to reach the recorder or the launcher: the Desk bundle and
+#: the one the allowlisted templates include.
+RECORDER_BUNDLES = {"erpnext_enhancements.bundle.js", "capture.bundle.js"}
+
+_IMPORT = re.compile(r"""(?:^|[\s;])import\s*(?:\(\s*|[^'\"`;]*?\bfrom\s*)?['\"]([^'\"]+)['\"]""", re.M)
+
 
 def _hook(name):
 	for node in ast.parse(HOOKS.read_text(encoding="utf-8")).body:
@@ -59,6 +68,32 @@ def _hook(name):
 				if isinstance(target, ast.Name) and target.id == name:
 					return ast.literal_eval(node.value)
 	return None
+
+
+def _resolve(base, spec):
+	if not spec.startswith("."):
+		return None  # a package; nothing of ours
+	target = (base.parent / spec).resolve()
+	for candidate in (target, target.with_name(target.name + ".js"), target / "index.js"):
+		if candidate.is_file():
+			return candidate
+	return None
+
+
+def _reach(entry):
+	"""Every local module an esbuild entry pulls in, followed transitively."""
+	seen = set()
+	stack = [entry.resolve()]
+	while stack:
+		path = stack.pop()
+		if path in seen:
+			continue
+		seen.add(path)
+		for spec in _IMPORT.findall(path.read_text(encoding="utf-8", errors="replace")):
+			resolved = _resolve(path, spec)
+			if resolved is not None:
+				stack.append(resolved)
+	return seen
 
 
 def _module_constant(path, name):
@@ -91,9 +126,12 @@ class TestWhereTheWidgetLoads(unittest.TestCase):
 				self.assertIn("capture.bundle.js", first_src)
 
 	def test_no_other_template_loads_any_capture_code(self):
+		# Every template in the app, doctype web views included (/maintenance-records is one).
 		offenders = []
-		for path in list(WWW.rglob("*.html")) + list((APP / "templates").rglob("*.html")):
+		for path in APP.rglob("*.html"):
 			if path.parent == WWW and path.name in ALLOWLIST:
+				continue
+			if "node_modules" in path.parts or "dist" in path.parts:
 				continue
 			text = path.read_text(encoding="utf-8", errors="replace")
 			if any(marker in text for marker in CAPTURE_MARKERS):
@@ -106,6 +144,44 @@ class TestWhereTheWidgetLoads(unittest.TestCase):
 				text = (WWW / page).read_text(encoding="utf-8")
 				for marker in CAPTURE_MARKERS:
 					self.assertNotIn(marker, text)
+
+	def test_the_never_web_views_exist_and_are_clean(self):
+		for rel in NEVER_WEB_VIEWS:
+			with self.subTest(page=rel):
+				text = (APP / rel).read_text(encoding="utf-8")
+				for marker in CAPTURE_MARKERS:
+					self.assertNotIn(marker, text)
+
+	def test_only_two_bundles_reach_the_recorder(self):
+		# The hook string can stay clean while the bundle it names imports the recorder, which
+		# would put it on every website page. So follow every entry's imports.
+		capture = (JS / "capture").resolve()
+		guarded = {capture / "recorder.js", capture / "launcher.js"}
+		bundles = sorted(JS.glob("*.bundle.js"))
+		self.assertGreater(len(bundles), 3)
+		for bundle in bundles:
+			with self.subTest(bundle=bundle.name):
+				reached = _reach(bundle) & guarded
+				if bundle.name in RECORDER_BUNDLES:
+					self.assertIn(capture / "recorder.js", reached)
+				else:
+					self.assertEqual(reached, set())
+
+	def test_web_include_js_reaches_no_capture_code_at_all(self):
+		value = _hook("web_include_js")
+		items = [value] if isinstance(value, str) else list(value or [])
+		capture = (JS / "capture").resolve()
+		for item in items:
+			with self.subTest(entry=item):
+				entry = JS / item.split("/")[-1]
+				self.assertTrue(entry.is_file(), entry)
+				self.assertEqual([p.name for p in _reach(entry) if capture in p.parents], [])
+
+	def test_the_import_scanner_sees_imports(self):
+		# A regex that matched nothing would make the two tests above pass vacuously.
+		reached = {p.name for p in _reach(JS / "capture_panel.bundle.js")}
+		for name in ("panel.js", "annotate.js", "drafts.js", "transport.js"):
+			self.assertIn(name, reached)
 
 	def test_the_desk_bundle_starts_with_the_recorder(self):
 		lines = [

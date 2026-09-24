@@ -2,8 +2,9 @@
 
 **Retention.** A request's screenshots and capture-context file go 180 days after it closes,
 and nothing else attached to it goes with them. The job selects on
-``coalesce(terminal_at, modified)``, joined to ``File`` so a cleaned request never comes back,
-and commits per deletion. Covers acceptance criterion "closed 181 days ago keeps its text and
+``coalesce(terminal_at, modified)``, joined to ``File`` on the capture artifacts only, so a
+cleaned request drops out even when it keeps a PDF, and commits per deletion. The same run
+deletes the panel's screenshot uploads that never reached a request. Covers acceptance criterion "closed 181 days ago keeps its text and
 loses its files; closed 179 days ago keeps both". That comparison is SQL, so the tests pin the
 cutoff the job computes and the predicate it sends.
 
@@ -170,7 +171,21 @@ class TestRetention(Base):
 		self.assertEqual(values["cutoff"], NOW - timedelta(days=180))
 		self.assertIn("coalesce(er.terminal_at, er.modified) < %(cutoff)s", " ".join(query.split()))
 		self.assertEqual(set(values["terminal"]), {"Tasks Created", "Rejected", "Duplicate"})
+		# Plain strings, not the enum members: str-enum equality hides the difference from the
+		# assertion above, and the driver escapes a member as 'RequestState.REJECTED'.
+		self.assertTrue(all(type(v) is str for v in values["terminal"]), values["terminal"])
 		self.assertIn("join `tabFile` f", query)
+
+	def test_the_join_selects_only_requests_with_an_artifact_left(self):
+		jobs.purge_expired_capture_files()
+		query, values = W.sql_calls[0]
+		flat = " ".join(query.split())
+		self.assertIn("lower(f.file_name) like %(context_like)s", flat)
+		self.assertIn("lower(substring_index(f.file_name, '.', -1)) in %(extensions)s", flat)
+		self.assertEqual(values["context_like"], "capture-context-%")
+		# The same extensions is_capture_artifact deletes, so the two tests cannot drift apart.
+		self.assertEqual(set(values["extensions"]), set(jobs.SCREENSHOT_EXTENSIONS))
+		self.assertTrue(all(type(v) is str for v in values["extensions"]))
 
 	def test_only_artifacts_are_deleted_each_with_its_own_commit(self):
 		W.sql_results = [[types.SimpleNamespace(name="ER-1")]]
@@ -182,7 +197,7 @@ class TestRetention(Base):
 		out = jobs.purge_expired_capture_files()
 		self.assertEqual(W.deleted, ["F1", "F2"])
 		self.assertEqual(W.commits, 2)
-		self.assertEqual(out, {"requests": 1, "deleted": 2, "failed": 0})
+		self.assertEqual(out, {"requests": 1, "deleted": 2, "failed": 0, "orphans": 0})
 
 	def test_one_failed_delete_rolls_back_alone_and_the_rest_continue(self):
 		W.sql_results = [[types.SimpleNamespace(name="ER-1")]]
@@ -196,7 +211,35 @@ class TestRetention(Base):
 		self.assertEqual((W.rollbacks, out["failed"]), (1, 1))
 
 	def test_nothing_left_means_nothing_done(self):
-		self.assertEqual(jobs.purge_expired_capture_files(), {"requests": 0, "deleted": 0, "failed": 0})
+		self.assertEqual(
+			jobs.purge_expired_capture_files(), {"requests": 0, "deleted": 0, "failed": 0, "orphans": 0}
+		)
+
+
+class TestOrphanScreenshots(Base):
+	def test_only_the_panels_unattached_private_uploads_a_day_old(self):
+		jobs.purge_orphan_screenshots()
+		query, values = W.sql_calls[0]
+		flat = " ".join(query.split())
+		self.assertIn("coalesce(attached_to_doctype, '') = ''", flat)
+		self.assertIn("is_private = 1", flat)
+		self.assertIn("file_name like %(prefix)s", flat)
+		self.assertEqual(values["prefix"], "capture-shot-%")
+		self.assertEqual(values["cutoff"], NOW - timedelta(days=1))
+
+	def test_each_orphan_is_deleted_with_its_own_commit(self):
+		W.sql_results = [[types.SimpleNamespace(name="S1"), types.SimpleNamespace(name="S2")]]
+		W.delete_fails = {"S1"}
+		self.assertEqual(jobs.purge_orphan_screenshots(), 1)
+		self.assertEqual((W.deleted, W.commits, W.rollbacks), (["S2"], 1, 1))
+
+	def test_the_daily_run_includes_them(self):
+		W.sql_results = [[], [types.SimpleNamespace(name="S1")]]
+		self.assertEqual(jobs.purge_expired_capture_files()["orphans"], 1)
+
+	def test_the_prefix_is_the_panels(self):
+		panel = (REPO_ROOT / "erpnext_enhancements" / "public" / "js" / "capture" / "panel.js").read_text(encoding="utf-8")
+		self.assertIn(f'export const SHOT_PREFIX = "{jobs.CAPTURE_SHOT_PREFIX}";', panel)
 
 
 FILED = datetime(2026, 9, 23, 12, 0, 0)
@@ -229,6 +272,19 @@ class TestMatching(Base):
 		# The browser's clock runs 7 minutes fast, but the failure was 60 s before capture.
 		when = jobs.estimate_server_time("2026-09-23T12:06:00", "2026-09-23T12:07:00", FILED)
 		self.assertEqual(when, FILED - timedelta(seconds=60))
+
+	def test_the_reference_is_sent_at_when_the_panel_stamped_it(self):
+		self.assertEqual(jobs.reference_time({"captured_at": "c", "sent_at": "s"}), "s")
+		self.assertEqual(jobs.reference_time({"captured_at": "c"}), "c")
+		self.assertIsNone(jobs.reference_time(None))
+
+	def test_time_spent_composing_does_not_shift_the_estimate(self):
+		# Panel opened at 12:00 (browser), failure 60 s before; the person typed for 25 minutes and
+		# sent at 12:25 (browser). The report arrived at FILED. Measured from sent_at the failure
+		# is 26 minutes before FILED; from captured_at it would wrongly be 1 minute before.
+		snap = {"captured_at": "2026-09-23T12:00:00", "sent_at": "2026-09-23T12:25:00"}
+		when = jobs.estimate_server_time("2026-09-23T11:59:00", jobs.reference_time(snap), FILED)
+		self.assertEqual(when, FILED - timedelta(minutes=26))
 
 	def test_same_user_verb_and_path_inside_the_flush_window_matches(self):
 		flushed = FILED + timedelta(minutes=9)  # the 0/15 flush wrote it later
@@ -278,6 +334,17 @@ class TestMatchJob(Base):
 		W.snapshots["ER-9"] = {"requests": [dict(REQ, status=404)]}
 		jobs.match_capture_error_logs()
 		self.assertEqual(W.sql_calls, [])
+
+	def test_the_job_measures_from_sent_at(self):
+		# Composed for 30 minutes: the Error Log was flushed 5 minutes after the real failure,
+		# which is 25 minutes before filing. Measured from captured_at it would fall outside.
+		W.snapshots["ER-9"] = {
+			"captured_at": "2026-09-23T12:00:00",
+			"sent_at": "2026-09-23T12:30:00",
+			"requests": [dict(REQ, at="2026-09-23T11:59:00")],
+		}
+		W.sql_results = [[_row("E1", FILED - timedelta(minutes=26))]]
+		self.assertEqual(jobs.match_capture_error_logs()["noted"], 1)
 
 	def test_the_lookup_is_prefiltered_on_the_user_and_a_window(self):
 		W.sql_results = [[]]

@@ -79,7 +79,9 @@ standard_help_items = [
 	{
 		"item_label": "Report a Problem",
 		"item_type": "Action",
-		"action": "window.ee_capture ? window.ee_capture.open() : window.open('/feedback')",
+		# open() rejects when the report form cannot load; frappe.utils.eval ignores the result,
+		# so without the catch a failed load would do nothing at all. /feedback is the fallback.
+		"action": "window.ee_capture ? window.ee_capture.open().catch(function () { window.open('/feedback'); }) : window.open('/feedback')",
 		"is_standard": 1,
 	},
 ]
@@ -1288,7 +1290,9 @@ scheduler_events = {
 		# product_feedback capture retention (WI-079 slice 2, Nik 2026-09-23): a request's
 		# screenshots and capture-context file are deleted 180 days after it closes; its text,
 		# decision and Task links stay. Clock is terminal_at, falling back to modified (never
-		# earlier than the real close). Joins to File, so a cleaned request never returns.
+		# earlier than the real close). Joins to File on capture artifacts only, so a cleaned
+		# request drops out even if it keeps a PDF. Also deletes the panel's screenshot uploads
+		# (capture-shot-*) still unattached after a day: filings that failed after the upload.
 		"erpnext_enhancements.product_feedback.capture_jobs.purge_expired_capture_files",
 		# Client-IP derivation (TASK-2026-01478): Error Log row if recent logins were recorded
 		# from a Google load-balancer address instead of the visitor's. The fix is a hand-placed

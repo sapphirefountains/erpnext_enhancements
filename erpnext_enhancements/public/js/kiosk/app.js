@@ -1738,6 +1738,9 @@
     };
     registerCaptureState();
     setTimeout(preloadCapturePanel, 8000);
+    // Offline at 8 s is the case the preload exists for, so it tries again when the signal
+    // returns. It does nothing once the form is on the page.
+    window.addEventListener('online', function () { setTimeout(preloadCapturePanel, 2000); });
 
     var v = views();
     TABS.forEach(function (t) {
@@ -1798,13 +1801,17 @@
   // because neither capture bundle is precached: if the signal drops later, "Report a
   // problem" must still open, so the report can be saved on the device and sent on the next
   // tap once it is back. The recorder's own loader sees the global and does not load it twice.
+  var capturePanelLoading = false;
   function preloadCapturePanel() {
     try {
       var cfg = window.EE_CAPTURE || {};
-      if (!window.ee_capture || window.ee_capture_panel || !cfg.panel_url || !navigator.onLine) return;
+      if (!window.ee_capture || window.ee_capture_panel || capturePanelLoading || !cfg.panel_url || !navigator.onLine) return;
+      capturePanelLoading = true;
       var s = document.createElement('script');
       s.src = cfg.panel_url;
       s.async = true;
+      s.onload = function () { capturePanelLoading = false; };
+      s.onerror = function () { capturePanelLoading = false; try { s.remove(); } catch (e) { /* retried on the next online */ } };
       (document.head || document.documentElement).appendChild(s);
     } catch (e) { /* a missing report form must never cost the clock */ }
   }

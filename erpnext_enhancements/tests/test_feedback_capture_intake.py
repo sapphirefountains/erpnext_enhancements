@@ -18,6 +18,9 @@ What these pin, and why each one matters:
   fields.
 - **Refuse before writing** an oversized or malformed snapshot. **Never lose a report** because
   the snapshot could not be saved.
+- **A resend is not a second report.** A draft of a report whose response was lost carries the
+  report's id; the id is remembered only after the filing commits, and only for that user.
+- **A pause is recognizable** (``FeedbackPausedError``), so the panel keeps a saved draft.
 
 ``frappe`` is a local stub installed in ``setUpModule`` and removed in ``tearDownModule``, so
 this suite gets its own CI step (CLAUDE.md: stub-installing suites are kept apart).
@@ -75,6 +78,8 @@ class State:
 		self.file_insert_fails = False
 		self.notified = []
 		self.paused = False
+		self.cache = {}
+		self.after_commit = []
 
 
 class FakeRequest:
@@ -138,10 +143,35 @@ def _install():
 		def expire(self, key, ttl):
 			pass
 
+		# Like RedisWrapper, these add the site prefix themselves.
+		def get_value(self, key, *a, **k):
+			return STATE.cache.get(f"site1|{key}")
+
+		def set_value(self, key, val, *a, expires_in_sec=None, **k):
+			STATE.cache[f"site1|{key}"] = val
+			STATE.cache_ttl = expires_in_sec
+
 	frappe.cache = Cache()
 	frappe.new_doc = lambda doctype: FakeRequest(len(STATE.docs) + 1)
 	frappe.get_doc = lambda values: FakeFile(values)
-	frappe.db = types.SimpleNamespace(get_value=lambda *a, **k: None, set_value=lambda *a, **k: None)
+	def exists(doctype, filters):
+		return any(
+			d.name == filters.get("name")
+			and d.requested_by == filters.get("requested_by")
+			and d.source == filters.get("source")
+			for d in STATE.docs
+		)
+
+	class AfterCommit:
+		def add(self, fn):
+			STATE.after_commit.append(fn)
+
+	frappe.db = types.SimpleNamespace(
+		get_value=lambda *a, **k: None,
+		set_value=lambda *a, **k: None,
+		exists=exists,
+		after_commit=AfterCommit(),
+	)
 
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(v or 0)
@@ -258,9 +288,11 @@ class TestOneWayIn(Base):
 
 	def test_a_paused_intake_refuses_capture_too(self):
 		STATE.paused = True
-		with self.assertRaises(ValidationError):
+		with self.assertRaises(ValidationError) as caught:
 			feedback.submit_capture(payload=dict(VALID), context={})
 		self.assertEqual(STATE.docs, [])
+		# The class name reaches the browser as exc_type; the panel keeps a draft on it.
+		self.assertEqual(type(caught.exception).__name__, "FeedbackPausedError")
 
 	def test_capture_needs_an_impact_like_the_form(self):
 		payload = dict(VALID)
@@ -354,6 +386,66 @@ class TestCaptureContext(Base):
 		out = feedback.submit_capture(payload=dict(VALID), context=self.SNAPSHOT)
 		self.assertEqual(len(STATE.docs), 1)
 		self.assertTrue(any("technical details" in r for r in out["rejected"]))
+
+
+class TestResendIsNotASecondReport(Base):
+	ID = "0f8e2c1a-7b3d-4e5f-9a6b-1c2d3e4f5a6b"
+
+	def _commit(self):
+		for fn in STATE.after_commit:
+			fn()
+		STATE.after_commit = []
+
+	def test_a_resend_after_commit_returns_the_first_request(self):
+		first = feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self._commit()
+		again = feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self.assertEqual(len(STATE.docs), 1)
+		self.assertEqual(again["name"], first["name"])
+		self.assertTrue(again["duplicate"])
+		self.assertEqual(STATE.cache_ttl, feedback.CLIENT_ID_TTL_SECONDS)
+		self.assertGreaterEqual(feedback.CLIENT_ID_TTL_SECONDS, 7 * 24 * 3600)
+
+	def test_nothing_is_remembered_before_the_filing_commits(self):
+		feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self.assertEqual(STATE.cache, {})
+
+	def test_a_remembered_name_that_is_not_in_the_table_files_again(self):
+		# Committed and remembered, then gone (say, deleted): not proof that this report arrived.
+		feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self._commit()
+		STATE.docs.clear()
+		feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self.assertEqual(len(STATE.docs), 1)
+
+	def test_the_id_is_per_person(self):
+		feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self._commit()
+		STATE.user = "jo@example.com"
+		STATE.system_users.add("jo@example.com")
+		out = feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self.assertEqual(len(STATE.docs), 2)
+		self.assertNotIn("duplicate", out)
+
+	def test_a_malformed_id_is_ignored(self):
+		for bad in ("short", "x" * 65, "<script>alert(1)</script>", "id with spaces here", 42):
+			with self.subTest(bad=bad):
+				feedback.submit_capture(payload=dict(VALID), context={}, client_id=bad)
+				self._commit()
+		self.assertEqual((len(STATE.docs), STATE.cache), (5, {}))
+
+	def test_a_resend_does_not_count_toward_the_limit(self):
+		feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self._commit()
+		for _ in range(15):
+			feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self.assertEqual(sum(STATE.counters.values()), 1)
+
+	def test_a_paused_intake_still_answers_a_resend_of_a_filed_report(self):
+		first = feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)
+		self._commit()
+		STATE.paused = True
+		self.assertEqual(feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)["name"], first["name"])
 
 
 if __name__ == "__main__":
