@@ -855,6 +855,11 @@ async function appStoreRuns() {
 		await settle();
 		const noClock = mountApp({ store_run: storeRun, now: undefined });
 		check("store run on: no site clock, no other person's run offered (a new run is the safe side)", noClock.offeredRuns().map((r) => r.run), []);
+		// ... unless it is this phone's current run (joined earlier): the run bar still says to add
+		// to it, and dropping it would split one trip into two runs.
+		const samsRun = later.openRuns()[0];
+		later.runState = { current: samsRun.run, finished: [] };
+		check("store run on: this phone's current run is still offered 3 h after its last line", later.offeredRuns().map((r) => r.run), [samsRun.run]);
 
 		// 3. A new run's id is minted once and outlives the sheet.
 		on.showItem({ ...item }, {});
@@ -963,15 +968,16 @@ async function appStoreRuns() {
 		U.closeAllSheets();
 		await settle();
 
-		// 6d. A receipt total well above the lines plus tax is flagged, on the joined header and at
-		// Finish, with the way to start again.
+		// 6d. The joined header shows progress, never the warning (mid-run the lines are nearly
+		// always short of the receipt); a total well above the lines plus tax is flagged at Finish,
+		// with the way to start again.
 		const typo = { ...on.currentRun(), lines: 2, amount: 20, receipt_total: 234.1 };
 		on.noteRun(typo);
 		on.showItem({ ...item }, {});
 		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1, run: on.currentRun() });
 		truthy(
-			"joined header: 'Check the receipt total' with the lines' tax band and how to start again",
-			/Check the receipt total: \$234\.10 with tax/.test(sheetText()) && /about \$21\.20–\$21\.80 with tax/.test(sheetText()) && /undo the run's lines/.test(sheetText()),
+			"joined header: progress line, no 'Check the receipt total'",
+			/Lines so far: \$20\.00 before tax, of a \$234\.10 receipt\./.test(sheetText()) && !/Check the receipt total/.test(sheetText()),
 			sheetText()
 		);
 		U.closeAllSheets();

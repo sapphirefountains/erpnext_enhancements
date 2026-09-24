@@ -308,10 +308,11 @@ yesterday *Today*, so each line carries the page's own day (`page_today`) and a 
 with "Reload the page" and a Reload button (`StalePageError`), not a run rule that does not fit.
 
 **A wrong receipt total.** It rides on every receipt of the run (`custom_receipt_total`) and into
-the KPI, and the receipts are submitted and the log immutable, so it cannot be edited. *Finish* and a
-joined run's header say **"Check the receipt total"** when it is more than 15% above what the lines
-cost before tax, with the lines plus Utah's 6–9% tax as the band it should be near
-(`logic.receiptCheck`); mid-run that may only mean lines still to come, and the page says so. The way
+the KPI, and the receipts are submitted and the log immutable, so it cannot be edited. *Finish* says
+**"Check the receipt total"** when it is more than 15% above what the lines cost before tax, with
+the lines plus Utah's 6–9% tax as the band it should be near (`logic.receiptCheck`). A joined run's
+header shows only the progress, because mid-run the lines are nearly always short of the receipt
+and a warning on every line would be ignored by the time it matters. The way
 out: undo the run's lines. Undone lines do not count toward the header, so a run with none left
 reopens as a new run's header **prefilled with the old values** (`logic.reopenedDraft`), under the
 same run id, to correct and record again. Past the undo window, Purchasing.

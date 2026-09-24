@@ -95,10 +95,11 @@ cannot tell a minimum set too low ("A stocked item was out") from a part the kit
   the default), so parts bought for a job do not sit in the bin as stock. The reason starts from
   the item's reorder level and a contradiction is pointed out. A run bar stays above every view
   while the run is open; *Finish* compares the lines with the receipt total and says to hand the
-  paper receipt to Accounting within 2 business days. *Finish* and a joined run's header say
-  **"Check the receipt total"** when it is more than 15% above the lines, with the lines plus 6–9%
-  tax as the band, and say how to start again (undo the lines; the run reopens with its header
-  prefilled to correct).
+  paper receipt to Accounting within 2 business days. *Finish* says **"Check the receipt total"**
+  when it is more than 15% above the lines, with the lines plus 6–9% tax as the band, and says how
+  to start again (undo the lines; the run reopens with its header prefilled to correct). A joined
+  run's header shows only the progress ("Lines so far: $X before tax, of a $Y receipt"): mid-run the
+  lines are nearly always short of the receipt, so a warning there would be ignored by Finish.
 - **Inventory Scanner Settings**: *New Items From Store Runs* (Stock Scan Log, created an Item, not
   reviewed).
 
@@ -111,8 +112,10 @@ cannot tell a minimum set too low ("A stocked item was out") from a part the kit
   the receipt total, else one the lines plus up to 15% tax could make. QuickBooks holds some
   purchases twice, from a receipt email and from the bank feed, and a bank-feed entry carries the
   bank's posting date (Lowes $16.60 on the Capital One card: `ACC-JV-2026-27340` from the receipt
-  email, 2026-02-07; `ACC-JV-2026-27137`, "LOWES #02662* - 2486", from the feed, 2026-02-09), so
-  exact-day matching would have counted those trips twice. A charge of any other amount is never
+  email, 2026-02-07; `ACC-JV-2026-27137`, "LOWES #02662* - 2486", from the feed, 2026-02-09). The
+  window lets a trip pair with a feed charge when that is its only charge. A purchase QuickBooks
+  holds twice, as that one is, still counts twice whether it was recorded or not, as in the
+  baseline. A charge of any other amount is never
   taken, however near: 163 of the 231 store charges in the 12 months to 2026-09-24 have another at
   the same store within 3 days, so a recorded trip whose own charge never arrives (cash, a personal
   card, a Bill, an unflagged vendor) would take the next trip's charge and two trips would count as
@@ -159,8 +162,9 @@ cannot tell a minimum set too low ("A stocked item was out") from a part the kit
    it.** That clears 2210 and still books the card liability. The difference between the receipt
    total and those lines (the tax, and any non-stock line, which the receipts did not post) stays
    on the expense account QuickBooks used, or wherever you decide tax goes (4). Every other draft is
-   reviewed and submitted as the runbook says; `quickbooks_online/MIGRATION_NOTES.md` carries this
-   exception at its bulk-submit step. The trips are listed by the Stock Scan Log (*Store Run*) and
+   reviewed and submitted as the runbook says. Step S-D of `docs/migration/backlog-gl-posting-runbook.md`,
+   which submits the 2026 drafts, and `quickbooks_online/MIGRATION_NOTES.md` at its bulk-submit step
+   both carry this exception. The trips are listed by the Stock Scan Log (*Store Run*) and
    the Purchase Receipt field *Store Run*. **Follow-up, not built here:** a read-only list pairing
    each trip with its draft, made with the KPI's own pairing (`metrics.combine_store_runs`).
 3. **After cutover, a card charge at a flagged store is booked so the KPI can see it.** For a

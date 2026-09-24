@@ -17,8 +17,10 @@ WATCH_BAND = 0.10
 #: after it, never before. QuickBooks holds some purchases from two feeds -- a receipt email and
 #: the bank feed -- and a bank-feed entry carries the bank's posting date, not the purchase's
 #: (Lowes $16.60 on the Capital One card: ACC-JV-2026-27340 from the receipt email, 2026-02-07;
-#: ACC-JV-2026-27137, "LOWES #02662* - 2486" from the feed, 2026-02-09). Matching the exact day
-#: counted such a trip twice. A feed entry posted more than this many days late still does.
+#: ACC-JV-2026-27137, "LOWES #02662* - 2486" from the feed, 2026-02-09). The window lets a trip
+#: pair with a feed charge when that is its only charge; a feed entry posted more than this many
+#: days late counts as a second trip. A purchase QuickBooks holds twice, like that one, counts twice
+#: whether it was recorded or not -- as it always did.
 STORE_RUN_PAIR_DAYS = 3
 
 #: Two dollar amounts closer than this are the same charge.

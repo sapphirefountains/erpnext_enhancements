@@ -121,7 +121,9 @@ or a trip whose own charge is missing would swallow the next trip's charge at th
 window is there because QuickBooks holds some purchases from two feeds and a bank-feed entry
 carries the bank's posting date (Lowes $16.60 on the Capital One card: `ACC-JV-2026-27340` from the
 receipt email, 2026-02-07, and `ACC-JV-2026-27137`, "LOWES #02662* - 2486", from the feed,
-2026-02-09); a feed entry more than three days late still counts as a second trip. Count = trips +
+2026-02-09), so a trip can pair with a feed charge when that is its only charge; a feed entry more
+than three days late still counts as a second trip, and a purchase QuickBooks holds twice, like that
+one, counts twice recorded or not, as in the baseline. Count = trips +
 unpaired charges; spend = the charge
 for a paired trip, the receipt total for an unpaired one, and every unpaired charge. The source is
 *Purchase Receipt + QuickBooks* with **no freshness entry**, so a stale QuickBooks sync no longer

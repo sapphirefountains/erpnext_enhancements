@@ -496,9 +496,9 @@ export const TAX_BAND = [0.06, 0.09];
 /**
  * `{low, high}` — the lines plus tax — when a run's receipt total is more than
  * RECEIPT_CHECK_ABOVE above what its lines cost before tax, else null. A mistyped total (234.10
- * for 23.41) rides on every receipt of the run and into the KPI, so Finish and the joined run's
- * header say "Check the receipt total". Mid-run it may only mean lines still to come; the page
- * says both. Nothing recorded yet, nothing to compare.
+ * for 23.41) rides on every receipt of the run and into the KPI, so Finish says "Check the
+ * receipt total". Only Finish: mid-run it nearly always means lines still to come, so the joined
+ * run's header shows progress instead. Nothing recorded yet, nothing to compare.
  */
 export function receiptCheck(total, amount) {
 	const t = toNumber(total);

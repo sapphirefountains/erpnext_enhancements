@@ -197,8 +197,9 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   by it (`logic.runOffered`), never by the phone's own clock or zone. The non-stock item card's
   *Bought it on a store run* and search's *Not in ERPNext?* ask *Which store run?* when one is open
   (the person's current run first, then *A different store run*), so a trip is one run. A run whose
-  every line was undone reopens as a new run's header, prefilled to correct; *Finish* and a joined
-  run's header say "Check the receipt total" when it is well above the lines plus tax. Each line
+  every line was undone reopens as a new run's header, prefilled to correct; *Finish* says "Check
+  the receipt total" when it is well above the lines plus tax, and a joined run's header shows the
+  lines so far against the receipt. Each line
   carries the page's own day (`page_today`), so a page left open overnight is told to reload. The **run
   sheet** is a full-height sheet like Move: a new run's header (store, today or yesterday, the
   receipt photo, the total with tax, the receipt number — drawn once; a store or day tap redraws

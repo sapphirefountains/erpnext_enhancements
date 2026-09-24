@@ -1719,10 +1719,13 @@ export class StockScanApp {
 	 * The open runs the page offers as "Add to …": the person's own, and another person's only
 	 * while its last line is under three hours old (`logic.runOffered`). Finish is stored on the
 	 * starter's phone only, so this is what keeps a second trip that afternoon off the first.
+	 * This phone's current run is always offered: the run bar is still telling the person to add
+	 * to it, and dropping it would split one trip into two runs.
 	 */
 	offeredRuns() {
 		const now = this.siteNow();
-		return this.openRuns().filter((r) => runOffered(r, this.boot.user, now));
+		const current = this.runState.current;
+		return this.openRuns().filter((r) => r.run === current || runOffered(r, this.boot.user, now));
 	}
 
 	/** "Home Depot, Lowe's…": the stores, for a new run's row. */
@@ -1854,8 +1857,9 @@ export class StockScanApp {
 	 * A run's header is its first Posted line's (`api.stock_scan._run_head`). A run whose every
 	 * line was undone (`lines` 0) has none left, so it opens as a new run's header under the same
 	 * run id, prefilled with what it had (`logic.reopenedDraft`): that is how a mistyped receipt
-	 * total is corrected. A joined run's header, and Finish, say "Check the receipt total" when
-	 * the total is well above what the lines plus tax could come to (`logic.receiptCheck`).
+	 * total is corrected. Finish says "Check the receipt total" when the total is well above what
+	 * the lines plus tax could come to (`logic.receiptCheck`); a joined run's header shows only the
+	 * lines so far against the receipt.
 	 */
 	openStoreRun(ctx) {
 		if (this.reportBusy() || !this.storeRunReady()) return;
@@ -2023,17 +2027,12 @@ export class StockScanApp {
 					line.textContent = `${run.supplier_name} · ${boughtLabel(run.bought, today)} · receipt ${photo ? "✓" : "missing"} · ${money(run.receipt_total)} with tax${whose}`;
 				};
 				drawLine();
-				const check = receiptCheck(run.receipt_total, run.amount);
+				// Progress, not a warning: mid-run the lines are nearly always short of the receipt.
+				// The "Check the receipt total" warning belongs to Finish, where it means something.
 				append(
 					headBox,
 					line,
-					check
-						? el(
-								"p",
-								"ee-ss-notice ee-ss-receipt-check",
-								`Check the receipt total: ${money(run.receipt_total)} with tax, and the lines so far come to ${money(run.amount)} before tax (about ${money(check.low)}–${money(check.high)} with tax). Fine if more are still to be recorded. ${RESTART_RUN}`
-							)
-						: null,
+					el("p", "ee-ss-run-progress", `Lines so far: ${money(run.amount)} before tax, of a ${money(run.receipt_total)} receipt.`),
 					photoPicker("Another photo (a long receipt)", () => s.linePhoto, (url) => (s.linePhoto = url), drawLine)
 				);
 				return;

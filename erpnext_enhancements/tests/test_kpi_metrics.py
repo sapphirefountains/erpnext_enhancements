@@ -164,7 +164,8 @@ class TestCombineStoreRuns(unittest.TestCase):
 	def test_the_charge_two_days_later_is_the_same_trip(self):
 		"""A bank-feed entry carries the bank's posting date: Lowes $16.60 on the Capital One card
 		is ACC-JV-2026-27340 (receipt email, 2026-02-07) and ACC-JV-2026-27137 ("LOWES #02662* -
-		2486" from the feed, 2026-02-09). Exact-day matching counted 2."""
+		2486" from the feed, 2026-02-09). The window lets a trip pair with the feed charge when that is
+		its only charge; exact-day matching counted 2."""
 		receipts = [self.receipt("2026-09-07", "sr-a", 15.4, supplier="Lowes", total=16.6)]
 		self.assertEqual(self.combine([self.charge("2026-09-09", 16.6, "Lowes")], receipts), (1, 16.6))
 		self.assertEqual(self.combine([self.charge("2026-09-10", 16.6, "Lowes")], receipts), (1, 16.6))
