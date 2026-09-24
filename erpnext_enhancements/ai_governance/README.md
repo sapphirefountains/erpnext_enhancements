@@ -45,11 +45,23 @@ placeholder into real records.
   a placeholder is still sitting under a credential-like key after restoring, the action goes to
   **Failed** without running. Executing is not an option in that state: it would write the
   placeholder.
-- **The confirmed call's result and error are masked** of the sealed strings before they are
-  stored, because a validation message can quote the value it rejected.
+- **The confirmed call's result and error are masked** before they reach this doctype, AI Action
+  Log, or the thrown message, because a validation message can quote the value it rejected. Only
+  sealed **strings** of six or more characters are masked. Shorter ones and non-string values are
+  not, because masking replaces every occurrence. FAC's own **Assistant Audit Log** row for the
+  call is masked too. `_gate._wrap_log_execution` gives FAC recursively redacted arguments while
+  `frappe.flags.ai_gate_sealed` is set, because FAC's own sanitizer only looks at top-level keys.
+  FAC's file log and Sentry are out of reach and receive FAC's raw error text on a failure.
+- **The person confirming can read what they approve.** The Confirm dialog lists the hidden
+  fields by path. **Show Hidden Values** calls `gating_api.reveal_sealed`, which is limited to the
+  requester or a System Manager, while Pending and unexpired. It leaves a comment each time. Most
+  of what the heuristic hides is ordinary data, and an injected value there would otherwise go
+  through unseen.
 - **`args_hash` is an HMAC** keyed by the site encryption key. It is computed over the raw
   arguments, and the rest of the hashed text sits in `arguments`, so a plain hash of a short
   password could be brute-forced by anyone who can read the row.
+- **Locals in the confirm path are named `secret_*`.** Frappe's 5xx Error Log snapshot prints
+  frame locals, and it blanks only names on its blocklist.
 
 ## DocTypes
 

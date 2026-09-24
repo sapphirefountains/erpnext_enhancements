@@ -4,7 +4,8 @@ Before v1.524.1 ``confirm_action`` re-executed ``AI Pending Action.arguments``, 
 credential-like keys ``sanitize_arguments`` had replaced with "***REDACTED***", so a
 confirmation wrote the placeholder into a real record. FAC 3.0.0's key heuristic matches the
 substring "auth", so `author` counts as a credential, and `draft_token` matches its token
-rule. ``author_training_course`` could therefore never succeed through a confirmation.
+rule. ``author_training_course`` could therefore never succeed through a confirmation when
+it was given a draft_token, which is its preferred input.
 
 The fix keeps the redacted copy for people and seals the replaced values in a Password field.
 These tests pin each part:
@@ -15,10 +16,14 @@ These tests pin each part:
 - ``confirm_action`` executes the proposed values, reads the seal before the Confirmed
   transition, masks them out of what it stores, and refuses a card it cannot restore instead
   of running the placeholder;
+- FAC's own audit logging is masked for exactly the confirmed call (``_wrap_log_execution``);
+- ``reveal_sealed`` shows the hidden values only to someone who may decide, only while Pending;
 - the controller deletes the seal on every save that leaves the action non-Pending.
 
 Plain ``unittest`` under the stub set ``test_assistant_tools_schema.install_stubs`` provides
-(no site, no FAC). Every frappe attribute a test needs is patched per test and restored.
+(no site, no FAC). Every frappe attribute a test needs is patched and restored, per test or
+per class, with one exception. ``frappe.whitelist`` is installed once for the module and left
+in place, which is what the sibling gate suites do: ``gating_api`` needs it at import time.
 
 Run: python -m unittest erpnext_enhancements.tests.test_ai_gate_sealed_arguments -v
 """
@@ -200,6 +205,12 @@ class TestSealPayloadAndMasking(unittest.TestCase):
         result = {"a": "b"}
         self.assertIs(_gate.mask_secrets(result, []), result)
 
+    def test_a_long_numeric_secret_is_not_masked(self):
+        # The documented limit: only sealed STRINGS are masked. Eight digits clear the length
+        # threshold, so this fails if the str-only rule is ever dropped without saying so.
+        sealed = [[["pin"], 44556677]]
+        self.assertEqual(_gate.mask_secrets("pin 44556677 rejected", sealed), "pin 44556677 rejected")
+
     def test_mask_takes_the_longest_secret_first(self):
         sealed = [[["a"], "abcdef"], [["b"], "abcdefgh"]]
         self.assertEqual(_gate.mask_secrets("xabcdefghx", sealed), f"x{_gate.REDACTED}x")
@@ -307,6 +318,7 @@ class FakeAction:
         self.decided_at = None
         self._password = password
         self.saves = []
+        self.comments = []
         self.password_read_while = []
 
     def get(self, key):
@@ -322,8 +334,13 @@ class FakeAction:
     def save(self, ignore_permissions=False):
         self.saves.append(self.status)
 
+    def add_comment(self, comment_type, text):
+        self.comments.append((comment_type, text))
 
-class TestConfirmActionRunsWhatWasProposed(FacPredicateMixin, unittest.TestCase):
+
+class ConfirmHarness(FacPredicateMixin, unittest.TestCase):
+    """confirm_action against fakes: a registry that records, a throw that raises."""
+
     PROPOSAL = {"draft_token": "dt_abcdef123456", "spec": {"title": "Pump basics"}}
 
     def setUp(self):
@@ -340,6 +357,7 @@ class TestConfirmActionRunsWhatWasProposed(FacPredicateMixin, unittest.TestCase)
         class Registry:
             def execute_tool(self, tool_name, arguments):
                 test.events.append(("execute", test.action.status))
+                test.sealed_flag_during_execute = frappe.flags.ai_gate_sealed
                 test.executed.append((tool_name, roundtrip(arguments)))
                 if test.execute_error:
                     raise test.execute_error
@@ -376,6 +394,8 @@ class TestConfirmActionRunsWhatWasProposed(FacPredicateMixin, unittest.TestCase)
         payload = _gate.seal_payload(sealed)
         return FakeAction(json.dumps(sanitized), "*" * len(payload) if payload else None, payload)
 
+
+class TestConfirmActionRunsWhatWasProposed(ConfirmHarness):
     def test_the_tool_receives_the_proposed_values(self):
         self.action = self._sealed_action()
         self.assertEqual(gating_api.confirm_action(self.action.name)["status"], "Executed")
@@ -442,6 +462,118 @@ class TestConfirmActionRunsWhatWasProposed(FacPredicateMixin, unittest.TestCase)
         gating_api.confirm_action(self.action.name)
         self.assertEqual(self.executed, [("create_document", proposal)])
         self.assertEqual(json.loads(self.action.result), self.execute_result)
+
+
+class TestConfirmHandsTheSealToFacLogging(ConfirmHarness):
+    """The flag _wrap_log_execution reads is set for exactly the confirmed call."""
+
+    def test_the_flag_carries_the_seal_during_execution_and_is_cleared_after(self):
+        import frappe
+
+        self.action = self._sealed_action()
+        gating_api.confirm_action(self.action.name)
+        self.assertEqual(self.sealed_flag_during_execute, [[["draft_token"], "dt_abcdef123456"]])
+        self.assertIsNone(frappe.flags.ai_gate_sealed)
+
+    def test_the_flag_is_cleared_when_execution_fails(self):
+        import frappe
+
+        self.action = self._sealed_action()
+        self.execute_error = ValueError("boom")
+        with self.assertRaises(FakeThrow):
+            gating_api.confirm_action(self.action.name)
+        self.assertIsNone(frappe.flags.ai_gate_sealed)
+
+    def test_a_corrupt_card_is_refused_not_a_500(self):
+        self.action = FakeAction("{not json")
+        with self.assertRaises(FakeThrow):
+            gating_api.confirm_action(self.action.name)
+        self.assertEqual(self.executed, [])
+        self.assertEqual(self.action.status, "Failed")
+
+
+class TestRevealSealed(ConfirmHarness):
+    def test_the_decider_sees_each_hidden_value_by_path_and_it_is_recorded(self):
+        self.action = self._sealed_action(
+            {"doctype": "Help Article", "data": {"author": "Jordan Rivers", "rows": [{"password": "correct horse"}]}}
+        )
+        shown = gating_api.reveal_sealed(self.action.name)
+        self.assertEqual(
+            shown,
+            [
+                {"path": "data.author", "value": "Jordan Rivers"},
+                {"path": "data.rows[0].password", "value": "correct horse"},
+            ],
+        )
+        self.assertEqual(len(self.action.comments), 1)
+        self.assertEqual(self.action.status, "Pending")  # a look, not a decision
+
+    def test_nobody_else_may_look(self):
+        import frappe
+
+        self.action = self._sealed_action()
+        self.action.requested_by = "someone@x"
+        with mock.patch.object(frappe, "get_roles", lambda *a: ["Employee"], create=True):
+            with self.assertRaises(FakeThrow) as raised:
+                gating_api.reveal_sealed(self.action.name)
+        self.assertIn("may decide this action", str(raised.exception))
+        self.assertEqual(self.action.password_read_while, [])
+        self.assertEqual(self.action.comments, [])
+
+    def test_a_decided_action_reveals_nothing(self):
+        self.action = self._sealed_action()
+        self.action.status = "Executed"
+        with self.assertRaises(FakeThrow):
+            gating_api.reveal_sealed(self.action.name)
+
+    def test_nothing_sealed_is_an_empty_list(self):
+        self.action = FakeAction(json.dumps({"doctype": "ToDo"}))
+        self.assertEqual(gating_api.reveal_sealed(self.action.name), [])
+
+
+class TestFacAuditLogIsMaskedDuringConfirm(FacPredicateMixin, unittest.TestCase):
+    """FAC's log_execution sanitizes only top-level keys; the wrapper covers the rest."""
+
+    def setUp(self):
+        super().setUp()
+        import frappe
+
+        self.logged = []
+        test = self
+
+        class FakeBaseTool:
+            def log_execution(self, arguments, result, execution_time, status="Success", traceback_str=None):
+                test.logged.append((arguments, result, execution_time, status, traceback_str))
+
+        self.BaseTool = FakeBaseTool
+        _gate._wrap_log_execution(FakeBaseTool)
+        self.flags = types.SimpleNamespace(ai_gate_sealed=None)
+        patcher = mock.patch.object(frappe, "flags", self.flags, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_nested_values_and_echoes_are_masked_while_the_seal_is_set(self):
+        args = {"doctype": "Plaid Banking Settings", "data": {"client_secret": "sk-live-abcdef"}}
+        self.flags.ai_gate_sealed = [[["data", "client_secret"], "sk-live-abcdef"]]
+        self.BaseTool().log_execution(
+            args, {"success": False, "error": "bad sk-live-abcdef"}, 0.1,
+            status="Error", traceback_str="ValueError: sk-live-abcdef",
+        )
+        arguments, result, _, _, traceback_str = self.logged[-1]
+        self.assertEqual(arguments["data"]["client_secret"], _gate.REDACTED)
+        self.assertNotIn("sk-live-abcdef", json.dumps(result))
+        self.assertNotIn("sk-live-abcdef", traceback_str)
+        self.assertEqual(args["data"]["client_secret"], "sk-live-abcdef")  # the call's own args untouched
+
+    def test_an_ordinary_call_is_passed_through_untouched(self):
+        args = {"doctype": "ToDo", "data": {"client_secret": "visible-to-fac"}}
+        self.BaseTool().log_execution(args, {"success": True}, 0.1)
+        self.assertIs(self.logged[-1][0], args)
+
+    def test_wrapping_twice_is_a_no_op(self):
+        first = self.BaseTool.log_execution
+        _gate._wrap_log_execution(self.BaseTool)
+        self.assertIs(self.BaseTool.log_execution, first)
 
 
 class TestControllerDeletesTheSeal(unittest.TestCase):

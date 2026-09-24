@@ -574,7 +574,8 @@ def args_fingerprint(user, tool_name, arguments, key=None):
 # action wrote the literal "***REDACTED***" wherever a key looked like a credential. The
 # predicate is a name heuristic, and most of what it catches is not a secret: FAC's own list
 # includes the substring "auth", so `author` matches, and so does the `draft_token` argument of
-# author_training_course. That tool could never have succeeded through a confirmation.
+# author_training_course. That tool could never succeed through a confirmation when it was
+# given a draft_token, which is its preferred input.
 #
 # Only the replaced values are sealed, not the whole payload, for two reasons. The secret
 # material is then exactly what was hidden, and nothing else. It is also small, whereas a whole
@@ -666,8 +667,19 @@ def unseal_arguments(arguments, sealed):
     Refuses rather than guessing. Every path must walk dicts by str key and lists by int
     index, and must end at a dict key whose value is still exactly REDACTED. Anything else
     means the stored copy and the seal disagree, and executing either one would write
-    something nobody confirmed.
+    something nobody confirmed. Any unexpected error is raised as SealError too. That keeps
+    it on confirm_action's refusal path and off a 500, whose error snapshot would print this
+    frame's locals.
     """
+    try:
+        return _unseal(arguments, sealed)
+    except SealError:
+        raise
+    except Exception:
+        raise SealError("the hidden values do not fit the stored arguments") from None
+
+
+def _unseal(arguments, sealed):
     for entry in sealed or []:
         if not isinstance(entry, (list, tuple)) or len(entry) != 2:
             raise SealError("malformed sealed entry")
@@ -1179,3 +1191,38 @@ def apply_gate():
 
     setattr(gated_safe_execute, GATE_MARKER, True)
     BaseTool._safe_execute = gated_safe_execute
+    _wrap_log_execution(BaseTool)
+
+
+def _wrap_log_execution(BaseTool):
+    """Keep sealed values out of FAC's own Assistant Audit Log row for a confirmed call.
+
+    A confirmed call runs FAC's real ``_safe_execute`` with the restored values, and
+    ``log_execution`` writes the Assistant Audit Log row. That row is committed together with
+    the confirmed write. FAC's argument sanitizer only looks at top-level keys, so the nested
+    ``data.<field>`` of every create/update would be stored in plaintext. Its output sanitizer
+    redacts by key name, never by value, so an echoed value would be stored too.
+
+    While ``gating_api.confirm_action`` holds ``frappe.flags.ai_gate_sealed``, this wrapper gives
+    FAC the recursively redacted arguments and masks the sealed strings from everything else it
+    logs: result, error, traceback. Class-level and keyed on a request-local flag, so a
+    concurrent call in another thread is untouched. On a failed call FAC's row, and the Error
+    Log it writes, go with the rollback in confirm_action.
+    """
+    original_log = getattr(BaseTool, "log_execution", None)
+    if original_log is None or getattr(original_log, GATE_MARKER, False):
+        return
+
+    @functools.wraps(original_log)
+    def masked_log_execution(self, arguments, result, *args, **kwargs):
+        # Named to match Frappe's traceback blocklist ("secret"), like confirm_action's locals.
+        sealed_secrets = getattr(getattr(frappe, "flags", None), "ai_gate_sealed", None)
+        if sealed_secrets:
+            arguments = mask_secrets(sanitize_arguments(arguments), sealed_secrets)
+            result = mask_secrets(result, sealed_secrets)
+            args = tuple(mask_secrets(list(args), sealed_secrets))
+            kwargs = mask_secrets(kwargs, sealed_secrets)
+        return original_log(self, arguments, result, *args, **kwargs)
+
+    setattr(masked_log_execution, GATE_MARKER, True)
+    BaseTool.log_execution = masked_log_execution
