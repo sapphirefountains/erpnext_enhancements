@@ -48,14 +48,14 @@ Settings come from the "Time Kiosk Settings" Single DocType.
 import csv
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from xml.sax.saxutils import escape as _xml_escape
 
 import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime, nowdate
 
-from erpnext_enhancements.workforce import costing, photo_gate, sites, tracking_health
+from erpnext_enhancements.workforce import client_time, costing, photo_gate, sites, tracking_health
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
@@ -1739,17 +1739,11 @@ def _resolve_employee(claimed_employee=None):
 
 
 def _parse_timestamp(ts):
-    """Accept a Frappe datetime string, an ISO-ish 'YYYY-MM-DD HH:MM:SS' string,
-    or epoch milliseconds (number or numeric string). Returns a datetime."""
-    if ts in (None, ""):
-        return now_datetime()
-    if isinstance(ts, (int, float)):
-        return datetime.fromtimestamp(ts / 1000.0)
-    try:
-        return get_datetime(ts)
-    except Exception:
-        # Possibly epoch-ms delivered as a string.
-        return datetime.fromtimestamp(float(ts) / 1000.0)
+    """Accept a Frappe datetime string, an ISO-8601 string with or without an
+    offset, or epoch milliseconds (number or numeric string). Returns a NAIVE
+    site-local datetime — see ``workforce/client_time.py`` for why an offset must
+    be converted rather than stripped (v1.526.1)."""
+    return client_time.parse_client_timestamp(ts)
 
 
 def _valid_coords(lat, lng):

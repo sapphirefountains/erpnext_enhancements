@@ -35,6 +35,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |
 | `photo_gate.py` | The job-photo capture gate (WP-2) |
+| `client_time.py` | A browser timestamp onto the site's clock — naive, site-local, offset converted not stripped (v1.526.1) |
 | `photo_routing.py` | Photo fan-out onto Project/Task + Drive hand-off (WP-3) |
 | `payroll_export.py` | Semi-monthly hours in the payroll provider's workbook format (WP-8) + the Internal Costing sheet |
 | `report/job_photo_compliance/` | Which closed jobs have photos, and which do not |
@@ -357,6 +358,16 @@ This is deliberate. A technician physically unable to leave a site because an up
 failing would destroy trust in the system faster than any amount of missing data justifies.
 Pending photos are recorded, reported on (`Job Photo Compliance`) and retried by the device.
 
+That promise rests on the capture-time registration succeeding, and until v1.526.1 it never
+did for a camera capture: the device sends `captured_on` as `toISOString()` (UTC, `…Z`), the
+server kept it tz-aware, and MariaDB refused the offset — so the row was rolled back, the
+upload (which only runs after a successful registration) never started, and the phone's own
+count said "captured" while the server's said 0. With the gate on, that is a clock-out the
+server refuses and the phone never offers a skip for. `client_time.py` now converts every
+client stamp to the site's zone before it is stored. The device queue only replays the
+**registration**, never the bytes, so a capture that failed this way comes back as a Pending
+row with no image.
+
 **Skipping is allowed by default.** Setting `allow_photo_skip = 0` turns the gate into a
 hard block with no escape hatch — a genuine case (customer refused permission, camera
 broken, nothing visible to photograph) then has no way through except phoning the office.
@@ -428,4 +439,5 @@ mode this module has.
 | `tests/test_workforce_overtime.py` | no |
 | `tests/test_workforce_costing.py` | yes — own CI step |
 | `tests/test_workforce_sweeper.py` | yes — own CI step |
+| `tests/test_workforce_client_time.py` | yes — own CI step |
 | `tests/test_time_correction_requests.py` | no (filesystem + `ast`) |
