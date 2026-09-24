@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.529.1] - 2026-09-24
+## [1.530.1] - 2026-09-24
 
 **Fixes from an independent review of 1.529.0.** 1.529.0 merged while the review was still
 running. Seven findings survived an adversarial check. All were low severity, and three were
-false statements in the 1.529.0 entry, now marked *(Corrected in v1.529.1)* in place. The
+false statements in the 1.529.0 entry, now marked *(Corrected in v1.530.1)* in place. The
 common thread: the browser's email regex (`frappe.utils.validate_type(..., "email")`, v16
 `utils.js`) is looser than the server's `validate_email_address` / `EMAIL_MATCH_PATTERN`. It
 also accepts accented and quoted local parts (`josé@…`, `"a b"@…`), IP literals
@@ -72,6 +72,98 @@ and each path had to handle a server refusal properly.
 - `tests/test_handoff_gate.py` (bench-free, in CI) gains `TestNotInvited`, five cases, which
   fail against 1.529.0's `handoff.py` and pass now. `tests/test_project_prompt.py` needs a
   bench and was not run.
+## [1.530.0] - 2026-09-24
+
+**Maintenance moves to a Service dashboard under Production, and Operations becomes the
+inventory dashboard, with a KPI for store runs.** Nik, 2026-09-24: maintenance does not belong
+under Operations, anything inventory does, and unscheduled purchasing needs a number. The
+example was many small PVC fittings bought on separate runs to several stores. Measured the
+same day, crews made 206 card transactions at Home Depot and Lowe's in 12 months (2 of them
+returns): $16.3k, about four a week.
+
+### Added
+
+- **Service**, a tenth KPI department: `_service_metrics`, a `Service Dashboard` workspace, and
+  a `service_dashboard` sidebar. It carries the six maintenance KPIs from Operations with their
+  keys unchanged (visits completed, open visit drafts, out-of-range visits and rate, active
+  contracts, contracts expiring), and the Today's Visits, Chemistry Alerts and Labor Capture
+  widgets. Roles are the ones that saw these numbers before: Maintenance Manager, Projects
+  Manager, Projects User.
+- **Operations inventory KPIs**:
+  - Store Runs (30d) and Store-Run Spend (30d);
+  - Stocked Items Out of Stock;
+  - Stock at Placeholder Cost (bin rows at a valuation rate of $0.01 or less);
+  - Unpriced PO Lines (90d);
+  - Stocked Items Counted (90d);
+  - Adds Without PO Awaiting Review, the Stock Scan review queue.
+
+  A "stocked item" is an Item with a positive reorder level: ERPNext's own marker, and the one
+  that drives its automatic Material Requests.
+- **Store-Run Vendor**, a Check on Supplier (`custom_store_run_vendor`). It is created by the
+  patch with `create_custom_fields`, like the procurement fields on Purchase Order. Home Depot
+  and Lowes are ticked, but only if no supplier is ticked yet, so a later untick is never
+  overturned.
+- `tests/test_kpi_departments.py` (bench-free, on the existing KPI CI step). A department is
+  named in seven places: the aggregators, both `department` Selects, the role map, the cockpit
+  route map, the sidebars and the Executive rollup. The test checks that they all agree, that
+  the moved keys left their old departments, and that Service sits in the Production group.
+
+### Changed
+
+- **Stock levels moved from Product to Operations**, definitions and keys unchanged: Inventory
+  Stock Value, Out-of-Stock Sellable Items, and Items Below Reorder (now labelled Stocked Items
+  Below Reorder). Stock quantity and cost are Operations' to manage; catalogue data quality
+  (naming, SKU and pump-spec completeness) stays on Product.
+- **Operations keeps** device compliance, unsynced time logs and project naming compliance, and
+  gains the Stock Manager role.
+- **Sidebar: Production is now a group** holding *Overview* (the Production Dashboard) and
+  *Service*, in all eleven KPI sidebars. A v16 sidebar nests items only under a Section Break:
+  `sidebar.js` `find_nested_items` attaches `child` items to the preceding Section Break and
+  never to a Link. So "under Production" has to be a group, and Service gets no desk tile.
+- **`_EXEC_ROLLUP` reads Active Maintenance Contracts and the out-of-range rate from Service.**
+  Left pointing at Operations, both would have disappeared from the Executive dashboard without
+  an error, because a key a department no longer emits is skipped.
+- **Also updated for Service:**
+  - the Executive scorecard;
+  - the cockpit's route lock;
+  - the `/wall` KPI band, which now shows Executive, Service and Operations;
+  - `kpi_dashboard_status`'s description;
+  - the KPI Snapshot and KPI Target `department` Selects.
+- **The three maintenance widgets are renamed `Service …`**: block records, source files, and a
+  new `api/service_dashboard.py` for their feeds. Their toggles keep the `operations_*`
+  fieldnames, because renaming a field on a Single drops the value every site has stored. The
+  settings section is relabelled "Operations & Service Dashboard Widgets".
+
+### Migration
+
+`patches/split_service_kpi_dashboard` does five steps. Each commits on its own, and a failure is
+logged without stopping the migrate:
+
+1. Creates the Supplier field.
+2. Seeds Home Depot and Lowes.
+3. Moves any KPI Target set against a moved key. The live site had none.
+4. Force-resyncs the two workspaces and eleven sidebars.
+5. Deletes the retired `Operations Day Board`, `Operations Chemistry Alerts` and
+   `Operations Labor Capture` block records. The block seeder only upserts and never deletes,
+   so without this they would stay in the block picker indefinitely. A record still linked
+   from a private workspace is logged and left.
+
+### How the store-run count works, and what it cannot see
+
+- Today a run exists only as a QuickBooks card purchase, and the sync imports that as a draft
+  Journal Entry with **no party on any line**. So `_store_runs` takes the newest raw payload's
+  `EntityRef`, keeps type `Vendor` only, and maps its id to a Supplier through the Vendor sync
+  mapping. The type check matters because QBO ids are unique per entity type: a Customer 55 and
+  a Vendor 55 can both exist. `Credit` purchases are card refunds and are excluded.
+- After the cutover it also counts submitted Purchase Receipts and Purchase Invoices from those
+  suppliers with no PO behind them. An invoice made from such a receipt is not counted twice.
+- The count is only as current as QuickBooks categorization. 168 of the 206 transactions were
+  on the Amex Prime card (1008), and nothing at either store appears on it after 2026-07-07.
+  Until bookkeeping confirms otherwise, the August and September dip is uncategorized data, not
+  an improvement.
+- With no supplier ticked, the KPI is **not published** rather than shown as 0. A 0 there is
+  true by construction and would read as the goal met, the same shape as the trailing-space
+  checks that reported clean forever.
 
 ## [1.529.0] - 2026-09-24
 
@@ -99,16 +191,16 @@ clean, but found that it silently dropped malformed attendees.
   the listed recipients plus `frappe.session.user`, de-duplicated. The `finally` has restored
   the requester's session by that point. Email is still sent only to the listed recipients. The
   email body is now built once and sent to each recipient separately, as before. *(Corrected
-  in v1.529.1: "always" was too strong. It holds whenever a status goes out, but two paths
+  in v1.530.1: "always" was too strong. It holds whenever a status goes out, but two paths
   sent none: the early return for an opportunity that already has a project, and an
-  `UnboundLocalError` on `drive_success`, which 1.529.1 fixes.)*
+  `UnboundLocalError` on `drive_success`, which 1.530.1 fixes.)*
 - **The field takes free text, and `enqueue_project_creation` refuses anything that is not an
   email address.** The dialog checks each entry with `frappe.utils.validate_type(..., "email")`
   before it replaces its body with the progress bar, so a typo can be corrected in place. The
   server checks again with `frappe.utils.validate_email_address` for other callers. A bad
   address would otherwise have surfaced only after the project existed, as a dead Email Queue
   row. `Administrator` and `Guest` are no longer offered as options, since neither is an
-  address. *(Corrected in v1.529.1: the browser regex is looser than the server's, and an
+  address. *(Corrected in v1.530.1: the browser regex is looser than the server's, and an
   address it passed but the server refused left the dialog stuck on "Queuing...", not
   correctable in place. The server check is the authority for every caller, the dialog
   included, not only "for other callers". And a malformed address never became a dead Email Queue row: `frappe.sendmail`
@@ -145,10 +237,10 @@ clean, but found that it silently dropped malformed attendees.
   client regex needs a TLD of two or more letters, and the server's `EMAIL_MATCH_PATTERN` needs a
   dotted domain. So what the dialog accepts, `_dedupe()` keeps. The server is unchanged:
   `_dedupe()` also filters the *suggested* attendees, where quietly skipping a bad configured
-  address is the right call. *(Corrected in v1.529.1: the two checks do not agree. The browser
+  address is the right call. *(Corrected in v1.530.1: the two checks do not agree. The browser
   regex also passes accented and quoted local parts, IP literals and hyphen-edged domain
   labels, all of which `_dedupe()` drops, so for those the silent drop was not closed.
-  1.529.1 closes it by having the server report what it dropped.)*
+  1.530.1 closes it by having the server report what it dropped.)*
 
 ### Notes
 

@@ -1,7 +1,7 @@
-// Today's Visits — Operations Dashboard Custom HTML Block.
+// Today's Visits — Service Dashboard Custom HTML Block.
 //
 // Every maintenance visit scheduled for today, unfinished work first, from
-// erpnext_enhancements.api.operations_dashboard.get_day_board.
+// erpnext_enhancements.api.service_dashboard.get_day_board.
 //
 // Shadow-DOM sandbox: `root_element` is the shadow root, and the workspace
 // re-runs this whole script with a fresh root on every navigation — so nothing
@@ -10,7 +10,7 @@
 
 (function () {
     const MAX_ATTEMPTS = 50;
-    const METHOD = "erpnext_enhancements.api.operations_dashboard.get_day_board";
+    const METHOD = "erpnext_enhancements.api.service_dashboard.get_day_board";
     let attempts = 0;
 
     function getContainer() {
