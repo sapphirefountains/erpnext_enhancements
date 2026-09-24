@@ -212,8 +212,11 @@ EXEMPTABLE_TOOLS = {"create_document", "update_document"}
 # one unconfirmed call could create or close any Task and undo ADR 0016 §6 (verified 2026-09-23).
 
 #: Task statuses an AI may set without a confirmation (ADR 0016 §6). An allowlist rather than a
-#: Completed/Canceled denylist, so a status this site adds later, ERPNext core's "Cancelled"
-#: spelling, "Invoiced" or a typo all wait for a human. Closing a Task is the thing to confirm.
+#: Completed/Canceled denylist, so a status this site adds later, "Invoiced" or anything else
+#: never skips a human. Closing a Task is the thing to confirm. A value that is not an option
+#: at all, such as ERPNext core's "Cancelled" spelling (this site has "Canceled"), gets no card
+#: either: since v1.533.0 it is refused with Frappe's own error before one is queued
+#: (`_precheck_refusal`).
 _TASK_STATUSES_THAT_RUN = frozenset({"Open", "Working", "Pending Review", "Overdue"})
 
 #: Keys in update_document's `data` that change which record is written or how it is saved
@@ -1087,13 +1090,197 @@ def _success_response(envelope):
     }
 
 
-def _error_response(message):
+def _error_response(message, error_type="AIGateError"):
     return {
         "success": False,
         "error": message,
-        "error_type": "AIGateError",
+        "error_type": error_type,
         "execution_time": 0.0,
     }
+
+
+# ------------------------------------------------------- queue-time validation
+#
+# A card spends a human's attention, so it must not be spent on a write that cannot run. On
+# 2026-09-24 an assistant queued 21 `update_document` cards, each setting a Task's status to
+# "Cancelled". This site's option is "Canceled". Nik confirmed all 21 in one batch and every
+# one failed on execution with Frappe's own `Status cannot be "Cancelled"` error, so the
+# confirmations were wasted and the cards had to be queued again (v1.533.0).
+#
+# The check reads DocType metadata and the proposed values, and nothing else. Running the
+# real validation would run controller hooks, and those send email, enqueue jobs and write
+# rows for a write nobody has confirmed. That rules out `doc.validate()` and FAC's own
+# `create_document(validate_only=True)`, which calls `run_method("validate")`. FAC's
+# validate_only would not even catch this case: Frappe checks Select values in
+# `_validate_selects`, which runs inside `_validate()` during insert/save, not in the
+# controller's `validate`.
+#
+# It checks Select values only, and deliberately not Link targets. A Link check would refuse
+# a legitimate sequence of cards, "create Item Group X" then "move these Items into X",
+# because X exists only once the first card is confirmed. Select options change only through
+# a schema write (a Property Setter or Custom Field), which ordinary cards don't make. A model
+# that queues "add this option" has to wait for that confirmation before it can use the new
+# option, and the refusal it gets in the meantime tells it so.
+#
+# Where it can't be sure, it errs toward the card:
+# - a Select with `fetch_from` (and no `fetch_if_empty`) is skipped, because Frappe overwrites
+#   it from the linked record before it validates;
+# - a cancel (`docstatus` 2) is skipped, because Frappe skips `_validate()` on cancel;
+# - if the check itself raises, the write is queued exactly as before and the failure goes to
+#   the Error Log.
+# The check may refuse a write, but it must never be the reason a legitimate one is lost. The
+# one exception is a DocType that does not exist: that call could never become a card (the
+# card's own Link to DocType fails), so it gets a plain refusal instead of an internal error.
+
+#: Tools whose arguments are {doctype, data, ...} with `data` written onto the document.
+PRECHECKED_TOOLS = frozenset({"create_document", "update_document"})
+
+#: Whole options strings that `Meta.get_select_fields()` skips (frappe v16 meta.py).
+_PLACEHOLDER_SELECT_OPTIONS = frozenset({"[Select]", "Loading..."})
+
+#: frappe.model.table_fields
+_TABLE_FIELDTYPES = frozenset({"Table", "Table MultiSelect"})
+
+#: A refusal lists at most this many problems. Each repeats the field's whole options list,
+#: so a call with many bad child rows would otherwise send back rows x options of text.
+MAX_REPORTED_PROBLEMS = 5
+
+
+class _UnknownDoctype(Exception):
+    def __init__(self, doctype):
+        super().__init__(doctype)
+        self.doctype = doctype
+
+
+def _select_problems(meta, values, where, is_sensitive):
+    """Frappe v16 ``BaseDocument._validate_selects``, applied to the proposed values only.
+
+    Uses Frappe's own comparison. It skips ``naming_series`` and falsy values, compares the
+    stripped value with the options split on newlines, and does not strip the options. Its
+    "only empty options" guard is ``if not filter(None, options)``, which never fires on
+    Python 3 (a filter object is always truthy), so a field whose options are only blank lines
+    refuses any non-empty value. This does the same.
+
+    Known gaps, accepted because closing them means running hooks. Frappe runs the
+    controller's `validate` before `_validate()`, so a controller that rewrites an off-options
+    value into a valid one gets past Frappe but not past this check. Only a value that is not
+    an option at all is refused, and the refusal lists the valid options, so the model can send
+    one of them. `fetch_from` Selects are skipped (see above), which errs toward a card.
+
+    A value under a credential-like field name is shown as REDACTED, as in the card's own
+    arguments, because this message is returned to the model and stored in AI Action Log.
+    """
+    problems = []
+    for df in getattr(meta, "fields", None) or []:
+        if getattr(df, "fieldtype", None) != "Select":
+            continue
+        fieldname = getattr(df, "fieldname", None)
+        options_text = getattr(df, "options", None)
+        if (
+            not fieldname
+            or fieldname == "naming_series"
+            or fieldname not in values
+            or not options_text
+            or options_text in _PLACEHOLDER_SELECT_OPTIONS
+            or (getattr(df, "fetch_from", None) and not getattr(df, "fetch_if_empty", 0))
+        ):
+            continue
+        raw = values.get(fieldname)
+        if not raw:
+            continue
+        value = str(raw).strip()
+        options = options_text.split("\n")
+        if value not in options:
+            label = getattr(df, "label", None) or fieldname
+            shown = REDACTED if is_sensitive(fieldname) else value
+            allowed = '", "'.join(options)
+            problems.append(f'{where}{label} cannot be "{shown}". It should be one of "{allowed}".')
+    return problems
+
+
+def _meta(get_meta, doctype):
+    try:
+        return get_meta(doctype)
+    except Exception as e:
+        does_not_exist = getattr(frappe, "DoesNotExistError", None)
+        if isinstance(does_not_exist, type) and isinstance(e, does_not_exist):
+            raise _UnknownDoctype(doctype) from None
+        raise
+
+
+def _precheck_problems(arguments, get_meta, tool_name="update_document"):
+    """Every Select value in a create/update's ``data`` that Frappe would refuse on save.
+
+    Covers the document's own fields and each child-table row, since FAC appends or patches
+    those rows before saving. A row is skipped only where FAC really removes it without
+    validating it: an ``update_document`` row with ``_delete`` and a ``name``. Shapes it does
+    not recognise yield no problems, so they are queued as before. Raises ``_UnknownDoctype``
+    for a DocType that does not exist.
+    """
+    args = arguments if isinstance(arguments, dict) else {}
+    doctype = args.get("doctype")
+    data = args.get("data")
+    if not isinstance(doctype, str) or not doctype or not isinstance(data, dict):
+        return []
+    if tool_name == "update_document" and str(data.get("docstatus")).strip() == "2":
+        return []  # a cancel: Frappe skips _validate(), so it skips the Select check too
+    is_sensitive = _sensitive_key_predicate()
+    meta = _meta(get_meta, doctype)
+    problems = _select_problems(meta, data, f"{doctype} ", is_sensitive)
+    for df in getattr(meta, "fields", None) or []:
+        if getattr(df, "fieldtype", None) not in _TABLE_FIELDTYPES:
+            continue
+        fieldname = getattr(df, "fieldname", None)
+        rows = data.get(fieldname)
+        child_doctype = getattr(df, "options", None)
+        if not isinstance(rows, list) or not child_doctype:
+            continue
+        child_meta = None
+        label = getattr(df, "label", None) or fieldname
+        for index, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                continue
+            if tool_name == "update_document" and row.get("_delete") and row.get("name"):
+                continue
+            if child_meta is None:
+                child_meta = _meta(get_meta, child_doctype)
+            problems.extend(
+                _select_problems(child_meta, row, f"{label} row {index}: ", is_sensitive)
+            )
+    return problems
+
+
+def _precheck_refusal(tool, arguments):
+    """The refusal to return instead of a card, or None to queue the write as before."""
+    name = getattr(tool, "name", "")
+    if name not in PRECHECKED_TOOLS:
+        return None
+    try:
+        problems = _precheck_problems(arguments, frappe.get_meta, name)
+    except _UnknownDoctype as e:
+        return (
+            f'DocType "{e.doctype}" does not exist. Nothing was queued for confirmation: check '
+            f"the name with get_doctype_info and call {name} again."
+        )
+    except Exception:
+        try:
+            frappe.log_error(
+                f"AI gate pre-check failed for {name}; the write was queued for confirmation "
+                f"anyway\n{frappe.get_traceback()}",
+                "AI Governance",
+            )
+        except Exception:
+            pass
+        return None
+    if not problems:
+        return None
+    shown = problems[:MAX_REPORTED_PROBLEMS]
+    if len(problems) > MAX_REPORTED_PROBLEMS:
+        shown.append(f"...and {len(problems) - MAX_REPORTED_PROBLEMS} more like these.")
+    return (
+        " ".join(shown)
+        + f" Nothing was queued for confirmation: correct the value and call {name} again."
+    )
 
 
 # --------------------------------------------------------------- the wrapper
@@ -1206,7 +1393,25 @@ def _gated_execute(tool, original, arguments):
             )
             return response
 
-        # 5/6) Propose + envelope.
+        # 5) A write that cannot run (an off-options Select value, or a DocType that does not
+        #    exist) gets its error now instead of a card (v1.533.0, see "queue-time
+        #    validation" above). Recorded in AI Action Log, like the denylist refusal, because a
+        #    model proposing values that do not exist is worth seeing. _precheck_refusal never
+        #    raises: a failing check queues the card.
+        refusal = _precheck_refusal(tool, arguments)
+        if refusal:
+            insert_action_log(
+                user=frappe.session.user,
+                tool_name=name,
+                arguments=arguments,
+                success=False,
+                summary=f"Not queued, invalid value: {summarize_tool_call(name, arguments)}",
+                error=refusal,
+                error_type="AIGateValidationError",
+            )
+            return _error_response(refusal, error_type="AIGateValidationError")
+
+        # 6/7) Propose + envelope.
         return _propose(tool, arguments)
     except Exception:
         # Fail closed: any gate failure on a mutating tool blocks execution.
