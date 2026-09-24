@@ -411,11 +411,43 @@ a list, looking like work in progress.
 
 ## The field wizard, and where the freeze is actually enforced
 
-`/app/inspection-wizard?inspection=QIR-…` walks a generated inspection one frozen section at a
-time, on a phone, in front of the fountain. Without the argument it lists the drafts assigned to
+`/desk/inspection-wizard/QIR-…/<section>` walks a generated inspection one frozen section at a
+time, on a phone, in front of the fountain; `/desk/inspection-wizard` lists the drafts assigned to
 whoever is signed in. It is modelled directly on `sapphire_maintenance`'s Visit Wizard — bootstrap
 once, autosave a field-allowlisted patch with optimistic locking, submit server-side — because a
 second half-different convention for the same job is how one of them ends up unmaintained.
+
+**Back and Forward walk the sections.** Every section is its own history entry: the section tabs
+and the Previous/Next bar route, and `handle_route` draws whatever the URL names, so the phone's
+Back steps to the previous section and Forward restores it. Back from the list, or from the
+section a link opened, leaves the page like any other. The older `?inspection=QIR-…` form still
+opens the record, and its history entry is *replaced* with the path form. The query string is
+gone because v16's `set_route` cannot write one — it moves an object argument into
+`frappe.route_options` and pushes the bare path — which is exactly how the list once pushed an
+entry identical to itself, and Back from any section landed on the list.
+
+Changing screen never loses or misroutes an answer. Unsaved answers are queued **per inspection**,
+each with the `modified` its own save must carry, and are sent before the screen changes: a Back
+to the list used to null the record under a pending autosave, which threw, dropped the answer and
+left autosave wedged for the rest of the session, and a save already in flight was retried under
+the *next* inspection's name and lock. A list fetch and a record fetch racing each other are
+ticketed, so a late response for a screen already left is dropped.
+
+That lock is the one the answer was **given against**, and it travels with the queued answer.
+Reopening an inspection reads a fresh `modified`; while any answer is still queued, the reopen
+moves nothing unless the stamp is unchanged. If somebody saved the inspection in between, the
+queued save stays refused ("changed elsewhere, reload") and the screen shows *their* answer. An
+earlier cut let the reopen move the lock, and the next retry quietly overwrote the other editor.
+That is the silent merge the stale-write refusal, and the course, promise never happens. A save's
+answer also never repaints the section while an input has focus: a measurement is queued on
+blur, so repainting it away mid-typing lost it. The repaint waits until the input lets go.
+
+One consequence worth knowing:
+the router closes any open dialog on every route change, so Back with the signature pad or the
+photo picker open closes it *and* steps back a section — the same as everywhere else in the Desk.
+`scripts/test_inspection_wizard_nav.mjs` runs the page against a fake of the v16 router and
+history and presses Back and Forward; `tests/test_inspection_wizard.py` runs it when node is on
+PATH.
 
 **The allowlist in `api/quality_wizard.py` is the freeze's last line of defence, and it is short
 on purpose.** An `Inspection Result` row carries two kinds of field: the *answers* — outcome,

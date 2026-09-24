@@ -434,8 +434,12 @@ class TestTheDeadEndIsGone(unittest.TestCase):
 		self.assertIn("save_then", code[at : at + 700])
 
 	def test_leaving_a_course_clears_the_query_string(self):
-		"""`handle_route` reads `?course=` first, so leaving it set means the next
-		`on_page_show` — a tab switch is enough — silently reopens what was left."""
+		"""Leaving routes to the bare page. Since v1.535.0 the course is a route
+		segment, so that route differs from the course's and is a real history step:
+		Back returns to the lesson just left. `_home` is set first so the route change
+		coming back through `handle_route` does not draw the home screen twice.
+		(Name kept: the route used to carry `?course=`, and leaving it set reopened
+		the course on the next `on_page_show`.)"""
 		code = _canvas_code()
 		at = code.index("	go_home() {")
 		window = code[at : at + 700]
@@ -592,7 +596,18 @@ class TestTwoDoorsOneScaffolder(unittest.TestCase):
 			with self.subTest(surface=path.name):
 				code = _strip_js_comments(_text(path))
 				at = code.index("create_from_starter")
-				self.assertIn("training-canvas", code[at : at + 1400])
+				window = code[at : at + 1400]
+				if path == CANVAS_JS:
+					# The canvas opens it the way every canvas door does now: through
+					# open_course, which puts the course IN the route
+					# (/desk/training-canvas/<course>) rather than in route_options, which
+					# v16 never writes to the address bar.
+					self.assertIn("this.open_course(out.course", window)
+					body = code[code.index("\topen_course(name, opts) {") :][:300]
+					self.assertIn("this.route_for(name)", body)
+					self.assertIn('const parts = ["training-canvas"];', code)
+				else:
+					self.assertIn("training-canvas", window)
 
 
 # ============================================== a whole lesson, first time

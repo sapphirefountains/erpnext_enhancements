@@ -197,6 +197,24 @@ flag is how the Desk would have ended up answering browser Back by running
 `queryParam("course")` against a route that has no query string. The preview harness passes
 `history: false` and no adapter, which is the third arrangement of the same two switches.
 
+**Browser Back walks the screens and Forward restores them** (v1.535.0). Every screen a
+learner moves between is its own history entry: the catalogue, a course's outline
+(`/desk/learn/<COURSE>`), each lesson, and a lesson's quiz (`/desk/learn/<COURSE>/<LESSON>/quiz`).
+Quiz results share the quiz's entry — they are the outcome of a submit, not a place to return
+to — and finishing a course pushes the course's own entry, so Back from the completion screen
+returns to the last lesson. The page and the player agree on where the learner is through one
+key built from one shape; they used to disagree on the outline (the player reports the lesson
+it last had even there), which silently dropped the outline, "← Course", Resume and the quiz
+from history. Opening a *different* course clears the last one's lesson, attempt and
+sign-off status first, and a reply that lands after the learner has moved on paints nothing.
+The outline's **Resume** button is that course's own: the boot payload's `resume` names the
+learner's most recent attempt, one course, and every outline used to offer it — a blank
+"Resume: " on course B that opened course A's lesson under B. Any other course offers
+**Start** instead.
+Executed, not grepped, in
+[`scripts/test_training_desk_history.mjs`](../../scripts/test_training_desk_history.mjs)
+against the real `learn.js` and the real routing half of `player.js`.
+
 `/training` is still a route and always will be: six senders have emailed it since
 v1.208.0 and those messages are still in inboxes. It redirects (`www/training.py`), and
 renders a sentence for anyone without desk access rather than bouncing them to a login
@@ -352,9 +370,26 @@ run *count* only — a reset is "have another go", not "lose what you earned".
 ## Authoring a course
 
 Open a Training Course and press **Edit Visually**, or go straight to
-`/app/training-canvas?course=TRN-CRS-00001`. That is the authoring surface.
+`/desk/training-canvas/TRN-CRS-00001`. That is the authoring surface.
 
-**Or just open the canvas.** As of v1.489.0 `/app/training-canvas` with no course is a
+**The route says where the author is** (v1.535.0): `/desk/training-canvas` is the home
+screen, `/desk/training-canvas/new` the starter gallery, and
+`/desk/training-canvas/<COURSE>/<LESSON>` the editor on that lesson. So browser Back walks
+lessons, courses, the gallery and the home screen, Forward restores them, and a reload lands
+where it was. The course used to ride in `route_options`, which v16 never writes to the
+address bar, so every screen shared one URL and Back was a dead press. Leaving a course
+because the route moved flushes the autosave first, exactly like the course-name link; if
+that save fails the course stays on screen with its edits. That includes **Out of date**:
+once another author's save has made this draft stale, nothing on screen can be saved, so
+Back, Forward, a door and the course-name link all refuse to leave and say so, rather than
+treat "nothing was sent" as "saved" and drop the edits. Anything else that saves first — the
+learner preview, say — refuses the same way while unsaved edits are waiting. Copy what you
+need, then Reload.
+The old doors still open: the
+course form, its list view and question review hand the course over in `route_options`, and
+a bookmark may carry `?course=` — the page replaces that entry with one naming the course.
+
+**Or just open the canvas.** As of v1.489.0 `/desk/training-canvas` with no course is a
 **home screen**: your open drafts first (each with its version number and lesson count),
 then what is published, then what is retired, searchable, with **Start a new course**
 beside the search box. Two doors that used to end nowhere now land there — the desk rail's
@@ -415,7 +450,7 @@ Two consequences worth knowing before they surprise you:
 
 ### Editing on the canvas (WYSIWYG)
 
-`/app/training-canvas?course=…` ([`page/training_canvas/`](page/training_canvas/)) is a
+`/desk/training-canvas/<COURSE>` ([`page/training_canvas/`](page/training_canvas/)) is a
 **full-bleed WYSIWYG builder** alongside the classic one. It renders every block with the
 learner's own renderer (`public/js/training/blocks.js` → `TR.renderBlock`) and edits it
 **on that render** — the thing you edit is the thing a learner sees, in the learner
@@ -675,6 +710,20 @@ all it claims — the same honesty the module owes when it labels watch coverage
 `Training Question`, so `/api/resource` refuses them the raw table and the rules above are the only
 way in. The number of terms withheld is returned and shown on screen: a panel that silently drops
 words teaches a learner that Help is unreliable, where one that states the rule teaches the rule.
+
+**`/desk/training-glossary-review`** ([`page/training_glossary_review/`](page/training_glossary_review/),
+served by [`glossary_review.py`](glossary_review.py)) is where the seeded entries get a reviewer's
+name. Its tab is in the route — the bare page is the queue, `.../traps` the queue narrowed to
+trade traps, `.../collisions` the "same word, two entries" tab — so browser Back returns to the
+previous tab (v1.535.0). Returning to the page reloads nothing, and anything typed into a card is
+kept until Accept sends it — across a tab switch, a page turn, Back and Forward — so a trip to
+"Open the record" and back loses no correction. The primary **Refresh** is the one rebuild that
+drops it: it puts the saved text back into the cards on screen, as it always did, and asks first
+when something typed there would be lost. The page *within* the queue is deliberately not in the
+route: every verdict shrinks the pending set, so an offset names different entries each visit.
+**Next** therefore advances past what is still waiting rather than past what was drawn, and it
+waits for any Accept or Disable still in flight before it counts: a verdict counted before the
+server has answered either skips an entry or shows one twice.
 
 ### Reviewing AI-drafted questions
 

@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Sapphire Fountains and contributors
 // For license information, please see license.txt
 //
-// Training Canvas (/app/training-canvas?course=…) — a full-bleed WYSIWYG builder.
+// Training Canvas (/desk/training-canvas/<course>/<lesson>) — a full-bleed WYSIWYG builder.
 //
 // The classic Training Builder -- deleted in v1.422.0 -- edited a lesson as a list of
 // summary cards with the real controls in a right-hand inspector, alongside a
@@ -140,6 +140,10 @@ const TC_MATERIAL = "Material Change (require retake)";
 
 const TC_SAVE_DEBOUNCE_MS = 1200;
 
+// The route segment that means the starter gallery rather than a course. Safe as a
+// segment because Training Course is named from a naming series, so no course is "new".
+const TC_STARTERS = "new";
+
 // The app's own question / chapter / checkpoint writers. NOT `frappe.client.save`:
 // that reconstructs a Document from whatever dict the browser sent, so every
 // constant field the browser omitted reads as a change. Verified against prod --
@@ -154,6 +158,9 @@ class TrainingCanvas {
 		this.page = page;
 		this.wrapper = wrapper;
 		this.$body = $(page.body);
+		// Bumped by every handle_route. A route answered after a flush that took a while is
+		// dropped when a later one has arrived in the meantime; see leave_then().
+		this._route_ticket = 0;
 		this.reset();
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
@@ -208,6 +215,10 @@ class TrainingCanvas {
 		// opened -- every paint guards on its container still being in the DOM --
 		// but a timer nobody can cancel is how the next person gets a real one.
 		clearTimeout(this._home_search_timer);
+		// A course still loading was asked for by a route that is no longer the one on
+		// screen. Its bootstrap must not land over whatever replaced it; see load().
+		this._load_ticket = (this._load_ticket || 0) + 1;
+		this._loading = null;
 	}
 
 	// ---------------------------------------------------------------- chrome
@@ -261,30 +272,183 @@ class TrainingCanvas {
 
 
 	// ----------------------------------------------------------------- route
+	//
+	// THE ROUTE SAYS WHERE THE AUTHOR IS, and every screen has one:
+	//
+	//     /desk/training-canvas                     the home screen
+	//     /desk/training-canvas/new                 "Start from a shape"
+	//     /desk/training-canvas/<course>/<lesson>   the editor, on that lesson
+	//
+	// It used to be one URL for all of them. The course rode in `route_options`, which
+	// v16's push_state never writes to the address bar -- it pushes the path alone --
+	// so opening a course pushed a second /desk/training-canvas identical to the first,
+	// leaving it pushed nothing at all (same path, so push_state declined), and a lesson
+	// was never in history. Back was a dead press and the second one left the page;
+	// Forward never changed the screen; a reload forgot the course.
+	//
+	// Now every move routes and this is the one place that answers: it runs on every
+	// route change into the page, including Back and Forward, compares the route with
+	// what is on screen and moves the screen. Leaving a course -- for home, the gallery or
+	// another course -- flushes first, exactly as the course-name link always has.
 	handle_route() {
-		let course = frappe.utils.get_url_arg("course");
+		const route = frappe.get_route() || [];
+		let course = route[1] || "";
+		let lesson = route[2] || "";
+
+		// The old doors, kept open: the Training Course form, its list view and the
+		// question review screen hand the course over in `route_options` and route to the
+		// bare page, and a bookmark from before this change carries `?course=`. The entry
+		// they pushed is REPLACED with one that names the course, so Back and a reload
+		// both know which course it was.
+		let asked = frappe.utils.get_url_arg("course");
 		if (frappe.route_options && frappe.route_options.course) {
-			course = course || frappe.route_options.course;
+			asked = asked || frappe.route_options.course;
 			frappe.route_options = null;
 		}
-		if (course && (!this.course || this.course.name !== course)) {
-			this.load(course);
-		} else if (!course && !this.course && !this._home) {
-			// `!this._home` keeps a deliberate return to the home screen from being
-			// undone by the next `on_page_show`. Leaving a course clears the query
-			// string, but a tab switch fires this again and a re-render would throw
-			// away a search the author had typed.
-			this.render_home();
+		if (!course && asked) {
+			course = asked;
+			// "Edit visually" on the course already open keeps the lesson on screen.
+			if (course === this.current_course() && this.lesson_name && !this.is_temp(this.lesson_name)) {
+				lesson = this.lesson_name;
+			}
+			this.route_to(this.route_for(course, lesson), { replace: true });
+		}
+
+		const ticket = ++this._route_ticket;
+		if (course === TC_STARTERS) {
+			if (this.current_course()) this.leave_then(ticket, () => this.render_starters());
+			else if (!this._starters) this.render_starters();
+			return;
+		}
+		if (!course) {
+			if (this.current_course()) {
+				this.leave_then(ticket, () => this.render_home());
+			} else if (!this._home) {
+				// `!this._home` keeps a return to the home screen that is already showing --
+				// the next on_page_show after a trip to another Desk page -- from re-rendering
+				// it and throwing away a search the author had typed.
+				this.render_home();
+			}
+			return;
+		}
+		if (course !== this.current_course()) {
+			this.leave_then(ticket, () => {
+				// Handed to apply_bootstrap, which keeps it when the draft has that lesson.
+				this.lesson_name = lesson || null;
+				this.load(course);
+			});
+			return;
+		}
+		if (!this.course) {
+			// Still loading this course; the bootstrap will honour the lesson.
+			if (lesson) this.lesson_name = lesson;
+			return;
+		}
+		// The same course: a lesson step, which is what Back and Forward walk in here. A
+		// route naming no lesson is the course as it opens, on its first lesson.
+		const wanted = lesson || this.first_lesson_name();
+		if (!wanted || wanted === this.lesson_name) return;
+		if (this.lesson(wanted)) {
+			this.show_lesson(wanted);
+		} else {
+			// Deleted since, or from an older draft: stay on the lesson on screen, and make
+			// the address bar say so rather than leave it naming a lesson that is not there.
+			this.sync_route({ replace: true, quiet: true });
 		}
 	}
 
+	// The course on screen, or the one on its way there.
+	current_course() {
+		return (this.course && this.course.name) || this._loading || null;
+	}
+
+	first_lesson_name() {
+		const first = this.lessons[0];
+		return first ? first.name || first.__temp : null;
+	}
+
+	// A lesson created this session has a temp id until its first save returns the real
+	// name. A temp id in the URL would be a link to nothing, so it is never written there.
+	is_temp(name) {
+		const lesson = this.lesson(name);
+		return !!(lesson && !lesson.name);
+	}
+
+	route_for(course, lesson) {
+		const parts = ["training-canvas"];
+		if (course) parts.push(course);
+		if (course && lesson) parts.push(lesson);
+		return parts;
+	}
+
+	// Every route the canvas sets goes through here. Compared first, as learn.js does: a
+	// set_route to where we already are still re-routes, and that arrives back as a fresh
+	// on_page_show. `quiet` is for routes nobody clicked for -- a load or a save landing
+	// -- because any route change closes the open dialog (router.set_history calls
+	// frappe.ui.hide_open_dialog), which is right for a click and wrong for an autosave
+	// arriving while the author is in Course settings. Returns whether it routed.
+	route_to(parts, opts) {
+		const options = opts || {};
+		if ((frappe.get_route() || []).join("/") === parts.join("/")) return false;
+		const dialog = window.cur_dialog;
+		if (options.quiet && dialog && dialog.display) return false;
+		if (options.replace) frappe.route_flags.replace_route = true;
+		frappe.set_route(parts);
+		// push_state has already read the flag -- set_route calls it synchronously -- and
+		// frappe clears route_flags only after its 100ms after_ajax wait, so a lesson
+		// clicked inside that window would REPLACE the entry it should push.
+		if (options.replace) frappe.route_flags.replace_route = false;
+		return true;
+	}
+
+	// Makes the address bar name what is on screen without adding a step: after a load
+	// (a door's bare /<course>, or a lesson this draft no longer has) and after Back
+	// lands on a lesson that has gone. Only while the canvas is on screen and still on
+	// this course -- a save that lands after the author has left must not drag them back.
+	sync_route(opts) {
+		if (!this.course) return false;
+		const route = frappe.get_route() || [];
+		if (route[0] !== "training-canvas" || route[1] !== this.course.name) return false;
+		const lesson = this.lesson_name && !this.is_temp(this.lesson_name) ? this.lesson_name : "";
+		return this.route_to(this.route_for(this.course.name, lesson), opts);
+	}
+
+	// Opening a course is a step: it routes, and handle_route does the loading when the
+	// route change comes back through on_page_show.
+	open_course(name, opts) {
+		if (!this.route_to(this.route_for(name), opts)) this.load(name);
+	}
+
+	// Leaving the course on screen because the ROUTE moved -- Back, Forward, a door --
+	// flushes first, the same contract go_home keeps for the course-name link. On success
+	// `next` draws the destination, unless a later route has taken over while the save
+	// was in flight. On failure the course stays, edits and all, and save_then has said
+	// why. The address bar is left where the browser put it: correcting it would be a
+	// route change, and a route change closes the dialog carrying that explanation.
+	// Nothing is lost either way -- a reload still meets the beforeunload prompt.
+	leave_then(ticket, next) {
+		const leaving = this.course ? this.save_then(__("Saving before you leave this course")) : Promise.resolve();
+		leaving.then(
+			() => {
+				if (ticket !== this._route_ticket) return;
+				this.reset();
+				this.$app.find(".tc-banner").remove();
+				next();
+			},
+			() => {}
+		);
+	}
+
 	reload() {
-		const course = this.course && this.course.name;
+		// The screen the route names, including a course still loading and the gallery:
+		// either used to redraw as the home screen under a URL that said otherwise.
+		const course = this.current_course();
 		const keep = this.lesson_name;
 		this.reset();
 		this.lesson_name = keep;
 		this.$app.find(".tc-banner").remove();
 		if (course) this.load(course);
+		else if (this._starters) this.render_starters();
 		else this.render_home();
 	}
 
@@ -302,27 +466,35 @@ class TrainingCanvas {
 	}
 
 	load(course) {
-		// Opening a course from the home screen sets `route_options` and calls
-		// `set_route`, then loads. Whether that also fires `on_page_show` -- and so
-		// `handle_route`, which would load the same course again while this one is
-		// still in flight -- depends on whether the router treats a same-route push
-		// as a navigation. Rather than depend on that, the in-flight course is the
-		// guard: `handle_route`'s own check compares against `this.course`, which is
-		// not set until the bootstrap lands. Also covers a double-clicked row.
+		// The in-flight course is the guard against loading it twice: a door's route is
+		// replaced with one naming the course, and that replace comes back through
+		// on_page_show -> handle_route while this load is still in flight, before
+		// `this.course` is set. Also covers a double-clicked row.
 		if (this._loading === course) return;
 		this._loading = course;
 		this._home = false;
+		this._starters = false;
+		const ticket = ++this._load_ticket;
 		this.$blocks.html(`<div class="tc-empty">${__("Loading…")}</div>`);
 		Promise.all([
 			this.load_assets(),
 			frappe.call({ method: "erpnext_enhancements.api.training_author.get_builder_bootstrap", args: { course } }),
 		])
 			.then(([, r]) => {
+				// Superseded: Back, Forward or a click asked for somewhere else while this
+				// was in flight, and reset() has moved on. Painting it now would put this
+				// course on screen under another course's URL, or over the home screen.
+				if (ticket !== this._load_ticket) return;
 				this._loading = null;
 				this.apply_bootstrap((r && r.message) || {});
 				this.render();
+				// A door routes to the course and names no lesson, and a lesson named in the
+				// route may be gone from this draft. Either way the entry is corrected in
+				// place to name the lesson actually on screen.
+				this.sync_route({ replace: true, quiet: true });
 			})
 			.catch(() => {
+				if (ticket !== this._load_ticket) return;
 				// Cleared here too, not in a `finally`: a failed load must leave the
 				// course retryable, and a stuck `_loading` would make Reload a no-op.
 				this._loading = null;
@@ -452,14 +624,15 @@ class TrainingCanvas {
 		// Flush first: leaving a course with an unsaved edit in the buffer is how
 		// you lose a paragraph. On failure, stay -- the autosave has already said
 		// what went wrong and a silent navigation would look like it worked.
+		const ticket = ++this._route_ticket;
 		this.save_then(__("Saving before you leave this course")).then(() => {
+			// Back or Forward pressed while the save was in flight wins over this click.
+			if (ticket !== this._route_ticket) return;
 			this.reset();
 			this.$app.find(".tc-banner").remove();
-			// Drop `?course=` as well as the in-memory course. `handle_route` reads
-			// the query string first, so leaving it set means the next
-			// `on_page_show` -- a tab switch is enough -- silently reopens the
-			// course just left. `_home` is the belt to that braces: it survives a
-			// route change the framework decides is a no-op.
+			// A pushed step now -- the course's route differs -- so Back returns to the
+			// lesson just left. `_home` first: the push comes back through handle_route,
+			// which must not draw the home screen a second time.
 			this._home = true;
 			frappe.set_route("training-canvas");
 			this.render_home();
@@ -468,6 +641,7 @@ class TrainingCanvas {
 
 	render_home() {
 		this._home = true;
+		this._starters = false;
 		this.clear_course_chrome();
 		this.$app.removeClass("is-readonly");
 		this.$title.attr("contenteditable", "false").text("");
@@ -500,7 +674,11 @@ class TrainingCanvas {
 		$home.find(".tc-home-search").attr("placeholder", __("Search courses"));
 		this.$blocks.empty().append($home);
 
-		$home.find(".tc-home-new").on("click", () => this.render_starters());
+		// Routed, so the gallery is a step: Back from it returns here rather than leaving
+		// the page. handle_route draws it when the route change comes back.
+		$home.find(".tc-home-new").on("click", () => {
+			if (!this.route_to(this.route_for(TC_STARTERS))) this.render_starters();
+		});
 
 		const $search = $home.find(".tc-home-search");
 		$search.on("input", () => {
@@ -647,12 +825,8 @@ class TrainingCanvas {
 			.text(course.status || "")
 			.addClass("is-" + String(course.status || "").toLowerCase().replace(/\s+/g, "-"));
 
-		const open = () => {
-			this._home = false;
-			frappe.route_options = { course: course.name };
-			frappe.set_route("training-canvas");
-			this.load(course.name);
-		};
+		// A pushed step to /desk/training-canvas/<course>, so Back returns to this list.
+		const open = () => this.open_course(course.name);
 		$row.on("click", open);
 		$row.on("keydown", (e) => {
 			// Same contract as the lesson rail rows, and for the same reason: this is
@@ -674,6 +848,15 @@ class TrainingCanvas {
 	// `create_from_starter`; neither builds a course itself.
 
 	render_starters() {
+		this._starters = true;
+		this._home = false;
+		// Reached by Back and Forward now as well as from the home screen, so it clears
+		// what a course left behind rather than assuming render_home already had.
+		this.clear_course_chrome();
+		this.$app.removeClass("is-readonly");
+		this.$title.attr("contenteditable", "false").text("");
+		this.$app.find(".tc-eyebrow").text("");
+		this.$rail.empty();
 		const $wrap = $(`
 			<div class="tc-home">
 				<div class="tc-home-head">
@@ -702,7 +885,10 @@ class TrainingCanvas {
 		$wrap.find(".tc-starter-go").text(__("Create draft"));
 		this.$blocks.empty().append($wrap);
 
-		$wrap.find(".tc-home-back").on("click", () => this.render_home());
+		// A link to the home screen, like the course name in the bar: it routes there.
+		$wrap.find(".tc-home-back").on("click", () => {
+			if (!this.route_to(this.route_for())) this.render_home();
+		});
 
 		const $gallery = $wrap.find(".tc-starters");
 		$gallery.html($("<div class='tc-muted'></div>").text(__("Loading…")));
@@ -772,11 +958,14 @@ class TrainingCanvas {
 							const out = (res && res.message) || {};
 							if (!out.course) return;
 							// Straight into the editor, which is the whole point of a
-							// starter: the next thing you do is replace the words.
-							this._home = false;
-							frappe.route_options = { course: out.course };
-							frappe.set_route("training-canvas");
-							this.load(out.course);
+							// starter: the next thing you do is replace the words. The
+							// gallery's entry is REPLACED -- it was a form, and it has been
+							// sent -- so Back from the new course goes home rather than
+							// back to the form that built it. Pushed if the author has
+							// already left the gallery, rather than overwrite wherever
+							// they went.
+							const onGallery = (frappe.get_route() || [])[1] === TC_STARTERS;
+							this.open_course(out.course, { replace: onGallery });
 						});
 				});
 			})
@@ -3426,6 +3615,12 @@ class TrainingCanvas {
 		clearTimeout(this._save_timer);
 		if (this._saving && this._inflight) return this._inflight;
 		if (!this.has_dirty()) return Promise.resolve();
+		// Edits that save() will not send have not landed either. Out of date is how you get
+		// here: enter_conflict() makes editable() false, so save() returns a bare
+		// Promise.resolve() with the batch still in `this.dirty` -- and resolving on that
+		// told leave_then and go_home the edits were stored, so Back, Forward, a door or the
+		// course-name link reset() them away without a word.
+		if (!this.editable()) return Promise.reject(new Error(__("These edits cannot be saved.")));
 		return this.save();
 	}
 
@@ -3439,14 +3634,19 @@ class TrainingCanvas {
 		// Named after the classic builder's own save_then, and for the same reason it
 		// was written there.
 		return this.flush_save().catch((error) => {
-			frappe.msgprint({
-				title: __("{0} was not done", [label]),
-				indicator: "red",
-				message: __(
-					"Your unsaved edits could not be stored, so {0} was not attempted — going ahead would have thrown them away. Nothing has been lost: the edits are still here. Resolve the error above and try again.",
+			let message = __(
+				"Your unsaved edits could not be stored, so {0} was not attempted — going ahead would have thrown them away. Nothing has been lost: the edits are still here. Resolve the error above and try again.",
+				[label]
+			);
+			// Out of date has no error above to resolve, and trying again cannot help:
+			// nothing on this screen saves until a Reload, and a Reload drops the edits.
+			if (this._conflict) {
+				message = __(
+					"This draft changed somewhere else, so your unsaved edits here cannot be stored and {0} was not attempted — going ahead would have thrown them away. They are still on screen: copy anything you want to keep, then Reload.",
 					[label]
-				),
-			});
+				);
+			}
+			frappe.msgprint({ title: __("{0} was not done", [label]), indicator: "red", message });
 			throw error;
 		});
 	}
@@ -4226,14 +4426,29 @@ class TrainingCanvas {
 
 	adopt_created(created) {
 		if (!created || !created.length) return;
+		let current = false;
 		created.forEach(({ temp_id, name }) => {
 			const lesson = this.lessons.find((l) => l.__temp === temp_id);
 			if (!lesson) return;
-			if (this.lesson_name === lesson.__temp) this.lesson_name = name;
+			if (this.lesson_name === lesson.__temp) {
+				this.lesson_name = name;
+				current = true;
+			}
 			lesson.name = name;
 			delete lesson.__temp;
 		});
 		this.render_rail();
+		// The lesson on screen has an address at last. Creating it was a step, so it is
+		// pushed and Back returns to the lesson the author was on before. Quiet, because
+		// this lands from the autosave and may arrive while a dialog is open; and only if
+		// the route is still this course's, so a save landing after Back has taken the
+		// author elsewhere does not drag them back.
+		if (current) {
+			const route = frappe.get_route() || [];
+			if (this.course && route[0] === "training-canvas" && route[1] === this.course.name) {
+				this.route_to(this.route_for(this.course.name, this.lesson_name), { quiet: true });
+			}
+		}
 	}
 
 	report_rejected(rejected) {
@@ -4257,9 +4472,24 @@ class TrainingCanvas {
 	}
 
 	// -------------------------------------------------------------- status
+	// The rail. A lesson is a step, so this pushes one and Back walks to the lesson
+	// before. A lesson created this session is shown but not routed until its first save
+	// names it; adopt_created routes it then.
 	select_lesson(name) {
 		if (name === this.lesson_name) return;
-		this.save();
+		this.show_lesson(name);
+		if (this.course && !this.is_temp(name)) this.route_to(this.route_for(this.course.name, name));
+	}
+
+	// Puts a lesson on screen without routing -- the half handle_route uses to answer Back
+	// and Forward, and the rail uses before it routes.
+	show_lesson(name) {
+		if (name === this.lesson_name) return;
+		// Not a flush-and-wait: the buffer is keyed by lesson, so an edit to the lesson
+		// being left goes with this save whichever lesson ends up on screen. Caught because
+		// a failed autosave paints its own status and puts its batch back; the rejection
+		// has nobody else to tell.
+		this.save().catch(() => {});
 		this.lesson_name = name;
 		this.removed_blocks = {};
 		this.render_rail();

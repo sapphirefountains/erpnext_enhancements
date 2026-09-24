@@ -18,7 +18,10 @@ rule merges only when the bracket is an abbreviation, and that is tested against
 Run: python -m unittest erpnext_enhancements.tests.test_glossary_review
 """
 
+import os
 import re
+import shutil
+import subprocess
 import sys
 import types
 import unittest
@@ -26,6 +29,7 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_ROOT.parent
+HISTORY_HARNESS = REPO_ROOT / "scripts" / "test_training_desk_history.mjs"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -730,6 +734,68 @@ class TestThePage(unittest.TestCase):
 
     def test_this_suite_runs_in_ci(self):
         self.assertIn("erpnext_enhancements.tests.test_glossary_review", _raw(CI))
+
+
+class TestBackAndForwardWalkTheTabs(unittest.TestCase):
+    """The tab is in the route (v1.535.0): /desk/training-glossary-review, .../traps,
+    .../collisions.
+
+    Before, the tabs, the trap toggle and the pager were instance state under one URL,
+    so browser Back from a tab left the page — and on_page_show ran refresh(), whose
+    first act is `this.body.empty()`, so a return from "Open the record" wiped every
+    correction typed into a card. Executed in `scripts/test_training_desk_history.mjs`
+    against the real page; these pin the two rules underneath it.
+    """
+
+    def test_a_show_that_changes_nothing_reloads_nothing(self):
+        js = re.sub(r"//[^\n]*", "", _raw(PAGE_JS))
+        show = js.split('frappe.pages["training-glossary-review"].on_page_show', 1)[1][:200]
+        self.assertIn("handleRoute()", show)
+        self.assertNotIn("refresh()", show)
+        body = js.split("\thandleRoute() {", 1)[1][:400]
+        self.assertIn("if (view === this.view) return;", body)
+
+    def test_a_typed_correction_outlives_a_reload_of_its_card(self):
+        js = re.sub(r"//[^\n]*", "", _raw(PAGE_JS))
+        self.assertIn("this.drafts[entry.name]", js)
+        self.assertIn('box.on("input"', js)
+
+    def test_the_primary_refresh_is_still_the_way_back_to_the_server_text(self):
+        """Every other rebuild keeps what was typed; Refresh drops it for the cards on
+        screen, as it always did, and asks first when there is something to lose."""
+        js = re.sub(r"//[^\n]*", "", _raw(PAGE_JS))
+        self.assertIn('set_primary_action(__("Refresh"), () => this.reload()', js)
+        body = js.split("\treload() {", 1)[1].split("\trefresh() {", 1)[0]
+        self.assertIn("frappe.confirm(", body)
+        self.assertIn("delete this.drafts[name]", body)
+
+    def test_next_waits_for_the_verdicts_still_in_flight(self):
+        """`judged` counts a verdict when its reply lands, so Accept then Next inside one
+        round trip advanced by the whole page and skipped an entry."""
+        js = re.sub(r"//[^\n]*", "", _raw(PAGE_JS))
+        pager = js.split("\tpager(data) {", 1)[1].split("\tturn(start) {", 1)[0]
+        self.assertIn("Promise.all(", pager)
+        self.assertIn("this.sending", pager)
+        self.assertEqual(js.count("this.send("), 2, "Accept and Disable must both be tracked")
+
+    # Skipped where node is genuinely absent -- a laptop without it -- but never in CI.
+    # This wrapper is the only thing that runs the executed checks there, and a skip
+    # reports OK: a runner image without node would pass them all without running one.
+    @unittest.skipUnless(shutil.which("node") or os.environ.get("CI"), "node is not on PATH")
+    def test_the_executed_harness_passes(self):
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "no node on PATH in CI: the Back/Forward harness did not run")
+        result = subprocess.run(
+            [node, str(HISTORY_HARNESS), "glossary"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=str(REPO_ROOT),
+            timeout=120,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"\b([1-9]\d*)/\1 passed")
 
 
 if __name__ == "__main__":
