@@ -2,7 +2,8 @@
 
 The capture recorder watches console errors and network requests. On a guest, token or customer
 page that would mean recording someone else's session, so ADR 0016 §4 mounts it on an
-**allowlist**: the Desk, ``/kiosk``, ``/feedback``, ``/itinerary`` and ``/travel_guidelines``.
+**allowlist**: the Desk, ``/kiosk``, ``/feedback``, ``/itinerary``, ``/travel_guidelines`` and
+``/stock-scan`` (login-required and role-gated; added once classified).
 It is **never** in ``web_include_js``, which Frappe emits on every website page, ``/pay`` and
 ``/contract-sign`` included. Acceptance: "loading ``/pay``, ``/contract-sign`` and ``/wall``
 fetches no capture code". Every one of those pages is a template in this repo, so the
@@ -35,6 +36,15 @@ ALLOWLIST = {
 	"feedback.html": "web",
 	"itinerary.html": "web",
 	"travel_guidelines.html": "web",
+	"stock-scan.html": "web",
+}
+
+#: Allowlisted pages with NO floating launcher (``launcher: false``), and the file that draws
+#: their own "Report a problem" instead. The kiosk's shared touchscreen would be pressed by
+#: accident all day; on Stock Scan the button would sit on Scan.
+IN_PAGE_DOORS = {
+	"kiosk.html": JS / "kiosk" / "settings.js",
+	"stock-scan.html": JS / "stock_scan" / "app.js",
 }
 
 #: The WI's never-list, restricted to the pages that are templates in this app.
@@ -46,7 +56,6 @@ NEVER = (
 	"fountain-move.html",
 	"training_certificate.html",
 	"wall.html",
-	"stock-scan.html",
 )
 
 CAPTURE_MARKERS = ("capture.bundle", "capture_panel.bundle", "EE_CAPTURE", "ee_capture")
@@ -120,10 +129,22 @@ class TestWhereTheWidgetLoads(unittest.TestCase):
 				self.assertIn("bundled_asset('capture.bundle.js')", block)
 				self.assertIn("bundled_asset('capture_panel.bundle.js')", block)
 				self.assertIn(f'surface: "{surface}"', block)
-				self.assertIn("launcher: false" if surface == "kiosk" else "launcher: true", block)
+				self.assertIn("launcher: false" if page in IN_PAGE_DOORS else "launcher: true", block)
 				# First script in the block, so it sees errors from the page's own scripts.
 				first_src = re.search(r"<script src=\"([^\"]+)\"", block).group(1)
 				self.assertIn("capture.bundle.js", first_src)
+
+	def test_a_page_without_the_launcher_draws_its_own_door(self):
+		# A page with no launcher and no door of its own is a page nobody can report from.
+		self.assertLessEqual(set(IN_PAGE_DOORS), set(ALLOWLIST))
+		for page, door in IN_PAGE_DOORS.items():
+			with self.subTest(page=page):
+				text = door.read_text(encoding="utf-8")
+				self.assertIn("ee_capture", text)
+				self.assertIn(".open(", text)
+				self.assertIn("Report a problem", text)
+				# ... opened as the surface its template declares.
+				self.assertRegex(text, r"surface:\s*['\"]" + re.escape(ALLOWLIST[page]) + r"['\"]")
 
 	def test_no_other_template_loads_any_capture_code(self):
 		# Every template in the app, doctype web views included (/maintenance-records is one).

@@ -8,10 +8,13 @@ Several standalone web pages live here, separate from the heavy desk app:
 - the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails.
 - the **fountain move intake form** at **`/fountain-move`** — the public, guest-accessible Cactus & Tropicals intake form (`fountain_move.py` + `fountain-move.html`; note the underscored controller — see [Controller filenames](#controller-filenames-hyphens-are-silently-fatal)). See [its section below](#fountain-move--public-intake-form).
 - the capture widget's recorder (`capture.bundle.js`, WI-079 slice 2) is included by exactly
-  four templates here: `kiosk.html`, `feedback.html`, `itinerary.html` and
-  `travel_guidelines.html`. Each sets `window.EE_CAPTURE` (surface, user, CSRF token, the panel's
-  hashed URL) first in its script block. No other page loads any capture code, and
-  `tests/test_feedback_capture_surface.py` fails the build if one does
+  five templates here: `kiosk.html`, `feedback.html`, `itinerary.html`,
+  `travel_guidelines.html` and `stock-scan.html`. Each sets `window.EE_CAPTURE` (surface, user,
+  CSRF token, the panel's hashed URL) first in its script block. Two have no floating launcher
+  (`launcher: false`) and draw their own "Report a problem" instead: the kiosk in its Settings
+  tab, Stock Scan in its header (the button would sit on Scan). No other page loads any capture
+  code, and `tests/test_feedback_capture_surface.py` fails the build if one does, or if a page
+  without the launcher has no door of its own
   ([`public/README.md`](../public/README.md), `capture/`);
 - the **feedback SPA** at **`/feedback`** — employee bug/feature intake and the reviewer's
   queue ([ADR 0010](../../decisions/adr/0010-employee-feedback-to-tasks.md)), chrome-free and
@@ -113,10 +116,10 @@ The phone page a warehouse QR label opens: the items at that location, a − / +
 this section is the shell.
 
 ```
-www/stock-scan.html               chrome-free shell — theme script first, bundled css, boot payload, bundled js
+www/stock-scan.html               chrome-free shell — theme script first, bundled css, capture recorder, boot payload, bundled js
 www/stock_scan.py                 controller — guest → login (query kept), role gate, boot via api.stock_scan.boot_payload
 public/js/stock_scan.bundle.js    entry: mounts StockScanApp on #ee-stock-scan-root
-public/js/stock_scan/             app.js (state machine), scanner.js, transport.js, logic.js (pure), ui.js, dom.js, lib/jsQR
+public/js/stock_scan/             app.js (state machine), nav.js (Back/Forward, pure), scanner.js, transport.js, logic.js (pure), ui.js, dom.js, lib/jsQR
 public/css/stock_scan.bundle.css  --ss-* tokens: light, then two identical dark blocks
 api/stock_scan.py                 every endpoint the page calls (transport.js's M map)
 ```
@@ -139,11 +142,50 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   that would have added the rule. A query string needs no rule at all. The keys (`w`, `item`,
   `loc`) stay clear of the request keys Frappe consumes before a page sees them — `sid`,
   `csrf_token`, `cmd`, `usr`, `pwd`.
-- **The URL never changes while the page runs.** No `pushState`, `replaceState` or hash:
-  iOS Safari asks for camera permission again when the URL changes, so a page that routed would
-  re-prompt at every bin. Navigation is an in-memory back stack and every view has a visible
-  back link. The consequence is deliberate: a reload returns to the location in the URL — the
-  label the phone's camera app opened — not to the last bin scanned in the page.
+- **The URL never changes while the page runs, but Back and Forward work.** iOS Safari asks for
+  camera permission again when the URL changes, so a page that routed would re-prompt at every
+  bin. Navigation is an in-memory back stack, and every view has a visible back link; `nav.js`
+  mirrors it into browser history entries that carry **no URL** — every call is
+  `pushState(state, "")` / `replaceState(state, "")`, nothing else in the client may call either,
+  and `tests/test_stock_scan_surface.py` fails the build on a third argument. The rules:
+  - the document's first screen is stamped onto the entry the phone opened (`replaceState`), so
+    Back from it leaves the page as it always did — nothing traps Back;
+  - a screen the person asked for is a new entry; one the page opened by itself (a scanned bin
+    holding one item) replaces the entry it came from. Push only from a tap: Chrome's Back
+    button skips an entry a page added without a user tap, and a camera read is not a tap;
+  - a sheet (the camera is one) pushes one **marker** entry inside the tap that opens it, so
+    the phone's Back closes the sheet instead of leaving the screen. A sheet closed from its ×
+    steps back off its marker; one that closed into a navigation (a scan, a search pick) hands
+    the marker's entry to the screen that lands;
+  - screens live in memory, keyed by an id in `history.state`; item and supplier names never go
+    into `history.state`, which browsers write to disk. An entry the page did not write (a
+    reload's, the report form's) is never restored from: the page stays put and re-stamps it.
+
+  A reload still returns to the location in the URL — the label the phone's camera app opened —
+  not to the last bin scanned in the page. **The off switch is a settings box, no deploy
+  needed:** Inventory Scanner Settings → "Turn Off Browser Back on Stock Scan"
+  (`stock_scan_disable_browser_back`, v1.534.0). Ticked, the boot sends
+  `settings.browser_history: 0`, the page writes none of its **own** entries (screens and sheet
+  markers) and runs on its in-memory stack alone, as before; and the template sets
+  `EE_CAPTURE.history: false`, so the report form pushes no entry either
+  (`capture/panel.js` `wantsHistoryEntry`). It is the fix if an iPhone ever re-prompts for the
+  camera because of an entry. `BROWSER_HISTORY` in `app.js` is the same switch for the page's
+  own entries as a one-line code change. Check on a real iPhone (Safari and a home-screen
+  install): open a label, scan three bins in the page, Back twice, Forward once, scan again —
+  one camera prompt in total; then open "Report a problem", Back out of it, and scan again.
+- **"Report a problem"** (the capture panel, WI-079) is a header button on every view, beside the
+  job chip. The template sets `launcher: false` because the floating launcher would sit on Scan;
+  `app.js` opens the panel through the `window.ee_capture` global as surface `web` (the bundle may
+  not import the recorder) and says what to do if it does not open. The panel pushes and removes
+  its **own** history entry and answers the phone's Back itself ("Discard this report?"), so the
+  page adds no marker for it and ignores `popstate` while it is open. Opening it drops a lookup
+  still loading, whose screen would otherwise land under the form, and from the tap until the
+  form closes the page opens no sheet and starts no navigation (`reportBusy`): the form
+  downloads on first use, and a camera opened under it on a slow connection would keep
+  decoding, navigate under the form and take the letters typed into it. What a report carries from
+  here: the path `/stock-scan` (never the `?w=` query), the recorder's scrubbed rings, and
+  `registerCaptureState` codes and counts — view, warehouse, item code, stack depth, sheets open —
+  no names, quantities, suppliers or jobs. The page is never sent a cost or a price.
 - **The camera.** `getUserMedia` needs https. The browser's `BarcodeDetector` is used only
   where `getSupportedFormats()` lists `qr_code` (Chrome on Android); everywhere else — every
   iPhone — the vendored **jsQR** decodes frames drawn to a canvas at most 480 px wide, about
@@ -164,9 +206,12 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   line, job) mints a fresh one. Walking to another screen and back keeps it. The server half is
   in the inventory README.
 - **Tests** (bench-free): `tests/test_stock_scan_surface.py` (the endpoint surface, the shell,
-  the controller), `tests/test_stock_scan_theme.py` (the three-way theme, cloned from the
-  kiosk's) and `scripts/test_stock_scan_client.mjs` (the pure `logic.js` and the transport's
-  error extraction, against the same parse vectors as the Python rules).
+  the controller, the two-argument history rule, the Back and report wiring),
+  `tests/test_stock_scan_theme.py` (the three-way theme, cloned from the kiosk's) and
+  `scripts/test_stock_scan_client.mjs` (the pure `logic.js`, the transport's error extraction
+  against the same parse vectors as the Python rules, `nav.js` driven against a fake session
+  history that refuses any call with a URL, and the real `app.js` on a small fake DOM for the
+  report form's sequences: nothing opens or navigates under it while it loads or is open).
 
 ## `/warehouse-labels` — printable QR labels
 
@@ -229,7 +274,7 @@ api/time_kiosk.py            get_kiosk_bootstrap, log_time, get_my_day, get_shif
   - **fetch** → network-first for `/kiosk` navigations (cached-shell fallback); network-first with last-good fallback for the kiosk's own GET APIs; cache-first-with-background-refresh for **exactly the `PRECACHE` list** (the kiosk's shell + the manifest) and nothing else — it is a root-scope worker, and `tests/test_kiosk_service_worker.py` pins that it never answers for the app's asset root. The shared Google Maps loader is deliberately **not** precached (see Map below).
   - **geo queue** → the page posts `config` / `enqueue` / `flush` messages; points persist in IndexedDB (`TimeKioskDB` v2, store `GeoQueue` keyed by `client_id`, plus a `Meta` kv store for `csrf_token` / `max_batch_size`), then upload in batches (default 50) to `api.time_kiosk.log_geolocation_batch`. Each point carries `fix_source` (`Watch` / `Heartbeat` / `Catch-up`). The server echoes `accepted` / `rejected[].client_id`; accepted and permanently-rejected (`invalid_coords`, `low_accuracy`) points are deleted, transient ones stay queued. A failed flush registers a **Background Sync** (`flush-geo`) that re-runs on reconnect.
   - **stats** → a `{type:'stats'}` message with a `MessageChannel` port is answered with `{queued: n}` (how many points are still in IndexedDB) — the Settings tab's "Queued points" line, via `KioskGeo.queuedCount()`.
-- **`kiosk-manifest.json`** (JSON, no comments) — `name`/`short_name` "Time Kiosk", `id`/`start_url`/`scope` = `/kiosk`, `display: standalone` with `display_override: ["minimal-ui"]` (Chromium installs get native back/forward/refresh chrome; on iOS the app runs standalone — there is no in-app back/forward bar any more, the app is single-page with a tab bar, and **Refresh app** lives in Settings), `orientation: portrait-primary`, `theme_color` and `background_color` = the light `--tk-bg` (`tests/test_kiosk_theme.py` pins them to the stylesheet). Icons list **PNGs first** (192, 512, maskable-512) then SVGs — the PNGs satisfy Chrome/Edge installability (see CHANGELOG 0.3.0).
+- **`kiosk-manifest.json`** (JSON, no comments) — `name`/`short_name` "Time Kiosk", `id`/`start_url`/`scope` = `/kiosk`, `display: standalone` with `display_override: ["minimal-ui"]` (Chromium installs get native back/forward/refresh chrome, which walks the kiosk's tabs and sheets — see Views below; on iOS the app runs standalone — there is no in-app back/forward bar any more, the app is single-page with a tab bar, and **Refresh app** lives in Settings), `orientation: portrait-primary`, `theme_color` and `background_color` = the light `--tk-bg` (`tests/test_kiosk_theme.py` pins them to the stylesheet). Icons list **PNGs first** (192, 512, maskable-512) then SVGs — the PNGs satisfy Chrome/Edge installability (see CHANGELOG 0.3.0).
 
 ## Theme — light / dark / system
 
@@ -243,6 +288,8 @@ Three modes, **system** the default, chosen in the Settings tab and stored in `l
 ## Views, sheets, diagnostics
 
 Bottom tab bar **Clock · My Day · Map · Settings**; everything is one page, and every interruption is a `KioskUI` bottom sheet (focus-trapped, `aria-modal`, Escape / backdrop close) — there is no `window.confirm` / `prompt` / `alert` anywhere under `public/js/kiosk/` (`tests/test_kiosk_frontend.py`).
+
+**Browser Back and Forward** walk the tabs and close sheets (`KioskUI.nav`, `ui.js` "History"), and the URL never changes. Every history call is two-argument, because iOS Safari asks for camera and location again when the URL changes and `kiosk-sw.js` serves the offline shell for the exact path `/kiosk`. So a reload lands on Clock, as before. A tab tap pushes one entry, from the tap itself. An open stack of sheets adds one more entry, and each Back closes the top sheet through `close('dismiss')`, the same path Escape takes. Every gate reads that as cancel, so Back on the review sheet, the photo gate or "Why no photo?" posts nothing. The clock state (idle / working / break / day complete) is never an entry, so Back cannot undo or repeat a clock action. The entry the page loads into is replaced, never pushed, so Back from it still leaves the page. A sheet closed from the UI, or replaced by the next one in the same burst, leaves no entry behind: its entry goes with one `history.back()`, and the `popstate` that causes is counted off rather than read as a Back. "Report a problem" pushes and answers its own entry (`capture/panel.js`), and the kiosk leaves `popstate` alone while `ee_capture.isOpen()`. Any entry that is not the kiosk's own is re-stamped with the screen as it is, never interpreted. That covers the panel's leftover entry and entries left by an earlier load of the page. It also covers a kiosk entry the person reached while the panel had the `popstate`, such as a jump several entries back with the panel open. Only a tap adds an entry. Under Chrome's history intervention each push uses up the activation of the tap before it. A push made without one marks every entry of the page skippable, and the next Back then leaves the app from wherever it is. So the kiosk pushes a tab entry only for a tab tap, and when the screen and its entry disagree for any other reason it re-stamps the entry. When Back closes the top of two stacked sheets, the marker's re-push spends the tap that stacked the second sheet. A stack three deep, a `dismissible: false` sheet refusing Back, or a sheet opened by a timer would push without a tap, and none exists today. `scripts/test_kiosk_history.js` drives all of this against the real scripts, with a fake history that models the intervention and counts every push made without a tap. `tests/test_kiosk_frontend.py` runs it. **The off switch is a settings box, no deploy needed:** Time Kiosk Settings → "Turn Off Browser Back in the Kiosk" (`disable_browser_back`, v1.534.0). Ticked, `app.js` never starts `KioskUI.nav` (no `popstate` listener, so sheets push nothing either) and `kiosk.py` hands the report panel `EE_CAPTURE.history: false`, so Back leaves the kiosk again, as before. It exists for iPhones: if one asks for location or camera permission again after a Back, tick it.
 
 - **Clock** — a state-coloured hero (idle / working green / break amber / day complete blue) with the wall clock, elapsed time, project, activity pill, photo count and a tracking chip whose text is reason-specific (`off | ready | on | denied | unavailable | insecure | hidden`). Idle: project picker as a full-screen sheet with **Recent** (`recent_projects`), **Nearest** (by the device's last fix, distance badge) and **All** (search by title or PRJ-#); task picker; activity chips; note; the nearby-visit suggestion card and Today's Visits as before. **Clock In** takes an anchor fix (`KioskGeo.anchorFix` — high accuracy, up to 3 attempts inside ~15 s, never fails) and, when the project has site coordinates, `radius_m > 0`, the fix is outside it and `Time Kiosk Settings.offsite_warn` is on, shows the off-site sheet ("You're 3.2 km from …") before posting `log_time` with `offsite_acknowledged: 1`. **Pause** opens the break sheet (15 / 30 / 45 / 60 / custom / no timer → `break_minutes`); the Break view counts down from `planned_break_minutes` and vibrates/beeps once at zero (in-app only). **Switch** → attachments nudge → picker → confirm sheet → photo gate → maintenance warning (only when leaving the project) → anchor + off-site check → `log_time Switch`. **Clock Out** → `get_shift_summary` review sheet → Confirm → maintenance warning → photo gate (+ skip reason) → attachments nudge → anchor → `log_time Stop` → the **Day complete** screen with "Start another job". Photos/attachments and the maintenance-form link work exactly as before (see `app.js` for the register-before-upload photo queue).
 - **My Day** — `get_my_history` (14-day strip, zero days included) and `get_my_day` (totals, one row per interval with tracking-health / off-site / auto-closed / corrected / break / photo badges). A row opens a detail sheet with **Request a correction** (Adjust Times / Change Project / Missed Clock-Out); "Missed an entry?" files a Missed Entry; both go to `submit_correction_request`. The employee's requests (`get_my_correction_requests`) list with status, cancellable while Requested (`cancel_correction_request`).
