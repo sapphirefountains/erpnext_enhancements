@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.535.1] - 2026-09-24
+
+**The plan for a company knowledge base, written down before any of it is built.** This release
+is documentation only. It contains no code, fixture, patch or schema change.
+
+### Added
+
+- **[WI-080](work-items/WI-080-company-knowledge-base.md): Company knowledge base (native).**
+  - Nik wants people and every AI tool Sapphire uses (Claude, Triton, Gemini) to read the same
+    approved knowledge, so that Parker Bailey can back him up.
+  - On 2026-09-24 he chose ERPNext as its home. After a comparison with Frappe Wiki v3, the plan
+    is a narrow module built in this app.
+  - The work item carries the native-first check against:
+    - Frappe Wiki v3: five unsafe defaults, self-merge, no history restore, and upgrades that need
+      server access;
+    - core Help Article: guest-readable through `web_search` and the sitemap;
+    - Helpdesk;
+    - Drive only;
+    - FAC Skills: 31 on prod, never read by any client.
+  - It is split into six slices, with checkable acceptance criteria (prod queries and person
+    tests), rollback steps and an explicit out-of-scope list:
+    - decision record;
+    - model and workflow;
+    - Markdown import;
+    - AI reach (two read-only tools);
+    - a one-way Drive copy for Gemini and outages;
+    - a trigger-gated, one-way "Training-lite" link.
+  - Build starts after the QBO and Workforce cutover (~2026-10-21).
+- **[ADR 0017](decisions/adr/0017-company-knowledge-lives-in-a-native-module.md) (Proposed):
+  company knowledge lives in a native Knowledge Base module.**
+  - **Doctypes:** a published-snapshot doctype, plus a separate version doctype that only
+    authors and approvers can open. Drafts therefore can't leak through FAC's `get_document`,
+    which checks doctype permission but not permlevel.
+  - **Approval:** done by someone other than the author, enforced in `before_submit` and
+    `on_submit`, from a signed-in browser.
+  - **AI tools:** `search_company_knowledge` and `fetch_knowledge_article`, with frozen names so
+    the storage behind them stays swappable.
+  - **Drive copy:** Gemini on a work account cannot call a custom MCP server, so it reads a
+    one-way copy in Drive.
+  - **Restricted continuity material** stays out of ERPNext.
+  - **Training** integrates one way, as pointers only. It never returns lesson text through the
+    AI tools, never embeds live, and never produces a publish card, because Nik batch-approves
+    every card.
+- Its row in `decisions/adr/README.md`.
+
+### Why write it down first
+
+- The estimate is calibrated against this repo's own history. Training phase 1 needed 26 fix PRs
+  in its first 7 days, and 3 of the last 4 new-module launches broke a prod deploy within 2 days.
+- v1 is **8.5–11 engineer-days** of build, and 12.5–17.5 with the fix tail features see once
+  people use them. The Drive copy adds 4–4.5.
+- The cost that dominates is content. The first 40 articles take about 46–62 person-hours, and
+  the approver's review time sets the calendar.
+- A recorded plan lets that cost and the scope limits be checked before PR 1, rather than
+  rediscovered during it.
+
 ## [1.535.0] - 2026-09-24
 
 **Print and email, round two of the Pillar Stripe chrome: every customer and supplier block
