@@ -24,11 +24,50 @@ path. The model can only *read* the outcome afterwards, via `check_ai_pending_ac
 Do not add a confirm tool. Do not relax the direct-status-edit block on `AI Pending Action` —
 blocking desk status edits is what keeps the lifecycle honest.
 
+## Confirming runs what was proposed, not what the card shows
+
+`AI Pending Action.arguments` is the copy people read, and credential-like keys in it show as
+`***REDACTED***`. The key test is FAC's name heuristic, and it catches ordinary data too: its
+substring `auth` matches `author`, and its token rule matches `author_training_course`'s
+`draft_token`. So the values it replaces are **sealed** in `sealed_arguments`, a hidden Password
+field (encrypted in `__Auth`, asterisks in the column). `confirm_action` restores them into the
+parsed card and executes that. Until v1.524.1 it executed the card itself, which wrote the
+placeholder into real records.
+
+- **The seal lives only while the action is Pending.** The controller clears it on every save
+  that leaves it any other status, including the Confirmed transition before execution. Frappe
+  runs `validate()` before `_save_passwords()`, so that one save deletes the `__Auth` row.
+  Deleting the document removes it too.
+- **It must stay a Password field.** The doctype has `track_changes`, so every save writes the
+  old and new values into `tabVersion`. A Password column only ever holds asterisks. Any other
+  fieldtype would copy the secret into Version on the save that clears it.
+- **It fails closed.** If the seal is missing, undecryptable, or disagrees with the card, or if
+  a placeholder is still sitting under a credential-like key after restoring, the action goes to
+  **Failed** without running. Executing is not an option in that state: it would write the
+  placeholder.
+- **The confirmed call's result and error are masked** before they reach this doctype, AI Action
+  Log, or the thrown message, because a validation message can quote the value it rejected. Only
+  sealed **strings** of six or more characters are masked. Shorter ones and non-string values are
+  not, because masking replaces every occurrence. FAC's own **Assistant Audit Log** row for the
+  call is masked too. `_gate._wrap_log_execution` gives FAC recursively redacted arguments while
+  `frappe.flags.ai_gate_sealed` is set, because FAC's own sanitizer only looks at top-level keys.
+  FAC's file log and Sentry are out of reach and receive FAC's raw error text on a failure.
+- **The person confirming can read what they approve.** The Confirm dialog lists the hidden
+  fields by path. **Show Hidden Values** calls `gating_api.reveal_sealed`, which is limited to the
+  requester or a System Manager, while Pending and unexpired. It leaves a comment each time. Most
+  of what the heuristic hides is ordinary data, and an injected value there would otherwise go
+  through unseen.
+- **`args_hash` is an HMAC** keyed by the site encryption key. It is computed over the raw
+  arguments, and the rest of the hashed text sits in `arguments`, so a plain hash of a short
+  password could be brute-forced by anyone who can read the row.
+- **Locals in the confirm path are named `secret_*`.** Frappe's 5xx Error Log snapshot prints
+  frame locals, and it blanks only names on its blocklist.
+
 ## DocTypes
 
 | DocType | Role |
 |---|---|
-| `AI Pending Action` | A proposed AI mutation awaiting human confirmation. Created by the gate; transitions only via `gating_api`. Direct status edits in the desk are blocked |
+| `AI Pending Action` | A proposed AI mutation awaiting human confirmation. Created by the gate; transitions only via `gating_api`. Direct status edits in the desk are blocked. `sealed_arguments` holds the redacted values while Pending (see above) |
 | `AI Action Log` | Append-only record of AI actions |
 | `AI Model Usage` | Model usage accounting |
 | `AI Confirmation Exempt Doctype` | Doctypes exempted from the confirmation requirement |

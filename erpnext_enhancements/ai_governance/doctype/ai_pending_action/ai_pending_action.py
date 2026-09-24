@@ -8,6 +8,13 @@ Direct status edits in the desk are blocked so the lifecycle stays honest.
 
 Lifecycle: Pending → Confirmed (transient, while executing) → Executed/Failed,
 or Pending → Cancelled / Expired.
+
+``sealed_arguments`` (Password, hidden) holds the credential-like values that
+``arguments`` shows as ***REDACTED***, encrypted in __Auth, so confirming runs
+what was proposed. Only a Pending action needs them. Every save that leaves the
+action in any other status deletes them. That covers the Confirmed transition
+before execution, Cancel, and the expiry sweep, and the purge removes the rest
+with the document.
 """
 
 import frappe
@@ -17,6 +24,11 @@ from frappe.model.document import Document
 
 class AIPendingAction(Document):
 	def validate(self):
+		# Before the early returns: this must run on every save, transitions included.
+		# Frappe runs validate() before _save_passwords(), so a cleared Password field
+		# deletes its __Auth row in this same save.
+		if self.status != "Pending" and self.get("sealed_arguments"):
+			self.sealed_arguments = None
 		if self.is_new():
 			return
 		if frappe.flags.ai_action_transition:

@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.524.1] - 2026-09-23
+
+**A confirmed AI action now runs what the assistant proposed, not the redacted copy shown on the
+card.** Found during WI-079 slice 1, and a blocker to turning the AI write gate on.
+
+### Fixed
+
+- **`gating_api.confirm_action` executed `AI Pending Action.arguments`**, the copy in which
+  `sanitize_arguments` had replaced every credential-like key with `***REDACTED***`. So a
+  confirmation wrote the placeholder into the real record. The key test is FAC 3.0.0's name
+  heuristic, and most of what it catches is ordinary data:
+  - its substring `auth` matches `author` (Help Article, Training Course);
+  - `credential` matches `credential_type` / `credential_number` (Employee Credential);
+  - its token rule matches QuickBooks Sync Mapping's `sync_token`, which is a version counter;
+  - the same rule matches `author_training_course`'s own `draft_token`, so that tool could
+    never succeed through a confirmation when it was given a draft_token, which is its
+    preferred input.
+
+  It never fired in production. The gate was only on for a few days in July (16 Pending
+  Actions), and none of them carried a redacted key. It would have fired on the first such write
+  after the gate went back on.
+- **The fix seals the replaced values.** `_propose` now also stores just the values it redacted,
+  as `[path, value]` pairs, in the new hidden **Password** field
+  `AI Pending Action.sealed_arguments`. Frappe encrypts it into `__Auth` and keeps only asterisks
+  in the column. `confirm_action` reads it while the action is still Pending and puts each value
+  back at its path in the parsed card. The controller then deletes it on the Confirmed transition,
+  and on every other save that leaves the action non-Pending (Cancel, the expiry sweep).
+  - A Password field and not a Long Text, because the doctype has `track_changes`. A Long Text
+    would copy the value into `tabVersion` on the very save that clears it.
+  - Only the redacted values are sealed, not the whole payload, so the secret material is exactly
+    what the card hides. It also stays well inside the TEXT column once Fernet has inflated it.
+    A seal over 32,000 bytes is refused at proposal time with a clear error, not queued.
+- **It fails closed.** In each of these cases the action goes to **Failed** with an explanation
+  and an AI Action Log row, and the tool is never called:
+  - the seal is missing or cannot be decrypted;
+  - a sealed path doesn't end at a placeholder on the card;
+  - a placeholder is still under a credential-like key after restoring, which is what any
+    pre-1.524.1 card with such a key looks like.
+
+  It goes to Failed rather than staying Pending because the retry dedupe would otherwise map
+  every re-proposal onto the same unrunnable card until it expired.
+  An unreadable card is refused the same way, so it produces a Failed status rather than a 500.
+
+### Security
+
+- **The confirmed call's result and error are masked** before they reach `AI Pending Action.result` /
+  `error`, AI Action Log, or the thrown message. Only sealed **strings** of six or more characters
+  are masked. Shorter strings and non-string values are left alone, because masking replaces every
+  occurrence and would shred ordinary text for a false positive like `author: "Jo"`. Until now the
+  call only ever ran with the placeholder, so nothing real could be echoed. It now runs with the
+  real value, and a Frappe validation message quotes the value it rejects.
+- **FAC's own Assistant Audit Log row for the confirmed call is masked too.** FAC 3.0.0's argument
+  sanitizer only looks at top-level keys, so the `data.<field>` of every create or update would
+  have been committed there in plaintext. Its output sanitizer never looks at values at all.
+  `apply_gate` now also wraps `BaseTool.log_execution` at class level. While `confirm_action` holds
+  the request-local `frappe.flags.ai_gate_sealed`, FAC is given the recursively redacted arguments
+  and the masked result, error and traceback. On a failed call, FAC's audit row and the Error Log it
+  writes (with the raw `Args:`) are discarded by the existing rollback.
+  - **Still outside our reach:** FAC's file logger (`logger.error(..., exc_info=True)` on a failure)
+    and Sentry, if telemetry is enabled, receive FAC's raw error text.
+- **Local names in the confirm path that hold a restored value contain "secret".** On a 5xx, Frappe
+  v16 logs an Error Log snapshot with `get_traceback(with_context=True)`, which prints every
+  frame's locals except names matching its blocklist (password, secret, token, key…). That rule
+  covers top-level names only, so a restored value nested inside the arguments would otherwise be
+  printed. `unseal_arguments` and `_arguments_to_execute` also turn any unexpected error into the
+  refusal path, which returns a 417, so a malformed seal never reaches a 500 at all.
+- **`args_hash` is an HMAC-SHA256** keyed by the site encryption key; it was a bare SHA-1. The
+  hash is over the raw arguments, and everything else it covers is in plain view in `arguments`.
+  So anyone able to read the row, AI Auditor included, could brute-force a short sealed password
+  offline. It is still over the raw values, so two proposals that differ only in a secret remain
+  two cards.
+
+### Added
+
+- **The person confirming can see what they're approving.** Confirming now applies values the card
+  hides, and most of those are ordinary data an injected instruction could plant, like an `author`
+  or a `credential_number`. So the Confirm dialog now lists the hidden fields by path (for example
+  `data.author`), and a new **Show Hidden Values** button calls
+  `gating_api.reveal_sealed`. It is POST-only and restricted to the requester or a System Manager,
+  and only while the action is Pending and unexpired. Both could already obtain the values: the
+  requester's own assistant proposed them, and a System Manager can call
+  `frappe.client.get_password`. Each reveal leaves a comment on the action.
+
+### Tests
+
+- New bench-free `tests/test_ai_gate_sealed_arguments.py` (45 tests), run in the existing AI-gate
+  CI step. It runs under a copy of FAC 3.0.0's real key predicate, because the stub environment's
+  fallback has neither `auth` nor the token-word rule. Reverting `confirm_action` to execute the
+  stored copy fails 9 of them. Disabling the FAC log masking fails the test written for it.
+
 ## [1.524.0] - 2026-09-23
 
 **WI-079 slice 1: every feedback Task knows its request, the planner sees every gotcha, and the

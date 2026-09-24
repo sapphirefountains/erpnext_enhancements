@@ -35,6 +35,7 @@ BaseTool has no ``_safe_execute``.
 
 import functools
 import hashlib
+import hmac
 import json
 import re
 
@@ -545,15 +546,65 @@ def build_envelope(action_name, summary, risk, expires_at):
     }
 
 
-def args_fingerprint(user, tool_name, arguments):
+def args_fingerprint(user, tool_name, arguments, key=None):
+    """Dedup key for a proposal: same user, tool and arguments -> same card.
+
+    Computed over the RAW arguments, so two proposals that differ only in a sealed credential
+    value never collapse into one card (confirming it would run the first one's value). With
+    ``key`` (the site's encryption key, which ``_propose`` passes) it is an HMAC: ``args_hash``
+    is readable by anyone who can read the row -- AI Auditor included -- and the rest of the
+    hashed text sits in plain sight in ``arguments``, so a bare hash over a short password is
+    an offline guessing target. Without ``key`` it is the original plain SHA-1.
+    """
     canonical = json.dumps(arguments or {}, sort_keys=True, default=str)
-    return hashlib.sha1(f"{user}|{tool_name}|{canonical}".encode()).hexdigest()
+    message = f"{user}|{tool_name}|{canonical}".encode()
+    if key:
+        return hmac.new(str(key).encode(), message, hashlib.sha256).hexdigest()
+    return hashlib.sha1(message).hexdigest()
 
 
-def sanitize_arguments(arguments):
-    """Redact credential-like keys (FAC's heuristic when importable)."""
+# ------------------------------------------------ redaction and sealed values
+#
+# A proposal stores its arguments twice. ``arguments`` is the copy people read: the Desk card,
+# check_ai_pending_action, the AI Action Log. Credential-like keys in it are replaced by
+# REDACTED. ``sealed_arguments`` is a Password field holding just the values that were
+# replaced, encrypted in __Auth, and it exists only while the action is Pending.
+#
+# Before v1.524.1 there was only the first copy, and confirm_action executed it, so a confirmed
+# action wrote the literal "***REDACTED***" wherever a key looked like a credential. The
+# predicate is a name heuristic, and most of what it catches is not a secret: FAC's own list
+# includes the substring "auth", so `author` matches, and so does the `draft_token` argument of
+# author_training_course. That tool could never succeed through a confirmation when it was
+# given a draft_token, which is its preferred input.
+#
+# Only the replaced values are sealed, not the whole payload, for two reasons. The secret
+# material is then exactly what was hidden, and nothing else. It is also small, whereas a whole
+# create_document payload can exceed what a Password field's TEXT column holds once Fernet and
+# base64 have inflated it.
+
+REDACTED = "***REDACTED***"
+
+#: A sealed payload is Fernet-encrypted and base64'd into __Auth.password, a TEXT column
+#: (65,535 bytes), and "*" * len(payload) goes into the doc column. Both grow roughly 4/3
+#: plus a constant. This leaves generous headroom under that.
+SEALED_MAX_BYTES = 32_000
+
+#: A sealed string shorter than this is not masked out of a stored result or error. Masking
+#: replaces every occurrence, so a false positive like `author: "Jo"` would shred ordinary
+#: text if it were masked.
+MASK_MIN_LENGTH = 6
+
+
+class SealError(Exception):
+    """The sealed values cannot be put back exactly where they came from."""
+
+
+def _sensitive_key_predicate():
+    """FAC's heuristic when importable, else the historical fallback."""
     try:
         from frappe_assistant_core.core.base_tool import _is_sensitive_key
+
+        return _is_sensitive_key
     except Exception:
 
         def _is_sensitive_key(key):
@@ -562,17 +613,164 @@ def sanitize_arguments(arguments):
                 for fragment in ("password", "secret", "api_key", "token", "credential")
             )
 
-    def scrub(value):
+        return _is_sensitive_key
+
+
+def redact_arguments(arguments):
+    """Return ``(sanitized, sealed)``.
+
+    ``sanitized`` is ``arguments`` with every credential-like key's value replaced by
+    REDACTED. ``sealed`` lists ``[path, value]`` for each replacement, where ``path`` holds
+    the dict keys (str) and list indices (int) from the root down to that key.
+    """
+    is_sensitive = _sensitive_key_predicate()
+    sealed = []
+
+    def scrub(value, path):
         if isinstance(value, dict):
-            return {
-                k: "***REDACTED***" if _is_sensitive_key(k) else scrub(v)
-                for k, v in value.items()
-            }
-        if isinstance(value, list):
-            return [scrub(v) for v in value]
+            out = {}
+            for k, v in value.items():
+                if is_sensitive(k):
+                    out[k] = REDACTED
+                    sealed.append([[*path, k], v])
+                else:
+                    out[k] = scrub(v, [*path, k])
+            return out
+        if isinstance(value, (list, tuple)):
+            return [scrub(v, [*path, i]) for i, v in enumerate(value)]
         return value
 
-    return scrub(arguments or {})
+    return scrub(arguments or {}, []), sealed
+
+
+def sanitize_arguments(arguments):
+    """Redact credential-like keys (FAC's heuristic when importable)."""
+    return redact_arguments(arguments)[0]
+
+
+def seal_payload(sealed):
+    """The Password-field value for ``sealed``, or None when nothing was redacted.
+
+    Raises SealError when the payload is too large to store (see SEALED_MAX_BYTES).
+    """
+    if not sealed:
+        return None
+    payload = json.dumps(sealed, default=str)
+    if len(payload.encode("utf-8")) > SEALED_MAX_BYTES:
+        raise SealError("the credential-like values are too large to hold for confirmation")
+    return payload
+
+
+def unseal_arguments(arguments, sealed):
+    """Put each sealed value back into ``arguments`` (parsed from the stored copy), in place.
+
+    Refuses rather than guessing. Every path must walk dicts by str key and lists by int
+    index, and must end at a dict key whose value is still exactly REDACTED. Anything else
+    means the stored copy and the seal disagree, and executing either one would write
+    something nobody confirmed. Any unexpected error is raised as SealError too. That keeps
+    it on confirm_action's refusal path and off a 500, whose error snapshot would print this
+    frame's locals.
+    """
+    try:
+        return _unseal(arguments, sealed)
+    except SealError:
+        raise
+    except Exception:
+        raise SealError("the hidden values do not fit the stored arguments") from None
+
+
+def _unseal(arguments, sealed):
+    for entry in sealed or []:
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+            raise SealError("malformed sealed entry")
+        path, value = entry
+        if not isinstance(path, (list, tuple)) or not path:
+            raise SealError("malformed sealed path")
+        container = arguments
+        for step in path[:-1]:
+            if isinstance(container, dict) and isinstance(step, str) and step in container:
+                container = container[step]
+            elif (
+                isinstance(container, list)
+                and isinstance(step, int)
+                and not isinstance(step, bool)
+                and 0 <= step < len(container)
+            ):
+                container = container[step]
+            else:
+                raise SealError("sealed path does not match the stored arguments")
+        last = path[-1]
+        if not isinstance(container, dict) or not isinstance(last, str) or container.get(last) != REDACTED:
+            raise SealError("sealed path does not end at a redacted value")
+        container[last] = value
+    return arguments
+
+
+def has_unrestored_redaction(arguments):
+    """True if any credential-like key still holds REDACTED, i.e. the sanitizer's placeholder
+    rather than a value anyone proposed. A literal "***REDACTED***" under an ordinary key is
+    left alone: the sanitizer could not have put it there."""
+    is_sensitive = _sensitive_key_predicate()
+
+    def walk(value):
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if is_sensitive(k) and v == REDACTED:
+                    return True
+                if walk(v):
+                    return True
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                if walk(v):
+                    return True
+        return False
+
+    return walk(arguments)
+
+
+def mask_secrets(value, sealed):
+    """``value`` with each sealed string (MASK_MIN_LENGTH or longer) replaced by REDACTED.
+
+    Used on what the confirmed execution returns or raises. Before the seal existed, a
+    confirmed action ran with the placeholder, so its result and error could only ever echo
+    the placeholder. Now it runs with the real value, and a Frappe validation message or a
+    tool result that quotes it would carry it into AI Pending Action and AI Action Log, which
+    are rows the redaction exists to keep it out of.
+    """
+    secrets = []
+
+    def collect(v):
+        if isinstance(v, str):
+            if len(v) >= MASK_MIN_LENGTH:
+                secrets.append(v)
+        elif isinstance(v, dict):
+            for item in v.values():
+                collect(item)
+        elif isinstance(v, (list, tuple)):
+            for item in v:
+                collect(item)
+
+    for entry in sealed or []:
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            collect(entry[1])
+    if not secrets:
+        return value
+    # Longest first, so a secret that contains another is masked whole.
+    secrets.sort(key=len, reverse=True)
+
+    def mask(v):
+        if isinstance(v, str):
+            for secret in secrets:
+                if secret in v:
+                    v = v.replace(secret, REDACTED)
+            return v
+        if isinstance(v, dict):
+            return {k: mask(item) for k, item in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [mask(item) for item in v]
+        return v
+
+    return mask(value)
 
 
 def truncate_json(value):
@@ -722,10 +920,28 @@ def _client_id():
     return client
 
 
+def _fingerprint_key():
+    """The site's encryption key, for args_fingerprint's HMAC. None means the plain hash is
+    used. get_encryption_key() creates the key on first use, so on a real site that only
+    happens when site_config.json cannot be written."""
+    try:
+        from frappe.utils.password import get_encryption_key
+
+        return get_encryption_key()
+    except Exception:
+        return None
+
+
 def _propose(tool, arguments):
     user = frappe.session.user
     name = getattr(tool, "name", "")
-    fingerprint = args_fingerprint(user, name, arguments)
+    sanitized, sealed = redact_arguments(arguments)
+    try:
+        sealed_payload = seal_payload(sealed)
+    except SealError as e:
+        # Queueing it without the values would guarantee a card that cannot run as proposed.
+        return _error_response(f"This action was not queued for confirmation: {e}.")
+    fingerprint = args_fingerprint(user, name, arguments, key=_fingerprint_key())
 
     # Models retry: an identical pending proposal gets its envelope back
     # instead of a duplicate card.
@@ -763,7 +979,10 @@ def _propose(tool, arguments):
             "requested_by": user,
             "client_id": _client_id(),
             "session_id": _session_id(),
-            "arguments": json.dumps(sanitize_arguments(arguments), default=str, indent=1),
+            "arguments": json.dumps(sanitized, default=str, indent=1),
+            # Password field: Frappe encrypts it into __Auth on insert and keeps only
+            # asterisks in the column. The controller deletes it once the action is decided.
+            "sealed_arguments": sealed_payload,
             "args_hash": fingerprint,
             "target_doctype": (arguments or {}).get("doctype"),
             "target_name": (arguments or {}).get("name"),
@@ -972,3 +1191,38 @@ def apply_gate():
 
     setattr(gated_safe_execute, GATE_MARKER, True)
     BaseTool._safe_execute = gated_safe_execute
+    _wrap_log_execution(BaseTool)
+
+
+def _wrap_log_execution(BaseTool):
+    """Keep sealed values out of FAC's own Assistant Audit Log row for a confirmed call.
+
+    A confirmed call runs FAC's real ``_safe_execute`` with the restored values, and
+    ``log_execution`` writes the Assistant Audit Log row. That row is committed together with
+    the confirmed write. FAC's argument sanitizer only looks at top-level keys, so the nested
+    ``data.<field>`` of every create/update would be stored in plaintext. Its output sanitizer
+    redacts by key name, never by value, so an echoed value would be stored too.
+
+    While ``gating_api.confirm_action`` holds ``frappe.flags.ai_gate_sealed``, this wrapper gives
+    FAC the recursively redacted arguments and masks the sealed strings from everything else it
+    logs: result, error, traceback. Class-level and keyed on a request-local flag, so a
+    concurrent call in another thread is untouched. On a failed call FAC's row, and the Error
+    Log it writes, go with the rollback in confirm_action.
+    """
+    original_log = getattr(BaseTool, "log_execution", None)
+    if original_log is None or getattr(original_log, GATE_MARKER, False):
+        return
+
+    @functools.wraps(original_log)
+    def masked_log_execution(self, arguments, result, *args, **kwargs):
+        # Named to match Frappe's traceback blocklist ("secret"), like confirm_action's locals.
+        sealed_secrets = getattr(getattr(frappe, "flags", None), "ai_gate_sealed", None)
+        if sealed_secrets:
+            arguments = mask_secrets(sanitize_arguments(arguments), sealed_secrets)
+            result = mask_secrets(result, sealed_secrets)
+            args = tuple(mask_secrets(list(args), sealed_secrets))
+            kwargs = mask_secrets(kwargs, sealed_secrets)
+        return original_log(self, arguments, result, *args, **kwargs)
+
+    setattr(masked_log_execution, GATE_MARKER, True)
+    BaseTool.log_execution = masked_log_execution
