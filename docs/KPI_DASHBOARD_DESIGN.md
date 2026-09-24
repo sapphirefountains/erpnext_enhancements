@@ -946,7 +946,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments, plus the Operat
 ### 2. Item Naming Compliance (New Items) — 🟢 Auto
 - **Definition:** The same, restricted to Items created on or after `NAMING_GO_LIVE` (2026-10-01, POL-0602's effective date). The whole catalogue is audited first and then restricted, so a new Item named like an old one still counts as a collision. Key `item_naming_new_compliance_pct`.
 - **Why it matters:** Nik, 2026-09-24 (TASK-2026-02238): new Items are held to 100% while the backlog is worked down. Splitting the figure stops a clean week of new Items from hiding in a catalogue-wide number that moves a fraction of a point.
-- **Target:** 100%. Not published until the first Item is created on or after the go-live date, because 100% of nothing would read as the target met. No KPI Target row ships with the code.
+- **Target:** 100%. Not published until the first Item is created on or after the go-live date, because 100% of nothing would read as the target met. Its KPI Target row is seeded by `patches/seed_inventory_kpi_targets` (v1.532.0), with the Operations inventory targets Nik approved the same day.
 - **Refresh:** Nightly.
 
 ---

@@ -257,11 +257,14 @@ def _ensure_product_item(cfg):
 			"custom_source_configuration": cfg.name,
 		}
 	)
-	# The configurator allocates this part number itself and builds the name from it, so the
-	# Item naming guard (v1.532.0) has nothing to add: the "Item Code Taken" check above owns
-	# collisions on the code, and the name is generated, not typed. Component Items in
-	# ensure_component_items keep the guard -- their names are the product definition's
-	# human-written component names.
+	# The configurator allocates this part number itself, and the person generating a
+	# configuration can change neither it nor the name, so a refusal from the Item naming guard
+	# (v1.532.0) would leave them stuck with nothing to fix. The name ("<product> <code>") can
+	# never read as just the code, so the flag's only effect is to exempt configurator part
+	# numbers from the guard's case- and punctuation-blind duplicate check -- deliberately:
+	# "Item Code Taken" above still refuses an exact clash, and a near-clash shows up in Monday's
+	# naming digest for the Purchasing Agent. Component Items in ensure_component_items keep
+	# the guard -- their names are the product definition's human-written component names.
 	item.flags.ignore_naming_guard = True
 	item.insert()
 	return item_code

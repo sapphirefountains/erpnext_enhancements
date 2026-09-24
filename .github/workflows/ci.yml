@@ -261,6 +261,11 @@ jobs:
       # recipients, no new Items or nothing failing sends nothing.
       - name: Item naming digest (whole-corpus audit, then the week; silent when clean)
         run: python -m unittest erpnext_enhancements.tests.test_item_naming_digest -v
+      # The two v1.532.0 seed patches. Own step: stubs frappe. The recipient seed must never write
+      # to a never-saved Single or over an existing row; each KPI Target must land on a key its
+      # department's snapshot publishes, graded the same way -- a misspelt key grades nothing, silently.
+      - name: Inventory seed patches (digest recipient, approved KPI targets)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_seed_patches -v
       # Its own step for the same reason as the one above: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.

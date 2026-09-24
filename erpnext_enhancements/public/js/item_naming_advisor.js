@@ -8,7 +8,7 @@
 // is procedural, and a third of the live catalogue would fail the comma rule today — anything
 // that blocked on the full rule set would fire constantly on legitimate edits to records that
 // were already there. The server's Item doc_event (v1.532.0, item_naming_guard.py) refuses a
-// NEW Item for two findings only: a duplicate code after normalisation, a name that is just
+// NEW Item, from 2026-10-01, for two findings only: a duplicate code after normalisation, a name that is just
 // the code.
 //
 // Two round-trip costs worth knowing before editing:

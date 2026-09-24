@@ -1185,3 +1185,9 @@ erpnext_enhancements.patches.split_service_kpi_dashboard
 # emptied list is a decision and is kept) and never on a never-saved Single. Reads tabSingles by its own
 # shape, never db.get_value("Singles"). Direct write, no validate; cannot raise, safe twice.
 erpnext_enhancements.patches.seed_naming_digest_recipient
+# v1.532.0: the KPI Targets Nik approved on 2026-09-24 (TASK-2026-02238) for the v1.530.0 Operations
+# inventory KPIs and the new item_naming_new_compliance_pct: store runs 4, below reorder 5, out of stock 0,
+# counted 100%, placeholder-cost lines 0, unpriced PO lines 0, new-item naming 100%. Insert-only, keyed
+# on the format: name; a row that exists (seeded or set on purpose) is never touched. Each row commits
+# alone; cannot raise, safe twice.
+erpnext_enhancements.patches.seed_inventory_kpi_targets

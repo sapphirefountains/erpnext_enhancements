@@ -32,7 +32,7 @@ class ItemNamingCheck(BaseTool):
             "Check an ERPNext Item Code and Item Name against the Sapphire "
             "Fountains Item Naming Schema — before the record is created, or on one that "
             "already exists — and return findings plus a STOP/FIX/PASS verdict. Read-only "
-            "— it never creates or edits an Item. When an Item is created, ERPNext refuses "
+            "— it never creates or edits an Item. From 2026-10-01, when an Item is created, ERPNext refuses "
             "only two of these findings: a code that duplicates an existing code after "
             "normalisation, and a name that is just the code; everything else is advice. "
             "Pass 'existing': true when re-checking an Item that is already in ERPNext. "

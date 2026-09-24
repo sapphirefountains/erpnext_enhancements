@@ -6,7 +6,7 @@ whether one already exists, asks what to call it, or asks which `PDT-` /
 SOP v1.0; `docs/item-naming-schema.md` is the citable copy.
 
 This is advisory — you produce a corrected code and name that a human
-applies by hand. Since v1.532.0 ERPNext refuses a *new* Item for two
+applies by hand. From 2026-10-01 (POL-0602) ERPNext refuses a *new* Item for two
 findings only: a code that duplicates an existing one after
 normalisation (`duplicate_code_normalised`) and a name that is just the
 code (`name_equals_code`, which a blank name also triggers). Say so when

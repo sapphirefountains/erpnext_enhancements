@@ -371,8 +371,8 @@ appearing on two or more records, plus the outright errors.
 > unchanged by this ruling.
 >
 > The same decision made two findings enforceable on a **new** Item, which §3's "nothing in
-> this schema is enforced by the system" no longer fully describes. From v1.532.0 ERPNext
-> refuses to save a new Item whose Item Code matches an existing one once case and
+> this schema is enforced by the system" no longer fully describes. From 2026-10-01
+> (v1.532.0) ERPNext refuses to save a new Item whose Item Code matches an existing one once case and
 > punctuation are ignored, or whose Item Name is just its Item Code. Every other rule in this
 > document, including Step 4.1's unapproved-category stop, stays procedural. Blocking an
 > unapproved category would refuse legitimate items while the rulings above are open. New

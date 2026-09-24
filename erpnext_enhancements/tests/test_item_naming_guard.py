@@ -26,8 +26,9 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1]
 HOOKS = APP / "hooks.py"
 
-STATE = {"existing": [], "get_all_calls": 0}
+STATE = {"existing": [], "get_all_calls": 0, "today": "2026-10-01", "names": {}}
 guard = None
+review = None
 
 
 class StubThrow(Exception):
@@ -48,29 +49,55 @@ def _install_frappe_stub():
 		STATE["get_all_calls"] += 1
 		return list(STATE["existing"])
 
+	def exists(doctype, name=None):
+		assert doctype == "Item", doctype
+		return name in STATE["existing"]
+
+	def get_value(doctype, filters, fieldname):
+		assert doctype == "Item" and fieldname == "name", (doctype, fieldname)
+		return STATE["names"].get(filters.get("item_name"))
+
 	frappe.throw = throw
 	frappe.get_all = get_all
 	frappe._ = lambda s: s
+	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
+	frappe.db = types.SimpleNamespace(exists=exists, get_value=get_value)
 	frappe.flags = types.SimpleNamespace()
 	frappe.local = types.SimpleNamespace(request=object())
+	utils = types.ModuleType("frappe.utils")
+	utils.nowdate = lambda: STATE["today"]
+	frappe.utils = utils
 	sys.modules["frappe"] = frappe
+	sys.modules["frappe.utils"] = utils
 
 
 def setUpModule():
-	global guard
+	global guard, review
 	_install_frappe_stub()
-	sys.modules.pop("erpnext_enhancements.inventory_enhancements.item_naming_guard", None)
+	for mod_name in (
+		"erpnext_enhancements.inventory_enhancements.item_naming_guard",
+		"erpnext_enhancements.accounting_intake.review",
+		"erpnext_enhancements.accounting_intake.audit",
+	):
+		sys.modules.pop(mod_name, None)
+	from erpnext_enhancements.accounting_intake import review as intake_review
 	from erpnext_enhancements.inventory_enhancements import item_naming_guard as mod
 
 	guard = mod
+	review = intake_review
 
 
 class _Item:
 	"""An Item doc double: is_new(), get(), flags, name."""
 
-	def __init__(self, item_code, item_name, new=True, **flags):
+	def __init__(self, item_code, item_name, new=True, variant_of=None, **flags):
 		self.name = item_code
-		self._data = {"item_code": item_code, "item_name": item_name, "name": item_code}
+		self._data = {
+			"item_code": item_code,
+			"item_name": item_name,
+			"name": item_code,
+			"variant_of": variant_of,
+		}
 		self._new = new
 		self.flags = types.SimpleNamespace(**flags)
 
@@ -88,6 +115,8 @@ class _Base(unittest.TestCase):
 		frappe.local = types.SimpleNamespace(request=object())
 		STATE["existing"] = ["806-020", "PDT-0009", "GMCB-1B-1"]
 		STATE["get_all_calls"] = 0
+		STATE["today"] = "2026-10-01"
+		STATE["names"] = {}
 
 	def assertRefused(self, doc):
 		with self.assertRaises(StubThrow) as ctx:
@@ -109,6 +138,14 @@ class RefusesTheTwoFindingsTest(_Base):
 		msg = self.assertRefused(_Item("22-1044", "22-1044"))
 		self.assertIn("descriptive name", msg)
 
+	def test_a_code_spelled_from_a_good_name_is_told_to_fix_the_code(self):
+		"""Review finding: the name is in schema order and the code was invented from it. The
+		comparison is punctuation-blind, so this is "name is the code" -- and the remedy is the
+		code, which the message has to say, or it asks for a name the user already wrote."""
+		msg = self.assertRefused(_Item("SKIMMER-HAYWARD-1084FVE", "SKIMMER, HAYWARD, 1084FVE"))
+		self.assertIn("the code is what needs changing", msg)
+		self.assertIn("vendor's part number", msg)
+
 	def test_a_blank_name(self):
 		"""ERPNext copies the code into a blank name before this runs; either way it is refused."""
 		self.assertRefused(_Item("22-1044", ""))
@@ -120,7 +157,8 @@ class RefusesTheTwoFindingsTest(_Base):
 
 	def test_the_message_says_nothing_else_is_enforced(self):
 		msg = self.assertRefused(_Item("22-1044", "22-1044"))
-		self.assertIn("Only these two naming problems", msg)
+		self.assertIn("Only two naming problems", msg)
+		self.assertIn("Once it is saved", msg, "an unsaved Item form has no Naming menu yet")
 
 
 class AdviceNeverRefusesTest(_Base):
@@ -164,6 +202,104 @@ class SkipsTest(_Base):
 	def test_a_falsy_flag_does_not_skip(self):
 		sys.modules["frappe"].flags = types.SimpleNamespace(in_import=False, in_test=None)
 		self.assertRefused(_Item(*self.BAD, ignore_naming_guard=False))
+
+	def test_a_variant_is_skipped(self):
+		"""ERPNext derives a variant's code and name from its template; a manufacturer variant
+		copies no name at all, so its name becomes its code. Nobody at the screen chose either."""
+		self.assertAllowed(_Item(*self.BAD, variant_of="806-020"))
+		self.assertEqual(STATE["get_all_calls"], 0)
+
+
+class GoLiveTest(_Base):
+	"""The refusal starts on POL-0602's effective date, the date the new-items KPI counts from."""
+
+	BAD = ("806020", "806020")
+
+	def test_the_go_live_is_the_policy_date(self):
+		self.assertEqual(guard.rules.NAMING_GO_LIVE, "2026-10-01")
+
+	def test_the_day_before_it_saves(self):
+		STATE["today"] = "2026-09-30"
+		self.assertAllowed(_Item(*self.BAD))
+		self.assertEqual(STATE["get_all_calls"], 0)
+
+	def test_on_the_day_and_after_it_refuses(self):
+		for today in ("2026-10-01", "2026-10-02", "2027-01-01"):
+			with self.subTest(today=today):
+				STATE["today"] = today
+				self.assertRefused(_Item(*self.BAD))
+
+	def test_in_force_takes_an_explicit_date(self):
+		self.assertFalse(guard.in_force("2026-09-24"))
+		self.assertTrue(guard.in_force("2026-10-01"))
+
+
+class _Row:
+	"""A Document Intake Line double."""
+
+	def __init__(self, idx, name, code=None):
+		self.idx = idx
+		self.proposed_item_name = name
+		self.description = name
+		self._data = {"proposed_item_code": code}
+
+	def get(self, key, default=None):
+		return self._data.get(key, default)
+
+
+class IntakeNamingProblemsTest(_Base):
+	"""Document Intake's Approve Items keeps the guard, so it has to be usable under it.
+
+	Before v1.532.0 shipped, it built every new Item with the proposed name as its code,
+	which the guard refuses: the reviewers' blocker. The Stock Manager now enters a Proposed
+	Item Code, and ``_naming_problems`` checks every line with the guard's own rule before the
+	first insert, so a refusal names the line and the field instead of an Item form nobody
+	opened.
+	"""
+
+	NAME = 'COUPLING, SOC, PVC, 2", SCH40'
+
+	def test_a_line_with_no_code_is_told_to_enter_one(self):
+		problems = review._naming_problems([_Row(3, self.NAME)])
+		self.assertEqual(len(problems), 1)
+		self.assertIn("Line 3", problems[0])
+		self.assertIn("Proposed Item Code", problems[0])
+
+	def test_a_line_with_a_real_code_passes(self):
+		self.assertEqual(review._naming_problems([_Row(1, self.NAME, code="429-020")]), [])
+
+	def test_a_near_duplicate_code_is_refused_with_the_guards_words(self):
+		problems = review._naming_problems([_Row(2, self.NAME, code="806020")])
+		self.assertEqual(len(problems), 1)
+		self.assertIn("Line 2", problems[0])
+		self.assertIn("<b>806-020</b>", problems[0])
+
+	def test_codes_earlier_in_the_batch_count(self):
+		problems = review._naming_problems(
+			[_Row(1, self.NAME, code="429-020"), _Row(2, 'TEE, SOC, PVC, 2", SCH40', code="429 020")]
+		)
+		self.assertEqual(len(problems), 1)
+		self.assertIn("Line 2", problems[0])
+
+	def test_a_line_that_names_an_existing_item_is_not_checked(self):
+		"""It links to that Item instead of creating one, as it always did."""
+		STATE["names"] = {self.NAME: "429-020"}
+		self.assertEqual(review._naming_problems([_Row(1, self.NAME)]), [])
+		self.assertEqual(review._existing_item(self.NAME, self.NAME), "429-020")
+
+	def test_the_line_name_is_escaped(self):
+		problems = review._naming_problems([_Row(1, "<b>x</b>")])
+		self.assertNotIn("<b>x</b>", problems[0])
+
+	def test_silent_before_the_go_live(self):
+		STATE["today"] = "2026-09-30"
+		self.assertEqual(review._naming_problems([_Row(1, self.NAME)]), [])
+
+	def test_the_code_falls_back_to_the_name(self):
+		self.assertEqual(review._proposed_code_and_name(_Row(1, self.NAME)), (self.NAME, self.NAME))
+		self.assertEqual(
+			review._proposed_code_and_name(_Row(1, self.NAME, code="  429-020 ")), ("429-020", self.NAME)
+		)
 
 
 class MessageTest(_Base):

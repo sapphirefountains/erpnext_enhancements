@@ -9,12 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.532.0] - 2026-09-24
 
-**Inventory guardrails: two naming defects now refuse a new Item, the rest go to the
-Purchasing Agent weekly, and a $0 Purchase Order line warns on submit.** Nik decided each rule
-on 2026-09-24. They are recorded on TASK-2026-02238 and in policy POL-0602 v1.0, effective
-2026-10-01. Before this release the naming rules were advice everywhere. There was no `Item`
-doc_event, and nothing reported new Items that broke the schema unless somebody opened the
-Item Naming Audit.
+**Inventory guardrails: from 2026-10-01 two naming defects refuse a new Item, the rest go to
+the Purchasing Agent weekly, a $0 Purchase Order line warns on submit, and the inventory KPIs get
+their approved targets.** Nik decided each rule on 2026-09-24. They are recorded on
+TASK-2026-02238 and in policy POL-0602 v1.0, effective 2026-10-01. Before this release the naming
+rules were advice everywhere. There was no `Item` doc_event, and nothing reported new Items that
+broke the schema unless somebody opened the Item Naming Audit.
 
 ### Added
 
@@ -38,32 +38,50 @@ Item Naming Audit.
   `item_naming_rules.BLOCKING_CODES` records the pair and the reason. Every other finding, STOPs
   included, stays advice on the Item form, in the report, in the KPI and in the MCP tool.
 
+  **Not before 2026-10-01.** The refusal starts on `item_naming_rules.NAMING_GO_LIVE`, POL-0602's
+  effective date, not on the day this deploys (`item_naming_guard.in_force`, against the site-local
+  `nowdate()`). The policy is what a refused person is pointed at, the conventions were still being
+  finalized the week this shipped, and the new-items KPI counts from the same day. The digest and
+  the KPI need no gate; the digest has always been advice.
+
   **Why only inside a web request.** The guard runs only when `frappe.local.request` is set, and
   never while `frappe.flags` has `in_import`, `in_migrate`, `in_install`, `in_patch`, `in_test` or
   `in_setup_wizard` set. The question is who can act on the refusal. A person saving in the Desk,
   through the REST API or through an MCP tool can rename the Item and save again. A background job
   cannot. The QuickBooks sync creates Items on the scheduler, and a refusal there would park the
-  record for manual review with nobody told why. Data Import runs inside a request, which is what
-  the `in_import` flag covers. The guard also runs only on `is_new()`, so an existing Item is never
-  refused, whatever its name. The catalogue has hundreds of records that predate the SOP, and
-  refusing an edit to one would stop somebody fixing its stock UOM over a name they did not write.
+  record for manual review with nobody told why. Data Import normally runs as a background job
+  too (`start_import` enqueues unless in tests or developer mode), so the request check already
+  skips it; `in_import` covers the inline runs. The guard also runs only on `is_new()`, so an
+  existing Item is never refused, whatever its name. The catalogue has hundreds of records that
+  predate the SOP, and refusing an edit to one would stop somebody fixing its stock UOM over a
+  name they did not write. **Variants are skipped** (`variant_of` set): ERPNext derives a variant's
+  code and name from its template, a manufacturer variant copies no name at all so its name
+  becomes its code, and *Make Variants* saves fewer than ten inline, inside the request.
 
-  **In-request callers, audited.** A caller sets `doc.flags.ignore_naming_guard` only when it
-  generates the name from the code:
+  **In-request callers, audited.** A caller sets `doc.flags.ignore_naming_guard` only when the
+  person at the screen can choose neither the code nor the name:
   - `product_configurator.erp_integration._ensure_product_item` sets it. The configurator
-    allocates the part number and builds the name from it, and its "Item Code Taken" check already
-    owns collisions.
+    allocates the part number and the person generating a configuration cannot change it. Its name
+    is `<product> <code>`, which can never read as just the code, so the flag's one real effect is
+    to exempt configurator part numbers from the case- and punctuation-blind duplicate check, on
+    purpose: its "Item Code Taken" check still refuses an exact clash, and a near-clash reaches
+    Monday's digest.
   - The `quickbooks_online.core.mapping` create path sets it for Items. A QuickBooks Item with no
     SKU gets its code from its Name, so name equals code by construction. The dashboard's
     per-entity Sync button (`api.sync_entity`) runs that path inside a request, and an import must
     not park or pass depending on which door started it.
   - `ensure_component_items` keeps the guard. Component names are the product definition's own
     words and a required field.
-  - `accounting_intake.review._create_item` (Approve Items) keeps the guard on purpose, because a
-    person is approving the Item. Know the consequence: it uses the proposed name as both code and
-    name, so the guard refuses every Item it would create. The way through is the SOP's: create the
-    Item with a real code and a descriptive name, then set it as the line's Matched Item. The
-    function's docstring and the intake README say so.
+  - `accounting_intake.review` (Document Intake's *Create Approved Items*) keeps the guard,
+    because a person is approving the Item, and now gives that person the code to set. It used
+    the proposed name as both code and name, which the guard refuses every time: review found the
+    button would have failed on every new line from go-live. A new **Proposed Item Code** on
+    Document Intake Line takes the vendor's part number or a CON-/PDT-/SRV- code, and
+    `_naming_problems` checks every approved line with `blocking_findings` before the first insert.
+    A line with no code (its name would be its code) or a near-duplicate code refuses the whole
+    batch with one message naming each line and what to fix, so nothing is half-created. Codes
+    approved earlier in the batch count as existing. A line whose code or name already matches an
+    Item links to it, as before. Document Intake had no rows on production on 2026-09-24.
   - The `water_engineering.setup` catalogue seeds keep the guard. They run from `after_migrate`,
     where it is skipped.
   - Tests and patches run under `in_test` and `in_patch`.
@@ -97,7 +115,15 @@ Item Naming Audit.
   items are held to 100%, and `item_naming_compliance_pct` stays the backlog measure. It is
   unpublished (None) until the first such Item exists, because 100% of nothing would read as the
   target met. It reuses the backlog figure's audit and has its own `try`, so its failure cannot
-  sink that figure or the department. No KPI Target row ships, because targets are site data.
+  sink that figure or the department. Its 100% target is seeded, below.
+- **`patches/seed_inventory_kpi_targets`: the KPI Targets Nik approved on 2026-09-24**
+  ("go with your recommendations", TASK-2026-02238). Operations: `store_runs_30` 4 (the 12
+  months to 2026-09-24 had 202, about 17 a month), `items_below_reorder` 5, `stocked_items_out`
+  0, `stocked_items_counted_90` 100%, `placeholder_cost_stock_lines` 0 and `unpriced_po_lines_90`
+  0. Product: `item_naming_new_compliance_pct` 100%. All Daily. Without a target a KPI renders as
+  an ungraded grey number, the failure `seed_item_naming_kpi_target` (v1.337.0) avoided for the
+  backlog figure. These are the business's numbers, so a row that exists, seeded earlier or set on
+  purpose, is never touched. Each row commits alone; the patch cannot raise.
 - **The $0 Purchase Order line warning, `po_price_check.warn_zero_rate_lines`**, last on Purchase
   Order `before_submit`, after both submit gates and the approval stamp. A refused order never
   reaches it. It shows an orange "Unpriced lines" message listing each line with a rate below half
@@ -135,10 +161,14 @@ Item Naming Audit.
   (punctuation and case variants, exact self-exclusion, a real sibling surviving it, a blank name,
   and every advisory STOP staying non-blocking) and `restrict_to`.
 - New bench-free unittest suites, each on its own CI step because each installs a `frappe` stub:
-  `test_item_naming_guard` (both refusals, every skip, escaping, the `doc_events` wiring),
+  `test_item_naming_guard` (both refusals, every skip including the go-live date and variants,
+  the code remedy, escaping, the `doc_events` wiring, and Document Intake's pre-insert line check),
   `test_item_naming_digest` (recipients, whole-corpus-then-restrict with the real rules module,
-  silence, the cap, the cron key) and `test_po_price_check` (the zero rule, the message, never
-  raising, bulk and no-request silence, last on `before_submit` after the gates).
+  silence, the cap, the cron key), `test_po_price_check` (the zero rule, the message, never
+  raising, bulk and no-request silence, last on `before_submit` after the gates) and
+  `test_inventory_seed_patches` (the recipient seed's two no-write branches and that it cannot
+  raise; the targets seed's values, insert-only behaviour, one-row failure, and that each key is
+  published by its department's snapshot and graded in the same direction).
 
 ## [1.531.0] - 2026-09-24
 

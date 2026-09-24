@@ -275,23 +275,29 @@ includes `name_category_unapproved`, and several category words are still waitin
 (TASK-2026-02215: PLMB, BRUSH, BOTTLE), so it would refuse legitimate new items for as long as
 a ruling is open. Neither of the two chosen findings depends on a ruling.
 
-**When it runs.** Only on `is_new()`, so an existing Item is never refused whatever its name.
-Only inside a web request, and never while `frappe.flags` has `in_import`, `in_migrate`,
-`in_install`, `in_patch`, `in_test` or `in_setup_wizard` set. A background job has nobody to
-read the message: the QuickBooks sync creates Items on the scheduler, and a refusal there would
-park the record for manual review. A save is also skipped when `doc.flags.ignore_naming_guard`
-is set, which only callers that generate the name from the code inside a request set:
+**When it runs.** From `item_naming_rules.NAMING_GO_LIVE` (2026-10-01, POL-0602's effective
+date), not from the deploy: the conventions were still being finalized the week it shipped, and
+the new-items KPI counts from the same day. Only on `is_new()`, so an existing Item is never
+refused whatever its name. Never on a variant (`variant_of` set): ERPNext derives a variant's
+code and name from its template, and a manufacturer variant copies no name at all. Only inside
+a web request, and never while `frappe.flags` has `in_import`, `in_migrate`, `in_install`,
+`in_patch`, `in_test` or `in_setup_wizard` set. A background job has nobody to read the
+message: the QuickBooks sync creates Items on the scheduler, and a refusal there would park the
+record for manual review. Data Import normally runs as a background job too; `in_import` covers
+its inline runs. A save is also skipped when `doc.flags.ignore_naming_guard` is set, which only
+in-request callers whose user cannot choose the code or the name set:
 
 | In-request Item creator | Guard |
 |---|---|
-| `product_configurator.erp_integration._ensure_product_item`, the configured product | **Off**. The configurator allocates the part number and builds the name from it |
+| `product_configurator.erp_integration._ensure_product_item`, the configured product | **Off**. The configurator allocates the part number and the person can change neither it nor the name. The name (`<product> <code>`) can never be just the code, so the flag only exempts part numbers from the case- and punctuation-blind duplicate check; "Item Code Taken" still refuses an exact clash, and a near-clash reaches Monday's digest |
 | `product_configurator.erp_integration.ensure_component_items` | On. Component names are the product definition's own words, and a required field |
 | `quickbooks_online.core.mapping` create path, for Items | **Off**. A QBO Item with no SKU is name == code by construction, and the dashboard's per-entity Sync runs it inside a request |
-| `accounting_intake.review._create_item` (Approve Items) | On. A person approves the Item. It uses the proposed name as code *and* name, so the guard refuses every Item it would create: create the Item properly and set it as the line's Matched Item |
+| `accounting_intake.review._create_item` (Approve Items) | On. The Stock Manager enters the line's *Proposed Item Code*; `_naming_problems` checks every line with `blocking_findings` before the first insert and refuses the batch naming each line and what to fix. A line with no code would make the name the code, so it is told to enter one |
 | `water_engineering.setup` catalogue seeds | On, but they run from `after_migrate`, where the guard is skipped |
 
-The message names the clashing codes, or asks for a descriptive name in schema order, and says
-that nothing else stops the save.
+The message names the clashing codes, or asks for a descriptive name in schema order (and,
+when the name already is one, says the code is what needs changing), and says that nothing
+else stops the save.
 
 ### The weekly digest (v1.532.0)
 

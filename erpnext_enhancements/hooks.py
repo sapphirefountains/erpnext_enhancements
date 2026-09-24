@@ -664,12 +664,15 @@ doc_events = {
 	# set was rejected because it includes unapproved category words, and several words are
 	# still awaiting a ruling (TASK-2026-02215), so it would refuse legitimate items.
 	#
-	# Skips: an existing Item (never refused, whatever its name); import, migrate, install,
-	# patch, test and setup-wizard flags; ANY save outside a web request -- the QuickBooks sync
-	# creates Items on the scheduler, and a refusal there parks a record with nobody told why;
-	# and `doc.flags.ignore_naming_guard`, set by the in-request callers whose name is
-	# generated from the code (configured-product Items, the QuickBooks upsert's per-entity
-	# Sync button). Document Intake's Approve Items keeps the guard on purpose. `validate`
+	# Skips: any save before item_naming_rules.NAMING_GO_LIVE (2026-10-01, POL-0602's
+	# effective date); an existing Item (never refused, whatever its name); a variant (ERPNext
+	# derives its code and name from the template); import, migrate, install, patch, test and
+	# setup-wizard flags; ANY save outside a web request -- the QuickBooks sync creates Items
+	# on the scheduler, and a refusal there parks a record with nobody told why; and
+	# `doc.flags.ignore_naming_guard`, set by the in-request callers whose user cannot choose
+	# the code or name (configured-product Items, the QuickBooks upsert's per-entity Sync
+	# button). Document Intake's Approve Items keeps the guard: the Stock Manager enters a
+	# Proposed Item Code, and accounting_intake.review checks every line first. `validate`
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
 		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",

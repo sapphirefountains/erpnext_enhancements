@@ -117,8 +117,10 @@ the new-items target at 100% on 2026-09-24 (TASK-2026-02238). The second audits 
 catalogue and then keeps the new rows (`restrict_to`), so a new Item named like an old one
 still counts as a collision. It is not published until the first such Item exists, since
 `add()` drops `None`. It reuses the backlog figure's audit but has its own `try`, so its
-failure cannot take the backlog figure or the Product department with it. No KPI Target row
-ships for it: targets are site data.
+failure cannot take the backlog figure or the Product department with it. Its 100% KPI Target
+is seeded by `patches/seed_inventory_kpi_targets` (v1.532.0), with the Operations inventory
+targets Nik approved on 2026-09-24: store runs 4, below reorder 5, out of stock 0, counted 100%,
+placeholder-cost lines 0, unpriced PO lines 0. Insert-only, so an edited row wins.
 
 ## Marketing spend and value-stream reporting (WP-4, v1.243.0)
 

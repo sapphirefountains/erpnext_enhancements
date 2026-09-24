@@ -19,6 +19,18 @@ items until each ruling lands. The two chosen findings need no ruling to be righ
 decides it; nothing here makes a naming judgement.
 
 --------------------------------------------------------------------------------------
+Not before the policy takes effect
+--------------------------------------------------------------------------------------
+
+The refusal starts on :data:`item_naming_rules.NAMING_GO_LIVE`, POL-0602's effective date,
+and not on the day this deploys. The policy is what a person who is refused gets pointed
+at, and the naming conventions themselves were still being finalized the week the guard
+shipped. The new-items KPI counts from the same date, so the days in which a new Item can
+still be saved with its code for a name are exactly the days the KPI does not measure.
+Compared against ``nowdate()``, which is site-local, like the ``Item.creation`` stamps the
+KPI reads.
+
+--------------------------------------------------------------------------------------
 Only a person at a screen is refused
 --------------------------------------------------------------------------------------
 
@@ -27,14 +39,22 @@ patch, test run or setup wizard. The reason is who can act on the message. A per
 an Item in the Desk, through the REST API or through an MCP tool can read "rename it" and
 rename it. A background job cannot: the QuickBooks sync creates Items from QuickBooks
 records on the scheduler, and a refusal there parks the record for manual review with
-nobody told why. The flags cover the bulk paths that run inside a request (Data Import sets
-``in_import``); the request check covers every job.
+nobody told why. Data Import normally runs as a background job, so the request check
+already skips it; the ``in_import`` flag covers the times it runs inline (developer mode,
+tests). The request check covers every other job.
 
-A caller that creates Items **inside** a request, from a name it generated from the code,
-sets ``doc.flags.ignore_naming_guard`` — the configured-product Item in
-``product_configurator.erp_integration`` and the QuickBooks upsert (whose per-entity Sync
-button runs inline) do. A caller where a person approves a new Item keeps the guard:
-``accounting_intake.review`` is the one, and says so where it inserts.
+A caller that creates Items **inside** a request, where the person at the screen cannot
+choose the code or the name, sets ``doc.flags.ignore_naming_guard`` — the configured-product
+Item in ``product_configurator.erp_integration`` and the QuickBooks upsert (whose per-entity
+Sync button runs inline) do. Document Intake's Approve Items keeps the guard, because the
+Stock Manager enters the code there; ``accounting_intake.review`` checks the two findings
+itself first, so a refusal names the intake line rather than an Item form nobody opened.
+
+**Variants are skipped.** ERPNext derives a variant's code and name from its template
+(``erpnext.controllers.item_variant``): a manufacturer variant copies no name at all, so
+its name becomes its code, and an attribute variant's name is the template's name plus an
+abbreviation. The person pressing *Make Variants* chose neither, and the template they
+came from is what the naming rules govern.
 
 Only ``is_new()``. An existing Item is never refused by this module, whatever its name —
 the catalogue has hundreds of records that predate the SOP, and refusing an edit to one of
@@ -45,14 +65,15 @@ import html
 
 import frappe
 from frappe import _
+from frappe.utils import nowdate
 
 from erpnext_enhancements.inventory_enhancements import item_naming_rules as rules
 
 #: ``frappe.flags`` that mean the save is part of a bulk or system operation rather than a
-#: person creating one Item. Data Import runs in a request and sets ``in_import``.
+#: person creating one Item. Data Import sets ``in_import``; it matters on the rare inline run.
 SKIP_FLAGS = ("in_import", "in_migrate", "in_install", "in_patch", "in_test", "in_setup_wizard")
 
-#: Set on an Item's ``flags`` by an in-request caller that generates the name from the code.
+#: Set on an Item's ``flags`` by an in-request caller whose user cannot choose the code or name.
 IGNORE_FLAG = "ignore_naming_guard"
 
 
@@ -81,10 +102,19 @@ def should_check(doc):
 		return False
 	if getattr(getattr(doc, "flags", None), IGNORE_FLAG, None):
 		return False
+	if doc.get("variant_of"):
+		return False
+	if not in_force():
+		return False
 	flags = frappe.flags
 	if any(getattr(flags, name, None) for name in SKIP_FLAGS):
 		return False
 	return bool(getattr(frappe.local, "request", None))
+
+
+def in_force(today=None):
+	"""True on and after :data:`item_naming_rules.NAMING_GO_LIVE`. ISO dates compare as text."""
+	return str(today or nowdate()) >= rules.NAMING_GO_LIVE
 
 
 def refusal_message(code, findings):
@@ -94,32 +124,39 @@ def refusal_message(code, findings):
 	otherwise a person who has just been refused reasonably assumes the whole naming
 	checklist is now enforced, and starts fixing findings that do not matter to the save.
 	"""
-	safe_code = html.escape(code)
-	parts = []
-	for finding in findings or ():
-		if finding.get("code") == rules.DUPLICATE_CODE_NORMALISED:
-			matches = ", ".join(f"<b>{html.escape(str(m))}</b>" for m in finding.get("matches") or ())
-			parts.append(
-				_(
-					"Item Code <b>{0}</b> is the same as {1} once capitals, spaces and punctuation "
-					"are ignored. If it is the same part, use that Item instead of creating a second "
-					"one. If it really is a different part, give it a code that tells the two apart."
-				).format(safe_code, matches)
-			)
-		elif finding.get("code") == rules.NAME_EQUALS_CODE:
-			parts.append(
-				_(
-					"The Item Name is just the Item Code (<b>{0}</b>), so nobody searching by "
-					"description will find this Item. Give it a descriptive name in the Item Naming "
-					"Schema's order: CATEGORY, SUB-CATEGORY, KEY FEATURE, MATERIAL, SIZE, RATING, "
-					"PACKAGING, for example <i>ELBOW, 90, SOC, PVC, 2&quot; SCH80</i>. A blank Item "
-					"Name counts too, because ERPNext copies the Item Code into it."
-				).format(safe_code)
-			)
+	parts = [p for p in (finding_message(code, finding) for finding in findings or ()) if p]
 	parts.append(
 		_(
-			"Only these two naming problems stop a new Item being saved (POL-0602). "
-			"<b>Naming → Check naming</b> on the Item form lists everything else, as advice."
+			"Only two naming problems stop a new Item being saved (POL-0602). Once it is saved, "
+			"<b>Naming → Check naming</b> on the Item form lists the rest, as advice."
 		)
 	)
 	return "<br><br>".join(parts)
+
+
+def finding_message(code, finding):
+	"""One refusal paragraph, or "" for a finding this module does not refuse.
+
+	Shared with ``accounting_intake.review``, which reports the same two findings against an
+	intake line before it tries the insert.
+	"""
+	safe_code = html.escape(code)
+	if finding.get("code") == rules.DUPLICATE_CODE_NORMALISED:
+		matches = ", ".join(f"<b>{html.escape(str(m))}</b>" for m in finding.get("matches") or ())
+		return _(
+			"Item Code <b>{0}</b> is the same as {1} once capitals, spaces and punctuation "
+			"are ignored. If it is the same part, use that Item instead of creating a second "
+			"one. If it really is a different part, give it a code that tells the two apart."
+		).format(safe_code, matches)
+	if finding.get("code") == rules.NAME_EQUALS_CODE:
+		return _(
+			"The Item Name is just the Item Code (<b>{0}</b>) once capitals, spaces and "
+			"punctuation are ignored, so nobody searching by description will find this Item. "
+			"Give it a descriptive name in the Item Naming Schema's order: CATEGORY, "
+			"SUB-CATEGORY, KEY FEATURE, MATERIAL, SIZE, RATING, PACKAGING, for example "
+			"<i>ELBOW, 90, SOC, PVC, 2&quot; SCH80</i>. A blank Item Name counts too, because "
+			"ERPNext copies the Item Code into it. If the name is already a proper description, "
+			"the code is what needs changing: use the vendor's part number, or the right CON-, "
+			"PDT- or SRV- code, rather than a code spelled from the name."
+		).format(safe_code)
+	return ""

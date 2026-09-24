@@ -91,7 +91,7 @@ def _message(result):
 	notes = [
 		_("Sorted worst-first: STOP before FIX before NOTE. A STOP is a record that should not "
 		  "be transacted against; a FIX is one that is merely untidy. None of this blocks a save of "
-		  "an existing Item; a new Item is refused only for a duplicate code or a name that is "
+		  "an existing Item; from 2026-10-01 a new Item is refused only for a duplicate code or a name that is "
 		  "just its code."),
 	]
 
