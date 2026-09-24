@@ -1155,7 +1155,9 @@ jobs:
       # test_kpi_departments: the seven places a KPI department is named must agree
       # (v1.530.0, when Service split off Operations). All three are ast/JSON only.
       # test_kpi_metrics also pins combine_store_runs (v1.535.0): a store run recorded on the
-      # Stock Scan page and its card charge (dated up to 3 days later) count as ONE trip.
+      # Stock Scan page and its card charge (dated up to 3 days later, same amount) count as ONE
+      # trip, a charge of another amount is never taken, and journal_store_charges counts a
+      # Journal Entry's credits to a store, never a payment.
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants
         run: >-
           python -m unittest
@@ -2154,7 +2156,9 @@ jobs:
       # v1.535.0 adds "Bought on a store run": the one Purchase Receipt builder (rate and
       # price-list rate, stock UOM, no project, no tax), the quick Item through the naming guard,
       # the receipt-photo ownership check, the patch's fields = the code's, the boot that never
-      # raises, and the undo/review limits a store run has that other saves do not.
+      # raises, and the undo/review limits a store run has that other saves do not; a run's
+      # header is its first Posted line (executed against an in-memory log), a stale page is
+      # told to reload, and only Receive on PO takes a non-stock item besides the run itself.
       - name: Stock Scan endpoint surface, voucher shape, shell, settings and desk tile (bench-free)
         run: >-
           python -m unittest
@@ -2342,7 +2346,8 @@ jobs:
       # later identical save would post nothing), saveKey mints a new one only when what the
       # save would post changes. Plain node, no npm install. v1.535.0: store runs on the real
       # app.js -- the run id minted once per run, upload() mapping a 403 to "signed out", open
-      # orders offered before "Bought on a store run", the quick item's live name check.
+      # orders offered before "Bought on a store run", the quick item's live name check, the
+      # non-stock and quick-item doors joining an open run, and "Check the receipt total".
       - name: Stock Scan client logic (bench-free, node)
         run: node scripts/test_stock_scan_client.mjs
       # Google address components -> Frappe Address fields. Every rule in that

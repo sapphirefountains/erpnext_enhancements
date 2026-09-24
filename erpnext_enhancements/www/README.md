@@ -192,9 +192,17 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   [`inventory_enhancements/README.md`](../inventory_enhancements/README.md#bought-on-a-store-run-v15350)).
   `boot.store_run` carries the stores (one per `store_key`, the newest usable Supplier), the
   reasons, the quick-item groups and units, two permissions and the runs still open today; it is
-  `None` where store runs are not set up, and then the page is exactly as before. The **run
+  `None` where store runs are not set up, and then the page is exactly as before. `boot.now` is the
+  site's clock: another person's run is offered only while its last line is under three hours old
+  by it (`logic.runOffered`), never by the phone's own clock or zone. The non-stock item card's
+  *Bought it on a store run* and search's *Not in ERPNext?* ask *Which store run?* when one is open
+  (the person's current run first, then *A different store run*), so a trip is one run. A run whose
+  every line was undone reopens as a new run's header, prefilled to correct; *Finish* and a joined
+  run's header say "Check the receipt total" when it is well above the lines plus tax. Each line
+  carries the page's own day (`page_today`), so a page left open overnight is told to reload. The **run
   sheet** is a full-height sheet like Move: a new run's header (store, today or yesterday, the
-  receipt photo, the total with tax, the receipt number), then the line (item or quick item, how
+  receipt photo, the total with tax, the receipt number — drawn once; a store or day tap redraws
+  only its own buttons, and a photo landing only its own field), then the line (item or quick item, how
   many, price each before tax, why, the job or "No job: safety or shop"). The **receipt photo** is
   shrunk on the phone (`dom.shrinkPhoto`, 1,600 px JPEG) and sent at once through
   `transport.upload` (XHR for progress; a 403 there can only be a lapsed session and says so);

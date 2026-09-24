@@ -486,13 +486,24 @@ def purchase_date(bought, today):
 def run_is_open(started_on, today):
 	"""Whether a run started (first line recorded) on ``started_on`` still takes lines.
 
-	For the whole day it was started, and for anyone. Not "six hours after its last line":
-	a crew that stops for lunch between the counter and the shop, or two people who shopped
-	together and record their halves, would otherwise each open a second run for one trip,
-	and the KPI would count the trip twice.
+	For the whole day it was started, and for anyone -- and on no later day, for anyone, its
+	starter included. Not "six hours after its last line": a crew that stops for lunch between
+	the counter and the shop, or two people who shopped together and record their halves, would
+	otherwise each open a second run for one trip, and the KPI would count the trip twice. (The
+	page *offers* another person's run only while its last line is recent, ``logic.runOffered``,
+	so a second trip to the same store later that day is not added to the first by a tap; the
+	server still takes a line for it all day.)
 	"""
 	start, day = _as_date(started_on), _as_date(today)
 	return bool(start and day and start == day)
+
+
+def page_is_stale(page_today, today):
+	"""True when the page's own day (``boot.today``, sent with a store-run line) is not the
+	site's today: the page was left open overnight, and its *Today* and *Yesterday* are a day
+	out. An unreadable page day is not called stale -- the other rules still decide."""
+	page, day = _as_date(page_today), _as_date(today)
+	return bool(page and day and page != day)
 
 
 def recorded_late(bought_on, posted_on):

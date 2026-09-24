@@ -51,8 +51,13 @@
  *     "signed out". On the real app.js: the door appears only with `boot.store_run`, "Where did
  *     these come from?" lists open orders FIRST, a filled sheet posts the line the server
  *     expects, the quick item's live check draws its neighbours and "Use this one" switches the
- *     line, an order at the chosen store is received on the order instead, "Only for this job"
- *     offers the Take, and Finish ends the bar.
+ *     line, an order at the chosen store is received on the order instead (a non-stock item's
+ *     too), "Only for this job" offers the Take, and Finish ends the bar. From the review: the
+ *     non-stock door and "Not in ERPNext?" join an open run (the same line of the same run id),
+ *     another person's run is offered only while its last line is under three hours old, a
+ *     receipt total well above the lines is flagged at Finish and on the joined header, a run
+ *     whose every line was undone reopens with its header to correct, a page left open overnight
+ *     is told to reload, and a photo landing redraws only its own field.
  *   - **Nothing opens or moves under the report form.** The real `app.js`, mounted on a small
  *     fake DOM with a fake recorder whose form arrives only when told (a slow first download):
  *     tapped, every door — Scan, Search, the job chip, a Recent row, Undo, a scanner gun, How
@@ -718,13 +723,16 @@ async function appStoreRuns() {
 		can_record: true,
 		open_runs: [samRun],
 	};
-	const boot = { user: "tina@example.com", today, recent: [], settings: {}, initial: null, decoder_url: "/jsqr.js", csrf_token: "tok" };
+	// The site's clock at boot: Sam's last line (10:42) is 18 minutes old, so his run is offered.
+	const boot = { user: "tina@example.com", today, now: `${today} 11:00:00`, recent: [], settings: {}, initial: null, decoder_url: "/jsqr.js", csrf_token: "tok" };
 	const item = {
 		item_code: "406-020", item_name: "ELBOW, 90, SOC, PVC, 2 IN", warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", stock_uom: "Unit",
 		on_hand: 5, available: 5, open_orders: [], elsewhere: [], is_stock_item: 1, store_run_ok: true, reorder_level: 0, whole_number: true,
 	};
 	const realFetch = globalThis.fetch;
 	const posted = [];
+	// The server's refusal of a line from a page left open overnight (api.stock_scan._stale_page).
+	let staleNext = false;
 	globalThis.window = page.win;
 	globalThis.document = page.doc;
 	page.win.ee_capture = rec;
@@ -733,6 +741,14 @@ async function appStoreRuns() {
 		const body = JSON.parse((init && init.body) || "{}");
 		posted.push({ url: String(url), body });
 		let message = null;
+		if (String(url).endsWith(".store_run") && staleNext) {
+			staleNext = false;
+			const said = "This page has been open since 09-23-2026, so its Today is out of date. Reload the page, then record the line again.";
+			return new Response(JSON.stringify({ exc_type: "StalePageError", _server_messages: serverMessages({ message: said, raise_exception: 1 }) }), {
+				status: 417,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
 		if (String(url).endsWith(".check_new_item")) {
 			message = {
 				checked: true,
@@ -755,6 +771,14 @@ async function appStoreRuns() {
 				log: { name: "SCAN-2026-00002", action: "Take", status: "Posted", item_code: body.item_code, item_name: item.item_name, qty: body.qty, stock_uom: "Unit", warehouse: body.warehouse, warehouse_name: "Bin A1", project: body.project, can_undo: 1 },
 				item: { ...item, on_hand: 5, available: 5 },
 				message: "Took it.",
+				repeated: false,
+				run: null,
+			};
+		} else if (String(url).endsWith(".add")) {
+			message = {
+				log: { name: "SCAN-2026-00003", action: "Receive", status: "Posted", item_code: body.item_code, item_name: "TOOL", qty: body.qty, stock_uom: "Unit", warehouse: body.warehouse, warehouse_name: "Bin A1", purchase_order: "PO-0091", can_undo: 1 },
+				item: null,
+				message: "Received 1 Unit of TOOL on PO-0091. It is not a stock item, so no stock was added.",
 				repeated: false,
 				run: null,
 			};
@@ -819,6 +843,18 @@ async function appStoreRuns() {
 		);
 		U.closeAllSheets();
 		await settle();
+		// Another person's run is offered only while its last line is under three hours old: at
+		// 14:00 Sam's 10:42 line is past it (Finish is on his phone only, so this is what keeps a
+		// second trip that afternoon off his morning run).
+		const later = mountApp({ store_run: storeRun, now: `${today} 14:00:00` });
+		later.showItem({ ...item }, {});
+		later.nudge(1);
+		later.save();
+		truthy("store run on: 3 h after its last line another person's run is no longer offered", !/Add to Sam's/.test(sheetText()) && /Bought on a store run/.test(sheetText()), sheetText());
+		U.closeAllSheets();
+		await settle();
+		const noClock = mountApp({ store_run: storeRun, now: undefined });
+		check("store run on: no site clock, no other person's run offered (a new run is the safe side)", noClock.offeredRuns().map((r) => r.run), []);
 
 		// 3. A new run's id is minted once and outlives the sheet.
 		on.showItem({ ...item }, {});
@@ -847,6 +883,7 @@ async function appStoreRuns() {
 			[minted, "Home Depot", "Bin A1 - SF", 2, 4.97, "Not something we stock", "/private/files/receipt.jpg", "today", 10.53, 1, "406-020", undefined]
 		);
 		truthy("save: with a client_ref and no page-only keys", typeof sent.client_ref === "string" && !("action" in sent), JSON.stringify(sent));
+		check("save: sends the page's own day, so a page left open overnight can be told to reload", sent.page_today, today);
 		check("save: the sheet closed and the draft is spent", [U.sheetDepth(), on.newRun], [0, null]);
 		check("save: the run bar shows the run", [on.runBar.hidden, /Home Depot run · 1 item/.test(on.runBar.textContent)], [false, true]);
 		check("save: the run is this phone's current one", on.runState.current, minted);
@@ -861,8 +898,136 @@ async function appStoreRuns() {
 		await settle();
 
 		// 6. A non-stock item: its own door on the item card.
-		on.showItem({ ...item, is_stock_item: 0, blocked: "Not tracked in inventory.", store_run_ok: true }, {});
+		const tool = { ...item, item_code: "TOOL-1", item_name: "TOOL, SHARKBITE, DISCONNECT", is_stock_item: 0, blocked: "Not tracked in inventory.", store_run_ok: true, reorder_level: 0 };
+		on.showItem({ ...tool }, {});
 		truthy("non-stock item: 'Bought it on a store run' on the card", /Bought it on a store run/.test(on.main.textContent), on.main.textContent);
+		const inMain = (test) => {
+			for (const n of on.main.walk()) if (test(n)) return n;
+			return null;
+		};
+		const nonStockDoor = () => inMain((n) => n.classList && n.classList.contains("ee-ss-nonstock-run"));
+		const rowStarting = (text) => inSheets((n) => n.tagName === "BUTTON" && n.textContent.startsWith(text));
+		const lastStoreRun = () => posted.filter((p) => p.url.endsWith(".store_run")).map((p) => p.body).slice(-1)[0] || {};
+		const priceBox = () => inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Price each, before tax, as on the receipt");
+		const typeInto = (node, value) => {
+			node.value = value;
+			for (const fn of (node.listeners.input || []).slice()) fn({ type: "input", target: node });
+		};
+
+		// 6a. With a run open, the non-stock door joins it: "Add to your Home Depot run" first,
+		// "A different store run" below (the choice + → Save offers), and the line posts on the run.
+		nonStockDoor().click();
+		const which = sheetText();
+		truthy(
+			"non-stock door with a run open: asks which run, this phone's run first, 'A different store run' last",
+			/Which store run\?/.test(which) && which.indexOf("Add to your Home Depot run") !== -1 && which.indexOf("Add to your Home Depot run") < which.indexOf("A different store run"),
+			which
+		);
+		rowStarting("Add to your Home Depot run").click();
+		await settle();
+		truthy("non-stock door: the joined run's sheet, its header on one line", /Add to the Home Depot run/.test(sheetText()) && /Home Depot · today · receipt ✓/.test(sheetText()), sheetText());
+		priceBox().value = "12.97";
+		buttonSaying("No job: safety or shop").click();
+		buttonSaying("Save to the run").click();
+		await settle();
+		check("non-stock door: the line posts on the SAME run", [lastStoreRun().run, lastStoreRun().item_code, lastStoreRun().receipt_total], [minted, "TOOL-1", 10.53]);
+
+		// 6b. The quick-item door ("Not in ERPNext?") joins it the same way.
+		on.openQuickItem({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", name: "HOSE CLAMP" });
+		truthy("quick-item door with a run open: asks which run first", /Which store run\?/.test(sheetText()) && /A different store run/.test(sheetText()), sheetText());
+		rowStarting("Add to your Home Depot run").click();
+		await settle();
+		truthy("quick-item door: the joined run's sheet with the quick-item form", /Add to the Home Depot run/.test(sheetText()) && /A part not in ERPNext/.test(sheetText()), sheetText());
+		typeInto(inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Part or model number"), "HC-12");
+		priceBox().value = "2.49";
+		buttonSaying("No job: safety or shop").click();
+		buttonSaying("Save to the run").click();
+		await settle();
+		check("quick-item door: the new item posts on the SAME run", [lastStoreRun().run, lastStoreRun().new_item && lastStoreRun().new_item.item_code], [minted, "HC-12"]);
+		U.closeAllSheets();
+		await settle();
+
+		// 6c. A non-stock item on order at the chosen store: "Receive on PO-…" receives it on the
+		// order (the server checks that branch with the store-run item rule, so a non-stock line
+		// is taken), rather than recording the planned pickup as a store run.
+		on.showItem({ ...tool, open_orders: [order] }, {});
+		nonStockDoor().click();
+		rowStarting("A different store run").click();
+		await settle();
+		buttonSaying("Home Depot").click();
+		truthy("non-stock item on order: the order at Home Depot is pointed out", /PO-0091 has 3 Unit of these on order from Home Depot/.test(sheetText()), sheetText());
+		buttonSaying("Receive on PO-0091").click();
+		await settle();
+		const receivedTool = posted.filter((p) => p.url.endsWith(".add")).map((p) => p.body).slice(-1)[0] || {};
+		check("non-stock item on order: received against the order line", [receivedTool.item_code, receivedTool.purchase_order_item, receivedTool.qty], ["TOOL-1", "poi-1", 1]);
+		U.closeAllSheets();
+		await settle();
+
+		// 6d. A receipt total well above the lines plus tax is flagged, on the joined header and at
+		// Finish, with the way to start again.
+		const typo = { ...on.currentRun(), lines: 2, amount: 20, receipt_total: 234.1 };
+		on.noteRun(typo);
+		on.showItem({ ...item }, {});
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1, run: on.currentRun() });
+		truthy(
+			"joined header: 'Check the receipt total' with the lines' tax band and how to start again",
+			/Check the receipt total: \$234\.10 with tax/.test(sheetText()) && /about \$21\.20–\$21\.80 with tax/.test(sheetText()) && /undo the run's lines/.test(sheetText()),
+			sheetText()
+		);
+		U.closeAllSheets();
+		await settle();
+		on.finishRun();
+		truthy(
+			"finish: 'Check the receipt total', the band, Keep adding, and undo to start again",
+			/Check the receipt total\. \$234\.10 is more than these lines with tax/.test(sheetText()) && /about \$21\.20–\$21\.80/.test(sheetText()) && /tap Keep adding/.test(sheetText()) && /record them again/.test(sheetText()),
+			sheetText()
+		);
+		buttonSaying("Keep adding").click();
+		await settle();
+		check("finish: Keep adding keeps the run", on.runState.current, minted);
+		const fine = { ...typo, amount: 20, receipt_total: 21.5 };
+		on.noteRun(fine);
+		on.finishRun();
+		truthy("finish: a total within the lines plus tax is not flagged", !/Check the receipt total/.test(sheetText()) && /The difference, \$1\.50/.test(sheetText()), sheetText());
+		buttonSaying("Keep adding").click();
+		await settle();
+
+		// 6e. Every line undone: the run reopens as a new run's header, prefilled to correct, and
+		// the corrected line posts under the same run id (the server takes the header from the
+		// first Posted line, so with none left this line's header is the run's).
+		on.noteRun({ ...typo, lines: 0, amount: 0 });
+		truthy("an emptied run: the bar says so", /Every line undone/.test(on.runBar.textContent), on.runBar.textContent);
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1, run: on.currentRun() });
+		const totalBox = inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Receipt total, tax included");
+		truthy(
+			"an emptied run reopens as a header to correct, prefilled",
+			/Start the Home Depot run again/.test(sheetText()) && /Every line of this run was undone/.test(sheetText()) && !!totalBox && totalBox.value === "234.1",
+			sheetText()
+		);
+		typeInto(totalBox, "23.41");
+		priceBox().value = "4.97";
+		buttonSaying("No job: safety or shop").click();
+		buttonSaying("Save to the run").click();
+		await settle();
+		check(
+			"an emptied run: the corrected header posts under the same run id, the old photo kept",
+			[lastStoreRun().run, lastStoreRun().supplier, lastStoreRun().receipt_total, lastStoreRun().receipt_photo, lastStoreRun().bought],
+			[minted, "Home Depot", 23.41, typo.receipt_photo, "today"]
+		);
+		check("an emptied run: its draft is spent once the line is in", on.newRun, null);
+
+		// 6f. A page left open overnight: the server refuses the line, and the page says to reload,
+		// with the Reload button, instead of a run-rule sentence that does not fit.
+		on.openStoreRun({ v: on.view, item: on.view.item, qty: 1, run: on.currentRun() });
+		priceBox().value = "4.97";
+		buttonSaying("No job: safety or shop").click();
+		staleNext = true;
+		buttonSaying("Save to the run").click();
+		await settle();
+		truthy("stale page: the refusal says to reload the page", /Reload the page/.test(sheetText()) && U.sheetDepth() === 1, sheetText());
+		truthy("stale page: ... with a Reload button", !!inSheets((n) => n.tagName === "BUTTON" && n.textContent.trim() === "Reload" && !n.hidden));
+		U.closeAllSheets();
+		await settle();
 
 		// 7. Finish: the paper receipt goes to Accounting; Done ends the bar.
 		on.finishRun();
@@ -877,6 +1042,10 @@ async function appStoreRuns() {
 		};
 		on.showLocation({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", items: [] }, {});
 		on.openQuickItem({ warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", name: "SHARKBITE COUPLING" });
+		// Sam's run is still open and recent, so the door asks first; this is a trip of its own.
+		truthy("quick item: Sam's open run offered, and a different run", /Add to Sam's Home Depot run/.test(sheetText()) && /A different store run/.test(sheetText()), sheetText());
+		rowStarting("A different store run").click();
+		await settle();
 		truthy("quick item: the form asks for the part number as printed, the group and the unit", ["Part or model number, exactly as printed", "Group", "Unit", "Fixed once saved"].every((t) => sheetText().includes(t)), sheetText());
 		const codeBox = inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Part or model number");
 		codeBox.value = "U-008LF";
@@ -901,7 +1070,11 @@ async function appStoreRuns() {
 		await settle();
 
 		// 7c. The receipt photo: picked, shrunk (no canvas in node: sent as is) and sent at once.
+		// The upload is held open here, the way a warehouse's signal holds it, to show that taps on
+		// the store and the day leave its progress alone, and that when it lands only the photo
+		// field is redrawn -- a receipt total being typed keeps its field (and the phone its keyboard).
 		const realXhr = globalThis.XMLHttpRequest;
+		const held = [];
 		globalThis.XMLHttpRequest = class {
 			constructor() {
 				this.upload = {};
@@ -909,7 +1082,7 @@ async function appStoreRuns() {
 			open() {}
 			setRequestHeader() {}
 			send() {
-				setImmediate(() => {
+				held.push(() => {
 					this.status = 200;
 					this.responseText = JSON.stringify({ message: { name: "f1", file_url: "/private/files/receipt-new.jpg" } });
 					this.onload();
@@ -921,16 +1094,32 @@ async function appStoreRuns() {
 			on.openStoreRun({ v: on.view, item: on.view.item, qty: 1 });
 			const fileBox = inSheets((n) => n.tagName === "INPUT" && n.type === "file");
 			check("photo: a file input for images, with no capture (the photo library is allowed)", fileBox && [fileBox.getAttribute("accept"), fileBox.hasAttribute("capture")], ["image/*", false]);
+			const typing = inSheets((n) => n.tagName === "INPUT" && n.getAttribute("aria-label") === "Receipt total, tax included");
+			typing.value = "5.4";
+			fire(typing, "input");
 			fileBox.files = [new Blob(["jpeg"], { type: "image/jpeg" })];
 			fire(fileBox, "change");
 			await settle();
+			const meter = inSheets((n) => n.classList && n.classList.contains("ee-ss-upload"));
+			truthy("photo: while it goes, the bar and 'Sending the photo…' show", !!meter && !meter.hidden && /Sending the photo…/.test(sheetText()), sheetText());
+			buttonSaying("Lowe's").click();
+			buttonSaying("Yesterday").click();
+			truthy("photo: a store or day tap mid-upload leaves the bar and its status on screen", meter.isConnected && !meter.hidden && /Sending the photo…/.test(sheetText()), sheetText());
+			buttonSaying("Today").click();
+			for (const release of held.splice(0)) release();
+			await settle();
 			check("photo: sent at once and kept on the run's draft", on.newRun && on.newRun.photo, "/private/files/receipt-new.jpg");
 			truthy("photo: the sheet shows it is in", /Receipt photo ✓/.test(sheetText()), sheetText());
+			check(
+				"photo: only the photo field was redrawn -- the total field is the same node, still holding what was typed",
+				[typing.isConnected, typing.value, on.newRun.receipt_total, on.newRun.supplier],
+				[true, "5.4", "5.4", "Lowe's"]
+			);
 		} finally {
 			globalThis.XMLHttpRequest = realXhr;
 		}
 
-		// 7d. Only for this job, saved: "Take these to the job now?", Take preselected. The header
+		// 7d. Only for this job, saved: "Take 1 Unit to <job> now?", Take preselected. The header
 		// typed so far (store, total, photo) is the run's draft and survives the sheet closing.
 		on.newRun.receipt_total = "5.40";
 		buttonSaying("Lowe's").click();
@@ -945,7 +1134,7 @@ async function appStoreRuns() {
 		await settle();
 		const second = posted.filter((p) => p.url.endsWith(".store_run")).map((p) => p.body).slice(-1)[0] || {};
 		check("only for this job: posts the job, not 'no job'", [second.reason, second.project, second.no_job, second.supplier], ["Only for this job", "PRJ-00598", 0, "Lowe's"]);
-		truthy("only for this job: then asks to take them to the job now", /Take these 1 to City Hall Plaza Fountain now\?/.test(sheetText()), sheetText());
+		truthy("only for this job: then asks to take them to the job now, in the item's unit", /Take 1 Unit to City Hall Plaza Fountain now\?/.test(sheetText()), sheetText());
 		inSheets((n) => n.tagName === "BUTTON" && /Take them now/.test(n.textContent)).click();
 		await settle();
 		const took = posted.filter((p) => p.url.endsWith(".take")).map((p) => p.body).slice(-1)[0] || {};
@@ -1004,6 +1193,9 @@ async function appStoreRuns() {
 		// "Bought on a store run" (v1.535.0).
 		"mintRunId", "runIsOpen", "runSummary", "validPrice", "validTotal", "money", "suggestedReason", "reasonWarning",
 		"ordersAtStore", "boughtLabel", "storeKey",
+		// The v1.535.0 review fixes: other people's runs only while recent, an emptied run reopened,
+		// and "Check the receipt total".
+		"siteTimeMs", "runOffered", "OTHERS_RUN_HOURS", "reopenedDraft", "receiptCheck", "RECEIPT_CHECK_ABOVE", "TAX_BAND",
 	]);
 	exported(T, "transport.js", ["M", "call", "upload", "StockScanCallError", "errorMessage", "isSignedOut", "SIGNED_OUT"]);
 	exported(N, "nav.js", ["NavHistory", "MAX_ENTRIES", "TRAVERSE_TIMEOUT_MS"]);
@@ -1254,6 +1446,29 @@ async function appStoreRuns() {
 	check("runSummary", L.runSummary(openRun), "Home Depot run · 2 items · $14.91 before tax");
 	check("runSummary: one item, nothing priced yet", L.runSummary({ supplier_name: "Lowe's", lines: 1, amount: 0 }), "Lowe's run · 1 item");
 	check("boughtLabel", [L.boughtLabel("2026-09-24", "2026-09-24"), L.boughtLabel("2026-09-30", "2026-10-01"), L.boughtLabel("2026-09-20", "2026-09-24")], ["today", "yesterday", "Sep 20"]);
+	// Which open runs the page offers: the person's own always; another person's only while its
+	// last line is under three hours old by the SITE's clock (Finish lives on the starter's phone).
+	const at = (text) => L.siteTimeMs(text);
+	check("siteTimeMs: a server stamp, microseconds and all; garbage is null", [at("2026-09-24 10:42:00.123456") - at("2026-09-24 10:41:00"), at("soon"), at(null)], [60000, null, null]);
+	const sams = { run: "sr-kf3z9a1-8qz0x4m2ab", started_by: "sam@example.com", lines: 2, last_at: "2026-09-24 10:42:00" };
+	check("runOffered: another person's run 2 h 59 min after its last line", L.runOffered(sams, "tina@example.com", at("2026-09-24 13:41:00")), true);
+	check("runOffered: ... and not after 3 h", L.runOffered(sams, "tina@example.com", at("2026-09-24 13:43:00")), false);
+	check("runOffered: the person's own run, whatever the hour", L.runOffered({ ...sams, started_by: "tina@example.com" }, "tina@example.com", at("2026-09-24 23:00:00")), true);
+	check("runOffered: another person's emptied run (no line left) is not offered", L.runOffered({ ...sams, lines: 0 }, "tina@example.com", at("2026-09-24 10:45:00")), false);
+	check("runOffered: no site clock, no other person's run", L.runOffered(sams, "tina@example.com", null), false);
+	check("OTHERS_RUN_HOURS is 3", L.OTHERS_RUN_HOURS, 3);
+	// An emptied run reopens as a new run's header, prefilled to correct, under the same id.
+	check(
+		"reopenedDraft: the old header, to correct, under the same run id",
+		L.reopenedDraft({ run: "sr-a1b2c3d4e5", supplier: "Home Depot", bought: "2026-09-23", receipt_photo: "/private/files/r.jpg", receipt_number: "H-1", receipt_total: 234.1 }, "2026-09-24"),
+		{ run: "sr-a1b2c3d4e5", supplier: "Home Depot", bought: "yesterday", photo: "/private/files/r.jpg", receipt_number: "H-1", receipt_total: "234.1", reopened: true }
+	);
+	check("reopenedDraft: bought today, nothing optional", L.reopenedDraft({ run: "sr-a1b2c3d4e5", supplier: "Lowe's", bought: "2026-09-24" }, "2026-09-24"), { run: "sr-a1b2c3d4e5", supplier: "Lowe's", bought: "today", photo: "", receipt_number: "", receipt_total: "", reopened: true });
+	// "Check the receipt total": more than 15% above the lines, with the lines plus 6-9% tax.
+	check("receiptCheck: 234.10 on $20 of lines is flagged, with the tax band", L.receiptCheck(234.1, 20), { low: 21.2, high: 21.8 });
+	check("receiptCheck: the lines plus tax are not", [L.receiptCheck(21.5, 20), L.receiptCheck(23.05, 20), L.receiptCheck(20, 20)], [null, null, null]);
+	truthy("receiptCheck: just past 15% is", L.receiptCheck(23.1, 20) !== null);
+	check("receiptCheck: nothing recorded yet, nothing to compare", [L.receiptCheck(50, 0), L.receiptCheck(null, 20), L.receiptCheck(50, undefined)], [null, null, null]);
 	check("validPrice: as on the receipt", [L.validPrice("4.97").rate, L.validPrice("$1,234.50").rate, L.validPrice(" 0.125 ").rate], [4.97, 1234.5, 0.125]);
 	for (const bad of ["", "   ", "abc", "0", "-4", "4.9.7", "4006381333931"]) {
 		truthy(`validPrice(${JSON.stringify(bad)}) is refused in words`, L.validPrice(bad).rate === null && /\w/.test(L.validPrice(bad).problem || ""));
@@ -2007,7 +2222,9 @@ async function appStoreRuns() {
 			};
 			const signedOut = await refusal(403, { exc_type: "PermissionError" });
 			check("upload(): a 403 is a lapsed session (every page user may upload), said as signed out", signedOut && [signedOut.status, signedOut.signedOut, signedOut.needsReload, signedOut.message], [401, true, true, T.SIGNED_OUT]);
-			const csrf = await refusal(400, { exc_type: "CSRFTokenError", _server_messages: serverMessages({ message: "Invalid Request", raise_exception: 1 }) });
+			const stale = new T.StockScanCallError("This page has been open since 09-23-2026. Reload the page.", 417, { exc_type: "StalePageError" });
+		check("StockScanCallError: a page left open overnight (StalePageError) needs a reload, and is not a sign-out", [stale.needsReload, stale.signedOut, stale.retryable], [true, false, false]);
+		const csrf = await refusal(400, { exc_type: "CSRFTokenError", _server_messages: serverMessages({ message: "Invalid Request", raise_exception: 1 }) });
 			check("upload(): a stale CSRF token says to reload", csrf && [csrf.needsReload, /reload/i.test(csrf.message)], [true, true]);
 			const tooBig = await refusal(417, { exc_type: "ValidationError", _server_messages: serverMessages({ message: "File size exceeded the maximum allowed size of 10.0 MB", raise_exception: 1 }) });
 			check("upload(): any other refusal is its own sentence, not a sign-out", tooBig && [tooBig.signedOut, /File size/.test(tooBig.message)], [false, true]);

@@ -315,12 +315,17 @@ def _store_run_rows(suppliers, since):
 	* **A submitted Purchase Invoice** from the store with no PO and no receipt behind any line.
 	  An invoice made from a store-run receipt has ``purchase_receipt`` set and is the same trip,
 	  so it is not a charge. Returns are out.
-	* **A submitted Journal Entry naming the store as a party**, on a line with no reference to
-	  an invoice, one per entry (the larger of its credit and debit to the store, so a
-	  pass-through entry is not doubled), and not a QuickBooks import. And **a submitted Payment
-	  Entry paying the store with no invoice reference**. After the cutover a card charge that
-	  skips the Purchase Invoice would otherwise leave the KPI, and the target could be met by
-	  not recording. A payment of an invoice carries its reference and is not counted again.
+	* **A submitted Journal Entry crediting the store's payable** -- a purchase booked as a Journal
+	  Entry -- not a QuickBooks import (those are the first arm). Only the credits count, one
+	  charge per entry (``metrics.journal_store_charges``): a debit to the store is a payment,
+	  and a bill plus its payment booked as two unlinked entries would otherwise count as two
+	  runs. After the cutover a card charge booked without a Purchase Invoice would otherwise
+	  leave the KPI, and the target could be met by not recording.
+
+	**Payment Entries are never charges**, allocated or not: a payment is money for a purchase
+	already booked (a Purchase Invoice or a Journal Entry credit), so counting one as well would
+	count the trip twice until someone reconciled the two -- and each nightly snapshot would keep
+	the doubled figure.
 
 	**Receipts** are what the Stock Scan page (or the Desk) recorded: submitted, non-return
 	Purchase Receipts from the store with no PO line, with the run id (``custom_store_run``, or
@@ -374,7 +379,9 @@ def _store_run_rows(suppliers, since):
 		as_dict=True,
 	)
 
-	# A QuickBooks import is already counted above, whatever becomes of its party lines.
+	# Never a QuickBooks import: its card purchases are the first arm, whatever becomes of their
+	# lines at cutover, and its Bill/BillPayment pairs at store vendors were never runs (the
+	# baseline of 231 counts neither).
 	not_qbo = (
 		"""
 			and not exists (
@@ -385,40 +392,24 @@ def _store_run_rows(suppliers, since):
 		if _exists("QuickBooks Sync Mapping")
 		else ""
 	)
-	charges += frappe.db.sql(
-		f"""
-		select jea.party as supplier, je.posting_date as day,
-			greatest(sum(jea.credit), sum(jea.debit)) as amount
-		from `tabJournal Entry` je
-		join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
-		where je.docstatus = 1 and je.posting_date >= %(early)s
-			and coalesce(je.is_opening, 'No') <> 'Yes'
-			and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
-			and not exists (
-				select 1 from `tabJournal Entry Account` r
-				where r.parent = je.name and r.party_type = 'Supplier' and r.party = jea.party
-					and coalesce(r.reference_type, '') <> ''
-			)
-			{not_qbo}
-		group by je.name, jea.party, je.posting_date
-		""",
-		params,
-		as_dict=True,
-	)
-
-	charges += frappe.db.sql(
-		"""
-		select pe.party as supplier, pe.posting_date as day, pe.base_paid_amount as amount
-		from `tabPayment Entry` pe
-		where pe.docstatus = 1 and pe.payment_type = 'Pay' and pe.party_type = 'Supplier'
-			and pe.party in %(suppliers)s and pe.posting_date >= %(early)s
-			and not exists (
-				select 1 from `tabPayment Entry Reference` r
-				where r.parent = pe.name and r.parenttype = 'Payment Entry'
-			)
-		""",
-		params,
-		as_dict=True,
+	# One row per party line; metrics.journal_store_charges keeps the unreferenced credits only
+	# (a debit to the store is a payment), so the rule is tested bench-free.
+	charges += metrics.journal_store_charges(
+		frappe.db.sql(
+			f"""
+			select je.name as entry, jea.party as supplier, je.posting_date as day,
+				jea.credit as credit, jea.debit as debit,
+				coalesce(jea.reference_type, '') as reference_type
+			from `tabJournal Entry` je
+			join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
+			where je.docstatus = 1 and je.posting_date >= %(early)s
+				and coalesce(je.is_opening, 'No') <> 'Yes'
+				and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
+				{not_qbo}
+			""",
+			params,
+			as_dict=True,
+		)
 	)
 
 	# The run id and the receipt total exist once patches/add_store_run_receipt_fields has run;

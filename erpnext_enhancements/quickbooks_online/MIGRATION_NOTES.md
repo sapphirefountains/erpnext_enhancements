@@ -79,7 +79,25 @@ Other prerequisites:
 - ✅ **Fiscal Years back to the oldest transaction (2008).** Already present (2008→2026).
   ERPNext rejects a posting whose date has no Fiscal Year.
 - **Imported transactions are created as drafts** (`docstatus = 0`) — they do not hit
-  the GL/Trial Balance until submitted. Review, then bulk-submit when ready.
+  the GL/Trial Balance until submitted. Review, then bulk-submit when ready — **except the
+  QuickBooks purchases that match a store run recorded on the Stock Scan page** (v1.535.0):
+  - Each recorded line is already a **submitted** Purchase Receipt posting Dr
+    `1410 - Stock In Hand - SF` / Cr `2210 - Stock Received But Not Billed - SF` at quantity ×
+    the price before tax (a non-stock line posts nothing). QuickBooks holds the same purchase as a
+    draft Purchase Journal Entry: Dr the expense account QuickBooks coded, Cr the card account, no
+    party. Submitted as it stands, that draft books the goods twice (Dr 1410 from the receipt, Dr
+    expense from the draft) and 2210 never clears. Left unsubmitted, the card liability is never
+    booked and the card accounts no longer tie out to QuickBooks.
+  - So for a draft that matches a recorded trip — same store, dated on the trip's day or up to
+    three days after, for the receipt total (or the lines plus tax), the pairing the Store Runs KPI
+    uses (`kpi_dashboards/metrics.combine_store_runs`) — **change the goods' debit from the expense
+    account to `2210 - Stock Received But Not Billed - SF`**, for what the trip's receipts credited
+    there (its stock lines before tax; split a line if need be), **then submit it**. That clears
+    2210 and still books the card liability. The rest — the tax, and any non-stock line — stays on
+    the expense account QuickBooks used, or wherever Accounting decides tax goes.
+  - The recorded trips are listed by Stock Scan Log (action *Store Run*, grouped by *Store Run*)
+    and the Purchase Receipt field *Store Run*. A read-only list pairing each trip with its draft is
+    a follow-up, not built yet. Every other draft is reviewed and submitted as above.
 - **Chart of Accounts mismatch.** QBO account names carry numeric prefixes
   (`13000 US Bank Checking`). If you let the integration create accounts, expect a
   large COA. If you pre-built a COA, use the **QuickBooks Record Matching** page (Finance

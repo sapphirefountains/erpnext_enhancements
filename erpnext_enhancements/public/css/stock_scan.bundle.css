@@ -1684,8 +1684,24 @@ body .page-footer {
 .ee-ss-choices.is-two .ee-ss-choice {
 	flex-basis: 45%;
 }
+/* The three reasons: bordered full-width rows, so they need a gap or they touch. */
+.ee-ss-reasons {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
 .ee-ss-reason .ee-ss-row-title {
 	font-size: 1rem;
+}
+/* "Check the receipt total": two sentences in one notice. */
+.ee-ss-receipt-check p {
+	margin: 0;
+}
+.ee-ss-receipt-check p + p {
+	margin-top: 8px;
+}
+.ee-ss-day-note:empty {
+	display: none;
 }
 
 /* The receipt photo: a thumbnail once it is up, a bar while it goes. */

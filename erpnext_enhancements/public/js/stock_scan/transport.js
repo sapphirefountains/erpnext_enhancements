@@ -52,7 +52,8 @@ export const SIGNED_OUT = "You were signed out. Reload the page to sign in again
  *
  * `signedOut` means the session is gone, so no retry can work and the page offers Reload
  * (`www/stock_scan.py` sends a signed-out visitor to log in and back). `needsReload` adds a
- * stale CSRF token, which a reload fixes the same way.
+ * stale CSRF token, which a reload fixes the same way, and a store-run line from a page left
+ * open overnight (`StalePageError`, `api.stock_scan._stale_page`), whose Today is yesterday.
  */
 export class StockScanCallError extends Error {
 	constructor(message, status, payload) {
@@ -63,7 +64,7 @@ export class StockScanCallError extends Error {
 		this.excType = (payload && payload.exc_type) || "";
 		this.retryable = this.status === 0;
 		this.signedOut = isSignedOut(payload, this.status);
-		this.needsReload = this.signedOut || this.excType === "CSRFTokenError";
+		this.needsReload = this.signedOut || this.excType === "CSRFTokenError" || this.excType === "StalePageError";
 	}
 }
 

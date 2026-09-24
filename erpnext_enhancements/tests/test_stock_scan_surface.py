@@ -40,10 +40,14 @@ bench-free CI cannot otherwise see:
    caller's own unclaimed upload or already on the run; the three receipt fields the code
    writes are the ones the patch makes, and the patch is in ``patches.txt`` and in
    ``after_install``; the store-run boot never raises; a reviewed store run is never undone and
-   nobody reviews their own; the KPI reads the run id behind ``has_column`` and only through SQL.
+   nobody reviews their own; the KPI reads the run id behind ``has_column`` and only through SQL,
+   and never counts a payment. From the review: a run's header is its first **Posted** line
+   (executed, against an in-memory log), a page left open overnight is told to reload, and only
+   *Receive on PO-…* takes a non-stock item besides the store run itself.
 
 Bench-free: ``ast``, ``json`` and ``re`` over the sources, plus ``stock_scan_rules`` (which
-imports no frappe). Files the front end owns (``www/stock-scan.html``,
+imports no frappe). The run-header functions are compiled out of the source and run against a
+fake ``frappe`` local to that one class, so nothing is installed in ``sys.modules``. Files the front end owns (``www/stock-scan.html``,
 ``public/js/stock_scan/*.js``) fail with a sentence naming the missing file rather than
 skipping — a skipped surface test is a surface nobody checked.
 
@@ -119,6 +123,8 @@ CONTRACT = {
 			"receipt_number",
 			"receipt_total",
 			"scanned_code",
+			# The page's own day (v1.535.0 review): a page left open overnight is told to reload.
+			"page_today",
 		},
 	),
 	"CHECK_NEW_ITEM": ("check_new_item", {"item_code"}, {"item_name", "item_group", "stock_uom"}),
@@ -276,6 +282,8 @@ BOOT_KEYS = {
 	"recent",
 	"initial",
 	"today",
+	# The site's clock at boot: how long ago another person's run was added to (logic.runOffered).
+	"now",
 	"csrf_token",
 	"build",
 	"decoder_url",
@@ -964,6 +972,7 @@ class TestARetriedSaveDoesNotPostTwice(unittest.TestCase):
 			# receipt permission are all sentences before the log row (and before the Item).
 			"store_run": (
 				"_store_run_ready",
+				"_stale_page",
 				"_run_ref",
 				"_store_supplier",
 				"rules.purchase_date",
@@ -1208,6 +1217,42 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 		self.assertIn("frappe.has_permission('Item', 'create')", check)
 		self.assertIn("frappe.db.exists('Item'", check)
 
+	def test_only_receive_on_an_order_takes_a_non_stock_item(self):
+		"""The store-run sheet's *Receive on PO-…* posts ``add`` with ``purchase_order_item``, and at
+		the store-run vendors every PO line on production is for a non-stock item: that branch is
+		checked with the store-run item rule (non-stock allowed). Every other path of ``add``, and
+		``take`` and ``move_here``, keeps ``_stock_item``'s refusal (v1.535.0 review)."""
+		add = ast.unparse(self.fn("add"))
+		self.assertIn("receive = bool(cstr(purchase_order_item).strip())", add)
+		self.assertIn("item = _store_run_item(item_code) if receive else _stock_item(item_code)", add)
+		for name in ("take", "move_here"):
+			with self.subTest(save=name):
+				self.assertIn("_stock_item(item_code)", ast.unparse(self.fn(name)))
+				self.assertNotIn("_store_run_item", ast.unparse(self.fn(name)))
+		callers = sorted(
+			fn.name for fn in _functions(API).values() for _l, _c, name, _call in _calls(fn) if name == "_store_run_item"
+		)
+		self.assertEqual(sorted(set(callers)), ["add", "store_run"])
+
+	def test_a_page_left_open_overnight_is_told_to_reload(self):
+		"""The page sends its own day; a stale one is refused as ``StalePageError``, which the page
+		answers with a Reload button (``transport.js``'s ``needsReload``)."""
+		tree = _tree(API)
+		classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+		self.assertIn("StalePageError", classes)
+		self.assertEqual([ast.unparse(b) for b in classes["StalePageError"].bases], ["frappe.ValidationError"])
+		stale = ast.unparse(self.fn("_stale_page"))
+		self.assertIn("rules.page_is_stale(day, getdate())", stale)
+		self.assertIn("StalePageError)", stale)
+		self.assertIn("Reload the page", stale)
+		run = self.fn("store_run")
+		self.assertLess(_first(run, "_stale_page"), _first(run, "_same_run"))
+		self.assertIn("_stale_page(page_today)", ast.unparse(run))
+		transport = (CLIENT / "transport.js").read_text(encoding="utf-8")
+		self.assertIn('this.excType === "StalePageError"', transport)
+		app = (CLIENT / "app.js").read_text(encoding="utf-8")
+		self.assertIn("page_today: today", app)
+
 	def test_the_photo_check_is_the_owners_or_the_runs(self):
 		photo = ast.unparse(self.fn("_receipt_photo"))
 		self.assertIn("frappe.db.sql(", photo)
@@ -1254,6 +1299,16 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 		self.assertIn('STORE_RUN_RECEIPT_FIELD = "custom_store_run"', source)
 		self.assertIn("metrics.combine_store_runs(", ast.unparse(_functions(SNAPSHOTS)["_store_runs"]))
 
+	def test_the_kpi_counts_journal_credits_and_never_payments(self):
+		"""A payment is never a store run (v1.535.0 review): Journal Entry lines go through
+		``metrics.journal_store_charges`` (credits only, tested in test_kpi_metrics), and no
+		Payment Entry is read at all -- an unallocated one next to its bill counted the trip twice."""
+		rows = _body_after_docstring(_functions(SNAPSHOTS)["_store_run_rows"])
+		code = "\n".join(ast.unparse(node) for node in rows)
+		self.assertIn("metrics.journal_store_charges(", code)
+		self.assertNotIn("Payment Entry", code)
+		self.assertNotIn("greatest(", code)
+
 	def test_the_store_run_door_never_takes_the_page_down(self):
 		"""It runs inside the page's own boot: one exception there would be Stock Scan down for
 		everybody, so the whole body is one try whose handler returns None."""
@@ -1295,6 +1350,145 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 5. The page controllers and the shell
 # ---------------------------------------------------------------------------
+
+
+class _Row(dict):
+	"""A ``frappe._dict`` stand-in: attribute access over a dict."""
+
+	__getattr__ = dict.get
+
+
+class _Refused(Exception):
+	pass
+
+
+class TestTheRunHeader(unittest.TestCase):
+	"""A store run's header is its **first Posted line** (v1.535.0 review), executed.
+
+	``_run_head``, ``_same_run`` and ``_run_summary`` are compiled out of ``api/stock_scan.py`` and
+	run against an in-memory Stock Scan Log behind a fake ``frappe`` that lives only in this
+	class's namespace. The review's case: a mistyped receipt total (234.10 for 23.41) was fixed
+	on a run forever by its first line -- undone or not -- and copied onto every later receipt.
+	Now undoing that line frees the header, and a run with no Posted line left starts again from
+	the next line's header, which the page prefills with the old values to correct."""
+
+	TODAY = "2026-09-24"
+	RUN = "sr-kf3z9a1-8qz0x4m2ab"
+
+	def setUp(self):
+		import datetime
+
+		self.rows = []
+		self.user = "tina@example.com"
+		test = self
+
+		def as_date(value=None):
+			if value is None:
+				return datetime.date.fromisoformat(test.TODAY)
+			if isinstance(value, datetime.datetime):
+				return value.date()
+			if isinstance(value, datetime.date):
+				return value
+			return datetime.date.fromisoformat(str(value)[:10])
+
+		def get_all(doctype, filters=None, fields=None, order_by=None, limit=None):
+			rows = [r for r in test.rows if all(r.get(k) == v for k, v in (filters or {}).items())]
+			rows.sort(key=lambda r: r["posted_at"])
+			return [_Row(r) for r in rows[: limit or None]]
+
+		def sql(query, params=None, as_dict=False):
+			posted = [r for r in test.rows if r["store_run"] == params["run"] and r["status"] == "Posted"]
+			last = max((r["posted_at"] for r in posted), default=None)
+			return [(len(posted), sum(r["qty"] * r["rate"] for r in posted), last)]
+
+		def throw(message, exc=None):
+			raise _Refused(message)
+
+		class Db:
+			get_value = staticmethod(lambda doctype, name, field: name)
+
+		class Frappe:
+			session = _Row(user=None)
+			db = Db()
+
+		Frappe.get_all = staticmethod(get_all)
+		Frappe.throw = staticmethod(throw)
+		Frappe.db.sql = staticmethod(sql)
+		Frappe.session = _Row(user=self.user)
+		wanted = {"_run_head", "_same_run", "_run_summary", "_full_name"}
+		tree = _tree(API)
+		module = ast.Module(
+			body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted], type_ignores=[]
+		)
+		self.ns = {
+			"frappe": Frappe,
+			"_": lambda text: text,
+			"LOG": "Stock Scan Log",
+			"rules": rules,
+			"getdate": as_date,
+			"formatdate": str,
+			"flt": lambda v: float(v or 0),
+			"cint": lambda v: int(v or 0),
+		}
+		exec(compile(module, str(API), "exec"), self.ns)
+
+	def line(self, posted_at, status="Posted", total=23.41, supplier="Home Depot", by=None, qty=1, rate=4.97):
+		self.rows.append(
+			{
+				"name": f"SCAN-{len(self.rows) + 1}",
+				"store_run": self.RUN,
+				"status": status,
+				"posted_at": posted_at,
+				"posted_by": by or self.user,
+				"supplier": supplier,
+				"bought_on": self.TODAY,
+				"receipt_number": None,
+				"receipt_total": total,
+				"receipt_photo": f"/private/files/{len(self.rows) + 1}.jpg",
+				"qty": qty,
+				"rate": rate,
+			}
+		)
+
+	def test_the_header_is_the_first_posted_line(self):
+		self.line("2026-09-24 07:00:00", status="Undone", total=234.1)
+		self.line("2026-09-24 08:00:00", total=23.41)
+		self.line("2026-09-24 09:00:00", total=99.0)
+		head = self.ns["_same_run"](self.RUN, "Home Depot", self.TODAY)
+		self.assertEqual((head.name, head.receipt_total), ("SCAN-2", 23.41))
+		summary = self.ns["_run_summary"](self.RUN)
+		self.assertEqual(
+			(summary["receipt_total"], summary["receipt_photo"], summary["lines"], summary["open"]),
+			(23.41, "/private/files/2.jpg", 2, True),
+		)
+
+	def test_a_run_with_every_line_undone_starts_again(self):
+		"""No Posted line: the next line is a new run's first (its own store, day and total), and
+		the summary hands the page the old header, with no lines, to prefill and correct."""
+		self.line("2026-09-24 07:00:00", status="Undone", total=234.1)
+		self.assertIsNone(self.ns["_same_run"](self.RUN, "Lowe's", self.TODAY))
+		summary = self.ns["_run_summary"](self.RUN)
+		self.assertEqual(
+			(summary["lines"], summary["amount"], summary["receipt_total"], summary["supplier"], summary["open"]),
+			(0, 0.0, 234.1, "Home Depot", True),
+		)
+
+	def test_a_run_from_another_day_is_closed_to_everyone(self):
+		"""Its starter included: the page never offers a run begun on an earlier day, and the
+		"finish it the next morning" allowance it once described is gone."""
+		self.line("2026-09-23 16:40:00")
+		with self.assertRaisesRegex(_Refused, "started on another day"):
+			self.ns["_same_run"](self.RUN, "Home Depot", self.TODAY)
+		self.assertFalse(self.ns["_run_summary"](self.RUN)["open"])
+
+	def test_the_store_must_be_the_runs(self):
+		self.line("2026-09-24 07:00:00")
+		with self.assertRaisesRegex(_Refused, "This run is for Home Depot"):
+			self.ns["_same_run"](self.RUN, "Lowe's", self.TODAY)
+
+	def test_no_run_no_header(self):
+		self.assertIsNone(self.ns["_same_run"](self.RUN, "Home Depot", self.TODAY))
+		self.assertIsNone(self.ns["_run_summary"](self.RUN))
 
 
 class TestThePageControllers(unittest.TestCase):

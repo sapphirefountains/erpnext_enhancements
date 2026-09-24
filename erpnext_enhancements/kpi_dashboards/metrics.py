@@ -14,10 +14,11 @@ from datetime import date, datetime
 WATCH_BAND = 0.10
 
 #: A card charge for a store run is dated on the day of the purchase or up to this many days
-#: after it, never before. QuickBooks holds the same purchase from two feeds -- itemised receipt
-#: entries and bank-feed descriptors -- and the bank feed can be two days later (Home Depot
-#: $43.31: 2026-07-07 as a receipt entry, 2026-07-09 from the feed). Matching the exact day
-#: counted such a trip twice.
+#: after it, never before. QuickBooks holds some purchases from two feeds -- a receipt email and
+#: the bank feed -- and a bank-feed entry carries the bank's posting date, not the purchase's
+#: (Lowes $16.60 on the Capital One card: ACC-JV-2026-27340 from the receipt email, 2026-02-07;
+#: ACC-JV-2026-27137, "LOWES #02662* - 2486" from the feed, 2026-02-09). Matching the exact day
+#: counted such a trip twice. A feed entry posted more than this many days late still does.
 STORE_RUN_PAIR_DAYS = 3
 
 #: Two dollar amounts closer than this are the same charge.
@@ -162,8 +163,8 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 	"""``(count, spend)`` of store runs since ``since``, from two records of the same trips.
 
 	``charges`` are money records, one per card charge: ``{supplier, day, amount}`` -- the
-	QuickBooks card purchases, standalone Purchase Invoices, and Journal Entries or Payment
-	Entries naming the store as the party. ``receipts`` are what the Stock Scan page recorded,
+	QuickBooks card purchases, standalone Purchase Invoices, and Journal Entries crediting the
+	store's payable (:func:`journal_store_charges`). ``receipts`` are what the Stock Scan page recorded,
 	one Purchase Receipt per line: ``{supplier, day, run, amount, receipt_total,
 	receipt_number}``. Before the cutover most trips have both (the receipt the same day, the
 	charge weeks later), some only a charge (not recorded), some only receipts (the charge not
@@ -177,9 +178,13 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 
 	**Each trip is paired with at most one charge, and each charge with at most one trip**: at
 	the same store (``store_key``, so "Lowes" and "Lowe's" are one), dated on the trip's day or
-	up to ``pair_days`` after it -- never before, a charge does not precede the purchase. Three
-	passes, so the best evidence wins: first a charge equal to the receipt total, then one the
-	lines plus tax could make, then any charge in the window; within a pass the nearest day.
+	up to ``pair_days`` after it -- never before, a charge does not precede the purchase -- and
+	only on the amount. Two passes, so the best evidence wins: first a charge equal to the
+	receipt total, then one the lines plus tax could make (a mistyped total); within a pass the
+	nearest day. **A charge of any other amount is never taken**, however near: a recorded trip
+	whose own charge is missing (cash, a personal card, a Bill, not synced yet, an unflagged
+	vendor) would otherwise swallow the next trip's charge at that store, and two trips would
+	count as one. At the flagged stores most charges have another within three days.
 
 	**Count** is trips plus unpaired charges; **spend** is the charge for a paired trip (what the
 	card paid, tax included), the trip's own amount for an unpaired one, and every unpaired
@@ -230,10 +235,7 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 			net > 0 and net - tolerance <= bill["amount"] <= net * (1 + STORE_RUN_TAX_ALLOWANCE) + tolerance
 		)
 
-	def any_amount(trip, bill):
-		return True
-
-	for matches in (equal_to_total, lines_plus_tax, any_amount):
+	for matches in (equal_to_total, lines_plus_tax):
 		for trip in runs:
 			if trip.get("bill") is not None:
 				continue
@@ -273,6 +275,37 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 		count += 1
 		spend += bill["amount"]
 	return count, round(spend, 2)
+
+
+def journal_store_charges(lines):
+	"""Store-run charges from Journal Entry lines naming a flagged store as the party.
+
+	``lines`` are ``{entry, supplier, day, credit, debit, reference_type}``, one per Journal
+	Entry Account row. Only a **credit** to the store's payable is a purchase: it is what a bill
+	booked as a Journal Entry does. A debit is a payment, and a payment is never a trip -- a
+	bill and its payment booked as two unlinked entries would otherwise count as two runs, and
+	QuickBooks' Bill/BillPayment imports have exactly that shape at the flagged stores. A credit
+	line carrying a reference (to an invoice or another entry) is settling or reversing
+	something already booked, and is not a purchase either.
+
+	One charge per entry and store, the sum of its unreferenced credits; an entry with none
+	gives nothing. A pass-through entry (the store credited and debited in one) counts its
+	credit once. Returns ``[{supplier, day, amount}]`` for :func:`combine_store_runs`.
+	"""
+	credits = {}
+	order = []
+	for row in lines or ():
+		if str(row.get("reference_type") or "").strip():
+			continue
+		credit = _amount(row.get("credit"))
+		if credit <= 0:
+			continue
+		key = (str(row.get("entry") or ""), str(row.get("supplier") or ""))
+		if key not in credits:
+			credits[key] = {"supplier": row.get("supplier"), "day": row.get("day"), "amount": 0.0}
+			order.append(key)
+		credits[key]["amount"] += credit
+	return [dict(credits[key], amount=round(credits[key]["amount"], 2)) for key in order]
 
 
 def is_source_stale(last_sync, max_age_hours=6, now=None):

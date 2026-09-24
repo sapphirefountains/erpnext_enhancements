@@ -425,6 +425,15 @@ class TestStoreRuns(unittest.TestCase):
 		# Every other save is unchanged: a supervisor may undo any at any time.
 		self.assertIsNone(rules.undo_refusal("Posted", False, True, 9999, 30, reviewed=True))
 
+	def test_a_page_left_open_overnight_is_stale(self):
+		"""Its Today is yesterday: the line is refused with "reload the page" (``_stale_page``)."""
+		self.assertTrue(rules.page_is_stale("2026-09-24", "2026-09-25"))
+		self.assertTrue(rules.page_is_stale("2026-09-25", "2026-09-24 00:00:01"))
+		self.assertFalse(rules.page_is_stale("2026-09-24", "2026-09-24"))
+		# An unreadable page day is not stale: the other rules still decide.
+		self.assertFalse(rules.page_is_stale("", "2026-09-24"))
+		self.assertFalse(rules.page_is_stale("garbage", "2026-09-24"))
+
 
 class TestQrSvg(unittest.TestCase):
 	def test_matrix_to_svg_draws_runs_as_one_path(self):

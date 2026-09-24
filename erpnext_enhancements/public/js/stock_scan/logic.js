@@ -435,6 +435,80 @@ export function runIsOpen(run, today) {
 	return !!today && String(run.started_on || "").slice(0, 10) === String(today).slice(0, 10);
 }
 
+/** How long after its last line another person's run is still offered as "Add to ‹name›'s run". */
+export const OTHERS_RUN_HOURS = 3;
+
+/**
+ * A server time ("2026-09-24 10:42:00.123456", the site's own clock and zone) as milliseconds
+ * on one scale, or null. Read as UTC fields on purpose: only differences between two such
+ * times are ever taken, so the phone's zone never enters into it.
+ */
+export function siteTimeMs(value) {
+	const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(value || ""));
+	if (!m) return null;
+	return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0));
+}
+
+/**
+ * Whether the page offers "Add to …" for an open run. The person's own runs, always (an emptied
+ * one included: it reopens with its header to correct). Another person's only while it has a
+ * line and that line is under OTHERS_RUN_HOURS old by the site's clock (`siteNowMs`, from
+ * `boot.now` plus the time since the page loaded): Finish is kept on the starter's phone only,
+ * so without this a second trip to the same store that afternoon would be one tap from being
+ * added to the morning's run — its receipt, its total — and the KPI would merge the two trips.
+ * No clock, no offer: starting a new run is the safe side. The server takes a line for any run
+ * all day; this is only what the page puts under the thumb.
+ */
+export function runOffered(run, user, siteNowMs) {
+	if (!run || !run.run) return false;
+	if (run.started_by && run.started_by === user) return true;
+	if (!(Number(run.lines) > 0)) return false;
+	const last = siteTimeMs(run.last_at);
+	if (last === null || typeof siteNowMs !== "number" || !Number.isFinite(siteNowMs)) return false;
+	return siteNowMs - last <= OTHERS_RUN_HOURS * 3600 * 1000;
+}
+
+/**
+ * The new-run header for a run whose every line was undone (`lines` 0): its old store, day,
+ * photo, total and number, to correct and record again under the same run id. The server takes
+ * a run's header from its first Posted line, so with none left the next line's header is the
+ * run's (`api.stock_scan._run_head`).
+ */
+export function reopenedDraft(run, today) {
+	const r = run || {};
+	const total = Number(r.receipt_total);
+	return {
+		run: r.run,
+		supplier: r.supplier || "",
+		bought: boughtLabel(r.bought, today) === "yesterday" ? "yesterday" : "today",
+		photo: r.receipt_photo || "",
+		receipt_number: r.receipt_number || "",
+		receipt_total: total > 0 ? String(total) : "",
+		reopened: true,
+	};
+}
+
+/** A receipt total more than this much above the lines is flagged: the KPI's own band (metrics.STORE_RUN_TAX_ALLOWANCE). */
+export const RECEIPT_CHECK_ABOVE = 0.15;
+/** Utah's combined sales tax, roughly: the band the page shows as "about $X–$Y with tax". */
+export const TAX_BAND = [0.06, 0.09];
+
+/**
+ * `{low, high}` — the lines plus tax — when a run's receipt total is more than
+ * RECEIPT_CHECK_ABOVE above what its lines cost before tax, else null. A mistyped total (234.10
+ * for 23.41) rides on every receipt of the run and into the KPI, so Finish and the joined run's
+ * header say "Check the receipt total". Mid-run it may only mean lines still to come; the page
+ * says both. Nothing recorded yet, nothing to compare.
+ */
+export function receiptCheck(total, amount) {
+	const t = toNumber(total);
+	const a = toNumber(amount);
+	if (t === null || a === null || !(a > EPSILON)) return null;
+	if (t <= a * (1 + RECEIPT_CHECK_ABOVE) + 0.05) return null;
+	const round = (n) => Math.round(n * 100) / 100;
+	return { low: round(a * (1 + TAX_BAND[0])), high: round(a * (1 + TAX_BAND[1])) };
+}
+
 /** "Home Depot run · 2 items · $14.91 before tax" — the run bar and the "Add to…" rows. */
 export function runSummary(run) {
 	const r = run || {};

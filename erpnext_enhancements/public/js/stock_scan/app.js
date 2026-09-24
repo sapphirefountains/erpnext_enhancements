@@ -52,14 +52,18 @@ import {
 	parseQty,
 	plain,
 	reasonWarning,
+	receiptCheck,
 	rememberedJob,
+	reopenedDraft,
 	reportAvailable,
 	runIsOpen,
+	runOffered,
 	runSummary,
 	saveKey,
 	saveLabel,
 	scanFailure,
 	shortDate,
+	siteTimeMs,
 	suggestedReason,
 	undoQuestion,
 	validPrice,
@@ -101,6 +105,9 @@ const SEARCH_DEBOUNCE_MS = 250;
 const START = { name: "start" };
 const STILL_SAVING = "Your last save is still going through. Try again in a moment.";
 const REPEATED = "That save was already recorded — nothing new was posted. Tap Save again to record another.";
+/** How a store run's wrong receipt total is put right: its receipts are submitted, so they are undone and recorded again. */
+const RESTART_RUN =
+	"If the total is wrong, undo the run's lines (under Recent, on the start screen) and record them again: the run then asks for its receipt again, filled in to correct. Past the undo window, tell Purchasing.";
 
 /** The only cure for a lost session or a stale CSRF token (`StockScanCallError.needsReload`). */
 const RELOAD = { label: "Reload", onClick: () => window.location.reload() };
@@ -264,6 +271,10 @@ export class StockScanApp {
 		this.storeRun = storeRun && Array.isArray(storeRun.suppliers) && storeRun.suppliers.length ? storeRun : null;
 		this.runs = this.storeRun && Array.isArray(this.storeRun.open_runs) ? this.storeRun.open_runs.slice() : [];
 		this.runState = readRunState(this.boot.user);
+		// The site's clock at boot, and when that was here: `siteNow()` for how long ago another
+		// person's run was last added to, without the phone's own clock or zone.
+		this.bootNow = siteTimeMs(this.boot.now);
+		this.bootAt = Date.now();
 		// The run not saved yet: its id is minted once and kept with its photo and header until a
 		// line posts, so a retry after no answer (or reopening the sheet) sends the SAME run id.
 		this.newRun = null;
@@ -903,7 +914,7 @@ export class StockScanApp {
 			if (item.store_run_ok && this.storeRunReady()) {
 				view.appendChild(
 					button([glyph("+"), el("span", null, "Bought it on a store run")], "ee-ss-btn ee-ss-btn-add is-lg ee-ss-nonstock-run", () =>
-						this.openStoreRun({ v, item, qty: 1 })
+						this.startStoreRun({ v, item, qty: 1 })
 					)
 				);
 			}
@@ -1154,7 +1165,7 @@ export class StockScanApp {
 		const job = this.job;
 		const orders = item.open_orders || [];
 		const storeRun = this.storeRunReady() && item.store_run_ok !== false;
-		const runs = storeRun ? this.openRuns().slice(0, 3) : [];
+		const runs = storeRun ? this.offeredRuns().slice(0, 3) : [];
 		const send = (extra) =>
 			this.post(
 				v,
@@ -1206,28 +1217,12 @@ export class StockScanApp {
 					list.appendChild(append(el("li"), row));
 				}
 				if (storeRun) {
-					const go = (title, sub, run) =>
-						append(
-							el("li"),
-							button(
-								[append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", title), el("span", "ee-ss-row-sub", sub)), icon("next", "ee-ss-row-go")],
-								"ee-ss-row ee-ss-order ee-ss-run-choice",
-								() => {
-									handle.close("action");
-									this.openStoreRun({ v, item, qty, run });
-								}
-							)
-						);
-					for (const run of runs) {
-						const mine = run.started_by === this.boot.user;
-						const title = mine ? `Add to your ${run.supplier_name} run` : `Add to ${firstName(run.started_by_name)}'s ${run.supplier_name} run`;
-						const lines = Number(run.lines || 0);
-						const when = formatWhen(run.last_at, this.boot.today);
-						list.appendChild(go(title, [`${lines} ${lines === 1 ? "item" : "items"}`, when].filter(Boolean).join(" · "), run));
-					}
-					const names = this.storeRun.suppliers.map((s) => s.supplier_name);
-					const stores = `${names.slice(0, 2).join(", ")}${names.length > 2 ? "…" : ""}`;
-					list.appendChild(go("Bought on a store run", `${stores} · with the receipt photo`, null));
+					const open = (run) => {
+						handle.close("action");
+						this.openStoreRun({ v, item, qty, run });
+					};
+					for (const row of this.runRows(runs, open)) list.appendChild(row);
+					list.appendChild(this.runChoice("Bought on a store run", `${this.storeNames()} · with the receipt photo`, () => open(null)));
 				}
 				if (job) {
 					list.appendChild(
@@ -1715,6 +1710,85 @@ export class StockScanApp {
 			.sort((a, b) => (a.run === current ? -1 : b.run === current ? 1 : 0));
 	}
 
+	/** The site's clock now (`boot.now` plus the time since the page loaded), or null. */
+	siteNow() {
+		return this.bootNow === null ? null : this.bootNow + (Date.now() - this.bootAt);
+	}
+
+	/**
+	 * The open runs the page offers as "Add to …": the person's own, and another person's only
+	 * while its last line is under three hours old (`logic.runOffered`). Finish is stored on the
+	 * starter's phone only, so this is what keeps a second trip that afternoon off the first.
+	 */
+	offeredRuns() {
+		const now = this.siteNow();
+		return this.openRuns().filter((r) => runOffered(r, this.boot.user, now));
+	}
+
+	/** "Home Depot, Lowe's…": the stores, for a new run's row. */
+	storeNames() {
+		const names = this.storeRun.suppliers.map((s) => s.supplier_name);
+		return `${names.slice(0, 2).join(", ")}${names.length > 2 ? "…" : ""}`;
+	}
+
+	/** One row of a "which run?" list. */
+	runChoice(title, sub, onPick) {
+		return append(
+			el("li"),
+			button(
+				[append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", title), el("span", "ee-ss-row-sub", sub)), icon("next", "ee-ss-row-go")],
+				"ee-ss-row ee-ss-order ee-ss-run-choice",
+				onPick
+			)
+		);
+	}
+
+	/** "Add to your Home Depot run" / "Add to Sam's Home Depot run" rows, this phone's run first. */
+	runRows(runs, onPick) {
+		return runs.map((run) => {
+			const mine = run.started_by === this.boot.user;
+			const title = mine ? `Add to your ${run.supplier_name} run` : `Add to ${firstName(run.started_by_name)}'s ${run.supplier_name} run`;
+			const lines = Number(run.lines || 0);
+			const sub = lines
+				? [`${lines} ${lines === 1 ? "item" : "items"}`, formatWhen(run.last_at, this.boot.today)].filter(Boolean).join(" · ")
+				: "Every line undone · start it again, the receipt open to correct";
+			return this.runChoice(title, sub, () => onPick(run));
+		});
+	}
+
+	/**
+	 * The doors that start from an item card or a search rather than + → Save — a non-stock item's
+	 * "Bought it on a store run" and "Not in ERPNext?" — ask the same question + → Save does:
+	 * the open runs first (this phone's current one at the top), then "A different store run".
+	 * Without it every such part started a run of its own, and one trip split into several: the
+	 * store, day, photo and total typed again, and the KPI counting a trip per split.
+	 * With no run to offer it goes straight to a new one.
+	 */
+	startStoreRun(ctx) {
+		if (this.reportBusy() || !this.storeRunReady()) return;
+		const c = ctx || {};
+		const runs = this.offeredRuns().slice(0, 3);
+		// No bin, no line: openStoreRun says so before anything is asked.
+		if (!runs.length || !(c.warehouse || (c.item && c.item.warehouse))) {
+			this.openStoreRun(Object.assign({}, ctx, { run: null }));
+			return;
+		}
+		sheet({
+			title: "Which store run?",
+			body: (body, handle) => {
+				const open = (run) => {
+					handle.close("action");
+					this.openStoreRun(Object.assign({}, ctx, { run }));
+				};
+				const list = el("ul", "ee-ss-list");
+				for (const row of this.runRows(runs, open)) list.appendChild(row);
+				list.appendChild(this.runChoice("A different store run", `${this.storeNames()} · with its own receipt photo`, () => open(null)));
+				body.appendChild(list);
+			},
+			actions: [{ label: "Cancel", kind: "ghost" }],
+		});
+	}
+
 	/** The run this phone is adding to, while it is open and not finished here. */
 	currentRun() {
 		const id = this.runState.current;
@@ -1747,22 +1821,21 @@ export class StockScanApp {
 		fill(bar);
 		bar.hidden = !run;
 		if (!run) return;
+		const sub = Number(run.lines) > 0
+			? `Receipt ${money(run.receipt_total)} with tax · press + on an item to add to it`
+			: "Every line undone · press + on an item to start it again, the receipt open to correct";
 		append(
 			bar,
-			append(
-				el("div", "ee-ss-runbar-text"),
-				el("span", "ee-ss-runbar-title", runSummary(run)),
-				el("span", "ee-ss-runbar-sub", `Receipt ${money(run.receipt_total)} with tax · press + on an item to add to it`)
-			),
+			append(el("div", "ee-ss-runbar-text"), el("span", "ee-ss-runbar-title", runSummary(run)), el("span", "ee-ss-runbar-sub", sub)),
 			button("Finish", "ee-ss-btn ee-ss-btn-outline ee-ss-runbar-finish", () => this.finishRun())
 		);
 	}
 
-	/** "Not in ERPNext?": the run sheet with a quick Item instead of an item, into this location. */
+	/** "Not in ERPNext?": the run sheet with a quick Item instead of an item, into this location — on an open run when there is one (`startStoreRun`). */
 	openQuickItem(opts) {
 		if (this.reportBusy()) return;
 		const o = opts || {};
-		this.openStoreRun({ warehouse: o.warehouse, warehouse_name: o.warehouse_name, qty: 1, newItem: { item_name: o.name || "" } });
+		this.startStoreRun({ warehouse: o.warehouse, warehouse_name: o.warehouse_name, qty: 1, newItem: { item_name: o.name || "" } });
 	}
 
 	/**
@@ -1777,6 +1850,12 @@ export class StockScanApp {
 	 * or shop", so a blank is a decision (POL-0602 §4.7 asks for the job). The reason starts from
 	 * the item: a stocked item (a reorder level above 0) "was out", anything else is "not
 	 * something we stock", and a contradiction is pointed out, not refused.
+	 *
+	 * A run's header is its first Posted line's (`api.stock_scan._run_head`). A run whose every
+	 * line was undone (`lines` 0) has none left, so it opens as a new run's header under the same
+	 * run id, prefilled with what it had (`logic.reopenedDraft`): that is how a mistyped receipt
+	 * total is corrected. A joined run's header, and Finish, say "Check the receipt total" when
+	 * the total is well above what the lines plus tax could come to (`logic.receiptCheck`).
 	 */
 	openStoreRun(ctx) {
 		if (this.reportBusy() || !this.storeRunReady()) return;
@@ -1789,8 +1868,14 @@ export class StockScanApp {
 			toast("Scan the bin these went into, then record the store run from there.", { kind: "info" });
 			return;
 		}
-		const run = c.run && runIsOpen(c.run, today) ? c.run : null;
-		if (!run && !this.newRun) {
+		const chosen = c.run && runIsOpen(c.run, today) ? c.run : null;
+		// Every line undone: the run starts again, its old header prefilled to correct.
+		const emptied = !!chosen && !(Number(chosen.lines) > 0);
+		const run = emptied ? null : chosen;
+		if (emptied && !(this.newRun && this.newRun.run === chosen.run)) {
+			this.newRun = reopenedDraft(chosen, today);
+		} else if (!run && !emptied && (!this.newRun || this.newRun.reopened)) {
+			// A new run. A reopened run's draft is that run's, not a new one's.
 			this.newRun = { run: mintRunId(), supplier: "", bought: "today", photo: "", receipt_number: "", receipt_total: "" };
 		}
 		const draft = run ? null : this.newRun;
@@ -1858,7 +1943,10 @@ export class StockScanApp {
 		const jobOf = () => (this.job ? { project: this.job.project, project_name: this.job.project_name } : null);
 
 		// --- the receipt photo: shrunk, then sent at once, so Save is not a 5 MB upload ---------
-		const photoPicker = (label, current, onDone) => {
+		// When the photo is in, only this field is redrawn (swapped for a fresh picker in place):
+		// a receipt total being typed meanwhile keeps its field, and the phone its keyboard. The
+		// store and day buttons redraw only themselves, so a tap there leaves the progress bar be.
+		const photoPicker = (label, current, onDone, afterDone) => {
 			const wrap = el("div", "ee-ss-photo");
 			// No `capture`: a phone then offers the camera AND the photo library, so a receipt
 			// photographed in the store, or last night, can be used.
@@ -1895,7 +1983,12 @@ export class StockScanApp {
 					});
 					onDone(res.file_url);
 					status.textContent = "";
-					if (!closed) drawHead();
+					if (!closed && wrap.parentNode) {
+						const parent = wrap.parentNode;
+						parent.insertBefore(photoPicker(label, current, onDone, afterDone), wrap);
+						parent.removeChild(wrap);
+					}
+					if (!closed && afterDone) afterDone();
 				} catch (e) {
 					const text = (e && e.message) || "The photo did not go through. Try again.";
 					status.textContent = text;
@@ -1918,47 +2011,71 @@ export class StockScanApp {
 		};
 
 		// --- the header: a new run's, or the run's on one line ----------------------------------
+		// Drawn once per sheet. Only the parts a tap changes redraw: the store buttons, the day
+		// buttons, and the photo field once its upload is in.
 		const drawHead = () => {
 			fill(headBox);
 			if (run) {
-				const photo = s.linePhoto || run.receipt_photo;
-				const whose = run.started_by && run.started_by !== this.boot.user ? ` · ${firstName(run.started_by_name)}'s run` : "";
+				const line = el("p", "ee-ss-run-line");
+				const drawLine = () => {
+					const photo = s.linePhoto || run.receipt_photo;
+					const whose = run.started_by && run.started_by !== this.boot.user ? ` · ${firstName(run.started_by_name)}'s run` : "";
+					line.textContent = `${run.supplier_name} · ${boughtLabel(run.bought, today)} · receipt ${photo ? "✓" : "missing"} · ${money(run.receipt_total)} with tax${whose}`;
+				};
+				drawLine();
+				const check = receiptCheck(run.receipt_total, run.amount);
 				append(
 					headBox,
-					el(
-						"p",
-						"ee-ss-run-line",
-						`${run.supplier_name} · ${boughtLabel(run.bought, today)} · receipt ${photo ? "✓" : "missing"} · ${money(run.receipt_total)} with tax${whose}`
-					),
-					photoPicker("Another photo (a long receipt)", () => s.linePhoto, (url) => (s.linePhoto = url))
+					line,
+					check
+						? el(
+								"p",
+								"ee-ss-notice ee-ss-receipt-check",
+								`Check the receipt total: ${money(run.receipt_total)} with tax, and the lines so far come to ${money(run.amount)} before tax (about ${money(check.low)}–${money(check.high)} with tax). Fine if more are still to be recorded. ${RESTART_RUN}`
+							)
+						: null,
+					photoPicker("Another photo (a long receipt)", () => s.linePhoto, (url) => (s.linePhoto = url), drawLine)
 				);
 				return;
 			}
 			const stores = el("div", "ee-ss-choices");
 			stores.setAttribute("role", "radiogroup");
-			for (const store of cfg.suppliers) {
-				stores.appendChild(
-					choiceButton(store.supplier_name, draft.supplier === store.supplier, () => {
-						draft.supplier = store.supplier;
-						showError("");
-						drawHead();
-						drawHints();
-					})
-				);
-			}
+			const drawStores = () => {
+				fill(stores);
+				for (const store of cfg.suppliers) {
+					stores.appendChild(
+						choiceButton(store.supplier_name, draft.supplier === store.supplier, () => {
+							draft.supplier = store.supplier;
+							showError("");
+							drawStores();
+							drawHints();
+						})
+					);
+				}
+			};
 			const days = el("div", "ee-ss-choices is-two");
 			days.setAttribute("role", "radiogroup");
-			for (const [value, label] of [
-				["today", "Today"],
-				["yesterday", "Yesterday"],
-			]) {
-				days.appendChild(
-					choiceButton(label, draft.bought === value, () => {
-						draft.bought = value;
-						drawHead();
-					})
-				);
-			}
+			const dayNote = el("div", "ee-ss-day-note");
+			const drawDays = () => {
+				fill(days);
+				fill(dayNote);
+				for (const [value, label] of [
+					["today", "Today"],
+					["yesterday", "Yesterday"],
+				]) {
+					days.appendChild(
+						choiceButton(label, draft.bought === value, () => {
+							draft.bought = value;
+							drawDays();
+						})
+					);
+				}
+				if (draft.bought === "yesterday") {
+					dayNote.appendChild(el("p", "ee-ss-note", "The policy asks for the same day, so the log notes it was recorded late."));
+				}
+			};
+			drawStores();
+			drawDays();
 			const total = input({ inputmode: "decimal", label: "Receipt total, tax included", placeholder: "23.41", value: draft.receipt_total });
 			total.addEventListener("input", () => {
 				draft.receipt_total = total.value;
@@ -1970,13 +2087,11 @@ export class StockScanApp {
 			});
 			append(
 				headBox,
+				draft.reopened
+					? el("p", "ee-ss-notice", "Every line of this run was undone. Check the receipt below, correct what was wrong, and record the lines again.")
+					: null,
 				field("Store", stores, null, true),
-				field(
-					"Bought",
-					days,
-					draft.bought === "yesterday" ? el("p", "ee-ss-note", "The policy asks for the same day, so the log notes it was recorded late.") : null,
-					true
-				),
+				field("Bought", days, dayNote, true),
 				field("Receipt photo", photoPicker("Take the receipt photo", () => draft.photo, (url) => (draft.photo = url)), null, true),
 				field("Receipt total, tax included", total),
 				field("Receipt number (optional)", number)
@@ -2362,6 +2477,8 @@ export class StockScanApp {
 					project: job ? job.project : undefined,
 					no_job: noJob ? 1 : 0,
 					scanned_code: (v && v.scannedCode) || undefined,
+					// The page's own day: a page left open overnight is told to reload (`_stale_page`).
+					page_today: today || undefined,
 				},
 				itemArgs
 			);
@@ -2375,8 +2492,9 @@ export class StockScanApp {
 			return undefined;
 		};
 
+		const reopenedStore = draft && draft.reopened ? storeOf() : null;
 		handle = sheet({
-			title: run ? `Add to the ${run.supplier_name} run` : "Bought on a store run",
+			title: run ? `Add to the ${run.supplier_name} run` : reopenedStore ? `Start the ${reopenedStore.supplier_name} run again` : "Bought on a store run",
 			full: true,
 			className: "ee-ss-run-sheet",
 			initialFocus: "sheet",
@@ -2440,12 +2558,13 @@ export class StockScanApp {
 		}
 	}
 
-	/** "Take these 3 to <job> now?" after a line bought only for that job. Take is the default. */
+	/** "Take 3 Unit to <job> now?" after a line bought only for that job. Take is the default. */
 	async offerTakeNow(args, item, job) {
 		if (this.reportBusy()) return;
 		const name = (job && (job.project_name || job.project)) || args.project;
+		const amount = `${plain(args.qty)} ${item.stock_uom || ""}`.trim();
 		const ok = await ask({
-			title: `Take these ${plain(args.qty)} to ${name} now?`,
+			title: `Take ${amount} to ${name} now?`,
 			body: "They were bought only for this job. Taking them now charges them to it; left in the bin they would read as stock on the shelf.",
 			ok: "Take them now",
 			okKind: "take",
@@ -2483,11 +2602,22 @@ export class StockScanApp {
 				}
 				const lines = Number(run.lines || 0);
 				const gap = Number(run.receipt_total || 0) - Number(run.amount || 0);
+				// Well above the lines plus tax: a line not recorded yet, or a mistyped total, which
+				// would otherwise sit on every receipt of the run and in the KPI as said.
+				const check = receiptCheck(run.receipt_total, run.amount);
 				append(
 					body,
 					el("p", "ee-ss-sheet-text", `${lines} ${lines === 1 ? "line" : "lines"} recorded, ${money(run.amount)} before tax.`),
 					el("p", "ee-ss-sheet-text", `Receipt total with tax: ${money(run.receipt_total)}.`),
-					gap > 0.005 ? el("p", "ee-ss-note", `The difference, ${money(gap)}, is the tax and anything on the receipt not recorded yet.`) : null,
+					check
+						? append(
+								el("div", "ee-ss-notice ee-ss-receipt-check"),
+								el("p", null, `Check the receipt total. ${money(run.receipt_total)} is more than these lines with tax: ${money(run.amount)} before tax is about ${money(check.low)}–${money(check.high)} with tax.`),
+								el("p", null, `If something on the receipt is not recorded yet, tap Keep adding and add it. ${RESTART_RUN}`)
+							)
+						: gap > 0.005
+							? el("p", "ee-ss-note", `The difference, ${money(gap)}, is the tax and anything on the receipt not recorded yet.`)
+							: null,
 					gap < -0.005 ? el("p", "ee-ss-notice", "The lines add up to more than the receipt total. Check the prices, or tell Purchasing.") : null,
 					el("p", "ee-ss-notice", "Hand the paper receipt to Accounting within 2 business days (POL-0602 §4.7).")
 				);

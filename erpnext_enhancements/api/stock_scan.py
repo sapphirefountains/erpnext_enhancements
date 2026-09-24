@@ -57,7 +57,9 @@ Things this module is careful about, each of which the obvious version gets wron
   either "Insufficient Stock" or "Valuation Rate Missing" depending on the bin's history.
 * **Serial, batch, variant, customer-provided and non-stock items are refused up front**
   (``stock_scan_rules.item_refusal``). ERPNext would auto-pick serial numbers FIFO on an
-  issue, which is wrong for serialised equipment.
+  issue, which is wrong for serialised equipment. Two saves take a non-stock item, through
+  ``stock_scan_rules.store_run_item_refusal``: a store-run line, and a receipt on an order
+  line (the store-run sheet's *Receive on PO-…*). Neither posts stock for it.
 * **``resolve`` never throws to answer a question.** A caught ``frappe.throw`` still
   queues a message (it msgprints before raising), so an unknown or unusable scan comes back
   as ``{kind: "unknown", message}`` and the boot payload resolves the same way.
@@ -119,6 +121,12 @@ SUPPLIER_FLAG = "custom_store_run_vendor"
 #: itself, and how many it shows.
 SIMILAR_READ = 25
 SIMILAR_SHOW = 5
+
+
+class StalePageError(frappe.ValidationError):
+	"""A store-run line from a page opened on an earlier day (left open overnight): its *Today*
+	is yesterday. The page answers this exception type with a Reload button
+	(``transport.js``, ``needsReload``), because reloading is the only cure."""
 
 
 # ---------------------------------------------------------------------------
@@ -658,8 +666,9 @@ def _begin_log(ref, action, item, qty, location, scanned_code=None, **extra):
 		# sent while the first attempt was mid-submit; the insert waited on its unique key).
 		# That attempt is about to commit, so this is NOT a refusal the page may answer with a
 		# fresh reference: raised as DuplicateEntryError (HTTP 409), which the page treats like
-		# a dropped connection and retries with the SAME reference -- and the retry then gets
-		# the first save back from _already_saved instead of posting a second.
+		# a dropped connection and keeps the SAME reference for (it does not retry by itself)
+		# -- so when the person taps Save again, that tap gets the first save back from
+		# _already_saved instead of posting a second.
 		frappe.throw(
 			_("This save is still being recorded. Wait a moment, then try again."),
 			frappe.DuplicateEntryError,
@@ -756,6 +765,14 @@ def add(
 	a Material Receipt at the item's current cost and flags the log for review. With
 	neither, nothing is posted: the page must say which, because receiving stock that is on
 	an order *without* the order double-counts it the day the order's own receipt arrives.
+
+	Receiving on an order line is the one save here that takes a **non-stock** item: it is
+	checked with the store-run rule (``_store_run_item``), because the store-run sheet's
+	*Receive on PO-…* is how a technician picks up what was ordered at a counter, and every PO
+	line ever placed at a store-run vendor on production is for a non-stock item. The order's
+	own mapper (``procurement.receive_order_line``) builds the receipt, and ERPNext posts no
+	stock and no GL for a non-stock line (84 of 103 submitted receipts on production are
+	non-stock only). Every other path keeps ``_stock_item``'s refusal.
 	"""
 	_check_access()
 	ref = _client_ref(client_ref)
@@ -764,11 +781,12 @@ def add(
 		return done
 
 	location = _location(warehouse)
-	item = _stock_item(item_code)
+	receive = bool(cstr(purchase_order_item).strip())
+	item = _store_run_item(item_code) if receive else _stock_item(item_code)
 	qty = _checked_qty(qty, item)
 	who = _who()
 
-	if cstr(purchase_order_item).strip():
+	if receive:
 		from erpnext_enhancements.api.procurement import receive_order_line
 
 		line = cstr(purchase_order_item).strip()
@@ -973,11 +991,22 @@ def _full_name(user):
 	return frappe.db.get_value("User", user, "full_name") or user
 
 
-def _run_head(run):
-	"""The first line recorded on a run (Undone lines count: the run still existed)."""
+def _run_head(run, posted_only=True):
+	"""A run's header: its first **Posted** line -- the store, the day bought, the receipt total
+	and number, and the receipt photo, which every later line of the run takes from it.
+
+	Undone lines do not count (v1.535.0 review). Undoing a run's first line frees its header,
+	and a run whose every line is undone has no header at all, so its next line starts it again
+	with a header of its own: that is how a mistyped receipt total is corrected, since the
+	receipts that carry it are submitted and the log is immutable. ``posted_only=False`` gives
+	the first line whatever its status -- what the page prefills when it reopens an emptied run.
+	"""
+	filters = {"store_run": run}
+	if posted_only:
+		filters["status"] = "Posted"
 	rows = frappe.get_all(
 		LOG,
-		filters={"store_run": run},
+		filters=filters,
 		fields=[
 			"name",
 			"posted_by",
@@ -994,13 +1023,34 @@ def _run_head(run):
 	return rows[0] if rows else None
 
 
+def _stale_page(page_today):
+	"""Refuse a store-run line from a page opened on an earlier day.
+
+	The page sends the day it was opened (``boot.today``). A page left open overnight still
+	calls yesterday *Today*: its "today" line would be posted a day off, and a line added to
+	yesterday's run would be refused as a run from another day, which reads like a rule when it
+	is only an old page. So this says the one thing that fixes it. Absent (an older page), the
+	check is skipped and the rules below still hold.
+	"""
+	day = cstr(page_today).strip()
+	if day and rules.page_is_stale(day, getdate()):
+		frappe.throw(
+			_(
+				"This page has been open since {0}, so its Today is out of date. Reload the page, then record the line again."
+			).format(formatdate(day)),
+			StalePageError,
+		)
+
+
 def _same_run(run, supplier, bought_on):
-	"""The run's first line when ``run`` exists, checked against this line; ``None`` for a new run.
+	"""The run's header (its first Posted line, :func:`_run_head`) checked against this line, or
+	``None`` for a new run -- and for a run whose every line was undone, which this line starts
+	again with its own store, day, receipt total and number.
 
 	Anyone may add to a run on the day it was started -- two people who shopped together, or a
-	run continued after lunch, is still one trip (the KPI would otherwise count it twice) --
-	and the person who started it may finish it the next morning. The store and the day
-	bought must be the run's.
+	run continued after lunch, is still one trip (the KPI would otherwise count it twice). On a
+	later day nobody may, the person who started it included: the page offers only runs started
+	today. The store and the day bought must be the run's.
 	"""
 	head = _run_head(run)
 	if not head:
@@ -1015,7 +1065,7 @@ def _same_run(run, supplier, bought_on):
 				formatdate(head.bought_on), formatdate(bought_on)
 			)
 		)
-	if head.posted_by != frappe.session.user and not rules.run_is_open(head.posted_at, getdate()):
+	if not rules.run_is_open(head.posted_at, getdate()):
 		frappe.throw(_("This store run was started on another day. Start a new one."))
 	return head
 
@@ -1191,11 +1241,16 @@ def _store_run_receipt(
 	"""The one Purchase Receipt builder in this module: one line of one store run.
 
 	* **No purchase order** (Buying Settings ``po_required`` is "No"; checked first).
-	* **The price on the paper receipt, before tax**: ``rate`` and ``price_list_rate`` both, with
-	  ``ignore_pricing_rule`` -- ``rate`` is not one of v16's ``force_item_fields`` and
-	  ``set_missing_item_details`` fills only blanks, so it survives a Standard Buying price.
-	  ``uom`` and ``conversion_factor`` are the stock unit's, because an Item with a purchase
-	  UOM would otherwise read the page's count as boxes.
+	* **The price on the paper receipt, before tax**: ``rate`` and ``price_list_rate`` both. They
+	  survive because neither is one of v16's ``force_item_fields`` and
+	  ``set_missing_item_details`` fills only blanks, so a Standard Buying price does not
+	  replace them -- and because production has no buying Pricing Rule (0 on 2026-09-24).
+	  ``ignore_pricing_rule`` is set too, but it is **not** the guarantee: on v16 it is a
+	  permlevel-1 field only Stock Manager may write, so for a scanner who is only a Stock User
+	  ``validate_higher_perm_levels`` resets it to 0 on insert. A buying Pricing Rule added
+	  later would therefore apply to those technicians' lines. ``uom`` and
+	  ``conversion_factor`` are the stock unit's, because an Item with a purchase UOM would
+	  otherwise read the page's count as boxes.
 	* **No tax.** The site's default purchase template (``US ST 6% - SF``) is the setup
 	  wizard's placeholder: 6% is not Utah's rate and its account has never been posted to.
 	  QuickBooks books the tax on these purchases into the goods' own expense account. The
@@ -1266,13 +1321,16 @@ def store_run(
 	receipt_number=None,
 	receipt_total=None,
 	scanned_code=None,
+	page_today=None,
 ):
 	"""Record one line of a store run: a submitted Purchase Receipt with no PO, flagged for review.
 
 	One save is one line (POL-0602 §4.7: the store, the item, quantity, price, job and reason,
 	with a photo of the receipt). ``run`` ties the lines of one trip together; the first line
 	of a run also carries its header -- the day bought, the receipt number and the receipt's
-	total with tax -- and every later line takes the header from the run, not from the page.
+	total with tax -- and every later line takes the header from the run's first Posted line,
+	not from the page. ``bought`` is "today" or "yesterday" on the page's day; ``page_today`` is
+	that day, and a page opened on an earlier day is told to reload (:func:`_stale_page`).
 
 	Exactly one of ``item_code`` (an existing Item; a non-stock one is allowed) and
 	``new_item`` (``{item_code, item_name, item_group, stock_uom}``, created here as a quick
@@ -1289,6 +1347,7 @@ def store_run(
 		return done
 
 	_store_run_ready()
+	_stale_page(page_today)
 	run = _run_ref(run)
 	store = _store_supplier(supplier)
 	bought_on = rules.purchase_date(bought, getdate())
@@ -1653,6 +1712,9 @@ def _message(doc, repeated=False, undone=False, already_canceled=False):
 		text = _("Took {0} of {1}.").format(amount, item)
 	elif doc.action == rules.ACTION_RECEIVE:
 		text = _("Received {0} of {1} on {2}.").format(amount, item, doc.purchase_order or _("its order"))
+		# A non-stock line received from the store-run sheet's "Receive on PO-…" adds no stock.
+		if not cint(frappe.db.get_value("Item", doc.item_code, "is_stock_item")):
+			text += " " + _("It is not a stock item, so no stock was added.")
 	elif doc.action == rules.ACTION_ADD_WITHOUT_PO and doc.project:
 		text = _("Returned {0} of {1} from {2}. A Stock Manager will review it.").format(
 			amount, item, doc.project
@@ -1682,9 +1744,16 @@ def _result(log_name, repeated=False, undone=False, already_canceled=False):
 
 def _run_summary(run):
 	"""A store run as the page shows it: its header, how many lines and what they cost before
-	tax (Posted lines only), who started it, and whether it still takes lines. Aggregates are
-	``frappe.db.sql``: Frappe 16 refuses ``sum(...)`` as a string field in ``get_all``."""
-	head = _run_head(run)
+	tax (Posted lines only), who started it, when its last line was saved, and whether it still
+	takes lines. Aggregates are ``frappe.db.sql``: Frappe 16 refuses ``sum(...)`` as a string
+	field in ``get_all``.
+
+	The header is the first **Posted** line's (:func:`_run_head`), the photo included. A run
+	whose every line was undone comes back with ``lines`` 0 and the header its first line had:
+	the page reopens it as a new run's header, prefilled with those values, so they can be
+	corrected -- the next line's own header becomes the run's.
+	"""
+	head = _run_head(run) or _run_head(run, posted_only=False)
 	if not head:
 		return None
 	row = frappe.db.sql(
@@ -1696,20 +1765,12 @@ def _run_summary(run):
 		{"run": run},
 	)
 	lines, amount, last_at = row[0] if row else (0, 0, None)
-	latest = frappe.db.sql(
-		"""
-		select receipt_photo from `tabStock Scan Log`
-		where store_run = %(run)s and coalesce(receipt_photo, '') <> ''
-		order by posted_at desc limit 1
-		""",
-		{"run": run},
-	)
 	return {
 		"run": run,
 		"supplier": head.supplier,
 		"supplier_name": frappe.db.get_value("Supplier", head.supplier, "supplier_name") or head.supplier,
 		"bought": str(head.bought_on) if head.bought_on else None,
-		"receipt_photo": (latest[0][0] if latest else None) or head.receipt_photo,
+		"receipt_photo": head.receipt_photo or None,
 		"receipt_number": head.receipt_number or None,
 		"receipt_total": flt(head.receipt_total),
 		"lines": cint(lines),
@@ -1717,32 +1778,32 @@ def _run_summary(run):
 		"started_by": head.posted_by,
 		"started_by_name": _full_name(head.posted_by),
 		"started_on": str(getdate(head.posted_at)) if head.posted_at else None,
-		"last_at": str(last_at) if last_at else None,
+		"last_at": str(last_at or head.posted_at) if (last_at or head.posted_at) else None,
 		"open": rules.run_is_open(head.posted_at, getdate()),
 	}
 
 
 def _open_runs():
-	"""Store runs started today, by anyone, the caller's own first, then the newest: the page
-	offers "Add to ..." for each. Found through today's lines, then kept only if the run's
-	FIRST line is today (a run begun yesterday is not open)."""
+	"""Store runs still taking lines today, by anyone, the caller's own first, then the newest:
+	the page offers "Add to ..." for them (other people's only while their last line is recent,
+	``logic.runOffered``). Found through today's lines; a run is kept only while its header (its
+	first Posted line, or its first line when every line was undone) is from today -- a run begun
+	yesterday is not open."""
 	rows = frappe.db.sql(
 		"""
 		select l.store_run, max(l.posted_at) as last_at
 		from `tabStock Scan Log` l
-		where l.store_run in (
-			select t.store_run from `tabStock Scan Log` t
-			where t.action = %(action)s and t.posted_at >= %(today)s and coalesce(t.store_run, '') <> ''
-		)
+		where l.action = %(action)s and l.posted_at >= %(today)s and coalesce(l.store_run, '') <> ''
 		group by l.store_run
-		having min(l.posted_at) >= %(today)s
 		order by max(l.posted_at) desc
 		limit 10
 		""",
 		{"action": rules.ACTION_STORE_RUN, "today": getdate()},
 		as_dict=True,
 	)
-	runs = [summary for summary in (_run_summary(row.store_run) for row in rows) if summary]
+	runs = [
+		summary for summary in (_run_summary(row.store_run) for row in rows) if summary and summary["open"]
+	]
 	user = frappe.session.user
 	runs.sort(key=lambda r: (r["started_by"] != user, -_sort_stamp(r.get("last_at"))))
 	return runs[: rules.MAX_OPEN_RUNS]
@@ -2042,6 +2103,10 @@ def boot_payload(args=None):
 		"recent": _recent(),
 		"initial": initial,
 		"today": str(getdate()),
+		# The site's clock when the page was built: with the time since, the page tells how long
+		# ago another person's run was last added to (``logic.runOffered``) without trusting the
+		# phone's own clock or time zone.
+		"now": str(now_datetime()),
 		"store_run": _store_run_boot(),
 	}
 
