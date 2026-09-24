@@ -7,6 +7,210 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.528.0] - 2026-09-24
+
+**AI Pending Actions can be confirmed or cancelled in batches, but only your own.** Nik asked on
+2026-09-23 for a batch way to approve some or all of the pending actions assigned to him. With the
+write gate on since v1.525.0, an assistant working through a list leaves one card per write, and
+each card had to be opened, read and confirmed on its own. The single-card flow is unchanged, except
+that its two endpoints are now POST-only and refuse token-authenticated requests (see Security). The
+batch runs every action through the same code it uses.
+
+### Added
+
+- **`gating_api.my_pending_actions`** (POST). It returns the session user's own actions that are
+  Pending and unexpired, oldest first, at most 100. Each row has:
+  - the tool, summary, risk, creation, expiry and target doctype;
+  - **`has_hidden`**, whether the action has sealed values. It comes from a second query that
+    filters on the column (`is set`) rather than reading it, so neither the ciphertext nor the
+    asterisks ever reach the endpoint, and nothing is decrypted;
+  - **`batch_default`**, whether the dialog ticks the row to begin with, and **`review_reason`**,
+    a short phrase saying why not. It is false for High risk ("high risk"), hidden values ("has
+    hidden values"), a submit or cancel ("submits or cancels a document": `_gate._changes_docstatus`),
+    a write to one of `_gate.NEVER_EXEMPT` ("changes the AI gate's own records or settings"), and
+    arguments that cannot be parsed. Risk comes from the tool name alone, so an `update_document`
+    that sets `docstatus: 2` on an invoice, which cancels it, is Medium and carries the same
+    summary as a harmless edit to its remarks. On risk alone it would start ticked while
+    `submit_document` on the same invoice (High) would not. The check reads the redacted
+    `arguments` the form shows, never `sealed_arguments`, and the arguments are not returned;
+  - `age_seconds` and `expires_in_seconds`, computed on the server with the site-local clock on
+    both sides, so the browser never compares a site-local stamp with its own clock.
+
+  "Unexpired" is `expires_at` empty or in the future, and the empty case is asked for explicitly
+  in `or_filters`: a `>` filter on a datetime is a bare comparison, which a NULL never passes.
+- **`gating_api.confirm_actions(names)` and `cancel_actions(names)`** (POST). `names` is a JSON
+  list or a list. It is de-duplicated, and more than 50 unique names is refused before any action
+  is read. The actions run oldest first, so a proposal that depends on an earlier one runs after
+  it. Each one goes through `_confirm_one` or `_cancel_one`, exactly as its form's button sends
+  it, and each result says Executed or Cancelled, Failed or Skipped, with the reason.
+  - **Oversized input is refused early.** Any signed-in user can POST these, and v16 accepts a
+    25 MB body by default (`frappe/app.py`, `max_content_length`). A list longer than 200 (four
+    times the cap, so a client may still repeat itself) is refused before the loop looks at a
+    single entry, and the loop stops at the 51st unique name. De-duplication uses a set, because
+    `not in` over a growing list is quadratic: measured locally, 40,000 names took about 3.6 s
+    that way and under 5 ms with the set.
+  - **Skipped, never raised:** not found, not yours, not Pending, or expired. Nothing is written
+    to a skipped action. An expired one is left for the hourly sweep to flip.
+  - **One failure never stops the batch.** After a failure the transaction is rolled back and
+    the next action goes ahead. Anything worth keeping was committed before the failure was
+    raised: the Confirmed status before execution, and the Failed outcome with its AI Action Log
+    row. Each cancel is committed on its own, so a later rollback cannot undo it.
+  - **A batch is not atomic, and a killed request can strand the action it was running.**
+    `_confirm_one` commits Confirmed before it runs the tool. If gunicorn kills the worker
+    mid-tool (bench's `http_timeout`, usually 120 s), that action's write rolls back but it stays
+    Confirmed, and nothing re-drives or fails a Confirmed action: the expiry sweep only touches
+    Pending, and the purge only terminal statuses. Fifty tools run back to back in one request
+    would make that plausible. So a request **starts no new action after 45 seconds**
+    (`BATCH_TIME_BUDGET_SECONDS`) and returns the rest as Skipped, still Pending ("not started,
+    because this request reached its 45-second time budget … run the batch again"), and reports
+    `budget_reached`. The list view sends **one action per request**, oldest first, so each is the
+    request the form's own Confirm button makes, with the same timeout exposure the single card
+    always had, and the budget only matters to a caller that sends several at once. An action
+    skipped for its own reason keeps that reason.
+  - **Messages are muted around each decision**, and the previous setting is restored
+    afterwards. Frappe v16's `msgprint` still raises a throw's exception while
+    `frappe.flags.mute_messages` is set; it only stops queueing the modal (checked in
+    `frappe/utils/messages.py` on `version-16`). So a twenty-action batch reports its failures in
+    one results table rather than twenty dialogs. Failure messages are the ones `_confirm_one`
+    already builds from masked text.
+  - A failure that isn't an ordinary refusal would have been a 500 with an Error Log from the
+    form. The batch writes that Error Log itself, with the message passed explicitly, so Frappe
+    records that text rather than a traceback whose frame locals could hold restored values.
+    Summaries in the results are cut to 200 characters.
+- **The AI Pending Action list** (`ai_pending_action_list.js`, new).
+  - **"Review My Pending (N)"** appears only when N is above zero, and reads "100+" when
+    `my_pending_actions` returns its limit. It recounts on every full list refresh and on the
+    list's realtime updates: a new proposal, the hourly expiry, a decision made elsewhere. v16
+    sends those through `listview.debounced_refresh`, which never calls the list settings'
+    `refresh`, so the script wraps it (keeping the original) with a 2-second debounced recount. A
+    separate `frappe.realtime.on("list_update")` would not survive, because
+    `setup_realtime_updates` calls `frappe.realtime.off("list_update")` with no handler. A count
+    asked for while one is in flight runs once that one lands, rather than being dropped.
+  - **The page-menu entry follows the button.** v16's `add_inner_button` also adds a
+    same-labelled entry to the page menu, and below the xl breakpoint the inner toolbar is hidden,
+    so on a phone or tablet that entry is the only way in. It now shows the same count, hides at
+    zero with the button, and is removed with a stale button rather than left behind.
+  - The button opens a table of your queue: a checkbox, the tool, the summary, a risk badge, the
+    age, the time left, and a hidden-values flag with a link that opens the form in a new tab. A
+    row with a `review_reason` starts unticked with a note, "Review individually recommended:
+    submits or cancels a document." High risk and hidden values never start ticked whatever the
+    server says. There are Select all and Select none controls, a primary button,
+    "Confirm & Execute (k)", and a secondary one, "Cancel (k)".
+  - **One review is a bounded set.** No more than 50 rows start ticked, Select all ticks the
+    oldest 50, and a note says so. More than 50 ticked by hand is refused with the review dialog
+    left open and the selection intact, rather than closing it and sending a batch the server
+    would refuse whole.
+  - **Every batch asks a second time:** "Run k actions as you? This executes them now." If any
+    high-risk action is ticked, the question says how many. The question is a `frappe.ui.Dialog`
+    with an HTML field, because `frappe.confirm` wraps its message in a `<p>` and the list's
+    confirmation has a `<ul>`.
+  - **One action per request, oldest first, one request after another**, with a progress bar
+    ("k of n done") and one results table at the end. Selected list rows are sorted oldest first
+    before sending, because the list shows newest first and a proposal that depends on an earlier
+    one must run after it. If a request fails at the HTTP level (a timeout, a refusal, an expired
+    session) or reports `budget_reached`, no further one is sent: the table marks that request's
+    action Unknown (it may or may not have run) and the rest Not sent (unchanged).
+  - **The actions menu has "Confirm & Execute Selected" and "Cancel Selected"** for ticked list
+    rows. The confirmation counts as runnable only the rows `my_pending_actions` returns, so an
+    action that expired an hour ago but is still Pending until the sweep reaches it is counted
+    with the skipped ones ("not yours, not Pending or expired"). All the ticked names still go to
+    the server, which decides. The results table says what it skipped.
+  - Every string from the server goes through `frappe.utils.escape_html`. A summary is text the
+    assistant wrote from arguments it chose, so it is exactly where an injected `<img onerror>`
+    would arrive.
+
+### Changed
+
+- **`confirm_action` and `cancel_action` are now thin wrappers** around `_confirm_one` and
+  `_cancel_one`, which hold their bodies unchanged. Every existing gate suite passes unmodified;
+  the shared stub in `test_assistant_tools_schema.install_stubs` gained a `get_request_header`
+  that answers `None`, as a request without the header would. What did change about the two
+  endpoints is under Security.
+
+### Security
+
+- **Decisions are POST-only.** `confirm_action` and `cancel_action` were bare
+  `@frappe.whitelist()`, which in v16 allows GET, and Frappe's CSRF check skips GET entirely
+  (`validate_csrf_token` returns early for anything outside POST/PUT/DELETE/PATCH). The session
+  cookie is `SameSite=Lax`, so a top-level GET carries it, and `_confirm_one` commits for itself,
+  so Frappe's end-of-request rollback of a GET did not undo it. The model is handed each action's
+  name in the gate envelope. A GET link, for example
+  `/api/method/erpnext_enhancements.assistant_tools.gating_api.confirm_action?name=AI-PA-…` in an
+  assistant reply, which the Triton widget renders as a clickable same-origin anchor, could
+  therefore confirm and execute a gated action on one click, with no dialog and no CSRF check. A
+  GET cancel returned "Cancelled" but was rolled back, since `_cancel_one` does not commit; it is
+  POST-only anyway. All six `gating_api` endpoints are now `@frappe.whitelist(methods=["POST"])`
+  (`reveal_sealed` and the batch endpoints already were). The form needs no change: `frappe.call`
+  defaults to POST. This bug predates the batch work; the refactor surfaced it by putting the old
+  decorators next to the new ones. `triton_chat.confirm_action` / `cancel_action` share the flaw
+  and are a follow-up.
+- **Decisions refuse token-authenticated requests.** All six endpoints now start with
+  `_require_desk_session()`, which throws `PermissionError` when the request carries an
+  `Authorization` header. Confirmation is desk-only by design: the gate exists so that a person,
+  signed in as themselves, reads a proposal and decides it. But v16 authenticates a bearer token,
+  an API key pair (`token key:secret`) or the same pair as `Basic` from that header, and
+  `validate_oauth` checks a bearer token against its own scopes, so any valid token opens any
+  `/api/method` call. An OAuth client holding the user's token, such as an MCP client or FAC
+  Chat's cloud side, could call `my_pending_actions` and then `confirm_actions`, and decide its
+  own proposals, 50 at a time. The desk never sends the header: it uses the session cookie and
+  the CSRF token. Outside a web request (a job, the console, `bench run-tests`) the check does
+  nothing. It reads `frappe.get_request_header("Authorization")`; an `auth_hooks` authenticator
+  that reads another header would not be seen, and this app registers none.
+- **A batch only covers actions whose `requested_by` is the session user, System Managers
+  included.** This is stricter than the single card, where `_check_identity` lets a System
+  Manager decide anybody's action. That override is for the exception: a card that has to be
+  decided while its requester is away, read and decided on its own. A confirmed action runs as
+  the person who confirms it, so confirming someone else's queue in bulk would run every
+  proposal in it with System Manager rights, which the requester's own assistant could never
+  have used. Some of those proposals could have been planted by a prompt injection in the other
+  person's session. So the batch skips them, and the form still lets a System Manager decide
+  them one by one. A skipped action that isn't yours returns no tool name or summary, and a
+  missing name gets the same message as another person's, so the batch cannot be used to read
+  out anybody else's queue.
+- **None of this is reachable from the MCP.** Confirmation stays desk-only (ADR 0006). No tool
+  was registered, nothing was added to FAC's configuration, a test checks that no
+  `assistant_tools` hook path names `gating_api`, and a token-authenticated caller is refused (see
+  above).
+
+### Tests
+
+- **`tests/test_ai_gate_batch.py`** (58 tests, bench-free, its own CI step). Every test runs
+  inside a fake web request with no `Authorization` header, as the desk's calls are, and against
+  a fake clock. It covers:
+  - the wrapper;
+  - another user's action skipped for a System Manager, with nothing read out;
+  - expired and decided actions skipped and left alone;
+  - a failed execution and an unexpected error each rolled back and passed over, the second
+    logged without a traceback;
+  - messages muted during each decision and restored afterwards;
+  - oldest-first ordering, the 50 cap on unique names, and JSON-string parsing;
+  - oversized input: more than 200 names refused without the list being iterated, and the loop
+    stopping at the 51st unique name;
+  - the time budget, through the patched clock: nothing starts after 45 s, the rest come back
+    Skipped and still Pending, and a real skip reason wins over the budget's;
+  - `my_pending_actions` scoped to the caller, never decrypting or returning the seal, with
+    `batch_default` false and a `review_reason` for High risk, hidden values, a submit or cancel
+    by `docstatus` or `submit`, a `NEVER_EXEMPT` target and unreadable arguments, while a plain
+    update stays ticked and the arguments are never returned;
+  - `cancel_actions` under the same rules;
+  - each of the six endpoints refusing a bearer token, an API key and Basic auth with
+    `PermissionError` before reading anything, working without the header, and doing nothing
+    outside a web request;
+  - an AST check that every whitelisted function in `gating_api` is one of the six and is
+    `@frappe.whitelist(methods=["POST"])`, so an endpoint added later is held to it too, and that
+    each one calls `_require_desk_session()` before anything else.
+- **`scripts/test_ai_pending_batch.mjs`** (node, 29 checks, its own CI step) runs the real list
+  script inside `new Function`, the way Frappe loads it, with a small fake jQuery and a fake
+  `frappe.call` that answers in v16's callback order. It covers the tick rules and the 50 cap,
+  the dialog refusing a 51st with the selection kept, "100+", `review_reason` notes, one action per
+  request sent oldest first with "k of n" progress, a failed or out-of-time request stopping the rest, the
+  confirmation as a Dialog, the realtime recount through `debounced_refresh`, the page-menu entry
+  following the button, the selected-rows count, and escaping of every server string. Mutation
+  runs over both files (15 server and 18 client mutations) each turned the suite red.
+- **`test_whitelist_placement`** now names all six `gating_api` endpoints in its inventory,
+  because `_confirm_one` and `_cancel_one` now sit directly above the functions whose decorators
+  matter.
+
 ## [1.527.0] - 2026-09-23
 
 **WI-079 slice 3, the ERPNext half: the work breakdown reads the code a request points at, and

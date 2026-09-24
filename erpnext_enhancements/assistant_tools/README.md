@@ -28,6 +28,21 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   `cancel_action` (dotted path — no Python import, the tripwire stays green).
   There is deliberately **no MCP confirm tool** — a model-callable confirm
   would collapse the human-in-the-loop guarantee under prompt injection.
+- **Batches (v1.528.0).** The AI Pending Action list decides several at once
+  through `my_pending_actions`, `confirm_actions` and `cancel_actions`. They
+  cap a batch at 50, run oldest first through the same
+  `_confirm_one` / `_cancel_one`, skip anything not Pending or expired, roll
+  back and continue after a failure, and start nothing new after a 45-second
+  time budget; the list sends one action per request, oldest first. They only cover the
+  caller's **own** actions, System Managers included, which is stricter than
+  `_check_identity`; the `gating_api` module docstring says why. High-risk,
+  hidden-value, submit/cancel and gate-record actions start unticked. See
+  [`ai_governance/README.md`](../ai_governance/README.md#deciding-in-batches-v15280).
+- **Every `gating_api` endpoint is POST-only and refuses a request that carries
+  an `Authorization` header** (v1.528.0, `_require_desk_session`). A GET skips
+  Frappe's CSRF check, so a link to `confirm_action` in an assistant reply
+  used to run the action on one click; and a token (an MCP client's OAuth
+  token, an API key) must never be able to decide its own proposals.
 - Confirming executes the arguments **as proposed**. The card shows credential-like values as
   `***REDACTED***`, and `_propose` seals the real ones in the hidden Password field
   `sealed_arguments`. `confirm_action` restores them and refuses if it can't. It masks sealed
