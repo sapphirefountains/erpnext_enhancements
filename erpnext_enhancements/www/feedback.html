@@ -55,6 +55,12 @@
 {% endblock %}
 
 {% block script %}
+{# Capture widget (WI-079 slice 2). This page is on its allowlist; the recorder goes first so it
+   sees errors from the page's own scripts. Never in web_include_js. #}
+<script>
+	window.EE_CAPTURE = {surface: "web", launcher: true, build: {{ deploy_version | tojson }}, user: {{ frappe.session.user | tojson }}, panel_url: {{ bundled_asset('capture_panel.bundle.js') | tojson }}};
+</script>
+<script src="{{ bundled_asset('capture.bundle.js') }}"></script>
 <script>
 	// Server-computed boot payload. Identity only — never a request list. That list is one
 	// fetch away (api.feedback.get_bootstrap) and putting it here would mean a stale queue on

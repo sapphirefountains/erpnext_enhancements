@@ -31,6 +31,9 @@ export const M = {
 	RERUN: "erpnext_enhancements.api.feedback.rerun_breakdown",
 	SAVE_PROPOSAL: "erpnext_enhancements.api.feedback.save_proposal",
 	CREATE_TASKS: "erpnext_enhancements.api.feedback.create_tasks",
+	// Dialled by the capture panel (public/js/capture/panel.js), which reuses this transport
+	// on the Desk, the kiosk and the allowlisted web pages rather than growing a second one.
+	CAPTURE: "erpnext_enhancements.api.feedback.submit_capture",
 };
 
 /** A refusal the SPA can recognise, so a 403 degrades into a sentence rather than a stack. */
@@ -51,7 +54,13 @@ export class FeedbackCallError extends Error {
 }
 
 function csrfToken() {
-	return BOOT.csrf_token || "";
+	// The /feedback page boots with its own token. The capture panel reuses this module on
+	// pages that do not: the Desk and every website page carry `frappe.csrf_token` (base.html
+	// writes it), and the kiosk's page does too. Read at call time, not import time, because
+	// on a website page the token is written after the bundle loads.
+	if (BOOT.csrf_token) return BOOT.csrf_token;
+	const w = typeof window !== "undefined" ? window : {};
+	return (w.frappe && w.frappe.csrf_token) || (w.EE_CAPTURE && w.EE_CAPTURE.csrf_token) || "";
 }
 
 export async function call(method, args, options) {

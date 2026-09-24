@@ -21,12 +21,17 @@
   "context_url",
   "context_doctype",
   "context_docname",
+  "source",
+  "source_doctype",
+  "source_ref",
   "column_break_context",
   "context_user_agent",
   "context_app_version",
+  "context_release",
   "triage_section",
   "decided_by",
   "decided_at",
+  "terminal_at",
   "decision_reason",
   "column_break_triage",
   "target_erpnext",
@@ -154,6 +159,31 @@
    "read_only": 1
   },
   {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Feedback form\nCapture\nDesign Review",
+   "default": "Feedback form",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "description": "How the request arrived (ADR 0016 §1). Set by the endpoint that filed it, never by the client, and frozen after insert."
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "label": "Source DocType",
+   "options": "DocType",
+   "read_only": 1,
+   "description": "What filed it, when that is a record — a Design Decision or Design Note (slice 5). Empty for the /feedback form and the capture widget."
+  },
+  {
+   "fieldname": "source_ref",
+   "fieldtype": "Dynamic Link",
+   "label": "Source Record",
+   "options": "source_doctype",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_context",
    "fieldtype": "Column Break",
    "label": null
@@ -173,6 +203,14 @@
    "description": "The deploy version the requester was running. Answers 'is this already fixed?' before anyone opens the code."
   },
   {
+   "fieldname": "context_release",
+   "fieldtype": "Data",
+   "label": "Deployed Release",
+   "length": 140,
+   "read_only": 1,
+   "description": "The release that was live on the server when the request was filed. Unlike App Version, which is what the requester's browser reported, this comes from the server."
+  },
+  {
    "fieldname": "triage_section",
    "fieldtype": "Section Break",
    "label": "Triage"
@@ -189,6 +227,13 @@
    "fieldtype": "Datetime",
    "label": "Decided At",
    "read_only": 1
+  },
+  {
+   "fieldname": "terminal_at",
+   "fieldtype": "Datetime",
+   "label": "Closed At",
+   "read_only": 1,
+   "description": "When the request reached Tasks Created, Rejected or Duplicate. The capture retention job counts 180 days from here (WI-079). Stamped by the controller; no default, so existing rows stay empty and the job falls back to their last change."
   },
   {
    "fieldname": "decision_reason",
@@ -274,7 +319,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-08-17 12:00:00.000000",
+ "modified": "2026-09-23 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Product Feedback",
  "name": "Enhancement Request",

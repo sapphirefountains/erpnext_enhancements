@@ -8,7 +8,10 @@ without anybody transcribing it, and without a model ever writing to that board?
 
 The lifecycle, and where each part lives:
 
-1. ``submit_request`` — anybody logged in files one. Nothing else happens.
+1. ``submit_request`` — anybody logged in files one from the ``/feedback`` form, and
+   ``submit_capture`` files one from the capture widget (Desk, kiosk, allowlisted web pages;
+   System Users only; WI-079 slice 2). Both go through :func:`file_request`, the one way a
+   request is created (ADR 0016 §1). Nothing else happens.
 2. ``review_decision`` — a System Manager approves, rejects, or closes it as a duplicate.
    Approving enqueues :mod:`product_feedback.breakdown`, which asks Triton for a proposal
    and writes it to a child table. **No ``Task`` exists at this point.**
@@ -110,6 +113,25 @@ VALID_IMPACTS = (
 #: A screenshot or two. The cap is on the link step rather than the upload, because the
 #: upload is Frappe's own endpoint and this is the seam we own.
 MAX_ATTACHMENTS = 5
+
+#: `Enhancement Request.source` (ADR 0016 §1). Set by the endpoint that files, never by the
+#: client: `source` is frozen after insert and absent from SUBMIT_ALLOWED_FIELDS.
+SOURCE_FEEDBACK_FORM = "Feedback form"
+SOURCE_CAPTURE = "Capture"
+SOURCE_DESIGN_REVIEW = "Design Review"
+
+#: One person, one minute (ADR 0016 consequences). `@rate_limit` keys by IP — one budget for
+#: a whole office — or by a value the client supplies, so the limit lives in `file_request`,
+#: keyed on the session user, and covers every way in.
+FILING_RATE_LIMIT = 10
+FILING_RATE_WINDOW_SECONDS = 60
+
+#: The capture widget's snapshot (page state, console errors, failed requests) is a private
+#: JSON File on the request, never a field: Triton's bulk sync reads the request's fields.
+#: The recorder's rings are 20 + 20 + 10 entries, so a real snapshot is a few KB; this cap is
+#: there for the one that is not.
+MAX_CONTEXT_BYTES = 200_000
+CAPTURE_CONTEXT_PREFIX = "capture-context-"
 
 MAX_TITLE_CHARS = 200
 MAX_BODY_CHARS = 20000
@@ -431,20 +453,155 @@ def submit_request(payload=None, attachments=None):
         frappe.throw(_("New requests are paused right now."), frappe.ValidationError)
 
     values, rejected = _filter_payload(_as_dict(payload), SUBMIT_ALLOWED_FIELDS)
+    # Session-derived, always. See the module docstring.
+    doc = file_request(values, frappe.session.user, SOURCE_FEEDBACK_FORM)
+
+    linked, attachment_problems = _link_attachments(doc.name, attachments)
+    return {"name": doc.name, "rejected": sorted(rejected) + attachment_problems, "attachments": linked}
+
+
+@frappe.whitelist(methods=["POST"])
+def submit_capture(payload=None, context=None, attachments=None):
+    """File a request from the capture widget (WI-079 slice 2): the Desk, the kiosk, or an
+    allowlisted web page.
+
+    The same allowlisted fields as ``submit_request``, plus ``context`` — the recorder's
+    snapshot, which the person has seen in full before sending — stored as a private JSON
+    File on the request. ``attachments`` is the flattened, annotated screenshot, uploaded
+    through ``upload_file`` with no doctype and linked here exactly as the SPA's are.
+
+    **System Users only.** The widget mounts on signed-in pages, but a Website User signed in
+    to ``/itinerary`` is signed in too, and the ``system_user`` cookie that hides the launcher
+    outlives the session: the check that counts is this one.
+    """
+    _require_system_user()
+    if get_settings()["paused"]:
+        frappe.throw(_("New requests are paused right now."), frappe.ValidationError)
+
+    values, rejected = _filter_payload(_as_dict(payload), SUBMIT_ALLOWED_FIELDS)
+    # Before anything is written: an oversized or malformed snapshot is refused whole rather
+    # than filing a request whose evidence was dropped.
+    content = _capture_context_json(context)
+
+    doc = file_request(values, frappe.session.user, SOURCE_CAPTURE)
+
+    problems = []
+    if not _attach_capture_context(doc.name, content):
+        problems.append("the technical details could not be saved; the report was filed without them")
+    linked, attachment_problems = _link_attachments(doc.name, attachments)
+    return {
+        "name": doc.name,
+        "rejected": sorted(rejected) + problems + attachment_problems,
+        "attachments": linked,
+    }
+
+
+def file_request(values, requested_by, source, source_doctype=None, source_ref=None):
+    """File one Enhancement Request. The only way a request is created (ADR 0016 §1).
+
+    The ``/feedback`` form, the capture widget and (slice 5) Design Review promotion all come
+    through here, so the rate limit, the validation, the provenance stamps and the reviewer's
+    notification exist once. ``values`` must already be filtered to ``SUBMIT_ALLOWED_FIELDS``
+    by the caller; ``source``, ``source_doctype``, ``source_ref`` and ``context_release`` are
+    set here and frozen afterwards, and none of them is ever taken from client input.
+
+    ``requested_by`` is a parameter rather than ``frappe.session.user`` so a promotion can say
+    who it files for; every caller today passes the session user.
+    """
+    _enforce_filing_rate(requested_by)
     _validate_submission(values)
 
     doc = frappe.new_doc(DOCTYPE)
     doc.update(values)
-    # Session-derived, always. See the module docstring.
-    doc.requested_by = frappe.session.user
+    doc.requested_by = requested_by
     doc.requested_at = now_datetime()
     doc.status = RequestState.SUBMITTED.value
+    doc.source = source
+    doc.source_doctype = source_doctype or None
+    doc.source_ref = source_ref or None
+    doc.context_release = _deployed_release()
     doc.insert(ignore_permissions=True)
 
-    linked, attachment_problems = _link_attachments(doc.name, attachments)
-
     _notify("request_submitted", doc.name)
-    return {"name": doc.name, "rejected": sorted(rejected) + attachment_problems, "attachments": linked}
+    return doc
+
+
+def _enforce_filing_rate(user):
+    """Ten requests a minute per person, then a 429.
+
+    Counted before validation, so a script cannot probe forever with payloads that are
+    refused. ``make_key`` gives the counter the site's prefix — ``incrby`` is raw redis — and
+    the expiry is set on the first hit only, so the window is fixed rather than sliding
+    forever under a steady trickle. The deploy's FLUSHDB resets it, which is harmless.
+    """
+    key = frappe.cache.make_key(f"ee_feedback_filing:{user}")
+    count = frappe.cache.incrby(key, 1)
+    if count == 1:
+        frappe.cache.expire(key, FILING_RATE_WINDOW_SECONDS)
+    if count > FILING_RATE_LIMIT:
+        frappe.throw(
+            _("You've sent several reports in the last minute. Wait a moment and try again."),
+            frappe.RateLimitExceededError,
+        )
+
+
+def _deployed_release():
+    """The release that was live when the request was filed, as distinct from
+    ``context_app_version``, which is what the requester's browser said it was running."""
+    try:
+        from erpnext_enhancements import __version__
+
+        return str(__version__)[:140]
+    except Exception:
+        return ""
+
+
+def _capture_context_json(context):
+    """The snapshot as JSON text, or a refusal. A dict is required; nothing else is stored."""
+    snapshot = context
+    if isinstance(context, str):
+        try:
+            snapshot = json.loads(context) if context.strip() else {}
+        except ValueError:
+            frappe.throw(_("The technical details were malformed."), frappe.ValidationError)
+    if snapshot is None:
+        snapshot = {}
+    if not isinstance(snapshot, dict):
+        frappe.throw(_("The technical details were malformed."), frappe.ValidationError)
+    text = json.dumps(snapshot, indent=1, ensure_ascii=False, default=str)
+    if len(text.encode("utf-8")) > MAX_CONTEXT_BYTES:
+        frappe.throw(
+            _("The technical details are too large to send ({0} KB at most).").format(MAX_CONTEXT_BYTES // 1000),
+            frappe.ValidationError,
+        )
+    return text
+
+
+def _attach_capture_context(request_name, content):
+    """Store the snapshot as a private File on the request. True when it was saved.
+
+    A failure here never loses the report: the request is already filed with the person's
+    words, and a snapshot that System Settings refuses (an extension allowlist without
+    ``json``, say) is worth a line in ``rejected``, not a lost bug report.
+    """
+    try:
+        frappe.get_doc(
+            {
+                "doctype": "File",
+                "file_name": f"{CAPTURE_CONTEXT_PREFIX}{request_name}.json",
+                "content": content,
+                "is_private": 1,
+                "attached_to_doctype": DOCTYPE,
+                "attached_to_name": request_name,
+            }
+        ).insert(ignore_permissions=True)
+        return True
+    except Exception:
+        try:
+            frappe.log_error(title=f"Capture context could not be saved for {request_name}")
+        except Exception:
+            pass
+        return False
 
 
 # ------------------------------------------------------------------------------- review
@@ -612,6 +769,16 @@ def _require_session():
     """
     if frappe.session.user in ("", None, "Guest"):
         frappe.throw(_("Sign in to use this."), frappe.PermissionError)
+
+
+def _require_system_user():
+    """A signed-in **System User**. Website Users can reach an allowlisted web page, and the
+    ``system_user`` cookie that hides the launcher from them is only a hint."""
+    _require_session()
+    from frappe.permissions import is_system_user
+
+    if not is_system_user(frappe.session.user):
+        frappe.throw(_("Only staff accounts can send reports from here."), frappe.PermissionError)
 
 
 def _is_reviewer():

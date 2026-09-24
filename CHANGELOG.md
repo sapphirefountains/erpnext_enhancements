@@ -7,6 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.526.0] - 2026-09-23
+
+**WI-079 slice 2: "Report a problem" from any Desk screen, the kiosk, and a short list of
+signed-in web pages.** The report carries what went wrong before the person decided to report
+it: the page they were on, the last console errors, the failed or slow requests, and an
+annotated screenshot. They see all of it before it is sent, and it never leaves ERPNext
+(ADR 0016 §1 and §4).
+
+### Added
+
+- **The capture widget.**
+  - **Recorder.** `public/js/capture/recorder.js` is the first import of the Desk bundle, and on
+    web pages it ships in `capture.bundle.js`. It starts at page load and keeps three rings:
+    - the last 20 console errors, uncaught errors and unhandled rejections, with consecutive
+      repeats collapsed;
+    - the last 20 failed (network error or 4xx/5xx) or slow (3 s or more) requests, as method,
+      path, status, duration and Frappe's `exc_type`, and never a body;
+    - the last 10 routes.
+
+    Text is scrubbed of emails and token-shaped strings. Everything is wrapped so that a
+    recorder fault cannot break the page, and the fetch wrapper hands back the page's own
+    Response and never reads its body.
+  - **Page state.** Desk route, query string and title. On a form: doctype, name, `docstatus`,
+    the unsaved flag and the names (never the values) of the fields changed since load. List and
+    report filters. Service-worker version, online state and device facts.
+    `ee_capture.registerCaptureState(fn)` lets a single-page app or PWA add its own. The Desk
+    page detection is lifted out of `triton_widget.js` into `capture/page_context.js`, and the
+    Triton widget imports it back with its reference shape unchanged.
+  - **The panel** (`capture_panel.bundle.js`, loaded only when someone asks):
+    - fields: type, impact, title, "What happened?" and steps;
+    - every captured detail, shown in full;
+    - a screenshot by paste or upload, then **annotated** (box, arrow, pen, text, blur, crop,
+      undo, retake). Blur and crop change the exported pixels, and only the flattened image is
+      uploaded. The original never leaves the browser;
+    - touch-sized controls on the kiosk, light and dark themes, and a focus-trapped dialog.
+  - **Offline on the kiosk.** A report made offline is saved in its own IndexedDB store
+    (`ee-capture`), not in Cache Storage, which both service workers clear. It is keyed to the
+    user, expires after 7 days, and is offered for sending when the signal returns. It is only
+    ever sent as the user the server says is signed in; another user's drafts are dropped. The
+    kiosk preloads the panel once it is idle and online, because neither capture bundle is
+    precached.
+  - **Entry points:**
+    - a **Report a Problem** item in the Desk's Help menu (`standard_help_items`,
+      `is_standard: 1`);
+    - a small "Report a problem" button on `/feedback`, `/itinerary` and `/travel_guidelines`,
+      shown only to System Users;
+    - a **Help** card in the kiosk's Settings tab.
+- **`api.feedback.submit_capture`** (POST). It takes the same allowlisted fields as the form plus
+  the snapshot, which is stored as the private JSON File `capture-context-<ER>.json` and never
+  as a field, because Triton's bulk sync reads the request's fields.
+  - **System Users only**, checked on the server. The launcher's `system_user` cookie check is
+    only a hint.
+  - An oversized or malformed snapshot (200 KB at most) is refused before anything is written.
+    A snapshot that cannot be saved never loses the report.
+- **`api.feedback.file_request`**, the one way a request is created. `submit_request` and
+  `submit_capture` both call it, and Design Review promotion will (slice 5). It holds the
+  validation, the provenance stamps and the new per-person limit: **ten filings a minute**,
+  counted on the session user, then a 429.
+- **Enhancement Request fields:**
+  - `source` (`Feedback form`, `Capture`, `Design Review`). It defaults to `Feedback form`, so
+    the ALTER labels the existing requests.
+  - `source_doctype`, and `source_ref` (a Dynamic Link) for slice 5's Design Decisions and
+    Notes.
+  - `context_release`, the release that was live on the server.
+  - All four are set by `file_request`, absent from `SUBMIT_ALLOWED_FIELDS` and in
+    `_FROZEN_FIELDS`.
+  - `terminal_at` ("Closed At"), stamped by the controller when a request enters Tasks
+    Created, Rejected or Duplicate. It has no default: on a normal doctype, a default would be
+    written into every existing row.
+- **Retention.** `product_feedback.capture_jobs.purge_expired_capture_files` runs daily and
+  deletes a request's screenshots and context file 180 days after it closed (decided
+  2026-09-23). The request, its text and its Task links stay.
+  - The clock is `terminal_at`, falling back to `modified`, which is never earlier than the real
+    close, so the fallback can only keep files longer.
+  - It joins to File, so a cleaned request never comes back, and it commits per deletion.
+- **Error Log matching.** `product_feedback.capture_jobs.match_capture_error_logs` runs hourly
+  and pairs each failed request in a snapshot with the Error Log the server wrote for it. It
+  notes each match once, as a Comment on the request that keeps the facts, because Error Log
+  rows are cleared after 14 days.
+  - It is a job, and not a lookup at filing time, because Frappe v16 writes a 5xx's Error Log
+    through `deferred_insert`. That insert is flushed every 15 minutes with the scheduler as
+    `owner` and the flush time as `creation`. So the match uses the row's `metadata` (user,
+    verb, path) inside the flush window, with the browser's clock skew removed.
+  - This is wider than the "few seconds" the work item imagined, which cannot work against a
+    deferred insert.
+
+### Fixed
+
+- **`public/js/feedback/context.js`** parsed only `/app/...` referrers. v16 serves the Desk
+  under `/desk/` and redirects `/app/` there, so every report filed from the `/feedback` form
+  after visiting a Desk screen arrived with an empty doctype and document. A blank reads as "not
+  filed from a form", so nothing failed. It now reads `/desk/` and `/app/`. It also no longer
+  takes `/view/report` or a `new-…` form for a document name, and keeps a docname containing
+  `/`. New node test: `scripts/test_feedback_context.js`.
+
+### Not in this release
+
+- **Automatic screenshots.** The two-day spike on six fixed screens (the work item's rule)
+  needs a signed-in browser on those screens and has not been run, so paste and upload are the
+  method, which is the work item's stated fallback. Masking permlevel > 0 and Password fields,
+  and switching capture off on pay, labor-cost, payments and QuickBooks pages, apply to
+  automatic capture, so they arrive with it.
+- **"Point at it"** (ADR 0016 §4) is not in the work item's slice 2 list and is not built. The
+  Server Error dialog does not yet offer the report either.
+
+### Tests
+
+- Bench-free Python:
+  - `test_feedback_capture_surface`, stub-free: the allowlist, never in `web_include_js`, the
+    never-list pages clean, the recorder first in the Desk bundle, the help item, the jobs, and
+    field provenance.
+  - `test_feedback_capture_intake`, stubbed, 16 tests: one way in, provenance refused, the
+    eleventh filing refused, System Users only, the snapshot as a private File, oversized
+    refused.
+  - `test_feedback_capture_jobs`, stubbed, 15 tests: the retention cutoff and clock, artifacts
+    only, per-row commit, and matching by metadata and window, skew and idempotence.
+- Node:
+  - `test_feedback_context`
+  - `test_capture_scrub` and `test_capture_recorder`
+  - `test_capture_panel`, `test_capture_annotate` and `test_capture_drafts`
+- All new suites are wired into CI. The three bundles build with esbuild.
+
 ## [1.525.0] - 2026-09-23
 
 **The AI write gate switches on, with exemptions that carry the routine work: permanent ones for

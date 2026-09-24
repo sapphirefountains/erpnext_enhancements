@@ -17,9 +17,11 @@
 /**
  * Pull `{url, doctype, docname}` out of a referrer.
  *
- * Desk URLs are `/app/<doctype-slug>/<docname>`; a list view is `/app/<doctype-slug>` with no
- * name. Anything else (a portal page, an external site, no referrer at all) yields the URL
- * and two empty strings, which is still worth having.
+ * Desk URLs are `/desk/<doctype-slug>/<docname>` (v16; `/app/` before it); a list view is
+ * `/desk/<doctype-slug>` with no name. Anything else (a portal page, an external site, no
+ * referrer at all) yields the URL and two empty strings, which is still worth having. A
+ * workspace (`/desk/<workspace>`) reads as a doctype here; the capture widget reads the live
+ * route instead and does not have that ambiguity.
  *
  * Only same-origin referrers are kept. A referrer from elsewhere tells us nothing about our
  * own software and storing it would quietly record where employees browse.
@@ -40,9 +42,17 @@ export function parseReferrer(referrer, origin) {
 	out.url = parsed.pathname + parsed.search;
 
 	const parts = parsed.pathname.split("/").filter(Boolean);
-	if (parts[0] === "app" && parts[1]) {
+	// v16 serves the Desk under `/desk/` and redirects `/app/...` there, so a Desk referrer is
+	// `/desk/...` today; `/app/...` is kept for links and bookmarks that predate the move.
+	if ((parts[0] === "app" || parts[0] === "desk") && parts[1]) {
 		out.doctype = deslug(parts[1]);
-		if (parts[2]) out.docname = decodeURIComponent(parts[2]);
+		// `/desk/<doctype>/view/report` is a view of a list, not a document called "view";
+		// `/desk/<doctype>/new` is an unsaved form with no name yet.
+		if (parts[2] && parts[2] !== "view" && !/^new(-|$)/.test(parts[2])) {
+			// A docname may itself contain "/" (v16 joins the rest of the route), so take the
+			// remainder rather than one segment.
+			out.docname = parts.slice(2).map((p) => decodeURIComponent(p)).join("/");
+		}
 	}
 	return out;
 }

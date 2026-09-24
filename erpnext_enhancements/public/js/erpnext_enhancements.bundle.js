@@ -25,6 +25,13 @@
  *   - doctype_js / lazy dashboard components: loaded on demand through
  *     frappe.require, which has a version-aware client-side cache.
  */
+// Capture recorder (WI-079 slice 2): installs window.ee_capture. FIRST on purpose:
+// it wraps fetch, XHR and console.error and listens for uncaught errors, and a
+// script imported ahead of it could fail, or make a request, before it was
+// watching. It is small, touches no frappe API at load beyond guarded reads,
+// and every piece of it is inside try/catch. The report form it opens is a
+// separate bundle (capture_panel.bundle.js), loaded only when used.
+import "./capture/recorder.js";
 import "./erpnext_enhancements.js";
 import "./global_comments.js";
 // Comments App: comments.js defines erpnext_enhancements.render_comments_app

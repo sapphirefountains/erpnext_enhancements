@@ -65,6 +65,24 @@ web_include_css = "login_enhancements.bundle.css"
 # Login page legal footer (Privacy Policy + EULA links). Loads on website pages
 # but only injects on /login; styled by login_enhancements.bundle.css.
 web_include_js = "login_enhancements.bundle.js"
+# The capture widget (WI-079 slice 2) is deliberately NOT here: web_include_js is emitted on
+# every website page, /pay and /contract-sign included. Its recorder ships in the Desk bundle
+# and in capture.bundle.js, which only the allowlisted templates include (kiosk, feedback,
+# itinerary, travel_guidelines). tests/test_feedback_capture_surface.py pins both.
+
+# Help menu -> "Report a problem" (WI-079 slice 2; frappe/hooks.py standard_help_items shape).
+# is_standard=1, so migrate syncs it and deleting this entry removes it. Navbar sync adds a
+# label only when it is missing, so change the label, not just the action, to update it.
+# The action is a JS expression (frappe.utils.eval) and must not start with this app's
+# dotted name: test_hook_targets_resolve would read it as a Python path.
+standard_help_items = [
+	{
+		"item_label": "Report a Problem",
+		"item_type": "Action",
+		"action": "window.ee_capture ? window.ee_capture.open() : window.open('/feedback')",
+		"is_standard": 1,
+	},
+]
 
 doctype_js = {
 	# training: the Course form's doors into the authoring flow — New Draft
@@ -1267,6 +1285,11 @@ scheduler_events = {
 		# deletes its private File through core's remove_all, which is the whole reason the
 		# file is anchored to a row instead of left orphaned.
 		"erpnext_enhancements.triton_attachments.purge_expired",
+		# product_feedback capture retention (WI-079 slice 2, Nik 2026-09-23): a request's
+		# screenshots and capture-context file are deleted 180 days after it closes; its text,
+		# decision and Task links stay. Clock is terminal_at, falling back to modified (never
+		# earlier than the real close). Joins to File, so a cleaned request never returns.
+		"erpnext_enhancements.product_feedback.capture_jobs.purge_expired_capture_files",
 		# Client-IP derivation (TASK-2026-01478): Error Log row if recent logins were recorded
 		# from a Google load-balancer address instead of the visitor's. The fix is a hand-placed
 		# nginx file on the VM (/etc/nginx/conf.d/00-realip.conf, source infra/configs/), so
@@ -1377,6 +1400,12 @@ scheduler_events = {
 		# already reported success. An Enhancement Request sitting in `Approved` with no
 		# proposal is the observable trace a lost job leaves; nothing else is. ADR 0010.
 		"erpnext_enhancements.product_feedback.breakdown.sweep_stalled_breakdowns",
+		# product_feedback capture (WI-079 slice 2): note on each capture filed 20 min to 36 h
+		# ago which Error Log belongs to each failed request in its snapshot. A job, not a
+		# submit-time lookup, because v16 writes a 5xx's Error Log through deferred_insert on the
+		# 0/15 cron, with owner = scheduler and creation = flush time -- so it matches on the
+		# row's metadata (user, verb, path) inside the flush window. Idempotent per Error Log.
+		"erpnext_enhancements.product_feedback.capture_jobs.match_capture_error_logs",
 		# workforce (v1.480.0): close clock-ins nobody clocked out of. An interval still
 		# Open/Paused auto_close_after_hours (Time Kiosk Settings, 14) after it started
 		# is closed at the pause time, else the last location fix, else start + limit,
