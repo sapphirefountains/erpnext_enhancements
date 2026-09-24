@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.534.0] - 2026-09-24
+
+**The phone's Back button now works inside Stock Scan and the Time Kiosk, and Stock Scan gets
+"Report a problem".** Back returns to the previous screen or tab, and Forward brings it back. When
+a sheet, the camera or the report form is open, Back closes that first. At the first screen,
+Back leaves the page as it always did.
+
+### Why
+
+Nik reported that pressing Back on `/stock-scan` "just takes you out of the app", and set the
+rule: *we shouldn't break basic browser functionality with back or forward navigation.* The
+cause was the same on both pages. Every screen change was an in-memory swap with no history
+entry, so the page owned exactly one entry, and Back always left it. On the kiosk that also
+threw away any open form and draft, and could background the app mid-shift.
+
+A survey of every custom page found the same problem elsewhere. Worst are the Inspection Wizard
+(Back can lose an answer still in its autosave debounce) and the Visit Wizard (Back skips every
+step, and its hard-coded `/app/` URLs land Back or Forward on "Page not found"). Those follow in
+later releases; this one fixes the two pages field staff use on phones, plus the report panel
+they share.
+
+### Added
+
+- **Stock Scan Back and Forward: `public/js/stock_scan/nav.js`.** Each screen is a history entry.
+  A sheet or the camera gets one marker entry, so Back closes it. The in-app back link calls
+  `history.back()` when its target is the entry behind; otherwise, for example after a scan
+  made Start the parent, it goes up as a new entry.
+- **Time Kiosk Back and Forward: `KioskUI.nav` in `public/js/kiosk/ui.js`.** A tab tap pushes one
+  entry. An open stack of sheets adds one more, and each Back closes the top sheet through
+  `close('dismiss')`, the path Escape takes, which every gate already reads as cancel. The clock
+  state (idle, working, break, day complete) is server truth and is never an entry, so Back
+  cannot undo or repeat a clock action.
+- **"Report a problem" on `/stock-scan`**: a header button on every screen. `stock-scan.html` joins
+  the capture allowlist with surface `web` and `launcher: false`, because the floating launcher
+  would sit on the Scan bar. While the form loads or is open, every other door on the page is
+  shut, so nothing opens underneath it.
+- **The report panel owns a history entry on the web and the kiosk** (`capture/panel.js`). Back
+  asks "Discard this report?" instead of unloading the page and silently losing the typed report
+  and annotated screenshot. Every other close path removes the entry with one `history.back()`.
+  `window.ee_capture.isOpen()` is new, so pages with their own history stand aside while it is
+  open.
+- **Off switches, no deploy needed:**
+  - Inventory Scanner Settings: "Turn Off Browser Back on Stock Scan"
+    (`stock_scan_disable_browser_back`).
+  - Time Kiosk Settings: "Turn Off Browser Back in the Kiosk" (`disable_browser_back`).
+
+  Ticked, each page and its report panel go back to pushing no history at all. They exist for
+  iPhones (see below).
+
+### Workarounds and platform limits, recorded here on purpose
+
+- **No history call carries a URL.** Every call is `pushState(state, "")` or
+  `replaceState(state, "")`, so `location.href` never changes. iOS Safari asks for camera
+  permission again when a page's URL changes, and Stock Scan uses the camera on every shelf. The
+  kiosk service worker serves its offline shell only for the exact path `/kiosk`. Tests on both
+  pages fail the build on a third argument.
+- **Whether iOS re-prompts for a same-URL `pushState` is unverified.** WebKit resets grants on a
+  load commit, not a same-document entry, so it should not. But home-screen web apps have had
+  bugs of this kind, and nobody has tested it on an iPhone yet. That is what the two settings
+  boxes are for.
+- **Chrome's history-manipulation intervention.** Back skips an entry the page pushed without a
+  user tap since the entry before it, and one tap-less push can make Back skip every entry the
+  page owns. So entries are pushed only from taps. A navigation the page makes by itself writes
+  over an entry that a tap already pushed: a camera read or a lookup result takes over the entry
+  the camera or search sheet pushed when it was tapped open, and the automatic open of a bin
+  holding one item replaces the bin's entry.
+- **The panel's entry is not used on the Desk**, where Frappe's router re-routes on every
+  `popstate`. **Nor yet on `/feedback`**, whose router re-renders the current view on every
+  `popstate`, which would clear a half-written request under the panel.
+- A screen's data is kept in memory keyed by an id in `history.state`, never in the state
+  itself, because browsers write that to disk. An entry from an earlier load of the page, or
+  one the page did not write, is never restored from: the page keeps its screen and re-stamps
+  the entry. A reload still opens the label in the URL on Stock Scan, and Clock on the kiosk.
+- **Both settings fields need no backfill patch.** Unticked is right for every site, and a site
+  that never saved the field reads it as unticked.
+
+### Tests
+
+- `scripts/test_stock_scan_client.mjs`: 273 checks, run against the real `nav.js` and `app.js`.
+- `scripts/test_kiosk_history.js`, new: 230 checks in 21 scenarios. It drives the real kiosk
+  scripts against a fake history that models Chrome's intervention and fails on any push made
+  without a tap. `tests/test_kiosk_frontend.py` runs it.
+- `scripts/test_capture_panel.js`: every close path, "stay" and re-arm, blocked dialogs,
+  Forward onto a dead entry, both races, and the off switch.
+- The Python surface suites pin the wiring that no node test can reach: `test_stock_scan_surface`,
+  `test_kiosk_frontend` and `test_feedback_capture_surface`.
+- Everything above runs against fake DOMs and fake histories, not a real phone.
+
 ## [1.533.0] - 2026-09-24
 
 **The AI write gate refuses a write that can't run before asking anyone to confirm it.** When an
