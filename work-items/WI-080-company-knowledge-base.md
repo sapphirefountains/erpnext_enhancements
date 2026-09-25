@@ -3,7 +3,7 @@
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (v1 in eight PRs, S to M each; v1.1 M; the training slice S)
 **Blocked by:**
 - Slice 0: nothing.
-- Slices 1–3: the QBO + Workforce cutover (~2026-10-21), so build starts no earlier than ~2026-11-02. Also Parker's Phase 0 test (below), and a named 4th KB Approver before slice 1's roles are granted.
+- Slices 1–3: the QBO + Workforce cutover (~2026-10-21), so nothing merges before ~2026-11-02. PRs 1 and 2 were written on 2026-09-25 and are held as draft PRs until then. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
 - Slice 4: the Google setup.
 - Slice 5: its content trigger.
 
@@ -13,6 +13,14 @@
 ## Why
 
 Nik wants a company knowledge base that people *and* every AI tool Sapphire uses read from the same place, so that Parker, James and the crews can keep the company running without him. On 2026-09-24 he chose ERPNext as its home. After comparing Frappe Wiki v3, the recommendation is to build a narrow native module (ADR 0017).
+
+## Decisions since the plan (2026-09-25)
+
+- **"We do our own."** Nik chose the native build. ADR 0017 is Accepted, and Frappe Wiki is dropped rather than kept as a fallback.
+- **Parker's Phase 0 test decides only PR 4a.** It no longer chooses between native and the Wiki. Build the Markdown import if the Google Docs Markdown export keeps pictures and tables; skip it if they break.
+- **The 4th KB Approver is Lisa Symanski** (lisa.symanski@sapphirefountains.com), approved by James on 2026-09-25. She holds the Role Profile "Finance Team", and a profiled user's roles are rebuilt from their profiles on every save, so she gets KB Approver through a one-role Role Profile named "KB Approver", which PR 1 seeds and Nik adds in the Desk as her second profile.
+- **The Restricted Drive runbook does not exist yet.** Its step "grant or revoke KB roles as Administrator" is tracked as an ERPNext Task on PRJ-00580, not in this repo.
+- **PRs 1 and 2 are written now and held.** Nik asked on 2026-09-25 for PRs 1 and 2 to be written. They are opened as draft PRs; none merges before the cutover is finished (~2026-11-02), and they merge one at a time.
 
 Why now, in numbers (verified 2026-09-24 against prod, read-only):
 
@@ -32,7 +40,7 @@ Checked against Frappe and ERPNext `version-16` (`git show origin/version-16:…
 
 | Candidate | Verdict |
 |---|---|
-| **Frappe Wiki v3** (v3.2.1, 2026-09-17, MIT; needs frappe ≥ 16.31.0, prod is 16.35.0) | **Rejected, kept as the fallback.** It has five unsafe defaults: a space with no roles is readable by portal users (`permissions.py:88-114`); uploads are public; the Wiki User role gives portal users Desk access; wiki routes can shadow site pages; a frontend build runs on every deploy. A writer can approve and merge their own change in one click, and System Manager and Wiki Manager Desk/API edits publish with no review (`wiki_document.py:987-999`). There is no way to browse or restore history (issue #622). Upgrades need server shell access, and the test VM is down (503). The two AI tools and the Drive copy are needed either way, so the Wiki saves only the model, editor and reader, about 4–6 days. **If Parker rejects the Quill editor in Phase 0, reopen this.** |
+| **Frappe Wiki v3** (v3.2.1, 2026-09-17, MIT; needs frappe ≥ 16.31.0, prod is 16.35.0) | **Rejected** (and, since Nik's "we do our own" on 2026-09-25, no longer kept as the fallback). It has five unsafe defaults: a space with no roles is readable by portal users (`permissions.py:88-114`); uploads are public; the Wiki User role gives portal users Desk access; wiki routes can shadow site pages; a frontend build runs on every deploy. A writer can approve and merge their own change in one click, and System Manager and Wiki Manager Desk/API edits publish with no review (`wiki_document.py:987-999`). There is no way to browse or restore history (issue #622). Upgrades need server shell access, and the test VM is down (503). The two AI tools and the Drive copy are needed either way, so the Wiki saves only the model, editor and reader, about 4–6 days. ~~If Parker rejects the Quill editor in Phase 0, reopen this.~~ Superseded 2026-09-25: the native build is decided. |
 | **Core Help Article / Help Category** (Website module) | **Rejected.** 0 rows on prod. `allow_guest_to_view=1`, so a published article is served to guests by `web_search` and listed in `sitemap.xml`; `login_required` on the page does not close either path. It has no draft/published split, no approver, and no KB number, owner or review-date fields. It relies on the acronym-blind global search. Its roles (Knowledge Base Contributor/Editor) are held by 22 users directly and 5 Role Profile rows, which is a latent leak with no content behind it. |
 | **Helpdesk knowledge base (HD Article, frappe/helpdesk v1.30.1)** | **Rejected.** Not installed. Installing it means a whole ticketing app for a customer-portal knowledge base. It has no two-person approval and no dedicated MCP tool; its AI integration is undocumented (helpdesk#3632, open). |
 | **Drive only** (Google Docs in a shared drive as the canonical store) | **Rejected as canonical, adopted twice as a copy.** Nik chose ERPNext as home. Drive enforces no second approver (it is a human process only), and Claude and Triton would still need a mirror plus the two tools. It stays as (a) the v1.1 one-way copy for Gemini in Workspace, which cannot call a custom MCP server on a work account, and for outages, and (b) the Restricted Drive for continuity material. |
@@ -42,13 +50,13 @@ Checked against Frappe and ERPNext `version-16` (`git show origin/version-16:…
 
 ## Preconditions
 
-- **The cutover is done.** Build starts no earlier than ~2026-11-02. Only slice 0 and the zero-code prep go earlier.
-- **Parker's Phase 0 test passes.**
+- **The cutover is done before anything merges.** No slice 1 PR merges before ~2026-11-02. Slice 0 and the zero-code prep went earlier, and PRs 1 and 2 were written on 2026-09-25 and held as drafts.
+- **Parker's Phase 0 test is run.** It decides only whether PR 4a is built.
   1. In a private Note, paste a real SOP from Google Docs, a screenshot and a table, then view it on his phone.
   2. Run File → Download → Markdown on SOP-0030 and on one image-bearing Doc. Record whether the images arrive as embedded `data:` URIs and whether lists inside table cells survive.
-  3. If the editor is unworkable, stop and reopen the Wiki. If the export fails, drop PR 4a and budget for manual re-pasting.
-- **A 4th KB Approver is named.** If that person has a Role Profile, the grant goes through a profile: a direct grant is wiped on their next save, and profile propagation is queued, so the deploy's FLUSHDB can kill it.
-- **The Restricted Drive runbook has a step:** "grant or revoke KB roles as Administrator".
+  3. ~~If the editor is unworkable, stop and reopen the Wiki.~~ **Superseded 2026-09-25:** Nik decided "we do our own", so the test no longer chooses between native and the Wiki. If the export keeps pictures and tables, build PR 4a. If they break, drop PR 4a and budget for manual re-pasting.
+- **A 4th KB Approver is named. Done 2026-09-25:** Lisa Symanski (lisa.symanski@sapphirefountains.com), approved by James. She holds the Role Profile "Finance Team", so the grant goes through a profile: a direct grant is wiped on her next save. PR 1's seed patch creates a one-role Role Profile named **"KB Approver"** (the KB Approver role only, no members). Nik adds it in the Desk as her second profile, on her User form, after PR 1 is deployed. That save rebuilds her roles synchronously (v16 `User.populate_role_profile_roles`); a later edit to the profile itself reaches members through a queued job, which the deploy's FLUSHDB can kill. Check her roles afterwards: ``SELECT role FROM `tabHas Role` WHERE parenttype='User' AND parent='lisa.symanski@sapphirefountains.com' AND role='KB Approver'`` returns one row.
+- **The Restricted Drive runbook has a step:** "grant or revoke KB roles as Administrator". The runbook does not exist yet, so this step is tracked as an ERPNext Task on PRJ-00580, not in the repo.
 - **The POL-0000 register is reconciled before any POL/PRO/SOP is imported.** Fix SOP-0030 vs SOP-0105, the titles typed into the Review Date column, and POL-0004 existing as both a Doc and a Sheet.
 - **Slice 4:** Nik creates the `erpnext-kb-export@erpnext-465317` service account and its key. James creates the "Sapphire Knowledge Base" shared drive, with sharing changes limited to James and Nik.
 - **Slice 5:** at least one published course cites three or more published articles.
@@ -83,10 +91,13 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - No submit, cancel, amend, delete, export, import or email for anyone.
   - No System Manager, `Desk User`, All or Guest row on Version.
 - **Roles:** `patches/seed_knowledge_base_roles.py` under `[post_model_sync]`, in the shape of `seed_training_roles` (`patches.txt:44`, `:371`; `hooks.py:2071-2073`). It is insert-only, with `desk_access=1`.
+  - It also seeds, insert-only, a Role Profile named **"KB Approver"** that carries only the KB Approver role and has no members (2026-09-25, for Lisa; see Preconditions). Assigning it is a Desk step.
+  - Every step is guarded and commits alone. A patch that raises aborts `bench migrate`, which is the deploy.
 - **Gate (`_gate.py`):**
   - `DENYLIST_DOCTYPES` += `Knowledge Article Version`. `NEVER_EXEMPT` += both doctypes.
   - The refusal message becomes a per-doctype reason map.
   - Fix `assistant_tools/README.md:125`, which says there is no denylist.
+  - Found while building PR 1: two FAC 3.0.0 paths name a doctype outside the arguments the denylist read. `fetch` takes `id="<doctype>/<name>"`, and `run_python_code`'s `data_query.doctype` is pre-loaded with `frappe.get_all`, which applies no permissions. The denylist now reads both, so "refused for every tool" holds.
 - **Tests:**
   - `tests/test_knowledge_base_schema.py` (unittest, own ci.yml step) pins the flags, the exact DocPerm matrix, the class names and the seed patch.
   - `tests/test_ai_gate_denylist.py` (unittest, appended to the "AI gate + assistant-tool contract" step) covers:
@@ -216,10 +227,11 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 - **Doctypes.** `SELECT name, module, is_submittable, track_changes, has_web_view, show_in_global_search FROM tabDocType WHERE name LIKE 'Knowledge Article%'` returns 2 rows in `Knowledge Base`. On the Version row: `track_changes = 0`, `has_web_view = 0`, `show_in_global_search = 0`.
 - **No force-delete.** ``SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' AND deleted_name LIKE 'Knowledge%'`` = 0.
 - **Roles.** `SELECT name, desk_access FROM tabRole WHERE name IN ('KB Author','KB Approver')` returns 2 rows, `desk_access = 1`.
+- **Role Profile.** ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB Approver'`` returns exactly 1 row, role `KB Approver`. ``SELECT COUNT(*) FROM `tabUser Role Profile` WHERE role_profile='KB Approver'`` is 0 until Nik adds it to Lisa in the Desk.
 - **Permissions.**
   - ``SELECT parent, role, share, submit, `delete`, export FROM tabDocPerm WHERE parent LIKE 'Knowledge Article%'`` shows `share = 0`, `submit = 0` and `delete = 0` on every row. No row has role `System Manager`, `Desk User`, `All` or `Guest` on the Version.
   - ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE parent LIKE 'Knowledge Article%'`` = 0.
-- **Denylist.** ``run_database_query("select name from `tabKnowledge Article Version`")`` is refused. `curl -s -o /dev/null -w '%{http_code}' https://erp.sapphirefountains.com/api/resource/Knowledge%20Article` with no cookie returns 403.
+- **Denylist.** ``run_database_query("select name from `tabKnowledge Article Version`")`` is refused, and so is `fetch("Knowledge Article Version/KBV-00001")`. ``run_database_query("select count(*) from `tabKnowledge Article`")`` is not. `curl -s -o /dev/null -w '%{http_code}' https://erp.sapphirefountains.com/api/resource/Knowledge%20Article` with no cookie returns 403.
 - **Person test (Parker, James, a technician with no KB role, phone):**
   1. Parker drafts with a pasted screenshot and a table, and submits.
   2. `SELECT allocated_to, status FROM tabToDo WHERE reference_type LIKE 'Knowledge Article%' AND status='Open'` shows James.
@@ -267,8 +279,8 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 ## Rollback
 
 - **Slice 1:**
-  - Fast: remove KB Approver from everyone in the Desk. Nothing can publish, and published articles stay readable.
-  - Full: revert the PRs. The empty tables and roles remain, and removing them is the two-step deletion (a `delete_doc` patch). The workspace, tile and help item go with the revert, plus an `is_hidden` flip or `delete_doc` patch for the Workspace and Desktop Icon.
+  - Fast: remove KB Approver from everyone in the Desk (for Lisa, remove the "KB Approver" profile). Nothing can publish, and published articles stay readable.
+  - Full: revert the PRs. The empty tables, the roles and the "KB Approver" Role Profile remain, and removing them is the two-step deletion (a `delete_doc` patch). Expect the first migrate after reverting PR 1 to force-delete the two DocType records itself (`remove_orphan_doctypes` deletes a DocType whose controller no longer imports), leaving `Deleted Document` rows and the tables. The workspace, tile and help item go with the revert, plus an `is_hidden` flip or `delete_doc` patch for the Workspace and Desktop Icon.
 - **Slice 2:** revert. Imported drafts stay as ordinary drafts.
 - **Slice 3:** set `enabled=0` on the two `FAC Tool Configuration` rows in the Desk, or revert. Triton chat drops the tools within an hour.
 - **Slice 4:** tick `export_paused`, or revert. The Drive copy stays until James removes it.

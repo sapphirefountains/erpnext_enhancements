@@ -202,6 +202,14 @@ jobs:
       # per-learner answers behind an "aggregate" item analysis. Static, and
       # checked against the live doctypes, so a field renamed later cannot drop
       # out of the list it is supposed to be in.
+      #
+      # test_ai_gate_denylist (v1.538.0, WI-080): knowledge-base drafts are refused on
+      # every gate path -- a doctype argument on any tool, fetch's "<doctype>/<name>" id,
+      # run_python_code's data_query, and raw SQL through comment, backtick, case and
+      # whitespace variants -- while `tabKnowledge Article`, the published text, is NOT.
+      # Raw SQL never consults DocPerm, so a needle that misses one spelling hands a
+      # model unapproved text, and a needle one word shorter breaks every read of the
+      # published doctype. Both fail silently; this fails the build.
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
           python -m unittest
@@ -211,6 +219,7 @@ jobs:
           erpnext_enhancements.tests.test_ai_gate_precheck
           erpnext_enhancements.tests.test_ai_gate_sealed_arguments
           erpnext_enhancements.tests.test_ai_gate_switch_on
+          erpnext_enhancements.tests.test_ai_gate_denylist
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
@@ -729,6 +738,17 @@ jobs:
       # that raises. Cost this repo two consecutive deploys (v1.452.1, v1.452.2).
       - name: DocType controller class names (Frappe strips spaces, it does not title-case)
         run: python -m unittest erpnext_enhancements.tests.test_doctype_controller_names -v
+      # The Knowledge Base (v1.538.0, WI-080, ADR 0017) is private by construction, and the
+      # construction is two DocType JSONs, two controllers and a seed patch. A permission row
+      # is only ever exercised on prod -- CI runs no migrate -- so an added `Desk User` row on
+      # Knowledge Article Version, a `share` right, or `track_changes` switched back on would
+      # put every unapproved draft in front of every staff user (or System Manager, triton@
+      # included) and pass everything else. Pins the flags, the WHOLE DocPerm matrix, the
+      # Select options against knowledge_base/constants.py, the controller refusals in both
+      # the hook a flag can skip and the one it cannot, and the seed patch's registration,
+      # idempotence and cannot-raise. Own step: it installs its own frappe stub.
+      - name: Knowledge base schema (drafts are never readable by a reader role)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_schema -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the

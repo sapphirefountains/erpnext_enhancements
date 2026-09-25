@@ -7,6 +7,200 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.538.0] - 2026-09-25
+
+**The company knowledge base gets its module, its two doctypes, its two roles and its locked
+permissions (WI-080 PR 1, ADR 0017).** Staff see nothing yet, and nothing can publish: there is no
+workspace, no action button and no AI tool, and a version can be submitted only by the publish
+action that PR 3 adds. Both tables stay empty until then.
+
+**Hold: this must not merge before the QuickBooks and Workforce cutover is finished
+(~2026-11-02).** The WI-080 PRs merge one at a time, and each is checked on prod with the read-only
+queries below before the next one merges.
+
+### Why
+
+- Nik wants one knowledge base that people and every AI tool Sapphire uses read from the same
+  place, so that Parker, James and the crews can keep the company running without him.
+- On 2026-09-25 he decided "we do our own". **ADR 0017 moves from Proposed to Accepted** with this
+  release, and Frappe Wiki is dropped rather than kept as a fallback.
+- The central rule of the design: **published text and drafts are different doctypes.** A draft
+  cannot leak through a reader path because it is not in the reader's doctype. Hiding draft fields
+  at a higher permlevel was rejected, because FAC's `get_document` checks doctype permission and
+  ignores permlevel.
+
+### Added
+
+- **The `Knowledge Base` module**: `modules.txt`, `knowledge_base/` with a README that maps every
+  leak path to what closes it, and a row in the root README's module map.
+- **`Knowledge Article`** (class `KnowledgeArticle`): the approved, published text of one KB number,
+  and nothing else.
+  - Named by `kb_number` (`KB-0612`); `allow_rename 0`; `track_changes 1`. Its core `Version` rows
+    hold only published text, and they give a tamper trail.
+  - All 25 fields are read-only, including `body` (Text Editor), `body_md` (hidden; the Markdown
+    the AI tools will read, written at publish) and `live_version`. `live_version` is Data, not a
+    Link, because readers cannot open versions, and a Link's title lookup would fail for all of them.
+- **`Knowledge Article Version`** (class `KnowledgeArticleVersion`): drafts and permanent history,
+  submittable, `KBV-.#####`, `track_changes 0`.
+  - `track_changes` is off because core `Version` rows are readable by System Manager, and that
+    includes the `triton@` service identity.
+  - Authors edit only the content fields: title, department, summary, keywords, process owner,
+    review interval, body and change note. Every review, provenance and AI field is read-only and
+    `no_copy`. The provenance fields are there for slice 2's import.
+  - `review_state` is the only field that may change after submit, when a newer version supersedes
+    this one. Copy is hidden (`allow_copy 1`).
+- **Both doctypes are private by construction:** `has_web_view 0`, `allow_guest_to_view 0`,
+  `show_in_global_search 0`, `make_attachments_public 0`, `allow_import 0`, and no field in global
+  search. All of these are stated explicitly in the JSON.
+- **The DocPerm matrix:**
+
+  | Role | Knowledge Article | Knowledge Article Version |
+  |---|---|---|
+  | Desk User | read, report, print | nothing |
+  | System Manager | read | nothing |
+  | KB Author | nothing (reads as a Desk User) | read, create, write, print, report |
+  | KB Approver | nothing (reads as a Desk User) | read, create, write, print, report |
+
+  - `share` is 0 everywhere, because v16 `assign_to.add` shares a document with an assignee who
+    cannot read it (frappe `origin/version-16` `desk/form/assign_to.py:106-118`). With no share
+    right, that call is refused instead.
+  - No role may submit, cancel, amend, delete, export, import or email.
+  - The Version doctype has no System Manager, `Desk User`, `All` or `Guest` row.
+- **Controllers that refuse every write the Knowledge Base did not announce.**
+  - The Article refuses any save without `flags.kb_action`, and every delete and rename.
+  - The Version refuses any submit without `flags.kb_publish`, any change after submit without
+    `flags.kb_action`, and every cancel, amendment, delete and rename.
+  - **Each refusal sits in two hooks**, because v16 lets a caller skip the obvious one.
+    `flags.ignore_validate` skips `validate`, `before_submit`, `before_cancel` and
+    `before_update_after_submit` (`model/document.py:1407-1408`), but never `on_update`,
+    `on_submit`, `on_cancel` or `on_update_after_submit` (`:1454-1462`).
+    `delete_doc(ignore_on_trash=True)` skips `on_trash` (`model/delete_doc.py:175-176`) but never
+    `after_delete` (`:195-196`). The second hook runs inside the same transaction, so raising there
+    rolls the write back.
+  - Nobody holds the rights these refusals guard, so they are reached only by server code running
+    with `ignore_permissions`. What they buy is that such code has to opt in by name.
+- **`knowledge_base/constants.py`**, standard library only. It holds the article statuses, the
+  review states and the ten POL-0000 department blocks (`"06 Operations"`). Every Select option on
+  both doctypes comes from here, and the code that writes those values in later PRs imports them,
+  so a misspelt state cannot save cleanly and then match nothing.
+- **`patches/seed_knowledge_base_roles.py`** (`[post_model_sync]`) creates **KB Author** and
+  **KB Approver** with `desk_access = 1`, in the shape of `seed_training_roles`.
+  - Not `fixtures/role.json`: `custom_docperm.json` imports first.
+  - v16 model sync usually creates both roles first anyway, from the DocPerm rows
+    (`DocType.on_update` → `make_module_and_roles`, `core/doctype/doctype/doctype.py:544`,
+    `:1968-1999`). The patch is what the module relies on rather than that side effect.
+- **The same patch creates a one-role "KB Approver" Role Profile** with no members.
+  - It exists for Lisa Symanski, the fourth approver, whom James approved on 2026-09-25. She holds
+    "Finance Team", and this site rebuilds a profiled user's roles from their profiles on every
+    save, so a direct grant of KB Approver would be wiped. Nik adds this profile to her in the Desk
+    as her second profile.
+  - Not in `fixtures/role_profile.json`, because fixture sync re-inserts every listed profile on
+    every migrate. Insert-only means a Desk edit to it survives.
+  - Inserting a Role Profile `queue_action`s a "re-save every member" job, which file-locks the
+    profile until a worker runs it. The deploy FLUSHDBs the queue, so the patch releases that lock
+    itself. The profile has no members, so the job has nothing to do.
+  - Every step is guarded and commits alone. It cannot raise, and it is safe to run twice.
+
+### Changed
+
+- **The AI gate refuses `Knowledge Article Version` on every generic tool, with AI gating on or
+  off** (`assistant_tools/_gate.py`, `DENYLIST_DOCTYPES`). Raw SQL never consults DocPerm, so this is
+  the only thing between a System Manager and the drafts.
+  - It refuses KB Authors and Approvers too. A draft in a model's context is the thing being
+    prevented, whoever asked for it.
+  - `tabKnowledge Article`, the published text, is deliberately **not** refused. Its needle
+    (`knowledgearticle`) is a prefix of the Version's (`knowledgearticleversion`), and the WI-080
+    acceptance queries all read it.
+  - One over-refusal is accepted and pinned: a query that aliases `tabKnowledge Article` as
+    `version` is refused.
+- **The refusal message is now a per-doctype reason map** (`DENYLIST_REASONS`). The Triton Chat
+  Attachment message is word for word what it was. The Version message says it holds unapproved
+  drafts and points at the Knowledge Article. The AI Action Log summary for a refusal no longer
+  calls every denylisted doctype "private assistant context".
+- **Both Knowledge Base doctypes are in `NEVER_EXEMPT`.** No settings row can let an assistant's
+  write to either skip its card, and a card that targets either never starts ticked in the batch
+  dialog.
+- **ADR 0017 is Accepted (2026-09-25)**, and its index row says so. WI-080 records the decisions
+  made after the plan was written:
+  - the native build is decided;
+  - the precondition "if the editor is unworkable, stop and reopen the Wiki" is struck, and
+    Parker's Phase 0 test now decides only whether PR 4a, the Markdown import, is built;
+  - Lisa Symanski is the named fourth approver, through the "KB Approver" Role Profile;
+  - the Restricted Drive runbook's "grant or revoke KB roles as Administrator" step is tracked as an
+    ERPNext Task, because the runbook does not exist yet.
+
+### Security
+
+- **Two ways past the denylist are closed.** Both predate this release, and both applied to
+  `Triton Chat Attachment` as well as to the new entry.
+  - FAC 3.0.0's `fetch` takes one `id`, `"<doctype>/<name>"`, which the denylist never read. It now
+    reads the doctype before the first slash, as FAC splits it.
+  - `run_python_code`'s `data_query.doctype` is pre-loaded with `frappe.get_all`, which applies no
+    permissions at all (`utils/code_execution_subprocess.py`). The denylist now reads it.
+  - A `doctype` argument is now also compared with case and runs of whitespace folded, since MariaDB
+    resolves a DocType name case-insensitively.
+
+### Fixed
+
+- `assistant_tools/README.md` said there was **no denylist in `_gate.py`**. There has been one entry,
+  `Triton Chat Attachment`, since v1.426.0. The section now documents the list, the reason map, the
+  three argument shapes and the history.
+
+### Tests
+
+- **`tests/test_knowledge_base_schema.py`** (unittest, installs its own frappe stub, so it gets its
+  own CI step). It pins:
+  - every flag, and the **whole** DocPerm matrix compared as a set, so an added row fails as surely
+    as a changed one;
+  - that no Custom DocPerm, Property Setter or Custom Field fixture targets either doctype;
+  - the exact field lists: every Article field read-only, only content fields editable on a Version,
+    `review_state` the only `allow_on_submit` field;
+  - the Select options against `constants.py`, and the controller class names Frappe derives;
+  - every controller refusal, in both of its hooks;
+  - the seed patch: registered once under `[post_model_sync]`, seeding exactly the roles the DocPerm
+    rows name, insert-only, idempotent, never raising when an insert or the unlock fails, and not
+    also a fixture.
+- **`tests/test_ai_gate_denylist.py`** (unittest, appended to the "AI gate + assistant-tool
+  contract" step). It covers:
+  - the Version doctype refused on every path: a `doctype` argument on every FAC 3.0.0 tool that
+    takes one, plus unknown tool names; `fetch`; `data_query`; `run_python_code` text; and fourteen
+    raw-SQL spellings under both `query` and `sql` (comments, backticks, double quotes, case,
+    newlines and tabs, `information_schema`);
+  - the published doctype and the WI-080 acceptance queries **not** refused;
+  - Triton Chat Attachment still refused, with its message unchanged;
+  - a settings row unable to exempt either KB doctype;
+  - `_gated_execute` refusing with gating off and with the bypass flag set, without running the
+    tool.
+
+### After deploy
+
+Read-only, on prod. The MCP denylist refuses any SQL that names the Version doctype, so these filter
+with `LIKE 'Knowledge Article%'`.
+
+- ``SELECT name, module, is_submittable, track_changes, has_web_view, show_in_global_search FROM
+  tabDocType WHERE name LIKE 'Knowledge Article%'``: 2 rows in `Knowledge Base`. On the Version row,
+  `track_changes`, `has_web_view` and `show_in_global_search` are all 0.
+- ``SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' AND deleted_name LIKE
+  'Knowledge%'`` = 0. This is the controller-name force-delete trap.
+- `SELECT name, desk_access FROM tabRole WHERE name IN ('KB Author','KB Approver')`: 2 rows,
+  `desk_access = 1`.
+- ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB
+  Approver'``: exactly 1 row, `KB Approver`.
+- ``SELECT parent, role, share, submit, `delete`, export FROM tabDocPerm WHERE parent LIKE
+  'Knowledge Article%'``: 4 rows, and every `share`, `submit`, `delete` and `export` is 0.
+- ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE parent LIKE 'Knowledge Article%'`` = 0.
+- ``run_database_query("select name from `tabKnowledge Article Version`")`` is refused.
+- `curl -s -o /dev/null -w '%{http_code}' https://erp.sapphirefountains.com/api/resource/Knowledge%20Article`
+  with no cookie returns 403.
+
+Then two Desk steps for Nik:
+- Grant KB Author and KB Approver directly to users who have no Role Profile. Never give such a user
+  a profile for this: it wipes their direct roles.
+- Add "KB Approver" to Lisa Symanski as a second Role Profile, on her User form. That save rebuilds
+  her roles from her profiles there and then (v16 `User.populate_role_profile_roles`), so her
+  `tabHas Role` rows include KB Approver straight away. A later edit to the *profile itself* is
+  different: it reaches members through a queued job, which a deploy's FLUSHDB can kill.
+
 ## [1.537.1] - 2026-09-25
 
 **Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,

@@ -1,0 +1,294 @@
+{
+ "actions": [],
+ "allow_guest_to_view": 0,
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "field:kb_number",
+ "creation": "2026-09-25 10:00:00.000000",
+ "description": "The approved, published text of one KB number, readable by every staff user. Every field is read-only: changes are made in a new Knowledge Article Version and published when a second person approves it (WI-080, ADR 0017).",
+ "doctype": "DocType",
+ "email_append_to": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_article",
+  "kb_number",
+  "title",
+  "department_block",
+  "column_break_article",
+  "status",
+  "version_number",
+  "review_by",
+  "section_summary",
+  "summary",
+  "keywords",
+  "section_body",
+  "body",
+  "body_md",
+  "section_record",
+  "author",
+  "approved_by",
+  "approved_on",
+  "first_published_on",
+  "change_note",
+  "column_break_record",
+  "process_owner",
+  "review_every_months",
+  "last_reviewed_on",
+  "last_reviewed_by",
+  "ai_drafted",
+  "content_hash",
+  "live_version",
+  "section_retired",
+  "retired_on",
+  "retired_by",
+  "retired_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_article",
+   "fieldtype": "Section Break",
+   "label": "Article"
+  },
+  {
+   "bold": 1,
+   "description": "The permanent number people and AI tools cite, e.g. KB-0612. Allocated when the first version is approved.",
+   "fieldname": "kb_number",
+   "fieldtype": "Data",
+   "label": "KB Number",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "department_block",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "00 Company Wide\n01 Executive\n02 Design\n03 Finance\n04 HR\n05 Marketing\n06 Operations\n07 Product Management\n08 Production\n09 Sales",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_article",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Published\nRetired",
+   "read_only": 1
+  },
+  {
+   "fieldname": "version_number",
+   "fieldtype": "Int",
+   "label": "Version",
+   "read_only": 1
+  },
+  {
+   "description": "When the process owner should next confirm this is still accurate.",
+   "fieldname": "review_by",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Review By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_summary",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "description": "Acronyms and other words people search with, such as PO or QBO.",
+   "fieldname": "keywords",
+   "fieldtype": "Small Text",
+   "label": "Keywords",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_body",
+   "fieldtype": "Section Break",
+   "label": "Article Text"
+  },
+  {
+   "fieldname": "body",
+   "fieldtype": "Text Editor",
+   "label": "Body",
+   "read_only": 1
+  },
+  {
+   "description": "The body as Markdown, for the AI tools. Written at publish from the stored body; never shown.",
+   "fieldname": "body_md",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Body (Markdown)",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_record",
+   "fieldtype": "Section Break",
+   "label": "Publication Record"
+  },
+  {
+   "fieldname": "author",
+   "fieldtype": "Link",
+   "label": "Author",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_published_on",
+   "fieldtype": "Datetime",
+   "label": "First Published On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "change_note",
+   "fieldtype": "Small Text",
+   "label": "Change Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_record",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Accountable for this article staying accurate.",
+   "fieldname": "process_owner",
+   "fieldtype": "Link",
+   "label": "Process Owner",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_every_months",
+   "fieldtype": "Int",
+   "label": "Review Every (Months)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Last Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Last Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "ai_drafted",
+   "fieldtype": "Check",
+   "label": "AI Drafted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash",
+   "read_only": 1
+  },
+  {
+   "description": "The Knowledge Article Version this text was published from. Data, not a Link: readers cannot open versions.",
+   "fieldname": "live_version",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Live Version",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.status=='Retired'",
+   "fieldname": "section_retired",
+   "fieldtype": "Section Break",
+   "label": "Retirement"
+  },
+  {
+   "fieldname": "retired_on",
+   "fieldtype": "Datetime",
+   "label": "Retired On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retired_by",
+   "fieldtype": "Link",
+   "label": "Retired By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retired_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1
+  }
+ ],
+ "has_web_view": 0,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "make_attachments_public": 0,
+ "modified": "2026-09-25 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Knowledge Base",
+ "name": "Knowledge Article",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Desk User"
+  },
+  {
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "quick_entry": 0,
+ "search_fields": "title,keywords,summary",
+ "show_in_global_search": 0,
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1,
+ "track_seen": 0,
+ "track_views": 0
+}

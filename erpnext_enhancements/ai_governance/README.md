@@ -82,7 +82,10 @@ with `docstatus` in its data, always goes to a card (`_changes_docstatus`).
   table, and both are in `NEVER_EXEMPT`, so that update is itself a card. AI Pending Action and AI
   Action Log are in `NEVER_EXEMPT` too. Otherwise an assistant could rewrite a card's arguments
   after someone had read it, or edit its own audit trail. Task is there because exempting it would
-  ungate Task creation along with its updates (ADR 0016 §6).
+  ungate Task creation along with its updates (ADR 0016 §6). Knowledge Article and Knowledge Article
+  Version are there since v1.538.0 (WI-080, ADR 0017): company knowledge is published only by a
+  person approving someone else's draft. The Version doctype is also on the gate's denylist, so a
+  generic tool cannot reach it at all.
 
 ## Confirmation is desk-only, on purpose
 

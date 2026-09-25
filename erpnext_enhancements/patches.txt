@@ -1197,3 +1197,11 @@ erpnext_enhancements.patches.seed_inventory_kpi_targets
 # links the upload) and custom_receipt_total (the paper receipt's total with tax). Also in after_install, since
 # install-app marks every patch as run. update=True; cannot raise, safe twice.
 erpnext_enhancements.patches.add_store_run_receipt_fields
+# v1.538.0 knowledge base (WI-080 PR 1, ADR 0017): seed "KB Author" and "KB Approver" (desk_access 1),
+# plus a one-role "KB Approver" Role Profile with no members. NOT fixtures: custom_docperm.json imports
+# before role.json, and fixture sync re-inserts a Role Profile on every migrate. The profile exists
+# because a profiled user's roles are rebuilt from their profiles on every save, so the 4th approver
+# (Lisa Symanski, profile "Finance Team") can hold KB Approver only through a second profile, added
+# in the Desk. Insert-only: an existing role or profile is never touched. Each step commits alone;
+# cannot raise, safe twice.
+erpnext_enhancements.patches.seed_knowledge_base_roles

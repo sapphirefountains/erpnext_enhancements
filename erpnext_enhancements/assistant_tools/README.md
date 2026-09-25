@@ -77,7 +77,9 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   `NEVER_EXEMPT` covers Task and the gate's own records: its settings, the
   exemption table, AI Pending Action and AI Action Log. That means an
   assistant can't open its own window, rewrite a card after it was read, or
-  edit its audit trail.
+  edit its audit trail. Since v1.538.0 it also covers the Knowledge Base's
+  two doctypes (WI-080): company knowledge is published only by a person
+  approving someone else's draft.
 - **FAC-upgrade risk**: `_safe_execute` is private FAC API. `apply_gate()`
   logs an Error Log entry when the seam is missing, and the integration
   canary test (`test_ai_gating_integration.test_gate_marker_present`) fails
@@ -120,16 +122,35 @@ desk; ask the assistant to check the action → it reports the created doc.
 Note: a desk-side "test tool" execution of a mutating FAC tool is gated too —
 any `_safe_execute` of a mutating tool counts as an assistant-channel write.
 
-## Denylisting a sensitive doctype (the chat denylist, v1.271.0 – v1.423.0)
+## The denylist: doctypes no generic tool may reach
 
-There is **no denylist in `_gate.py` today**. `CHAT_DENYLIST_DOCTYPES` made employee chat
-content unreadable through every generic FAC tool, by every role, with the write gate on or
-off; it was removed with the chat module itself in v1.426.0
-([ADR 0011](../../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)), because the
-twenty-three DocTypes it named no longer exist and a denylist over nothing is a claim that
-rots. The *design* survives as a comment block in `_gate.py`, deliberately, and this section
-is here for the same reason: the next sensitive table will need it, and its load-bearing
-details are not the ones you would reach for.
+`_gate.DENYLIST_DOCTYPES` names the doctypes that no generic FAC tool may reach, for any role,
+with the write gate on or off, and whatever a confirmation says. It holds two today:
+
+| Doctype | Since | Why |
+|---|---|---|
+| `Triton Chat Attachment` | v1.426.0 (deliberately; incidentally since v1.271.0) | Every employee's private Triton uploads. Its own hooks deny rows a System Manager does not own, and those hooks do nothing to raw SQL |
+| `Knowledge Article Version` | v1.538.0 ([WI-080](../../work-items/WI-080-company-knowledge-base.md), [ADR 0017](../../decisions/adr/0017-company-knowledge-lives-in-a-native-module.md)) | Knowledge-base drafts and the history behind them: text no second person has approved. Only approved text may reach an assistant. It refuses KB Authors and Approvers too, who can open drafts in the Desk |
+
+`Knowledge Article`, the **published** doctype, is deliberately **not** on the list. Every staff
+user reads it anyway, and its needle (`knowledgearticle`) is a prefix of the Version's, so adding
+it would refuse every generic read of the published text and the WI-080 acceptance queries. The
+operators' own integrity check over drafts therefore lives in a Script Report (WI-080 PR 4), not in
+MCP SQL.
+
+Each entry has its own reason in `_gate.DENYLIST_REASONS`, and the refusal reads
+"Refused: <doctype> <reason>". A model and the person behind it read that message, and "private
+assistant context" is the wrong explanation for a draft. `test_ai_gate_denylist` fails the build if
+the two drift apart.
+
+**History.** `CHAT_DENYLIST_DOCTYPES` made employee chat content unreadable the same way from
+v1.271.0 until the chat module was removed in v1.426.0
+([ADR 0011](../../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)). It was nearly
+deleted outright, and that would have been wrong: its `Chat Attachment` needle was a substring of
+`tabtritonchatattachment`, so it had been gating `Triton Chat Attachment` all along, and that
+doctype survives. The comment block above `DENYLIST_DOCTYPES` in `_gate.py` records it. (Until
+v1.538.0 this section said there was no denylist in `_gate.py` at all; there has been one entry
+since v1.426.0.)
 
 **It is not enough to withhold DocPerm.** That closes `get_document` and `list_documents`
 and does nothing to the third surface. `run_database_query`'s own stated security model is
@@ -139,26 +160,37 @@ check and a read-only-SQL check. Raw SQL sits *underneath* DocPerm,
 touches it, and a System Manager is otherwise one ``select …`` away from the whole table,
 delivered into a model's context window. Note that `run_database_query` is exempt from
 *confirmation* (above) and must **not** be exempt from a content denylist. So the refusal
-comes in two shapes, because the tools do: a **`doctype` argument** in the denylist, tested
-on *every* tool rather than a named list, so a tool added to FAC tomorrow that takes a
-`doctype` is covered the day it appears; and **free text** — `run_database_query`'s `query`
-and `run_python_code`'s `code`.
+comes in three shapes, because the tools do:
+
+- a **`doctype` argument**, compared on *every* tool rather than a named list, so a tool added to
+  FAC tomorrow that takes a `doctype` is covered the day it appears. Case and runs of whitespace
+  are folded, since MariaDB resolves a DocType name case-insensitively;
+- a **doctype named inside a structured argument** (since v1.538.0): `fetch`'s single `id`,
+  `"<doctype>/<name>"`, split on the first slash as FAC splits it; and `run_python_code`'s
+  `data_query.doctype`, which FAC pre-loads with `frappe.get_all`, applying no permissions at all.
+  Both were open before v1.538.0;
+- **free text**: `run_database_query`'s `query` (or `sql`) and `run_python_code`'s `code`.
 
 **And the refusal belongs at the top of `_gated_execute`** — above the confirm-flow bypass
 and above the `ai_write_gating_enabled` check. A refusal reachable only while a settings
-checkbox is ticked is not an invariant, and the shipped state of that checkbox is *off*.
-The free-text half refused on **contact** rather than trying to parse: case-fold, strip
+checkbox is ticked is not an invariant. It is logged to AI Action Log (`success = 0`, High
+risk), because an attempt to reach one of these doctypes is the event an operator wants to
+find later.
+The free-text half refuses on **contact** rather than trying to parse: case-fold, strip
 SQL comments, drop every non-word character, refuse if the table name survives as a
 contiguous needle.
 Attempting to allow "safe" queries loses to every quoting trick; refusing on contact does
 not. Over-refusal costs an analyst one rephrase; under-refusal costs the invariant silently.
+(One accepted over-refusal is pinned in the test: a query that aliases `tabKnowledge Article`
+as `version` is refused.)
 
-One test-shape worth reusing: the suite asserted the denylist equalled the filesystem by
-**set equality**, so a DocType added to the protected module later failed the build rather
-than escaping the denylist unnoticed — the same failure mode
-`test_every_registered_tool_is_classified` exists to prevent. It also asserted the branch
-*ordering* on the source, because a passing call cannot reveal it: both orders refuse while
-gating is on, and only one refuses while it is off.
+`tests/test_ai_gate_denylist.py` (on the AI-gate CI step) covers every path for the Version
+doctype, a set of SQL spellings (comments, backticks, double quotes, case, newlines and tabs,
+`information_schema`), the published doctype and the WI-080 acceptance queries passing, the
+Triton Chat Attachment refusal and its message unchanged, and the ordering: it runs
+`_gated_execute` with gating off and with the bypass flag set, and asserts that the tool never
+runs. Add to the list whenever a doctype's content must not reach a model and its hooks are the
+only thing between a System Manager and the rows.
 
 ## The FAC-optional invariant
 
@@ -193,8 +225,8 @@ For the same reason, do **not** add `frappe_assistant_core` to
   update executes unless it closes the Task — an allowlist of Open, Working, Pending Review
   and Overdue, so Completed, Canceled, core's "Cancelled" and anything unrecognised wait —
   and every other doctype falls through to the exempt allowlist and then a proposal.
-  `NEVER_EXEMPT` strips Task, and since v1.525.0 the gate's own records, from the settings
-  allowlist whatever a row says, because that allowlist ungates `create_document` and
+  `NEVER_EXEMPT` strips Task, since v1.525.0 the gate's own records, and since v1.538.0 the
+  two Knowledge Base doctypes, from the settings allowlist whatever a row says, because that allowlist ungates `create_document` and
   `update_document` together. **No decider is ever
   registered for a `HIGH_RISK` tool** (`test_ai_gate_per_call` pins the sets disjoint): step 3b
   does not consult `HIGH_RISK`, so a decider would run it unconfirmed. `run_python_code` is

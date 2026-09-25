@@ -1,8 +1,15 @@
 # 0017. Company knowledge lives in a native Knowledge Base module
 
-- **Status:** Proposed
-- **Date:** 2026-09-24
+- **Status:** Accepted (2026-09-25)
+- **Date:** 2026-09-24 (proposed); accepted 2026-09-25, when Nik decided "we do our own"
 - **Work item:** [WI-080](../../work-items/WI-080-company-knowledge-base.md)
+
+> **On acceptance (2026-09-25).** Nik chose the native build, so Frappe Wiki is dropped rather than
+> held as a fallback, and Parker's Phase 0 editor test no longer decides between the two: it decides
+> only whether the Markdown import (WI-080 PR 4a) is built. The fourth KB Approver is Lisa Symanski,
+> approved by James; because she holds a Role Profile, she gets the role through a one-role
+> "KB Approver" profile. The text below was edited where those facts appear (the roles bullet in §2,
+> the Quill consequence, the follow-ups and the revisit list) and is otherwise as proposed.
 
 ## Context
 
@@ -85,8 +92,8 @@ A version is published only by `approve_and_publish`. The server refuses unless 
 - Excluding `run_python_code` from batch approval is the real control, and is a follow-up to ADR 0014.
 
 **Roles and notices:**
-- Roles are granted directly in the Desk.
-- They are seeded by a `post_model_sync` patch, not a fixture.
+- Roles are granted in the Desk: directly for a user with no Role Profile, and through a one-role "KB Approver" Role Profile for a user who has one, because this site rebuilds a profiled user's roles from their profiles on every save.
+- They are seeded by a `post_model_sync` patch, not a fixture, and so is that Role Profile.
 - Review notices are ToDos, raised inline, with the existing branded ToDo notification.
 
 **AI can only draft, and in v1 it cannot even do that through a dedicated tool.**
@@ -144,7 +151,7 @@ The rules that hold at every tier:
 - **The tool contract survives a change of backend.** If Sapphire later moves to the Wiki, the names and fields stay.
 
 **Negative**
-- **Parker writes in Quill, not TipTap.** There is no slash menu, callouts or autosave. This is the Wiki's real advantage, and Parker's editor test decides whether it matters.
+- **Parker writes in Quill, not TipTap.** There is no slash menu, callouts or autosave. This is the Wiki's real advantage. Nik accepted it on 2026-09-25; Parker's Phase 0 test now decides only whether the Markdown import is built.
 - **More code for one engineer to own.** v1 is 8.5–11 engineer-days of build, 12.5–17.5 with the fix tail this repo sees on live features. The Drive copy adds 4–4.5. The repo's history suggests a ~50% chance that one of the first deploys breaks.
 - **The riskiest behavior can only be tested on prod.** That covers private-image access after re-attach and the permission rows: CI has no bench job and the test VM is down. Every PR carries read-only verification queries.
 - **The denylist has side effects.** It refuses any MCP SQL that names the Version doctype, including the operators' own integrity checks, which therefore live in a Script Report.
@@ -153,11 +160,12 @@ The rules that hold at every tier:
 
 **Follow-ups**
 - Exclude `run_python_code` cards from batch approval, as an amendment to ADR 0014.
-- Name a 4th KB Approver. Add "grant or revoke KB roles as Administrator" to the Restricted Drive runbook.
+- ~~Name a 4th KB Approver.~~ Done 2026-09-25: Lisa Symanski, approved by James, through the "KB Approver" Role Profile.
+- Add "grant or revoke KB roles as Administrator" to the Restricted Drive runbook. The runbook does not exist yet, so the step is tracked as an ERPNext Task.
 - Regenerate the Triton agent snapshot and run `deploy_agents` after the tools ship.
-- Build the markdown import once Parker's export test shows images arrive embedded.
+- Build the markdown import if Parker's export test shows that images arrive embedded and tables survive; skip it if they break.
 - The Help Article role cleanup: the leak is latent (0 articles). If done, it must be a patch, because Role Profile propagation is queued and FLUSHDB kills it.
 - **Revisit:**
   - if the scope grows toward the /kb site, digests, synonyms and deep Training embedding (~25 days), where the Wiki is cheaper;
-  - if Parker rejects the editor;
+  - ~~if Parker rejects the editor~~ (withdrawn on acceptance: the native build is decided);
   - if Gemini in Workspace gains custom-tool access, which would remove the Gemini reason for the Drive copy but not the outage reason.

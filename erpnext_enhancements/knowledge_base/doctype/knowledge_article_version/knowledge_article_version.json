@@ -1,0 +1,329 @@
+{
+ "actions": [],
+ "allow_copy": 1,
+ "allow_guest_to_view": 0,
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "KBV-.#####",
+ "creation": "2026-09-25 10:00:00.000000",
+ "description": "Drafts and the permanent history of a Knowledge Article. Only KB Authors and KB Approvers can open it, and it is never readable through the generic AI tools (WI-080, ADR 0017).",
+ "doctype": "DocType",
+ "email_append_to": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_draft",
+  "title",
+  "department_block",
+  "article",
+  "column_break_draft",
+  "review_state",
+  "version_number",
+  "base_version",
+  "section_summary",
+  "summary",
+  "keywords",
+  "column_break_summary",
+  "process_owner",
+  "review_every_months",
+  "section_body",
+  "body",
+  "change_note",
+  "section_review",
+  "reviewer",
+  "submitted_by",
+  "submitted_on",
+  "column_break_review",
+  "approved_by",
+  "approved_on",
+  "review_note",
+  "section_provenance",
+  "contributors",
+  "ai_drafted",
+  "ai_requested_by",
+  "column_break_provenance",
+  "source_url",
+  "source_drive_file_id",
+  "source_modified",
+  "imported_on",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_draft",
+   "fieldtype": "Section Break",
+   "label": "Draft"
+  },
+  {
+   "bold": 1,
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "department_block",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "00 Company Wide\n01 Executive\n02 Design\n03 Finance\n04 HR\n05 Marketing\n06 Operations\n07 Product Management\n08 Production\n09 Sales",
+   "reqd": 1
+  },
+  {
+   "description": "Empty until the first version of a new article is published; the KB number is allocated then.",
+   "fieldname": "article",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Article",
+   "options": "Knowledge Article",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_draft",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "review_state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Review State",
+   "no_copy": 1,
+   "options": "Draft\nIn Review\nPublished\nSuperseded\nDiscarded",
+   "read_only": 1
+  },
+  {
+   "fieldname": "version_number",
+   "fieldtype": "Int",
+   "label": "Version",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "The live version when this draft was started.",
+   "fieldname": "base_version",
+   "fieldtype": "Data",
+   "label": "Based On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_summary",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "description": "One or two sentences. Shown in search results.",
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary"
+  },
+  {
+   "description": "Acronyms and other words people search with, such as PO or QBO.",
+   "fieldname": "keywords",
+   "fieldtype": "Small Text",
+   "label": "Keywords"
+  },
+  {
+   "fieldname": "column_break_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Accountable for this article staying accurate.",
+   "fieldname": "process_owner",
+   "fieldtype": "Link",
+   "label": "Process Owner",
+   "options": "User"
+  },
+  {
+   "fieldname": "review_every_months",
+   "fieldtype": "Int",
+   "label": "Review Every (Months)"
+  },
+  {
+   "fieldname": "section_body",
+   "fieldtype": "Section Break",
+   "label": "Body"
+  },
+  {
+   "fieldname": "body",
+   "fieldtype": "Text Editor",
+   "label": "Body"
+  },
+  {
+   "description": "What changed and why. The approver reads it, and it stays with the published version.",
+   "fieldname": "change_note",
+   "fieldtype": "Small Text",
+   "label": "Change Note"
+  },
+  {
+   "fieldname": "section_review",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "fieldname": "reviewer",
+   "fieldtype": "Link",
+   "label": "Reviewer",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "submitted_by",
+   "fieldtype": "Link",
+   "label": "Submitted By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "submitted_on",
+   "fieldtype": "Datetime",
+   "label": "Submitted On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_provenance",
+   "fieldtype": "Section Break",
+   "label": "Provenance"
+  },
+  {
+   "description": "Everyone who changed the content, comma-separated. None of them may approve this version.",
+   "fieldname": "contributors",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Contributors",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "ai_drafted",
+   "fieldtype": "Check",
+   "label": "AI Drafted",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "ai_requested_by",
+   "fieldtype": "Link",
+   "label": "AI Requested By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_provenance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_url",
+   "fieldtype": "Data",
+   "label": "Source URL",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_drive_file_id",
+   "fieldtype": "Data",
+   "label": "Source Drive File ID",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_modified",
+   "fieldtype": "Datetime",
+   "label": "Source Modified",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "imported_on",
+   "fieldtype": "Datetime",
+   "label": "Imported On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Knowledge Article Version",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "has_web_view": 0,
+ "index_web_pages_for_search": 0,
+ "is_submittable": 1,
+ "links": [],
+ "make_attachments_public": 0,
+ "modified": "2026-09-25 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Knowledge Base",
+ "name": "Knowledge Article Version",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "KB Author",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "KB Approver",
+   "write": 1
+  }
+ ],
+ "quick_entry": 0,
+ "show_in_global_search": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}
