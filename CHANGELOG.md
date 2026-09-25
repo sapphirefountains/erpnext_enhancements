@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.537.1] - 2026-09-25
+
+**Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,
+invoice ACC-SINV-2026-01749) was refused by Stripe on both tries. Nothing was charged. The card
+page had never been used on prod before, so this bug had been there since the page was built.
+
+### Fixed
+
+- **The PaymentIntent now names `payment_method_types: ["card"]`** (`card_element._intent_params`).
+  - The Payment Element in `www/pay-card.html` is built with `paymentMethodTypes: ["card"]`. A
+    ConfirmationToken collected that way can only confirm an intent that names the same types.
+  - Left out, the intent defaults to automatic payment methods, and Stripe answers every charge
+    with a 400: "Payment details were collected through Stripe Elements using
+    payment_method_types and cannot be confirmed through the API configured with automatic
+    payment methods".
+  - The code carried a comment arguing that pinning the types was unnecessary and risky; the
+    opposite was true.
+  - v1.537.0's safety rules handled the refusal as designed: a 400 is a definite failure, both
+    rows were marked Failed with no PaymentIntent, and the invoice stayed payable.
+- **No `statement_descriptor_suffix` on card charges.** Stripe builds a card descriptor as the
+  account's prefix + "* " + suffix, and the whole must be 22 characters or fewer.
+  - The setting holds a full descriptor ("Sapphire Fountains LLC", 22 characters on prod), so
+    using it as a suffix overflowed on every charge. Stripe's docs don't say whether it would
+    truncate or refuse.
+  - The account's own descriptor now applies.
+
+### Tests
+
+- `test_the_card_charge_names_the_payment_method_types_the_element_collected` pins the intent's
+  types **against the Element's declared `paymentMethodTypes` in `pay-card.html`**, so the two
+  halves cannot drift apart again. It also checks that no suffix is sent. It fails without the fix.
+
+### Follow-up, not done here
+
+- The REST client sends no `Stripe-Version` header, so it runs on the account's default API
+  version.
+- Stripe's `2026-08-26.preview` removes `payment_method_types` from PaymentIntents in favour of
+  `allowed_payment_method_types`. An account upgrade to the next major version would break card
+  payments again: a 400, nothing charged.
+- Pinning the API version in `client._request` is worth a separate change.
+
 ## [1.537.0] - 2026-09-25
 
 **One invoice can no longer be paid twice through Stripe, and the phone's Back button works on the
