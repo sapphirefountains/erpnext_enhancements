@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.537.3] - 2026-09-25
+
+**Every Stripe request now pins its API version, `2026-06-24.dahlia`.** Upgrading the account's
+default version in the Stripe Dashboard can no longer change what these requests mean.
+
+### Why
+
+The REST client (`stripe_payments/core/client.py`) sent no `Stripe-Version` header, so every
+request ran on the account's default version. Stripe's `2026-08-26.preview` removes
+`payment_method_types` from PaymentIntents in favour of `allowed_payment_method_types`, and every
+card charge sends that parameter (v1.537.1). Once that version is released, one Dashboard click
+would make every card charge fail with a 400; nothing would be charged, and nobody would be paid.
+
+`2026-06-24.dahlia` is the version the account's webhook events already carry (prod
+`Stripe Event.api_version`, 2026-07-28 through 2026-09-25). Pinning it changes nothing today, and it
+keeps what the client reads back in the same shape as what the webhooks deliver. It supports
+everything the code uses: ConfirmationTokens, `payment_method_types`, Checkout Session expiry and
+the PaymentIntent list lookup.
+
+### Changed
+
+- `client.STRIPE_API_VERSION`, sent as `Stripe-Version` on every request by `client._headers`.
+  To upgrade:
+  1. Read Stripe's changelog for every version in between.
+  2. Move the constant and the webhook endpoint's version (Dashboard → Developers → Webhooks)
+     together.
+  3. Re-run the live card test.
+
+### Tests
+
+- `test_every_request_pins_the_stripe_api_version` checks the header on `_headers` and on a real
+  `_request`, and that the constant is a valid Stripe version string.
+
 ## [1.537.1] - 2026-09-25
 
 **Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,
