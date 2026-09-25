@@ -14,6 +14,12 @@
 // Job Interval form ("View on Timeline") and the Employee form ("Location
 // Timeline") can open it pre-filled.
 //
+// The mode is a route segment: Trail is the bare route, which every way in opens,
+// and Live is location-timeline/live. A tap on a mode, or on a Live row, is a
+// history entry, so Back from a person's trail returns to the Live list and
+// Forward goes back to the trail; a reload keeps Live. The filters are not in the
+// URL (route_options never reach it on v16), so a reloaded Trail starts empty.
+//
 // Assets. Leaflet is frappe's vendored copy (/assets/frappe/js/lib/leaflet/,
 // present on v16) and the stylesheet lives in public/css/workforce/; both come in
 // through frappe.require with BARE paths. On v16 frappe.require appends
@@ -404,7 +410,7 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
             this.$playBtn = this.$root.find('.lt-play-btn');
             this.$liveStatus = this.$root.find('.lt-live-status');
 
-            this.$root.on('click', '.lt-mode-btn', (e) => this.setMode(e.currentTarget.dataset.mode));
+            this.$root.on('click', '.lt-mode-btn', (e) => this.pickMode(e.currentTarget.dataset.mode));
             this.$root.on('change', '.lt-accuracy-toggle', (e) => {
                 this.showAccuracy = !!e.currentTarget.checked;
                 this.applyAccuracyLayer();
@@ -471,6 +477,10 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 if (opts && (opts.employee || opts.from_date || opts.to_date)) {
                     return this.applyRouteOptions(opts);
                 }
+                // The route is read when init settles, not when the show fired: a Back
+                // or Forward pressed while the map was still loading has moved it since.
+                // A page left in the meantime keeps the mode it had.
+                if (pageIsCurrent()) this.setMode(this.routeMode());
                 if (this.mode === 'live') this.startLivePolling();
                 return null;
             }).catch(() => {
@@ -725,6 +735,23 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         // ---- modes ----------------------------------------------------------
+
+        // The mode the route asks for. Trail is the bare route; anything but /live is Trail.
+        routeMode() {
+            return (frappe.get_route() || [])[1] === 'live' ? 'live' : 'trail';
+        }
+
+        // A mode the manager tapped: set it, then give it a history entry. The router's
+        // show that follows finds the mode already set, and setMode returns early on the
+        // mode it is in, so that show cannot redraw the previous trail over one that is
+        // loading. Tapping the mode already routed adds nothing.
+        pickMode(mode) {
+            if (mode !== 'trail' && mode !== 'live') return;
+            this.setMode(mode);
+            if (pageIsCurrent() && this.routeMode() !== mode) {
+                frappe.set_route(mode === 'live' ? [PAGE_ROUTE, 'live'] : [PAGE_ROUTE]);
+            }
+        }
 
         setMode(mode, opts) {
             opts = opts || {};
@@ -1514,7 +1541,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 this.employeeField.df.options = this.employees;
                 this.employeeField.set_data(this.employees);
             }
-            this.setMode('trail');
+            // pickMode, so the drill-down is an entry: Back returns to the Live list.
+            this.pickMode('trail');
             await this.setSilently(this.fromField, today());
             await this.setSilently(this.toField, today());
             await this.setSilently(this.employeeField, String(r.employee));

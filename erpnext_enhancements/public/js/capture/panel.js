@@ -32,10 +32,9 @@
  * and took the typed report with it, without asking "Discard this report?". So the panel
  * pushes one history entry, `{ee_capture: <panel id>}` with no URL. A Back pops it and asks
  * the same question the Close button asks. When the panel closes any other way, it removes the
- * entry again. Pages with history of their own (the kiosk, Stock Scan) leave `popstate` alone
- * while `ee_capture.isOpen()` is true. This is not done on the Desk, where frappe's router
- * owns `popstate`, nor yet on /feedback, whose router re-renders on every `popstate` (see
- * `wantsHistoryEntry`). See `takeHistoryEntry`.
+ * entry again. Pages with history of their own (the kiosk, Stock Scan, /feedback) leave
+ * `popstate` alone while `ee_capture.isOpen()` is true. This is not done on the Desk, where
+ * frappe's router owns `popstate` (see `wantsHistoryEntry`). See `takeHistoryEntry`.
  *
  * A closed panel's entry can stay behind. After a Back has closed the panel, a Forward steps
  * onto the entry again. After a reload with the panel open, the page starts on it. The entry
@@ -1730,12 +1729,10 @@ class CapturePanel {
  * Not on the Desk. frappe's router re-routes on every `popstate`, so the panel's own Back would
  * re-render the form underneath. A Desk tab also has a mouse and a Close button.
  *
- * Not on /feedback yet. Its SPA router re-renders the current view on every `popstate`
- * (`feedback/app.js`, `mount`), so each close would clear a half-written request under the
- * panel. There, Back with the panel open still moves the page underneath, as it always has.
- * Remove this exception once that router ignores `popstate` while `ee_capture.isOpen()` is
- * true, and keeps its view on a state that carries `ee_capture`, as the kiosk and Stock Scan
- * do. Then flip the "/feedback" checks in `scripts/test_capture_panel.js`.
+ * On /feedback, yes. Its router used to re-render the current view on every `popstate`, so it
+ * was left out until that router ignored `popstate` while `ee_capture.isOpen()` is true and
+ * kept its view on a state that carries `ee_capture`, as the kiosk and Stock Scan do
+ * (`feedback/app.js`, `onPopState`). It does both now.
  *
  * Not where the template says `EE_CAPTURE.history: false`. /stock-scan and /kiosk set it from
  * their settings' "Turn Off Browser Back" box, the off switch in case an iPhone re-prompts for
@@ -1746,8 +1743,7 @@ export function wantsHistoryEntry(surface, win) {
 	if (surface === "desk") return false;
 	try {
 		if (!win || !win.history || typeof win.history.pushState !== "function") return false;
-		if (win.EE_CAPTURE && win.EE_CAPTURE.history === false) return false;
-		return !win.EE_FEEDBACK_BOOT;
+		return !(win.EE_CAPTURE && win.EE_CAPTURE.history === false);
 	} catch (e) {
 		return false;
 	}

@@ -194,8 +194,10 @@ Deep links work — `/desk/learn/<COURSE>/<LESSON>` — in both directions. The 
 and the page answers it in `on_page_show`), and it passes a **router adapter**, through
 which the player *writes* it. Reading and writing are two jobs; conflating them into one
 flag is how the Desk would have ended up answering browser Back by running
-`queryParam("course")` against a route that has no query string. The preview harness passes
-`history: false` and no adapter, which is the third arrangement of the same two switches.
+`queryParam("course")` against a route that has no query string. The preview harness
+(`www/training_preview.html`) passes `history: false` and an adapter of its own, `writeRoute`: it
+pushes one entry per place only after a tap and answers Back through the player's own doors,
+the same two switches the Desk uses.
 
 **Browser Back walks the screens and Forward restores them** (v1.536.1). Every screen a
 learner moves between is its own history entry: the catalogue, a course's outline
@@ -756,6 +758,29 @@ Three properties are load-bearing:
   turns the gate into theatre, and the gate is the only thing between a machine-written answer key
   and somebody's compliance record. The endpoint set is pinned by set equality so adding one fails
   the build first. Making the work fast is the goal; making it skippable is not.
+
+**Where the reviewer is working is in the route**, so the browser's Back returns to the course or
+lesson they were on and Forward goes back to it. `training-review` is the whole queue,
+`training-review/course/<course>` is the *Working through* filter and `training-review/lesson/<lesson>`
+is *Open a specific lesson*. They are path segments, never `route_options`: v16's `push_state`
+writes the path alone, so anything in `route_options` is gone after Back, Forward or a reload. Only
+the reviewer's own moves are entries. The next lesson the queue hands out when one empties is not,
+because that lesson is finished and Back into it would open nothing. A jumped-to lesson that empties
+steps back onto the view it was opened from. The page marks that lesson's entry in `history.state`,
+with no URL. A lesson that was not opened from the page, such as a pasted link, hands its entry to
+the queue instead. A route change that would repaint over a question being edited asks first. If
+the reviewer stays, the edit stays and the address is left where Back put it, so Forward returns to
+the entry that matches. The "stay" holds only while the route still names the view it was said
+to: once Back or Forward moves on it is forgotten, because a later return to that view is a new
+request (kept, it silently dropped a Back that a load or a verdict had held). And once the view
+stayed on empties there is nothing left to keep, so the page follows the route rather than
+advancing on its own; a jumped-to lesson's step back would otherwise go past the entry the route
+names. A Back pressed while a lesson is loading is caught up when the load lands.
+One pressed while a verdict is in flight waits for the last verdict to land, then follows the
+route. Loading sooner could hand back the lesson being emptied with its question still pending, the
+double accept the auto-advance waits to avoid. It would also miss a save-and-accept whose card is
+out of the pane until its reply comes: if that save is refused, the card comes back with its
+corrections, and the route change asks before painting over them.
 
 ### Batches (cohorts)
 

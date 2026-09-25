@@ -688,10 +688,150 @@
 		leaderboard: function () { return LEADERBOARD; }
 	};
 
+	// ---- history: Back and Forward walk the views ----
+	//
+	// One entry per place the author goes -- the catalog, a course's outline, a lesson, their
+	// record -- so Back returns to the view before and Forward restores it, as on the Desk's
+	// /desk/learn. The player keeps `history: false`, so it never reads the address bar
+	// itself. It hands every view it settles on to `router.write` (player.js `route()`), the
+	// seam the Desk host uses, and this page decides what that means for the history:
+	//
+	//   * A place, not a view. The key is learn.js's `position_key` shape plus the scenario,
+	//     so a lesson's quiz and results share the lesson's entry, as on the Desk. Back onto
+	//     it reopens the lesson: the grade lives only in memory, and a draft has no retry.
+	//   * Pushed only after a tap. Chrome's Back skips an entry a page pushed without one. The
+	//     first view after every mount re-stamps the entry it is on instead, so the page's own
+	//     start never adds one, and neither does a scenario button's remount.
+	//   * The address keeps ?course= on every entry, the catalog's too, and takes it from the
+	//     page's own URL, never from the player: the server picks draft mode by it, and the
+	//     player's course can be the canned card's. A lesson adds ?lesson=, the shape of the
+	//     Desk's "Preview as a learner" link, so a reload lands where the author was.
+	//   * Back answers through the player's own doors (openCourse, openPerson, go). The write
+	//     that follows carries the same key and is dropped, as learn.js's `showing` drops the
+	//     Desk's echo. An entry from another scenario remounts that scenario first.
+	//
+	// The lightbox, the quiz dialog and the video scrim do not close on Back. That needs the
+	// player, which the Desk shares.
+
+	// Chrome's user activation lasts about this long after a tap.
+	var TAP_MS = 5000;
+	var activeScenario = "populated";
+	// The key of the place the entry on top records.
+	var showing = null;
+	// No write since the last mount: it re-stamps the entry, never pushes one.
+	var fresh = true;
+	var tappedAt = 0;
+
+	function historyState() {
+		try {
+			return window.history.state;
+		} catch (e) {
+			return null;
+		}
+	}
+
+	// What the player reports (routeState in player.js) as a place to come back to.
+	function placeOf(next) {
+		var n = next || {};
+		var view = n.view || "catalog";
+		return {
+			scenario: activeScenario,
+			view: view,
+			course: n.course || null,
+			// The outline names a course and no single lesson, whatever lesson the player holds.
+			lesson: n.course && view !== "course" ? n.lesson || null : null,
+			user: view === "person" ? n.user || null : null
+		};
+	}
+
+	function placeKey(place) {
+		var where = place.course
+			? (place.lesson ? "lesson" : "course") + "|" + place.course + "|" + (place.lesson || "")
+			: place.view + "|" + (place.user || "") + "|";
+		return place.scenario + "#" + where;
+	}
+
+	function placeUrl(place) {
+		var params = [];
+		if (PREVIEW_COURSE) params.push("course=" + encodeURIComponent(PREVIEW_COURSE));
+		if (place.course && place.lesson) params.push("lesson=" + encodeURIComponent(place.lesson));
+		return window.location.pathname + (params.length ? "?" + params.join("&") : "");
+	}
+
+	// The place an entry of this page records, or null for any other state.
+	function placeIn(state) {
+		var place = state && typeof state === "object" ? state.tp : null;
+		return place && typeof place === "object" && typeof place.scenario === "string" ? place : null;
+	}
+
+	// Where a first visit opens: a draft on its outline, or on the lesson the Desk named;
+	// the canned workbench on its catalog, or on ?lesson= after a reload.
+	function urlPlace() {
+		var lesson = "";
+		try {
+			lesson = new URLSearchParams(window.location.search).get("lesson") || "";
+		} catch (e) {
+			lesson = "";
+		}
+		var place = { scenario: "populated", view: "catalog", course: null, lesson: null, user: null };
+		if (DRAFT) place.course = (DRAFT.course && DRAFT.course.course) || PREVIEW_COURSE || null;
+		else if (lesson) place.course = COURSE;
+		if (place.course) {
+			place.lesson = lesson || null;
+			place.view = lesson ? "lesson" : "course";
+		}
+		return place;
+	}
+
+	// The player's `router.write`: every view it settles on, the page's own start included.
+	function writeRoute(next) {
+		var place = placeOf(next);
+		var key = placeKey(place);
+		var push = !fresh && Date.now() - tappedAt < TAP_MS;
+		fresh = false;
+		tappedAt = 0;
+		if (key === showing) return;
+		showing = key;
+		try {
+			if (push) window.history.pushState({ tp: place }, "", placeUrl(place));
+			else window.history.replaceState({ tp: place }, "", placeUrl(place));
+		} catch (e) {
+			// A sandboxed frame, or Safari past 100 calls in 10 s. The preview carries on
+			// without the entry, as player.js's own route() does.
+		}
+	}
+
+	function openPlace(place) {
+		if (place.course) current.openCourse(place.course, place.lesson || null);
+		else if (place.view === "person" && place.user) current.openPerson(place.user);
+		else current.go(place.view || "catalog");
+	}
+
+	// Registered once for the page, never per mount.
+	window.addEventListener("popstate", function (event) {
+		var place = placeIn(event.state);
+		if (!place || !current) return;
+		showing = placeKey(place);
+		tappedAt = 0;
+		if (place.scenario !== activeScenario) mount(place.scenario, place);
+		else openPlace(place);
+	});
+
+	// Capture phase, so it is noted before the player's own handler navigates.
+	document.addEventListener("click", function () {
+		tappedAt = Date.now();
+	}, true);
+
 	// ---- boot scenarios ----
 
-	function boot(scenario) {
-		var base = { history: false, route_base: "/training_preview" };
+	function boot(scenario, at) {
+		var base = { history: false, route_base: "/training_preview", router: { write: writeRoute } };
+		// Where the player opens, as a place an entry recorded (or the URL named).
+		if (at && at.course) base.start = { course: at.course, lesson_key: at.lesson || null };
+		else if (at && at.view === "person" && at.user) {
+			base.view = "person";
+			base.start = { user: at.user };
+		} else if (at && at.view) base.view = at.view;
 		if (scenario === "dormant") {
 			base.enabled = false;
 			base.message = "Training is switched off for maintenance in this preview.";
@@ -725,7 +865,8 @@
 	var root = document.getElementById("training-root");
 	var current = null;
 
-	function mount(scenario) {
+	// `at`: the place to open on (see "history" above), or null for the scenario's catalog.
+	function mount(scenario, at) {
 		if (!window.TR || typeof window.TR.Player !== "function") {
 			root.setAttribute("aria-busy", "false");
 			root.innerHTML = '<div class="tr-error">Player scripts failed to load.</div>';
@@ -734,7 +875,13 @@
 		if (current && typeof current.destroy === "function") {
 			try { current.destroy(); } catch (e) { /* a fresh mount follows regardless */ }
 		}
-		current = new window.TR.Player(root, boot(scenario), transport);
+		activeScenario = scenario;
+		fresh = true;
+		// Here rather than in the click handler: Back onto another scenario's entry remounts too.
+		bar.querySelectorAll("[data-scenario]").forEach(function (b) {
+			b.setAttribute("aria-pressed", b.getAttribute("data-scenario") === scenario ? "true" : "false");
+		});
+		current = new window.TR.Player(root, boot(scenario, at), transport);
 	}
 
 	var bar = document.querySelector(".hp-bar");
@@ -742,10 +889,7 @@
 		var target = event.target.closest("button");
 		if (!target) return;
 		if (target.hasAttribute("data-scenario")) {
-			bar.querySelectorAll("[data-scenario]").forEach(function (b) {
-				b.setAttribute("aria-pressed", b === target ? "true" : "false");
-			});
-			mount(target.getAttribute("data-scenario"));
+			mount(target.getAttribute("data-scenario"), null);
 			return;
 		}
 		if (target.hasAttribute("data-jump") && current) {
@@ -755,7 +899,12 @@
 		}
 	});
 
-	mount("populated");
+	// A reload keeps the place its entry recorded, which is already written; a first visit
+	// opens where the URL says, and stamps that onto the entry it arrived on.
+	var kept = placeIn(historyState());
+	if (kept) showing = placeKey(kept);
+	var first = kept || urlPlace();
+	mount(first.scenario, first);
 })();
 </script>
 {% endblock %}

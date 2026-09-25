@@ -59,3 +59,43 @@ and `public/js/device_management/employee_devices.js` (Employee panel).
 - The Employee panel field is provisioned in code (`setup.py`), not in
   `fixtures/custom_field.json`. If it is later exported to fixtures, the fixture
   owns it and the after-migrate hook becomes a no-op for it.
+- **The Device Console's sheets are route segments, so the phone's Back button closes
+  them.** Camera Scan is `device-console/camera` and Choose Employee is
+  `device-console/employee`. Frappe v16's router owns `popstate` on the Desk and closes
+  the open dialog on every route change, so a sheet with no entry of its own made Back
+  leave the console. Now Back closes the sheet and stays, and Forward opens it again
+  (Choose Employee only for the same device). Three things are deliberate. First, a
+  sheet is shown only after its route has settled, because the route change would
+  otherwise close it. Second, a sheet closed any other way (a read, a pick, X) steps back
+  off its own entry, and the scan or pick runs only once that has landed, so the enroll
+  prompt is not closed by the step. Third, a sheet's URL never opens the camera on its
+  own. Only an entry the console pushed itself is a sheet's: it marks each
+  one in `history.state` (no URL) as it pushes it. Frappe's Route History records every
+  route with a second segment, and the awesome bar offers the most used as links, so the
+  same URL can arrive from another page; the sheet would then open with that page behind
+  it, and X, or a camera read's step back, would land there. An unmarked sheet URL becomes
+  the console, as a pasted link's does, except when it was pushed over the console's own
+  entry while that was showing (the awesome bar's link picked on the console itself): then
+  the console steps back onto that entry, since replacing it would leave two console entries
+  in a row and the next Back would seem to do nothing. "Showing" means no other page has
+  been shown since, which the console learns from the `hide` frappe fires on the page it
+  leaves. A reload on a sheet entry the console pushed (a tab discarded with the camera
+  open, since the console's camera has no visibilitychange close) steps back the same way:
+  `history.state` survives the reload, and the entry behind a marked one is always the
+  console's own. Each replace the console asks for (`route_flags.replace_route`) is cleared
+  the moment `set_route` returns: v16 reads the flag while writing the entry but clears it
+  only once every request then in flight has landed, so on a first show, with the bootstrap
+  call out, it turned the next tap into a replace of the console's own entry, and Back from
+  the camera tapped then left the page. Back or Forward onto a sheet's entry that cannot be
+  opened again steps back onto the console's own entry; it used to replace the entry with
+  a second copy of the console, so the next Back seemed to do nothing. The picker cannot
+  be opened again for a device scanned since, after a pick has been made (Forward used to
+  offer a second Check Out, or a second Transfer), or once the device's status no longer
+  allows the action (a Check Out picker for a device since marked lost). A scan is never
+  a history entry. A late reply to an unknown scan puts the
+  enroll prompt up only while the console itself is showing; anywhere else (another
+  page, a sheet opened since) the code is only reported. The picker checks out the device
+  it was opened for, not whatever a scan still in flight puts on the card. "Open full record" is a
+  `get_form_link` /desk path: an /app href is a full page load on v16, and Back from it
+  used to rebuild the console with the scanned device gone. Behaviour tests:
+  `scripts/test_desk_page_history.js`, run by `tests/test_desk_page_history.py`.

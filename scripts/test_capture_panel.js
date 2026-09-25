@@ -19,7 +19,8 @@
  *     panel pushes one entry with no URL, and a Back asks "Discard this report?". Every other
  *     way of closing removes the entry once, and only while it is still on top. Pages with
  *     history of their own see `ee_capture.isOpen()` true for every popstate the panel causes.
- *     The Desk and /feedback get no entry.
+ *     The Desk gets no entry; /feedback, whose router stands aside while the panel is open,
+ *     does.
  *
  * Imports `panel.js` for real, which also imports `transport.js`, `annotate.js` and
  * `drafts.js`: all four must stay importable without a DOM. If one grows a top-level browser
@@ -643,7 +644,7 @@ async function backClosesThePanel(P, stripComments) {
 		check("then closed, and isOpen() false", [P.isPanelOpen(), result() && result().status], [false, "canceled"]);
 	}
 
-	console.log("\nthe kiosk takes an entry; the Desk and /feedback do not");
+	console.log("\nthe kiosk and /feedback take an entry; the Desk does not");
 	{
 		const pg = page({ surface: "kiosk" });
 		const { handle } = await open(pg, "kiosk");
@@ -662,32 +663,37 @@ async function backClosesThePanel(P, stripComments) {
 		check("Desk: no history.back() on close", [pg.b.count("back"), P.isPanelOpen()], [0, false]);
 	}
 	{
+		// /feedback's router stands aside while isOpen() is true (feedback/app.js, onPopState).
 		const pg = page({ feedback: true });
 		const { handle } = await open(pg);
-		check("/feedback: no push (its router re-renders on every popstate)", pg.b.count("push"), 0);
+		const pushes = pg.b.calls.filter((c) => c.call === "push");
+		check("/feedback: one push, with two arguments", [pushes.length, pushes[0] && pushes[0].args], [1, 2]);
 		handle.close();
-		check("/feedback: no history.back()", [pg.b.count("back"), P.isPanelOpen()], [0, false]);
+		check("/feedback: removed on close, by one history.back()", pg.b.count("back"), 1);
+		await flush();
+		check("/feedback: back on the page's entry, and settled", [pg.b.index(), P.isPanelOpen()], [0, false]);
+		check("/feedback: the page saw that popstate with isOpen() true", pg.saw.map((s) => s.open), [true]);
 	}
 	{
-		// The known gap while /feedback is excluded: Back is its router's, as before this change.
+		// Back with a half-written report asks, and the page underneath stays where it is.
 		const pg = page({ feedback: true, entries: [{ view: "mine" }, { view: "request" }] });
-		const { handle } = await open(pg);
+		const { result } = await open(pg);
 		findInput(pg.doc, "One line: what went wrong?").value = "Half a report";
 		const asked = [];
 		pg.b.win.confirm = answered(true, asked);
 		pg.b.userBack();
-		check("/feedback: Back moves the page underneath; the panel stays, nothing asked", [pg.b.index(), !!panelRoot(pg.doc), asked.length], [0, true, 0]);
+		check("/feedback: Back asks, as the Close button asks, then closes", [asked, !!panelRoot(pg.doc)], [["Discard this report?"], false]);
+		check("/feedback: the page is still on its own entry, not the one below it", [pg.b.index(), pg.b.win.history.state], [1, { view: "request" }]);
 		check("/feedback: the page's router saw that popstate with isOpen() true", pg.saw.map((s) => s.open), [true]);
-		pg.b.win.confirm = answered(true);
-		handle.close();
-		check("/feedback: closing makes no history call", [pg.b.count("push"), pg.b.count("back"), P.isPanelOpen()], [0, 0, false]);
+		await flush();
+		check("/feedback: closed with no Back of the panel's own", [P.isPanelOpen(), result() && result().status, pg.b.count("back")], [false, "canceled", 0]);
 	}
-	check("wantsHistoryEntry: web yes, kiosk yes, desk no, /feedback no", [
+	check("wantsHistoryEntry: web yes, kiosk yes, desk no, /feedback yes", [
 		P.wantsHistoryEntry("web", { history: { pushState() {} } }),
 		P.wantsHistoryEntry("kiosk", { history: { pushState() {} } }),
 		P.wantsHistoryEntry("desk", { history: { pushState() {} } }),
 		P.wantsHistoryEntry("web", { history: { pushState() {} }, EE_FEEDBACK_BOOT: {} }),
-	], [true, true, false, false]);
+	], [true, true, false, true]);
 	check("wantsHistoryEntry: no history API, or a throwing window, is no", [
 		P.wantsHistoryEntry("web", {}),
 		P.wantsHistoryEntry("web", Object.defineProperty({}, "history", { get() { throw new Error("boom"); } })),

@@ -29,8 +29,45 @@ answered on the job's Desk form by someone who has looked at the network
 | `composer.js` | **Pure.** Counters, the `save_post` payload, and the per-network preview, which mirrors what the publishers send (Instagram never gets the link; Facebook and LinkedIn put it in the text only beside media; YouTube appends it). Since v1.516.0 it also shows a link to our own site **tagged**, as sent: `tagged` is the JS twin of `marketing/publish/tracking.py`, and `marketing/publish/tracking_vectors.json` holds both to the same answers |
 | `transport.js` | One `fetch` wrapper, every call a POST with the CSRF header; the `M` endpoint map; the unattached upload |
 | `dom.js` | Node builders (`el`, `fill`, …), pills with a glyph as well as a colour, `outLink` (http(s) or plain text), `assetThumb`, `dialog` |
-| `app.js` | Layout, router, notices, and **the one placeholder writer** (`showPlaceholder`) |
+| `app.js` | Layout, router and browser history, notices, and **the one placeholder writer** (`showPlaceholder`) |
 | `view_*.js` | One surface each, as in the table above |
+
+## Back and Forward
+
+Back returns to the previous screen and Forward restores it; Back from the first screen leaves
+the page. `app.js` owns every history call:
+
+- **One entry per tap that changes the screen**, `{ee_mk: n}` with the address. `n` counts from
+  the entry the page opened on, which is re-stamped at load and never pushed. A link to the
+  screen already showing re-stamps instead, or the next Back would appear to do nothing. That is
+  decided by screen, not by address (`samePlace`): `/marketing` and
+  `/marketing/calendar/<this month>` are one month, and a week is one week from any of its days,
+  `/marketing/week` included, so Today, the lit tab and the lit Month or Week switch never push
+  a second copy of what is on screen. Save, submit, approve, send back and cancel **replace**
+  (Back never returns to a `/marketing/new` that has become a post).
+- **Delete leaves the way the post was reached** (`retreat`). A pushed entry records the address
+  underneath it (`from`), and a replace keeps it. The post's entry is replaced with the calendar,
+  so Back never lands on a post that is gone; when the entry underneath is that same calendar,
+  as it nearly always is, the page then takes one `history.back()` onto it. Without that step,
+  two copies of the calendar sit one on the other and the next Back appears to do nothing. The
+  replaced entry is left as a Forward onto the same calendar until the next tap drops it.
+- **Unsaved work is asked about on Back and Forward too.** A composer with changes answers a
+  popstate with the same "Leave without saving?" a click gets. `n` says how far the browser moved,
+  so the step is put back (`history.go(-delta)`) while the question is open: **Stay** keeps the
+  screen, its address and every character typed; **Discard changes** takes the step again. The
+  `beforeunload` prompt still covers leaving the document.
+- **A late reply draws nothing.** Each route is its own object; the composer, results and a
+  calendar drag check `app.route === route` after their wait, and a save, submit, approve, send
+  back, cancel or delete that lands after the person moved on says what it did but does not move
+  the page back. The queue's **Send back** redraws the queue only while the queue is the screen
+  (by view, so after Back and then Forward onto it the list is still refreshed).
+- **Every dialog closes on a screen change** (`dom.closeDialogs`). No entry per dialog: Android's
+  Back already closes a modal `<dialog>` without moving the history.
+- **A "Copy into a new draft" rides in its entry** (`seed`), so Forward, or a reload, brings the
+  copy back rather than an empty form.
+
+`scripts/test_marketing_history.js` drives all of it through the real app on a fake DOM and a
+fake history.
 
 ## The rules, and what enforces them
 
@@ -92,6 +129,7 @@ in the same commit as the reason.
 ```bash
 node scripts/test_marketing_client.js
 node scripts/test_marketing_source_rules.js
+node scripts/test_marketing_history.js
 python -m unittest erpnext_enhancements.tests.test_marketing_spa
 ```
 

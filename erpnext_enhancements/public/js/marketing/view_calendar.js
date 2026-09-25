@@ -213,7 +213,9 @@ function acceptDrops(app, cell, key, route) {
 		} catch (e) {
 			app.fail(e);
 		}
-		renderCalendar(app, route);
+		// Only while this calendar is still the screen: a move that lands after Back must not paint
+		// the calendar over wherever the person went.
+		if (app.route === route) renderCalendar(app, route);
 	});
 }
 

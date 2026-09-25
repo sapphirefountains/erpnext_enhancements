@@ -37,6 +37,13 @@
  *    away with rename_doc, which re-points every Link to it across the database; a
  *    few hundred of those in one request would outrun the gateway timeout, and the
  *    page would get no word on which of them had landed.
+ *  - The tab is a route segment: Masters is the bare route, which every way in opens,
+ *    and Parked transactions is quickbooks-record-matching/transactions. So Back
+ *    returns to the tab before, Forward restores it, and a reload keeps it. A tab
+ *    click only routes; on_page_show shows the tab the route names, and never
+ *    refetches rows already on screen, because that would drop unsaved picks and
+ *    ticks. Filters and pages of rows stay out of history, as they do in Frappe's own
+ *    list view: an entry per page of rows would bury the tab.
  *
  * Endpoints (erpnext_enhancements.quickbooks_online.core.api): get_match_queue,
  * decide_match, decide_matches, confirm_match, confirm_matches,
@@ -52,6 +59,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 
 	const esc = frappe.utils.escape_html;
 	const API = "erpnext_enhancements.quickbooks_online.core.api.";
+	const ROUTE = "quickbooks-record-matching";
 
 	// Keep in sync with MASTER_ENTITIES / TRANSACTION_ENTITIES in core/constants.py.
 	const MASTER_TYPES = ["Customer", "Vendor", "Item", "Account", "TaxCode", "Class", "Term", "PaymentMethod"];
@@ -353,17 +361,28 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	const $pageLength = $root.find("[data-filter='page-length']").val(String(state.pageLength));
 	const $txnPageLength = $root.find("[data-txn-filter='page-length']").val(String(state.txn.pageLength));
 
+	// A tab click only routes -- see "Things this script is careful about". Clicking the tab
+	// already showing routes nowhere and adds no entry.
 	$root.on("click", "[data-tab]", (event) => {
 		const tab = $(event.currentTarget).attr("data-tab");
+		frappe.set_route(tab === "transactions" ? [ROUTE, "transactions"] : [ROUTE]);
+	});
+	function showTab(tab) {
 		state.tab = tab;
 		$root.find("[data-tab]").removeClass("active");
-		$(event.currentTarget).addClass("active");
+		$root.find(`[data-tab='${tab}']`).addClass("active");
 		$root.find("[data-panel]").attr("hidden", true);
 		$root.find(`[data-panel='${tab}']`).removeAttr("hidden");
 		if (tab === "transactions" && !state.txn.rows.length) {
 			loadTransactions();
 		}
-	});
+	}
+	// on_page_show runs this on every show: a tab click, Back, Forward, the first open, and
+	// the way back from the Sync Mapping list. It only ever shows a panel.
+	wrapper.qbo_record_matching_show_tab = () => {
+		const route = frappe.get_route() || [];
+		showTab(route[0] === ROUTE && route[1] === "transactions" ? "transactions" : "masters");
+	};
 	$entity.on("change", () => {
 		state.entity = $entity.val();
 		state.start = 0;
@@ -1053,7 +1072,11 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	}
 
 	// ------------------------------------------------------------- transactions
+	// Only the newest request paints. Back and Forward across the tabs before the first reply
+	// can ask twice, and paging faster than the server answers can land replies out of order.
+	let txnSeq = 0;
 	function loadTransactions() {
+		const seq = ++txnSeq;
 		const $body = $root.find("[data-txn-body]");
 		$body.html(`<div class="qbo-mt-empty">${__("Loading…")}</div>`);
 		frappe.call({
@@ -1064,6 +1087,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				page_length: state.txn.pageLength,
 			},
 			callback(response) {
+				if (seq !== txnSeq) {
+					return;
+				}
 				const data = response.message || {};
 				state.txn.rows = data.rows || [];
 				state.txn.total = data.total || 0;
@@ -1074,6 +1100,9 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 				txnSelection.sync();
 			},
 			error() {
+				if (seq !== txnSeq) {
+					return;
+				}
 				$body.html(`<div class="qbo-mt-empty">${__("Could not load parked transactions.")}</div>`);
 			},
 		});
@@ -1217,4 +1246,10 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	}
 
 	load();
+};
+
+frappe.pages["quickbooks-record-matching"].on_page_show = function (wrapper) {
+	if (wrapper.qbo_record_matching_show_tab) {
+		wrapper.qbo_record_matching_show_tab();
+	}
 };

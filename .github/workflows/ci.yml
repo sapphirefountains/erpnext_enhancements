@@ -705,6 +705,11 @@ jobs:
       # static check just as happily with the wrong members in it.
       - name: Training player routing (executed, not grepped)
         run: node scripts/test_training_route.mjs
+      # The course preview harness (www/training_preview.html) walks its places with the
+      # browser's Back and Forward: one entry per place, pushed only after a tap, answered
+      # through the player's own doors. Runs the real player against a fake history.
+      - name: Training preview Back/Forward (bench-free, node)
+        run: node scripts/test_training_preview_history.mjs
       # Checkpoint completeness moved from validate to publish. BOTH halves are
       # asserted in that one suite on purpose: shipping the relaxation without the
       # publish gate lets a checkpoint with no correct option reach _split_lesson,
@@ -2292,6 +2297,13 @@ jobs:
       # "override the view somebody just clicked" is not expressible.
       - name: Feedback routing composition (bench-free, node)
         run: node scripts/test_feedback_routes.js
+      # /feedback's Back and Forward, and its truce with the report panel: the page stands
+      # aside while ee_capture.isOpen(), a lit tab adds no entry, Back or Forward before the
+      # bootstrap lands draws nothing, a redrawn New form shows work still in flight, and a
+      # half-written request survives leaving the page (sessionStorage, text only). Its own
+      # step: it installs window/document/fetch/sessionStorage globals of its own.
+      - name: Feedback Back/Forward (bench-free, node)
+        run: node scripts/test_feedback_history.js
       # The one label on the feedback board that is not a status. `Tasks Created` is a
       # TERMINAL state, so a request whose tasks were all finished read "Tasks Created"
       # forever while the Work column beside it said 2/2 — nothing was broken, there was
@@ -2340,6 +2352,16 @@ jobs:
       # is checked against what the publishers actually send (Instagram never gets the link).
       - name: Marketing app client logic (bench-free, node)
         run: node scripts/test_marketing_client.js
+      # /marketing's Back and Forward: no duplicate entries (Today, Delete), and a reply that
+      # lands after Back never paints over the screen the person went to.
+      - name: Marketing app Back/Forward (bench-free, node)
+        run: node scripts/test_marketing_history.js
+      # Six Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
+      # QuickBooks record matching, training review, location timeline). Runs the harness
+      # through Python so the source checks and the behaviour run together; node is on PATH
+      # in this job, so TestTheBehaviourHarness cannot skip here.
+      - name: Desk pages Back/Forward (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_page_history -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads
