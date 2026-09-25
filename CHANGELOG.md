@@ -235,6 +235,74 @@ Then two Desk steps for Nik:
   `tabHas Role` rows include KB Approver straight away. A later edit to the *profile itself* is
   different: it reaches members through a queued job, which a deploy's FLUSHDB can kill.
 
+## [1.537.2] - 2026-09-25
+
+**Files on an Opportunity open again for every user, not only Administrator.** Everyone else got
+"DocType Attendance Request not found". The cause was 161 leftover permission rows for HRMS and
+Helpdesk doctypes this site does not have, which Frappe 16.35.0 began to trip over.
+
+### Fixed
+
+- **Symptom.** The files panel on an Opportunity failed for every user except Administrator with
+  "DocType Attendance Request not found". Any File list query by a non-Administrator System User
+  failed the same way. The name in the message varies, because it depends on set order.
+- **Mechanism (Frappe 16.35.0).** The panel calls `frappe.client.get_list("File", ...)`, which
+  runs File's `permission_query_conditions` hook: `get_permission_query_conditions` in
+  `frappe/core/doctype/file/file.py`.
+  - For a non-Administrator System User the hook takes `frappe.permissions.get_doctypes_with_read(user)`.
+    That is the `parent` of every `DocPerm` and `Custom DocPerm` row with read at permlevel 0 for
+    the user's roles, including `All`.
+  - It passes that list to `_split_doctypes_by_owner_constraint` and
+    `_split_doctypes_by_user_permissions`. Both call `frappe.get_meta(doctype)` on every name,
+    and `get_meta` on a DocType that does not exist raises `DoesNotExistError`.
+  - The per-name `get_meta` is new in 16.35.0 (commit `0a770d9716`, "honor if_owner on attached
+    doctype in File list permission hook"). Up to 16.34.0 the list was only joined into an
+    `IN (...)` string, where a missing name did no harm. That is why the rows went unnoticed.
+  - Administrator returns before any of this, which is why only Administrator could see files.
+- **What production held (SELECT-only, 2026-09-25).**
+  - `tabCustom DocPerm`: 161 of 541 rows named 40 doctypes with no `tabDocType` row. Of those, 39
+    are HRMS doctypes (Attendance, Attendance Request, Leave Application, Expense Claim, Salary
+    Slip, Employee Checkin and others) and one is Helpdesk's HD Ticket. Neither app is installed.
+    The rows were last modified on 2025-07-08 and 2026-02-07.
+  - Roles on those rows: Employee, Employee Self Service, HR Manager, HR User, System Manager,
+    Expense Approver, Leave Approver, Fleet Manager, Agent, Agent Manager and All. The `All` role
+    holds a read row on HD Ticket, so every signed-in System User had at least one missing
+    doctype in their list.
+  - `tabDocPerm`: no orphans (0 of 1,996 rows).
+- **The fix is a patch, `delete_orphan_docperms`.**
+  - It deletes every `Custom DocPerm` row, and every `DocPerm` row with `parenttype = 'DocType'`,
+    whose parent matches no DocType name.
+  - Names are compared with case, accents and trailing spaces folded, like the tables'
+    `utf8mb4_unicode_ci` / PAD SPACE collation. A DocType spelt differently is kept, and the
+    collation-matched `IN` of the DELETE cannot reach it.
+  - It uses `frappe.db.delete` with an `in` filter, commits per table, and runs
+    `frappe.clear_cache()` only when it deleted something.
+  - It deletes nothing if the `tabDocType` read lacks `DocType` itself.
+  - It cannot raise, and it is safe to run twice.
+- **Why delete the rows rather than guard the code.** The trigger is data. The rows name
+  DocTypes that do not exist, so they grant nothing, and deleting them fixes every path that
+  reads them at once. The function that breaks is Frappe core code, which this app could only
+  change by monkeypatching it. Keeping the rows would also do harm later: any `Custom DocPerm`
+  row on a DocType replaces that DocType's standard perms entirely (`get_valid_perms`). So
+  installing HRMS or Helpdesk later would silently inherit these old rows instead of the app's
+  own permissions. The rows were never in this app's fixtures (the `Custom DocPerm` fixture
+  names only Material Request and Purchase Order). Of CLAUDE.md's two-step rule, only the
+  delete step applies.
+- An upstream guard in Frappe would also be reasonable: skip names that are not DocTypes in
+  `get_doctypes_with_read` or in the File query. That is not done here.
+
+### Tests
+
+- `tests/test_orphan_docperm_cleanup.py`, bench-free, with its own CI step because it installs a
+  `frappe` stub (18 tests). It checks that:
+  - orphan rows in both tables are deleted, using one `in`-filtered delete per table;
+  - rows of existing DocTypes survive, as do differently spelt matches and blank parents;
+  - nothing is deleted when the `tabDocType` read looks incomplete;
+  - `clear_cache` runs once, and only when something was deleted;
+  - the patch is safe twice;
+  - a failed read, delete or cache clear is logged and never raised;
+  - the patch is registered under `[post_model_sync]`.
+
 ## [1.537.1] - 2026-09-25
 
 **Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,

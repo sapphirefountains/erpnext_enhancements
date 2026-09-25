@@ -279,6 +279,13 @@ jobs:
       # department's snapshot publishes, graded the same way -- a misspelt key grades nothing, silently.
       - name: Inventory seed patches (digest recipient, approved KPI targets)
         run: python -m unittest erpnext_enhancements.tests.test_inventory_seed_patches -v
+      # The v1.537.2 orphan-permission cleanup. Own step: installs a frappe stub in setUpModule.
+      # It is a DELETE on the site's permission tables, so the direction that matters is what
+      # it keeps: a row for a DocType that exists -- even spelt with other case, accents or a
+      # trailing space, which the DELETE's collation-matched IN would also reach -- must survive,
+      # an unreadable tabDocType must delete nothing, and no failure may raise out of the patch.
+      - name: Orphan DocPerm cleanup (deletes only rows for DocTypes that do not exist)
+        run: python -m unittest erpnext_enhancements.tests.test_orphan_docperm_cleanup -v
       # Its own step for the same reason as the Item naming schema step: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.
