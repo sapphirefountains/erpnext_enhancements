@@ -445,6 +445,16 @@ Standard Buying price at the store's retail rate (`auto_insert_price_list_rate_i
 and Standard Buying is company-wide, so it pre-fills every later PO line for that item from any
 supplier. Submitting a receipt also updates the Item's `last_purchase_rate`.
 
+**Accounting's side** (v1.538.0). The receipts post Dr 1410 / Cr 2210 and nothing on this page
+bills them; the card charge for the same trip arrives from QuickBooks as a draft Journal Entry.
+The **Store Run Charge Matching** report (KPI Dashboards) lists every recorded run beside the
+charge the Store Runs KPI pairs it with, the amount the charge must move to 2210, and what to do;
+Accounting works through its *Needs action* rows, then checks its *Waiting* ones, at the QuickBooks
+cutover. A charge the pairing cannot see (more than 3 days late, two runs of one purchase) is
+linked by putting the run id -- the `custom_store_run` this page writes -- in the charge's
+Reference Number. See
+[`kpi_dashboards/README.md`](../kpi_dashboards/README.md).
+
 **Checks that need a bench** (not in CI): the entered rate survives `set_missing_values` when a
 Standard Buying price exists; the photo is linked to the first receipt and copied to the second; a
 concurrent retry with a new Item gets a 409 and then "already saved"; an Amend keeps
@@ -617,6 +627,7 @@ python -m unittest erpnext_enhancements.tests.test_item_naming_digest -v  # frap
 python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v    # needs PyQRCode~=1.2.1 for the QR half; store-run rules too
 python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v  # incl. the store-run receipt, photo, quick item and patch
 python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v         # combine_store_runs: a recorded trip and its charge count once
+python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Accounting's list of those pairs (Store Run Charge Matching)
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 node scripts/test_stock_scan_client.mjs

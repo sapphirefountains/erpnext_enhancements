@@ -80,24 +80,9 @@ Other prerequisites:
   ERPNext rejects a posting whose date has no Fiscal Year.
 - **Imported transactions are created as drafts** (`docstatus = 0`) — they do not hit
   the GL/Trial Balance until submitted. Review, then bulk-submit when ready — **except the
-  QuickBooks purchases that match a store run recorded on the Stock Scan page** (v1.536.0):
-  - Each recorded line is already a **submitted** Purchase Receipt posting Dr
-    `1410 - Stock In Hand - SF` / Cr `2210 - Stock Received But Not Billed - SF` at quantity ×
-    the price before tax (a non-stock line posts nothing). QuickBooks holds the same purchase as a
-    draft Purchase Journal Entry: Dr the expense account QuickBooks coded, Cr the card account, no
-    party. Submitted as it stands, that draft books the goods twice (Dr 1410 from the receipt, Dr
-    expense from the draft) and 2210 never clears. Left unsubmitted, the card liability is never
-    booked and the card accounts no longer tie out to QuickBooks.
-  - So for a draft that matches a recorded trip — same store, dated on the trip's day or up to
-    three days after, for the receipt total (or the lines plus tax), the pairing the Store Runs KPI
-    uses (`kpi_dashboards/metrics.combine_store_runs`) — **change the goods' debit from the expense
-    account to `2210 - Stock Received But Not Billed - SF`**, for what the trip's receipts credited
-    there (its stock lines before tax; split a line if need be), **then submit it**. That clears
-    2210 and still books the card liability. The rest — the tax, and any non-stock line — stays on
-    the expense account QuickBooks used, or wherever Accounting decides tax goes.
-  - The recorded trips are listed by Stock Scan Log (action *Store Run*, grouped by *Store Run*)
-    and the Purchase Receipt field *Store Run*. A read-only list pairing each trip with its draft is
-    a follow-up, not built yet. Every other draft is reviewed and submitted as above.
+  QuickBooks purchases that match a store run recorded on the Stock Scan page** (v1.536.0),
+  whose goods debit is first moved to 2210 with the *Store Run Charge Matching* report
+  (runbook step S-D): see [section 8](#8-store-runs-at-the-cutover-step-s-d).
 - **Chart of Accounts mismatch.** QBO account names carry numeric prefixes
   (`13000 US Bank Checking`). If you let the integration create accounts, expect a
   large COA. If you pre-built a COA, use the **QuickBooks Record Matching** page (Finance
@@ -352,3 +337,110 @@ Verify after the deploy:
 
 Re-check by hand at any time (writes nothing):
 `bench --site <site> execute erpnext_enhancements.quickbooks_online.core.party_group_remediation.restore_party_groups --kwargs "{'doctype': 'Customer', 'clear_no_history': True}"`
+
+## 8. Store runs at the cutover (step S-D)
+
+The single reference for the *Store Run Charge Matching* report (KPI Dashboards, v1.538.0) at
+runbook step S-D (`docs/migration/backlog-gl-posting-runbook.md`). Each row's *What to Do* says what
+that row needs; this section is the procedure and the rules behind it.
+
+### Why
+
+- A store run recorded on the Stock Scan page is a **submitted** Purchase Receipt per line:
+  Dr `1410 - Stock In Hand - SF` / Cr `2210 - Stock Received But Not Billed - SF`, for its stock
+  lines before tax (a non-stock line posts nothing).
+- QuickBooks holds the same purchase as a **draft** card-charge Journal Entry: Dr the expense
+  QuickBooks coded / Cr the card, no party.
+- Submitted as it stands, that draft books the goods twice and 2210 never clears; left unsubmitted,
+  the card liability is never booked. So each such draft first has its goods debit **moved to
+  2210** for the trip's stock lines before tax (split a line if need be). The tax and any non-stock
+  line stay on the expense.
+
+### The procedure
+
+1. Open **Store Run Charge Matching**. From Date **2026-01-01**, To Date today. (Not the day the
+   page shipped: a no-PO receipt at a flagged store counts as a trip whatever its date, and the page
+   can post a run as yesterday.)
+2. Show = **Needs action**. Do what each row's *What to Do* says, every row before refreshing.
+   **Save** each adjusted draft; never submit drafts one by one.
+3. Show = **Waiting**. The same, for every trip dated on or before the last QuickBooks sync.
+4. Refresh and repeat 2 and 3 until **neither list changes, *Needs action* is empty and *2210 Not
+   Accounted For* reads $0.00**. A link can move rows back into either list.
+5. Run the S-D loop.
+6. Run the report again. *Needs action* should still be empty; a row now reading *Submitted with
+   the goods on the expense* gets the correcting entry it names. *On 2210 With No Store Run* and
+   *2210 Not Accounted For* should read $0.00.
+7. After the cutover, bill from its receipts only a trip with **no card charge at all**. Fixing the
+   draft *and* billing the trip would credit the card twice.
+
+### The lists
+
+- **Needs action**: a charge to adjust, a Reference Number to correct, or a 2210 amount no charge
+  accounts for.
+- **Waiting**: a trip whose charge did not pair (a bank-feed date more than 3 days late, an amount
+  outside the tolerance, two runs of one purchase, a vendor not ticked *Store-Run Vendor*); a
+  question about a link; a Purchase Invoice waiting for its receipt.
+- **Done**: nothing left to do; the loop submits the drafts.
+- A draft under a vendor not ticked *Store-Run Vendor* is invisible until it is linked: link it
+  by Reference Number anyway, and never bill that trip from its receipts.
+
+### Reference Number tokens
+
+The Reference Number is the Journal Entry's `cheque_no`. Tokens are separated by spaces, commas or
+semicolons, and matched ignoring case.
+
+| Token | Where | Means |
+|---|---|---|
+| A trip's run id, `sr-…` (or the name of any of its receipts, `MAT-PRE-…`) | A draft charge. For a submitted charge: a correcting entry, after the charge's name | This charge pays for that trip. List every trip it pays for. A link overrides the automatic pairing. |
+| A charge's name, `ACC-JV-…` | A correcting entry, first | This entry corrects that charge; once submitted, its 2210 amount counts with the charge's. Naming a correcting entry names its charge. |
+| `part-paid`, right after a run id | A charge, or a correcting entry of one | The charge paid for that trip only in part (store credit, a second card). The trip leaves the capacity check; its 2210 target stays its whole stock lines. |
+| `not-store-run` | Any Journal Entry | Not a store run: no link, no correction, no pairing (in the report only; the KPI still counts it). An ERPNext entry leaves the 2210 check whatever it carries; a QuickBooks entry only once it carries nothing on 2210. |
+| `not-store-run` and a Purchase Receipt's name | A card charge whose 2210 amount clears that receipt | The receipt is not a store run (made from a Purchase Order, or a return). The entry leaves the 2210 check whatever it carries. The report checks the receipt exists, is submitted and is not a store run, and lists the entry with the reason if not. A receipt a card charge clears must **not** also be billed by a Purchase Invoice: the report does not read whether it is billed. |
+
+### A charge already submitted
+
+- Its Reference Number cannot be changed (v16). Fix it with **one correcting Journal Entry**:
+  Dr 2210 / Cr the expense account the charge used (or the reverse), with the amount and the
+  Reference Number the row gives: the charge's name, then the run ids of the trips it pays for.
+- **Post and submit** it: a draft correcting entry counts for nothing and is listed until it is
+  submitted or deleted.
+- **Never amend a QuickBooks Journal Entry.** Amending cancels the original, `tabQuickBooks Sync
+  Mapping` stays on the cancelled one, and the pairing follows the mapping, so the charge drops out
+  of the report and its trip reads as waiting.
+- Marked `not-store-run` by mistake: a submitted correcting entry naming it beside run ids links it
+  anyway; every entry naming it then counts as its correction.
+- Its 2210 amount cleared a receipt that is not a store run: move it back with the correcting entry
+  the row names, then post a Journal Entry for the same amount the other way with Reference Number
+  `not-store-run` followed by the receipt's name.
+
+### What the report checks
+
+- **Pairing**: the Store Runs KPI's own. Same store (Lowes and Lowe's are one), dated on the trip's
+  day or up to 3 days after, for the receipt total, else the lines plus up to 15% tax. Rows are read
+  from 7 days before From Date, charges up to 3 days after To Date.
+- **Moved to 2210**: the charge's net 2210 debit, its submitted correcting entries included, equals
+  its trips' stock lines **to the cent**.
+- **Capacity**: a charge never carries more than it paid (5-cent tolerance). Over it, the row asks
+  three ways: a checkout discount the receipt's rates do not show, a part payment (`part-paid`), or,
+  only if it is neither, not the trip's charge. A linked trip's run id then comes out of what links
+  it; an automatic pair (always on the receipt total, say one typed as an unrelated charge's amount)
+  is overridden: "If it is neither, it is not this trip's charge: put sr-… in the Reference Number of
+  the trip's own charge and save it, which overrides this pair".
+- **A submitted Stock Scan receipt's rates** (a checkout discount) are corrected by canceling and
+  amending it. The run id survives the amend; a charge linked by the old receipt's *name* must be
+  relinked to the amended receipt's name or to the run id.
+- **Every 2210 line**: each Journal Entry line on 2210 from 7 days before From Date to To Date
+  belongs to one charge, or gets a row of its own; *2210 Not Accounted For* totals them.
+- **No amounts are guessed.** A wrong automatic pair consistent with every figure, and a link typed
+  on the wrong trip that contradicts nothing, stay invisible (CHANGELOG `[1.538.0]`, Known limits).
+
+### Settled by hand
+
+- **One card charge that pays for both a store run and a PO receipt** cannot be expressed on that
+  charge (a run id beside `not-store-run` is a contradiction). Keep only the trip's stock lines on
+  the charge, linked by its run id, and post and submit a separate Journal Entry for the receipt's
+  share (Dr 2210 / Cr the expense account the charge used) whose Reference Number is `not-store-run`
+  followed by the receipt's name.
+- **A trip with no stock lines whose submitted charge the pairing gave to another trip** is told
+  "A charge already submitted: change nothing" (a correcting entry needs an amount): that wrong
+  automatic pair is one the report cannot see.

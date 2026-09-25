@@ -30,6 +30,15 @@ STORE_RUN_AMOUNT_TOLERANCE = 0.05
 #: within this much below it: Utah's combined sales tax is under 9%.
 STORE_RUN_TAX_ALLOWANCE = 0.15
 
+#: How far before a window the rows are read: a trip just before it still claims its card charge
+#: inside it (a charge pairs up to STORE_RUN_PAIR_DAYS later). The KPI (``snapshots._store_run_rows``)
+#: and the Store Run Charge Matching report read from the same distance, so they pair alike.
+STORE_RUN_LOOKBACK_DAYS = 7
+
+#: Which pass of :func:`pair_store_runs` matched a trip to its charge.
+PAIRED_ON_RECEIPT_TOTAL = "receipt_total"
+PAIRED_ON_LINES_PLUS_TAX = "lines_plus_tax"
+
 HIGHER = "Higher is better"
 LOWER = "Lower is better"
 
@@ -194,9 +203,49 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 	window still claims its charge inside it, so pass rows from a few days earlier.
 
 	Pure: no frappe; ``store_key`` is a callable (``stock_scan_rules.store_key``); dates may be
-	``date``/``datetime`` or ISO strings.
+	``date``/``datetime`` or ISO strings. The pairing itself is :func:`pair_store_runs`, which
+	the Store Run Charge Matching report calls too, so the list pairs exactly as this count does
+	when counted from the same From Date.
 	"""
 	since_day = _as_day(since)
+	runs, bills = pair_store_runs(charges, receipts, store_key, pair_days)
+
+	count = 0
+	spend = 0.0
+	for trip in runs:
+		if since_day and trip["day"] < since_day:
+			continue
+		count += 1
+		bill = trip["charge"]
+		spend += bill["amount"] if bill else (trip["total"] or trip["net"])
+	for bill in bills:
+		if bill["paired"] or (since_day and bill["day"] < since_day):
+			continue
+		count += 1
+		spend += bill["amount"]
+	return count, round(spend, 2)
+
+
+def pair_store_runs(charges, receipts, store_key, pair_days=STORE_RUN_PAIR_DAYS):
+	"""``(trips, charges)``: recorded trips paired one-to-one with card charges.
+
+	The pairing :func:`combine_store_runs` counts, with its rules (read its docstring): receipts
+	grouped into trips by run id or by receipt number at a store on a day; each trip paired with
+	at most one charge at the same store, dated on the trip's day or up to ``pair_days`` after,
+	first on the receipt total, then on the lines plus tax, nearest day first, then nearest amount;
+	an exact tie goes to the charge that comes first in ``charges`` (``snapshots._store_run_rows``
+	returns them in a fixed order since v1.538.0).
+
+	* ``trips``, sorted by day, store and key: ``{key, store, day, net, total, receipts, charge,
+	  basis}``. ``receipts`` are the input rows of the trip, in input order and unchanged (so a
+	  caller's extra keys -- a receipt's name, its stock lines -- ride along); ``charge`` is the
+	  paired entry of ``charges`` or ``None``; ``basis`` is which pass matched it,
+	  :data:`PAIRED_ON_RECEIPT_TOTAL` or :data:`PAIRED_ON_LINES_PLUS_TAX`, or ``None``.
+	* ``charges``, in input order, a row with no usable day left out: ``{index, row, store, day,
+	  amount, paired}``, ``row`` being the input row itself (its voucher, for the report).
+
+	Pure, like :func:`combine_store_runs`; neither argument is modified.
+	"""
 	trips = {}
 	for row in receipts or ():
 		day = _as_day(row.get("day"))
@@ -205,10 +254,23 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 		store = store_key(row.get("supplier") or "")
 		number = _receipt_number(row.get("receipt_number"))
 		key = ("receipt", store, day, number) if number else ("run", str(row.get("run") or ""))
-		trip = trips.setdefault(key, {"key": key, "store": store, "day": day, "net": 0.0, "total": 0.0})
+		trip = trips.setdefault(
+			key,
+			{
+				"key": key,
+				"store": store,
+				"day": day,
+				"net": 0.0,
+				"total": 0.0,
+				"receipts": [],
+				"charge": None,
+				"basis": None,
+			},
+		)
 		trip["day"] = min(trip["day"], day)
 		trip["net"] += _amount(row.get("amount"))
 		trip["total"] = max(trip["total"], _amount(row.get("receipt_total")))
+		trip["receipts"].append(row)
 	runs = sorted(trips.values(), key=lambda t: (t["day"], t["store"], str(t["key"])))
 
 	bills = []
@@ -219,6 +281,7 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 		bills.append(
 			{
 				"index": index,
+				"row": row,
 				"store": store_key(row.get("supplier") or ""),
 				"day": day,
 				"amount": _amount(row.get("amount")),
@@ -237,9 +300,10 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 			net > 0 and net - tolerance <= bill["amount"] <= net * (1 + STORE_RUN_TAX_ALLOWANCE) + tolerance
 		)
 
-	for matches in (equal_to_total, lines_plus_tax):
+	passes = ((PAIRED_ON_RECEIPT_TOTAL, equal_to_total), (PAIRED_ON_LINES_PLUS_TAX, lines_plus_tax))
+	for basis, matches in passes:
 		for trip in runs:
-			if trip.get("bill") is not None:
+			if trip["charge"] is not None:
 				continue
 			options = [
 				bill
@@ -261,22 +325,9 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 				),
 			)
 			best["paired"] = True
-			trip["bill"] = best
-
-	count = 0
-	spend = 0.0
-	for trip in runs:
-		if since_day and trip["day"] < since_day:
-			continue
-		count += 1
-		bill = trip.get("bill")
-		spend += bill["amount"] if bill else (trip["total"] or trip["net"])
-	for bill in bills:
-		if bill["paired"] or (since_day and bill["day"] < since_day):
-			continue
-		count += 1
-		spend += bill["amount"]
-	return count, round(spend, 2)
+			trip["charge"] = best
+			trip["basis"] = basis
+	return runs, bills
 
 
 def journal_store_charges(lines):
@@ -292,7 +343,9 @@ def journal_store_charges(lines):
 
 	One charge per entry and store, the sum of its unreferenced credits; an entry with none
 	gives nothing. A pass-through entry (the store credited and debited in one) counts its
-	credit once. Returns ``[{supplier, day, amount}]`` for :func:`combine_store_runs`.
+	credit once. Returns ``[{supplier, day, amount, voucher_type, voucher_no}]`` for
+	:func:`combine_store_runs`; the voucher (``Journal Entry``, the entry) is for the Store Run
+	Charge Matching report, and the count reads none of it.
 	"""
 	credits = {}
 	order = []
@@ -304,7 +357,13 @@ def journal_store_charges(lines):
 			continue
 		key = (str(row.get("entry") or ""), str(row.get("supplier") or ""))
 		if key not in credits:
-			credits[key] = {"supplier": row.get("supplier"), "day": row.get("day"), "amount": 0.0}
+			credits[key] = {
+				"supplier": row.get("supplier"),
+				"day": row.get("day"),
+				"amount": 0.0,
+				"voucher_type": "Journal Entry",
+				"voucher_no": key[0],
+			}
 			order.append(key)
 		credits[key]["amount"] += credit
 	return [dict(credits[key], amount=round(credits[key]["amount"], 2)) for key in order]

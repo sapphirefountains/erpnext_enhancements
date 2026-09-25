@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.538.0] - 2026-09-25
+
+**Store Run Charge Matching: Accounting's list of every store run recorded on the Stock Scan page
+beside the QuickBooks card charge it pairs with, the amount to move to 2210, and what to do.** It is
+the list v1.536.0 left as a follow-up for runbook step S-D. How Accounting uses it is in
+`quickbooks_online/MIGRATION_NOTES.md` section 8; how it works is in `kpi_dashboards/README.md`.
+
+### Added
+
+- **Report *Store Run Charge Matching*** (Script Report, KPI Dashboards, `ref_doctype` Purchase
+  Receipt; Accounts Manager, Accounts User, Purchase Manager, System Manager). Read-only: no write
+  and no button; every change is made on the voucher itself, in the Desk.
+  - **Rows**: one per recorded store run in the range, plus one for each charge or Journal Entry
+    that needs a word: a charge carrying 2210 with no store run, a linked charge whose trips are
+    all outside the range, a Reference Number to check, a draft correcting entry, and any 2210
+    amount no charge accounts for.
+  - **Columns**: Trip Day, Store, Run / Receipt No., Receipts and First Receipt, Recorded By, Lines
+    Before Tax, **Stock Lines Before Tax (Move to 2210)**, Receipt Total (Tax Included), **Matched
+    Charge**, Charge Date, Amount, Source and Status, Match Basis, **Moved to 2210** (to the cent,
+    submitted correcting entries included) and **What to Do**.
+  - **Filters**: From Date and To Date (default the last 60 days), Store (the suppliers ticked
+    *Store-Run Vendor*; Lowes also shows Lowe's), and **Show**: All, Needs action, Waiting or Done.
+  - **Summary cards**, over every row in range whatever *Show* says: store runs, matched, needs
+    action, still to move to 2210, already moved, on 2210 with no store run, and **2210 Not
+    Accounted For**, which must read $0.00 before the S-D loop.
+  - **Reference Number tokens** (a Journal Entry's `cheque_no`; separated by spaces, commas or
+    semicolons; any case). The procedure and every rule: MIGRATION_NOTES section 8.
+
+    | Token | Means |
+    |---|---|
+    | A run id `sr-…`, or a trip's receipt name `MAT-PRE-…` | This charge pays for that trip; overrides the automatic pairing. A submitted charge is linked by its correcting entry: *the charge* then the run ids |
+    | A charge's name `ACC-JV-…` | A correcting entry for that charge, followed through chains; counts once submitted |
+    | `part-paid`, right after a run id | The charge paid for that trip only in part; its 2210 target stays the whole stock lines |
+    | `not-store-run` | Not a store run: no link, no correction, no pairing (in the report only) |
+    | `not-store-run` and a Purchase Receipt's name | The entry's 2210 amount clears that receipt, which is not a store run (a PO receipt, a return) |
+- **`kpi_dashboards/store_run_matching.py`**: every rule of the report, with no frappe import. The
+  report's `.py` only reads, every query a literal `select` with bound params.
+
+### Changed
+
+- **`metrics.pair_store_runs`** is the pairing extracted from `combine_store_runs` unchanged. The
+  KPI counts through it and the report pairs with it, so a trip in range pairs exactly as the KPI
+  pairs it counted from the same From Date. It also says which pass took each charge
+  (`receipt_total` or `lines_plus_tax`). `STORE_RUN_LOOKBACK_DAYS` (7) now lives in `metrics`.
+- **`snapshots._store_run_rows`** returns identifying columns the count never reads (each charge's
+  voucher, docstatus, source and company; each receipt's name, company, owner, `net_amount`,
+  `is_stock_item` and `stock_amount`), and returns charges in a fixed order (posting date, then
+  voucher name), so an exact tie no longer depends on database order. `stock_amount` is what the
+  receipt credited to 2210 in the GL, not the Item's stock flag today: `MAT-PRE-2026-00038`
+  credited $81.00 where its Items' current flags said $205.50. KPI numbers are unchanged, except
+  where the fixed order now breaks an exact tie.
+- **Runbook step S-D** (`docs/migration/backlog-gl-posting-runbook.md`) is a five-step procedure
+  around the report, and **MIGRATION_NOTES section 8** is the single reference: the procedure, the
+  lists, the tokens, a charge already submitted, what the report checks, what is settled by hand.
+
+### Why
+
+- A QuickBooks card-charge draft submitted unchanged at S-D expenses goods that a store-run receipt
+  already put into stock (Dr 1410 / Cr 2210), so the purchase is booked twice and 2210 never
+  clears. Among ~13,000 drafts, finding those pairs by hand is impractical.
+- Beyond the KPI's own pairing, the report links a charge to its trips only **explicitly, by
+  Reference Number**, never by guessing amounts: review showed that recognizing a draft by a 2210
+  debit equal to a waiting trip's stock lines could give one trip's draft to another and double-book.
+- Wrong states are made visible instead: every Journal Entry line on 2210 must be accounted for by
+  one charge (the conservation total, *2210 Not Accounted For*), and a charge never carries more
+  than it paid (the capacity check), so a link that displaces a pair or oversteps the charge is
+  asked about rather than read as Done.
+
+### Known limits
+
+- Without guessing amounts it cannot see a wrong automatic pair consistent with every figure, or a
+  link typed on the wrong trip that contradicts nothing.
+- `part-paid` has nowhere to go on a submitted charge already carrying its trips' stock lines and
+  linked only by its own Reference Number: settled by hand.
+- An entry naming the receipt its 2210 amount clears is taken at its word; the amounts are not
+  compared.
+- One card charge that pays for both a store run and a PO receipt cannot be expressed on that
+  charge: settled by hand (MIGRATION_NOTES section 8).
+- A trip with no stock lines whose submitted charge the pairing gave to another trip is told
+  "change nothing" (a correcting entry needs an amount).
+- A submitted card charge that cleared a PO receipt takes two Journal Entries: moved back, then
+  posted again naming the receipt.
+- A submitted charge carrying 2210 that is neither paired nor linked takes two entries: moved back,
+  then moved again, linked.
+- A wrong run id in a submitted charge's own Reference Number cannot be taken out (v16).
+- A trip billed from its receipts whose own card charge never paired, carrying nothing on 2210, is
+  invisible. S-D does not meet it: a trip is billed only after the cutover, and only with no charge.
+- A standalone Purchase Invoice with *Update Stock* ticked pairs as a charge but posts to the
+  warehouse, not 2210, so its *What to Do* cannot be computed (none on production, 2026-09-25).
+- A Purchase Invoice cannot be linked by Reference Number; one carrying 2210 waits for its receipt.
+- Links and the 2210 backstop are read from 7 days before From Date (a card charge in that lookback
+  that pairs with nothing is told to widen the range); a named entry is looked up four links deep.
+- A run id split across the reader's lookback (Desk only) is linked with the receipts it read.
+- Rows for a Journal Entry ignore the Store filter: such an entry has no store.
+- From a different From Date, a chain of same-amount trips at one store can pair differently from
+  the nightly KPI (30 days back); from 2026-01-01 there is nothing earlier.
+
+### Tests
+
+- `test_store_run_matching` (new, 175 tests, bench-free; in the stub-free KPI step of `ci.yml`):
+  every *What to Do* case followed to its end, links, correction chains, capacity and `part-paid`,
+  the backstop, the Show buckets and summary, the KPI equivalence, and the report's files read by
+  `ast` (read-only, literal selects with bound params, the JS filters equal to the Python's).
+- Seeded property tests on generated histories, among them the 2210 conservation: attributed + not
+  accounted for + `not-store-run` equals every 2210 amount read, and the summary totals the rows.
+- `test_kpi_metrics` (50 tests before, 83 now): `combine_store_runs` against its v1.536.0 body, kept
+  verbatim, on every earlier case and 1,500 generated histories, bit for bit.
+- A follow-the-advice simulator (an Accounting agent doing what each row says to a fixed point, then
+  the S-D loop) over ~10,000 generated histories found no false Done the report could see, and no
+  crash, unparsed text or run without a fixed point. The simulator is not in the repo.
+
 ## [1.537.2] - 2026-09-25
 
 **Files on an Opportunity open again for every user, not only Administrator.** Everyone else got
