@@ -8,7 +8,8 @@ recorded on the Stock Scan page already posted Dr 1410 / Cr 2210 (its stock line
 QuickBooks holds the same purchase as a draft Journal Entry, Dr the expense / Cr the card. Before
 the 2026 drafts are submitted, each draft listed here under **Needs action** has its goods debit
 moved to 2210 for the amount the row gives, or the purchase is booked twice and 2210 never clears
-(CHANGELOG 1.536.0, "For Accounting" note 2; how this list is used: CHANGELOG 1.538.0).
+(CHANGELOG 1.536.0, "For Accounting" note 2; how this list is used:
+``quickbooks_online/MIGRATION_NOTES.md`` section 8).
 
 **Read-only.** No write of any kind and no button: every change is made on the voucher itself,
 by a person, in the Desk.

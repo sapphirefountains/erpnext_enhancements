@@ -261,9 +261,13 @@ docstring):
 - **`part-paid`** (fifth review) right after a trip key, in the Reference Number of a charge or of a
   submitted correcting entry of one, says the charge paid for that trip only in part (store credit,
   a second card): the trip leaves the capacity check, its 2210 target stays its whole stock lines,
-  and the row reads Done once 2210 carries them. An automatic pair over the charge's amount is always
-  a receipt-total pair, so its row offers a checkout discount (correct the receipt's rates) or
-  `part-paid`, never "not this trip's charge", which looped on a coupon.
+  and the row reads Done once 2210 carries them. A row over capacity asks three ways, in this
+  order: a checkout discount (correct the receipt's rates), `part-paid`, and only if it is neither,
+  not the trip's charge -- a linked trip's run id comes out of what links it; an automatic pair,
+  always a receipt-total pair (say a receipt total typed as an unrelated charge's amount), is
+  overridden by putting the run id on the trip's own charge. Offered alone, "not this trip's charge"
+  sent a coupon's own draft looking for itself; not offered at all, the typed total could never
+  leave *Needs action*.
 - **Every 2210 line is accounted for** (third review). Each backstop entry's net 2210 amount must
   belong to exactly one charge's figure -- the charge of a trip (shown, or hidden because its trips
   are outside the range), a submitted correcting entry of one, or a charge with no trip dated in
@@ -291,7 +295,7 @@ of their rows):
 |---|---|---|
 | Paired or linked draft, 2210 short of the stock lines | Move $X (more) of the goods debit to 2210, then save it; the S-D loop submits it | Needs action |
 | Paired or linked charge already submitted, 2210 short | Post and submit one correcting Journal Entry for $X (Dr 2210 / Cr the expense account the charge used) with Reference Number = the charge followed by its trips' run ids (so a second run of the same purchase is added, not swapped) | Needs action |
-| A charge whose trips' stock lines are more than the charge itself | Linked: one of these trips is not this charge's (take its run id out of what links it, named), or the charge paid for it only in part (`part-paid` right after its run id: on a draft its own Reference Number, on a submitted charge the correcting entry that moves the rest); nothing ticked. An automatic receipt-total pair: a checkout discount (correct the receipt's rates) or a part payment (`part-paid`) | Needs action |
+| A charge whose trips' stock lines are more than the charge itself | A checkout discount (correct the receipt's rates), or a part payment (`part-paid` right after its run id: on a draft its own Reference Number, on a submitted charge the correcting entry that moves the rest), or, only if neither, not this charge's trip: linked, take its run id out of what links it (named); an automatic receipt-total pair, put the run id on the trip's own charge, which overrides the pair (a submitted one: a correcting entry naming it and the run id). Nothing ticked | Needs action |
 | More on 2210 than the stock lines | Reduce it on the draft, or a correcting entry the other way (Reference Number = the charge and its trips). A draft over-moved by its correcting entries is told to reverse them, never to cut its own lines below the target | Needs action |
 | A linked draft whose link took another trip's automatic pair | First, all three answers: *If this draft also pays for sr-a, add sr-a …; if it pays for sr-a and not for sr-b, put sr-a in its Reference Number in place of sr-b …; otherwise* reduce / move the amount for its own trips. An answer the charge cannot pay for is not offered | Needs action |
 | Paired or linked draft, 2210 exact / no stock lines | *Goods debit on 2210: nothing to change; the S-D loop submits it* / *No stock lines: nothing to move; …* | Done |
@@ -315,10 +319,10 @@ procedure at step S-D is in MIGRATION_NOTES section 8.
 
 **What the report cannot see** (fourth review): it compares no amounts beyond the KPI's own
 pairing, so a wrong automatic pair consistent with every figure, and a link typed on the wrong trip
-that contradicts no automatic pair and fits the charge, stay invisible. The round-4 verifier's
-simulator, extended to read the fourth review's texts, found no other false *Done* on 23,000
-generated histories, and the fifth review's re-run of both simulators none on 18,000 more, the
-round-5 verifier's own seeds included (CHANGELOG 1.538.0, Tests).
+that contradicts no automatic pair and fits the charge, stay invisible. A simulator that follows
+every row's text found no other false *Done* on the generated histories it ran (CHANGELOG 1.538.0,
+Tests; the simulator is not in the repo). The limits Accounting settles by hand are in
+MIGRATION_NOTES section 8.
 
 **Known limit**: a standalone Purchase Invoice with *Update Stock* ticked pairs as a charge, but
 its stock lines post to the warehouse account, not 2210, so the report reads nothing on 2210 for

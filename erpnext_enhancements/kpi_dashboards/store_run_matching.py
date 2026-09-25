@@ -181,7 +181,7 @@ RUN_PREFIX = "sr-"
 RECEIPT_PREFIX = "mat-pre-"
 
 #: How a draft is finished. Accounting saves each adjusted draft; the S-D loop submits every 2026
-#: draft together (CHANGELOG 1.538.0, "For Accounting").
+#: draft together (``quickbooks_online/MIGRATION_NOTES.md`` section 8).
 SAVE_IT = "then save it; the S-D loop submits it"
 
 #: The one fix for a charge already submitted: a correcting Journal Entry naming the charge in its
@@ -1528,19 +1528,27 @@ def _over_capacity(group, target, moved, account, linked):
 	An automatic pair over capacity is always a receipt-total pair (the lines-plus-tax pass never
 	exceeds the charge): the charge is the receipt's total, so its stock lines are more than what was
 	paid for them -- a checkout discount the receipt's rates do not show, or a part payment by other
-	means (fifth review: "it is not this trip's charge" looped on a coupon). A linked charge is asked
-	whether it paid for the trip only in part, or does not pay for it at all. ``part-paid`` answers
-	the first (:func:`_acknowledge`), and the 2210 target stays the whole stock lines."""
+	means. Only when it is neither is it not the trip's charge (a receipt total typed wrong that
+	equals an unrelated charge): the trip's own charge is then linked by its run id, which overrides
+	the pair. That answer is offered last and conditionally: offered alone, "it is not this trip's
+	charge" sent a coupon's own draft looking for itself (fifth review). A linked charge is asked the
+	same three ways. ``part-paid`` answers the part payment (:func:`_acknowledge`), and the 2210
+	target stays the whole stock lines."""
 	trips = group["trips"]
 	amount = _money(group["charge"]["amount"])
 	stays = "its 2210 target stays the whole stock lines"
 	if not linked:
+		key = link_key(trips[0])
 		return (
 			f"Its stock lines ({_money(target)}) are more than the charge itself ({amount}), and a charge never "
 			f"moves more to {account} than it paid: the stock lines exceed what this charge paid. If it is a "
 			"checkout discount, correct the receipt's rates to the prices paid. If it is a part payment by "
 			f"other means (store credit, a second card), add {PART_PAID} next to the run id: "
-			f"{_acknowledge(group, trips, target, moved, account)}; {stays}. This row then says what to move"
+			f"{_acknowledge(group, trips, target, moved, account)}; {stays}. If it is neither, it is not this "
+			f"trip's charge: put {key} in the Reference Number of the trip's own charge and save it, which "
+			"overrides this pair (if that charge is already submitted, post and submit a correcting Journal "
+			f"Entry for {_money(target)} (Dr {account} / Cr the expense account it used) whose Reference Number "
+			f"is its name followed by {key}). This row then says what to move"
 		)
 	each = ", ".join(f"{link_key(trip)} {_money(_stock(trip))}" for trip in trips)
 	charge = group["charge"]["row"].get("voucher_no") or ""
@@ -1548,18 +1556,20 @@ def _over_capacity(group, target, moved, account, linked):
 		key = link_key(trips[0])
 		return (
 			f"The stock lines of the trip its Reference Number links ({each}) are more than the charge itself "
-			f"({amount}). If {charge} paid for {key} only in part (the rest by store credit or a second card), "
+			f"({amount}). If the difference is a checkout discount, correct the receipt's rates to the prices "
+			f"paid. If {charge} paid for {key} only in part (the rest by store credit or a second card), "
 			f"{_acknowledge(group, trips, target, moved, account)}; {stays}, and this row then says what to "
 			f"move. If it is not {key}'s charge, take {key} out of {_out_of(group, trips)}, and {key}'s row "
 			"then asks for its own charge"
 		)
 	return (
 		f"The stock lines of the trips its Reference Number links ({each}: {_money(target)} together) are "
-		f"more than the charge itself ({amount}): one of these trips is not this charge's, or it paid for "
-		"one only in part (the rest by store credit or a second card). Take the run id of each trip it does "
-		f"not pay for out of {_out_of(group, trips)}, and each trip taken out asks for its own charge on its "
-		f"own row. For a trip it paid for only in part, {_acknowledge(group, trips, target, moved, account)}; "
-		f"{stays}. This row then says what the charge keeps on {account}"
+		f"more than the charge itself ({amount}): one of these trips is not this charge's, it paid for one "
+		"only in part (the rest by store credit or a second card), or a receipt's rates miss a checkout "
+		f"discount. Take the run id of each trip it does not pay for out of {_out_of(group, trips)}, and each "
+		"trip taken out asks for its own charge on its own row. For a trip it paid for only in part, "
+		f"{_acknowledge(group, trips, target, moved, account)}; {stays}. For a checkout discount, correct "
+		f"that receipt's rates to the prices paid. This row then says what the charge keeps on {account}"
 	)
 
 
@@ -2089,9 +2099,9 @@ def build_rows(
 	  too, or for that trip and not the linked ones;
 	* a charge already submitted short of it: the purchase is booked twice until one correcting
 	  Journal Entry naming the charge and its trips moves the difference (**Needs action**);
-	* a charge whose trips' stock lines are more than the charge itself: one of them is not its, or
-	  it paid for one only in part (``part-paid``), or -- an automatic pair -- the receipt shows no
-	  checkout discount (**Needs action**, nothing ticked);
+	* a charge whose trips' stock lines are more than the charge itself: a checkout discount the
+	  receipt's rates do not show, a part payment (``part-paid``), or -- only if neither -- a trip that
+	  is not its, linked to its own charge (**Needs action**, nothing ticked);
 	* more than the stock lines on 2210: reduce it, on the draft or with a correcting entry; a draft
 	  whose correcting entries over-move is told to reverse them, never to cut its own lines below
 	  the target (**Needs action**);

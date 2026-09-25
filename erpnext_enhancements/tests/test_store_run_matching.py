@@ -2366,12 +2366,13 @@ class TestFourthReview(unittest.TestCase):
 			self.assertEqual(
 				rows[key]["action"],
 				"The stock lines of the trips its Reference Number links (sr-a $100.00, sr-b $95.00: $195.00 "
-				"together) are more than the charge itself ($107.00): one of these trips is not this charge's, or "
-				"it paid for one only in part (the rest by store credit or a second card). Take the run id of each "
-				"trip it does not pay for out of ACC-JV-1's Reference Number (edit it and save it), and each trip "
-				"taken out asks for its own charge on its own row. For a trip it paid for only in part, put "
-				"part-paid right after its run id in ACC-JV-1's Reference Number and save it; its 2210 target stays "
-				f"the whole stock lines. This row then says what the charge keeps on {ACCOUNT}",
+				"together) are more than the charge itself ($107.00): one of these trips is not this charge's, it "
+				"paid for one only in part (the rest by store credit or a second card), or a receipt's rates miss a "
+				"checkout discount. Take the run id of each trip it does not pay for out of ACC-JV-1's Reference "
+				"Number (edit it and save it), and each trip taken out asks for its own charge on its own row. For a "
+				"trip it paid for only in part, put part-paid right after its run id in ACC-JV-1's Reference Number "
+				"and save it; its 2210 target stays the whole stock lines. For a checkout discount, correct that "
+				f"receipt's rates to the prices paid. This row then says what the charge keeps on {ACCOUNT}",
 			)
 			self.assertEqual(rows[key]["moved_to_2210"], 0)
 
@@ -2426,15 +2427,18 @@ class TestFourthReview(unittest.TestCase):
 		self.assertEqual(
 			self.only_trip(over)["action"],
 			"The stock lines of the trip its Reference Number links (sr-a $45.00) are more than the charge "
-			"itself ($44.94). If ACC-JV-1 paid for sr-a only in part (the rest by store credit or a second card), "
-			"put sr-a part-paid in ACC-JV-1's Reference Number and save it; its 2210 target stays the whole stock "
-			"lines, and this row then says what to move. If it is not sr-a's charge, take sr-a out of ACC-JV-1's "
+			"itself ($44.94). If the difference is a checkout discount, correct the receipt's rates to the prices "
+			"paid. If ACC-JV-1 paid for sr-a only in part (the rest by store credit or a second card), put sr-a "
+			"part-paid in ACC-JV-1's Reference Number and save it; its 2210 target stays the whole stock lines, "
+			"and this row then says what to move. If it is not sr-a's charge, take sr-a out of ACC-JV-1's "
 			"Reference Number (edit it and save it), and sr-a's row then asks for its own charge",
 		)
 
 	def test_an_automatic_pair_over_capacity(self):
 		"""An automatic pair over the charge's amount is always a receipt-total pair: a checkout discount
-		or a part payment, never "not this trip's charge" (fifth review, item 3: that looped on a coupon)."""
+		or a part payment first, and "not this trip's charge" only if it is neither (offered alone, it
+		looped on a coupon; offered not at all, a receipt total typed as an unrelated charge's amount was
+		stuck)."""
 		rows = report(
 			[charge("2026-09-03", 20.0, "ACC-JV-5")], [receipt("2026-09-03", "sr-a", 45.0, total=20.0)]
 		)
@@ -2448,10 +2452,13 @@ class TestFourthReview(unittest.TestCase):
 			f"{ACCOUNT} than it paid: the stock lines exceed what this charge paid. If it is a checkout discount, "
 			"correct the receipt's rates to the prices paid. If it is a part payment by other means (store "
 			"credit, a second card), add part-paid next to the run id: put sr-a part-paid in ACC-JV-5's "
-			"Reference Number and save it; its 2210 target stays the whole stock lines. This row then says what "
-			"to move",
+			"Reference Number and save it; its 2210 target stays the whole stock lines. If it is neither, it is "
+			"not this trip's charge: put sr-a in the Reference Number of the trip's own charge and save it, which "
+			"overrides this pair (if that charge is already submitted, post and submit a correcting Journal Entry "
+			"for $45.00 (Dr 2210 / Cr the expense account it used) whose Reference Number is its name followed by "
+			"sr-a). This row then says what to move",
 		)
-		self.assertNotIn("not this trip's charge", row["action"])
+		self.assertEqual(row["action"].count("not this trip's charge"), 1)
 
 	def only_trip(self, rows):
 		trips = _of(rows, matching.ROW_TRIP)
@@ -3053,7 +3060,8 @@ class TestFifthReview(unittest.TestCase):
 		self.assertEqual(
 			row["action"],
 			"The stock lines of the trip its Reference Number links (sr-1 $120.00) are more than the charge "
-			"itself ($100.00). If ACC-JV-1 paid for sr-1 only in part (the rest by store credit or a second "
+			"itself ($100.00). If the difference is a checkout discount, correct the receipt's rates to the "
+			"prices paid. If ACC-JV-1 paid for sr-1 only in part (the rest by store credit or a second "
 			f"card), post and submit a correcting Journal Entry for $100.00 (Dr {ACCOUNT} / Cr the expense "
 			"account the charge used) with Reference Number ACC-JV-1 followed by sr-1 part-paid; its 2210 target "
 			"stays the whole stock lines, and this row then says what to move. If it is not sr-1's charge, take "
@@ -3134,7 +3142,11 @@ class TestFifthReview(unittest.TestCase):
 			"add part-paid next to the run id: put sr-1 part-paid in ACC-JV-1's Reference Number",
 			row["action"],
 		)
-		self.assertNotIn("not this trip's charge", row["action"])
+		# "Not this trip's charge" only if it is neither, so a coupon's own draft is never sent looking for
+		# itself.
+		neither = row["action"].index("If it is neither, it is not this trip's charge")
+		self.assertLess(row["action"].index("If it is a checkout discount"), neither)
+		self.assertLess(row["action"].index("If it is a part payment"), neither)
 		# A discount: the receipt at the prices paid, and the draft moves $90.00.
 		paid = [receipt("2026-09-01", "sr-1", 90.0, total=96.3)]
 		self.assertEqual(self.only(report(charges, paid, on_2210={JV1: 90.0}))["show"], matching.DONE)
@@ -3454,6 +3466,118 @@ class TestFifthReview(unittest.TestCase):
 					self.assertLessEqual(row["action"].count(ACCOUNT), 1, row["action"])
 					if "QuickBooks" in (row["charge_source"] or ""):
 						self.assertNotIn("amend", row["action"].lower())
+
+
+class TestOverCapacityAnswers(unittest.TestCase):
+	"""A charge whose trips' stock lines are more than the charge itself is asked three ways: a
+	checkout discount the receipt's rates do not show, a part payment (``part-paid``), or not the
+	trip's charge at all. Each answer is followed to the end its text describes."""
+
+	typed = (receipt("2026-09-01", "sr-1", 100.0, total=96.3),)
+
+	def typed_charges(self, docstatus):
+		"""sr-1's receipt total was typed as $96.30, which is exactly an unrelated card charge the same
+		day (ACC-JV-X), so the receipt-total pass pairs them; sr-1's own charge (ACC-JV-1, $107.00, the
+		next day) pairs with nothing."""
+		return [
+			charge("2026-09-01", 96.3, "ACC-JV-X", docstatus=docstatus),
+			charge("2026-09-02", 107.0, "ACC-JV-1", docstatus=docstatus),
+		]
+
+	def test_a_receipt_total_typed_as_an_unrelated_charge(self):
+		"""Neither a discount nor a part payment: offered only those two, the row could never leave
+		*Needs action* on a correct book. The third answer links the trip's own charge by its run id,
+		which overrides the pair, and following it ends clean with each charge carrying its own."""
+		for docstatus in (0, 1):
+			with self.subTest(docstatus=docstatus):
+				charges = self.typed_charges(docstatus)
+				row = self.only_trip(report(charges, list(self.typed)))
+				self.assertEqual(
+					(row["charge"], row["match_basis"], row["show"]),
+					("ACC-JV-X", "Receipt total", matching.NEEDS_ACTION),
+				)
+				self.assertIn(
+					"If it is neither, it is not this trip's charge: put sr-1 in the Reference Number of the "
+					"trip's own charge and save it, which overrides this pair (if that charge is already "
+					"submitted, post and submit a correcting Journal Entry for $100.00 (Dr 2210 / Cr the expense "
+					"account it used) whose Reference Number is its name followed by sr-1). This row then says "
+					"what to move",
+					row["action"],
+				)
+				if docstatus == 0:
+					links = [ref("ACC-JV-1", "sr-1", day="2026-09-02", amount=107.0)]
+					row = self.only_trip(report(charges, list(self.typed), links))
+					self.assertEqual(
+						(row["charge"], row["action"]),
+						(
+							"ACC-JV-1",
+							f"Move $100.00 of the goods debit to {ACCOUNT}, then save it; the S-D loop submits it",
+						),
+					)
+					on = {JV1: 100.0}
+					taken = "It was paired with sr-1 until ACC-JV-1 linked sr-1, and carries nothing on"
+				else:
+					links = [
+						ref("ACC-JV-900", "ACC-JV-1 sr-1", day="2026-09-03", docstatus=1, source="ERPNext")
+					]
+					on = {je("ACC-JV-900"): 100.0}
+					taken = "It was paired with sr-1 until ACC-JV-900 linked sr-1 to ACC-JV-1, and carries nothing"
+				rows = report(charges, list(self.typed), links, on_2210=on)
+				row = self.only_trip(rows)
+				self.assertEqual(
+					(row["charge"], row["show"], row["moved_to_2210"]), ("ACC-JV-1", matching.DONE, 1)
+				)
+				# The unrelated charge the link took from sr-1 asks whether it is sr-1's after all.
+				taken_row = _of(rows, matching.ROW_CHARGE)[0]
+				self.assertEqual((taken_row["charge"], taken_row["show"]), ("ACC-JV-X", matching.WAITING))
+				self.assertTrue(taken_row["action"].startswith(taken), taken_row["action"])
+				if docstatus == 0:
+					# "If not, put ... not-store-run if it pays for no store run": the list is then clean.
+					links.append(ref("ACC-JV-X", "not-store-run", day="2026-09-01", amount=96.3))
+					rows = report(charges, list(self.typed), links, on_2210=on)
+					self.assertEqual([r["charge"] for r in rows], ["ACC-JV-1"])
+				summary = matching.summarize(rows)
+				self.assertEqual((summary["needs_action"], summary["not_accounted"]), (0, 0.0))
+
+	def test_a_linked_charge_is_offered_the_checkout_discount(self):
+		"""A charge linked by its run id may be over its trips' stock lines for the same reason an
+		automatic pair is: a coupon the receipt's rates do not show. Correcting the rates ends Done."""
+		charges = [charge("2026-09-09", 96.3, "ACC-JV-1")]
+		links = [ref("ACC-JV-1", "sr-1", day="2026-09-09", amount=96.3)]
+		shelf = [receipt("2026-09-01", "sr-1", 100.0, total=96.3)]
+		row = self.only_trip(report(charges, shelf, links))
+		self.assertEqual(
+			(row["match_basis"], row["show"]), ("Linked by Reference Number", matching.NEEDS_ACTION)
+		)
+		self.assertIn(
+			"($96.30). If the difference is a checkout discount, correct the receipt's rates to the prices "
+			"paid. If ACC-JV-1 paid for sr-1 only in part",
+			row["action"],
+		)
+		paid = [receipt("2026-09-01", "sr-1", 90.0, total=96.3)]
+		row = self.only_trip(report(charges, paid, links, on_2210={JV1: 90.0}))
+		self.assertEqual((row["show"], row["moved_to_2210"]), (matching.DONE, 1))
+		# Two runs of one purchase on one draft, a coupon on the whole.
+		charges = [charge("2026-09-09", 99.0, "ACC-JV-1")]
+		links = [ref("ACC-JV-1", "sr-1 sr-2", day="2026-09-09", amount=99.0)]
+		shelf = [receipt("2026-09-01", "sr-1", 60.0), receipt("2026-09-02", "sr-2", 50.0)]
+		rows = report(charges, shelf, links)
+		for row in rows:
+			self.assertEqual(row["show"], matching.NEEDS_ACTION)
+			self.assertIn(
+				"or a receipt's rates miss a checkout discount. Take the run id of each trip", row["action"]
+			)
+			self.assertIn(
+				"For a checkout discount, correct that receipt's rates to the prices paid.", row["action"]
+			)
+		paid = [receipt("2026-09-01", "sr-1", 54.0), receipt("2026-09-02", "sr-2", 45.0)]
+		rows = report(charges, paid, links, on_2210={JV1: 99.0})
+		self.assertEqual([(row["show"], row["moved_to_2210"]) for row in rows], [(matching.DONE, 1)] * 2)
+
+	def only_trip(self, rows):
+		trips = _of(rows, matching.ROW_TRIP)
+		self.assertEqual(len(trips), 1, rows)
+		return trips[0]
 
 
 class TestTheTexts(unittest.TestCase):

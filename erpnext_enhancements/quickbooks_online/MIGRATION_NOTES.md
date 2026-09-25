@@ -395,7 +395,7 @@ semicolons, and matched ignoring case.
 | A charge's name, `ACC-JV-…` | A correcting entry, first | This entry corrects that charge; once submitted, its 2210 amount counts with the charge's. Naming a correcting entry names its charge. |
 | `part-paid`, right after a run id | A charge, or a correcting entry of one | The charge paid for that trip only in part (store credit, a second card). The trip leaves the capacity check; its 2210 target stays its whole stock lines. |
 | `not-store-run` | Any Journal Entry | Not a store run: no link, no correction, no pairing (in the report only; the KPI still counts it). An ERPNext entry leaves the 2210 check whatever it carries; a QuickBooks entry only once it carries nothing on 2210. |
-| `not-store-run` and a Purchase Receipt's name | A card charge whose 2210 amount clears that receipt | The receipt is not a store run (made from a Purchase Order, or a return). The entry leaves the 2210 check whatever it carries. The report checks the receipt exists, is submitted and is not a store run, and lists the entry with the reason if not. |
+| `not-store-run` and a Purchase Receipt's name | A card charge whose 2210 amount clears that receipt | The receipt is not a store run (made from a Purchase Order, or a return). The entry leaves the 2210 check whatever it carries. The report checks the receipt exists, is submitted and is not a store run, and lists the entry with the reason if not. A receipt a card charge clears must **not** also be billed by a Purchase Invoice: the report does not read whether it is billed. |
 
 ### A charge already submitted
 
@@ -420,10 +420,27 @@ semicolons, and matched ignoring case.
   from 7 days before From Date, charges up to 3 days after To Date.
 - **Moved to 2210**: the charge's net 2210 debit, its submitted correcting entries included, equals
   its trips' stock lines **to the cent**.
-- **Capacity**: a charge never carries more than it paid (5-cent tolerance). Over it: one of its
-  trips is not its, or it paid for one only in part (`part-paid`); on a receipt-total pair, a
-  checkout discount the receipt's rates do not show.
+- **Capacity**: a charge never carries more than it paid (5-cent tolerance). Over it, the row asks
+  three ways: a checkout discount the receipt's rates do not show, a part payment (`part-paid`), or,
+  only if it is neither, not the trip's charge. A linked trip's run id then comes out of what links
+  it; an automatic pair (always on the receipt total, say one typed as an unrelated charge's amount)
+  is overridden: "If it is neither, it is not this trip's charge: put sr-… in the Reference Number of
+  the trip's own charge and save it, which overrides this pair".
+- **A submitted Stock Scan receipt's rates** (a checkout discount) are corrected by canceling and
+  amending it. The run id survives the amend; a charge linked by the old receipt's *name* must be
+  relinked to the amended receipt's name or to the run id.
 - **Every 2210 line**: each Journal Entry line on 2210 from 7 days before From Date to To Date
   belongs to one charge, or gets a row of its own; *2210 Not Accounted For* totals them.
 - **No amounts are guessed.** A wrong automatic pair consistent with every figure, and a link typed
   on the wrong trip that contradicts nothing, stay invisible (CHANGELOG `[1.538.0]`, Known limits).
+
+### Settled by hand
+
+- **One card charge that pays for both a store run and a PO receipt** cannot be expressed on that
+  charge (a run id beside `not-store-run` is a contradiction). Keep only the trip's stock lines on
+  the charge, linked by its run id, and post and submit a separate Journal Entry for the receipt's
+  share (Dr 2210 / Cr the expense account the charge used) whose Reference Number is `not-store-run`
+  followed by the receipt's name.
+- **A trip with no stock lines whose submitted charge the pairing gave to another trip** is told
+  "A charge already submitted: change nothing" (a correcting entry needs an amount): that wrong
+  automatic pair is one the report cannot see.
