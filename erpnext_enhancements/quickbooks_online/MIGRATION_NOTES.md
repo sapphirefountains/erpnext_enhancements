@@ -113,7 +113,10 @@ Other prerequisites:
     Reference Number names nothing usable (a run id that names no recorded store run, two different
     charges, a draft correcting entry) or whose 2210 amount no charge accounts for: its row says
     why. Put `not-store-run` in the Reference Number of an entry on 2210 that has nothing to do with
-    store runs, or of a card charge that pays for none, and the report leaves it out.
+    store runs, or of a card charge that pays for none, and the report leaves it out; a QuickBooks
+    card charge must first carry nothing on 2210 (move it back to the expense), or it stays listed.
+    A charge whose trips' stock lines add up to more than the charge itself is listed too: one of
+    those trips is not its, and its run id comes out.
   - **Then set Show = Waiting** and check every trip dated on or before the last QuickBooks sync.
     Its charge did not pair: a bank-feed date more than three days late, an amount outside the
     tolerance, two runs of one purchase, a vendor not ticked *Store-Run Vendor*. Its row says one
@@ -123,7 +126,9 @@ Other prerequisites:
     Number*) and the row moves to *Done* once the draft carries the stock lines. When one draft
     pays for several trips — two runs of one purchase — list all their run ids, separated by
     commas or spaces and keeping any already there: the draft then carries their stock lines
-    together. If the draft is already another trip's charge in the list, list both run ids. **A
+    together. If the draft is already another trip's charge in the list, list both run ids only if
+    it pays for both; otherwise its Reference Number lists this trip's alone (take the other one's
+    out), and the other trip's row then asks for its own charge. **A
     draft found under a QuickBooks vendor that is not a ticked Store-Run Vendor is invisible to the
     report until it is linked: link it by Reference Number anyway, and never bill that trip from its
     receipts** (the report reads every Journal Entry's Reference Number, whatever its vendor). **Only if it has no card charge at all**, bill the trip from its receipts
@@ -134,18 +139,20 @@ Other prerequisites:
     changes, *Needs action* is empty and the summary's *2210 Not Accounted For* reads $0.00**, before
     the bulk submit. A link can move rows back into either list: a draft now carrying more than its
     linked trips' stock lines, or a draft the pairing had given to another trip (the draft's row asks
-    first whether it pays for that trip too, and that trip waits under *Waiting* until it is
-    settled). *2210 Not Accounted For* is every Journal Entry line on 2210, from 7 days before From
+    first whether it pays for that trip too, or for that trip and not the one it links, and that
+    trip waits under *Waiting*, asked the same way, until it is settled). Work through every row of a
+    list before refreshing: a question about a charge goes away once that charge is linked
+    elsewhere. *2210 Not Accounted For* is every Journal Entry line on 2210, from 7 days before From
     Date to To Date, that no charge accounts for.
   - **A draft submitted before it was adjusted** reappears under *Needs action* as *Submitted with
     the goods on the expense*. Fix it by posting and submitting **one correcting Journal Entry** —
     Dr `2210 - Stock Received But Not Billed - SF` / Cr the expense account the charge used, for the
-    amount the row gives — whose **Reference Number is the charge's name**; the report adds the 2210
-    debit of every submitted entry that names a charge that way (or names a correcting entry of it),
-    so the row moves to *Done*. A draft correcting entry counts for nothing and is listed until it is
-    submitted or deleted. For a trip whose charge never paired, follow the charge's name with the
-    trip's run id in that Reference Number: that links them, since a submitted entry's own Reference
-    Number cannot be changed. **Never amend a
+    amount the row gives — whose **Reference Number is the charge's name followed by the run ids of
+    the trips it pays for**, as the row gives it; the report adds the 2210 debit of every submitted
+    entry that names a charge that way (or names a correcting entry of it), so the row moves to
+    *Done*. The run ids link the charge to its trips, since a submitted entry's own Reference Number
+    cannot be changed, so a second run of the same purchase is added, not swapped. A draft correcting
+    entry counts for nothing and is listed until it is submitted or deleted. **Never amend a
     QuickBooks Journal Entry** to fix it: amending cancels the original, `tabQuickBooks Sync
     Mapping` stays on the cancelled one, and the pairing follows the mapping, so the charge would
     drop out of the report and its trip would read as waiting.

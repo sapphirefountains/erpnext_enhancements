@@ -36,14 +36,23 @@ a trip differently (``test_rows_before_the_lookback_play_no_part`` shows one).
   ``STORE_RUN_PAIR_DAYS`` late, an amount outside the tolerance, **two runs of one purchase** (one
   draft, two trips), a draft under a QuickBooks vendor that is not a ticked Store-Run Vendor. A
   link **overrides** the automatic pairing for its trips and its charge: a linked trip's automatic
-  charge goes back to unpaired (its row names the link that took it), and a linked charge's
-  automatic trip goes back to waiting (its row says so, :func:`build_rows`). A linked charge's
-  **target on 2210 is the sum of its linked trips' stock lines**, so one draft for two runs reaches
-  Done once it carries both. **Links resolve by key, not by date**: a linked trip outside From..To
-  is not shown, but its charge is never listed as having no store run, and a linked charge in
-  range whose trips are all outside it gets a row of its own when it needs action. A submitted
-  entry's Reference Number cannot be changed (v16, not ``allow_on_submit``), so a charge already
-  submitted is linked by the Reference Number of a correcting entry instead (next item).
+  charge goes back to unpaired (its row names the link that took it, and asks whether it is that
+  trip's charge after all -- under Waiting when it carries nothing on 2210), and a linked charge's
+  automatic trip goes back to waiting (its row asks all three ways: the charge pays for both, for
+  that trip and not the linked ones, or for the linked ones alone, :func:`build_rows`). A linked
+  charge's **target on 2210 is the sum of its linked trips' stock lines**, so one draft for two
+  runs reaches Done once it carries both. **Links resolve by key, not by date**: a linked trip
+  outside From..To is not shown, but its charge is never listed as having no store run, and a
+  linked charge in range whose trips are all outside it gets a row of its own when it needs action.
+  A submitted entry's Reference Number cannot be changed (v16, not ``allow_on_submit``), so a
+  charge already submitted is linked by the Reference Number of a correcting entry instead (next
+  item).
+* **A charge never carries more than it paid** (:func:`_fits`). A charge whose trips' stock lines
+  add up to more than its own amount (the pairing's tolerance allowed) cannot pay for all of them:
+  its rows are Needs action, name the trips and what carries each run id, and ask Accounting to take
+  out the one that is not the charge's. No amount is guessed: the report never says which. The
+  same bound keeps the questions honest -- a charge that cannot pay for a displaced trip as well as
+  its own is not asked whether it does.
 * **Correcting entries count, through chains.** A charge already submitted with the goods on the
   expense is fixed with ONE correcting Journal Entry, Dr 2210 / Cr the expense account the charge
   used, whose Reference Number names the charge. A Reference Number that names a correcting entry
@@ -51,14 +60,20 @@ a trip differently (``test_rows_before_the_lookback_play_no_part`` shows one).
   the first correction still counts for the charge. The 2210 debit of every **submitted**
   correcting entry is added to the charge's own, so the row reaches Done once corrected and an
   over-correction is flagged; a draft one counts for nothing and is listed to be submitted. Trip
-  keys listed beside the charge's name link that charge to those trips. **Amending the charge is
+  keys listed beside the charge's name link that charge to those trips, and every correcting entry
+  the report advises for a charge with trips names them all, so a later one for another run of the
+  same purchase adds to the link instead of displacing it. A submitted QuickBooks entry whose own
+  Reference Number is unusable still names itself, so the correcting entry it is told to post
+  counts for it. **Amending the charge is
   never advised**: amending a QuickBooks-synced Journal Entry cancels the original, and
   ``tabQuickBooks Sync Mapping`` -- which the KPI's reader follows to find QuickBooks charges --
   stays on the cancelled one, so the charge would drop out of the pairing.
 * **A charge carrying 2210 is never lost.** A charge dated in range that is neither paired nor
   linked but carries a net 2210 debit is listed under **Needs action**: link it to its trip, or
   move it back to the expense (a Purchase Invoice, which books its stock lines to 2210 itself, is
-  left to wait for its receipt).
+  left to wait for its receipt, Waiting). A Journal Entry a link took from its trip is listed even
+  when it carries nothing (Waiting): the link may be the mistake, and its row is the only place
+  that asks.
 * **Every 2210 line is accounted for** (:func:`attribute_2210`). Every Journal Entry line on a
   company's Stock Received But Not Billed account dated from the lookback to the To Date must
   belong to a charge the report accounts for -- one with trips, shown or not, or one with none
@@ -66,10 +81,15 @@ a trip differently (``test_rows_before_the_lookback_play_no_part`` shows one).
   the summary's *2210 Not Accounted For* totals them: it must be $0.00 before the S-D loop.
 * **Reference Numbers that say nothing usable are listed**: a key that names no recorded store
   run, tokens pointing to two different charges, a card charge naming another charge, a draft
-  correcting entry. Never first-token-wins, never silently dropped.
+  correcting entry (whatever its own date, when its charge is accounted for in range: the S-D loop
+  submits it all the same). Never first-token-wins, never silently dropped.
 * **not-store-run.** The token ``not-store-run`` in a Journal Entry's Reference Number takes it out
-  of all this: it is not a correcting entry, not a link, not in the backstop, and a card charge
-  carrying it pairs with no trip (in the report only; the KPI still counts it).
+  of all this: it is not a correcting entry, not a link, and a card charge carrying it pairs with
+  no trip (in the report only; the KPI still counts it). It leaves the backstop too, **except a
+  QuickBooks entry** -- a card charge, which carries nothing on 2210 unless it pays for a store
+  run: one marked ``not-store-run`` whose 2210 (with that of the entries marked ``not-store-run``
+  that name it) is not zero stays listed until it is moved back. An ERPNext entry marked so may
+  carry 2210: an adjustment that has nothing to do with store runs is legitimate.
 
 **A token that names a charge and a token that names a trip cannot be confused**: run ids start
 ``sr-`` (``stock_scan_rules.RUN_REF_PREFIX``) and receipts are named on the Purchase Receipt series
@@ -168,11 +188,15 @@ def _lower(value):
 	return str(value or "").strip().lower()
 
 
-def _and(items):
+def _and(items, word="and"):
 	items = [str(item) for item in items]
 	if len(items) < 2:
 		return "".join(items)
-	return f"{', '.join(items[:-1])} and {items[-1]}"
+	return f"{', '.join(items[:-1])} {word} {items[-1]}"
+
+
+def _or(items):
+	return _and(items, "or")
 
 
 def _short(account):
@@ -302,7 +326,8 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 	different charges, resolve to nothing. So a reversal whose Reference Number names the first
 	correcting entry is a correction of the charge, not of the correcting entry.
 
-	Returns ``{"links", "corrections", "drafts", "excluded", "problems", "roots", "entries"}``:
+	Returns ``{"links", "corrections", "drafts", "excluded", "marks", "problems", "roots",
+	"entries"}``:
 
 	* ``links``: ``{(voucher_type, voucher_no): {"row", "keys", "carriers"}}`` -- the charge row (the
 	  reader's own for a charge it read, so its store and source stay the KPI's), the trip keys that
@@ -314,6 +339,9 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 	  ``drafts``: ``{charge voucher: [draft correcting entries]}`` (they count for nothing).
 	* ``excluded``: the entries whose Reference Number says ``not-store-run`` and lists nothing that
 	  contradicts it (entries that are themselves ``not-store-run`` may be named beside it).
+	  ``marks``: ``{entry marked not-store-run: [excluded entries naming it, and nothing else]}`` --
+	  the correcting entries of a marked QuickBooks entry, whose 2210 counts with its own
+	  (:func:`attribute_2210`).
 	* ``problems``: ``{entry: [(kind, detail)]}`` -- ``dead`` keys, ``both`` (two charges),
 	  ``nsr_and`` (not-store-run beside a key or charge), ``names_nsr``, ``charge_names`` (one of the
 	  KPI's charges naming another charge), ``unresolved`` (a loop or a conflict further on),
@@ -341,6 +369,11 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 			return reader[name].get("voucher_no") or name
 		return (entries.get(name) or {}).get("name") or name
 
+	def fixed(name):
+		"""A submitted QuickBooks entry: never cancelled, its Reference Number never changes."""
+		entry = entries.get(name) or {}
+		return entry.get("docstatus") in (1, "1") and entry.get("source") == "QuickBooks"
+
 	memo = {}
 
 	def read(name, stack):
@@ -351,6 +384,7 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 			"dead": [],
 			"roots": [],
 			"nsr_named": [],
+			"nsr_roots": [],
 			"unresolved": [],
 		}
 		for token, typed in _typed_tokens((entries.get(name) or {}).get("reference")):
@@ -368,6 +402,7 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 						found["roots"].append(where)
 				elif kind == "nsr":
 					found["nsr_named"].append(typed)
+					found["nsr_roots"].append(where)
 				else:
 					found["unresolved"].append(typed)
 			elif is_key_shaped(token):
@@ -399,7 +434,10 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 		elif name in reader:
 			result = ("charge", name)
 		elif bad(found):
-			result = ("bad", name)
+			# A submitted QuickBooks entry naming what cannot be resolved still names itself: its
+			# Reference Number can never be corrected, so a correcting entry naming it is the only
+			# way its 2210 comes back (v1.538.0 fourth review).
+			result = ("charge", name) if fixed(name) else ("bad", name)
 		elif found["roots"]:
 			result = ("charge", found["roots"][0])
 		else:
@@ -411,6 +449,7 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 	corrections = {}
 	drafts = {}
 	excluded = set()
+	marks = {}
 	problems = {}
 	roots = {}
 
@@ -451,6 +490,9 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 				link(name, found["trips"], carrier)
 		elif found["clean_nsr"]:
 			excluded.add(own)
+			named_nsr = _distinct(found["nsr_roots"])
+			if len(named_nsr) == 1 and named_nsr[0] != name:
+				marks.setdefault(spelled(named_nsr[0]), []).append(own)
 		elif found["nsr"]:
 			pass
 		elif found["unresolved"]:
@@ -479,6 +521,7 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=())
 		"corrections": corrections,
 		"drafts": drafts,
 		"excluded": excluded,
+		"marks": marks,
 		"problems": problems,
 		"roots": [roots[name] for name in sorted(roots)],
 		"entries": {entry.get("name") or name: entry for name, entry in entries.items()},
@@ -850,15 +893,38 @@ def attribute_2210(window, resolution=None, on_2210=None, corrections=None, jour
 	An entry is **attributed** when it is the charge of a group, or a submitted correcting entry of
 	one, and the group is ``accounted`` (:func:`match_window`: it has trips, shown or not, or its
 	charge is dated in range) -- its amount is then in that group's own figure. It is **excluded**
-	when its Reference Number says ``not-store-run``. Otherwise it is **unaccounted**, and ``outside``
+	when its Reference Number says ``not-store-run`` -- **unless it is a QuickBooks entry** (a card
+	charge) whose 2210, with that of the entries marked ``not-store-run`` that name it (``marks``),
+	does not net to zero: a card charge that pays for no store run carries nothing on 2210, and
+	marking one hid its debit from the backstop (v1.538.0 fourth review). Those are unaccounted, and
+	``marked`` maps each to the QuickBooks entry whose row shows them. An ERPNext entry marked
+	``not-store-run`` is excluded whatever it carries: a 2210 adjustment that has nothing to do with
+	store runs (a PO receipt's, say) is legitimate. Otherwise it is **unaccounted**, and ``outside``
 	names the group when it has one (a charge dated outside the range that pairs with nothing).
 
 	Returns ``{"attributed": {entry: amount}, "unaccounted": {entry: amount}, "excluded": {entry:
-	amount}, "outside": {entry: group}}``. The three amounts together are every amount considered:
-	each backstop entry, and each entry of an accounted group read by name.
+	amount}, "outside": {entry: group}, "marked": {entry: QuickBooks entry}}``. The three amounts
+	together are every amount considered: each backstop entry, and each entry of an accounted group
+	read by name.
 	"""
 	on_2210 = on_2210 or {}
 	excluded = set((resolution or {}).get("excluded") or ())
+	info = dict((resolution or {}).get("entries") or {})
+	info.update({entry.get("name"): entry for entry in journal or () if entry.get("name")})
+	unit_of = {}
+	for marked, entries in ((resolution or {}).get("marks") or {}).items():
+		for entry in entries:
+			unit_of.setdefault(entry, marked)
+
+	def unit(name):
+		"""The marked QuickBooks entry whose 2210 ``name``'s counts with, or None."""
+		if name not in excluded:
+			return None
+		owner = name if name not in unit_of else unit_of[name]
+		if owner in excluded and (info.get(owner) or {}).get("source") == "QuickBooks":
+			return owner
+		return None
+
 	owners = {}
 	for group in (window or {}).get("groups") or ():
 		row = group["charge"]["row"]
@@ -871,11 +937,19 @@ def attribute_2210(window, resolution=None, on_2210=None, corrections=None, jour
 	names |= {
 		name for name, group in owners.items() if group["accounted"] and ("Journal Entry", name) in on_2210
 	}
-	result = {"attributed": {}, "unaccounted": {}, "excluded": {}, "outside": {}}
+	result = {"attributed": {}, "unaccounted": {}, "excluded": {}, "outside": {}, "marked": {}}
+	nets = {}
+	for name in names:
+		owner = unit(name)
+		if owner is not None:
+			nets[owner] = _cents(nets.get(owner, 0.0) + _cents(on_2210.get(("Journal Entry", name))))
 	for name in sorted(names):
 		amount = _cents(on_2210.get(("Journal Entry", name)))
 		group = owners.get(name)
-		if name in excluded:
+		if name in excluded and unit(name) is not None and nets.get(unit(name)):
+			result["unaccounted"][name] = amount
+			result["marked"][name] = unit(name)
+		elif name in excluded:
 			result["excluded"][name] = amount
 		elif group is not None and group["accounted"]:
 			result["attributed"][name] = amount
@@ -955,20 +1029,48 @@ def _linked_by(groups, trip):
 
 
 def _find_its_draft(stock, account, key):
-	"""How to find and link a waiting trip's charge: on its draft (listing both run ids when that
-	draft already pays for another trip), or -- a submitted entry's Reference Number cannot be
-	changed -- with a correcting entry that names the charge and the trip."""
+	"""How to find and link a waiting trip's charge: on its draft, or -- a submitted entry's
+	Reference Number cannot be changed -- with a correcting entry that names the charge and the trip.
+
+	A draft that is already another trip's charge in this list lists both trips' run ids **only when
+	it pays for both** (v1.538.0 fourth review): said unconditionally, a draft the pairing had given
+	to the wrong trip was linked to both, carried both trips' stock lines, and read Done while the
+	other trip's own charge was submitted with its goods on the expense."""
 	return (
 		f"find its QuickBooks draft, move {_money(stock)} of its goods debit to {account}, put this trip's "
-		f"run id ({key}) in its Reference Number and save it. If that draft is already another trip's "
-		"charge in this list, list both trips' run ids in its Reference Number and move both trips' stock "
-		f"lines together. If it is already submitted, post and submit a correcting Journal Entry for "
-		f"{_money(stock)} (Dr {account} / Cr the expense account it used) whose Reference Number is its name "
-		f"followed by {key}"
+		f"run id ({key}) in its Reference Number and save it; if it is already submitted, post and submit a "
+		f"correcting Journal Entry for {_money(stock)} (Dr {account} / Cr the expense account it used) whose "
+		f"Reference Number is its name followed by {key}. If that charge is already another trip's in this "
+		"list and it also pays for that trip, list both trips' run ids (a draft: in its Reference Number, "
+		"its 2210 debit carrying both trips' stock lines; submitted: after its name in that correcting "
+		"entry). If it does not pay for that trip, take that trip's run id out of what links it to this "
+		f"charge ({_TAKE_OUT}), and that trip's row then asks for its own charge"
 	)
 
 
 _ONLY_IF_NONE = "Only if it has no card charge at all, bill it from the receipts after the cutover."
+
+#: How a run id comes out of the Reference Number that carries it.
+_TAKE_OUT = "edit a draft and save it, cancel a submitted correcting entry"
+
+
+def _out_of(group, trips):
+	"""Where the run ids of ``trips`` come out of to unlink them from ``group``'s charge: "ACC-JV-7's
+	Reference Number" when the draft's own carries every one, else each run id and what carries it."""
+	charge = group["charge"]["row"].get("voucher_no") or ""
+	carriers = [carrier for trip in trips for carrier in _carriers(group, trip)]
+	if all(carrier["name"] == charge and carrier["docstatus"] == 0 for carrier in carriers):
+		return f"{charge}'s Reference Number (edit it and save it)"
+	where = "; ".join(f"{link_key(trip)} in {_carried_in(group, trip)}" for trip in trips)
+	return f"the Reference Number that links it ({where}; {_TAKE_OUT})"
+
+
+def _fits(group, extra=0.0):
+	"""Whether ``group``'s charge can pay for the stock lines of its trips plus ``extra``: a card
+	charge never moves more to 2210 than it paid (v1.538.0 fourth review). The pairing's own
+	tolerance is allowed, so no automatic pair on the lines plus tax ever fails it."""
+	target = sum(_stock(trip) for trip in group["trips"]) + extra
+	return _cents(target) <= _cents(group["charge"]["amount"]) + metrics.STORE_RUN_AMOUNT_TOLERANCE
 
 
 def _waiting(stock, account, key, displaced=None):
@@ -976,28 +1078,54 @@ def _waiting(stock, account, key, displaced=None):
 
 	Either/or, never both: a trip that has a card charge is fixed on that charge and is never
 	billed from its receipts (that would credit the card twice). ``displaced`` is the group of the
-	charge the trip was paired with until that charge's Reference Number linked other trips."""
-	if stock <= 0:
-		return (
-			"No card charge paired and no stock lines: if it has a QuickBooks draft, change nothing "
-			f"(optionally put {key} in its Reference Number). {_ONLY_IF_NONE}",
-			WAITING,
-		)
+	charge the trip was paired with until that charge's Reference Number linked other trips.
+
+	**A displaced trip is asked all three ways** (v1.538.0 fourth review): the charge pays for this
+	trip as well as the ones it links, for this trip and not for them (the link is the mistake), or
+	for them alone. Asked only "does it pay for this trip too?", a link typed on the wrong trip
+	gained this one beside it and read Done. When the charge cannot pay for both (:func:`_fits`),
+	the first answer is not offered. Asked even with no stock lines: the link may still be wrong."""
 	if displaced is None:
+		if stock <= 0:
+			return (
+				"No card charge paired and no stock lines: if it has a QuickBooks draft, change nothing "
+				f"(optionally put {key} in its Reference Number). {_ONLY_IF_NONE}",
+				WAITING,
+			)
 		return f"No card charge paired: {_find_its_draft(stock, account, key)}. {_ONLY_IF_NONE}", WAITING
 	row = displaced["charge"]["row"]
 	charge = row.get("voucher_no") or ""
-	if _is_draft(row):
-		add = f"add {key} to that Reference Number and move this trip's {_money(stock)} of stock lines too"
+	draft = _is_draft(row)
+	correct = (
+		f"post and submit a correcting Journal Entry for {_money(stock)} (Dr {account} / Cr the expense "
+		f"account it used) whose Reference Number is {charge} followed by {key}"
+	)
+	linked = [link_key(trip) for trip in displaced["trips"]]
+	keys, either = _and(linked), _or(linked)
+	head = f"Its paired charge {charge} now links only {', '.join(linked)}, by its Reference Number"
+	if stock <= 0:
+		add = f"add {key} to that Reference Number (this trip has no stock lines to move)" if draft else ""
+		link = f"put {key} in its Reference Number and save it" if draft else "the pairing gives it back"
+		elsewhere = f"change nothing: it has no stock lines. {_ONLY_IF_NONE}"
 	else:
-		add = (
-			f"post and submit a correcting Journal Entry for {_money(stock)} (Dr {account} / Cr the expense "
-			f"account it used) whose Reference Number is {charge} followed by {key}"
+		add = f"add {key} to that Reference Number and move this trip's {_money(stock)} of stock lines too"
+		add = add if draft else correct
+		link = f"put {key} in its Reference Number, save it, and this trip's row then says what to move"
+		link = link if draft else correct
+		elsewhere = f"{_find_its_draft(stock, account, key)}. {_ONLY_IF_NONE}"
+	swap = f"take {keys} out of {_out_of(displaced, displaced['trips'])}, then {link}"
+	if not _fits(displaced, stock):
+		theirs = f"{either}'s" if len(linked) == 1 else f"the charge of {either}"
+		return (
+			f"{head}, and it cannot pay for this trip too: their stock lines and this trip's "
+			f"({_money(sum(_stock(trip) for trip in displaced['trips']) + stock)}) are more than {charge} itself "
+			f"({_money(displaced['charge']['amount'])}). If {charge} is this trip's charge and not {theirs}, "
+			f"{swap}. If not, {elsewhere}",
+			WAITING,
 		)
-	keys = ", ".join(link_key(trip) for trip in displaced["trips"])
 	return (
-		f"Its paired charge {charge} now links only {keys}, by its Reference Number. If {charge} pays for "
-		f"this trip too, {add}. If not, {_find_its_draft(stock, account, key)}. {_ONLY_IF_NONE}",
+		f"{head}. If {charge} pays for this trip as well as {keys}, {add or 'nothing needs to change'}. If it "
+		f"pays for this trip and not for {either}, {swap}. If it does not pay for this trip, {elsewhere}",
 		WAITING,
 	)
 
@@ -1032,20 +1160,47 @@ def _over_draft(shown, target, own, corrections, fixes, account, voucher_no):
 
 def _also_pays(group, target, moved, account):
 	"""The question a linked draft asks first when its link took another trip's automatic pair:
-	"If this draft also pays for sr-a, add sr-a to its Reference Number …"."""
+	"If this draft also pays for sr-a, add sr-a to its Reference Number …; if it pays for sr-a and not
+	for sr-b, …". The "otherwise" the caller appends is the third answer: the trips it links alone.
+
+	Both of the first two are asked (v1.538.0 fourth review): asked only whether it *also* pays, a
+	link typed on the wrong trip kept it and gained the right one. An answer the charge cannot pay
+	for (:func:`_fits`) is not offered. Returns "" when neither is."""
 	before = [link_key(trip) for trip in group["displaced"]]
-	both = [link_key(trip) for trip in group["trips"]] + before
-	alt = _cents(target + sum(_stock(trip) for trip in group["displaced"]))
-	together = f"the stock lines of {', '.join(both)} together"
-	if moved == alt:
-		after = f" (it then carries exactly {together})"
-	elif moved < alt:
-		more = " more" if moved > 0 else ""
-		after = f" and move {_money(alt - moved)}{more} of the goods debit to {account} ({together})"
-	else:
-		after = f" and reduce its {account} debit to {_money(alt)} ({together})"
+	linked = [link_key(trip) for trip in group["trips"]]
 	names = _and(before)
-	return f"If this draft also pays for {names}, add {names} to its Reference Number{after}"
+	extra = sum(_stock(trip) for trip in group["displaced"])
+
+	def after(amount, which):
+		amount = _cents(amount)
+		lines = f"the stock lines of {', '.join(which)}" + (" together" if len(which) > 1 else "")
+		if moved == amount:
+			return f" (it then carries exactly {lines})"
+		if moved < amount:
+			more = " more" if moved > 0 else ""
+			return f" and move {_money(amount - moved)}{more} of the goods debit to {account} ({lines})"
+		return f" and reduce its {account} debit to {_money(amount)} ({lines})"
+
+	said = []
+	if _fits(group, extra):
+		said.append(
+			f"If this draft also pays for {names}, add {names} to its Reference Number"
+			f"{after(target + extra, linked + before)}"
+		)
+	charge = group["charge"]["row"].get("voucher_no")
+	own = all(
+		carrier["name"] == charge
+		for trip in group["trips"]
+		for carrier in _carriers(group, trip) or [{"name": charge}]
+	)
+	if _fits(dict(group, trips=group["displaced"])):
+		if own:
+			swap = f"put {names} in its Reference Number in place of {_and(linked)}"
+		else:
+			swap = f"take {_and(linked)} out of {_out_of(group, group['trips'])} and put {names} in its Reference Number"
+		subject = "if it" if said else "If this draft"
+		said.append(f"{subject} pays for {names} and not for {_or(linked)}, {swap}{after(extra, before)}")
+	return "; ".join(said)
 
 
 def _contested(group, account):
@@ -1062,34 +1217,88 @@ def _contested(group, account):
 	)
 
 
-def _billed_text(row, group, invoices, linked):
+def _billed_text(row, group, invoices, linked, account):
 	"""A charge paired or linked with a trip that is billed from its receipts: the invoice, already
-	submitted, books the purchase, so the charge must not book it too."""
+	submitted, books the purchase, so the charge must not book it too.
+
+	Each branch ends in a state the report can see (v1.538.0 fourth review: "its debit belongs on the
+	store's payable" left the row in Needs action for good). A draft that is the invoice's payment is
+	marked ``not-store-run`` once nothing of it is on the expense or on 2210, which frees the trip; a
+	submitted charge's Reference Number cannot change, so the invoice is cancelled and the charge
+	books the purchase, as its row then says."""
 	bills = _and(invoices)
 	how = "linked to this charge by its Reference Number" if linked else "matched to this charge"
 	head = (
 		f"Billed from the receipts ({', '.join(invoices)}) and {how} too: {bills} already books this "
 		"purchase, so this charge must not book it again."
 	)
+	draft = _is_draft(row)
 	if linked:
 		where = _and(_distinct(_carried_in(group, trip) for trip in group["trips"]))
 		other = (
 			"If the charge is not this trip's, take this trip's run id out of the Reference Number that links "
-			f"it, {where}: edit a draft and save it, cancel a submitted correcting entry."
+			f"it, {where}: {_TAKE_OUT}."
 		)
-	elif _is_draft(row):
+	elif draft:
 		other = (
-			"If the charge is not this trip's, put its own trip's run id in its Reference Number, or "
-			f"{NOT_STORE_RUN} if it pays for no store run, and save it."
+			"If the charge is not this trip's, put its own trip's run id in its Reference Number and save it; "
+			f"if it pays for no store run, move any debit it has on {account} back to the expense, put "
+			f"{NOT_STORE_RUN} in its Reference Number and save it."
 		)
 	else:
 		other = (
 			"If the charge is not this trip's, its own trip's row says how to link it (a submitted "
 			"entry's Reference Number cannot be changed)."
 		)
+	if draft:
+		tail = (
+			f"If it is, it is the payment of {bills}, not a second purchase: move its whole debit to the "
+			f"store's payable (none of it on the expense or on {account}), make its Reference Number "
+			f"{NOT_STORE_RUN} alone and save it"
+		)
+	else:
+		tail = (
+			f"If it is, it books the purchase and a submitted charge's Reference Number cannot be changed: "
+			f"cancel {bills} (and any payment made against it), and this row then says what the charge needs"
+		)
+	return f"{head} {other} {tail}"
+
+
+#: The one case the capacity rule cannot settle: a trip the charge paid for only in part.
+_PART_PAID = (
+	"A trip this charge paid for only in part (the rest by store credit or a second card) cannot be "
+	"matched here: that row stays until Accounting settles it by hand"
+)
+
+
+def _over_capacity(group, target, account, linked):
+	"""A charge whose trips' stock lines add up to more than the charge itself (:func:`_fits`): one of
+	the trips is not its. No amount is guessed: the row names the trips and what carries each run
+	id, and Accounting takes out the one that is not the charge's (v1.538.0 fourth review)."""
+	trips = group["trips"]
+	amount = _money(group["charge"]["amount"])
+	if not linked:
+		key = link_key(trips[0])
+		return (
+			f"Its stock lines ({_money(target)}) are more than the charge itself ({amount}), and a charge never "
+			f"moves more to {account} than it paid: it is not this trip's charge. For the trip's own charge, "
+			f"{_find_its_draft(target, account, key)}. {_ONLY_IF_NONE} {_PART_PAID}"
+		)
+	each = ", ".join(f"{link_key(trip)} {_money(_stock(trip))}" for trip in trips)
+	if len(trips) == 1:
+		head = (
+			f"The stock lines of the trip its Reference Number links ({each}) are more than the charge itself "
+			f"({amount}), so it is not this trip's charge: take {link_key(trips[0])} out of"
+		)
+	else:
+		head = (
+			f"The stock lines of the trips its Reference Number links ({each}: {_money(target)} together) are "
+			f"more than the charge itself ({amount}), so one of these trips is not this charge's: take the run id "
+			"of each trip it does not pay for out of"
+		)
 	return (
-		f"{head} {other} If it is, it is the payment of {bills}, not a second purchase: its debit belongs "
-		"on the store's payable, not on the expense"
+		f"{head} {_out_of(group, trips)}. This row then says what the charge keeps on {account}, and each "
+		f"trip taken out asks for its own charge on its own row. {_PART_PAID}"
 	)
 
 
@@ -1106,15 +1315,22 @@ def _decide(charge, group, target, own, corrections, fixes, account, invoices, l
 	keys = [link_key(trip) for trip in group["trips"]]
 	if group["contested"]:
 		return _contested(group, account), NEEDS_ACTION, 0.0
+	if not _fits(group):
+		return _over_capacity(group, target, account, linked), NEEDS_ACTION, 0.0
 	if invoices:
-		return _billed_text(row, group, invoices, linked), NEEDS_ACTION, 0.0
+		return _billed_text(row, group, invoices, linked, account), NEEDS_ACTION, 0.0
 	lines = "the stock lines"
 	if linked:
 		trips = "the trip" if len(keys) == 1 else "the trips"
 		lines = f"the stock lines of {trips} its Reference Number links ({', '.join(keys)})"
 	together = f" (the stock lines of {', '.join(keys)} together)" if len(keys) > 1 else ""
+	# A correcting entry for a submitted charge names the charge and every trip it pays for, so it
+	# links them explicitly: a later link naming one more trip then adds to the group instead of
+	# displacing the first (v1.538.0 fourth review: the first correction was reversed and posted again).
+	reference = f"{voucher_no} followed by {_and(keys)}" if keys else voucher_no
 	# A linked draft whose link took another trip's automatic pair asks first whether it pays for
-	# that trip too (two runs of one purchase), then says what to do if not (v1.538.0 third review).
+	# that trip too (two runs of one purchase), or for that trip and not the linked ones (the link is
+	# the mistake), then says what to do if neither (v1.538.0 third and fourth reviews).
 	ask = _also_pays(group, target, moved, account) if linked and draft and group["displaced"] else ""
 	if moved > target:
 		shown = f"The {account} debit is {_money(moved)} but {lines} are {_money(target)}"
@@ -1129,7 +1345,7 @@ def _decide(charge, group, target, own, corrections, fixes, account, invoices, l
 		fix = _CORRECTING_ENTRY.format(
 			amount=_money(moved - target),
 			lines=f"Dr the expense account the charge used / Cr {account}",
-			charge=voucher_no,
+			charge=reference,
 		)
 		return f"{shown}{_corrected(fixes)}: {fix}", NEEDS_ACTION, 0.0
 	if moved < target:
@@ -1138,7 +1354,7 @@ def _decide(charge, group, target, own, corrections, fixes, account, invoices, l
 			fix = _CORRECTING_ENTRY.format(
 				amount=_money(missing),
 				lines=f"Dr {account} / Cr the expense account the charge used",
-				charge=voucher_no,
+				charge=reference,
 			)
 			if moved > 0:
 				by = f", corrected by {', '.join(fixes)}" if fixes else ""
@@ -1188,8 +1404,13 @@ def _decide(charge, group, target, own, corrections, fixes, account, invoices, l
 	)
 
 
-def _issue_sentences(issues):
-	"""What is wrong with a Reference Number, one sentence per problem of :func:`resolve_references`."""
+def _issue_sentences(issues, trips_of=None):
+	"""What is wrong with a Reference Number, one sentence per problem of :func:`resolve_references`.
+
+	``trips_of``: ``{charge: [run ids of its trips]}``, so a draft correcting entry names the row that
+	says whether it is needed -- the trip's, since a charge with trips has no row of its own (v1.538.0
+	fourth review)."""
+	trips_of = trips_of or {}
 	said = []
 	for kind, detail in issues or ():
 		if kind == "dead":
@@ -1215,10 +1436,22 @@ def _issue_sentences(issues):
 		elif kind == "unresolved":
 			said.append(f"Its Reference Number names {_and(detail)}, which does not lead to one card charge.")
 		elif kind == "draft":
-			said.append(
-				f"It is a draft correcting entry for {detail}: submit it (a draft correcting entry does not "
-				f"count until submitted), or delete it if {detail}'s row does not need it."
-			)
+			keys = trips_of.get(detail)
+			if keys:
+				rows = "row" if len(keys) == 1 else "rows"
+				ask = "does" if len(keys) == 1 else "do"
+				said.append(
+					f"It is a draft correcting entry for {detail}: submit it (a draft correcting entry does not "
+					f"count until submitted), or delete it if the {rows} of {_and(keys)} (Matched Charge "
+					f"{detail}) {ask} not ask for it."
+				)
+			else:
+				said.append(
+					f"It is a draft correcting entry for {detail}, which no recorded store run is paired or "
+					f"linked with: delete it, unless {detail} has a row of its own (No recorded store run) that "
+					"asks for a correcting entry of this amount; then submit it (a draft correcting entry does "
+					"not count until submitted)."
+				)
 	return said
 
 
@@ -1235,23 +1468,45 @@ def _fix_reference(entry):
 	return "It is submitted, so its Reference Number cannot be changed: cancel it and amend it with the right one."
 
 
-def _charge_row(bill, amount, account, fixes, issues=()):
-	"""The row of a charge that is neither paired nor linked but carries ``amount`` (net) on 2210."""
+def _charge_row(bill, amount, account, fixes, issues=(), trips_of=None):
+	"""The row of a charge that is neither paired nor linked but carries ``amount`` (net) on 2210,
+	or that a link took from the trip it was paired with (:func:`build_rows`)."""
 	row = bill["row"]
 	draft = _is_draft(row)
 	voucher_no = row.get("voucher_no") or ""
 	invoice = row.get("voucher_type") == "Purchase Invoice"
 	unlinked = bill.get("unlinked")
 	show = NEEDS_ACTION
-	if amount > 0 and unlinked:
+	if not amount and unlinked:
+		# Nothing on 2210, but a link overrode the pairing, and the link may be the mistake: a
+		# charge linked to the wrong trip took that trip from its own charge, and nothing else
+		# would ever say so (v1.538.0 fourth review).
+		key = link_key(unlinked["trip"])
+		taken = f"It was paired with {key} until {_linked_by(unlinked['groups'], unlinked['trip'])}"
+		if draft:
+			other = (
+				f"put its own trip's run id in its Reference Number, or {NOT_STORE_RUN} if it pays for no store "
+				"run, and save it"
+			)
+		else:
+			other = "it pays for no trip in this list, and nothing on it changes"
+		what = (
+			f"{taken}, and carries nothing on {account}. If this one is {key}'s charge, take {key} out of the "
+			f"Reference Number that links the other one ({_TAKE_OUT}); if not, {other}"
+		)
+		show = WAITING
+	elif amount > 0 and unlinked:
 		key = link_key(unlinked["trip"])
 		taken = f"It was paired with {key} until {_linked_by(unlinked['groups'], unlinked['trip'])}"
 		if invoice:
+			# Either answer leaves a correct booking behind (v16 books the invoice's stock lines to 2210
+			# itself), so it waits, like any invoice waiting for its receipt (v1.538.0 fourth review).
 			what = (
 				f"{taken}: keep one charge for {key}. A Purchase Invoice books its stock lines to {account} "
 				f"itself, so do not move them: if this invoice is {key}'s charge, take {key} out of the "
 				"Reference Number that links the other one; if not, it waits for its own receipt"
 			)
+			show = WAITING
 		else:
 			how = (
 				f", {SAVE_IT}"
@@ -1263,9 +1518,11 @@ def _charge_row(bill, amount, account, fixes, issues=()):
 					charge=voucher_no,
 				)
 			)
+			# Both answers, as the invoice's text gives them: the link may be the mistake (fourth review).
 			what = (
-				f"{taken}: keep one charge for {key} and move this one's {_money(amount)} on {account} back to "
-				f"the expense{how}"
+				f"{taken}: keep one charge for {key}, which {key}'s row shows as its Matched Charge now. If this "
+				f"one is {key}'s charge, take {key} out of the Reference Number that links the other one "
+				f"({_TAKE_OUT}); if not, move this one's {_money(amount)} on {account} back to the expense{how}"
 			)
 	elif amount > 0 and invoice:
 		# v16 books a stock line of an invoice made without a receipt to 2210 itself, where it waits
@@ -1310,7 +1567,7 @@ def _charge_row(bill, amount, account, fixes, issues=()):
 				lines=f"Dr {account} / Cr the expense account it used",
 				charge=voucher_no,
 			)
-	said = _issue_sentences(issues)
+	said = _issue_sentences(issues, trips_of)
 	if said:
 		what = " ".join([*said, what])
 		show = NEEDS_ACTION
@@ -1340,11 +1597,49 @@ def _charge_row(bill, amount, account, fixes, issues=()):
 	}
 
 
-def _entry_row(entry, amount, issues, outside, account):
-	"""The row of a Journal Entry whose Reference Number says something unusable, or whose net 2210
-	``amount`` no charge accounts for (:func:`attribute_2210`)."""
+def _back_to_zero(name, amount, account):
+	"""The correcting entry that brings a submitted entry's net 2210 ``amount`` back to $0.00."""
+	lines = (
+		f"Dr the expense account it used / Cr {account}"
+		if amount > 0
+		else f"Dr {account} / Cr the expense account it used"
+	)
+	return _CORRECTING_ENTRY.format(amount=_money(abs(amount)), lines=lines, charge=name)
+
+
+def _marked_row_text(entry, amount, account, with_entries=()):
+	"""A QuickBooks entry marked ``not-store-run`` that still carries 2210 (v1.538.0 fourth review:
+	marking it hid the debit from the backstop, and the report read clean with the money still on
+	2210 and no receipt to clear it). A card charge that pays for no store run carries nothing there."""
 	name = entry.get("name") or ""
-	said = _issue_sentences(issues)
+	carries = f"carries {_money(amount)} on" if amount > 0 else f"takes {_money(-amount)} off"
+	also = ""
+	if with_entries:
+		also = f" (with {_and(with_entries)}, marked {NOT_STORE_RUN}, which names it)"
+	head = (
+		f"Its Reference Number says {NOT_STORE_RUN}, but it still {carries} {account}{also}, and a card "
+		"charge that pays for no store run carries nothing there"
+	)
+	back = "move it back to the expense" if amount > 0 else "bring it back to $0.00"
+	if _is_draft(entry):
+		return (
+			f"{head}: {back}, {SAVE_IT}. If you moved it for a trip, put that trip's run id in its Reference "
+			f"Number in place of {NOT_STORE_RUN}"
+		)
+	fix = _back_to_zero(f"{name} followed by {NOT_STORE_RUN}", amount, account)
+	return f"{head}. It is a submitted QuickBooks entry, which is never cancelled: {back}; {fix}"
+
+
+def _entry_row(entry, amount, issues, outside, account, trips_of=None, marked=None):
+	"""The row of a Journal Entry whose Reference Number says something unusable, or whose net 2210
+	``amount`` no charge accounts for (:func:`attribute_2210`). ``marked``: the entries marked
+	``not-store-run`` that name it, when it is a QuickBooks entry marked so that still carries 2210
+	(``amount`` is then theirs and its own together)."""
+	name = entry.get("name") or ""
+	quickbooks = entry.get("source") == "QuickBooks"
+	if marked is not None:
+		return _row_of_entry(entry, amount, issues, _marked_row_text(entry, amount, account, marked), account)
+	said = _issue_sentences(issues, trips_of)
 	fixable = [kind for kind, _detail in issues or () if kind != "draft"]
 	show = NEEDS_ACTION
 	if outside is not None:
@@ -1359,25 +1654,52 @@ def _entry_row(entry, amount, issues, outside, account):
 			f"{subject} dated {day}, outside this range, that no recorded store run is paired or linked with: "
 			f"widen the range to include {day}, and {whose} row there says what to do."
 		)
+	stuck = quickbooks and not _is_draft(entry)
 	if said:
 		if fixable:
 			said.append(_fix_reference(entry))
-			if not amount and not _is_draft(entry) and entry.get("source") == "QuickBooks":
+			if not amount and stuck:
 				show = WAITING
-		if amount > 0:
+		if amount and stuck and outside is None:
+			# Its Reference Number never changes, so waiting for it would wait for good: its 2210 goes
+			# back to the expense with a correcting entry naming it, which counts for it whatever its
+			# own Reference Number lists (v1.538.0 fourth review).
+			back = "move it back to the expense" if amount > 0 else "bring it back to $0.00"
+			held = f"Its {_money(amount)} on" if amount > 0 else f"The {_money(-amount)} it takes off"
+			said.append(
+				f"{held} {account} is therefore not accounted for: {back}; "
+				f"{_back_to_zero(name, amount, account)}. If you moved it for a trip, that trip's row then says "
+				"how to move it again, linked."
+			)
+		elif amount > 0:
 			said.append(f"Until then its {_money(amount)} on {account} is not accounted for.")
 		elif amount < 0:
 			said.append(f"Until then the {_money(-amount)} it takes off {account} is not accounted for.")
 		what = " ".join(said)
+	elif quickbooks:
+		# A QuickBooks entry is a card charge: one that pays for no store run carries nothing on 2210,
+		# so not-store-run is never its answer while it does (v1.538.0 fourth review).
+		carries = f"Carries {_money(amount)} on" if amount > 0 else f"Takes {_money(-amount)} off"
+		back = "move it back to the expense" if amount > 0 else "bring it back to $0.00"
+		shown = (
+			f"{carries} {account} that the report cannot tie to any store run or card charge, and a card charge "
+			"that pays for no store run carries nothing there"
+		)
+		if _is_draft(entry):
+			what = (
+				f"{shown}. If you moved it for a trip whose row shows no other charge, put that trip's run id in "
+				f"its Reference Number; otherwise {back}. Then save it; the S-D loop submits it"
+			)
+		else:
+			what = (
+				f"{shown}. It is a submitted QuickBooks entry, which is never cancelled: {back}; "
+				f"{_back_to_zero(name, amount, account)}. If you moved it for a trip, that trip's row then says "
+				"how to move it again, linked"
+			)
 	else:
 		carries = f"Carries {_money(amount)} on" if amount > 0 else f"Takes {_money(-amount)} off"
 		if _is_draft(entry):
 			how = "Edit its Reference Number and save it."
-		elif entry.get("source") == "QuickBooks":
-			how = (
-				"It is a submitted QuickBooks entry, which is never cancelled: post and submit a correcting "
-				f"Journal Entry that takes its {_money(amount)} back off {account}, with Reference Number {name}."
-			)
 		else:
 			how = (
 				"It is submitted, so its Reference Number cannot be changed: cancel it and amend it with the "
@@ -1388,6 +1710,12 @@ def _entry_row(entry, amount, issues, outside, account):
 			"charge, its Reference Number should name that charge (or the trip's run id); if it has nothing to "
 			f"do with store runs, add {NOT_STORE_RUN} to its Reference Number. {how}"
 		)
+	return _row_of_entry(entry, amount, issues, what, account, show)
+
+
+def _row_of_entry(entry, amount, issues, what, account, show=NEEDS_ACTION):
+	"""The columns of a Journal Entry's own row (:func:`_entry_row`)."""
+	name = entry.get("name") or ""
 	return {
 		"trip_day": None,
 		"store": None,
@@ -1452,9 +1780,11 @@ def build_rows(
 
 	* a charge's draft short of it: move the difference, then save it (**Needs action**); a linked
 	  draft whose link took another trip's automatic pair first asks whether it pays for that trip
-	  too;
+	  too, or for that trip and not the linked ones;
 	* a charge already submitted short of it: the purchase is booked twice until one correcting
-	  Journal Entry naming the charge moves the difference (**Needs action**);
+	  Journal Entry naming the charge and its trips moves the difference (**Needs action**);
+	* a charge whose trips' stock lines are more than the charge itself: one of them is not its
+	  (**Needs action**, nothing ticked);
 	* more than the stock lines on 2210: reduce it, on the draft or with a correcting entry; a draft
 	  whose correcting entries over-move is told to reverse them, never to cut its own lines below
 	  the target (**Needs action**);
@@ -1466,12 +1796,15 @@ def build_rows(
 	* a charge whose trip is also billed from its receipts has two records of one purchase, and a
 	  trip two charges link has two charges (**Needs action**);
 	* otherwise **Waiting**, an either/or: find its charge, move the stock lines and link it by
-	  Reference Number; only if it has none, bill it from its receipts after the cutover;
+	  Reference Number; only if it has none, bill it from its receipts after the cutover. A trip a
+	  link took its charge from is asked all three ways;
 	* a charge neither paired nor linked that carries a net 2210 debit: link it to its trip, or move
 	  it back to the expense (**Needs action**); a Purchase Invoice waits for its receipt
-	  (**Waiting**);
+	  (**Waiting**); a Journal Entry a link took from its trip, carrying nothing, is asked whether it
+	  is that trip's charge (**Waiting**);
 	* a Journal Entry whose Reference Number lists a dead key or points two ways, a draft correcting
-	  entry, or one whose 2210 amount no charge accounts for (**Needs action**).
+	  entry, one whose 2210 amount no charge accounts for, or a QuickBooks entry marked
+	  ``not-store-run`` that still carries 2210 (**Needs action**).
 
 	``on_2210`` and ``to_move`` on a trip row are its share of its charge's, for the summary: the
 	charge's 2210 debit is laid over its trips **shown** in date order, the last taking what is
@@ -1487,6 +1820,11 @@ def build_rows(
 	resolution = resolution or {}
 	problems = resolution.get("problems") or {}
 	shown_ids = {id(trip) for trip in trips}
+	trips_of = {}
+	for group in (window or {}).get("groups") or ():
+		voucher = group["charge"]["row"].get("voucher_no")
+		if voucher and group["trips"]:
+			trips_of.setdefault(voucher, [link_key(trip) for trip in group["trips"]])
 
 	def own_of(bill):
 		return _cents(metrics._amount(on_2210.get(_charge_id(bill["row"]))))
@@ -1574,7 +1912,8 @@ def build_rows(
 			action, show, target, moved, shares, _missing = decide(group)
 			on, to_move = shares[id(trip)]
 			basis = BASIS_LABELS.get(trip.get("basis"), "")
-			checked = 1 if target > 0 and moved == target else 0
+			# A charge over its own amount has no target it can reach: nothing is ticked (fourth review).
+			checked = 1 if target > 0 and moved == target and _fits(group) else 0
 		else:
 			on, to_move, checked = 0.0, 0.0, 0
 			if receipts_billed and receipts_billed == len(receipts):
@@ -1618,14 +1957,19 @@ def build_rows(
 	merged = set()
 	for bill in unpaired:
 		amount = carried(bill)
-		if amount == 0:
-			continue
 		row = bill["row"]
+		# A Journal Entry a link took from its trip is listed even with nothing on 2210 (Waiting): the
+		# link may be the mistake, and this row is the only place that asks (v1.538.0 fourth review).
+		taken = bill.get("unlinked") and row.get("voucher_type") == "Journal Entry"
+		if amount == 0 and not taken:
+			continue
 		issues = problems.get(row.get("voucher_no")) if row.get("voucher_type") == "Journal Entry" else None
 		if issues:
 			merged.add(row.get("voucher_no"))
 		rows.append(
-			_charge_row(bill, amount, account_of_company(row.get("company")), sorted(fixes_of(bill)), issues)
+			_charge_row(
+				bill, amount, account_of_company(row.get("company")), sorted(fixes_of(bill)), issues, trips_of
+			)
 		)
 
 	for group in (window or {}).get("outside") or ():
@@ -1679,16 +2023,40 @@ def build_rows(
 		entries = dict(resolution.get("entries") or {})
 		entries.update({entry.get("name"): entry for entry in journal or () if entry.get("name")})
 		early, end = window["early"], window["end"]
-		names = set(ledger["unaccounted"]) | set(problems)
+		# A marked QuickBooks entry still carrying 2210 gets one row, with the 2210 of the entries
+		# marked not-store-run that name it (attribute_2210).
+		marked = ledger.get("marked") or {}
+		units = {}
+		for name, owner in marked.items():
+			units[owner] = _cents(units.get(owner, 0.0) + ledger["unaccounted"][name])
+		names = (set(ledger["unaccounted"]) - set(marked)) | set(problems) | set(units)
+		accounted = {
+			group["charge"]["row"].get("voucher_no")
+			for group in window.get("groups") or ()
+			if group["accounted"]
+		}
 		for name in sorted(names):
 			entry = entries.get(name)
 			if entry is None or name in merged or name in ledger["excluded"]:
 				continue
 			day = metrics._as_day(entry.get("day"))
-			if day is None or not early <= day <= end:
+			# A marked entry's row is shown whatever its date: the money is its entries' in range. So
+			# is a draft correcting entry of a charge accounted for here, dated after To Date: the S-D
+			# loop submits it all the same (v1.538.0 fourth review).
+			late_draft = (
+				day is not None
+				and day >= early
+				and problems.get(name)
+				and all(kind == "draft" and detail in accounted for kind, detail in problems[name])
+			)
+			if name not in units and not late_draft and (day is None or not early <= day <= end):
 				continue
-			amount = ledger["unaccounted"].get(name, 0.0)
 			issues = problems.get(name)
+			if name in units:
+				amount = units[name]
+				naming = sorted(other for other, owner in marked.items() if owner == name and other != name)
+			else:
+				amount, naming = ledger["unaccounted"].get(name, 0.0), None
 			if not amount and not issues:
 				continue
 			rows.append(
@@ -1698,6 +2066,8 @@ def build_rows(
 					issues,
 					ledger["outside"].get(name),
 					account_of_company(entry.get("company")),
+					trips_of,
+					naming,
 				)
 			)
 

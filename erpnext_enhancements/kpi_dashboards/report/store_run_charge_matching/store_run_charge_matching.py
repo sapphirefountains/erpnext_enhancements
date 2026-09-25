@@ -444,18 +444,21 @@ def _message():
 				"draft, move the trip's stock lines to 2210 and <b>put the trip's run id in the draft's Reference "
 				"Number</b> (several run ids, separated by commas or spaces, when one draft pays for several "
 				"trips; keep any already there, and if the draft is already another trip's charge in this list, "
-				"list both); the report then shows it as the trip's charge (Match Basis <i>Linked by Reference "
-				"Number</i>). Only if the trip has no card charge at all, bill it from its receipts after the "
-				"cutover; never both."
+				"list both only if it pays for both, and otherwise take the other trip's run id out, so that "
+				"trip's row asks for its own charge); the report then shows it as the trip's charge (Match Basis "
+				"<i>Linked by Reference Number</i>). Only if the trip has no card charge at all, bill it from its "
+				"receipts after the cutover; never both."
 			),
 			_(
 				"<b>Then repeat: Show = <i>Needs action</i>, then Show = <i>Waiting</i>, until neither list "
 				"changes, <i>Needs action</i> is empty and <i>2210 Not Accounted For</i> reads $0.00. Only then "
-				"run the loop.</b> A link can move rows back into either list. <i>2210 Not Accounted For</i> is "
-				"every Journal Entry line on 2210 from 7 days before From Date to To Date that no charge accounts "
-				"for: each has a row saying why. Put <i>not-store-run</i> in the Reference Number of an entry on "
-				"2210 that has nothing to do with store runs, or of a card charge that pays for none, and the "
-				"report leaves it out."
+				"run the loop.</b> A link can move rows back into either list. Work through every row of a list "
+				"before refreshing: a question a row asks about a charge goes away once that charge is linked "
+				"elsewhere. <i>2210 Not Accounted For</i> is every Journal Entry line on 2210 from 7 days before "
+				"From Date to To Date that no charge accounts for: each has a row saying why. Put "
+				"<i>not-store-run</i> in the Reference Number of an entry on 2210 that has nothing to do with "
+				"store runs, or of a card charge that pays for none, and the report leaves it out; a QuickBooks "
+				"card charge must first carry nothing on 2210 (move it back to the expense), or it stays listed."
 			),
 			_(
 				"One row per store run recorded in the range. Charges are paired exactly as the Store Runs KPI "
@@ -464,9 +467,10 @@ def _message():
 				"before From Date and charges up to 3 days after To Date, so a trip near either edge pairs as it "
 				"does in the KPI counted from the same From Date. A Reference Number that lists a trip's run id "
 				"(or any of its receipts' names) overrides that pairing, whatever the trip's date. A charge that "
-				"carries 2210 but is neither paired nor linked, and a Journal Entry whose Reference Number names "
-				"nothing usable, are listed under <i>Needs action</i>. The figures above cover every row in "
-				"range, whatever Show is set to."
+				"carries 2210 but is neither paired nor linked, a charge whose trips' stock lines add up to more "
+				"than the charge itself (one of those trips is not its), and a Journal Entry whose Reference "
+				"Number names nothing usable, are listed under <i>Needs action</i>. The figures above cover every "
+				"row in range, whatever Show is set to."
 			),
 		]
 	)

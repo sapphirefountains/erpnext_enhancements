@@ -47,28 +47,31 @@ summary's *2210 Not Accounted For* must read $0.00 before the S-D loop.
     | Row | What to Do | Show |
     |---|---|---|
     | Paired or linked draft, 2210 short of the stock lines | "Move $X of the goods debit to 2210 - Stock Received But Not Billed - SF, then save it; the S-D loop submits it" ("$X more … ($Y is there already)" when partly moved; "(the stock lines of sr-a, sr-b together)" for a draft linked to several trips). A draft whose correcting entries took too much back off is told to post one more, not to touch its own lines | Needs action |
-    | Paired or linked charge already submitted without it | "Submitted with the goods on the expense: post and submit a correcting Journal Entry for $X (Dr 2210 … / Cr the expense account the charge used) with Reference Number *the charge*" (the remainder, when partly corrected) | Needs action |
+    | Paired or linked charge already submitted without it | "Submitted with the goods on the expense: post and submit a correcting Journal Entry for $X (Dr 2210 … / Cr the expense account the charge used) with Reference Number *the charge* followed by sr-…" (the remainder, when partly corrected). The correcting entry names every trip the charge pays for, so it links them: a later one for another run of the same purchase adds to the link instead of displacing the first (fourth review, item 3: the first correction was reversed and posted again) | Needs action |
+    | A charge whose trips' stock lines add up to more than the charge itself | "The stock lines of the trips its Reference Number links (sr-a $100.00, sr-b $95.00: $195.00 together) are more than the charge itself ($107.00), so one of these trips is not this charge's: take the run id of each trip it does not pay for out of ACC-JV-…'s Reference Number (edit it and save it). This row then says what the charge keeps on 2210 …, and each trip taken out asks for its own charge on its own row. A trip this charge paid for only in part (the rest by store credit or a second card) cannot be matched here: …" (one trip: "… so it is not this trip's charge: take sr-a out of …"; an automatic pair: "Its stock lines ($X) are more than the charge itself ($Y), and a charge never moves more to 2210 … than it paid: it is not this trip's charge. For the trip's own charge, find its QuickBooks draft, …"). The pairing's 5-cent tolerance is allowed; *Moved to 2210* is not ticked | Needs action |
     | More on 2210 than the stock lines | Reduce it: on the draft, then save it; on a submitted charge, a correcting entry the other way with the same Reference Number. **A draft over-moved by its correcting entries** is told which ones and how much to reverse ("the draft's own lines already carry $S and its correcting entries (ACC-JV-…) add $C, $Y too many: reverse $Y of them; post and submit a correcting Journal Entry …"), never to cut its own lines below the target | Needs action |
-    | A linked draft whose link took another trip's automatic pair (two runs of one purchase), short or over | **The question comes first**: "… If this draft also pays for sr-a, add sr-a to its Reference Number (it then carries exactly the stock lines of sr-b, sr-a together); otherwise reduce it to $40.00. Then save it; …" (short: "… add sr-a to its Reference Number and move $100.00 of the goods debit to 2210 (…together); otherwise move $40.00 …") | Needs action |
+    | A linked draft whose link took another trip's automatic pair (two runs of one purchase, or a link typed on the wrong trip), short or over | **The question comes first, all three answers**: "… If this draft also pays for sr-a, add sr-a to its Reference Number (it then carries exactly the stock lines of sr-b, sr-a together); if it pays for sr-a and not for sr-b, put sr-a in its Reference Number in place of sr-b and reduce its 2210 debit to $60.00 (the stock lines of sr-a); otherwise reduce it to $40.00. Then save it; …" (short: "… add sr-a to its Reference Number and move $100.00 of the goods debit to 2210 (…together); if it pays for sr-a and not for sr-b, … move $60.00 …; otherwise move $40.00 …"). An answer the charge cannot pay for is not offered | Needs action |
     | Paired or linked draft, 2210 exact | "Goods debit on 2210 …: nothing to change; the S-D loop submits it" | Done |
     | Paired or linked draft, no stock lines | "No stock lines: nothing to move; the S-D loop submits it" | Done |
     | Paired or linked and submitted, 2210 exact (its submitted correcting entries included) | "Done" ("Done (corrected by ACC-JV-…)") | Done |
     | No charge; every receipt billed by a submitted Purchase Invoice | "Billed from the receipts (ACC-PINV-…)" | Done |
     | No charge; some receipts billed | Bill the rest | Needs action |
-    | Paired or linked **and** billed from the receipts | "Billed from the receipts (ACC-PINV-…) and matched to this charge too: ACC-PINV-… already books this purchase, so this charge must not book it again. If the charge is not this trip's, put its own trip's run id in its Reference Number, or not-store-run if it pays for no store run, and save it. If it is, it is the payment of ACC-PINV-…, not a second purchase: its debit belongs on the store's payable, not on the expense" (linked: take the run id out of the Reference Number that links it, named; submitted: its own trip's row says how to link it) | Needs action |
+    | Paired or linked **and** billed from the receipts | "Billed from the receipts (ACC-PINV-…) and matched to this charge too: ACC-PINV-… already books this purchase, so this charge must not book it again. If the charge is not this trip's, put its own trip's run id in its Reference Number and save it; if it pays for no store run, move any debit it has on 2210 … back to the expense, put not-store-run in its Reference Number and save it. If it is, it is the payment of ACC-PINV-…, not a second purchase: move its whole debit to the store's payable (none of it on the expense or on 2210), make its Reference Number not-store-run alone and save it" (linked: take the run id out of the Reference Number that links it, named; submitted: its own trip's row says how to link it, and "If it is, it books the purchase and a submitted charge's Reference Number cannot be changed: cancel ACC-PINV-… (and any payment made against it), and this row then says what the charge needs"). Each answer ends in a state the report can see (fourth review, item 4: "its debit belongs on the store's payable" never left *Needs action*) | Needs action |
     | A trip two charges' Reference Numbers link | "Linked from more than one charge's Reference Number: sr-a by ACC-JV-… (its own Reference Number, a draft) and ACC-JV-… (the Reference Number of ACC-JV-…, submitted). Which charge is the trip's is Accounting's call. Take the run id out of the other one's Reference Number (a draft: edit it and save it; a submitted correcting entry: cancel it; …), and move the dropped charge's debit on 2210 … back to the expense; its own row then says how" | Needs action |
-    | No charge, stock lines | "No card charge paired: find its QuickBooks draft, move $X of its goods debit to 2210 - Stock Received But Not Billed - SF, put this trip's run id (sr-…) in its Reference Number and save it. If that draft is already another trip's charge in this list, list both trips' run ids in its Reference Number and move both trips' stock lines together. If it is already submitted, post and submit a correcting Journal Entry for $X (Dr 2210 / Cr the expense account it used) whose Reference Number is its name followed by sr-…. Only if it has no card charge at all, bill it from the receipts after the cutover." | Waiting |
+    | No charge, stock lines | "No card charge paired: find its QuickBooks draft, move $X of its goods debit to 2210 - Stock Received But Not Billed - SF, put this trip's run id (sr-…) in its Reference Number and save it; if it is already submitted, post and submit a correcting Journal Entry for $X (Dr 2210 / Cr the expense account it used) whose Reference Number is its name followed by sr-…. If that charge is already another trip's in this list and it also pays for that trip, list both trips' run ids (a draft: in its Reference Number, its 2210 debit carrying both trips' stock lines; submitted: after its name in that correcting entry). If it does not pay for that trip, take that trip's run id out of what links it to this charge (edit a draft and save it, cancel a submitted correcting entry), and that trip's row then asks for its own charge. Only if it has no card charge at all, bill it from the receipts after the cutover." "List both" is conditional (fourth review, item 1: said unconditionally, a draft the pairing had given to the wrong trip was linked to both, carried both trips' stock lines and read Done) | Waiting |
     | No charge, no stock lines | "No card charge paired and no stock lines: if it has a QuickBooks draft, change nothing (optionally put sr-… in its Reference Number). Only if it has no card charge at all, bill it from the receipts after the cutover." | Waiting |
-    | No charge because a Reference Number took its paired charge for other trips | "Its paired charge ACC-JV-… now links only sr-b, by its Reference Number. If ACC-JV-… pays for this trip too, add sr-a to that Reference Number and move this trip's $X of stock lines too. If not, find its QuickBooks draft, … Only if it has no card charge at all, bill it from the receipts after the cutover." | Waiting |
+    | No charge because a Reference Number took its paired charge for other trips | **All three answers**, with or without stock lines: "Its paired charge ACC-JV-… now links only sr-b, by its Reference Number. If ACC-JV-… pays for this trip as well as sr-b, add sr-a to that Reference Number and move this trip's $X of stock lines too. If it pays for this trip and not for sr-b, take sr-b out of ACC-JV-…'s Reference Number (edit it and save it), then put sr-a in its Reference Number, save it, and this trip's row then says what to move. If it does not pay for this trip, find its QuickBooks draft, … Only if it has no card charge at all, bill it from the receipts after the cutover." When the charge cannot pay for both: "…, and it cannot pay for this trip too: their stock lines and this trip's ($195.00) are more than ACC-JV-… itself ($107.00). If ACC-JV-… is this trip's charge and not sr-b's, …. If not, …" | Waiting |
     | A draft, neither paired nor linked, whose net 2210 debit is not zero | "Carries $X on 2210 … but no recorded store run is paired or linked. If you moved it for a trip whose row shows no other charge, put that trip's run id in this entry's Reference Number; otherwise move it back to the expense. Then save it; the S-D loop submits it" | Needs action |
     | The same, already submitted | "… and a submitted entry's Reference Number cannot be changed: move it back to the expense; post and submit a correcting Journal Entry for $X (Dr the expense account it used / Cr 2210) with Reference Number *the charge*. If you moved it for a trip, that trip's row then says how to move it again, linked" | Needs action |
-    | The same, but a link took it from the trip it was paired with | "It was paired with sr-1 until ACC-JV-… linked sr-1: keep one charge for sr-1 and move this one's $X on 2210 … back to the expense, then save it; …" (submitted: with a correcting entry; a correcting entry that carries the link is named: "until ACC-JV-900 linked sr-1 to ACC-JV-…") | Needs action |
-    | A Purchase Invoice, neither paired nor linked, carrying 2210 | "Waiting for its receipt: a Purchase Invoice books its stock lines ($X) to 2210 … itself and its Purchase Receipt clears them, so leave its lines as they are. …" (v16 books a stock line of an invoice made without a receipt to 2210; "move it back" would undo a correct booking). A displaced one: keep one charge, never move its lines | Waiting (displaced: Needs action) |
+    | The same, but a link took it from the trip it was paired with | Both answers: "It was paired with sr-1 until ACC-JV-… linked sr-1: keep one charge for sr-1, which sr-1's row shows as its Matched Charge now. If this one is sr-1's charge, take sr-1 out of the Reference Number that links the other one (edit a draft and save it, cancel a submitted correcting entry); if not, move this one's $X on 2210 … back to the expense, then save it; …" (submitted: with a correcting entry; a correcting entry that carries the link is named: "until ACC-JV-900 linked sr-1 to ACC-JV-…") | Needs action |
+    | A Journal Entry a link took from the trip it was paired with, carrying nothing on 2210 | "It was paired with sr-1 until ACC-JV-… linked sr-1, and carries nothing on 2210 …. If this one is sr-1's charge, take sr-1 out of the Reference Number that links the other one (…); if not, put its own trip's run id in its Reference Number, or not-store-run if it pays for no store run, and save it" (submitted: "it pays for no trip in this list, and nothing on it changes"). New in the fourth review: a link typed on the wrong trip took that trip from its own charge, and when that charge carried nothing, nothing said so | Waiting |
+    | A Purchase Invoice, neither paired nor linked, carrying 2210 | "Waiting for its receipt: a Purchase Invoice books its stock lines ($X) to 2210 … itself and its Purchase Receipt clears them, so leave its lines as they are. …" (v16 books a stock line of an invoice made without a receipt to 2210; "move it back" would undo a correct booking). A displaced one: keep one charge, never move its lines; it waits too, since either answer leaves a correct booking (fourth review, item 7: as *Needs action* it could never leave) | Waiting |
     | A linked charge in range whose trips are all outside it, needing action | "The store runs its Reference Number links (sr-a, sr-b) are dated outside this range. Move $60.00 more …" | Needs action |
     | A Journal Entry whose Reference Number lists a key-shaped token (`sr-…`, `MAT-PRE-…`) that names no recorded store run | "Its Reference Number lists sr-1x, which is no recorded store run." (on the charge's own row when it has one) | Needs action |
-    | A Journal Entry whose Reference Number points two ways | "Its Reference Number points to both ACC-JV-1 and ACC-JV-2, so the report cannot tell which charge it adjusts." / "… says not-store-run and also lists sr-a." / "… names ACC-JV-5, marked not-store-run: …" / "It is a card charge itself, and its Reference Number names ACC-JV-1: …" / "… names ACC-JV-9, which does not lead to one card charge." (a loop) — then "Correct its Reference Number and save it." (submitted: "cancel it and amend it with the right one"; a submitted QuickBooks entry is never cancelled, so the report ignores what it lists: Waiting) | Needs action |
-    | A draft correcting entry | "It is a draft correcting entry for ACC-JV-…: submit it (a draft correcting entry does not count until submitted), or delete it if ACC-JV-…'s row does not need it." | Needs action |
-    | A Journal Entry on 2210 no charge accounts for | "Carries $X on 2210 … that the report cannot tie to any store run or card charge. If it adjusts a charge, its Reference Number should name that charge (or the trip's run id); if it has nothing to do with store runs, add not-store-run to its Reference Number. Edit its Reference Number and save it." (submitted: "cancel it and amend it with the right Reference Number"; a submitted QuickBooks entry: a correcting entry that takes it back off 2210). A card charge dated in the lookback that pairs with nothing: "widen the range to include *its date*, and its row there says what to do" | Needs action |
+    | A Journal Entry whose Reference Number points two ways | "Its Reference Number points to both ACC-JV-1 and ACC-JV-2, so the report cannot tell which charge it adjusts." / "… says not-store-run and also lists sr-a." / "… names ACC-JV-5, marked not-store-run: …" / "It is a card charge itself, and its Reference Number names ACC-JV-1: …" / "… names ACC-JV-9, which does not lead to one card charge." (a loop) — then "Correct its Reference Number and save it." (submitted: "cancel it and amend it with the right one"; a submitted QuickBooks entry is never cancelled, so the report ignores what it lists: Waiting, and with money on 2210 it is told to move it back with a correcting entry naming it, "Its $X on 2210 … is therefore not accounted for: move it back to the expense; post and submit a correcting Journal Entry for $X (Dr the expense account it used / Cr 2210) with Reference Number ACC-JV-…", which counts for it whatever its own Reference Number lists — fourth review, item 5) | Needs action |
+    | A draft correcting entry, dated in range or dated after To Date for a charge accounted for in range (the S-D loop submits it all the same) | "It is a draft correcting entry for ACC-JV-…: submit it (a draft correcting entry does not count until submitted), or delete it if the row of sr-a (Matched Charge ACC-JV-…) does not ask for it." (a charge with no trip: "…, which no recorded store run is paired or linked with: delete it, unless ACC-JV-… has a row of its own (No recorded store run) that asks for a correcting entry of this amount; then submit it …"). The row named exists (fourth review, item 8: "ACC-JV-…'s row" named one that did not) | Needs action |
+    | A Journal Entry on 2210 no charge accounts for | ERPNext: "Carries $X on 2210 … that the report cannot tie to any store run or card charge. If it adjusts a charge, its Reference Number should name that charge (or the trip's run id); if it has nothing to do with store runs, add not-store-run to its Reference Number. Edit its Reference Number and save it." (submitted: "cancel it and amend it with the right Reference Number"). **QuickBooks** (a card charge, which carries nothing on 2210 unless it pays for a store run, so never told to mark itself not-store-run): "Carries $X on 2210 … that the report cannot tie to any store run or card charge, and a card charge that pays for no store run carries nothing there. If you moved it for a trip whose row shows no other charge, put that trip's run id in its Reference Number; otherwise move it back to the expense. Then save it; the S-D loop submits it" (submitted: "… move it back to the expense; post and submit a correcting Journal Entry for $X (Dr the expense account it used / Cr 2210) with Reference Number ACC-JV-…. If you moved it for a trip, that trip's row then says how to move it again, linked"). A card charge dated in the lookback that pairs with nothing: "widen the range to include *its date*, and its row there says what to do" | Needs action |
+    | A QuickBooks entry marked not-store-run that still carries 2210 | "Its Reference Number says not-store-run, but it still carries $X on 2210 …, and a card charge that pays for no store run carries nothing there: move it back to the expense, then save it; the S-D loop submits it. If you moved it for a trip, put that trip's run id in its Reference Number in place of not-store-run" (submitted: "… post and submit a correcting Journal Entry for $X (Dr the expense account it used / Cr 2210) with Reference Number ACC-JV-… followed by not-store-run", whose 2210 counts with its own). Fourth review, item 2: marking it hid the debit from the backstop, and the report read clean with the money on 2210 and no receipt to clear it | Needs action |
 
     **Every Waiting text is an either/or that cannot read as both**: the charge is found and fixed
     and linked, or, *only* when the trip has no card charge at all, the trip is billed from its
@@ -92,7 +95,10 @@ summary's *2210 Not Accounted For* must read $0.00 before the S-D loop.
     entry the KPI reads as a charge never corrects another) to that charge's own, so the row reaches
     Done once corrected, shows the remainder after a partial correction, and flags an
     over-correction. Run ids listed beside the charge's name in a correcting entry link that charge
-    to those trips (next item): that is how a charge already submitted is linked.
+    to those trips (next item): that is how a charge already submitted is linked, and every
+    correcting entry the report advises for a charge with trips names them all. A submitted
+    QuickBooks entry whose own Reference Number cannot be resolved (it points two ways, say) still
+    names itself when a correcting entry names it, so the correction it is told to post counts.
     - **A Reference Number that names a correcting entry names that entry's charge**, followed to
       the end (loops refused; entries dated before the lookback are looked up by name, up to four
       rounds deep). The second review filed such an entry under the correcting entry it named,
@@ -102,7 +108,8 @@ summary's *2210 Not Accounted For* must read $0.00 before the S-D loop.
       lead to two different charges make the entry count for neither and give it a row ("points to
       both …"). Never first-token-wins.
     - **A draft correcting entry counts for nothing and is listed**: "submit it …, or delete it if
-      *the charge*'s row does not need it". Ignored silently before, the S-D loop would have
+      the row of sr-a (Matched Charge *the charge*) does not ask for it" -- dated after To Date too,
+      when its charge is accounted for in range. Ignored silently before, the S-D loop would have
       submitted it beside a later one.
     **"Amend it" is not advice for a QuickBooks entry**: amending a QuickBooks-synced Journal Entry
     cancels the original, and `tabQuickBooks Sync Mapping`, which the pairing follows to find
@@ -163,6 +170,15 @@ summary's *2210 Not Accounted For* must read $0.00 before the S-D loop.
     trips only, so such a draft left the list without a word, still carrying a 2210 debit no receipt
     credit would clear. A Purchase Invoice is the exception: v16 books its stock lines to 2210
     itself until its receipt clears them, so it is a *Waiting* row and is never told to move them.
+    **A Journal Entry a link took from its trip is listed even when it carries nothing** (*Waiting*,
+    fourth review): the link may be the mistake, and its row is the only place that asks.
+  - **A charge never carries more than it paid** (fourth review, item 1). A charge whose trips'
+    stock lines add up to more than its own amount (Charge Amount, the pairing's 5-cent tolerance
+    allowed) cannot pay for all of them: its rows are *Needs action*, name the trips and what carries
+    each run id, and ask Accounting to take out the one that is not the charge's. No amount is
+    guessed: the report never picks one. The same bound keeps the questions honest: a charge that
+    cannot pay for a displaced trip as well as its own is not asked whether it does, only which
+    one it pays for.
   - **Every Journal Entry line on 2210 is accounted for** (third review, the backstop). The report
     reads every Journal Entry Account line on a company's own Stock Received But Not Billed account,
     draft or submitted, dated from 7 days before From Date to To Date, whatever its Reference Number
@@ -176,11 +192,16 @@ summary's *2210 Not Accounted For* must read $0.00 before the S-D loop.
     `not-store-run` add up to every 2210 line read, and that each attributed amount is in exactly
     the figure its charge's rows use.
   - **`not-store-run`.** That token in a Journal Entry's Reference Number (any case) takes it out
-    of the list: it is no link, no correcting entry, not in the backstop, and a card charge carrying
-    it pairs with no trip (in the report only; the KPI still counts it). It is how an entry on 2210
-    that has nothing to do with store runs is set aside, and how a billed trip that happened to pair
-    with an unrelated charge leaves *Needs action*. Beside a run id or a charge's name it is a
-    contradiction, and listed.
+    of the list: it is no link, no correcting entry, and a card charge carrying it pairs with no trip
+    (in the report only; the KPI still counts it). It is how an entry on 2210 that has nothing to do
+    with store runs is set aside, and how a billed trip that happened to pair with an unrelated
+    charge leaves *Needs action*. Beside a run id or a charge's name it is a contradiction, and
+    listed. **It takes an entry out of the backstop too, except a QuickBooks entry that still
+    carries 2210** (fourth review, item 2): a card charge that pays for no store run carries nothing
+    there, so one marked `not-store-run` stays listed, with the 2210 of any entry marked
+    `not-store-run` that names it, until that nets to zero. An ERPNext entry marked so is left out
+    whatever it carries: a 2210 adjustment that has nothing to do with store runs (a PO receipt's,
+    say) is legitimate.
   - **Summary**: store runs, matched to a charge, needs action, still to move to 2210, already moved
     to 2210, **on 2210 with no store run** (the charges under *Needs action* that match no recorded
     store run; a Purchase Invoice waiting for its receipt is not one) and **2210 not accounted for**.
@@ -245,8 +266,8 @@ summary's *2210 Not Accounted For* must read $0.00 before the S-D loop.
   nothing earlier to reach in.
 - The Store filter is applied after the pairing, never to the rows.
 - Only the rules above are the report's own (correcting entries, links by Reference Number,
-  `not-store-run`, a charge carrying 2210 with no store run, the 2210 backstop), and none changes
-  the KPI. Where a Reference Number links a charge or says `not-store-run`, the report deliberately
+  `not-store-run`, a charge carrying 2210 with no store run, the 2210 backstop, a charge never
+  carrying more than it paid), and none changes the KPI. Where a Reference Number links a charge or says `not-store-run`, the report deliberately
   departs from the KPI's pairing for that charge and its trips; the KPI still counts a trip and a
   charge more than 3 days apart as two runs, the known limit of its window, and still counts a
   charge marked `not-store-run`.
@@ -270,7 +291,10 @@ Before the loop that submits the 2026 Journal Entries:
    or one to move back to the expense. A row for a Journal Entry (*Reference Number to check*, *Not
    tied to a store run*) says what is wrong with its Reference Number or why its 2210 amount is not
    accounted for. Put `not-store-run` in the Reference Number of an entry on 2210 that has nothing to
-   do with store runs, or of a card charge that pays for none.
+   do with store runs, or of a card charge that pays for none; **a QuickBooks card charge must first
+   carry nothing on 2210** (move it back to the expense), or it stays listed. A row saying a charge's
+   trips' stock lines are more than the charge itself means one of those trips is not its: take that
+   trip's run id out.
 3. Refresh the report. A row leaves *Needs action* once its draft carries exactly that 2210 debit,
    and then reads "Goods debit on 2210 …: nothing to change; the S-D loop submits it".
 4. **When *Needs action* is empty, set Show to Waiting** and check every trip dated on or before
@@ -281,7 +305,10 @@ Before the loop that submits the 2026 Journal Entries:
      run id in the draft's Reference Number** and save it. The row then shows the draft with Match
      Basis *Linked by Reference Number*. When one draft pays for several trips, list all their run
      ids (commas or spaces), keeping any already there: the draft then carries their stock lines
-     together. **If the draft is already another trip's charge in this list, list both run ids.**
+     together. **If the draft is already another trip's charge in this list, list both run ids only
+     if it pays for both**; otherwise its Reference Number lists this trip's alone (take the other
+     trip's out, or cancel the correcting entry that links it), and the other trip's row then asks
+     for its own charge.
      **A draft found under a QuickBooks vendor that is not a ticked Store-Run Vendor is invisible
      to this report until it is linked: link it by Reference Number anyway, and never bill that
      trip from its receipts** (the report reads every Journal Entry's Reference Number, whatever
@@ -293,17 +320,20 @@ Before the loop that submits the 2026 Journal Entries:
    *Needs action* is empty and *2210 Not Accounted For* reads $0.00. Then run the loop.** Linking a
    draft can move rows back into either list: a draft that now carries more than its linked trips'
    stock lines, or one the pairing had given to another trip -- its row asks **first** whether the
-   draft pays for that trip too ("If this draft also pays for sr-a, add sr-a to its Reference
-   Number …; otherwise reduce it to $40.00"), and that trip waits under *Waiting* until it is
-   settled. The second review checked only *Needs action* here, so following a reduction emptied it
-   while the other run of the same purchase stayed *Waiting* and its draft expensed goods already in
-   stock.
+   draft pays for that trip too, or for that trip and not the one it links ("If this draft also pays
+   for sr-a, add sr-a to its Reference Number …; if it pays for sr-a and not for sr-b, put sr-a in
+   its Reference Number in place of sr-b …; otherwise reduce it to $40.00"), and that trip waits
+   under *Waiting*, asked the same three ways, until it is settled. The second review checked only
+   *Needs action* here, so following a reduction emptied it while the other run of the same purchase
+   stayed *Waiting* and its draft expensed goods already in stock. **Work through every row of a
+   list before refreshing**: a question a row asks about a charge ("It was paired with sr-1 until
+   … linked sr-1") goes away once that charge is linked elsewhere, answered or not.
 6. After the loop, run the report once more. *Needs action* should still be empty. A row there now
    reading "Submitted with the goods on the expense" was submitted before it was adjusted: post
    and submit the **one correcting Journal Entry** it names (Dr 2210 / Cr the expense account the
-   charge used) with the charge as its **Reference Number**, and the row moves to Done. For a trip
-   whose charge was not paired, the Reference Number is the charge's name followed by the trip's
-   run id, which links the two (a submitted entry's own Reference Number cannot be changed).
+   charge used) with its **Reference Number** as the row gives it -- the charge's name followed by
+   the run ids of the trips it pays for, which links them (a submitted entry's own Reference Number
+   cannot be changed) -- and the row moves to Done.
    **Never amend a QuickBooks Journal Entry** to fix it (see above). *On 2210 With No Store Run* and *2210 Not
    Accounted For* should both read $0.00.
 
@@ -318,6 +348,22 @@ yet, so nothing is linked and no correcting entry is counted.
 
 ### Known limits
 
+- **What the report cannot see without guessing amounts** (fourth review, measured on the round-4
+  verifier's simulator; see Tests). The report never compares amounts beyond the KPI's own
+  pairing rules, so two mistakes stay invisible: an **automatic pair that is wrong** when every
+  figure is consistent with it (two purchases at one store whose totals each fit the other's charge
+  swap; each charge carries the other trip's stock lines, 2210 clears in total and the expense is
+  misallocated between them), and a **link typed on the wrong trip that contradicts nothing** (the
+  trip had no automatic charge, the charge no automatic trip, and it can pay for the trip). Every
+  other mistaken link displaces an automatic pair or oversteps the charge's own amount, and is
+  asked about.
+- **A trip paid for only in part by its card charge** (the rest by store credit or a second card)
+  whose stock lines exceed that charge cannot be matched: the capacity rule flags it, and nothing
+  in the report clears it. Accounting settles it by hand.
+- **A submitted charge whose own Reference Number carries a wrong run id** cannot have it taken
+  out (v16 does not allow it), so a contest, a capacity breach or a question about it cannot be
+  settled on that charge; the S-D steps link every draft before the loop, so this is reached only
+  if a draft was submitted outside the loop.
 - **A standalone Purchase Invoice with *Update Stock* ticked** pairs as a charge (the reader takes
   any submitted invoice from a store with no PO or receipt behind it), but its stock lines post to
   the warehouse account, not 2210. The report reads nothing on 2210 for it, so its *What to Do*
@@ -362,7 +408,7 @@ yet, so nothing is linked and no correcting entry is counted.
   - A tie goes to the earlier charge. Its expectation is unchanged by the new `order by`: the pure
     function still breaks the tie by input order, which is what the `order by` now fixes.
   - The one exact-shape assertion on `journal_store_charges` now includes the voucher.
-- `test_store_run_matching` (new, 138 tests):
+- `test_store_run_matching` (new, 156 tests):
   - trips at either edge of the range, including a chain of same-amount trips reaching in from
     before the lookback;
   - the KPI equivalence on 800 generated histories, for the trips in range and for the charges in
@@ -410,16 +456,41 @@ yet, so nothing is linked and no correcting entry is counted.
     nothing; a draft correcting entry, listed until submitted; the displaced charge naming the link
     (draft, submitted, a correcting entry carrying it, a Purchase Invoice); a contest naming the
     correcting entry that carries the key; a better match arriving later; two runs of one purchase
-    (the Waiting text says to list both, short and over ask first and give both amounts, nothing
-    says "instead"); the billed-trip texts (matched, submitted, linked); a linked charge spanning
+    (the Waiting text says to list both when the draft pays for both, short and over ask first and
+    give both amounts, nothing says "instead"); the billed-trip texts (matched, submitted, linked,
+    each ending in a state the report sees); a linked charge spanning
     From Date (row and summary agree) and one whose trips are all before it (its own row); an
     unpaired Purchase Invoice waiting for its receipt;
+  - **the fourth review's cases** (the round-4 verifier's minimal histories, each a regression test
+    with its new outcome): M1, a late charge the pairing gave to another trip -- "list both" only
+    when the draft pays for both, the capacity check catching both listed anyway ($195.00 of stock
+    lines on a $107.00 charge, neither row Done or ticked), and linking the right trip alone ending
+    with each trip on its own charge; the capacity rule allowing the pairing's own tolerance and
+    catching an automatic pair on a mistyped receipt total; M2 and M2b, a draft dropped from a
+    contest and an unrelated draft carrying $40.00, told to move it back and never to mark it, and
+    still listed when marked not-store-run with money on 2210 until it is $0.00, draft or submitted
+    (its correcting entry marked not-store-run netting it, and half of it leaving the rest listed);
+    an ERPNext entry marked not-store-run keeping its 2210; M3 (v4_min3), a submitted QuickBooks
+    entry with a dead key and $100.00 on 2210, and one pointing two ways, each told to post a
+    correcting entry that then counts for it; M4, a submitted charge for two runs reaching Done
+    without a reversal (the -60/+60 case); M5, a billed trip and its own charge leaving *Needs
+    action*, draft and submitted; M6, a mistaken link asked about from both sides, with money on
+    2210 and without; a displaced trip asked all three ways, with stock lines and without; M7, a
+    displaced Purchase Invoice waiting; M8, a draft correcting entry naming the trip's row, a charge
+    with no trip, and one dated after To Date listed;
+  - **the fourth review's rules on 400 seeded generated histories** (mistaken links, two runs of one
+    purchase, not-store-run marks, 2210 amounts; bench-free, well under a second): a charge whose
+    trips' stock lines are more than it paid is never Done or ticked, a QuickBooks entry marked
+    not-store-run that still carries 2210 is listed under *Needs action*, a Journal Entry a link
+    took from its trip is always listed, "list both" is always conditional, and a displaced trip is
+    always asked all three ways (or which one, when the charge cannot pay for both);
   - **the 2210 conservation on 500 generated histories** (run ids, receipt names, dead keys,
     correction chains, `not-store-run`, junk and stray entries): attributed + not accounted for +
     `not-store-run` equals every 2210 amount read (without `not-store-run`, attributed + not
     accounted for alone), the attributed amounts are exactly the accounted charges' own figures, each
-    amount not accounted for has a row of its own and the summary is their total, and a charge's trip
-    rows add up to its figure;
+    amount not accounted for has a row of its own (a marked QuickBooks entry's row carries its own and
+    that of the entries marked not-store-run that name it) and the summary is their total, and a
+    charge's trip rows add up to its figure;
   - on 300 more generated histories, no text writes the account in full twice, says "post a
     correcting" without "and submit", says "instead", or tells a QuickBooks entry to amend;
   - the Show buckets and the summary;
@@ -455,7 +526,37 @@ yet, so nothing is linked and no correcting entry is counted.
   charge allowed to name another, an entry naming a `not-store-run` entry accepted (it survived the
   first run; `test_an_entry_naming_one_marked_not_store_run` was added for it), no row for a linked
   charge whose trips are outside the range, no note on the displaced charge, the account written in
-  full twice, and loops allowed.
+  full twice, and loops allowed. The fourth review's 19 mutations each fail a test too: no capacity
+  check, "list both" unconditionally, not-store-run hiding a QuickBooks entry's 2210, a correcting
+  entry naming the charge alone, the billed draft marked nothing, the billed submitted charge told
+  nothing it can finish, no correcting entry for a submitted QuickBooks entry with a problem, one
+  pointing two ways naming nothing, one answer on the displaced charge, a displaced invoice blocking
+  *Needs action*, "*the charge*'s row", no row for a charge a link took that carries nothing, a
+  displaced trip asked only "too", one with no stock lines not asked, no "and not for" on the draft,
+  "also pays" offered beyond the charge's amount, a late draft correcting entry not listed, a charge
+  over its amount still ticked, and a marked entry's correcting entries not netted.
+- **The round-4 verifier's simulator as the acceptance test** (fourth review). It copies
+  `execute()` over emulated reads; an Accounting agent follows every *Needs action* row, then every
+  *Waiting* row, to a fixed point, answering each question a text asks from the history's truth;
+  then the S-D loop submits every draft, the agent runs to a fixed point again, the trips with no
+  charge are billed from their receipts, and it runs once more. Per purchase, the goods on 2210 must
+  equal its trips' stock lines and nothing may be billed twice. A **false Done** is a clean report
+  (*Needs action* empty, *2210 Not Accounted For* $0.00) while that fails; **stuck** is a report that
+  stays unclean at a fixed point on a correct book. Set apart as undetectable without guessing
+  amounts (Known limits): a wrong automatic pair whose charge carries exactly its automatic trips
+  within its own amount, and a mistaken link that contradicts no automatic pair. Before (85507b09,
+  the round-4 agent reading the texts as written): 74 false Done before the loop and 1 after on
+  2,000 random realistic histories; 536 before and 3 after on 3,000 messy ones (mistaken links,
+  corrections, reversal chains, draft corrections, stray 2210 entries); the minimal cases M1, M2,
+  M2b and a marked M2 false Done, M3 and a billed submitted charge unresolved, a billed draft stuck.
+  After: **0 false Done, 0 crashes or unparsed texts, 0 runs without a fixed point** on those 5,000
+  and on 18,000 more (6,000 each of random histories with coincidental charges, random and messy
+  from other seeds); every minimal case clean, and M4 without the -60/+60 reversal. The only
+  histories left unclean at a fixed point (15 of the 2,000 random, 24 of the 3,000 messy) are ones
+  the generator gave a card charge below its own purchase's stock lines, which the capacity rule
+  flags by design (Known limits: a trip paid for only in part); with each charge floored at its
+  purchase's stock lines, none. Undetectable by design, after: 13 and 23 wrong automatic pairs, and
+  11 mistaken links that contradict nothing.
 - `execute()` ran end to end against a stubbed frappe: a draft to adjust; a late draft linked by a
   Reference Number typed in upper case with a trailing space; a submitted charge whose correcting
   entry (lower case, trailing space) takes it to Done; a draft under a vendor that is not a
