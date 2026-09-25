@@ -154,21 +154,56 @@ different payment method" shows the card step at once (so a Pay tap before the t
 lands charges nothing) and goes through the same history. Back while a charge is in flight
 (the server call, then 3-D Secure) changes nothing until the charge has an answer.
 
+**The page talks to the server over `fetch`, never `frappe.call`.** The website build of
+`frappe.call` (frappe v16, `website/js/website.js` — not the Desk's) calls back on an HTTP 200
+only and never calls `error()`. The page relied on `error()` for every refusal, so in production
+a declined card — a `frappe.throw`, HTTP 417 — left Pay on "Please wait…", Back held by the
+charge, and nothing said, while the harness (which faked `frappe.call` *with* an `error()`)
+passed. Both calls now go through one in-page helper that POSTs to `/api/method/<method>` with
+the session's CSRF token and answers every outcome — each HTTP status, a dropped connection,
+and a timeout (a minute for Continue; 150 s for Pay). The Pay timer is only a backstop for a
+connection that hangs outright: a proxy normally answers a slow charge with a 504 first, which
+the page treats the same way, and neither says the request behind it has ended. What stops a
+second charge is the server — the row committed `Processing` under the invoice lock before
+Stripe is asked, the charge keyed on the row (Stripe's idempotency key), and `_check_quote`,
+which never sends a row that is no longer a Draft. Pay charges the quote its review was drawn
+for (`shown`), never the page's latest quote, and a tap with no quote behind the review says
+"Please tap Back and Continue again" rather than nothing.
+
+The message under the form is the server's, and it is only as specific as the server makes it.
+For a card error (a 402) it carries Stripe's own words for the cardholder; for any other definite
+refusal — a 400 about the shape of the request, like the `payment_method_types` one v1.537.1
+fixed — it is the generic "did not go through, and nothing was charged", and the cause is only in
+that Stripe Payment row's `error_message`. Read that before calling a decline the card's.
+
 **What the page does with the answer depends on whether it *is* one.** A definite failure —
-the server refused, or Stripe declined; to `frappe.call` a 417 whose body names its
-`exc_type` — charged nothing, and spends the quote: back to the card step with the card still
-entered, and Continue prices a new one (the server never sends a row twice). **A refusal for
+the server refused, or Stripe declined: a 4xx whose JSON body names its `exc_type` — charged
+nothing, and spends the quote: back to the card step with the card still entered and the
+server's message under it, and Continue prices a new one (the server never sends a row twice).
+A 5xx is never a definite failure, even one naming an `exc_type`: an error after Stripe charged
+is a 500. **A refusal for
 the invoice rather than the card** — `PaymentBlocked`: another payment settling or waiting on a
 bank, one already received, the invoice paid or credited meanwhile, the quote already sent — is
 different: a card form beside "already being processed" contradicts itself, so the page loads
 `/pay-card` again and the render says why (at Continue too). An emailed link Stripe could not
 be asked to close (`LinkStillOpen`), and an earlier card attempt that cannot charge whose cancel
 Stripe would not confirm just now (`AttemptUnreleased`, the `Unreleased` verdict), are ordinary
-refusals: the form stays and the modal says why. There is nothing to render for either — a
+refusals: the form stays and says why. There is nothing to render for either — a
 render never releases, so it reads that dead attempt as not blocking and used to bring the card
 form back with no word of why, every tap looping until Stripe answered the cancel. Both are
-`PaymentBlocked` subclasses, which dunning still reschedules on. Anything else is
-**not an answer**: a dropped connection, a 5xx, a proxy timeout, or 3-D Secure ending in any
+`PaymentBlocked` subclasses, which dunning still reschedules on. **A session the page no longer
+has** reloads too, at Continue and at Pay: a stale CSRF token (a 400 `CSRFTokenError`, "Invalid
+Request" — the payer signed in again in another tab), or a sign-in that expired or was ended
+elsewhere, which makes the call a Guest's and has frappe's `is_whitelisted` refuse it (a 403
+`PermissionError` whose message names the method, with `session_expired` set when the cookie named
+a session that has ended). frappe refuses both before any handler runs, so nothing moved, and every
+later call would be refused the same way: shown under the form they came back on each Continue,
+while a render hands out a new token or `pay_card.py` sends the Guest to log in. The endpoints' own
+`PermissionError` ("You can only pay your own invoices") stays an ordinary refusal, since reloading
+on a refusal nobody has traced could loop with no word of why. Anything else is
+**not an answer**: a dropped connection, a 5xx, a proxy timeout or error page, a body that
+would not parse, a 200 carrying an exception or no message, the page's own timeout, or 3-D
+Secure ending in any
 error that is not about the card or the request (`card_error`, `validation_error`,
 `invalid_request_error` are the bank's or Stripe's definite no; `api_connection_error`,
 `api_error`, a `rate_limit_error`, a type the page does not know say nothing about whether the

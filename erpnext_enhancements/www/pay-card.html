@@ -67,7 +67,8 @@
 	   still be priced from the card the payer actually enters. #}
 	<div id="step-card">
 		<div id="payment-element" style="margin:16px 0;"></div>
-		<div id="card-error" class="text-danger small" style="margin-bottom:12px;"></div>
+		{# role="alert": a screen reader announces a decline the moment it is written here. #}
+		<div id="card-error" class="text-danger small" role="alert" style="margin-bottom:12px;"></div>
 		<button id="continue-btn" class="btn btn-primary btn-block">{{ _("Continue") }}</button>
 		{% if enable_ach %}
 		<p class="text-muted small" style="margin-top:12px;">
@@ -99,6 +100,10 @@
 		</table>
 		<div id="review-disclosure" class="alert alert-info small" style="display:none;"></div>
 		<div id="review-nofee" class="text-muted small" style="display:none; margin-bottom:12px;"></div>
+		{# A Pay tap is never ignored in silence: when there is no quote behind the review on
+		   screen, this says what to do instead (announced, like #card-error). Empty, it adds no
+		   gap above Pay: its margin collapses through it into the one above. #}
+		<div id="review-error" class="text-danger small" role="alert" style="margin-bottom:12px;"></div>
 		<button id="pay-btn" class="btn btn-primary btn-block"></button>
 		<button id="back-btn" class="btn btn-link btn-block">{{ _("Back — use a different payment method") }}</button>
 	</div>
@@ -115,6 +120,25 @@
 		const PAY = "{{ _('Pay') }}";
 		const NO_FEE = "{{ _('No processing fee applies to this card.') }}";
 		const CHECKING = "{{ _('Checking your payment…') }}";
+		const CONTINUE_FAILED = "{{ _('Your card could not be checked just now. Please tap Continue again.') }}";
+		const NOT_CHARGED = "{{ _('The payment did not go through. Nothing was charged.') }}";
+		const REVIEW_LOST = "{{ _('Please tap Back and Continue again.') }}";
+		const PRICE = "erpnext_enhancements.stripe_payments.core.api.portal_price_card_payment";
+		const CONFIRM = "erpnext_enhancements.stripe_payments.core.api.portal_confirm_card_payment";
+		// How long each call may go unanswered before the page stops waiting and counts it as no
+		// answer. A quote moves no money, so Continue gives up after a minute and says to try
+		// again. A charge waits 150 s, past the usual 120 s proxy limit, so a slow one normally
+		// ends in the proxy's 504 first — no answer too, which reloads the same way — and this
+		// timer is only the backstop for a connection that hangs outright. It promises nothing
+		// about the request behind it, which may still be running (gunicorn's gthread workers,
+		// for one, are not killed at their timeout), and it is not what stops a second charge:
+		// the server commits the row Processing under the invoice lock before it asks Stripe,
+		// keys the charge on the row (Stripe's idempotency key), and never sends a row that is
+		// no longer a Draft (_check_quote). A reload that lands while the charge still runs may
+		// show the form again, but a new quote or charge for the invoice queues on that same
+		// lock and then meets the Processing row, and is refused.
+		const PRICE_TIMEOUT_MS = 60000;
+		const CHARGE_TIMEOUT_MS = 150000;
 		const stripe = Stripe({{ publishable_key | tojson }});
 
 		// Deferred intent mode: the Element renders without a PaymentIntent, so no
@@ -140,6 +164,161 @@
 		// A Back pressed while charging. Never acted on mid-charge; honoured once the charge
 		// has failed (a charge that succeeds leaves the page anyway).
 		let back_pending = false;
+		// The review on screen and the quote it was drawn for, {quote, token}: exactly what Pay
+		// charges. Set only by show_review and cleared only by show_card, so nothing that sets
+		// the page's latest `quote` aside (the Element's change event, a new Continue) can leave
+		// a Pay button on screen that does nothing when tapped.
+		let shown = null;
+
+		// The page's two calls to the server, over fetch rather than frappe.call. The website
+		// build of frappe.call (frappe v16, website/js/website.js) calls back on an HTTP 200
+		// only and never calls error(): a refusal (a frappe.throw, HTTP 417 — a declined card
+		// among them), a 5xx, a dropped connection and a proxy timeout reached nothing on this
+		// page. A declined card left Pay on "Please wait…" and Back held by the charge for good,
+		// and every answer below that is not a success was dead code. Answers {ok, status, body}
+		// for every HTTP response (body is the parsed JSON object, or null when there is none),
+		// and {ok: false, status: 0, body: null} for a dropped connection or no answer within
+		// timeout_ms. Never rejects, and answers once.
+		function rpc(method, args, timeout_ms) {
+			return new Promise(function (resolve) {
+				let settled = false;
+				let timer = null;
+				let controller = null;
+				const answer = function (res) {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					resolve(res);
+				};
+				const no_answer = function () {
+					answer({ ok: false, status: 0, body: null });
+				};
+				try {
+					controller = new AbortController();
+				} catch (e) {
+					controller = null; // an old browser: the timer still answers; the request runs on
+				}
+				timer = setTimeout(function () {
+					no_answer();
+					try {
+						if (controller) controller.abort();
+					} catch (e) {
+						// answered already
+					}
+				}, timeout_ms);
+				const body = Object.keys(args)
+					.map(function (key) {
+						const value = args[key] == null ? "" : String(args[key]);
+						return encodeURIComponent(key) + "=" + encodeURIComponent(value);
+					})
+					.join("&");
+				let request;
+				try {
+					request = fetch("/api/method/" + method, {
+						method: "POST",
+						credentials: "same-origin",
+						headers: {
+							Accept: "application/json",
+							"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+							"X-Frappe-CSRF-Token": frappe.csrf_token,
+						},
+						body: body,
+						signal: controller ? controller.signal : undefined,
+					});
+				} catch (e) {
+					no_answer();
+					return;
+				}
+				request
+					.then(function (response) {
+						return response.text().then(
+							function (text) {
+								let parsed = null;
+								try {
+									parsed = JSON.parse(text);
+								} catch (e) {
+									parsed = null; // a proxy's HTML error page, say
+								}
+								answer({
+									ok: response.ok,
+									status: response.status,
+									body: parsed && typeof parsed === "object" ? parsed : null,
+								});
+							},
+							function () {
+								// The body was cut off: a status, but nothing to read.
+								answer({ ok: response.ok, status: response.status, body: null });
+							}
+						);
+					}, no_answer)
+					.catch(no_answer);
+			});
+		}
+
+		// What an answer to a call of `method` says. "ok": a 2xx carrying its message and no
+		// exception. "blocked" and "refused": the server's definite no — frappe answers a
+		// frappe.throw, raised before anything moved, with a 4xx whose JSON names the raised
+		// class in exc_type. "blocked" is a no that only a new render of /pay-card answers:
+		// PaymentBlocked itself (refused_for_invoice), or a session this page no longer has
+		// (session_lost). Everything else is "unsure": no answer, a 5xx (even one naming an
+		// exc_type — an error after Stripe charged is a 500), a body that would not parse, a 4xx
+		// naming no class, a 2xx carrying an exception or no message.
+		function verdict(res, method) {
+			const body = res.body;
+			if (res.ok) return body && !body.exc && body.message ? "ok" : "unsure";
+			if (res.status >= 400 && res.status < 500 && body && typeof body.exc_type === "string" && body.exc_type) {
+				return refused_for_invoice(body) || session_lost(body, method) ? "blocked" : "refused";
+			}
+			return "unsure";
+		}
+
+		// The session this page was rendered in is gone, so frappe refuses every call from it
+		// the same way — before any handler runs, so nothing moved — until a render gives it a
+		// new one. A stale CSRF token (the payer signed in again in another tab, which issues a
+		// new one) is a 400 CSRFTokenError, "Invalid Request". A sign-in that expired, or was
+		// ended elsewhere, makes the call a Guest's, and frappe refuses a Guest the method
+		// itself: a 403 PermissionError from is_whitelisted, whose message names the method, with
+		// session_expired set when the cookie named a session that has ended. Shown under the
+		// form, those came back on every Continue until the payer reloaded by hand; a reload gets
+		// a new token, or the login page (pay_card.py sends a Guest there). Any other
+		// PermissionError — "You can only pay your own invoices" — stays an ordinary refusal with
+		// its message under the form: reloading on a refusal nobody has traced could loop, the
+		// page coming back each time with no word of why.
+		function session_lost(body, method) {
+			const type = body.exc_type;
+			if (type === "CSRFTokenError" || type === "SessionExpired") return true;
+			if (type !== "PermissionError") return false;
+			return !!body.session_expired || (!!method && String(body._server_messages || "").indexOf(method) !== -1);
+		}
+
+		// The server's own words for a refusal, as plain text: the last of its _server_messages,
+		// a JSON list whose items are JSON-encoded {message} objects (or plain strings).
+		function server_message(body) {
+			let text = "";
+			try {
+				const list = JSON.parse((body && body._server_messages) || "[]");
+				let last = Array.isArray(list) && list.length ? list[list.length - 1] : "";
+				try {
+					last = JSON.parse(last);
+				} catch (e) {
+					// a plain string
+				}
+				text = last && typeof last === "object" ? last.message : last;
+			} catch (e) {
+				text = "";
+			}
+			return String(text == null ? "" : text)
+				.replace(/<br\s*\/?>/gi, " ")
+				.replace(/<[^>]*>/g, "")
+				.replace(/&nbsp;/g, " ")
+				.replace(/&lt;/g, "<")
+				.replace(/&gt;/g, ">")
+				.replace(/&quot;/g, '"')
+				.replace(/&#39;|&#x27;/g, "'")
+				.replace(/&amp;/g, "&")
+				.replace(/\s+/g, " ")
+				.trim();
+		}
 
 		// Browser Back and Forward. The review step is a history entry of its own, so the
 		// phone's Back returns to the card step instead of leaving the page, which lost the
@@ -188,12 +367,13 @@
 
 		// The server refused because of the invoice itself — a payment for it already settling,
 		// received or waiting on a bank, or the invoice paid or no longer payable — rather than
-		// because of this card. frappe.call hands error() the 417's body, naming the class.
-		// The page has no state for that; a render of /pay-card does, so ask it rather than
-		// leave a live card form under a modal that says "already being processed". Only the
-		// class itself: its subclasses LinkStillOpen and AttemptUnreleased (an earlier attempt
-		// Stripe would not confirm canceled) have nothing a render could show — it would bring
-		// the card form back with no word of why — so they keep the form and the modal says why.
+		// because of this card. frappe names the raised class in the 417's exc_type (r is its
+		// parsed body). The page has no state for that; a render of /pay-card does, so ask it
+		// rather than leave a live card form beside "already being processed". Only the class
+		// itself: its subclasses LinkStillOpen and AttemptUnreleased (an earlier attempt Stripe
+		// would not confirm canceled) have nothing a render could show — it would bring the card
+		// form back with no word of why — so they keep the form, and the server's message under
+		// it says why.
 		function refused_for_invoice(r) {
 			return !!(r && typeof r === "object" && r.exc_type === "PaymentBlocked");
 		}
@@ -220,14 +400,21 @@
 
 			// Validates the form and collects wallet details; required before a
 			// ConfirmationToken can be created.
-			const submitted = await elements.submit();
-			if (submitted.error) {
-				$("card-error").textContent = submitted.error.message;
+			let created;
+			try {
+				const submitted = await elements.submit();
+				if (submitted.error) {
+					$("card-error").textContent = submitted.error.message;
+					busy(this, false, CONTINUE);
+					return;
+				}
+				created = await stripe.createConfirmationToken({ elements });
+			} catch (e) {
+				// Stripe.js itself failed: nothing was priced, so say so and let Continue try again.
+				$("card-error").textContent = CONTINUE_FAILED;
 				busy(this, false, CONTINUE);
 				return;
 			}
-
-			const created = await stripe.createConfirmationToken({ elements });
 			if (created.error) {
 				$("card-error").textContent = created.error.message;
 				busy(this, false, CONTINUE);
@@ -235,24 +422,25 @@
 			}
 			const created_token = created.confirmationToken.id;
 
-			frappe.call({
-				method: "erpnext_enhancements.stripe_payments.core.api.portal_price_card_payment",
-				args: { sales_invoice: INVOICE, confirmation_token: created_token },
-				callback: function (r) {
-					busy($("continue-btn"), false, CONTINUE);
-					if (!r || r.exc || !r.message) return;
-					if (mine !== attempt) return; // the payer moved on while it was priced
-					token = created_token;
-					quote = r.message;
-					show_review(quote);
-					// Pushed from the Continue tap, so Chrome's Back never skips it.
-					write_entry(true, { payCard: REVIEW, quote: quote.stripe_payment });
-				},
-				error: function (r) {
-					busy($("continue-btn"), false, CONTINUE);
-					if (mine === attempt && refused_for_invoice(r)) show_server_verdict();
-				},
-			});
+			const res = await rpc(PRICE, { sales_invoice: INVOICE, confirmation_token: created_token }, PRICE_TIMEOUT_MS);
+			busy($("continue-btn"), false, CONTINUE);
+			if (mine !== attempt) return; // the payer moved on while it was priced
+			const said = verdict(res, PRICE);
+			if (said === "ok") {
+				token = created_token;
+				quote = res.body.message;
+				show_review(quote, token);
+				// Pushed from the Continue tap, so Chrome's Back never skips it.
+				write_entry(true, { payCard: REVIEW, quote: quote.stripe_payment });
+			} else if (said === "blocked") {
+				// Refused for the invoice, or a session this page no longer has: the render says
+				// why, or signs the payer in again.
+				show_server_verdict();
+			} else {
+				// Refused over this card (or an attempt no render can show), or no answer at all. A
+				// quote moves no money, so the card step stays, says why, and Continue tries again.
+				$("card-error").textContent = (said === "refused" && server_message(res.body)) || CONTINUE_FAILED;
+			}
 		});
 
 		function discard_quote() {
@@ -266,10 +454,13 @@
 			$("review-nofee").style.display = "none";
 		}
 
-		function show_review(q) {
+		// The review of quote q, priced against token t: what its Pay button charges (`shown`).
+		function show_review(q, t) {
 			// Nothing of an earlier quote may show under this one: a debit card quoted after a
 			// credit card must never sit beside the credit card's fee line.
 			hide_fee_lines();
+			$("review-error").textContent = "";
+			shown = { quote: q, token: t };
 			$("review-amount").textContent = q.amount_display;
 			$("review-total").textContent = q.total_display;
 
@@ -295,9 +486,11 @@
 
 		// The card step, with the card still in the Element. The quote is kept: until the card
 		// changes or a new Continue starts, a Forward may show its review again, and a
-		// different card always gets its own quote and its own fee decision.
+		// different card always gets its own quote and its own fee decision. The review's own
+		// hold on it (`shown`) ends here: only a review on screen can be paid.
 		function show_card() {
 			attempt += 1;
+			shown = null;
 			hide_fee_lines();
 			$("step-review").style.display = "none";
 			$("step-card").style.display = "";
@@ -332,7 +525,7 @@
 			}
 			if (live) {
 				// Forward (or Back from an entry above) onto the review of the quote still held.
-				show_review(quote);
+				show_review(quote, token);
 				return;
 			}
 			show_card();
@@ -357,9 +550,23 @@
 		});
 
 		$("pay-btn").addEventListener("click", function () {
+			// One charge at a time: while one runs, the button reads "Please wait…" or "Checking
+			// your payment…" and a tap changes nothing.
+			if (charging) return;
 			// Only from the review on screen: a tap that lands as the page steps off it (the
 			// in-page Back, say) charges nothing.
-			if (!quote || charging || $("step-review").style.display === "none") return;
+			if ($("step-review").style.display === "none") return;
+			// Exactly the quote this review was drawn for, never the page's latest `quote`: Pay
+			// once did nothing at all on a review whose `quote` had been set aside (the cause is
+			// unproven; the Element's change event is suspected), and this cannot.
+			const charge = shown;
+			if (!charge) {
+				// Nothing behind the review on screen, which should never be: say what to do
+				// rather than ignore the tap. Continue prices a new quote.
+				$("review-error").textContent = REVIEW_LOST;
+				return;
+			}
+			$("review-error").textContent = "";
 			const label = this.textContent;
 			busy(this, true, label);
 			charging = true;
@@ -403,29 +610,37 @@
 				show_server_verdict();
 			};
 
-			// frappe.call gives error() the parsed body of a 417, a frappe.throw — the server's
-			// definite refusal, which names its exc_type — and nothing, or the bare request,
-			// for a dropped connection, a 5xx or a proxy timeout.
-			const definite = function (r) {
-				return !!(r && typeof r === "object" && r.exc_type);
-			};
-
 			// 3-D Secure's own answer. Only an error about the card or the request is the bank's
 			// (or Stripe's) definite no: the PaymentIntent is dead, and the card step is right.
 			// Anything else — Stripe unreachable, a rate limit, an error type this page has never
 			// heard of — says nothing about whether the bank approved it.
 			const DEFINITE_3DS_ERRORS = ["card_error", "validation_error", "invalid_request_error"];
 
-			frappe.call({
-				method: "erpnext_enhancements.stripe_payments.core.api.portal_confirm_card_payment",
-				args: { stripe_payment: quote.stripe_payment, confirmation_token: token },
-				callback: async function (r) {
+			rpc(
+				CONFIRM,
+				{ stripe_payment: charge.quote.stripe_payment, confirmation_token: charge.token },
+				CHARGE_TIMEOUT_MS
+			)
+				.then(async function (answer) {
 					if (answered) return;
-					if (!r || r.exc) {
+					const said = verdict(answer, CONFIRM);
+					if (said === "blocked") {
+						// Refused for the invoice (another payment, paid, credited), or a session this
+						// page no longer has: nothing was charged, and the render says why or signs the
+						// payer in again — never a card form beside that refusal.
 						unsure();
 						return;
 					}
-					const res = r.message || {};
+					if (said === "refused") {
+						// Declined, or refused over this card: the server's own words, under the form.
+						failed(server_message(answer.body) || NOT_CHARGED);
+						return;
+					}
+					if (said !== "ok") {
+						unsure();
+						return;
+					}
+					const res = answer.body.message;
 					if (res.requires_action && res.client_secret) {
 						// 3-D Secure. The webhook finalises either way; this only lets
 						// the payer complete the challenge without leaving the flow.
@@ -449,17 +664,14 @@
 					// (status Processing, outcome_unknown): "being processed" is the truth.
 					answered = true;
 					window.location.replace(
-						"/stripe-return?status=success&sp=" + encodeURIComponent(res.stripe_payment || "")
+						"/stripe-return?status=success&sp=" +
+							encodeURIComponent(res.stripe_payment || charge.quote.stripe_payment || "")
 					);
-				},
-				error: function (r) {
-					// Refused for the invoice (another payment, paid, credited): nothing was
-					// charged, and the render says why — never a card form beside that refusal.
-					if (refused_for_invoice(r)) unsure();
-					else if (definite(r)) failed(null);
-					else unsure();
-				},
-			});
+				})
+				.catch(function () {
+					// Nothing here may leave the charge hanging: whatever broke, ask the server.
+					unsure();
+				});
 		});
 	})();
 	</script>

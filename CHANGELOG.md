@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.537.2] - 2026-09-25
+
+**A declined card no longer freezes `/pay-card`.** The customer sees the bank's message and can
+correct the card and try again. The Bank and autopay buttons on `/pay` also no longer stay stuck
+after a refusal.
+
+### Why
+
+The second live test (TASK-2026-02293) reached Stripe. The issuer declined the card twice:
+Mastercard debit, `incorrect_number` and then `generic_decline`, so nothing was charged. After
+each decline the page locked up: Pay stayed on "Please wait…", and Back and Forward stopped
+working.
+
+**Frappe v16's website `frappe.call` (`frappe/website/js/website.js`) calls back only on an HTTP
+200 and never calls `error()`.** On a 417 (a `frappe.throw`, which is what a decline is) it shows
+the server's message in a pop-up and does nothing else. `/pay-card` handled every refusal in
+`error()`: a decline, the invoice already being paid, a dropped connection. None of it ever ran.
+The page harness faked `frappe.call` with an `error()` callback, so it passed. This is the same
+trap as the v1.520.1 lesson: a harness that fakes the framework proves only the fake.
+
+### Fixed
+
+- **`/pay-card` talks to the server over `fetch`.**
+  - One in-page `rpc()` helper posts to `/api/method/<method>` with the session's CSRF token.
+  - It answers every outcome: a 2xx, a 4xx refusal naming its `exc_type`, a 5xx, a dropped
+    connection or a timeout (60 s for Continue, 150 s for Pay).
+  - A definite refusal returns the payer to the card step with the server's message, for example
+    "Your card was declined. Nothing was charged."
+  - `PaymentBlocked` reloads the page so it can say why.
+  - Anything uncertain after Pay goes to "Checking your payment…", never to a fresh card form.
+- **Pay charges exactly the review on screen.** `show_review` records its own quote and token,
+  and Pay reads that instead of the shared `quote` that the Payment Element's `change` handler
+  and the Forward logic may clear.
+  - The owner once saw Pay do nothing at all on the review. That symptom matches this dependency,
+    though the cause was not proven.
+  - A Pay tap with no quote behind it now says "Please tap Back and Continue again." instead of
+    being ignored.
+  - `#card-error` and `#review-error` are `role="alert"`.
+- **`/pay`: Bank, Set up autopay and Cancel autopay** re-enabled themselves only in `error()`. They
+  now get their button back in the website `frappe.call`'s `always` hook, which it does run for
+  every outcome after its own pop-up, unless the call succeeded.
+
+### Tests
+
+- `scripts/test_web_flow_history.js` fakes `fetch`, not `frappe.call`: 239 checks.
+  - It covers the production failure and a decline at Continue.
+  - It covers twelve uncertain outcomes after Pay. Each one reloads and none shows the card form.
+  - It covers a `change` event under the review, Pay with no quote, the timeouts, and the CSRF
+    header and URL.
+  - A `frappe.call` stand-in that, like the real one, never answers a refusal sits on `window`,
+    and no call reaches it.
+- `test_pay_card_never_uses_the_website_frappe_call` and
+  `test_pay_buttons_are_given_back_after_any_refusal` run without node.
+
 ## [1.537.1] - 2026-09-25
 
 **Card payments on `/pay-card` go through.** The first live portal payment (TASK-2026-02293,
