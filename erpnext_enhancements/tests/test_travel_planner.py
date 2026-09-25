@@ -932,5 +932,71 @@ def _strip_js_comments(source):
 	return re.sub(r"(^|[^:\"'`])//[^\n]*", r"\1", source)
 
 
+class TestItineraryBackForward(unittest.TestCase):
+	"""/itinerary: the trip on screen is ?trip=<name>, a chip tap is one history entry, and
+	Back / Forward load the entry's trip. Before, Back after switching trips left the page (or
+	the home-screen app), and a reload or Back from /travel_guidelines showed the default trip
+	instead of the one being read."""
+
+	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
+	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
+
+	def _login_redirect(self):
+		"""The real ``login_redirect``, extracted with ast: importing the controller pulls in
+		api.travel and the kiosk controller, far more than this suite's stub provides."""
+		import ast
+		from urllib.parse import quote
+
+		tree = ast.parse(_read(self.CONTROLLER))
+		wanted = [
+			n
+			for n in tree.body
+			if (isinstance(n, ast.FunctionDef) and n.name == "login_redirect")
+			or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "ROUTE" for t in n.targets))
+		]
+		namespace = {"quote": quote}
+		exec(compile(ast.Module(body=wanted, type_ignores=[]), self.CONTROLLER, "exec"), namespace)
+		return namespace["login_redirect"]
+
+	def test_the_login_redirect_keeps_the_trip(self):
+		login_redirect = self._login_redirect()
+		# A bare visit reads exactly as it always has.
+		self.assertEqual(login_redirect("/itinerary?"), "/login?redirect-to=/itinerary")
+		self.assertEqual(login_redirect(None), "/login?redirect-to=/itinerary")
+		# The trip comes back after login, encoded whole so the login page cannot split it.
+		self.assertEqual(
+			login_redirect("/itinerary?trip=TRIP-0007&x=1"),
+			"/login?redirect-to=/itinerary%3Ftrip%3DTRIP-0007%26x%3D1",
+		)
+		# Never anywhere but this page.
+		self.assertEqual(login_redirect("//evil.example/x"), "/login?redirect-to=/itinerary")
+
+	def test_history_calls_come_only_from_the_tap_and_the_boot(self):
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		self.assertNotIn("beforeunload", code)
+		# One push, in writeTripEntry, called with push=true only from the chip's click.
+		self.assertEqual(code.count("pushState("), 1)
+		self.assertEqual(code.count("writeTripEntry(true"), 1)
+		self.assertRegex(
+			code,
+			r"chip\.addEventListener\('click', function \(\) \{\s*"
+			r"if \(trip\.name !== state\.currentTrip\) writeTripEntry\(true, trip\.name\);",
+		)
+		# loadTrip, which popstate calls, never writes history.
+		body = code[code.index("function loadTrip(") : code.index("function defaultTrip(")]
+		self.assertNotIn("writeTripEntry", body)
+		self.assertNotIn("State(", body)
+
+	def test_the_page_in_a_fake_browser(self):
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		harness = os.path.join(os.path.dirname(APP_DIR), "scripts", "test_web_flow_history.js")
+		result = subprocess.run(
+			[node, harness, "itinerary"], capture_output=True, text=True, check=False, timeout=120
+		)
+		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
 	unittest.main()

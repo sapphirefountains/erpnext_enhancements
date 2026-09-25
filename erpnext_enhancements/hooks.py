@@ -989,6 +989,14 @@ doc_events = {
 	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
+		# stripe_payments: refuse to cancel an invoice while a Stripe payment for it is still
+		# in flight, and expire its emailed payment links first. Frappe blocks a cancel only
+		# for SUBMITTED linked documents and a Stripe Payment is never submitted, so an ACH
+		# debit settling for days (or a charge whose Payment Entry could not post) did not
+		# stop it -- and the amended copy got a new name no guard keyed on, so autopay
+		# charged it again on submit. Runs inside the cancel's transaction and never commits
+		# (ERPNext's own before_cancel has written by then); a no-op while Stripe is off.
+		"before_cancel": "erpnext_enhancements.stripe_payments.core.card_element.before_invoice_cancel",
 	},
 	# ai_governance (FAC 3.0.0 compat): give each of this app's assistant tools the FAC category
 	# its own annotations imply, at the moment FAC inserts its row. FAC seeds every external

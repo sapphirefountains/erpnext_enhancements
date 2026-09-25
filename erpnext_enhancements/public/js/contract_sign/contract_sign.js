@@ -315,21 +315,96 @@
 			})
 			.then(function (result) {
 				if (result && result.ok) {
-					window.location.reload();
+					// In place, like signing. Declining retires the link, so a reload
+					// could only say "This link isn't available", never "declined".
+					$("cs-form").hidden = true;
+					$("cs-agreement").hidden = true;
+					$("cs-declined").hidden = false;
+					window.scrollTo(0, 0);
 					return;
 				}
 				showError((result && result.error) || "Please confirm your email address first.");
 			});
 	}
 
+	/* ------------------------------------------------- autopay, after Back */
+
+	/* "Save a card" leaves for Stripe's own page. Back from there reloads this
+	 * link, which by then says "Already signed", and the enrolment just left had
+	 * no way back in: the server hands out one Stripe link per request, and never
+	 * from the link alone. So the one it handed this tab is kept for this tab:
+	 * sessionStorage (never sent anywhere, gone with the tab), filed under a
+	 * fingerprint of the ref rather than the ref itself, and offered again only
+	 * while the server says the enrolment is unfinished (BOOT.autopay_resumable).
+	 * No history entry is added anywhere on this page: the executed form must
+	 * never come back, so signing and declining swap in place. */
+	var CHECKOUT_KEY = "cs_autopay_checkout";
+	var CHECKOUT_TTL_MS = 23 * 60 * 60 * 1000; // Stripe expires the session at 24 hours
+
+	function refPrint() {
+		// FNV-1a: an identity check between two pages of one tab, not a secret.
+		var text = String(BOOT.ref || "");
+		var hash = 0x811c9dc5;
+		for (var i = 0; i < text.length; i++) {
+			hash ^= text.charCodeAt(i);
+			hash = Math.imul(hash, 0x01000193) >>> 0;
+		}
+		return hash.toString(16);
+	}
+
+	function rememberCheckout(url) {
+		try {
+			window.sessionStorage.setItem(
+				CHECKOUT_KEY,
+				JSON.stringify({ ref: refPrint(), url: url, at: Date.now() })
+			);
+		} catch (e) {
+			// Private mode or storage off: Back simply cannot offer it again.
+		}
+	}
+
+	function savedCheckout() {
+		try {
+			var saved = JSON.parse(window.sessionStorage.getItem(CHECKOUT_KEY) || "null");
+			if (
+				saved &&
+				saved.ref === refPrint() &&
+				typeof saved.url === "string" &&
+				saved.url.indexOf("https://") === 0 &&
+				Date.now() - saved.at < CHECKOUT_TTL_MS
+			) {
+				return saved.url;
+			}
+		} catch (e) {
+			// Unreadable is the same as absent.
+		}
+		return null;
+	}
+
+	function forgetCheckout() {
+		try {
+			window.sessionStorage.removeItem(CHECKOUT_KEY);
+		} catch (e) {
+			// Nothing to forget.
+		}
+	}
+
 	function startAutopay() {
 		var button = $("cs-autopay-start");
+		// A page the browser kept in memory, shown again by Back from Stripe: the link
+		// this tab was given still works, and asking again only gets "already started".
+		var kept = savedCheckout();
+		if (kept) {
+			window.location.href = kept;
+			return;
+		}
 		button.disabled = true;
 		post("erpnext_enhancements.project_enhancements.esign.portal.start_autopay", {
 			esign_sid: sid,
 		})
 			.then(function (result) {
 				if (result && result.ok && result.checkout_url) {
+					rememberCheckout(result.checkout_url);
 					window.location.href = result.checkout_url;
 					return;
 				}
@@ -362,6 +437,18 @@
 
 	/* ----------------------------------------------------------------- init */
 
+	// Restored from the back-forward cache by Back from Stripe (the page is
+	// no-store, so this is rare): "Save a card" was disabled on the way out, and
+	// nothing else would ever enable it again.
+	window.addEventListener("pageshow", function (event) {
+		if (!event.persisted) return;
+		var start = $("cs-autopay-start");
+		var offer = $("cs-autopay");
+		if (!start || !offer || offer.hidden || !start.disabled) return;
+		if (savedCheckout()) start.disabled = false;
+		else $("cs-autopay-note").hidden = false;
+	});
+
 	document.addEventListener("DOMContentLoaded", function () {
 		var fresh = $("cs-fresh");
 		if (fresh) fresh.addEventListener("click", freshLink);
@@ -370,6 +457,24 @@
 		if (autopayStart) autopayStart.addEventListener("click", startAutopay);
 		var autopaySkip = $("cs-autopay-skip");
 		if (autopaySkip) autopaySkip.addEventListener("click", skipAutopay);
+
+		// "Already signed", reached by Back from Stripe's card page.
+		var resume = $("cs-autopay-resume");
+		if (resume) {
+			if (BOOT.autopay_resumable && savedCheckout()) {
+				resume.hidden = false;
+				$("cs-autopay-resume-start").addEventListener("click", function () {
+					var url = savedCheckout();
+					if (url) window.location.href = url;
+				});
+				$("cs-autopay-resume-skip").addEventListener("click", function () {
+					forgetCheckout();
+					resume.hidden = true;
+				});
+			} else if (!BOOT.autopay_resumable) {
+				forgetCheckout(); // finished, or never started: nothing to go back to
+			}
+		}
 
 		var form = $("cs-form");
 		if (!form) return; // a notice state — nothing else to wire up

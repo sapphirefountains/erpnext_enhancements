@@ -126,11 +126,30 @@
 		<p class="cs-hint" id="cs-autopay-note" hidden>{{ _("We'll follow up about payment setup separately.") }}</p>
 	</div>
 
+	{# Declining retires the link, so a reload can only say "This link isn't available".
+	   The answer to the decline is therefore shown in place, as signing's is. #}
+	<div id="cs-declined" class="cs-done" hidden role="status">
+		<h2>{{ _("This agreement was declined") }}</h2>
+		<p>{{ _("Our team has been notified. If that was a mistake, please call us on") }} {{ boot.contact_phone | e }}.</p>
+	</div>
+
 	{% elif state == "signed" %}
 	<div class="cs-notice">
 		<h1>{{ _("Already signed") }}</h1>
 		<p>{{ _("You signed this agreement on") }} {{ boot.signed_on | e }}. {{ _("We emailed you a copy at the time.") }}</p>
 		<p class="cs-hint">{{ _("Need another copy? Call us on") }} {{ boot.contact_phone | e }}.</p>
+	</div>
+
+	{# Back from Stripe's card page lands here. contract_sign.js shows this only when the
+	   server says the enrolment is unfinished (boot.autopay_resumable) and this tab still
+	   holds the Stripe link it was given; the link never comes from the server here. #}
+	<div id="cs-autopay-resume" class="cs-autopay" hidden>
+		<h3>{{ _("Finish setting up automatic payments?") }}</h3>
+		<p>{{ _("You left the secure payment page before a card was saved. You can go back to it, or skip this for now.") }}</p>
+		<div class="cs-actions">
+			<button type="button" class="cs-submit" id="cs-autopay-resume-start">{{ _("Continue to the payment page") }}</button>
+			<button type="button" class="cs-decline" id="cs-autopay-resume-skip">{{ _("No thanks") }}</button>
+		</div>
 	</div>
 
 	{% elif state == "declined" %}

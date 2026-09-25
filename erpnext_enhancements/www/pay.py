@@ -12,6 +12,7 @@ import frappe
 from frappe.utils import fmt_money, formatdate
 
 from erpnext_enhancements.stripe_payments.core.api import get_portal_customers
+from erpnext_enhancements.stripe_payments.core.card_element import invoice_payment_blocks
 from erpnext_enhancements.stripe_payments.core.saved_methods import autopay_consent_text
 from erpnext_enhancements.stripe_payments.core.utils import get_settings, is_enabled
 
@@ -42,14 +43,28 @@ def get_context(context):
 				"due_date",
 				"outstanding_amount",
 				"currency",
-				"custom_stripe_payment_status",
 			],
 			order_by="due_date asc",
 			limit_page_length=200,
 		)
+		# Which invoices get Card and Bank is decided by the rule the endpoints behind them
+		# enforce (card_element.invoice_payment_block), not by the invoice's
+		# custom_stripe_payment_status stamp, which hid both buttons for good after an
+		# abandoned or failed 3-D Secure (nothing un-stamps those). "Paid" is a payment
+		# received on an invoice that still shows a balance (this list holds nothing else),
+		# "Awaiting" a card payment waiting on the payer's bank, and any other verdict one
+		# still settling or not yet confirmed — every verdict hides both buttons (pay.html).
+		# The invoice an amended one was made from counts as the same bill. Read-only:
+		# rendering the page cancels nothing. A tab loaded before a payment started still
+		# shows its buttons; checkout.create_payment and the card endpoints refuse them with
+		# the same verdict. Each Stripe lookup gets a few seconds (card_element.READ_TIMEOUT);
+		# one that does not answer reads as "Processing…" (safe), and after it none of the
+		# rest is attempted.
+		blocks = invoice_payment_blocks([inv["name"] for inv in invoices])
 		for inv in invoices:
 			inv["amount_display"] = fmt_money(inv["outstanding_amount"], currency=inv["currency"])
 			inv["due_display"] = formatdate(inv["due_date"]) if inv["due_date"] else "—"
+			inv["payment_block"] = blocks.get(inv["name"])
 		context.invoices = invoices
 
 	context.enable_card = bool(settings.enable_card)

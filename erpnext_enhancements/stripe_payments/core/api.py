@@ -46,7 +46,9 @@ def create_invoice_payment(sales_invoice, method=None):
 
 @frappe.whitelist()
 def create_adhoc_payment(customer, amount, description=None, method=None):
-	"""RPC (desk): start a Stripe Checkout for an ad-hoc amount (no invoice)."""
+	"""RPC (desk): start a Stripe Checkout for an ad-hoc amount (no invoice). Refused while the
+	customer has a Stripe payment settling or a link open: it is applied to no invoice, so it
+	would not settle that bill (``card_element._refuse_ad_hoc_beside_open_payments``)."""
 	_require_stripe_operator()
 	return create_payment(
 		customer=customer, amount=flt(amount), description=description, channel="Desk", method=method
@@ -66,6 +68,17 @@ def send_payment_link(stripe_payment, via="email", to=None):
 		frappe.throw("This payment has no checkout link to send.")
 	if sp.status not in ("Link Sent", "Processing"):
 		frappe.throw(f"Cannot send a link for a payment that is {sp.status}.")
+	if sp.status == "Link Sent" and sp.sales_invoice:
+		# A link outlives its invoice: canceled, amended, credited or paid another way since
+		# it was made, paying it now would be a second payment or an overpayment.
+		from erpnext_enhancements.stripe_payments.core.card_element import link_is_stale
+
+		if link_is_stale(sp.sales_invoice, sp.amount):
+			frappe.throw(
+				f"Sales Invoice {sp.sales_invoice} has changed since this link was made (canceled, "
+				"amended, or paid in part or in full), so it must not be sent. Start a new Stripe "
+				"payment from the invoice if anything is still owed."
+			)
 
 	label = sp.description or "your payment"
 	message = f"Sapphire Fountains — pay {label}: {sp.checkout_url}"
@@ -282,7 +295,13 @@ def portal_enroll_autopay():
 
 @frappe.whitelist()
 def charge_saved_method(customer, amount=None, sales_invoice=None, description=None):
-	"""RPC (desk): charge a customer's saved method off-session (manual trigger)."""
+	"""RPC (desk): charge a customer's saved method off-session (manual trigger).
+
+	With ``sales_invoice`` (the Customer form's prompt offers the customer's outstanding
+	invoices) it is the guarded invoice path, charged for the invoice's outstanding amount.
+	Without one it is an ad hoc charge allocated to no invoice, refused while the customer
+	has a Stripe payment in flight or a link open (``saved_methods.charge_saved_method``).
+	"""
 	_require_stripe_operator()
 	from erpnext_enhancements.stripe_payments.core.saved_methods import (
 		charge_saved_method as _charge_saved_method,

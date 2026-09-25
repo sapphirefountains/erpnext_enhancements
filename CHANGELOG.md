@@ -7,6 +7,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.537.0] - 2026-09-25
+
+**One invoice can no longer be paid twice through Stripe, and the phone's Back button works on the
+card payment page, `/itinerary` and `/contract-sign`.** This is the last batch of Nik's
+Back/Forward rule (v1.534.0), held back from v1.536.2. A review found that the first Back/Forward
+version of `/pay-card` could charge a card twice when the connection to Stripe dropped mid-charge,
+so the page's fix grew into a payment-safety change built on Nik's decisions of 2026-09-24.
+
+### Why
+
+Before this release, several paths could take a second payment for the same invoice:
+- a card payment beside an emailed Bank link;
+- a Bank checkout started from a `/pay` tab opened before a card payment;
+- the desk's off-session charge, which had no invoice guard at all;
+- cancel-and-amend, because the amended invoice has a new name and no guard keyed on it;
+- two tabs each holding a quote;
+- a charge whose outcome was unknown (a timeout after Stripe had already charged). The page then
+  offered a fresh card form.
+
+### Changed: the rules every payment path now follows (`stripe_payments/core/card_element.py`)
+
+- **One shared guard.** `invoice_payment_block` / `_refuse_if_in_flight` runs on every path that
+  can start a payment for an invoice:
+  - the card quote and confirm;
+  - the hosted Checkout (the Bank button, and the desk "Pay with Stripe");
+  - the desk and autopay off-session charge;
+  - dunning.
+
+  Page renders (`/pay`, `/pay-card`) check it read-only, with a 4 s Stripe timeout, and treat a
+  failed lookup as "being processed".
+- **One payment at a time per invoice.** `invoice_lock`, a per-invoice filelock (the
+  `finalize_payment` pattern), is held from the guard through the Stripe call and the commit. It
+  commits on acquisition, so a waiter never reads the ledger as it stood before the previous
+  holder's commit.
+- **Write-ahead charges.** The row is committed Processing before Stripe is called.
+  - An unknown outcome (timeout, 5xx, worker killed) is retried once with the same idempotency
+    key. If it is still unknown, the row stays blocking and the customer sees "checking your
+    payment", never a fresh card form.
+  - `poll_pending` finds the PaymentIntent through the list endpoint and its
+    `metadata.stripe_payment`, then settles it.
+  - `client.StripeError` now carries `status_code`. Only a 4xx counts as proof that nothing was
+    charged.
+- **Abandoned 3-D Secure (decision 2).** A `requires_action` attempt blocks for 30 minutes. It is
+  then cancelled at Stripe when a new payment starts, or by `poll_pending`. Meanwhile `/pay-card`
+  says the payment "is waiting for your bank's approval… you can pay again in about N minutes".
+  Attempts that can no longer charge are released at once.
+- **Emailed Bank links (decision 3).** Before a customer-started card payment, a new Checkout or a
+  desk charge, every open "Link Sent" Checkout Session for the invoice is expired at Stripe
+  (`POST /v1/checkout/sessions/{id}/expire`). If Stripe says the session was completed, the new
+  payment is refused. Autopay and dunning leave an open link alone and retry in 2 days.
+- **Cancelling a Sales Invoice is refused while a Stripe payment for it is in flight**
+  (`doc_events` `before_cancel` → `card_element.before_invoice_cancel`). Accounts settles or
+  refunds first. A cancel also expires the invoice's open links.
+  - Frappe blocks a cancel only for *submitted* linked documents, and a Stripe Payment is never
+    submitted, which is how cancel-and-amend got through.
+  - `Stripe Payment.sales_invoice` gains an index, so the hook's locking read does not lock the
+    table.
+- **A Payment Entry that fails to post after a successful charge** no longer reaches the customer
+  as "failed". The row stays Processing, and `poll_pending` posts it.
+- **No webhook moves a row backwards.**
+  - A declined attempt inside an emailed Checkout link no longer marks the link Failed while it
+    stays payable. Only the Session's own events decide it.
+  - A Refunded row is never posted or turned back into Paid.
+- **The desk's ad hoc payment link and charge** wait while the customer has a payment in flight.
+- **Wording is true.**
+  - "Paid" appears only when ERPNext says Paid. A credit note is shown as "nothing left to pay".
+  - A card decline shows Stripe's own message.
+  - An attempt Stripe would not confirm cancelled says so, instead of promising it will clear.
+  - A charge held with an unknown outcome is emailed to the payer if it later proves not charged.
+    The one exception: when the payer's own new payment releases it, only Accounts is alerted.
+
+### Fixed: Back and Forward
+
+- **`/pay-card`.**
+  - The review step is a history entry pushed without a URL, so Back returns to the card step.
+  - A charge in flight is never interrupted.
+  - Success uses `location.replace`.
+  - The quote is spent only on a definite failure.
+- **`/itinerary`.** The trip chips push `?trip=` entries. Boot accepts only the person's own
+  trips, and the login redirect keeps `?trip=`.
+- **`/contract-sign`.** Declining shows the declined panel in place, where before it reloaded
+  onto "link not available". An interrupted "Save a card" can be resumed from the same tab.
+
+### After deploy
+
+1. One small live card payment on a phone, including Back mid-flow. There is no test site;
+   see TASK on PRJ-00580.
+2. A read-only check for emailed links that the old webhook marked Failed in the last day while
+   still open, then expire any still-open Session in the Stripe dashboard:
+
+   ```sql
+   select name, sales_invoice, stripe_checkout_session, modified from `tabStripe Payment`
+   where status='Failed' and ifnull(stripe_checkout_session,'')!='' and modified > now() - interval 1 day
+   ```
+
+### Tests
+
+- `tests/test_stripe_payments.py`: 104 tests. Every rule above has one, including races and
+  unknown outcomes.
+- `scripts/test_web_flow_history.js`: 138 checks, covering `/pay-card`, `/itinerary` and
+  `/contract-sign`.
+- Five review rounds, each with mutation checks: money-safety, Stripe-correctness and final
+  verification. Nothing ran against a real bench or Stripe.
+
 ## [1.536.2] - 2026-09-24
 
 **Browser Back and Forward now work on Marketing, Feedback, the course preview and six more Desk

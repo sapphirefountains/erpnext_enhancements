@@ -36,9 +36,50 @@ TIMEOUT = 30
 # Stripe's default tolerance.
 SIGNATURE_TOLERANCE_SECONDS = 300
 
+#: HTTP statuses that are Stripe's definite answer that a request did **not** take
+#: effect: invalid (400), unauthenticated (401), declined (402 — a card error, the one
+#: that matters), forbidden (403), no such object (404). Everything else is an outcome
+#: we cannot know from here: a transport error or timeout (no status at all), a 5xx
+#: (Stripe caches it under the idempotency key, so it replays rather than resolves), a
+#: 409 (the same idempotency key is still executing) or a 429. A charge whose outcome
+#: is unknown may have gone through, and must never be treated as a decline.
+DEFINITE_FAILURE_STATUSES = frozenset({400, 401, 402, 403, 404})
+
 
 class StripeError(frappe.ValidationError):
-	"""Raised when a Stripe REST call or signature verification fails."""
+	"""Raised when a Stripe REST call or signature verification fails.
+
+	``status_code`` is the HTTP status Stripe answered with, or ``None`` when no answer
+	arrived (a transport error or timeout). ``stripe_message`` is Stripe's own
+	``error.message`` — for a card error it is written for the cardholder ("Your card
+	was declined."), so it is the only part of a failure fit to show a customer.
+	"""
+
+	def __init__(self, message="", status_code=None, stripe_message=None):
+		super().__init__(message)
+		self.status_code = status_code
+		self.stripe_message = stripe_message
+
+	@property
+	def definite(self) -> bool:
+		"""Stripe answered, and the request did not take effect (see
+		:data:`DEFINITE_FAILURE_STATUSES`)."""
+		return self.status_code in DEFINITE_FAILURE_STATUSES
+
+
+def is_definite_failure(exc) -> bool:
+	"""Whether ``exc`` proves a Stripe write did not take effect. Anything that is not a
+	:class:`StripeError` carrying a definite status — a bug, a response that would not
+	parse, a killed connection — proves nothing, and is an unknown outcome."""
+	return isinstance(exc, StripeError) and exc.definite
+
+
+def is_missing(exc) -> bool:
+	"""Whether ``exc`` is Stripe's definite answer that the object does not exist **for the
+	configured key** (HTTP 404, ``resource_missing``): created in the other mode (Test vs
+	Live) or another account, or never created at all. Not a failure to reach Stripe — asking
+	again gets the same answer for ever, so a caller must settle the row rather than retry."""
+	return isinstance(exc, StripeError) and exc.status_code == 404
 
 
 def _encode(data, parent=None, out=None):
@@ -60,26 +101,55 @@ def _encode(data, parent=None, out=None):
 	return out
 
 
-def _request(method, path, *, data=None, params=None, idempotency_key=None, settings=None):
-	"""Make an authenticated Stripe REST call; return parsed JSON or raise StripeError."""
+def _request(method, path, *, data=None, params=None, idempotency_key=None, settings=None, timeout=None):
+	"""Make an authenticated Stripe REST call; return parsed JSON or raise StripeError.
+
+	``timeout`` (seconds) defaults to :data:`TIMEOUT`. Read-only lookups made while a
+	web page renders pass a few seconds instead, so a slow Stripe cannot hold a web
+	worker for half a minute per invoice.
+
+	The secret key goes straight into the call rather than into a local, and transport
+	errors are raised ``from None``: a traceback logged with frame locals (as a failed
+	background job's is) must never carry the ``Authorization`` header.
+	"""
 	settings = settings or get_settings()
-	headers = {"Authorization": f"Bearer {get_api_key(settings)}"}
-	if idempotency_key:
-		headers["Idempotency-Key"] = idempotency_key
 	try:
 		response = requests.request(
 			method,
 			f"{API_BASE}{path}",
-			headers=headers,
+			headers=_headers(settings, idempotency_key),
 			data=_encode(data) if data else None,
 			params=_encode(params) if params else None,
-			timeout=TIMEOUT,
+			timeout=timeout or TIMEOUT,
 		)
 	except requests.RequestException as exc:
-		raise StripeError(f"Stripe request failed: {error_snippet(str(exc), 200)}")
+		raise StripeError(f"Stripe request failed: {error_snippet(str(exc), 200)}") from None
 	if response.status_code >= 400:
-		raise StripeError(f"Stripe API error ({response.status_code}): {error_snippet(response.text)}")
-	return response.json()
+		raise StripeError(
+			f"Stripe API error ({response.status_code}): {error_snippet(response.text)}",
+			status_code=response.status_code,
+			stripe_message=_stripe_error_message(response),
+		)
+	try:
+		return response.json()
+	except ValueError:
+		# A 2xx we cannot read took effect all the same: an unknown outcome, not a failure.
+		raise StripeError("Stripe returned a response that could not be read.") from None
+
+
+def _headers(settings, idempotency_key=None) -> dict:
+	headers = {"Authorization": f"Bearer {get_api_key(settings)}"}
+	if idempotency_key:
+		headers["Idempotency-Key"] = idempotency_key
+	return headers
+
+
+def _stripe_error_message(response) -> str | None:
+	"""Stripe's ``error.message`` from an error response, when it has one."""
+	try:
+		return ((response.json() or {}).get("error") or {}).get("message") or None
+	except Exception:
+		return None
 
 
 def ensure_stripe_customer(customer: str, settings=None) -> str:
@@ -107,18 +177,61 @@ def ensure_stripe_customer(customer: str, settings=None) -> str:
 
 
 def create_checkout_session(params: dict, idempotency_key: str | None = None):
+	# Called by checkout._start_checkout while it holds the Sales Invoice row lock (so a
+	# cancel waits for the Link Sent commit); the client's full timeout bounds that wait.
 	"""Create a Stripe Checkout Session. ``params`` is a nested dict (form-encoded)."""
 	return _request("POST", "/checkout/sessions", data=params, idempotency_key=idempotency_key)
 
 
-def retrieve_checkout_session(session_id: str, expand: list[str] | None = None):
+def retrieve_checkout_session(session_id: str, expand: list[str] | None = None, timeout=None):
 	"""Retrieve a Checkout Session, optionally expanding nested objects."""
-	return _request("GET", f"/checkout/sessions/{session_id}", params={"expand": expand} if expand else None)
+	return _request(
+		"GET",
+		f"/checkout/sessions/{session_id}",
+		params={"expand": expand} if expand else None,
+		timeout=timeout,
+	)
 
 
-def retrieve_payment_intent(payment_intent_id: str):
+def expire_checkout_session(session_id: str, timeout=None):
+	"""Expire an open Checkout Session (``POST /v1/checkout/sessions/:id/expire``).
+
+	After this the payer's link shows "expired" and can no longer take a payment.
+	Stripe refuses to expire a session that is already complete (paid, or an ACH debit
+	submitted), which is exactly the case where a second payment must not start. No
+	idempotency key, like a PaymentIntent cancel: Stripe never expires a session twice,
+	and a key would replay a transient error for a day. Callers re-read the session
+	when this raises.
+	"""
+	return _request("POST", f"/checkout/sessions/{session_id}/expire", timeout=timeout)
+
+
+def retrieve_payment_intent(payment_intent_id: str, timeout=None):
 	"""Retrieve a PaymentIntent with its latest charge expanded."""
-	return _request("GET", f"/payment_intents/{payment_intent_id}", params={"expand": ["latest_charge"]})
+	return _request(
+		"GET",
+		f"/payment_intents/{payment_intent_id}",
+		params={"expand": ["latest_charge"]},
+		timeout=timeout,
+	)
+
+
+def list_payment_intents(
+	customer: str, *, created_gte: int | None = None, starting_after: str | None = None, timeout=None
+):
+	"""One page (up to 100, newest first) of a Stripe Customer's PaymentIntents.
+
+	How a charge whose outcome was unknown is found again: the list endpoints are
+	strongly consistent, unlike ``/payment_intents/search`` (which can lag a minute or
+	more), so a PaymentIntent that exists is always on it — and one that is not on it,
+	a quarter of an hour after the request, was never created.
+	"""
+	params = {"customer": customer, "limit": 100}
+	if created_gte:
+		params["created"] = {"gte": int(created_gte)}
+	if starting_after:
+		params["starting_after"] = starting_after
+	return _request("GET", "/payment_intents", params=params, timeout=timeout)
 
 
 def create_refund(payment_intent: str, amount_minor: int | None = None, reason: str | None = None):
@@ -175,7 +288,9 @@ def list_recent_payouts(limit: int = 20, settings=None) -> list[dict]:
 
 
 def create_payment_intent(params: dict, idempotency_key: str | None = None):
-	"""Create (and usually confirm) a PaymentIntent — used for off-session charges."""
+	"""Create (and usually confirm) a PaymentIntent — the off-session charge and the card
+	page's charge. Callers always send an idempotency key, and go through
+	``card_element.create_intent_settled``, which tells a decline from an unknown outcome."""
 	return _request("POST", "/payment_intents", data=params, idempotency_key=idempotency_key)
 
 

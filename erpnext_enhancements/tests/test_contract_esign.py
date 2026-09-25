@@ -817,5 +817,83 @@ class TestSettingsFlags(unittest.TestCase):
         self.assertEqual(set(order), names)
 
 
+class TestSigningPageBackAndForward(unittest.TestCase):
+    """The public page adds no history entry of its own — the executed form must never come
+    back — so Back from Stripe's card page reloads the link into "Already signed". That notice
+    used to drop the card enrolment the customer had just left, with no way back in. Pinned
+    here: the server's yes-or-no (``_autopay_resumable``), where the page shows the offer, and
+    the page's behaviour in node (``scripts/test_web_flow_history.js``)."""
+
+    CONTROLLER = APP_DIR / "www" / "contract_sign.py"
+    TEMPLATE = APP_DIR / "www" / "contract-sign.html"
+
+    def _resumable(self, request, contract=("Customer", "CUST-1"), enrolled=None, raises=False):
+        """Run the real ``_autopay_resumable`` against a fake ``frappe.db``. Extracted with ast:
+        importing the controller pulls in far more of frappe than this suite's stub provides."""
+        import ast
+
+        tree = ast.parse(self.CONTROLLER.read_text(encoding="utf-8"))
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_autopay_resumable")
+
+        def get_value(doctype, name, fields, as_dict=False):
+            if raises:
+                raise RuntimeError("db exploded")
+            if doctype == "Project Contract":
+                return contract
+            return types.SimpleNamespace(**enrolled) if enrolled else None
+
+        namespace = {"frappe": types.SimpleNamespace(db=types.SimpleNamespace(get_value=get_value))}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), str(self.CONTROLLER), "exec"), namespace)
+        doc = dict(request)
+        req = types.SimpleNamespace(project_contract="PC-1", get=doc.get)
+        return namespace["_autopay_resumable"](req)
+
+    def test_resumable_only_while_the_enrolment_is_started_and_unfinished(self):
+        started = {"autopay_offered": 1, "autopay_outcome": "Started"}
+        self.assertTrue(self._resumable(started))
+        # Stripe said it finished, or it never started: nothing to go back to.
+        for outcome in ("Enrolled", "Declined", "Not Offered"):
+            self.assertFalse(self._resumable({"autopay_offered": 1, "autopay_outcome": outcome}), outcome)
+        self.assertFalse(self._resumable({"autopay_offered": 0, "autopay_outcome": "Started"}))
+        # A card already on file (saved some other way): never ask twice.
+        on_file = {"custom_stripe_autopay_enabled": 1, "custom_stripe_default_payment_method": "pm_1"}
+        self.assertFalse(self._resumable(started, enrolled=on_file))
+        self.assertTrue(self._resumable(started, enrolled={"custom_stripe_autopay_enabled": 0}))
+        # Not a customer's contract.
+        self.assertFalse(self._resumable(started, contract=("Supplier", "SUP-1")))
+        self.assertFalse(self._resumable(started, contract=None))
+
+    def test_resumable_never_raises_on_a_page_that_just_executed_a_contract(self):
+        self.assertFalse(self._resumable({"autopay_offered": 1, "autopay_outcome": "Started"}, raises=True))
+
+    def test_the_boot_carries_it_only_on_the_signed_notice(self):
+        src = self.CONTROLLER.read_text(encoding="utf-8")
+        self.assertIn('"autopay_resumable": _autopay_resumable(request) if state == "signed" else False', src)
+
+    def test_the_offer_and_the_declined_answer_sit_in_their_states(self):
+        html = self.TEMPLATE.read_text(encoding="utf-8")
+        signable_at, signed_at = '{% if state == "signable" %}', '{% elif state == "signed" %}'
+        signable = html.split(signable_at, 1)[1].split(signed_at, 1)[0]
+        signed = html.split(signed_at, 1)[1].split("{% elif", 1)[0]
+        self.assertIn('id="cs-declined"', signable)
+        self.assertIn('id="cs-autopay-resume"', signed)
+        self.assertNotIn('id="cs-autopay-resume"', signable)
+        # The resume block never carries a link of its own: the URL comes from this tab.
+        self.assertNotIn("href", signed.split('id="cs-autopay-resume"', 1)[1])
+
+    def test_the_page_in_a_fake_browser(self):
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not on PATH")
+        harness = REPO_ROOT / "scripts" / "test_web_flow_history.js"
+        result = subprocess.run(
+            [node, str(harness), "contract-sign"], capture_output=True, text=True, timeout=120, check=False
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

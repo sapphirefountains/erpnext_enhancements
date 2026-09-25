@@ -109,7 +109,13 @@ def _discover_new_failures(today) -> list[str]:
     link bounces too, with no channel guard). Keying on that flag alone would
     wrongly enrol — and immediately service-hold — a customer who was never on
     autopay. The ``ENROLL_LOOKBACK_DAYS`` recency bound keeps this query off the
-    full never-pruned Failed-payment history."""
+    full never-pruned Failed-payment history.
+
+    ``Failed`` means the card was asked and said no. A charge that provably never
+    reached Stripe, or whose PaymentIntent Stripe does not have, is marked ``Expired``
+    instead (``card_element.resolve_unknown_outcome`` / ``settle_missing``), so it is
+    never enrolled here and the customer is never told a card declined that was not
+    even tried; autopay's sweep charges again."""
     auto_failed = frappe.get_all(
         "Stripe Payment",
         filters={
@@ -201,10 +207,15 @@ def _process_case(inv, today, schedule):
         return
 
     # An earlier attempt's charge is still settling (ACH) or already cleared —
-    # don't stack a second in-flight PaymentIntent.
-    inflight = frappe.db.exists(
-        "Stripe Payment", {"sales_invoice": inv, "status": ["in", ["Processing", "Paid"]]}
-    )
+    # don't stack a second in-flight PaymentIntent. The rule every payment path shares
+    # (card_element.invoice_payment_block), read-only here. A raw count of Processing
+    # rows also counted a portal card attempt whose 3-D Secure the customer abandoned:
+    # it stays Processing until something settles it, so the case was pushed back two
+    # days at a time. The shared rule lets such an attempt through once it provably
+    # cannot charge, and charge_saved_method cancels it at Stripe before charging.
+    from erpnext_enhancements.stripe_payments.core.card_element import invoice_payment_block
+
+    inflight = invoice_payment_block(inv)
     if inflight:
         _stamp(inv, {"custom_dunning_next_retry": add_days(today, 2)})
         frappe.db.commit()
@@ -227,6 +238,14 @@ def _process_case(inv, today, schedule):
         return
 
     status, err = _attempt_charge(invoice.customer, inv)
+    if status == "Blocked":
+        # Refused before anything was charged: another payment for the invoice started
+        # since the check above, or a payment link emailed for it is still open (dunning
+        # never expires the link the customer was sent; card_element._close_open_checkouts).
+        # Not a decline — no attempt counted, no customer email.
+        _stamp(inv, {"custom_dunning_next_retry": add_days(today, 2)})
+        frappe.db.commit()
+        return
 
     # Re-read outstanding: finalize_payment (on success) posts the Payment Entry.
     outstanding = flt(frappe.db.get_value("Sales Invoice", inv, "outstanding_amount"))
@@ -239,7 +258,9 @@ def _process_case(inv, today, schedule):
         frappe.db.commit()
         return
     if status == "Processing":
-        # ACH pending — wait for the webhook to settle, re-check in a couple of days.
+        # ACH pending, or a charge Stripe never answered (it may have gone through, so it
+        # is never counted as a decline) — wait for the webhook / poll_pending to settle,
+        # re-check in a couple of days.
         _stamp(inv, {"custom_dunning_next_retry": add_days(today, 2), "custom_dunning_last_attempt": now_datetime()})
         frappe.db.commit()
         return
@@ -303,14 +324,18 @@ def _can_autocharge(customer) -> bool:
 
 def _attempt_charge(customer, sales_invoice):
     """Re-charge the saved card for a retry. Returns ``(status, error)`` — status
-    is the resulting Stripe Payment status ('Paid'/'Processing'/'Failed');
+    is the resulting Stripe Payment status ('Paid'/'Processing'/'Failed'), or
+    'Blocked' when the invoice guard refused before anything was charged;
     ``charge_saved_method`` raises on a synchronous decline, caught here. Uses the
     ``Dunning`` channel so the built-in per-failure Accounts alert stays quiet."""
+    from erpnext_enhancements.stripe_payments.core.card_element import PaymentBlocked
     from erpnext_enhancements.stripe_payments.core.saved_methods import charge_saved_method
 
     try:
         result = charge_saved_method(customer=customer, sales_invoice=sales_invoice, channel="Dunning")
         return result.get("status"), None
+    except PaymentBlocked:
+        return "Blocked", None
     except Exception as exc:
         return "Failed", str(exc)
 
