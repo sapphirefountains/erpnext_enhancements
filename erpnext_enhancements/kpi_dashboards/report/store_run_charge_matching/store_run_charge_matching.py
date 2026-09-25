@@ -25,9 +25,10 @@ Besides the KPI's rows it reads: every Journal Entry with a **Reference Number**
 whatever its vendor -- a charge linked to its trips by their run ids, a **correcting Journal
 Entry** naming a charge (the one fix advised for a charge already submitted; amending a
 QuickBooks-synced entry would detach it from ``tabQuickBooks Sync Mapping`` and so from the
-pairing), or one saying ``not-store-run``; the earlier trips and the Journal Entries those
-Reference Numbers name that nothing else read, round after round, so a chain of correcting entries
-is followed to its charge; **every Journal Entry line on a company's Stock Received But Not Billed
+pairing), or one saying ``not-store-run``; the earlier trips, the Journal Entries and the other
+Purchase Receipts (one that is not a store run, named beside ``not-store-run``) those Reference
+Numbers name that nothing else read, round after round, so a chain of correcting entries is followed
+to its charge; **every Journal Entry line on a company's Stock Received But Not Billed
 account** from the reader's lookback to the To Date (the backstop: each must be accounted for);
 the 2210 lines of the charges and of their correcting entries; and the Purchase Invoices billed
 from the trips' receipts.
@@ -74,14 +75,17 @@ def execute(filters=None):
 	charges, receipts = snapshots._store_run_rows(suppliers, from_date)
 	early = add_days(from_date, -snapshots.STORE_RUN_LOOKBACK_DAYS)
 	# Then what the Reference Numbers say: links from a charge to its trips, correcting entries,
-	# not-store-run. The keys nothing read are looked up as earlier trips (a link resolves by key,
-	# whatever the trip's date) and as Journal Entries, and the tokens of what that finds in turn.
+	# not-store-run, part-paid. The keys nothing read are looked up as earlier trips (a link resolves
+	# by key, whatever the trip's date), as Journal Entries and as any other Purchase Receipt (the one
+	# a not-store-run entry's 2210 clears), and the tokens of what that finds in turn.
 	references = _references(early)
-	far_receipts, named, asked = [], [], set()
+	far_receipts, named, others, asked = [], [], [], set()
 	for _round in range(LOOKUP_ROUNDS):
 		unknown = [
 			token
-			for token in matching.unresolved_tokens(references + named, charges, receipts + far_receipts)
+			for token in matching.unresolved_tokens(
+				references + named, charges, receipts + far_receipts, others
+			)
 			if token not in asked
 		]
 		if not unknown:
@@ -89,7 +93,8 @@ def execute(filters=None):
 		asked.update(unknown)
 		far_receipts += _receipts_by_key(suppliers, unknown)
 		named += _entries_by_name(unknown)
-	resolution = matching.resolve_references(references, charges, receipts, far_receipts, named)
+		others += _receipts_by_name(suppliers, unknown)
+	resolution = matching.resolve_references(references, charges, receipts, far_receipts, named, others)
 	window = matching.match_window(
 		charges,
 		receipts,
@@ -340,6 +345,41 @@ def _receipts_by_key(suppliers, keys):
 	)
 
 
+def _receipts_by_name(suppliers, names):
+	"""Any Purchase Receipt named by ``names``, draft, submitted or cancelled, with whether it is a
+	store run: ``{name, docstatus, store_run}``. A Reference Number that says ``not-store-run`` may
+	name the receipt its 2210 amount clears, one that is not a store run (a card charge that paid for
+	a PO receipt); ``store_run_matching.resolve_references`` accepts it only when it is submitted and
+	not a store run, and lists the entry, saying why, otherwise.
+
+	``store_run`` is the KPI reader's own definition (the receipts query of
+	``snapshots._store_run_rows``, whatever the date): submitted, not a return, from a store-run
+	vendor, no PO line. ``tests/test_store_run_matching.py`` compares the clauses. Looked up by primary
+	key; MariaDB's case-insensitive collation matches the tokens as ``reference_tokens`` lower-cases
+	them.
+	"""
+	if not names:
+		return []
+	return frappe.db.sql(
+		"""
+		select pr.name, pr.docstatus,
+			(
+				pr.docstatus = 1 and pr.is_return = 0
+				and pr.supplier in %(suppliers)s
+				and not exists (
+					select 1 from `tabPurchase Receipt Item` i
+					where i.parent = pr.name and coalesce(i.purchase_order, '') <> ''
+				)
+			) as store_run
+		from `tabPurchase Receipt` pr
+		where pr.name in %(names)s
+		order by pr.name
+		""",
+		{"names": tuple(names), "suppliers": tuple(suppliers)},
+		as_dict=True,
+	)
+
+
 def _accounts(companies):
 	"""``{company: its Stock Received But Not Billed account}`` for ``companies``
 	(``store_run_matching.companies``: of every receipt, charge and entry a row may name)."""
@@ -425,52 +465,28 @@ def _billed(receipts):
 
 
 def _message():
-	return "<br><br>".join(
+	"""A few lines above the list; the full rules are in ``quickbooks_online/MIGRATION_NOTES.md``
+	section 8, and each row's What to Do says what that row needs."""
+	return "<br>".join(
 		[
 			_(
-				"<b>At the QuickBooks cutover (runbook step S-D), set From Date to 2026-01-01 and Show to "
-				"<i>Needs action</i>, and do what each row says before the submit loop.</b> A draft QuickBooks "
-				"card charge that matches a recorded store run has its goods debit moved to 2210 for the trip's "
-				"stock lines before tax and is saved; the loop submits it. The tax and any non-stock line stay on "
-				"the expense account. A charge already submitted is fixed by posting and submitting one "
-				"correcting Journal Entry whose Reference Number is the charge's name, which this report counts "
-				"once submitted; never amend a QuickBooks charge, which detaches it from its sync mapping and so "
-				"from this list. A row leaves <i>Needs action</i> once the charge carries exactly that 2210 debit."
+				"<b>Runbook step S-D:</b> set From Date to 2026-01-01. Work through <i>Needs action</i>, then "
+				"<i>Waiting</i>, doing what each row's <i>What to Do</i> says; finish a list before refreshing."
 			),
 			_(
-				"<b>Then set Show to <i>Waiting</i></b> and check each trip dated on or before the last "
-				"QuickBooks sync: its charge did not pair (a bank-feed date more than 3 days late, an amount "
-				"outside the tolerance, two runs of one purchase, a vendor not ticked Store-Run Vendor). Find its "
-				"draft, move the trip's stock lines to 2210 and <b>put the trip's run id in the draft's Reference "
-				"Number</b> (several run ids, separated by commas or spaces, when one draft pays for several "
-				"trips; keep any already there, and if the draft is already another trip's charge in this list, "
-				"list both only if it pays for both, and otherwise take the other trip's run id out, so that "
-				"trip's row asks for its own charge); the report then shows it as the trip's charge (Match Basis "
-				"<i>Linked by Reference Number</i>). Only if the trip has no card charge at all, bill it from its "
-				"receipts after the cutover; never both."
+				"Repeat until neither list changes, <i>Needs action</i> is empty and <i>2210 Not Accounted "
+				"For</i> reads $0.00. Only then run the loop. Save adjusted drafts: the loop submits them."
 			),
 			_(
-				"<b>Then repeat: Show = <i>Needs action</i>, then Show = <i>Waiting</i>, until neither list "
-				"changes, <i>Needs action</i> is empty and <i>2210 Not Accounted For</i> reads $0.00. Only then "
-				"run the loop.</b> A link can move rows back into either list. Work through every row of a list "
-				"before refreshing: a question a row asks about a charge goes away once that charge is linked "
-				"elsewhere. <i>2210 Not Accounted For</i> is every Journal Entry line on 2210 from 7 days before "
-				"From Date to To Date that no charge accounts for: each has a row saying why. Put "
-				"<i>not-store-run</i> in the Reference Number of an entry on 2210 that has nothing to do with "
-				"store runs, or of a card charge that pays for none, and the report leaves it out; a QuickBooks "
-				"card charge must first carry nothing on 2210 (move it back to the expense), or it stays listed."
+				"In a Reference Number, a trip's run id links a charge to it; <i>part-paid</i> right after a run "
+				"id says the charge paid for that trip only in part; <i>not-store-run</i> sets an entry aside, "
+				"followed by the name of the Purchase Receipt its 2210 amount clears when that receipt is not a "
+				"store run."
 			),
 			_(
-				"One row per store run recorded in the range. Charges are paired exactly as the Store Runs KPI "
-				"pairs them: same store (Lowes and Lowe's are one), dated on the trip's day or up to 3 days after, "
-				"for the receipt total, else the lines plus up to 15% tax. Trips and charges are read from 7 days "
-				"before From Date and charges up to 3 days after To Date, so a trip near either edge pairs as it "
-				"does in the KPI counted from the same From Date. A Reference Number that lists a trip's run id "
-				"(or any of its receipts' names) overrides that pairing, whatever the trip's date. A charge that "
-				"carries 2210 but is neither paired nor linked, a charge whose trips' stock lines add up to more "
-				"than the charge itself (one of those trips is not its), and a Journal Entry whose Reference "
-				"Number names nothing usable, are listed under <i>Needs action</i>. The figures above cover every "
-				"row in range, whatever Show is set to."
+				"A submitted charge is fixed with a correcting Journal Entry whose Reference Number names it; "
+				"never amend a QuickBooks entry. Charges pair as the Store Runs KPI pairs them, and the figures "
+				"cover every row in range, whatever Show is set to."
 			),
 		]
 	)

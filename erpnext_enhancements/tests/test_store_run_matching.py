@@ -136,6 +136,7 @@ def flow(
 	from_date="2026-09-01",
 	to_date="2026-09-30",
 	journal=None,
+	others=(),
 	**kwargs,
 ):
 	"""``(rows, window, resolution, journal, on_2210, corrections)`` as the report's ``execute``
@@ -143,9 +144,10 @@ def flow(
 	overridden by the links, every 2210 amount taken from ``on_2210``. ``journal`` -- the backstop's
 	read, every Journal Entry with a line on 2210 dated from the lookback to To Date -- is, unless
 	given, every Journal Entry of ``on_2210`` so dated (its date from ``references``, ``named`` or
-	``charges``)."""
+	``charges``). ``others``: the Purchase Receipts ``_receipts_by_name`` found (``{name, docstatus,
+	store_run}``)."""
 	on_2210 = dict(on_2210 or {})
-	resolution = matching.resolve_references(references, charges, receipts, far_receipts, named)
+	resolution = matching.resolve_references(references, charges, receipts, far_receipts, named, others)
 	window = matching.match_window(
 		charges,
 		receipts,
@@ -223,6 +225,35 @@ def find_its_draft(stock, key, account=ACCOUNT):
 def waiting_text(stock, key):
 	"""The account is written in full once per text, by its number after that (third review)."""
 	return f"No card charge paired: {find_its_draft(stock, key)}. {ONLY_IF_NONE}"
+
+
+#: What a card charge's 2210 amount may clear besides a store run (fifth review, item 1).
+OTHER_RECEIPT = "a Purchase Receipt that is not a store run (one made from a Purchase Order, or a return)"
+CLEARS_DRAFT = (
+	f"If this amount clears {OTHER_RECEIPT}, put not-store-run followed by that receipt's name in its Reference "
+	"Number"
+)
+AGAIN = "If you moved it for a trip, that trip's row then says how to move it again, linked"
+
+
+def clears_submitted(amount, lines="Dr 2210 / Cr the expense account it used"):
+	"""A submitted entry cannot be marked: the amount moved back is posted again naming the receipt."""
+	return (
+		f"If that amount cleared {OTHER_RECEIPT}, also post and submit a Journal Entry for {amount} ({lines}) "
+		"with Reference Number not-store-run followed by that receipt's name, which keeps that receipt cleared"
+	)
+
+
+def no_stock_find(key):
+	"""How a waiting trip with no stock lines finds its charge: the clause of :func:`find_its_draft`,
+	nothing to move (fifth review, item 2: "change nothing" left another trip holding its draft)."""
+	return (
+		f"find its QuickBooks draft, if it has one: nothing on it needs to move (optionally put {key} in its "
+		"Reference Number and save it). If that draft is already another trip's charge in this list, put "
+		f"{key} in its Reference Number and save it; if it does not pay for that trip, also take that trip's "
+		"run id out of what links it to this charge (edit a draft and save it, cancel a submitted correcting "
+		"entry); that trip's row then asks. A charge already submitted: change nothing"
+	)
 
 
 # ---------------------------------------------------------------------------
@@ -550,9 +581,9 @@ class TestWhatToDo(unittest.TestCase):
 		row = self.one([], [receipt("2026-09-03", amount=20.0, stock=0.0, total=21.45)])
 		self.assertEqual(
 			row["action"],
-			"No card charge paired and no stock lines: if it has a QuickBooks draft, change nothing "
-			f"(optionally put sr-a in its Reference Number). {ONLY_IF_NONE}",
+			f"No card charge paired and no stock lines: {no_stock_find('sr-a')}. {ONLY_IF_NONE}",
 		)
+		self.assertNotIn("change nothing (", row["action"])
 		self.assertEqual(row["show"], matching.WAITING)
 
 	def test_waiting_texts_are_either_or(self):
@@ -813,9 +844,9 @@ class TestChargesWithNoStoreRun(unittest.TestCase):
 		row = rows[0]
 		self.assertEqual(
 			row["action"],
-			f"Carries $45.00 on {ACCOUNT} but no recorded store run is paired or linked. If you moved it for "
-			"a trip whose row shows no other charge, put that trip's run id in this entry's Reference Number; "
-			"otherwise move it back to the expense. Then save it; the S-D loop submits it",
+			f"Carries $45.00 on {ACCOUNT} but no recorded store run is paired or linked. {CLEARS_DRAFT}; if you "
+			"moved it for a trip whose row shows no other charge, put that trip's run id in this entry's "
+			"Reference Number; otherwise move it back to the expense. Then save it; the S-D loop submits it",
 		)
 		self.assertEqual(
 			(row["show"], row["row_type"], row["match_basis"]),
@@ -845,7 +876,7 @@ class TestChargesWithNoStoreRun(unittest.TestCase):
 			f"Carries $45.00 on {ACCOUNT} but no recorded store run is paired or linked, and a submitted "
 			"entry's Reference Number cannot be changed: move it back to the expense; post and submit a "
 			"correcting Journal Entry for $45.00 (Dr the expense account it used / Cr 2210) with Reference "
-			"Number ACC-JV-7. If you moved it for a trip, that trip's row then says how to move it again, linked",
+			f"Number ACC-JV-7. {clears_submitted('$45.00')}. {AGAIN}",
 		)
 		self.assertEqual(rows[0]["charge_status"], "Submitted")
 
@@ -1608,17 +1639,15 @@ class TestBackstop(unittest.TestCase):
 
 	def test_an_entry_with_no_reference_number(self):
 		"""An ERPNext entry may be an adjustment that has nothing to do with store runs; a QuickBooks
-		entry is a card charge, which carries nothing on 2210 unless it pays for a store run, so it is
-		never told to mark itself not-store-run while it still carries money there (fourth review)."""
+		entry is a card charge, never told to mark itself not-store-run alone while it still carries
+		money there (fourth review), but told to name the receipt that money clears when it clears one
+		that is not a store run (fifth review, item 1)."""
 		erpnext = (
 			f"Carries $30.00 on {ACCOUNT} that the report cannot tie to any store run or card charge. If it "
 			"adjusts a charge, its Reference Number should name that charge (or the trip's run id); if it has "
 			"nothing to do with store runs, add not-store-run to its Reference Number. "
 		)
-		card = (
-			f"Carries $30.00 on {ACCOUNT} that the report cannot tie to any store run or card charge, and a card "
-			"charge that pays for no store run carries nothing there. "
-		)
+		card = f"Carries $30.00 on {ACCOUNT} that the report cannot tie to any store run or card charge. "
 		for docstatus, source, action in (
 			(0, "ERPNext", erpnext + "Edit its Reference Number and save it."),
 			(
@@ -1632,17 +1661,16 @@ class TestBackstop(unittest.TestCase):
 				0,
 				"QuickBooks",
 				card
-				+ "If you moved it for a trip whose row shows no other charge, put that trip's run id in "
-				"its Reference Number; otherwise move it back to the expense. Then save it; the S-D loop "
-				"submits it",
+				+ f"{CLEARS_DRAFT}; if you moved it for a trip whose row shows no other charge, put that trip's "
+				"run id in its Reference Number; otherwise move it back to the expense. Then save it; the S-D "
+				"loop submits it",
 			),
 			(
 				1,
 				"QuickBooks",
 				card + "It is a submitted QuickBooks entry, which is never cancelled: move it back to the "
 				"expense; post and submit a correcting Journal Entry for $30.00 (Dr the expense account it "
-				"used / Cr 2210) with Reference Number ACC-JV-60. If you moved it for a trip, that trip's row "
-				"then says how to move it again, linked",
+				f"used / Cr 2210) with Reference Number ACC-JV-60. {clears_submitted('$30.00')}. {AGAIN}",
 			),
 		):
 			with self.subTest(docstatus=docstatus, source=source):
@@ -1655,7 +1683,8 @@ class TestBackstop(unittest.TestCase):
 				self.assertEqual(rows[0]["action"], action)
 				self.assertEqual(matching.summarize(rows)["not_accounted"], 30.0)
 				if source == "QuickBooks":
-					self.assertNotIn(matching.NOT_STORE_RUN, rows[0]["action"])
+					self.assertNotIn(f"add {matching.NOT_STORE_RUN}", rows[0]["action"])
+				self.assertNotIn("carries nothing there", rows[0]["action"])
 
 	def test_not_store_run_takes_an_entry_out(self):
 		entry = stray("ACC-JV-60", reference=" Not-Store-Run ")
@@ -1696,19 +1725,22 @@ class TestBackstop(unittest.TestCase):
 	def test_m2c_a_card_charge_marked_not_store_run_still_on_2210(self):
 		"""Fourth review, item 2: marking a QuickBooks card charge not-store-run took its 2210 debit
 		out of the backstop, so the report read clean with the money still on 2210 and no receipt to
-		clear it. Now it stays listed until its 2210 is back to $0.00, draft or submitted."""
+		clear it. Now it stays listed until its 2210 is back to $0.00, draft or submitted, or its
+		Reference Number names the receipt that amount clears (fifth review, item 1)."""
 		charges = [charge("2026-09-04", 48.26, "ACC-JV-1")]
 		for docstatus, tail in (
 			(
 				0,
-				": move it back to the expense, then save it; the S-D loop submits it. If you moved it for a "
-				"trip, put that trip's run id in its Reference Number in place of not-store-run",
+				f". {CLEARS_DRAFT}; if you moved it for a trip, put that trip's run id in its Reference Number "
+				"in place of not-store-run; otherwise move it back to the expense. Then save it; the S-D loop "
+				"submits it",
 			),
 			(
 				1,
 				". It is a submitted QuickBooks entry, which is never cancelled: move it back to the expense; "
 				"post and submit a correcting Journal Entry for $45.00 (Dr the expense account it used / Cr "
-				"2210) with Reference Number ACC-JV-1 followed by not-store-run",
+				f"2210) with Reference Number ACC-JV-1 followed by not-store-run. {clears_submitted('$45.00')}. "
+				f"{AGAIN}",
 			),
 		):
 			with self.subTest(docstatus=docstatus):
@@ -1718,8 +1750,8 @@ class TestBackstop(unittest.TestCase):
 				entry = _of(rows, matching.ROW_ENTRY)[0]
 				self.assertEqual(
 					entry["action"],
-					f"Its Reference Number says not-store-run, but it still carries $45.00 on {ACCOUNT}, and a "
-					f"card charge that pays for no store run carries nothing there{tail}",
+					f"Its Reference Number says not-store-run, but it still carries $45.00 on {ACCOUNT}, and it "
+					f"names no Purchase Receipt that amount clears{tail}",
 				)
 				self.assertEqual((entry["show"], entry["on_2210"]), (matching.NEEDS_ACTION, 45.0))
 				self.assertEqual(matching.summarize(rows)["not_accounted"], 45.0)
@@ -1752,15 +1784,16 @@ class TestBackstop(unittest.TestCase):
 
 	def test_the_billed_trip_it_frees(self):
 		"""Finding 6's stuck case: a billed trip that happened to pair with an unrelated charge could
-		never leave Needs action. Marking the charge not-store-run ends it -- once nothing of it is on
-		2210 (fourth review)."""
+		never leave Needs action. Marking the charge not-store-run ends it (fourth review); a debit it
+		still has on 2210 then gets its own row (fifth review: "move it back" was wrong for a charge whose
+		debit clears a PO receipt)."""
 		receipts = [receipt("2026-09-03", total=48.26, name="PR-1")]
 		charges = [charge("2026-09-04", 48.26, "ACC-JV-1")]
 		billed = {"PR-1": "ACC-PINV-7"}
 		stuck = report(charges, receipts, billed=billed)[0]
 		self.assertIn(
-			f"if it pays for no store run, move any debit it has on {ACCOUNT} back to the expense, put "
-			f"{matching.NOT_STORE_RUN} in its Reference Number and save it",
+			f"if it pays for no store run, put {matching.NOT_STORE_RUN} in its Reference Number and save it (a "
+			f"debit it still has on {ACCOUNT} then gets a row of its own)",
 			stuck["action"],
 		)
 		freed = report(charges, receipts, [ref("ACC-JV-1", "not-store-run")], billed=billed)
@@ -1776,8 +1809,8 @@ class TestBackstop(unittest.TestCase):
 		self.assertEqual(trip["charge"], "ACC-JV-1", "not excluded: it pairs as the KPI pairs it")
 		self.assertEqual(
 			entry["action"],
-			"Its Reference Number says not-store-run and also lists SR-A. Correct its Reference Number and "
-			"save it.",
+			"Its Reference Number says not-store-run and also lists SR-A (a recorded store run). Correct its "
+			"Reference Number and save it.",
 		)
 
 	def test_a_charge_in_the_lookback_that_pairs_with_nothing(self):
@@ -1956,9 +1989,9 @@ class TestDeadKeys(unittest.TestCase):
 		self.assertEqual(
 			rows[0]["action"],
 			f"Its Reference Number lists sr-ax, which is no recorded store run. Carries $45.00 on {ACCOUNT} but "
-			"no recorded store run is paired or linked. If you moved it for a trip whose row shows no other "
-			"charge, put that trip's run id in this entry's Reference Number; otherwise move it back to the "
-			"expense. Then save it; the S-D loop submits it",
+			f"no recorded store run is paired or linked. {CLEARS_DRAFT}; if you moved it for a trip whose row "
+			"shows no other charge, put that trip's run id in this entry's Reference Number; otherwise move it "
+			"back to the expense. Then save it; the S-D loop submits it",
 		)
 		self.assertEqual(len(_of(rows, matching.ROW_ENTRY)), 0, "one row per entry: the charge's")
 
@@ -2086,7 +2119,7 @@ class TestDisplacedAndContested(unittest.TestCase):
 		charges = [charge("2026-09-02", 105.0, "ACC-JV-1"), charge("2026-09-03", 107.0, "ACC-JV-0")]
 		rows = report(charges, receipts, on_2210={JV1: 100.0})
 		self.assertIn(
-			"If you moved it for a trip whose row shows no other charge, put that trip's run id",
+			"if you moved it for a trip whose row shows no other charge, put that trip's run id",
 			_of(rows, matching.ROW_CHARGE)[0]["action"],
 		)
 		self.assertEqual(_of(rows, matching.ROW_TRIP)[0]["charge"], "ACC-JV-0")
@@ -2189,8 +2222,8 @@ class TestBilledTrip(unittest.TestCase):
 				[],
 				"matched to this charge",
 				"If the charge is not this trip's, put its own trip's run id in its Reference Number and save "
-				f"it; if it pays for no store run, move any debit it has on {ACCOUNT} back to the expense, put "
-				"not-store-run in its Reference Number and save it.",
+				"it; if it pays for no store run, put not-store-run in its Reference Number and save it (a debit "
+				f"it still has on {ACCOUNT} then gets a row of its own).",
 				draft_tail("2210"),
 			),
 			(
@@ -2333,12 +2366,12 @@ class TestFourthReview(unittest.TestCase):
 			self.assertEqual(
 				rows[key]["action"],
 				"The stock lines of the trips its Reference Number links (sr-a $100.00, sr-b $95.00: $195.00 "
-				"together) are more than the charge itself ($107.00), so one of these trips is not this charge's: "
-				"take the run id of each trip it does not pay for out of ACC-JV-1's Reference Number (edit it and "
-				f"save it). This row then says what the charge keeps on {ACCOUNT}, and each trip taken out asks "
-				"for its own charge on its own row. A trip this charge paid for only in part (the rest by store "
-				"credit or a second card) cannot be matched here: that row stays until Accounting settles it by "
-				"hand",
+				"together) are more than the charge itself ($107.00): one of these trips is not this charge's, or "
+				"it paid for one only in part (the rest by store credit or a second card). Take the run id of each "
+				"trip it does not pay for out of ACC-JV-1's Reference Number (edit it and save it), and each trip "
+				"taken out asks for its own charge on its own row. For a trip it paid for only in part, put "
+				"part-paid right after its run id in ACC-JV-1's Reference Number and save it; its 2210 target stays "
+				f"the whole stock lines. This row then says what the charge keeps on {ACCOUNT}",
 			)
 			self.assertEqual(rows[key]["moved_to_2210"], 0)
 
@@ -2390,15 +2423,18 @@ class TestFourthReview(unittest.TestCase):
 			receipts,
 			[ref("ACC-JV-1", "sr-a", day="2026-09-03", amount=44.94)],
 		)
-		self.assertTrue(
-			self.only_trip(over)["action"].startswith(
-				"The stock lines of the trip its Reference Number links (sr-a $45.00) are more than the charge "
-				"itself ($44.94), so it is not this trip's charge: take sr-a out of ACC-JV-1's Reference Number"
-			)
+		self.assertEqual(
+			self.only_trip(over)["action"],
+			"The stock lines of the trip its Reference Number links (sr-a $45.00) are more than the charge "
+			"itself ($44.94). If ACC-JV-1 paid for sr-a only in part (the rest by store credit or a second card), "
+			"put sr-a part-paid in ACC-JV-1's Reference Number and save it; its 2210 target stays the whole stock "
+			"lines, and this row then says what to move. If it is not sr-a's charge, take sr-a out of ACC-JV-1's "
+			"Reference Number (edit it and save it), and sr-a's row then asks for its own charge",
 		)
 
 	def test_an_automatic_pair_over_capacity(self):
-		"""Paired on a receipt total typed wrong, to a smaller unrelated charge."""
+		"""An automatic pair over the charge's amount is always a receipt-total pair: a checkout discount
+		or a part payment, never "not this trip's charge" (fifth review, item 3: that looped on a coupon)."""
 		rows = report(
 			[charge("2026-09-03", 20.0, "ACC-JV-5")], [receipt("2026-09-03", "sr-a", 45.0, total=20.0)]
 		)
@@ -2406,14 +2442,16 @@ class TestFourthReview(unittest.TestCase):
 		self.assertEqual(
 			(row["charge"], row["show"], row["to_move"]), ("ACC-JV-5", matching.NEEDS_ACTION, 0.0)
 		)
-		self.assertTrue(
-			row["action"].startswith(
-				f"Its stock lines ($45.00) are more than the charge itself ($20.00), and a charge never moves more "
-				f"to {ACCOUNT} than it paid: it is not this trip's charge. For the trip's own charge, "
-				f"{find_its_draft('$45.00', 'sr-a', account='2210')}. {ONLY_IF_NONE}"
-			),
+		self.assertEqual(
 			row["action"],
+			f"Its stock lines ($45.00) are more than the charge itself ($20.00), and a charge never moves more to "
+			f"{ACCOUNT} than it paid: the stock lines exceed what this charge paid. If it is a checkout discount, "
+			"correct the receipt's rates to the prices paid. If it is a part payment by other means (store "
+			"credit, a second card), add part-paid next to the run id: put sr-a part-paid in ACC-JV-5's "
+			"Reference Number and save it; its 2210 target stays the whole stock lines. This row then says what "
+			"to move",
 		)
+		self.assertNotIn("not this trip's charge", row["action"])
 
 	def only_trip(self, rows):
 		trips = _of(rows, matching.ROW_TRIP)
@@ -2439,7 +2477,9 @@ class TestFourthReview(unittest.TestCase):
 		entry = _of(dropped, matching.ROW_ENTRY)[0]
 		self.assertEqual(entry["charge"], "ACC-JV-D")
 		self.assertIn("otherwise move it back to the expense", entry["action"])
-		self.assertNotIn(matching.NOT_STORE_RUN, entry["action"])
+		# not-store-run is offered only beside the receipt the amount clears, never alone (fifth review).
+		self.assertNotIn(f"add {matching.NOT_STORE_RUN}", entry["action"])
+		self.assertIn(f"put {matching.NOT_STORE_RUN} followed by that receipt's name", entry["action"])
 		self.assertEqual(matching.summarize(dropped)["not_accounted"], 100.0)
 		# Marked not-store-run instead of moved back: still listed, still counted.
 		marked = ref("ACC-JV-D", "not-store-run", day="2026-09-02")
@@ -2476,8 +2516,7 @@ class TestFourthReview(unittest.TestCase):
 			"which is never cancelled, so its Reference Number stays as it is and the report ignores what it "
 			f"lists. Its $100.00 on {ACCOUNT} is therefore not accounted for: move it back to the expense; post "
 			"and submit a correcting Journal Entry for $100.00 (Dr the expense account it used / Cr 2210) with "
-			"Reference Number ACC-JV-NV. If you moved it for a trip, that trip's row then says how to move it "
-			"again, linked.",
+			f"Reference Number ACC-JV-NV. {clears_submitted('$100.00')}. {AGAIN}.",
 		)
 		self.assertEqual(rows[0]["show"], matching.NEEDS_ACTION)
 		fix = ref("ACC-JV-901", "ACC-JV-NV", day="2026-09-05", docstatus=1, source="ERPNext")
@@ -2771,6 +2810,652 @@ class TestFourthReview(unittest.TestCase):
 							self.assertIn("If it does not pay for this trip, ", row["action"])
 
 
+def po_receipt(name="MAT-PRE-PO1", docstatus=1, store_run=0):
+	"""A Purchase Receipt as ``_receipts_by_name`` reads it: not a store run unless ``store_run``."""
+	return {"name": name, "docstatus": docstatus, "store_run": store_run}
+
+
+class TestFifthReview(unittest.TestCase):
+	"""The round-5 verifier's findings, each a regression test with its new outcome (v1.538.0 fifth
+	review). Each case is followed to the end the row's text describes, and must end with the list
+	clean and the books right."""
+
+	# -- Item 1: a card charge that cleared a PO receipt -----------------------------------------
+
+	trip = (receipt("2026-09-01", "sr-1", 100.0, total=107.0, name="MAT-PRE-SR1"),)
+	own = (charge("2026-09-02", 107.0, "ACC-JV-1"),)
+
+	def po_charge(self, reference, docstatus):
+		"""An Amazon card charge (a vendor the KPI does not read) whose $50.00 goods debit was moved to
+		2210 to clear MAT-PRE-PO1, a receipt made from a Purchase Order."""
+		entry = stray(
+			"ACC-JV-PO", day="2026-09-03", docstatus=docstatus, source="QuickBooks", reference=reference
+		)
+		return dict(entry, amount=53.5)
+
+	def test_r5v_po_a_card_charge_that_cleared_a_po_receipt(self):
+		"""r5v_po's four cases. Before, every one was told to move the $50.00 back, which left the PO
+		receipt's 2210 open for good. Now following the row keeps the receipt cleared and the list
+		ends clean: a draft names the receipt beside not-store-run; a submitted one, whose Reference
+		Number cannot change, moves it back and posts it again naming the receipt."""
+		others = [po_receipt()]
+		for marked in (True, False):
+			for docstatus in (0, 1):
+				with self.subTest(marked=marked, docstatus=docstatus):
+					qa = self.po_charge("not-store-run" if marked else "", docstatus)
+					references = [qa] if marked else []
+					on = {JV1: 100.0, je("ACC-JV-PO"): 50.0}
+					rows = report(
+						list(self.own),
+						list(self.trip),
+						references,
+						named=[qa],
+						on_2210=on,
+						journal=[qa],
+						others=others,
+					)
+					entry = _of(rows, matching.ROW_ENTRY)[0]
+					self.assertEqual(
+						(entry["charge"], entry["show"], entry["on_2210"]),
+						("ACC-JV-PO", matching.NEEDS_ACTION, 50.0),
+					)
+					self.assertIn(
+						CLEARS_DRAFT if docstatus == 0 else clears_submitted("$50.00"), entry["action"]
+					)
+					self.assertNotIn("carries nothing there", entry["action"])
+					if docstatus == 0:
+						done = dict(qa, reference="not-store-run MAT-PRE-PO1")
+						rows = report(
+							list(self.own), list(self.trip), [done], on_2210=on, journal=[done], others=others
+						)
+					else:
+						back = ref(
+							"ACC-JV-901",
+							"ACC-JV-PO not-store-run" if marked else "ACC-JV-PO",
+							day="2026-09-06",
+							docstatus=1,
+							source="ERPNext",
+						)
+						again = ref(
+							"ACC-JV-902",
+							"not-store-run MAT-PRE-PO1",
+							day="2026-09-06",
+							docstatus=1,
+							source="ERPNext",
+						)
+						on = {**on, je("ACC-JV-901"): -50.0, je("ACC-JV-902"): 50.0}
+						rows = report(
+							list(self.own),
+							list(self.trip),
+							[*references, back, again],
+							named=[qa],
+							on_2210=on,
+							journal=[qa, back, again],
+							others=others,
+						)
+					self.assertEqual(
+						[(row["row_type"], row["show"]) for row in rows], [(matching.ROW_TRIP, matching.DONE)]
+					)
+					self.assertEqual(matching.summarize(rows)["not_accounted"], 0.0)
+
+	def test_a_draft_naming_the_receipt_it_clears_is_left_out_whatever_it_carries(self):
+		"""The decided rule: not-store-run beside the name of a submitted receipt that is no store run
+		takes the entry out of the backstop regardless of its 2210 amount; the receipt is looked up."""
+		for amount in (50.0, 12.34, -8.0):
+			with self.subTest(amount=amount):
+				qa = self.po_charge("not-store-run, mat-pre-po1", 0)
+				rows, window, resolution, *_ = flow(
+					[], [], [qa], on_2210={je("ACC-JV-PO"): amount}, journal=[qa], others=[po_receipt()]
+				)
+				self.assertEqual(rows, [])
+				self.assertEqual(resolution["clears"], {"ACC-JV-PO": ["mat-pre-po1"]})
+				self.assertIn("ACC-JV-PO", resolution["excluded"])
+		# An ERPNext entry that names the receipt it clears is left out too (as one marked alone always was).
+		erp = stray("ACC-JV-60", reference="not-store-run MAT-PRE-PO1", source="ERPNext")
+		self.assertEqual(
+			report([], [], [erp], on_2210={je("ACC-JV-60"): 30.0}, journal=[erp], others=[po_receipt()]), []
+		)
+
+	def test_a_receipt_the_report_cannot_take_is_refused_with_the_reason(self):
+		"""Beside not-store-run: a recorded store run's receipt, a receipt that does not exist, one that
+		is not submitted, and one the reader's rules call a store run. Each is refused, the entry stays
+		in the backstop, and its row says why."""
+		others = [
+			po_receipt("MAT-PRE-PO2", docstatus=2),
+			po_receipt("MAT-PRE-PO3", docstatus=0),
+			po_receipt("MAT-PRE-PO4", store_run=1),
+		]
+		cases = (
+			("MAT-PRE-SR1", "MAT-PRE-SR1 (a recorded store run)"),
+			("sr-1", "sr-1 (a recorded store run)"),
+			("MAT-PRE-9", "MAT-PRE-9 (no Purchase Receipt)"),
+			("MAT-PRE-PO2", "MAT-PRE-PO2 (a Purchase Receipt that is not submitted)"),
+			("MAT-PRE-PO3", "MAT-PRE-PO3 (a Purchase Receipt that is not submitted)"),
+			("MAT-PRE-PO4", "MAT-PRE-PO4 (a recorded store run)"),
+		)
+		for token, said in cases:
+			with self.subTest(token=token):
+				qa = self.po_charge(f"not-store-run {token}", 0)
+				rows, window, resolution, *_ = flow(
+					list(self.own),
+					list(self.trip),
+					[qa],
+					on_2210={je("ACC-JV-PO"): 50.0},
+					journal=[qa],
+					others=others,
+				)
+				entry = _of(rows, matching.ROW_ENTRY)[0]
+				self.assertEqual(
+					entry["action"],
+					f"Its Reference Number says not-store-run and also lists {said}. Correct its Reference Number "
+					f"and save it. Until then its $50.00 on {ACCOUNT} is not accounted for.",
+				)
+				self.assertEqual(
+					(entry["show"], entry["match_basis"]),
+					(matching.NEEDS_ACTION, matching.REFERENCE_TO_CHECK),
+				)
+				self.assertNotIn("ACC-JV-PO", resolution["excluded"])
+				self.assertEqual(matching.summarize(rows)["not_accounted"], 50.0)
+		# Submitted, its Reference Number is stuck: moved back, and posted again naming the right receipt.
+		qa = self.po_charge("not-store-run MAT-PRE-9", 1)
+		rows = report([], [], [qa], on_2210={je("ACC-JV-PO"): 50.0}, journal=[qa], others=others)
+		self.assertIn(clears_submitted("$50.00"), rows[0]["action"])
+
+	def test_a_po_receipt_s_name_is_never_a_dead_key(self):
+		"""Named without not-store-run it links nothing, and the row says what it is, not "no recorded
+		store run"; the lookups never ask for it, or for part-paid, again."""
+		qa = self.po_charge("MAT-PRE-PO1", 0)
+		rows = report([], [], [qa], on_2210={je("ACC-JV-PO"): 50.0}, journal=[qa], others=[po_receipt()])
+		self.assertEqual(
+			rows[0]["action"],
+			"Its Reference Number lists MAT-PRE-PO1, a Purchase Receipt that is not a store run: put "
+			"not-store-run beside it if this entry's 2210 amount clears it. Correct its Reference Number and "
+			f"save it. Until then its $50.00 on {ACCOUNT} is not accounted for.",
+		)
+		self.assertEqual(
+			matching.unresolved_tokens(
+				[ref("ACC-JV-9", "MAT-PRE-PO1 sr-1 part-paid mat-pre-x")], [], [], [po_receipt()]
+			),
+			["mat-pre-x", "sr-1"],
+		)
+
+	# -- Item 2: a waiting trip with no stock lines whose draft is another trip's ------------------
+
+	nostock = (
+		receipt("2026-09-11", "sr-1", 200.0, total=214.0),
+		receipt("2026-09-11", "sr-8", 197.5, stock=0.0, total=211.33),
+	)
+	qj5 = (charge("2026-09-14", 208.77, "ACC-JV-5"),)
+
+	def test_r5v_min_no_stock_trip_whose_draft_the_pairing_gave_away(self):
+		"""sr-8 has no stock lines and ACC-JV-5 is its draft; the pairing gave ACC-JV-5 to sr-1 (lines
+		plus tax), which has no charge. "Change nothing" left sr-1 Done on sr-8's charge. Now sr-8 is
+		told to link its draft, and sr-1's row then asks."""
+		JV5 = je("ACC-JV-5")
+		rows = {
+			row["run_ref"]: row for row in report(list(self.qj5), list(self.nostock), on_2210={JV5: 200.0})
+		}
+		self.assertEqual(rows["sr-1"]["charge"], "ACC-JV-5")
+		self.assertEqual(
+			rows["sr-8"]["action"],
+			f"No card charge paired and no stock lines: {no_stock_find('sr-8')}. {ONLY_IF_NONE}",
+		)
+		linked = [ref("ACC-JV-5", "sr-8", day="2026-09-14", amount=208.77)]
+		rows = {
+			row["run_ref"]: row
+			for row in report(list(self.qj5), list(self.nostock), linked, on_2210={JV5: 200.0})
+		}
+		self.assertEqual(rows["sr-1"]["show"], matching.WAITING)
+		self.assertTrue(rows["sr-1"]["action"].startswith("Its paired charge ACC-JV-5 now links only sr-8"))
+		self.assertEqual(rows["sr-8"]["show"], matching.NEEDS_ACTION)
+		self.assertIn("If this draft also pays for sr-1", rows["sr-8"]["action"])
+		self.assertIn("otherwise reduce it to $0.00", rows["sr-8"]["action"])
+		# The otherwise: ACC-JV-5 carries nothing, sr-8 is Done, sr-1 waits for its own charge.
+		rows = {
+			row["run_ref"]: row
+			for row in report(list(self.qj5), list(self.nostock), linked, on_2210={JV5: 0.0})
+		}
+		self.assertEqual(rows["sr-8"]["show"], matching.DONE)
+		self.assertEqual(rows["sr-1"]["show"], matching.WAITING)
+		self.assertIn("If it does not pay for this trip, find its QuickBooks draft", rows["sr-1"]["action"])
+
+	def test_a_displaced_trip_with_no_stock_lines_finds_its_draft_the_same_way(self):
+		receipts = [
+			receipt("2026-09-03", "sr-a", 60.0, stock=0.0, total=107.0),
+			receipt("2026-09-03", "sr-b", 40.0, total=107.0),
+		]
+		rows = report(
+			[charge("2026-09-04", 107.0, "ACC-JV-1")], receipts, [ref("ACC-JV-1", "sr-b", day="2026-09-04")]
+		)
+		row = next(row for row in rows if row["run_ref"] == "sr-a")
+		self.assertIn(
+			f"If it does not pay for this trip, {no_stock_find('sr-a')}. {ONLY_IF_NONE}", row["action"]
+		)
+		self.assertNotIn("change nothing: it has no stock lines", row["action"])
+
+	# -- Item 3: part-paid ----------------------------------------------------------------------
+
+	def test_part_paid_keys(self):
+		self.assertEqual(matching.part_paid_keys("ACC-JV-1 sr-a part-paid sr-b"), ["sr-a"])
+		self.assertEqual(matching.part_paid_keys("SR-A Part-Paid, sr-b part-paid"), ["sr-a", "sr-b"])
+		self.assertEqual(matching.part_paid_keys("part-paid sr-a"), [None])
+		self.assertEqual(matching.part_paid_keys("sr-a part paid"), [])
+
+	def test_split_tender_submitted(self):
+		"""QJ-1 ($100.00, submitted) paid for $120.00 of stock; $20.00 of store credit is on a correcting
+		entry naming it. The capacity rule held it in Needs action for good. The row now offers
+		part-paid, in the correcting entry that moves what is left, and following it reaches Done."""
+		receipts = [receipt("2026-09-01", "sr-1", 120.0, total=128.4)]
+		charges = [charge("2026-09-01", 100.0, "ACC-JV-1", docstatus=1)]
+		credit = ref("ACC-JV-SC", "ACC-JV-1 sr-1", day="2026-09-03", docstatus=1, source="ERPNext")
+		on = {je("ACC-JV-SC"): 20.0}
+		row = report(charges, receipts, [credit], on_2210=on)[0]
+		self.assertEqual(
+			row["action"],
+			"The stock lines of the trip its Reference Number links (sr-1 $120.00) are more than the charge "
+			"itself ($100.00). If ACC-JV-1 paid for sr-1 only in part (the rest by store credit or a second "
+			f"card), post and submit a correcting Journal Entry for $100.00 (Dr {ACCOUNT} / Cr the expense "
+			"account the charge used) with Reference Number ACC-JV-1 followed by sr-1 part-paid; its 2210 target "
+			"stays the whole stock lines, and this row then says what to move. If it is not sr-1's charge, take "
+			"sr-1 out of the Reference Number that links it (sr-1 in ACC-JV-1 (the Reference Number of "
+			"ACC-JV-SC, submitted); edit a draft and save it, cancel a submitted correcting entry), and sr-1's "
+			"row then asks for its own charge",
+		)
+		fix = ref("ACC-JV-900", "ACC-JV-1 sr-1 part-paid", day="2026-09-05", docstatus=1, source="ERPNext")
+		row = report(charges, receipts, [credit, fix], on_2210={**on, je("ACC-JV-900"): 100.0})[0]
+		self.assertEqual(
+			(row["action"], row["show"], row["moved_to_2210"]),
+			("Done (corrected by ACC-JV-900, ACC-JV-SC)", matching.DONE, 1),
+		)
+
+	def test_two_cards_for_one_trip(self):
+		"""$100.00 of stock paid $60.00 on one card and $47.00 on another. Linked to the first, over its
+		amount: part-paid lifts the capacity check, the target stays $100.00, and the row reads Done once
+		the charge carries it (the other card's goods stay on the expense, credited on this one)."""
+		receipts = [receipt("2026-09-01", "sr-1", 100.0, total=107.0)]
+		for docstatus in (0, 1):
+			with self.subTest(docstatus=docstatus):
+				charges = [
+					charge("2026-09-01", 60.0, "ACC-JV-1", docstatus=docstatus),
+					charge("2026-09-01", 47.0, "ACC-JV-2", docstatus=docstatus),
+				]
+				if docstatus == 0:
+					links = [ref("ACC-JV-1", "sr-1", day="2026-09-01", amount=60.0)]
+					on = {JV1: 100.0}
+				else:
+					links = [
+						ref("ACC-JV-900", "ACC-JV-1 sr-1", day="2026-09-02", docstatus=1, source="ERPNext")
+					]
+					on = {je("ACC-JV-900"): 100.0}
+				row = self.only(report(charges, receipts, links, on_2210=on))
+				self.assertEqual(row["show"], matching.NEEDS_ACTION)
+				if docstatus == 0:
+					self.assertIn(
+						"put sr-1 part-paid in ACC-JV-1's Reference Number and save it", row["action"]
+					)
+					links = [ref("ACC-JV-1", "sr-1 part-paid", day="2026-09-01", amount=60.0)]
+				else:
+					# Nothing is left to move, so part-paid goes on the entry that links it.
+					self.assertIn(
+						"put part-paid right after sr-1 in the Reference Number that links it (ACC-JV-1 (the "
+						"Reference Number of ACC-JV-900, submitted); edit a draft and save it, cancel a submitted "
+						"correcting entry and submit a copy of it with part-paid added)",
+						row["action"],
+					)
+					links = [
+						ref(
+							"ACC-JV-901",
+							"ACC-JV-1 sr-1 part-paid",
+							day="2026-09-03",
+							docstatus=1,
+							source="ERPNext",
+						)
+					]
+					on = {je("ACC-JV-901"): 100.0}
+				rows = report(charges, receipts, links, on_2210=on)
+				self.assertEqual(
+					[(r["row_type"], r["show"]) for r in rows], [(matching.ROW_TRIP, matching.DONE)]
+				)
+				self.assertEqual(rows[0]["moved_to_2210"], 1)
+
+	def test_coupon_on_a_receipt_total_pair(self):
+		"""r5v_min's coupon: the receipt total ($96.30, after a 10% coupon) pairs to the cent, but the
+		stock lines are at shelf price ($100.00). "Not this trip's charge" sent the draft looking for
+		itself. Now it is a discount (the receipt's rates corrected) or a part payment (part-paid)."""
+		charges = [charge("2026-09-01", 96.3, "ACC-JV-1")]
+		shelf = [receipt("2026-09-01", "sr-1", 100.0, total=96.3)]
+		row = self.only(report(charges, shelf))
+		self.assertEqual((row["match_basis"], row["show"]), ("Receipt total", matching.NEEDS_ACTION))
+		self.assertIn("the stock lines exceed what this charge paid", row["action"])
+		self.assertIn(
+			"If it is a checkout discount, correct the receipt's rates to the prices paid", row["action"]
+		)
+		self.assertIn(
+			"add part-paid next to the run id: put sr-1 part-paid in ACC-JV-1's Reference Number",
+			row["action"],
+		)
+		self.assertNotIn("not this trip's charge", row["action"])
+		# A discount: the receipt at the prices paid, and the draft moves $90.00.
+		paid = [receipt("2026-09-01", "sr-1", 90.0, total=96.3)]
+		self.assertEqual(self.only(report(charges, paid, on_2210={JV1: 90.0}))["show"], matching.DONE)
+		# A part payment: part-paid, and the draft moves the whole $100.00.
+		acknowledged = [ref("ACC-JV-1", "sr-1 part-paid", day="2026-09-01", amount=96.3)]
+		row = self.only(report(charges, shelf, acknowledged))
+		self.assertEqual(
+			row["action"],
+			f"Move $100.00 of the goods debit to {ACCOUNT}, then save it; the S-D loop submits it",
+		)
+		row = self.only(report(charges, shelf, acknowledged, on_2210={JV1: 100.0}))
+		self.assertEqual((row["show"], row["moved_to_2210"]), (matching.DONE, 1))
+		# Submitted: the correcting entry that moves it carries part-paid.
+		submitted = [charge("2026-09-01", 96.3, "ACC-JV-1", docstatus=1)]
+		row = self.only(report(submitted, shelf))
+		self.assertIn(
+			"post and submit a correcting Journal Entry for $100.00 (Dr 2210 / Cr the expense account the charge "
+			"used) with Reference Number ACC-JV-1 followed by sr-1 part-paid",
+			row["action"],
+		)
+		fix = ref("ACC-JV-900", "ACC-JV-1 sr-1 part-paid", day="2026-09-03", docstatus=1, source="ERPNext")
+		row = self.only(report(submitted, shelf, [fix], on_2210={je("ACC-JV-900"): 100.0}))
+		self.assertEqual((row["show"], row["moved_to_2210"]), (matching.DONE, 1))
+
+	def test_part_paid_lifts_the_check_for_its_trip_only(self):
+		"""$110.00 linked to sr-a ($100.00) and sr-b ($120.00): part-paid after sr-b leaves $100.00 to
+		check, which fits; after sr-a, $120.00 still does not."""
+		receipts = [receipt("2026-09-01", "sr-a", 100.0), receipt("2026-09-01", "sr-b", 120.0)]
+		charges = [charge("2026-09-01", 110.0, "ACC-JV-1")]
+		for reference, over in (
+			("sr-a sr-b part-paid", False),
+			("sr-a part-paid sr-b", True),
+			("sr-a sr-b", True),
+		):
+			with self.subTest(reference=reference):
+				rows = report(
+					charges, receipts, [ref("ACC-JV-1", reference, amount=110.0)], on_2210={JV1: 220.0}
+				)
+				trips = _of(rows, matching.ROW_TRIP)
+				self.assertEqual(
+					all("are more than the charge itself" in row["action"] for row in trips), over, reference
+				)
+				self.assertEqual(
+					[row["show"] for row in trips], [matching.NEEDS_ACTION if over else matching.DONE] * 2
+				)
+
+	def test_part_paid_with_nothing_to_acknowledge_is_listed(self):
+		"""part-paid first, or after something that is no run id: listed on a row, never dropped."""
+		receipts = [receipt("2026-09-01", "sr-1", 100.0, total=107.0)]
+		charges = [charge("2026-09-01", 107.0, "ACC-JV-1")]
+		rows = report(
+			charges, receipts, [ref("ACC-JV-1", "part-paid sr-1", amount=107.0)], on_2210={JV1: 100.0}
+		)
+		entry = _of(rows, matching.ROW_ENTRY)[0]
+		self.assertEqual(
+			entry["action"],
+			"Its Reference Number says part-paid with no run id right before it: part-paid goes right after the "
+			"run id of the trip the charge paid for only in part. Correct its Reference Number and save it.",
+		)
+		self.assertEqual(
+			_of(rows, matching.ROW_TRIP)[0]["show"], matching.DONE, "the link itself still holds"
+		)
+		# Beside not-store-run it is a contradiction like any other.
+		rows = report([], [], [stray("ACC-JV-9", reference="not-store-run part-paid", source="ERPNext")])
+		self.assertEqual(
+			rows[0]["action"],
+			"Its Reference Number says not-store-run and also lists part-paid. It is submitted, so its Reference "
+			"Number cannot be changed: cancel it and amend it with the right one.",
+		)
+		# On a draft correcting entry it counts for nothing, like the entry.
+		resolution = matching.resolve_references(
+			[ref("ACC-JV-900", "ACC-JV-1 sr-1 part-paid", source="ERPNext")], charges, receipts
+		)
+		self.assertEqual(resolution["links"], {})
+
+	def test_a_billed_trip_whose_charge_a_link_took_asks(self):
+		"""The round-5 verifier's messy+ 92281 (found by the round-6 re-run, and there before): a link
+		typed on the wrong trip took a billed trip's own charge. Billed, the trip read Done, so nothing
+		asked, and the purchase stayed booked twice. Now its row asks, and taking the link out brings
+		back the billed-and-matched row that settles it."""
+		receipts = [
+			receipt("2026-09-03", "sr-1", 45.0, total=48.26, name="PR-1"),
+			receipt("2026-09-10", "sr-b", 30.0, total=0.0, name="PR-B", supplier="Lowes"),
+		]
+		charges = [charge("2026-09-04", 48.26, "ACC-JV-1")]
+		billed = {"PR-1": "ACC-PINV-7"}
+		links = [ref("ACC-JV-1", "sr-b", day="2026-09-04", amount=48.26)]
+		row = next(
+			r
+			for r in report(charges, receipts, links, billed=billed, on_2210={JV1: 30.0})
+			if r["run_ref"] == "sr-1"
+		)
+		self.assertEqual(
+			(row["show"], row["action"]),
+			(
+				matching.WAITING,
+				"Billed from the receipts (ACC-PINV-7). Its paired charge ACC-JV-1 now links only sr-b, by its "
+				"Reference Number. If ACC-JV-1 is this trip's charge, ACC-PINV-7 and ACC-JV-1 book this purchase "
+				"twice: take sr-b out of ACC-JV-1's Reference Number (edit it and save it), and this row then says "
+				"what ACC-JV-1 needs. If it is not, nothing needs to change",
+			),
+		)
+		row = next(
+			r for r in report(charges, receipts, billed=billed, on_2210={JV1: 30.0}) if r["run_ref"] == "sr-1"
+		)
+		self.assertEqual((row["charge"], row["show"]), ("ACC-JV-1", matching.NEEDS_ACTION))
+		self.assertTrue(
+			row["action"].startswith("Billed from the receipts (ACC-PINV-7) and matched to this charge too")
+		)
+		# Billed with nothing displaced still reads Done.
+		self.assertEqual(
+			report([], receipts[:1], billed=billed)[0]["action"], "Billed from the receipts (ACC-PINV-7)"
+		)
+
+	# -- Item 4: the taken submitted charge ------------------------------------------------------
+
+	def test_a_taken_submitted_charge_points_to_its_own_trip_s_row(self):
+		charges = [
+			charge("2026-09-04", 48.26, "ACC-JV-1", docstatus=1),
+			charge("2026-09-12", 50.0, "ACC-JV-7"),
+		]
+		rows = report(
+			charges, _trip(), [ref("ACC-JV-7", "sr-a", day="2026-09-12", amount=50.0)], on_2210={JV7: 45.0}
+		)
+		taken = _of(rows, matching.ROW_CHARGE)[0]
+		self.assertEqual(taken["charge"], "ACC-JV-1")
+		self.assertTrue(
+			taken["action"].endswith(
+				"if not, nothing on it changes (a submitted entry's Reference Number cannot be), and its own "
+				"trip's row says how to link it"
+			),
+			taken["action"],
+		)
+		self.assertNotIn("pays for no trip in this list", taken["action"])
+
+	# -- Item 5: a submitted QuickBooks charge marked not-store-run by mistake --------------------
+
+	def test_a_submitted_charge_marked_by_mistake_is_linked_by_a_correcting_entry(self):
+		"""Its Reference Number can never lose the mark, so a submitted correcting entry naming it beside
+		the run id links it anyway; every entry naming it is then its correction."""
+		receipts = [receipt("2026-09-01", "sr-1", 100.0, total=107.0)]
+		charges = [charge("2026-09-02", 107.0, "ACC-JV-1", docstatus=1)]
+		marked = ref("ACC-JV-1", "not-store-run", day="2026-09-02", docstatus=1, amount=107.0)
+		# Nothing moved yet: the trip waits and says how; the correcting entry it asks for links it.
+		row = self.only(report(charges, receipts, [marked]))
+		self.assertEqual(row["action"], waiting_text("$100.00", "sr-1"))
+		fix = ref("ACC-JV-900", "ACC-JV-1 sr-1", day="2026-09-05", docstatus=1, source="ERPNext")
+		rows, window, resolution, *_ = flow(
+			charges, receipts, [marked, fix], on_2210={je("ACC-JV-900"): 100.0}
+		)
+		self.assertEqual(resolution["overridden"], {"ACC-JV-1"})
+		self.assertEqual(
+			(rows[0]["charge"], rows[0]["show"], rows[0]["moved_to_2210"]), ("ACC-JV-1", matching.DONE, 1)
+		)
+		self.assertEqual(matching.summarize(rows)["not_accounted"], 0.0)
+		# Its goods already on 2210 when it was marked: moved back while marked (the row's text), then
+		# moved again linked; the first correcting entry now counts for it too.
+		back = ref("ACC-JV-901", "ACC-JV-1 not-store-run", day="2026-09-04", docstatus=1, source="ERPNext")
+		on = {JV1: 100.0, je("ACC-JV-901"): -100.0, je("ACC-JV-900"): 100.0}
+		rows, window, resolution, journal, on_2210, corrections = flow(
+			charges, receipts, [marked, back, fix], on_2210=on
+		)
+		self.assertEqual(sorted(corrections["ACC-JV-1"]), ["ACC-JV-900", "ACC-JV-901"])
+		self.assertEqual(
+			[(row["row_type"], row["show"]) for row in rows], [(matching.ROW_TRIP, matching.DONE)]
+		)
+		self.assertEqual(matching.summarize(rows)["not_accounted"], 0.0)
+		# A draft correcting entry does not link it, and a draft charge is never overridden (its mark
+		# can simply be taken out).
+		draft_fix = dict(fix, docstatus=0)
+		self.assertEqual(
+			matching.resolve_references([marked, draft_fix], charges, receipts)["overridden"], set()
+		)
+		draft = ref("ACC-JV-1", "not-store-run", day="2026-09-02", amount=107.0)
+		self.assertEqual(
+			matching.resolve_references([draft, fix], [charge("2026-09-02", 107.0, "ACC-JV-1")], receipts)[
+				"overridden"
+			],
+			set(),
+		)
+
+	def only(self, rows):
+		trips = _of(rows, matching.ROW_TRIP)
+		self.assertEqual(len(trips), 1, rows)
+		return trips[0]
+
+	# -- The rules together, on generated histories ---------------------------------------------
+
+	def test_the_fifth_review_rules_on_generated_histories(self):
+		"""Random trips, charges and Reference Numbers drawn from run ids, receipt names, PO receipts
+		(submitted, cancelled, missing), not-store-run and part-paid: the 2210 conservation holds; an
+		entry naming a receipt it clears is left out and never listed for its amount; a QuickBooks entry
+		marked not-store-run alone that still carries 2210 is listed; a group whose unacknowledged trips'
+		stock lines exceed its charge is never Done; and no text states that a card charge paying for
+		no store run carries nothing on 2210."""
+		rng = random.Random(20261025)
+		start = date(2026, 9, 1)
+		others = [po_receipt("MAT-PRE-PO1"), po_receipt("MAT-PRE-PO2", docstatus=2)]
+		for case in range(400):
+			receipts = [
+				receipt(
+					(start + timedelta(days=rng.randint(-3, 25))).isoformat(),
+					f"sr-{index}",
+					rng.choice((20.0, 45.0, 100.0)),
+					total=rng.choice((0.0, 21.45, 48.26, 107.0)),
+					name=f"MAT-PRE-{index}",
+				)
+				for index in range(rng.randint(0, 5))
+			]
+			charges = [
+				charge(
+					(start + timedelta(days=rng.randint(-2, 25))).isoformat(),
+					rng.choice((21.45, 48.26, 60.0, 107.0)),
+					f"JV-{index}",
+					docstatus=rng.choice((0, 1)),
+				)
+				for index in range(rng.randint(0, 5))
+			]
+			pool = [row["run"] for row in receipts] + [row["receipt"] for row in receipts]
+			pool += [row["voucher_no"] for row in charges] + [
+				"MAT-PRE-PO1",
+				"MAT-PRE-PO2",
+				"MAT-PRE-X",
+				"sr-typo",
+			]
+			references = []
+			for row in charges:
+				if rng.random() < 0.5:
+					words = rng.sample(
+						[r["run"] for r in receipts] + ["MAT-PRE-PO1"],
+						min(len(receipts) + 1, rng.randint(1, 2)),
+					)
+					if rng.random() < 0.3:
+						words.append(matching.PART_PAID)
+					if rng.random() < 0.2:
+						words.insert(0, matching.NOT_STORE_RUN)
+					references.append(
+						ref(row["voucher_no"], " ".join(words), day=row["day"], docstatus=row["docstatus"])
+					)
+			names = [row["voucher_no"] for row in charges]
+			for index in range(rng.randint(0, 4)):
+				words = rng.sample(pool, min(len(pool), rng.randint(1, 3)))
+				if rng.random() < 0.4:
+					words.append(rng.choice((matching.NOT_STORE_RUN, matching.PART_PAID)))
+				references.append(
+					ref(
+						f"JV-X{index}",
+						" ".join(words),
+						day=(start + timedelta(days=rng.randint(-2, 25))).isoformat(),
+						docstatus=rng.choice((0, 1)),
+						source=rng.choice(("ERPNext", "QuickBooks")),
+					)
+				)
+				names.append(f"JV-X{index}")
+			on_2210 = {je(name): rng.choice((0.0, 20.0, 45.0, 100.0, -10.0)) for name in names}
+			known = {row["voucher_no"]: dict(row, reference="") for row in charges}
+			known.update({entry["name"]: entry for entry in references})
+			journal = [
+				stray(
+					name,
+					day=known[name]["day"],
+					docstatus=known[name]["docstatus"],
+					source=known[name]["source"],
+					reference=known[name].get("reference") or "",
+				)
+				for name in names
+				if on_2210[je(name)] and "2026-08-25" <= known[name]["day"] <= "2026-09-30"
+			]
+			rows, window, resolution, journal, on_2210, corrections = flow(
+				charges, receipts, references, on_2210=on_2210, journal=journal, others=others
+			)
+			ledger = matching.attribute_2210(window, resolution, on_2210, corrections, journal)
+			with self.subTest(case=case):
+				considered = {entry["name"] for entry in journal}
+				for group in window["groups"]:
+					voucher = group["charge"]["row"]["voucher_no"]
+					if group["accounted"]:
+						considered.update(
+							n for n in [voucher, *corrections.get(voucher, {})] if je(n) in on_2210
+						)
+				buckets = [ledger["attributed"], ledger["unaccounted"], ledger["excluded"]]
+				self.assertEqual(sorted(n for bucket in buckets for n in bucket), sorted(considered))
+				listed = {row["charge"] for row in _of(rows, matching.ROW_ENTRY)}
+				for name in resolution["clears"]:
+					self.assertNotIn(name, ledger["unaccounted"])
+					self.assertIn("mat-pre-po1", [token.lower() for token in resolution["clears"][name]])
+				# A QuickBooks entry left out that names no receipt it clears nets to zero with the entries
+				# marked not-store-run that name it; otherwise it is listed (marked, below).
+				marks = {n: owner for owner, named in resolution["marks"].items() for n in named}
+				for name in ledger["excluded"]:
+					owner = marks.get(name, name)
+					source = (resolution["entries"].get(owner) or {}).get("source")
+					if (
+						name in resolution["clears"]
+						or owner in resolution["clears"]
+						or source != "QuickBooks"
+					):
+						continue
+					unit = [
+						n for n in considered if marks.get(n, n) == owner and n not in resolution["clears"]
+					]
+					self.assertAlmostEqual(sum(on_2210[je(n)] for n in unit), 0.0, places=2, msg=name)
+				for owner in set(ledger["marked"].values()):
+					if any(ledger["unaccounted"].get(n) for n, o in ledger["marked"].items() if o == owner):
+						self.assertIn(owner, listed)
+				for group in window["groups"]:
+					if group["trips"] and not matching._fits(group):
+						for row in rows:
+							if (
+								row["row_type"] == matching.ROW_TRIP
+								and row["charge"] == group["charge"]["row"]["voucher_no"]
+							):
+								self.assertNotEqual(row["show"], matching.DONE)
+								self.assertEqual(row["moved_to_2210"], 0)
+				for row in rows:
+					self.assertNotIn("carries nothing there", row["action"])
+					self.assertLessEqual(row["action"].count(ACCOUNT), 1, row["action"])
+					if "QuickBooks" in (row["charge_source"] or ""):
+						self.assertNotIn("amend", row["action"].lower())
+
+
 class TestTheTexts(unittest.TestCase):
 	"""Plain sentences, the account written in full once, "post and submit" wherever a correcting
 	entry is advised, and no amendment of a QuickBooks entry (third review)."""
@@ -2986,10 +3671,12 @@ class TestReportFiles(unittest.TestCase):
 			"references = _references(early)",
 			# Looked up round after round, so a chain of correcting entries is followed to its charge.
 			"for _round in range(LOOKUP_ROUNDS):",
-			"matching.unresolved_tokens(references + named, charges, receipts + far_receipts)",
+			"matching.unresolved_tokens(references + named, charges, receipts + far_receipts, others)",
 			"far_receipts += _receipts_by_key(suppliers, unknown)",
 			"named += _entries_by_name(unknown)",
-			"matching.resolve_references(references, charges, receipts, far_receipts, named)",
+			# Any Purchase Receipt a token names: the one a not-store-run entry's 2210 clears (fifth review).
+			"others += _receipts_by_name(suppliers, unknown)",
+			"matching.resolve_references(references, charges, receipts, far_receipts, named, others)",
 			"matching.match_window(",
 			"links=resolution['links']",
 			"far_receipts=far_receipts",
@@ -3122,6 +3809,33 @@ class TestReportFiles(unittest.TestCase):
 		)
 		self.assertNotIn("posting_date >=", ours)
 
+	def test_other_receipts_are_judged_as_the_kpi_judges_a_store_run(self):
+		"""``_receipts_by_name`` reads any Purchase Receipt a token names, with the reader's own
+		definition of a store run (fifth review: not-store-run beside a PO receipt's name). The clauses
+		are the reader's, whatever the date, and the lookup is by name only."""
+		ours = self._query("as store_run")
+		source = SNAPSHOTS.read_text(encoding="utf-8")
+		node = next(
+			node
+			for node in ast.walk(ast.parse(source))
+			if isinstance(node, ast.JoinedStr) and "as stock_amount" in ast.get_source_segment(source, node)
+		)
+		reader = " ".join(ast.get_source_segment(source, node).split())
+		for clause in (
+			"pr.docstatus = 1 and pr.is_return = 0",
+			"pr.supplier in %(suppliers)s",
+			"not exists ( select 1 from `tabPurchase Receipt Item` i where i.parent = pr.name and "
+			"coalesce(i.purchase_order, '') <> '' )",
+		):
+			with self.subTest(clause=clause):
+				self.assertIn(clause, reader)
+				self.assertIn(clause, ours)
+		self.assertTrue(
+			ours.startswith("select pr.name, pr.docstatus, ( pr.docstatus = 1 and pr.is_return = 0")
+		)
+		self.assertIn("from `tabPurchase Receipt` pr where pr.name in %(names)s order by pr.name", ours)
+		self.assertNotIn("posting_date", ours)
+
 	def test_it_writes_nothing(self):
 		code = self.code
 		for needle in (
@@ -3151,10 +3865,10 @@ class TestReportFiles(unittest.TestCase):
 			for node in ast.walk(self.tree)
 			if isinstance(node, ast.Call) and ast.unparse(node.func) == "frappe.db.sql"
 		]
-		# The Reference Numbers, the Journal Entries and trips they name, the backstop's 2210 lines, a
-		# Journal Entry's own 2210 lines (correcting entries' included), a Purchase Invoice's, the
-		# billing.
-		self.assertEqual(len(calls), 7)
+		# The Reference Numbers, the Journal Entries, trips and other Purchase Receipts they name, the
+		# backstop's 2210 lines, a Journal Entry's own 2210 lines (correcting entries' included), a
+		# Purchase Invoice's, the billing.
+		self.assertEqual(len(calls), 8)
 		for call in calls:
 			with self.subTest(line=call.lineno):
 				query = call.args[0]
@@ -3235,23 +3949,29 @@ class TestReportFiles(unittest.TestCase):
 		self.assertIn('"label": _("2210 Not Accounted For")', self.source)
 
 	def test_the_message_gives_the_loop_step(self):
-		"""Step 5 (third review): Needs action, then Waiting, repeated until neither list changes, Needs
-		action is empty and 2210 Not Accounted For reads $0.00; only then the loop."""
+		"""Step S-D in a few short lines (fifth review: the message had grown into four paragraphs): From
+		Date, Needs action then Waiting, repeated until neither list changes, Needs action is empty and
+		2210 Not Accounted For reads $0.00; only then the loop. The rules are in MIGRATION_NOTES."""
 		function = next(
 			node for node in self.tree.body if isinstance(node, ast.FunctionDef) and node.name == "_message"
 		)
-		message = " ".join(" ".join(_strings(function)).split())
+		strings = _strings(_without_docstrings(function))
+		message = " ".join(" ".join(strings).split())
 		for needle in (
-			"Then repeat: Show = <i>Needs action</i>, then Show = <i>Waiting</i>, until neither list changes, "
-			"<i>Needs action</i> is empty and <i>2210 Not Accounted For</i> reads $0.00. Only then run the loop.",
-			"posting and submitting one correcting Journal Entry",
-			"if the draft is already another trip's charge in this list, list both only if it pays for both",
-			"<i>not-store-run</i>",
-			"a QuickBooks card charge must first carry nothing on 2210",
-			"more than the charge itself",
+			"set From Date to 2026-01-01",
+			"Work through <i>Needs action</i>, then <i>Waiting</i>",
+			"finish a list before refreshing",
+			"Repeat until neither list changes, <i>Needs action</i> is empty and <i>2210 Not Accounted For</i> "
+			"reads $0.00. Only then run the loop.",
+			"<i>part-paid</i> right after a run id",
+			"<i>not-store-run</i> sets an entry aside, followed by the name of the Purchase Receipt its 2210 "
+			"amount clears when that receipt is not a store run",
+			"a correcting Journal Entry whose Reference Number names it; never amend a QuickBooks entry",
 		):
 			with self.subTest(needle=needle):
 				self.assertIn(needle, message)
+		self.assertLessEqual(len(message), 1000, "a few short lines")
+		self.assertNotIn("carries nothing", message)
 
 	def test_the_kpi_reader_returns_charges_in_a_fixed_order(self):
 		"""pair_store_runs breaks an exact tie by input order, so each charge arm of the KPI's
