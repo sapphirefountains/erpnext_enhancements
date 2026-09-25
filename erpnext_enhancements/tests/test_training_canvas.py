@@ -26,11 +26,16 @@ Run: python -m unittest erpnext_enhancements.tests.test_training_canvas
 
 import ast
 import json
+import os
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
+REPO = APP.parent
+HISTORY_HARNESS = REPO / "scripts" / "test_training_desk_history.mjs"
 AUTHOR_PY = APP / "api/training_author.py"
 CANVAS_JS = APP / "training/page/training_canvas/training_canvas.js"
 CANVAS_JSON = APP / "training/page/training_canvas/training_canvas.json"
@@ -1553,6 +1558,74 @@ class TestTheCourseIsEditableOnTheCanvas(unittest.TestCase):
         start = author.index("def update_course_settings(")
         body = author[start : start + 2200]
         self.assertIn("rejected.append(_refusal(", body)
+
+
+class TestTheRouteSaysWhereTheAuthorIs(unittest.TestCase):
+    """/desk/training-canvas[/new | /<course>/<lesson>] (v1.536.1).
+
+    The course used to ride in `route_options`, which v16's push_state never writes to
+    the address bar, so every canvas screen shared one URL: Back was a dead press and
+    the second one left the page, Forward never changed the screen, a lesson was never
+    in history and a reload forgot the course. The behaviour is executed in
+    `scripts/test_training_desk_history.mjs` under a fake of the v16 router; these pin
+    the two rules a refactor could drop without any single screen looking wrong.
+    """
+
+    def test_leaving_a_course_on_a_route_change_flushes_first(self):
+        """Back to the home screen or another course with an edit still in the 1200ms
+        debounce is the same lost paragraph go_home already guarded against."""
+        src = _canvas()
+        body = src[src.index("\tleave_then(ticket, next) {") :][:900]
+        self.assertIn("this.save_then(", body)
+        self.assertLess(body.index("this.save_then("), body.index("this.reset()"))
+
+    def test_a_late_bootstrap_is_dropped(self):
+        src = _canvas()
+        body = src[src.index("\tload(course) {") :][:1500]
+        self.assertIn("if (ticket !== this._load_ticket) return;", body)
+        reset = src[src.index("\treset() {") :][:1200]
+        self.assertIn("this._load_ticket", reset)
+
+    def test_out_of_date_edits_are_not_reported_as_stored(self):
+        """After enter_conflict() save() declines to send and resolves anyway, so a flush
+        that passed that on told leave_then and go_home the edits had landed, and Back
+        reset() them away without a word. The flush must reject while edits it cannot
+        send are waiting -- and before it reaches the save() that would resolve."""
+        src = _canvas()
+        at = src.index("\tflush_save() {")
+        block = src[at : src.index("\tsave_then(label) {", at)]
+        self.assertIn("if (!this.editable()) return Promise.reject(", block)
+        self.assertLess(block.index("this.editable()"), block.index("return this.save();"))
+        at = src.index("\tsave_then(label) {")
+        self.assertIn("this._conflict", src[at : src.index("\tsave() {", at)])
+
+    def test_the_old_doors_still_open(self):
+        """training_course.js, training_course_list.js and training_review.js hand the
+        course over in route_options; a pre-v1.536.1 bookmark carries ?course=."""
+        src = _canvas()
+        body = src[src.index("\thandle_route() {") :][:1600]
+        self.assertIn("frappe.route_options.course", body)
+        self.assertIn('frappe.utils.get_url_arg("course")', body)
+        self.assertIn("replace: true", body)
+
+    # Skipped where node is genuinely absent -- a laptop without it -- but never in CI.
+    # This wrapper is the only thing that runs the executed checks there, and a skip
+    # reports OK: a runner image without node would pass them all without running one.
+    @unittest.skipUnless(shutil.which("node") or os.environ.get("CI"), "node is not on PATH")
+    def test_the_executed_harness_passes(self):
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "no node on PATH in CI: the Back/Forward harness did not run")
+        result = subprocess.run(
+            [node, str(HISTORY_HARNESS), "canvas"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=str(REPO),
+            timeout=120,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"\b([1-9]\d*)/\1 passed")
 
 
 if __name__ == "__main__":

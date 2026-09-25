@@ -23,11 +23,16 @@ Run: python -m unittest erpnext_enhancements.tests.test_training_desk_page
 """
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
+REPO = APP.parent
+HISTORY_HARNESS = REPO / "scripts" / "test_training_desk_history.mjs"
 PAGE_DIR = APP / "training" / "page" / "learn"
 PAGE_JSON = PAGE_DIR / "learn.json"
 PAGE_JS = PAGE_DIR / "learn.js"
@@ -371,6 +376,59 @@ class TestTheLessonPreview(unittest.TestCase):
         be wrong."""
         text = strip_comments(self.SCRIPT.read_text(encoding="utf-8"))
         self.assertIn("course_version", text)
+
+
+class TestBackAndForwardWalkTheSteps(unittest.TestCase):
+    """Browser Back returns to the previous screen and Forward restores it (v1.536.1).
+
+    The textual asserts above could not see the bug this replaces, and it passed them
+    all: the player reports the lesson it last had even on the course outline, and
+    `position_key` fell back to it, so the outline keyed as `lesson|C|L` while its URL
+    keyed as `course|C|`. "← Course" and Resume pushed nothing, Forward from the
+    outline did nothing, an in-progress course loaded twice, and the quiz shared its
+    lesson's entry so Back skipped the lesson. The checks that matter are executed, in
+    `scripts/test_training_desk_history.mjs`, against the real learn.js and the real
+    routing half of player.js under a fake of the v16 router.
+    """
+
+    def test_one_shape_is_keyed(self):
+        """The fallback that made the two sides disagree must not come back."""
+        body = code().split("position_key(target) {", 1)[1][:600]
+        self.assertNotIn("target.lesson ||", body)
+        self.assertIn("this.player_target(next)", code())
+
+    def test_the_quiz_has_a_route_of_its_own(self):
+        self.assertIn('route[3] === "quiz"', code())
+        self.assertIn('parts.push("quiz")', code())
+
+    def test_the_outline_resumes_only_its_own_course(self):
+        """`state.resume` is the boot payload's: `_resume` names the learner's most
+        recent attempt, ONE course. Read on every outline, course B's footer offered a
+        blank "Resume: " that opened course A's lesson under B, minted an attempt on B
+        and then failed with "That lesson is not part of this course"."""
+        player = strip_comments((PLAYER_DIR / "player.js").read_text(encoding="utf-8"))
+        body = player.split("function renderCourse() {", 1)[1].split("function rowFor(", 1)[0]
+        self.assertIn("state.resume.course === state.courseName", body)
+        self.assertNotIn("(state.resume && state.resume.lesson_key) ||", body)
+
+    # Skipped where node is genuinely absent -- a laptop without it -- but never in CI.
+    # This wrapper is the only thing that runs the executed checks there, and a skip
+    # reports OK: a runner image without node would pass them all without running one.
+    @unittest.skipUnless(shutil.which("node") or os.environ.get("CI"), "node is not on PATH")
+    def test_the_executed_harness_passes(self):
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "no node on PATH in CI: the Back/Forward harness did not run")
+        result = subprocess.run(
+            [node, str(HISTORY_HARNESS), "learn"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=str(REPO),
+            timeout=120,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"\b([1-9]\d*)/\1 passed")
 
 
 if __name__ == "__main__":

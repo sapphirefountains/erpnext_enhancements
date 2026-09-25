@@ -23,15 +23,28 @@ visible in a diff:
    ``[\\s<NUL>-<US>]`` with literal control characters rather than ``\\u0000``
    escapes works at runtime, so nothing fails -- but git then treats the file as
    binary and stops producing readable diffs for it.
+
+And one about the browser's Back button (``TestVisitWizardHistory``):
+
+3. **Back left the wizard from any step.** No step, tab or visit ever made a
+   history entry -- the page rewrote its one entry with ``replaceState`` -- and it
+   wrote that entry as ``/app/visit-wizard``, which the v16 router cannot parse,
+   so a later Back or Forward onto it showed "Page not found". The behaviour is
+   executed, not grepped: ``scripts/test_wizard_back_forward.mjs`` runs the real
+   page against a port of the v16 router, and this module runs it, because a new
+   node step would need its own line in ci.yml.
 """
 
 import io
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIZARD = os.path.join(APP_DIR, "sapphire_maintenance", "page", "visit_wizard", "visit_wizard.js")
+HARNESS = os.path.join(os.path.dirname(APP_DIR), "scripts", "test_wizard_back_forward.mjs")
 
 
 class TestVisitWizardMarkup(unittest.TestCase):
@@ -120,6 +133,70 @@ class TestVisitWizardMarkup(unittest.TestCase):
 			f"visit_wizard.js contains raw control bytes at {offenders[:5]}. "
 			"Write them as \\u0000-style escapes instead.",
 		)
+
+
+class TestVisitWizardHistory(unittest.TestCase):
+	"""Back returns to the previous step, tab or screen; Forward restores it."""
+
+	@classmethod
+	def setUpClass(cls):
+		with io.open(WIZARD, encoding="utf-8") as handle:
+			source = handle.read()
+		# Comments out: the ones explaining each rule name the very thing they
+		# forbid ("/app/visit-wizard", "replaceState").
+		source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+		cls.code = re.sub(r"(^|[^:\"'`])//[^\n]*", r"\1", source)
+
+	def test_no_hand_built_paths(self):
+		"""A path written by hand is how /app/visit-wizard got into history."""
+		self.assertIsNone(re.search(r"[\"'`]/(app|desk)/", self.code))
+		self.assertNotIn("pushState(", self.code)
+		self.assertIn("frappe.set_route(", self.code)
+
+	def test_frappe_owns_history(self):
+		"""frappe's router already re-renders the route on popstate and fires
+		on_page_show; a listener of our own would handle every Back twice."""
+		self.assertNotIn("popstate", self.code)
+		self.assertEqual(self.code.count(".handle_route()"), 1)
+
+	def test_leaving_the_page_saves(self):
+		self.assertRegex(self.code, r"\$\(wrapper\)\.on\(\"hide\"")
+
+	def test_saves_for_a_visit_off_screen_are_silent_and_not_retried_when_refused(self):
+		"""A parked retry used to be a normal call: every refusal popped frappe's
+		unnamed "Visit Out of Date ... Reload" dialog over whichever visit was
+		open, up to six times, and retried a save that could never succeed."""
+		body = re.search(r"\n\tsend_parked\(name\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(body, "send_parked() is gone")
+		self.assertIn("silent: true", body.group(1))
+		self.assertIn("refused: vz_refused(error)", body.group(1))
+		self.assertIn("this.flush_save({ silent: true })", self.code)
+
+	def test_a_visit_named_only_in_route_options_gets_an_address(self):
+		"""frappe.set_route("visit-wizard", {record}) pushes a bare
+		/desk/visit-wizard; left as it was, Back or a reload onto that entry
+		showed the picker."""
+		body = re.search(r"\n\troute_target\(\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(body, "route_target() is gone")
+		self.assertIn("unaddressed:", body.group(1))
+		self.assertIn("target.unaddressed", self.code)
+
+	def test_back_and_forward_executed(self):
+		"""The behaviour itself: the real page against a port of the v16 router."""
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		result = subprocess.run(
+			[node, HARNESS, "visit-wizard"],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			errors="replace",
+			check=False,
+			timeout=120,
+		)
+		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+		self.assertIn(" 0 failed", result.stdout)
 
 
 if __name__ == "__main__":

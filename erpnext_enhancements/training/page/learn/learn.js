@@ -178,6 +178,9 @@ class LearnPage {
 			// stale node, and re-rendering clears the mount anyway.
 		}
 		this.player = null;
+		// What the page last told a player that no longer exists. Left set, a remount's
+		// first write that happened to match it would skip the rail and the URL check.
+		this.showing = null;
 	}
 
 	// Fires on every route change INTO this page, including /desk/learn ->
@@ -196,6 +199,9 @@ class LearnPage {
 		} else if (route[1]) {
 			target.course = route[1];
 			if (route[2]) target.lesson_key = route[2];
+			// /desk/learn/<course>/<lesson>/quiz. A fourth segment after a lesson key cannot
+			// be mistaken for one: lesson keys are ten-character hashes.
+			if (route[2] && route[3] === "quiz") target.view = "quiz";
 		}
 
 		// Recorded BEFORE any early return. The rail paints from two files while the
@@ -243,7 +249,11 @@ class LearnPage {
 		this.showing = key;
 		this.mark(target);
 		if (target.course) {
-			this.player.openCourse(target.course, target.lesson_key || null);
+			// The third argument lands Forward (or a reload) on the quiz entry it names
+			// rather than on the lesson under it. Re-entering costs nothing: get_quiz
+			// records nothing and draws the same questions, and runs count on submit.
+			const view = target.view === "quiz" ? "quiz" : null;
+			this.player.openCourse(target.course, target.lesson_key || null, view);
 		} else if (target.view === "person" && target.user) {
 			// `go("person")` alone would render whoever the player last had in
 			// `viewingUser` -- which on a fresh load or a Back is nobody.
@@ -266,9 +276,24 @@ class LearnPage {
 	// to itself, which re-enters here with a key that does not match and opens A a
 	// third time; B then does the same in reverse. With the keys agreed, the stale
 	// arrival is recognised and stops there.
+	//
+	// And then they did not agree AGAIN, on the course outline. The player reports the
+	// lesson it last had for every view inside a course, the outline included --
+	// routeState does that on purpose, see player.js -- and this used to fall back to it
+	// (`target.lesson_key || target.lesson`). So an outline with any lesson behind it,
+	// which is nearly always, keyed as `lesson|C|L` while its URL /desk/learn/C keyed as
+	// `course|C|`. Each symptom was a history step gone missing: "← Course" pushed
+	// nothing, Resume on an in-progress course pushed nothing, Forward from the outline to
+	// a lesson did nothing, and opening any course with an attempt loaded it twice. Both
+	// directions now key ONE shape -- the route's -- and write() converts the player's
+	// state into it with player_target() before asking.
+	//
+	// The quiz is the one view with its own key. It used to share its lesson's, so it
+	// pushed nothing and Back from a quiz skipped the lesson entirely.
 	position_key(target) {
 		if (target.course) {
-			const lesson = target.lesson_key || target.lesson || "";
+			const lesson = target.lesson_key || "";
+			if (lesson && target.view === "quiz") return `quiz|${target.course}|${lesson}`;
 			return `${lesson ? "lesson" : "course"}|${target.course}|${lesson}`;
 		}
 		// The user is part of the position for the person view. Without it every profile
@@ -276,6 +301,35 @@ class LearnPage {
 		// swallowed by the guard above as "already showing this" -- and Back shows the
 		// wrong person. Both halves of this file must agree; see the comment above.
 		return `${target.view || "catalog"}|${target.user || ""}|`;
+	}
+
+	// The player's statement of where it is, in the shape handle_route builds from a URL.
+	// The player says more than a URL does -- it names the lesson it last had even on the
+	// outline -- and less about the screens that are not steps of their own:
+	//   * `course`, `complete` and `signoff` are the course as a whole: /desk/learn/<course>.
+	//     Finishing a course pushes that entry, so Back from the completion screen returns
+	//     to the last lesson, and Forward or a reload lands on the outline, which shows the
+	//     finished state. The celebration itself is not a place anybody returns to.
+	//   * `results` shares the quiz's entry. It is the outcome of a submit, and re-entering
+	//     it would draw "Not passed yet" with no score, because the result is not state
+	//     that survives; Back from it goes to the lesson.
+	player_target(next) {
+		if (!next.course) {
+			return {
+				course: null,
+				lesson_key: null,
+				view: next.view || null,
+				user: next.view === "person" ? next.user || null : null,
+			};
+		}
+		const quiz = next.view === "quiz" || next.view === "results";
+		const lesson_key = quiz || next.view === "lesson" ? next.lesson || null : null;
+		return {
+			course: next.course,
+			lesson_key: lesson_key,
+			view: quiz && lesson_key ? "quiz" : null,
+			user: null,
+		};
 	}
 
 	// The other half: what the player tells the Desk. Returns the adapter handed to
@@ -299,12 +353,16 @@ class LearnPage {
 				// top of the dashboard they asked for.
 				if (!this.is_current()) return;
 
+				// The URL and the key are both derived from this one object, so they can
+				// no longer describe two different screens.
+				const target = this.player_target(next);
 				const parts = ["learn"];
-				if (next.course) {
-					parts.push(next.course);
+				if (target.course) {
+					parts.push(target.course);
 					// The outline names a course and no single lesson, matching what the
 					// portal puts in its query string.
-					if (next.lesson && next.view !== "course") parts.push(next.lesson);
+					if (target.lesson_key) parts.push(target.lesson_key);
+					if (target.view === "quiz") parts.push("quiz");
 				} else if (next.view === "person" && next.user) {
 					// Two segments: the view and who it is about. Before this, `person` was
 					// not in LEARN_VIEWS at all, so NEITHER branch ran, `parts` stayed as
@@ -315,10 +373,10 @@ class LearnPage {
 					parts.push(next.view);
 				}
 
-				const key = this.position_key(next);
+				const key = this.position_key(target);
 				if (key === this.showing) return;
 				this.showing = key;
-				this.mark(next);
+				this.mark(target);
 
 				// Compared before routing as well: a set_route to where we already are
 				// still fires a route event, and that event arrives here as a fresh
@@ -374,6 +432,8 @@ class LearnPage {
 		boot.router = this.router_adapter();
 		if (target.course) {
 			boot.start = { course: target.course, lesson_key: target.lesson_key || null };
+			// A reloaded quiz entry opens on the quiz, as Forward into it does.
+			if (target.view === "quiz" && target.lesson_key) boot.start.view = "quiz";
 		} else if (target.view) {
 			boot.view = target.view;
 			// Deep-linking straight to a colleague's profile: the player needs to know who

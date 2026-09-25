@@ -2323,6 +2323,16 @@ jobs:
           node scripts/test_capture_panel.js
           node scripts/test_capture_annotate.js
           node scripts/test_capture_drafts.js
+      # Browser Back/Forward on the Desk wizards and training pages (v1.536.1). Each harness runs
+      # the real page against a port of v16's router and a fake browser history: Back steps back
+      # a section/step/lesson, Forward restores it, Back from the first screen leaves the page,
+      # and a save pending when the screen changes is neither lost nor sent for the wrong record.
+      # The Python suites also run them, but skip without node; here node is guaranteed.
+      - name: Desk wizards + training pages Back/Forward (bench-free, node)
+        run: |
+          node scripts/test_inspection_wizard_nav.mjs
+          node scripts/test_wizard_back_forward.mjs
+          node scripts/test_training_desk_history.mjs
       # The /marketing app's client (TASK-2026-01487, v1.515.0). The pure half -- the router,
       # the calendar arithmetic, the composer's rules -- is checked directly, and the calendar
       # again under three other TZ values: day arithmetic that leaned on the device's clock would
