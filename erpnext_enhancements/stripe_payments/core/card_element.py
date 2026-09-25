@@ -651,20 +651,27 @@ def _intent_params(sp, confirmation_token, settings) -> dict:
 		"customer": sp.stripe_customer_id,
 		"confirmation_token": confirmation_token,
 		"confirm": True,
-		# The method is carried by the ConfirmationToken itself. We deliberately do
-		# not also pin payment_method_types: the token is already proven to be a card
-		# (price_card_payment rejects anything else) and is bound to this row, so
-		# pinning would add no guarantee while risking a parameter conflict that would
-		# fail every card payment.
+		# Must match the Payment Element's own `paymentMethodTypes: ["card"]` in
+		# www/pay-card.html. A ConfirmationToken collected by an Element configured with
+		# payment_method_types can only confirm an intent that names them too: left out,
+		# the intent defaults to automatic payment methods and Stripe refuses every charge
+		# with a 400 ("Payment details were collected through Stripe Elements using
+		# payment_method_types and cannot be confirmed through the API configured with
+		# automatic payment methods"). That is how the first live portal payment failed
+		# on 2026-09-25, under an earlier comment that argued pinning was unnecessary.
+		# Nothing was charged: a 400 is a definite refusal.
+		"payment_method_types": ["card"],
 		"return_url": f"{get_url(settings.success_route or '/stripe-return')}"
 		f"?status=success&sp={sp.name}",
 		"description": (sp.description or "Payment")[:250],
 		"metadata": metadata,
 	}
-	if settings.statement_descriptor:
-		# Safe to set unconditionally here, unlike the hosted path: this PaymentIntent
-		# is always a card, and the suffix is only problematic when mixed with ACH.
-		params["statement_descriptor_suffix"] = settings.statement_descriptor[:22]
+	# No statement_descriptor_suffix: Stripe builds a card's descriptor as the account's
+	# prefix + "* " + suffix, and the whole must be 22 characters or fewer. The setting holds
+	# a full descriptor ("Sapphire Fountains LLC", 22 characters on prod), not a suffix, so
+	# sending it here overflows on every charge, and Stripe's docs do not promise to
+	# truncate rather than refuse. The account's own descriptor applies instead. (The hosted
+	# path sends it only when ACH is off, which is not the case on prod.)
 	return params
 
 
