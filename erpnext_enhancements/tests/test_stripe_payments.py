@@ -1612,6 +1612,38 @@ def test_confirm_card_payment_rechecks_the_invoice_where_the_money_moves(monkeyp
 	assert result["requires_action"] is True and writes["store"]["SP-Q"]["status"] == "Processing"
 
 
+def test_the_card_charge_names_the_payment_method_types_the_element_collected(monkeypatch):
+	"""The first live portal payment (2026-09-25) failed on every try with Stripe's 400
+	"Payment details were collected through Stripe Elements using payment_method_types and
+	cannot be confirmed through the API configured with automatic payment methods". The
+	Payment Element in www/pay-card.html is built with ``paymentMethodTypes: ["card"]``, so the
+	PaymentIntent that confirms its ConfirmationToken must name the same types; left out, the
+	intent defaults to automatic payment methods. Pin both halves, so they cannot drift apart."""
+	import pathlib
+	import re
+
+	card_element, writes = _card_page(monkeypatch, [_quote()], {"id": "pi_ok", "status": "succeeded"})
+	monkeypatch.setattr(card_element, "post_charged_payment", lambda *a, **k: None, raising=False)
+	card_element.confirm_card_payment(stripe_payment="SP-Q", confirmation_token="ct_new")
+	params = writes["charges"][0][0]
+	assert params["confirmation_token"] == "ct_new" and params["confirm"] is True
+	assert params["payment_method_types"] == ["card"]
+	assert "automatic_payment_methods" not in params
+	# The setting is a whole descriptor; as a suffix it overflows prefix + "* " + suffix <= 22.
+	settings = _charge_settings()
+	settings.statement_descriptor = "Sapphire Fountains LLC"
+	assert "statement_descriptor_suffix" not in card_element._intent_params(
+		types.SimpleNamespace(**_quote(stripe_customer_id="cus_1", currency="USD")), "ct_new", settings
+	)
+
+	page = (pathlib.Path(__file__).resolve().parents[1] / "www" / "pay-card.html").read_text(encoding="utf-8")
+	element = re.search(r"stripe\.elements\(\{(.*?)\}\);", page, re.S)
+	assert element, "the Payment Element's options were not found in pay-card.html"
+	declared = re.search(r"paymentMethodTypes:\s*\[([^\]]*)\]", element.group(1))
+	assert declared, "pay-card.html's Element must declare paymentMethodTypes; the intent pins them"
+	assert re.findall(r"[\"']([a-z_]+)[\"']", declared.group(1)) == params["payment_method_types"]
+
+
 def test_confirm_card_payment_guards_the_quote_itself(monkeypatch):
 	"""One quote, one charge: a quote already sent — charged, settling, or failed — is never
 	sent again (a failed one would replay its first answer through the idempotency key)."""
