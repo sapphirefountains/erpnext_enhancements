@@ -274,31 +274,38 @@ PER_CALL_GATED = {
     "update_document": _update_document_needs_human,
 }
 
-#: Doctypes the settings allowlist may never exempt, whatever a row says. The exemption step
-#: applies to create_document and update_document alike, so exempting Task would ungate Task
-#: creation along with its updates — the one write ADR 0016 §6 exists to confirm.
-#:
-#: The next four are the gate's own records. Exempting the settings or its exemption table would
-#: let an assistant open its own exemption window (v1.525.0). Exempting AI Pending Action would
-#: let it rewrite a card's arguments after a human had read it but before they confirmed.
-#: Exempting AI Action Log would let it edit its own audit trail.
-#:
-#: The Knowledge Base's two doctypes (v1.538.0, WI-080, ADR 0017). Company knowledge is published
-#: only by a person approving someone else's draft, so no settings row may let an assistant's
-#: write to either skip its card. Being here also means a card that targets either never starts
-#: ticked in the batch dialog (`gating_api._review_reasons`). The Version doctype is on the
-#: denylist below as well, so a generic-tool write to it is refused before it could become a card.
-NEVER_EXEMPT = frozenset(
+#: The gate's own records (v1.525.0). Exempting the settings or its exemption table would let an
+#: assistant open its own exemption window. Exempting AI Pending Action would let it rewrite a
+#: card's arguments after a human had read it but before they confirmed. Exempting AI Action Log
+#: would let it edit its own audit trail.
+GATE_OWN_DOCTYPES = frozenset(
     {
-        "Task",
         "ERPNext Enhancements Settings",
         "AI Confirmation Exempt Doctype",
         "AI Pending Action",
         "AI Action Log",
-        "Knowledge Article",
-        "Knowledge Article Version",
     }
 )
+
+#: The Knowledge Base's two doctypes (v1.538.0, WI-080, ADR 0017). Company knowledge is published
+#: only by a person approving someone else's draft, so no settings row may let an assistant's
+#: write to either skip its card. The Version doctype is on the denylist below as well, so a
+#: generic-tool write to it is refused before it could become a card.
+KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Version"})
+
+#: Doctypes the settings allowlist may never exempt, whatever a row says. There are three kinds,
+#: each never exempt for its own reason:
+#:
+#: - Task. The exemption step applies to create_document and update_document alike, so exempting
+#:   Task would ungate Task creation along with its updates — the one write ADR 0016 §6 exists
+#:   to confirm.
+#: - The gate's own records, ``GATE_OWN_DOCTYPES``.
+#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES``.
+#:
+#: A card that targets any of them never starts ticked in the batch dialog, and the reason it
+#: shows names the kind (`gating_api._never_exempt_reason`). A new entry joins one of the three
+#: kinds or gets its own phrase in that function; `test_ai_gate_batch` fails on one with neither.
+NEVER_EXEMPT = frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES
 
 # ------------------------------------------------- private-context denylist
 #

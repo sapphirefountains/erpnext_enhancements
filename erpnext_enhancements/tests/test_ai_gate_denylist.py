@@ -26,7 +26,7 @@ What must hold, and why each one is a test rather than a hope:
 - the refusal happens before the confirm-flow bypass and before the gating switch, so it holds
   with gating off;
 - both KB doctypes are in ``NEVER_EXEMPT``, so no settings row can let a write to either skip its
-  card.
+  card, and the two settings descriptions that list what is never exempt name them.
 
 Plain ``unittest`` under ``test_assistant_tools_schema.install_stubs``, which is why it sits on the
 "AI gate + assistant-tool contract" CI step. Every frappe attribute is patched per test and
@@ -35,6 +35,7 @@ restored.
 Run: python -m unittest erpnext_enhancements.tests.test_ai_gate_denylist -v
 """
 
+import json
 import sys
 import types
 import unittest
@@ -173,6 +174,30 @@ class TestTheLists(unittest.TestCase):
     def test_both_kb_doctypes_are_never_exempt(self):
         self.assertIn(ARTICLE, _gate.NEVER_EXEMPT)
         self.assertIn(VERSION, _gate.NEVER_EXEMPT)
+        self.assertEqual(_gate.KNOWLEDGE_BASE_DOCTYPES, {ARTICLE, VERSION})
+        self.assertFalse(_gate.KNOWLEDGE_BASE_DOCTYPES & _gate.GATE_OWN_DOCTYPES)
+
+    def test_the_settings_page_names_the_kb_doctypes_as_never_exempt(self):
+        """The two descriptions a person reads before adding an exemption row said only "Task and
+        the gate's own records" after v1.538.0 added the knowledge base to NEVER_EXEMPT."""
+        app = REPO_ROOT / "erpnext_enhancements"
+        places = (
+            (
+                "ai_governance/doctype/ai_confirmation_exempt_doctype/ai_confirmation_exempt_doctype.json",
+                "document_type",
+            ),
+            (
+                "enhancements_core/doctype/erpnext_enhancements_settings/erpnext_enhancements_settings.json",
+                "ai_exempt_doctypes",
+            ),
+        )
+        for relative, fieldname in places:
+            meta = json.loads((app / relative).read_text(encoding="utf-8"))
+            field = next(f for f in meta["fields"] if f["fieldname"] == fieldname)
+            with self.subTest(field=fieldname):
+                for doctype in ("Task", ARTICLE, VERSION):
+                    self.assertIn(doctype, field["description"])
+                self.assertIn("the gate's own records", field["description"])
 
     def test_a_settings_row_cannot_exempt_either_kb_doctype(self):
         rows = [

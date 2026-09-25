@@ -2107,7 +2107,7 @@ fixtures = [
 	# so re-export never sweeps user-created records. "PO Approver" and "PO Creator"
 	# are deliberately absent from the Role entry — they are owned by
 	# patches/seed_po_approver_role.py and patches/seed_po_creator_role.py. So are
-	# "KB Author" and "KB Approver", and the one-role "KB Approver" Role Profile is
+	# "KB Author" and "KB Approver", and the one-role "KB Approvers" Role Profile is
 	# deliberately absent from the Role Profile entry below: all three are owned by
 	# patches/seed_knowledge_base_roles.py (WI-080, v1.538.0), insert-only, so a Desk
 	# edit to the profile survives and fixture sync does not re-insert it every migrate.

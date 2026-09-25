@@ -110,6 +110,8 @@ count. They call three endpoints in `gating_api`:
   says whether each has hidden values without reading or decrypting them. A row starts unticked
   (`batch_default` false, with a `review_reason`) for High risk, hidden values, a submit or cancel
   (`_gate._changes_docstatus`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
+  For a never-exempt target the reason names its kind (`gating_api._never_exempt_reason`): a Task,
+  the gate's own records, or since v1.538.0 the company knowledge base.
   It reads the redacted `arguments` for that and never returns them.
 - `confirm_actions` / `cancel_actions` take up to 50 names. The actions run oldest first, through
   the same `_confirm_one` / `_cancel_one` the form's buttons use. An action that is not yours, not

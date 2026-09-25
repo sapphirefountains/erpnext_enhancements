@@ -23,12 +23,13 @@ row is ever exercised:
   fixture targets either doctype.
 * **The Select options** are exactly ``knowledge_base/constants.py``, which the publishing code
   writes, and a required Select with no default starts blank, because v16 otherwise defaults it
-  to its first option and ``reqd`` never fires.
+  to its first option and ``reqd`` never fires. ``review_every_months`` defaults to
+  ``constants.DEFAULT_REVIEW_EVERY_MONTHS`` on both doctypes, the cadence POL-0001 sets.
 * **The controllers** carry the class names Frappe derives (a mismatch gets a DocType
   force-deleted on migrate), and refuse what they must refuse, in both the hook a flag can skip
   and the one it cannot.
 * **The seed patch** is registered once under ``[post_model_sync]``, seeds every role the DocPerm
-  rows name with ``desk_access = 1`` plus the one-role "KB Approver" Role Profile, is insert-only
+  rows name with ``desk_access = 1`` plus the one-role "KB Approvers" Role Profile, is insert-only
   and idempotent, and cannot raise.
 
 Installs its own ``frappe`` stub in ``setUpModule``, which is why it has its own CI step.
@@ -640,6 +641,17 @@ class TestSelectOptionsMatchTheCode(unittest.TestCase):
 		self.assertNotIn("", constants.DEPARTMENT_BLOCK_OPTIONS)
 		self.assertIsNone(constants.block_code(constants.DEPARTMENT_BLOCK_SELECT_OPTIONS[0]))
 
+	def test_review_every_months_defaults_to_the_policy_cadence(self):
+		"""POL-0001 sets the cadence (six months on 2026-09-25). One constant, and both JSONs carry
+		it: the Version's default is what a new draft starts with, and the Article's copy matches."""
+		self.assertIsInstance(constants.DEFAULT_REVIEW_EVERY_MONTHS, int)
+		self.assertGreater(constants.DEFAULT_REVIEW_EVERY_MONTHS, 0)
+		for doctype in (ARTICLE, VERSION):
+			field = _field(_load(doctype), "review_every_months")
+			with self.subTest(doctype=doctype):
+				self.assertEqual(field["fieldtype"], "Int")
+				self.assertEqual(field.get("default"), str(constants.DEFAULT_REVIEW_EVERY_MONTHS))
+
 	def test_block_code_is_strict(self):
 		self.assertEqual(constants.block_code("06 Operations"), "06")
 		self.assertEqual(constants.block_code("00 Company Wide"), "00")
@@ -779,13 +791,16 @@ class TestSeedPatchRegistration(unittest.TestCase):
 				self.assertEqual(desk_access, 1)
 
 	def test_the_profile_carries_the_approver_role_only(self):
-		self.assertEqual(seed.APPROVER_PROFILE, "KB Approver")
+		"""Plural like the other one-role profiles ("PO Approvers" holds "PO Approver")."""
+		self.assertEqual(seed.APPROVER_PROFILE, "KB Approvers")
 		self.assertEqual(seed.APPROVER_ROLE, "KB Approver")
+		self.assertNotEqual(seed.APPROVER_PROFILE, seed.APPROVER_ROLE)
 		self.assertIn(seed.APPROVER_ROLE, {name for name, _desk in seed.ROLES})
 
 	def test_it_is_not_also_a_fixture(self):
 		"""Owned by the patch. Fixture sync would re-insert the profile on every migrate."""
-		for filename, names in (("role.json", ("KB Author", "KB Approver")), ("role_profile.json", ("KB Approver",))):
+		owned = (("role.json", ("KB Author", "KB Approver")), ("role_profile.json", ("KB Approvers",)))
+		for filename, names in owned:
 			path = APP / "fixtures" / filename
 			if not path.exists():
 				continue
@@ -806,11 +821,11 @@ class TestSeedPatchBehaviour(unittest.TestCase):
 		self.assertEqual(len(STATE["inserted_profiles"]), 1)
 		data, ignore_permissions = STATE["inserted_profiles"][0]
 		self.assertTrue(ignore_permissions)
-		self.assertEqual(data["role_profile"], "KB Approver")
+		self.assertEqual(data["role_profile"], "KB Approvers")
 		self.assertEqual(data["roles"], [{"role": "KB Approver"}])
 		# No members: assigning the profile is a Desk step, never this patch's.
 		self.assertEqual(set(data), {"doctype", "role_profile", "roles"})
-		self.assertEqual(STATE["unlocked"], ["KB Approver"])
+		self.assertEqual(STATE["unlocked"], ["KB Approvers"])
 		self.assertEqual(STATE["errors"], [])
 
 	def test_it_is_idempotent(self):
@@ -823,12 +838,12 @@ class TestSeedPatchBehaviour(unittest.TestCase):
 	def test_it_is_insert_only(self):
 		"""Model sync usually creates both roles first (make_module_and_roles). A role or profile
 		that exists is never touched, whatever it holds."""
-		_reset_patch_state(roles=("KB Author", "KB Approver"), profiles=("KB Approver",))
+		_reset_patch_state(roles=("KB Author", "KB Approver"), profiles=("KB Approvers",))
 		seed.execute()
 		self.assertEqual(STATE["inserted_roles"], [])
 		self.assertEqual(STATE["inserted_profiles"], [])
 		self.assertEqual(STATE["roles"], {"KB Author": 0, "KB Approver": 0})
-		self.assertEqual(STATE["profiles"], {"KB Approver": []})
+		self.assertEqual(STATE["profiles"], {"KB Approvers": []})
 
 	def test_existing_roles_still_get_the_profile(self):
 		_reset_patch_state(roles=("KB Author", "KB Approver"))

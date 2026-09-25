@@ -8,7 +8,7 @@
 > held as a fallback, and Parker's Phase 0 editor test no longer decides between the two: it decides
 > only whether the Markdown import (WI-080 PR 4a) is built. The fourth KB Approver is Lisa Symanski,
 > approved by James; because she holds a Role Profile, she gets the role through a one-role
-> "KB Approver" profile. The text below was edited where those facts appear (the roles bullet in §2,
+> "KB Approvers" profile. The text below was edited where those facts appear (the roles bullet in §2,
 > the Quill consequence, the follow-ups and the revisit list) and is otherwise as proposed.
 
 ## Context
@@ -92,7 +92,7 @@ A version is published only by `approve_and_publish`. The server refuses unless 
 - Excluding `run_python_code` from batch approval is the real control, and is a follow-up to ADR 0014.
 
 **Roles and notices:**
-- Roles are granted in the Desk: directly for a user with no Role Profile, and through a one-role "KB Approver" Role Profile for a user who has one, because this site rebuilds a profiled user's roles from their profiles on every save.
+- Roles are granted in the Desk: directly for a user with no Role Profile, and through a one-role "KB Approvers" Role Profile for a user who has one, because this site rebuilds a profiled user's roles from their profiles on every save.
 - They are seeded by a `post_model_sync` patch, not a fixture, and so is that Role Profile.
 - Review notices are ToDos, raised inline, with the existing branded ToDo notification.
 
@@ -160,8 +160,8 @@ The rules that hold at every tier:
 
 **Follow-ups**
 - Exclude `run_python_code` cards from batch approval, as an amendment to ADR 0014.
-- ~~Name a 4th KB Approver.~~ Done 2026-09-25: Lisa Symanski, approved by James, through the "KB Approver" Role Profile.
-- Add "grant or revoke KB roles as Administrator" to the Restricted Drive runbook. The runbook does not exist yet, so the step is tracked as an ERPNext Task.
+- ~~Name a 4th KB Approver.~~ Done 2026-09-25: Lisa Symanski, approved by James, through the "KB Approvers" Role Profile.
+- Add "grant or revoke KB roles as Administrator" to the Restricted Drive runbook. The runbook does not exist yet, so the step is tracked as ERPNext task TASK-2026-02297 ("Continuity 3: write the restricted-access runbook") on PRJ-00580.
 - Regenerate the Triton agent snapshot and run `deploy_agents` after the tools ship.
 - Build the markdown import if Parker's export test shows that images arrive embedded and tables survive; skip it if they break.
 - The Help Article role cleanup: the leak is latent (0 articles). If done, it must be a patch, because Role Profile propagation is queued and FLUSHDB kills it.

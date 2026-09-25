@@ -79,7 +79,9 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   assistant can't open its own window, rewrite a card after it was read, or
   edit its audit trail. Since v1.538.0 it also covers the Knowledge Base's
   two doctypes (WI-080): company knowledge is published only by a person
-  approving someone else's draft.
+  approving someone else's draft. It is built from those three kinds (Task,
+  `GATE_OWN_DOCTYPES`, `KNOWLEDGE_BASE_DOCTYPES`), and the batch dialog's
+  review reason names the kind rather than calling every one the gate's own.
 - **FAC-upgrade risk**: `_safe_execute` is private FAC API. `apply_gate()`
   logs an Error Log entry when the seam is missing, and the integration
   canary test (`test_ai_gating_integration.test_gate_marker_present`) fails

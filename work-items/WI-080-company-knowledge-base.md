@@ -18,8 +18,9 @@ Nik wants a company knowledge base that people *and* every AI tool Sapphire uses
 
 - **"We do our own."** Nik chose the native build. ADR 0017 is Accepted, and Frappe Wiki is dropped rather than kept as a fallback.
 - **Parker's Phase 0 test decides only PR 4a.** It no longer chooses between native and the Wiki. Build the Markdown import if the Google Docs Markdown export keeps pictures and tables; skip it if they break.
-- **The 4th KB Approver is Lisa Symanski** (lisa.symanski@sapphirefountains.com), approved by James on 2026-09-25. She holds the Role Profile "Finance Team", and a profiled user's roles are rebuilt from their profiles on every save, so she gets KB Approver through a one-role Role Profile named "KB Approver", which PR 1 seeds and Nik adds in the Desk as her second profile.
-- **The Restricted Drive runbook does not exist yet.** Its step "grant or revoke KB roles as Administrator" is tracked as an ERPNext Task on PRJ-00580, not in this repo.
+- **The 4th KB Approver is Lisa Symanski** (lisa.symanski@sapphirefountains.com), approved by James on 2026-09-25. She holds the Role Profile "Finance Team", and a profiled user's roles are rebuilt from their profiles on every save, so she gets KB Approver through a one-role Role Profile named "KB Approvers" (plural, like "PO Approvers", which holds the "PO Approver" role), which PR 1 seeds and Nik adds in the Desk as her second profile.
+- **The Restricted Drive runbook does not exist yet.** Its step "grant or revoke KB roles as Administrator" is tracked as ERPNext task TASK-2026-02297 ("Continuity 3: write the restricted-access runbook") on PRJ-00580, not in this repo.
+- **Articles are reviewed every six months by default.** POL-0001 (Company Documentation - Guiding Principles) mandates a review every six months and lists the Knowledge Base among the company's document types. So `review_every_months` defaults to 6 on both doctypes, from one constant, `knowledge_base/constants.py` `DEFAULT_REVIEW_EVERY_MONTHS`. Nik can change it later; a new default reaches new drafts only, and every published article keeps the interval it was approved with.
 - **PRs 1 and 2 are written now and held.** Nik asked on 2026-09-25 for PRs 1 and 2 to be written. They are opened as draft PRs; none merges before the cutover is finished (~2026-11-02), and they merge one at a time.
 
 Why now, in numbers (verified 2026-09-24 against prod, read-only):
@@ -55,8 +56,8 @@ Checked against Frappe and ERPNext `version-16` (`git show origin/version-16:…
   1. In a private Note, paste a real SOP from Google Docs, a screenshot and a table, then view it on his phone.
   2. Run File → Download → Markdown on SOP-0030 and on one image-bearing Doc. Record whether the images arrive as embedded `data:` URIs and whether lists inside table cells survive.
   3. ~~If the editor is unworkable, stop and reopen the Wiki.~~ **Superseded 2026-09-25:** Nik decided "we do our own", so the test no longer chooses between native and the Wiki. If the export keeps pictures and tables, build PR 4a. If they break, drop PR 4a and budget for manual re-pasting.
-- **A 4th KB Approver is named. Done 2026-09-25:** Lisa Symanski (lisa.symanski@sapphirefountains.com), approved by James. She holds the Role Profile "Finance Team", so the grant goes through a profile: a direct grant is wiped on her next save. PR 1's seed patch creates a one-role Role Profile named **"KB Approver"** (the KB Approver role only, no members). Nik adds it in the Desk as her second profile, on her User form, after PR 1 is deployed. That save rebuilds her roles synchronously (v16 `User.populate_role_profile_roles`); a later edit to the profile itself reaches members through a queued job, which the deploy's FLUSHDB can kill. Check her roles afterwards: ``SELECT role FROM `tabHas Role` WHERE parenttype='User' AND parent='lisa.symanski@sapphirefountains.com' AND role='KB Approver'`` returns one row.
-- **The Restricted Drive runbook has a step:** "grant or revoke KB roles as Administrator". The runbook does not exist yet, so this step is tracked as an ERPNext Task on PRJ-00580, not in the repo.
+- **A 4th KB Approver is named. Done 2026-09-25:** Lisa Symanski (lisa.symanski@sapphirefountains.com), approved by James. She holds the Role Profile "Finance Team", so the grant goes through a profile: a direct grant is wiped on her next save. PR 1's seed patch creates a one-role Role Profile named **"KB Approvers"** (the KB Approver role only, no members). Nik adds it in the Desk as her second profile, on her User form, after PR 1 is deployed. That save rebuilds her roles synchronously (v16 `User.populate_role_profile_roles`); a later edit to the profile itself reaches members through a queued job, which the deploy's FLUSHDB can kill. Check her roles afterwards: ``SELECT role FROM `tabHas Role` WHERE parenttype='User' AND parent='lisa.symanski@sapphirefountains.com' AND role='KB Approver'`` returns one row.
+- **The Restricted Drive runbook has a step:** "grant or revoke KB roles as Administrator". The runbook does not exist yet, so this step is tracked as ERPNext task TASK-2026-02297 ("Continuity 3: write the restricted-access runbook") on PRJ-00580, not in the repo.
 - **The POL-0000 register is reconciled before any POL/PRO/SOP is imported.** Fix SOP-0030 vs SOP-0105, the titles typed into the Review Date column, and POL-0004 existing as both a Doc and a Sheet.
 - **Slice 4:** Nik creates the `erpnext-kb-export@erpnext-465317` service account and its key. James creates the "Sapphire Knowledge Base" shared drive, with sharing changes limited to James and Nik.
 - **Slice 5:** at least one published course cites three or more published articles.
@@ -81,6 +82,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 - **`Knowledge Article Version`**, class `KnowledgeArticleVersion`:
   - Submittable, `KBV-.#####`, `track_changes 0`.
   - Fields: article, version_number, base_version, review_state (Draft / In Review / Published / Superseded / Discarded), the editable content fields, reviewer, submitted_by/on, approved_by/on, review_note, contributors, ai_drafted, ai_requested_by, and `source_url`/`source_drive_file_id`/`source_modified`/`imported_on` for slice 2.
+  - `review_every_months` defaults to 6 (`constants.DEFAULT_REVIEW_EVERY_MONTHS`, from POL-0001's six-month review), on the Version and on the Article's copy. The schema test asserts both JSON defaults equal the constant. No backfill is needed: neither table has a row yet (PR 1 is unmerged), and on a normal doctype a new column's default reaches existing rows through the `ALTER` anyway.
   - `department_block` is required, and its options start with a blank. v16 defaults a Select to its first option (`create_new.py:117-118`), so otherwise `reqd` never fires and an unplaced draft becomes block 00.
   - `before_submit` **and** `on_submit` refuse without `flags.kb_publish`, because `flags.ignore_validate` skips `before_submit` (v16 `document.py:1391-1416`) but never `on_submit` (`:1445-1457`).
   - `before_cancel`, `on_trash` and amend all refuse.
@@ -93,10 +95,11 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - No submit, cancel, amend, delete, export, import or email for anyone.
   - No System Manager, `Desk User`, All or Guest row on Version.
 - **Roles:** `patches/seed_knowledge_base_roles.py` under `[post_model_sync]`, in the shape of `seed_training_roles` (`patches.txt:44`, `:371`; `hooks.py:2071-2073`). It is insert-only, with `desk_access=1`.
-  - It also seeds, insert-only, a Role Profile named **"KB Approver"** that carries only the KB Approver role and has no members (2026-09-25, for Lisa; see Preconditions). Assigning it is a Desk step.
+  - It also seeds, insert-only, a Role Profile named **"KB Approvers"** that carries only the KB Approver role and has no members (2026-09-25, for Lisa; see Preconditions). Assigning it is a Desk step.
   - Every step is guarded and commits alone. A patch that raises aborts `bench migrate`, which is the deploy.
 - **Gate (`_gate.py`):**
   - `DENYLIST_DOCTYPES` += `Knowledge Article Version`. `NEVER_EXEMPT` += both doctypes.
+  - `NEVER_EXEMPT` is built from three named kinds (Task, `GATE_OWN_DOCTYPES`, `KNOWLEDGE_BASE_DOCTYPES`), and the batch dialog's reason says which applies ("changes the company knowledge base"), rather than calling every never-exempt target the gate's own records (found in PR 1 review). The two settings descriptions that list what is never exempt name the knowledge-base doctypes.
   - The refusal message becomes a per-doctype reason map.
   - Fix `assistant_tools/README.md:125`, which says there is no denylist.
   - Found while building PR 1: two FAC 3.0.0 paths name a doctype outside the arguments the denylist read. `fetch` takes `id="<doctype>/<name>"`, and `run_python_code`'s `data_query.doctype` is pre-loaded with `frappe.get_all`, which applies no permissions. The denylist now reads both, so "refused for every tool" holds.
@@ -229,7 +232,8 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 - **Doctypes.** `SELECT name, module, is_submittable, track_changes, has_web_view, show_in_global_search FROM tabDocType WHERE name LIKE 'Knowledge Article%'` returns 2 rows in `Knowledge Base`. On the Version row: `track_changes = 0`, `has_web_view = 0`, `show_in_global_search = 0`.
 - **No force-delete.** ``SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' AND deleted_name LIKE 'Knowledge%'`` = 0.
 - **Roles.** `SELECT name, desk_access FROM tabRole WHERE name IN ('KB Author','KB Approver')` returns 2 rows, `desk_access = 1`.
-- **Role Profile.** ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB Approver'`` returns exactly 1 row, role `KB Approver`. ``SELECT COUNT(*) FROM `tabUser Role Profile` WHERE role_profile='KB Approver'`` is 0 until Nik adds it to Lisa in the Desk.
+- **Role Profile.** ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB Approvers'`` returns exactly 1 row, role `KB Approver`. ``SELECT COUNT(*) FROM `tabUser Role Profile` WHERE role_profile='KB Approvers'`` is 0 until Nik adds it to Lisa in the Desk.
+- **Review default.** ``SELECT parent, `default` FROM tabDocField WHERE parent LIKE 'Knowledge Article%' AND fieldname='review_every_months'`` returns 2 rows, both `6` (POL-0001's six months).
 - **Permissions.**
   - ``SELECT parent, role, share, submit, `delete`, export FROM tabDocPerm WHERE parent LIKE 'Knowledge Article%'`` shows `share = 0`, `submit = 0` and `delete = 0` on every row. No row has role `System Manager`, `Desk User`, `All` or `Guest` on the Version.
   - ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE parent LIKE 'Knowledge Article%'`` = 0.
@@ -281,8 +285,8 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 ## Rollback
 
 - **Slice 1:**
-  - Fast: remove KB Approver from everyone in the Desk (for Lisa, remove the "KB Approver" profile). Nothing can publish, and published articles stay readable.
-  - Full: revert the PRs. The empty tables, the roles and the "KB Approver" Role Profile remain, and removing them is the two-step deletion (a `delete_doc` patch). Expect the first migrate after reverting PR 1 to force-delete the two DocType records itself (`remove_orphan_doctypes` deletes a DocType whose controller no longer imports), leaving `Deleted Document` rows and the tables. The workspace, tile and help item go with the revert, plus an `is_hidden` flip or `delete_doc` patch for the Workspace and Desktop Icon.
+  - Fast: remove KB Approver from everyone in the Desk (for Lisa, remove the "KB Approvers" profile). Nothing can publish, and published articles stay readable.
+  - Full: revert the PRs. The empty tables, the roles and the "KB Approvers" Role Profile remain, and removing them is the two-step deletion (a `delete_doc` patch). Expect the first migrate after reverting PR 1 to force-delete the two DocType records itself (`remove_orphan_doctypes` deletes a DocType whose controller no longer imports), leaving `Deleted Document` rows and the tables. The workspace, tile and help item go with the revert, plus an `is_hidden` flip or `delete_doc` patch for the Workspace and Desktop Icon.
 - **Slice 2:** revert. Imported drafts stay as ordinary drafts.
 - **Slice 3:** set `enabled=0` on the two `FAC Tool Configuration` rows in the Desk, or revert. Triton chat drops the tools within an hour.
 - **Slice 4:** tick `export_paused`, or revert. The Drive copy stays until James removes it.

@@ -27,6 +27,15 @@ REVIEW_STATES = ("Draft", "In Review", "Published", "Superseded", "Discarded")
 #: The two states in which a version is still being worked on. At most one per article (PR 2).
 OPEN_REVIEW_STATES = ("Draft", "In Review")
 
+#: How many months a published article may go before its process owner must review it, unless
+#: the author sets another interval. POL-0001 (Company Documentation - Guiding Principles)
+#: mandates a review every six months and lists the Knowledge Base among the company's document
+#: types. This is the ``default`` of ``review_every_months`` on both doctypes, and the schema test
+#: asserts both JSONs match it, so changing the cadence means changing it here and in both JSONs.
+#: A new default reaches new drafts only: every version and article already saved keeps the
+#: interval it was written with.
+DEFAULT_REVIEW_EVERY_MONTHS = 6
+
 #: The POL-0000 register's department blocks, as ``(two-digit code, label)``. A KB number is
 #: ``KB-{code}{01..99}``, and ``{code}00`` is reserved as that block's index, following the
 #: register's own convention (xx00 is the group's Roles & Responsibilities).

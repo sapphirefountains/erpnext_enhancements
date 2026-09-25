@@ -192,6 +192,8 @@
    "read_only": 1
   },
   {
+   "default": "6",
+   "description": "How often the process owner must confirm this article is still accurate. The default comes from POL-0001, which sets the review cycle for company documents.",
    "fieldname": "review_every_months",
    "fieldtype": "Int",
    "label": "Review Every (Months)",
@@ -262,7 +264,7 @@
  "index_web_pages_for_search": 0,
  "links": [],
  "make_attachments_public": 0,
- "modified": "2026-09-25 11:00:00.000000",
+ "modified": "2026-09-25 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Knowledge Base",
  "name": "Knowledge Article",

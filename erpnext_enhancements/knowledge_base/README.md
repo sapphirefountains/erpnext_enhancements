@@ -84,7 +84,7 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | Import and export | `allow_import 0`, and no import or export right |
 | A Custom DocPerm, Property Setter or Custom Field widening a doctype | None exist, and the schema test fails if a fixture adds one |
 | The generic AI tools, raw SQL included | The AI gate refuses `Knowledge Article Version` on every path: a `doctype` argument on any tool, `fetch`'s id, `run_python_code`'s `data_query`, and the text of `run_database_query` and `run_python_code` (`assistant_tools/_gate.py`, `DENYLIST_DOCTYPES`). The text is searched with SQL comments stripped **and** without, because a `#` in a string literal, `1--1` and a `/*! */` comment are not comments to MariaDB. Raw SQL never consults DocPerm, so this is the only thing between a System Manager and the drafts. `tabKnowledge Article` is deliberately **not** refused |
-| An AI write skipping its confirmation | Both doctypes are in the gate's `NEVER_EXEMPT`, so no settings row can exempt them, and a card that targets either never starts ticked in the batch dialog |
+| An AI write skipping its confirmation | Both doctypes are in the gate's `NEVER_EXEMPT`, so no settings row can exempt them, and a card that targets either never starts ticked in the batch dialog, with the reason "changes the company knowledge base" (`_gate.KNOWLEDGE_BASE_DOCTYPES`) |
 
 The one thing none of this stops is a System Manager writing past the ORM with `frappe.db.set_value`,
 raw SQL, or a batch-approved `run_python_code` card. The Knowledge Base Integrity report (PR 4)
@@ -117,8 +117,9 @@ runs inside the same transaction, so raising there rolls the write back.
 before `role.json`. Model sync usually creates both roles first anyway, from the DocPerm rows
 (`make_module_and_roles`), and the patch is what the module relies on.
 
-The same patch creates a **"KB Approver" Role Profile** that carries only the KB Approver role and
-has no members. On this site a user who holds any Role Profile has `roles` rebuilt from the union of
+The same patch creates a **"KB Approvers" Role Profile** that carries only the KB Approver role and
+has no members. It is named in the plural like the other one-role profiles ("PO Approvers" holds
+the "PO Approver" role). On this site a user who holds any Role Profile has `roles` rebuilt from the union of
 their profiles on every save, so a role granted to them directly is wiped. Such a user can only get
 KB Approver through a profile of its own.
 
@@ -128,7 +129,7 @@ Granting is a Desk step, and only a System Manager can do it:
   Parker had none when WI-066 checked on 2026-07-28): add the role directly on the User. **Never**
   give such a user a Role Profile to do this; it regenerates their roles from the profile and wipes
   System Manager and everything else they hold directly.
-- **A user with a Role Profile**: add "KB Approver" as an additional profile. Lisa Symanski, the
+- **A user with a Role Profile**: add "KB Approvers" as an additional profile. Lisa Symanski, the
   fourth approver (approved by James on 2026-09-25), holds "Finance Team", so this is her route.
 - **Revoking** is the same step in reverse. The fast rollback of the whole Knowledge Base is to
   remove KB Approver from everyone: nothing can publish, and published articles stay readable.
@@ -137,11 +138,11 @@ Granting is a Desk step, and only a System Manager can do it:
 
 | Path | What it is |
 |---|---|
-| `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00 |
+| `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00 |
 | `doctype/knowledge_article/` | The published snapshot. Controller `KnowledgeArticle`: refuses every write without `flags.kb_action`, and every delete and rename |
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish`, and every cancel, amend, delete and rename |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |
-| [`../patches/seed_knowledge_base_roles.py`](../patches/seed_knowledge_base_roles.py) | The two roles and the one-role "KB Approver" Role Profile. Insert-only; cannot raise |
+| [`../patches/seed_knowledge_base_roles.py`](../patches/seed_knowledge_base_roles.py) | The two roles and the one-role "KB Approvers" Role Profile. Insert-only; cannot raise |
 | [`../assistant_tools/_gate.py`](../assistant_tools/_gate.py) | `DENYLIST_DOCTYPES`, `DENYLIST_REASONS` and `NEVER_EXEMPT` carry the KB entries |
 | [`../tests/test_knowledge_base_schema.py`](../tests/test_knowledge_base_schema.py) | Flags, the DocPerm matrix, fields, Select options, controller refusals, the seed patch. Its own CI step |
 | [`../tests/test_ai_gate_denylist.py`](../tests/test_ai_gate_denylist.py) | The Version doctype refused on every gate path; the published doctype not refused. On the AI-gate CI step |

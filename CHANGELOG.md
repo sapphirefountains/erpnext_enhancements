@@ -65,6 +65,13 @@ queries below before the next one merges.
     stays the list of valid blocks; `DEPARTMENT_BLOCK_SELECT_OPTIONS` is what the JSON stores.
   - `review_state` is the only field that may change after submit, when a newer version supersedes
     this one. Copy is hidden (`allow_copy 1`).
+  - **`review_every_months` defaults to 6**, on the Version and on the Article's copy. POL-0001
+    (Company Documentation - Guiding Principles) mandates a review every six months and lists the
+    Knowledge Base among the company's document types. The number lives once, in
+    `constants.DEFAULT_REVIEW_EVERY_MONTHS`, and the schema test asserts both JSON defaults equal it,
+    so Nik can change the cadence in one reviewed place. No backfill: neither table has a row yet,
+    and on a normal doctype a new column's default reaches existing rows through the `ALTER`
+    anyway. A later change of default reaches new drafts only.
 - **Both doctypes are private by construction:** `has_web_view 0`, `allow_guest_to_view 0`,
   `show_in_global_search 0`, `make_attachments_public 0`, `allow_import 0`, and no field in global
   search. All of these are stated explicitly in the JSON.
@@ -105,7 +112,9 @@ queries below before the next one merges.
   - v16 model sync usually creates both roles first anyway, from the DocPerm rows
     (`DocType.on_update` → `make_module_and_roles`, `core/doctype/doctype/doctype.py:544`,
     `:1968-1999`). The patch is what the module relies on rather than that side effect.
-- **The same patch creates a one-role "KB Approver" Role Profile** with no members.
+- **The same patch creates a one-role "KB Approvers" Role Profile** with no members.
+  - Plural, like this repo's other one-role profiles: "PO Approvers" holds the "PO Approver"
+    role and "PO Creators" holds "PO Creator". The role keeps its singular name, KB Approver.
   - It exists for Lisa Symanski, the fourth approver, whom James approved on 2026-09-25. She holds
     "Finance Team", and this site rebuilds a profiled user's roles from their profiles on every
     save, so a direct grant of KB Approver would be wiped. Nik adds this profile to her in the Desk
@@ -141,9 +150,11 @@ queries below before the next one merges.
   - the native build is decided;
   - the precondition "if the editor is unworkable, stop and reopen the Wiki" is struck, and
     Parker's Phase 0 test now decides only whether PR 4a, the Markdown import, is built;
-  - Lisa Symanski is the named fourth approver, through the "KB Approver" Role Profile;
-  - the Restricted Drive runbook's "grant or revoke KB roles as Administrator" step is tracked as an
-    ERPNext Task, because the runbook does not exist yet.
+  - Lisa Symanski is the named fourth approver, through the "KB Approvers" Role Profile;
+  - the Restricted Drive runbook's "grant or revoke KB roles as Administrator" step is tracked as
+    ERPNext task TASK-2026-02297 ("Continuity 3: write the restricted-access runbook") on
+    PRJ-00580, because the runbook does not exist yet;
+  - an article is reviewed every six months by default, as POL-0001 requires.
 
 ### Security
 
@@ -170,6 +181,17 @@ queries below before the next one merges.
 
 ### Fixed
 
+- **The batch dialog said every never-exempt card "changes the AI gate's own records or
+  settings".** `gating_api._review_reasons` used that one phrase for every `NEVER_EXEMPT` target.
+  It was already wrong for Task (v1.528.0), and adding the two KB doctypes made it wrong for them
+  too. `NEVER_EXEMPT` is now built from three named kinds, Task, `GATE_OWN_DOCTYPES` and
+  `KNOWLEDGE_BASE_DOCTYPES`, and `_never_exempt_reason` gives each its own phrase: "creates or
+  changes a Task", "changes the AI gate's own records or settings" (unchanged), and "changes the
+  company knowledge base". An entry added without a kind would show a generic fallback, and the
+  batch suite fails the build on one.
+- The description on AI Confirmation Exempt Doctype's Document Type and on the settings'
+  Confirmation-Exempt Doctypes table said "Task and the gate's own records are never exempt". Both
+  now name the knowledge base (Knowledge Article, Knowledge Article Version) as well.
 - `assistant_tools/README.md` said there was **no denylist in `_gate.py`**. There has been one entry,
   `Triton Chat Attachment`, since v1.426.0. The section now documents the list, the reason map, the
   three argument shapes and the history.
@@ -190,7 +212,9 @@ queries below before the next one merges.
   - every controller refusal, in both of its hooks;
   - the seed patch: registered once under `[post_model_sync]`, seeding exactly the roles the DocPerm
     rows name, insert-only, idempotent, never raising when an insert or the unlock fails, and not
-    also a fixture.
+    also a fixture;
+  - the profile named "KB Approvers", never the role's own name;
+  - `review_every_months` defaulting to `constants.DEFAULT_REVIEW_EVERY_MONTHS` on both doctypes.
 - **`tests/test_ai_gate_denylist.py`** (unittest, appended to the "AI gate + assistant-tool
   contract" step). It covers:
   - the Version doctype refused on every path: a `doctype` argument on every FAC 3.0.0 tool that
@@ -201,9 +225,13 @@ queries below before the next one merges.
     `run_python_code` text, fails against the comments-stripped search alone;
   - the published doctype and the WI-080 acceptance queries **not** refused;
   - Triton Chat Attachment still refused, with its message unchanged;
-  - a settings row unable to exempt either KB doctype;
+  - a settings row unable to exempt either KB doctype, and both settings descriptions naming them;
   - `_gated_execute` refusing with gating off and with the bypass flag set, without running the
     tool.
+- **`tests/test_ai_gate_batch.py`** gains four tests: a Task card and a knowledge-base card each get
+  their own reason, the three kinds make up `NEVER_EXEMPT` without overlapping, and every
+  `NEVER_EXEMPT` doctype has a reason of its own (never the fallback, and the gate's-own phrase only
+  for the gate's own records).
 
 ### After deploy
 
@@ -218,7 +246,9 @@ with `LIKE 'Knowledge Article%'`.
 - `SELECT name, desk_access FROM tabRole WHERE name IN ('KB Author','KB Approver')`: 2 rows,
   `desk_access = 1`.
 - ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB
-  Approver'``: exactly 1 row, `KB Approver`.
+  Approvers'``: exactly 1 row, `KB Approver`.
+- ``SELECT parent, `default` FROM tabDocField WHERE parent LIKE 'Knowledge Article%' AND
+  fieldname='review_every_months'``: 2 rows, both `6`.
 - ``SELECT parent, role, permlevel, `write`, share, submit, `delete`, export FROM tabDocPerm WHERE
   parent LIKE 'Knowledge Article%'``: 6 rows, and every `share`, `submit`, `delete` and `export` is
   0. The two Version rows at `permlevel` 1 (KB Author, KB Approver) have `write` 0.
@@ -230,7 +260,7 @@ with `LIKE 'Knowledge Article%'`.
 Then two Desk steps for Nik:
 - Grant KB Author and KB Approver directly to users who have no Role Profile. Never give such a user
   a profile for this: it wipes their direct roles.
-- Add "KB Approver" to Lisa Symanski as a second Role Profile, on her User form. That save rebuilds
+- Add "KB Approvers" to Lisa Symanski as a second Role Profile, on her User form. That save rebuilds
   her roles from her profiles there and then (v16 `User.populate_role_profile_roles`), so her
   `tabHas Role` rows include KB Approver straight away. A later edit to the *profile itself* is
   different: it reaches members through a queued job, which a deploy's FLUSHDB can kill.

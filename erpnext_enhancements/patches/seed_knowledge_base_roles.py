@@ -1,4 +1,4 @@
-"""Seed the two Knowledge Base roles, and the one-role "KB Approver" Role Profile (v1.538.0).
+"""Seed the two Knowledge Base roles, and the one-role "KB Approvers" Role Profile (v1.538.0).
 
 WI-080 PR 1, ADR 0017.
 
@@ -19,7 +19,7 @@ On most sites the two roles already exist when this runs. v16 model sync calls
 names, with ``desk_access = 1``. This patch is what the Knowledge Base relies on rather than that
 side effect, and it states the ``desk_access`` requirement in one place.
 
-**The "KB Approver" Role Profile.** The fourth approver, Lisa Symanski (approved by James,
+**The "KB Approvers" Role Profile.** The fourth approver, Lisa Symanski (approved by James,
 2026-09-25), has the Role Profile "Finance Team". On this site ``User.validate`` rebuilds a
 profiled user's ``roles`` from the union of their profiles on every save, so a role granted to her
 directly would be wiped on her next save. The only way to give her KB Approver is a profile that
@@ -52,9 +52,11 @@ ROLES = (
 	("KB Approver", 1),
 )
 
-#: The one-role profile a profiled user needs to hold KB Approver. Same name as the role, on
-#: purpose: it carries exactly that role and nothing else.
-APPROVER_PROFILE = "KB Approver"
+#: The one-role profile a profiled user needs to hold KB Approver. It carries exactly that role
+#: and nothing else, and is named in the plural like this repo's other one-role profiles ("PO
+#: Approvers" holds "PO Approver", "PO Creators" holds "PO Creator"), so the Desk never shows a
+#: profile and a role under the same name.
+APPROVER_PROFILE = "KB Approvers"
 APPROVER_ROLE = "KB Approver"
 
 
