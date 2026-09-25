@@ -19,7 +19,7 @@ frappe.pages['device-console'].on_page_load = function (wrapper) {
 		title: __('Device Console'),
 		single_column: true,
 	});
-	wrapper.device_console = new DeviceConsole(page);
+	wrapper.device_console = new DeviceConsole(page, wrapper);
 };
 
 frappe.pages['device-console'].on_page_show = function (wrapper) {
@@ -33,13 +33,19 @@ const DC_SHEETS = ['camera', 'employee'];
 const DC_BACK_TIMEOUT_MS = 1500;
 
 class DeviceConsole {
-	constructor(page) {
+	constructor(page, wrapper) {
 		this.page = page;
 		this.state = { camera: false, device: null };
 		this.sheet = null; // {name, dialog} while a sheet is open
 		this.opening = null; // the sheet whose route is being pushed
 		this.shownSheet = undefined; // the sheet segment at the last show; undefined before the first
+		this.away = false; // another Desk page has been shown since the last show (see onShow)
 		this.pick = null; // {action, device} of a Choose Employee closed with no pick, so Forward can reopen it
+		// frappe triggers "hide" on the page it leaves for another. Only the page's own counts: a
+		// Bootstrap "hide.bs.*" from inside the page bubbles up to the wrapper as well.
+		$(wrapper).on('hide', (e) => {
+			if (e.target === wrapper) this.away = true;
+		});
 		this.injectStyles();
 		this.buildSkeleton();
 		this.boot();
@@ -74,15 +80,27 @@ class DeviceConsole {
 	// segment and the router closes the sheet with nothing more from here. A sheet closed
 	// any other way (a read, a pick, X, Escape) steps back off its own entry, so Back never
 	// lands on a sheet that is already shut. The entry behind a sheet's is always the
-	// console's own: one on the first show — a reload or a pasted link — is replaced, and one
-	// Back or Forward lands on that cannot be opened again is stepped back off.
+	// console's own: one on the first show is replaced if it is a pasted link, and stepped
+	// back off if it is the page's own (a reload), as is one Back or Forward lands on that
+	// cannot be opened again.
 	//
 	// Only an entry this page pushed is a sheet's. Each is marked in history.state as it is
 	// pushed (markSheet), because the same URL also arrives from outside: frappe records every
 	// route with a second segment in Route History, and the awesome bar offers the most used as
 	// links. A sheet opened from one of those would have another page behind it, so X, or a
 	// camera read's step back, would land there and the scan be looked up off-screen. An
-	// unmarked sheet URL is handed to the console, as a reload's is.
+	// unmarked sheet URL is handed to the console, as a pasted link's is — or, when it was pushed
+	// over the console's own entry while that was showing, stepped back off, onto that entry. A
+	// marked one on the first show (a reload, or Android restoring a discarded tab: history.state
+	// survives both) is stepped back off too, since the entry behind a marked one is always the
+	// console's own.
+	//
+	// Each replace the page asks for clears `route_flags.replace_route` as soon as set_route
+	// returns. set_route reads the flag as it writes the entry, but clears route_flags itself
+	// only once its promise settles, and that waits on every request then in flight (v16's
+	// after_ajax) — on a first show, the bootstrap call. Left set, the flag would turn the next
+	// tap into a replace of the console's own entry, and Back or X from the sheet it opened would
+	// then leave the page.
 
 	sheetRoute() {
 		const route = frappe.get_route() || [];
@@ -118,6 +136,8 @@ class DeviceConsole {
 		// An entry left behind by a sheet that has closed is taken over, not stacked on.
 		if (on) frappe.route_flags.replace_route = true;
 		const settled = frappe.set_route(DC_ROUTE, name);
+		// Read already, and left set it would outlive this call (see "sheets and the phone's Back button").
+		frappe.route_flags.replace_route = false;
 		// set_route has written the entry by the time it returns (push_state runs before its
 		// promise does), so the mark lands on the sheet's own entry.
 		this.markSheet(name);
@@ -159,6 +179,9 @@ class DeviceConsole {
 		const sheet = this.sheetRoute();
 		const first = this.shownSheet === undefined;
 		const came = this.shownSheet;
+		// The console's own entry was showing at the last show, and no other page has been since.
+		const stayed = !first && !this.away && came === null;
+		this.away = false;
 		this.shownSheet = sheet;
 		// A sheet whose entry is no longer current. The router closes the open dialog on
 		// every route change, but not one still fading in: it is not cur_dialog yet.
@@ -168,10 +191,20 @@ class DeviceConsole {
 			if (first || !this.ownSheet(sheet)) {
 				// A reload, a pasted link, or a sheet URL reached from another page (never start a
 				// camera nobody asked for, over a page it would step back to): the entry becomes
-				// the console.
+				// the console, or is stepped back off onto the console's own.
 				this.shownSheet = null;
-				frappe.route_flags.replace_route = true;
-				frappe.set_route(DC_ROUTE);
+				if (stayed || (first && this.ownSheet(sheet))) {
+					// Pushed over the console's own entry while it was showing (the awesome bar's
+					// link to a sheet, picked here), or a reload on a sheet entry this page pushed
+					// (its mark survives the reload): the entry behind is the console's, so step
+					// back onto it. Replacing this one would leave two console entries in a row.
+					window.history.back();
+				} else {
+					frappe.route_flags.replace_route = true;
+					frappe.set_route(DC_ROUTE);
+					// Read already, and left set it would outlive this call (see openSheet).
+					frappe.route_flags.replace_route = false;
+				}
 			} else if (!this.reopenSheet(sheet)) {
 				// Back or Forward onto a sheet that cannot be opened again (the picker, for a
 				// device scanned since): step back onto the console's own entry, which is always

@@ -8,14 +8,25 @@
  *   - **Back returns to the previous screen and Forward restores it.** Every tap that changes the
  *     screen adds one entry; the page's own start re-stamps the entry it opened on (the landing
  *     redirect included), so Back from the first screen leaves the page. A tab that is already
- *     lit adds nothing, or the next Back would appear to do nothing.
+ *     lit adds nothing, or the next Back would appear to do nothing; "lit" is the screen, not
+ *     the string, so the bare /feedback showing the form counts. Back or Forward before the
+ *     bootstrap has answered draws nothing, and the page draws the entry it landed on.
  *   - **A half-written request is never silently lost.** The New form keeps what was typed across
  *     Back, Forward and the tabs, and a second tap on its tab leaves it alone. It outlives leaving
  *     the page too: it is mirrored to this tab's sessionStorage under the user (fields and file
- *     names only), so Back off a first-entry /feedback/new and Forward bring it back.
+ *     names only), so Back off a first-entry /feedback/new and Forward bring it back. Work still
+ *     in flight when the form is drawn again shows on the drawing on screen: an upload's row, an
+ *     "Expand with AI" or a submit drawn busy, and the form read-only while it is being sent, so
+ *     no correction typed then is dropped when it is filed. That work is read from the draft,
+ *     not only the page-wide busy flag another action clears, so nothing goes twice. Submit
+ *     waits for files still uploading, so none is filed without them. Left mid-send, the text
+ *     comes back with a warning that it may already have been filed.
+ *   - **A filed request stays filed.** A failed refresh after it does not reopen the form with
+ *     the text just filed.
  *   - **A late reply never draws over the screen the person went to**: a request that finishes
  *     loading after Back, or a submit that finishes after they left the form. And an "Expand
- *     with AI" that lands after the form was drawn again never replaces what was typed since.
+ *     with AI" never replaces what was typed into the description while it drafted, on the form
+ *     it was asked from or one drawn again; it says so instead.
  *   - **The report panel owns Back while it is open.** The page does nothing on a popstate while
  *     `ee_capture.isOpen()` is true, so answering "Discard this report?" does not clear the
  *     request under it; an entry the panel left behind keeps the screen and is re-stamped. Nor
@@ -334,6 +345,8 @@ function detail(name) {
 		attachments: [],
 		duplicate_candidates: [],
 		created_tasks: [],
+		// The triage panel a reviewer sees on a Submitted request names both projects.
+		projects: { erpnext: "PRJ-00001", triton: "PRJ-00002" },
 	};
 }
 
@@ -344,12 +357,14 @@ function detail(name) {
 function fakeServer(options) {
 	const opts = options || {};
 	const held = {};
+	const failing = {};
 	const sent = [];
 	const answer = (method, args) => {
-		if (method === API + "get_bootstrap") return bootstrap(opts.reviewer);
+		if (method === API + "get_bootstrap") return { ...bootstrap(opts.reviewer), ...(opts.bootstrap || {}) };
 		if (method === API + "get_request") return detail(args.name);
 		if (method === API + "submit_request") return { name: "ER-2026-00099", rejected: [] };
 		if (method === API + "draft_description") return { description: "Drafted by the AI." };
+		if (method === API + "review_decision") return {};
 		throw new Error(`no fake reply for ${method}`);
 	};
 	return {
@@ -363,12 +378,65 @@ function fakeServer(options) {
 				delete held[method];
 				await gate;
 			}
+			if (method in failing) {
+				const message = failing[method];
+				delete failing[method];
+				return { ok: false, status: 417, json: async () => ({ exception: message }) };
+			}
 			return { ok: true, status: 200, json: async () => ({ message: answer(method, args) }) };
 		},
 		hold(method) {
 			let release;
 			held[method] = new Promise((resolve) => (release = resolve));
 			return { release };
+		},
+		/** The next reply for `method` is a refusal carrying `message`. */
+		fail(method, message) {
+			failing[method] = message;
+		},
+	};
+}
+
+/**
+ * Uploads through a stand-in XMLHttpRequest, each held until the test lets it go: `progress`
+ * moves the oldest one still out, `finish` lands it as the File `name`, `fail` drops the
+ * connection, `refuse` answers it with an HTTP error. `restore` puts the real one back.
+ */
+function heldUploads() {
+	const real = globalThis.XMLHttpRequest;
+	const out = [];
+	globalThis.XMLHttpRequest = class {
+		constructor() {
+			this.upload = {};
+		}
+		open() {}
+		setRequestHeader() {}
+		abort() {}
+		send() {
+			out.push(this);
+		}
+	};
+	return {
+		progress(fraction) {
+			out[0].upload.onprogress({ lengthComputable: true, loaded: fraction * 100, total: 100 });
+		},
+		finish(name) {
+			const xhr = out.shift();
+			xhr.status = 200;
+			xhr.responseText = JSON.stringify({ message: { name, file_url: `/private/files/${name}` } });
+			xhr.onload();
+		},
+		fail() {
+			out.shift().onerror();
+		},
+		refuse(status) {
+			const xhr = out.shift();
+			xhr.status = status;
+			xhr.responseText = "";
+			xhr.onload();
+		},
+		restore() {
+			globalThis.XMLHttpRequest = real;
 		},
 	};
 }
@@ -389,7 +457,8 @@ function fakeStorage() {
 
 // ------------------------------------------------------------------ driving the page
 
-async function boot(F, options) {
+/** The page, built and not yet mounted: `boot` for the usual start, this to hold its bootstrap. */
+function setup(F, options) {
 	const opts = options || {};
 	const b = fakeBrowser(opts);
 	const doc = fakeDocument();
@@ -412,9 +481,25 @@ async function boot(F, options) {
 	const root = doc.createElement("div");
 	doc.body.appendChild(root);
 	const app = new F.FeedbackApp(root, b.win.EE_FEEDBACK_BOOT);
-	await app.mount();
-	await flush();
 	return { b, doc, app, server };
+}
+
+async function boot(F, options) {
+	const pg = setup(F, options);
+	await pg.app.mount();
+	await flush();
+	return pg;
+}
+
+/**
+ * Make `pg` the page the globals point at again, after a later `boot` took them. Only to let a
+ * reply held on an earlier page land there: `call()`'s 45 s abort timer holds the run open until
+ * it does.
+ */
+function reenter(pg) {
+	globalThis.window = pg.b.win;
+	globalThis.document = pg.doc;
+	globalThis.fetch = pg.server.fetch;
 }
 
 function find(scope, tag, text) {
@@ -444,6 +529,36 @@ const tab = (pg, label) => {
 	for (const node of pg.app.nav.walk()) if (node.tagName === "A" && node.textContent.startsWith(label)) return node;
 	return null;
 };
+/** The attachment rows the form on screen lists, as text, a refused one marked. */
+function attachmentRows(pg) {
+	const rows = [];
+	for (const node of pg.app.pane.walk()) {
+		if (node.classList.contains("ee-fb-attachment")) rows.push(`${node.textContent}${node.classList.contains("ee-fb-attachment-bad") ? " (refused)" : ""}`);
+	}
+	return rows;
+}
+/** Pick files in the form on screen, the way the file picker's change does. */
+function pickFiles(pg, ...names) {
+	let picker = null;
+	for (const node of pg.app.pane.walk()) if (node.type === "file") picker = node;
+	picker.files = names.map((name) => new File(["bytes"], name, { type: "image/png" }));
+	picker.dispatch("change");
+}
+/** The select offering `option`: the Impact box, given one of its choices. */
+function selectOffering(scope, option) {
+	for (const node of scope.walk()) {
+		if (node.tagName === "SELECT" && node.childNodes.some((o) => o.textContent === option)) return node;
+	}
+	return null;
+}
+/** Whether the New form on screen shows its "Sending…" note. */
+function sendingNoteShown(pg) {
+	for (const node of pg.app.pane.walk()) if (node.tagName === "P" && node.textContent.startsWith("Sending")) return !node.hidden;
+	return false;
+}
+/** What was filed: each submit_request's title. */
+const filedTitles = (pg) => pg.server.sent.filter((c) => c.method === API + "submit_request").map((c) => c.args.payload.title);
+
 /** What the pane shows: the form, a list, a request's title, or a notice. */
 function screen(pg) {
 	const pane = pg.app.pane;
@@ -506,6 +621,26 @@ function screen(pg) {
 		tap(tab(pg, "My requests"));
 		check("the lit tab: no push", [pg.b.count("push"), pg.b.entries.length], [2, 3]);
 	}
+	{
+		// A first-time filer lands on the bare /feedback, which keeps its address and shows the
+		// form with "New request" lit, though that tab's href is /feedback/new. Screens, not strings.
+		const pg = await boot(F, { url: "/feedback", bootstrap: { my_requests: [] } });
+		check(
+			"the bare landing: the form, the address kept, New lit",
+			[screen(pg), pg.b.win.location.pathname, tab(pg, "New request").className.includes("ee-fb-tab-active")],
+			["form", "/feedback", true]
+		);
+		const box = findInput(pg.app.pane, TITLE);
+		typeInto(box, "Typed on the landing");
+		const before = pg.b.calls.length;
+		tap(tab(pg, "New request"));
+		check(
+			"tapping the lit New tab: no push, the address named in place, the same form",
+			[pg.b.calls.slice(before).map((c) => [c.call, c.url, c.state]), pg.b.entries.length, findInput(pg.app.pane, TITLE) === box],
+			[[["replace", "/feedback/new", { ee_fb: 1 }]], 1, true]
+		);
+		check("so the next Back leaves the page", pg.b.userBack(), false);
+	}
 
 	console.log("\na half-written request survives Back, Forward and the tabs");
 	{
@@ -563,6 +698,25 @@ function screen(pg) {
 		check("no push to the request: the list stays", [pg.b.count("push") - pushes, screen(pg)], [0, "list"]);
 		check("it says it was filed", pg.app.banner.textContent, "Filed as ER-2026-00099.");
 		check("and the next form starts empty", pg.app.state.newDraft, null);
+	}
+
+	console.log("\na submit that is filed stays filed when the refresh after it fails");
+	{
+		// The refresh is only the nav counts. Failing, it must not reopen the form with what was
+		// just filed, orphaned from the draft, for the next tap to file a second time.
+		const pg = await boot(F);
+		typeInto(findInput(pg.app.pane, TITLE), "Filed but bootstrap failed");
+		pg.server.fail(API + "get_bootstrap", "Bad gateway");
+		tap(find(pg.app.pane, "BUTTON", "Submit"));
+		await flush();
+		check(
+			"filed: the page goes to it as usual, and says nothing of the refresh",
+			[filedTitles(pg), screen(pg), pg.app.banner.hidden],
+			[["Filed but bootstrap failed"], "request: Detail of ER-2026-00099", true]
+		);
+		check("the draft and its mirror are gone", [pg.app.state.newDraft, pg.b.win.sessionStorage.getItem(DRAFT_KEY)], [null, null]);
+		pg.b.userBack();
+		check("Back: a blank form, not the one just filed", [screen(pg), findInput(pg.app.pane, TITLE).value], ["form", ""]);
 	}
 
 	console.log("\nan \"Expand with AI\" that lands late never replaces newer typing");
@@ -624,6 +778,330 @@ function screen(pg) {
 		const asked = pg.server.sent.filter((c) => c.method === API + "draft_description").map((c) => c.args.description);
 		check("on the form it was asked from: it fills the box, from what was there", [desc.value, pg.app.state.newDraft.description, asked], ["Drafted by the AI.", "Drafted by the AI.", ["It is greyed out"]]);
 	}
+	{
+		// On the form it was asked from, typed into during the wait: the typing is the newer work.
+		const pg = await boot(F);
+		typeInto(findInput(pg.app.pane, TITLE), "The printer icon does nothing");
+		const desc = findInput(pg.app.pane, DESC);
+		typeInto(desc, "short");
+		const gate = pg.server.hold(API + "draft_description");
+		tap(find(pg.app.pane, "BUTTON", "Expand with AI"));
+		await flush();
+		const typed = "short, and then a long paragraph typed while it drafted";
+		typeInto(desc, typed);
+		gate.release();
+		await flush();
+		check(
+			"typed into during the wait, same form: the box, the draft and the mirror keep the typing",
+			[desc.value, pg.app.state.newDraft.description, JSON.parse(pg.b.win.sessionStorage.getItem(DRAFT_KEY)).description],
+			[typed, typed, typed]
+		);
+		check("and it says the AI draft was not applied", [pg.app.banner.hidden, / not applied\.$/.test(pg.app.banner.textContent)], [false, true]);
+		check("the button is back", [find(pg.app.pane, "BUTTON", "Expand with AI").disabled, pg.app.state.busy], [false, false]);
+	}
+
+	console.log("\nwork in flight shows on the form drawn again, and nothing it holds is dropped");
+	{
+		// An upload that finishes after the person left the form and came back.
+		const pg = await boot(F);
+		const uploads = heldUploads();
+		try {
+			pickFiles(pg, "wrong-screenshot.png");
+			await flush();
+			check("picked: listed as uploading", attachmentRows(pg), ["wrong-screenshot.png — uploading…"]);
+			tap(tab(pg, "My requests"));
+			pg.b.userBack();
+			check("away and Back: the form drawn again lists it, still uploading", attachmentRows(pg), ["wrong-screenshot.png — uploading…"]);
+			uploads.progress(0.5);
+			check("its progress shows on the form on screen", attachmentRows(pg), ["wrong-screenshot.png — 50%"]);
+			uploads.finish("FILE-0009");
+			await flush();
+			check("it lands: listed as ready on the form on screen", attachmentRows(pg), ["wrong-screenshot.png — ready"]);
+			typeInto(findInput(pg.app.pane, TITLE), "Something is wrong");
+			tap(find(pg.app.pane, "BUTTON", "Submit"));
+			await flush();
+			const sent = pg.server.sent.filter((c) => c.method === API + "submit_request").map((c) => c.args.attachments);
+			check("and Submit sends what the list showed", sent, [["FILE-0009"]]);
+		} finally {
+			uploads.restore();
+		}
+	}
+	{
+		// One refused after the form was drawn again says so there, and is not sent.
+		const pg = await boot(F);
+		const uploads = heldUploads();
+		try {
+			pickFiles(pg, "too-big.png");
+			await flush();
+			tap(tab(pg, "My requests"));
+			pg.b.userBack();
+			uploads.fail();
+			await flush();
+			check("refused: the form on screen says so", attachmentRows(pg), ["too-big.png — Upload failed. (refused)"]);
+			check("nothing attached, nothing in flight mirrored", [pg.app.state.newDraft.attachments, "uploads" in JSON.parse(pg.b.win.sessionStorage.getItem(DRAFT_KEY) || "{}")], [[], false]);
+		} finally {
+			uploads.restore();
+		}
+	}
+	{
+		// A submit still out when the person comes back: the form is read-only until it answers.
+		const pg = await boot(F);
+		typeInto(findInput(pg.app.pane, TITLE), "First words");
+		const gate = pg.server.hold(API + "submit_request");
+		tap(find(pg.app.pane, "BUTTON", "Submit"));
+		await flush();
+		check(
+			"while it is sent: the form is read-only, Submit busy, and it says so",
+			[findInput(pg.app.pane, TITLE).disabled, !!find(pg.app.pane, "BUTTON", "Submitting…") && find(pg.app.pane, "BUTTON", "Submitting…").disabled, sendingNoteShown(pg)],
+			[true, true, true]
+		);
+		tap(tab(pg, "My requests"));
+		pg.b.userBack();
+		const title = findInput(pg.app.pane, TITLE);
+		const busy = find(pg.app.pane, "BUTTON", "Submitting…");
+		check(
+			"away and Back while it is sent: drawn read-only, Submit drawn busy, the note shown",
+			[title.value, title.disabled, findInput(pg.app.pane, DESC).disabled, !!busy && busy.disabled, !!find(pg.app.pane, "BUTTON", "Submit"), sendingNoteShown(pg)],
+			["First words", true, true, true, false, true]
+		);
+		check("and nothing takes focus into the locked form", pg.doc.activeElement === title, false);
+		tap(busy || find(pg.app.pane, "BUTTON", "Submit"));
+		gate.release();
+		await flush();
+		check("it lands: filed once, as it was sent, and the page shows it", [filedTitles(pg), screen(pg)], [["First words"], "request: Detail of ER-2026-00099"]);
+	}
+	{
+		// The same, refused: the form drawn again opens for changes, holding what was typed.
+		const pg = await boot(F);
+		typeInto(findInput(pg.app.pane, TITLE), "First words");
+		const gate = pg.server.hold(API + "submit_request");
+		pg.server.fail(API + "submit_request", "The title is too short.");
+		tap(find(pg.app.pane, "BUTTON", "Submit"));
+		await flush();
+		tap(tab(pg, "My requests"));
+		pg.b.userBack();
+		gate.release();
+		await flush();
+		const title = findInput(pg.app.pane, TITLE);
+		const submit = find(pg.app.pane, "BUTTON", "Submit");
+		check(
+			"refused: the form on screen opens again with the typing, and says why",
+			[screen(pg), title.value, title.disabled, !!submit && submit.disabled, sendingNoteShown(pg), pg.app.banner.textContent],
+			["form", "First words", false, false, false, "The title is too short."]
+		);
+		typeInto(title, "First words, corrected");
+		tap(submit);
+		await flush();
+		check(
+			"so the correction is what is filed next",
+			[filedTitles(pg), screen(pg)],
+			[["First words", "First words, corrected"], "request: Detail of ER-2026-00099"]
+		);
+	}
+	{
+		// An "Expand with AI" still out when the person comes back: the form drawn again shows it
+		// busy, and is live again when it lands.
+		const pg = await boot(F, { bootstrap: { ai_drafting: true } });
+		typeInto(findInput(pg.app.pane, TITLE), "The printer icon does nothing");
+		const gate = pg.server.hold(API + "draft_description");
+		tap(find(pg.app.pane, "BUTTON", "Expand with AI"));
+		await flush();
+		tap(tab(pg, "My requests"));
+		pg.b.userBack();
+		const drafting = find(pg.app.pane, "BUTTON", "Drafting…");
+		check(
+			"away and Back while it drafts: Expand drawn busy, Submit disabled rather than swallowing a tap",
+			[!!drafting && drafting.disabled, find(pg.app.pane, "BUTTON", "Submit").disabled],
+			[true, true]
+		);
+		gate.release();
+		await flush();
+		const expand = find(pg.app.pane, "BUTTON", "Expand with AI");
+		check(
+			"it lands: the form on screen shows the draft, and can expand and submit again",
+			[findInput(pg.app.pane, DESC).value, !!expand && expand.disabled, find(pg.app.pane, "BUTTON", "Submit").disabled, pg.app.state.busy],
+			["Drafted by the AI.", false, false, false]
+		);
+	}
+
+	console.log("\nwork in flight keeps the form's buttons locked, whatever else finishes meanwhile");
+	/** A reviewer rejects ER-2026-00001 and comes Back, Back to the form. */
+	const detourThroughAReject = async (pg) => {
+		tap(tab(pg, "My requests"));
+		tap(find(pg.app.pane, "A", "Stock page is slow"));
+		await flush();
+		tap(find(pg.app.pane, "BUTTON", "Reject"));
+		await flush();
+		pg.b.userBack();
+		pg.b.userBack();
+	};
+	{
+		// A reviewer's decision clears the page-wide busy flag when it lands. The submit it
+		// overlapped is still out: the form drawn again must not let it go a second time.
+		const pg = await boot(F, { reviewer: true });
+		typeInto(findInput(pg.app.pane, TITLE), "Filed by a reviewer");
+		const gate = pg.server.hold(API + "submit_request");
+		tap(find(pg.app.pane, "BUTTON", "Submit"));
+		await flush();
+		await detourThroughAReject(pg);
+		const decided = pg.server.sent.filter((c) => c.method === API + "review_decision").length;
+		const busy = find(pg.app.pane, "BUTTON", "Submitting…");
+		const expand = find(pg.app.pane, "BUTTON", "Expand with AI");
+		check(
+			"a Reject lands meanwhile, then Back, Back: the form is still locked, Submit still busy, Expand off",
+			[decided, pg.app.state.busy, screen(pg), findInput(pg.app.pane, TITLE).disabled, !!busy && busy.disabled, expand.disabled],
+			[1, false, "form", true, true, true]
+		);
+		tap(busy);
+		tap(expand);
+		gate.release();
+		await flush();
+		check(
+			"taps that land anyway send nothing: filed once, nothing drafted",
+			[filedTitles(pg), pg.server.sent.filter((c) => c.method === API + "draft_description").length],
+			[["Filed by a reviewer"], 0]
+		);
+	}
+	{
+		// The same for an "Expand with AI", which has up to 90 s to be overlapped.
+		const pg = await boot(F, { reviewer: true, bootstrap: { ai_drafting: true } });
+		typeInto(findInput(pg.app.pane, TITLE), "The printer icon does nothing");
+		const gate = pg.server.hold(API + "draft_description");
+		tap(find(pg.app.pane, "BUTTON", "Expand with AI"));
+		await flush();
+		await detourThroughAReject(pg);
+		const drafting = find(pg.app.pane, "BUTTON", "Drafting…");
+		check(
+			"a Reject lands meanwhile, then Back, Back: Expand still busy, Submit still disabled",
+			[pg.app.state.busy, !!drafting && drafting.disabled, find(pg.app.pane, "BUTTON", "Submit").disabled],
+			[false, true, true]
+		);
+		tap(drafting);
+		tap(find(pg.app.pane, "BUTTON", "Submit"));
+		await flush();
+		check(
+			"taps that land anyway ask nothing twice and file nothing",
+			[pg.server.sent.filter((c) => c.method === API + "draft_description").length, filedTitles(pg)],
+			[1, []]
+		);
+		gate.release();
+		await flush();
+		const expand = find(pg.app.pane, "BUTTON", "Expand with AI");
+		check(
+			"it lands: the draft is shown, and both are live again",
+			[findInput(pg.app.pane, DESC).value, !!expand, expand && expand.disabled, find(pg.app.pane, "BUTTON", "Submit").disabled],
+			["Drafted by the AI.", true, false, false]
+		);
+	}
+
+	console.log("\nSubmit waits for the files still uploading");
+	{
+		// Sent early, the request would be filed without the file, and the file would land on a
+		// draft already dropped: attached to nothing, and nothing would say so.
+		const pg = await boot(F);
+		const uploads = heldUploads();
+		try {
+			typeInto(findInput(pg.app.pane, TITLE), "The screenshot shows it");
+			pickFiles(pg, "shot.png");
+			await flush();
+			const waiting = find(pg.app.pane, "BUTTON", "Waiting for uploads…");
+			check(
+				"while it uploads: Submit is disabled and says why",
+				[!!waiting && waiting.disabled, !!find(pg.app.pane, "BUTTON", "Submit")],
+				[true, false]
+			);
+			tap(waiting);
+			await flush();
+			check("a tap that lands anyway files nothing", filedTitles(pg), []);
+			tap(tab(pg, "My requests"));
+			pg.b.userBack();
+			const drawnAgain = find(pg.app.pane, "BUTTON", "Waiting for uploads…");
+			check("away and Back: the form drawn again still waits", !!drawnAgain && drawnAgain.disabled, true);
+			pickFiles(pg, "second.png");
+			await flush();
+			uploads.finish("FILE-0042");
+			await flush();
+			check(
+				"one of two lands: still waiting on the other",
+				[attachmentRows(pg), !!find(pg.app.pane, "BUTTON", "Waiting for uploads…")],
+				[["shot.png — ready", "second.png — uploading…"], true]
+			);
+			uploads.finish("FILE-0043");
+			await flush();
+			const submit = find(pg.app.pane, "BUTTON", "Submit");
+			check("both land: Submit is live again", [!!submit, submit && submit.disabled], [true, false]);
+			tap(submit);
+			await flush();
+			const sent = pg.server.sent.filter((c) => c.method === API + "submit_request").map((c) => c.args.attachments);
+			check("and the request carries both files", sent, [["FILE-0042", "FILE-0043"]]);
+		} finally {
+			uploads.restore();
+		}
+	}
+	{
+		// An upload has no timeout of its own, so only its end frees Submit: a dropped connection
+		// or a refusal frees it as surely as a success.
+		const pg = await boot(F);
+		const uploads = heldUploads();
+		try {
+			typeInto(findInput(pg.app.pane, TITLE), "Neither file made it");
+			pickFiles(pg, "dropped.png");
+			pickFiles(pg, "too-big.png");
+			await flush();
+			uploads.fail();
+			await flush();
+			check("one dropped, one still out: still waiting", !!find(pg.app.pane, "BUTTON", "Waiting for uploads…"), true);
+			uploads.refuse(413);
+			await flush();
+			const submit = find(pg.app.pane, "BUTTON", "Submit");
+			check(
+				"both refused: listed as refused, and Submit is live",
+				[attachmentRows(pg), !!submit, submit && submit.disabled],
+				[["dropped.png — Upload failed. (refused)", "too-big.png — Request failed (413) (refused)"], true, false]
+			);
+			tap(submit);
+			await flush();
+			const sent = pg.server.sent.filter((c) => c.method === API + "submit_request").map((c) => c.args.attachments);
+			check("and it files with neither", sent, [[]]);
+		} finally {
+			uploads.restore();
+		}
+	}
+
+	console.log("\nBack before the page has loaded");
+	{
+		// A reload on /feedback/mine, Back pressed during "Loading…": the form must not be built
+		// before the bootstrap's Impact choices, or it keeps no impact and files "Blocking my work".
+		const storage = fakeStorage();
+		storage.setItem(DRAFT_KEY, JSON.stringify({ request_type: "Feature", impact: "Nice to have", title: "Kept", description: "", steps: "", attachments: [], labels: {} }));
+		const pg = setup(F, {
+			storage,
+			entries: [
+				{ state: { ee_fb: 1 }, url: "/feedback/new" },
+				{ state: { ee_fb: 1 }, url: "/feedback/mine" },
+			],
+		});
+		const gate = pg.server.hold(API + "get_bootstrap");
+		const mounted = pg.app.mount();
+		await flush();
+		pg.b.userBack();
+		check(
+			"Back while it loads: the address moves, and nothing is drawn, kept or written",
+			[pg.b.win.location.pathname, screen(pg), pg.app.state.newDraft, pg.b.calls],
+			["/feedback/new", "", null, []]
+		);
+		gate.release();
+		await mounted;
+		await flush();
+		check(
+			"loaded: the entry landed on is drawn, with the mirrored Impact and Type",
+			[screen(pg), pg.app.state.newDraft.impact, selectOffering(pg.app.pane, "Nice to have").value, pg.app.state.newDraft.request_type, findInput(pg.app.pane, TITLE).value],
+			["form", "Nice to have", "Nice to have", "Feature", "Kept"]
+		);
+		check("its entry is re-stamped in place", pg.b.calls.map((c) => [c.call, c.args, c.state]), [["replace", 2, { ee_fb: 1 }]]);
+		pg.b.userForward();
+		check("and Forward walks on to the list", screen(pg), "list");
+	}
 
 	console.log("\na half-written request outlives leaving the page, in this tab only");
 	{
@@ -652,6 +1130,58 @@ function screen(pg) {
 		check("filed: the mirror is dropped", storage.getItem(DRAFT_KEY), null);
 		const after = await boot(F, { storage });
 		check("so the next load starts empty", [findInput(after.app.pane, TITLE).value, findInput(after.app.pane, DESC).value], ["", ""]);
+	}
+	{
+		// Left while a submit was out. The browser drops the reply, but the server has usually
+		// filed it by then: the text comes back, never silently dropped, with a warning that it
+		// may have gone, so the natural next tap is not an unwitting duplicate.
+		const storage = fakeStorage();
+		const first = await boot(F, { storage });
+		typeInto(findInput(first.app.pane, TITLE), "Sent then left");
+		const gate = first.server.hold(API + "submit_request");
+		tap(find(first.app.pane, "BUTTON", "Submit"));
+		await flush();
+		check("while it is out, the mirror says it may have been filed", JSON.parse(storage.getItem(DRAFT_KEY)).maybe_filed, true);
+		check("Back leaves the page with the reply still out", first.b.userBack(), false);
+		const again = await boot(F, { storage });
+		const warned = (pg) => [pg.app.banner.hidden, pg.app.banner.className, pg.app.banner.textContent];
+		const WARNING = [false, "ee-fb-banner ee-fb-banner-warn", "This may already have been filed: it was being sent when the page was left. Check My requests before you send it again."];
+		check("Forward loads the page again: the text is kept, and a live form", [findInput(again.app.pane, TITLE).value, findInput(again.app.pane, TITLE).disabled], ["Sent then left", false]);
+		check("with a warning that it may already have been filed", warned(again), WARNING);
+		tap(tab(again, "My requests"));
+		check("not on another screen", again.app.banner.hidden, true);
+		again.b.userBack();
+		check("but on the form drawn again", warned(again), WARNING);
+		typeInto(findInput(again.app.pane, TITLE), "Sent then left, edited");
+		check("an edit keeps the warning in the mirror", JSON.parse(storage.getItem(DRAFT_KEY)).maybe_filed, true);
+		again.server.fail(API + "submit_request", "Too many requests just now. Try again shortly.");
+		tap(find(again.app.pane, "BUTTON", "Submit"));
+		await flush();
+		check(
+			"sent again and refused: that says nothing of the first send, so the mirror still warns",
+			[findInput(again.app.pane, TITLE).disabled, again.app.banner.textContent, JSON.parse(storage.getItem(DRAFT_KEY)).maybe_filed],
+			[false, "Too many requests just now. Try again shortly.", true]
+		);
+		tap(find(again.app.pane, "BUTTON", "Submit"));
+		await flush();
+		check("sent again and filed: the mirror is dropped", [filedTitles(again), storage.getItem(DRAFT_KEY)], [["Sent then left, edited", "Sent then left, edited"], null]);
+		// The first page's reply, which the browser dropped with it: let it land there.
+		reenter(first);
+		gate.release();
+		await flush();
+	}
+	{
+		// Refused on the page it was sent from: not filed, so nothing to warn of.
+		const storage = fakeStorage();
+		const pg = await boot(F, { storage });
+		typeInto(findInput(pg.app.pane, TITLE), "Refused at once");
+		pg.server.fail(API + "submit_request", "The title is too short.");
+		tap(find(pg.app.pane, "BUTTON", "Submit"));
+		await flush();
+		const saved = JSON.parse(storage.getItem(DRAFT_KEY));
+		check("refused: the mirror keeps the text, and no longer says it may have been filed", [saved.title, "maybe_filed" in saved], ["Refused at once", false]);
+		const again = await boot(F, { storage });
+		check("so loading it again warns of nothing", [findInput(again.app.pane, TITLE).value, again.app.banner.hidden], ["Refused at once", true]);
 	}
 	{
 		// An upload keeps its name and label in the mirror, never its bytes.
@@ -701,12 +1231,12 @@ function screen(pg) {
 		storage.setItem(DRAFT_KEY, "{not json");
 		const broken = await boot(F, { storage });
 		check("a mirror that is not JSON: a blank form", [screen(broken), findInput(broken.app.pane, TITLE).value], ["form", ""]);
-		storage.setItem(DRAFT_KEY, JSON.stringify({ request_type: "Rant", impact: "Whatever", title: 7, attachments: ["F-1", 3], labels: { "F-1": "a.png", "F-2": "b.png" } }));
+		storage.setItem(DRAFT_KEY, JSON.stringify({ request_type: "Rant", impact: "Whatever", title: 7, attachments: ["F-1", 3], labels: { "F-1": "a.png", "F-2": "b.png" }, maybe_filed: "yes" }));
 		const odd = await boot(F, { storage });
 		check(
 			"one that is malformed: only what is well formed, and only choices still offered",
-			[odd.app.state.newDraft.request_type, odd.app.state.newDraft.impact, odd.app.state.newDraft.title, odd.app.state.newDraft.attachments, odd.app.state.newDraft.labels],
-			["Bug", "Painful but I can work around it", "", ["F-1"], { "F-1": "a.png" }]
+			[odd.app.state.newDraft.request_type, odd.app.state.newDraft.impact, odd.app.state.newDraft.title, odd.app.state.newDraft.attachments, odd.app.state.newDraft.labels, odd.app.state.newDraft.maybe_filed],
+			["Bug", "Painful but I can work around it", "", ["F-1"], { "F-1": "a.png" }, false]
 		);
 	}
 	{

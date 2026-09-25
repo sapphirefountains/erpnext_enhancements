@@ -54,11 +54,18 @@ class InventoryScanner {
 		this.sheet = null; // {name, dialog} while a sheet is open
 		this.opening = null; // the sheet whose route is being pushed
 		this.shownSheet = undefined; // the sheet segment at the last show; undefined before the first
+		this.away = false; // another Desk page has been shown since the last show (see onShow)
 		this.shows = 0; // every show, counted: a lookup's reply compares it to see whether the clerk has moved
 		this.lastSearch = ''; // Find Item's pre-fill, so Forward can reopen it as it was
 		// 'camera' while the camera's entry holds no sheet: its read is being looked up there,
 		// or the lookup failed. Such an entry is taken over by the next sheet, never reopened.
 		this.leftover = null;
+		this.reads = 0; // camera reads, counted: `leftover` is the last one's (see handleScan)
+		// frappe triggers "hide" on the page it leaves for another. Only the page's own counts: a
+		// Bootstrap "hide.bs.*" from inside the page bubbles up to the wrapper as well.
+		$(wrapper).on('hide', (e) => {
+			if (e.target === wrapper) this.away = true;
+		});
 		this.injectStyles();
 		this.buildSkeleton();
 		this.boot();
@@ -100,8 +107,9 @@ class InventoryScanner {
 	// segment and the router closes the sheet with nothing more from here. A sheet closed
 	// any other way (a read, a pick, X, Escape) steps back off its own entry, so Back never
 	// lands on a sheet that is already shut. The entry behind a sheet's is always the
-	// count's own: one on the first show — a reload or a pasted link — is replaced, and one
-	// Back or Forward lands on that cannot be opened again is stepped back off.
+	// count's own: one on the first show is replaced if it is a pasted link, and stepped back
+	// off if it is the page's own (a reload), as is one Back or Forward lands on that cannot
+	// be opened again.
 	//
 	// A camera read is not a tap. Its lookup runs on the camera's entry, and what it leads
 	// to either takes that entry over (Find Item, for an unknown code) or steps back off it
@@ -113,7 +121,17 @@ class InventoryScanner {
 	// route with a second segment in Route History, and the awesome bar offers the most used as
 	// links. A sheet opened from one of those would have another page behind it, so X, or a
 	// camera read's step back, would land there. An unmarked sheet URL is handed to the
-	// count, as a reload's is.
+	// count, as a pasted link's is — or, when it was pushed over the count's own entry while
+	// that was showing, stepped back off, onto that entry. A marked one on the first show (a
+	// reload, or Android restoring a discarded tab: history.state survives both) is stepped
+	// back off too, since the entry behind a marked one is always the count's own.
+	//
+	// Each replace the page asks for clears `route_flags.replace_route` as soon as set_route
+	// returns. set_route reads the flag as it writes the entry, but clears route_flags itself
+	// only once its promise settles, and that waits on every request then in flight (v16's
+	// after_ajax) — on a first show, the bootstrap call. Left set, the flag would turn the
+	// clerk's next tap into a replace of the count's own entry, and X or Back from the sheet it
+	// opened would then leave the page.
 
 	sheetRoute() {
 		const route = frappe.get_route() || [];
@@ -154,6 +172,8 @@ class InventoryScanner {
 		// looked up) is taken over, not stacked on.
 		if (on) frappe.route_flags.replace_route = true;
 		const settled = frappe.set_route(ISA_ROUTE, name);
+		// Read already, and left set it would outlive this call (see "sheets and the phone's Back button").
+		frappe.route_flags.replace_route = false;
 		// set_route has written the entry by the time it returns (push_state runs before its
 		// promise does), so the mark lands on the sheet's own entry.
 		this.markSheet(name);
@@ -199,6 +219,9 @@ class InventoryScanner {
 		const sheet = this.sheetRoute();
 		const first = this.shownSheet === undefined;
 		const came = this.shownSheet;
+		// The count's own entry was showing at the last show, and no other page has been since.
+		const stayed = !first && !this.away && came === null;
+		this.away = false;
 		this.shownSheet = sheet;
 		this.shows += 1;
 		// A sheet whose entry is no longer current. The router closes the open dialog on
@@ -209,10 +232,20 @@ class InventoryScanner {
 			if (first || !this.ownSheet(sheet)) {
 				// A reload, a pasted link, or a sheet URL reached from another page (never start a
 				// camera nobody asked for, over a page it would step back to): the entry becomes
-				// the count.
+				// the count, or is stepped back off onto the count's own.
 				this.shownSheet = null;
-				frappe.route_flags.replace_route = true;
-				frappe.set_route(ISA_ROUTE);
+				if (stayed || (first && this.ownSheet(sheet))) {
+					// Pushed over the count's own entry while it was showing (the awesome bar's
+					// link to a sheet, picked here), or a reload on a sheet entry this page pushed
+					// (its mark survives the reload): the entry behind is the count's, so step back
+					// onto it. Replacing this one would leave two count entries in a row.
+					window.history.back();
+				} else {
+					frappe.route_flags.replace_route = true;
+					frappe.set_route(ISA_ROUTE);
+					// Read already, and left set it would outlive this call (see openSheet).
+					frappe.route_flags.replace_route = false;
+				}
 			} else if (this.leftover === sheet) {
 				// The camera's entry while its read is looked up, or while the lookup's failure is
 				// on screen: not a sheet to reopen, and no camera started by a Back or Forward
@@ -459,6 +492,12 @@ class InventoryScanner {
 	// moved — Back or Forward, a sheet tapped open, another Desk page — would otherwise route
 	// them back onto the count from wherever they went, or push an entry nobody tapped for
 	// (which Chrome then skips on Back). There the unknown code is only reported.
+	//
+	// And a camera read's reply acts only on the entry the read was taken on, while that entry
+	// still holds nothing but its lookup (`mine`). A camera the clerk has opened since — on that
+	// entry, or on a new one after Back — has taken it over (openSheet clears `leftover`), as has
+	// a later read; stepping off then would close the clerk's camera, and Find Item would replace
+	// it. The result is drawn where the clerk is, and there is nothing of this read's to step off.
 	handleScan(raw, fromCamera) {
 		const code = (raw || '').trim();
 		this.clearScan();
@@ -467,18 +506,25 @@ class InventoryScanner {
 			return;
 		}
 		if (fromCamera) this.leftover = 'camera';
+		const read = fromCamera ? ++this.reads : 0;
+		const mine = () => fromCamera && this.leftover === 'camera' && this.reads === read;
 		const shows = this.shows;
 		const ensure = this.state.session ? Promise.resolve() : this.startSession();
 		ensure
 			.then(() => this.call('resolve_scan', { code, warehouse: this.activeWarehouse() }))
 			.then(
 				(res) => {
+					const own = mine();
 					const search =
 						this.shows === shows &&
 						(frappe.get_route() || [])[0] === ISA_ROUTE &&
-						(!fromCamera || this.sheetRoute() === 'camera');
+						(!fromCamera || (own && this.sheetRoute() === 'camera'));
 					if (fromCamera && !(search && this.unknownOpensSearch(res))) {
-						if (this.leftover === 'camera') this.leftover = null;
+						if (!own) {
+							this.onResolved(res, code);
+							return;
+						}
+						this.leftover = null;
 						this.leaveSheet('camera', () => this.onResolved(res, code));
 						return;
 					}
@@ -486,12 +532,13 @@ class InventoryScanner {
 				},
 				() => {
 					// frappe has already said why the lookup failed, in a dialog that stepping
-					// off the camera's entry would close. The entry stays `leftover` until that
-					// dialog has gone. A sheet opened on it since has taken it over; one Back has
+					// off the camera's entry would close — unless the request never got through,
+					// when it puts no dialog up. The entry stays `leftover` until any such dialog
+					// has gone. A sheet opened on it since has taken it over; one Back has
 					// already moved off it, and leaveSheet then steps over nothing.
 					if (!fromCamera) return;
 					this.afterFrappeMessage(() => {
-						if (this.leftover !== 'camera') return;
+						if (!mine()) return;
 						this.leftover = null;
 						this.leaveSheet('camera');
 					});
@@ -501,12 +548,19 @@ class InventoryScanner {
 
 	// `then` runs once frappe's own error message is gone, or at once when none is up. frappe
 	// puts a refusal up in msgprint's dialog and a crash in its Server Error dialog, and has
-	// called show() on it before a call's promise rejects. `is_visible` is set by that show(),
-	// so it is true through the fade-in, when `display` is not yet. It stays true on a dialog
-	// closed by its own X, which never calls hide(); such a stale one only delays the step, and
-	// the step checks where the clerk is when it comes.
+	// called show() on it before a call's promise rejects. Whether one is up is Bootstrap's own
+	// `_isShown`: set as show() starts, so true through the fade-in when `display` is not yet,
+	// and cleared by every hide. Not frappe's `is_visible`, which only Dialog.hide() clears: the
+	// dialog's X is data-dismiss="modal", which Bootstrap closes with no hide() around it, and
+	// msgprint's dialog is one for the whole session. After any message anywhere was closed by
+	// its X, a lookup that failed with no message at all (a dropped connection: request.js has
+	// no handler for status 0) would wait for a "hidden" that never comes, and the camera's
+	// entry would never be stepped off.
 	afterFrappeMessage(then) {
-		const up = [frappe.msg_dialog, frappe.error_dialog].filter((d) => d && d.is_visible && d.$wrapper);
+		const up = [frappe.msg_dialog, frappe.error_dialog].filter((d) => {
+			const modal = d && d.$wrapper && d.$wrapper.data('bs.modal');
+			return !!(modal && modal._isShown);
+		});
 		if (!up.length) {
 			then();
 			return;

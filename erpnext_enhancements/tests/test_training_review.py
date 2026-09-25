@@ -440,6 +440,23 @@ class TestWhereTheReviewerIsWorkingIsTheRoute(unittest.TestCase):
         self.assertIn("key !== this.declined", advance)
         self.assertLess(advance.index("this.follow(wanted);"), advance.index("if (this.cards.length) return;"))
 
+    def test_a_stay_holds_only_while_the_route_names_that_view(self):
+        """A "Stay" keeps an edit on screen under the entry Back moved to. Kept after Back or
+        Forward had moved on, it made the catch-ups drop a later Back to that view which a load
+        or a verdict had held, leaving the URL naming one view and the screen showing another.
+        And once the view stayed on empties there is nothing left to keep: the route is followed,
+        not the lesson's own advance, whose step back went past the entry the route names."""
+        refresh = self._method("refresh(force) {", "sync_queue() {")
+        forget = "if (tq_view_key(this.route_view()) !== this.declined) this.declined = null;"
+        self.assertIn(forget, refresh)
+        # ...before a show that finds a load running returns: that show is the one to forget on.
+        self.assertLess(refresh.index(forget), refresh.index("if (this.loading) return;"))
+        advance = self._method("maybe_advance() {", "find(name) {")
+        emptied = advance[advance.index("if (this.cards.length) return;") :]
+        self.assertIn("if (wanted && key !== tq_view_key(this.view)) {", emptied)
+        self.assertLess(emptied.index("this.follow(wanted);"), emptied.index("this.leave_lesson();"))
+        self.assertLess(emptied.index("this.follow(wanted);"), emptied.index("this.load({ course: this.course_filter });"))
+
     def test_a_show_during_a_load_is_caught_up_when_it_lands(self):
         load = self._method("load(args) {", "adopt(data) {")
         self.assertIn(".finally(() => {", load)

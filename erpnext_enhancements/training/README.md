@@ -194,8 +194,10 @@ Deep links work — `/desk/learn/<COURSE>/<LESSON>` — in both directions. The 
 and the page answers it in `on_page_show`), and it passes a **router adapter**, through
 which the player *writes* it. Reading and writing are two jobs; conflating them into one
 flag is how the Desk would have ended up answering browser Back by running
-`queryParam("course")` against a route that has no query string. The preview harness passes
-`history: false` and no adapter, which is the third arrangement of the same two switches.
+`queryParam("course")` against a route that has no query string. The preview harness
+(`www/training_preview.html`) passes `history: false` and an adapter of its own, `writeRoute`: it
+pushes one entry per place only after a tap and answers Back through the player's own doors,
+the same two switches the Desk uses.
 
 `/training` is still a route and always will be: six senders have emailed it since
 v1.208.0 and those messages are still in inboxes. It redirects (`www/training.py`), and
@@ -719,7 +721,12 @@ steps back onto the view it was opened from. The page marks that lesson's entry 
 with no URL. A lesson that was not opened from the page, such as a pasted link, hands its entry to
 the queue instead. A route change that would repaint over a question being edited asks first. If
 the reviewer stays, the edit stays and the address is left where Back put it, so Forward returns to
-the entry that matches. A Back pressed while a lesson is loading is caught up when the load lands.
+the entry that matches. The "stay" holds only while the route still names the view it was said
+to: once Back or Forward moves on it is forgotten, because a later return to that view is a new
+request (kept, it silently dropped a Back that a load or a verdict had held). And once the view
+stayed on empties there is nothing left to keep, so the page follows the route rather than
+advancing on its own; a jumped-to lesson's step back would otherwise go past the entry the route
+names. A Back pressed while a lesson is loading is caught up when the load lands.
 One pressed while a verdict is in flight waits for the last verdict to land, then follows the
 route. Loading sooner could hand back the lesson being emptied with its question still pending, the
 double accept the auto-advance waits to avoid. It would also miss a save-and-accept whose card is

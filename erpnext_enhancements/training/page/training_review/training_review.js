@@ -451,6 +451,11 @@ class TrainingReview {
 		// takes it away, and on_page_show is the only thing that runs on the way back in.
 		this.bind_keys();
 
+		// A "Stay" (follow) holds only while the route still names the view it was said to. Once
+		// Back or Forward has moved on, a later return to that view is a new request, and the
+		// catch-ups below (load's finally, maybe_advance) must not drop it as already declined.
+		if (tq_view_key(this.route_view()) !== this.declined) this.declined = null;
+
 		// A show that finds a load running is picked up when it ends (load's finally), and one
 		// that finds a verdict in flight when the last of them lands (follow, maybe_advance).
 		if (this.loading) return;
@@ -533,6 +538,10 @@ class TrainingReview {
 		}
 		if (replace) frappe.route_flags.replace_route = true;
 		frappe.set_route(tq_view_route(view));
+		// v16 clears route_flags only in set_route's .finally, after a 100 ms timer and
+		// after_ajax, so a reviewer's own move made while a request is in flight would read a
+		// stale replace and overwrite this entry. push_state has already read the flag.
+		frappe.route_flags.replace_route = false;
 		// set_route has written the entry by the time it returns (push_state runs before its
 		// promise does). A lesson's entry is marked as pushed from this page, so leaving the
 		// lesson can step back onto the view it was opened from rather than add one.
@@ -588,7 +597,9 @@ class TrainingReview {
 			() => {
 				// Staying: the lesson and the edit stay on screen, under the entry Back moved
 				// to. The address is left alone, because writing over that entry would lose it,
-				// and Forward returns to the one that matches. load() does not chase it later.
+				// and Forward returns to the one that matches. Nothing chases the route later
+				// (load's finally, maybe_advance) while it still names this view, unless the
+				// view on screen empties; refresh forgets the decline once the route moves on.
 				this.declined = tq_view_key(view);
 				this.paint_courses();
 			}
@@ -1794,6 +1805,15 @@ class TrainingReview {
 			return;
 		}
 		if (this.cards.length) return;
+		// The route names another view, which the reviewer declined in order to keep an edit
+		// here, and this view has now emptied: there is nothing left to keep, so the route is
+		// followed after all. Neither advance below would do: each loads or leaves the view on
+		// screen, and leave_lesson takes the route's entry to be that lesson's, so it would step
+		// back past the entry the route names.
+		if (wanted && key !== tq_view_key(this.view)) {
+			this.follow(wanted);
+			return;
+		}
 		// A lesson opened by name has emptied: back to the queue, without leaving a history
 		// entry for Back to reopen it by. Only while the page is on screen: a verdict landing
 		// after the reviewer has left must not route them back.

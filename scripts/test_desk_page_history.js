@@ -14,16 +14,26 @@
  *     `current_route`, then `set_history()` (which closes the open dialog), `render()` and
  *     triggers "change". `set_route()` pushes the PATH only (`history.pushState(null, null,
  *     path)`), replaces instead when `frappe.route_flags.replace_route` is set, skips an
- *     unchanged path, and resolves after a 100 ms timeout, clearing `route_flags` only then.
+ *     unchanged path, and resolves after a 100 ms timeout and `frappe.after_ajax`, clearing
+ *     `route_flags` only then. `after_ajax` runs at once here unless the desk is made with
+ *     `{ ajax: true }`: then it waits, as request.js's does, until no request is in flight, so a
+ *     flag set for one route change is still set for the next while any reply is outstanding.
+ *     It is opt-in because most scenarios hold a reply open and still tap a sheet open meanwhile.
  *   - views/container.js `change_to()`: hides a displayed dialog, triggers "hide" on the page
  *     it leaves and "show" on every show, the same page included. pageview.js runs
  *     `on_page_load` once per page and `on_page_show` on every "show".
  *   - ui/dialog.js on Bootstrap 4.6: a modal fades in over 300 ms; `display` and `cur_dialog`
  *     are set only once it is shown, and `hide()` on a modal still fading in is ignored.
- *     `is_visible` is set by `show()` itself. frappe's `onhide` runs on "hide"; Bootstrap's
- *     "hidden.bs.modal" fires once the 300 ms fade-out is over. messages.js keeps msgprint's
- *     dialog as `frappe.msg_dialog`, and request.js has put a refusal up in it before the
- *     call's promise rejects.
+ *     `is_visible` is set by `show()` itself and cleared only by `hide()`: the dialog's X is
+ *     `data-dismiss="modal"` (dom.js), which Bootstrap handles with no `hide()` around it, so
+ *     `closeDialog` leaves `is_visible` set. Bootstrap's own state, `$wrapper.data("bs.modal")
+ *     ._isShown`, is set as a show starts and cleared as any hide does. frappe's `onhide` runs
+ *     on "hide"; Bootstrap's "hidden.bs.modal" fires once the 300 ms fade-out is over.
+ *     messages.js makes msgprint's dialog once and keeps it as `frappe.msg_dialog`, and
+ *     request.js has put a refusal up in it before the call's promise rejects; a request that
+ *     never reached the server (status 0) has no handler there and puts no dialog up.
+ *   - A reload (`desk.reload()`) is a new Desk, page scripts and all, over the same session
+ *     history: the browser keeps every entry's URL and `history.state` across it.
  *   - A browser traversal (Back, Forward, `history.back()`) is an asynchronous task that fires
  *     `popstate` when it lands; Back from the first entry leaves the page.
  *
@@ -53,6 +63,9 @@ const SCRIPTS = {
 // Page code swallows a failed server call the way the Desk does; a rejection nobody handles is
 // not this harness's business, and node would otherwise stop on it.
 process.on("unhandledRejection", () => {});
+
+// A `respond` handler returns this for a request that never reached the server.
+const NETWORK_DOWN = Symbol("network down");
 
 let failures = 0;
 let checks = 0;
@@ -151,6 +164,9 @@ function makeDesk(options) {
 					desk.calls.push({ label, method: "focus", args: [] });
 				},
 				scrollIntoView() {},
+				// Question Review's editor puts the caret at the end of the stem it opens on.
+				value: "",
+				setSelectionRange() {},
 			},
 			extra || {}
 		);
@@ -446,13 +462,19 @@ function makeDesk(options) {
 			this.$wrapper = jq(makeElement("dialog:" + this.title));
 			this.display = false;
 			this.is_visible = false;
-			this.shown_ = false;
+			this.shown_ = false; // Bootstrap's `_isShown`: set as show() starts, cleared as hide() does
 			this.fading = false;
+			const dialog = this;
+			this.$wrapper.data("bs.modal", {
+				get _isShown() {
+					return dialog.shown_;
+				},
+			});
 			desk.dialogs.push(this);
 		}
 		show() {
-			if (this.shown_ || this.fading) return this;
 			this.is_visible = true;
+			if (this.shown_ || this.fading) return this;
 			this.shown_ = true;
 			this.fading = true;
 			setTimeout_(() => {
@@ -464,8 +486,13 @@ function makeDesk(options) {
 			}, 300);
 			return this;
 		}
+		// frappe's hide(): Bootstrap's hide, then `is_visible` cleared.
 		hide() {
+			this.dismiss();
 			this.is_visible = false;
+		}
+		// Bootstrap's hide alone: what the X's `data-dismiss="modal"` runs, with no Dialog.hide().
+		dismiss() {
 			if (!this.shown_ || this.fading) return; // Bootstrap: not shown, or still transitioning
 			this.shown_ = false;
 			this.display = false;
@@ -487,8 +514,8 @@ function makeDesk(options) {
 	}
 	desk.shown = () => desk.dialogs.filter((d) => d.display).map((d) => d.title);
 	desk.dialog = (title) => desk.dialogs.filter((d) => d.title === title && d.display).pop() || null;
-	// The dialog's X, as a person closes it.
-	desk.closeDialog = (title) => desk.dialog(title).hide();
+	// The dialog's X, as a person closes it: Bootstrap's data-dismiss, so `is_visible` stays set.
+	desk.closeDialog = (title) => desk.dialog(title).dismiss();
 
 	// ---- server calls
 	function server(method, args) {
@@ -498,11 +525,13 @@ function makeDesk(options) {
 				if (req.settled) return;
 				req.settled = true;
 				resolve(m);
+				flushAjax();
 			};
 			req.reject = (e) => {
 				if (req.settled) return;
 				req.settled = true;
 				reject(e || {});
+				flushAjax();
 			};
 		});
 		desk.requests.push(req);
@@ -510,13 +539,20 @@ function makeDesk(options) {
 		if (answer) {
 			setTimeout_(() => {
 				const m = answer(req.args);
-				if (m instanceof Error) req.reject(m);
+				if (m === NETWORK_DOWN) req.reject({ status: 0 });
+				else if (m instanceof Error) req.reject(m);
 				else if (m !== undefined) req.resolve(m);
 			}, 5);
 		}
 		return req;
 	}
 	desk.sent = (method) => desk.requests.filter((r) => r.method === method);
+	// request.js's waiting_for_ajax: run once no request is in flight (see `after_ajax`).
+	const ajaxWaiting = [];
+	function flushAjax() {
+		if (desk.requests.some((r) => !r.settled)) return;
+		ajaxWaiting.splice(0).forEach((fn) => fn());
+	}
 
 	// ---- frappe
 	const router = {
@@ -689,7 +725,10 @@ function makeDesk(options) {
 		router,
 		get_route: () => router.current_route,
 		set_route: (...a) => router.set_route(...a),
-		after_ajax: (fn) => fn(),
+		after_ajax(fn) {
+			if (opts.ajax && desk.requests.some((r) => !r.settled)) ajaxWaiting.push(fn);
+			else fn();
+		},
 		provide(ns) {
 			let o = ctx;
 			ns.split(".").forEach((part) => {
@@ -716,8 +755,11 @@ function makeDesk(options) {
 				},
 				(err) => {
 					if (o.error) o.error(err);
-					// request.js puts the server's refusal up as a message.
-					frappe.msgprint(__("The server refused: {0}", [(err && err.message) || "error"]));
+					// request.js puts the server's refusal up as a message. A request that never
+					// reached the server has no status handler there, so no dialog is put up.
+					if (!(err && err.status === 0)) {
+						frappe.msgprint(__("The server refused: {0}", [(err && err.message) || "error"]));
+					}
 					throw err;
 				}
 			);
@@ -755,11 +797,12 @@ function makeDesk(options) {
 		msgprint(m) {
 			const message = typeof m === "object" ? m.message : m;
 			desk.messages.push(message);
-			const d = new Dialog({ title: "Message" });
+			// messages.js makes its dialog once, keeps it here and shows that one every time; a
+			// refusal is up in it before the call rejects.
+			if (!frappe.msg_dialog) frappe.msg_dialog = new Dialog({ title: "Message" });
+			const d = frappe.msg_dialog;
 			d.message = message;
 			d.show();
-			// messages.js keeps its dialog here; a refusal is up in it before the call rejects.
-			frappe.msg_dialog = d;
 			return d;
 		},
 		show_alert(m) {
@@ -904,11 +947,26 @@ function makeDesk(options) {
 
 	// ---- what a person does
 	desk.load = async function (url) {
+		await desk.restore([{ url, state: null }], 0);
+	};
+	desk.restore = async function (list, at) {
 		entries.length = 0;
-		entries.push({ url, state: null });
-		index = 0;
+		list.forEach((e) => entries.push(e));
+		index = at;
 		router.route();
 		await desk.settle();
+	};
+	// Pull-to-refresh, or Android bringing back a discarded tab: a new Desk, its page scripts run
+	// afresh, over the same session history. The browser keeps each entry's URL and its
+	// history.state (a structured clone) across it; nothing else survives. Use the desk this
+	// returns from here on.
+	desk.reload = async function () {
+		const next = makeDesk(opts);
+		Object.assign(next.respond, desk.respond);
+		next.cameraAuto = desk.cameraAuto;
+		const kept = entries.map((e) => ({ url: e.url, state: e.state == null ? null : JSON.parse(JSON.stringify(e.state)) }));
+		await next.restore(kept, index);
+		return next;
 	};
 	desk.tap = async function (fn) {
 		desk.press(fn);
@@ -1053,6 +1111,46 @@ test("Device Console: a reload on the camera's URL opens the console, not the ca
 	check("the scan box has focus, as on any first show", desk.focused(".dc-scan") > 0, true);
 });
 
+test("Device Console: a reload on the camera's own entry steps back onto the console, leaving no duplicate", async () => {
+	let desk = await deviceConsole();
+	await desk.tap(() => dc(desk).openCamera());
+	check("the camera's entry is marked as the console's own", desk.ctx.history.state, { dc_sheet: "camera" });
+	// A tab discarded with the camera open: the console's camera has no visibilitychange close.
+	desk = await desk.reload();
+	check("no camera nobody tapped for", [desk.shown(), desk.cameras.length], [[], 0]);
+	check("stepped back onto the console's own entry, the camera's still ahead", [desk.route(), desk.at(), desk.urls()], [
+		"device-console",
+		{ index: 1, length: 3, url: "/desk/device-console" },
+		["/desk/home", "/desk/device-console", "/desk/device-console/camera"],
+	]);
+	await desk.back();
+	check("so one Back leaves the console", desk.current(), "home");
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: the camera tapped while the first show's replace waits on the bootstrap keeps the console's entry", async () => {
+	// v16's set_route clears route_flags only once every request in flight has landed.
+	const desk = makeDesk({ ajax: true });
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	await desk.load("/desk/home");
+	const release = hold(desk, "get_console_bootstrap");
+	// The awesome bar's frequently-visited link, with the console not yet opened this session.
+	await desk.tap(() => desk.frappe.set_route("device-console/camera"));
+	check("the first show made the entry the console", [desk.route(), desk.urls()], ["device-console", ["/desk/home", "/desk/device-console"]]);
+	check("… and left no replace behind for the next route change", !!desk.frappe.route_flags.replace_route, false);
+	await desk.tap(() => dc(desk).openCamera());
+	release();
+	await desk.settle();
+	check("the camera got an entry of its own", [desk.route(), desk.shown(), desk.urls()], [
+		"device-console/camera",
+		["Camera Scan"],
+		["/desk/home", "/desk/device-console", "/desk/device-console/camera"],
+	]);
+	await desk.back();
+	check("Back from the camera stays on the console", [desk.current(), desk.route(), desk.shown()], ["device-console", "device-console", []]);
+	check("no push without a tap", desk.violations, []);
+});
+
 test("Device Console: Choose Employee is an entry; a pick checks out after the step back", async () => {
 	const desk = await deviceConsole();
 	await desk.key(() => dc(desk).handleScan("DEV-1"));
@@ -1158,6 +1256,37 @@ test("Device Console: a sheet's URL reached from another page opens the console,
 	await desk.back();
 	check("one Back returns to the list", desk.current(), "managed-device");
 	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: a sheet's URL pushed while the console is showing steps back, leaving no duplicate", async () => {
+	const desk = await deviceConsole();
+	// The awesome bar's link to a sheet, picked on the console itself: frappe pushes it over the
+	// console's own entry, so the entry behind it is already the console.
+	await desk.tap(() => desk.frappe.set_route("device-console/camera"));
+	check("no camera: back on the console's own entry", [desk.route(), desk.shown(), desk.cameras.length, desk.at().index], ["device-console", [], 0, 1]);
+	await desk.tap(() => desk.frappe.set_route("device-console/employee"));
+	check("no picker either", [desk.route(), desk.shown(), desk.at().index], ["device-console", [], 1]);
+	check("no second console entry", desk.urls(), ["/desk/home", "/desk/device-console", "/desk/device-console/employee"]);
+	await desk.back();
+	check("so one Back leaves the console", desk.current(), "home");
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: back on the console from another page, a sheet's URL pushed there steps back as well", async () => {
+	const desk = await deviceConsole();
+	await desk.tap(() => desk.frappe.set_route("List", "Managed Device"));
+	await desk.back();
+	check("back on the console's own entry", [desk.current(), desk.at().index], ["device-console", 1]);
+	await desk.tap(() => desk.frappe.set_route("device-console/camera"));
+	check("no camera, and no second console entry", [desk.route(), desk.shown(), desk.cameras.length, desk.at().index, desk.urls()], [
+		"device-console",
+		[],
+		0,
+		1,
+		["/desk/home", "/desk/device-console", "/desk/device-console/camera"],
+	]);
+	await desk.back();
+	check("one Back leaves the console", desk.current(), "home");
 });
 
 test("Device Console: Back from another page onto the picker's own entry reopens it; X returns to the console", async () => {
@@ -1363,6 +1492,92 @@ test("Scanner Audit: a sheet's URL reached from another page opens the count, no
 	check("no push without a tap", desk.violations, []);
 });
 
+test("Scanner Audit: a sheet's URL pushed while the count is showing steps back, leaving no duplicate", async () => {
+	const desk = await inventory();
+	// The awesome bar's link to a sheet, picked on the scanner itself: pushed over the count's own entry.
+	await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit/camera"));
+	check("no camera: back on the count's own entry", [desk.route(), desk.shown(), desk.cameras.length, desk.at().index], ["inventory-scanner-audit", [], 0, 1]);
+	await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit/find"));
+	check("no Find Item either", [desk.route(), desk.shown(), desk.at().index], ["inventory-scanner-audit", [], 1]);
+	check("no second count entry", desk.urls(), ["/desk/home", "/desk/inventory-scanner-audit", "/desk/inventory-scanner-audit/find"]);
+	await desk.back();
+	check("so one Back leaves the page", desk.current(), "home");
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Scanner Audit: a camera read's reply leaves a camera tapped open after Back alone", async () => {
+	const desk = await inventory();
+	await desk.tap(() => isa(desk).openCamera());
+	const release = hold(desk, "resolve_scan");
+	desk.nextCode = "ITEM-1";
+	await desk.settle();
+	await desk.back();
+	await desk.tap(() => isa(desk).openCamera());
+	check("the clerk's new camera is up on an entry of its own", [desk.route(), desk.shown(), desk.at().index], ["inventory-scanner-audit/camera", ["Camera Scan"], 2]);
+	release();
+	await desk.settle();
+	check("the old read's reply stepped nothing off: the camera is still up", [desk.route(), desk.shown(), desk.at().index, desk.cameraLive()], ["inventory-scanner-audit/camera", ["Camera Scan"], 2, 1]);
+	check("the read is drawn beneath it", isa(desk).state.pendingItem && isa(desk).state.pendingItem.item_code, "ITEM-1");
+});
+
+test("Scanner Audit: a camera read's reply leaves a camera reopened on the read's entry alone", async () => {
+	const desk = await inventory();
+	await desk.tap(() => isa(desk).openCamera());
+	const release = hold(desk, "resolve_scan");
+	desk.nextCode = "ITEM-1";
+	await desk.settle();
+	check("looked up on the camera's entry, no sheet on it", [desk.route(), desk.shown()], ["inventory-scanner-audit/camera", []]);
+	await desk.tap(() => isa(desk).openCamera());
+	check("the clerk's camera is up on that same entry", [desk.route(), desk.shown(), desk.at().length], ["inventory-scanner-audit/camera", ["Camera Scan"], 3]);
+	release();
+	await desk.settle();
+	check("the camera is still up, on its entry", [desk.route(), desk.shown(), desk.at().index, desk.cameraLive()], ["inventory-scanner-audit/camera", ["Camera Scan"], 2, 1]);
+	check("the read is drawn beneath it", isa(desk).state.pendingItem && isa(desk).state.pendingItem.item_code, "ITEM-1");
+});
+
+test("Scanner Audit: an unknown camera read's reply never turns a camera reopened on its entry into Find Item", async () => {
+	const desk = await inventory();
+	await desk.tap(() => isa(desk).openCamera());
+	const release = hold(desk, "resolve_scan");
+	desk.nextCode = "WHAT-IS-THIS";
+	await desk.settle();
+	await desk.tap(() => isa(desk).openCamera());
+	release();
+	await desk.settle();
+	check("no Find Item for the old code: the camera stays up", [desk.route(), desk.shown(), desk.at()], [
+		"inventory-scanner-audit/camera",
+		["Camera Scan"],
+		{ index: 2, length: 3, url: "/desk/inventory-scanner-audit/camera" },
+	]);
+	check("the code is reported instead", desk.alerts.slice(-1), ["Unknown barcode: WHAT-IS-THIS"]);
+});
+
+test("Scanner Audit: with two camera reads looked up, each reply acts only on its own read's entry", async () => {
+	const desk = await inventory();
+	const answer = desk.respond.resolve_scan;
+	delete desk.respond.resolve_scan; // both lookups are held, and let land one at a time
+	await desk.tap(() => isa(desk).openCamera());
+	desk.nextCode = "ITEM-1";
+	await desk.settle();
+	await desk.back();
+	await desk.tap(() => isa(desk).openCamera());
+	desk.nextCode = "WHAT-IS-THIS";
+	await desk.settle();
+	check("the second read is looked up on the new camera's entry", [desk.route(), desk.shown(), desk.at().index], ["inventory-scanner-audit/camera", [], 2]);
+	const [first, second] = desk.sent("resolve_scan");
+	first.resolve(answer(first.args));
+	await desk.settle();
+	check("the first read's reply is drawn, and steps nothing off the second's entry", [isa(desk).state.pendingItem.item_code, desk.route(), desk.at().index], ["ITEM-1", "inventory-scanner-audit/camera", 2]);
+	second.resolve(answer(second.args));
+	await desk.settle();
+	check("the second's hands its own entry to Find Item", [desk.shown(), desk.route(), desk.at()], [
+		["Find Item"],
+		"inventory-scanner-audit/find",
+		{ index: 2, length: 3, url: "/desk/inventory-scanner-audit/find" },
+	]);
+	check("no push without a tap", desk.violations, []);
+});
+
 test("Scanner Audit: an unknown code typed at the scan box opens Find Item as an entry", async () => {
 	const desk = await inventory();
 	await desk.key(() => isa(desk).handleScan("NOPE"));
@@ -1465,6 +1680,74 @@ test("Scanner Audit: a reload on a sheet's URL opens the count", async () => {
 	desk.respond.get_bootstrap = () => ({ settings: { enable_camera_scan: 1 }, session: null });
 	await desk.load("/desk/inventory-scanner-audit/camera");
 	check("replaced with the page, no camera", [desk.at().url, desk.at().length, desk.cameras.length, desk.shown()], ["/desk/inventory-scanner-audit", 1, 0, []]);
+});
+
+test("Scanner Audit: a reload on Find Item's own entry steps back onto the count, leaving no duplicate", async () => {
+	let desk = await inventory();
+	await desk.tap(() => isa(desk).openItemSearch(""));
+	check("Find Item's entry is marked as the count's own", desk.ctx.history.state, { isa_sheet: "find" });
+	desk = await desk.reload(); // pull-to-refresh
+	check("no sheet reopened by the reload", desk.shown(), []);
+	check("stepped back onto the count's own entry, Find Item's still ahead", [desk.route(), desk.at(), desk.urls()], [
+		"inventory-scanner-audit",
+		{ index: 1, length: 3, url: "/desk/inventory-scanner-audit" },
+		["/desk/home", "/desk/inventory-scanner-audit", "/desk/inventory-scanner-audit/find"],
+	]);
+	await desk.back();
+	check("so one Back leaves the page", desk.current(), "home");
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Scanner Audit: Find tapped while the first show's replace waits on the bootstrap keeps the count's entry", async () => {
+	// v16's set_route clears route_flags only once every request in flight has landed.
+	const desk = makeDesk({ ajax: true });
+	desk.respond.get_bootstrap = () => ({
+		settings: { enable_camera_scan: 1, allow_unknown_item: 1, default_warehouse: "Stores" },
+		session: { name: "ICS-1", lines: [], summary: { lines: 0, with_variance: 0 } },
+	});
+	desk.respond.lookup_item = () => [];
+	await desk.load("/desk/home");
+	const release = hold(desk, "get_bootstrap");
+	// The awesome bar's frequently-visited link, with the scanner not yet opened this session.
+	await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit/find"));
+	check("the first show made the entry the count", [desk.route(), desk.urls()], ["inventory-scanner-audit", ["/desk/home", "/desk/inventory-scanner-audit"]]);
+	check("… and left no replace behind for the next route change", !!desk.frappe.route_flags.replace_route, false);
+	await desk.tap(() => isa(desk).openItemSearch(""));
+	release();
+	await desk.settle();
+	check("Find Item got an entry of its own", [desk.route(), desk.shown(), desk.urls()], [
+		"inventory-scanner-audit/find",
+		["Find Item"],
+		["/desk/home", "/desk/inventory-scanner-audit", "/desk/inventory-scanner-audit/find"],
+	]);
+	desk.closeDialog("Find Item");
+	await desk.settle();
+	check("X on Find Item stays on the count", [desk.current(), desk.route(), desk.at().index], ["inventory-scanner-audit", "inventory-scanner-audit", 1]);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Scanner Audit: a camera lookup lost to the network steps off the camera's entry, after a message closed by its X", async () => {
+	const desk = await inventory();
+	// Any message closed with its X earlier in the session: frappe's msgprint dialog is one dialog
+	// for the whole session, and its X (data-dismiss) never calls hide(), so `is_visible` stays set.
+	await desk.key(() => isa(desk).handleScan("FAIL"));
+	check("a refusal is up", desk.shown(), ["Message"]);
+	desk.closeDialog("Message");
+	await desk.settle();
+	check("closed by its X, `is_visible` still set", [desk.shown(), desk.frappe.msg_dialog.is_visible], [[], true]);
+	const lookup = desk.respond.resolve_scan;
+	desk.respond.resolve_scan = (args) => (args.code === "OFFLINE" ? NETWORK_DOWN : lookup(args));
+	await desk.tap(() => isa(desk).openCamera());
+	desk.nextCode = "OFFLINE";
+	await desk.settle();
+	check("no message: request.js shows none for a request that never got through", desk.shown(), []);
+	check("stepped back off the camera's entry", [desk.route(), desk.at(), isa(desk).leftover], [
+		"inventory-scanner-audit",
+		{ index: 1, length: 3, url: "/desk/inventory-scanner-audit" },
+		null,
+	]);
+	await desk.back();
+	check("so one Back leaves the page", desk.current(), "home");
 });
 
 test("Scanner Audit: Back during the camera's fade-in still closes it", async () => {
@@ -1745,6 +2028,90 @@ test("Question Review: a refused save-and-accept comes back, and the held Back a
 	check("Back's view is asked about, not loaded over it", [desk.shown(), lessons(desk).length], [["Confirm"], loads]);
 	await desk.tap(() => desk.dialog("Confirm").answer(false));
 	check("staying keeps C2 and the edit on screen", [lessons(desk).length, tr(desk).view.course, tr(desk).cards.length], [loads, "C2", 1]);
+});
+
+// C2's lesson holds Q1 and Q2, and a lesson opened by name holds one question of its own. All are
+// Short Answer with an answer, so nothing blocks an accept.
+async function reviewWithQuestions() {
+	const desk = await review();
+	const lessonFor = desk.respond.get_review_lesson;
+	desk.respond.get_review_lesson = (args) => {
+		const data = lessonFor(args);
+		const names = args.lesson ? ["Q-" + args.lesson] : args.course === "C2" ? ["Q1", "Q2"] : [];
+		data.lesson.questions = names.map((question) => ({
+			question,
+			question_type: "Short Answer",
+			question_text: "Why?",
+			correct_text_answers: "Because",
+		}));
+		return data;
+	};
+	return desk;
+}
+
+const verdictsLand = (desk) =>
+	desk.requests.filter((r) => r.method === "accept_question" && !r.settled).forEach((r) => r.resolve({ remaining: { reviewed: 1 } }));
+
+// Back from C2 with Q1 being edited, and "Stay"; then Forward to C2 and the edit given up.
+async function reviewAfterAStay() {
+	const desk = await reviewWithQuestions();
+	await desk.tap(() => tr(desk).pick_course("C2"));
+	tr(desk).edit("Q1");
+	check("Q1 is being edited", tr(desk).cards.map((rec) => rec.editing), [true, false]);
+	await desk.back();
+	await desk.tap(() => desk.dialog("Confirm").answer(false));
+	check("stayed: C2 and the edit on screen, under the queue's entry", [desk.route(), tr(desk).view.course], ["training-review", "C2"]);
+	await desk.forward();
+	check("Forward: the route is C2 again, nothing asked", [desk.route(), desk.shown()], ["training-review/course/C2", []]);
+	tr(desk).cancel_edit(tr(desk).cards[0]);
+	return desk;
+}
+
+test("Question Review: a Stay is forgotten once the route moves on, so a later Back held for a verdict is followed", async () => {
+	const desk = await reviewAfterAStay();
+	desk.press(() => tr(desk).accept("Q2"));
+	await desk.settle();
+	check("Q2's verdict is in flight", tr(desk).inflight, 1);
+	const loads = lessons(desk).length;
+	await desk.back();
+	check("Back to the queue waits for it", [desk.route(), lessons(desk).length], ["training-review", loads]);
+	verdictsLand(desk);
+	await desk.settle();
+	check("once it lands, the queue Back asked for loads", [lessons(desk).length, lessons(desk).slice(-1), tr(desk).course_filter], [loads + 1, ["course:"], null]);
+});
+
+test("Question Review: a Stay is forgotten once the route moves on, so a later Back during a load is followed", async () => {
+	const desk = await reviewAfterAStay();
+	const release = hold(desk, "get_review_lesson");
+	await desk.tap(() => desk.page.buttons["Refresh"]());
+	check("C2 is loading again", [tr(desk).loading, lessons(desk).slice(-1)], [true, ["course:C2"]]);
+	const loads = lessons(desk).length;
+	await desk.back();
+	check("Back found the load running", [desk.route(), tr(desk).loading], ["training-review", true]);
+	release();
+	await desk.settle();
+	check("once it lands, the queue Back asked for loads", [lessons(desk).length, lessons(desk).slice(-1), tr(desk).course_filter], [loads + 1, ["course:"], null]);
+});
+
+test("Question Review: a lesson stayed on that empties opens the view the route names, not the one behind it", async () => {
+	const desk = await reviewWithQuestions();
+	for (const lesson of ["L0", "L1"]) {
+		await desk.tap(() => tr(desk).jump_to_lesson());
+		await desk.tap(() => desk.dialog("Which lesson?").submit({ lesson }));
+	}
+	check("two lessons, each an entry", [desk.route(), desk.at().index, desk.at().length], ["training-review/lesson/L1", 3, 4]);
+	tr(desk).edit("Q-L1");
+	await desk.back();
+	await desk.tap(() => desk.dialog("Confirm").answer(false));
+	check("stayed on L1 under L0's entry", [desk.route(), tr(desk).view.lesson], ["training-review/lesson/L0", "L1"]);
+	tr(desk).cancel_edit(tr(desk).cards[0]);
+	desk.press(() => tr(desk).accept("Q-L1"));
+	await desk.settle();
+	verdictsLand(desk);
+	await desk.settle();
+	check("L1 has emptied, and L0 (the route) loads", [lessons(desk).slice(-1), tr(desk).view.lesson], [["L0"], "L0"]);
+	check("on L0's own entry: nothing stepped back past it", [desk.route(), desk.at().index, desk.at().length], ["training-review/lesson/L0", 2, 4]);
+	check("no push without a tap", desk.violations, []);
 });
 
 // ---------------------------------------------------------------------------- Location Timeline

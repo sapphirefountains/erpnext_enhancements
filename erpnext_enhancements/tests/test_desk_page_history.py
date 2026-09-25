@@ -10,17 +10,22 @@ should return to has to be a route segment, and these pages now carry one:
   sheet and stays on the console; Forward opens it again, or steps back off an entry whose sheet
   cannot be opened again (a pick already made, or one the device's status no longer allows).
   Only an entry the page pushed, marked in ``history.state``, is a sheet's: the same URL from
-  another page becomes the console. A scan is never an entry, and an unknown scan's enroll
-  prompt waits for the console to be showing.
+  another page becomes the console, and pushed over the console's own entry while it was
+  showing, it is stepped back off, as is a marked entry after a reload. A replace the page asks
+  for is cleared as soon as set_route has read it, not left to set_route's own late reset. A
+  scan is never an entry, and an unknown scan's enroll prompt waits for the console to be showing.
 * Inventory Scanner Audit — ``inventory-scanner-audit/camera`` and ``/find``, the same way. A
   camera read is looked up on the camera's own entry and then either steps back off it or hands
   it to Find Item, so a read never pushes; a failed lookup steps off once frappe's message has
-  closed; and a lookup's reply opens Find Item only if the clerk has not moved since the scan.
+  closed (Bootstrap's own state, since the X leaves ``is_visible`` set); a lookup's reply opens
+  Find Item only if the clerk has not moved since the scan; and a camera read's reply acts only
+  on its own entry, never on a camera the clerk has opened since.
 * Sales Pipeline — ``sales-pipeline/tv`` is TV mode, and nothing else is. It used to stick
   (``tv || state.tv_mode``), leaving the chrome-less TV view on the plain board after Back.
 * QuickBooks Record Matching — ``/transactions`` is the Parked transactions tab.
 * Question Review — ``training-review/course/<course>`` and ``/lesson/<lesson>``. A Back or
-  Forward that comes while a verdict is in flight is held until the last one lands.
+  Forward that comes while a verdict is in flight is held until the last one lands. A "Stay"
+  that keeps an edit holds only while the route names the view it was said to.
 * Location Timeline — ``location-timeline/live`` is Live; the bare route is Trail.
 
 ``scripts/test_desk_page_history.js`` runs the real page scripts against a model of the v16
@@ -49,6 +54,9 @@ PAGES = {
 	"location-timeline": APP / "workforce/page/location_timeline/location_timeline.js",
 }
 SCANNERS = ("device-console", "inventory-scanner-audit")
+# A scanner's show steps back, rather than replacing, onto its own entry from a sheet URL pushed
+# over it while it was showing, or from a sheet entry of its own on the first show after a reload.
+STEP_BACK = "if (stayed || (first && this.ownSheet(sheet))) {"
 
 
 def _text(path):
@@ -175,12 +183,13 @@ class TestScannerSheetsAreRouteSegments(unittest.TestCase):
 				self.assertLess(camera.index("d.show();"), camera.index("getUserMedia("))
 
 	def test_a_close_other_than_back_steps_back_off_the_sheets_entry(self):
-		"""Two steps back, and no more: off a sheet closed by a read, a pick, X or Escape, and
-		off a sheet entry Back or Forward landed on that cannot be opened again."""
+		"""Three steps back, and no more: off a sheet closed by a read, a pick, X or Escape; off a
+		sheet entry Back or Forward landed on that cannot be opened again; and off an unmarked
+		sheet URL pushed over the page's own entry while it was showing."""
 		for name in SCANNERS:
 			with self.subTest(page=name):
 				code = _code(PAGES[name])
-				self.assertEqual(code.count("window.history.back();"), 2)
+				self.assertEqual(code.count("window.history.back();"), 3)
 				self.assertIn("frappe.router.once('change', finish);", code)
 				# ...and only while the route is still on that segment, so Back never double-steps.
 				self.assertRegex(code, r"if \(this\.sheetRoute\(\) !== name\) \{\s*finish\(\);\s*return;")
@@ -204,8 +213,72 @@ class TestScannerSheetsAreRouteSegments(unittest.TestCase):
 				self.assertIn(opener, show)
 				replace = _between(show, opener, "} else if")
 				self.assertLess(replace.index("frappe.route_flags.replace_route = true;"), replace.index("frappe.set_route("))
+				self.assertNotIn("reopenSheet(", replace)
 				# ...and it is decided before anything could reopen the sheet.
 				self.assertLess(show.index(opener), show.index("this.reopenSheet(sheet)"))
+
+	def test_an_unmarked_sheet_url_pushed_over_the_page_steps_back_rather_than_replacing(self):
+		"""The awesome bar's link to a sheet, picked on the page itself, is pushed over the page's
+		own entry. Replacing it left two identical entries in a row, so the next Back seemed to do
+		nothing. The page was showing if its last show was its own entry and no other page has been
+		shown since: frappe triggers "hide" on the page it leaves, and only the wrapper's own counts
+		(a Bootstrap "hide.bs.*" from inside the page bubbles up to it too). An unmarked first show,
+		and an arrival from another page, still replace."""
+		for name in SCANNERS:
+			with self.subTest(page=name):
+				code = _code(PAGES[name])
+				ctor = _between(code, "constructor(page, wrapper) {", "\n\t}")
+				self.assertIn("this.away = false;", ctor)
+				self.assertIn("$(wrapper).on('hide', (e) => {", ctor)
+				self.assertIn("if (e.target === wrapper) this.away = true;", ctor)
+				self.assertNotIn(".away = true", code.replace("if (e.target === wrapper) this.away = true;", ""))
+				show = _between(code, "onShow() {", "reopenSheet(name) {")
+				stayed = "const stayed = !first && !this.away && came === null;"
+				self.assertIn(stayed, show)
+				self.assertLess(show.index(stayed), show.index("this.away = false;"))
+				self.assertLess(show.index("this.away = false;"), show.index("if (sheet) {"))
+				handed = _between(show, "if (first || !this.ownSheet(sheet)) {", "} else if")
+				self.assertIn(STEP_BACK, handed)
+				step = _between(handed, STEP_BACK, "} else {")
+				self.assertIn("window.history.back();", step)
+				self.assertNotIn("set_route(", step)
+				self.assertNotIn("replace_route", step)
+				self.assertIn("frappe.route_flags.replace_route = true;", handed[handed.index("} else {") :])
+
+	def test_a_reload_on_the_pages_own_sheet_entry_steps_back_rather_than_replacing(self):
+		"""history.state survives a reload (and Android restoring a discarded tab), so a sheet entry
+		the page marked is still marked on the first show that follows. The entry behind a marked
+		one is always the page's own: only the page marks entries, and only ones it pushed over its
+		own. Replacing it with the page's route left two identical entries in a row, so the next
+		Back seemed to do nothing. A first show on an unmarked sheet URL (a pasted link, a bookmark)
+		still replaces: there is no telling what is behind it."""
+		for name in SCANNERS:
+			with self.subTest(page=name):
+				show = _between(_code(PAGES[name]), "onShow() {", "reopenSheet(name) {")
+				handed = _between(show, "if (first || !this.ownSheet(sheet)) {", "} else if")
+				self.assertIn(STEP_BACK, handed)
+				# The only way into the replace is an unmarked first show or an arrival from elsewhere.
+				replace = handed.index("frappe.route_flags.replace_route = true;")
+				self.assertLess(handed.index(STEP_BACK), replace)
+
+	def test_every_replace_the_page_asks_for_is_cleared_once_set_route_returns(self):
+		"""v16's set_route reads `route_flags.replace_route` synchronously, in push_state, but resets
+		route_flags only in its promise's `finally`, after a 100 ms timer and `frappe.after_ajax`,
+		which waits until no request at all is in flight. On a first show the page's bootstrap call
+		is, so the flag outlived the page's replace and turned the clerk's next tap into a replace of
+		the page's own entry: X, or Back, from the sheet it opened then left the page. Each flag the
+		page sets must be followed by its set_route, and at once by the reset."""
+		flag, reset = "frappe.route_flags.replace_route = true;", "frappe.route_flags.replace_route = false;"
+		for name in SCANNERS:
+			with self.subTest(page=name):
+				lines = [line.strip() for line in _code(PAGES[name]).splitlines() if line.strip()]
+				sets = [i for i, line in enumerate(lines) if line.endswith(flag)]
+				self.assertEqual(len(sets), 2)
+				for at in sets:
+					call = next(i for i in range(at + 1, len(lines)) if "frappe.set_route(" in lines[i])
+					self.assertEqual(call, at + 1, lines[at : call + 1])
+					self.assertEqual(lines[call + 1], reset, lines[call : call + 2])
+				self.assertEqual(lines.count(reset), len(sets))
 
 	def test_a_sheet_that_cannot_reopen_steps_back_rather_than_replacing(self):
 		"""Back or Forward onto a sheet's entry that cannot be opened again: replacing it with
@@ -245,7 +318,7 @@ class TestScannerSheetsAreRouteSegments(unittest.TestCase):
 		for guard in (
 			"this.shows === shows &&",
 			"(frappe.get_route() || [])[0] === ISA_ROUTE &&",
-			"(!fromCamera || this.sheetRoute() === 'camera')",
+			"(!fromCamera || (own && this.sheetRoute() === 'camera'))",
 			"if (fromCamera && !(search && this.unknownOpensSearch(res))) {",
 			"this.onResolved(res, code, search);",
 		):
@@ -253,6 +326,25 @@ class TestScannerSheetsAreRouteSegments(unittest.TestCase):
 		resolved = _between(code, "onResolved(res, code, search) {", "addCount() {")
 		self.assertIn("if (search && this.unknownOpensSearch(res)) {", resolved)
 		self.assertEqual(code.count("this.openItemSearch(shown);"), 1)
+
+	def test_a_camera_reads_reply_acts_only_on_the_entry_the_read_was_taken_on(self):
+		"""A camera the clerk opened before the reply landed (on the read's entry, or on a new one
+		after Back) has taken that entry over, as has a later read. Stepping off then closed the
+		clerk's camera, and an unknown code replaced it with Find Item for the old code."""
+		code = _code(PAGES["inventory-scanner-audit"])
+		scan = _between(code, "handleScan(raw", "unknownOpensSearch(res) {")
+		self.assertIn("const read = fromCamera ? ++this.reads : 0;", scan)
+		self.assertIn("const mine = () => fromCamera && this.leftover === 'camera' && this.reads === read;", scan)
+		# Only a read counts, and openSheet is what hands the entry on: it clears `leftover`.
+		self.assertEqual(code.count("++this.reads"), 1)
+		opener = _between(code, "openSheet(name, show, reopen) {", "hideSheet(d) {")
+		self.assertEqual(opener.count("this.leftover = null;"), 2)
+		reply = scan[scan.index("this.call('resolve_scan'") :]
+		self.assertIn("const own = mine();", reply)
+		not_mine = _between(reply, "if (!own) {", "}")
+		self.assertIn("this.onResolved(res, code);", not_mine)
+		self.assertNotIn("leaveSheet(", not_mine)
+		self.assertLess(reply.index("if (!own) {"), reply.index("this.leaveSheet('camera', () => this.onResolved(res, code));"))
 
 	def test_an_unknown_devices_enroll_prompt_needs_the_console_showing(self):
 		code = _code(PAGES["device-console"])
@@ -299,11 +391,25 @@ class TestScannerSheetsAreRouteSegments(unittest.TestCase):
 		failed = scan[scan.index("() => {", scan.index("this.onResolved(res, code, search);")) :]
 		self.assertIn("if (!fromCamera) return;", failed)
 		wait = failed[failed.index("this.afterFrappeMessage(() => {") :]
-		self.assertLess(wait.index("if (this.leftover !== 'camera') return;"), wait.index("this.leaveSheet('camera');"))
+		# ...and only off the read's own entry, if nothing has taken it over since.
+		self.assertLess(wait.index("if (!mine()) return;"), wait.index("this.leaveSheet('camera');"))
 		after = _between(code, "afterFrappeMessage(then) {", "unknownOpensSearch(res) {")
 		self.assertIn("[frappe.msg_dialog, frappe.error_dialog]", after)
-		self.assertIn("d.is_visible", after)
 		self.assertIn(".one('hidden.bs.modal',", after)
+
+	def test_whether_frappes_message_is_up_is_bootstraps_own_state(self):
+		"""Not frappe's `is_visible`, which only Dialog.hide() clears. The dialog's X is
+		`data-dismiss="modal"` (v16 dom.js), which Bootstrap 4.6 closes with no hide() around it,
+		and msgprint's dialog is one for the whole Desk session. After any message was closed by
+		its X, a camera lookup that failed with no dialog up (a dropped connection: request.js has
+		no handler for status 0) waited for a "hidden" that never came, and the camera's entry was
+		never stepped off. Bootstrap's `_isShown` is set as show() starts, so it is true through
+		the fade-in, and cleared by every hide, the X's included."""
+		code = _code(PAGES["inventory-scanner-audit"])
+		after = _between(code, "afterFrappeMessage(then) {", "unknownOpensSearch(res) {")
+		self.assertIn("d.$wrapper.data('bs.modal')", after)
+		self.assertIn("modal._isShown", after)
+		self.assertNotIn("is_visible", code)
 
 	def test_the_record_links_route_in_place(self):
 		self.assertIn(

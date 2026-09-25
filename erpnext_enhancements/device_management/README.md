@@ -68,13 +68,25 @@ and `public/js/device_management/employee_devices.js` (Employee panel).
   sheet is shown only after its route has settled, because the route change would
   otherwise close it. Second, a sheet closed any other way (a read, a pick, X) steps back
   off its own entry, and the scan or pick runs only once that has landed, so the enroll
-  prompt is not closed by the step. Third, a reload on a sheet's URL opens the console,
-  never the camera. Only an entry the console pushed itself is a sheet's: it marks each
+  prompt is not closed by the step. Third, a sheet's URL never opens the camera on its
+  own. Only an entry the console pushed itself is a sheet's: it marks each
   one in `history.state` (no URL) as it pushes it. Frappe's Route History records every
   route with a second segment, and the awesome bar offers the most used as links, so the
   same URL can arrive from another page; the sheet would then open with that page behind
   it, and X, or a camera read's step back, would land there. An unmarked sheet URL becomes
-  the console, as a reload's does. Back or Forward onto a sheet's entry that cannot be
+  the console, as a pasted link's does, except when it was pushed over the console's own
+  entry while that was showing (the awesome bar's link picked on the console itself): then
+  the console steps back onto that entry, since replacing it would leave two console entries
+  in a row and the next Back would seem to do nothing. "Showing" means no other page has
+  been shown since, which the console learns from the `hide` frappe fires on the page it
+  leaves. A reload on a sheet entry the console pushed (a tab discarded with the camera
+  open, since the console's camera has no visibilitychange close) steps back the same way:
+  `history.state` survives the reload, and the entry behind a marked one is always the
+  console's own. Each replace the console asks for (`route_flags.replace_route`) is cleared
+  the moment `set_route` returns: v16 reads the flag while writing the entry but clears it
+  only once every request then in flight has landed, so on a first show, with the bootstrap
+  call out, it turned the next tap into a replace of the console's own entry, and Back from
+  the camera tapped then left the page. Back or Forward onto a sheet's entry that cannot be
   opened again steps back onto the console's own entry; it used to replace the entry with
   a second copy of the console, so the next Back seemed to do nothing. The picker cannot
   be opened again for a device scanned since, after a pick has been made (Forward used to
