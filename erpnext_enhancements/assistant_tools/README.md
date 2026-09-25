@@ -61,6 +61,9 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   can't be sure it queues the card: `fetch_from` Selects, cancels, and any failure of the check
   itself, which also goes to the Error Log. See
   [`ai_governance/README.md`](../ai_governance/README.md#a-write-that-cannot-run-gets-no-card-v15330).
+  **Since v1.540.0 an `update_document` with `docstatus` 2 is refused the same way**
+  (`_cancel_refusal`), because FAC refuses every change to a submitted document and the card
+  could only fail after approval. The refusal names `cancel_document`.
 - The model retrieves the real outcome afterwards via the read-only
   `check_ai_pending_action` tool; the `ee-ai-write-confirmation` skill teaches
   connected assistants the flow.
@@ -307,6 +310,7 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `workforce_clock_out` | Time Kiosk | **write (per-call: gated only on-behalf)** — no `employee` closes the caller's own session and executes; naming another employee needs `TIMELINE_MANAGER_ROLES`, is stamped with the requester, and becomes an AI Pending Action. Always an unanchored close; the photo gate's `skip_reason` is recorded verbatim |
 | `check_ai_pending_action` | AI Governance | read-only status/result lookup of gated AI Pending Actions |
 | `create_followup_task` | Productivity | **write (gated)** — creates a ToDo follow-up, optionally linked + assigned |
+| `cancel_document` | Documents | **write (gated, HIGH risk, never exempt)** — cancels a submitted document with `doc.cancel()`, so Frappe's cancel permission, linked-document check (`LinkExistsError`, never `ignore_links`) and the doctype's cancel hooks apply, inside a savepoint. Refuses drafts, non-submittable doctypes and a Workflow that owns cancelling (names `run_workflow`); reports an already-cancelled document as done. FAC 3.0.0 has no cancel tool and its `update_document` refuses any change to a submitted document, so a `docstatus: 2` update is refused at queue time and points here (v1.540.0) |
 | `remote_lock_device` / `remote_wipe_device` / `locate_device` / `reboot_device` / `run_device_script` / `deploy_device_patch` | Device Management | **write (gated)** — remote MDM actions via `mdm_integration.actions` (Miradore mobile / Action1 computers); wipe/lock/run-script are HIGH risk |
 | `stripe_payment_status` | Accounting | counts by status + unreconciled-paid + failed-webhook signals + recent Stripe Payments (perm-aware `frappe.get_list`) |
 | `quickbooks_sync_status` | Accounting | QBO connection state + failed-run count + recent QuickBooks Sync Log rows; pass `sync_log` for one run's summary |

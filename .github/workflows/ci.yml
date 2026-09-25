@@ -212,6 +212,11 @@ jobs:
       # Raw SQL never consults DocPerm, so a needle that misses one spelling hands a
       # model unapproved text, and a needle one word shorter breaks every read of the
       # published doctype. Both fail silently; this fails the build.
+      #
+      # test_assistant_cancel_document (v1.540.0): an update_document with docstatus 2 could only
+      # fail after a human approved it (FAC refuses any change to a submitted document), and
+      # did, on MAT-MR-2026-00014. It is refused before it becomes a card now, and cancel_document
+      # is the path: HIGH risk, never exempt, doc.cancel() inside a savepoint, never ignore_links.
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
           python -m unittest
@@ -222,6 +227,7 @@ jobs:
           erpnext_enhancements.tests.test_ai_gate_sealed_arguments
           erpnext_enhancements.tests.test_ai_gate_switch_on
           erpnext_enhancements.tests.test_ai_gate_denylist
+          erpnext_enhancements.tests.test_assistant_cancel_document
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration

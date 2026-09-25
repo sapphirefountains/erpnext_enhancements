@@ -163,11 +163,19 @@ APP_MUTATING = {
     # draft on the wrong course and editing it for an hour. Not HIGH_RISK, so it
     # lands on the Medium band alongside publish, which is if anything generous.
     "create_training_draft_version",
+    # v1.540.0 -- cancel a submitted document. FAC ships submit_document and no cancel, and its
+    # update_document refuses every change to a submitted document, so `{"docstatus": 2}` through
+    # it failed at execution after a human had approved the card (MAT-MR-2026-00014,
+    # 2026-09-25). HIGH_RISK below, like submit_document: a cancel is permanent.
+    "cancel_document",
 }
 
 HIGH_RISK = {
     "delete_document",
     "submit_document",
+    # docstatus 2 is terminal, and on accounting and stock documents the cancel reverses their
+    # ledger entries. The remedy is Amend, a new document, not another tool call.
+    "cancel_document",
     "run_workflow",
     "run_python_code",
     # irreversible / arbitrary-remote-code device actions: a wipe is irreversible,
@@ -194,6 +202,11 @@ LOW_RISK = {
 # Only plain-document create/update may use the settings exempt-doctype
 # allowlist; privileged/irreversible tools never skip confirmation.
 EXEMPTABLE_TOOLS = {"create_document", "update_document"}
+
+#: Tools whose whole job is a docstatus change. The batch dialog starts their cards unticked
+#: with the same reason as a create that submits (``gating_api._review_reasons``). Both are
+#: HIGH_RISK as well; the reason says what the card does, the risk says how much it matters.
+DOCSTATUS_TOOLS = frozenset({"submit_document", "cancel_document"})
 
 # tool name -> callable(arguments) -> bool  (True = this CALL needs confirmation)
 #
@@ -620,6 +633,12 @@ def summarize_tool_call(tool_name, arguments):
         return f"Delete {doctype} {name}".strip()
     if tool_name == "submit_document":
         return f"Submit {doctype} {name}".strip()
+    if tool_name == "cancel_document":
+        # Permanent, so the card says so, and the reason is what the approver is judging.
+        reason = (args.get("reason") or "").strip()
+        snippet = (reason[:80] + "…") if len(reason) > 80 else reason
+        line = f"CANCEL {doctype} {name} (permanent)".replace("  ", " ")
+        return f"{line}: “{snippet}”" if snippet else line
     if tool_name == "run_workflow":
         action = args.get("action") or args.get("workflow_action") or "transition"
         return f"Workflow '{action}' on {doctype} {name}".strip()
@@ -981,9 +1000,15 @@ def is_mutating(tool):
 def _changes_docstatus(arguments):
     """True for a create that submits, or an update that sets docstatus.
 
-    Those are submit and cancel, which are never exempt. A key named `docstatus` anywhere in
-    `data` counts, whatever its value: deciding which values are harmless is exactly the kind
-    of guess an exemption must not make.
+    Neither is ever exempt. A key named `docstatus` anywhere in `data` counts, whatever its
+    value: deciding which values are harmless is exactly the kind of guess an exemption must
+    not make.
+
+    This used to say the update half was "cancel". It is not a way to cancel anything: FAC
+    3.0.0's update_document refuses every change to a submitted document, `docstatus`
+    included, and a `docstatus` 2 update is now refused before it becomes a card
+    (`_cancel_refusal`). Cancelling is `cancel_document`. The check stays because refusing an
+    exemption costs nothing and FAC's rule is not ours to rely on.
     """
     args = arguments if isinstance(arguments, dict) else {}
     if args.get("submit"):
@@ -1252,12 +1277,17 @@ def _error_response(message, error_type="AIGateError"):
 # Where it can't be sure, it errs toward the card:
 # - a Select with `fetch_from` (and no `fetch_if_empty`) is skipped, because Frappe overwrites
 #   it from the linked record before it validates;
-# - a cancel (`docstatus` 2) is skipped, because Frappe skips `_validate()` on cancel;
 # - if the check itself raises, the write is queued exactly as before and the failure goes to
 #   the Error Log.
-# The check may refuse a write, but it must never be the reason a legitimate one is lost. The
-# one exception is a DocType that does not exist: that call could never become a card (the
-# card's own Link to DocType fails), so it gets a plain refusal instead of an internal error.
+# The check may refuse a write, but it must never be the reason a legitimate one is lost. Two
+# calls are refused whatever their values, because neither could ever run:
+# - a DocType that does not exist. The card's own Link to DocType fails, so it gets a plain
+#   refusal instead of an internal error;
+# - an `update_document` that cancels (`docstatus` 2), since v1.540.0 (`_cancel_refusal`).
+#   FAC 3.0.0's update_document refuses every change to a submitted document, `docstatus`
+#   included, so this card could only fail, and did: MAT-MR-2026-00014 on 2026-09-25, approved
+#   and then "Cannot modify submitted document". The refusal names `cancel_document`. The Select
+#   check itself still skips a cancel, because Frappe skips `_validate()` on one.
 
 #: Tools whose arguments are {doctype, data, ...} with `data` written onto the document.
 PRECHECKED_TOOLS = frozenset({"create_document", "update_document"})
@@ -1377,11 +1407,45 @@ def _precheck_problems(arguments, get_meta, tool_name="update_document"):
     return problems
 
 
+def _is_cancel(value):
+    """True for a `docstatus` value that means cancelled: 2, "2", 2.0 or " 2 "."""
+    try:
+        return float(str(value).strip()) == 2
+    except (TypeError, ValueError):
+        return False
+
+
+def _cancel_refusal(tool_name, arguments):
+    """The refusal for an ``update_document`` that tries to cancel, or None.
+
+    Only ``update_document``: a create has nothing to cancel, and ``cancel_document`` is the
+    supported path this message points to.
+    """
+    if tool_name != "update_document":
+        return None
+    args = arguments if isinstance(arguments, dict) else {}
+    data = args.get("data")
+    if not isinstance(data, dict) or not _is_cancel(data.get("docstatus")):
+        return None
+    doctype = args.get("doctype") or "the document"
+    name = args.get("name") or ""
+    return (
+        f"update_document cannot cancel {doctype} {name}".rstrip()
+        + ": Frappe Assistant Core refuses every change to a submitted document, docstatus "
+        "included, so this card could only fail after someone approved it. Nothing was queued "
+        "for confirmation: call cancel_document with the same doctype and name instead."
+    )
+
+
 def _precheck_refusal(tool, arguments):
     """The refusal to return instead of a card, or None to queue the write as before."""
     name = getattr(tool, "name", "")
     if name not in PRECHECKED_TOOLS:
         return None
+    # Pure and total, so it needs no guard: the Select check below is the part that can raise.
+    cancel = _cancel_refusal(name, arguments)
+    if cancel:
+        return cancel
     try:
         problems = _precheck_problems(arguments, frappe.get_meta, name)
     except _UnknownDoctype as e:

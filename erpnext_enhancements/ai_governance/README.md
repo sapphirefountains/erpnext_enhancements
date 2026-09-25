@@ -50,9 +50,19 @@ Where it can't be sure, it queues the card:
 
 - A Select with `fetch_from` and no `fetch_if_empty` is skipped, because Frappe overwrites it from
   the linked record before it validates.
-- A cancel (`docstatus` 2) is skipped, because Frappe skips `_validate()` on cancel.
 - An `update_document` row marked `_delete` with a `name` is skipped, because FAC removes it
   without validating it. Every other row is checked.
+
+**An `update_document` that cancels is refused outright (v1.540.0).** A `docstatus` of 2 in its
+`data` can never run. FAC 3.0.0's `update_document` refuses every change to a submitted document,
+`docstatus` included, and FAC has no cancel tool of its own. On 2026-09-25 that card was approved
+for Material Request MAT-MR-2026-00014 and then failed with "Cannot modify submitted document".
+`_gate._cancel_refusal` now returns the refusal before any metadata is read, logged like the
+others, and the refusal names **`cancel_document`**. That is this app's tool for cancelling
+(`assistant_tools/cancel_document.py`). It is HIGH risk and never exempt, like `submit_document`,
+and it calls `doc.cancel()`, so Frappe's cancel permission, linked-document check and the
+doctype's own cancel hooks all apply. The Select check itself still skips a cancel, because
+Frappe skips `_validate()` on one.
 
 **Known gap:** the check sees the proposed value, not what a controller might change it to.
 Frappe runs the controller's `validate` before `_validate()`, so a controller that rewrote an
@@ -63,9 +73,10 @@ the valid options, so the model can send one of them.
 
 A row in **Confirmation-Exempt Doctypes** lets an assistant's `create_document` and
 `update_document` on that doctype execute without a card. It is still logged in AI Action Log as
-Auto Approved. Delete, submit, workflow and code execution are never exempt. That includes a
-submit dressed as a create or update: `create_document` with `submit`, or `update_document`
-with `docstatus` in its data, always goes to a card (`_changes_docstatus`).
+Auto Approved. Delete, submit, cancel, workflow and code execution are never exempt. That includes
+a submit dressed as a create or update: `create_document` with `submit`, or `update_document`
+with `docstatus` in its data, is never exempt (`_changes_docstatus`). It goes to a card, except
+a `docstatus` of 2, which is refused before it becomes one (see above).
 
 - **Permanent** means **Exempt Until** is empty. The patch seeds Comment, ToDo, Sapphire
   Maintenance Template and Section (checklists and their instructions), Serial No and Training
@@ -109,7 +120,8 @@ count. They call three endpoints in `gating_api`:
 - `my_pending_actions` lists your own Pending, unexpired actions, oldest first, at most 100. It
   says whether each has hidden values without reading or decrypting them. A row starts unticked
   (`batch_default` false, with a `review_reason`) for High risk, hidden values, a submit or cancel
-  (`_gate._changes_docstatus`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
+  (`_gate._changes_docstatus`, or since v1.540.0 a `submit_document` / `cancel_document` card,
+  `_gate.DOCSTATUS_TOOLS`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
   For a never-exempt target the reason names its kind (`gating_api._never_exempt_reason`): a Task,
   the gate's own records, or since v1.538.0 the company knowledge base.
   It reads the redacted `arguments` for that and never returns them.
