@@ -653,6 +653,21 @@ class TestReviewReasons(BatchHarness):
         self.assertFalse(rows["AI-PA-1"]["batch_default"])
         self.assertEqual(rows["AI-PA-1"]["review_reason"], "submits or cancels a document")
 
+    def test_the_submit_and_cancel_tools_say_so_too(self):
+        """v1.540.0: an update_document cancel is refused before it becomes a card, so a cancel
+        now arrives as cancel_document. Its arguments carry no `docstatus`, so the reason has to
+        come from the tool name, or the dialog would call it merely "high risk"."""
+        for tool in ("submit_document", "cancel_document"):
+            with self.subTest(tool=tool):
+                self.store.clear()
+                arguments = json.dumps({"doctype": "Material Request", "name": "MAT-MR-1", "reason": "x"})
+                rows = self.rows(
+                    FakeAction("AI-PA-1", tool_name=tool, arguments=arguments, target_doctype="Material Request", risk="High")
+                )
+                self.assertFalse(rows["AI-PA-1"]["batch_default"])
+                self.assertEqual(rows["AI-PA-1"]["review_reason"], "high risk, submits or cancels a document")
+        self.assertEqual(_gate.DOCSTATUS_TOOLS, frozenset({"submit_document", "cancel_document"}))
+
     def test_a_create_that_submits_is_a_submit(self):
         arguments = json.dumps({"doctype": "Sales Invoice", "data": {"customer": "C"}, "submit": True})
         rows = self.rows(FakeAction("AI-PA-1", arguments=arguments, target_doctype="Sales Invoice"))

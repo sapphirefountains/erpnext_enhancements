@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.540.0] - 2026-09-25
+
+**Assistants can cancel a submitted document through a confirmation card that works.** Before
+this, the only card that could actually cancel anything was a `run_python_code` card.
+
+This is 1.540.0 rather than 1.539.0 because the Plan a Trip PR (#1133) already claims 1.539.0,
+and both were open at the same time.
+
+### Why
+
+- **What happened.** On 2026-09-25 the nightly reorder job raised Material Request
+  MAT-MR-2026-00014 for 218 PVC fittings, far more than the shelves hold. An assistant proposed
+  cancelling it with `update_document` and `{"docstatus": 2}`, which is the shape `_gate.py`'s own
+  comments described as a cancel. Nik approved the card (AI-PA-2026-880995), and it failed at
+  execution with `[ToolReportedError] Cannot modify submitted document Material Request
+  MAT-MR-2026-00014`.
+- **Why it could never have worked.** Frappe Assistant Core 3.0.0 has `submit_document` but no
+  cancel tool. Its `update_document` goes through `security_config.validate_document_access`,
+  which refuses every field on a submitted document that is not `allow_on_submit`, and
+  `docstatus` is not a field at all. So `update_document` with `docstatus` 2 fails on every
+  submitted document, every time, and only after someone has approved it.
+- **What it cost.** The MR was cancelled with a `run_python_code` card (AI-PA-2026-881009), which
+  is labeled High risk as arbitrary code. That meant using the widest tool on the server for one
+  line of `doc.cancel()`.
+
+### Added
+
+- **`cancel_document`** (`assistant_tools/cancel_document.py`, registered in `hooks.py`). It takes
+  `doctype`, `name` and an optional `reason`, and calls `frappe.get_doc(doctype, name).cancel()`
+  and nothing else. That means the rules the Desk's Cancel button follows apply unchanged:
+  - **Cancel permission** belongs to the person who confirms the card.
+  - **Linked documents:** Frappe raises `LinkExistsError` while a submitted document links to this
+    one. The tool never sets `ignore_links`. It also doesn't offer the Desk's "Cancel All",
+    because each linked document is its own decision and gets its own card.
+  - **The doctype's own cancel hooks run.** On ERPNext documents those reverse GL and stock
+    ledger entries.
+  - **The Desk's workflow rule:** when a Workflow on the doctype has its own cancel transition
+    (`frappe.model.workflow.can_cancel_document`), the tool refuses and names `run_workflow`.
+  - **Savepoint:** the cancel runs inside one. FAC's `_safe_execute` turns a raised
+    `ValidationError` into a result instead of raising it, so on the ungated path a cancel that
+    failed partway through its hooks would otherwise leave its first writes to be committed.
+  - **Refusals:** it refuses a draft (and points to `delete_document`), a doctype that isn't
+    submittable, and missing permission.
+  - **Already cancelled:** it reports that as done, with nothing changed. A card can be confirmed
+    after someone has already cancelled the document in the Desk, and "Failed" would be the wrong
+    word for that.
+  - **Reason:** when given, it's left as an HTML-escaped timeline comment that names the person
+    who confirmed.
+- **Gated like `submit_document`.** It's in `APP_MUTATING` and `HIGH_RISK`, so it's always a card:
+  - The settings allowlist covers only `create_document` and `update_document`.
+  - It has no per-call decider.
+  - It advertises `destructiveHint`, and `fac_tool_categories` files it as `privileged` on the
+    next migrate.
+  - The card reads **"CANCEL <doctype> <name> (permanent): “<reason>”"**.
+- **`_gate.DOCSTATUS_TOOLS`** (`submit_document`, `cancel_document`). The batch dialog starts those
+  cards unticked with "submits or cancels a document". Their arguments carry no `docstatus`, so
+  that reason has to come from the tool name.
+
+### Changed
+
+- **An `update_document` with `docstatus` 2 is refused before it becomes a card**
+  (`_gate._cancel_refusal`). This is the same principle as v1.533.0: a write that cannot run gets
+  no card.
+  - The refusal is `AIGateValidationError` and is logged to AI Action Log. It says to call
+    `cancel_document` with the same doctype and name.
+  - It is checked before any metadata is read, and it accepts `2`, `"2"`, `2.0` and `" 2 "`.
+  - A `docstatus` 1 update and a create with `submit` still go to a card, and none of the three
+    is ever exempt.
+- **Comments and docs now describe what actually happens:**
+  - `_gate.py`: the `_changes_docstatus` docstring and the queue-time validation block, which
+    still say a cancel through `update_document` is skipped rather than refused.
+  - `gating_api._review_reasons`.
+  - `ai_governance/README.md` and `assistant_tools/README.md`.
+  - The `ee-ai-write-confirmation` skill, which now tells assistants to use `cancel_document`
+    and never `run_python_code` to cancel. FAC updates skill content on migrate when it differs.
+
+### Tests
+
+- **New:** `test_assistant_cancel_document` has 26 cases, on the AI-gate CI step:
+  - the tool against a fake Frappe, including the linked-document refusal with its rollback,
+    another failure that rolls back and raises, and a check that `ignore_links` is never set in
+    code;
+  - the workflow rule on all three branches;
+  - classification, annotations and the card wording;
+  - every spelling of `docstatus` 2;
+  - the incident call through `_gated_execute`, refused with no card, and `cancel_document`
+    always a card, even when its doctype is exempt.
+- **Changed:** two `test_ai_gate_per_call` cases expected a `docstatus` 2 update on an exempt
+  doctype to become a card. They now expect a refusal, still never executed, and keep the
+  `docstatus` 1 case as a card.
+- **Added:** one `test_ai_gate_batch` case for the tool-name reason.
+- Disabling the refusal fails four of these tests.
+
+### Notes
+
+- **Reconnect after deploying.** An MCP client caches the tool list when it connects, so
+  `cancel_document` becomes reachable only after the client reconnects. FAC discovers the tool on
+  `bench restart` and creates its `FAC Tool Configuration` row.
+- **Nothing changes on a site without FAC.** The FAC-optional invariant holds: nothing outside
+  `assistant_tools/` imports the new module.
+
 ## [1.538.0] - 2026-09-25
 
 **The company knowledge base gets its module, its two doctypes, its two roles and its locked

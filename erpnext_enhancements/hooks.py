@@ -2546,6 +2546,12 @@ assistant_tools = [
 	# v1.29.0 — the first AI *write* tool. Mutating: gated by _gate.py
 	# (APP_MUTATING) so it proposes an AI Pending Action when write gating is on.
 	"erpnext_enhancements.assistant_tools.create_followup_task.CreateFollowupTask",
+	# v1.540.0 — cancel a submitted document. FAC has submit_document and no cancel, and its
+	# update_document refuses any change to a submitted document, so an approved
+	# {"docstatus": 2} card could only fail. HIGH risk and never exempt, like submit
+	# (_gate.py); the tool calls doc.cancel(), so Frappe's own permission and linked-document
+	# checks apply.
+	"erpnext_enhancements.assistant_tools.cancel_document.CancelDocument",
 	# v1.32.0 — mdm_integration remote device actions. All mutating + gated; wipe/
 	# lock/run-script are HIGH risk (see _gate.py). Each routes to the device's
 	# provider (Miradore mobile / Action1 computers) via mdm_integration.actions.
