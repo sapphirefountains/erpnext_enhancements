@@ -839,6 +839,65 @@ class TestPageRouting(unittest.TestCase):
 		self.assertEqual(self.code.count(".handle_route()"), 1)
 		self.assertIn("wrapper.trip_planner.handle_route()", self.code)
 
+	def test_step_changes_are_history_entries(self):
+		# Every address write used to be replaceState, so Back from any step left the page. A
+		# move the user makes pushes; one Back/Forward asked for (go's from_route) never does.
+		self.assertIn("window.history.pushState(", self.code)
+		self.assertRegex(self.code, r"\n\tgo\(index, from_route\) \{")
+		self.assertIn("this.show_step(index, !from_route)", self.code)
+		self.assertIn("this.set_address(this.address_args(), push)", self.code)
+
+	def test_back_is_never_held_up(self):
+		# Back used to go through the same blocking save as Next: one half-finished card showed
+		# "A few things to fill in first" on every press of Back and overwrote each entry it
+		# refused. A move back saves quietly and moves whatever the answer.
+		body = re.search(r"\n\tgo\(index, from_route\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(body, "go() is gone")
+		back = re.search(
+			r"if \(index < this\.step \|\| \(from_route && this\.route_delta > 0\)\) \{(.*?)\n\t\t\}",
+			body.group(1),
+			re.S,
+		)
+		self.assertIsNotNone(back, "go() no longer lets a move back through before its checks")
+		self.assertIn("this.save({ quiet: true })", back.group(1))
+		self.assertNotIn("if (!ok) return", back.group(1))
+
+	def test_a_refused_forward_says_why_after_going_back(self):
+		# frappe closes any open dialog on every route change, so a refusal shown before the
+		# history.go that undoes the move would vanish unread: it is left for handle_route.
+		body = re.search(r"\n\trefuse_route\(delta, say\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(body, "refuse_route() is gone")
+		code = body.group(1)
+		self.assertLess(code.index("this.return_notice ="), code.index("window.history.go(delta)"))
+		self.assertNotIn("say();\n\t\t\twindow.history.go", code)
+
+	def test_the_pages_own_entries_are_told_apart(self):
+		# Back onto a "?new=1" entry the page wrote must reopen the trip started there (saved
+		# since, with a name), not start a blank one: that entry's history.state says which.
+		body = re.search(r"\n\thandle_route\(\) \{(.*?)\n\t\}\n", self.source, re.S)
+		self.assertIsNotNone(body, "handle_route() is gone")
+		self.assertIn("this.history_mark()", body.group(1))
+
+	def test_back_and_forward_executed(self):
+		# The behaviour itself: the real page, run against a port of the v16 router, by
+		# scripts/test_wizard_back_forward.mjs. Run from here because a node step of its own
+		# would need its own line in ci.yml.
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		harness = os.path.join(os.path.dirname(APP_DIR), "scripts", "test_wizard_back_forward.mjs")
+		result = subprocess.run(
+			[node, harness, "plan-a-trip"],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			errors="replace",
+			check=False,
+			timeout=120,
+		)
+		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+		self.assertIn(" 0 failed", result.stdout)
+
 	def test_no_hand_built_app_links(self):
 		# The v16 desk is /desk; the router only intercepts /desk links, so an in-desk
 		# href="/app/..." costs a full reload and a redirect.

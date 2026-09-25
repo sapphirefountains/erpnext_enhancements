@@ -11,7 +11,10 @@
  *     the server's checks use, but the list of problems comes from `spa.check_post`, which runs
  *     the outbox's own checks. A post with any is refused at submit and again at approval.
  *   - **Unsaved work is not lost to a stray click.** `app.leaveGuard` asks before navigating
- *     away, and the browser asks before closing the tab.
+ *     away, Back and Forward included, and the browser asks before closing the tab.
+ *
+ * Every wait here can end after the person has gone to another screen. What lands then does not
+ * draw, arm the leave guard or move the page (`stillShown`): the screen they went to stays.
  */
 
 import { call, M } from "./transport.js";
@@ -100,6 +103,9 @@ export async function renderComposer(app, route) {
 	if (route.view === VIEW_POST) {
 		app.showPlaceholder(app.pane, "◷", "Loading the post…");
 		saved = await call(M.GET_POST, { name: route.name });
+		// Back while it loaded: that screen is drawn already, and nothing may arm a leave guard for
+		// a post nobody is looking at.
+		if (app.route !== route) return;
 	}
 	const seed = route.view === VIEW_NEW ? app.takeSeed() : null;
 	const baseline = saved ? stateFrom(saved) : emptyState(route.day);
@@ -110,7 +116,7 @@ export async function renderComposer(app, route) {
 	const editable = !!actions.can_edit;
 	app.leaveGuard = () => editable && isDirty(state, baseline);
 
-	const ctx = { app, saved, state, baseline, actions, editable, els: {}, checkSeq: 0, checkTimer: null };
+	const ctx = { app, route, saved, state, baseline, actions, editable, els: {}, checkSeq: 0, checkTimer: null };
 
 	const form = el("div", "ee-mk-form");
 	const side = el("aside", "ee-mk-side");
@@ -620,6 +626,15 @@ function actionBar(ctx) {
 	return bar;
 }
 
+/**
+ * Still the screen this composer was drawn for? An answer that lands after Back has done what it
+ * was asked, and says so, but it must not move the page back to the post or disarm another
+ * screen's leave guard.
+ */
+function stillShown(ctx) {
+	return ctx.app.route === ctx.route;
+}
+
 /** Run an action with the page's buttons held, and say what went wrong if it did. */
 async function run(ctx, action) {
 	const buttons = Array.from(ctx.app.pane.querySelectorAll(".ee-mk-actions button"));
@@ -639,8 +654,10 @@ async function save(ctx) {
 		name: ctx.saved ? ctx.saved.name : null,
 		modified: ctx.saved ? ctx.saved.modified : null,
 	});
-	ctx.app.leaveGuard = null;
-	ctx.app.navigate(buildRoute(VIEW_POST, result.name), true);
+	if (stillShown(ctx)) {
+		ctx.app.leaveGuard = null;
+		ctx.app.navigate(buildRoute(VIEW_POST, result.name), true);
+	}
 	ctx.app.say("Saved.", "ok");
 	return result;
 }
@@ -656,8 +673,10 @@ async function submit(ctx) {
 		name = result.name;
 	}
 	await call(M.SUBMIT, { post: name });
-	ctx.app.leaveGuard = null;
-	ctx.app.navigate(buildRoute(VIEW_POST, name), true);
+	if (stillShown(ctx)) {
+		ctx.app.leaveGuard = null;
+		ctx.app.navigate(buildRoute(VIEW_POST, name), true);
+	}
 	ctx.app.say("Submitted for approval.", "ok");
 	ctx.app.refreshBootstrap();
 }
@@ -678,7 +697,7 @@ function approve(ctx) {
 			onClick: () =>
 				run(ctx, async () => {
 					await call(M.APPROVE, { post: saved.name, modified: saved.modified });
-					app.navigate(buildRoute(VIEW_POST, saved.name), true);
+					if (stillShown(ctx)) app.navigate(buildRoute(VIEW_POST, saved.name), true);
 					app.say("Approved and queued.", "ok");
 					app.refreshBootstrap();
 				}),
@@ -696,8 +715,10 @@ function withReason(ctx, title, prompt, confirmLabel, method, done) {
 			onClick: () =>
 				run(ctx, async () => {
 					await call(method, { post: ctx.saved.name, reason: reason.value });
-					ctx.app.leaveGuard = null;
-					ctx.app.navigate(buildRoute(VIEW_POST, ctx.saved.name), true);
+					if (stillShown(ctx)) {
+						ctx.app.leaveGuard = null;
+						ctx.app.navigate(buildRoute(VIEW_POST, ctx.saved.name), true);
+					}
 					ctx.app.say(done, "ok");
 					ctx.app.refreshBootstrap();
 				}),
@@ -714,8 +735,12 @@ function remove(ctx) {
 			onClick: () =>
 				run(ctx, async () => {
 					await call(M.DELETE_POST, { name: ctx.saved.name });
-					ctx.app.leaveGuard = null;
-					ctx.app.navigate(buildRoute(VIEW_MONTH));
+					// Never pushed: Back must not land on the address of a post that is gone, nor on a
+					// second copy of the calendar it was opened from (`retreat`).
+					if (stillShown(ctx)) {
+						ctx.app.leaveGuard = null;
+						ctx.app.retreat(buildRoute(VIEW_MONTH));
+					}
 					ctx.app.say("Deleted.", "ok");
 				}),
 		},

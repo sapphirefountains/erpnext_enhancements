@@ -388,6 +388,85 @@ class TestTheFrontEndDiscipline(unittest.TestCase):
             self.assertNotIn(banned, js)
 
 
+class TestWhereTheReviewerIsWorkingIsTheRoute(unittest.TestCase):
+    """The course filter and a lesson opened by name are route segments, so Back returns to the
+    course or lesson before and Forward goes back to it. The behaviour — against a model of the
+    v16 router — is scripts/test_desk_page_history.js; these pin the shape it depends on."""
+
+    def setUp(self):
+        self.js = _strip_js_comments(_raw(PAGE_JS))
+
+    def _method(self, head, end):
+        at = self.js.index(head)
+        return self.js[at : self.js.index(end, at + len(head))]
+
+    def test_segments_not_route_options(self):
+        """v16's push_state writes the path alone: state held in route_options is gone after
+        Back, Forward or a reload."""
+        self.assertIn('return [TQ_ROUTE, "lesson", view.lesson];', self.js)
+        self.assertIn('return [TQ_ROUTE, "course", view.course];', self.js)
+        self.assertNotIn('frappe.set_route("training-review", {', self.js)
+
+    def test_the_reviewers_moves_route_and_do_not_load(self):
+        """The show the route fires does the loading; loading here as well would load twice."""
+        pick = self._method("pick_course(value) {", "paint_lesson() {")
+        self.assertIn("this.go(", pick)
+        self.assertNotIn("this.load(", pick)
+        jump = self._method("jump_to_lesson() {", "build() {")
+        self.assertIn("this.go({ lesson: values.lesson", jump)
+
+    def test_auto_advance_is_never_a_history_entry(self):
+        """The next lesson the queue hands out is finished business once it empties; Back into
+        it would open nothing."""
+        advance = self._method("maybe_advance() {", "find(name) {")
+        self.assertNotIn("frappe.set_route(", advance)
+        self.assertIn("this.leave_lesson();", advance)
+        self.assertIn("this.route_view()", advance, "a verdict landing after the reviewer left must not route")
+
+    def test_a_route_driven_load_asks_before_it_drops_an_edit(self):
+        follow = self._method("follow(view) {", "load(args) {")
+        self.assertIn("this.cards.some((rec) => rec.editing)", follow)
+        self.assertIn("frappe.confirm(", follow)
+
+    def test_a_route_driven_load_waits_for_verdicts_in_flight(self):
+        """A Back or Forward while a verdict is in flight is held: loading then could be handed
+        back the lesson being emptied (the double accept maybe_advance waits to avoid), and a
+        save-and-accept's card is out of `cards`, so the edit check cannot see it. The last
+        verdict to land catches up with the route, before the lesson's own advance."""
+        follow = self._method("follow(view) {", "load(args) {")
+        self.assertLess(follow.index("if (this.inflight > 0) return;"), follow.index("this.cards.some("))
+        advance = self._method("maybe_advance() {", "find(name) {")
+        self.assertLess(advance.index("if (this.inflight > 0) return;"), advance.index("this.follow(wanted);"))
+        self.assertIn("key !== this.declined", advance)
+        self.assertLess(advance.index("this.follow(wanted);"), advance.index("if (this.cards.length) return;"))
+
+    def test_a_stay_holds_only_while_the_route_names_that_view(self):
+        """A "Stay" keeps an edit on screen under the entry Back moved to. Kept after Back or
+        Forward had moved on, it made the catch-ups drop a later Back to that view which a load
+        or a verdict had held, leaving the URL naming one view and the screen showing another.
+        And once the view stayed on empties there is nothing left to keep: the route is followed,
+        not the lesson's own advance, whose step back went past the entry the route names."""
+        refresh = self._method("refresh(force) {", "sync_queue() {")
+        forget = "if (tq_view_key(this.route_view()) !== this.declined) this.declined = null;"
+        self.assertIn(forget, refresh)
+        # ...before a show that finds a load running returns: that show is the one to forget on.
+        self.assertLess(refresh.index(forget), refresh.index("if (this.loading) return;"))
+        advance = self._method("maybe_advance() {", "find(name) {")
+        emptied = advance[advance.index("if (this.cards.length) return;") :]
+        self.assertIn("if (wanted && key !== tq_view_key(this.view)) {", emptied)
+        self.assertLess(emptied.index("this.follow(wanted);"), emptied.index("this.leave_lesson();"))
+        self.assertLess(emptied.index("this.follow(wanted);"), emptied.index("this.load({ course: this.course_filter });"))
+
+    def test_a_show_during_a_load_is_caught_up_when_it_lands(self):
+        load = self._method("load(args) {", "adopt(data) {")
+        self.assertIn(".finally(() => {", load)
+        self.assertIn("this.follow(wanted)", load[load.index(".finally(") :])
+
+    def test_an_open_lesson_is_still_never_refetched_on_a_plain_show(self):
+        refresh = self._method("refresh(force) {", "sync_queue() {")
+        self.assertIn("this.sync_queue();", refresh)
+
+
 class TestItIsWiredIntoCI(unittest.TestCase):
     def test_this_suite_runs_in_ci(self):
         self.assertIn("erpnext_enhancements.tests.test_training_review", _raw(CI))

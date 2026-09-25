@@ -63,6 +63,15 @@ ERPNext records. Logic in `core/matching.py`; the whitelisted surface is `get_ma
 `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches`
 in `core/api.py`.
 
+**The tab is in the route**, so the browser's Back and Forward move between the two tabs.
+Masters is the bare route, which the dashboard and the workspace tiles open, and Parked
+transactions is `/desk/quickbooks-record-matching/transactions`. Frappe v16's router owns
+`popstate` on the Desk, so a tab that changed nothing but a hidden attribute had no entry,
+and Back left the page. A tab click only routes. `on_page_show` shows the tab the route
+names and never refetches rows already on screen, because that would drop unsaved picks and
+ticks. Filters and pages of rows stay out of history, as they do in Frappe's own list view.
+Only the newest parked-transactions reply paints.
+
 **Why it replaced the dashboard's "Link Existing Records" dialog.** That dialog listed QBO
 records with *no* Sync Mapping row, and after Import All that is none of them — every master
 record gets a row on import (`Created`, `Auto Matched` or `Pending Review`). On production it

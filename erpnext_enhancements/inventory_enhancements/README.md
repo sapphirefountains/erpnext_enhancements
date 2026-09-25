@@ -59,6 +59,57 @@ used `BarcodeDetector` alone, which Safari does not have, so the button never ap
 it now falls back to the vendored jsQR decoder (QR only — an item *barcode* on an iPhone
 still wants the wedge scanner or "Find item").
 
+**The count page's sheets are route segments, so the phone's Back button closes them.**
+Camera Scan is `inventory-scanner-audit/camera` and Find Item is
+`inventory-scanner-audit/find`. Frappe v16's router owns `popstate` on the Desk and closes
+the open dialog on every route change, so a sheet with no entry of its own made Back leave
+the count. Now Back closes the sheet and stays on the count, and Forward opens it again. The
+pending-item card is part of the one screen and is not an entry, and a scan never is.
+
+A camera read is not a tap, and Chrome's Back skips an entry a page pushes without one. So a
+read is looked up on the camera's own entry. An unknown code that opens Find Item takes that
+entry over. Any other result is drawn once the page has stepped back off the entry, so the
+counted-qty box keeps its focus. If the lookup fails, the page steps back off the entry once
+frappe's error message has been closed: sooner would close the message, and leaving the entry
+behind made the clerk's next Back change nothing on screen. Whether a message is up is read from
+Bootstrap's own state (`$wrapper.data('bs.modal')._isShown`), not frappe's `is_visible`: the
+dialog's X is `data-dismiss="modal"`, which never calls frappe's `hide()`, and msgprint's dialog
+is one for the whole session. So after any message had been closed by its X, a lookup that
+failed with no dialog up (a dropped connection: frappe puts none up for status 0) waited
+forever, and the camera's entry was never stepped off.
+
+A sheet's URL opens the count, never the camera, on a pasted link and when it is reached from
+another page. Only an entry the page pushed itself is a sheet's, and it marks each one in
+`history.state` (no URL) as it pushes it: Frappe's Route History records every route with a
+second segment and the awesome bar offers the most used as links, and a sheet opened from one of
+those would have another page behind it for X, or a camera read's step back, to land on. When
+such a link is picked on the count itself, the URL is pushed over the count's own entry, and
+replacing it would leave two count entries in a row, so the page steps back onto its entry
+instead. It knows the count was showing from the `hide` frappe fires on the page it leaves: none
+since the last show means nothing else has been. A reload on a sheet entry the page pushed
+steps back too: `history.state` survives a reload, and the entry behind a marked one is always
+the count's own. Each replace the page asks for (`route_flags.replace_route`) is cleared the
+moment `set_route` returns. v16 reads the flag while writing the entry but clears it only once
+every request then in flight has landed, and on a first show that includes the bootstrap call:
+left set, it turned the clerk's next tap into a replace of the count's own entry, so X on Find
+Item, tapped before the bootstrap landed, left the page.
+
+A camera read's reply acts only on the entry the read was taken on, and only while that entry
+still holds nothing but the lookup. A camera the clerk opens before the reply lands (on that
+same entry, or on a new one after Back) has taken it over, as has a later read, and the reply is
+then drawn where the clerk is: it used to step back off the clerk's new camera, closing it, or
+replace it with Find Item for the old code.
+
+An unknown code opens Find Item only where it was scanned. A lookup's reply that lands after
+the clerk has moved (Back, Forward, a sheet tapped open, another Desk page) used to route
+anyway, which dragged the clerk back onto the count from wherever they had gone, or pushed an
+entry with no tap behind it; now the code is only reported there. Back or Forward onto a
+sheet's entry that cannot be opened again (the camera, with camera scanning since turned off)
+steps back onto the count's own entry rather than replacing it with a second copy. The Finalize
+message links the draft reconciliation with `get_form_link` (a /desk path), not the
+server's /app `reconciliation_url`, which is a full page load on v16. Behaviour tests:
+`scripts/test_desk_page_history.js`, run by `tests/test_desk_page_history.py`.
+
 ## The Stock Scan page
 
 What Nik asked for, 2026-09-23: a QR code on every location that holds inventory; scan it,

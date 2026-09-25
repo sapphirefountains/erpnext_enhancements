@@ -46,6 +46,26 @@ const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 /** Mirrors `api.feedback.draft_description`'s own guard. The server stays the authority. */
 const MIN_TITLE_FOR_DRAFT = 8;
 
+/** The state of this page's own history entries. */
+const HISTORY_KEY = "ee_fb";
+/**
+ * The report panel's (`capture/panel.js`, `HISTORY_KEY`). While it is open the panel pushes
+ * `{ee_capture: <id>}` with no URL over this page, and answers Back itself.
+ */
+const CAPTURE_KEY = "ee_capture";
+/**
+ * The sessionStorage key the New form's draft is mirrored under, with the user after a colon
+ * (`storeDraft`). Per tab, so it outlives Back off the page and a reload, and no other tab sees it.
+ */
+const DRAFT_KEY = "ee_fb_new_draft";
+/**
+ * Shown over a New form restored from a mirror that was being submitted when the page was left
+ * (`maybe_filed`). The browser drops the reply with the page, but the server has usually filed it
+ * by then, so the text is kept, and the next tap is not an unwitting duplicate.
+ */
+const MAYBE_FILED =
+	"This may already have been filed: it was being sent when the page was left. Check My requests before you send it again.";
+
 export class FeedbackApp {
 	constructor(root, boot) {
 		this.root = root;
@@ -66,8 +86,26 @@ export class FeedbackApp {
 			// Admin-view filters. Not in the URL: a filtered admin list is something you scan,
 			// not something you link somebody to.
 			allFilters: { search: "", status: "", request_type: "", start: 0 },
+			// What is typed into the New form, kept until it is sent (`newDraft`).
+			newDraft: null,
 			busy: false,
 		};
+		// The path the pane was last drawn for.
+		this.here = "";
+		// False until `mount()` has applied the bootstrap. Back or Forward before then draws
+		// nothing (`onPopState`): the New form built without the bootstrap's Impact choices would
+		// be cached as the draft with no impact, and file the first choice, "Blocking my work".
+		// `mount()` draws whichever entry the browser is on once it has them.
+		this.ready = false;
+		// Bumped on every screen change and every fetch-then-draw. A reply that lands after it
+		// moved on draws nothing: Back while a request loads must not paint the request over the
+		// list the person went back to.
+		this.renderToken = 0;
+		// The New form last drawn: the draft it was drawn from, the `renderToken` it was drawn for,
+		// its description box, and `sync`, which redraws its buttons and attachment list from the
+		// draft's work in flight. A late "Expand with AI", an upload or a submit reaches the form
+		// on screen through here, not the one it started on.
+		this.newForm = null;
 		// Captured once, at load, from the page they came *from*. Reading it later would
 		// capture this page instead.
 		this.captured = captureContext({
@@ -80,7 +118,7 @@ export class FeedbackApp {
 
 	async mount() {
 		this.buildLayout();
-		window.addEventListener("popstate", () => this.routeTo(window.location.pathname));
+		window.addEventListener("popstate", (ev) => this.onPopState(ev));
 		try {
 			const data = await call(M.BOOTSTRAP);
 			this.applyBootstrap(data);
@@ -96,8 +134,14 @@ export class FeedbackApp {
 			this.state.isReviewer,
 			this.state.myRequests.length > 0
 		);
-		if (preferred) window.history.replaceState({}, "", buildRoute(preferred));
+		// The entry the page opened on is stamped as this page's, never pushed over, so Back from
+		// the first screen leaves the page as it always has. Not while the report panel is open
+		// over the page: the entry on top is the panel's then.
+		if (!captureOpen()) writeEntry(false, preferred ? buildRoute(preferred) : undefined);
 
+		// From here Back and Forward draw (`onPopState`). One pressed while this loaded moved the
+		// address only, so this draws the entry the browser is on now.
+		this.ready = true;
 		this.routeTo(window.location.pathname);
 	}
 
@@ -157,8 +201,52 @@ export class FeedbackApp {
 	// ------------------------------------------------------------------ routing
 
 	navigate(href) {
-		window.history.pushState({}, "", href);
+		// The report panel's entry is on top while it is open (`onPopState`). An entry pushed now
+		// would sit over it: the panel's own Back would land on this page's entry and leave the
+		// panel open over the wrong address. Nothing moves until it has closed.
+		if (captureOpen()) return;
+		// Screens, not strings: the bare `/feedback` a first-time filer lands on shows the form
+		// with "New request" lit, but that tab's href is `/feedback/new`.
+		const to = parseRoute(href);
+		const at = parseRoute(window.location.pathname);
+		if (to.view === at.view && to.name === at.name) {
+			// Already here: no second entry, or the next Back would appear to do nothing. The
+			// address is corrected in place when it names the screen differently (the tap says "I
+			// want the form"). The New form is left as it is; a list is drawn again, which is what
+			// a second tap asks for.
+			if (href !== window.location.pathname) {
+				writeEntry(false, href);
+				this.here = String(href).split("?")[0];
+			}
+			if (to.view !== VIEW_NEW) this.routeTo(href);
+			return;
+		}
+		writeEntry(true, href);
 		this.routeTo(href);
+	}
+
+	/**
+	 * Back or Forward. The screen follows the address, except around the report panel
+	 * (`capture/panel.js`), which puts an entry of its own over this page while it is open:
+	 *
+	 *   - While the panel is open, and until the popstate of its own closing Back has landed,
+	 *     Back is the panel's to answer ("Discard this report?"). Nothing here moves, so a
+	 *     half-written request under it is not cleared by the answer.
+	 *   - An entry it left behind (Forward onto it after Back closed the panel, or a reload with
+	 *     the panel open) is not a screen of this page. It is re-stamped as this page's, and on
+	 *     the address already on screen the view, and whatever is typed in it, stays.
+	 *
+	 * Nothing is drawn before `mount()` has the bootstrap (`ready`); it draws the entry landed on.
+	 */
+	onPopState(ev) {
+		if (!this.ready) return;
+		if (captureOpen()) return;
+		const state = ev && ev.state;
+		if (state && typeof state === "object" && CAPTURE_KEY in state) {
+			writeEntry(false);
+			if (window.location.pathname === this.here) return;
+		}
+		this.routeTo(window.location.pathname);
 	}
 
 	/**
@@ -171,9 +259,11 @@ export class FeedbackApp {
 	 * that keeps overriding the view somebody just clicked is not routing.
 	 */
 	routeTo(pathname) {
-		const route = parseRoute(String(pathname).split("?")[0]);
+		this.here = String(pathname).split("?")[0];
+		const route = parseRoute(this.here);
 		this.state.view = route.view;
 		this.state.name = route.name;
+		this.renderToken += 1;
 		this.renderNav();
 		this.clearBanner();
 
@@ -189,6 +279,7 @@ export class FeedbackApp {
 	renderNew() {
 		clear(this.pane);
 		if (this.state.paused) {
+			this.newForm = null;
 			append(
 				this.pane,
 				this.notice(
@@ -202,12 +293,28 @@ export class FeedbackApp {
 		const form = el("form", "ee-fb-form");
 		form.addEventListener("submit", (ev) => ev.preventDefault());
 
-		const typeInput = select(this.state.requestTypes, "Bug");
-		const titleInput = input("text", "One line: what is wrong, or what you want", "");
+		// Drawn from what was typed last time, so Back, Forward or a tab never wipes a
+		// half-written request; each keystroke is kept as it happens, and mirrored (`storeDraft`).
+		// And from the work still in flight on it: an upload, an "Expand with AI" or a submit
+		// started on a drawing the person has since left carries on, and this one shows it (`sync`).
+		const kept = this.newDraft();
+		const token = this.renderToken;
+		const typeInput = select(this.state.requestTypes, kept.request_type);
+		const titleInput = input("text", "One line: what is wrong, or what you want", kept.title);
 		titleInput.maxLength = 200;
-		const impactInput = select(this.state.impacts, this.state.impacts[1] || this.state.impacts[0]);
-		const descInput = textarea("What happened, and what you expected instead.", "", 7);
-		const stepsInput = textarea("1. Open …\n2. Click …\n3. It does …", "", 5);
+		const impactInput = select(this.state.impacts, kept.impact);
+		const descInput = textarea("What happened, and what you expected instead.", kept.description, 7);
+		const stepsInput = textarea("1. Open …\n2. Click …\n3. It does …", kept.steps, 5);
+		const keep = (node, key, type) =>
+			node.addEventListener(type || "input", () => {
+				kept[key] = node.value;
+				this.storeDraft(kept);
+			});
+		keep(typeInput, "request_type", "change");
+		keep(titleInput, "title");
+		keep(impactInput, "impact", "change");
+		keep(descInput, "description");
+		keep(stepsInput, "steps");
 
 		const stepsField = field(
 			"Steps to reproduce",
@@ -223,27 +330,52 @@ export class FeedbackApp {
 		// Expands the title into a fuller description. Fills the textarea rather than
 		// submitting anything — the requester edits it and is still the author.
 		const draft = button("Expand with AI", "ee-fb-btn ee-fb-btn-small", async () => {
+			// Drawn disabled while the draft has work out (`syncDraft`); one tap that lands anyway
+			// asks nothing a second time.
+			if (this.state.busy || kept.drafting || kept.sending) return;
+			// What the description said when it was asked. It takes up to 90 s.
+			const sent = descInput.value;
+			kept.drafting = true;
 			this.setBusy(draft, true, "Drafting…");
 			try {
 				const result = await call(
 					M.DRAFT,
 					{
 						title: titleInput.value,
-						description: descInput.value,
+						description: sent,
 						request_type: typeInput.value,
 					},
 					{ timeout: 90000 }
 				);
-				descInput.value = result.description;
-				descInput.focus();
+				// The form on screen, if it is this draft's: this one, or one drawn again from it
+				// after the person left and came back while it drafted. None when they are elsewhere.
+				const live = this.liveNewForm(kept);
+				// Asked for, so kept, but only if nothing has been typed into the description since
+				// it was asked, on this form or any drawn again from the draft: the reply never
+				// replaces newer typing. Said when it is on screen, so the wait does not end in silence.
+				if ((live ? live.description.value : kept.description) !== sent) {
+					if (live) {
+						this.showBanner(
+							"You typed into the description while it drafted, so your text was kept and the AI draft was not applied.",
+							"warn"
+						);
+					}
+					return;
+				}
+				kept.description = result.description;
+				this.storeDraft(kept);
+				// The person left the form: it shows the draft when they come back.
+				if (!live) return;
+				live.description.value = result.description;
+				if (live.description === descInput) descInput.focus();
 				this.showBanner("Drafted from your title. Edit anything that is not right — you are the author.", "ok");
 			} catch (e) {
-				this.showBanner(e.message, "bad");
+				if (this.liveNewForm(kept)) this.showBanner(e.message, "bad");
 			} finally {
+				kept.drafting = false;
+				// Re-syncs the form on screen, which may have been drawn again since: its button
+				// follows the draft, and the title rule is applied again (`sync`).
 				this.setBusy(draft, false, "Expand with AI");
-				// `setBusy` re-enables unconditionally; re-apply the title rule so a cleared
-				// title does not leave a live button behind.
-				syncDraft();
 			}
 		});
 		const descriptionField = field("Description", descInput);
@@ -260,20 +392,25 @@ export class FeedbackApp {
 		// a correct refusal presented as a server error, and it showed up in the console as
 		// one. The server keeps that guard (it is the authority; this is a courtesy), so the
 		// two thresholds have to agree.
+		//
+		// Disabled too while this draft has an Expand or a submit out, read from the draft itself
+		// and not only from `state.busy`: any other action's `setBusy(..., false)` clears that
+		// flag, and a reviewer's decision can land while this form's own work is still out.
 		const syncDraft = () => {
 			const ready = titleInput.value.trim().length >= MIN_TITLE_FOR_DRAFT;
-			draft.disabled = !ready || this.state.busy;
+			draft.disabled = !ready || this.state.busy || !!kept.drafting || !!kept.sending;
+			draft.textContent = kept.drafting ? "Drafting…" : "Expand with AI";
 			draftHelp.textContent = ready
 				? "Expands your title into a description you can edit."
 				: "Write a title first, then this can expand it for you.";
 		};
 		titleInput.addEventListener("input", syncDraft);
-		syncDraft();
 
-		const attachments = this.buildAttachmentPicker();
+		const attachments = this.buildAttachmentPicker(kept);
 
 		const submit = button("Submit", "ee-fb-btn ee-fb-btn-primary", async () => {
 			await this.submitRequest({
+				kept,
 				submit,
 				values: {
 					request_type: typeInput.value,
@@ -286,6 +423,34 @@ export class FeedbackApp {
 				attachments,
 			});
 		});
+		const sendingNote = el("p", "ee-fb-context", "Sending… The form opens again for changes if it does not go through.");
+		sendingNote.setAttribute("role", "status");
+
+		// Draws the draft's work in flight onto this form, whichever drawing it started on. While
+		// it is being sent the form is read-only, because what is typed then would be dropped when
+		// it is filed; while anything is busy, Submit and Expand are drawn disabled rather than
+		// swallowing a tap. Called on every change of it (`syncNewForm`, `setBusy`).
+		//
+		// Submit follows the draft's own work as well as `state.busy`, which another action's
+		// `setBusy(..., false)` clears: a submit or Expand still out, and any file still uploading.
+		// Sent before a file lands, the request would be filed without it and the file attached to
+		// nothing, so Submit waits for it. The upload has no timeout of its own: a dropped
+		// connection or a refusal ends it as surely as a success, and a reload lets go of one that
+		// never answers (uploads are not mirrored).
+		const sync = () => {
+			const sending = !!kept.sending;
+			const waiting = uploadsPending(kept);
+			for (const node of [typeInput, titleInput, impactInput, descInput, stepsInput, attachments.picker]) {
+				node.disabled = sending;
+			}
+			syncDraft();
+			submit.disabled = this.state.busy || sending || !!kept.drafting || waiting;
+			submit.textContent = sending ? "Submitting…" : waiting ? "Waiting for uploads…" : "Submit";
+			sendingNote.hidden = !sending;
+			attachments.draw();
+		};
+		this.newForm = { kept, token, description: descInput, sync };
+		sync();
 
 		append(
 			form,
@@ -296,10 +461,148 @@ export class FeedbackApp {
 			stepsField.row,
 			attachments.row,
 			this.contextSummary(),
-			append(el("div", "ee-fb-actions"), submit)
+			append(el("div", "ee-fb-actions"), submit),
+			sendingNote
 		);
 		append(this.pane, form);
-		titleInput.focus();
+		// Not under the report panel: focus belongs to what the person is typing into there.
+		if (!captureOpen() && !kept.sending) titleInput.focus();
+		// Restored from a mirror that was being sent when the page was left (`MAYBE_FILED`). Said
+		// on every drawing of it, since leaving the form clears the banner (`routeTo`).
+		if (kept.maybe_filed && !kept.sending) this.showBanner(MAYBE_FILED, "warn");
+	}
+
+	/**
+	 * The New form on screen when it was drawn from `kept`, else null: the person is on another
+	 * screen, or the draft was sent and a new one started.
+	 */
+	liveNewForm(kept) {
+		const live = this.newForm;
+		return live && live.kept === kept && live.token === this.renderToken ? live : null;
+	}
+
+	/** Bring the New form last drawn up to date with its draft's work in flight (`renderNew`). */
+	syncNewForm() {
+		if (this.newForm) this.newForm.sync();
+	}
+
+	/**
+	 * What is typed into the New form, kept across screens until it is sent: Back, Forward and
+	 * the tabs redraw the form from it. Uploaded files are kept by the name submit sends, with the
+	 * file name the list shows.
+	 *
+	 * Mirrored to this tab's sessionStorage too (`storeDraft`), because memory does not outlive
+	 * the page. When `/feedback/new` is the tab's first entry (a link from an email), Back leaves
+	 * the page and Forward loads it again — `no_cache` keeps it out of the back-forward cache — so
+	 * an empty memory is filled from the mirror before it starts a blank form.
+	 *
+	 * The work in flight on it lives here too, in memory only and never in the mirror, so a form
+	 * drawn again shows it (`renderNew`'s `sync`): `uploads` (each file still uploading, or
+	 * refused, as the list shows it), `drafting` (an "Expand with AI" is out) and `sending` (it is
+	 * being submitted).
+	 *
+	 * `maybe_filed` is the one thing about a submit that is mirrored: the mirror says so while one
+	 * is out (`storeDraft`), so a draft restored from it was left mid-send, and its form warns
+	 * that it may already have been filed (`MAYBE_FILED`). It holds until the draft is filed: a
+	 * later send that is refused says nothing about the one whose reply was lost.
+	 */
+	newDraft() {
+		if (!this.state.newDraft) {
+			this.state.newDraft = {
+				request_type: "Bug",
+				title: "",
+				impact: this.state.impacts[1] || this.state.impacts[0],
+				description: "",
+				steps: "",
+				attachments: [],
+				labels: {},
+				uploads: [],
+				drafting: false,
+				sending: false,
+				maybe_filed: false,
+				...this.restoreDraft(),
+			};
+		}
+		return this.state.newDraft;
+	}
+
+	/** This user's sessionStorage key for the draft, or "" when the page does not know who it is. */
+	draftKey() {
+		return this.state.user ? `${DRAFT_KEY}:${this.state.user}` : "";
+	}
+
+	/**
+	 * Mirror `kept` to sessionStorage, if it is still the draft (one already sent is not written
+	 * back). The typed fields and each uploaded file's name and label: never a file's contents,
+	 * which are on the server already. And `maybe_filed` while a submit is out, or one was when a
+	 * restored draft's page was left (`newDraft`): a reply that never arrives, because the page
+	 * was left first, cannot clear it. Storage that refuses (a private window, a full quota) leaves
+	 * the draft in memory, as it was before there was a mirror.
+	 */
+	storeDraft(kept) {
+		const key = this.draftKey();
+		if (!key || !kept || kept !== this.state.newDraft) return;
+		const labels = {};
+		for (const name of kept.attachments) if (kept.labels[name]) labels[name] = String(kept.labels[name]);
+		try {
+			window.sessionStorage.setItem(
+				key,
+				JSON.stringify({
+					request_type: kept.request_type,
+					title: kept.title,
+					impact: kept.impact,
+					description: kept.description,
+					steps: kept.steps,
+					attachments: kept.attachments.slice(),
+					labels,
+					...(kept.sending || kept.maybe_filed ? { maybe_filed: true } : {}),
+				})
+			);
+		} catch (e) {
+			// Kept in memory only.
+		}
+	}
+
+	/**
+	 * The mirrored draft (`storeDraft`), as fields to lay over a blank one: only what is well
+	 * formed, and a Type or Impact only while it is still one of the choices. Empty when there is
+	 * none or storage cannot be read.
+	 */
+	restoreDraft() {
+		const key = this.draftKey();
+		if (!key) return {};
+		let saved;
+		try {
+			saved = JSON.parse(window.sessionStorage.getItem(key) || "null");
+		} catch (e) {
+			return {};
+		}
+		if (!saved || typeof saved !== "object") return {};
+		const out = {};
+		const offered = (options, value) => options.some((o) => (o && typeof o === "object" ? o.value : o) === value);
+		if (offered(this.state.requestTypes, saved.request_type)) out.request_type = saved.request_type;
+		if (offered(this.state.impacts, saved.impact)) out.impact = saved.impact;
+		for (const prop of ["title", "description", "steps"]) {
+			if (typeof saved[prop] === "string") out[prop] = saved[prop];
+		}
+		const names = Array.isArray(saved.attachments) ? saved.attachments : [];
+		out.attachments = names.filter((name) => typeof name === "string" && name).slice(0, 5);
+		out.labels = {};
+		const labels = saved.labels && typeof saved.labels === "object" ? saved.labels : {};
+		for (const name of out.attachments) if (typeof labels[name] === "string") out.labels[name] = labels[name];
+		if (saved.maybe_filed === true) out.maybe_filed = true;
+		return out;
+	}
+
+	/** Drop the mirror: the draft was sent. */
+	forgetDraft() {
+		const key = this.draftKey();
+		if (!key) return;
+		try {
+			window.sessionStorage.removeItem(key);
+		} catch (e) {
+			// Nothing to drop.
+		}
 	}
 
 	contextSummary() {
@@ -323,7 +626,14 @@ export class FeedbackApp {
 		return node;
 	}
 
-	buildAttachmentPicker() {
+	/**
+	 * The file picker, and the list under it drawn from the draft (`newDraft`): each uploaded file
+	 * as ready, then each still uploading or refused. An upload carries on after the person leaves
+	 * the form, and moves the list of whichever drawing of it is on screen (`syncNewForm`). Submit
+	 * waits while any is still uploading (`renderNew`'s `sync`), so the files listed as ready are
+	 * the files it sends.
+	 */
+	buildAttachmentPicker(kept) {
 		const picker = document.createElement("input");
 		picker.type = "file";
 		picker.accept = "image/*,.pdf,.txt,.log";
@@ -331,52 +641,104 @@ export class FeedbackApp {
 		picker.className = "ee-fb-input";
 
 		const list = el("div", "ee-fb-attachments");
-		const uploaded = [];
+		// The draft's own lists, so an upload that finishes while the person is on another screen,
+		// or on the form drawn again, is attached and listed where they are.
+		const uploaded = kept.attachments;
+		const draw = () => {
+			clear(list);
+			for (const name of uploaded) {
+				list.appendChild(el("div", "ee-fb-attachment ee-fb-attachment-ok", `${kept.labels[name] || name} — ready`));
+			}
+			for (const entry of kept.uploads) {
+				list.appendChild(
+					el("div", `ee-fb-attachment${entry.bad ? " ee-fb-attachment-bad" : ""}`, `${entry.label} — ${entry.text}`)
+				);
+			}
+		};
 
 		picker.addEventListener("change", async () => {
 			const files = Array.from(picker.files || []);
 			picker.value = "";
 			for (const file of files) {
 				if (uploaded.length >= 5) break;
-				const row = el("div", "ee-fb-attachment", `${file.name} — uploading…`);
-				list.appendChild(row);
+				const entry = { label: file.name, text: "uploading…", bad: false };
+				kept.uploads.push(entry);
+				this.syncNewForm();
 				try {
 					// Upload first, link on submit. A file uploaded against nothing is harmless;
 					// a request pointing at a file that failed to upload is not.
 					const result = await upload(file, (fraction) => {
-						row.textContent = `${file.name} — ${Math.round(fraction * 100)}%`;
+						entry.text = `${Math.round(fraction * 100)}%`;
+						this.syncNewForm();
 					}).promise;
+					kept.uploads.splice(kept.uploads.indexOf(entry), 1);
 					uploaded.push(result.name);
-					row.textContent = `${file.name} — ready`;
-					row.classList.add("ee-fb-attachment-ok");
+					kept.labels[result.name] = file.name;
+					this.storeDraft(kept);
 				} catch (e) {
-					row.textContent = `${file.name} — ${e.message}`;
-					row.classList.add("ee-fb-attachment-bad");
+					entry.text = e.message;
+					entry.bad = true;
 				}
+				this.syncNewForm();
 			}
 		});
 
 		const wrapper = field("Attachments", picker, "A screenshot answers more than a paragraph.");
 		append(wrapper.row, list);
-		return { row: wrapper.row, names: uploaded };
+		return { row: wrapper.row, names: uploaded, picker, draw };
 	}
 
-	async submitRequest({ submit, values, attachments }) {
-		if (this.state.busy) return;
+	async submitRequest({ kept, submit, values, attachments }) {
+		// Drawn disabled while any of this is true (`renderNew`'s `sync`). Checked here as well: a
+		// tap can land on a drawing another action's `setBusy` re-enabled a moment before.
+		if (this.state.busy || kept.sending || kept.drafting || uploadsPending(kept)) return;
+		// Sent as it stands now. Until the server answers, the form, and any drawn again from the
+		// draft, is read-only (`renderNew`'s `sync`): the filed request replaces it, and a correction
+		// typed meanwhile would be dropped without a word. The mirror says it may have been filed
+		// until then (`storeDraft`), for the page left before the answer.
+		kept.sending = true;
+		this.storeDraft(kept);
 		this.setBusy(submit, true, "Submitting…");
 		try {
 			const result = await call(M.SUBMIT, { payload: values, attachments: attachments.names });
-			const refreshed = await call(M.BOOTSTRAP);
-			this.applyBootstrap(refreshed);
+			// Filed: the next New form starts empty, here and after a reload.
+			this.state.newDraft = null;
+			this.forgetDraft();
+			// Only the nav counts, which the next refresh corrects. Failing, it must not reach the
+			// catch below, which would reopen the form with what was just filed, orphaned from the
+			// draft, and file it again on the next tap.
+			try {
+				this.applyBootstrap(await call(M.BOOTSTRAP));
+			} catch (e) {
+				// Filed all the same.
+			}
 			if (result && result.rejected && result.rejected.length) {
 				// Reported rather than swallowed — see `api/feedback.py`. A field the server
 				// refused is a bug in this file, and a silent one is found weeks later.
 				this.showBanner(`Filed, but some fields were not saved: ${result.rejected.join(", ")}`, "warn");
 			}
+			if (this.state.view !== VIEW_NEW || captureOpen()) {
+				// They went to another screen while it was sent, or opened the report panel over
+				// the form, whose entry is on top of this page's now: a push would bury it
+				// (`navigate`). It was filed all the same: say so where they are, rather than pull
+				// them to it. A form still under the panel is drawn again empty, so what was just
+				// filed cannot be sent a second time from it.
+				if (this.state.view === VIEW_NEW) {
+					this.renderToken += 1;
+					this.renderNew();
+				}
+				this.showBanner(`Filed as ${result.name}.`, "ok");
+				return;
+			}
 			this.navigate(buildRoute(VIEW_REQUEST, result.name));
 		} catch (e) {
 			this.showBanner(e.message, "bad");
 		} finally {
+			// Not sent, or sent and replaced: either way the form on screen opens again (`setBusy`).
+			kept.sending = false;
+			// Refused: not filed, so the mirror stops saying it may have been, unless an earlier
+			// send's reply was lost (`maybe_filed`). One filed is not written back (`storeDraft`).
+			this.storeDraft(kept);
 			this.setBusy(submit, false, "Submit");
 		}
 	}
@@ -420,6 +782,9 @@ export class FeedbackApp {
 	 * putting it in the URL would mean reconciling it with the router on every keystroke.
 	 */
 	async renderAll() {
+		// Only while this list is the screen, and only the newest fetch draws: see `renderToken`.
+		if (this.state.view !== VIEW_ALL) return;
+		const token = ++this.renderToken;
 		clear(this.pane);
 		if (!this.state.isReviewer) {
 			append(this.pane, this.notice("Not for you", "Only a System Manager can see every request."));
@@ -431,10 +796,12 @@ export class FeedbackApp {
 		try {
 			data = await call(M.ALL, this.state.allFilters);
 		} catch (e) {
+			if (token !== this.renderToken) return;
 			clear(this.pane);
 			append(this.pane, this.notice("Could not load", e.message));
 			return;
 		}
+		if (token !== this.renderToken) return;
 
 		clear(this.pane);
 		append(this.pane, this.allFilterBar(data), this.allTally(data), this.allTable(data));
@@ -608,16 +975,23 @@ export class FeedbackApp {
 	// ------------------------------------------------------------------ detail
 
 	async renderRequest(name) {
+		// Only while that request is the screen. A Refresh, decision or re-run that finishes
+		// after the person moved on must not draw it over where they went; and only the newest
+		// fetch draws (`renderToken`).
+		if (this.state.view !== VIEW_REQUEST || this.state.name !== name) return;
+		const token = ++this.renderToken;
 		clear(this.pane);
 		append(this.pane, el("div", "ee-fb-loading", "Loading…"));
 		let detail;
 		try {
 			detail = await call(M.GET, { name });
 		} catch (e) {
+			if (token !== this.renderToken) return;
 			clear(this.pane);
 			append(this.pane, this.notice("Cannot open that", e.message));
 			return;
 		}
+		if (token !== this.renderToken) return;
 		this.state.detail = detail;
 		clear(this.pane);
 
@@ -1064,9 +1438,13 @@ export class FeedbackApp {
 
 	setBusy(control, busy, label) {
 		this.state.busy = busy;
-		if (!control) return;
-		control.disabled = busy;
-		control.textContent = label;
+		if (control) {
+			control.disabled = busy;
+			control.textContent = label;
+		}
+		// The New form may have been drawn again since this started: its Submit and Expand follow
+		// the flag too, not only the control that was tapped, which may be off screen now.
+		this.syncNewForm();
 	}
 
 	notice(title, body) {
@@ -1093,5 +1471,42 @@ export class FeedbackApp {
 				? error.message
 				: "Something went wrong loading this page.";
 		append(this.pane, this.notice("Could not load", message));
+	}
+}
+
+/**
+ * True while a file picked into the draft is still uploading (`buildAttachmentPicker`). One that
+ * was refused or dropped is listed as such, and waits on nothing.
+ */
+function uploadsPending(kept) {
+	return kept.uploads.some((entry) => !entry.bad);
+}
+
+/**
+ * Push an entry for `href`, or re-stamp the current one: with `href` when given, else in place
+ * with two arguments, keeping the address.
+ */
+function writeEntry(push, href) {
+	const state = { [HISTORY_KEY]: 1 };
+	try {
+		if (push) window.history.pushState(state, "", href);
+		else if (href) window.history.replaceState(state, "", href);
+		else window.history.replaceState(state, "");
+	} catch (e) {
+		// Safari refuses past 100 calls in 10 s. The screen still changes; only the entry is lost.
+	}
+}
+
+/**
+ * True while the report panel is open over the page, and until the popstate of its own closing
+ * Back has landed (`capture/panel.js`, `isPanelOpen`). Read through the recorder's global only:
+ * this bundle does not load the panel.
+ */
+function captureOpen() {
+	try {
+		const capture = window.ee_capture;
+		return !!(capture && typeof capture.isOpen === "function" && capture.isOpen());
+	} catch (e) {
+		return false; // a broken recorder is a closed panel
 	}
 }

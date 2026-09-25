@@ -15,7 +15,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `lead_triage.py` | Inbound Lead ownership and the speed-to-lead SLA (v1.502.0, TASK-2026-01473): named owner or `Sales Team` rotation, a working-time first-response deadline, a ToDo, remind-then-escalate once each, and the one "has this Lead been answered" rule the Speed-to-Lead widget shares. See [`docs/lead-triage-runbook.md`](../../docs/lead-triage-runbook.md) | `prepare_inbound_lead` / `assign_inbound_lead` (called by `web_lead.py`), `stamp_first_response`, `sweep_first_response_sla`, `backfill_first_responses`, `RESPONSE_EXISTS_SQL` | `Communication` `on_update`; `scheduler_events.cron` `*/10`; `after_migrate` |
 | `website_cleanup.py` | Accept a bare domain in any URL field (v1.324.0) — prefixes `https://` before frappe's URL validation reads it. Shared with the QuickBooks sync, which met the same defect first | `normalize_website` (the whole rule, pure), `heal_url_fields`, `add_missing_scheme` | `before_validate` on Lead / Customer / Opportunity / **Supplier / Company** (the last two are not CRM — they are here because they carry the same Property Setter); `quickbooks_online.core.mapping._heal_invalid_urls` delegates to it |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
-| `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/app/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
+| `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`, `fountain_move_request*.js`, `fountain_move_invite.js`) — see the [public README](../public/README.md#crm-enhancements).
 
@@ -204,7 +204,7 @@ optional:
    erpnext_enhancements.utils.client_ip.check_client_ip_derivation` should report
    `"proxy": 0`; a daily run of the same check writes an Error Log row if it stops.
 
-## Sales Pipeline page (`/app/sales-pipeline`)
+## Sales Pipeline page (`/desk/sales-pipeline`)
 
 The wall-TV funnel board from the Jun 9 process meeting. Columns mirror the live
 `Opportunity.status` options (meta-driven — a stage rename reshapes the board without a
@@ -215,9 +215,15 @@ Cards age by `custom_stage_changed_on` (stamped on every status change; backfill
 thresholds in **ERPNext Enhancements Settings → Sales Pipeline Dashboard** (defaults
 7/14 days; the won column runs a tighter 1/3-day clock to match the unconverted nag).
 Refreshes via the `sales_pipeline_updated` realtime event on every Opportunity save,
-with a 5-minute poll as kiosk fallback. **TV mode** (`/app/sales-pipeline/tv`, or the
+with a 5-minute poll as kiosk fallback. **TV mode** (`/desk/sales-pipeline/tv`, or the
 header button) hides desk chrome and scales type — point the Raspberry Pi at the `/tv`
-route. Access is page-level (shared portfolio display, like the Project Dashboard): a
+route. The route *is* the mode: the button routes to `/tv` and `on_page_show` sets TV mode
+from the route on every show, so Back from TV mode returns to the board with its navbar and
+Forward goes back in. It used to be `tv || state.tv_mode`, which kept the chrome-less view,
+with no button to leave it, on the plain board after Back until a reload. Escape out of the
+fullscreen the button asked for steps back the same way, and leaving the page ends that
+fullscreen. Cards and hand-off chips link with `get_form_link` (/desk paths); an /app href
+is a full page load on v16. Access is page-level (shared portfolio display, like the Project Dashboard): a
 `Custom Role` record for page `sales-pipeline` wins if present, else any staff role in
 `DEFAULT_ROLES`; data is then fetched permission-free so User Permissions can't
 silently empty the board.

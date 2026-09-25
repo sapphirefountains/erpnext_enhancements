@@ -790,6 +790,28 @@ def test_dashboard_hands_off_to_the_page_and_the_dead_dialog_is_gone():
 	assert ".qbo-match-row" not in css
 
 
+def test_the_tab_is_a_route_segment_and_a_show_never_refetches():
+	"""Masters is the bare route (the dashboard and the workspace tiles open it) and Parked
+	transactions is /transactions, so Back and Forward move between the tabs. A tab click only
+	routes; on_page_show shows the panel, and a refetch there would drop unsaved picks. The
+	behaviour, against a model of the v16 router, is scripts/test_desk_page_history.js."""
+	js = _read(PAGE_DIR / "quickbooks_record_matching.js")
+	click = js[js.index('$root.on("click", "[data-tab]"') : js.index("function showTab(tab) {")]
+	assert 'frappe.set_route(tab === "transactions" ? [ROUTE, "transactions"] : [ROUTE]);' in click
+	assert "loadTransactions()" not in click and "load()" not in click
+	show = js[js.index("function showTab(tab) {") : js.index("$entity.on(")]
+	assert 'route[0] === ROUTE && route[1] === "transactions" ? "transactions" : "masters"' in show
+	assert "load()" not in show, "the masters queue must not reload on a show"
+	assert 'if (tab === "transactions" && !state.txn.rows.length)' in show
+	assert 'frappe.pages["quickbooks-record-matching"].on_page_show = function (wrapper) {' in js
+	# Filters and pages of rows stay out of history, as in Frappe's own list view.
+	assert js.count("frappe.set_route(") == 3, "the tab, plus the two routes to other pages"
+	# Only the newest parked-transactions reply paints.
+	txn = js[js.index("function loadTransactions() {") : js.index("function renderTransactions() {")]
+	assert "const seq = ++txnSeq;" in txn
+	assert txn.count("if (seq !== txnSeq) {") == 2
+
+
 def test_stylesheet_is_bundled_and_documented():
 	assert (APP / "public" / "css" / "quickbooks_online" / "qbo_matching.css").is_file()
 	scss = _read(APP / "public" / "css" / "desk_addons.bundle.scss")

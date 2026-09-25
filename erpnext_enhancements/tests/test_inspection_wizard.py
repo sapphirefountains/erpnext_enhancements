@@ -22,6 +22,13 @@ The failures guarded here are the ones that leave the screen looking right:
    ``requires_photo`` reach the ``before_submit`` gate whether or not anybody saw them. A
    checklist that only says what it wanted once you try to finish is a checklist that lied.
 5. **Raw control bytes**, which make git treat the file as binary and stop producing diffs.
+6. **Back that skips every section, and a screen change that loses an answer.** Each section
+   is a history entry; the phone's Back used to land on the list from any of them, and the
+   list nulled the record under a pending autosave, which then threw and lost the answer. A
+   queued answer keeps the lock it was given against, so reopening the inspection cannot send
+   it over somebody else's save, and a save's repaint waits while an input is being typed into.
+   ``scripts/test_inspection_wizard_nav.mjs`` asserts this by running the page; it is run from
+   here when node is on PATH, and in CI it fails rather than skips without node.
 
 Run: python -m unittest erpnext_enhancements.tests.test_inspection_wizard
 """
@@ -29,6 +36,8 @@ Run: python -m unittest erpnext_enhancements.tests.test_inspection_wizard
 import io
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -211,11 +220,17 @@ class TestWizardMarkup(unittest.TestCase):
         self.assertIn("beforeunload", self.code, "closing the tab must warn while edits are unsaved")
 
     def test_a_failed_save_puts_the_patch_back(self):
-        """Dropping the patch on failure loses the answers silently, which is the whole failure."""
+        """Dropping the patch on failure loses the answers silently, which is the whole failure.
+
+        The queue is keyed by inspection (see TestWizardHistory), so the patch goes back under
+        the name it was sent for -- ``this.pending[name] = {`` -- never into a shared buffer the
+        next inspection's answers are already in.
+        """
         self.assertRegex(
             self.code,
-            r"catch\(\(\) => \{[\s\S]{0,600}?this\.pending = \{",
-            "the catch branch must restore the pending patch before reporting the error",
+            r"catch\(\(\w*\) => \{[\s\S]{0,900}?this\.pending\[name\] = \{",
+            "the catch branch must restore the pending patch, under its own inspection, before "
+            "reporting the error",
         )
 
     def test_required_and_photo_rows_are_marked_before_submit(self):
@@ -262,6 +277,174 @@ class TestWizardMarkup(unittest.TestCase):
             f"inspection_wizard.js contains raw control bytes at {offenders[:5]}. "
             "Write them as \\u0000-style escapes instead.",
         )
+
+
+class TestWizardHistory(unittest.TestCase):
+    """Back and Forward walk the sections; a screen change never loses or misroutes an answer.
+
+    The behaviour is asserted by ``scripts/test_inspection_wizard_nav.mjs``, which runs the real
+    page against a fake of Frappe v16's router and history and presses Back and Forward (run
+    below, when node is on PATH). These source guards are the cheap half: each names a mistake
+    that was live in this file, and each one still reads as deliberate code in a diff.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        with io.open(WIZARD, encoding="utf-8") as handle:
+            cls.code = _strip_comments(handle.read())
+
+    def _method(self, name):
+        """The body of one method of the page class, up to the next method."""
+        match = re.search(
+            r"^\t%s\([^)]*\) \{\n([\s\S]*?)^\t\}\n" % re.escape(name), self.code, re.M
+        )
+        self.assertIsNotNone(match, f"{name}() is missing from inspection_wizard.js")
+        return match.group(1)
+
+    def test_set_route_is_never_given_an_object(self):
+        """v16 moves an object argument into ``route_options`` and pushes the bare path, so
+        ``set_route("inspection-wizard", {inspection})`` pushed an entry identical to the
+        list's own -- and Back from any section landed on the list."""
+        self.assertNotRegex(self.code, r"set_route\([^)]*\{", "set_route must take route segments")
+
+    def test_sections_change_through_the_router(self):
+        """A tab or Previous/Next that repaints without routing is a section with no history
+        entry, which is what made Back skip every section at once."""
+        self.assertRegex(self._method("render_tabs"), r'on\("click", \(\) => this\.go_section\(index\)\)')
+        nav = self._method("render_nav")
+        self.assertIn("this.go_section(this.section_index - 1)", nav)
+        self.assertIn("this.go_section(this.section_index + 1)", nav)
+        self.assertNotRegex(
+            nav + self._method("render_tabs"),
+            r"this\.section_index =(?!=)",
+            "a click that assigns the section itself changes the screen without a history entry",
+        )
+        self.assertIn("this.route_to(", self._method("go_section"))
+
+    def test_the_route_is_read_from_the_router(self):
+        handle = self._method("handle_route")
+        self.assertIn("frappe.get_route()", handle)
+        self.assertNotIn(
+            "get_url_arg",
+            handle,
+            "the query string is only the legacy fallback, read in take_legacy_inspection",
+        )
+        self.assertIn('get_url_arg("inspection")', self._method("take_legacy_inspection"))
+
+    def test_the_list_click_only_routes(self):
+        """Loading the record from the click as well raced the list fetch the router's own
+        "show" started; whichever landed last won the screen."""
+        click = re.search(r'\.qw-list-item"\)\.on\("click"[\s\S]*?\}\);', self.code)
+        self.assertIsNotNone(click)
+        self.assertIn("this.route_to(", click.group(0))
+        self.assertNotIn("this.load(", click.group(0))
+
+    def test_no_hard_coded_desk_paths(self):
+        """An ``/app/`` href is a full page reload in v16 (the router intercepts only /desk),
+        and a hand-built path is a second copy of the router's own rules."""
+        self.assertNotRegex(self.code, r"""["'`]/(app|desk)/""")
+
+    def test_route_options_are_cleared_before_routing(self):
+        """A leftover route_options makes v16's push_state push even a route to the current
+        path, because it compares a query string it never writes."""
+        self.assertRegex(
+            self._method("route_to"),
+            r"frappe\.route_options = null;[\s\S]*?frappe\.set_route\(parts\)",
+        )
+
+    def test_flush_never_reads_the_screen(self):
+        """``flush()`` read ``this.doc.header.name`` and ``this.doc.state.modified``; the list
+        nulls ``this.doc``, so a pending answer threw, was lost, and left ``saving`` stuck."""
+        flush = self._method("flush")
+        self.assertIn("inspection: name,", flush)
+        self.assertIn("modified: queued.base,", flush)
+        self.assertNotIn("this.doc.state.modified", flush)
+        self.assertNotIn("this.doc.header.name,", flush)
+        self.assertIn(
+            "this.doc.header.name === name",
+            flush,
+            "a save's answer must be applied only to the inspection it was for",
+        )
+
+    def test_a_queued_answer_keeps_the_lock_it_was_given_against(self):
+        """The lock travels with the buffer. ``flush()`` sent ``this.modified[name]``, which any
+        reopen moved forward to the stamp it read -- so an answer queued before somebody else
+        saved the inspection went out under THEIR stamp and overwrote them without a word. The
+        course promises that save is refused, not merged."""
+        self.assertIn("base: this.modified[name]", self._method("queue_for"))
+        flush = self._method("flush")
+        self.assertNotIn(
+            "modified: this.modified[name]", flush, "the lock is the buffer's own, not the newest"
+        )
+        catch = flush[flush.index(".catch(") :]
+        self.assertIn("base: queued.base,", catch, "a refused patch goes back under its own lock")
+        load = self._method("load")
+        self.assertRegex(
+            load,
+            r"if \(!queued \|\| String\(queued\.base\) === String\(this\.doc\.state\.modified\)\) \{"
+            r"\s*this\.note_modified\(",
+            "a reopen may move the lock, and lay queued answers over the copy, only when nothing "
+            "was saved in between",
+        )
+
+    def test_a_save_never_repaints_over_typing(self):
+        """A repaint replaces every input, and one with focus holds a value nothing has queued
+        yet -- measurements and notes queue on "change", i.e. on blur. A save's answer landing
+        mid-measurement wiped it."""
+        flush = self._method("flush")
+        self.assertIn("this.render_unless_typing();", flush)
+        self.assertNotIn("this.render();", flush)
+        self.assertIn("this.render_deferred = true;", self._method("render_unless_typing"))
+        self.assertIn('.on("focusout",', self._method("bind_deferred_render"))
+
+    def test_stale_responses_are_dropped(self):
+        for method in ("render_list", "load"):
+            self.assertGreaterEqual(
+                self._method(method).count("ticket !== this.ticket"),
+                2,
+                f"{method}() must drop a response for a screen already left, before and after "
+                "its fetch",
+            )
+
+    def test_the_nav_bar_goes_with_its_screen(self):
+        """``.qw-nav`` is fixed to the viewport and lives outside the repainted wrap."""
+        self.assertIn('this.page.main.find(".qw-nav").remove()', self._method("clear_screen"))
+        self.assertIn('this.page.main.find(".qw-nav").remove()', self._method("render_submitted"))
+
+    def test_the_constructor_does_not_route(self):
+        """on_page_show always follows on_page_load; routing from both sent two fetches."""
+        self.assertNotIn("this.handle_route()", self._method("constructor"))
+
+
+HARNESS = os.path.join(
+    os.path.dirname(APP_DIR), "scripts", "test_inspection_wizard_nav.mjs"
+)
+
+
+#: GitHub Actions sets CI=true on every runner.
+IN_CI = os.environ.get("CI", "").lower() in ("1", "true", "yes")
+
+
+@unittest.skipUnless(shutil.which("node") or IN_CI, "node is not on PATH")
+class TestWizardHistoryExecuted(unittest.TestCase):
+    """Runs the node harness from this suite, so it rides the existing CI step.
+
+    Skipped on a laptop without node; FAILED, not skipped, in CI. A skip there still reports
+    OK, and the QuickBooks suite once ran nowhere for weeks behind exactly that kind of green.
+    """
+
+    def test_back_and_forward_walk_the_sections(self):
+        node = shutil.which("node")
+        self.assertTrue(node, "CI must have node on PATH: the Back/Forward harness runs on it")
+        result = subprocess.run(
+            [node, HARNESS],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"\n(\d+)/\1 passed")
 
 
 class TestWizardPage(unittest.TestCase):

@@ -7,6 +7,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.536.2] - 2026-09-24
+
+**Browser Back and Forward now work on Marketing, Feedback, the course preview and six more Desk
+pages, and "Report a problem" asks before Back discards a report on `/feedback` too.** This is
+batch 3 of Nik's rule from v1.534.0: *we shouldn't break basic browser functionality with back or
+forward navigation.* The payment and contract pages (`/pay-card`, `/pay`, `/contract-sign`) and
+`/itinerary` are held back for a release of their own, because their fix changes how card
+payments are guarded.
+
+### Fixed
+
+- **`/marketing`**
+  - Today and Delete no longer leave two identical entries in a row, where the next Back appeared
+    to do nothing.
+  - A reply that lands after Back (a calendar drop, a Send back from the Approval queue) no longer
+    paints its screen over the one the person went to.
+- **`/feedback`**
+  - The report panel now takes a history entry here too, so Back asks "Discard this report?"
+    instead of moving the page underneath. The page stands aside while `ee_capture.isOpen()`
+    (`capture/panel.js` `wantsHistoryEntry` no longer excludes it).
+  - A first-time filer tapping the already-lit "New request" tab on bare `/feedback` no longer
+    gets a duplicate entry. The lit-tab rule compares screens, not addresses.
+  - **Back or Forward while the page is still loading could file the wrong impact.** It built
+    the New form before the Impact choices arrived, dropped the saved Impact, and the form then
+    filed the first choice, "Blocking my work". Popstate is ignored until the page has loaded.
+  - **A half-written request survives leaving the page.** It is mirrored to `sessionStorage` (text
+    only, never file contents). If the page was left while a submit was out, the text comes back
+    with a warning that it may already have been filed.
+  - The New form drawn again after Back shows work still in flight: uploads finishing, a submit
+    (the form is read-only while it sends), and "Expand with AI". Submit now waits for uploads,
+    because it used to file the request without a file that was still uploading.
+  - "Expand with AI" no longer overwrites text typed while it drafted.
+  - A filed request stays filed if the refresh after it fails. Before, the form reopened with the
+    filed text, and the next tap filed it again.
+- **Course preview (`/training_preview`)**: its places are history entries, pushed only after a
+  tap and answered through the player's own doors.
+- **Desk: device console and scanner audit**
+  - Their sheets (camera, Find Item, pickers) are route segments marked in `history.state`, so
+    Back closes a sheet and Forward reopens it. A sheet URL arriving from another page (the
+    awesome bar lists them as "frequently visited") opens the page, not the sheet.
+  - A scan is not a tap, so a scan never adds an entry.
+  - A stale lookup reply no longer routes, or steps off a camera opened after it.
+- **Desk: QuickBooks record matching, sales pipeline, training review, location timeline**: the
+  tab, filter or drill-down is in the route, so Back returns to the previous one.
+  - Training review defers a route-driven reload while verdicts are still being saved.
+  - "Stay" on its leave prompt now applies only to the entry it was said on.
+
+### v16 behaviour recorded here on purpose
+
+- **`frappe.route_flags.replace_route` outlives the call that set it.** `set_route` clears
+  `route_flags` only in its `.finally`, after a 100 ms timer and after `frappe.after_ajax`, which
+  waits for every in-flight request. So a push made while any request is out reads a stale
+  replace and overwrites the page's own entry. This made the scanner's X leave the page. Every
+  page-owned replace now clears the flag right after `set_route` returns, because `push_state`
+  reads it synchronously.
+- **A Frappe dialog closed with its X keeps `is_visible` true.** v16 wires the X as
+  `data-dismiss="modal"`, so Bootstrap hides it without `Dialog.hide()`, and `frappe.msg_dialog`
+  is one shared dialog for the whole Desk session. "Is a message up" reads Bootstrap's own
+  `_isShown` instead.
+- Frappe's Route History records every route with a second segment, and the awesome bar offers
+  a user's top five. So a sheet route like `device-console/camera` becomes a link people follow.
+
+### Tests
+
+- New harnesses:
+  - `test_marketing_history.js`, `test_feedback_history.js` (122 checks) and
+    `test_training_preview_history.mjs`, each with its own CI step;
+  - `test_desk_page_history.js` (273 checks, 69 scenarios), run by
+    `tests/test_desk_page_history.py` in its own CI step.
+- `test_capture_panel.js` now pins `/feedback` as a page that gets the panel's entry.
+- Several rounds of adversarial review; every fix is pinned by a scenario that fails without it.
+  Nothing ran in a real browser.
+
+## [1.536.1] - 2026-09-24
+
+**Browser Back and Forward now work on the Inspection Wizard, the Visit Wizard, Plan a Trip and
+the training Desk pages.** Batch 2 of Nik's rule from v1.534.0: *we shouldn't break basic browser
+functionality with back or forward navigation.* Each step, section or lesson is now a history
+entry: Back returns to the previous one, Forward restores it, and Back from the page's first
+screen leaves it.
+
+### Fixed
+
+- **Inspection Wizard**
+  - Back from any section jumped to the inspection list. The address is now
+    `/desk/inspection-wizard/<inspection>/<section>`. Old `?inspection=` links still open the
+    record; their entry is replaced, not pushed.
+  - **It could lose an answer.** A list render under a pending autosave made `flush()` read
+    `this.doc.header.name` after `this.doc` was gone. It threw a TypeError, the answer was
+    lost, and `saving` stayed true for the rest of the session. Answers are now queued per
+    inspection, each against its own `modified` lock, so a queued answer can never be sent
+    under another editor's stamp and silently overwrite their save. A refused save stays
+    refused ("changed elsewhere, reload").
+  - A save response no longer repaints the section while an input has focus, which used to wipe
+    a measurement being typed. The same bug also reset wrap-up remarks and the inspection date,
+    and predates this batch.
+- **Visit Wizard**
+  - No step, tab or visit made a history entry, so Back left the wizard from any step.
+  - **The page wrote its address as `/app/visit-wizard`.** v16's router strips only `desk/`, so
+    it parsed that as a Page called "app", and Back or Forward onto such an entry showed "Page
+    not found". A reload worked, because the server redirects `/app` to `/desk`, which is why
+    nobody noticed. Every screen is now routed with `frappe.set_route` segments
+    (`/desk/visit-wizard/<record>/<step>/<serial>`), and `?record=` still works.
+  - A save that failed after the technician moved to another visit was merged into the visit
+    on screen. It is now parked against its own record and retried.
+  - The safety acknowledgement now gates the step dots, Forward and a typed address, not only
+    Start Visit.
+- **Plan a Trip**
+  - Each step was a `replaceState`, so Back left the page. Steps are now `pushState` entries
+    (`?trip=…&step=…`).
+  - A move back (a tab to an earlier step, the page's Back button or the phone's) saves quietly
+    and always moves, marking unsaved edits "Not saved". A half-finished card used to block
+    Back with "A few things to fill in first" and overwrite the entry each time.
+  - A move forward is still checked like Next. If a Forward is refused, the page returns to the
+    entry it came from.
+- **Training Canvas**
+  - The course lived in `frappe.route_options`, which v16's `push_state` never writes to the URL,
+    so every canvas screen shared one address. Back did nothing, and a reload lost the course.
+    The route is now `/desk/training-canvas`, `/new` or `/<course>/<lesson>`.
+  - Leaving a course by Back or Forward saves first. **An out-of-date canvas no longer drops
+    unsaved edits.** `save()` sent nothing and resolved anyway, so leaving ran `reset()`. Now
+    the course stays on screen, with a message to copy the edits and then Reload.
+- **Learner page (`/desk/learn`)**
+  - "← Course", Resume and the outline now push entries. Before, the outline and the lesson
+    shared one history key, so they pushed nothing and in-progress courses loaded twice.
+  - Also fixed, older than this batch and shared with the `/training` portal: a course's outline
+    offered the learner's most recent Resume from a **different** course. That produced a
+    blank "Resume:" button that failed with "That lesson is not part of this course".
+- **Glossary review**
+  - The tab is now in the route, so Back returns to the previous tab.
+  - Next pressed while an Accept or Disable was still waiting for its reply skipped an entry.
+
+### v16 behaviour recorded here on purpose
+
+- `frappe.set_route(page, {…})` moves the object into `frappe.route_options` and pushes the
+  **path only**. State that must survive Back, Forward or a reload has to be a route segment
+  (see also v1.520.1).
+- Every route change calls `frappe.ui.hide_open_dialog()`. A message that must stay visible is
+  shown **after** a corrective re-route, never before it.
+- `frappe.get_route()` lags the address bar while an async `route()` is still resolving, so
+  "is this page still showing" checks use the page's own ticket.
+- v16 clears route flags only after a 100 ms `after_ajax` wait, so `replace_route` is reset right
+  after `set_route`. Otherwise a click inside that window replaces instead of pushing.
+
+### Tests
+
+- New node harnesses: `test_inspection_wizard_nav.mjs` (21 checks), `test_wizard_back_forward.mjs`
+  (36) and `test_training_desk_history.mjs` (45). Each runs the real page against a port of v16's
+  router (read from `origin/version-16`) and a fake history. They are wrapped by the Python suites
+  and have their own CI step.
+- 453 Python tests across the affected suites pass. Nothing ran in a real browser.
+
 ## [1.536.0] - 2026-09-24
 
 **"Bought on a store run" on the Stock Scan page.** A technician back from Home Depot scans the

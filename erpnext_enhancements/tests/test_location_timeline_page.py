@@ -426,12 +426,52 @@ class TestTheTrailDrawsWhatTheContractDescribes(unittest.TestCase):
         self.assertIn("healthPill(s.health)", block)
 
     def test_a_live_row_opens_todays_trail_for_that_person(self):
+        """pickMode, not setMode: the drill-down is a history entry of its own, so Back
+        from the trail returns to the Live list."""
         body = _js(PAGE_JS)
         at = body.index("openTrailFor(idx) {")
         block = body[at : at + 1000]
-        self.assertIn("setMode('trail')", block)
+        self.assertIn("pickMode('trail')", block)
         self.assertIn("today()", block)
         self.assertIn("loadTrail(", block)
+
+
+class TestTheModeIsARouteSegment(unittest.TestCase):
+    """Trail is the bare route and Live is location-timeline/live, so Back and Forward move
+    between the modes. Behaviour, against a model of the v16 router, is in
+    scripts/test_desk_page_history.js (run by tests/test_desk_page_history.py); these pin
+    the shape it depends on."""
+
+    def test_the_mode_buttons_route_rather_than_set_the_mode(self):
+        body = _js(PAGE_JS)
+        self.assertIn("this.$root.on('click', '.lt-mode-btn', (e) => this.pickMode(", body)
+        at = body.index("pickMode(mode) {")
+        block = body[at : body.index("setMode(mode, opts) {")]
+        self.assertIn("this.setMode(mode);", block)
+        self.assertIn("frappe.set_route(mode === 'live' ? [PAGE_ROUTE, 'live'] : [PAGE_ROUTE])", block)
+        # Tapping the mode already routed must not push a second entry for it.
+        self.assertIn("this.routeMode() !== mode", block)
+
+    def test_every_show_takes_the_mode_from_the_route_once_init_settles(self):
+        body = _js(PAGE_JS)
+        at = body.index("onShow() {")
+        block = body[at : body.index("init() {")]
+        self.assertIn("this.init().then(() => {", block)
+        self.assertIn("if (pageIsCurrent()) this.setMode(this.routeMode());", block)
+        self.assertLess(block.index("this.init().then"), block.index("this.setMode(this.routeMode())"))
+
+    def test_the_bare_route_is_trail(self):
+        """Every way in (the Employee and Job Interval buttons, the workspace) uses the bare
+        route; Back from /live to it must land on Trail, not stay on Live."""
+        body = _js(PAGE_JS)
+        self.assertIn("return (frappe.get_route() || [])[1] === 'live' ? 'live' : 'trail';", body)
+
+    def test_the_filters_never_go_into_the_url_by_hand(self):
+        """v16's push_state drops a query string; the page must not write one of its own."""
+        body = _js(PAGE_JS)
+        for token in ("pushState", "replaceState", "location.search", "location.href ="):
+            with self.subTest(token=token):
+                self.assertNotIn(token, body)
 
 
 class TestTheStylesheetCoversWhatTheScriptEmits(unittest.TestCase):

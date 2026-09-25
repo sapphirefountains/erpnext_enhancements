@@ -24,6 +24,8 @@ const FIGURES = [
 export async function renderResults(app, route) {
 	app.showPlaceholder(app.pane, "◷", "Loading results…");
 	const data = await call(M.RESULTS, { name: route.name });
+	// Back while it loaded: that screen is drawn already, and this must not paint over it.
+	if (app.route !== route) return;
 	const toolbar = el("div", "ee-mk-toolbar");
 	append(
 		toolbar,

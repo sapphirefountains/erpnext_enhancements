@@ -18,6 +18,19 @@
 // no traveler. A save based on a version somebody else replaced is refused by the server, and
 // the page offers a reload rather than merging.
 //
+// HISTORY. Every step, and the list, is its own browser history entry (?trip=...&step=..., or
+// ?new=1&step=... before the trip has a name), so Back returns to the previous step and Forward
+// restores it; Back from the first screen leaves the page as usual. A move BACK — to an earlier
+// step (a tab, the Back button), or wherever the phone's Back leads — saves quietly and always
+// happens: a half-finished card must never trap anyone on a step, and what was typed stays on
+// the page, marked "Not saved", until a save goes through. A move FORWARD — a later step, by
+// Next, a tab or the phone's Forward — passes the checks and the save the Next button always
+// did. When a Forward is refused, the page goes back to the entry of the step still showing (the
+// entry asked for is left where it was, to go Forward to once fixed) and says why once it is
+// there, because frappe closes any open dialog on every route change. A trip the server would
+// not take yet (nobody on it, or a save refused) is kept in memory when the list replaces it —
+// never dropped.
+//
 // TIMES are native <input type="time">, which shows AM/PM on a US browser or phone. A stored
 // time of exactly midnight reads as "no time given": the Datetime column cannot hold a date
 // without a time, so a flight whose time is not known yet is stored at 00:00:00.
@@ -284,6 +297,17 @@ function tp_text_to_html(text) {
 		.join("");
 }
 
+function tp_server_messages(xhr) {
+	// What frappe.request.cleanup shows for a refused call — its _server_messages, which
+	// frappe.msgprint takes as they are — for a call made silent (see TripPlanner.save).
+	try {
+		const messages = JSON.parse(xhr.responseJSON._server_messages);
+		return messages && messages.length ? messages : null;
+	} catch (e) {
+		return null;
+	}
+}
+
 class TripPlanner {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -295,6 +319,22 @@ class TripPlanner {
 		this.lookups = null;
 		this.saving = null;
 		this.card_seq = 0;
+		// Bumped by every move, so an answer for a screen already left (a slow load, a save
+		// that finishes after Back) is dropped instead of drawn.
+		this.nav_seq = 0;
+		// A trip started here is a "draft" until saved; its history entries carry the draft
+		// id, and `drafts` maps it to the name the trip got, so Back onto its "?new=1" entries
+		// reopens that trip instead of starting a blank one.
+		this.draft_id = null;
+		this.drafts = {};
+		// Trips replaced on screen before the server would take them (see keep_current).
+		this.kept = {};
+		// Where the entry on screen sits in history (history_mark().pos), how far the last
+		// Back/Forward moved (route_delta), and what to say once a refused move is undone
+		// (refuse_route).
+		this.pos = null;
+		this.route_delta = 0;
+		this.return_notice = null;
 		this.bind_unload();
 		// No handle_route() here: frappe fires on_page_show right after on_page_load, and
 		// route_args() consumes frappe.route_options — a second pass would find them gone
@@ -303,7 +343,7 @@ class TripPlanner {
 
 	bind_unload() {
 		$(window).on("beforeunload.tp", () => {
-			if (this.state && this.is_dirty()) {
+			if ((this.state && this.is_dirty()) || this.unsaved_kept().length) {
 				return __("This trip has changes that are not saved yet.");
 			}
 		});
@@ -312,13 +352,42 @@ class TripPlanner {
 	// ------------------------------------------------------------------ routing and loading
 
 	handle_route() {
-		// Switching trips, or back to the list, saves the one on screen first.
+		// Switching trips, or back to the list, saves the one on screen first. A step of the
+		// same trip is saved by go(), which also refuses a move to a later step if that save
+		// is refused.
 		const args = this.route_args();
-		if (this.state && this.is_dirty() && !this.saving) {
-			this.save({ quiet: true }).then(() => this.route(args));
+		const mark = this.history_mark();
+		const seq = ++this.nav_seq;
+		// How far the entry the page was showing is from this one: above 0 when this move was
+		// a Back (go() never refuses one), and what refuse_route() moves by to undo a Forward.
+		// 0 when it cannot tell — an entry frappe made carries no mark.
+		this.route_delta = mark && typeof mark.pos === "number" && this.pos != null ? this.pos - mark.pos : 0;
+		// The reason a refused move gave, due on the entry it went back to and nowhere else.
+		const notice = this.return_notice;
+		this.return_notice = null;
+		const say = notice && mark && mark.pos === notice.pos ? notice.say : null;
+		if (this.state && this.is_dirty() && !this.saving && !this.is_on_screen(args, mark)) {
+			this.save({ quiet: true }).then(() => {
+				// Back/Forward again while that saved: the newer entry has its turn instead.
+				if (seq === this.nav_seq) this.route(args, mark);
+			});
 			return;
 		}
-		this.route(args);
+		this.route(args, mark);
+		if (say) say();
+	}
+
+	// The mark this page leaves in history.state on the entries it writes: {draft, back, pos}.
+	// frappe's own entries (a link, the sidebar, frappe.set_route from the form) carry none.
+	history_mark() {
+		const state = window.history.state;
+		return state && state.tp ? state.tp : null;
+	}
+
+	is_on_screen(args, mark) {
+		if (!this.state) return false;
+		if (args.trip) return this.state.name === args.trip;
+		return !!(args.new && mark && mark.draft && mark.draft === this.draft_id);
 	}
 
 	route_args() {
@@ -348,79 +417,240 @@ class TripPlanner {
 		return args;
 	}
 
-	route(args) {
+	route(args, mark) {
+		const draft = (mark && mark.draft) || "";
+		if (this.is_on_screen(args, mark)) {
+			// Back/Forward between this trip's own steps, or a deep link's &step=. A plain visit
+			// to the trip on screen (the form's button, no step) keeps the step showing.
+			if (args.step || mark) this.jump_to(args.step || "trip", { from_route: true });
+			// An entry frappe made for it (the form's "Plan step by step", a checklist link)
+			// has no query string — v16 set_route pushes the path alone — so name what it is
+			// showing, or Back onto it later, or a reload, would find the list.
+			if (!mark) this.set_address(this.address_args());
+			return;
+		}
+		// A "new trip" that is not this page's own entry, while the new trip on screen is
+		// still unsaved: keep it rather than start another, and make that entry its own.
+		if (args.new && !draft && this.state && !this.state.name) {
+			this.set_address(this.address_args());
+			return;
+		}
+		this.keep_current();
 		if (args.trip) {
-			if (this.state && this.state.name === args.trip) {
-				if (args.step) this.jump_to(args.step);
-				return;
-			}
-			this.load(args.trip, args.step);
+			if (!this.restore_kept(args.trip, args.step)) this.load(args.trip, args.step, draft);
 			return;
 		}
 		if (args.new) {
-			if (this.state && !this.state.name) return;
-			this.start_new();
+			// One of this page's own "new trip" entries is the trip started there, never a
+			// blank one — even after it was saved and got a name.
+			const saved_as = draft && this.drafts[draft];
+			if (saved_as) {
+				if (!this.restore_kept(saved_as, args.step)) this.load(saved_as, args.step, draft);
+			} else if (!draft || !this.restore_kept(`draft:${draft}`, args.step)) {
+				this.start_new(draft);
+			}
 			return;
 		}
 		this.render_landing();
 	}
 
-	set_address(args) {
-		// Keep the address bar on what is open, so a reload or a bookmark comes back to it
-		// (a full load's query string reaches route_args through the router). replaceState,
-		// not frappe.set_route: the page moves between its own trips itself, and routing to
-		// the page it is already on is exactly what went wrong in v1.520.0.
-		const query = Object.entries(args || {})
+	// The trip on screen is about to give way to the list, another trip or a new one. One the
+	// server would not take — nobody on it yet, or a save that was refused — is kept rather
+	// than dropped: Back/Forward to it, or its card on the list, brings it back as it was.
+	// Before history had an entry for the list, Back left the page and the trip simply stayed
+	// in memory; drawing the list over it would otherwise throw it away without a word.
+	keep_current() {
+		if (!this.state || (this.state.name && !this.is_dirty())) return;
+		const key = this.state.name || `draft:${this.draft_id}`;
+		this.kept[key] = { state: this.state, baseline: this.baseline, step: this.step, draft: this.draft_id };
+	}
+
+	restore_kept(key, step_key) {
+		const kept = this.kept[key];
+		if (!kept) return false;
+		delete this.kept[key];
+		this.state = kept.state;
+		this.baseline = kept.baseline;
+		this.draft_id = kept.draft;
+		this.step = kept.step;
+		if (step_key) this.jump_to(step_key, { silent: true });
+		this.set_address(this.address_args());
+		this.render();
+		return true;
+	}
+
+	unsaved_kept() {
+		return Object.keys(this.kept).filter((key) => this.serialize(this.kept[key].state) !== this.kept[key].baseline);
+	}
+
+	// The address of the step on screen.
+	address_args() {
+		const step = TP_STEPS[this.step].key;
+		return this.state && this.state.name ? { trip: this.state.name, step: step } : { new: 1, step: step };
+	}
+
+	query_for(args) {
+		return Object.entries(args || {})
 			.filter(([, value]) => value)
 			.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
 			.join("&");
+	}
+
+	set_address(args, push) {
+		// Keep the address bar on what is open, so a reload or a bookmark comes back to it
+		// (a full load's query string reaches route_args through the router). The history API,
+		// not frappe.set_route: the page moves between its own trips itself, and routing to
+		// the page it is already on is exactly what went wrong in v1.520.0.
+		//
+		// `push` makes a new entry (a move the user made: a step, a trip picked from the list);
+		// otherwise the entry on screen is corrected in place. A push that would repeat the
+		// entry it is on replaces it instead, so no entry is ever in history twice in a row.
+		// Each entry is marked (history_mark) with the draft it belongs to, the address of the
+		// entry behind it, which the page's own Back button reads (back_one_step), and its
+		// position — one more than the entry it was pushed from — which tells handle_route how
+		// far a Back/Forward moved. An entry frappe made is numbered as the next one after the
+		// entry the page showed last: exact unless other pages' entries sit between them, and
+		// a refused move is the only thing that relies on it (refuse_route).
+		//
+		// Only while this page is the one on screen: an answer that lands after the user went
+		// elsewhere must not rewrite the address of wherever they went.
+		if ((frappe.get_route() || [])[0] !== "plan-a-trip") return;
+		const query = this.query_for(args);
+		const url = window.location.pathname + (query ? `?${query}` : "");
+		const here = this.history_mark();
+		const pos = here && typeof here.pos === "number" ? here.pos : this.pos == null ? 0 : this.pos + 1;
 		try {
-			window.history.replaceState(window.history.state, "", window.location.pathname + (query ? `?${query}` : ""));
+			if (push && url !== window.location.pathname + window.location.search) {
+				const tp = { draft: this.draft_id || null, back: window.location.search, pos: pos + 1 };
+				window.history.pushState({ tp: tp }, "", url);
+				this.pos = pos + 1;
+			} else {
+				const tp = Object.assign({}, (window.history.state || {}).tp, {
+					draft: this.draft_id || null,
+					pos: pos,
+				});
+				window.history.replaceState(Object.assign({}, window.history.state, { tp: tp }), "", url);
+				this.pos = pos;
+			}
 		} catch (e) {
 			// An address bar that does not follow is cosmetic; never fail a load over it.
 		}
 	}
 
-	load(name, step_key) {
+	// The entry on screen is the one the page is showing now (a Back/Forward onto the step
+	// already drawn, which is where undoing a refused move lands).
+	note_entry() {
+		const mark = this.history_mark();
+		if (mark && typeof mark.pos === "number") this.pos = mark.pos;
+	}
+
+	// Undo a Forward the page will not follow (go() never refuses a Back): return to the entry
+	// of the step still showing, so the one asked for stays in history, and say why once
+	// there. Not before: frappe closes any open dialog on every route change
+	// (router.set_history -> hide_open_dialog), so a message shown now would vanish on the way.
+	// Where the page cannot tell how far it moved — an entry frappe made, such as a link with
+	// &step= — it corrects that entry in place and says why at once instead.
+	refuse_route(delta, say) {
+		if (delta) {
+			this.return_notice = { pos: this.pos, say: say };
+			window.history.go(delta);
+			return;
+		}
+		this.set_address(this.address_args());
+		say();
+	}
+
+	// load() and start_new() replace the trip on screen (route() has kept it first if it
+	// needed keeping), so it is cleared before the fetch: a failed load must not leave the old
+	// trip in `state` looking as if it were the one showing.
+	load(name, step_key, draft) {
+		const seq = this.nav_seq;
+		this.state = null;
+		this.remove_chrome();
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
 		frappe
 			.call({ method: "erpnext_enhancements.travel_management.planner.get_plan", args: { trip: name } })
 			.then(
 				(r) => {
+					// Moved on while it loaded (Back again, another trip): that screen wins.
+					if (seq !== this.nav_seq) return;
 					const data = (r && r.message) || {};
 					this.lookups = data.lookups;
+					this.draft_id = draft || null;
 					this.adopt(data.state);
 					this.step = 0;
-					if (step_key) this.jump_to(step_key, true);
-					this.set_address({ trip: name });
+					if (step_key) this.jump_to(step_key, { silent: true });
+					this.set_address(this.address_args());
 					this.render();
 				},
-				() => this.body.html(`<div class="tp-empty">${__("This trip could not be opened.")}</div>`)
+				() => {
+					if (seq !== this.nav_seq) return;
+					this.body.html(`<div class="tp-empty">${__("This trip could not be opened.")}</div>`);
+				}
 			);
 	}
 
-	start_new() {
+	start_new(draft) {
+		const seq = this.nav_seq;
+		this.state = null;
+		this.remove_chrome();
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
 		frappe.call({ method: "erpnext_enhancements.travel_management.planner.get_plan" }).then(
 			(r) => {
+				if (seq !== this.nav_seq) return;
 				const data = (r && r.message) || {};
 				this.lookups = data.lookups;
+				this.draft_id = draft || frappe.utils.get_random(8);
 				this.adopt(this.blank_state());
 				this.step = 0;
-				this.set_address({ new: 1 });
+				this.set_address(this.address_args());
 				this.render();
 			},
-			() => this.body.html(`<div class="tp-empty">${__("You are not allowed to plan trips.")}</div>`)
+			() => {
+				if (seq !== this.nav_seq) return;
+				this.body.html(`<div class="tp-empty">${__("You are not allowed to plan trips.")}</div>`);
+			}
 		);
+	}
+
+	// From the list: a new history entry, so Back returns to the list.
+	open_from_landing(args) {
+		if (args.trip && this.kept[args.trip]) {
+			this.carry_on(args.trip);
+			return;
+		}
+		++this.nav_seq;
+		if (args.trip) {
+			this.draft_id = null;
+			this.set_address({ trip: args.trip, step: "trip" }, true);
+			this.load(args.trip);
+		} else {
+			this.draft_id = frappe.utils.get_random(8);
+			this.set_address({ new: 1, step: "trip" }, true);
+			this.start_new(this.draft_id);
+		}
+	}
+
+	carry_on(key) {
+		const kept = this.kept[key];
+		if (!kept) return;
+		++this.nav_seq;
+		this.draft_id = kept.draft;
+		const step = TP_STEPS[kept.step].key;
+		this.set_address(kept.state.name ? { trip: kept.state.name, step: step } : { new: 1, step: step }, true);
+		this.restore_kept(key);
 	}
 
 	render_landing() {
 		this.state = null;
+		this.draft_id = null;
 		this.set_address({});
 		this.remove_chrome();
+		const seq = this.nav_seq;
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
 		frappe.call({ method: "erpnext_enhancements.travel_management.planner.get_recent_plans" }).then(
 			(r) => {
+				if (seq !== this.nav_seq) return;
 				const rows = (r && r.message) || [];
 				const items = rows
 					.map(
@@ -432,7 +662,18 @@ class TripPlanner {
 						</button>`
 					)
 					.join("");
+				// Trips put aside unsaved on the way here (keep_current), first: their changes
+				// exist nowhere else.
+				const unsaved = this.unsaved_kept()
+					.map((key) => {
+						const kept = this.kept[key];
+						return `<div class="tp-gap"><span>${__("{0} has changes that are not saved yet.", [
+							tp_esc(kept.state.trip.purpose || kept.state.name || __("A new trip")),
+						])}</span><button class="tp-btn-link" data-kept="${tp_esc(key)}">${__("Carry on")} &rarr;</button></div>`;
+					})
+					.join("");
 				this.body.html(`
+					${unsaved}
 					<div class="tp-card">
 						<div class="tp-step-title">${__("Plan a new trip")}</div>
 						<div class="tp-step-help">${__(
@@ -447,22 +688,35 @@ class TripPlanner {
 					}`);
 				// Opened directly, not through frappe.set_route: routing to the page we are
 				// already on is what made these buttons redraw the landing in v1.520.0.
-				this.body.find('[data-action="new"]').on("click", () => this.start_new());
+				this.body.find('[data-action="new"]').on("click", () => this.open_from_landing({ new: 1 }));
 				this.body.find(".tp-list-item").on("click", (event) => {
-					this.load(String($(event.currentTarget).attr("data-name")));
+					this.open_from_landing({ trip: String($(event.currentTarget).attr("data-name")) });
+				});
+				this.body.find("[data-kept]").on("click", (event) => {
+					this.carry_on(String($(event.currentTarget).attr("data-kept")));
 				});
 			},
-			() => this.body.html(`<div class="tp-empty">${__("Could not load trips.")}</div>`)
+			() => {
+				if (seq !== this.nav_seq) return;
+				this.body.html(`<div class="tp-empty">${__("Could not load trips.")}</div>`);
+			}
 		);
 	}
 
-	jump_to(step_key, silent) {
+	// options: `silent` sets the step without moving (a load before its first draw);
+	// `from_route` is a move Back/Forward asked for (see go()).
+	jump_to(step_key, options) {
+		options = options || {};
 		const index = TP_STEPS.findIndex((s) => s.key === step_key);
-		if (index < 0) return;
-		if (silent) {
+		if (index < 0) {
+			// An address naming no step this page has: stay, and say where we are instead.
+			if (options.from_route) this.set_address(this.address_args());
+			return;
+		}
+		if (options.silent) {
 			this.step = index;
 		} else {
-			this.go(index);
+			this.go(index, options.from_route);
 		}
 	}
 
@@ -553,8 +807,8 @@ class TripPlanner {
 		});
 	}
 
-	serialize() {
-		const s = this.state;
+	serialize(state) {
+		const s = state || this.state;
 		return JSON.stringify({
 			trip: s.trip,
 			desc: s.description_changed ? s.description_text : null,
@@ -751,7 +1005,12 @@ class TripPlanner {
 	save(options) {
 		// Resolves true when the page is safe to move on from: saved, nothing to save, or too
 		// early to save (no crew yet). Resolves false when the save was refused.
+		//
+		// options: `quiet` says nothing about what problems() found; `silent` also keeps the
+		// server's refusal off the screen, in `refusal`, for the caller to show once it is
+		// safe to (a move Back/Forward asked for — see refuse_route).
 		options = options || {};
+		this.refusal = null;
 		if (!this.state || !this.state.can_write) return Promise.resolve(true);
 		if (this.saving) return this.saving;
 		if (!this.state.name && !this.can_create()) return Promise.resolve(true);
@@ -759,17 +1018,13 @@ class TripPlanner {
 
 		const problems = this.problems();
 		if (problems.length) {
-			if (!options.quiet) {
-				frappe.msgprint({
-					title: __("A few things to fill in first"),
-					message: `<ul>${problems.map((p) => `<li>${tp_esc(p)}</li>`).join("")}</ul>`,
-					indicator: "orange",
-				});
-			}
+			if (!options.quiet) this.say_problems(problems);
 			return Promise.resolve(false);
 		}
 
 		const was_new = !this.state.name;
+		const draft = this.draft_id;
+		const saving_state = this.state;
 		this.set_save_state("saving");
 		this.saving = frappe
 			.call({
@@ -779,12 +1034,23 @@ class TripPlanner {
 					trip: this.state.name || undefined,
 					modified: this.state.modified || undefined,
 				},
+				silent: !!options.silent,
 			})
 			.then(
 				(r) => {
 					this.saving = null;
 					const fresh = r && r.message;
 					if (!fresh) return false;
+					if (was_new && draft) this.drafts[draft] = fresh.name;
+					if (this.state !== saving_state) {
+						// Saved after Back had already put the list (or another trip) on screen.
+						// Nothing to draw, and a copy kept for being unsaved is saved now: Forward
+						// to it loads the saved trip.
+						Object.keys(this.kept).forEach((key) => {
+							if (this.kept[key].state === saving_state) delete this.kept[key];
+						});
+						return true;
+					}
 					this.adopt(fresh);
 					this.set_save_state("saved");
 					if ((fresh.notes || []).length) {
@@ -792,16 +1058,27 @@ class TripPlanner {
 					}
 					// The trip exists now: point the address at it, but only while this page is
 					// still the one on screen — a save fired by leaving the page must not
-					// rewrite the address of wherever you went.
-					if (was_new && frappe.get_route()[0] === "plan-a-trip") {
-						this.set_address({ trip: fresh.name });
+					// rewrite the address of wherever you went — and only while the entry on
+					// screen is still this new trip's own. The entry keeps its step; its older
+					// "?new=1" entries find the trip through `drafts`.
+					const mark = this.history_mark();
+					if (
+						was_new &&
+						frappe.get_route()[0] === "plan-a-trip" &&
+						frappe.utils.get_url_arg("new") &&
+						(!mark || !mark.draft || mark.draft === draft)
+					) {
+						this.set_address({ trip: fresh.name, step: frappe.utils.get_url_arg("step") || "" });
 					}
 					return true;
 				},
-				() => {
-					// The server's own message is already on screen (frappe.call shows it).
+				(error) => {
+					// The server's own message is already on screen (frappe.call shows it) —
+					// unless the call was silent, which leaves it here instead: the messages
+					// frappe.request.cleanup would have shown, or none for no answer at all.
 					this.saving = null;
 					this.set_save_state("error");
+					if (options.silent) this.refusal = tp_server_messages(error);
 					return false;
 				}
 			);
@@ -812,37 +1089,115 @@ class TripPlanner {
 		if (this.state && this.is_dirty()) this.save({ quiet: true });
 	}
 
-	go(index) {
-		if (index === this.step) return;
+	say_problems(problems) {
+		frappe.msgprint({
+			title: __("A few things to fill in first"),
+			message: `<ul>${problems.map((p) => `<li>${tp_esc(p)}</li>`).join("")}</ul>`,
+			indicator: "orange",
+		});
+	}
+
+	// Why a save refused a move, said after refuse_route() has undone it: what problems()
+	// finds, or what the server said (kept by a silent save), or — no answer at all — only
+	// the "Not saved" the page already shows.
+	say_refusal() {
+		const problems = this.state ? this.problems() : [];
+		if (problems.length) {
+			this.say_problems(problems);
+		} else if (this.refusal) {
+			frappe.msgprint(this.refusal);
+		}
+	}
+
+	// Every step change: the tabs, Back/Next, the checklist's Fix links — and Back/Forward
+	// (`from_route`, through handle_route). A move the user made pushes a history entry once
+	// it has happened; one Back/Forward asked for is already in the address.
+	//
+	// A move BACK is never refused: an earlier step, or wherever the phone's Back leads (a
+	// later step too, when a tab jumped back from it; route_delta > 0). Holding Back up behind
+	// the save of a half-finished card trapped people on the page: every press of Back showed
+	// "A few things to fill in first", and each refusal overwrote the entry it was going back
+	// to. It saves quietly first — the next step is drawn from the state that save returns,
+	// so nothing typed is left on an object the page no longer shows — and moves, saved or not.
+	//
+	// A move FORWARD passes the checks and the save the Next button always did. One the
+	// phone's Forward asked for and that is refused is undone by refuse_route().
+	go(index, from_route) {
 		if (!this.state) return;
+		if (index === this.step) {
+			if (from_route) this.note_entry();
+			return;
+		}
+		const seq = from_route ? this.nav_seq : ++this.nav_seq;
+		if (index < this.step || (from_route && this.route_delta > 0)) {
+			this.save({ quiet: true }).then((ok) => {
+				// Back/Forward, or another tap, since this started: that move decides.
+				if (seq !== this.nav_seq) return;
+				this.show_step(index, !from_route);
+				if (!ok) this.set_save_state("error");
+			});
+			return;
+		}
+		const delta = from_route ? this.route_delta : 0;
+		const refuse = (say) => (from_route ? this.refuse_route(delta, say) : say());
 		// Leaving the first step needs the basics, even before there is anything to save.
-		if (this.step === 0 && index > 0) {
+		if (this.step === 0) {
 			const t = this.state.trip;
 			if (!t.purpose || !t.start_date || !t.end_date || t.end_date < t.start_date) {
-				frappe.msgprint({
-					title: __("The trip first"),
-					message: __("Say what the trip is for and pick its first and last day."),
-					indicator: "orange",
-				});
+				refuse(() =>
+					frappe.msgprint({
+						title: __("The trip first"),
+						message: __("Say what the trip is for and pick its first and last day."),
+						indicator: "orange",
+					})
+				);
 				return;
 			}
 		}
 		if (index > 1 && !this.crew().length) {
-			frappe.msgprint({
-				title: __("Who's going?"),
-				message: __("Pick at least one person on the Who's going step first."),
-				indicator: "orange",
-			});
-			this.step = 1;
-			this.render();
+			refuse(() =>
+				frappe.msgprint({
+					title: __("Who's going?"),
+					message: __("Pick at least one person on the Who's going step first."),
+					indicator: "orange",
+				})
+			);
+			// A tap goes to where the fix is; Back/Forward has just been undone instead.
+			if (!from_route && this.step !== 1) this.show_step(1, true);
 			return;
 		}
-		this.save().then((ok) => {
-			if (!ok) return;
-			this.step = Math.max(0, Math.min(TP_STEPS.length - 1, index));
-			this.render();
-			frappe.utils.scroll_to(0);
+		this.save({ quiet: from_route, silent: from_route }).then((ok) => {
+			if (seq !== this.nav_seq) return;
+			if (ok) {
+				this.show_step(index, !from_route);
+			} else if (from_route) {
+				this.refuse_route(delta, () => this.say_refusal());
+			}
 		});
+	}
+
+	// Draw step `index` and put it in the address: a new entry for a move made on the page,
+	// the entry already there for one Back/Forward made.
+	show_step(index, push) {
+		this.step = Math.max(0, Math.min(TP_STEPS.length - 1, index));
+		this.render();
+		frappe.utils.scroll_to(0);
+		this.set_address(this.address_args(), push);
+	}
+
+	// The page's own Back button: the same as the phone's. When the entry behind this one is
+	// the previous step (it is whenever Next or a tab led here), go back through history
+	// rather than pushing that step on top — Next, Back, Next must not leave a stack the
+	// browser's Back replays — and go() saves on the way, as it does for the phone's Back.
+	back_one_step() {
+		if (!this.state || this.step === 0) return;
+		const previous = Object.assign(this.address_args(), { step: TP_STEPS[this.step - 1].key });
+		const mark = this.history_mark();
+		if (!mark || mark.back !== `?${this.query_for(previous)}`) {
+			this.go(this.step - 1);
+			return;
+		}
+		window.history.back();
 	}
 
 	set_save_state(kind) {
@@ -984,7 +1339,7 @@ class TripPlanner {
 		$(`<button>${__("Back")}</button>`)
 			.appendTo(nav)
 			.prop("disabled", this.step === 0)
-			.on("click", () => this.go(this.step - 1));
+			.on("click", () => this.back_one_step());
 		if (this.step < TP_STEPS.length - 1) {
 			$(`<button class="tp-primary">${__("Next")}: ${tp_esc(TP_STEPS[this.step + 1].title)}</button>`)
 				.appendTo(nav)
