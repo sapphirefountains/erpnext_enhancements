@@ -2,7 +2,8 @@
 
 Every value a Select field on the two KB doctypes can hold lives here, and
 ``tests/test_knowledge_base_schema.py`` asserts that each doctype JSON's ``options`` equal these
-tuples exactly. The publishing code that arrives in later PRs writes these values, so it imports
+tuples exactly (``department_block`` with the blank it stores first, see
+``DEPARTMENT_BLOCK_SELECT_OPTIONS``). The publishing code that arrives in later PRs writes these values, so it imports
 them from here rather than typing the strings again: a misspelt state written by code is a row
 that saves cleanly, never matches a filter, and is only found when somebody counts.
 
@@ -42,9 +43,19 @@ DEPARTMENT_BLOCKS = (
 	("09", "Sales"),
 )
 
-#: ``department_block`` Select options exactly as stored, e.g. ``"06 Operations"``. The code
-#: leads so that the list sorts in register order and :func:`block_code` needs no lookup table.
+#: The valid ``department_block`` values, e.g. ``"06 Operations"``. The code leads so that the list
+#: sorts in register order and :func:`block_code` needs no lookup table.
 DEPARTMENT_BLOCK_OPTIONS = tuple(f"{code} {label}" for code, label in DEPARTMENT_BLOCKS)
+
+#: ``department_block``'s Select ``options`` as the doctype JSONs store them: a **blank first**, then
+#: the valid values. v16 gives a Select with no ``default`` its first option on every new document,
+#: on the server (``model/create_new.py:117-118``, applied by ``Document._set_defaults``,
+#: ``model/document.py:1071-1077``) and in the Desk (``model/create_new.js:107-114``). With
+#: ``"00 Company Wide"`` first, ``reqd`` could never fire, and a draft nobody placed would be
+#: published into block 00 under a KB number that can never be renamed. A blank first option
+#: defaults to ``""``, which ``reqd`` refuses, so an author has to choose. Never a valid value:
+#: :func:`block_code` answers ``None`` for it.
+DEPARTMENT_BLOCK_SELECT_OPTIONS = ("", *DEPARTMENT_BLOCK_OPTIONS)
 
 
 def block_code(option):

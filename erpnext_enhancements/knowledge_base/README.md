@@ -26,7 +26,7 @@ and **nothing can publish**: a version is submitted only when the publish action
 
 **A draft cannot leak through a reader path because it is not in the reader's doctype.** Hiding
 draft fields at a higher permlevel was rejected: FAC's `get_document` checks doctype permission, not
-permlevel.
+permlevel. (The Version does use permlevel 1, for a different job: see "Server-set fields" below.)
 
 **Nothing is ever deleted, canceled, amended or renamed.** An article is retired, never deleted;
 an abandoned draft is Discarded, not deleted.
@@ -37,8 +37,8 @@ an abandoned draft is Discarded, not deleted.
 |---|---|---|
 | Every staff user (`Desk User`) | read, report, print | nothing |
 | System Manager | read | **nothing** |
-| KB Author | read (as a staff user) | read, create, write, print, report |
-| KB Approver | read (as a staff user) | read, create, write, print, report |
+| KB Author | read (as a staff user) | read, create, write, print, report; **read only** at permlevel 1 |
+| KB Approver | read (as a staff user) | read, create, write, print, report; **read only** at permlevel 1 |
 | Guest, `All` (portal users) | nothing | nothing |
 
 No row anywhere carries share, submit, cancel, amend, delete, export, import or email.
@@ -50,6 +50,26 @@ KB Author and KB Approver hold the same DocPerm. What makes an approver differen
 code (PR 2 and PR 3): the approver holds KB Approver, is not the owner, the submitter, a contributor
 or the person who asked an AI to draft it, approves from a signed-in browser, and approves the
 version exactly as they opened it.
+
+### Server-set fields
+
+Those rules read stored fields (`contributors`, `ai_requested_by`, `submitted_by`, `review_state`
+and the rest), so the people they constrain must not be able to write them. `read_only` does not do
+that: it is a Desk hint, and v16 never checks it on the server. A KB Approver holding write at level
+0 could clear `contributors` on a draft with `frappe.client.set_value` and then approve their own
+edit.
+
+So **every field on the Version except the eight content fields and `amended_from` is at permlevel
+1**, and both KB roles hold **read only** there. On every save and insert, v16's
+`validate_higher_perm_levels` (frappe `origin/version-16` `model/document.py:1021-1044`) puts back
+the stored value, or the default on a new document, for any level the user cannot write. The schema
+test pins both halves: the field levels, and that no row has write above level 0.
+
+**The rule this puts on later PRs:** code that writes a server-set field must run with
+`ignore_permissions` (or list the field in `flags.ignore_permlevel_for_fields`). Otherwise the value
+is silently put back, and a supersede or a submit-for-review looks like it worked. A value computed
+in `validate` or `before_save` survives a user's own save, because the reset runs before those hooks
+(`:592`, `:594`); one set in `before_insert` does not (`:480`, then the reset at `:483`).
 
 ## Every leak path, and what closes it
 
@@ -63,7 +83,7 @@ version exactly as they opened it.
 | Pasted images and attachments | `make_attachments_public 0`. PR 2 forces `is_private = 1` on every File attached to either doctype |
 | Import and export | `allow_import 0`, and no import or export right |
 | A Custom DocPerm, Property Setter or Custom Field widening a doctype | None exist, and the schema test fails if a fixture adds one |
-| The generic AI tools, raw SQL included | The AI gate refuses `Knowledge Article Version` on every path: a `doctype` argument on any tool, `fetch`'s id, `run_python_code`'s `data_query`, and the text of `run_database_query` and `run_python_code` (`assistant_tools/_gate.py`, `DENYLIST_DOCTYPES`). Raw SQL never consults DocPerm, so this is the only thing between a System Manager and the drafts. `tabKnowledge Article` is deliberately **not** refused |
+| The generic AI tools, raw SQL included | The AI gate refuses `Knowledge Article Version` on every path: a `doctype` argument on any tool, `fetch`'s id, `run_python_code`'s `data_query`, and the text of `run_database_query` and `run_python_code` (`assistant_tools/_gate.py`, `DENYLIST_DOCTYPES`). The text is searched with SQL comments stripped **and** without, because a `#` in a string literal, `1--1` and a `/*! */` comment are not comments to MariaDB. Raw SQL never consults DocPerm, so this is the only thing between a System Manager and the drafts. `tabKnowledge Article` is deliberately **not** refused |
 | An AI write skipping its confirmation | Both doctypes are in the gate's `NEVER_EXEMPT`, so no settings row can exempt them, and a card that targets either never starts ticked in the batch dialog |
 
 The one thing none of this stops is a System Manager writing past the ORM with `frappe.db.set_value`,
@@ -117,7 +137,7 @@ Granting is a Desk step, and only a System Manager can do it:
 
 | Path | What it is |
 |---|---|
-| `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches |
+| `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00 |
 | `doctype/knowledge_article/` | The published snapshot. Controller `KnowledgeArticle`: refuses every write without `flags.kb_action`, and every delete and rename |
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish`, and every cancel, amend, delete and rename |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |

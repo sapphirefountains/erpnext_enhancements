@@ -176,17 +176,23 @@ and above the `ai_write_gating_enabled` check. A refusal reachable only while a 
 checkbox is ticked is not an invariant. It is logged to AI Action Log (`success = 0`, High
 risk), because an attempt to reach one of these doctypes is the event an operator wants to
 find later.
-The free-text half refuses on **contact** rather than trying to parse: case-fold, strip
-SQL comments, drop every non-word character, refuse if the table name survives as a
-contiguous needle.
+The free-text half refuses on **contact** rather than trying to parse: case-fold, drop every
+non-word character, and refuse if the table name survives as a contiguous needle in **either**
+of two views of the text, one with SQL comments stripped and one without
+(`_denylist_haystacks`). The stripped view alone was a hole from v1.271.0 until v1.538.0:
+stripping comments is parsing, and it deleted text MariaDB runs. A `#` or `--` inside a string
+literal (`select '#', body from ...`), a `--` with no space after it (`1--1`), and a `/*! ... */`
+or `/*M! ... */` executable comment each hid the table name, and `run_database_query` is a read
+tool, so nothing raised a card.
 Attempting to allow "safe" queries loses to every quoting trick; refusing on contact does
 not. Over-refusal costs an analyst one rephrase; under-refusal costs the invariant silently.
-(One accepted over-refusal is pinned in the test: a query that aliases `tabKnowledge Article`
-as `version` is refused.)
+(Two accepted over-refusals are pinned in the test: a query that aliases `tabKnowledge Article`
+as `version`, and a comment saying `version` right after it.)
 
 `tests/test_ai_gate_denylist.py` (on the AI-gate CI step) covers every path for the Version
 doctype, a set of SQL spellings (comments, backticks, double quotes, case, newlines and tabs,
-`information_schema`), the published doctype and the WI-080 acceptance queries passing, the
+`information_schema`, and the comment markers MariaDB does not honour), the published doctype
+and the WI-080 acceptance queries passing, the
 Triton Chat Attachment refusal and its message unchanged, and the ordering: it runs
 `_gated_execute` with gating off and with the bypass flag set, and asserts that the tool never
 runs. Add to the list whenever a doctype's content must not reach a model and its hooks are the

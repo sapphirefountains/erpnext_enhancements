@@ -15,6 +15,10 @@ What must hold, and why each one is a test rather than a hope:
   the free text of ``run_database_query`` and ``run_python_code``;
 - raw SQL is refused through comment, backtick, quoting, case and whitespace variants, because
   string-matching SQL only works if it refuses on contact;
+- and through comment markers MariaDB does **not** honour: a ``#`` or ``--`` inside a string
+  literal, ``1--1``, and ``/*! */`` / ``/*M! */``, whose contents MariaDB runs. Stripping those as
+  comments deleted the table name, so the gate searches the text with comments stripped **and**
+  without (``_denylist_haystacks``), and a test here tries each one;
 - ``tabKnowledge Article``, the **published** doctype, is NOT refused. Its needle is a prefix of the
   Version's, so a careless needle would break every generic tool on the text staff read anyway,
   and the WI-080 acceptance queries that check a deploy;
@@ -86,6 +90,17 @@ VERSION_SQL = (
     "select table_name from information_schema.tables "
     "where table_name = 'tabKnowledge Article Version'",
     "select count(*) from `tabKnowledge Article Version` where review_state = 'Draft'",
+    # Comment markers MariaDB does NOT treat as comments. Stripping them as comments deleted the
+    # table name, and every one of these read drafts with no card until the gate also searched
+    # the unstripped text (review of WI-080 PR 1).
+    "select '#' as x, body from `tabKnowledge Article Version`",
+    "SELECT name, CONCAT('#', version_number) AS v, body FROM `tabKnowledge Article Version`",
+    "SELECT CONCAT(title, ' -- ', name) AS label, body FROM `tabKnowledge Article Version`",
+    "select 1--1 as x, body from `tabKnowledge Article Version`",
+    "select body from /*! `tabKnowledge Article Version` */",
+    "select body from /*!50700 `tabKnowledge Article Version` */",
+    "select body from /*M! `tabKnowledge Article Version` */",
+    "select '/*' a, body from `tabKnowledge Article Version` where '*/'='*/'",
 )
 
 #: Queries that must keep working: the WI-080 PR 1 acceptance checks, and ordinary reads of the
@@ -103,6 +118,13 @@ ARTICLE_SQL = (
     "AND is_private = 0",
     "select name, title, live_version from `tabKnowledge Article` where status = 'Published'",
     "select * from `tabKnowledge Article` where version_number > 1",
+    "SELECT parent, role, permlevel, `write`, share, submit, `delete`, export FROM tabDocPerm "
+    "WHERE parent LIKE 'Knowledge Article%'",
+    # Comment markers on the published doctype alone: searching the unstripped text too must not
+    # turn these into refusals.
+    "select name, '#' as x from `tabKnowledge Article` -- the published text",
+    "select name from `tabKnowledge Article` /* KB-0612 */ where status = 'Published'",
+    "select name from /*! `tabKnowledge Article` */",
 )
 
 #: The Triton Chat Attachment refusal, word for word as it read before v1.538.0 made the message
@@ -207,6 +229,10 @@ class TestTheVersionDoctypeIsRefusedOnEveryPath(unittest.TestCase):
             f'rows = frappe.get_all("{VERSION}", fields=["body"])',
             'rows = frappe.db.sql("select body from `tabKnowledge Article Version`")',
             'dt = "Knowledge Article " + "Version"\nrows = frappe.get_all(dt)',
+            # A `#` in a Python string is not a comment either.
+            "x='#'; r = frappe.get_all('Knowledge Article Version', fields=['body'])",
+            'x = "#"; rows = frappe.get_all("Knowledge Article Version")',
+            "rows = frappe.db.sql(\"select '#', body from `tabKnowledge Article Version`\")",
         ):
             with self.subTest(code=code):
                 self.assertEqual(_gate.denylist_hit("run_python_code", {"code": code}), VERSION)
@@ -222,6 +248,27 @@ class TestTheVersionDoctypeIsRefusedOnEveryPath(unittest.TestCase):
         cannot tell a table from an alias, and does not try to (see _normalise_for_denylist)."""
         query = "select version.name from `tabKnowledge Article` version"
         self.assertEqual(_gate.denylist_hit("run_database_query", {"query": query}), VERSION)
+
+    def test_a_comment_saying_version_after_the_article_is_refused_too(self):
+        """The same accepted over-refusal, from the unstripped view: it cannot tell a comment
+        from code any more than the stripped view can tell a table from an alias."""
+        query = "select name from `tabKnowledge Article` /* version */"
+        self.assertEqual(_gate.denylist_hit("run_database_query", {"query": query}), VERSION)
+
+    def test_both_views_are_searched(self):
+        """Neither view alone is enough: the stripped one misses a name MariaDB runs, and the
+        raw one misses a name split by comments."""
+        executed = "select '#', body from `tabKnowledge Article Version`"
+        split = "select body from tabKnowledge/*x*/Article/* hidden */Version"
+        self.assertNotIn("knowledgearticleversion", _gate._normalise_for_denylist(executed))
+        self.assertIn("knowledgearticleversion", _gate._denylist_haystacks(executed)[1])
+        self.assertIn("knowledgearticleversion", _gate._denylist_haystacks(split)[0])
+        self.assertNotIn("knowledgearticleversion", _gate._denylist_haystacks(split)[1])
+        for query in (executed, split):
+            with self.subTest(query=query):
+                self.assertEqual(_gate.denylist_hit("run_database_query", {"query": query}), VERSION)
+        self.assertEqual(_gate._denylist_haystacks(None), ())
+        self.assertEqual(_gate._denylist_haystacks("  "), ())
 
 
 class TestThePublishedDoctypeIsNotRefused(unittest.TestCase):
@@ -259,9 +306,17 @@ class TestTritonChatAttachmentIsStillRefused(unittest.TestCase):
         for query in (
             "select name from `tabTriton Chat Attachment`",
             "SELECT/*x*/ NAME FROM   tabTRITON chat attachment",
+            # The comment-marker holes predate WI-080 and applied here first.
+            "select '#', name from `tabTriton Chat Attachment`",
+            "select name, 1--1 from `tabTriton Chat Attachment`",
+            "select name from /*! `tabTriton Chat Attachment` */",
+            "select name from /*M! `tabTriton Chat Attachment` */",
+            "select '/*' a, name from `tabTriton Chat Attachment` where '*/'='*/'",
         ):
             with self.subTest(query=query):
                 self.assertEqual(_gate.denylist_hit("run_database_query", {"query": query}), ATTACHMENT)
+        code = "x = '#'; rows = frappe.get_all('Triton Chat Attachment')"
+        self.assertEqual(_gate.denylist_hit("run_python_code", {"code": code}), ATTACHMENT)
 
     def test_its_message_did_not_change(self):
         self.assertEqual(_gate._denylist_refusal_message(ATTACHMENT), ATTACHMENT_MESSAGE)

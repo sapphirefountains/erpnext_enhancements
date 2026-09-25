@@ -47,6 +47,22 @@ queries below before the next one merges.
   - Authors edit only the content fields: title, department, summary, keywords, process owner,
     review interval, body and change note. Every review, provenance and AI field is read-only and
     `no_copy`. The provenance fields are there for slice 2's import.
+  - **Those server-set fields are at permlevel 1, where both KB roles hold read only.**
+    `read_only` is a Desk hint that v16 never checks on the server; only permlevel is enforced
+    (`validate_higher_perm_levels`, `model/document.py:1021-1044`). At level 0, a KB Author or
+    Approver could clear `contributors` or `ai_requested_by`, or set `review_state`, with
+    `frappe.client.set_value` on a draft, and nothing would record it (`track_changes` is 0). That
+    would erase exactly what PR 2's rule "the approver is not a contributor or the AI requester"
+    reads. Now v16 puts back the stored value, or the default on a new draft, before `validate`.
+    The code that writes these fields in later PRs must therefore run with `ignore_permissions`,
+    or the write is silently undone; the module README and the controller say so.
+  - **`department_block` is required and starts blank.** v16 gives a Select with no `default` its
+    first option on every new document, on the server (`model/create_new.py:117-118`, through
+    `Document._set_defaults`) and in the Desk (`model/create_new.js:107-114`). With
+    "00 Company Wide" first, `reqd` could never fire, and a draft nobody placed would be published
+    under a block-00 KB number that can never be renamed. The options now store a blank first, so
+    the author has to choose. The Article's options match. `constants.DEPARTMENT_BLOCK_OPTIONS`
+    stays the list of valid blocks; `DEPARTMENT_BLOCK_SELECT_OPTIONS` is what the JSON stores.
   - `review_state` is the only field that may change after submit, when a newer version supersedes
     this one. Copy is hidden (`allow_copy 1`).
 - **Both doctypes are private by construction:** `has_web_view 0`, `allow_guest_to_view 0`,
@@ -58,8 +74,8 @@ queries below before the next one merges.
   |---|---|---|
   | Desk User | read, report, print | nothing |
   | System Manager | read | nothing |
-  | KB Author | nothing (reads as a Desk User) | read, create, write, print, report |
-  | KB Approver | nothing (reads as a Desk User) | read, create, write, print, report |
+  | KB Author | nothing (reads as a Desk User) | read, create, write, print, report; read only at permlevel 1 |
+  | KB Approver | nothing (reads as a Desk User) | read, create, write, print, report; read only at permlevel 1 |
 
   - `share` is 0 everywhere, because v16 `assign_to.add` shares a document with an assignee who
     cannot read it (frappe `origin/version-16` `desk/form/assign_to.py:106-118`). With no share
@@ -131,8 +147,20 @@ queries below before the next one merges.
 
 ### Security
 
-- **Two ways past the denylist are closed.** Both predate this release, and both applied to
+- **Three ways past the denylist are closed.** All three predate this release, and all applied to
   `Triton Chat Attachment` as well as to the new entry.
+  - **The free-text match stripped SQL comments before it looked, and stripping deleted text
+    MariaDB runs.** A `#` or `--` inside a string literal (`select '#', body from ...`), a `--`
+    with no space after it (`1--1` is arithmetic), and a `/*! ... */` or `/*M! ... */` comment,
+    whose contents MariaDB executes, each removed the table name from what the needle search saw.
+    FAC 3.0.0's own SELECT check accepts all of them and runs the original string, and
+    `run_database_query` is a read tool, so it raises no card: one line could have read every
+    draft body, and could read every Triton Chat Attachment row until now. Found in review of this
+    PR; the hole dates from the denylist itself (v1.271.0). The gate now
+    searches two views of the text, comments stripped and not (`_denylist_haystacks`), and refuses
+    if either names a denylisted table. A second view can only refuse more. The one new
+    over-refusal, a comment saying `version` right after `tabKnowledge Article`, is pinned in the
+    test.
   - FAC 3.0.0's `fetch` takes one `id`, `"<doctype>/<name>"`, which the denylist never read. It now
     reads the doctype before the first slash, as FAC splits it.
   - `run_python_code`'s `data_query.doctype` is pre-loaded with `frappe.get_all`, which applies no
@@ -150,8 +178,11 @@ queries below before the next one merges.
 
 - **`tests/test_knowledge_base_schema.py`** (unittest, installs its own frappe stub, so it gets its
   own CI step). It pins:
-  - every flag, and the **whole** DocPerm matrix compared as a set, so an added row fails as surely
-    as a changed one;
+  - every flag, and the **whole** DocPerm matrix compared as a set keyed on role and permlevel, so
+    an added row fails as surely as a changed one;
+  - every server-set Version field at permlevel 1, no write right above level 0, and every field
+    level readable by both KB roles;
+  - that a required Select with no default starts with a blank option;
   - that no Custom DocPerm, Property Setter or Custom Field fixture targets either doctype;
   - the exact field lists: every Article field read-only, only content fields editable on a Version,
     `review_state` the only `allow_on_submit` field;
@@ -163,9 +194,11 @@ queries below before the next one merges.
 - **`tests/test_ai_gate_denylist.py`** (unittest, appended to the "AI gate + assistant-tool
   contract" step). It covers:
   - the Version doctype refused on every path: a `doctype` argument on every FAC 3.0.0 tool that
-    takes one, plus unknown tool names; `fetch`; `data_query`; `run_python_code` text; and fourteen
-    raw-SQL spellings under both `query` and `sql` (comments, backticks, double quotes, case,
-    newlines and tabs, `information_schema`);
+    takes one, plus unknown tool names; `fetch`; `data_query`; `run_python_code` text; and
+    twenty-two raw-SQL spellings under both `query` and `sql` (comments, backticks, double quotes,
+    case, newlines and tabs, `information_schema`, and eight that use comment markers MariaDB does
+    not honour). Each of those eight, and the same tricks on `Triton Chat Attachment` and in
+    `run_python_code` text, fails against the comments-stripped search alone;
   - the published doctype and the WI-080 acceptance queries **not** refused;
   - Triton Chat Attachment still refused, with its message unchanged;
   - a settings row unable to exempt either KB doctype;
@@ -186,8 +219,9 @@ with `LIKE 'Knowledge Article%'`.
   `desk_access = 1`.
 - ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB
   Approver'``: exactly 1 row, `KB Approver`.
-- ``SELECT parent, role, share, submit, `delete`, export FROM tabDocPerm WHERE parent LIKE
-  'Knowledge Article%'``: 4 rows, and every `share`, `submit`, `delete` and `export` is 0.
+- ``SELECT parent, role, permlevel, `write`, share, submit, `delete`, export FROM tabDocPerm WHERE
+  parent LIKE 'Knowledge Article%'``: 6 rows, and every `share`, `submit`, `delete` and `export` is
+  0. The two Version rows at `permlevel` 1 (KB Author, KB Approver) have `write` 0.
 - ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE parent LIKE 'Knowledge Article%'`` = 0.
 - ``run_database_query("select name from `tabKnowledge Article Version`")`` is refused.
 - `curl -s -o /dev/null -w '%{http_code}' https://erp.sapphirefountains.com/api/resource/Knowledge%20Article`

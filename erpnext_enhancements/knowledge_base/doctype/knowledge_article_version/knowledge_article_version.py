@@ -30,6 +30,22 @@ What may change after publishing: only ``review_state`` (``allow_on_submit``), w
 version supersedes this one. The publish code sets ``doc.flags.kb_action`` for that write; any
 other update-after-submit is refused.
 
+**Every server-set field is at permlevel 1, and nobody holds write there.** ``read_only`` is a
+Desk hint that v16 never enforces on the server; only permlevel is enforced. KB Author and KB
+Approver hold write at level 0, so with these fields at level 0 either of them could rewrite
+``contributors``, ``ai_requested_by`` or ``review_state`` through ``frappe.client.set_value`` or
+``PUT /api/resource`` on a draft, and erase the very record PR 2's approval rules read. At level 1
+they read them, and ``validate_higher_perm_levels`` (frappe ``origin/version-16``
+``model/document.py:1021-1044``, called at ``:483`` on insert and ``:592`` on save) puts back the
+stored value, or the default on a new document, before ``validate`` runs. The content fields
+and ``amended_from`` (Frappe's own, refused above) stay at level 0.
+
+That puts one rule on the code in later PRs: **a write to a server-set field must run with
+``ignore_permissions``** (or name the field in ``flags.ignore_permlevel_for_fields``); otherwise it
+is silently reset, supersede included. A value computed in ``validate`` or ``before_save`` survives
+a user's save, because the reset runs before them; one set in ``before_insert`` does not, because
+the reset runs after it (``:480`` then ``:483``).
+
 Nothing is ever deleted, canceled or amended. A published version is the record of what a person
 approved, and the Knowledge Base Integrity report (PR 4) checks every Article against it.
 """

@@ -429,6 +429,19 @@ def _normalise_for_denylist(text):
     parse; it wins only if it refuses on contact. Over-refusal costs an analyst one rephrase.
     Under-refusal costs the invariant, silently, with a correct answer delivered to the wrong
     reader.
+
+    **This is only one of the two views the contact match searches** (see
+    :func:`_denylist_haystacks`). Stripping comments is itself parsing, and it deletes text
+    MariaDB *executes*:
+      * a ``#`` or ``--`` inside a string literal: in ``select '#', body from ...`` everything
+        after the ``#`` is deleted, table name included;
+      * a ``--`` with no whitespace after it: ``1--1`` is arithmetic, not a comment;
+      * the whole of a ``/*! ... */`` or ``/*M! ... */`` comment, which MariaDB runs.
+    Searched on its own, this view let each of those read a denylisted table through
+    ``run_database_query`` (a read tool, so no card). That hole dates from the denylist itself
+    (v1.271.0) and applied to ``Triton Chat Attachment`` too; the review of WI-080 PR 1 found
+    it, and v1.538.0 added the raw view. Stripping still earns its place: it is what joins
+    ``tabKnowledge/**/Article/**/Version`` back into one needle.
     """
     if not isinstance(text, str):
         return ""
@@ -436,6 +449,21 @@ def _normalise_for_denylist(text):
     lowered = _SQL_COMMENT_BLOCK.sub(" ", lowered)
     lowered = _SQL_COMMENT_LINE.sub(" ", lowered)
     return _NON_WORD.sub("", lowered)
+
+
+def _denylist_haystacks(text):
+    """Both views of ``text`` the contact match searches: comments stripped, and not.
+
+    A needle found in **either** is a refusal. The stripped view catches a name split by
+    comments; the raw view catches a name that the stripping deleted although MariaDB runs it
+    (see :func:`_normalise_for_denylist`). Searching a second view can only ever refuse more,
+    never less, which is the only direction a denylist may err in. The price is one more
+    accepted over-refusal: a comment that says ``version`` right after ``tabKnowledge Article``.
+    """
+    if not isinstance(text, str):
+        return ()
+    views = (_normalise_for_denylist(text), _NON_WORD.sub("", text.lower()))
+    return tuple(view for view in views if view)
 
 
 def _denylist_needles():
@@ -472,7 +500,8 @@ def denylist_hit(tool_name, arguments):
     ("<doctype>/<name>") and ``run_python_code`` inside ``data_query.doctype``, so those are
     read in their own shape (``DENYLIST_ID_ARGUMENTS`` / ``DENYLIST_NESTED_DOCTYPE_ARGUMENTS``).
     ``run_database_query`` and ``run_python_code`` also take free text, so that half is the
-    contact match described on :func:`_normalise_for_denylist`.
+    contact match described on :func:`_normalise_for_denylist`, run over both views of the text
+    that :func:`_denylist_haystacks` returns.
 
     The ``doctype`` check is applied to **every** tool rather than to a named list: a tool
     added to FAC tomorrow that takes a ``doctype`` is covered the day it appears, which is the
@@ -502,11 +531,11 @@ def denylist_hit(tool_name, arguments):
 
     needles = _denylist_needles()
     for key in DENYLIST_TEXT_ARGUMENTS.get(tool_name, ()):
-        haystack = _normalise_for_denylist(args.get(key))
-        if not haystack:
+        haystacks = _denylist_haystacks(args.get(key))
+        if not haystacks:
             continue
         for needle, doctype in reversed(needles):
-            if needle in haystack:
+            if any(needle in haystack for haystack in haystacks):
                 return doctype
     return None
 

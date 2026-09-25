@@ -12,7 +12,9 @@ row is ever exercised:
   default, no import, and ``track_changes`` off on the Version doctype, because core ``Version``
   rows are readable by System Manager, which includes the ``triton@`` service identity.
 * **The exact DocPerm matrix.** Article: ``Desk User`` read/report/print, System Manager read.
-  Version: KB Author and KB Approver read/create/write/print/report. ``share`` is 0 everywhere,
+  Version: KB Author and KB Approver read/create/write/print/report at level 0, and read only at
+  level 1, where every server-set field sits (v16 enforces permlevel on a save and never
+  ``read_only``, so this is what stops a KB role rewriting ``contributors``). ``share`` is 0 everywhere,
   because v16 ``assign_to.add`` shares a document with an assignee who cannot read it; nobody may
   submit, cancel, amend, delete, export, import or email; and no System Manager, ``Desk User``,
   ``All`` or ``Guest`` row exists on the Version doctype. Compared as a whole, so an added row
@@ -20,7 +22,8 @@ row is ever exercised:
 * **Nothing outside the JSON widens it**: no Custom DocPerm, Property Setter or Custom Field
   fixture targets either doctype.
 * **The Select options** are exactly ``knowledge_base/constants.py``, which the publishing code
-  writes.
+  writes, and a required Select with no default starts blank, because v16 otherwise defaults it
+  to its first option and ``reqd`` never fires.
 * **The controllers** carry the class names Frappe derives (a mismatch gets a DocType
   force-deleted on migrate), and refuse what they must refuse, in both the hook a flag can skip
   and the one it cannot.
@@ -76,14 +79,19 @@ RIGHTS = (
 )
 FORBIDDEN_RIGHTS = ("share", "submit", "cancel", "amend", "delete", "export", "import", "email")
 
+#: Keyed on ``(role, permlevel)``. The Version's level-1 rows are read-only on purpose: the
+#: server-set fields live there, and only server code running with ``ignore_permissions`` may
+#: write them (v16 enforces permlevel on save, and never ``read_only``).
 EXPECTED_PERMISSIONS = {
 	ARTICLE: {
-		"Desk User": {"read", "report", "print"},
-		"System Manager": {"read"},
+		("Desk User", 0): {"read", "report", "print"},
+		("System Manager", 0): {"read"},
 	},
 	VERSION: {
-		"KB Author": {"read", "create", "write", "print", "report"},
-		"KB Approver": {"read", "create", "write", "print", "report"},
+		("KB Author", 0): {"read", "create", "write", "print", "report"},
+		("KB Approver", 0): {"read", "create", "write", "print", "report"},
+		("KB Author", 1): {"read"},
+		("KB Approver", 1): {"read"},
 	},
 }
 
@@ -415,10 +423,10 @@ class TestFlags(unittest.TestCase):
 def _matrix(meta):
 	matrix = {}
 	for row in meta["permissions"]:
-		role = row["role"]
-		if role in matrix:
-			raise AssertionError(f"{meta['name']} has two DocPerm rows for {role}")
-		matrix[role] = {right for right in RIGHTS if row.get(right)}
+		key = (row["role"], row.get("permlevel") or 0)
+		if key in matrix:
+			raise AssertionError(f"{meta['name']} has two DocPerm rows for {key}")
+		matrix[key] = {right for right in RIGHTS if row.get(right)}
 	return matrix
 
 
@@ -435,12 +443,37 @@ class TestPermissions(unittest.TestCase):
 					with self.subTest(doctype=doctype, role=row["role"], right=right):
 						self.assertFalse(row.get(right), f"{doctype}/{row['role']} has {right}")
 
-	def test_every_row_is_level_zero_and_not_owner_scoped(self):
+	def test_no_row_is_owner_scoped(self):
 		for doctype in (ARTICLE, VERSION):
 			for row in _load(doctype)["permissions"]:
-				with self.subTest(doctype=doctype, role=row["role"]):
-					self.assertFalse(row.get("permlevel"))
+				with self.subTest(doctype=doctype, role=row["role"], permlevel=row.get("permlevel")):
 					self.assertFalse(row.get("if_owner"))
+
+	def test_every_article_row_is_level_zero(self):
+		for row in _load(ARTICLE)["permissions"]:
+			with self.subTest(role=row["role"]):
+				self.assertFalse(row.get("permlevel"))
+
+	def test_nobody_can_write_above_level_zero_on_the_version(self):
+		"""The server-set fields are at level 1. A write right there is a KB role able to rewrite
+		the contributors or the AI requester, which is what PR 2's approval rules read."""
+		for row in _load(VERSION)["permissions"]:
+			if not row.get("permlevel"):
+				continue
+			with self.subTest(role=row["role"], permlevel=row["permlevel"]):
+				self.assertEqual({right for right in RIGHTS if row.get(right)}, {"read"})
+
+	def test_every_field_level_is_readable_by_both_kb_roles(self):
+		"""A field at a level a role cannot read vanishes from that role's form and list."""
+		meta = _load(VERSION)
+		levels = {field.get("permlevel") or 0 for field in _value_fields(meta)}
+		readable = {
+			(row["role"], row.get("permlevel") or 0) for row in meta["permissions"] if row.get("read")
+		}
+		for role in ("KB Author", "KB Approver"):
+			for level in levels:
+				with self.subTest(role=role, permlevel=level):
+					self.assertIn((role, level), readable)
 
 	def test_no_reader_row_on_the_version(self):
 		roles = {row["role"] for row in _load(VERSION)["permissions"]}
@@ -499,6 +532,46 @@ class TestFields(unittest.TestCase):
 				editable = not field.get("read_only")
 				self.assertEqual(editable, field["fieldname"] in VERSION_CONTENT_FIELDS)
 
+	def test_every_server_set_field_is_at_permlevel_one(self):
+		"""``read_only`` is a Desk hint; v16 enforces only permlevel on a save
+		(``validate_higher_perm_levels``, ``model/document.py:1021-1044``). At level 0, a KB Author
+		or Approver could clear ``contributors`` or ``ai_requested_by`` with
+		``frappe.client.set_value`` and then approve their own edit. ``amended_from`` is Frappe's
+		own amendment link, stays at level 0, and is refused by the controller instead."""
+		for field in _value_fields(_load(VERSION)):
+			name = field["fieldname"]
+			expected = 0 if name in VERSION_CONTENT_FIELDS or name == "amended_from" else 1
+			with self.subTest(field=name):
+				self.assertEqual(field.get("permlevel") or 0, expected)
+
+	def test_no_article_field_is_above_level_zero(self):
+		"""Nobody writes the Article at any level; a raised level would only hide fields from readers."""
+		for field in _load(ARTICLE)["fields"]:
+			with self.subTest(field=field["fieldname"]):
+				self.assertFalse(field.get("permlevel"))
+
+	def test_a_reqd_select_cannot_default_to_a_real_value(self):
+		"""v16 gives a Select with no ``default`` its FIRST option on every new document, on the
+		server (``model/create_new.py:117-118``, via ``Document._set_defaults``) and in the Desk
+		(``model/create_new.js:107-114``). So ``reqd`` on such a field never fires unless the first
+		option is blank. On ``department_block`` that decides a KB number nobody can rename."""
+		for doctype in (ARTICLE, VERSION):
+			for field in _load(doctype)["fields"]:
+				if field["fieldtype"] != "Select" or not field.get("reqd") or "default" in field:
+					continue
+				with self.subTest(doctype=doctype, field=field["fieldname"]):
+					self.assertEqual(field["options"].split("\n")[0], "")
+
+	def test_department_block_is_required_and_starts_blank(self):
+		version_field = _field(_load(VERSION), "department_block")
+		self.assertEqual(version_field.get("reqd"), 1)
+		self.assertNotIn("default", version_field)
+		for doctype in (ARTICLE, VERSION):
+			field = _field(_load(doctype), "department_block")
+			with self.subTest(doctype=doctype):
+				self.assertEqual(field["options"].split("\n", 1)[0], "")
+				self.assertNotIn("default", field)
+
 	def test_only_review_state_changes_after_submit(self):
 		meta = _load(VERSION)
 		self.assertEqual([f["fieldname"] for f in meta["fields"] if f.get("allow_on_submit")], ["review_state"])
@@ -556,10 +629,16 @@ class TestSelectOptionsMatchTheCode(unittest.TestCase):
 	def test_department_blocks(self):
 		for doctype in (ARTICLE, VERSION):
 			with self.subTest(doctype=doctype):
-				self.assertEqual(self._options(doctype, "department_block"), constants.DEPARTMENT_BLOCK_OPTIONS)
+				self.assertEqual(
+					self._options(doctype, "department_block"), constants.DEPARTMENT_BLOCK_SELECT_OPTIONS
+				)
+		self.assertEqual(constants.DEPARTMENT_BLOCK_SELECT_OPTIONS, ("", *constants.DEPARTMENT_BLOCK_OPTIONS))
 		codes = [code for code, _label in constants.DEPARTMENT_BLOCKS]
 		self.assertEqual(codes, [f"{n:02d}" for n in range(10)])
 		self.assertIn("06 Operations", constants.DEPARTMENT_BLOCK_OPTIONS)
+		# The blank is a way of saying "not chosen yet", never a block.
+		self.assertNotIn("", constants.DEPARTMENT_BLOCK_OPTIONS)
+		self.assertIsNone(constants.block_code(constants.DEPARTMENT_BLOCK_SELECT_OPTIONS[0]))
 
 	def test_block_code_is_strict(self):
 		self.assertEqual(constants.block_code("06 Operations"), "06")

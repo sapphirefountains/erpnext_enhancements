@@ -81,12 +81,14 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 - **`Knowledge Article Version`**, class `KnowledgeArticleVersion`:
   - Submittable, `KBV-.#####`, `track_changes 0`.
   - Fields: article, version_number, base_version, review_state (Draft / In Review / Published / Superseded / Discarded), the editable content fields, reviewer, submitted_by/on, approved_by/on, review_note, contributors, ai_drafted, ai_requested_by, and `source_url`/`source_drive_file_id`/`source_modified`/`imported_on` for slice 2.
+  - `department_block` is required, and its options start with a blank. v16 defaults a Select to its first option (`create_new.py:117-118`), so otherwise `reqd` never fires and an unplaced draft becomes block 00.
   - `before_submit` **and** `on_submit` refuse without `flags.kb_publish`, because `flags.ignore_validate` skips `before_submit` (v16 `document.py:1391-1416`) but never `on_submit` (`:1445-1457`).
   - `before_cancel`, `on_trash` and amend all refuse.
 - **Both doctypes:** `has_web_view 0`, `allow_guest_to_view 0`, `show_in_global_search 0`, `make_attachments_public 0`, `allow_import 0`.
 - **DocPerm:**
   - Article: `Desk User` read/report/print, System Manager read.
   - Version: KB Author and KB Approver read/create/write/print/report.
+  - Version, permlevel 1 (added in PR 1 review): KB Author and KB Approver **read only**. Every server-set field sits there, i.e. all but the content fields and `amended_from`. v16 enforces permlevel on save and never `read_only` (`document.py:1021-1044`), so otherwise a KB role could clear `contributors` or `ai_requested_by` through REST before approving. PR 2 onward writes these fields under `ignore_permissions`.
   - **`share 0` everywhere.** v16 `assign_to.add` shares the document with an assignee who cannot read it (`assign_to.py:106-118`).
   - No submit, cancel, amend, delete, export, import or email for anyone.
   - No System Manager, `Desk User`, All or Guest row on Version.
@@ -102,7 +104,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - `tests/test_knowledge_base_schema.py` (unittest, own ci.yml step) pins the flags, the exact DocPerm matrix, the class names and the seed patch.
   - `tests/test_ai_gate_denylist.py` (unittest, appended to the "AI gate + assistant-tool contract" step) covers:
     - the Version doctype refused for every tool;
-    - raw SQL on `` `tabKnowledge Article Version` `` refused, including comment and backtick variants;
+    - raw SQL on `` `tabKnowledge Article Version` `` refused, including comment and backtick variants, and comment markers MariaDB does not honour (`'#'` in a string, `1--1`, `/*! */`);
     - `tabKnowledge Article` **not** refused;
     - `Triton Chat Attachment` still refused.
 
