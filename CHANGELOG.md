@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.539.0] - 2026-09-25
+
+**Plan a Trip's checklist stops asking for things that were never needed, and a room can have
+a guest staying free.** On the first real trip (TRIP-2026-00001, the Kapture event) the office
+was told a day-tripper needed five nights of hotel, a one-night guest in a colleague's upgraded
+room needed a room of his own, and all four flights home needed a cost. None of that was true.
+
+### Why
+
+- **A day trip needs no bed.** One of the crew flew out at 7:20 AM and home at 3:45 PM the same
+  day. The checklist counted his nights from his dates on the crew step, and those were the whole
+  trip (Sep 27–Oct 2). The flights are what was actually booked, so they should decide.
+- **A guest in someone else's room is free.** The fourth person stayed one night in a colleague's
+  room, which had been upgraded. There was no way to say so. Ticking him into the room would have
+  split its cost in half and shown him checking in two days before he flew out.
+- **A round-trip ticket is one charge.** The flights home cost nothing unless a pricier option is
+  picked, and the fare shows as one charge on the company's invoicing. Asking for a cost on each
+  flight would split one charge into two lines, so an Expense Claim built from the trip would not
+  match what was paid.
+
+### Changed
+
+- **The checklist reads each person's travel, not only their dates**
+  (`completeness.stay_window`). Someone needs a bed from the day their way there leaves until the
+  day their way home leaves, within their own dates. Travel only narrows the window, never widens
+  it. The page's nights grid uses the same rule, marks a person who needs no nights as *day trip*,
+  and *Add a room* no longer ticks them in.
+- **A flight with no cost isn't flagged when it's on a paid ticket**
+  (`completeness.on_another_ticket`). If everyone on it has a confirmation number (PNR) that is on
+  another flight that has a cost, it's covered. A different PNR, a missing one, or no fare anywhere
+  on that PNR is still flagged. This is for flights only, because two hotel rooms on one
+  confirmation are still two charges.
+  - On the page, a flight home covered this way shows *Round trip: paid with the ticket for SLC →
+    San Diego on Sun, Sep 27*. A cost typed on it is treated as an extra charge, such as a fare
+    upgrade.
+  - *Copy the way there, reversed* now copies each person's confirmation number onto the flight
+    home.
+  - A flagged flight now also says how to clear it: give it the confirmation number of the flight
+    whose fare it shares.
+- The *Getting there*, *Getting back* and *Where everyone sleeps* help text, and the Review line for
+  costs, now explain these rules.
+
+### Added
+
+- **Room guests: Trip Accommodation `guest`** (Check, default 0, labeled *Guest (No Cost)*).
+  - On the page, tick the guest into the room, then tick them under *Anyone staying free?*. The
+    card shows their own check-in and check-out, and the cost hint reads *Staying free: …*.
+  - `planner.merge_bookings`: a guest gets no share of the cost. The split is redone when someone
+    becomes or stops being a guest. A room where everyone is a guest splits as before. Guest rows
+    sort after the people paying, because the page, the checklist and the crew itinerary all read a
+    booking's dates from its first row.
+  - `planner.fit_guest_stays`, which runs on every page save after all tables are merged: each
+    guest row's check-in and check-out become the room's dates cut to the guest's own nights. That
+    makes their `/itinerary`, itinerary email and calendar invite right. If the guest's nights fall
+    outside the room, the row keeps the room's dates.
+  - `get_state` reads a room's dates from its first non-guest row.
+
+### Result on TRIP-2026-00001 (computed from its prod rows with this code)
+
+- **Checklist: 6 flags → 1.** Before: 5 nights for the day-tripper, 1 night for the one-nighter, and
+  "no cost entered" on each of the 4 flights home. Now only the one-nighter's Monday is left.
+- **With him added to the colleague's room as a guest: 0 flags.** The room stays at $942.88 on the
+  colleague's row, the guest's row is $0 for Mon 9/28–Tue 9/29, and the trip total is unchanged at
+  $3,699.73.
+- The data on the trip itself is not changed by this release. The guest has to be added on the page.
+
+### Notes
+
+- **The day-tripper's dates were changed on 2026-09-25.** `tabVersion` shows his traveler row going
+  from Sep 28–Sep 28 to Sep 27–Oct 2 at 10:58, in a save that changed nothing else.
+  Unticking and re-ticking *Different dates* on the crew step does exactly that. His per diem and
+  his pre-travel reminder still use those dates, so they should be set back to Sep 28 if he isn't
+  away the whole trip.
+- Tests: 21 new cases in `tests/test_travel_planner.py`, including `TestTheKaptureTrip`, the real
+  trip with synthetic names and confirmation numbers. The page changes were exercised by rendering
+  the real `plan_a_trip.js` against that trip's state in a browser.
+
 ## [1.538.0] - 2026-09-25
 
 **The company knowledge base gets its module, its two doctypes, its two roles and its locked
