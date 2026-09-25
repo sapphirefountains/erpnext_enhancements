@@ -1,10 +1,15 @@
 // Visit Wizard — the technician's guided, touch-first maintenance visit form.
 //
-// A desk Page (/app/visit-wizard?record=MNT-REC-...) that steps through a
+// A desk Page (/desk/visit-wizard/MNT-REC-...) that steps through a
 // Sapphire Maintenance Record one section at a time: Safety → Water
 // Chemistry → Chemicals Used → Inspection → Cleaning → Wrap-up. Every input
 // is a tap (steppers, segmented buttons, toggles) or a short numeric entry —
-// no child-table grids. Without ?record= it lists today's open visits.
+// no child-table grids. Without a record it lists today's open visits.
+//
+// Every screen is its own history entry, so the phone's Back button goes back
+// one screen and Forward returns to it — see "routing" below for the
+// addresses. ?record=MNT-REC-... (the kiosk's and the desk form's link) still
+// opens a visit.
 //
 // It reads and writes the same Sapphire Maintenance Record as the desk form
 // via api/maintenance_visit.py (bootstrap instantiates the template
@@ -24,6 +29,9 @@ frappe.pages["visit-wizard"].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 	wrapper.visit_wizard = new VisitWizard(page, wrapper);
+	// Leaving for another Desk page (the sidebar, a link) sends what was typed,
+	// as a step change does. The visit stays loaded, so Back comes back to it.
+	$(wrapper).on("hide", () => wrapper.visit_wizard.save_on_hide());
 };
 
 frappe.pages["visit-wizard"].on_page_show = function (wrapper) {
@@ -192,6 +200,47 @@ function vz_plain_html(value) {
 	return frappe.utils.escape_html(String(value == null ? "" : value)).replace(/\n/g, "<br>");
 }
 
+// The save_visit patch for a batch of edits: changed parent fields, changed rows
+// by name, and consumables added here (no name yet — the server appends them).
+function vz_patch(dirty, pending_added) {
+	const rows = {};
+	Object.entries(dirty.rows).forEach(([table, by_name]) => {
+		rows[table] = Object.entries(by_name).map(([name, changes]) => ({ name, ...changes }));
+	});
+	pending_added.forEach((row) => {
+		(rows.consumables = rows.consumables || []).push({
+			item: row.item,
+			qty: row.qty,
+			warehouse: row.warehouse,
+		});
+	});
+	return { fields: dirty.fields, rows };
+}
+
+// A save the server answered and turned down — out of date (someone saved the
+// visit since, or an earlier save committed but its answer never arrived), not
+// permitted, gone — is turned down again on every retry, so it is not retried.
+// No answer at all (status 0: a bad signal) or a server error may pass next
+// time, and is. frappe.call rejects with the jqXHR, which carries the status.
+function vz_refused(error) {
+	const status = (error && error.status) || 0;
+	return status >= 400 && status < 500 && ![401, 408, 429].includes(status);
+}
+
+// Two batches of unsaved edits as one; `top` wins wherever both touched a field.
+function vz_merge_dirty(base, top) {
+	const merged = { fields: { ...base.fields, ...top.fields }, rows: {} };
+	[base.rows, top.rows].forEach((rows) => {
+		Object.entries(rows).forEach(([table, by_name]) => {
+			const into = (merged.rows[table] = merged.rows[table] || {});
+			Object.entries(by_name).forEach(([name, changes]) => {
+				into[name] = { ...(into[name] || {}), ...changes };
+			});
+		});
+	});
+	return merged;
+}
+
 class VisitWizard {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -199,10 +248,22 @@ class VisitWizard {
 		$("<style>").text(VZ_STYLE).appendTo(page.body);
 		this.$wrap = $('<div class="vz-wrap"></div>').appendTo(page.body);
 		this.page.set_secondary_action(__("Reload"), () => this.reload(), "refresh");
+		// Edits that outlived the screen they were made on, by record name (see
+		// park()), and the save of each record still on the wire. Neither is part
+		// of reset(): both belong to a record, not to what is on screen.
+		this._parked = {};
+		this._park_warned = new Set();
+		this._saving = {};
+		// Bumped whenever the picker or a visit is asked for, so a slow answer for
+		// a screen the technician has already left is dropped instead of painted.
+		this._paint_seq = 0;
 		// Closing the tab mid-visit used to lose whatever had not autosaved yet,
 		// silently. Technicians work on phones and switch apps constantly.
 		window.addEventListener("beforeunload", (event) => {
-			if (this.doc && this.doc.docstatus === 0 && this.has_dirty()) {
+			if (
+				(this.doc && this.doc.docstatus === 0 && this.has_dirty()) ||
+				Object.keys(this._parked).length
+			) {
 				event.preventDefault();
 				event.returnValue = "";
 				return "";
@@ -224,29 +285,255 @@ class VisitWizard {
 		this.dirty = { fields: {}, rows: {} };
 		this.pending_added = [];
 		this.safety_ok = false;
+		// Cleared, not just forgotten: a timer left running fires into the next
+		// visit, and a stale "NOT SAVED" or signature must not follow the
+		// technician onto a different record.
+		clearTimeout(this._save_timer);
+		clearTimeout(this._retry_timer);
+		clearTimeout(this._saved_timer);
 		this._save_timer = null;
+		this._retry_attempt = 0;
+		this._save_state = null;
+		this._loading = null;
+		this._load_target = null;
+		this._signature_drawn = false;
+		this._signature_data = null;
+		this._signature_canvas = null;
 	}
 
 	// ----- routing -------------------------------------------------------
+	//
+	// One history entry per screen, so the phone's Back button goes back one
+	// screen and Forward comes back to it:
+	//
+	//   /desk/visit-wizard                           the picker
+	//   /desk/visit-wizard/<record>                  a visit, on its first step
+	//   /desk/visit-wizard/<record>/<step>           a step: safety, readings, ...
+	//   /desk/visit-wizard/<record>/<step>/<serial>  a feature tab on that step
+	//
+	// ?record=<name> (the kiosk's and the desk form's link) opens a visit too.
+	//
+	// The page moves with frappe.set_route and frappe owns history: Back and
+	// Forward re-render the route, which fires on_page_show -> handle_route, and
+	// there is no popstate listener here. The page used to write its own address
+	// with history.replaceState — never a new entry, so Back left the wizard
+	// from any step — and wrote it as /app/visit-wizard, which the v16 router
+	// cannot parse: a Back or Forward onto one of those entries showed "Page
+	// not found". A hand-built path is how that happened, so there is none here.
 
 	handle_route() {
-		let record = frappe.utils.get_url_arg("record");
-		if (!record && frappe.route_options && frappe.route_options.record) {
-			record = frappe.route_options.record;
+		const target = this.route_target();
+		if (!target) return;
+		this._url_target = target;
+		if (!target.record) {
+			this.leave_record();
+			this.reset();
+			this.show_picker();
+			return;
+		}
+		if (this.doc && this.doc.name === target.record) {
+			this.go(this.step_for(target.step), { feature: target.feature, from_route: true });
+			return;
+		}
+		if (this._loading === target.record) {
+			// Back/Forward again while this visit is still loading: land on the
+			// newest step asked for once it arrives.
+			this._load_target = target;
+			return;
+		}
+		this.leave_record();
+		this.load_record(target.record, target);
+	}
+
+	// What the address asks for: {record, step, feature}. Path segments win;
+	// ?record= and frappe.set_route("visit-wizard", {record}) arrive in
+	// frappe.route_options, which is consumed like the list view does — the
+	// router merges every address's query into it and never clears it, so an
+	// unconsumed key would reopen this visit on the next plain /desk/visit-wizard.
+	//
+	// Only ?record= in the address itself (the kiosk's link, a full load) names
+	// the visit in that history entry. frappe.set_route("visit-wizard", {record})
+	// and an in-desk <a href="/desk/visit-wizard?record=..."> — which the router
+	// intercepts and routes as the path alone — leave a bare /desk/visit-wizard
+	// that Back, Forward or a reload would read as the picker. Such a target is
+	// `unaddressed`, which no screen matches (target_key), so the load's
+	// sync_route replaces that entry with the visit's own address.
+	route_target() {
+		const route = frappe.get_route() || [];
+		if (route[0] !== "visit-wizard") return null;
+		const options = frappe.route_options || {};
+		const take = (key) => {
+			const value = options[key];
+			delete options[key];
+			return value == null ? "" : String(value);
+		};
+		const record = take("record");
+		const step = take("step");
+		if (frappe.route_options && !Object.keys(frappe.route_options).length) {
 			frappe.route_options = null;
 		}
-		if (record && (!this.doc || this.doc.name !== record)) {
-			this.load_record(record);
-		} else if (!record && !this.doc) {
-			this.show_picker();
+		if (route[1]) {
+			return { record: String(route[1]), step: String(route[2] || ""), feature: String(route[3] || "") };
+		}
+		const in_address = frappe.utils.get_url_arg("record") || "";
+		const name = record || in_address;
+		return {
+			record: name,
+			step: step || frappe.utils.get_url_arg("step") || "",
+			feature: "",
+			unaddressed: !!name && name !== in_address,
+		};
+	}
+
+	// The screen on view, in the same shape as route_target().
+	view_target(index) {
+		if (!this.doc) return { record: "", step: "", feature: "" };
+		const at = index == null ? this.step_index : index;
+		const step = this.steps[at] || {};
+		const tabbed = step.table && this.features.length;
+		return { record: this.doc.name, step: step.key || "", feature: tabbed ? this.feature || "" : "" };
+	}
+
+	// One string per screen, so "is that the screen already showing?" is a
+	// comparison. A visit's bare address is its first step, and a feature is
+	// part of the screen only on a step that shows feature tabs. An address for
+	// such a step without a feature keeps the tab already chosen, and is then
+	// corrected in place to name it (sync_route) — it must not compare equal to
+	// whichever tab happens to be showing, or a tab change would push nothing.
+	// An `unaddressed` target (route_target) is no screen at all.
+	target_key(target) {
+		if (!target || !target.record || target.unaddressed) return "";
+		const step = target.step || "safety";
+		const tabbed = this.features.length && this.steps.some((s) => s.key === step && s.table);
+		return [target.record, step, tabbed ? target.feature || "" : ""].join("/");
+	}
+
+	step_for(key) {
+		const index = this.steps.findIndex((step) => step.key === key);
+		return index < 0 ? 0 : index;
+	}
+
+	// Put `target` in the address as a new history entry, or in place of the
+	// current one. Each entry the page pushes is tagged in history.state with
+	// the screen it was pushed from, which is what lets the wizard's own Back
+	// button step back through history (back_one_step) instead of stacking a
+	// new entry on top.
+	push_route(target, replace) {
+		// Only while this page is the one on screen: a visit that finishes loading
+		// after the technician went elsewhere must not route them back here.
+		if ((frappe.get_route() || [])[0] !== "visit-wizard") return;
+		const behind = this._url_target ? this.target_key(this._url_target) : null;
+		const kept = ((window.history.state || {}).vz || {}).back;
+		const before = window.location.href;
+		// A leftover key would ride along into the route pushed here.
+		if (frappe.route_options) {
+			delete frappe.route_options.record;
+			delete frappe.route_options.step;
+		}
+		const route = ["visit-wizard"];
+		if (target.record) {
+			route.push(target.record);
+			if (target.step) route.push(target.step);
+			if (target.step && target.feature) route.push(target.feature);
+		}
+		if (replace) frappe.route_flags.replace_route = true;
+		frappe.set_route(route);
+		// Read only by push_state, which has already run: frappe itself clears
+		// the flag after 100 ms *and* every pending request, so left set it would
+		// turn the technician's next Next (the safety brief still loading) into a
+		// replace instead of a new entry.
+		delete frappe.route_flags.replace_route;
+		this._url_target = target;
+		if (window.location.href === before) return;
+		const back = replace ? kept : behind;
+		if (back == null) return;
+		try {
+			window.history.replaceState(Object.assign({}, window.history.state, { vz: { back } }), "");
+		} catch (e) {
+			// Untagged, the wizard's Back button pushes rather than steps back.
 		}
 	}
 
+	// Keep the address on the screen showing. A move the technician made gets
+	// its own entry; a screen the address asked for and could not show as-is
+	// (a later step before the safety tick, a step this visit does not have)
+	// corrects the entry it is on rather than adding one.
+	sync_route(from_route) {
+		const view = this.view_target();
+		if (this.target_key(this._url_target) === this.target_key(view)) return;
+		this.push_route(view, from_route);
+	}
+
+	// A visit picked from the list is a screen change like any other — its own
+	// entry, so Back returns to the list. Only from the list: an answer that
+	// arrives after the technician has gone elsewhere must not drag them back.
+	open_record(name) {
+		if ((frappe.get_route() || [])[0] !== "visit-wizard") return;
+		if (this.doc || (this._url_target && this._url_target.record)) return;
+		this.push_route({ record: name, step: "", feature: "" });
+	}
+
+	// The wizard's own Back button. When the entry behind this one is the
+	// previous step — it is whenever Next led here — go back through history
+	// rather than pushing that step again: Next, Back, Next must not leave a
+	// stack that the phone's Back button then replays.
+	back_one_step() {
+		const back = ((window.history.state || {}).vz || {}).back;
+		if (back != null && back === this.target_key(this.view_target(this.step_index - 1))) {
+			window.history.back();
+			return;
+		}
+		this.go(this.step_index - 1);
+	}
+
+	// A move that came from Back/Forward has no tap to blur the field being
+	// typed in, and the number and text inputs commit on "change" — so blur it
+	// here first, or the reading or the note is dropped with the old screen.
+	commit_input() {
+		const el = document.activeElement;
+		if (el && el !== document.body && this.$wrap[0] && this.$wrap[0].contains(el) && el.blur) {
+			el.blur();
+		}
+	}
+
+	// Before the visit on screen gives way to the list or another visit: commit
+	// the field being typed in and send what is unsaved. Not awaited — Back must
+	// not hang on a bad signal — so flush_save() keeps hold of the record it is
+	// saving and parks a failure against it (see park()). Silent: by the time
+	// the server answers, this visit is no longer the one on screen, and
+	// frappe's "Visit Out of Date … Reload to continue" would sit over another
+	// visit without saying which it meant; park() names it instead.
+	leave_record() {
+		if (!this.doc) return;
+		this.commit_input();
+		if (this._saving[this.doc.name] && this.has_dirty()) {
+			// A save of this visit is still on the wire and the rest may only
+			// follow it — which flush_save() would do for the visit on screen,
+			// and this one is about to stop being that. Queue the rest behind it.
+			this.park(this.doc, this.dirty, this.pending_added, { soon: true });
+			this.dirty = { fields: {}, rows: {} };
+			this.pending_added = [];
+			return;
+		}
+		this.flush_save({ silent: true }).catch(() => {});
+	}
+
+	// Another Desk page took over. The visit stays loaded (Back returns to it),
+	// so this is a plain flush — nothing is parked for a record still on screen.
+	save_on_hide() {
+		if (!this.doc) return;
+		this.commit_input();
+		this.flush_save().catch(() => {});
+	}
+
+	// Reload re-reads the screen the address names — the visit on the same
+	// step, or the list — and drops edits not yet sent: it is the way out of
+	// "Visit Out of Date", and of "Could not load this visit".
 	reload() {
-		if (this.doc) {
-			const name = this.doc.name;
-			this.reset();
-			this.load_record(name);
+		const target = this.doc ? this.view_target() : this._url_target || { record: "" };
+		this.reset();
+		if (target.record) {
+			this.load_record(target.record, target);
 		} else {
 			this.show_picker();
 		}
@@ -255,12 +542,16 @@ class VisitWizard {
 	// ----- picker --------------------------------------------------------
 
 	show_picker() {
+		const ticket = ++this._paint_seq;
 		this.page.set_title(__("Visits"));
+		this.page.clear_indicator();
 		this.$wrap.html(`<div class="vz-empty">${__("Loading…")}</div>`);
 		Promise.all([
 			frappe.call("erpnext_enhancements.api.time_kiosk.get_my_visits_today"),
 			frappe.call("erpnext_enhancements.api.maintenance_visit.get_upcoming_visits"),
 		]).then(([today_res, upcoming_res]) => {
+			// A visit opened (or Forward pressed) while the list loaded wins.
+			if (ticket !== this._paint_seq) return;
 			const today = (today_res && today_res.message) || [];
 			const upcoming = (upcoming_res && upcoming_res.message) || [];
 			this.$wrap.empty();
@@ -286,6 +577,9 @@ class VisitWizard {
 				`<div class="vz-section-head">${__("Not on the list?")}</div>`
 			);
 			this.$wrap.append(this.log_visit_card());
+		}, () => {
+			if (ticket !== this._paint_seq) return;
+			this.$wrap.html(`<div class="vz-empty">${__("Could not load your visits.")}</div>`);
 		});
 	}
 
@@ -386,12 +680,7 @@ class VisitWizard {
 									});
 								}
 								dialog.hide();
-								window.history.replaceState(
-									null,
-									"",
-									`/app/visit-wizard?record=${encodeURIComponent(name)}`
-								);
-								this.load_record(name);
+								this.open_record(name);
 							})
 							.catch(() => {
 								dialog.clear_message();
@@ -430,10 +719,7 @@ class VisitWizard {
 		return $(`<button class="vz-pick-card">
 				<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
 				<div class="vz-card-sub">${frappe.utils.escape_html(sub)} · ${frappe.utils.escape_html(visit.name)}</div>
-			</button>`).on("click", () => {
-			window.history.replaceState(null, "", `/app/visit-wizard?record=${encodeURIComponent(visit.name)}`);
-			this.load_record(visit.name);
-		});
+			</button>`).on("click", () => this.open_record(visit.name));
 	}
 
 	upcoming_card(visit) {
@@ -463,12 +749,7 @@ class VisitWizard {
 				.then((r) => {
 					const name = r && r.message;
 					if (!name) throw new Error("no record returned");
-					window.history.replaceState(
-						null,
-						"",
-						`/app/visit-wizard?record=${encodeURIComponent(name)}`
-					);
-					this.load_record(name);
+					this.open_record(name);
 				})
 				.catch(() => {
 					$btn.prop("disabled", false).text(__("Do Visit Today"));
@@ -479,28 +760,56 @@ class VisitWizard {
 
 	// ----- loading -------------------------------------------------------
 
-	load_record(name) {
+	// `target` is the step (and feature tab) the address asked for.
+	load_record(name, target) {
 		this.reset();
+		const ticket = ++this._paint_seq;
+		this._loading = name;
+		this._load_target = target || { record: name, step: "", feature: "" };
 		this.$wrap.html(`<div class="vz-empty">${__("Loading visit…")}</div>`);
-		frappe
-			.call({
-				method: "erpnext_enhancements.api.maintenance_visit.get_visit_bootstrap",
-				args: { record: name },
+		let parked = null;
+		// A save of this visit still on the wire would land after the bootstrap
+		// was read, leaving the screen a version behind and the next autosave
+		// refused as out of date. Let it land (or fail, and be parked) first.
+		Promise.resolve(this._saving[name])
+			.then(() => {
+				if (ticket !== this._paint_seq) return null;
+				parked = this.take_parked(name);
+				return frappe.call({
+					method: "erpnext_enhancements.api.maintenance_visit.get_visit_bootstrap",
+					args: { record: name },
+				});
 			})
 			.then((r) => {
+				// The technician moved on while this loaded: paint nothing, and
+				// hand back any parked edits taken for it.
+				if (ticket !== this._paint_seq) {
+					if (parked) this.park(parked.doc, parked.dirty, parked.pending_added);
+					return;
+				}
 				const data = r.message || {};
+				this._loading = null;
 				this.doc = data.record;
 				this.dashboard = data.dashboard || {};
 				this.section_meta = data.sections || {};
 				this.template_meta = data.template_meta || {};
 				this.feature_names = data.features || {};
 				this.apply_state(data.state);
+				if (parked) this.reapply_parked(parked);
+				parked = null;
 				this.safety_ok = !!this.doc.safety_acknowledged;
 				this.build_steps();
 				this.build_features();
+				const want = this._load_target || {};
+				this.step_index = this.clamp_step(this.step_for(want.step));
+				if (want.feature && this.features.includes(want.feature)) this.feature = want.feature;
 				this.render();
+				this.sync_route(true);
 			})
 			.catch(() => {
+				if (parked) this.park(parked.doc, parked.dirty, parked.pending_added);
+				if (ticket !== this._paint_seq) return;
+				this._loading = null;
 				this.$wrap.html(`<div class="vz-empty">${__("Could not load this visit.")}</div>`);
 			});
 	}
@@ -575,7 +884,7 @@ class VisitWizard {
 
 	schedule_save() {
 		clearTimeout(this._save_timer);
-		this._save_timer = setTimeout(() => this.flush_save(), 4000);
+		this._save_timer = setTimeout(() => this.flush_save().catch(() => {}), 4000);
 		this.set_save_state("pending");
 	}
 
@@ -630,63 +939,217 @@ class VisitWizard {
 		);
 	}
 
-	flush_save() {
+	// Saves outlive the screen they were made on: this keeps hold of the record
+	// it is saving (`doc`), because by the time the server answers Back may have
+	// put the list or another visit on screen. options: `silent` keeps frappe
+	// from showing a refusal itself (see leave_record).
+	flush_save(options) {
+		options = options || {};
 		clearTimeout(this._save_timer);
-		if (!this.doc || this.doc.docstatus !== 0 || !this.has_dirty()) {
+		const doc = this.doc;
+		if (!doc || doc.docstatus !== 0 || !this.has_dirty()) {
 			return Promise.resolve();
 		}
-		const rows = {};
-		Object.entries(this.dirty.rows).forEach(([table, by_name]) => {
-			rows[table] = Object.entries(by_name).map(([name, changes]) => ({ name, ...changes }));
-		});
-		this.pending_added.forEach((row) => {
-			(rows.consumables = rows.consumables || []).push({
-				item: row.item,
-				qty: row.qty,
-				warehouse: row.warehouse,
-			});
-		});
+		// One save of a visit at a time. Each carries the `modified` the one
+		// before it returned, so a second sent alongside the first is refused as
+		// out of date. What is unsaved now goes out when the first has answered.
+		if (this._saving[doc.name]) {
+			return this._saving[doc.name].then(() => (this.doc === doc ? this.flush_save(options) : undefined));
+		}
 		const added_local = this.pending_added;
 		const sent_dirty = this.dirty;
-		const patch = { fields: sent_dirty.fields, rows };
+		const patch = vz_patch(sent_dirty, added_local);
 		this.dirty = { fields: {}, rows: {} };
 		this.pending_added = [];
 		this.set_save_state("saving");
 
-		return frappe
+		const done = frappe
 			.call({
 				method: "erpnext_enhancements.api.maintenance_visit.save_visit",
 				args: {
-					record: this.doc.name,
+					record: doc.name,
 					patch: JSON.stringify(patch),
-					modified: this.doc.modified,
+					modified: doc.modified,
 				},
+				silent: !!options.silent,
 			})
 			.then((r) => {
 				const state = r.message || {};
 				((state.added || {}).consumables || []).forEach((name, index) => {
 					if (added_local[index]) added_local[index].name = name;
 				});
+				if (doc !== this.doc) {
+					// Nothing of it is on screen any more, but a later save of this
+					// record (a parked one) must carry the version this one made.
+					doc.modified = state.modified || doc.modified;
+					return;
+				}
 				this.apply_state(state);
 				this.refresh_reading_flags();
 				this._retry_attempt = 0;
 				this.set_save_state(this.has_dirty() ? "pending" : "saved");
 			})
 			.catch((error) => {
+				if (doc !== this.doc) {
+					// Never into the visit on screen now — these rows are not on it.
+					// Anything parked for this record since is newer, so this goes under it.
+					this.park(doc, sent_dirty, added_local, { underneath: true, refused: vz_refused(error) });
+					return;
+				}
 				// keep the edits — newer in-flight changes win over the failed batch
-				const merged = { fields: { ...sent_dirty.fields, ...this.dirty.fields }, rows: sent_dirty.rows };
-				Object.entries(this.dirty.rows).forEach(([table, by_name]) => {
-					const base = (merged.rows[table] = merged.rows[table] || {});
-					Object.entries(by_name).forEach(([name, changes]) => {
-						base[name] = { ...(base[name] || {}), ...changes };
-					});
-				});
-				this.dirty = merged;
+				this.dirty = vz_merge_dirty(sent_dirty, this.dirty);
 				this.pending_added = added_local.concat(this.pending_added);
 				this.set_save_state("error");
 				this.schedule_retry();
 				throw error;
 			});
+		this.track_save(doc.name, done);
+		return done;
+	}
+
+	// Record `promise` as the save of `name` on the wire, as one that never
+	// rejects: flush_save() and load_record() wait on it, whatever its outcome.
+	track_save(name, promise) {
+		const tracked = promise.then(
+			() => {},
+			() => {}
+		);
+		this._saving[name] = tracked;
+		tracked.then(() => {
+			if (this._saving[name] === tracked) delete this._saving[name];
+		});
+	}
+
+	// ----- saves that outlive the screen ---------------------------------------
+	//
+	// Back to the list or on to another visit while a save is failing (a bad
+	// signal) used to drop the edits: reset() cleared them, and a failure that
+	// answered later was merged into whichever visit was on screen by then. Now
+	// they are parked against their own record, retried there with that
+	// record's own `modified`, and put back on screen if the visit is opened
+	// again before they land. beforeunload still warns while any are parked.
+	//
+	// Every save sent from here is silent (see leave_record for why), and a
+	// refusal is not retried: the likeliest one is "out of date" after a save
+	// that did commit but whose answer was lost on a bad signal, and a retry
+	// carries the same stale `modified`, so it could never succeed — it used to
+	// pop six unnamed "Visit Out of Date" dialogs over whatever visit was open,
+	// where tapping that page's Reload would drop *that* visit's unsent edits.
+
+	// options: `underneath` — this batch is older than anything already parked
+	// for the record; `attempt` — sends already failed; `soon` — not a failure,
+	// just queued behind a save still on the wire, so send it straight after;
+	// `refused` — the server turned it down (vz_refused): kept, not retried.
+	park(doc, dirty, pending_added, options) {
+		options = options || {};
+		const name = doc.name;
+		const parked = this._parked[name] || { doc, dirty: { fields: {}, rows: {} }, pending_added: [], attempt: 0 };
+		parked.dirty = options.underneath ? vz_merge_dirty(dirty, parked.dirty) : vz_merge_dirty(parked.dirty, dirty);
+		parked.pending_added = options.underneath
+			? pending_added.concat(parked.pending_added)
+			: parked.pending_added.concat(pending_added);
+		parked.attempt = Math.max(parked.attempt, options.attempt || 0);
+		this._parked[name] = parked;
+		clearTimeout(parked.timer);
+		if (options.refused) {
+			// Opening the visit again loads it fresh and puts these back on
+			// screen as unsaved edits, which then save against that version.
+			frappe.show_alert({
+				message: __(
+					"Changes to {0} were turned down by the server. They are kept: open that visit to send them again.",
+					[name]
+				),
+				indicator: "red",
+			});
+			return;
+		}
+		if (!options.soon && !this._park_warned.has(name)) {
+			this._park_warned.add(name);
+			frappe.show_alert({
+				message: __("Changes to {0} are not saved yet. Retrying.", [name]),
+				indicator: "orange",
+			});
+		}
+		if (parked.attempt >= 6) {
+			frappe.show_alert({
+				message: __("Changes to {0} are still not saved. Open that visit to try again.", [name]),
+				indicator: "red",
+			});
+			return;
+		}
+		const delay = options.soon ? 0 : 1000 * Math.pow(2, Math.min(parked.attempt + 1, 5));
+		parked.timer = setTimeout(() => this.send_parked(name), delay);
+	}
+
+	send_parked(name) {
+		if (!this._parked[name]) return;
+		clearTimeout(this._parked[name].timer);
+		let parked = null;
+		// Taken only once any save of this record still on the wire has answered,
+		// so a failure it parks meanwhile is in the batch too, underneath.
+		const sent = Promise.resolve(this._saving[name]).then(() => {
+			parked = this.take_parked(name);
+			if (!parked) return null;
+			return frappe.call({
+				method: "erpnext_enhancements.api.maintenance_visit.save_visit",
+				args: {
+					record: name,
+					patch: JSON.stringify(vz_patch(parked.dirty, parked.pending_added)),
+					modified: parked.doc.modified,
+				},
+				silent: true,
+			});
+		});
+		this.track_save(
+			name,
+			sent.then(
+				(r) => {
+					if (!parked) return;
+					parked.doc.modified = ((r && r.message) || {}).modified || parked.doc.modified;
+					this._park_warned.delete(name);
+					frappe.show_alert({ message: __("Saved your changes to {0}.", [name]), indicator: "green" });
+				},
+				(error) => {
+					if (!parked) return;
+					this.park(parked.doc, parked.dirty, parked.pending_added, {
+						underneath: true,
+						attempt: parked.attempt + 1,
+						refused: vz_refused(error),
+					});
+				}
+			)
+		);
+	}
+
+	take_parked(name) {
+		const parked = this._parked[name];
+		if (!parked) return null;
+		delete this._parked[name];
+		clearTimeout(parked.timer);
+		return parked;
+	}
+
+	// Parked edits back onto the freshly loaded record, as unsaved edits the
+	// normal autosave sends. A row gone from the record since has nowhere to go.
+	reapply_parked(parked) {
+		Object.entries(parked.dirty.fields).forEach(([field, value]) => {
+			this.doc[field] = value;
+			this.dirty.fields[field] = value;
+		});
+		Object.entries(parked.dirty.rows).forEach(([table, by_name]) => {
+			Object.entries(by_name).forEach(([name, changes]) => {
+				const row = (this.doc[table] || []).find((candidate) => candidate.name === name);
+				if (!row) return;
+				Object.assign(row, changes);
+				const table_dirty = (this.dirty.rows[table] = this.dirty.rows[table] || {});
+				table_dirty[name] = { ...(table_dirty[name] || {}), ...changes };
+			});
+		});
+		parked.pending_added.forEach((row) => {
+			(this.doc.consumables = this.doc.consumables || []).push(row);
+			this.pending_added.push(row);
+		});
+		if (this.has_dirty()) this.schedule_save();
 	}
 
 	refresh_reading_flags() {
@@ -791,11 +1254,7 @@ class VisitWizard {
 			$(`<button type="button" role="tab" aria-selected="${active}" class="vz-tab ${active ? "vz-active" : ""}">
 					${frappe.utils.escape_html(label)}${left ? ` <span class="vz-chip vz-chip-req">${left}</span>` : ""}
 				</button>`)
-				.on("click", () => {
-					this.flush_save().catch(() => {});
-					this.feature = serial;
-					this.render();
-				})
+				.on("click", () => this.go(this.step_index, { feature: serial }))
 				.appendTo($tabs);
 		});
 	}
@@ -819,7 +1278,7 @@ class VisitWizard {
 		if (this.step_index > 0) {
 			$('<button type="button"></button>')
 				.text(__("Back"))
-				.on("click", () => this.go(this.step_index - 1))
+				.on("click", () => this.back_one_step())
 				.appendTo($inner);
 		}
 		if (!last) {
@@ -842,11 +1301,42 @@ class VisitWizard {
 		this.$wrap.append($nav);
 	}
 
-	go(index) {
-		this.flush_save();
-		this.step_index = Math.max(0, Math.min(index, this.steps.length - 1));
-		this.render();
-		window.scrollTo(0, 0);
+	// Every step change: the Back/Next buttons, the step dots, a feature tab,
+	// and Back/Forward (from_route, via handle_route). The move is shown first
+	// and the address follows it, so a push that frappe dedupes never leaves
+	// the screen behind.
+	go(index, options) {
+		options = options || {};
+		if (!this.doc) return;
+		const target = this.clamp_step(index, !options.from_route);
+		const feature =
+			options.feature && this.features.includes(options.feature) ? options.feature : this.feature;
+		if (target !== this.step_index || feature !== this.feature) {
+			this.commit_input();
+			this.flush_save().catch(() => {});
+			this.step_index = target;
+			this.feature = feature;
+			this.render();
+			window.scrollTo(0, 0);
+		}
+		this.sync_route(options.from_route);
+	}
+
+	// The checklist opens only after the safety acknowledgement. The Start
+	// Visit button always knew that; the step dots, Forward and a typed address
+	// did not. A submitted visit is read-only, so it is not held back.
+	clamp_step(index, tell) {
+		const step = Math.max(0, Math.min(index, this.steps.length - 1));
+		if (step > 0 && !this.safety_ok && this.doc.docstatus === 0) {
+			if (tell) {
+				frappe.show_alert({
+					message: __("Acknowledge the safety procedures first."),
+					indicator: "orange",
+				});
+			}
+			return 0;
+		}
+		return step;
 	}
 
 	// Render a section-backed step: group the step's rows by their source
@@ -1430,7 +1920,14 @@ class VisitWizard {
 				};
 				this.doc.consumables.push(row);
 				this.pending_added.push(row);
-				this.flush_save().then(() => this.render());
+				// Drawn whether or not the save got through (a failed one shows as
+				// NOT SAVED and retries), and only onto the visit it was added to.
+				const doc = this.doc;
+				this.flush_save()
+					.catch(() => {})
+					.then(() => {
+						if (this.doc === doc) this.render();
+					});
 			},
 		});
 		dialog.show();
@@ -1596,13 +2093,18 @@ class VisitWizard {
 		});
 	}
 
+	// The canvas is rebuilt every time Wrap-up renders — leaving the step and
+	// coming back, now also by Back and Forward. A signature drawn this visit is
+	// kept as a data URL (on pointerup) and drawn back into the new canvas;
+	// before, the flag outlived the drawing, and Finish sent a blank image as
+	// the client's signature.
 	setup_signature($card) {
 		const canvas = $card.find("canvas")[0];
 		const resize = () => {
-			const data = canvas.toDataURL();
+			const data = this._signature_drawn ? this._signature_data || canvas.toDataURL() : null;
 			canvas.width = canvas.offsetWidth;
 			canvas.height = canvas.offsetHeight;
-			if (this._signature_drawn) {
+			if (data) {
 				const image = new Image();
 				image.onload = () => canvas.getContext("2d").drawImage(image, 0, 0);
 				image.src = data;
@@ -1634,14 +2136,20 @@ class VisitWizard {
 			context.stroke();
 			this._signature_drawn = true;
 		});
-		canvas.addEventListener("pointerup", () => (drawing = false));
+		const lift = () => {
+			if (drawing && this._signature_drawn) this._signature_data = canvas.toDataURL("image/png");
+			drawing = false;
+		};
+		canvas.addEventListener("pointerup", lift);
+		canvas.addEventListener("pointercancel", lift);
 		$card.find(".vz-link-btn").on("click", () => {
 			context.clearRect(0, 0, canvas.width, canvas.height);
 			this._signature_drawn = false;
+			this._signature_data = null;
 		});
 		this._signature_canvas = canvas;
 
-		if (this.doc.client_sign_off) {
+		if (this.doc.client_sign_off && !this._signature_drawn) {
 			const image = new Image();
 			image.onload = () => {
 				context.drawImage(image, 0, 0, canvas.width || canvas.offsetWidth, canvas.height || canvas.offsetHeight);
@@ -1691,15 +2199,16 @@ class VisitWizard {
 	// ----- finish -------------------------------------------------------------
 
 	finish() {
-		const signature =
-			this._signature_drawn && this._signature_canvas
-				? this._signature_canvas.toDataURL("image/png")
-				: null;
+		const signature = this._signature_drawn
+			? this._signature_data ||
+				(this._signature_canvas ? this._signature_canvas.toDataURL("image/png") : null)
+			: null;
+		const doc = this.doc;
 		this.flush_save()
 			.then(() =>
 				frappe.call({
 					method: "erpnext_enhancements.api.maintenance_visit.finish_visit",
-					args: { record: this.doc.name, signature, modified: this.doc.modified },
+					args: { record: doc.name, signature, modified: doc.modified },
 					freeze: true,
 					freeze_message: __("Finishing visit…"),
 				})
@@ -1707,6 +2216,20 @@ class VisitWizard {
 			.then((r) => {
 				const state = (r && r.message) || {};
 				const submitted = state.docstatus === 1;
+				// Back from the done screen shows the steps again: they must show
+				// the visit as it now is (submitted, or pending review), not as
+				// an open draft that would autosave into a refusal.
+				doc.modified = state.modified || doc.modified;
+				if (state.docstatus != null) doc.docstatus = state.docstatus;
+				if (state.workflow_state !== undefined) doc.workflow_state = state.workflow_state;
+				// Left for another screen while it finished: say so, paint nothing.
+				if (doc !== this.doc) {
+					frappe.show_alert({
+						message: submitted ? __("Visit submitted") : __("Sent for review"),
+						indicator: "green",
+					});
+					return;
+				}
 				this.$wrap.empty().append(`
 					<div class="vz-done-screen">
 						<div class="vz-done-icon">${submitted ? "✅" : "📨"}</div>
@@ -1718,13 +2241,15 @@ class VisitWizard {
 						}</p>
 					</div>
 				`);
+				// A new entry for the list, so Back from it returns to this visit
+				// (read-only now) rather than skipping the whole visit.
 				$(`<button type="button" class="vz-pick-card" style="text-align:center;font-weight:600;">${__("Back to Today's Visits")}</button>`)
-					.on("click", () => {
-						window.history.replaceState(null, "", "/app/visit-wizard");
-						this.reset();
-						this.show_picker();
-					})
+					.on("click", () => this.push_route({ record: "", step: "", feature: "" }))
 					.appendTo(this.$wrap.find(".vz-done-screen"));
+			})
+			.catch(() => {
+				// The failed save is already on screen and retrying; a refused
+				// finish showed the server's own message.
 			});
 	}
 }

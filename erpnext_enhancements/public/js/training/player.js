@@ -388,6 +388,16 @@
 
 		// -------------------------------------------------------------- plumbing
 
+		// Bumped by every view change -- go() and loading() -- and read back by anything
+		// that paints `main` from a reply. On the Desk, Back and Forward move the player
+		// while a fetch is still in flight, and a reply that paints into `main` regardless
+		// puts the screen the learner just left under the URL of the one they went to.
+		var viewSeq = 0;
+		// Thrown down load()'s chain when its reply arrives for a view that has since been
+		// replaced, so neither its state writes nor its caller's go() run. Not an error;
+		// every catch on that chain lets it pass silently.
+		var STALE = { stale: true };
+
 		function runTeardowns() {
 			flush();
 			teardowns.forEach(function (fn) {
@@ -611,6 +621,7 @@
 		// ------------------------------------------------------------------ view
 
 		function go(view) {
+			viewSeq += 1;
 			runTeardowns();
 			state.view = view;
 			clear(head);
@@ -652,6 +663,7 @@
 		// the *previous* course's outline for a beat, which reads as the wrong
 		// course having opened.
 		function loading(message) {
+			viewSeq += 1;
 			runTeardowns();
 			clear(head);
 			clear(main);
@@ -1094,7 +1106,43 @@
 			go("person");
 		}
 
-		function openCourse(courseName, lessonKey) {
+		// Everything that belongs to ONE course, cleared when a different one opens.
+		//
+		// Nothing used to clear it. `load()` reads `state.lessonKey` as the lesson it
+		// wants, so opening course B straight after course A asked B for A's lesson -- a
+		// ten-character hash B cannot have, so get_lesson threw "That lesson is not part of
+		// this course" -- and minted an attempt on B for somebody who had only opened its
+		// outline, which is the one thing load() says a glance must never do. A's
+		// "Awaiting Sign-off" banner could ride along onto B's outline the same way. The
+		// Desk rail, a catalogue card, and Back or Forward between two course URLs all
+		// reach it.
+		function forgetCourse() {
+			state.lesson = null;
+			state.lessonKey = null;
+			state.nextLessonKey = null;
+			state.attempt = null;
+			// Emptied rather than replaced: the per-lesson map is what lives here, and a
+			// bare reassignment of this object is the bug class test_training_boot_wire
+			// sweeps for.
+			state.progress = state.progress || {};
+			state.progress.lessons = {};
+			state.status = null;
+			state.assignmentStatus = null;
+			state.signoffWith = null;
+			state.outstanding = null;
+			state.quiz = null;
+			state.result = null;
+			state.completion = null;
+			state.reward = null;
+			state.nextCheckpoints = {};
+		}
+
+		// `view` is only ever "quiz", and only from the Desk host: its quiz entry,
+		// re-entered by Forward or a reload. Anything else lands where it always did.
+		function openCourse(courseName, lessonKey, view) {
+			// The SAME course keeps its state, which resume and the builder preview's
+			// "course" jump both rely on.
+			if (courseName !== state.courseName) forgetCourse();
 			state.courseName = courseName;
 			state.view = "course";
 			loading(t("Opening the course…"));
@@ -1102,9 +1150,11 @@
 				.then(function () {
 					// The server said where they were; honour it rather than
 					// guessing from anything cached in this browser.
-					go(lessonKey ? "lesson" : "course");
+					go(view === "quiz" && lessonKey ? "quiz" : lessonKey ? "lesson" : "course");
 				})
 				.catch(function (err) {
+					// Somewhere else was asked for while this loaded; that view owns `main`.
+					if (err === STALE) return;
 					clear(main);
 					fail(main, err);
 					main.appendChild(button(t("Back"), "tr-button", function () {
@@ -1124,9 +1174,18 @@
 		// first click of any course, because `attempt` is a required argument and it
 		// was sending `course` instead.
 		function load(courseName, lessonKey) {
+			// Every caller shows loading() first, so this is the view the reply is for. A
+			// reply that arrives after it has been replaced writes NOTHING: not the view (the
+			// caller's go() never runs) and not `state`, because a late getCourse for course A
+			// landing after course B's would put A's outline and name under B's lessons.
+			var mine = viewSeq;
+			function current() {
+				if (mine !== viewSeq) throw STALE;
+			}
 			setBusy(true);
 			return call("getCourse", { course: courseName })
 				.then(function (payload) {
+					current();
 					payload = payload || {};
 					state.course = payload.course || state.course;
 					state.courseName = (payload.course && payload.course.course) || courseName;
@@ -1142,6 +1201,7 @@
 					return payload.attempt || null;
 				})
 				.then(function (attempt) {
+					current();
 					// An attempt is only started when the learner is actually going
 					// into a lesson. Opening a course to look at its outline must not
 					// mint one — that would mark the assignment In Progress for
@@ -1157,6 +1217,7 @@
 					return call("startAttempt", { course: courseName });
 				})
 				.then(function (attempt) {
+					current();
 					adoptAttempt(attempt);
 					var wanted = lessonKey || state.lessonKey;
 					if (!state.attempt || !wanted) {
@@ -1165,6 +1226,7 @@
 					}
 					return call("getLesson", { attempt: state.attempt, lesson_key: wanted })
 						.then(function (payload) {
+							current();
 							payload = payload || {};
 							adoptAttempt(payload.attempt);
 							if (payload.lesson) {
@@ -1296,10 +1358,22 @@
 			});
 			main.appendChild(list);
 
-			var resumeKey = (state.resume && state.resume.lesson_key) || firstOpenLesson();
+			// `state.resume` is the boot payload's, and `_resume` names ONE course: the
+			// learner's most recently touched attempt. Read on every outline, it gave course
+			// B's footer a blank "Resume: " that opened course A's lesson under B -- minting an
+			// attempt on B, then "That lesson is not part of this course". Only this course's,
+			// and only a lesson its outline actually has.
+			var resumeHere =
+				state.resume &&
+				state.resume.course === state.courseName &&
+				state.resume.lesson_key &&
+				rowFor(state.resume.lesson_key)
+					? state.resume.lesson_key
+					: null;
+			var resumeKey = resumeHere || firstOpenLesson();
 			if (resumeKey) {
 				var resumeRow = rowFor(resumeKey);
-				var resumeLabel = state.resume && state.resume.lesson_key ? t("Resume: {0}") : t("Start: {0}");
+				var resumeLabel = resumeHere ? t("Resume: {0}") : t("Start: {0}");
 				foot.appendChild(
 					button(
 						fmt(resumeLabel, [(resumeRow && resumeRow.title) || ""]),
@@ -1421,6 +1495,7 @@
 					go("lesson");
 				})
 				.catch(function (err) {
+					if (err === STALE) return;
 					clear(main);
 					fail(main, err);
 					main.appendChild(button(t("Back to the course"), "tr-button", function () {
@@ -2642,8 +2717,12 @@
 			pending.setAttribute("role", "status");
 			main.appendChild(pending);
 
+			// This view, so a draw that lands after "← Back to the lesson" or the browser's
+			// Back does not mount a quiz over the lesson that replaced it.
+			var mine = viewSeq;
 			call("startQuiz", { attempt: state.attempt, lesson_key: state.lessonKey })
 				.then(function (payload) {
+					if (mine !== viewSeq) return;
 					clear(main);
 					state.quiz = payload || {};
 					if (!TR.Quiz || typeof TR.Quiz.mount !== "function") {
@@ -2741,6 +2820,7 @@
 					main.appendChild(renderHelp(state.lesson || { lesson_key: state.lessonKey }, true));
 				})
 				.catch(function (err) {
+					if (mine !== viewSeq) return;
 					clear(main);
 					fail(main, err);
 					main.appendChild(button(t("Back to the lesson"), "tr-button", function () {
@@ -3573,8 +3653,12 @@
 			pending.setAttribute("role", "status");
 			main.appendChild(pending);
 
+			// Both handlers clear `main`, so a reply for a view already left would paint
+			// the directory under whatever Back went to. See viewSeq.
+			var mine = viewSeq;
 			call("directory", {})
 				.then(function (data) {
+					if (mine !== viewSeq) return;
 					clear(main);
 					var people = (data && data.people) || [];
 					if (!people.length) {
@@ -3593,6 +3677,7 @@
 					main.appendChild(list);
 				})
 				.catch(function (err) {
+					if (mine !== viewSeq) return;
 					clear(main);
 					fail(main, err);
 				});
@@ -3652,8 +3737,11 @@
 			pending.setAttribute("role", "status");
 			main.appendChild(pending);
 
+			// Same reason as the directory: both handlers clear `main`.
+			var mine = viewSeq;
 			call("signoffQueue", {})
 				.then(function (data) {
+					if (mine !== viewSeq) return;
 					clear(main);
 					var rows = (data && data.queue) || [];
 					if (!rows.length) {
@@ -3667,6 +3755,7 @@
 					main.appendChild(list);
 				})
 				.catch(function (err) {
+					if (mine !== viewSeq) return;
 					clear(main);
 					fail(main, err);
 					main.appendChild(button(t("Back"), "tr-button", function () {
@@ -4044,7 +4133,8 @@
 			var course = startAt.course || (b.history === false ? "" : queryParam("course"));
 			var lessonKey = startAt.lesson_key || (b.history === false ? "" : queryParam("lesson"));
 			if (course) {
-				openCourse(course, lessonKey || null);
+				// `view` is set only by the Desk host, for its quiz entry reloaded.
+				openCourse(course, lessonKey || null, startAt.view || null);
 				return;
 			}
 			// A deep link straight to a colleague's profile. Without the user it falls back to
