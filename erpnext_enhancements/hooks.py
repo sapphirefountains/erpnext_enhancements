@@ -2106,7 +2106,11 @@ fixtures = [
 	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
 	# so re-export never sweeps user-created records. "PO Approver" and "PO Creator"
 	# are deliberately absent from the Role entry — they are owned by
-	# patches/seed_po_approver_role.py and patches/seed_po_creator_role.py.
+	# patches/seed_po_approver_role.py and patches/seed_po_creator_role.py. So are
+	# "KB Author" and "KB Approver", and the one-role "KB Approvers" Role Profile is
+	# deliberately absent from the Role Profile entry below: all three are owned by
+	# patches/seed_knowledge_base_roles.py (WI-080, v1.538.0), insert-only, so a Desk
+	# edit to the profile survives and fixture sync does not re-insert it every migrate.
 	# NOTE: this list's order governs *export* only. Fixtures IMPORT in alphabetical
 	# filename order (frappe/utils/fixtures.py sorts the directory), so
 	# custom_docperm.json lands before role.json and role.json before
