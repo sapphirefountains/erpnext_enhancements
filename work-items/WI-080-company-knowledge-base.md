@@ -127,6 +127,11 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 - **`body_md` and `content_hash` are computed at publish, from the stored body. Never in `validate`.**
 - `knowledge_base/files.py` forces `is_private=1` on any File attached to either KB doctype (`doc_events["File"]["before_insert"]`).
 - Tests are unittest and pure. Secret fixtures are built by concatenation, because push protection refused an `sk_live_` fixture before.
+- Found while building PR 2 (v1.539.0):
+  - **Setting the flag in `before_insert` would not make the file private.** A `doc_events` handler runs after the controller's own method (v16 `Document.hook`, `model/document.py:1633-1649`), and `File.before_insert` has already written the upload to `public/files` (`core/doctype/file/file.py:107-144`). So the hook re-saves the content privately through `File.save_file` and deletes the public copy only if that insert wrote it. It is also registered on `before_validate`, so an owner unticking Private on an existing KB File is undone before `File.validate` moves the bytes.
+  - **A published article's images could be deleted by whoever uploaded them** (found in PR 1 review). v16 protects attachments only on a submitted document (`File.validate_protected_file`), and an Article is never submitted. `files.file_has_permission` (`has_permission["File"]`) refuses `delete` on a Knowledge Article's File unless KB code sets `flags.kb_action`. Not an `on_trash` hook: `File.on_trash` deletes the bytes before any `doc_events` handler runs.
+  - **Alignment is a style.** v16's Text Editor stores `text-align` in `style` (`text_editor.js`), so `strip_presentation` keeps that one declaration and drops the rest.
+  - **The Version controller applies the rules** (as PR 1's controller said it would): the approval rules in `before_submit` and `on_submit` against the stored row, with PR 3 passing the opened `modified` as `flags.kb_opened_modified`; and on save, the Draft-only content rule, stripping, the secret scan and `contributors`. One open version per article stays with PR 3's `start_revision`.
 
 **PR 3: actions.**
 - `api/knowledge_base.py` (tabs; POST-only, with explicit permission checks; token-authenticated requests are refused on the approval path). Endpoints:
@@ -247,6 +252,8 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
   6. The technician reads the article and its image on a phone. The same image URL with no cookie returns 403. `GET /api/resource/Knowledge Article Version` as the technician returns 403.
 - **Published row.** ``SELECT name, author, approved_by, version_number FROM `tabKnowledge Article` `` returns the row with `approved_by <> author`.
 - **Images.** `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0` = 0.
+  - From PR 2: a file attached to a draft through the sidebar **with Private unticked** is stored with `is_private = 1` and a `/private/files/` URL, and its would-be `/files/<name>` URL returns 404 with no cookie.
+  - From PR 2: the uploader of an image on a published article cannot delete it (the File form shows no Delete, and `DELETE /api/resource/File/<name>` is refused).
 - **Integrity.** The `Knowledge Base Integrity` report returns 0 rows: every Article has a submitted Version at its `version_number`, and `approved_by` is not in {owner, submitted_by, ai_requested_by, contributors}.
 - **Entry points.**
   - ``SELECT item_label, route FROM `tabNavbar Item` WHERE parentfield='help_dropdown' AND item_label='Company Knowledge Base'`` returns `/desk/knowledge-base`.

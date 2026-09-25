@@ -205,6 +205,10 @@ class _Document:
 	def get(self, key, default=None):
 		return getattr(self, key, default)
 
+	def get_doc_before_save(self):
+		# A new document: PR 2's content rules then treat every field as the creator's work.
+		return None
+
 
 STATE = {}
 
@@ -298,6 +302,8 @@ def _install_frappe_stub():
 	frappe.get_doc = _get_doc
 	frappe.get_traceback = lambda: "traceback"
 	frappe.log_error = lambda *a, **k: STATE["errors"].append(a)
+	# The Version's validate records the saver as a contributor (PR 2).
+	frappe.session = types.SimpleNamespace(user="author@example.com")
 
 	model = types.ModuleType("frappe.model")
 	document = types.ModuleType("frappe.model.document")
@@ -710,11 +716,16 @@ class TestVersionController(unittest.TestCase):
 			with self.subTest(hook=hook), self.assertRaises(Refused):
 				getattr(doc, hook)()
 
-	def test_a_submit_with_the_publish_flag_passes(self):
+	def test_a_submit_with_the_publish_flag_reaches_the_approval_rules(self):
+		"""The flag is necessary, not sufficient: from PR 2 both hooks then apply the approval rules,
+		which ``test_knowledge_base_hooks`` exercises with a stub that has a session and a request."""
 		doc = self._doc()
 		doc.flags.kb_publish = True
+		reached = []
+		doc._refuse_unless_approvable = lambda: reached.append(True)
 		doc.before_submit()
 		doc.on_submit()
+		self.assertEqual(reached, [True, True])
 
 	def test_cancel_is_always_refused_in_both_hooks(self):
 		doc = self._doc()
