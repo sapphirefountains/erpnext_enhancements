@@ -274,39 +274,77 @@ def _store_run_suppliers():
 	return frappe.get_all("Supplier", filters={STORE_RUN_FIELD: 1}, pluck="name")
 
 
+#: Purchase Receipt fields a Stock Scan store-run line writes (patches/add_store_run_receipt_fields):
+#: the run id every receipt of one trip carries, and the paper receipt's total with tax.
+STORE_RUN_RECEIPT_FIELD = "custom_store_run"
+STORE_RUN_TOTAL_FIELD = "custom_receipt_total"
+
+#: The store-run KPI's source, one label for both halves. No freshness entry: a stale QuickBooks
+#: sync must not grey out the runs technicians recorded today.
+STORE_RUN_SOURCE = "Purchase Receipt + QuickBooks"
+
+#: How far before the window the rows are read: a trip just before it still claims its card
+#: charge inside it (``metrics.combine_store_runs`` pairs a charge up to three days later).
+STORE_RUN_LOOKBACK_DAYS = 7
+
+
 def _store_runs(suppliers, since):
 	"""(count, spend) of unscheduled counter purchases from ``suppliers`` since ``since``.
 
-	Two sources, because a store run is recorded in a different place before and after the
-	QuickBooks cutover:
-
-	* **QuickBooks card purchases** (today). The sync imports a QBO ``Purchase`` as a draft
-	  Journal Entry with no party on any line, so the vendor is only in the raw payload. The
-	  newest payload per purchase gives ``EntityRef``; its id maps to a Supplier through the
-	  Vendor sync mapping. ``EntityRef.type`` must be Vendor, because QBO ids are unique per
-	  entity type and a Customer 55 and a Vendor 55 can both exist. ``Credit`` purchases are
-	  card refunds and are not runs. Cancelled Journal Entries are out; drafts are in, because
-	  every synced QBO Journal Entry is a draft.
-	* **ERPNext documents** (after cutover, and from the store-run screen when it exists): a
-	  submitted Purchase Receipt with no PO line, and a submitted Purchase Invoice with no PO
-	  and no receipt behind any line, so an invoice made from such a receipt is not a second
-	  run. Returns are out.
-
-	During the transition a run recorded in ERPNext whose card charge also reaches QuickBooks
-	would count twice. Nothing records one in ERPNext yet; the store-run screen has to link the
-	charge when it ships.
+	The rows come from :func:`_store_run_rows`; ``metrics.combine_store_runs`` pairs recorded
+	trips with card charges so a trip with both counts once. See both.
 	"""
-	count = 0
-	spend = 0.0
-	params = {"since": since, "suppliers": tuple(suppliers)}
+	from erpnext_enhancements.inventory_enhancements.stock_scan_rules import store_key
 
-	if _exists("QuickBooks Sync Mapping") and _exists("QuickBooks Raw Payload"):
-		row = frappe.db.sql(
+	charges, receipts = _store_run_rows(suppliers, since)
+	return metrics.combine_store_runs(charges, receipts, since, store_key)
+
+
+def _store_run_rows(suppliers, since):
+	"""``(charges, receipts)`` for the store-run KPI, every query ``frappe.db.sql`` with bound params.
+
+	**Charges** are money records, one per card charge, dated at the purchase:
+
+	* **QuickBooks card purchases** (until the cutover, ~2026-10-21). The sync imports a QBO
+	  ``Purchase`` as a draft Journal Entry with no party on any line, so the vendor is only in
+	  the raw payload. The newest payload per purchase gives ``EntityRef``; its id maps to a
+	  Supplier through the Vendor sync mapping. ``EntityRef.type`` must be Vendor, because QBO
+	  ids are unique per entity type and a Customer 55 and a Vendor 55 can both exist. ``Credit``
+	  purchases are card refunds and are not runs. Cancelled Journal Entries are out; drafts
+	  are in, because every synced QBO Journal Entry is a draft.
+	* **A submitted Purchase Invoice** from the store with no PO and no receipt behind any line.
+	  An invoice made from a store-run receipt has ``purchase_receipt`` set and is the same trip,
+	  so it is not a charge. Returns are out.
+	* **A submitted Journal Entry crediting the store's payable** -- a purchase booked as a Journal
+	  Entry -- not a QuickBooks import (those are the first arm). Only the credits count, one
+	  charge per entry (``metrics.journal_store_charges``): a debit to the store is a payment,
+	  and a bill plus its payment booked as two unlinked entries would otherwise count as two
+	  runs. After the cutover a card charge booked without a Purchase Invoice would otherwise
+	  leave the KPI, and the target could be met by not recording.
+
+	**Payment Entries are never charges**, allocated or not: a payment is money for a purchase
+	already booked (a Purchase Invoice or a Journal Entry credit), so counting one as well would
+	count the trip twice until someone reconciled the two -- and each nightly snapshot would keep
+	the doubled figure.
+
+	**Receipts** are what the Stock Scan page (or the Desk) recorded: submitted, non-return
+	Purchase Receipts from the store with no PO line, with the run id (``custom_store_run``, or
+	the receipt's own name), the receipt total and the receipt number.
+
+	Rows start :data:`STORE_RUN_LOOKBACK_DAYS` before ``since``; the pairing decides what counts.
+	"""
+	early = add_days(since, -STORE_RUN_LOOKBACK_DAYS)
+	params = {"since": since, "early": early, "suppliers": tuple(suppliers)}
+	qbo = _exists("QuickBooks Sync Mapping") and _exists("QuickBooks Raw Payload")
+	charges = []
+
+	if qbo:
+		charges += frappe.db.sql(
 			"""
-			select count(*), sum(je.total_debit)
+			select vm.erpnext_name as supplier, je.posting_date as day, je.total_debit as amount
 			from `tabQuickBooks Sync Mapping` m
 			join `tabJournal Entry` je
-				on je.name = m.erpnext_name and je.docstatus < 2 and je.posting_date >= %(since)s
+				on je.name = m.erpnext_name and je.docstatus < 2 and je.posting_date >= %(early)s
 			join `tabQuickBooks Raw Payload` rp on rp.name = (
 				select rp2.name from `tabQuickBooks Raw Payload` rp2
 				where rp2.qbo_entity_type = 'Purchase' and rp2.qbo_id = m.qbo_id
@@ -322,29 +360,14 @@ def _store_runs(suppliers, since):
 				and vm.erpnext_name in %(suppliers)s
 			""",
 			params,
+			as_dict=True,
 		)
-		count += cint(row[0][0]) if row else 0
-		spend += flt(row[0][1]) if row else 0.0
 
-	row = frappe.db.sql(
+	charges += frappe.db.sql(
 		"""
-		select count(*), sum(pr.base_grand_total) from `tabPurchase Receipt` pr
-		where pr.docstatus = 1 and pr.is_return = 0 and pr.posting_date >= %(since)s
-			and pr.supplier in %(suppliers)s
-			and not exists (
-				select 1 from `tabPurchase Receipt Item` i
-				where i.parent = pr.name and coalesce(i.purchase_order, '') <> ''
-			)
-		""",
-		params,
-	)
-	count += cint(row[0][0]) if row else 0
-	spend += flt(row[0][1]) if row else 0.0
-
-	row = frappe.db.sql(
-		"""
-		select count(*), sum(pi.base_grand_total) from `tabPurchase Invoice` pi
-		where pi.docstatus = 1 and pi.is_return = 0 and pi.posting_date >= %(since)s
+		select pi.supplier, pi.posting_date as day, pi.base_grand_total as amount
+		from `tabPurchase Invoice` pi
+		where pi.docstatus = 1 and pi.is_return = 0 and pi.posting_date >= %(early)s
 			and pi.supplier in %(suppliers)s
 			and not exists (
 				select 1 from `tabPurchase Invoice Item` i
@@ -353,10 +376,67 @@ def _store_runs(suppliers, since):
 			)
 		""",
 		params,
+		as_dict=True,
 	)
-	count += cint(row[0][0]) if row else 0
-	spend += flt(row[0][1]) if row else 0.0
-	return count, spend
+
+	# Never a QuickBooks import: its card purchases are the first arm, whatever becomes of their
+	# lines at cutover, and its Bill/BillPayment pairs at store vendors were never runs (the
+	# baseline of 231 counts neither).
+	not_qbo = (
+		"""
+			and not exists (
+				select 1 from `tabQuickBooks Sync Mapping` qm
+				where qm.erpnext_doctype = 'Journal Entry' and qm.erpnext_name = je.name
+			)
+		"""
+		if _exists("QuickBooks Sync Mapping")
+		else ""
+	)
+	# One row per party line; metrics.journal_store_charges keeps the unreferenced credits only
+	# (a debit to the store is a payment), so the rule is tested bench-free.
+	charges += metrics.journal_store_charges(
+		frappe.db.sql(
+			f"""
+			select je.name as entry, jea.party as supplier, je.posting_date as day,
+				jea.credit as credit, jea.debit as debit,
+				coalesce(jea.reference_type, '') as reference_type
+			from `tabJournal Entry` je
+			join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
+			where je.docstatus = 1 and je.posting_date >= %(early)s
+				and coalesce(je.is_opening, 'No') <> 'Yes'
+				and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
+				{not_qbo}
+			""",
+			params,
+			as_dict=True,
+		)
+	)
+
+	# The run id and the receipt total exist once patches/add_store_run_receipt_fields has run;
+	# before that every receipt is its own trip, as it always was.
+	run_expr = "pr.name"
+	total_expr = "0"
+	if frappe.db.has_column("Purchase Receipt", STORE_RUN_RECEIPT_FIELD):
+		run_expr = f"coalesce(nullif(pr.`{STORE_RUN_RECEIPT_FIELD}`, ''), pr.name)"
+	if frappe.db.has_column("Purchase Receipt", STORE_RUN_TOTAL_FIELD):
+		total_expr = f"coalesce(pr.`{STORE_RUN_TOTAL_FIELD}`, 0)"
+	receipts = frappe.db.sql(
+		f"""
+		select pr.supplier, pr.posting_date as day, {run_expr} as run,
+			pr.base_grand_total as amount, {total_expr} as receipt_total,
+			coalesce(pr.supplier_delivery_note, '') as receipt_number
+		from `tabPurchase Receipt` pr
+		where pr.docstatus = 1 and pr.is_return = 0 and pr.posting_date >= %(early)s
+			and pr.supplier in %(suppliers)s
+			and not exists (
+				select 1 from `tabPurchase Receipt Item` i
+				where i.parent = pr.name and coalesce(i.purchase_order, '') <> ''
+			)
+		""",
+		params,
+		as_dict=True,
+	)
+	return charges, receipts
 
 
 def _operations_metrics():
@@ -382,13 +462,16 @@ def _operations_metrics():
 	freshness = {}
 
 	# --- store runs. Not published at all until a supplier is flagged: with nothing flagged
-	#     the count is 0 by construction, and a 0 here reads as the goal met. ---
+	#     the count is 0 by construction, and a 0 here reads as the goal met. Since v1.536.0 a
+	#     trip recorded on the Stock Scan page and its card charge count once (_store_runs). ---
 	suppliers = _store_run_suppliers()
 	if suppliers:
 		runs, spend = _store_runs(suppliers, d30)
-		add("store_runs_30", "Store Runs (30d)", runs, "count", "QuickBooks Sync Mapping", metrics.LOWER)
-		add("store_run_spend_30", "Store-Run Spend (30d)", spend, "USD", "QuickBooks Sync Mapping", metrics.LOWER)
-		freshness.update(_qbo_freshness())
+		# One source label for both halves, and deliberately no freshness entry for it: the
+		# QuickBooks half lags weeks by nature, and a stale-sync badge would grey out the runs
+		# technicians recorded today on the Stock Scan page (v1.536.0).
+		add("store_runs_30", "Store Runs (30d)", runs, "count", STORE_RUN_SOURCE, metrics.LOWER)
+		add("store_run_spend_30", "Store-Run Spend (30d)", spend, "USD", STORE_RUN_SOURCE, metrics.LOWER)
 
 	# --- stock levels (moved from Product, definitions unchanged) ---
 	if _exists("Item Reorder") and _exists("Bin") and frappe.db.has_column("Item Reorder", "warehouse_reorder_level"):
@@ -491,12 +574,14 @@ def _operations_metrics():
 		metrics.LOWER,
 	)
 
-	# --- the Stock Scan page's own review queue: stock added without a PO, at a cost the page
-	#     chose, that a Stock Manager has not looked at. Undone saves need no review. ---
+	# --- the Stock Scan page's own review queue: stock added without a PO -- an Add Without PO
+	#     at a cost the page chose, or (v1.536.0) a store-run line at the receipt's price -- that
+	#     nobody has looked at. Undone saves need no review. The key is unchanged, so a KPI
+	#     Target set against it keeps grading; the label now covers both. ---
 	if _exists("Stock Scan Log"):
 		add(
 			"stock_scan_review_queue",
-			"Adds Without PO Awaiting Review",
+			"Stock Scan Saves Awaiting Review",
 			_scalar(
 				"select count(*) from `tabStock Scan Log` "
 				"where needs_review = 1 and coalesce(reviewed,0) = 0 and status = 'Posted'"

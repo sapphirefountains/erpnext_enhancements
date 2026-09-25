@@ -34,9 +34,20 @@ bench-free CI cannot otherwise see:
    whose buttons open the two pages with the query key the page understands; the log's
    ``client_ref`` unique and the log unwritable by hand; every new setting's default mirrored in
    ``DEFAULTS`` and backfilled onto the existing Single (a new field's default never reaches it).
+8. **Store runs** (v1.536.0): ``_store_run_receipt`` is the one Purchase Receipt builder, with
+   the price as both rate and price-list rate, the stock unit, no project and no tax; the quick
+   Item is created as the user, through the naming guard; the receipt photo must be the
+   caller's own unclaimed upload or already on the run; the three receipt fields the code
+   writes are the ones the patch makes, and the patch is in ``patches.txt`` and in
+   ``after_install``; the store-run boot never raises; a reviewed store run is never undone and
+   nobody reviews their own; the KPI reads the run id behind ``has_column`` and only through SQL,
+   and never counts a payment. From the review: a run's header is its first **Posted** line
+   (executed, against an in-memory log), a page left open overnight is told to reload, and only
+   *Receive on PO-…* takes a non-stock item besides the store run itself.
 
 Bench-free: ``ast``, ``json`` and ``re`` over the sources, plus ``stock_scan_rules`` (which
-imports no frappe). Files the front end owns (``www/stock-scan.html``,
+imports no frappe). The run-header functions are compiled out of the source and run against a
+fake ``frappe`` local to that one class, so nothing is installed in ``sys.modules``. Files the front end owns (``www/stock-scan.html``,
 ``public/js/stock_scan/*.js``) fail with a sentence naming the missing file rather than
 skipping — a skipped surface test is a surface nobody checked.
 
@@ -99,6 +110,24 @@ CONTRACT = {
 	),
 	"UNDO": ("undo", {"log"}, set()),
 	"RECENT": ("get_recent", set(), set()),
+	# "Bought on a store run" (v1.536.0).
+	"STORE_RUN": (
+		"store_run",
+		{"run", "supplier", "warehouse", "qty", "rate", "reason", "receipt_photo", "client_ref"},
+		{
+			"item_code",
+			"new_item",
+			"project",
+			"no_job",
+			"bought",
+			"receipt_number",
+			"receipt_total",
+			"scanned_code",
+			# The page's own day (v1.536.0 review): a page left open overnight is told to reload.
+			"page_today",
+		},
+	),
+	"CHECK_NEW_ITEM": ("check_new_item", {"item_code"}, {"item_name", "item_group", "stock_uom"}),
 }
 
 #: Keys Frappe consumes from the request before argument binding (``sid``, ``cmd``,
@@ -107,7 +136,12 @@ CONTRACT = {
 RESERVED_REQUEST_KEYS = {"sid", "cmd", "csrf_token", "usr", "pwd"}
 
 #: The saves, which post a submitted voucher.
-SAVES = ("take", "add", "move_here")
+SAVES = ("take", "add", "move_here", "store_run")
+
+#: The patch that creates the Purchase Receipt fields a store-run line writes.
+RECEIPT_PATCH = APP / "patches" / "add_store_run_receipt_fields.py"
+SNAPSHOTS = APP / "kpi_dashboards" / "snapshots.py"
+LOG_PY = LOG_DIR / "stock_scan_log.py"
 
 #: The only functions allowed to pass ``ignore_permissions``: both write the page's own
 #: ``Stock Scan Log`` row, never a voucher.
@@ -139,6 +173,10 @@ ITEM_KEYS = {
 	"available",
 	"elsewhere",
 	"open_orders",
+	# store runs: a non-stock item can be a line, and the reason is read against the minimum
+	"is_stock_item",
+	"store_run_ok",
+	"reorder_level",
 }
 ELSEWHERE_KEYS = {"warehouse", "warehouse_name", "on_hand", "available"}
 OPEN_ORDER_KEYS = {
@@ -176,8 +214,55 @@ LOG_ROW_KEYS = {
 	"needs_review",
 	"can_undo",
 	"undo_refusal",
+	"reviewed",
+	"supplier",
+	"rate",
+	"receipt_total",
+	"store_run",
+	"store_run_reason",
+	"bought_on",
+	"recorded_late",
+	"no_job",
+	"non_stock_item",
+	"created_item",
+	"repeat_unstocked",
 }
-SAVE_RESULT_KEYS = {"log", "item", "message", "repeated"}
+SAVE_RESULT_KEYS = {"log", "item", "message", "repeated", "run"}
+RUN_KEYS = {
+	"run",
+	"supplier",
+	"supplier_name",
+	"bought",
+	"receipt_photo",
+	"receipt_number",
+	"receipt_total",
+	"lines",
+	"amount",
+	"started_by",
+	"started_by_name",
+	"started_on",
+	"last_at",
+	"open",
+}
+STORE_RUN_BOOT_KEYS = {
+	"suppliers",
+	"reasons",
+	"item_groups",
+	"uoms",
+	"can_create_items",
+	"can_record",
+	"open_runs",
+}
+CHECK_NEW_ITEM_KEYS = {
+	"checked",
+	"exists",
+	"similar",
+	"blocking",
+	"advice",
+	"will_refuse",
+	"refuse_from",
+	"suggested_group",
+}
 SEARCH_ITEM_KEYS = {
 	"item_code",
 	"item_name",
@@ -197,9 +282,12 @@ BOOT_KEYS = {
 	"recent",
 	"initial",
 	"today",
+	# The site's clock at boot: how long ago another person's run was added to (logic.runOffered).
+	"now",
 	"csrf_token",
 	"build",
 	"decoder_url",
+	"store_run",
 }
 BOOT_SETTINGS_KEYS = {"require_project_for_take", "undo_window_minutes"}
 SCAN_KINDS = {"location", "item", "unknown"}
@@ -564,10 +652,10 @@ def _client_sources():
 
 
 class TestEndpointSurface(unittest.TestCase):
-	def test_the_contract_has_eleven_endpoints_and_they_are_all_whitelisted(self):
+	def test_the_contract_has_thirteen_endpoints_and_they_are_all_whitelisted(self):
 		"""Anti-vacuity for every loop below, and the spec's table, both ways."""
 		endpoints = _whitelisted()
-		self.assertEqual(len(CONTRACT), 11)
+		self.assertEqual(len(CONTRACT), 13)
 		self.assertEqual(
 			set(endpoints),
 			{fn for fn, _req, _opt in CONTRACT.values()},
@@ -748,7 +836,11 @@ class TestTheVouchersAreV16Shaped(unittest.TestCase):
 		self.assertEqual(builders, ["_stock_entry"])
 
 	def _item_rows(self):
-		"""``{function: (stock entry type, [row keys])}`` for each ``se.append("items", {...})``."""
+		"""``{function: (stock entry type, [row keys])}`` for each ``se.append("items", {...})``.
+
+		Only functions that build a Stock Entry (call ``_stock_entry``): the store run's Purchase
+		Receipt rows are a different voucher with different rules, checked in
+		:class:`TestTheStoreRunReceipt`."""
 		out = {}
 		for fn in _functions(API).values():
 			types = [
@@ -756,6 +848,8 @@ class TestTheVouchersAreV16Shaped(unittest.TestCase):
 				for _l, _c, name, call in _calls(fn)
 				if name == "_stock_entry" and call.args and isinstance(call.args[0], ast.Constant)
 			]
+			if not types:
+				continue
 			rows = [
 				_dict_keys(call.args[1])
 				for _l, _c, name, call in _calls(fn)
@@ -873,6 +967,22 @@ class TestARetriedSaveDoesNotPostTwice(unittest.TestCase):
 			# add's _require guards its without-PO branch (the receipt branch is checked by
 			# receive_items itself), so it is compared with that branch's _begin_log: the last.
 			"add": ("_require", "_receipt_rate"),
+			# A store run: a store not on the list, another person's run on another day, a price,
+			# a missing job, somebody else's photo, a quick item that could not be made, and the
+			# receipt permission are all sentences before the log row (and before the Item).
+			"store_run": (
+				"_store_run_ready",
+				"_stale_page",
+				"_run_ref",
+				"_store_supplier",
+				"rules.purchase_date",
+				"_same_run",
+				"rules.check_price",
+				"_project",
+				"_receipt_photo",
+				"_check_quick_item",
+				"_require",
+			),
 		}
 		for name, before in expectations.items():
 			fn = _functions(API)[name]
@@ -1016,10 +1126,369 @@ class TestPayloadShapes(unittest.TestCase):
 		self.assertIn("rules.QUERY_KINDS", source)
 		self.assertEqual(rules.QUERY_KINDS[0], ("w", "warehouse"), "labels print ?w=")
 
+	def test_the_store_run_shapes(self):
+		self.assertCarries(_returned_dicts(self._fn("_run_summary")), RUN_KEYS, "Run")
+		self.assertCarries(_returned_dicts(self._fn("_store_run_boot")), STORE_RUN_BOOT_KEYS, "boot.store_run")
+		self.assertCarries(_dicts_in(self._fn("check_new_item")), CHECK_NEW_ITEM_KEYS, "check_new_item")
+		self.assertIn("_store_run_boot()", ast.unparse(self._fn("boot_payload")))
+
+
+# ---------------------------------------------------------------------------
+# Store runs (v1.536.0): the receipt, the photo, the quick Item, the KPI's read
+# ---------------------------------------------------------------------------
+
+
+class TestTheStoreRunReceipt(unittest.TestCase):
+	"""A store-run line posts a submitted Purchase Receipt with no PO. There is no bench in CI to
+	post one, so the shape ERPNext v16 needs, and the fields the patch creates, are read here."""
+
+	def fn(self, name):
+		return _functions(API)[name]
+
+	def test_the_one_purchase_receipt_builder(self):
+		builders = [
+			fn.name
+			for fn in _functions(API).values()
+			for _l, _c, name, call in _calls(fn)
+			if name == "frappe.new_doc" and call.args and ast.unparse(call.args[0]) == "'Purchase Receipt'"
+		]
+		self.assertEqual(builders, ["_store_run_receipt"])
+		self.assertIn("_store_run_receipt(", ast.unparse(self.fn("store_run")))
+
+	def test_the_header(self):
+		assigned = {
+			ast.unparse(target)
+			for sub in ast.walk(self.fn("_store_run_receipt"))
+			if isinstance(sub, ast.Assign)
+			for target in sub.targets
+		}
+		for name in (
+			"pr.supplier",
+			"pr.company",
+			"pr.posting_date",
+			"pr.set_posting_time",
+			"pr.posting_time",
+			"pr.set_warehouse",
+			"pr.supplier_delivery_note",
+			"pr.ignore_pricing_rule",
+			"pr.remarks",
+		):
+			with self.subTest(field=name):
+				self.assertIn(name, assigned)
+		source = ast.unparse(self.fn("_store_run_receipt"))
+		for field in ("RUN_FIELD", "PHOTO_FIELD", "TOTAL_FIELD"):
+			with self.subTest(custom=field):
+				self.assertIn(f"pr.set({field},", source)
+
+	def test_no_project_and_no_tax_on_the_receipt(self):
+		"""The job stays on the log and in the remarks: a row project is copied into the Purchase
+		Invoice and counts in the Project's purchase cost while the Take counts the parts again as
+		consumed. And no tax template: the site's default (US ST 6% - SF) is the setup wizard's
+		placeholder, posting to an account nothing has ever used."""
+		source = _strip_prose(ast.unparse(self.fn("_store_run_receipt")))
+		self.assertNotIn("pr.project", source)
+		self.assertNotIn("taxes_and_charges", source)
+		self.assertNotIn("append_taxes_from_master", source)
+		rows = _appended_dicts(self.fn("_store_run_receipt"))
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(
+			rows[0],
+			{"item_code", "qty", "uom", "stock_uom", "conversion_factor", "rate", "price_list_rate", "warehouse", "cost_center"},
+		)
+		self.assertNotIn("project", rows[0])
+
+	def test_the_cost_center_setting_is_read_from_a_dict(self):
+		"""``get_settings()`` returns a dict: ``settings.scan_cost_center`` is an AttributeError on
+		the first real save, which no bench-free test would otherwise catch."""
+		source = _strip_prose(_read(API, "the server side"))
+		self.assertNotRegex(source, r"settings\.(scan_cost_center|take_expense_account|add_offset_account)\b")
+		self.assertIn('settings.get("scan_cost_center")', ast.unparse(self.fn("_store_run_receipt")).replace("'", '"'))
+
+	def test_the_quick_item_is_the_users_and_the_guards(self):
+		source = _strip_prose(_read(API, "the server side"))
+		self.assertNotIn("ignore_naming_guard", source)
+		quick = "\n".join(ast.unparse(s) for s in _body_after_docstring(self.fn("_quick_item")))
+		self.assertIn("item.insert()", quick)
+		self.assertNotIn("ignore_permissions", quick)
+		self.assertIn("item.is_stock_item = 1", quick)
+		self.assertIn("'item_defaults'", quick, "the Item Default is the bin, not Stores - SF")
+		check = ast.unparse(self.fn("_check_quick_item"))
+		self.assertIn("rules.quick_item_problem(", check)
+		self.assertIn("frappe.has_permission('Item', 'create')", check)
+		self.assertIn("frappe.db.exists('Item'", check)
+
+	def test_only_receive_on_an_order_takes_a_non_stock_item(self):
+		"""The store-run sheet's *Receive on PO-…* posts ``add`` with ``purchase_order_item``, and at
+		the store-run vendors every PO line on production is for a non-stock item: that branch is
+		checked with the store-run item rule (non-stock allowed). Every other path of ``add``, and
+		``take`` and ``move_here``, keeps ``_stock_item``'s refusal (v1.536.0 review)."""
+		add = ast.unparse(self.fn("add"))
+		self.assertIn("receive = bool(cstr(purchase_order_item).strip())", add)
+		self.assertIn("item = _store_run_item(item_code) if receive else _stock_item(item_code)", add)
+		for name in ("take", "move_here"):
+			with self.subTest(save=name):
+				self.assertIn("_stock_item(item_code)", ast.unparse(self.fn(name)))
+				self.assertNotIn("_store_run_item", ast.unparse(self.fn(name)))
+		callers = sorted(
+			fn.name for fn in _functions(API).values() for _l, _c, name, _call in _calls(fn) if name == "_store_run_item"
+		)
+		self.assertEqual(sorted(set(callers)), ["add", "store_run"])
+
+	def test_a_page_left_open_overnight_is_told_to_reload(self):
+		"""The page sends its own day; a stale one is refused as ``StalePageError``, which the page
+		answers with a Reload button (``transport.js``'s ``needsReload``)."""
+		tree = _tree(API)
+		classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+		self.assertIn("StalePageError", classes)
+		self.assertEqual([ast.unparse(b) for b in classes["StalePageError"].bases], ["frappe.ValidationError"])
+		stale = ast.unparse(self.fn("_stale_page"))
+		self.assertIn("rules.page_is_stale(day, getdate())", stale)
+		self.assertIn("StalePageError)", stale)
+		self.assertIn("Reload the page", stale)
+		run = self.fn("store_run")
+		self.assertLess(_first(run, "_stale_page"), _first(run, "_same_run"))
+		self.assertIn("_stale_page(page_today)", ast.unparse(run))
+		transport = (CLIENT / "transport.js").read_text(encoding="utf-8")
+		self.assertIn('this.excType === "StalePageError"', transport)
+		app = (CLIENT / "app.js").read_text(encoding="utf-8")
+		self.assertIn("page_today: today", app)
+
+	def test_the_photo_check_is_the_owners_or_the_runs(self):
+		photo = ast.unparse(self.fn("_receipt_photo"))
+		self.assertIn("frappe.db.sql(", photo)
+		self.assertIn("f.owner = %(user)s", photo)
+		self.assertIn("f.is_private = 1", photo)
+		self.assertIn("frappe.session.user", photo)
+		self.assertIn("pr.custom_store_run = %(run)s", photo)
+		self.assertIn("/private/files/", photo)
+
+	def test_the_fields_the_code_writes_are_the_fields_the_patch_makes(self):
+		patch = _functions(RECEIPT_PATCH)
+		self.assertIn("execute", patch)
+		made = set()
+		for sub in ast.walk(ast.parse(_read(RECEIPT_PATCH, "the server side"))):
+			if isinstance(sub, ast.Assign) and isinstance(sub.targets[0], ast.Name):
+				if isinstance(sub.value, ast.Constant) and isinstance(sub.value.value, str):
+					made.add((sub.targets[0].id, sub.value.value))
+		wanted = {
+			(name, ast.literal_eval(_module_constant(API, name))) for name in ("RUN_FIELD", "PHOTO_FIELD", "TOTAL_FIELD")
+		}
+		self.assertTrue(wanted <= made, f"api/stock_scan.py writes {wanted}, the patch makes {made}")
+		self.assertEqual(ast.literal_eval(_module_constant(API, "RUN_FIELD")), "custom_store_run")
+		lines = [line.strip() for line in PATCHES_TXT.read_text(encoding="utf-8").splitlines()]
+		self.assertIn("erpnext_enhancements.patches.add_store_run_receipt_fields", lines)
+		self.assertIn("create_custom_fields(", _read(RECEIPT_PATCH))
+		self.assertIn("update=True", _read(RECEIPT_PATCH))
+		# install-app marks every patch as run: a fresh site gets the fields only from after_install.
+		hooks = _read(HOOKS, "the server side")
+		self.assertIn('"erpnext_enhancements.patches.add_store_run_receipt_fields.execute"', hooks)
+
+	def test_the_patch_cannot_raise(self):
+		body = _body_after_docstring(_functions(RECEIPT_PATCH)["execute"])
+		self.assertEqual(len(body), 1)
+		self.assertIsInstance(body[0], ast.Try)
+		self.assertEqual([ast.unparse(h.type) for h in body[0].handlers], ["Exception"])
+
+	def test_the_kpi_reads_the_run_behind_has_column_and_only_through_sql(self):
+		source = _read(SNAPSHOTS, "the server side")
+		rows = ast.unparse(_functions(SNAPSHOTS)["_store_run_rows"])
+		self.assertIn("frappe.db.has_column('Purchase Receipt', STORE_RUN_RECEIPT_FIELD)", rows)
+		self.assertIn("frappe.db.has_column('Purchase Receipt', STORE_RUN_TOTAL_FIELD)", rows)
+		self.assertNotIn("get_all", rows)
+		self.assertNotIn("get_list", rows)
+		self.assertIn('STORE_RUN_RECEIPT_FIELD = "custom_store_run"', source)
+		self.assertIn("metrics.combine_store_runs(", ast.unparse(_functions(SNAPSHOTS)["_store_runs"]))
+
+	def test_the_kpi_counts_journal_credits_and_never_payments(self):
+		"""A payment is never a store run (v1.536.0 review): Journal Entry lines go through
+		``metrics.journal_store_charges`` (credits only, tested in test_kpi_metrics), and no
+		Payment Entry is read at all -- an unallocated one next to its bill counted the trip twice."""
+		rows = _body_after_docstring(_functions(SNAPSHOTS)["_store_run_rows"])
+		code = "\n".join(ast.unparse(node) for node in rows)
+		self.assertIn("metrics.journal_store_charges(", code)
+		self.assertNotIn("Payment Entry", code)
+		self.assertNotIn("greatest(", code)
+
+	def test_the_store_run_door_never_takes_the_page_down(self):
+		"""It runs inside the page's own boot: one exception there would be Stock Scan down for
+		everybody, so the whole body is one try whose handler returns None."""
+		body = _body_after_docstring(_functions(API)["_store_run_boot"])
+		self.assertEqual(len(body), 1)
+		self.assertIsInstance(body[0], ast.Try)
+		handler = body[0].handlers[0]
+		self.assertEqual(ast.unparse(handler.type), "Exception")
+		self.assertEqual(ast.unparse(handler.body[-1]), "return None")
+
+	def test_aggregates_are_sql_not_get_all_strings(self):
+		"""Frappe 16 refuses ``fields=["sum(...)"]`` in get_all; the bench-free stub would not."""
+		code = _strip_prose(_read(API, "the server side"))
+		self.assertNotRegex(code, r"fields\s*=\s*\[[^\]]*\b(count|sum|max|min|avg)\s*\(", re.I)
+
+	def test_check_new_item_previews_with_the_guards_exact_call(self):
+		source = ast.unparse(self.fn("check_new_item"))
+		self.assertIn("naming.blocking_findings(code, name, frappe.get_all('Item', pluck='name'))", source)
+		self.assertIn("item_naming_guard.in_force()", source)
+		self.assertIn("naming.DELETED_MARKER", source, "QuickBooks tombstones are dropped from the neighbours")
+		guard = _read(APP / "inventory_enhancements" / "item_naming_guard.py", "the server side")
+		self.assertIn('rules.blocking_findings(code, doc.get("item_name"), existing)', guard)
+		self.assertIn('existing = frappe.get_all("Item", pluck="name")', guard)
+
+	def test_undo_of_a_store_run_is_narrower(self):
+		refusal = ast.unparse(self.fn("_undo_refusal"))
+		for needle in ("store_run=store_run", "is_purchasing=", "reviewed="):
+			with self.subTest(needle=needle):
+				self.assertIn(needle, refusal)
+		self.assertEqual(rules.STORE_RUN_UNDO_ROLES, frozenset({"Purchase Manager", "Accounts Manager"}))
+		self.assertNotIn("Stock Manager", rules.STORE_RUN_UNDO_ROLES)
+
+	def test_nobody_reviews_their_own_store_run(self):
+		source = ast.unparse(_tree(LOG_PY))
+		self.assertIn("self.action == STORE_RUN and self.posted_by == frappe.session.user", source)
+		self.assertEqual(ast.literal_eval(_module_constant(LOG_PY, "STORE_RUN")), rules.ACTION_STORE_RUN)
+
 
 # ---------------------------------------------------------------------------
 # 5. The page controllers and the shell
 # ---------------------------------------------------------------------------
+
+
+class _Row(dict):
+	"""A ``frappe._dict`` stand-in: attribute access over a dict."""
+
+	__getattr__ = dict.get
+
+
+class _Refused(Exception):
+	pass
+
+
+class TestTheRunHeader(unittest.TestCase):
+	"""A store run's header is its **first Posted line** (v1.536.0 review), executed.
+
+	``_run_head``, ``_same_run`` and ``_run_summary`` are compiled out of ``api/stock_scan.py`` and
+	run against an in-memory Stock Scan Log behind a fake ``frappe`` that lives only in this
+	class's namespace. The review's case: a mistyped receipt total (234.10 for 23.41) was fixed
+	on a run forever by its first line -- undone or not -- and copied onto every later receipt.
+	Now undoing that line frees the header, and a run with no Posted line left starts again from
+	the next line's header, which the page prefills with the old values to correct."""
+
+	TODAY = "2026-09-24"
+	RUN = "sr-kf3z9a1-8qz0x4m2ab"
+
+	def setUp(self):
+		import datetime
+
+		self.rows = []
+		self.user = "tina@example.com"
+		test = self
+
+		def as_date(value=None):
+			if value is None:
+				return datetime.date.fromisoformat(test.TODAY)
+			if isinstance(value, datetime.datetime):
+				return value.date()
+			if isinstance(value, datetime.date):
+				return value
+			return datetime.date.fromisoformat(str(value)[:10])
+
+		def get_all(doctype, filters=None, fields=None, order_by=None, limit=None):
+			rows = [r for r in test.rows if all(r.get(k) == v for k, v in (filters or {}).items())]
+			rows.sort(key=lambda r: r["posted_at"])
+			return [_Row(r) for r in rows[: limit or None]]
+
+		def sql(query, params=None, as_dict=False):
+			posted = [r for r in test.rows if r["store_run"] == params["run"] and r["status"] == "Posted"]
+			last = max((r["posted_at"] for r in posted), default=None)
+			return [(len(posted), sum(r["qty"] * r["rate"] for r in posted), last)]
+
+		def throw(message, exc=None):
+			raise _Refused(message)
+
+		class Db:
+			get_value = staticmethod(lambda doctype, name, field: name)
+
+		class Frappe:
+			session = _Row(user=None)
+			db = Db()
+
+		Frappe.get_all = staticmethod(get_all)
+		Frappe.throw = staticmethod(throw)
+		Frappe.db.sql = staticmethod(sql)
+		Frappe.session = _Row(user=self.user)
+		wanted = {"_run_head", "_same_run", "_run_summary", "_full_name"}
+		tree = _tree(API)
+		module = ast.Module(
+			body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted], type_ignores=[]
+		)
+		self.ns = {
+			"frappe": Frappe,
+			"_": lambda text: text,
+			"LOG": "Stock Scan Log",
+			"rules": rules,
+			"getdate": as_date,
+			"formatdate": str,
+			"flt": lambda v: float(v or 0),
+			"cint": lambda v: int(v or 0),
+		}
+		exec(compile(module, str(API), "exec"), self.ns)
+
+	def line(self, posted_at, status="Posted", total=23.41, supplier="Home Depot", by=None, qty=1, rate=4.97):
+		self.rows.append(
+			{
+				"name": f"SCAN-{len(self.rows) + 1}",
+				"store_run": self.RUN,
+				"status": status,
+				"posted_at": posted_at,
+				"posted_by": by or self.user,
+				"supplier": supplier,
+				"bought_on": self.TODAY,
+				"receipt_number": None,
+				"receipt_total": total,
+				"receipt_photo": f"/private/files/{len(self.rows) + 1}.jpg",
+				"qty": qty,
+				"rate": rate,
+			}
+		)
+
+	def test_the_header_is_the_first_posted_line(self):
+		self.line("2026-09-24 07:00:00", status="Undone", total=234.1)
+		self.line("2026-09-24 08:00:00", total=23.41)
+		self.line("2026-09-24 09:00:00", total=99.0)
+		head = self.ns["_same_run"](self.RUN, "Home Depot", self.TODAY)
+		self.assertEqual((head.name, head.receipt_total), ("SCAN-2", 23.41))
+		summary = self.ns["_run_summary"](self.RUN)
+		self.assertEqual(
+			(summary["receipt_total"], summary["receipt_photo"], summary["lines"], summary["open"]),
+			(23.41, "/private/files/2.jpg", 2, True),
+		)
+
+	def test_a_run_with_every_line_undone_starts_again(self):
+		"""No Posted line: the next line is a new run's first (its own store, day and total), and
+		the summary hands the page the old header, with no lines, to prefill and correct."""
+		self.line("2026-09-24 07:00:00", status="Undone", total=234.1)
+		self.assertIsNone(self.ns["_same_run"](self.RUN, "Lowe's", self.TODAY))
+		summary = self.ns["_run_summary"](self.RUN)
+		self.assertEqual(
+			(summary["lines"], summary["amount"], summary["receipt_total"], summary["supplier"], summary["open"]),
+			(0, 0.0, 234.1, "Home Depot", True),
+		)
+
+	def test_a_run_from_another_day_is_closed_to_everyone(self):
+		"""Its starter included: the page never offers a run begun on an earlier day, and the
+		"finish it the next morning" allowance it once described is gone."""
+		self.line("2026-09-23 16:40:00")
+		with self.assertRaisesRegex(_Refused, "started on another day"):
+			self.ns["_same_run"](self.RUN, "Home Depot", self.TODAY)
+		self.assertFalse(self.ns["_run_summary"](self.RUN)["open"])
+
+	def test_the_store_must_be_the_runs(self):
+		self.line("2026-09-24 07:00:00")
+		with self.assertRaisesRegex(_Refused, "This run is for Home Depot"):
+			self.ns["_same_run"](self.RUN, "Lowe's", self.TODAY)
+
+	def test_no_run_no_header(self):
+		self.assertIsNone(self.ns["_same_run"](self.RUN, "Home Depot", self.TODAY))
+		self.assertIsNone(self.ns["_run_summary"](self.RUN))
 
 
 class TestThePageControllers(unittest.TestCase):
@@ -1367,6 +1836,12 @@ class TestReportAProblem(unittest.TestCase):
 		"openLocation",
 		"resolve",
 		"onWedgeKey",
+		# "Bought on a store run" (v1.536.0): the run sheet, the quick-item door, the run bar's
+		# Finish, and "take them to the job now?".
+		"openStoreRun",
+		"openQuickItem",
+		"finishRun",
+		"offerTakeNow",
 	)
 
 	def test_no_door_opens_under_the_form(self):
@@ -1485,6 +1960,32 @@ class TestTheLogDoctype(unittest.TestCase):
 
 	def test_status_options_are_the_ones_undo_reads(self):
 		self.assertEqual(tuple(self.fields()["status"]["options"].split("\n")), ("Posted", "Undone"))
+
+	def test_the_store_run_fields(self):
+		"""The reasons are stored verbatim and a blank comes first, so every other action's row
+		(no reason) stays a valid Select value. The run id is indexed: the KPI, the undo and the
+		open-runs read all look rows up by it. And the doctype's ``modified`` moved, or model sync
+		would skip the whole change."""
+		fields = self.fields()
+		self.assertEqual(
+			fields["store_run_reason"]["options"].split("\n"), ["", *rules.STORE_RUN_REASONS]
+		)
+		self.assertEqual(fields["store_run"].get("search_index"), 1)
+		for name in ("supplier", "rate", "store_run", "store_run_reason", "created_item", "repeat_unstocked"):
+			with self.subTest(field=name):
+				self.assertEqual(fields[name].get("read_only"), 1)
+		order = self.meta()["field_order"]
+		self.assertLess(order.index("voucher_no"), order.index("store_run_section"))
+		self.assertLess(order.index("store_run_section"), order.index("review_section"))
+		self.assertGreaterEqual(self.meta()["modified"], "2026-09-24")
+		self.assertIn("Store Run", fields["needs_review"]["description"])
+
+	def test_the_settings_buttons_open_the_two_review_lists(self):
+		js = _strip_js_comments(_read(SETTINGS_DIR / "inventory_scanner_settings.js", "the server side"))
+		self.assertIn('__("Stock Scan Saves to Review")', js)
+		self.assertIn('__("New Items From Store Runs")', js)
+		self.assertIn("created_item: 1", js)
+		self.assertNotIn("Added Without PO to Review", js)
 
 	def test_a_fetched_field_cannot_turn_undo_into_an_error(self):
 		"""Frappe v16 re-fetches every ``fetch_from`` field on each save of a non-submittable

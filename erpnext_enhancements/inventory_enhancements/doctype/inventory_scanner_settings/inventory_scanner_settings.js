@@ -13,7 +13,8 @@
  * page that lets you choose an account every save will then reject is a trap you find on
  * the warehouse floor, one technician at a time.
  *
- * Also links to the page itself, the label print page, and the review queue.
+ * Also links to the page itself, the label print page, the review queue, and (v1.536.0) the
+ * Items technicians created while recording a store run.
  */
 frappe.ui.form.on("Inventory Scanner Settings", {
 	setup(frm) {
@@ -29,13 +30,27 @@ frappe.ui.form.on("Inventory Scanner Settings", {
 		const group = __("Stock Scan");
 		frm.add_custom_button(__("Open Stock Scan"), () => window.open("/stock-scan", "_blank", "noopener"), group);
 		frm.add_custom_button(__("Print QR Labels"), () => window.open("/warehouse-labels", "_blank", "noopener"), group);
+		// Every save that added stock without a purchase order: Add Without PO and, since
+		// v1.536.0, every store-run line. Posted only -- an undone save needs no review.
 		frm.add_custom_button(
-			__("Added Without PO to Review"),
+			__("Stock Scan Saves to Review"),
 			() =>
 				frappe.set_route("List", "Stock Scan Log", {
 					needs_review: 1,
 					reviewed: 0,
 					status: "Posted",
+				}),
+			group
+		);
+		// POL-0602 §4.8: the Purchasing Agent reviews each Item a technician created on a store
+		// run, weekly. No status filter: an Item created with a line that was then undone still
+		// exists, and still needs looking at.
+		frm.add_custom_button(
+			__("New Items From Store Runs"),
+			() =>
+				frappe.set_route("List", "Stock Scan Log", {
+					created_item: 1,
+					reviewed: 0,
 				}),
 			group
 		);
