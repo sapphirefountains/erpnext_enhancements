@@ -6,7 +6,10 @@ Three things fail silently if they drift, and each is pinned here:
   requires `read` on its ``ref_doctype``. So the report's roles must be a subset of the roles
   that can read Job Interval at permlevel 0 — and, because finance is the audience, must
   include Accounts Manager. `Training Completion Matrix` listed HR Manager while the
-  doctype granted HR Manager nothing, and errored for exactly its intended reader.
+  doctype granted HR Manager nothing, and errored for exactly its intended reader. The
+  opposite bound matters as much: the report's raw SQL applies no permlevel, so its roles
+  must also be a subset of Job Interval's **permlevel-1** readers, or it hands the pay block
+  to someone the doctype hides it from. Projects Manager was exactly that until v1.538.0.
 * **Groupings.** The JS `group_by` Select offers a list; the Python refuses anything outside
   ``GROUP_BY``. A grouping offered but refused is a report that errors for the reader who
   picked it, so the two lists are compared verbatim.
@@ -69,6 +72,15 @@ class TestReportRecord(unittest.TestCase):
         )
         self.assertIn("Accounts Manager", report_roles)
         self.assertNotIn("Employee", report_roles, "every staff account holds Employee; this is a pay report")
+        pay_readers = {p["role"] for p in interval["permissions"] if p.get("read") and p.get("permlevel") == 1}
+        self.assertLessEqual(
+            report_roles,
+            pay_readers,
+            f"a raw-SQL report must not be wider than the pay block it reads: {report_roles - pay_readers}",
+        )
+        self.assertNotIn(
+            "Projects Manager", report_roles, "Projects Manager reads Job Interval but not its permlevel-1 pay block"
+        )
 
 
 class TestGroupings(unittest.TestCase):

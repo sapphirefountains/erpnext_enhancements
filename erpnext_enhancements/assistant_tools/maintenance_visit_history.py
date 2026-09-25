@@ -128,6 +128,10 @@ class MaintenanceVisitHistory(BaseTool):
                 frappe._("No read permission for Sapphire Maintenance Record {0}").format(doc.name),
                 frappe.PermissionError,
             )
+        # has_permission is document-level only, and get_doc applies no permlevel: without this,
+        # total_labor_cost (permlevel 1, pay-derived; v1.538.0) reaches every reader of the visit.
+        # The key stays in the payload and reads None for a caller without level-1 read.
+        doc.apply_fieldlevel_read_permissions()
 
         visit = {field: doc.get(field) for field in _DETAIL_HEADER_FIELDS}
         visit["project_title"] = frappe.db.get_value("Project", doc.project, "project_name") or doc.project

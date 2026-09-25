@@ -2186,7 +2186,57 @@ override_whitelisted_methods = {
 	# and only rewrites the filename afterwards, for Purchase Order alone. See
 	# po_pdf_filename.py.
 	"frappe.utils.print_format.download_pdf": "erpnext_enhancements.po_pdf_filename.download_pdf",
+	# Activity Cost's costing_rate is each employee's burdened pay rate (workforce/costing.py,
+	# ADR 0013), and ERPNext's whitelisted get_activity_cost returned it to any logged-in
+	# caller with no permission check (v1.538.0). The permlevel-1 Property Setter on the field
+	# cannot reach a whitelisted function's own db read, so this HTTP route is the only lever.
+	# The override calls ERPNext's function unchanged and zeroes costing_rate for anyone
+	# outside the pay audience; billing_rate is never touched. The server-side caller,
+	# TimesheetDetail.update_cost, imports ERPNext's function directly and is unaffected, so
+	# saved Timesheets still cost from the real rate. See api/activity_cost.py.
+	"erpnext.projects.doctype.timesheet.timesheet.get_activity_cost": "erpnext_enhancements.api.activity_cost.get_activity_cost",
+	# Field-level read on the responses frappe v16 sends unstripped (v1.538.0, ADR 0013).
+	# (1) The form's docinfo: getdoc strips the document, then attaches `versions`, the
+	# stored Version diffs verbatim -- old and new value of every changed field, whole child
+	# rows -- with no permlevel filter. Employee and Job Interval track changes, so pay-rate
+	# rows and every stamped labor_cost reached every reader of the record in the payload.
+	# savedocs / cancel / discard send the same docinfo. (2) Write responses: frappe.client's
+	# set_value / insert / save / submit / cancel return doc.as_dict(), and apply_workflow
+	# returns the Document, none stripped, so a writer without level-1 read got the stored
+	# level-1 values back. Each override calls frappe's own function unchanged and scrubs what
+	# it produced; stored Versions are never touched. The REST twins (/api/resource,
+	# /api/v2/document) are routes no override can reach: see `after_request` below. The
+	# signatures and HTTP methods mirror frappe's and tests/test_fieldlevel_read.py pins
+	# them. See fieldlevel_read.py.
+	"frappe.desk.form.load.getdoc": "erpnext_enhancements.fieldlevel_read.getdoc",
+	"frappe.desk.form.load.get_docinfo": "erpnext_enhancements.fieldlevel_read.get_docinfo",
+	"frappe.desk.form.save.savedocs": "erpnext_enhancements.fieldlevel_read.savedocs",
+	"frappe.desk.form.save.cancel": "erpnext_enhancements.fieldlevel_read.desk_cancel",
+	"frappe.desk.form.save.discard": "erpnext_enhancements.fieldlevel_read.desk_discard",
+	"frappe.client.set_value": "erpnext_enhancements.fieldlevel_read.client_set_value",
+	"frappe.client.insert": "erpnext_enhancements.fieldlevel_read.client_insert",
+	"frappe.client.save": "erpnext_enhancements.fieldlevel_read.client_save",
+	"frappe.client.submit": "erpnext_enhancements.fieldlevel_read.client_submit",
+	"frappe.client.cancel": "erpnext_enhancements.fieldlevel_read.client_cancel",
+	"frappe.model.workflow.apply_workflow": "erpnext_enhancements.fieldlevel_read.apply_workflow",
 }
+
+# POST/PUT /api/resource and /api/v2/document return the saved document unstripped, and they
+# are werkzeug routes rather than whitelisted methods, so no override reaches them. This scrubs
+# the serialised body instead, only on those paths and only when a field actually goes; every
+# other request leaves on a method + path check. It never raises (frappe would log it and send
+# the body unscrubbed). See fieldlevel_read.scrub_rest_write_response (v1.538.0).
+after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response"]
+
+# The overrides above match a method *name*, but frappe's whitelist check matches the function
+# *object*, so a module that imports one of the eleven wrapped functions exposes frappe's
+# original, unscrubbed, under its own dotted path (frappe.email.inbox.set_value, Workflow
+# Action's apply_workflow, getdoc in five shipped test modules, among others). This takes the
+# originals off frappe's whitelist once their canonical names are overridden, so every alias,
+# present or future, fails the whitelist check; the canonical names still reach the wrappers,
+# and in-process calls are unaffected. It never raises. See fieldlevel_read.seal_wrapped_originals
+# (v1.538.0).
+before_request = ["erpnext_enhancements.fieldlevel_read.seal_wrapped_originals"]
 
 override_doctype_dashboards = {
 	"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data",

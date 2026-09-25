@@ -21,6 +21,7 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Effective From",
+   "permlevel": 1,
    "reqd": 1
   },
   {
@@ -31,6 +32,7 @@
    "in_list_view": 1,
    "label": "Pay Type",
    "options": "Hourly\nSalaried",
+   "permlevel": 1,
    "reqd": 1
   },
   {
@@ -39,7 +41,8 @@
    "fieldname": "hourly_rate",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Hourly Rate"
+   "label": "Hourly Rate",
+   "permlevel": 1
   },
   {
    "columns": 2,
@@ -47,13 +50,15 @@
    "fieldname": "annual_salary",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Annual Salary"
+   "label": "Annual Salary",
+   "permlevel": 1
   },
   {
    "description": "Annual salary / 2080. Computed when the Employee is saved; used as the hourly rate for job costing.",
    "fieldname": "hourly_equivalent",
    "fieldtype": "Currency",
    "label": "Hourly Equivalent",
+   "permlevel": 1,
    "read_only": 1
   },
   {
@@ -62,14 +67,16 @@
    "fieldname": "burden_pct",
    "fieldtype": "Percent",
    "in_list_view": 1,
-   "label": "Burden %"
+   "label": "Burden %",
+   "permlevel": 1
   },
   {
    "columns": 2,
    "fieldname": "note",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Note"
+   "label": "Note",
+   "permlevel": 1
   }
  ],
  "index_web_pages_for_search": 1,
