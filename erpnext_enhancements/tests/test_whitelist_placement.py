@@ -88,6 +88,16 @@ MUST_STAY_WHITELISTED = {
         "confirm_actions",
         "cancel_actions",
     ),
+    # The customer portal's surface on /pay and /pay-card. Each portal endpoint has a private
+    # ownership guard directly above it (`_own_invoice_or_throw`, `_own_submitted_invoice`) --
+    # the shape of the accident above -- and a lost decorator here fails only on a customer's
+    # phone: a Card, Bank or "View invoice (PDF)" tap that answers "not whitelisted".
+    "stripe_payments/core/api.py": (
+        "portal_create_payment",
+        "portal_price_card_payment",
+        "portal_confirm_card_payment",
+        "portal_invoice_pdf",
+    ),
 }
 
 
