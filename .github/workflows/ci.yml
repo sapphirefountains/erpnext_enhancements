@@ -1176,7 +1176,7 @@ jobs:
       # generated histories; test_store_run_matching covers the Store Run Charge Matching report
       # (Accounting's list at the QuickBooks cutover) built on it: each "What to do", the 2210
       # check to the cent (correcting entries named by Reference Number included), charges that
-      # carry 2210 with no store run, charges found by hand, the Show buckets, trips at either edge
+      # carry 2210 with no store run, links by Reference Number, the Show buckets, trips at either edge
       # of the range pairing as the KPI pairs them, and the report's files (placement, reads only,
       # the reader's fixed charge order, JS filters = Python's). All four are stub-free.
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants + store-run matching

@@ -16,15 +16,18 @@ by a person, in the Desk.
 **The pairing is the Store Runs KPI's own**: the rows come from ``snapshots._store_run_rows``, the
 KPI's reader, and are paired by ``metrics.pair_store_runs``, the function the KPI counts with, over
 the same window rule (``store_run_matching.pair_window``). The list therefore pairs exactly as the
-KPI does when counted from the same From Date. Every rule -- what counts as moved, what to do,
-which bucket, a charge found by hand, a charge carrying 2210 with no trip -- is in
-``kpi_dashboards/store_run_matching.py``, pure and tested bench-free; this module only reads.
+KPI does when counted from the same From Date, except where a Reference Number links a charge to
+its trips. Every rule -- what counts as moved, what to do, which bucket, what a Reference Number
+links, a charge carrying 2210 with no trip -- is in ``kpi_dashboards/store_run_matching.py``, pure
+and tested bench-free; this module only reads.
 
-Besides the KPI's rows it reads, for the matched charges and the charges that paired with none:
-their own 2210 lines, the submitted **correcting Journal Entries** whose Reference Number
-(``cheque_no``) names them (the one fix advised for a charge already submitted -- amending a
+Besides the KPI's rows it reads: every Journal Entry with a **Reference Number** (``cheque_no``),
+whatever its vendor -- a charge linked to its trips by their run ids, or a **correcting Journal
+Entry** naming a charge (the one fix advised for a charge already submitted; amending a
 QuickBooks-synced entry would detach it from ``tabQuickBooks Sync Mapping`` and so from the
-pairing), and the Purchase Invoices billed from the trips' receipts.
+pairing); the earlier trips and the Journal Entries those Reference Numbers name that the reader
+did not read; the 2210 lines of the charges and of their correcting entries; and the Purchase
+Invoices billed from the trips' receipts.
 
 **Known limit**: a standalone Purchase Invoice with *Update Stock* ticked pairs as a charge, but
 its stock lines post to the warehouse account, not 2210, so the report reads nothing on 2210 for
@@ -61,18 +64,41 @@ def execute(filters=None):
 	# The KPI's reader, from STORE_RUN_LOOKBACK_DAYS before the From Date; pair_window keeps the
 	# charges up to STORE_RUN_PAIR_DAYS after the To Date and pairs them as the KPI does.
 	charges, receipts = snapshots._store_run_rows(suppliers, from_date)
+	# Then what the Reference Numbers say: links from a charge to its trips, and correcting
+	# entries. The keys the reader's rows do not resolve are looked up as earlier trips (a link
+	# resolves by key, whatever the trip's date) and as Journal Entries a correcting entry names.
+	references = _references(add_days(from_date, -snapshots.STORE_RUN_LOOKBACK_DAYS))
+	unknown = matching.unresolved_tokens(references, charges, receipts)
+	far_receipts = _receipts_by_key(suppliers, unknown)
+	links, corrections = matching.resolve_links(
+		references, charges, receipts, far_receipts, _entries_by_name(unknown)
+	)
 	trips, unpaired = matching.pair_window(
-		charges, receipts, from_date, to_date, store_key, store=filters.get("store")
+		charges,
+		receipts,
+		from_date,
+		to_date,
+		store_key,
+		store=filters.get("store"),
+		links=links,
+		far_receipts=far_receipts,
 	)
 	accounts = _accounts(trips, unpaired)
-	on_2210, corrections = _on_2210(matching.vouchers(trips, unpaired), accounts)
+	found = matching.vouchers(trips, unpaired)
+	on_2210 = _on_2210(
+		{
+			"Journal Entry": found["Journal Entry"] + matching.correcting_entries(found, corrections),
+			"Purchase Invoice": found["Purchase Invoice"],
+		},
+		accounts,
+	)
 	rows = matching.build_rows(
 		trips,
 		on_2210=on_2210,
-		billed=_billed(trips),
+		billed=_billed(matching.receipt_names(trips)),
 		accounts=accounts,
 		name_of=get_fullname,
-		corrections=corrections,
+		corrections=matching.correction_amounts(corrections, on_2210),
 		unpaired=unpaired,
 	)
 	summary = matching.summarize(rows)
@@ -137,13 +163,120 @@ def get_columns():
 	]
 
 
+def _references(early):
+	"""Every Journal Entry, draft or submitted, dated from ``early`` (the reader's lookback before the
+	From Date) whose Reference Number (``cheque_no``) is filled in, for
+	``store_run_matching.resolve_links``: a charge linked to its trips, or a correcting entry.
+
+	**Not limited to the store-run vendors**: a QuickBooks draft under a vendor that is not ticked
+	*Store-Run Vendor* is invisible to the KPI's reader, and linking it by Reference Number is how
+	Accounting tells the report it is a trip's charge. The keys are matched in Python
+	(``reference_tokens``), so a Reference Number listing several is read once. A charge is never
+	dated before its purchase and a correcting entry never before its charge, so nothing dated
+	before ``early`` bears on a row. 0 rows on production on 2026-09-25 (no Journal Entry there
+	carries a Reference Number yet).
+
+	The QuickBooks mapping is joined once, as a derived table, rather than probed per row with a
+	correlated ``exists``: ``tabQuickBooks Sync Mapping`` has no index on ``erpnext_name``, and on
+	production the ``exists`` form took 2.8 s over 826 entries where the join took 26 ms.
+	"""
+	return frappe.db.sql(
+		"""
+		select je.name, je.cheque_no as reference, je.docstatus, je.posting_date as day, je.company,
+			je.total_debit as amount, if(qm.erpnext_name is null, 'ERPNext', 'QuickBooks') as source
+		from `tabJournal Entry` je
+		left join (
+			select distinct m.erpnext_name from `tabQuickBooks Sync Mapping` m
+			where m.erpnext_doctype = 'Journal Entry'
+		) qm on qm.erpnext_name = je.name
+		where je.docstatus < 2 and je.cheque_no <> '' and je.posting_date >= %(early)s
+		order by je.name
+		""",
+		{"early": early},
+		as_dict=True,
+	)
+
+
+def _entries_by_name(names):
+	"""The Journal Entries (draft or submitted) named by ``names``, in the shape of
+	:func:`_references`: the charge a correcting entry names when nothing else read it (a QuickBooks
+	charge under a vendor that is not a store-run vendor, submitted before it was linked)."""
+	if not names:
+		return []
+	return frappe.db.sql(
+		"""
+		select je.name, je.cheque_no as reference, je.docstatus, je.posting_date as day, je.company,
+			je.total_debit as amount, if(qm.erpnext_name is null, 'ERPNext', 'QuickBooks') as source
+		from `tabJournal Entry` je
+		left join (
+			select distinct m.erpnext_name from `tabQuickBooks Sync Mapping` m
+			where m.erpnext_doctype = 'Journal Entry'
+		) qm on qm.erpnext_name = je.name
+		where je.docstatus < 2 and je.name in %(names)s
+		order by je.name
+		""",
+		{"names": tuple(names)},
+		as_dict=True,
+	)
+
+
+def _receipts_by_key(suppliers, keys):
+	"""The receipts of the trips ``keys`` name that the KPI's reader did not read: store runs dated
+	before its lookback, which a link still reaches. A key is a run id, or a receipt's name when it
+	has none; MariaDB's case-insensitive collation matches them as ``reference_tokens`` lower-cases
+	them.
+
+	The same columns and the same rules as the receipts of ``snapshots._store_run_rows`` (submitted,
+	not a return, from a store-run vendor, no PO line), read by key instead of by date;
+	``tests/test_store_run_matching.py`` compares the two queries. Before
+	``patches/add_store_run_receipt_fields`` has run there is no run id to look up.
+	"""
+	if not keys:
+		return []
+	for field in (snapshots.STORE_RUN_RECEIPT_FIELD, snapshots.STORE_RUN_TOTAL_FIELD):
+		if not frappe.db.has_column("Purchase Receipt", field):
+			return []
+	return frappe.db.sql(
+		"""
+		select pr.supplier, pr.posting_date as day, coalesce(nullif(pr.`custom_store_run`, ''), pr.name) as run,
+			pr.base_grand_total as amount, coalesce(pr.`custom_receipt_total`, 0) as receipt_total,
+			coalesce(pr.supplier_delivery_note, '') as receipt_number,
+			pr.name as receipt, pr.company, pr.owner as recorded_by, pr.base_net_total as net_amount,
+			exists(
+				select 1 from `tabStock Ledger Entry` sle
+				where sle.voucher_type = 'Purchase Receipt' and sle.voucher_no = pr.name
+					and sle.is_cancelled = 0
+			) as is_stock_item,
+			(
+				select coalesce(sum(g.credit) - sum(g.debit), 0) from `tabGL Entry` g
+				where g.voucher_type = 'Purchase Receipt' and g.voucher_no = pr.name and g.is_cancelled = 0
+					and g.account = (
+						select c.stock_received_but_not_billed from `tabCompany` c where c.name = pr.company
+					)
+			) as stock_amount
+		from `tabPurchase Receipt` pr
+		where pr.docstatus = 1 and pr.is_return = 0
+			and coalesce(nullif(pr.`custom_store_run`, ''), pr.name) in %(keys)s
+			and pr.supplier in %(suppliers)s
+			and not exists (
+				select 1 from `tabPurchase Receipt Item` i
+				where i.parent = pr.name and coalesce(i.purchase_order, '') <> ''
+			)
+		order by pr.posting_date, pr.name
+		""",
+		{"keys": tuple(keys), "suppliers": tuple(suppliers)},
+		as_dict=True,
+	)
+
+
 def _accounts(trips, unpaired):
 	"""``{company: its Stock Received But Not Billed account}`` for the companies of the trips'
-	receipts and of the charges that paired with no trip."""
+	receipts, of their charges, and of the charges that paired with no trip."""
 	companies = {row.get("company") for trip in trips for row in trip["receipts"] if row.get("company")}
-	companies |= {bill["row"].get("company") for bill in unpaired if bill["row"].get("company")}
+	companies |= {trip["charge"]["row"].get("company") for trip in trips if trip.get("charge")}
+	companies |= {bill["row"].get("company") for bill in unpaired}
 	accounts = {}
-	for company in sorted(companies):
+	for company in sorted(filter(None, companies)):
 		account = frappe.get_cached_value("Company", company, "stock_received_but_not_billed")
 		if account:
 			accounts[company] = account
@@ -151,20 +284,20 @@ def _accounts(trips, unpaired):
 
 
 def _on_2210(vouchers, accounts):
-	"""``(on_2210, corrections)`` for the charges in ``vouchers`` (``store_run_matching.vouchers``).
+	"""``{(voucher_type, voucher_no): net debit on 2210}`` for the vouchers in ``vouchers``: the
+	charges (``store_run_matching.vouchers``) and their correcting entries
+	(``store_run_matching.correcting_entries``).
 
-	* ``on_2210``: ``{(voucher_type, voucher_no): net debit on 2210}``, read from the voucher's own
-	  lines, so a draft (which has no GL yet) is read like a submitted one: a Journal Entry's account
-	  rows, and a Purchase Invoice's item rows whose expense account is 2210 (ERPNext books a stock
-	  line of an invoice with no receipt there).
-	* ``corrections``: ``{voucher_no: {entry: net debit on 2210}}``, every **submitted** Journal Entry
-	  whose Reference Number (``cheque_no``) is one of the charges -- the correcting entry the report
-	  advises for a charge already submitted. Matched ignoring case and surrounding spaces, as it is
-	  typed by hand; a charge is never counted as its own correction. ``build_rows`` adds the two.
+	Read from each voucher's own lines, so a draft (which has no GL yet) is read like a submitted
+	one: a Journal Entry's account rows, and a Purchase Invoice's item rows whose expense account is
+	2210 (ERPNext books a stock line of an invoice with no receipt there). Which entry corrects which
+	charge was decided from the Reference Numbers (``store_run_matching.resolve_links``: submitted
+	entries only, never a charge correcting itself); ``store_run_matching.correction_amounts`` pairs
+	the two up and ``build_rows`` adds them.
 	"""
 	names = [name for found in vouchers.values() for name in found]
 	if not accounts or not names:
-		return {}, {}
+		return {}
 
 	on_2210 = {}
 	params = {"accounts": tuple(sorted(set(accounts.values())))}
@@ -193,40 +326,18 @@ def _on_2210(vouchers, accounts):
 			as_dict=True,
 		):
 			on_2210[("Purchase Invoice", row.voucher_no)] = row.amount
-
-	# The correcting entries. trim() and the case-insensitive lookup below forgive how a Reference
-	# Number is typed; `je.name not in` keeps a charge from correcting itself.
-	canonical = {name.lower(): name for name in names}
-	corrections = {}
-	for row in frappe.db.sql(
-		"""
-		select trim(je.cheque_no) as reference, je.name as entry,
-			coalesce(sum(jea.debit), 0) - coalesce(sum(jea.credit), 0) as amount
-		from `tabJournal Entry` je
-		join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
-		where je.docstatus = 1 and trim(je.cheque_no) in %(names)s and je.name not in %(names)s
-			and jea.account in %(accounts)s
-		group by je.name, trim(je.cheque_no)
-		""",
-		dict(params, names=tuple(sorted(names))),
-		as_dict=True,
-	):
-		charge = canonical.get(str(row.reference or "").strip().lower())
-		if charge:
-			corrections.setdefault(charge, {})[row.entry] = row.amount
-	return on_2210, corrections
+	return on_2210
 
 
-def _billed(trips):
-	"""``{receipt: Purchase Invoice}``: the trips' receipts a submitted invoice was made from.
+def _billed(receipts):
+	"""``{receipt: Purchase Invoice}``: the receipts (``store_run_matching.receipt_names``: the
+	trips' own, and those of every trip their charges are linked to) a submitted invoice was made
+	from.
 
 	After the cutover a recorded trip is billed from its receipts (*Get Items From -> Purchase
 	Receipt*); that invoice clears 2210 itself and is the same trip, not a charge, so the KPI never
 	pairs it. The earliest invoice per receipt is named.
 	"""
-	receipts = sorted(
-		{row.get("receipt") for trip in trips for row in trip["receipts"] if row.get("receipt")}
-	)
 	if not receipts:
 		return {}
 	billed = {}
@@ -262,17 +373,22 @@ def _message():
 			_(
 				"<b>Then set Show to <i>Waiting</i></b> and check each trip dated on or before the last "
 				"QuickBooks sync: its charge did not pair (a bank-feed date more than 3 days late, an amount "
-				"outside the tolerance). Find its draft by hand and move exactly the trip's stock lines to 2210; "
-				"the report then shows it as the trip's charge (Match Basis <i>Its 2210 debit</i>). If there is "
-				"none, bill the trip from its receipts after the cutover. A charge that carries 2210 but matches no "
-				"recorded store run is listed under <i>Needs action</i>, to be moved back to the expense."
+				"outside the tolerance, two runs of one purchase, a vendor not ticked Store-Run Vendor). Find its "
+				"draft, move the trip's stock lines to 2210 and <b>put the trip's run id in the draft's Reference "
+				"Number</b> (several run ids, separated by commas or spaces, when one draft pays for several "
+				"trips; keep any already there); the report then shows it as the trip's charge (Match Basis "
+				"<i>Linked by Reference Number</i>). Only if the trip has no card charge at all, bill it from its "
+				"receipts after the cutover; never both. <b>Then set Show to <i>Needs action</i> again: it must be "
+				"empty before the loop.</b>"
 			),
 			_(
 				"One row per store run recorded in the range. Charges are paired exactly as the Store Runs KPI "
 				"pairs them: same store (Lowes and Lowe's are one), dated on the trip's day or up to 3 days after, "
 				"for the receipt total, else the lines plus up to 15% tax. Trips and charges are read from 7 days "
 				"before From Date and charges up to 3 days after To Date, so a trip near either edge pairs as it "
-				"does in the KPI counted from the same From Date. The figures above cover every row in range, "
+				"does in the KPI counted from the same From Date. A Reference Number that lists a trip's run id "
+				"overrides that pairing, whatever the trip's date. A charge that carries 2210 but is neither paired "
+				"nor linked is listed under <i>Needs action</i>. The figures above cover every row in range, "
 				"whatever Show is set to."
 			),
 		]

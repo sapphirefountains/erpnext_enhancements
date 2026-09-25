@@ -450,7 +450,9 @@ bills them; the card charge for the same trip arrives from QuickBooks as a draft
 The **Store Run Charge Matching** report (KPI Dashboards) lists every recorded run beside the
 charge the Store Runs KPI pairs it with, the amount the charge must move to 2210, and what to do;
 Accounting works through its *Needs action* rows, then checks its *Waiting* ones, at the QuickBooks
-cutover. See
+cutover. A charge the pairing cannot see (more than 3 days late, two runs of one purchase) is
+linked by putting the run id -- the `custom_store_run` this page writes -- in the charge's
+Reference Number. See
 [`kpi_dashboards/README.md`](../kpi_dashboards/README.md).
 
 **Checks that need a bench** (not in CI): the entered rate survives `set_missing_values` when a

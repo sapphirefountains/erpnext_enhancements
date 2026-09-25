@@ -106,22 +106,36 @@ Other prerequisites:
     credited to 2210, read from the GL) and whether the draft already carries it (*Moved to 2210*,
     to the cent). An adjusted draft is **saved, not submitted**; the bulk submit takes it. A row
     leaves *Needs action* once its draft carries exactly that 2210 debit, so re-running the report
-    shows what is left. A charge that carries 2210 but matches no recorded store run (a draft
-    adjusted for a trip whose receipt was later cancelled, say) is listed there too, to be moved
-    back to the expense.
+    shows what is left. A charge that carries 2210 but is neither paired nor linked to a recorded
+    store run is listed there too: a draft moved for a trip but not linked to it (put the trip's
+    run id in its Reference Number), or one to move back to the expense (its trip's receipt was
+    cancelled, say).
   - **Then set Show = Waiting** and check every trip dated on or before the last QuickBooks sync.
     Its charge did not pair: a bank-feed date more than three days late, an amount outside the
-    tolerance, two runs of one purchase. Find its draft by hand and adjust it like a *Needs action*
-    row; once the draft carries exactly the trip's stock lines on 2210, the report shows it as the
-    trip's charge (Match Basis *Its 2210 debit (found by hand)*) and the row moves to *Done*. Or
-    confirm there is none, and bill the trip from its receipts after the cutover (no card charge
-    arrives from QuickBooks after it). Submitted unchanged, such a draft books the goods twice,
-    and billing the trip from its receipts afterwards would credit the card a second time.
+    tolerance, two runs of one purchase, a vendor not ticked *Store-Run Vendor*. Its row says one
+    of two things, never both. **If it has a card charge**: find the draft, move the trip's stock
+    lines to 2210, **put the trip's run id in the draft's Reference Number** (`cheque_no`) and save
+    it; the report then shows the draft as the trip's charge (Match Basis *Linked by Reference
+    Number*) and the row moves to *Done* once the draft carries the stock lines. When one draft
+    pays for several trips — two runs of one purchase — list all their run ids, separated by
+    commas or spaces and keeping any already there: the draft then carries their stock lines
+    together. **A draft found under a QuickBooks vendor that is not a ticked Store-Run Vendor is
+    invisible to the report until it is linked: link it by Reference Number anyway, and never bill
+    that trip from its receipts** (the report reads every Journal Entry's Reference Number,
+    whatever its vendor). **Only if it has no card charge at all**, bill the trip from its receipts
+    after the cutover (no card charge arrives from QuickBooks after it). Submitted unchanged, such
+    a draft books the goods twice; fixing it *and* billing the trip from its receipts would credit
+    the card a second time.
+  - **Then re-run with Show = Needs action; it must be empty** before the bulk submit. A link can
+    move rows back into it: a draft now carrying more than its linked trips' stock lines, or a draft
+    the pairing had given to another trip (that trip's row asks whether the draft pays for it too).
   - **A draft submitted before it was adjusted** reappears under *Needs action* as *Submitted with
     the goods on the expense*. Fix it with **one correcting Journal Entry** — Dr `2210 - Stock
     Received But Not Billed - SF` / Cr the expense account the charge used, for the amount the row
     gives — whose **Reference Number is the charge's name**; the report adds the 2210 debit of every
-    submitted entry that names a charge that way, so the row moves to *Done*. **Never amend a
+    submitted entry that names a charge that way, so the row moves to *Done*. For a trip whose
+    charge never paired, follow the charge's name with the trip's run id in that Reference Number:
+    that links them, since a submitted entry's own Reference Number cannot be changed. **Never amend a
     QuickBooks Journal Entry** to fix it: amending cancels the original, `tabQuickBooks Sync
     Mapping` stays on the cancelled one, and the pairing follows the mapping, so the charge would
     drop out of the report and its trip would read as waiting.
