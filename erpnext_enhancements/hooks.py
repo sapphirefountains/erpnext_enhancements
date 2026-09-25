@@ -835,7 +835,11 @@ doc_events = {
 		# upload to public/files -- so on insert it re-saves the content privately through
 		# File.save_file and deletes the public copy only if this insert wrote it. On an
 		# update (before_validate runs before File.validate) setting is_private is enough:
-		# File.validate moves the bytes itself. See knowledge_base/files.py.
+		# File.validate moves the bytes itself. Also on an update: a File the stored row
+		# attaches to either KB doctype may not be detached or moved (read_only is never
+		# enforced on the server, so its owner could otherwise detach an article's image and
+		# then delete it) unless KB code sets flags.kb_action. before_validate runs even
+		# under flags.ignore_validate. See knowledge_base/files.py.
 		"before_insert": "erpnext_enhancements.knowledge_base.files.force_private",
 		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
@@ -2394,8 +2398,10 @@ has_permission = {
 	# delete an image out of approved text. A permission hook rather than on_trash
 	# because File.on_trash deletes the bytes BEFORE any doc_events on_trash handler
 	# runs. KB code that must delete one passes flags={"kb_action": True} to delete_doc;
-	# nothing in v1 does. Not a query-condition twin case: it filters no list, it only
-	# takes away one right. Runs for every File permission check on the site, so every
+	# nothing in v1 does. Detaching the File first is refused by force_private above (a
+	# permission hook sees only the updated row). Not a query-condition twin case: it
+	# filters no list, it only takes away one right. Runs for every File permission
+	# check on the site, so every
 	# other ptype returns True explicitly (a falsy return DENIES on v16).
 	"File": "erpnext_enhancements.knowledge_base.files.file_has_permission",
 }

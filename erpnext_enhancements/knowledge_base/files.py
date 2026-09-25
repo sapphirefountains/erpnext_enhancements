@@ -4,11 +4,12 @@
 """Files attached to the Knowledge Base are always private, and a published article keeps its images.
 
 WI-080 PR 2, ADR 0017 ("Every attached file is private"). Two hooks on the core ``File`` doctype,
-registered in ``hooks.py``. **Both run for every File on the site**, so each starts with one
-attribute read and returns at once for a File that is not attached to the Knowledge Base. They
-read with ``getattr(doc, "...", None) or ""`` and never raise for an unrelated File: File inserts
-happen during ERPNext's own test bootstrap and in every upload on the site, and a hook that
-raised there would break all of them.
+registered in ``hooks.py``. **Both run for every File on the site**, so each returns at once for a
+File that is not attached to the Knowledge Base, after reading the File's attachment (and, on an
+update, the stored row's, which v16 has already loaded: no query). They read with
+``getattr(doc, "...", None) or ""`` and never raise for an unrelated File: File inserts happen
+during ERPNext's own test bootstrap and in every upload on the site, and a hook that raised there
+would break all of them.
 
 :func:`force_private` (``doc_events["File"]["before_insert"]`` and ``["before_validate"]``).
 A File is public when ``is_private`` is 0, and nginx then serves it to anyone who has the URL, with
@@ -35,6 +36,23 @@ which runs before ``File.validate``), setting the flag is enough: ``File.validat
 (``handle_is_private_changed``, ``file.py:324-389``). That closes the other way a KB file could
 turn public: its owner editing the File and unticking Private.
 
+**A KB File stays attached where it is** (the same hook, on an update). ``attached_to_doctype`` and
+``attached_to_name`` are only ``read_only`` in v16's ``file.json``, which the server never
+enforces: ``frappe.client.set_value`` and ``PUT /api/resource/File`` apply the new values and
+save (``client.py:208-215``, ``api/v1.py:50-58``), and the write-permission check then runs on the
+*updated* row (``model/document.py:584``), which ``File.has_permission`` grants its owner. So the
+owner of a published article's image could detach it in one call and delete it in the next (the
+delete check below would see no article), or detach it and untick Private in the same call (the
+KB test would see no KB doctype). On an update this compares the attachment with the stored row
+(``get_doc_before_save()``, loaded ``FOR UPDATE`` by ``check_if_latest``, ``:1097``) and refuses
+any change to ``attached_to_doctype`` or ``attached_to_name`` of a File the stored row attaches to
+either KB doctype, unless KB code sets ``flags.kb_action``; and a File is treated as a KB File if
+either the stored row or the new one says so. A permission hook could not do this, since it sees
+only the updated row. ``before_validate`` runs even under ``flags.ignore_validate``
+(``model/document.py:1404-1405``, before the return at ``:1407-1408``), so no flag skips it.
+``api/comments.link_files_to_comment`` moves Files with ``db_set``, which runs no hook at all, so
+it refuses KB Files itself.
+
 :func:`file_has_permission` (``has_permission["File"]``). v16 protects attachments from deletion
 only on a *submitted* document whose doctype sets ``protect_attached_files``
 (``File.validate_protected_file``, ``file.py:586-614``), and a Knowledge Article is never
@@ -48,12 +66,14 @@ the row and leave it pointing at a file that is already gone. A permission check
 ``delete_doc`` before ``on_trash`` (``model/delete_doc.py:173-176``), while nothing has been
 touched.
 
-**The flag for PR 3.** The Knowledge Base's own code may delete such a File only by saying so:
+**The flag for PR 3.** The Knowledge Base's own code may delete such a File, or move a KB File to
+another document, only by saying so: ``file.flags.kb_action = True`` before ``file.save()``, or
 ``frappe.delete_doc("File", name, flags={"kb_action": True})`` (``delete_doc`` copies ``flags``
-onto the document before it checks permission). Nothing in v1 deletes one (publishing moves Files
-and retiring keeps them), so no code sets it today. Code running with ``ignore_permissions`` does
-not consult permission hooks at all; that is Frappe's rule for every doctype, and the Knowledge
-Base Integrity report (PR 4) is what would notice. Administrator is never refused, by Frappe.
+onto the document before it checks permission). **Publishing moves a draft's Files onto the
+Article, so PR 3 sets it on each File it moves.** Nothing in v1 deletes one (retiring keeps them).
+Code running with ``ignore_permissions`` does not consult permission hooks at all; that is Frappe's
+rule for every doctype, and the Knowledge Base Integrity report (PR 4) is what would notice.
+Administrator is never refused a delete, by Frappe.
 """
 
 import frappe
@@ -61,14 +81,22 @@ from frappe.utils import cint
 
 from erpnext_enhancements.knowledge_base.constants import ARTICLE_DOCTYPE, KB_DOCTYPES
 
-#: The flag KB code sets on a File to delete one attached to a Knowledge Article.
-DELETE_FLAG = "kb_action"
+#: The flag KB code sets on a File to delete one attached to a Knowledge Article, or to move a
+#: File off either KB doctype.
+ACTION_FLAG = "kb_action"
 
 
 def force_private(doc, method=None):
-	"""Make a File attached to either KB doctype private, bytes included. See the module docstring."""
-	if (getattr(doc, "attached_to_doctype", None) or "") not in KB_DOCTYPES:
+	"""Make a File attached to either KB doctype private, bytes included, and keep it attached
+	where it is. See the module docstring."""
+	attached = getattr(doc, "attached_to_doctype", None) or ""
+	# Only a saved File has a stored row, and before_insert never sees one.
+	stored = _stored_row(doc) if method == "before_validate" else None
+	was_attached = (_read(stored, "attached_to_doctype") or "") if stored is not None else ""
+	if attached not in KB_DOCTYPES and was_attached not in KB_DOCTYPES:
 		return
+	if was_attached in KB_DOCTYPES:
+		_refuse_moving(doc, stored)
 	if cint(getattr(doc, "is_private", 0)):
 		return
 	file_url = getattr(doc, "file_url", None) or ""
@@ -111,9 +139,40 @@ def file_has_permission(doc, ptype=None, user=None, debug=False):
 		return True
 	if (getattr(doc, "attached_to_doctype", None) or "") != ARTICLE_DOCTYPE:
 		return True
-	if _flag(doc, DELETE_FLAG):
+	if _flag(doc, ACTION_FLAG):
 		return True
 	return False
+
+
+def _refuse_moving(doc, stored):
+	"""Refuse a change to where a KB File is attached, unless KB code flags it."""
+	if _flag(doc, ACTION_FLAG):
+		return
+	fields = ("attached_to_doctype", "attached_to_name")
+	before = tuple(str(_read(stored, f) or "") for f in fields)
+	after = tuple(str(getattr(doc, f, None) or "") for f in fields)
+	if before == after:
+		return
+	frappe.throw(
+		frappe._(
+			"{0} is attached to {1} {2}, and a file attached to the knowledge base stays there: it "
+			"cannot be detached or moved to another document. A published article keeps its "
+			"images, and every knowledge base file stays private. To take a picture out of a draft, "
+			"delete it from the draft."
+		).format(getattr(doc, "file_name", None) or getattr(doc, "name", None) or "This file", *before),
+		title=frappe._("Knowledge base files stay attached"),
+	)
+
+
+def _stored_row(doc):
+	"""The File as stored, which v16's ``check_if_latest`` loaded before any hook ran; no query."""
+	getter = getattr(doc, "get_doc_before_save", None)
+	return getter() if callable(getter) else None
+
+
+def _read(obj, key):
+	getter = getattr(obj, "get", None)
+	return getter(key) if callable(getter) else getattr(obj, key, None)
 
 
 def _flag(doc, name):

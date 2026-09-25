@@ -132,6 +132,11 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - **A published article's images could be deleted by whoever uploaded them** (found in PR 1 review). v16 protects attachments only on a submitted document (`File.validate_protected_file`), and an Article is never submitted. `files.file_has_permission` (`has_permission["File"]`) refuses `delete` on a Knowledge Article's File unless KB code sets `flags.kb_action`. Not an `on_trash` hook: `File.on_trash` deletes the bytes before any `doc_events` handler runs.
   - **Alignment is a style.** v16's Text Editor stores `text-align` in `style` (`text_editor.js`), so `strip_presentation` keeps that one declaration and drops the rest.
   - **The Version controller applies the rules** (as PR 1's controller said it would): the approval rules in `before_submit` and `on_submit` against the stored row, with PR 3 passing the opened `modified` as `flags.kb_opened_modified`; and on save, the Draft-only content rule, stripping, the secret scan and `contributors`. One open version per article stays with PR 3's `start_revision`.
+- Found in PR 2 review:
+  - **The content rules run in `before_validate`, not `validate`.** `flags.ignore_validate` skips `validate`, but v16 runs `before_validate` before it looks at that flag (`model/document.py:1404-1405`, then `:1407-1408`). In `validate`, server code could have changed an In Review version's text without being recorded as a contributor.
+  - **Presentation also arrives as attributes.** v16's `sanitize_html` keeps the `font` element and the `color`, `size`, `face`, `bgcolor` and `hidden` attributes (`utils/html_utils.py:267`, `:413-516`), and a REST write stores the body as sent, so `<font color="#ffffff">` or `<p hidden>` hid text from readers and not from `body_md`. `strip_presentation` drops those attributes; a bare `<font>` renders as plain text.
+  - **The secret scan must not refuse ordinary sentences**, because nothing lets an author past a finding. "Basic Maintenance/Cleaning" was an HTTP Basic credential (letters and `/` are base64), and "Password: case-sensitive." or "the password is forgotten," a written-out password. A Basic token must now decode to `user:password`, and a written password ignores the sentence's punctuation and needs a digit or a symbol other than `-`, `.` or `/`.
+  - **A KB File's owner could detach it and then delete it**, or detach it and make it public in one call: `attached_to_doctype` and `attached_to_name` are only `read_only`, which v16 never enforces, and the write check runs on the updated row. `force_private` (`before_validate`, which no flag skips) now refuses any change to where a KB File is attached unless KB code sets `flags.kb_action`, and treats a File as a KB File if its stored row says so. `api/comments.link_files_to_comment` moves Files with `db_set`, which runs no hook, so it skips KB Files itself.
 
 **PR 3: actions.**
 - `api/knowledge_base.py` (tabs; POST-only, with explicit permission checks; token-authenticated requests are refused on the approval path). Endpoints:
@@ -141,7 +146,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 - `knowledge_base/publish.py` does the following in one transaction:
   1. Allocates the number with `SELECT … FOR UPDATE` (the `%` goes inside the bound parameter).
   2. Writes the Article under `flags.kb_action`.
-  3. Moves every `?fid=` File that is attached to this Version and used in its body onto the Article. It never deletes.
+  3. Moves every `?fid=` File that is attached to this Version and used in its body onto the Article, setting `flags.kb_action` on each (from PR 2, a File attached to either KB doctype refuses any other change to its attachment). It never deletes.
   4. Supersedes the previous version and closes its ToDos.
 - `knowledge_base/notify.py` handles review ToDos in the shape of `training/notifications._raise_todo`, but **inline, not enqueued**. The description holds the title and link, never draft text. The enabled fixture Notification "New ToDo Created – Notify Creator and Assignee" sends the email.
 - Form scripts go in `public/js/knowledge_base/*.js`, registered in `doctype_js`.
@@ -253,7 +258,7 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 - **Published row.** ``SELECT name, author, approved_by, version_number FROM `tabKnowledge Article` `` returns the row with `approved_by <> author`.
 - **Images.** `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0` = 0.
   - From PR 2: a file attached to a draft through the sidebar **with Private unticked** is stored with `is_private = 1` and a `/private/files/` URL, and its would-be `/files/<name>` URL returns 404 with no cookie.
-  - From PR 2: the uploader of an image on a published article cannot delete it (the File form shows no Delete, and `DELETE /api/resource/File/<name>` is refused).
+  - From PR 2: the uploader of an image on a published article cannot delete it. Pressing Delete on the File form, or `DELETE /api/resource/File/<name>`, is refused with a permission error. (The form still shows Delete: v16 builds that menu from the role-level `can_delete` list, `toolbar.js:504-523` and `model.js:348-351`, and never asks the permission hook.) Clearing its Attached To through `frappe.client.set_value` is refused too.
 - **Integrity.** The `Knowledge Base Integrity` report returns 0 rows: every Article has a submitted Version at its `version_number`, and `approved_by` is not in {owner, submitted_by, ai_requested_by, contributors}.
 - **Entry points.**
   - ``SELECT item_label, route FROM `tabNavbar Item` WHERE parentfield='help_dropdown' AND item_label='Company Knowledge Base'`` returns `/desk/knowledge-base`.

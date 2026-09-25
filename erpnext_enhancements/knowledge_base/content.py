@@ -8,9 +8,10 @@ in the bench-free CI tier. Three jobs:
 
 * :func:`strip_presentation` removes the markup that can make text invisible to the person reading
   the page while leaving it in front of any AI that reads the HTML: colour, background, size and
-  font, whether they arrive as ``style`` or as Quill's ``ql-color-*``/``ql-bg-*``/``ql-size-*``/
-  ``ql-font-*`` classes. White-on-white or zero-size text is exactly what a reviewer would never
-  see and a model would obey. Tables, lists, alignment and indent survive.
+  font, whether they arrive as ``style``, as Quill's ``ql-color-*``/``ql-bg-*``/``ql-size-*``/
+  ``ql-font-*`` classes or as the attributes HTML had before CSS (``<font color size face>``,
+  ``bgcolor``), and the ``hidden`` attribute. White-on-white or zero-size text is exactly what a
+  reviewer would never see and a model would obey. Tables, lists, alignment and indent survive.
 * :func:`secret_findings` finds secret-shaped strings (vendor keys, private keys, tokens, a
   password written out) and reports **where and what kind, never the value**, because the refusal
   message is shown on screen and may be logged.
@@ -30,6 +31,7 @@ still carries every pasted screenshot as megabytes of base64, in which a vendor-
 up by chance. The scan never looks at them.
 """
 
+import base64
 import hashlib
 import html
 import json
@@ -52,7 +54,18 @@ PRESENTATION_CLASS_PREFIXES = ("ql-color-", "ql-bg-", "ql-size-", "ql-font-")
 #: any declaration this does not recognise exactly: this is an allowlist on purpose.
 KEPT_STYLE = {"text-align": frozenset({"left", "right", "center", "justify", "start", "end"})}
 
-_MAY_NEED_STRIPPING = re.compile(r"style|ql-", re.IGNORECASE)
+#: Presentation attributes, dropped from every tag. v16's ``sanitize_html`` keeps the ``font``
+#: element and every one of these (frappe ``origin/version-16`` ``utils/html_utils.py``: ``font``
+#: at :267, ``bgcolor`` :413, ``color`` :432, ``face`` :453, ``hidden`` :462, ``size`` :516), and
+#: a REST write stores the body as sent, so ``<font color="#ffffff">`` is white-on-white text and
+#: ``<p hidden>`` is not displayed at all. The Desk editor would turn a ``<font>`` into a coloured
+#: ``<span>`` (its ``CustomColor`` blot, ``text_editor.js``), but only if someone opens the draft.
+#: A ``<font>`` left with no attributes renders as plain text, so the element itself stays:
+#: renaming it would mean rewriting its end tag too, and nothing else here touches an end tag.
+PRESENTATION_ATTRIBUTES = frozenset({"bgcolor", "color", "face", "hidden", "size"})
+
+#: A quick test before the parser runs: no tag can need stripping without one of these in it.
+_MAY_NEED_STRIPPING = re.compile(r"style|ql-|color|face|hidden|size", re.IGNORECASE)
 #: HTMLParser counts lines on "\n" alone, so positions are mapped back the same way.
 _NEWLINE = re.compile("\n")
 
@@ -60,10 +73,10 @@ _NEWLINE = re.compile("\n")
 def strip_presentation(markup):
 	"""``markup`` with presentation removed. Anything not a string is returned as it came.
 
-	Only the start tags that carry a dropped ``style`` declaration or a presentation class are
-	rewritten; every other byte (text, entities, comments, other tags, ``data:`` images) is
-	returned exactly as it was, so the function is idempotent and a body with nothing to strip
-	comes back identical. ``indent`` (``ql-indent-N``), ``direction``, table and list markup are
+	Only the start tags that carry a dropped ``style`` declaration, a presentation class or a
+	presentation attribute are rewritten; every other byte (text, entities, comments, other tags,
+	end tags, ``data:`` images) is returned exactly as it was, so the function is idempotent and a
+	body with nothing to strip comes back identical. ``indent`` (``ql-indent-N``), ``direction``, table and list markup are
 	untouched. Tags are found with the standard library's HTML parser rather than a regex, so an
 	attribute value containing ``>`` or an unquoted value containing ``=`` is read the way a
 	browser reads it.
@@ -115,6 +128,8 @@ class _PresentationFinder(HTMLParser):
 def _clean_attrs(attrs):
 	cleaned = []
 	for name, value in attrs:
+		if name in PRESENTATION_ATTRIBUTES:
+			continue
 		if name == "style":
 			kept = _kept_style(value)
 			if kept is not None:
@@ -184,20 +199,60 @@ _DATA_URI = re.compile(r"data:[^,\s\"'<>]*,[^\s\"'<>)]*", re.IGNORECASE)
 #: A value that names where a secret is kept rather than being one.
 _POINTS_AT_A_VAULT = ("1password", "bitwarden", "lastpass", "keepass", "dashlane", "vault", "manager")
 
+#: Punctuation around a value that belongs to the sentence, not the value: "If the password is
+#: forgotten, ...", "Password: (optional)". The quotes are already outside the pattern's group.
+_SENTENCE_LEADING = "([{"
+_SENTENCE_TRAILING = ".,;:!?)]}…"
+#: Characters that join words in prose ("case-sensitive", "self-service", "first.last", "and/or").
+#: On their own they do not make a word a password; a digit or any other symbol does.
+_WORD_JOINERS = frozenset("-./")
+
+
+def _written_value(value):
+	"""The value after "password:" or "API key:" without the sentence's punctuation around it."""
+	return value.lstrip(_SENTENCE_LEADING).rstrip(_SENTENCE_TRAILING)
+
 
 def _written_password(value):
-	"""A value after "password:" that looks like a password rather than a sentence."""
-	lowered = value.casefold()
-	if "://" in value or any(word in lowered for word in _POINTS_AT_A_VAULT):
+	"""A value after "password:" or "password is" that is a password rather than a word of the sentence.
+
+	Eight characters or more once the sentence's own punctuation is off, a letter, and a digit or a
+	symbol that is not just joining two words. So ``Fountain#2026`` and ``Welcome1`` are passwords,
+	and "is forgotten,", "is case-sensitive.", "Password: (unchanged)" and "is: first.last" are
+	not. A password of letters and hyphens alone is missed, as a password of letters alone always
+	was: the scan is for secrets pasted by mistake, and refusing ordinary sentences, which nothing
+	lets an author past, costs more than that miss.
+	"""
+	token = _written_value(value)
+	if len(token) < 8:
 		return False
-	has_letter = any(c.isalpha() for c in value)
-	has_other = any(c.isdigit() or not c.isalnum() for c in value)
-	return has_letter and has_other
+	lowered = token.casefold()
+	if "://" in token or any(word in lowered for word in _POINTS_AT_A_VAULT):
+		return False
+	if not any(c.isalpha() for c in token):
+		return False
+	return any(c.isdigit() or not (c.isalnum() or c in _WORD_JOINERS) for c in token)
 
 
 def _written_key(value):
 	"""A value after "API key:" or "auth token:" long and mixed enough to be the key itself."""
-	return len(value) >= 16 and _written_password(value) and any(c.isdigit() for c in value)
+	token = _written_value(value)
+	return len(token) >= 16 and _written_password(token) and any(c.isdigit() for c in token)
+
+
+def _basic_credential(value):
+	"""A token after "Basic" that is what HTTP Basic sends: ``user:password`` in base64.
+
+	To a pattern, "Basic Maintenance/Cleaning" has the same shape, because letters and ``/`` are
+	base64 characters. So the token has to decode, to printable text with a ``:`` between a user
+	and a password; a phrase of words decodes to bytes that are not text.
+	"""
+	try:
+		decoded = base64.b64decode(value + "=" * (-len(value) % 4), validate=True).decode("utf-8")
+	except ValueError:  # binascii.Error and UnicodeDecodeError are both ValueErrors
+		return False
+	user, colon, password = decoded.partition(":")
+	return bool(colon and user and password and decoded.isprintable())
 
 
 #: ``(kind, pattern, check)``. ``check``, when present, is applied to the pattern's first group.
@@ -228,7 +283,12 @@ _SECRET_PATTERNS = tuple(
 		("a JSON Web Token", r"\beyJ[0-9A-Za-z_-]{8,}\.eyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}", 0, None),
 		("a Frappe API key and secret", r"\btoken\s+[0-9a-f]{15}:[0-9a-f]{15}\b", re.IGNORECASE, None),
 		("a bearer token", r"\bbearer\s+[0-9A-Za-z._~+/-]{20,}", re.IGNORECASE, None),
-		("an HTTP Basic credential", r"\bbasic\s+[0-9A-Za-z+/]{16,}={0,2}(?![0-9A-Za-z+/=])", re.IGNORECASE, None),
+		(
+			"an HTTP Basic credential",
+			r"\bbasic\s+([0-9A-Za-z+/]{16,}={0,2})(?![0-9A-Za-z+/=])",
+			re.IGNORECASE,
+			_basic_credential,
+		),
 		("a password in a web address", r"\b[a-z][a-z0-9+.-]*://[^\s/:@<>\"']+:[^\s/@<>\"']+@", re.IGNORECASE, None),
 		(
 			"a written-out password",

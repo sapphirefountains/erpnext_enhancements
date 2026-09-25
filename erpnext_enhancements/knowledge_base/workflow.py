@@ -147,7 +147,8 @@ def content_edit_problem(stored, changed):
 	"""Why these content changes may not be saved; ``None`` if they may.
 
 	Content changes only while the stored version is a Draft. There is no flag that lets code
-	past this: nothing the Knowledge Base does needs to change the text of a version that has
+	past this (the controller applies it in ``before_validate``, which ``flags.ignore_validate``
+	does not skip): nothing the Knowledge Base does needs to change the text of a version that has
 	left Draft, and "what the approver read is what was published" depends on it.
 	"""
 	if stored is None or not changed:

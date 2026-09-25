@@ -769,7 +769,8 @@ jobs:
       # months from one constant; month ends; leap years), presentation stripping (the colour,
       # size and font that hide text from a reviewer and not from a model, while tables, lists,
       # alignment and indent survive), the secret scan (never the value; never the base64 of a
-      # pasted screenshot) and the content hash. workflow.py and content.py import no frappe,
+      # pasted screenshot; never an ordinary sentence, since nothing lets an author past a
+      # finding) and the content hash. workflow.py and content.py import no frappe,
       # checked in a fresh interpreter, so no stub and nothing to cross-talk with.
       - name: Knowledge base rules (who may approve, KB numbers, review dates, content hygiene)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_rules -v
@@ -777,7 +778,9 @@ jobs:
       # an unrelated File must come back untouched with no query, or every upload breaks. For a
       # KB File it must move the BYTES, not just the flag -- a doc_events before_insert runs after
       # File.before_insert has already written the upload to public/files, where nginx serves it
-      # to anyone -- and delete the public copy only when this insert wrote it. The File
+      # to anyone -- and delete the public copy only when this insert wrote it. On an update it
+      # must refuse detaching or moving a KB File, or its owner could detach an article's image
+      # and then delete it; link_files_to_comment (db_set, no hooks) must skip them. The File
       # permission hook sees every File permission check too, and on v16 a falsy answer DENIES,
       # so anything but `delete` on a Knowledge Article's file must be exactly True. And the
       # Version controller applying the approval rules in before_submit AND on_submit, against

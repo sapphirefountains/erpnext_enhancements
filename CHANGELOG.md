@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **The knowledge base gets its rules (WI-080 PR 2, ADR 0017): who may approve a version, what a save
 may change, the KB number and review date publishing will write, and the content hygiene that keeps
 hidden text and secrets out of what people and AI read.** Files attached to either KB doctype are
-now private with their bytes, and an image on a published article cannot be deleted. Staff still see
-nothing new and nothing can publish: the approve button and the publish action are PR 3.
+now private with their bytes and stay attached where they are, and an image on a published article
+cannot be deleted. Staff still see nothing new and nothing can publish: the approve button and the
+publish action are PR 3.
 
 **Hold: this merges after PR 1 (v1.538.0, #1126) and not before the QuickBooks and Workforce
 cutover is finished (~2026-11-02).** The WI-080 PRs merge one at a time, each checked on prod with
@@ -54,27 +55,41 @@ the read-only queries below before the next.
     28 February, the 29th in a leap year). A blank, 0, negative or unreadable interval uses
     `constants.DEFAULT_REVIEW_EVERY_MONTHS` (6, POL-0001), read at call time, never restated.
 - **`knowledge_base/content.py`** (standard library only).
-  - `strip_presentation` removes every `style` declaration except `text-align`, and the
-    `ql-color-*`, `ql-bg-*`, `ql-size-*` and `ql-font-*` classes. **v16's Text Editor stores
-    alignment as a style** (it registers Quill's `attributors/style/align`), so removing all of
-    `style` would have lost it. Only the start tags that change are rewritten, found with the
-    standard library's HTML parser so an attribute holding `>` is read as a browser reads it; every
-    other byte, entities and pasted `data:` images included, comes back exactly as it was.
+  - `strip_presentation` removes every `style` declaration except `text-align`, the
+    `ql-color-*`, `ql-bg-*`, `ql-size-*` and `ql-font-*` classes, and the `color`, `size`, `face`,
+    `bgcolor` and `hidden` attributes. **v16's Text Editor stores alignment as a style** (it
+    registers Quill's `attributors/style/align`), so removing all of `style` would have lost it.
+    **The attributes are there because v16's `sanitize_html` keeps them, and the `<font>` element**
+    (frappe `origin/version-16` `utils/html_utils.py:267`, `:413-516`), and a REST write stores a
+    body as sent: `<font color="#ffffff">` or `<p hidden>` would be text no reader sees and every AI
+    reads in `body_md`. A `<font>` left with no attributes renders as plain text, so it stays (the
+    Desk editor turns one into a `<span>` anyway, but only when someone opens the draft). Only the
+    start tags that change are rewritten, found with the standard library's HTML parser so an
+    attribute holding `>` is read as a browser reads it; every other byte, entities and pasted
+    `data:` images included, comes back exactly as it was.
   - `secret_findings` finds private keys; Stripe, AWS, Google, GitHub, Slack, SendGrid, Anthropic,
     OpenAI and Plaid credentials; JWTs; a Frappe `token key:secret`; bearer and Basic credentials; a
     password inside a web address; and a password or key written out after "password:" or "API key:".
     It returns `(line, kind)` and **never the value**. **`data:` URIs are removed first**, because
     v16 turns pasted images into Files only after `validate` (`model/document.py:594` then `:835`),
     so in `validate` the body still holds every screenshot as base64. In HTML, a line is a line of the
-    page, and attribute values (a link's address, hidden `data-*`) are read with it.
+    page, and attribute values (a link's address, hidden `data-*`) are read with it. **Nothing lets
+    an author past a finding, so the two word-shaped kinds are checked for more than shape.** A Basic
+    credential must decode from base64 to `user:password`: letters and `/` are base64 characters,
+    so "Basic Maintenance/Cleaning" and "Basic Pumps/Filters/Lights" matched the pattern. A written
+    password ignores the sentence's punctuation around it and needs a digit or a symbol other than
+    the `-`, `.` and `/` that join words, so "If the password is forgotten, ...", "Password:
+    case-sensitive.", "Password: (optional)" and "The password is: first.last" are prose. A password
+    of letters and hyphens alone is missed, as one of letters alone always was.
   - `content_hash`: SHA-256 over title, summary, keywords and body. The WI names no rule, so the
     documented choice is to ignore what nobody can see (line endings, Unicode spelling, end space,
     runs of spaces in single-line fields, keyword order and case, stripped presentation) and nothing
     else. It is **not** computed in `validate`: PR 3 computes it, and `body_md`, at publish from the
     stored body.
-- **`knowledge_base/files.py`**, two hooks on `File`, each returning after one attribute read for a
-  File not attached to the Knowledge Base (they run for every File on the site, and never raise for
-  an unrelated one).
+- **`knowledge_base/files.py`**, two hooks on `File`, each returning for a File not attached to the
+  Knowledge Base after reading its attachment and, on an update, the stored row's, which v16 has
+  already loaded (they run for every File on the site, make no query for an unrelated one, and never
+  raise for it).
   - `force_private` (`doc_events["File"]["before_insert"]` and `["before_validate"]`). **Setting the
     flag in `before_insert` is not enough, and that is a correction to the plan:** a `doc_events`
     handler runs after the controller's own method (v16 `Document.hook`,
@@ -88,6 +103,21 @@ the read-only queries below before the next.
     the flag is enough, because `File.validate` moves the bytes itself (`handle_is_private_changed`),
     which closes the owner-unticks-Private path. Pasted images were already private: v16 extracts
     them private unless the doctype sets `make_attachments_public`.
+  - **The same hook keeps a KB File attached where it is.** `attached_to_doctype` and
+    `attached_to_name` are only `read_only` in v16's `file.json`, and the server never enforces
+    that: `frappe.client.set_value` and `PUT /api/resource/File` apply them and save
+    (`client.py:208-215`, `api/v1.py:50-58`), and the write check runs on the updated row
+    (`model/document.py:584`), which `File.has_permission` grants a File's owner. So the uploader of
+    a published article's image could clear its Attached To in one call and delete it in the next,
+    past the delete refusal below, or detach it and untick Private in one call, past the privacy
+    rule. On an update the hook now refuses any change to where a File is attached when the stored
+    row (`get_doc_before_save()`, already loaded `FOR UPDATE`) attaches it to either KB doctype,
+    unless KB code sets `flags.kb_action`, and treats a File as a KB File if either row says so.
+    `before_validate` runs even under `flags.ignore_validate` (`model/document.py:1404-1405`). PR 3's
+    publish, which moves a draft's Files onto the Article, sets the flag on each.
+  - **`api/comments.link_files_to_comment` skips a File attached to either KB doctype.** It moves
+    the caller's own Files with `db_set`, which runs no File hook, so it was the same detach by
+    another door.
   - `file_has_permission` (`has_permission["File"]`) refuses `delete`, and only `delete`, on a File
     attached to a Knowledge Article, unless KB code sets `flags.kb_action`
     (`frappe.delete_doc("File", name, flags={"kb_action": True})`; nothing in v1 does). **It is a
@@ -95,7 +125,10 @@ the read-only queries below before the next.
     the bytes from disk before any `doc_events` `on_trash` handler runs: refusing there would roll
     back the row and leave it pointing at a file that is already gone. The permission check runs in
     `delete_doc` before `on_trash` (`model/delete_doc.py:173-176`). Every other answer is `True`
-    exactly, because on v16 a falsy permission-hook answer denies (`permissions.py:483-500`).
+    exactly, because on v16 a falsy permission-hook answer denies (`permissions.py:483-500`). **The
+    File form still shows Delete**: v16 builds that menu from the role-level `can_delete` list
+    (`toolbar.js:504-523`, `model.js:348-351`) and never asks the hook, and role `All` holds delete
+    on File. Pressing it is refused with a permission error, which is what the WI now checks.
 - **`constants.py`** gains the doctype names, the role names and `VERSION_CONTENT_FIELDS`, so the
   new code names nothing twice. A test asserts they agree with the JSONs, the seed patch and
   `_gate.KNOWLEDGE_BASE_DOCTYPES`.
@@ -110,28 +143,37 @@ the read-only queries below before the next.
     stored content, and is scanned for secrets again. PR 3's `approve_and_publish` passes the opened
     `modified` as `flags.kb_opened_modified`; without it every approval is refused. It cannot be read
     off the document, because the save has moved `modified` on by then (`document.py:586`).
-  - `validate` strips presentation from the body, refuses a content change unless the stored version
-    is a Draft (no flag gets past this), and on a save that changes content refuses a secret and
-    records the saver in `contributors`. A save that changes no content (a state change by the KB's
-    own actions) is not scanned, so a version whose text predates a stricter scan can still be sent
-    back; approval scans it again. `contributors` is at permlevel 1, and a value set in `validate`
-    survives the user's save because v16 resets higher permlevels before `validate` runs.
+  - `before_validate` strips presentation from the body, refuses a content change unless the stored
+    version is a Draft (no flag gets past this), and on a save that changes content refuses a secret
+    and records the saver in `contributors`. **`before_validate`, not `validate`:**
+    `flags.ignore_validate` skips `validate`, but v16 runs `before_validate` before it looks at that
+    flag (`model/document.py:1404-1405`, then `:1407-1408`), so in `validate` server code could have
+    changed an In Review version's text without being recorded as a contributor. A save that changes
+    no content (a state change by the KB's own actions) is not scanned, so a version whose text
+    predates a stricter scan can still be sent back; approval scans it again. `contributors` is at
+    permlevel 1, and a value set in `before_validate` survives the user's save because v16 resets
+    higher permlevels before it runs (`:592` on save, `:483` on insert).
 - `tests/test_knowledge_base_schema.py`: its stub gains `get_doc_before_save` and a session, and
   "a submit with the publish flag passes" becomes "reaches the approval rules", which the new hooks
   suite exercises.
+- WI-080's acceptance check for an article's image no longer says the File form shows no Delete (it
+  does, see above); it says pressing Delete, or the REST delete, is refused.
 
 ### Tests
 
 - **`tests/test_knowledge_base_rules.py`** (unittest, no stub, its own CI step): every branch of
-  `workflow.py` and `content.py`, a real v16 Quill body, every style that hides text, 21 secret kinds
-  (all fixtures concatenated, never a literal key: GitHub push protection refused this repo's branch
-  once for a literal Stripe-shaped string), ordinary KB prose that must not be flagged, and a
+  `workflow.py` and `content.py`, a real v16 Quill body, every style and every attribute that hides
+  text, 21 secret kinds (all fixtures concatenated, never a literal key: GitHub push protection
+  refused this repo's branch once for a literal Stripe-shaped string), ordinary KB prose that must
+  not be flagged (slash-joined "Basic" headings and "password is <word>," sentences included), and a
   fresh-interpreter check that neither module imports frappe.
 - **`tests/test_knowledge_base_hooks.py`** (unittest, its own `frappe` stub and CI step): the File
   hooks' fast path (no write, no query, nothing raised for an unrelated File or an object with no
-  attributes), the byte move and when the public copy may be deleted, the delete refusal and the
-  exact `True` everywhere else, the `hooks.py` registration, and the Version controller's content
-  and approval gates, each approval rule refused in both hooks.
+  attributes), the byte move and when the public copy may be deleted, a KB File refused a detach or
+  move without `flags.kb_action`, `link_files_to_comment` leaving KB Files where they are, the
+  delete refusal and the exact `True` everywhere else, the `hooks.py` registration, and the Version
+  controller's content gate (pinned to `before_validate` from the syntax tree) and approval gate,
+  each approval rule refused in both hooks.
 
 ### After deploy
 
@@ -144,6 +186,9 @@ Read-only, on prod, after PR 1's checks pass.
   `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0`
   is 0, the File's URL starts `/private/files/`, and the would-be `/files/<name>` returns 404 with no
   cookie. This is the one behaviour CI cannot prove: it depends on v16's real `File.save_file`.
+- Still in the Desk, the same author runs `frappe.client.set_value` from the browser console to clear
+  that File's `attached_to_name`: it is refused with "Knowledge base files stay attached", and the
+  File is unchanged.
 - A save with `sk_live_` followed by 24 letters in the body is refused with "Body line N looks like a
   Stripe secret key", and the message does not repeat it.
 - ``SELECT COUNT(*) FROM `tabError Log` WHERE creation > '<deploy time>' AND error LIKE '%knowledge_base/files.py%'``

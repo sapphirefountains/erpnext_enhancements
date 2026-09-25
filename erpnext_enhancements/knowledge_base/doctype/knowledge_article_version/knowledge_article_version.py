@@ -25,7 +25,7 @@ match it (``_refuse_unless_approvable``).
 after you opened it". It cannot be taken from the document itself: by ``before_submit`` the save
 has already moved ``modified`` on (``set_user_and_timestamp``, ``:586``).
 
-**Content rules on every save** (``validate``, PR 2). Presentation is stripped from the body
+**Content rules on every save** (``before_validate``, PR 2). Presentation is stripped from the body
 (``content.strip_presentation``). Content changes only while the stored version is a Draft
 (``workflow.content_edit_problem``). A save that changes content is scanned for secrets and
 refused on a finding (``content.document_secret_findings``), and records the saver in
@@ -33,12 +33,16 @@ refused on a finding (``content.document_secret_findings``), and records the sav
 change by the KB's own actions) is neither scanned nor recorded, so a version whose text predates a
 stricter scan can still be sent back or withdrawn; it is scanned again before it can be approved.
 
-Why every refusal is in two places. Frappe v16 lets a caller skip the obvious hook:
+Why every refusal is in two places, or in ``before_validate``. Frappe v16 lets a caller skip the
+obvious hook:
 
 * ``flags.ignore_validate`` skips ``validate``, ``before_submit``, ``before_cancel`` and
   ``before_update_after_submit`` (frappe ``origin/version-16`` ``model/document.py:1407-1408``)
   but never ``on_submit``, ``on_cancel`` or ``on_update_after_submit`` (``:1457``, ``:1459``,
   ``:1462``), which run inside the same transaction, so raising there rolls the write back.
+* ``before_validate`` runs on every save and submit *before* v16 looks at ``ignore_validate``
+  (``:1404-1405``), so the content rules sit there alone: one hook that no flag skips, which runs
+  after the permlevel reset (``:592`` on save, ``:483`` on insert) as ``validate`` did.
 * ``delete_doc(ignore_on_trash=True)`` skips ``on_trash`` (``model/delete_doc.py:175-176``) but
   never ``after_delete`` (``:195-196``).
 * ``before_insert`` runs on every insert, ignore_validate or not (``model/document.py:480``), so
@@ -60,9 +64,9 @@ and ``amended_from`` (Frappe's own, refused above) stay at level 0.
 
 That puts one rule on the code in later PRs: **a write to a server-set field must run with
 ``ignore_permissions``** (or name the field in ``flags.ignore_permlevel_for_fields``); otherwise it
-is silently reset, supersede included. A value computed in ``validate`` or ``before_save`` survives
-a user's save, because the reset runs before them; one set in ``before_insert`` does not, because
-the reset runs after it (``:480`` then ``:483``).
+is silently reset, supersede included. A value computed in ``before_validate``, ``validate`` or
+``before_save`` survives a user's save, because the reset runs before them; one set in
+``before_insert`` does not, because the reset runs after it (``:480`` then ``:483``).
 
 Nothing is ever deleted, canceled or amended. A published version is the record of what a person
 approved, and the Knowledge Base Integrity report (PR 4) checks every Article against it.
@@ -82,9 +86,13 @@ class KnowledgeArticleVersion(Document):
 	def before_insert(self):
 		self._refuse_amend()
 
+	def before_validate(self):
+		# Not validate: flags.ignore_validate skips validate, and v16 runs before_validate before it
+		# looks at that flag (model/document.py:1404-1405, then :1407-1408). No flag skips this.
+		self._apply_content_rules()
+
 	def validate(self):
 		self._refuse_amend()
-		self._apply_content_rules()
 
 	def before_submit(self):
 		self._refuse_unless_publishing()
@@ -156,8 +164,8 @@ class KnowledgeArticleVersion(Document):
 
 	def _apply_content_rules(self):
 		"""Strip presentation; refuse a content edit outside Draft, or one carrying a secret; record
-		the contributor. ``contributors`` sits at permlevel 1, and a value set in ``validate``
-		survives the user's save because v16 resets higher permlevels before ``validate`` runs."""
+		the contributor. ``contributors`` sits at permlevel 1, and a value set in ``before_validate``
+		survives the user's save because v16 resets higher permlevels before it runs."""
 		if self.get("body"):
 			self.body = content.strip_presentation(self.body)
 		stored = self.get_doc_before_save()

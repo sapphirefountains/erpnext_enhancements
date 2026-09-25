@@ -13,13 +13,19 @@ WI-080 PR 2, ADR 0017. Bench-free, with its own ``frappe`` stub. What it pins:
   through ``save_file`` as private, reading it *before* flipping ``is_private`` (File validates the
   URL against the folder ``is_private`` names), and deletes the public copy only when this insert
   wrote it and no other File row uses it. On an update it only sets the flag.
+* **A KB File stays attached where it is.** On an update, a change to ``attached_to_doctype`` or
+  ``attached_to_name`` of a File the stored row attaches to either KB doctype is refused unless KB
+  code sets ``flags.kb_action``; otherwise its owner could detach an article's image and then
+  delete it, or detach it and make it public in one call. ``link_files_to_comment``, which moves
+  Files with ``db_set`` and so runs no hook, skips KB Files itself.
 * **Delete is refused on a File attached to a Knowledge Article**, and only delete, and only there,
   unless KB code sets ``flags.kb_action``. Every other answer is ``True`` exactly: on v16 a falsy
   permission-hook answer denies, and this hook sees every File permission check on the site.
 * **The hooks are registered** where ``hooks.py`` says.
 * **The Version controller** strips presentation and records contributors on a content save,
-  refuses a content edit outside Draft or one carrying a secret, and refuses a submit that breaks
-  any approval rule, in ``before_submit`` and again in ``on_submit``.
+  refuses a content edit outside Draft or one carrying a secret (in ``before_validate``, which
+  ``flags.ignore_validate`` does not skip), and refuses a submit that breaks any approval rule, in
+  ``before_submit`` and again in ``on_submit``.
 
 Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_hooks -v
 """
@@ -29,6 +35,7 @@ import datetime
 import importlib
 import inspect
 import sys
+import textwrap
 import types
 import unittest
 from pathlib import Path
@@ -40,6 +47,7 @@ if str(REPO_ROOT) not in sys.path:
 
 FILES_MODULE = "erpnext_enhancements.knowledge_base.files"
 VERSION_MODULE = "erpnext_enhancements.knowledge_base.doctype.knowledge_article_version.knowledge_article_version"
+COMMENTS_MODULE = "erpnext_enhancements.api.comments"
 ARTICLE = "Knowledge Article"
 VERSION = "Knowledge Article Version"
 AUTHOR = "parker@example.com"
@@ -93,6 +101,8 @@ def _reset(**overrides):
 			"exists_calls": [],
 			"deleted": [],
 			"db_forbidden": False,
+			"file_docs": {},
+			"errors": [],
 		}
 	)
 	STATE.update(overrides)
@@ -131,6 +141,12 @@ def _install_frappe_stub():
 	frappe.throw = _throw
 	frappe.get_roles = lambda user=None: list(STATE["roles"].get(user, ()))
 	frappe.db = types.SimpleNamespace(exists=_exists)
+	# For api/comments.py's link_files_to_comment.
+	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
+	frappe.has_permission = lambda *a, **k: True
+	frappe.get_doc = lambda doctype, name: STATE["file_docs"][name]
+	frappe.log_error = lambda *a, **k: STATE["errors"].append(a)
+	frappe.get_traceback = lambda *a, **k: "traceback"
 
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = _cint
@@ -164,15 +180,17 @@ def _install_frappe_stub():
 
 files = None
 version_controller = None
+comments = None
 
 
 def setUpModule():
-	global files, version_controller
+	global files, version_controller, comments
 	_install_frappe_stub()
-	for name in (FILES_MODULE, VERSION_MODULE):
+	for name in (FILES_MODULE, VERSION_MODULE, COMMENTS_MODULE):
 		sys.modules.pop(name, None)
 	files = importlib.import_module(FILES_MODULE)
 	version_controller = importlib.import_module(VERSION_MODULE)
+	comments = importlib.import_module(COMMENTS_MODULE)
 
 
 # ------------------------------------------------------------------ a File, as far as the hook sees one
@@ -182,7 +200,7 @@ class FakeFile:
 	"""The parts of v16 ``File`` the hook touches, with the one rule that bites: ``get_content``
 	validates the URL against the folder ``is_private`` names (``File.validate_file_path``)."""
 
-	def __init__(self, **values):
+	def __init__(self, stored=None, **values):
 		self.flags = _Flags()
 		self.calls = []
 		self.content = b""
@@ -190,8 +208,17 @@ class FakeFile:
 		self.content_hash = "hash-public"
 		self.file_name = "slip.png"
 		self.bytes_on_disk = b"\x89PNG screenshot"
+		# The row as stored, as v16's check_if_latest loads it before any hook; None for a new File.
+		self.stored = stored
 		for key, value in values.items():
 			setattr(self, key, value)
+
+	def get_doc_before_save(self):
+		return self.stored
+
+	def db_set(self, fieldname, value, update_modified=True):
+		self.calls.append(("db_set", fieldname, value))
+		setattr(self, fieldname, value)
 
 	def get_content(self):
 		self.calls.append(("get_content", self.is_private, self.file_url))
@@ -207,10 +234,17 @@ class FakeFile:
 
 
 class Untouchable:
-	"""An unrelated File: any attribute write, or any read but the first, is a failure."""
+	"""An unrelated File: any attribute write, or any read but its attachment and the stored row
+	v16 has already loaded (no query), is a failure."""
 
-	def __init__(self, attached_to_doctype):
+	def __init__(self, attached_to_doctype, stored_doctype=None):
 		object.__setattr__(self, "attached_to_doctype", attached_to_doctype)
+		object.__setattr__(
+			self, "_stored", {"attached_to_doctype": stored_doctype, "attached_to_name": "X-1"}
+		)
+
+	def get_doc_before_save(self):
+		return self._stored
 
 	def __setattr__(self, key, value):
 		raise AssertionError(f"wrote {key} on an unrelated File")
@@ -228,9 +262,10 @@ class TestUnrelatedFilesAreLeftAlone(unittest.TestCase):
 
 	def test_force_private_returns_at_once(self):
 		for doctype in ("Opportunity", "Project", "Knowledge Base", "knowledge article", "", None):
-			for method in ("before_insert", "before_validate"):
-				with self.subTest(doctype=doctype, method=method):
-					files.force_private(Untouchable(doctype), method)
+			for stored in ("Opportunity", doctype, "", None):
+				for method in ("before_insert", "before_validate"):
+					with self.subTest(doctype=doctype, stored=stored, method=method):
+						files.force_private(Untouchable(doctype, stored), method)
 
 	def test_an_object_with_no_file_attributes_does_not_raise(self):
 		for doc in (object(), types.SimpleNamespace(), types.SimpleNamespace(attached_to_doctype=None)):
@@ -332,11 +367,154 @@ class TestArticleImagesCannotBeDeleted(unittest.TestCase):
 	def test_kb_code_may_delete_by_saying_so(self):
 		doc = types.SimpleNamespace(attached_to_doctype=ARTICLE, flags=_Flags(kb_action=True))
 		self.assertIs(files.file_has_permission(doc, "delete"), True)
-		self.assertEqual(files.DELETE_FLAG, "kb_action")
+		self.assertEqual(files.ACTION_FLAG, "kb_action")
 
 	def test_the_publish_flag_is_not_the_delete_flag(self):
 		doc = types.SimpleNamespace(attached_to_doctype=ARTICLE, flags=_Flags(kb_publish=True))
 		self.assertIs(files.file_has_permission(doc, "delete"), False)
+
+	def test_once_detached_the_delete_check_sees_no_article(self):
+		"""Why a KB File must not be detachable: the delete check reads the row as it now is."""
+		detached = types.SimpleNamespace(attached_to_doctype="", flags=_Flags())
+		self.assertIs(files.file_has_permission(detached, "delete"), True)
+
+
+# ------------------------------------------------------------------ a KB File stays attached
+
+
+def _stored_file(doctype, name):
+	return {"attached_to_doctype": doctype, "attached_to_name": name, "is_private": 1}
+
+
+def _update(stored_doctype, stored_name="KB-0612", **values):
+	"""A File on its update path: the stored row, and the row as the request left it."""
+	current = {
+		"attached_to_doctype": stored_doctype,
+		"attached_to_name": stored_name,
+		"is_private": 1,
+		"file_url": "/private/files/slip.png",
+	}
+	current.update(values)
+	return FakeFile(stored=_stored_file(stored_doctype, stored_name), **current)
+
+
+class TestKbFilesStayAttached(unittest.TestCase):
+	"""frappe.client.set_value / PUT /api/resource/File apply read_only fields and save, and the
+	write check runs on the updated row, which File.has_permission grants its owner."""
+
+	def setUp(self):
+		_reset()
+
+	def test_an_articles_image_cannot_be_detached_or_moved(self):
+		for changes in (
+			{"attached_to_doctype": "", "attached_to_name": ""},
+			{"attached_to_doctype": None, "attached_to_name": None},
+			{"attached_to_doctype": "ToDo", "attached_to_name": "a1b2c3"},
+			{"attached_to_name": "KB-0613"},
+			{"attached_to_doctype": VERSION, "attached_to_name": "KBV-00012"},
+		):
+			with self.subTest(changes=changes):
+				doc = _update(ARTICLE, **changes)
+				with self.assertRaises(Refused) as caught:
+					files.force_private(doc, "before_validate")
+				message = str(caught.exception)
+				self.assertIn("slip.png is attached to Knowledge Article KB-0612", message)
+				self.assertIn("cannot be detached or moved", message)
+
+	def test_a_drafts_file_cannot_be_moved_off_it_either(self):
+		"""Detached, it would no longer be a KB File, and its owner could make it public."""
+		doc = _update(VERSION, "KBV-00012", attached_to_doctype="", attached_to_name="")
+		with self.assertRaises(Refused):
+			files.force_private(doc, "before_validate")
+
+	def test_detaching_and_making_public_in_one_call_is_refused(self):
+		doc = _update(ARTICLE, attached_to_doctype="", attached_to_name="", is_private=0)
+		with self.assertRaises(Refused):
+			files.force_private(doc, "before_validate")
+
+	def test_a_save_that_leaves_the_attachment_alone_passes(self):
+		files.force_private(_update(ARTICLE, file_name="slip-renamed.png"), "before_validate")
+		doc = _update(ARTICLE, is_private=0)
+		files.force_private(doc, "before_validate")
+		self.assertEqual(doc.is_private, 1)
+		self.assertEqual(doc.calls, [])
+
+	def test_kb_code_may_move_a_file_by_saying_so_and_it_stays_private(self):
+		"""Publishing moves a draft's Files onto the Article (PR 3), with flags.kb_action."""
+		doc = _update(VERSION, "KBV-00012", attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		doc.flags.kb_action = True
+		files.force_private(doc, "before_validate")
+		doc = _update(ARTICLE, attached_to_doctype="", attached_to_name="", is_private=0)
+		doc.flags.kb_action = True
+		files.force_private(doc, "before_validate")
+		self.assertEqual(doc.is_private, 1)
+
+	def test_the_publish_flag_does_not_move_a_file(self):
+		doc = _update(VERSION, "KBV-00012", attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		doc.flags.kb_publish = True
+		with self.assertRaises(Refused):
+			files.force_private(doc, "before_validate")
+
+	def test_a_file_from_elsewhere_may_be_attached_and_is_made_private(self):
+		doc = FakeFile(
+			stored=_stored_file("Opportunity", "CRM-OPP-2026-00001"),
+			attached_to_doctype=VERSION,
+			attached_to_name="KBV-00012",
+			is_private=0,
+			file_url="/files/slip.png",
+		)
+		files.force_private(doc, "before_validate")
+		self.assertEqual(doc.is_private, 1)
+
+	def test_an_insert_has_no_stored_row_to_compare(self):
+		doc = FakeFile(
+			attached_to_doctype=ARTICLE,
+			attached_to_name="KB-0612",
+			is_private=1,
+			file_url="/private/files/a.png",
+		)
+		for method in ("before_insert", "before_validate"):
+			files.force_private(doc, method)
+		self.assertEqual(doc.calls, [])
+
+
+class TestCommentsNeverMoveKbFiles(unittest.TestCase):
+	"""link_files_to_comment moves a caller's own Files with db_set, which runs no File hook."""
+
+	def setUp(self):
+		_reset()
+		sys.modules["frappe"].session.user = AUTHOR
+
+	def _files(self, *docs):
+		STATE["file_docs"].update({doc.name: doc for doc in docs})
+
+	def test_an_articles_image_is_not_moved_to_the_callers_todo(self):
+		kb = FakeFile(name="f-kb", owner=AUTHOR, attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		draft = FakeFile(
+			name="f-draft", owner=AUTHOR, attached_to_doctype=VERSION, attached_to_name="KBV-00012"
+		)
+		mine = FakeFile(name="f-mine", owner=AUTHOR, attached_to_doctype=None, attached_to_name=None)
+		self._files(kb, draft, mine)
+		comments.link_files_to_comment(["f-kb", "f-draft", "f-mine"], "c-1", "ToDo", "todo-1")
+		for doc, doctype, name in ((kb, ARTICLE, "KB-0612"), (draft, VERSION, "KBV-00012")):
+			with self.subTest(file=doc.name):
+				self.assertEqual((doc.attached_to_doctype, doc.attached_to_name), (doctype, name))
+				self.assertEqual(doc.calls, [])
+		self.assertEqual((mine.attached_to_doctype, mine.attached_to_name), ("ToDo", "todo-1"))
+		self.assertEqual(STATE["errors"], [])
+
+	def test_not_even_for_a_system_manager(self):
+		STATE["roles"][None] = ["System Manager"]
+		kb = FakeFile(name="f-kb", owner=APPROVER, attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		self._files(kb)
+		comments.link_files_to_comment(["f-kb"], "c-1", "ToDo", "todo-1")
+		self.assertEqual(kb.attached_to_doctype, ARTICLE)
+
+	def test_a_kb_file_already_on_that_document_is_left_where_it_is(self):
+		kb = FakeFile(name="f-kb", owner=AUTHOR, attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		self._files(kb)
+		comments.link_files_to_comment(["f-kb"], "c-1", ARTICLE, "KB-0612")
+		self.assertEqual((kb.attached_to_doctype, kb.attached_to_name), (ARTICLE, "KB-0612"))
 
 
 # ------------------------------------------------------------------ registration
@@ -430,14 +608,14 @@ class TestVersionContentRules(unittest.TestCase):
 	def test_a_new_draft_is_stripped_and_its_creator_recorded(self):
 		sys.modules["frappe"].session.user = AUTHOR
 		doc = _version(None, title="T", body='<p style="color: white;">hidden</p>')
-		doc.validate()
+		doc.before_validate()
 		self.assertEqual(doc.body, "<p>hidden</p>")
 		self.assertEqual(doc.contributors, AUTHOR)
 
 	def test_an_edit_to_a_draft_records_the_editor(self):
 		stored = _stored(review_state="Draft")
 		doc = _version(stored, body="<p>Scan the slip twice.</p>")
-		doc.validate()
+		doc.before_validate()
 		self.assertEqual(doc.contributors, f"{AUTHOR}\n{APPROVER}")
 
 	def test_a_save_with_no_content_change_records_nobody_and_scans_nothing(self):
@@ -445,41 +623,62 @@ class TestVersionContentRules(unittest.TestCase):
 		by text that predates a stricter scan: it is scanned again before approval."""
 		stored = _stored(body=f"<p>{STRIPE_KEY}</p>")
 		doc = _version(stored, review_state="Draft", review_note="Please fix.")
-		doc.validate()
+		doc.before_validate()
 		self.assertEqual(doc.contributors, AUTHOR)
 
 	def test_content_cannot_change_in_review(self):
 		doc = _version(_stored(), body="<p>Scan the slip twice.</p>")
 		with self.assertRaises(Refused) as caught:
-			doc.validate()
+			doc.before_validate()
 		self.assertIn("In Review", str(caught.exception))
 
 	def test_a_presentation_only_change_in_review_is_not_an_edit(self):
 		doc = _version(_stored(), body='<p style="color: red;">Scan the slip.</p>')
-		doc.validate()
+		doc.before_validate()
 		self.assertEqual(doc.body, "<p>Scan the slip.</p>")
 		self.assertEqual(doc.contributors, AUTHOR)
 
 	def test_a_discarded_version_is_history(self):
 		doc = _version(_stored(review_state="Discarded"), title="New title")
 		with self.assertRaises(Refused):
-			doc.validate()
+			doc.before_validate()
 
 	def test_a_secret_is_refused_by_line_and_kind_never_by_value(self):
 		stored = _stored(review_state="Draft")
 		doc = _version(stored, body=f"<p>ok</p><p>{STRIPE_KEY}</p>")
 		with self.assertRaises(Refused) as caught:
-			doc.validate()
+			doc.before_validate()
 		message = str(caught.exception)
 		self.assertIn("Body line 2 looks like a Stripe secret key", message)
 		self.assertNotIn(STRIPE_KEY[-10:], message)
 		self.assertEqual(doc.get("contributors"), AUTHOR)
 
-	def test_an_amendment_is_still_refused_first(self):
+	def test_an_amendment_is_still_refused(self):
+		"""before_insert runs before before_validate on insert (document.py:480, then :486)."""
 		doc = _version(None, title="T", amended_from="KBV-00001")
-		with self.assertRaises(Refused) as caught:
-			doc.validate()
-		self.assertIn("amended", str(caught.exception))
+		for hook in ("before_insert", "validate"):
+			with self.subTest(hook=hook), self.assertRaises(Refused) as caught:
+				getattr(doc, hook)()
+			self.assertIn("amended", str(caught.exception))
+
+	def test_the_content_rules_run_where_ignore_validate_cannot_reach(self):
+		"""v16 runs before_validate before it looks at flags.ignore_validate (document.py:1404-1405,
+		then :1407-1408), which skips validate, before_save and before_submit. So the rules run
+		there, and once. Read from the syntax tree, so a comment naming the call cannot satisfy or
+		break it."""
+		cls = version_controller.KnowledgeArticleVersion
+
+		def calls(hook):
+			method = getattr(cls, hook, None)
+			if method is None:
+				return set()
+			tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+			return {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+
+		self.assertIn("_apply_content_rules", calls("before_validate"))
+		for hook in ("validate", "before_save", "before_submit"):
+			with self.subTest(hook=hook):
+				self.assertNotIn("_apply_content_rules", calls(hook))
 
 
 class TestVersionApprovalGate(unittest.TestCase):

@@ -84,8 +84,8 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | A reader opening a draft | Drafts are in the Version doctype, which has no reader row |
 | Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead |
 | Core `Version` rows (the change log) | `track_changes 0` on the Version doctype, because core `Version` is readable by System Manager, which includes the `triton@` service identity. The Article keeps `track_changes 1`: its rows hold only published text, and they give a tamper trail |
-| Pasted images and attachments | `make_attachments_public 0`, so pasted images are private already. `files.force_private` (PR 2) makes every other File attached to either doctype private, **bytes included**: an upload with Private unticked, a public library pick, a REST insert, and an owner unticking Private later. See "Files" below |
-| Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font on every content save, so nothing a reviewer cannot see stays in the HTML a model reads |
+| Pasted images and attachments | `make_attachments_public 0`, so pasted images are private already. `files.force_private` (PR 2) makes every other File attached to either doctype private, **bytes included**: an upload with Private unticked, a public library pick, a REST insert, and an owner unticking Private later. It also keeps a KB File attached where it is, so its owner cannot detach it and then make it public. See "Files" below |
+| Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font (as `style`, as Quill's classes, or as `<font color size face>` and `bgcolor`) and the `hidden` attribute on every content save, so nothing a reviewer cannot see stays in the HTML a model reads |
 | A secret pasted into an article | `content.secret_findings` (PR 2) refuses the save, naming the field, line and kind and never the value; scanned again at approval |
 | Import and export | `allow_import 0`, and no import or export right |
 | A Custom DocPerm, Property Setter or Custom Field widening a doctype | None exist, and the schema test fails if a fixture adds one |
@@ -108,14 +108,17 @@ running with `ignore_permissions`; the point is that such code has to opt in by 
 | `doc.flags.kb_action` | The publish, retire and still-accurate actions (PR 3) | An insert or save of a Knowledge Article; `review_state` changing on a submitted version (Superseded) |
 | `doc.flags.kb_publish` | `approve_and_publish` only (PR 3) | Submitting a Knowledge Article Version, **as far as the approval rules**, which then run in the same two hooks |
 | `doc.flags.kb_opened_modified` | `approve_and_publish` only (PR 3), from the page | Nothing by itself: it is the `modified` value of the copy the approver had open, and the approval rules refuse unless it equals the stored one. Missing means refused |
-| `file.flags.kb_action` | KB code deleting a File, via `frappe.delete_doc("File", name, flags={"kb_action": True})` | Deleting a File attached to a Knowledge Article. **Nothing in v1 sets it**: publishing moves Files and retiring keeps them |
+| `file.flags.kb_action` | PR 3's publish, on each File it moves from the Version onto the Article; KB code deleting a File, via `frappe.delete_doc("File", name, flags={"kb_action": True})` | Changing where a File attached to either KB doctype is attached; deleting a File attached to a Knowledge Article. Nothing in v1 deletes one: retiring keeps them |
 
 **Each refusal sits in two hooks**, because Frappe v16 lets a caller skip the obvious one.
 `flags.ignore_validate` skips `validate`, `before_submit`, `before_cancel` and
 `before_update_after_submit` (`model/document.py:1407-1408`) but never `on_update`, `on_submit`,
 `on_cancel` or `on_update_after_submit` (`:1454-1462`). `delete_doc(ignore_on_trash=True)` skips
 `on_trash` (`model/delete_doc.py:175-176`) but never `after_delete` (`:195-196`). The second hook
-runs inside the same transaction, so raising there rolls the write back.
+runs inside the same transaction, so raising there rolls the write back. **The exception is
+`before_validate`**, which v16 runs on every save and submit *before* it looks at `ignore_validate`
+(`:1404-1405`): the content rules and the File attachment check sit there, in one hook that no flag
+skips.
 
 ## The rules (PR 2)
 
@@ -141,7 +144,8 @@ The rules read the version **as stored** (`get_doc_before_save()`, which v16 loa
 never the copy in memory, and the copy being submitted must have the same content. Marketing's own
 `approval_problems` is not reused: it hard-codes Marketing Manager.
 
-**Content** (`validate`, on every save):
+**Content** (`before_validate`, on every save; not `validate`, which `flags.ignore_validate`
+skips):
 
 - presentation is stripped from the body (`content.strip_presentation`);
 - content changes only while the stored version is a **Draft** (`workflow.content_edit_problem`). No
@@ -167,8 +171,12 @@ interval that is blank, 0, negative or unreadable is `constants.DEFAULT_REVIEW_E
 POL-0001).
 
 **Presentation** (`content.strip_presentation`): removes every `style` declaration except
-`text-align` (v16's Text Editor stores alignment as a style), and the `ql-color-*`, `ql-bg-*`,
-`ql-size-*` and `ql-font-*` classes. Indent (`ql-indent-N`), direction, lists and tables survive.
+`text-align` (v16's Text Editor stores alignment as a style), the `ql-color-*`, `ql-bg-*`,
+`ql-size-*` and `ql-font-*` classes, and the `color`, `size`, `face`, `bgcolor` and `hidden`
+attributes. v16's `sanitize_html` keeps all of those and the `<font>` element, and a REST write
+stores a body as sent, so `<font color="#ffffff">` would otherwise be text no reader sees; a bare
+`<font>` is left in place and renders as plain text. Indent (`ql-indent-N`), direction, lists and
+tables survive.
 Only the start tags that change are rewritten; every other byte comes back as it was. An image's
 float or size set as `style` by the resize handles is dropped too; its `width` attribute is kept.
 Scripts, comments and unknown tags are left to v16's own `sanitize_html`, which runs on every Text
@@ -179,8 +187,13 @@ secret and tokens, service-account key id), GitHub, Slack, SendGrid, Anthropic, 
 tokens, JWTs, a Frappe `token key:secret`, bearer and Basic credentials, a password inside a web
 address, and a password or key written out after "password:" or "API key:". `data:` URIs are removed
 first: in `validate` the body still carries every pasted screenshot as base64. A finding is
-`(line, kind)` and never carries the value. Ordinary KB prose ("the password is kept in 1Password",
-Drive links, ERPNext document names) is pinned as not a finding.
+`(line, kind)` and never carries the value. **Nothing lets an author past a finding**, so the scan
+must not refuse ordinary sentences: a Basic credential must decode to `user:password` ("Basic
+Maintenance/Cleaning" is base64-shaped too), and a written-out password ignores the sentence's
+punctuation around it and needs a digit or a symbol other than the `-`, `.` and `/` that join words
+("the password is forgotten,", "Password: case-sensitive."). Ordinary KB prose ("the password is
+kept in 1Password", those sentences, Drive links, ERPNext document names) is pinned as not a
+finding.
 
 **The content hash** (`content.content_hash`): SHA-256 over the title, summary, keywords and body,
 treating as equal what nobody can see (line endings, Unicode spelling, space at the ends and runs of
@@ -191,7 +204,8 @@ publish, from the stored body, **never in `validate`**.
 ## Files
 
 `files.py`, registered in `hooks.py`. Both hooks run for every File on the site, so each returns
-after one attribute read for a File not attached to the Knowledge Base.
+for a File not attached to the Knowledge Base after reading its attachment (and, on an update, the
+stored row's, which v16 has already loaded: no query).
 
 - **`force_private`** (`doc_events["File"]["before_insert"]` and `["before_validate"]`). A
   `doc_events` handler runs after File's own method of the same name, and `File.before_insert` has
@@ -199,6 +213,15 @@ after one attribute read for a File not attached to the Knowledge Base.
   So on insert the hook re-saves the content through `File.save_file` as private and deletes the
   public copy **only if this insert wrote it** (`flags.new_file`, and no other File row uses the URL).
   On an update, setting `is_private` is enough: `File.validate` moves the bytes itself.
+- **A KB File stays attached where it is** (the same hook, on an update). `attached_to_doctype` and
+  `attached_to_name` are only `read_only`, which v16 never enforces: `frappe.client.set_value` and
+  `PUT /api/resource/File` save them, and the write check runs on the updated row, which a File's
+  owner always passes. So the uploader of a published article's image could detach it and then
+  delete it (the delete check below would see no article), or detach it and untick Private in one
+  call. The hook compares the attachment with the stored row and refuses any change to it on a File
+  the stored row attaches to either KB doctype, unless KB code sets `flags.kb_action`, and treats a
+  File as a KB File if either row says so. `api/comments.link_files_to_comment` moves a caller's
+  Files with `db_set`, which runs no hook, so it skips KB Files itself.
 - **`file_has_permission`** (`has_permission["File"]`) refuses **delete** on a File attached to a
   Knowledge Article, unless KB code sets `flags.kb_action`. v16 protects attachments only on a
   submitted document, and an Article is never submitted, so otherwise a File's owner could delete an
@@ -241,7 +264,7 @@ Granting is a Desk step, and only a System Manager can do it:
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish` or that breaks an approval rule, and every cancel, amend, delete and rename; applies the content rules on save |
 | `workflow.py` | The approval rules, content-edit and contributor rules, KB numbers and review dates (PR 2). Standard library only, plus `signed_in_browser` from Marketing |
 | `content.py` | Presentation stripping, the secret scan and the content hash (PR 2). Standard library only |
-| `files.py` | The two `File` hooks: private Files, bytes included, and no deleting an article's image (PR 2) |
+| `files.py` | The two `File` hooks: private Files, bytes included, that stay attached where they are, and no deleting an article's image (PR 2) |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |
 | [`../patches/seed_knowledge_base_roles.py`](../patches/seed_knowledge_base_roles.py) | The two roles and the one-role "KB Approvers" Role Profile. Insert-only; cannot raise |
 | [`../assistant_tools/_gate.py`](../assistant_tools/_gate.py) | `DENYLIST_DOCTYPES`, `DENYLIST_REASONS` and `NEVER_EXEMPT` carry the KB entries |
@@ -263,6 +286,8 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
     `kb_number_prefix(block) + "%"`;
   - compute `body_md` (`frappe.utils.to_markdown`) and `content_hash` at publish from the stored
     body, and set `review_by` with `workflow.review_by`;
+  - set `flags.kb_action` on each File it moves from the Version onto the Article, or the move is
+    refused;
   - enforce one open version per article in `start_revision`;
   - never modify a version's content at publish: the controller refuses a submit whose content
     differs from the stored row.

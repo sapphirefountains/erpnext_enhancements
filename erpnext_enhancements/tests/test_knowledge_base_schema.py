@@ -302,7 +302,7 @@ def _install_frappe_stub():
 	frappe.get_doc = _get_doc
 	frappe.get_traceback = lambda: "traceback"
 	frappe.log_error = lambda *a, **k: STATE["errors"].append(a)
-	# The Version's validate records the saver as a contributor (PR 2).
+	# The Version's before_validate records the saver as a contributor (PR 2).
 	frappe.session = types.SimpleNamespace(user="author@example.com")
 
 	model = types.ModuleType("frappe.model")
@@ -755,6 +755,7 @@ class TestVersionController(unittest.TestCase):
 	def test_an_ordinary_draft_saves(self):
 		doc = self._doc(amended_from=None)
 		doc.before_insert()
+		doc.before_validate()
 		doc.validate()
 
 	def test_delete_and_rename_are_always_refused(self):
