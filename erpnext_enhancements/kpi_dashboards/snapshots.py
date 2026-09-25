@@ -337,13 +337,21 @@ def _store_run_rows(suppliers, since):
 
 	**Identifying columns** (v1.538.0), for the Store Run Charge Matching report; the count reads
 	none of them. Each charge carries ``voucher_type``, ``voucher_no``, ``docstatus`` (a QuickBooks
-	card purchase is a draft until step S-D submits it) and ``source`` (``QuickBooks`` or
-	``ERPNext``). Each receipt carries its name (``receipt``), ``company``, ``recorded_by`` (the
-	owner), ``net_amount`` (its lines before tax), ``is_stock_item`` (a line of it went into
-	stock: it has a stock ledger entry) and ``stock_amount``: its stock lines before tax, read as
-	what the receipt credited to the company's Stock Received But Not Billed account in the GL
-	(v16 credits ``base_net_amount`` per stock line; a non-stock line posts nothing). That is the
-	amount a matching card charge must move to 2210.
+	card purchase is a draft until step S-D submits it), ``source`` (``QuickBooks`` or
+	``ERPNext``) and ``company``. Each receipt carries its name (``receipt``), ``company``,
+	``recorded_by`` (the owner), ``net_amount`` (its lines before tax), ``is_stock_item`` (a line
+	of it went into stock: it has a stock ledger entry) and ``stock_amount``: its stock lines before
+	tax, read as what the receipt credited to the company's Stock Received But Not Billed account in
+	the GL (v16 credits ``base_net_amount`` per stock line; a non-stock line posts nothing). That is
+	the amount a matching card charge must move to 2210.
+
+	**Charges come back in a fixed order** (v1.538.0): the QuickBooks arm, then Purchase Invoices,
+	then Journal Entries, each by posting date and voucher name (a Journal Entry's lines by row
+	too). ``metrics.pair_store_runs`` breaks an exact tie -- same day, same distance from the amount
+	-- by input order, and without an ``order by`` that was the database's return order, which is
+	not guaranteed: two tied charges could swap between runs and the report name a different
+	voucher each time. The order changes only which of two tied charges a trip takes (and, in a
+	contrived case, what the other then pairs with).
 	"""
 	early = add_days(since, -STORE_RUN_LOOKBACK_DAYS)
 	params = {"since": since, "early": early, "suppliers": tuple(suppliers)}
@@ -355,7 +363,7 @@ def _store_run_rows(suppliers, since):
 			"""
 			select vm.erpnext_name as supplier, je.posting_date as day, je.total_debit as amount,
 				'Journal Entry' as voucher_type, je.name as voucher_no, je.docstatus as docstatus,
-				'QuickBooks' as source
+				'QuickBooks' as source, je.company as company
 			from `tabQuickBooks Sync Mapping` m
 			join `tabJournal Entry` je
 				on je.name = m.erpnext_name and je.docstatus < 2 and je.posting_date >= %(early)s
@@ -372,6 +380,7 @@ def _store_run_rows(suppliers, since):
 				and json_value(rp.payload, '$.EntityRef.type') = 'Vendor'
 				and coalesce(json_value(rp.payload, '$.Credit'), '0') not in ('1', 'true')
 				and vm.erpnext_name in %(suppliers)s
+			order by je.posting_date, je.name
 			""",
 			params,
 			as_dict=True,
@@ -381,7 +390,7 @@ def _store_run_rows(suppliers, since):
 		"""
 		select pi.supplier, pi.posting_date as day, pi.base_grand_total as amount,
 			'Purchase Invoice' as voucher_type, pi.name as voucher_no, pi.docstatus as docstatus,
-			'ERPNext' as source
+			'ERPNext' as source, pi.company as company
 		from `tabPurchase Invoice` pi
 		where pi.docstatus = 1 and pi.is_return = 0 and pi.posting_date >= %(early)s
 			and pi.supplier in %(suppliers)s
@@ -390,6 +399,7 @@ def _store_run_rows(suppliers, since):
 				where i.parent = pi.name
 					and (coalesce(i.purchase_order, '') <> '' or coalesce(i.purchase_receipt, '') <> '')
 			)
+		order by pi.posting_date, pi.name
 		""",
 		params,
 		as_dict=True,
@@ -410,26 +420,28 @@ def _store_run_rows(suppliers, since):
 	)
 	# One row per party line; metrics.journal_store_charges keeps the unreferenced credits only
 	# (a debit to the store is a payment), so the rule is tested bench-free. It names the entry
-	# as the voucher; the query reads submitted entries only, hence docstatus 1.
+	# as the voucher; the query reads submitted entries only, hence docstatus 1. The entry's company
+	# is carried beside it for the report, which names that company's 2210 account.
+	journal_lines = frappe.db.sql(
+		f"""
+		select je.name as entry, jea.party as supplier, je.posting_date as day,
+			jea.credit as credit, jea.debit as debit,
+			coalesce(jea.reference_type, '') as reference_type, je.company as company
+		from `tabJournal Entry` je
+		join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
+		where je.docstatus = 1 and je.posting_date >= %(early)s
+			and coalesce(je.is_opening, 'No') <> 'Yes'
+			and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
+			{not_qbo}
+		order by je.posting_date, je.name, jea.idx
+		""",
+		params,
+		as_dict=True,
+	)
+	company_of = {str(row.get("entry") or ""): row.get("company") for row in journal_lines}
 	charges += [
-		dict(charge, docstatus=1, source="ERPNext")
-		for charge in metrics.journal_store_charges(
-			frappe.db.sql(
-				f"""
-				select je.name as entry, jea.party as supplier, je.posting_date as day,
-					jea.credit as credit, jea.debit as debit,
-					coalesce(jea.reference_type, '') as reference_type
-				from `tabJournal Entry` je
-				join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
-				where je.docstatus = 1 and je.posting_date >= %(early)s
-					and coalesce(je.is_opening, 'No') <> 'Yes'
-					and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
-					{not_qbo}
-				""",
-				params,
-				as_dict=True,
-			)
-		)
+		dict(charge, docstatus=1, source="ERPNext", company=company_of.get(charge["voucher_no"]))
+		for charge in metrics.journal_store_charges(journal_lines)
 	]
 
 	# The run id and the receipt total exist once patches/add_store_run_receipt_fields has run;

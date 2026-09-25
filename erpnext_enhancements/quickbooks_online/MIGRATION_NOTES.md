@@ -92,17 +92,40 @@ Other prerequisites:
     three days after, for the receipt total (or the lines plus tax), the pairing the Store Runs KPI
     uses (`kpi_dashboards/metrics.pair_store_runs`) — **change the goods' debit from the expense
     account to `2210 - Stock Received But Not Billed - SF`**, for what the trip's receipts credited
-    there (its stock lines before tax; split a line if need be), **then submit it**. That clears
-    2210 and still books the card liability. The rest — the tax, and any non-stock line — stays on
-    the expense account QuickBooks used, or wherever Accounting decides tax goes.
+    there (its stock lines before tax; split a line if need be), **then save it**; the bulk
+    submit (runbook step S-D) submits it with the rest. That clears 2210 and still books the card
+    liability. The rest — the tax, and any non-stock line — stays on the expense account
+    QuickBooks used, or wherever Accounting decides tax goes.
   - **Before the bulk submit, run the *Store Run Charge Matching* report** (KPI Dashboards,
-    v1.538.0) from 2026-09-24 to today with **Show = Needs action**, and adjust each listed draft
-    as its *What to Do* column says before the loop. One row per recorded trip: its receipts, the
-    draft it pairs with (the KPI's own pairing, so the list and the KPI cannot disagree), the
-    amount to move (*Stock Lines Before Tax (Move to 2210)*: what the receipts credited to 2210,
-    read from the GL) and whether the draft already carries it (*Moved to 2210*, to the cent). A
-    row leaves *Needs action* once its draft carries exactly that 2210 debit, so re-running the
-    report shows what is left. Every other draft is reviewed and submitted as above.
+    v1.538.0) from **2026-01-01** to today with **Show = Needs action**, and do what each row's
+    *What to Do* column says. From 2026-01-01, not from the day the Stock Scan page shipped: a
+    Purchase Receipt with no PO at a flagged store counts as a trip whatever its date, and the page
+    can post a run as yesterday. One row per recorded trip: its receipts, the draft it pairs with
+    (the KPI's own pairing, so the list pairs exactly as the KPI does when counted from the same
+    From Date), the amount to move (*Stock Lines Before Tax (Move to 2210)*: what the receipts
+    credited to 2210, read from the GL) and whether the draft already carries it (*Moved to 2210*,
+    to the cent). An adjusted draft is **saved, not submitted**; the bulk submit takes it. A row
+    leaves *Needs action* once its draft carries exactly that 2210 debit, so re-running the report
+    shows what is left. A charge that carries 2210 but matches no recorded store run (a draft
+    adjusted for a trip whose receipt was later cancelled, say) is listed there too, to be moved
+    back to the expense.
+  - **Then set Show = Waiting** and check every trip dated on or before the last QuickBooks sync.
+    Its charge did not pair: a bank-feed date more than three days late, an amount outside the
+    tolerance, two runs of one purchase. Find its draft by hand and adjust it like a *Needs action*
+    row; once the draft carries exactly the trip's stock lines on 2210, the report shows it as the
+    trip's charge (Match Basis *Its 2210 debit (found by hand)*) and the row moves to *Done*. Or
+    confirm there is none, and bill the trip from its receipts after the cutover (no card charge
+    arrives from QuickBooks after it). Submitted unchanged, such a draft books the goods twice,
+    and billing the trip from its receipts afterwards would credit the card a second time.
+  - **A draft submitted before it was adjusted** reappears under *Needs action* as *Submitted with
+    the goods on the expense*. Fix it with **one correcting Journal Entry** — Dr `2210 - Stock
+    Received But Not Billed - SF` / Cr the expense account the charge used, for the amount the row
+    gives — whose **Reference Number is the charge's name**; the report adds the 2210 debit of every
+    submitted entry that names a charge that way, so the row moves to *Done*. **Never amend a
+    QuickBooks Journal Entry** to fix it: amending cancels the original, `tabQuickBooks Sync
+    Mapping` stays on the cancelled one, and the pairing follows the mapping, so the charge would
+    drop out of the report and its trip would read as waiting.
+  - Every other draft is reviewed and submitted as above.
 - **Chart of Accounts mismatch.** QBO account names carry numeric prefixes
   (`13000 US Bank Checking`). If you let the integration create accounts, expect a
   large COA. If you pre-built a COA, use the **QuickBooks Record Matching** page (Finance

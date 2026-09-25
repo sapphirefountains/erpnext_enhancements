@@ -602,7 +602,14 @@ class TestPairStoreRuns(unittest.TestCase):
 
 	def test_a_tie_goes_to_the_earlier_charge(self):
 		"""Same day, the same distance from the receipt total: the first charge in the input wins.
-		The report names that charge, so the tie-break is pinned, not only the count."""
+		The report names that charge, so the tie-break is pinned, not only the count.
+
+		The expectation still depends on input order, and is meant to: the pure function has no
+		other key to break the tie with. What was loose was the input -- snapshots._store_run_rows
+		had no ORDER BY, so the database chose the order. Since the v1.538.0 review each charge arm
+		orders by posting date and voucher name (test_store_run_matching pins the clauses), so the
+		reversed call below is the order a different database return would have given, not one the
+		report can now see."""
 		receipts = [{"supplier": "Home Depot", "day": "2026-09-03", "run": "sr-a", "amount": 9.0, "receipt_total": 10.0}]
 		charges = [
 			{"supplier": "Home Depot", "day": "2026-09-03", "amount": 10.02, "voucher_no": "JV-1"},

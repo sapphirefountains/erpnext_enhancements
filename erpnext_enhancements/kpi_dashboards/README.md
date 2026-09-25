@@ -22,7 +22,7 @@ master switch and hands a batch to the `long` queue.
 |---|---|
 | `snapshots.py` | The snapshot engine. Builds one `KPI Snapshot` per department, **committing per department** so one slow or broken aggregator cannot sink the rest of the run |
 | `metrics.py` | Pure KPI math — **no `frappe` import**, so it runs in the bench-free CI suite. Turns a raw value plus its target into the presentation fields: Good/Watch/Bad status, period-over-period trend, display string, source-staleness check. Deterministic, side-effect free, `now` injectable |
-| `store_run_matching.py` | Pure rules of the **Store Run Charge Matching** report (v1.538.0) — **no `frappe` import**: the report's window over the KPI's pairing, one row per recorded store run, the 2210 check, *What to Do*, the Show buckets and the summary |
+| `store_run_matching.py` | Pure rules of the **Store Run Charge Matching** report (v1.538.0) — **no `frappe` import**: the report's window over the KPI's pairing, one row per recorded store run, the 2210 check (correcting entries included), *What to Do*, a charge found by hand, a charge carrying 2210 with no store run, the Show buckets and the summary |
 | `report/store_run_charge_matching/` | Accounting's list of recorded store runs and the card charge each pairs with, for the QuickBooks cutover (runbook step S-D). Read-only; it only reads, the rules are above |
 
 ## Aggregators read ERPNext, never the upstream APIs
@@ -108,7 +108,7 @@ gap is uncategorized QuickBooks data, not an improvement, until bookkeeping says
 
 **Since v1.536.0 a trip is counted once, whichever records it** (`metrics.combine_store_runs`,
 pure and tested bench-free; since v1.538.0 the pairing itself is `metrics.pair_store_runs`, which it
-calls, so the Store Run Charge Matching report lists exactly the pairs it counts). The Stock Scan page records a run the same day as Purchase Receipts
+calls, so the Store Run Charge Matching report pairs exactly as it does when counted from the same From Date). The Stock Scan page records a run the same day as Purchase Receipts
 carrying a run id (`custom_store_run`) and the receipt total; the card charge arrives in QuickBooks
 about four weeks later. *Charges* are the money records — QuickBooks card purchases, standalone
 Purchase Invoices from a store (an invoice made from a store-run receipt has `purchase_receipt`
@@ -149,8 +149,9 @@ submits the 2026 drafts; a draft that pairs with a recorded trip must first have
 moved to 2210, or the purchase is booked twice and 2210 never clears. The **Store Run Charge
 Matching** report is the list of those pairs.
 
-**It cannot disagree with the KPI, by construction.** `metrics.pair_store_runs` is the pairing,
-extracted from `combine_store_runs` unchanged (`combine_store_runs` calls it; `test_kpi_metrics`
+**It pairs exactly as the KPI does when counted from the same From Date.**
+`metrics.pair_store_runs` is the pairing, extracted from `combine_store_runs` unchanged
+(`combine_store_runs` calls it; `test_kpi_metrics`
 runs every earlier case and 1,500 generated histories through both the new and the v1.536.0 body
 and compares the results bit for bit). It returns the trips with their receipts, the charge each
 took and **which pass took it** (`receipt_total` or `lines_plus_tax`), and the charges with their
@@ -158,12 +159,16 @@ paired flag. The report reads through the KPI's own `snapshots._store_run_rows`,
 `STORE_RUN_LOOKBACK_DAYS` (7, now defined in `metrics`) before the From Date, and keeps charges up
 to `STORE_RUN_PAIR_DAYS` (3) after the To Date. Receipts are not cut at that end: a later receipt
 carrying a trip's run id still changes the trip's lines. With that window every trip in range
-pairs as it does in the KPI, which `test_store_run_matching` checks on generated data. The Store
-filter is applied after the pairing, never to the rows, so Lowes and Lowe's still pair as one
-store.
+pairs as it does in the KPI counted from the From Date, which `test_store_run_matching` checks on
+generated data. The nightly KPI counts from 30 days back and the report defaults to 60, so a chain
+of same-amount trips at one store reaching in from before one start but not the other can pair a
+trip differently; at step S-D (From Date 2026-01-01) there is nothing earlier. The Store filter is
+applied after the pairing, never to the rows, so Lowes and Lowe's still pair as one store.
+**Charges are read in a fixed order** (each arm by posting date and voucher name): the pairing
+breaks an exact tie by input order, which before this was whatever the database returned.
 
 `_store_run_rows` gained identifying columns the count never reads: each charge's `voucher_type`,
-`voucher_no`, `docstatus` and `source` (`QuickBooks` or `ERPNext`), and each receipt's name,
+`voucher_no`, `docstatus`, `source` (`QuickBooks` or `ERPNext`) and `company`, and each receipt's name,
 company, owner, `net_amount`, `is_stock_item` and `stock_amount`. **The stock columns read what the
 receipt posted, not the Item's stock flag today.** `stock_amount` is the receipt's net credit to the
 company's Stock Received But Not Billed account in the GL, and `is_stock_item` is whether it has a
@@ -173,28 +178,56 @@ current flags said $205.50 (2026-09-25).
 
 **What the report reads besides the KPI's rows**, all `frappe.db.sql` with bound params:
 
-- the 2210 debit each matched charge already carries, from the voucher's own lines, so a draft
-  with no GL yet is read like a submitted one: Journal Entry Account rows, and Purchase Invoice
-  Item rows whose expense account is 2210;
+- the 2210 debit each matched charge, and each charge that paired with no trip, already carries,
+  from the voucher's own lines, so a draft with no GL yet is read like a submitted one: Journal
+  Entry Account rows, and Purchase Invoice Item rows whose expense account is 2210;
+- **plus the 2210 lines of every submitted correcting Journal Entry whose Reference Number
+  (`cheque_no`) is one of those charges' names**: the one fix the report advises for a charge
+  already submitted with the goods on the expense (Dr 2210 / Cr the expense account the charge
+  used). It is added to the charge's own, so the row reaches Done once corrected and an
+  over-correction is flagged. The report never advises amending: amending a QuickBooks-synced
+  Journal Entry cancels the original, `tabQuickBooks Sync Mapping` stays on the cancelled one, and
+  the pairing follows the mapping, so the charge would drop out of the list;
 - the submitted Purchase Invoices made from the trips' receipts.
+
+Two rules are the report's own and change nothing in the KPI (`store_run_matching` module
+docstring):
+
+- **A charge that carries 2210 is never lost.** A charge dated in range that paired with no trip
+  but carries a net 2210 debit (a draft adjusted for a trip whose receipt was later cancelled or
+  edited, or whose charge a back-dated Desk receipt took first) gets a *Needs action* row of its
+  own: move it back to the expense. The summary's *On 2210 With No Store Run* totals them.
+- **A charge found by hand is recognized by its 2210 debit.** A trip whose charge never pairs (a
+  bank-feed date more than 3 days late, an amount outside the tolerance) is found by hand at step
+  S-D and its draft given the trip's stock lines on 2210. An unpaired charge in range whose net
+  2210 debit equals a waiting trip's stock lines to the cent, at the same store, is shown as that
+  trip's charge (Match Basis *Its 2210 debit (found by hand)*), nearest date first, earlier trip
+  first. Without it the rule above would tell Accounting to undo the adjustment.
 
 **What to Do** (`store_run_matching.build_rows`; *Moved to 2210* means equal to the cent):
 
-| Trip | What to Do | Show |
+| Row | What to Do | Show |
 |---|---|---|
-| Matched draft, 2210 short of the stock lines | Move $X (more) of the goods debit to 2210, then submit | Needs action |
-| Matched charge already submitted, 2210 short | Move $X from the expense to 2210 (amend, or a correcting Journal Entry) | Needs action |
-| More on 2210 than the stock lines | Reduce it | Needs action |
-| Matched draft, 2210 exact / no stock lines | *Goods debit on 2210: submit* / *No stock lines: submit as is* | Done |
-| Matched and submitted, 2210 exact | Done | Done |
+| Matched draft, 2210 short of the stock lines | Move $X (more) of the goods debit to 2210, then save it; the S-D loop submits it | Needs action |
+| Matched charge already submitted, 2210 short | Post one correcting Journal Entry for $X (Dr 2210 / Cr the expense account the charge used) with Reference Number = the charge | Needs action |
+| More on 2210 than the stock lines | Reduce it on the draft, or a correcting entry the other way (Reference Number = the charge) | Needs action |
+| Matched draft, 2210 exact / no stock lines | *Goods debit on 2210: nothing to change; the S-D loop submits it* / *No stock lines: nothing to move; …* | Done |
+| Matched and submitted, 2210 exact (its correcting entries included) | Done (corrected by …) | Done |
 | No charge, every receipt billed by a submitted Purchase Invoice | Billed from the receipts | Done |
 | No charge, some receipts billed | Bill the rest | Needs action |
 | Matched **and** billed from the receipts | Check the purchase is not booked twice | Needs action |
-| No charge | Waiting for the card charge | Waiting |
+| No charge | *No card charge paired yet*: before the cutover find its QuickBooks draft and move $X to 2210; after it bill the trip from the receipts | Waiting |
+| A charge with no store run, net 2210 debit not zero | *Carries $X on 2210 but matches no recorded store run*: move it back to the expense (on the draft, or with a correcting entry) | Needs action |
 
-The summary (store runs, matched, needs action, still to move to 2210, already moved) covers
-every trip in range whatever *Show* is set to. Roles: Accounts Manager, Accounts User, Purchase
-Manager, System Manager; `ref_doctype` Purchase Receipt, so v16 also requires report permission
+The summary (store runs, matched, needs action, still to move to 2210, already moved, on 2210 with
+no store run) covers every row in range whatever *Show* is set to.
+
+**Known limit**: a standalone Purchase Invoice with *Update Stock* ticked pairs as a charge, but
+its stock lines post to the warehouse account, not 2210, so the report reads nothing on 2210 for
+it and its *What to Do* cannot be computed (the goods would be in stock twice, once from the
+receipt and once from the invoice). Production has none (2026-09-25).
+
+Roles: Accounts Manager, Accounts User, Purchase Manager, System Manager; `ref_doctype` Purchase Receipt, so v16 also requires report permission
 on it (every production user holding one of those roles also holds Accounts User, Purchase User
 or Stock User, which carry it). No writes and no buttons.
 

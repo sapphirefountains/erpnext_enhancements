@@ -449,7 +449,8 @@ supplier. Submitting a receipt also updates the Item's `last_purchase_rate`.
 bills them; the card charge for the same trip arrives from QuickBooks as a draft Journal Entry.
 The **Store Run Charge Matching** report (KPI Dashboards) lists every recorded run beside the
 charge the Store Runs KPI pairs it with, the amount the charge must move to 2210, and what to do;
-Accounting works through its *Needs action* rows at the QuickBooks cutover. See
+Accounting works through its *Needs action* rows, then checks its *Waiting* ones, at the QuickBooks
+cutover. See
 [`kpi_dashboards/README.md`](../kpi_dashboards/README.md).
 
 **Checks that need a bench** (not in CI): the entered rate survives `set_missing_values` when a

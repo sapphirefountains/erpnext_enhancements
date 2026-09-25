@@ -204,7 +204,8 @@ def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_
 
 	Pure: no frappe; ``store_key`` is a callable (``stock_scan_rules.store_key``); dates may be
 	``date``/``datetime`` or ISO strings. The pairing itself is :func:`pair_store_runs`, which
-	the Store Run Charge Matching report calls too, so the list and this count cannot disagree.
+	the Store Run Charge Matching report calls too, so the list pairs exactly as this count does
+	when counted from the same From Date.
 	"""
 	since_day = _as_day(since)
 	runs, bills = pair_store_runs(charges, receipts, store_key, pair_days)
@@ -231,7 +232,9 @@ def pair_store_runs(charges, receipts, store_key, pair_days=STORE_RUN_PAIR_DAYS)
 	The pairing :func:`combine_store_runs` counts, with its rules (read its docstring): receipts
 	grouped into trips by run id or by receipt number at a store on a day; each trip paired with
 	at most one charge at the same store, dated on the trip's day or up to ``pair_days`` after,
-	first on the receipt total, then on the lines plus tax, nearest day first.
+	first on the receipt total, then on the lines plus tax, nearest day first, then nearest amount;
+	an exact tie goes to the charge that comes first in ``charges`` (``snapshots._store_run_rows``
+	returns them in a fixed order since v1.538.0).
 
 	* ``trips``, sorted by day, store and key: ``{key, store, day, net, total, receipts, charge,
 	  basis}``. ``receipts`` are the input rows of the trip, in input order and unchanged (so a

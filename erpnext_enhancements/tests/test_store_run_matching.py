@@ -94,6 +94,24 @@ def rows_for(
 	return matching.build_rows(trips, on_2210=on_2210, billed=billed, accounts=ACCOUNTS)
 
 
+def listed(
+	charges,
+	receipts,
+	on_2210=None,
+	corrections=None,
+	billed=None,
+	from_date="2026-09-01",
+	to_date="2026-09-30",
+	**kwargs,
+):
+	"""Every row the report shows, as its ``execute`` builds them: the trips, and the charges that
+	paired with none (listed when they carry 2210, or taken by a trip when found by hand)."""
+	trips, unpaired = matching.pair_window(charges, receipts, from_date, to_date, _key, **kwargs)
+	return matching.build_rows(
+		trips, on_2210=on_2210, billed=billed, accounts=ACCOUNTS, corrections=corrections, unpaired=unpaired
+	)
+
+
 # ---------------------------------------------------------------------------
 # 1. The window: the KPI's pairing, trips near either edge included
 # ---------------------------------------------------------------------------
@@ -232,7 +250,7 @@ class TestTripsInWindow(unittest.TestCase):
 			to_day = from_day + timedelta(days=rng.randint(0, 20))
 			early = from_day - timedelta(days=metrics.STORE_RUN_LOOKBACK_DAYS)
 			# The KPI's read: everything from the lookback on, no upper bound.
-			kpi_trips, _bills = metrics.pair_store_runs(
+			kpi_trips, kpi_bills = metrics.pair_store_runs(
 				[row for row in charges if date.fromisoformat(row["day"]) >= early],
 				[row for row in receipts if date.fromisoformat(row["day"]) >= early],
 				_key,
@@ -242,12 +260,23 @@ class TestTripsInWindow(unittest.TestCase):
 				for trip in kpi_trips
 				if from_day <= trip["day"] <= to_day
 			}
-			listed = matching.trips_in_window(charges, receipts, from_day, to_day, _key)
+			listed, unpaired = matching.pair_window(charges, receipts, from_day, to_day, _key)
 			got = {
 				trip["key"]: (trip["charge"]["row"]["voucher_no"] if trip["charge"] else None, trip["basis"])
 				for trip in listed
 			}
 			self.assertEqual(got, expected, f"case {case}, {from_day}..{to_day}")
+			# And the charges in range that paired with no trip are the KPI's too: the ones the
+			# report may list as carrying 2210 with no store run.
+			self.assertEqual(
+				sorted(bill["row"]["voucher_no"] for bill in unpaired),
+				sorted(
+					bill["row"]["voucher_no"]
+					for bill in kpi_bills
+					if not bill["paired"] and from_day <= bill["day"] <= to_day
+				),
+				f"case {case}, {from_day}..{to_day}",
+			)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +292,11 @@ class TestWhatToDo(unittest.TestCase):
 
 	def test_a_matching_draft_moves_its_stock_lines_to_2210(self):
 		row = self.one([charge("2026-09-05", 48.26)], [receipt("2026-09-03", amount=45.0, total=48.26)])
-		self.assertEqual(row["action"], f"Move $45.00 of the goods debit to {ACCOUNT}, then submit")
+		self.assertEqual(
+			row["action"],
+			f"Move $45.00 of the goods debit to {ACCOUNT}, then save it; the S-D loop submits it",
+		)
+		self.assertEqual(row["row_type"], matching.ROW_TRIP)
 		self.assertEqual(row["show"], matching.NEEDS_ACTION)
 		self.assertEqual(
 			(row["charge"], row["charge_type"], row["charge_status"]), ("ACC-JV-1", "Journal Entry", "Draft")
@@ -290,7 +323,8 @@ class TestWhatToDo(unittest.TestCase):
 		)
 		self.assertEqual(
 			row["action"],
-			f"Move $25.00 more of the goods debit to {ACCOUNT} ($20.00 is there already), then submit",
+			f"Move $25.00 more of the goods debit to {ACCOUNT} ($20.00 is there already), then save it; "
+			"the S-D loop submits it",
 		)
 		self.assertEqual(
 			(row["moved_to_2210"], row["to_move"], row["show"]), (0, 25.0, matching.NEEDS_ACTION)
@@ -304,7 +338,9 @@ class TestWhatToDo(unittest.TestCase):
 					[receipt("2026-09-03", total=48.26)],
 					on_2210={("Journal Entry", "ACC-JV-1"): on},
 				)
-				self.assertEqual(row["action"], f"Goods debit on {ACCOUNT}: submit")
+				self.assertEqual(
+					row["action"], f"Goods debit on {ACCOUNT}: nothing to change; the S-D loop submits it"
+				)
 				self.assertEqual((row["moved_to_2210"], row["show"], row["to_move"]), (1, matching.DONE, 0.0))
 
 	def test_a_cent_short_is_not_moved(self):
@@ -326,27 +362,30 @@ class TestWhatToDo(unittest.TestCase):
 		)
 		self.assertEqual(
 			row["action"],
-			f"The {ACCOUNT} debit is $48.26 but the stock lines are $45.00: reduce it to $45.00, then submit",
+			f"The {ACCOUNT} debit is $48.26 but the stock lines are $45.00: reduce it to $45.00, then save it; "
+			"the S-D loop submits it",
 		)
 		self.assertEqual((row["moved_to_2210"], row["show"]), (0, matching.NEEDS_ACTION))
 
-	def test_no_stock_lines_submit_as_is(self):
+	def test_no_stock_lines_nothing_to_move(self):
 		row = self.one(
 			[charge("2026-09-03", 21.45)], [receipt("2026-09-03", amount=20.0, stock=0.0, total=21.45)]
 		)
-		self.assertEqual(row["action"], "No stock lines: submit as is")
+		self.assertEqual(row["action"], "No stock lines: nothing to move; the S-D loop submits it")
 		self.assertEqual((row["moved_to_2210"], row["show"], row["stock_amount"]), (0, matching.DONE, 0.0))
 
 	def test_a_submitted_charge_without_the_move_books_the_goods_twice(self):
+		"""One correcting Journal Entry naming the charge, never an amendment: amending a QuickBooks
+		charge detaches it from its sync mapping, and so from this list (v1.538.0 review)."""
 		row = self.one([charge("2026-09-03", 48.26, docstatus=1)], [receipt("2026-09-03", total=48.26)])
 		self.assertEqual(
 			row["action"],
-			f"Submitted with the goods on the expense: move $45.00 from the expense to {ACCOUNT} "
-			"(amend it or post a correcting Journal Entry)",
+			"Submitted with the goods on the expense: post a correcting Journal Entry for $45.00 "
+			f"(Dr {ACCOUNT} / Cr the expense account the charge used) with Reference Number ACC-JV-1",
 		)
 		self.assertEqual(
-			(row["charge_status"], row["charge_source"], row["show"]),
-			("Submitted", "QuickBooks Journal Entry", matching.NEEDS_ACTION),
+			(row["charge_status"], row["charge_source"], row["show"], row["to_move"]),
+			("Submitted", "QuickBooks Journal Entry", matching.NEEDS_ACTION, 45.0),
 		)
 
 	def test_a_submitted_charge_with_the_move_is_done(self):
@@ -377,15 +416,31 @@ class TestWhatToDo(unittest.TestCase):
 		self.assertEqual(row["show"], matching.NEEDS_ACTION)
 
 	def test_no_charge_yet_is_waiting(self):
+		"""True before the cutover and after it: after it no card charge arrives from QuickBooks, so
+		"waiting for the card charge" would be wrong advice (v1.538.0 review)."""
 		row = self.one([], [receipt("2026-09-03", total=48.26)])
 		self.assertEqual(
 			(row["action"], row["show"], row["match_basis"]),
-			("Waiting for the card charge", matching.WAITING, "No charge yet"),
+			(
+				"No card charge paired yet: before the cutover, find its QuickBooks draft and move $45.00 of "
+				f"its goods debit to {ACCOUNT}; after the cutover, bill it from the receipts",
+				matching.WAITING,
+				"No charge yet",
+			),
 		)
 		self.assertEqual(
 			(row["charge"], row["charge_type"], row["charge_status"], row["charge_source"]),
 			(None, None, "", ""),
 		)
+
+	def test_a_waiting_trip_with_no_stock_lines(self):
+		row = self.one([], [receipt("2026-09-03", amount=20.0, stock=0.0, total=21.45)])
+		self.assertEqual(
+			row["action"],
+			"No card charge paired yet: no stock lines, so its QuickBooks draft needs no change before the "
+			"cutover; after the cutover, bill it from the receipts",
+		)
+		self.assertEqual(row["show"], matching.WAITING)
 
 	def test_a_charge_of_another_amount_leaves_it_waiting(self):
 		row = self.one([charge("2026-09-04", 480.0)], [receipt("2026-09-03", total=48.26)])
@@ -438,7 +493,10 @@ class TestWhatToDo(unittest.TestCase):
 			_key,
 		)
 		row = matching.build_rows(trips, accounts={"Sapphire Fountains": "2210 - SRBNB - X"})[0]
-		self.assertEqual(row["action"], "Move $45.00 of the goods debit to 2210 - SRBNB - X, then submit")
+		self.assertEqual(
+			row["action"],
+			"Move $45.00 of the goods debit to 2210 - SRBNB - X, then save it; the S-D loop submits it",
+		)
 		row = matching.build_rows(trips)[0]
 		self.assertIn(matching.DEFAULT_2210, row["action"])
 
@@ -470,6 +528,308 @@ class TestWhatToDo(unittest.TestCase):
 		self.assertEqual(
 			[row["show"] for row in rows], [matching.NEEDS_ACTION, matching.WAITING, matching.DONE]
 		)
+
+
+# ---------------------------------------------------------------------------
+# 2b. Correcting entries, charges with no store run, charges found by hand (v1.538.0 review)
+# ---------------------------------------------------------------------------
+
+JV1 = ("Journal Entry", "ACC-JV-1")
+JV7 = ("Journal Entry", "ACC-JV-7")
+
+
+def _trip():
+	"""One recorded trip at Home Depot on Sep 3: $45.00 of stock lines, $48.26 receipt total."""
+	return [receipt("2026-09-03", total=48.26)]
+
+
+class TestCorrectingEntries(unittest.TestCase):
+	"""A charge already submitted with the goods on the expense is fixed by ONE correcting Journal
+	Entry whose Reference Number is the charge; its 2210 debit is added to the charge's own, so
+	the row reaches Done once corrected."""
+
+	def one(self, corrections, on_2210=None, docstatus=1):
+		rows = listed(
+			[charge("2026-09-03", 48.26, docstatus=docstatus)],
+			_trip(),
+			on_2210=on_2210,
+			corrections=corrections,
+		)
+		self.assertEqual(len(rows), 1)
+		return rows[0]
+
+	def test_a_submitted_charge_plus_its_correcting_entry_is_done(self):
+		row = self.one({"ACC-JV-1": {"ACC-JV-900": 45.0}})
+		self.assertEqual((row["action"], row["show"]), ("Done (corrected by ACC-JV-900)", matching.DONE))
+		self.assertEqual((row["moved_to_2210"], row["on_2210"], row["to_move"]), (1, 45.0, 0.0))
+
+	def test_a_partial_correction_shows_the_remainder(self):
+		row = self.one({"ACC-JV-1": {"ACC-JV-900": 20.0}})
+		self.assertEqual(
+			row["action"],
+			"Submitted with $25.00 of the goods still on the expense ($20.00 is on "
+			f"{ACCOUNT} already, corrected by ACC-JV-900): post a correcting Journal Entry for $25.00 "
+			f"(Dr {ACCOUNT} / Cr the expense account the charge used) with Reference Number ACC-JV-1",
+		)
+		self.assertEqual(
+			(row["show"], row["to_move"], row["moved_to_2210"]), (matching.NEEDS_ACTION, 25.0, 0)
+		)
+
+	def test_an_over_correction_is_flagged(self):
+		row = self.one({"ACC-JV-1": {"ACC-JV-900": 50.0}})
+		self.assertEqual(
+			row["action"],
+			f"The {ACCOUNT} debit is $50.00 but the stock lines are $45.00 (corrected by ACC-JV-900): post a "
+			f"correcting Journal Entry for $5.00 (Dr the expense account the charge used / Cr {ACCOUNT}) with "
+			"Reference Number ACC-JV-1",
+		)
+		self.assertEqual((row["show"], row["moved_to_2210"], row["to_move"]), (matching.NEEDS_ACTION, 0, 0.0))
+
+	def test_the_reversing_entry_it_asks_for_brings_it_to_done(self):
+		row = self.one({"ACC-JV-1": {"ACC-JV-900": 50.0, "ACC-JV-901": -5.0}})
+		self.assertEqual(
+			(row["action"], row["show"]), ("Done (corrected by ACC-JV-900, ACC-JV-901)", matching.DONE)
+		)
+
+	def test_a_correction_adds_to_the_charge_s_own_lines(self):
+		row = self.one({"ACC-JV-1": {"ACC-JV-900": 25.0}}, on_2210={JV1: 20.0})
+		self.assertEqual((row["show"], row["on_2210"], row["moved_to_2210"]), (matching.DONE, 45.0, 1))
+
+	def test_another_charge_s_correction_does_not_count(self):
+		row = self.one({"ACC-JV-2": {"ACC-JV-900": 45.0}})
+		self.assertEqual((row["show"], row["on_2210"], row["to_move"]), (matching.NEEDS_ACTION, 0.0, 45.0))
+
+	def test_a_draft_counts_a_correcting_entry_too(self):
+		row = self.one({"ACC-JV-1": {"ACC-JV-900": 45.0}}, docstatus=0)
+		self.assertEqual(
+			row["action"],
+			f"Goods debit on {ACCOUNT} (corrected by ACC-JV-900): nothing to change; the S-D loop submits it",
+		)
+		self.assertEqual(row["show"], matching.DONE)
+
+	def test_no_advice_is_to_amend(self):
+		"""Amending a QuickBooks-synced Journal Entry cancels the original, and tabQuickBooks Sync
+		Mapping stays on it; the pairing follows the mapping, so the charge would drop out of it."""
+		for docstatus in (0, 1):
+			for on in (0.0, 20.0, 45.0, 50.0, -5.0):
+				with self.subTest(docstatus=docstatus, on_2210=on):
+					self.assertNotIn(
+						"amend", self.one({}, on_2210={JV1: on}, docstatus=docstatus)["action"].lower()
+					)
+					rows = listed(
+						[charge("2026-09-05", 1.0, "ACC-JV-7", docstatus=docstatus)], [], on_2210={JV7: on}
+					)
+					for row in rows:
+						self.assertNotIn("amend", row["action"].lower())
+
+
+class TestChargesWithNoStoreRun(unittest.TestCase):
+	"""A charge dated in range that paired with no trip but carries 2210 -- a draft adjusted for a
+	trip whose pairing then changed -- is listed under Needs action, never silently dropped."""
+
+	def test_a_draft_adjusted_for_a_trip_since_cancelled_is_listed(self):
+		rows = listed([charge("2026-09-05", 48.26, "ACC-JV-7")], [], on_2210={JV7: 45.0})
+		self.assertEqual(len(rows), 1)
+		row = rows[0]
+		self.assertEqual(
+			row["action"],
+			f"Carries $45.00 on {ACCOUNT} but matches no recorded store run: move it back to the expense, "
+			"then save it; the S-D loop submits it",
+		)
+		self.assertEqual(
+			(row["show"], row["row_type"], row["match_basis"]),
+			(matching.NEEDS_ACTION, matching.ROW_CHARGE, matching.NO_STORE_RUN),
+		)
+		self.assertEqual(
+			(row["charge"], row["charge_type"], row["charge_status"], row["charge_source"]),
+			("ACC-JV-7", "Journal Entry", "Draft", "QuickBooks draft Journal Entry"),
+		)
+		self.assertEqual(
+			(row["trip_day"], row["receipts"], row["charge_date"], row["on_2210"], row["to_move"]),
+			(None, 0, date(2026, 9, 5), 45.0, 0.0),
+		)
+
+	def test_a_charge_with_nothing_on_2210_is_not_listed(self):
+		charges = [charge("2026-09-05", 48.26, "ACC-JV-7")]
+		self.assertEqual(listed(charges, []), [])
+		self.assertEqual(listed(charges, [], on_2210={JV7: 0.004}), [])
+
+	def test_a_submitted_one_is_moved_back_with_a_correcting_entry(self):
+		rows = listed([charge("2026-09-05", 48.26, "ACC-JV-7", docstatus=1)], [], on_2210={JV7: 45.0})
+		self.assertEqual(
+			rows[0]["action"],
+			f"Carries $45.00 on {ACCOUNT} but matches no recorded store run: move it back to the expense; "
+			f"post a correcting Journal Entry for $45.00 (Dr the expense account it used / Cr {ACCOUNT}) "
+			"with Reference Number ACC-JV-7",
+		)
+		self.assertEqual(rows[0]["charge_status"], "Submitted")
+
+	def test_its_correcting_entries_count(self):
+		charges = [charge("2026-09-05", 48.26, "ACC-JV-7", docstatus=1)]
+		cleared = listed(charges, [], on_2210={JV7: 45.0}, corrections={"ACC-JV-7": {"ACC-JV-900": -45.0}})
+		self.assertEqual(cleared, [])
+		part = listed(charges, [], on_2210={JV7: 45.0}, corrections={"ACC-JV-7": {"ACC-JV-900": -20.0}})
+		self.assertTrue(
+			part[0]["action"].startswith(
+				f"Carries $25.00 on {ACCOUNT} (corrected by ACC-JV-900) but matches no recorded store run"
+			),
+			part[0]["action"],
+		)
+
+	def test_one_reversed_too_far_is_brought_back_to_zero(self):
+		rows = listed(
+			[charge("2026-09-05", 48.26, "ACC-JV-7", docstatus=1)],
+			[],
+			corrections={"ACC-JV-7": {"ACC-JV-900": -5.0}},
+		)
+		self.assertEqual(
+			rows[0]["action"],
+			f"Takes $5.00 off {ACCOUNT} (corrected by ACC-JV-900) but matches no recorded store run: bring "
+			f"it back to $0.00; post a correcting Journal Entry for $5.00 (Dr {ACCOUNT} / Cr the expense "
+			"account it used) with Reference Number ACC-JV-7",
+		)
+		self.assertEqual(matching.summarize(rows)["unmatched_on_2210"], -5.0)
+
+	def test_only_charges_dated_in_range_are_listed(self):
+		"""One in the lookback may belong to a trip before From Date; one after To Date to a trip
+		after it. Neither is this range's to judge."""
+		names = ("JV-early", "JV-in", "JV-late")
+		charges = [
+			charge("2026-08-28", 48.26, "JV-early"),
+			charge("2026-09-15", 48.26, "JV-in"),
+			charge("2026-10-02", 48.26, "JV-late"),
+		]
+		rows = listed(charges, [], on_2210={("Journal Entry", name): 45.0 for name in names})
+		self.assertEqual([row["charge"] for row in rows], ["JV-in"])
+
+	def test_the_store_filter_applies_to_them(self):
+		charges = [charge("2026-09-05", 48.26, "ACC-JV-7", supplier="Lowe's")]
+		self.assertEqual(listed(charges, [], on_2210={JV7: 45.0}, store="Home Depot"), [])
+		self.assertEqual(
+			[row["charge"] for row in listed(charges, [], on_2210={JV7: 45.0}, store="Lowes")], ["ACC-JV-7"]
+		)
+
+	def test_a_charge_row_names_its_company_s_account(self):
+		row = dict(charge("2026-09-05", 48.26, "ACC-JV-7"), company="Other Co")
+		trips, unpaired = matching.pair_window([row], [], "2026-09-01", "2026-09-30", _key)
+		rows = matching.build_rows(
+			trips, on_2210={JV7: 45.0}, accounts={"Other Co": "2210 - SRBNB - OC"}, unpaired=unpaired
+		)
+		self.assertIn("on 2210 - SRBNB - OC but", rows[0]["action"])
+
+	def test_they_sort_among_needs_action_by_charge_date(self):
+		receipts = [receipt("2026-09-06", "sr-act", total=48.26)]
+		charges = [
+			charge("2026-09-06", 48.26, "JV-trip"),
+			charge("2026-09-10", 30.0, "JV-late"),
+			charge("2026-09-02", 30.0, "JV-early"),
+		]
+		rows = listed(
+			charges,
+			receipts,
+			on_2210={("Journal Entry", "JV-late"): 5.0, ("Journal Entry", "JV-early"): 5.0},
+		)
+		self.assertEqual([row["charge"] for row in rows], ["JV-early", "JV-trip", "JV-late"])
+
+	def test_vouchers_names_every_charge_the_report_reads(self):
+		charges = [
+			charge("2026-09-03", 48.26, "JV-1"),
+			charge("2026-09-10", 20.0, "JV-2"),
+			charge(
+				"2026-09-11", 21.0, "PINV-1", docstatus=1, source="ERPNext", voucher_type="Purchase Invoice"
+			),
+		]
+		trips, unpaired = matching.pair_window(charges, _trip(), "2026-09-01", "2026-09-30", _key)
+		self.assertEqual(
+			matching.vouchers(trips, unpaired),
+			{"Journal Entry": ["JV-1", "JV-2"], "Purchase Invoice": ["PINV-1"]},
+		)
+		self.assertEqual(matching.vouchers([], []), {"Journal Entry": [], "Purchase Invoice": []})
+
+
+class TestFoundByHand(unittest.TestCase):
+	"""A trip whose charge never pairs -- a bank-feed date more than 3 days late, an amount outside
+	the tolerance -- is found by hand at step S-D, and the draft given the trip's stock lines on
+	2210. That debit is the link; without it the adjusted draft would be listed to be moved back."""
+
+	def late(self, **kwargs):
+		"""The trip's card charge, seven days late: the pairing never takes it."""
+		return [charge("2026-09-10", 48.26, "ACC-JV-7", **kwargs)]
+
+	def test_before_it_is_adjusted_the_trip_waits_and_the_charge_is_not_listed(self):
+		rows = listed(self.late(), _trip())
+		self.assertEqual(
+			[(row["row_type"], row["show"]) for row in rows], [(matching.ROW_TRIP, matching.WAITING)]
+		)
+
+	def test_once_adjusted_it_is_the_trip_s_charge(self):
+		rows = listed(self.late(), _trip(), on_2210={JV7: 45.0})
+		self.assertEqual(len(rows), 1)
+		row = rows[0]
+		self.assertEqual(
+			(row["charge"], row["match_basis"], row["show"], row["moved_to_2210"]),
+			("ACC-JV-7", matching.MATCHED_BY_HAND, matching.DONE, 1),
+		)
+		self.assertEqual(
+			row["action"], f"Goods debit on {ACCOUNT}: nothing to change; the S-D loop submits it"
+		)
+		self.assertEqual(matching.summarize(rows)["matched"], 1)
+
+	def test_a_cent_off_is_not_a_match(self):
+		rows = listed(self.late(), _trip(), on_2210={JV7: 44.99})
+		self.assertEqual(
+			[(row["row_type"], row["show"]) for row in rows],
+			[(matching.ROW_CHARGE, matching.NEEDS_ACTION), (matching.ROW_TRIP, matching.WAITING)],
+		)
+
+	def test_only_at_the_same_store(self):
+		rows = listed(self.late(supplier="Lowes"), _trip(), on_2210={JV7: 45.0})
+		self.assertEqual(
+			sorted(row["row_type"] for row in rows), sorted([matching.ROW_CHARGE, matching.ROW_TRIP])
+		)
+
+	def test_the_nearest_dated_charge_is_taken(self):
+		charges = [charge("2026-09-20", 48.26, "JV-far"), charge("2026-09-09", 48.26, "JV-near")]
+		on = {("Journal Entry", "JV-far"): 45.0, ("Journal Entry", "JV-near"): 45.0}
+		rows = {row["row_type"]: row for row in listed(charges, _trip(), on_2210=on)}
+		self.assertEqual(rows[matching.ROW_TRIP]["charge"], "JV-near")
+		self.assertEqual(rows[matching.ROW_CHARGE]["charge"], "JV-far")
+
+	def test_one_charge_serves_one_trip_the_earlier_first(self):
+		receipts = [receipt("2026-09-03", "sr-a", total=48.26), receipt("2026-09-04", "sr-b", total=48.26)]
+		rows = listed([charge("2026-09-12", 48.26, "ACC-JV-7")], receipts, on_2210={JV7: 45.0})
+		self.assertEqual(
+			sorted((row["run_ref"], row["charge"] or "") for row in rows),
+			[("sr-a", "ACC-JV-7"), ("sr-b", "")],
+		)
+
+	def test_a_submitted_one_with_its_correcting_entry(self):
+		rows = listed(self.late(docstatus=1), _trip(), corrections={"ACC-JV-7": {"ACC-JV-900": 45.0}})
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(
+			(rows[0]["action"], rows[0]["match_basis"]),
+			("Done (corrected by ACC-JV-900)", matching.MATCHED_BY_HAND),
+		)
+
+	def test_a_trip_billed_from_its_receipts_is_never_matched_by_hand(self):
+		rows = listed(
+			self.late(),
+			[receipt("2026-09-03", total=48.26, name="PR-1")],
+			on_2210={JV7: 45.0},
+			billed={"PR-1": "ACC-PINV-7"},
+		)
+		shown = {row["row_type"]: row["show"] for row in rows}
+		self.assertEqual(
+			shown, {matching.ROW_TRIP: matching.DONE, matching.ROW_CHARGE: matching.NEEDS_ACTION}
+		)
+
+	def test_a_charge_that_paired_is_never_taken_by_hand(self):
+		receipts = [receipt("2026-09-03", "sr-a", total=48.26), receipt("2026-09-20", "sr-b", total=99.0)]
+		rows = listed(
+			[charge("2026-09-04", 48.26, "JV-1")], receipts, on_2210={("Journal Entry", "JV-1"): 45.0}
+		)
+		by_run = {row["run_ref"]: row for row in rows}
+		self.assertEqual((by_run["sr-a"]["charge"], by_run["sr-b"]["charge"]), ("JV-1", None))
 
 
 # ---------------------------------------------------------------------------
@@ -513,13 +873,54 @@ class TestShowAndSummary(unittest.TestCase):
 	def test_the_summary(self):
 		self.assertEqual(
 			matching.summarize(self.rows),
-			{"trips": 4, "matched": 3, "needs_action": 1, "waiting": 1, "to_move": 40.0, "moved": 35.0},
+			{
+				"trips": 4,
+				"matched": 3,
+				"needs_action": 1,
+				"waiting": 1,
+				"to_move": 40.0,
+				"moved": 35.0,
+				"unmatched_on_2210": 0.0,
+			},
 		)
 
 	def test_an_empty_range(self):
 		self.assertEqual(
 			matching.summarize([]),
-			{"trips": 0, "matched": 0, "needs_action": 0, "waiting": 0, "to_move": 0.0, "moved": 0.0},
+			{
+				"trips": 0,
+				"matched": 0,
+				"needs_action": 0,
+				"waiting": 0,
+				"to_move": 0.0,
+				"moved": 0.0,
+				"unmatched_on_2210": 0.0,
+			},
+		)
+
+	def test_a_charge_with_no_store_run_is_counted_apart(self):
+		"""It needs action, but it is not a store run, not matched, and its 2210 debit is not
+		"already moved": it is what must come back off 2210."""
+		receipts = [receipt("2026-09-04", "sr-act", total=48.26)]
+		charges = [charge("2026-09-04", 48.26, "JV-2"), charge("2026-09-10", 30.0, "JV-9")]
+		trips, unpaired = matching.pair_window(charges, receipts, "2026-09-01", "2026-09-30", _key)
+		rows = matching.build_rows(
+			trips,
+			on_2210={("Journal Entry", "JV-2"): 5.0, ("Journal Entry", "JV-9"): 12.5},
+			accounts=ACCOUNTS,
+			unpaired=unpaired,
+		)
+		self.assertEqual(
+			matching.summarize(rows),
+			{
+				"trips": 1,
+				"matched": 1,
+				"needs_action": 2,
+				"waiting": 0,
+				"to_move": 40.0,
+				"moved": 5.0,
+				"unmatched_on_2210": 12.5,
+			},
 		)
 
 
@@ -587,14 +988,39 @@ class TestReportFiles(unittest.TestCase):
 		for needle in (
 			"snapshots._store_run_suppliers()",
 			"snapshots._store_run_rows(suppliers, from_date)",
-			"matching.trips_in_window(",
+			"matching.pair_window(",
+			"_on_2210(matching.vouchers(trips, unpaired), accounts)",
 			"matching.build_rows(",
+			"corrections=corrections",
+			"unpaired=unpaired",
 			"matching.filter_rows(",
 			"matching.summarize(",
 		):
 			with self.subTest(needle=needle):
 				self.assertIn(needle, code)
-		self.assertNotIn("pair_store_runs", code, "the pairing is reached through trips_in_window only")
+		self.assertNotIn("pair_store_runs", code, "the pairing is reached through pair_window only")
+
+	def test_it_counts_submitted_correcting_entries_by_reference_number(self):
+		"""The one fix advised for a charge already submitted is a Journal Entry whose Reference
+		Number (cheque_no) is the charge: only submitted ones count, only their 2210 lines, and a
+		charge is never its own correction."""
+		queries = [
+			" ".join(text.split()) for text in _strings(_without_docstrings(self.tree)) if "cheque_no" in text
+		]
+		self.assertEqual(len(queries), 1)
+		query = queries[0]
+		for needle in (
+			"from `tabJournal Entry` je",
+			"je.docstatus = 1",
+			"trim(je.cheque_no) in %(names)s",
+			"je.name not in %(names)s",
+			"jea.account in %(accounts)s",
+			"coalesce(sum(jea.debit), 0) - coalesce(sum(jea.credit), 0) as amount",
+			"group by je.name, trim(je.cheque_no)",
+		):
+			with self.subTest(needle=needle):
+				self.assertIn(needle, query)
+		self.assertIn("canonical.get(str(row.reference or '').strip().lower())", self.code)
 
 	def test_it_writes_nothing(self):
 		code = self.code
@@ -625,7 +1051,8 @@ class TestReportFiles(unittest.TestCase):
 			for node in ast.walk(self.tree)
 			if isinstance(node, ast.Call) and ast.unparse(node.func) == "frappe.db.sql"
 		]
-		self.assertEqual(len(calls), 3)
+		# A Journal Entry's own 2210 lines, a Purchase Invoice's, the correcting entries, the billing.
+		self.assertEqual(len(calls), 4)
 		for call in calls:
 			with self.subTest(line=call.lineno):
 				query = call.args[0]
@@ -688,6 +1115,43 @@ class TestReportFiles(unittest.TestCase):
 		self.assertTrue(fieldnames <= set(row), fieldnames - set(row))
 		self.assertIn('"options": "charge_type"', self.source)
 		self.assertIn("charge_type", fieldnames)
+		# ...and of a charge that carries 2210 with no store run.
+		trips, unpaired = matching.pair_window(
+			[charge("2026-09-03", 48.26)], [], "2026-09-01", "2026-09-30", _key
+		)
+		rows = matching.build_rows(
+			trips, on_2210={("Journal Entry", "ACC-JV-1"): 45.0}, accounts=ACCOUNTS, unpaired=unpaired
+		)
+		self.assertEqual([row["row_type"] for row in rows], [matching.ROW_CHARGE])
+		self.assertTrue(fieldnames <= set(rows[0]), fieldnames - set(rows[0]))
+
+	def test_the_summary_cards_read_keys_the_summary_has(self):
+		keys = set(re.findall(r'summary\["([a-z_0-9]+)"\]', self.source))
+		self.assertIn("unmatched_on_2210", keys)
+		self.assertTrue(keys <= set(matching.summarize([])), keys - set(matching.summarize([])))
+
+	def test_the_kpi_reader_returns_charges_in_a_fixed_order(self):
+		"""pair_store_runs breaks an exact tie by input order, so each charge arm of the KPI's
+		reader orders by posting date and voucher name (v1.538.0 review); before, a tie went to
+		whichever row the database returned first."""
+		source = SNAPSHOTS.read_text(encoding="utf-8")
+		function = next(
+			node
+			for node in ast.walk(ast.parse(source))
+			if isinstance(node, ast.FunctionDef) and node.name == "_store_run_rows"
+		)
+		# The statements after the docstring, which names the clause it explains.
+		body = " ".join(
+			" ".join(ast.get_source_segment(source, statement).split()) for statement in function.body[1:]
+		)
+		for needle in (
+			'and vm.erpnext_name in %(suppliers)s order by je.posting_date, je.name """',
+			') order by pi.posting_date, pi.name """',
+			'{not_qbo} order by je.posting_date, je.name, jea.idx """',
+		):
+			with self.subTest(needle=needle):
+				self.assertIn(needle, body)
+		self.assertEqual(body.count("order by"), 4, "three charge arms and the raw-payload pick")
 
 
 if __name__ == "__main__":
