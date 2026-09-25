@@ -7,6 +7,451 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.536.0] - 2026-09-24
+
+**"Bought on a store run" on the Stock Scan page.** A technician back from Home Depot scans the
+bin, presses +, chooses *Bought on a store run*, picks the store, photographs the receipt, enters
+the receipt total, the quantity, the price each and why, and picks the job — or says there was
+none. Each line is saved at once as a submitted Purchase Receipt with no purchase order, flagged
+for Purchasing to review. A part that is not in ERPNext is created as a quick Item on the same
+save, with its name checked live against the naming rules and the nearest existing items shown
+first, so nobody makes a duplicate.
+
+### Why
+
+Crews make about 19 unplanned counter purchases a month (231 QuickBooks card charges at the
+flagged stores in the 12 months to 2026-09-24, $19,551.55), and until now the only record of one
+was that card charge, reaching QuickBooks about four weeks later with no item, no job and no
+reason. Nik approved option B of the inventory plan on 2026-09-24, and POL-0602 §4.7 says to
+record every run **the same day, on this page**: the store, the items, the quantities, the
+prices, the job and the reason, with a photo of the receipt. §4.8 lets a technician create a
+quick Item while doing it, reviewed weekly by the Purchasing Agent. Without the reason, Purchasing
+cannot tell a minimum set too low ("A stocked item was out") from a part the kit should carry
+("Not something we stock", twice in 60 days) from a one-off ("Only for this job").
+
+### Added
+
+- **`api.stock_scan.store_run`** (POST): one line of a run as a submitted Purchase Receipt with no
+  PO, from a Supplier ticked *Store-Run Vendor*, at the price on the receipt (`rate` and
+  `price_list_rate`, in the stock UOM). The price survives because neither field is one of v16's
+  `force_item_fields` and production has no buying Pricing Rule. `ignore_pricing_rule` is set as
+  well but guarantees nothing: on v16 it is a permlevel-1 field only Stock Manager may write, so for
+  a scanner who is only a Stock User it is reset to 0 on insert, and a buying Pricing Rule added
+  later would apply to those lines. One save is one line, with its own Undo and the page's usual
+  `client_ref` idempotency: no cart to lose when the phone drops the tab. A **run id**
+  (`sr-<time>-<random>`) ties one trip's receipts together. The run's **header** — store, day,
+  receipt number, receipt total, photo — is its **first Posted line's**, and later lines take it
+  from there; undone lines do not count, so a run whose every line was undone starts again from the
+  next line's header (how a mistyped total is corrected: the receipts carrying it are submitted and
+  the log is immutable). Anyone may add to a run on the day it was started (two people on one trip
+  is one trip), and nobody may on a later day. Today or yesterday only; yesterday is posted at 23:59
+  and flagged *Recorded Late*. Each line carries the page's own day (`page_today`): a page left open
+  overnight still calls yesterday *Today*, so it is refused with "Reload the page" as
+  `StalePageError`, which the page answers with a Reload button. Every refusal comes before the log
+  row.
+- **Non-stock Items can be a line.** 660 of 1,086 Items are non-stock (524 live), and counters
+  sell mostly tools and consumables. Refusing them left one way to finish: a duplicate Item. Their
+  card now has *Bought it on a store run*; the receipt posts no stock and no GL for them
+  (provisional accounting is off). QuickBooks tombstones ("(deleted)") are refused.
+- **Quick Items** (`check_new_item`, POST, and the `new_item` argument): part or model number as
+  printed (the SKU if none) as the code, a name, a leaf group (most used first, starting from the
+  nearest existing item's) and `Unit`, `FT` or `Gallon`. The check runs 500 ms after typing stops:
+  up to five neighbours (tombstones dropped; *Use this one*, or *Record against it (not stocked)*),
+  an exact code match (Save off), and the naming guard's two refusals from **its exact call**
+  (`blocking_findings` over every Item code), in red once POL-0602 is in force on 1 October. The
+  Item is created in the save's own transaction, as the user, through `item_naming_guard` — no
+  `ignore_permissions`, no `ignore_naming_guard` — with `is_stock_item = 1` and an Item Default of
+  the bin it went into (ERPNext would otherwise default it to `Stores - SF`).
+- **Stock Scan Log fields**: store, unit price, receipt total, receipt number, receipt photo, day
+  bought, *Recorded Late*, run id (indexed), reason, *No Job (Safety or Shop)*, the item's minimum
+  when bought, *Not a Stock Item*, *Created the Item*, and *Unstocked, Bought Twice in 60 Days*
+  (counted by distinct runs, the current one excluded, so one part split over two bins is not a
+  repeat). Action `Store Run` is appended last to the Select; the reason Select starts with a blank
+  so every other action's row stays valid. Production had 0 rows, so no migration.
+- **Three Purchase Receipt fields** (`patches/add_store_run_receipt_fields`, `create_custom_fields`,
+  also in `after_install` because install-app marks every patch as run): *Store Run* (the run id,
+  `no_copy`, indexed), *Receipt Photo* (`Attach Image`, so Frappe's own `attach_files_to_document`
+  attaches the upload to the first receipt and a copy to each later one), and *Receipt Total (Tax
+  Included)*.
+- **On the page**: open purchase-order lines are offered **first** under + (a planned pickup
+  recorded as a store run would be received twice), then *Add to your ‹store› run* for each run
+  open today, then *Bought on a store run*. Another person's run is offered only while its last line
+  is under **three hours** old by the site's clock (`boot.now`, `logic.runOffered`): *Finish* is
+  kept on the starter's phone only, so a second trip to the same store that afternoon was one tap
+  from being added to the morning's run, its receipt and its total, and the KPI would have merged
+  the two. The non-stock card's *Bought it on a store run* and search's *Not in ERPNext?* ask
+  *Which store run?* when one is open — *Add to your ‹store› run* first, *A different store run*
+  below — instead of always starting a new run, which split a trip with a tool or a new part into
+  several runs, each typed again and each counted by the KPI. Choosing a store that has this item on
+  order says so and offers *Receive on PO-…*, which receives it on the order — a non-stock item too:
+  that branch of `add` checks the item with the store-run rule, because every PO line ever placed
+  at a store-run vendor on production is for a non-stock item, so the button was otherwise always a
+  dead end (every other path of `add`, and Take and Move, still refuse one). The receipt photo is
+  shrunk to 1,600 px and sent as soon as it is taken (Save waits for it; no `capture`, so a photo
+  already taken can be chosen); when it lands only the photo field is redrawn, so a total being
+  typed keeps its field and the phone its keyboard, and a store or day tap mid-upload leaves the
+  progress bar alone. A job is required on every line unless the technician picks *No job: safety
+  or shop*; *Only for this job* requires one and then offers *Take 3 Unit to ‹job› now?* (Take is
+  the default), so parts bought for a job do not sit in the bin as stock. The reason starts from
+  the item's reorder level and a contradiction is pointed out. A run bar stays above every view
+  while the run is open; *Finish* compares the lines with the receipt total and says to hand the
+  paper receipt to Accounting within 2 business days. *Finish* says **"Check the receipt total"**
+  when it is more than 15% above the lines, with the lines plus 6–9% tax as the band, and says how
+  to start again (undo the lines; the run reopens with its header prefilled to correct). A joined
+  run's header shows only the progress ("Lines so far: $X before tax, of a $Y receipt"): mid-run the
+  lines are nearly always short of the receipt, so a warning there would be ignored by Finish.
+- **Inventory Scanner Settings**: *New Items From Store Runs* (Stock Scan Log, created an Item, not
+  reviewed).
+
+### Changed
+
+- **The Store Runs (30d) KPI counts a trip once, whichever record holds it**
+  (`metrics.combine_store_runs`). Recorded trips (receipts grouped by run id, or by receipt number
+  at a store on a day) are paired one-to-one with card charges at the same store dated on the
+  trip's day or up to 3 days after — never before — and **only on the amount**: a charge equal to
+  the receipt total, else one the lines plus up to 15% tax could make. QuickBooks holds some
+  purchases twice, from a receipt email and from the bank feed, and a bank-feed entry carries the
+  bank's posting date (Lowes $16.60 on the Capital One card: `ACC-JV-2026-27340` from the receipt
+  email, 2026-02-07; `ACC-JV-2026-27137`, "LOWES #02662* - 2486", from the feed, 2026-02-09). The
+  window lets a trip pair with a feed charge when that is its only charge. A purchase QuickBooks
+  holds twice, as that one is, still counts twice whether it was recorded or not, as in the
+  baseline. A charge of any other amount is never
+  taken, however near: 163 of the 231 store charges in the 12 months to 2026-09-24 have another at
+  the same store within 3 days, so a recorded trip whose own charge never arrives (cash, a personal
+  card, a Bill, an unflagged vendor) would take the next trip's charge and two trips would count as
+  one. Lowes and Lowe's are one store. Charges now also include submitted Journal Entries
+  **crediting** a store's payable (`metrics.journal_store_charges`), so the count does not go
+  silent after the QuickBooks cutover. A debit to the store is a payment and never counts, and
+  **Payment Entries are not a source at all**: a bill and its payment booked as two unlinked
+  entries — the shape QuickBooks' own Bill/BillPayment imports already have at the flagged stores —
+  would otherwise count as two runs until someone reconciled them, and every nightly snapshot in
+  between would keep the doubled figure. The source is *Purchase Receipt + QuickBooks* with no
+  freshness entry: a stale sync no longer greys out runs recorded today. **Expect the 30-day count
+  to rise from 3 toward about 19 a month once technicians start recording.** That is the
+  measurement catching up with trips QuickBooks has not categorized yet, not more trips. With
+  nothing recorded it returns the old figure exactly.
+- **The review-queue KPI** is now *Stock Scan Saves Awaiting Review* (key unchanged), and the
+  settings button *Added Without PO to Review* is *Stock Scan Saves to Review*: store-run lines join
+  the queue.
+- **Undo of a store-run line is narrower than any other save.** One line is one receipt: Undo
+  cancels that receipt only, and a quick Item stays. Once reviewed it cannot be undone from the page;
+  before that, the person who recorded it may inside the window, and Purchase or Accounts Manager
+  (10 of the people who scan, on 2026-09-24) at any time. Stock Manager no longer bypasses the window here: 15 of the
+  16 people who scan hold it, every technician among them, so a technician could cancel a receipt
+  weeks later, after Accounting matched it. Nobody can tick *Reviewed* on a store run they
+  recorded.
+
+### For Accounting (Lisa)
+
+1. **What posts.** Each store-run line's receipt posts Dr `1410 - Stock In Hand - SF` / Cr `2210 -
+   Stock Received But Not Billed - SF` at quantity × the price before tax, cost center `Main - SF`,
+   no project. A non-stock line posts nothing (provisional accounting is off), so 2210 holds the
+   stock lines only. **Nothing clears 2210 automatically**: the page never bills. Before cutover it is
+   cleared by the QuickBooks draft for the same purchase (2); after cutover by the Purchase Invoice
+   made from the receipts (3).
+2. **At cutover, a QuickBooks draft that matches a recorded trip is submitted with its goods moved
+   to 2210.** Until then there is no double count: a card charge reaches ERPNext only as a draft
+   Purchase Journal Entry — Dr the expense account QuickBooks coded, Cr the card account (22500 or
+   22600), no party — which posts nothing, and QuickBooks never sees the receipt. But that draft is
+   the only record of the card liability, so it must be submitted, and submitted as it stands it
+   would expense goods the receipt already put into stock (Dr 1410 and Dr expense for one purchase)
+   and leave 2210 open for good. So for a draft that matches a trip — same store, dated on the
+   trip's day or up to three days after, for the receipt total (or the lines plus tax): **change
+   the goods' debit to `2210 - Stock Received But Not Billed - SF`** — the amount the trip's
+   receipts credited there, its stock lines before tax, splitting a line if need be — **and submit
+   it.** That clears 2210 and still books the card liability. The difference between the receipt
+   total and those lines (the tax, and any non-stock line, which the receipts did not post) stays
+   on the expense account QuickBooks used, or wherever you decide tax goes (4). Every other draft is
+   reviewed and submitted as the runbook says. Step S-D of `docs/migration/backlog-gl-posting-runbook.md`,
+   which submits the 2026 drafts, and `quickbooks_online/MIGRATION_NOTES.md` at its bulk-submit step
+   both carry this exception. The trips are listed by the Stock Scan Log (*Store Run*) and
+   the Purchase Receipt field *Store Run*. **Follow-up, not built here:** a read-only list pairing
+   each trip with its draft, made with the KPI's own pairing (`metrics.combine_store_runs`).
+3. **After cutover, a card charge at a flagged store is booked so the KPI can see it.** For a
+   recorded trip: a Purchase Invoice from its receipts (*Get Items From → Purchase Receipt*,
+   filtered on *Store Run*), which clears 2210 and is the same trip, not a second one. For a charge
+   with no recorded trip: a **standalone Purchase Invoice** from the store (or a Journal Entry
+   **crediting the store's payable**, party set), with `bill_no` = the receipt number and
+   `bill_date` = the day bought. Pay it from the card as you like — a Payment Entry (the card account
+   must be type Bank or Cash) or a Journal Entry Dr `2110 Creditors` (party, against the invoice) /
+   Cr the card: **payments are never counted** as runs. A charge booked straight to an expense with
+   no party is invisible to the Store Runs KPI and would let the target be met by not recording.
+4. **Tax is not on the receipt, on purpose.** The company's default purchase template, `US ST 6%
+   - SF`, is the setup wizard's placeholder: 6% is not the Utah rate, and its account `ST 6% - SF`
+   (Liability, under 2300 Duties and Taxes) has never been posted to. On these store purchases
+   QuickBooks books the tax into the goods' own expense accounts (Build Materials, Shop Supplies),
+   not to `66200 - Sales Tax Expense - Utah`. So the receipt carries the real total with tax
+   instead (*Receipt Total*), and the tax is the difference. Before billing in ERPNext, set up a
+   real purchase-tax template: an Actual charge to 66200 if tax is expensed, or a Valuation (or
+   Valuation and Total) row if you want it in the stock value — which needs the Company's
+   *Expenses Included In Valuation* set (5118 exists; the field is blank). Your call — and it also
+   decides where the tax in (2) goes.
+
+### For Purchasing (Parker)
+
+- **Weekly**: Inventory Scanner Settings → *Stock Scan Saves to Review* (every unreviewed store-run
+  line and Add Without PO) and *New Items From Store Runs* (Items technicians created, which survive
+  an Undo). Tick *Reviewed* once the purchase and the Item are checked. *Unstocked, Bought Twice in
+  60 Days* marks kit candidates; *A stocked item was out* means the minimum is too low (the
+  minimum at the time is on the line). The Monday naming digest keeps flagging new Items that fail
+  the naming rules.
+- **Lowes and Lowe's** are two ticked Suppliers (QuickBooks vendors 1015 and 2720). The page shows
+  the newer usable one and the KPI counts both as one store. Whether to merge them is your call.
+- **Standard Buying prices.** When someone who can write Item Price records the first store-run
+  purchase of an Item with no Standard Buying price, ERPNext inserts one at the store's retail rate
+  (Stock Settings *auto_insert_price_list_rate_if_missing* is on). Standard Buying is company-wide,
+  so it pre-fills every later PO line for that item from any supplier. On 2026-09-24 the Purchase
+  Master Manager role that allows this is held by Cedrik, James, Lisa, Logan, Nathan, Nikolas,
+  Parker and Triton. Submitting a receipt also updates the Item's *Last Purchase Rate*.
+- **Item Manager** is needed to create a quick Item; Shellyce and Lisa lack it and are told to ask
+  you.
+
+### Notes
+
+- **Checks that need a bench** (there is no Frappe integration job in CI): the entered rate
+  survives `set_missing_values` when a Standard Buying price exists; the photo is linked to the first
+  receipt and copied to the second; a concurrent retry that creates an Item gets a 409 and then
+  "already saved"; an Amend keeps *Store Run*; a non-stock item received on its order line from the
+  run sheet submits through `receive_order_line`.
+- **Known limits**: *Only for this job* followed by *Take them now* issues FIFO, so where the bin
+  already held the item at the $0.01 opening placeholder the job is charged that layer first; an
+  Undo of the store-run line after the Take is refused on negative stock until the Take is undone
+  (the Undo question says so). Two identical QuickBooks charges on one store-day still count twice.
+  A card charge more than 3 days after its trip counts as a second trip (bank-feed entries carry
+  the bank's posting date; same-amount, same-store pairs turn up 5, 7 and 11 days apart), and so
+  does one that matches neither the receipt total nor the lines plus 15%. Another person's run is
+  still taken by the server all day; only the page stops offering it after three hours. The Desk
+  still lets a Stock User cancel a store-run receipt directly.
+- Tests: `test_stock_scan_rules` (store-run rules, the stale page), `test_stock_scan_surface`
+  (thirteen endpoints, the receipt's shape, the photo check, the quick Item, the patch, the boot
+  that never raises, the undo and review limits, *Receive on PO-…* for a non-stock item, and
+  `TestTheRunHeader`: `_run_head` / `_same_run` / `_run_summary` executed against an in-memory log),
+  `test_kpi_metrics` (`TestCombineStoreRuns`, 19 cases; `TestJournalStoreCharges`, 6), and
+  `scripts/test_stock_scan_client.mjs` (the store-run flows on the real `app.js`: joining a run from
+  the non-stock and quick-item doors, *Check the receipt total*, an emptied run reopened, a stale
+  page, the photo field). No new CI steps: every suite extended an existing one.
+
+## [1.535.1] - 2026-09-24
+
+**The plan for a company knowledge base, written down before any of it is built.** This release
+is documentation only. It contains no code, fixture, patch or schema change.
+
+### Added
+
+- **[WI-080](work-items/WI-080-company-knowledge-base.md): Company knowledge base (native).**
+  - Nik wants people and every AI tool Sapphire uses (Claude, Triton, Gemini) to read the same
+    approved knowledge, so that Parker Bailey can back him up.
+  - On 2026-09-24 he chose ERPNext as its home. After a comparison with Frappe Wiki v3, the plan
+    is a narrow module built in this app.
+  - The work item carries the native-first check against:
+    - Frappe Wiki v3: five unsafe defaults, self-merge, no history restore, and upgrades that need
+      server access;
+    - core Help Article: guest-readable through `web_search` and the sitemap;
+    - Helpdesk;
+    - Drive only;
+    - FAC Skills: 31 on prod, never read by any client.
+  - It is split into six slices, with checkable acceptance criteria (prod queries and person
+    tests), rollback steps and an explicit out-of-scope list:
+    - decision record;
+    - model and workflow;
+    - Markdown import;
+    - AI reach (two read-only tools);
+    - a one-way Drive copy for Gemini and outages;
+    - a trigger-gated, one-way "Training-lite" link.
+  - Build starts after the QBO and Workforce cutover (~2026-10-21).
+- **[ADR 0017](decisions/adr/0017-company-knowledge-lives-in-a-native-module.md) (Proposed):
+  company knowledge lives in a native Knowledge Base module.**
+  - **Doctypes:** a published-snapshot doctype, plus a separate version doctype that only
+    authors and approvers can open. Drafts therefore can't leak through FAC's `get_document`,
+    which checks doctype permission but not permlevel.
+  - **Approval:** done by someone other than the author, enforced in `before_submit` and
+    `on_submit`, from a signed-in browser.
+  - **AI tools:** `search_company_knowledge` and `fetch_knowledge_article`, with frozen names so
+    the storage behind them stays swappable.
+  - **Drive copy:** Gemini on a work account cannot call a custom MCP server, so it reads a
+    one-way copy in Drive.
+  - **Restricted continuity material** stays out of ERPNext.
+  - **Training** integrates one way, as pointers only. It never returns lesson text through the
+    AI tools, never embeds live, and never produces a publish card, because Nik batch-approves
+    every card.
+- Its row in `decisions/adr/README.md`.
+
+### Why write it down first
+
+- The estimate is calibrated against this repo's own history. Training phase 1 needed 26 fix PRs
+  in its first 7 days, and 3 of the last 4 new-module launches broke a prod deploy within 2 days.
+- v1 is **8.5–11 engineer-days** of build, and 12.5–17.5 with the fix tail features see once
+  people use them. The Drive copy adds 4–4.5.
+- The cost that dominates is content. The first 40 articles take about 46–62 person-hours, and
+  the approver's review time sets the calendar.
+- A recorded plan lets that cost and the scope limits be checked before PR 1, rather than
+  rediscovered during it.
+
+## [1.535.0] - 2026-09-24
+
+**Print and email, round two of the Pillar Stripe chrome: every customer and supplier block
+prints the party's address, phone and email; email type is the reader's own system font instead
+of a squished stand-in; Sales Invoice keeps one designed format (plus frappe's built-in
+Standard, which no record can disable), and the three sales formats become their doctypes'
+defaults.** Nik's three asks of 2026-09-24. A read-only field audit of the nine
+Sapphire formats against ERPNext v16 and production data, run the same day, found the rest:
+two formats printed wrong numbers or the wrong thing, and none of the designed table spacing had
+ever reached a page. Tracked as TASK-2026-02277 (subtasks 02278–02283) on PRJ-00580.
+
+### Added
+
+- **`print_lookup.py`: the party block, found the way this site actually stores it.** New
+  `ps_party(doc)` / `ps_rfq_suppliers(doc)` Jinja globals draw the customer or supplier as name,
+  address, `Attn:`, phone and email on every Sapphire format that has a party (Quotation, Sales
+  Order, Sales Invoice, Purchase Order, Request for Quotation per supplier, Supplier Quotation,
+  Purchase Receipt, Purchase Invoice). The document alone could
+  not do it: `address_display` is on 17 of 230 Purchase Orders and 0 of 10 Purchase Invoices, and
+  `contact_mobile` / `contact_email` are blank on every Purchase Order and on all but 12 of 1,629
+  Sales Invoices. The numbers exist, in this app's own fields — `Contact.custom_email` (1,741 of
+  2,792 contacts), `custom_mobile_number`, `custom_phone_number`; `Supplier.custom_phone_number` /
+  `custom_email`; `Customer.custom_accounts_phone_number` / `custom_accounts_email_address` — and
+  ERPNext's `get_contact_details` reads only the stock ones, so it copies blanks onto every
+  document. Each value now takes the first of the document, the Contact it names (else the
+  party's primary contact), the Address it prints, and the party's own record; the address
+  falls back to the document's own Address link, then the party's primary address, rendered
+  through the site's template with `check_permissions=False` as frappe's `get_company_address`
+  does. `Attn:` is only ever the contact the document names. Every custom field is checked
+  against the doctype's meta before it is read (`get_value` raises on a missing column, and
+  inside a Jinja global that is a blank page), and any failure logs and prints what the
+  document itself carries. A phone or email the address already prints is not printed twice
+  (the stock Address Template prints both; this site's United States template does not, today).
+- **Content helpers in `print_style`**, frappe-free, as `ps_*` globals: `ps_address` (trims the
+  trailing `<br>` every United States address ends with), `ps_phone` (bare ten digits print as
+  `(801) 555-0100`; anything international or with an extension prints as stored), `ps_qty`
+  (`1`, not `1.0`), `ps_rich` (markup passes through; plain text is escaped and keeps its line
+  breaks — 1,657 of 6,148 invoice lines are plain text with newlines and ran together as one
+  paragraph), `ps_line` (bold item name, description only when it adds something), `ps_uom`
+  (`Nos` prints `ea`), `ps_state` (red `DRAFT` / `CANCELLED`: frappe's Draft heading comes from
+  macros a custom format never calls, and there are 305 draft invoices).
+- **`ps_charge_rows` / `ps_tax_rows`: billable expenses print as lines, tax as tax.** The
+  QuickBooks sync books a billable expense (a QBO invoice line with no Item) as an `Actual`
+  charge in the taxes table, because there is no Item to put on a line
+  (`quickbooks_online/core/mapping.py`, `_sales_passthrough_charges`): 1,030 rows on 155
+  invoices, the material on a Cost of Goods Sold account and its markup on an Income account.
+  Printed whole, they sat under Subtotal looking like tax, up to 98 deep. The sales formats now
+  print them under a **Billable expenses** heading in the line table; the tax rows print
+  without the ` - SF` company suffix and QuickBooks' ` - Inactive` marker (51 invoices carried
+  a retired code: 33 "Utah Sales Tax - Inactive - SF", 18 "Utah - Weber - Ogden - Inactive - SF").
+- **Default print formats for Quotation, Sales Order and Sales Invoice** (`default_print_format`
+  Property Setter fixtures, in the procurement setters' exact shape), so Print, bulk print and the
+  email composer open on the Sapphire format rather than Standard. None of the three had one.
+- **Sales Invoice states.** A return prints as a **Credit Note** — title, "Against invoice",
+  "Credit total", and no payment section — since ERPNext's own return format is now disabled
+  and there is none to fall back on (0 returns yet; QBO credit memos import as Journal
+  Entries). A submitted invoice with a payment against it prints "Payments received" and
+  "Amount due"; paid in full (1,162 of 1,324) it says so instead of printing "How to pay" over
+  $0.00 due. "Due on receipt" replaces a due date equal to the invoice date (1,583 of 1,629),
+  with the payment terms template under it when there is one.
+- **The email's Outlook-only font block** after the shell's `<style>`: classic Outlook's Word
+  engine can fall back to Times New Roman, so an MSO conditional pins Segoe UI / Consolas. It
+  survives premailer as a comment node, the same way the ghost table does.
+- `tests/test_print_lookup.py` (own CI step: it installs its own frappe stub, including
+  `frappe.contacts.doctype.address.address`), and new coverage in the print-style, sales,
+  purchase-order, procurement and email suites.
+
+### Changed
+
+- **Email type is the platform's own UI face — San Francisco, Segoe UI, Roboto — for headings
+  and body alike.** Nik: the design system's font does not reach email, "so instead of a
+  similar font, let's just use better fonts that are designed better and don't have a squished
+  look". It cannot reach it: frappe inlines every email through premailer 3.10, which drops
+  `@font-face` (its `_parse_style_rules` keeps `@media` and nothing else), so titles named Big
+  Noodle Titling and rendered in Arial Narrow, a condensed face; body text named Lato, almost
+  never installed; and frappe's own stylesheet put a third, system stack on every `<td>`. One
+  stack now (`-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial`),
+  declared once in `_components.html`, with sizes re-set for a normal-width face (title 26/32px,
+  sub-heads 19/25px, eyebrow tracked +1px) and a guard test that no email names the old faces.
+  Premailer's `data-premailer="ignore"` escape hatch would let a web font through; it is left
+  unused on purpose, since Gmail ignores web fonts anyway.
+- **Sales line table leads with the item's name, not its code.** Item | Qty | Unit | Rate |
+  Amount; customers do not know `SF-BASALT-3COL`. Buying documents keep the code column, which
+  receiving and a supplier's counter use, and no longer wrap it at the hyphen.
+- **The Purchase Order's ORDER STATUS speaks to the supplier:** Issued, or in red "Draft — not an
+  order until approved", "On hold — please do not ship yet", "Cancelled — do not supply".
+  ERPNext's internal statuses read wrong at a supplier's desk: "Closed" (104 orders) as
+  cancelled, "To Bill" (73) as an invitation to bill.
+- **Quotation:** "Valid until the date above" printed over a dash on all 673 quotations
+  (`valid_till` is never set); the sentence and the fact now appear only with a date, and
+  PAYMENT TERMS takes the slot otherwise. PREPARED BY says Sapphire Fountains rather than
+  "Administrator" (24 quotations). Sales Order / Sales Invoice print the project's name under
+  its number, and "Your ref." only when there is one (`po_no` is empty on every invoice).
+- **Superseded Sales Invoice formats are disabled on every migrate** (`SUPERSEDED_SALES_FORMATS`):
+  Standard, with Item Image, Return, Sales Auditing Voucher, Print, PD Format v2, the leftover
+  Point of Sale row and Sales Order PD v2, with the three Regional formats kept disabled. Three
+  printed nothing: Sales Invoice Print lost its template in ERPNext v16.19, and the PD v2
+  formats belong to Print Designer, which is not installed — all raise `TemplateNotFoundError`.
+  Checked first: no Notification, Auto Repeat, POS Profile, statement run, Payment Request,
+  Dunning, Web Form, script or default references any of them, and no sales document has ever
+  been emailed from ERPNext. Quotation's and Sales Order's stock formats stay enabled.
+- **Corrected a wrong claim the old comments made:** a disabled standard print format does *not*
+  come back on migrate — `frappe/modules/import_file.py` (v16, `ignore_values`) keeps the site's
+  `disabled` when it re-imports. The every-migrate pass stays because it is idempotent and
+  re-disables anything an admin turned back on; the `pdf_generator` pass really does need it.
+
+### Fixed
+
+- **Purchase Order DELIVER TO printed the Address record's name.** It read `shipping_address`,
+  a Link, before `shipping_address_display`, so 221 of 221 orders with a ship-to printed
+  "Sapphire Fountain-Billing" instead of 85 W 300 S. It reads only the display field now.
+- **Discounted sales documents subtracted the discount twice.** Subtotal printed `net_total`,
+  which under `apply_discount_on = "Net Total"` (all 47 discounted invoices) already has the
+  discount off, and the Discount row took it off again, so the column did not reach the total.
+  Subtotal is `total` now, plus any billable-expense lines; the suites check the page adds up.
+- **And on a document with no tax rows the Discount row read `-$ -425.28`** (ACC-SINV-2026-01569,
+  and 26 other invoices). ERPNext's own `AccountsController.before_print` (v16) runs before the
+  template and flips `discount_amount` negative when the taxes table is empty, for the stock
+  formats' benefit; printed with a minus of our own it became a double negative and the rows
+  added the discount instead of taking it off. The template undoes the flip under the same
+  condition, so the stored sign decides: a sale's discount comes off, a credit note's goes back
+  on. It predates this release — the old row made the same mistake.
+- **Four notification emails would have been dropped.** "Maintenance Finalized" and "Maintenance
+  Contract Renewal Due" called `ee_p()`, "High Escalation Risk Call" and "Compliance Flag on
+  Call" called `ee_h()`, from v1.331.0 — and neither was ever defined. Calling an undefined Jinja
+  global raises, and `Notification.send()` catches it, writes an Error Log and sends nothing.
+  None had fired yet (no maintenance record has been finalized since). `ee_h` / `ee_p` now exist
+  and are registered, and `test_email_design` fails the build on any `ee_*` a Notification
+  fixture calls that is not.
+- **"Due on receipt" printed under a date it contradicted.** Production's Payment Terms Template
+  of that name is set to 1 day after the *end of the invoice month*, so its 22 invoices fall due
+  on the 1st of the next month. A template reading "Due on receipt" is never printed under a date
+  now; the date, which Overdue and dunning go by, stands alone.
+- **A drop-ship Purchase Order would head its SUPPLIER block with our customer's name**: the
+  block took whichever of `customer_name` / `supplier_name` was filled, and ERPNext keeps the end
+  customer's on a PO whose lines ship direct. It reads the field for the party type now.
+- **Plain-text descriptions holding an entity printed it literally** (`POOL &amp; FOUNTAIN …`,
+  item PDT-0014): `ps_rich` decodes before it escapes. **A foreign number without its `+`**
+  (`65-688-000-88`) was reshaped as `(656) 880-0088`; only North American grouping is reshaped.
+- **None of the designed table spacing reached a page.** Frappe appends `standard.css`
+  (`td, th {padding: 6px !important; vertical-align: top !important}`) and this site's *Redesign*
+  Print Style (`padding: 10px !important`, a 1px `th` rule) to every print format, custom ones
+  included; a stylesheet `!important` beats an ordinary inline style, so rows printed at nearly
+  twice their designed height and a six-line invoice spilled its totals onto page 2. Cell
+  geometry is inline `!important` now, the one thing that outranks it. A 28-line invoice drops
+  from 4 pages to 3.
+- **Every document printed its name twice**, one line apart: the eyebrow exists to name a
+  pillar, and a neutral document has none, so it held only the document name — `INVOICE` over
+  `INVOICE`, the display face being all capitals — from v1.494.0 on every sales and buying
+  document and on the Crew Qualification Roster sheet. An eyebrow that only repeats its title
+  is dropped (case-insensitively, so the Credit Note / Invoice Jinja pair counts); a pillar
+  keeps its name.
+- A blank line after every address (the letterhead's, the party block's, Remit to) from the
+  United States template's trailing `<br>`; quantities printed as `1.0`; the Purchase Order's
+  payment terms printed "Net 30" twice; customer and supplier names were not escaped;
+  Quotation's fallback read `doc.customer`, a field Quotation does not have (on production that
+  prints Jinja debug text rather than nothing).
+- **Email: the button label and links lost their colour in Apple Mail.** frappe's
+  `.email-body a:not(.btn){color:#171717;font-weight:600;text-decoration:underline}` survives
+  premailer as an `!important` head rule. The button and the component links now carry
+  `class="btn"` and declare every property frappe's `.btn` rule would otherwise inline (premailer
+  merges property by property and the element's own declaration wins — without them the button
+  came out filled grey with a border and a margin); markdown links in the morning briefing get
+  `td.ee-md a:not(.btn)`, one element more specific than frappe's rule.
+
 ## [1.534.1] - 2026-09-24
 
 **Fixes from an independent review of 1.529.0.** 1.529.0 merged while the review was still

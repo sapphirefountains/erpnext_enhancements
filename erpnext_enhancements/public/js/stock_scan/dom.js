@@ -75,6 +75,8 @@ const ICONS = {
 	close: ["M6 6l12 12", "M18 6L6 18"],
 	// "Report a problem": a speech bubble, not a flag — Recent's "Review" pill already uses ⚑.
 	report: ["M4 5h16v11H10l-4 4v-4H4z", "M12 8v3.5", "M12 13.5v.01"],
+	// The receipt photo on a store run.
+	camera: ["M4 8h3.5l1.5-2.5h6L16.5 8H20v11H4z", "M12 10.5a3 3 0 1 1 0 6a3 3 0 1 1 0-6z"],
 };
 
 /** A small line icon, `aria-hidden` (the words beside it carry the meaning). */
@@ -110,7 +112,95 @@ export function input(opts) {
 	if (o.inputmode) node.setAttribute("inputmode", o.inputmode);
 	if (o.enterkeyhint) node.setAttribute("enterkeyhint", o.enterkeyhint);
 	if (o.label) node.setAttribute("aria-label", o.label);
+	// A file input (the receipt photo): what it accepts, and — only when asked — `capture`,
+	// which on a phone skips the photo library and goes straight to the camera.
+	if (o.accept) node.setAttribute("accept", o.accept);
+	if (o.capture) node.setAttribute("capture", o.capture);
+	if (o.maxlength) node.setAttribute("maxlength", String(o.maxlength));
 	return node;
+}
+
+/**
+ * A `<select>` from `[value, label]` pairs (or plain strings), at 16 px like every input.
+ * Option text is `textContent`: group and unit names are data.
+ */
+export function select(options, value, label) {
+	const node = document.createElement("select");
+	node.className = "ee-ss-input ee-ss-select";
+	if (label) node.setAttribute("aria-label", label);
+	for (const entry of options || []) {
+		const [v, text] = Array.isArray(entry) ? entry : [entry, entry];
+		const opt = document.createElement("option");
+		opt.value = String(v);
+		opt.textContent = String(text);
+		if (String(v) === String(value)) opt.selected = true;
+		node.appendChild(opt);
+	}
+	if (value !== undefined && value !== null) node.value = String(value);
+	return node;
+}
+
+/**
+ * The receipt photo made small enough to send on a warehouse's signal: the long edge at most
+ * `maxEdge` px, re-encoded as JPEG. A phone photo is 3-12 MB; this is a few hundred KB and
+ * still reads. Resolves the original file whenever anything fails (no canvas, a format the
+ * browser cannot decode) — the upload then just takes longer. The browser applies the photo's
+ * EXIF rotation when it draws it, so the receipt stays upright.
+ */
+export function shrinkPhoto(file, maxEdge = 1600, quality = 0.8) {
+	return new Promise((resolve) => {
+		let url = null;
+		const done = (out) => {
+			if (url) {
+				try {
+					URL.revokeObjectURL(url);
+				} catch (e) {
+					/* nothing to free */
+				}
+			}
+			resolve(out);
+		};
+		try {
+			if (!file || typeof document === "undefined" || typeof URL === "undefined" || typeof Image === "undefined") {
+				done(file);
+				return;
+			}
+			url = URL.createObjectURL(file);
+			const image = new Image();
+			image.onload = () => {
+				try {
+					const w0 = image.naturalWidth || image.width;
+					const h0 = image.naturalHeight || image.height;
+					if (!w0 || !h0) return done(file);
+					const scale = Math.min(1, maxEdge / Math.max(w0, h0));
+					const canvas = document.createElement("canvas");
+					canvas.width = Math.max(1, Math.round(w0 * scale));
+					canvas.height = Math.max(1, Math.round(h0 * scale));
+					const ctx = canvas.getContext && canvas.getContext("2d");
+					if (!ctx || !canvas.toBlob) return done(file);
+					ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+					canvas.toBlob(
+						(blob) => {
+							if (!blob || !blob.size) return done(file);
+							try {
+								done(new File([blob], "receipt.jpg", { type: "image/jpeg" }));
+							} catch (e) {
+								done(blob);
+							}
+						},
+						"image/jpeg",
+						quality
+					);
+				} catch (e) {
+					done(file);
+				}
+			};
+			image.onerror = () => done(file);
+			image.src = url;
+		} catch (e) {
+			done(file);
+		}
+	});
 }
 
 /**

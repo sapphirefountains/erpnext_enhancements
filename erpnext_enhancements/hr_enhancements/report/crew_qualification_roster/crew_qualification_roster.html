@@ -11,8 +11,9 @@
 	  print-format rule elsewhere in this app, where custom_format = 1 means the
 	  template draws everything. The print design system's chrome
 	  (docs/print-design-system.md) is therefore applied WITHOUT its wordmark: the
-	  pillar stripe, the eyebrow, the display-face title, ruled tables, the closing
-	  stripe. The wordmark is the letter head the wrapper prints above.
+	  pillar stripe, the display-face title, ruled tables, the closing stripe. The
+	  wordmark is the letter head the wrapper prints above. No eyebrow either: with no
+	  pillar to name, it only repeated the title one line above it (v1.535.0).
 	* NEVER WRITE A DOUBLE BRACE IN THIS FILE, COMMENTS INCLUDED, AND THAT IS NOT
 	  PEDANTRY. frappe.template.compile runs str.replace on every double brace in the
 	  WHOLE file before it looks for anything else, HTML comments very much included,
@@ -67,7 +68,6 @@
 	.cqr-stripe { height: 9px; background-color: #00263e; background-image: linear-gradient(90deg, #00263e 0%, #00111c 100%); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 	.cqr-stripe-foot { height: 4px; margin-top: 8px; }
 	.cqr-head { margin: 12px 0 10px; }
-	.cqr-eyebrow { font-size: 9pt; font-weight: 700; color: #00609c; }
 	.cqr-sheet h2 { margin: 2px 0 0; font-family: "Big Noodle Titling", "Arial Narrow", Arial, sans-serif; font-weight: 700; font-size: 26pt; line-height: 1; color: #00263e; }
 	.cqr-asof { font-size: 11pt; font-weight: 700; color: #151515; margin: 6px 0 6px; }
 	.cqr-note { font-size: 8.5pt; color: #363636; margin-bottom: 10px; line-height: 1.35; }
@@ -90,7 +90,6 @@
 <div class="cqr-sheet">
 	<div class="cqr-stripe"></div>
 	<div class="cqr-head">
-		<div class="cqr-eyebrow">CREW QUALIFICATION ROSTER</div>
 		<h2>Crew Qualification Roster</h2>
 		<div class="cqr-asof">As of {%= frappe.datetime.str_to_user(filters.as_of) %}</div>
 	</div>

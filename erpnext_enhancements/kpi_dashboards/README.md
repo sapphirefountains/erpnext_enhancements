@@ -104,6 +104,36 @@ Measured on 2026-09-24: 206 Home Depot and Lowe's card transactions in 12 months
 returns), $16.3k, and almost none since July 7 on the Amex card that carried 168 of them. That
 gap is uncategorized QuickBooks data, not an improvement, until bookkeeping says otherwise.
 
+**Since v1.536.0 a trip is counted once, whichever records it** (`metrics.combine_store_runs`,
+pure and tested bench-free). The Stock Scan page records a run the same day as Purchase Receipts
+carrying a run id (`custom_store_run`) and the receipt total; the card charge arrives in QuickBooks
+about four weeks later. *Charges* are the money records — QuickBooks card purchases, standalone
+Purchase Invoices from a store (an invoice made from a store-run receipt has `purchase_receipt`
+set and is the same trip), and, for after the cutover, submitted Journal Entries **crediting** the
+store's payable (`metrics.journal_store_charges`: a debit to the store is a payment, and a bill
+plus its payment booked as two unlinked entries would otherwise count twice). **Payment Entries are
+never counted**: a payment is money for a purchase already booked. *Recorded trips* are the
+receipts grouped by run id (or by receipt number at a store on a day). Each trip is paired with at
+most one charge at the same store (`store_key`, so Lowes and Lowe's are one) dated **on the trip's
+day or up to three days after**, and **only on the amount**: a charge equal to the receipt total,
+else one the lines plus tax could make. A charge of any other amount is never taken, however near,
+or a trip whose own charge is missing would swallow the next trip's charge at that store. The
+window is there because QuickBooks holds some purchases from two feeds and a bank-feed entry
+carries the bank's posting date (Lowes $16.60 on the Capital One card: `ACC-JV-2026-27340` from the
+receipt email, 2026-02-07, and `ACC-JV-2026-27137`, "LOWES #02662* - 2486", from the feed,
+2026-02-09), so a trip can pair with a feed charge when that is its only charge; a feed entry more
+than three days late still counts as a second trip, and a purchase QuickBooks holds twice, like that
+one, counts twice recorded or not, as in the baseline. Count = trips +
+unpaired charges; spend = the charge
+for a paired trip, the receipt total for an unpaired one, and every unpaired charge. The source is
+*Purchase Receipt + QuickBooks* with **no freshness entry**, so a stale QuickBooks sync no longer
+greys out runs recorded today. **When technicians start recording, the 30-day count will rise
+from 3 (2026-09-24) toward the real rate** — 231 charges in the 12 months to that day, about 19 a
+month: that is the measurement catching up with trips QuickBooks has not categorized yet, not
+more trips. With nothing recorded it returns exactly
+the old figure. The review-queue KPI (`stock_scan_review_queue`, key unchanged) is now labelled
+*Stock Scan Saves Awaiting Review*, since store-run lines join it.
+
 `tests/test_kpi_departments.py` checks that the seven places a department is named agree.
 
 ## Item naming, split into backlog and new items (v1.532.0)

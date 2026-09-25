@@ -72,8 +72,8 @@ inline SVG**, so email uses a hosted `<img>`.
 Since **v1.494.0** the chrome is the *Pillar Stripe* concept from the design canvas Nik
 picked on 2026-09-21, built from the Sapphire Fountains design system's own tokens. Top
 to bottom: a stripe in the pillar's left-to-right gradient; the wordmark on white with
-the pillar's name beside it; an eyebrow in the pillar's closing stop over a display-face
-title in deep-sea-blue; the body; a ruled footer with the tagline; a thinner stripe.
+the pillar's name beside it; an eyebrow in the pillar's closing stop over a bold title in
+deep-sea-blue; the body; a ruled footer with the tagline; a thinner stripe.
 
 **Pillars.** The four things the company sells each own a colour — Service is
 fresh-blue, Build bahama-blue, Design violet, Rent teal — and a mail that belongs to one
@@ -84,12 +84,6 @@ live in `print_style.py` so paper and email cannot disagree; `email_style` impor
 Today the customer-facing maintenance mail is Service and the contract, fountain-move
 and e-sign mail is Build; sales and billing mail is neutral until a document can say
 which pillar it is under.
-
-**The display face never arrives.** frappe inlines every email through premailer, whose
-`_parse_style_rules` keeps `@media` rules and drops every other at-rule, `@font-face`
-included (verified against premailer 3.10). So titles and sub-heads name Big Noodle
-Titling first and render in Arial Narrow bold — the same condensed shape — where the
-client has it, and Arial bold where it does not. The sizes are chosen for that fallback.
 
 Fluid `width:100%`, capped at `max-width:840px`. Full-bleed with comfortable gutters on
 a phone; capped before body copy runs 1400px wide on a maximised desktop window. White
@@ -120,6 +114,79 @@ Two mechanics, both verified against this site rather than assumed:
   clicking the colour did nothing (v1.331.2). **Declare `width` on every macro table
   and `padding` *and* `border` on every macro td**; `tests/test_email_design.py` fails
   the build otherwise.
+
+---
+
+## Type
+
+**Email is set in the reader's own platform face, not in the design system's faces and
+not in a look-alike of them.** Since 2026-09-24 every stack is
+
+```
+-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif
+```
+
+which is San Francisco on Apple devices, Segoe UI on Windows, Roboto on Android, and
+Helvetica Neue or Arial anywhere else. Headings are the same stack at weight 700. Code
+and machine output keep the monospace stack (`ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`).
+`system-ui` is left out on purpose: on a Windows machine set to a Chinese or Japanese
+display language it resolves to that language's UI font rather than Segoe UI.
+
+**Why not the brand faces.** The design system's faces are web fonts: Big Noodle Titling
+for display, Lato for body. frappe inlines every email through premailer, whose
+`_parse_style_rules` keeps `@media` rules and drops every other at-rule, `@font-face`
+included (verified against premailer 3.10). So the old stacks never got the brand faces.
+Headings fell to Arial Narrow bold, a condensed face that read squashed. Body copy fell
+to Helvetica or Arial, because Lato is almost never installed. frappe's own stylesheet
+meanwhile put its system stack on every `<td>`, so a single message mixed three faces.
+Nik's call on 2026-09-24 was to stop chasing a similar font and use better-designed faces
+that do not look squished. The platform UI faces are drawn for reading on screen at
+exactly these sizes, and they are already installed on the reader's device.
+
+**The display face could reach an inbox, and deliberately does not.** premailer leaves any
+`<style data-premailer="ignore">` untouched, so an `@font-face` could be shipped through
+that escape hatch. It is not used. Gmail ignores web fonts, so the brand face would reach
+only some readers and everyone else would still get a fallback.
+
+**Sizes are set for a normal-width face.** The old sizes were chosen for a condensed one.
+Body, note and footer sizes are unchanged.
+
+| Element | Size / line-height | Tracking |
+|---|---|---|
+| Title (`h1`) | 26px / 32px; 22px / 28px under 600px | −0.3px |
+| `h()` and markdown `h1`/`h2` | 19px / 25px | −0.2px |
+| Markdown `h3`/`h4` | 15px / 21px | — |
+| Eyebrow and pillar name | 12px / 16px, uppercase | 1px |
+| KPI value | 22px / 26px | −0.3px |
+| Button label | 15px, bold | 0.5px |
+
+**Declared once.** `SANS`, `MONO`, `MSO_SANS` and `MSO_MONO` are set at the top of
+`_components.html`, and `_shell.html` imports them as `ee`. `tests/test_email_design.py`
+fails the build on a literal stack in either file, on Big Noodle, Arial Narrow or Lato in
+any email template, and on any `font-family` in a rendered message other than those four.
+
+**Text cells name their face.** Premailer inlines frappe's `.body-table td{font-family:…}`
+onto every `<td>` in the message, and only a declaration on the cell itself outranks it.
+So the `kv()` and `table()` cells declare `SANS` themselves; before this change, fact tables
+were set in frappe's stack while the paragraphs around them were in ours.
+
+**Outlook gets its own rule.** Outlook's Word engine does not reliably walk a font stack.
+Given a list whose first family it does not have, it can fall back to Times New Roman, and
+`-apple-system` is never installed on Windows. So right after the main `<style>` the shell
+emits an Outlook-only block:
+
+```html
+<!--[if mso]><style type="text/css">
+body,table,td,th,div,p,span,a,li,h1,h2,h3,h4{font-family:'Segoe UI',Arial,sans-serif !important}
+.ee-mono,pre,code{font-family:Consolas,'Courier New',monospace !important}
+</style><![endif]-->
+```
+
+`code()` carries `class="ee-mono"` so it stays monospaced there. Premailer passes the block
+through untouched. To lxml a conditional comment is a comment node, so no selector reaches
+the `<style>` inside it; the ghost-table conditionals survive for the same reason, verified
+on mail sent from this site. The block must come *after* the main `<style>`, because the
+guard suite reads the `@media` block as running up to the first closing style tag.
 
 ---
 
@@ -170,7 +237,7 @@ All in `_components.html`, all available as `email_style.<name>()` in Python and
 
 | Macro | For |
 |---|---|
-| `h(text)` | A sub-heading inside the body — the display face, bahama-blue |
+| `h(text)` | A sub-heading inside the body — the body face in bold, bahama-blue |
 | `p(text)` | A paragraph. Escapes its argument |
 | `rich(html)` | A paragraph carrying inline `<b>`/links. **Does not escape** — you must |
 | `note(text)` / `note_rich(html)` | Small print |
@@ -190,6 +257,43 @@ of a callout or KPI and the edge of a pill, on the off-white ground; the ground 
 never changes colour. The button is the design system's control: sapphire fill,
 `radius-10`, a bold label in capitals typed into the copy (`"VIEW THE REPORT"`), in
 navy-900. A `danger` button takes the red fill with an off-white label.
+
+**Every anchor the macros draw carries `class="btn"`, and that is frappe's opt-out, not a
+style.** frappe's email stylesheet has
+`.email-body a:not(.btn){color:$gray-900;font-weight:600;text-decoration:underline}`.
+Premailer cannot inline a pseudo-class selector, so it leaves that rule in `<head>` and
+marks every declaration in it `!important`. frappe calls premailer with
+`strip_important=False`, so the `!important` stays, and a head `!important` beats a plain
+inline style. So in every client that
+honours a head stylesheet (Apple Mail, iOS Mail) the button label turned near-black,
+semibold and underlined, and every link lost bahama-blue. `class="btn"` takes an anchor out
+of that rule. The cost is frappe's own `.btn` rule, which has no pseudo-class, so premailer
+*does* inline it onto the anchor: a grey fill, a 1px border, `4px 20px` padding, an `8px`
+margin and 13px type. Premailer merges property by property and lets the element's own
+inline declaration win (`merge_styles`), so each such anchor declares every property `.btn`
+sets. `button()` spells them out; the text links in `links()`, `table()` and the shell's
+footer use `LINK_RESET`. premailer 3.10 was run on the CTA with frappe's rules. With the
+class but without `margin`, `border` and `background-color`, the anchor came out filled in
+frappe's grey, with a matching `bgcolor` attribute, a border and an 8px margin. With them,
+nothing of `.btn` survived except `border-color:transparent` on a zero-width border. The
+guard suite checks that every such anchor declares all eleven properties.
+
+Links this app does not draw itself — the `md_to_html()` output in the morning briefing,
+and any `<a>` written into `rich()`, `note_rich()` or an HTML string handed to `wrap()` —
+cannot carry the class, so the shell answers frappe's rule with one of its own:
+`td.ee-md a:not(.btn){color:#00609c !important;font-weight:400 !important}`. Premailer
+cannot inline it either (the `:not()`), so it stays as an `!important` rule in the shell's
+own `<style>`, which sits in the body; only frappe's `email_css` leftovers reach `<head>`.
+The `td` makes it one element more specific than `.email-body a:not(.btn)`, so it wins
+wherever both apply, whichever order they land in — Apple Mail and the other clients that
+honour a body `<style>`. **Gmail drops a `<style>` in the body, so this rule does not
+reach it**; whether frappe's `<head>` rule does depends on Gmail's handling of `:not()`,
+which has not been checked in a real inbox. If it does, markdown links in Gmail still
+print near-black; moving the rule into an app `email_css` bundle (which premailer writes
+to `<head>`) is the fix, and was deliberately left for a change of its own. Verified by
+rendering the sample mail through premailer 3.10: the briefing's markdown link prints
+bahama-blue at normal weight. It does not touch the button, whose anchor carries
+`class="btn"`.
 
 **`prose()` and `code()` are not interchangeable.** Four senders used to emit their whole
 body as `<pre>`; two of them (offsite backup, call transcripts) really are machine
@@ -279,6 +383,9 @@ python -m pytest erpnext_enhancements/tests/test_email_design.py -q
 
 - Add a `max-width` or `margin:0 auto` container to a body template.
 - Use a colour that is not in `email_style.py`.
+- Write a font stack into a template. Use `SANS` or `MONO` from `_components.html`.
+- Add an `<a>` to a macro or the shell without `class="btn"` and every property frappe's
+  `.btn` sets (see Components).
 - Use `email_style.raw()` without a comment saying why. It exists for HTML this app did
   not generate — `Auto Email Report.get_report_content()` and pre-rendered feedback
   bodies — and the guard suite watches it.

@@ -7,10 +7,28 @@ trend, a human display string, and a source-staleness check. Keeping them pure
 unit-testable without a database — see ``tests/test_kpi_metrics.py``.
 """
 
-from datetime import datetime
+import re
+from datetime import date, datetime
 
 # A value within this fraction of its target counts as "Watch" rather than "Bad".
 WATCH_BAND = 0.10
+
+#: A card charge for a store run is dated on the day of the purchase or up to this many days
+#: after it, never before. QuickBooks holds some purchases from two feeds -- a receipt email and
+#: the bank feed -- and a bank-feed entry carries the bank's posting date, not the purchase's
+#: (Lowes $16.60 on the Capital One card: ACC-JV-2026-27340 from the receipt email, 2026-02-07;
+#: ACC-JV-2026-27137, "LOWES #02662* - 2486" from the feed, 2026-02-09). The window lets a trip
+#: pair with a feed charge when that is its only charge; a feed entry posted more than this many
+#: days late counts as a second trip. A purchase QuickBooks holds twice, like that one, counts twice
+#: whether it was recorded or not -- as it always did.
+STORE_RUN_PAIR_DAYS = 3
+
+#: Two dollar amounts closer than this are the same charge.
+STORE_RUN_AMOUNT_TOLERANCE = 0.05
+
+#: With no receipt total recorded, a charge still matches a run whose lines (before tax) are
+#: within this much below it: Utah's combined sales tax is under 9%.
+STORE_RUN_TAX_ALLOWANCE = 0.15
 
 HIGHER = "Higher is better"
 LOWER = "Lower is better"
@@ -118,6 +136,178 @@ def _parse_dt(value):
 			except ValueError:
 				continue
 	return None
+
+
+def _as_day(value):
+	"""A date from a ``date``, a ``datetime`` or an ISO string; ``None`` otherwise."""
+	if isinstance(value, datetime):
+		return value.date()
+	if isinstance(value, date):
+		return value
+	try:
+		return date.fromisoformat(str(value or "").strip()[:10])
+	except ValueError:
+		return None
+
+
+def _amount(value):
+	try:
+		return float(value or 0)
+	except (TypeError, ValueError):
+		return 0.0
+
+
+def _receipt_number(value):
+	return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def combine_store_runs(charges, receipts, since, store_key, pair_days=STORE_RUN_PAIR_DAYS):
+	"""``(count, spend)`` of store runs since ``since``, from two records of the same trips.
+
+	``charges`` are money records, one per card charge: ``{supplier, day, amount}`` -- the
+	QuickBooks card purchases, standalone Purchase Invoices, and Journal Entries crediting the
+	store's payable (:func:`journal_store_charges`). ``receipts`` are what the Stock Scan page recorded,
+	one Purchase Receipt per line: ``{supplier, day, run, amount, receipt_total,
+	receipt_number}``. Before the cutover most trips have both (the receipt the same day, the
+	charge weeks later), some only a charge (not recorded), some only receipts (the charge not
+	in yet). Counting either alone is wrong; adding them counts most trips twice.
+
+	**Receipts become trips.** One trip is one run id (a receipt with none is its own trip), and
+	runs that carry the same receipt number at the same store on the same day are one trip too
+	-- two people who shopped together and each started a run. A trip's day is its earliest
+	receipt; its amount is the receipt total the technician entered (tax included) or, without
+	one, the sum of its receipts.
+
+	**Each trip is paired with at most one charge, and each charge with at most one trip**: at
+	the same store (``store_key``, so "Lowes" and "Lowe's" are one), dated on the trip's day or
+	up to ``pair_days`` after it -- never before, a charge does not precede the purchase -- and
+	only on the amount. Two passes, so the best evidence wins: first a charge equal to the
+	receipt total, then one the lines plus tax could make (a mistyped total); within a pass the
+	nearest day. **A charge of any other amount is never taken**, however near: a recorded trip
+	whose own charge is missing (cash, a personal card, a Bill, not synced yet, an unflagged
+	vendor) would otherwise swallow the next trip's charge at that store, and two trips would
+	count as one. At the flagged stores most charges have another within three days.
+
+	**Count** is trips plus unpaired charges; **spend** is the charge for a paired trip (what the
+	card paid, tax included), the trip's own amount for an unpaired one, and every unpaired
+	charge. Only trips and charges dated on or after ``since`` count: a trip just before the
+	window still claims its charge inside it, so pass rows from a few days earlier.
+
+	Pure: no frappe; ``store_key`` is a callable (``stock_scan_rules.store_key``); dates may be
+	``date``/``datetime`` or ISO strings.
+	"""
+	since_day = _as_day(since)
+	trips = {}
+	for row in receipts or ():
+		day = _as_day(row.get("day"))
+		if day is None:
+			continue
+		store = store_key(row.get("supplier") or "")
+		number = _receipt_number(row.get("receipt_number"))
+		key = ("receipt", store, day, number) if number else ("run", str(row.get("run") or ""))
+		trip = trips.setdefault(key, {"key": key, "store": store, "day": day, "net": 0.0, "total": 0.0})
+		trip["day"] = min(trip["day"], day)
+		trip["net"] += _amount(row.get("amount"))
+		trip["total"] = max(trip["total"], _amount(row.get("receipt_total")))
+	runs = sorted(trips.values(), key=lambda t: (t["day"], t["store"], str(t["key"])))
+
+	bills = []
+	for index, row in enumerate(charges or ()):
+		day = _as_day(row.get("day"))
+		if day is None:
+			continue
+		bills.append(
+			{
+				"index": index,
+				"store": store_key(row.get("supplier") or ""),
+				"day": day,
+				"amount": _amount(row.get("amount")),
+				"paired": False,
+			}
+		)
+
+	tolerance = STORE_RUN_AMOUNT_TOLERANCE
+
+	def equal_to_total(trip, bill):
+		return trip["total"] > 0 and abs(bill["amount"] - trip["total"]) <= tolerance
+
+	def lines_plus_tax(trip, bill):
+		net = trip["net"]
+		return (
+			net > 0 and net - tolerance <= bill["amount"] <= net * (1 + STORE_RUN_TAX_ALLOWANCE) + tolerance
+		)
+
+	for matches in (equal_to_total, lines_plus_tax):
+		for trip in runs:
+			if trip.get("bill") is not None:
+				continue
+			options = [
+				bill
+				for bill in bills
+				if not bill["paired"]
+				and bill["store"] == trip["store"]
+				and 0 <= (bill["day"] - trip["day"]).days <= pair_days
+				and matches(trip, bill)
+			]
+			if not options:
+				continue
+			target = trip["total"] or trip["net"]
+			best = min(
+				options,
+				key=lambda bill: (
+					(bill["day"] - trip["day"]).days,
+					abs(bill["amount"] - target),
+					bill["index"],
+				),
+			)
+			best["paired"] = True
+			trip["bill"] = best
+
+	count = 0
+	spend = 0.0
+	for trip in runs:
+		if since_day and trip["day"] < since_day:
+			continue
+		count += 1
+		bill = trip.get("bill")
+		spend += bill["amount"] if bill else (trip["total"] or trip["net"])
+	for bill in bills:
+		if bill["paired"] or (since_day and bill["day"] < since_day):
+			continue
+		count += 1
+		spend += bill["amount"]
+	return count, round(spend, 2)
+
+
+def journal_store_charges(lines):
+	"""Store-run charges from Journal Entry lines naming a flagged store as the party.
+
+	``lines`` are ``{entry, supplier, day, credit, debit, reference_type}``, one per Journal
+	Entry Account row. Only a **credit** to the store's payable is a purchase: it is what a bill
+	booked as a Journal Entry does. A debit is a payment, and a payment is never a trip -- a
+	bill and its payment booked as two unlinked entries would otherwise count as two runs, and
+	QuickBooks' Bill/BillPayment imports have exactly that shape at the flagged stores. A credit
+	line carrying a reference (to an invoice or another entry) is settling or reversing
+	something already booked, and is not a purchase either.
+
+	One charge per entry and store, the sum of its unreferenced credits; an entry with none
+	gives nothing. A pass-through entry (the store credited and debited in one) counts its
+	credit once. Returns ``[{supplier, day, amount}]`` for :func:`combine_store_runs`.
+	"""
+	credits = {}
+	order = []
+	for row in lines or ():
+		if str(row.get("reference_type") or "").strip():
+			continue
+		credit = _amount(row.get("credit"))
+		if credit <= 0:
+			continue
+		key = (str(row.get("entry") or ""), str(row.get("supplier") or ""))
+		if key not in credits:
+			credits[key] = {"supplier": row.get("supplier"), "day": row.get("day"), "amount": 0.0}
+			order.append(key)
+		credits[key]["amount"] += credit
+	return [dict(credits[key], amount=round(credits[key]["amount"], 2)) for key in order]
 
 
 def is_source_stale(last_sync, max_age_hours=6, now=None):

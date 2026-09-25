@@ -20,6 +20,7 @@ any host on purpose: a label printed on the test site must still resolve on prod
 where the warehouse has the same name.
 """
 
+import datetime
 import math
 import re
 from urllib.parse import parse_qs, quote, unquote_plus, urlsplit
@@ -74,7 +75,61 @@ ACTION_TAKE = "Take"
 ACTION_RECEIVE = "Receive"
 ACTION_ADD_WITHOUT_PO = "Add Without PO"
 ACTION_MOVE = "Move"
-ACTIONS = (ACTION_TAKE, ACTION_RECEIVE, ACTION_ADD_WITHOUT_PO, ACTION_MOVE)
+#: "Bought on a store run" (v1.536.0, POL-0602 §4.7): a submitted Purchase Receipt with no
+#: purchase order, one per line, flagged for review. Appended LAST: the Select's order is
+#: this tuple's, and the existing values keep their positions.
+ACTION_STORE_RUN = "Store Run"
+ACTIONS = (ACTION_TAKE, ACTION_RECEIVE, ACTION_ADD_WITHOUT_PO, ACTION_MOVE, ACTION_STORE_RUN)
+
+# ---------------------------------------------------------------------------
+# Store runs (v1.536.0)
+# ---------------------------------------------------------------------------
+
+#: The three reasons a technician gives for a store run, stored verbatim in
+#: ``Stock Scan Log.store_run_reason`` (whose Select options are these, after a blank that keeps
+#: the other actions valid). Purchasing acts on each differently, which is the point of asking.
+REASON_OUT_OF_STOCK = "A stocked item was out"
+REASON_NOT_STOCKED = "Not something we stock"
+REASON_ONLY_THIS_JOB = "Only for this job"
+STORE_RUN_REASONS = (REASON_OUT_OF_STOCK, REASON_NOT_STOCKED, REASON_ONLY_THIS_JOB)
+
+#: What each reason means to Purchasing, shown under it on the page.
+REASON_HINTS = {
+	REASON_OUT_OF_STOCK: "The minimum is too low",
+	REASON_NOT_STOCKED: "Twice in 60 days means add it to the kit",
+	REASON_ONLY_THIS_JOB: "Fine",
+}
+
+#: "Twice in 60 days means add it to the kit": the second run for an unstocked item inside the
+#: window flags the line. Runs, not lines -- four of one part split over two bins is one run.
+REPEAT_WINDOW_DAYS = 60
+REPEAT_THRESHOLD = 2
+
+#: The dearest single part a counter sells, as a guard rather than a rule: a barcode scanned
+#: into the price field must not become a $4,006,381,333,931 receipt.
+MAX_UNIT_PRICE = 100000
+MAX_RECEIPT_TOTAL = 1000000
+
+#: The units a quick Item may be created in. The unit is fixed at creation -- ERPNext refuses
+#: to change a stock UOM once stock has moved -- so the choice is short and deliberate.
+QUICK_ITEM_UOMS = ("Unit", "FT", "Gallon")
+
+#: Longest code or name a quick Item may carry (Frappe's ``name`` column and ``item_name``).
+MAX_ITEM_TEXT = 140
+
+#: A run id is a client reference with this prefix: ``sr-<time36>-<rand10>``.
+RUN_REF_PREFIX = "sr-"
+
+#: How many open runs the page offers to add to.
+MAX_OPEN_RUNS = 5
+
+#: Who may undo a store-run line after the undo window, or a line someone else recorded.
+#: Stock Manager is NOT here, deliberately: 15 of the 16 people who scan hold it, every
+#: technician among them, so the supervisor bypass every other save has would mean a
+#: technician could cancel a receipt weeks later, after Accounting matched it, and the run
+#: would silently drop out of the KPI. The people who answer for the purchase are Purchasing
+#: and Accounts.
+STORE_RUN_UNDO_ROLES = frozenset({"Purchase Manager", "Accounts Manager"})
 
 
 # ---------------------------------------------------------------------------
@@ -315,32 +370,292 @@ def pending_stock_qty(line):
 
 
 # ---------------------------------------------------------------------------
+# Store runs (v1.536.0, POL-0602 §4.7-4.8)
+# ---------------------------------------------------------------------------
+
+#: What QuickBooks leaves on an Item it deleted: the code gains this suffix and the record
+#: stays. 135 of them on 2026-09-24, all non-stock. Matched case-insensitively, as
+#: ``item_naming_rules.DELETED_MARKER`` is.
+DELETED_MARKER = "(deleted)"
+
+
+def store_run_item_refusal(item, today=None):
+	"""Why ``item`` cannot be a line of a store run, or ``None`` when it can.
+
+	:func:`item_refusal` with one difference: an item that is **not** kept in stock is
+	allowed. On 2026-09-24, 660 of 1,086 Items were non-stock -- 524 of them live -- and what a
+	crew buys at a counter is mostly tools and consumables, exactly those. Refusing them left
+	the technician one way to finish: invent a new code for a part that already exists, which
+	is the duplicate POL-0602 §4.8 and the naming guard exist to stop. ERPNext accepts a
+	non-stock line on a Purchase Receipt and posts neither stock nor GL for it (provisional
+	accounting is off on production), so the receipt records the store, price, job and photo
+	and nothing else. A QuickBooks tombstone is refused: it is a deleted record, not a part.
+	"""
+	if not item:
+		return "No such item."
+	name = item.get("item_name") or item.get("item_code") or item.get("name") or "This item"
+	code = str(item.get("item_code") or item.get("name") or "")
+	if DELETED_MARKER in code.lower():
+		return f"{code} is a record QuickBooks deleted. Pick the live item, or create a new one."
+	if item.get("is_stock_item"):
+		return item_refusal(item, today)
+	# Non-stock: item_refusal's own checks, minus "Maintain Stock is off" (and serial and batch,
+	# which only a stock item can carry).
+	if item.get("disabled"):
+		return f"{name} is disabled."
+	end_of_life = item.get("end_of_life")
+	if end_of_life and today and str(end_of_life)[:10] <= str(today)[:10]:
+		return f"{name} has reached its end of life."
+	if item.get("has_variants"):
+		return f"{name} is a template. Scan or search for one of its variants instead."
+	if item.get("is_customer_provided_item"):
+		return f"{name} is supplied by the customer and carries no cost. Use a Stock Entry in the Desk."
+	return None
+
+
+def _money_number(value):
+	"""A price or total typed on a phone: ``$4.97``, ``1,234.50`` and ``4.97`` all read 4.97."""
+	if isinstance(value, str):
+		value = value.strip().replace("$", "").replace(",", "")
+	return _number(value)
+
+
+def check_price(value):
+	"""``(rate, problem)`` for the price each, before tax, as printed on the receipt.
+
+	The same shape as :func:`check_qty`. Required and more than zero: a store-run line at $0
+	would receive its stock at no cost, which makes every later issue of it cost nothing.
+	"""
+	rate = _money_number(value)
+	if rate is None:
+		return None, "Enter the price each, before tax, as it is on the receipt."
+	if rate <= TOLERANCE:
+		return None, "The price must be more than zero."
+	if rate > MAX_UNIT_PRICE:
+		return None, f"{money(rate)} each is more than a counter sells anything for. Check the price."
+	return rate, None
+
+
+def check_receipt_total(value):
+	"""``(total, problem)`` for the paper receipt's total, tax included.
+
+	Asked once per run. It is what the card is charged, so it is what the store-run KPI
+	matches a card charge on and what the run's spend is before the charge arrives. It also
+	lets Accounting see the tax without a tax template on the receipt.
+	"""
+	total = _money_number(value)
+	if total is None:
+		return None, "Enter the receipt's total, tax included."
+	if total <= TOLERANCE:
+		return None, "The receipt total must be more than zero."
+	if total > MAX_RECEIPT_TOTAL:
+		return None, f"{money(total)} is more than one receipt. Check the total."
+	return total, None
+
+
+def _as_date(value):
+	if isinstance(value, datetime.datetime):
+		return value.date()
+	if isinstance(value, datetime.date):
+		return value
+	try:
+		return datetime.date.fromisoformat(str(value or "")[:10])
+	except ValueError:
+		return None
+
+
+def purchase_date(bought, today):
+	"""The day a store run was bought: ``today`` or the day before, else ``None``.
+
+	POL-0602 §4.7 says to record a run the same day. Yesterday is allowed because a run made
+	at the end of a shift is recorded the next morning, and the log flags it
+	(:func:`recorded_late`). Anything older is recorded in the Desk by Purchasing, who can
+	see the card statement.
+	"""
+	day = _as_date(today)
+	if day is None:
+		return None
+	choice = str(bought or "").strip().lower()
+	if choice == "today":
+		return day
+	if choice == "yesterday":
+		return day - datetime.timedelta(days=1)
+	return None
+
+
+def run_is_open(started_on, today):
+	"""Whether a run started (first line recorded) on ``started_on`` still takes lines.
+
+	For the whole day it was started, and for anyone -- and on no later day, for anyone, its
+	starter included. Not "six hours after its last line": a crew that stops for lunch between
+	the counter and the shop, or two people who shopped together and record their halves, would
+	otherwise each open a second run for one trip, and the KPI would count the trip twice. (The
+	page *offers* another person's run only while its last line is recent, ``logic.runOffered``,
+	so a second trip to the same store later that day is not added to the first by a tap; the
+	server still takes a line for it all day.)
+	"""
+	start, day = _as_date(started_on), _as_date(today)
+	return bool(start and day and start == day)
+
+
+def page_is_stale(page_today, today):
+	"""True when the page's own day (``boot.today``, sent with a store-run line) is not the
+	site's today: the page was left open overnight, and its *Today* and *Yesterday* are a day
+	out. An unreadable page day is not called stale -- the other rules still decide."""
+	page, day = _as_date(page_today), _as_date(today)
+	return bool(page and day and page != day)
+
+
+def recorded_late(bought_on, posted_on):
+	"""True when a run was recorded on a later day than it was bought (the policy says same day)."""
+	bought, posted = _as_date(bought_on), _as_date(posted_on)
+	return bool(bought and posted and bought < posted)
+
+
+def repeat_unstocked(reason, prior_runs):
+	"""True for the second (or later) run in :data:`REPEAT_WINDOW_DAYS` that bought an item as
+	"Not something we stock". ``prior_runs`` counts earlier RUNS, the current one excluded, so
+	one part split over two bins in one run is not a repeat."""
+	if reason != REASON_NOT_STOCKED:
+		return False
+	count = _number(prior_runs) or 0
+	return count >= REPEAT_THRESHOLD - 1
+
+
+def is_run_ref(value):
+	"""Whether ``value`` has the shape of a run id the page mints (``sr-<time36>-<rand10>``)."""
+	text = str(value or "")
+	return text.startswith(RUN_REF_PREFIX) and bool(re.fullmatch(r"[A-Za-z0-9._:-]{8,80}", text))
+
+
+def store_key(name):
+	"""The store a Supplier name means, for grouping: ``Lowes`` and ``Lowe's`` are one store.
+
+	Two Suppliers are both ticked as store-run vendors for Lowe's (QuickBooks vendors 1015 and
+	2720). Whether to merge the records is Purchasing's call; until then the picker shows one
+	and the KPI counts one.
+	"""
+	return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def store_picker(rows):
+	"""The stores the page offers, one per :func:`store_key`, the newest Supplier of each.
+
+	``rows`` are Supplier rows (``name``, ``supplier_name``, ``creation``, ``disabled``,
+	``on_hold``). Disabled and on-hold suppliers are dropped FIRST: collapsing first could keep
+	a record a receipt then refuses and hide the usable one behind it.
+	"""
+	best = {}
+	for row in rows or ():
+		if row.get("disabled") or row.get("on_hold"):
+			continue
+		label = row.get("supplier_name") or row.get("name") or ""
+		key = store_key(label) or store_key(row.get("name"))
+		if not key:
+			continue
+		kept = best.get(key)
+		if kept is None or str(row.get("creation") or "") > str(kept.get("creation") or ""):
+			best[key] = row
+	out = [
+		{
+			"supplier": row.get("name"),
+			"supplier_name": row.get("supplier_name") or row.get("name"),
+			"key": key,
+		}
+		for key, row in best.items()
+	]
+	out.sort(key=lambda r: natural_key(r["supplier_name"]))
+	return out
+
+
+def quick_item_problem(spec, groups, uoms):
+	"""Why a quick Item cannot be created as described, or ``None``.
+
+	``spec`` is ``{item_code, item_name, item_group, stock_uom}``; ``groups`` the leaf Item
+	Groups; ``uoms`` the units offered (:data:`QUICK_ITEM_UOMS` that are enabled). The naming
+	guard (``item_naming_guard``) still runs on insert; this is only what makes an insert
+	pointless to try.
+	"""
+	spec = spec if isinstance(spec, dict) else {}
+	code = str(spec.get("item_code") or "").strip()
+	name = str(spec.get("item_name") or "").strip()
+	if not code:
+		return "Enter the part or model number, exactly as printed."
+	if not name:
+		return "Enter a name for the item."
+	if len(code) > MAX_ITEM_TEXT:
+		return f"The part number is longer than {MAX_ITEM_TEXT} characters."
+	if len(name) > MAX_ITEM_TEXT:
+		return f"The name is longer than {MAX_ITEM_TEXT} characters."
+	if re.search(r"[<>]", code):
+		return "A part number cannot contain < or >."
+	if (spec.get("item_group") or "") not in set(groups or ()):
+		return "Choose a group from the list."
+	if (spec.get("stock_uom") or "") not in set(uoms or ()):
+		return f"Choose one of the units offered: {', '.join(uoms or QUICK_ITEM_UOMS)}."
+	return None
+
+
+def money(value):
+	"""``$4.97``, ``$1,234.50``; four places when a unit price needs them (``$0.1250``)."""
+	number = _number(value)
+	if number is None:
+		return str(value)
+	if abs(number * 100 - round(number * 100)) > 1e-6:
+		return f"${number:,.4f}"
+	return f"${number:,.2f}"
+
+
+# ---------------------------------------------------------------------------
 # Undo
 # ---------------------------------------------------------------------------
 
 
-def undo_refusal(status, is_owner, is_supervisor, age_minutes, window_minutes):
+def undo_refusal(
+	status,
+	is_owner,
+	is_supervisor,
+	age_minutes,
+	window_minutes,
+	store_run=False,
+	is_purchasing=False,
+	reviewed=False,
+):
 	"""A sentence saying why a save cannot be undone, or ``None`` when it can.
 
 	The person who saved it may undo it for ``window_minutes``; a Stock Manager may undo
 	any save at any time, which is the same power they have over the voucher in the Desk.
 	A save already undone cannot be undone twice.
+
+	A **store-run** line (``store_run``) is a purchase, and other people answer for it. Once
+	Purchasing has reviewed it (``reviewed``) nobody undoes it from the page: the receipt may
+	already be matched to its card charge. Before that, Purchasing and Accounts
+	(:data:`STORE_RUN_UNDO_ROLES`, ``is_purchasing``) may undo it at any time, and everyone
+	else -- Stock Managers included, which is every technician -- only their own line, inside
+	the window.
 	"""
 	if status != "Posted":
 		return "This has already been undone."
+	who = "a Stock Manager"
+	if store_run:
+		if reviewed:
+			return "Purchasing has reviewed this store run, so it can't be undone here. Ask Purchasing."
+		if is_purchasing:
+			return None
+		if not is_owner:
+			return "Only the person who recorded this store run, or Purchasing, can undo it."
+		is_supervisor = False
+		who = "Purchasing"
 	if is_supervisor:
 		return None
 	if not is_owner:
 		return "Only the person who saved this, or a Stock Manager, can undo it."
 	window = _number(window_minutes)
 	if window is None or window <= 0:
-		return "Undo is switched off. Ask a Stock Manager to reverse it."
+		return f"Undo is switched off. Ask {who} to reverse it."
 	age = _number(age_minutes)
 	if age is None or age > window + TOLERANCE:
-		return (
-			f"Undo is only available for {plain(window)} minutes after saving. "
-			"Ask a Stock Manager to reverse it."
-		)
+		return f"Undo is only available for {plain(window)} minutes after saving. Ask {who} to reverse it."
 	return None
 
 
@@ -445,13 +760,38 @@ def location_trail(ancestors):
 	return " › ".join(names)
 
 
-def remark(action, who, warehouse, qty, uom, from_warehouse=None, project=None, purchase_order=None):
+def remark(
+	action,
+	who,
+	warehouse,
+	qty,
+	uom,
+	from_warehouse=None,
+	project=None,
+	purchase_order=None,
+	supplier=None,
+	reason=None,
+	run=None,
+	non_stock=False,
+):
 	"""The ``remarks`` written on the voucher a save creates.
 
 	The voucher is what accounting and the stock ledger show, so it has to say, without
 	the Stock Scan Log beside it, that it came from a scan, who did it, and where.
+
+	A store run names the store, the reason, the job (or that there was none) and the run id,
+	because the receipt carries no project of its own (see ``api.stock_scan._store_run_receipt``)
+	and the run id is how Accounting finds the other receipts of the same trip.
 	"""
 	amount = f"{plain(qty)} {uom}".strip()
+	if action == ACTION_STORE_RUN:
+		what = f"{amount} (not a stock item)" if non_stock else amount
+		where = f"at {supplier}" if supplier else "at a counter"
+		job = f"Job: {project}." if project else "No job (safety or shop)."
+		return (
+			f"Stock Scan: {who} bought {what} {where} on a store run, into {warehouse}. "
+			f"Reason: {reason or 'not given'}. {job} Run {run or '?'}, flagged for review."
+		)
 	if action == ACTION_TAKE:
 		text = f"Stock Scan: {who} took {amount} from {warehouse}"
 	elif action == ACTION_RECEIVE:

@@ -18,7 +18,7 @@ model, the pure rules and the label reads.
 | `doctype/inventory_count_line/` | One counted row |
 | `doctype/storage_location/` | Sub-warehouse storage locations |
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
-| `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO, and the idempotency key |
+| `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | Desk audit view over count sessions |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
@@ -152,6 +152,7 @@ Undo exists.
 | **+** returned from the run's job | `Add Without PO` (with the job) | Stock Entry, **Material Receipt** at the item's current cost, tagged with the job | Offsets to the *Parts Taken* account, so the credit reverses the account the take charged and the job nets by project in the ledger. Flagged `needs_review` |
 | **+** found, or not from a job | `Add Without PO` (no job) | Stock Entry, **Material Receipt** at the item's current cost | Offsets to the *Added Without PO* account. Flagged `needs_review` for a Stock Manager |
 | **Move here from…** | `Move` | Stock Entry, **Material Transfer** into the scanned location | Put-away: from wherever the stock is recorded |
+| **+** bought on a store run (v1.536.0) | `Store Run` | **Purchase Receipt**, no PO, one per line, from a Supplier ticked *Store-Run Vendor* | At the price on the paper receipt, before tax; no tax row and no project on the receipt. Carries the run id, the receipt photo and the receipt total. Flagged `needs_review` for Purchasing. See [Bought on a store run](#bought-on-a-store-run-v15350) |
 
 **"+" is PO-first, and the fallback is a choice, never a default.** The item's open order
 lines are offered first, oldest promise first (`order_line_sort_key`). "Open" is ERPNext's own
@@ -258,6 +259,18 @@ only** (`logic.keptRef`, `RETRY_WINDOW_MS`): the same numbers saved later are a 
 "That save was already recorded — nothing new was posted" — and the dialled change stays, so a
 person who did mean a second one taps Save again and gets a fresh reference.
 
+**A store-run line is one row and one receipt** (v1.536.0). Undo cancels that line's receipt only;
+the other lines of the run are untouched, and a quick Item created with the line **stays**, for
+Purchasing's review. The run id (`sr-<time>-<random>`) is part of the line's `saveKey`, so the page
+mints it **once** per new run and keeps it with the run's draft (store, photo, total) until a line
+posts: a retry, or the sheet closed and opened again, sends the same run id and the same reference.
+Undo is narrower for a store run than for any other save (`undo_refusal(store_run=True)`): once
+Purchasing has ticked *Reviewed* nobody undoes it from the page; before that the person who
+recorded it may, inside the window, and **Purchasing and Accounts** (`STORE_RUN_UNDO_ROLES`) may at
+any time. Stock Manager does **not** bypass the window here, because 15 of the 16 people who scan
+hold it, every technician among them. The Desk still lets a Stock User cancel the receipt itself;
+that is a limit of the page's reach, not a rule it enforces.
+
 ### The labels page
 
 `/warehouse-labels` prints a label for every warehouse that can hold stock: a leaf, not
@@ -288,13 +301,155 @@ and no Item has a barcode or an image, so items are found by location, by name, 
 and show a monogram tile.
 
 **Watch** the `needs_review` queue (Stock Scan Log, *Needs Review* ticked, *Reviewed* not): it is
-every unit that entered stock without an order, at a cost the page chose. Since v1.530.0 it is a
-KPI, *Adds Without PO Awaiting Review*, on the Operations dashboard, which is now the inventory
-dashboard: store runs, stocked items below reorder or out, stock at a placeholder cost,
-unpriced PO lines and count coverage. See
+every unit that entered stock without an order — an Add Without PO at a cost the page chose, or
+(v1.536.0) a store-run line at the receipt's price. Since v1.530.0 it is a KPI on the Operations
+dashboard, renamed *Stock Scan Saves Awaiting Review* in v1.536.0 (key unchanged), beside store
+runs, stocked items below reorder or out, stock at a placeholder cost, unpriced PO lines and count
+coverage. See
 [`kpi_dashboards/README.md`](../kpi_dashboards/README.md#service-split-off-operations-operations-is-inventory-v15300)
 for the definitions, and for the *Store-Run Vendor* flag on Supplier that the store-run KPI
 reads.
+
+### Bought on a store run (v1.536.0)
+
+Nik approved option B of the inventory plan on 2026-09-24: *scan the bin, press +, choose the
+store, enter the price and quantity, photograph the receipt, and pick a reason; save a Purchase
+Receipt with no PO, flagged for review.* POL-0602 §4.7 defines a store run (any purchase at a walk-in
+counter not placed on a PO in advance, allowed only when a job would otherwise stop or for safety)
+and says to record it **the same day on this page**: the store, items, quantities, prices, job and
+reason, with a photo of the receipt. §4.8 lets a technician create a quick Item while doing it,
+reviewed weekly by the Purchasing Agent. The door appears only when a Supplier is ticked
+*Store-Run Vendor*, the receipt fields exist, and Buying Settings does not require a PO on every
+receipt (`boot.store_run` is otherwise `None`, and that boot block never raises — it runs inside
+the page's own boot).
+
+**The flow.** On an item, + and Save ask *Where did these come from?*: the item's open order lines
+**first** (a planned pickup recorded as a store run would leave its order open and be received
+twice), then *Add to your ‹store› run* for each run still open today, then *Bought on a store run*,
+then *Returned from ‹job›* and *Not on a purchase order*. Another person's run is offered (*Add to
+Sam's Home Depot run*) only while its last line is under **three hours** old by the site's clock
+(`logic.runOffered`, from `boot.now`): *Finish* is kept on the starter's phone only, so without it a
+second trip to the same store that afternoon was one tap from being added to the morning's run —
+its receipt, its total — and the KPI would merge the two trips. On a location, *Add an item here* →
+search → *Not in ERPNext? Record it as bought on a store run* for a part with no Item. A
+**non-stock** Item (most tools and consumables: 660 of 1,086 Items on 2026-09-24) gets its own
+*Bought it on a store run* button on its card, since it has no stepper. Both of those doors **join
+an open run** the same way: with one open they ask *Which store run?* — *Add to your ‹store› run*
+first, then *A different store run* — so a trip with a stocked part, a tool and a new part is one
+run, not three (each with the store, day, photo and total typed again, and counted by the KPI as a
+trip of its own). With none open they go straight to a new run. The run sheet asks, for a
+new run: the **store**, **today or yesterday**, the **receipt photo** (shrunk to 1,600 px and sent
+as soon as it is taken; Save waits for it; no `capture` attribute, so a photo already taken can be
+chosen), the **receipt total with tax** (required) and the receipt number (optional). For the line:
+the item, **how many**, the **price each before tax as on the receipt**, the **reason**, and the
+**job — or an explicit "No job: safety or shop"**, so a blank is a decision; *Only for this job*
+requires the job. After each line the page goes to the item at its bin, and a run bar
+(*Home Depot run · 2 items · $14.91 before tax · Finish*) stays above every view while the
+technician scans the next bin and presses + again. *Finish* shows the lines against the receipt
+total and says to hand the paper receipt to Accounting within 2 business days.
+
+**One save is one line**: a submitted Purchase Receipt, its own Undo, the page's usual idempotency.
+There is no cart to lose when the phone evicts the tab. A **run id** ties a trip's receipts together
+(`Purchase Receipt.custom_store_run`, and `Stock Scan Log.store_run`). The run's **header** — its
+store, day, receipt number, receipt total and photo — is its **first Posted line's**
+(`_run_head`), and every later line takes it from there. **Anyone** may add to a run on the day it
+was started (two people on one trip, or a run continued after lunch, is still one trip), and nobody
+may on a later day: the page offers only runs started today. A page left open overnight still calls
+yesterday *Today*, so each line carries the page's own day (`page_today`) and a stale one is refused
+with "Reload the page" and a Reload button (`StalePageError`), not a run rule that does not fit.
+
+**A wrong receipt total.** It rides on every receipt of the run (`custom_receipt_total`) and into
+the KPI, and the receipts are submitted and the log immutable, so it cannot be edited. *Finish* says
+**"Check the receipt total"** when it is more than 15% above what the lines cost before tax, with
+the lines plus Utah's 6–9% tax as the band it should be near (`logic.receiptCheck`). A joined run's
+header shows only the progress, because mid-run the lines are nearly always short of the receipt
+and a warning on every line would be ignored by the time it matters. The way
+out: undo the run's lines. Undone lines do not count toward the header, so a run with none left
+reopens as a new run's header **prefilled with the old values** (`logic.reopenedDraft`), under the
+same run id, to correct and record again. Past the undo window, Purchasing.
+
+**The reason** starts from the item: a reorder level above 0 is a *stocked item* (the KPI's own
+definition), so buying it means *A stocked item was out* (Purchasing raises the minimum); anything
+else, and every new item, is *Not something we stock* (twice in 60 days means add it to the kit);
+*Only for this job* is fine. A choice that contradicts the item is pointed out, not refused, and the
+reorder level seen is stored on the line (`reorder_level_seen`). `repeat_unstocked` flags the
+second **run** (not line) in 60 days that bought the item as not stocked, the current run excluded.
+*Only for this job* offers **Take them now** straight after the save (the default), so parts that
+went to the job do not sit in the bin as stock. Two limits: the Take issues FIFO, so where the bin
+already held the item at the $0.01 opening placeholder the job is charged that layer first; and
+undoing the store-run line after the Take is refused on negative stock until the Take is undone
+(the Undo question says so).
+
+**What the receipt is.** Supplier, company, `posting_date` (yesterday is posted at 23:59),
+`set_warehouse`, `supplier_delivery_note` = the receipt number, `ignore_pricing_rule`, remarks that
+name the store, the reason, the job and the run, and one row: the item, qty in the **stock UOM**
+(`uom`, `conversion_factor` 1, so a purchase UOM cannot turn the count into boxes), `rate` **and**
+`price_list_rate` = the receipt price, the bin, the scan cost center (`settings.get(...)`: the
+settings are a dict). The price survives because neither `rate` nor `price_list_rate` is one of
+v16's `force_item_fields` (so a Standard Buying price does not replace it) and production has no
+buying Pricing Rule. `ignore_pricing_rule` is **not** the guarantee: on v16 it is a permlevel-1 field
+only Stock Manager may write, so for a scanner who is only a Stock User it is reset to 0 on insert,
+and a buying Pricing Rule added later would apply to those technicians' lines. **No project** on
+the receipt, header or row: a row project is copied into the Purchase Invoice made from it and counts in the Project's purchase cost, while the Take counts the
+parts again as consumed material. **No tax**: the company's default purchase template,
+`US ST 6% - SF`, is a setup-wizard placeholder (6% is not Utah's rate and `ST 6% - SF` has never been
+posted to), and QuickBooks books the tax on these purchases into the goods' own expense account
+(Build Materials, Shop Supplies). The receipt total with tax is stored instead
+(`custom_receipt_total`), so the tax is visible as the difference. A non-stock line posts no stock
+and no GL (provisional accounting is off on production).
+
+**The receipt photo** goes up through Frappe's `upload_file` (private, attached to nothing). `store_run`
+accepts it only if it is a private File this user uploaded that nothing has claimed, or the photo
+already on a receipt of the same run; Frappe's own `attach_files_to_document` (an `on_update` hook
+on every doctype) attaches it to the first receipt and a copy to each later one. A long receipt can
+take another photo for the following lines. When a photo lands, only the photo field is redrawn: a
+receipt total being typed keeps its field (and the phone its keyboard), and a tap on the store or
+the day, which redraw only their own buttons, leaves the upload's progress bar on screen.
+
+**An order at the chosen store.** Choosing a store that has an open PO line for the item says so
+and offers *Receive on PO-…*, which posts `add` with the order line — received on the order, not as
+a store run. That branch of `add` checks the item with the store-run rule, so a **non-stock** item
+is received too (every PO line ever placed at a store-run vendor on production is for one); every
+other path of `add`, and Take and Move, still refuses a non-stock item.
+
+**Quick items.** Four fields: the part or model number exactly as printed (the manufacturer's, else
+the store SKU) as `item_code`, the name, the group (leaf groups, most used first, starting from the
+nearest existing item's) and the unit (`Unit`, `FT` or `Gallon` — fixed once stock moves).
+`check_new_item` runs 500 ms after typing stops and on leaving a field: *Is it one of these?* (up to
+five neighbours by name, QuickBooks tombstones dropped, each with *Use this one*, or *Record against
+it (not stocked)* for a non-stock Item, or its refusal), an exact code match (*Already in ERPNext*,
+Save off), the naming guard's two blocking findings from **its exact call**
+(`blocking_findings(code, name, every Item code)`, so the preview and the refusal cannot disagree:
+red once the guard is in force, amber before 1 October), and the rest as collapsed tips. The Item is
+created **inside the save's transaction, as the user** — no `ignore_permissions`, no
+`ignore_naming_guard` — with `is_stock_item = 1` (the site's Property Setter defaults it to 0) and an
+Item Default of **the bin it went into**, not `Stores - SF`. Item Manager is needed to create one;
+without it the page says to ask Purchasing (Shellyce and Lisa lack it). A concurrent retry blocks on
+the Item's primary key and gets a 409; the page keeps the reference (it does not retry by itself),
+so tapping Save again returns the first save.
+
+**The review.** Every line sets `needs_review`. Inventory Scanner Settings has two buttons: *Stock
+Scan Saves to Review* (every unreviewed Posted save without a PO) and *New Items From Store Runs*
+(`created_item = 1`, unreviewed, undone or not — the Item survives an Undo). Parker ticks *Reviewed*
+once the purchase and any Item are checked; nobody can review a store run they recorded
+(`StockScanLog._stamp_review`), and a reviewed line can no longer be undone from the page. The Monday
+naming digest keeps flagging any new Item that fails the naming rules. `recorded_late` marks a line
+recorded the day after it was bought.
+
+**Purchasing notes.** Lowes and Lowe's are two ticked Suppliers (QuickBooks vendors 1015 and
+2720): the picker shows the newer usable one and the KPI counts them as one store
+(`stock_scan_rules.store_key`); merging the records is Purchasing's call. When the person recording
+the first purchase of an Item with no Standard Buying price can write Item Price (the Purchase
+Master Manager role: Cedrik, James, Lisa, Logan, Nathan, Nikolas, Parker, Triton), ERPNext inserts a
+Standard Buying price at the store's retail rate (`auto_insert_price_list_rate_if_missing` is on),
+and Standard Buying is company-wide, so it pre-fills every later PO line for that item from any
+supplier. Submitting a receipt also updates the Item's `last_purchase_rate`.
+
+**Checks that need a bench** (not in CI): the entered rate survives `set_missing_values` when a
+Standard Buying price exists; the photo is linked to the first receipt and copied to the second; a
+concurrent retry with a new Item gets a 409 and then "already saved"; an Amend keeps
+`custom_store_run`; a non-stock item received on its order line from the run sheet submits (84 of
+103 submitted receipts on production are non-stock only, so ERPNext takes the shape).
 
 ## Item naming
 
@@ -459,8 +614,9 @@ Bench-free:
 python -m unittest erpnext_enhancements.tests.test_item_naming_rules -v
 python -m unittest erpnext_enhancements.tests.test_item_naming_guard -v   # frappe stub
 python -m unittest erpnext_enhancements.tests.test_item_naming_digest -v  # frappe stub
-python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v    # needs PyQRCode~=1.2.1 for the QR half
-python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v
+python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v    # needs PyQRCode~=1.2.1 for the QR half; store-run rules too
+python -m unittest erpnext_enhancements.tests.test_stock_scan_surface -v  # incl. the store-run receipt, photo, quick item and patch
+python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v         # combine_store_runs: a recorded trip and its charge count once
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 node scripts/test_stock_scan_client.mjs

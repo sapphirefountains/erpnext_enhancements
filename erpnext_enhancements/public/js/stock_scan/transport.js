@@ -27,8 +27,14 @@ export const M = {
 	MOVE: "erpnext_enhancements.api.stock_scan.move_here",
 	UNDO: "erpnext_enhancements.api.stock_scan.undo",
 	RECENT: "erpnext_enhancements.api.stock_scan.get_recent",
+	// "Bought on a store run" (v1.536.0): one line of a run, and the quick-item name check.
+	STORE_RUN: "erpnext_enhancements.api.stock_scan.store_run",
+	CHECK_NEW_ITEM: "erpnext_enhancements.api.stock_scan.check_new_item",
 };
 Object.freeze(M);
+
+/** How long a receipt photo may take to go up on a warehouse's signal before we give up. */
+export const UPLOAD_TIMEOUT_MS = 60000;
 
 /** Long enough for a Purchase Receipt submit on a slow site; short enough that a dead signal says so. */
 export const DEFAULT_TIMEOUT_MS = 30000;
@@ -46,7 +52,8 @@ export const SIGNED_OUT = "You were signed out. Reload the page to sign in again
  *
  * `signedOut` means the session is gone, so no retry can work and the page offers Reload
  * (`www/stock_scan.py` sends a signed-out visitor to log in and back). `needsReload` adds a
- * stale CSRF token, which a reload fixes the same way.
+ * stale CSRF token, which a reload fixes the same way, and a store-run line from a page left
+ * open overnight (`StalePageError`, `api.stock_scan._stale_page`), whose Today is yesterday.
  */
 export class StockScanCallError extends Error {
 	constructor(message, status, payload) {
@@ -57,7 +64,7 @@ export class StockScanCallError extends Error {
 		this.excType = (payload && payload.exc_type) || "";
 		this.retryable = this.status === 0;
 		this.signedOut = isSignedOut(payload, this.status);
-		this.needsReload = this.signedOut || this.excType === "CSRFTokenError";
+		this.needsReload = this.signedOut || this.excType === "CSRFTokenError" || this.excType === "StalePageError";
 	}
 }
 
@@ -122,6 +129,76 @@ export async function call(method, args, options) {
 		throw new StockScanCallError("The answer was cut off. Check your signal and try again.", 0, null);
 	}
 	return payload.message === undefined ? null : payload.message;
+}
+
+/**
+ * Upload the receipt photo through Frappe's own `upload_file`, private, with **no doctype or
+ * docname** — so `check_write_permission` has nothing to check and any signed-in user may
+ * create an unattached File (the shape of `public/js/feedback/transport.js`'s `upload`).
+ * `api.stock_scan.store_run` then accepts it only if this person uploaded it and nothing has
+ * claimed it, and Frappe's own `attach_files_to_document` attaches it to the receipt.
+ *
+ * XMLHttpRequest, not fetch: fetch still has no upload progress, and a phone photo on a
+ * warehouse's signal needs a bar. Resolves `{name, file_url}`; rejects `StockScanCallError`.
+ *
+ * Every page user is a System User, and for them `upload_file` has no MIME or doctype limit, so
+ * a 403 here can only mean the session is gone (v16 answers a Guest upload with a bare
+ * PermissionError): said as signed out. A stale CSRF token (400 `CSRFTokenError`) needs a
+ * reload the same way. Status 0 is no answer, and a photo that got no answer is simply taken
+ * again — nothing is posted until the line is saved.
+ */
+export function upload(file, onProgress) {
+	return new Promise((resolve, reject) => {
+		let xhr;
+		let form;
+		try {
+			xhr = new XMLHttpRequest();
+			form = new FormData();
+			form.append("file", file, (file && file.name) || "receipt.jpg");
+			form.append("is_private", "1");
+			form.append("folder", "Home/Attachments");
+			xhr.open("POST", "/api/method/upload_file", true);
+			xhr.withCredentials = true;
+			xhr.timeout = UPLOAD_TIMEOUT_MS;
+			xhr.setRequestHeader("X-Frappe-CSRF-Token", bootCsrf());
+			xhr.setRequestHeader("Accept", "application/json");
+			if (xhr.upload && onProgress) {
+				xhr.upload.onprogress = (ev) => {
+					if (ev && ev.lengthComputable && ev.total) onProgress(ev.loaded / ev.total);
+				};
+			}
+		} catch (e) {
+			reject(new StockScanCallError("This phone could not send the photo. Reload the page and try again.", 0, null));
+			return;
+		}
+		xhr.onload = () => {
+			let payload = null;
+			try {
+				payload = JSON.parse(xhr.responseText);
+			} catch (e) {
+				payload = null;
+			}
+			const message = payload && payload.message;
+			if (xhr.status >= 200 && xhr.status < 300 && message && message.file_url) {
+				resolve({ name: message.name, file_url: message.file_url });
+				return;
+			}
+			const exc = (payload && payload.exc_type) || "";
+			if (xhr.status === 403 || xhr.status === 401 || isSignedOut(payload, xhr.status)) {
+				reject(new StockScanCallError(SIGNED_OUT, 401, payload));
+				return;
+			}
+			if (exc === "CSRFTokenError") {
+				reject(new StockScanCallError("Your session changed. Reload the page.", xhr.status, payload));
+				return;
+			}
+			reject(new StockScanCallError(errorMessage(payload, xhr.status || 0), xhr.status || 0, payload));
+		};
+		xhr.onerror = () => reject(new StockScanCallError("The photo did not go through. Check your signal and try again.", 0, null));
+		xhr.ontimeout = () => reject(new StockScanCallError("The photo took too long to send. Check your signal and try again.", 0, null));
+		xhr.onabort = () => reject(new StockScanCallError("The photo upload was stopped.", 0, null));
+		xhr.send(form);
+	});
 }
 
 // ---------------------------------------------------------------------------
