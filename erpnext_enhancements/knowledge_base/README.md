@@ -86,7 +86,7 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead |
 | Core `Version` rows (the change log) | `track_changes 0` on the Version doctype, because core `Version` is readable by System Manager, which includes the `triton@` service identity. The Article keeps `track_changes 1`: its rows hold only published text, and they give a tamper trail |
 | Pasted images and attachments | `make_attachments_public 0`, so pasted images are private already. `files.force_private` (PR 2) makes every other File attached to either doctype private, **bytes included**: an upload with Private unticked, a public library pick, a REST insert, and an owner unticking Private later. It also keeps a KB File attached where it is, so its owner cannot detach it and then make it public. See "Files" below |
-| Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font (as `style`, or as `<font color size face>` and `bgcolor`), the `hidden` and `id` attributes, and **every class except the few v16's Text Editor writes for structure** (`KEPT_CLASSES`) on every content save, so nothing a reviewer cannot see stays in the HTML a model reads. Classes are an allowlist because any stylesheet on the page can hide text by class (`hidden`, `d-none`, `sr-only`, Frappe's `icon`) |
+| Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font (as `style`, or as `<font color size face>` and `bgcolor`), the `hidden` and `id` attributes, **every class except the few v16's Text Editor writes for structure** (`KEPT_CLASSES`), **the tags of every element except the ones it writes** (`KEPT_ELEMENTS`), and every comment and declaration, on every content save, so nothing a reviewer cannot see stays in the HTML a model reads. Classes and elements are allowlists because any stylesheet on the page can hide text by class (`hidden`, `d-none`, `sr-only`, Frappe's `icon`), and a browser paints none of the text of a `<dialog>`, an `<audio>`, a `<canvas>` or an SVG `<desc>` |
 | A secret pasted into an article | `content.secret_findings` (PR 2) refuses the save, naming the field, line and kind and never the value; scanned again at approval |
 | Import and export | `allow_import 0`, and no import or export right |
 | A Custom DocPerm, Property Setter or Custom Field widening a doctype | None exist, and the schema test fails if a fixture adds one |
@@ -211,11 +211,36 @@ local v16 checkout when there is one (CI has none, so it skips there). `id` goes
 stylesheet can hide by id too: Frappe's desk gives `#freeze` `opacity: 0`, and Quill never writes
 an id.
 
-Lists, tables, code blocks, alignment, direction and indent survive. Only the start tags that
-change are rewritten; every other byte comes back as it was. An image's float or size set as
-`style` by the resize handles is dropped too; its `width` attribute is kept. Scripts, comments and
-unknown tags are left to v16's own `sanitize_html`, which runs on every Text Editor save after
-`validate`.
+**Elements are an allowlist too.** v16's `sanitize_html` lets through 168 tags, and a browser
+paints none of the text of many of them: `<dialog>` and `<audio>` are `display: none`;
+`<datalist>`, `<video>`, `<canvas>`, `<meter>`, `<progress>` and an SVG `<desc>`, `<title>` or
+`<metadata>` render none of their text; an `<svg opacity="0">` and MathML's `<mphantom>` hide what
+they hold. All of it is still in the HTML and in `body_md`. `content.KEPT_ELEMENTS` is the tags
+v16's editor writes, each the `tagName` of a Quill 2.0.3 or v16 format (cited in the constant, held
+verbatim and derived in the rules test): `p`, `br`, `h1`-`h6`, `blockquote`, `ol`, `ul`, `li`,
+`pre`, `div`, `table`, `tbody`, `tr`, `td`, `strong`/`b`, `em`/`i`, `s`/`strike`, `u`,
+`sub`/`sup`, `code`, `a`, `img`, `span` and a bare `font`; plus `thead` and `th`, which a table
+written any other way has. **Every other element is unwrapped**: its tags go and its text stays,
+where a reader sees it. SVG and MathML go the same way, so nothing of either survives to hide what
+is left. `script` and `style` go with what they hold (code, not text; v16's `REMOVE_CONTENT_TAGS`
+is the same two). The rules test pushes every tag `sanitize_html` allows through the strip.
+
+**Comments and declarations go whole, and raw text comes back as text.** Python's HTML parser and a
+browser disagree about where some of them end: Python runs a comment opened by `<!-->` to the next
+`-->` and a `<![CDATA[` section to `]]>`, where a browser ends both at the first `>`, so a
+`<p class="hidden">` between them was a live element to the browser and invisible to the strip. It
+also reads `<style>`, `<textarea>` and `<title>` as raw text even inside an `<svg>`, where a
+browser reads markup. So nothing Python counted as inside a comment, a declaration or a processing
+instruction is kept; text Python read as raw is written back escaped when its element is
+unwrapped; and a raw `<` in any other text is escaped too (v16's editor and `sanitize_html` both
+write `&lt;`, so a real body never has one). The output is kept tags and text only, so stripping
+it again changes nothing.
+
+Lists, tables, code blocks, alignment, direction and indent survive. Text, entities and the kept
+tags that need no change come back byte for byte, so a body with nothing to strip is returned
+identical. An image's float or size set as `style` by the resize handles is dropped too; its
+`width` attribute is kept. v16's own `sanitize_html` still runs on every Text Editor save after
+`validate`, for everything that is not about visibility (`javascript:` links and the like).
 
 **Secrets** (`content.secret_findings`): private keys, Stripe, AWS, Google (API key, OAuth client
 secret and tokens, service-account key id), GitHub, Slack, SendGrid, Anthropic, OpenAI, Plaid access

@@ -75,10 +75,10 @@ the read-only queries below before the next.
     (frappe `origin/version-16` `utils/html_utils.py:267`, `:413-516`), and a REST write stores a
     body as sent: `<font color="#ffffff">` or `<p hidden>` would be text no reader sees and every AI
     reads in `body_md`. A `<font>` left with no attributes renders as plain text, so it stays (the
-    Desk editor turns one into a `<span>` anyway, but only when someone opens the draft). Only the
-    start tags that change are rewritten, found with the standard library's HTML parser so an
-    attribute holding `>` is read as a browser reads it; every other byte, entities and pasted
-    `data:` images included, comes back exactly as it was.
+    Desk editor turns one into a `<span>` anyway, but only when someone opens the draft). A kept
+    start tag is rewritten only when it changes, found with the standard library's HTML parser so
+    an attribute holding `>` is read as a browser reads it; text, entities and pasted `data:`
+    images come back exactly as they were.
   - **Classes are an allowlist** (changed in review; the first cut dropped only the `ql-color-*`,
     `ql-bg-*`, `ql-size-*` and `ql-font-*` classes). A class means whatever the stylesheets on the
     page say, and the page carries Bootstrap, Frappe, ERPNext and this app, so the denylist kept a
@@ -98,6 +98,30 @@ the read-only queries below before the next.
     exactly and case included, with classes split on HTML's ASCII whitespace as a browser splits
     them. **`id` is dropped too**: Quill never writes one, and Frappe's desk stylesheet gives
     `#freeze` `opacity: 0` (`public/scss/desk/global.scss:511-514`).
+  - **Elements are an allowlist too** (changed in review; the strip had looked only at
+    attributes). v16's `sanitize_html` lets 168 tags through (`acceptable_elements`,
+    `svg_elements`, `mathml_elements` and six more), and a browser paints none of the text of many
+    of them. Checked in Chrome 152 inside v16's read-mode wrapper: `<dialog>` and `<audio>` are
+    `display: none`; `<datalist>`, `<video>`, `<canvas>`, `<meter>`, `<progress>` and an SVG
+    `<desc>`, `<title>` or `<metadata>` render none of their text; an `<svg opacity="0">` and
+    MathML's `<mphantom>` hide what they hold. Every one came back from the strip byte for byte,
+    with its text still in the HTML and in `body_md`. `content.KEPT_ELEMENTS` is now the tags v16's
+    editor writes, each the `tagName` of a Quill 2.0.3 or v16 format (`blots/block.ts:127`,
+    `formats/bold.ts:5` and so on; `text_editor.js:8`, `:15`, `:132`, `:428`), plus `thead` and
+    `th`. **Every other element is unwrapped**: its tags go and its text stays where a reader sees
+    it. SVG and MathML go the same way. `script` and `style` go with what they hold, the same two
+    tags v16 lists as `REMOVE_CONTENT_TAGS` (`utils/html_utils.py:21`).
+  - **Comments and declarations go whole, and raw text comes back as text** (changed in review).
+    Python's `HTMLParser` and a browser disagree about where some constructs end. Python 3.14.6
+    runs a comment opened by `<!-->` to the next `-->` and a `<![CDATA[` section to `]]>`, where a
+    browser (and nh3) ends both at the first `>`. It also reads `<style>` as raw text inside an
+    `<svg>`, where a browser breaks out to HTML. So `<!--><p class="hidden">a</p><!-- -->` came
+    back unchanged, and v16 stored it as `<!----><p class="hidden">a</p><!-- -->`. Nothing Python
+    counted as inside a comment, a declaration or a processing instruction is kept now. Text Python
+    read as raw (`<textarea>`, `<title>`, `<xmp>`, `<plaintext>`) is written back escaped when its
+    element is unwrapped. A raw `<` in any other text is escaped as well; v16's editor and
+    `sanitize_html` both write `&lt;`, so a real body never has one. The output is kept tags and
+    text only, so a second strip changes nothing.
   - `secret_findings` finds private keys; Stripe, AWS, Google, GitHub, Slack, SendGrid, Anthropic,
     OpenAI and Plaid credentials; JWTs; a Frappe `token key:secret`; bearer and Basic credentials; a
     password inside a web address; and a password or key written out after "password:" or "API key:".
@@ -199,7 +223,12 @@ the read-only queries below before the next.
   kept class (a list nested eight deep, aligned and right-to-left paragraphs, a code block, a
   table, a mention) coming back byte for byte, and again with `hidden` added to every tag; the kept
   list derived from the cited v16 and Quill lines, held verbatim, and those Frappe lines checked
-  against a local `origin/version-16` checkout when one is present (skipped in CI); Administrator
+  against a local `origin/version-16` checkout when one is present (skipped in CI); every tag v16's
+  `sanitize_html` allows (held verbatim, and checked against a local checkout the same way) either
+  kept or unwrapped with its text left outside it, the elements KB-PR2-R3-01 found hiding text
+  among them; `KEPT_ELEMENTS` derived from the cited `tagName` lines; the three inputs Python's
+  parser misread, both as sent and as a browser writes them back; comments, declarations, raw text,
+  `script`/`style`, a stray `<` and cut-off tags; and every output a fixed point; Administrator
   (holding every role, in any case), Guest, nobody, and every user type but `System User` refused,
   while a named approver still passes; 21 secret kinds (all fixtures concatenated, never a literal key: GitHub push protection
   refused this repo's branch once for a literal Stripe-shaped string), ordinary KB prose that must
@@ -223,7 +252,9 @@ Read-only, on prod, after PR 1's checks pass.
   that names the Version doctype, by design.) A nested list, a code block and a table in the same
   draft keep their indent, box and borders.
 - The same author writes the draft's body from the browser console with `frappe.client.set_value`
-  as `<p class="hidden">a</p><p id="freeze">b</p>`: it reads back as `<p>a</p><p>b</p>`.
+  as `<p class="hidden">a</p><p id="freeze">b</p>`: it reads back as `<p>a</p><p>b</p>`. Written as
+  `<p>a</p><dialog>b</dialog><svg><desc>c</desc></svg><!--><p class="hidden">d</p><!-- -->`, it
+  reads back as `<p>a</p>bc`.
 - The same author attaches a file through the sidebar **with Private unticked**:
   `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0`
   is 0, the File's URL starts `/private/files/`, and the would-be `/files/<name>` returns 404 with no

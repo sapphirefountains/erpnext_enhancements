@@ -12,17 +12,21 @@ in the bench-free CI tier. Three jobs:
   size face>``, ``bgcolor``); the ``hidden`` attribute; **every class except the few v16's Text
   Editor writes for structure** (:data:`KEPT_CLASSES`), because any stylesheet on the page can hide
   text by class (``hidden``, ``d-none``, ``sr-only``, Frappe's own ``icon``, Quill's own
-  ``ql-clipboard``); and ``id``, which a stylesheet can target the same way. White-on-white or
-  zero-size text is exactly what a reviewer would never see and a model would obey. Tables, lists,
-  code blocks, alignment, direction and indent survive.
+  ``ql-clipboard``); ``id``, which a stylesheet can target the same way; **the tags of every element
+  except the ones v16's Text Editor writes** (:data:`KEPT_ELEMENTS`), because a browser never shows
+  the text of a ``<dialog>``, ``<audio>``, ``<canvas>`` or an SVG ``<desc>``; and comments and
+  declarations, which are never shown either. White-on-white or zero-size text is exactly what a
+  reviewer would never see and a model would obey. Tables, lists, code blocks, alignment, direction
+  and indent survive.
 * :func:`secret_findings` finds secret-shaped strings (vendor keys, private keys, tokens, a
   password written out) and reports **where and what kind, never the value**, because the refusal
   message is shown on screen and may be logged.
 * :func:`content_hash` answers "did the text people and AI read change?", for the Drive copy
   (slice 4) to compare.
 
-**When they run.** The Version controller strips and scans on every save that changes content
-(``validate``), and scans again at approval. ``body_md`` and ``content_hash`` are **not** computed
+**When they run.** The Version controller strips on every save and scans on every save that
+changes content (``before_validate``, which runs before v16's own ``sanitize_html``), and scans
+again at approval. ``body_md`` and ``content_hash`` are **not** computed
 here or in ``validate``: PR 3 computes them at publish, from the stored body, so they always
 describe what was approved (``body_md`` with v16's own ``frappe.utils.to_markdown``,
 ``utils/data.py:2468``).
@@ -139,9 +143,85 @@ PRESENTATION_ATTRIBUTES = frozenset({"bgcolor", "color", "face", "hidden", "size
 #: so ``<p id="freeze">`` is text no reader sees.
 DROPPED_ATTRIBUTES = PRESENTATION_ATTRIBUTES | {"id"}
 
-#: A quick test before the parser runs: no tag can need stripping without one of these in it. A
-#: superset on purpose (``id`` is in "video" and "side"): a false match only costs a parse.
-_MAY_NEED_STRIPPING = re.compile(r"style|class|color|face|hidden|size|id", re.IGNORECASE)
+#: The only elements whose tags are kept: the ones v16's Text Editor writes, plus a table's header
+#: row. **Every other element is unwrapped**: its start and end tags go and what it held stays, as
+#: text a reader sees. v16's ``sanitize_html`` allows over a hundred more (frappe
+#: ``origin/version-16`` ``utils/html_utils.py``: ``acceptable_elements``, ``svg_elements``,
+#: ``mathml_elements``), and a browser never shows the text of many of them: ``<dialog>`` and
+#: ``<audio>`` are ``display: none``; ``<datalist>``, ``<video>``, ``<canvas>``, ``<meter>``,
+#: ``<progress>`` and an SVG ``<desc>``, ``<title>`` or ``<metadata>`` render none of their text; an
+#: SVG's own ``opacity``/``visibility``/``font-size`` attributes and MathML's ``<mphantom>`` hide it.
+#: The text of each is still in the HTML, and in ``body_md``. SVG and MathML are unwrapped like the
+#: rest, so nothing of either survives to hide what is left. As with classes, this is an allowlist
+#: on purpose: an element this does not know is one whose rendering it cannot vouch for.
+#:
+#: Each tag is the ``tagName`` of a format v16's editor uses, Quill 2.0.3 (``packages/quill/src/``)
+#: or v16's own (frappe ``origin/version-16``, ``text_editor.js`` and ``mention.js`` are under
+#: ``public/js/frappe/form/controls/``). ``tests/test_knowledge_base_rules.py`` holds the cited
+#: lines verbatim and derives this set from them.
+#:
+#: - ``p``, ``br``: Quill's block and line break (``blots/block.ts:127``, ``blots/break.ts:23``);
+#:   v16 registers its own ``br`` too (``text_editor.js:15``).
+#: - ``h1`` to ``h6``, ``blockquote`` (``formats/header.ts:5``, ``formats/blockquote.ts:5``).
+#: - ``ol``, ``li``: a list, which Quill writes as ``<ol>`` whatever its kind
+#:   (``formats/list.ts:8``, ``:53``); ``ul``: v16 rewrites a bullet list as one
+#:   (``patch_unordered_list``, ``text_editor.js:428``).
+#: - ``pre``, ``div``: a code block, whose container v16 makes a ``<pre>`` (``text_editor.js:8``)
+#:   round one ``div`` per line (``formats/code.ts:47``); ``div`` is also the ``ql-editor`` wrapper
+#:   (``text_editor.js:402``).
+#: - ``table``, ``tbody``, ``tr``, ``td`` (``formats/table.ts:128``, ``:121``, ``:61``, ``:7``).
+#:   ``thead`` and ``th`` are not Quill's, but a table written any other way has them, a header cell
+#:   shows its text like any other, and unwrapping them would break the table apart.
+#: - ``strong`` and ``b``, ``em`` and ``i``, ``s`` and ``strike``, ``u``, ``sub`` and ``sup``,
+#:   ``code``, ``a``, ``img`` (``formats/bold.ts:5``, ``italic.ts:5``, ``strike.ts:5``,
+#:   ``underline.ts:5``, ``script.ts:5``, ``code.ts:43``, ``link.ts:5``, ``image.ts:8``). Quill
+#:   writes the first of each pair and reads both as the same format.
+#: - ``span``: every inline style, the list marker and a mention (``blots/cursor.ts:10``,
+#:   ``mention.js:48``).
+#: - ``font``: v16's ``CustomColor`` blot (``text_editor.js:132``). Only a bare one survives, since
+#:   its ``color``, ``size`` and ``face`` are in :data:`PRESENTATION_ATTRIBUTES`.
+KEPT_ELEMENTS = frozenset(
+	{
+		"p",
+		"br",
+		*(f"h{level}" for level in range(1, 7)),
+		"blockquote",
+		"ol",
+		"ul",
+		"li",
+		"pre",
+		"div",
+		"table",
+		"thead",
+		"tbody",
+		"tr",
+		"th",
+		"td",
+		"strong",
+		"b",
+		"em",
+		"i",
+		"s",
+		"strike",
+		"u",
+		"sub",
+		"sup",
+		"code",
+		"a",
+		"img",
+		"span",
+		"font",
+	}
+)
+
+#: Elements that go together with what they hold: they hold code, not text, and v16's own list of
+#: tags whose content is removed with them is exactly these two (``REMOVE_CONTENT_TAGS``, frappe
+#: ``origin/version-16`` ``utils/html_utils.py:21``).
+DROPPED_WITH_CONTENT = frozenset({"script", "style"})
+
+#: An end tag with nothing in it but its name, which is kept byte for byte (``</P>`` stays ``</P>``).
+#: Anything else in an end tag is ignored by a browser, and is not kept.
+_PLAIN_END_TAG = re.compile(r"</([a-zA-Z][a-zA-Z0-9]*)>")
 #: HTMLParser counts lines on "\n" alone, so positions are mapped back the same way.
 _NEWLINE = re.compile("\n")
 
@@ -149,56 +229,103 @@ _NEWLINE = re.compile("\n")
 def strip_presentation(markup):
 	"""``markup`` with presentation removed. Anything not a string is returned as it came.
 
-	Only the start tags that carry a dropped ``style`` declaration, a class outside
-	:data:`KEPT_CLASSES` or a dropped attribute are rewritten; every other byte (text, entities,
-	comments, other tags, end tags, ``data:`` images) is returned exactly as it was, so the function
-	is idempotent and a body with nothing to strip comes back identical. Indent, alignment,
-	direction, code blocks, tables, lists and mentions as v16's editor writes them are untouched.
-	Tags are found with the standard library's HTML parser rather than a regex, so an attribute
-	value containing ``>`` or an unquoted value containing ``=`` is read the way a browser reads it.
+	Kept: the start and end tags of :data:`KEPT_ELEMENTS`, with only their dropped attributes, their
+	dropped ``style`` declarations and their classes outside :data:`KEPT_CLASSES` removed, and all
+	text. Removed: the tags of every other element (what it held stays), ``script`` and ``style``
+	with their contents, and every comment, declaration, CDATA section and processing instruction.
+
+	**Why comments and declarations go whole.** Python's parser and a browser disagree about where
+	some of them end: Python reads ``<!-->`` as the start of a comment that runs to the next
+	``-->``, and ``<![CDATA[`` as a section that runs to ``]]>``, where a browser ends both at the
+	first ``>``. A tag Python counted as inside one is a live element to a browser, so it must not
+	be kept unread. The same goes for text Python reads as raw (inside ``<textarea>``, ``<title>``,
+	``<xmp>``, ``<plaintext>`` and the like, where a browser inside an ``<svg>`` reads markup): when
+	its element is unwrapped it is written back **escaped**, as text, never as markup. Any other
+	text holding a raw ``<`` is escaped for the same reason; v16's editor and ``sanitize_html``
+	both write ``&lt;``, so a real body never has one.
+
+	Everything else (text, entities, the kept tags that need no change and their end tags, ``data:``
+	images) is returned byte for byte, so a body with nothing to strip comes back identical. The output holds only
+	kept tags and text with no raw ``<``, so stripping it again changes nothing. Tags are found with
+	the standard library's HTML parser rather than a regex, so an attribute value containing ``>``
+	or an unquoted value containing ``=`` is read the way a browser reads it.
 	"""
-	if not isinstance(markup, str) or not _MAY_NEED_STRIPPING.search(markup):
+	if not isinstance(markup, str) or "<" not in markup:
 		return markup
-	finder = _PresentationFinder()
-	finder.feed(markup)
-	finder.close()
-	if not finder.found:
-		return markup
+	reader = _Markup()
+	reader.feed(markup)
+	reader.close()
 
 	line_starts = [0]
 	line_starts.extend(match.end() for match in _NEWLINE.finditer(markup))
-	out, cursor = [], 0
-	for line, offset, raw, tag, attrs, closed in finder.found:
-		index = line_starts[line - 1] + offset
-		if not markup.startswith(raw, index):
-			index = markup.find(raw, cursor)
-		if index < cursor:
-			continue
-		out.append(markup[cursor:index])
-		out.append(_start_tag(tag, attrs, closed))
-		cursor = index + len(raw)
-	out.append(markup[cursor:])
-	return "".join(out)
+	starts = [line_starts[line - 1] + offset for line, offset, _kind, _value in reader.tokens]
+	starts.append(len(markup))
+	out = []
+	for index, (_line, _offset, kind, value) in enumerate(reader.tokens):
+		out.append(_rewritten(kind, value, markup[starts[index] : starts[index + 1]]))
+	stripped = "".join(out)
+	return markup if stripped == markup else stripped
 
 
-class _PresentationFinder(HTMLParser):
-	"""Records each start tag whose attributes :func:`_clean_attrs` would change, with its position."""
+def _rewritten(kind, value, raw):
+	"""What one token of the markup becomes. ``raw`` runs from the token to the next one, so it also
+	holds any bytes the parser passed over without a token (``</>``, a tag cut off at the end),
+	which a browser ignores too: only a text token's ``raw`` is ever written back, and only when it
+	holds no ``<``, which every one of those starts with."""
+	if kind == "start":
+		tag, attrs, closed, text = value
+		if tag not in KEPT_ELEMENTS:
+			return ""
+		cleaned = _clean_attrs(attrs)
+		return text if cleaned == attrs else _start_tag(tag, cleaned, closed)
+	if kind == "end":
+		if value not in KEPT_ELEMENTS:
+			return ""
+		plain = _PLAIN_END_TAG.match(raw)
+		return plain.group(0) if plain and plain.group(1).lower() == value else f"</{value}>"
+	if kind == "text":
+		return raw if "<" not in raw else html.escape(value, quote=True)
+	return ""  # a comment, a declaration, a processing instruction, or script or style content
+
+
+class _Markup(HTMLParser):
+	"""The markup as tokens, each ``(line, offset, kind, value)`` at the position it starts.
+
+	``convert_charrefs`` is on, so text arrives decoded, and no character or entity reference is
+	reported as a token of its own.
+	"""
 
 	def __init__(self):
 		super().__init__(convert_charrefs=True)
-		self.found = []
+		self.tokens = []
+
+	def _note(self, kind, value):
+		line, offset = self.getpos()
+		self.tokens.append((line, offset, kind, value))
 
 	def handle_starttag(self, tag, attrs):
-		self._note(tag, attrs, closed=False)
+		self._note("start", (tag, attrs, False, self.get_starttag_text()))
 
 	def handle_startendtag(self, tag, attrs):
-		self._note(tag, attrs, closed=True)
+		self._note("start", (tag, attrs, True, self.get_starttag_text()))
 
-	def _note(self, tag, attrs, closed):
-		cleaned = _clean_attrs(attrs)
-		if cleaned != attrs:
-			line, offset = self.getpos()
-			self.found.append((line, offset, self.get_starttag_text(), tag, cleaned, closed))
+	def handle_endtag(self, tag):
+		self._note("end", tag)
+
+	def handle_data(self, data):
+		self._note("dropped" if self.cdata_elem in DROPPED_WITH_CONTENT else "text", data)
+
+	def handle_comment(self, data):
+		self._note("dropped", None)
+
+	def handle_decl(self, decl):
+		self._note("dropped", None)
+
+	def unknown_decl(self, data):
+		self._note("dropped", None)
+
+	def handle_pi(self, data):
+		self._note("dropped", None)
 
 
 def _clean_attrs(attrs):

@@ -20,8 +20,12 @@ frappe, so every branch runs here, bench-free and with no stub:
   ``<font color size face>`` and ``bgcolor``), the ``hidden`` and ``id`` attributes, and every class
   outside ``KEPT_CLASSES``: each hiding class goes, each kept class survives a realistic v16 body,
   and the kept list is derived here from the v16 and Quill source lines it cites (checked against a
-  local v16 checkout when there is one). Alignment, indent, lists, code blocks and tables stay;
-  nothing else is rewritten; it is idempotent.
+  local v16 checkout when there is one). Elements are an allowlist the same way: every tag v16's
+  ``sanitize_html`` allows is kept or unwrapped, so text a browser never paints (a ``<dialog>``,
+  an SVG ``<desc>``) comes out where it does. Comments and declarations go whole and raw text
+  comes back escaped, where Python's parser and a browser disagree about where they end.
+  Alignment, indent, lists, code blocks and tables stay; nothing else is rewritten; the output is a
+  fixed point.
 * **The secret scan** finds each kind, skips ``data:`` images, reports line and kind and never the
   value, and leaves ordinary KB prose alone: nothing lets an author past a finding, so a sentence
   it refuses ("Basic Maintenance/Cleaning", "Password: case-sensitive.") is a save that cannot be
@@ -520,9 +524,12 @@ class TestStripPresentation(unittest.TestCase):
 		self.assertIn("<span>quantity</span>", out)
 
 	def test_only_the_tags_that_change_are_rewritten(self):
-		"""Everything outside the rewritten start tags comes back byte for byte."""
-		body = '<p>a &lt;b&gt; &#169; &copy; AT&amp;T <b>bold</b></p><!-- note --><p style="color:red">c</p>'
-		self.assertEqual(C.strip_presentation(body), '<p>a &lt;b&gt; &#169; &copy; AT&amp;T <b>bold</b></p><!-- note --><p>c</p>')
+		"""Everything outside the rewritten start tags comes back byte for byte. (A comment does not:
+		see TestKeptElements.)"""
+		body = '<p>a &lt;b&gt; &#169; &copy; AT&amp;T <b>bold</b></p><br><p style="color:red">c</p>'
+		self.assertEqual(
+			C.strip_presentation(body), "<p>a &lt;b&gt; &#169; &copy; AT&amp;T <b>bold</b></p><br><p>c</p>"
+		)
 
 	def test_nothing_to_strip_returns_the_same_text(self):
 		for body in ("<p>Plain.</p>", '<p class="ql-indent-2">x</p>', '<p style="text-align: justify;">x</p>', ""):
@@ -857,12 +864,13 @@ class TestKeptClasses(unittest.TestCase):
 	def test_the_cited_frappe_lines_are_v16s(self):
 		"""Skipped where there is no frappe checkout beside this repo, CI included. A failure means
 		the cited line has moved in that checkout's ``origin/version-16``: re-read the file there and
-		re-cite, in this list, in ``content.KEPT_CLASSES`` and in the knowledge_base README."""
+		re-cite, in this list, in ``content.KEPT_CLASSES`` or ``content.KEPT_ELEMENTS`` and in the
+		knowledge_base README."""
 		checkout = _frappe_checkout()
 		if checkout is None:
 			self.skipTest("no frappe checkout beside this repo")
 		files = {}
-		for origin, path, line, text in KEPT_CLASS_SOURCES + KEPT_CLASS_REGISTRATIONS:
+		for origin, path, line, text in KEPT_CLASS_SOURCES + KEPT_CLASS_REGISTRATIONS + KEPT_ELEMENT_SOURCES:
 			if origin != "frappe":
 				continue
 			if path not in files:
@@ -886,6 +894,325 @@ class TestKeptClasses(unittest.TestCase):
 			C.strip_presentation('<h2 id="freeze" style="text-align: center;">x</h2>'),
 			'<h2 style="text-align: center;">x</h2>',
 		)
+
+
+# ------------------------------------------------------------------ elements: an allowlist
+
+#: The source lines ``content.KEPT_ELEMENTS`` is derived from, as ``KEPT_CLASS_SOURCES`` above: each
+#: format's ``tagName``, the ``<ul>`` v16 builds for a bullet list, and the wrapper ``<div>``. The
+#: Quill rows were checked against the ``v2.0.3`` tag of ``slab/quill`` when this list was written.
+KEPT_ELEMENT_SOURCES = (
+	("quill", "blots/block.ts", 127, "Block.tagName = 'P';"),
+	("quill", "blots/break.ts", 23, "Break.tagName = 'BR';"),
+	("frappe", TEXT_EDITOR, 15, 'BreakBlot.tagName = "br";'),
+	("quill", "formats/header.ts", 5, "static tagName = ['H1', 'H2', 'H3', 'H4', 'H5', 'H6'];"),
+	("quill", "formats/blockquote.ts", 5, "static tagName = 'blockquote';"),
+	("quill", "formats/list.ts", 8, "ListContainer.tagName = 'OL';"),
+	("quill", "formats/list.ts", 53, "ListItem.tagName = 'LI';"),
+	("frappe", TEXT_EDITOR, 428, 'const ul = document.createElement("ul");'),
+	("frappe", TEXT_EDITOR, 8, 'CodeBlockContainer.tagName = "PRE";'),
+	("quill", "formats/code.ts", 47, "CodeBlock.tagName = 'DIV';"),
+	("frappe", TEXT_EDITOR, 402, 'value = `<div class="ql-editor read-mode">${value}</div>`;'),
+	("quill", "formats/table.ts", 7, "static tagName = 'TD';"),
+	("quill", "formats/table.ts", 61, "static tagName = 'TR';"),
+	("quill", "formats/table.ts", 121, "static tagName = 'TBODY';"),
+	("quill", "formats/table.ts", 128, "static tagName = 'TABLE';"),
+	("quill", "formats/bold.ts", 5, "static tagName = ['STRONG', 'B'];"),
+	("quill", "formats/italic.ts", 5, "static tagName = ['EM', 'I'];"),
+	("quill", "formats/strike.ts", 5, "static tagName = ['S', 'STRIKE'];"),
+	("quill", "formats/underline.ts", 5, "static tagName = 'U';"),
+	("quill", "formats/script.ts", 5, "static tagName = ['SUB', 'SUP'];"),
+	("quill", "formats/code.ts", 43, "Code.tagName = 'CODE';"),
+	("quill", "formats/link.ts", 5, "static tagName = 'A';"),
+	("quill", "formats/image.ts", 8, "static tagName = 'IMG';"),
+	("quill", "blots/cursor.ts", 10, "static tagName = 'span';"),
+	("frappe", MENTION_BLOT, 48, 'MentionBlot.tagName = "span";'),
+	("frappe", TEXT_EDITOR, 132, 'CustomColor.tagName = "font";'),
+)
+
+#: Kept without a cited line: a table's header row, which Quill never writes and a table written any
+#: other way has (see ``content.KEPT_ELEMENTS``).
+TABLE_HEADER_ELEMENTS = frozenset({"thead", "th"})
+
+#: Every tag v16's ``sanitize_html`` lets through (frappe ``origin/version-16``
+#: ``utils/html_utils.py``: ``acceptable_elements``, ``svg_elements``, ``mathml_elements`` and the
+#: six it adds in ``sanitize_html``), held here so CI can push each one through the strip; checked
+#: against a local v16 checkout below when there is one. SVG names keep their case, as v16 spells
+#: them.
+SANITIZE_HTML_TAGS = frozenset(
+	"""
+	a abbr acronym address animate animateColor animateMotion animateTransform area article aside
+	audio b big blockquote body br button canvas caption center circle cite clipPath code col
+	colgroup command datagrid datalist dd defs del desc details dfn dialog dir div dl dt ellipse em
+	event-source fieldset figcaption figure font font-face font-face-name font-face-src footer form
+	g glyph h1 h2 h3 h4 h5 h6 head header hkern hr html i img input ins kbd keygen label legend li
+	line linearGradient link m maction map mark marker math menu merror meta metadata meter mfrac mi
+	missing-glyph mmultiscripts mn mo mover mpadded mpath mphantom mprescripts mroot mrow mspace
+	msqrt mstyle msub msubsup msup mtable mtd mtext mtr multicol munder munderover nav nextid none
+	o:p ol optgroup option output p path polygon polyline pre progress q radialGradient rect s samp
+	section select set small sound source spacer span stop strike strong sub summary sup svg switch
+	table tbody td text textarea tfoot th thead time title tr tspan tt u ul use var video
+	""".split()
+)
+
+#: What KB-PR2-R3-01 found: each element v16's ``sanitize_html`` keeps whose text a browser (Chrome
+#: 152, inside v16's read-mode wrapper) never paints, while the text stays in the HTML and in
+#: ``body_md``.
+NEVER_SHOWN = {
+	"<dialog>SECRET dialog</dialog>": "SECRET dialog",
+	"<datalist><option>SECRET datalist</option></datalist>": "SECRET datalist",
+	"<audio>SECRET audio</audio>": "SECRET audio",
+	"<video>SECRET video</video>": "SECRET video",
+	"<canvas>SECRET canvas</canvas>": "SECRET canvas",
+	"<meter>SECRET meter</meter>": "SECRET meter",
+	"<progress>SECRET progress</progress>": "SECRET progress",
+	"<svg><desc>SECRET desc</desc></svg>": "SECRET desc",
+	"<svg><title>SECRET title</title></svg>": "SECRET title",
+	"<svg><metadata>SECRET metadata</metadata></svg>": "SECRET metadata",
+	'<svg opacity="0"><text y="20">SECRET svg opacity</text></svg>': "SECRET svg opacity",
+	'<svg><text font-size="0" fill="#fff" visibility="hidden">SECRET svg attrs</text></svg>': "SECRET svg attrs",
+	"<math><mphantom><mtext>SECRET mphantom</mtext></mphantom></math>": "SECRET mphantom",
+}
+
+#: What KB-PR2-R3-02 found: Python's parser reads each as a comment, a CDATA section or raw text,
+#: where a browser, and nh3, read a live ``<p class="hidden">``. Each maps to what a browser
+#: serialises it back as (Chrome 152 ``innerHTML``), which is what nh3 would store.
+PARSERS_DISAGREE = {
+	'<!--><p class="hidden">SECRET cmt</p><!-- -->': '<!----><p class="hidden">SECRET cmt</p><!-- -->',
+	'<![CDATA[x><p class="hidden">SECRET cdata</p>]]>': '<!--[CDATA[x--><p class="hidden">SECRET cdata</p>]]&gt;',
+	'<svg><style><p class="hidden">SECRET breakout</p></style></svg>': (
+		'<svg><style></style></svg><p class="hidden">SECRET breakout</p>'
+	),
+}
+
+
+def _derive_kept_elements(sources):
+	"""The tags the cited lines name: a ``tagName`` (one, or a list), a ``createElement`` and a
+	literal start tag, lower-cased as a browser reads them."""
+	tags = set()
+	for _origin, _path, _line, text in sources:
+		for listed in re.findall(r"tagName = \[([^\]]*)\]", text):
+			tags.update(name.strip().strip("'\"").lower() for name in listed.split(","))
+		tags.update(name.lower() for name in re.findall(r"tagName = ['\"](\w+)['\"]", text))
+		tags.update(name.lower() for name in re.findall(r'createElement\("(\w+)"\)', text))
+		tags.update(name.lower() for name in re.findall(r"<([a-zA-Z]\w*)[\s>]", text))
+	return tags
+
+
+class _Structure(HTMLParser):
+	"""What the parser reads in stripped markup: its tags, its comments and declarations, its text."""
+
+	def __init__(self):
+		super().__init__(convert_charrefs=True)
+		self.tags, self.other, self.text = [], [], []
+
+	def handle_starttag(self, tag, attrs):
+		self.tags.append((tag, dict(attrs)))
+
+	handle_startendtag = handle_starttag
+
+	def handle_data(self, data):
+		self.text.append(data)
+
+	def handle_comment(self, data):
+		self.other.append(("comment", data))
+
+	def handle_decl(self, decl):
+		self.other.append(("decl", decl))
+
+	def unknown_decl(self, data):
+		self.other.append(("decl", data))
+
+	def handle_pi(self, data):
+		self.other.append(("pi", data))
+
+
+def _structure(markup):
+	reader = _Structure()
+	reader.feed(markup)
+	reader.close()
+	return reader
+
+
+class TestKeptElements(unittest.TestCase):
+	def assertOnlyKeptMarkup(self, markup):
+		"""Every tag is a kept element, no class is outside the kept ones, nothing is a comment or a
+		declaration, and no raw ``<`` is left in the text."""
+		read = _structure(markup)
+		for tag, attrs in read.tags:
+			self.assertIn(tag, C.KEPT_ELEMENTS, markup)
+			self.assertTrue(set((attrs.get("class") or "").split()) <= C.KEPT_CLASSES, markup)
+			self.assertFalse(C.DROPPED_ATTRIBUTES & set(attrs), markup)
+		self.assertEqual(read.other, [], markup)
+		self.assertNotIn("<", re.sub(r"<[^>]*>", "", markup), markup)
+
+	def test_text_a_browser_never_shows_comes_out_where_it_does(self):
+		for body, text in NEVER_SHOWN.items():
+			with self.subTest(body=body):
+				out = C.strip_presentation(f"<p>Visible.</p>{body}")
+				self.assertEqual(out, f"<p>Visible.</p>{text}")
+				self.assertOnlyKeptMarkup(out)
+
+	def test_every_tag_sanitize_html_allows_is_kept_or_unwrapped(self):
+		self.assertTrue(C.KEPT_ELEMENTS <= {tag.lower() for tag in SANITIZE_HTML_TAGS})
+		for tag in sorted(SANITIZE_HTML_TAGS):
+			with self.subTest(tag=tag):
+				body = f'<p>Visible.</p><{tag} title="t">SECRET {tag}</{tag}>'
+				out = C.strip_presentation(body)
+				if tag in C.KEPT_ELEMENTS:
+					self.assertEqual(out, body)
+				else:
+					self.assertEqual(out, f"<p>Visible.</p>SECRET {tag}")
+				self.assertOnlyKeptMarkup(out)
+
+	def test_an_unknown_element_is_unwrapped_too(self):
+		for body in (
+			"<x-note>kept text</x-note>",
+			"<template>kept text</template>",
+			"<noscript>kept text</noscript>",
+		):
+			with self.subTest(body=body):
+				self.assertEqual(C.strip_presentation(body), "kept text")
+
+	def test_every_kept_element_survives_on_its_own(self):
+		for tag in sorted(C.KEPT_ELEMENTS):
+			with self.subTest(tag=tag):
+				body = f"<{tag}>x</{tag}>"
+				self.assertEqual(C.strip_presentation(body), body)
+
+	def test_what_a_parser_misreads_is_not_kept(self):
+		"""Python's parser runs a comment opened by ``<!-->`` to the next ``-->`` and a CDATA section
+		to ``]]>``, and reads ``<style>`` as raw text even inside an ``<svg>``; a browser ends the
+		first two at the first ``>`` and breaks out of the third. Nothing Python could not read
+		into is kept. Once a browser or nh3 has written the same markup back out, the two parsers
+		agree, and the class goes the ordinary way."""
+		for body, as_a_browser_writes_it in PARSERS_DISAGREE.items():
+			with self.subTest(body=body):
+				out = C.strip_presentation(body)
+				self.assertNotIn("hidden", out)
+				self.assertEqual(out, "")
+				normalised = C.strip_presentation(as_a_browser_writes_it)
+				self.assertNotIn('class="hidden"', normalised)
+				self.assertOnlyKeptMarkup(normalised)
+				self.assertTrue(normalised.startswith("<p>SECRET "), normalised)
+
+	def test_comments_and_declarations_go_whole(self):
+		cases = {
+			"<p>a</p><!-- note --><p>b</p>": "<p>a</p><p>b</p>",
+			"<!DOCTYPE html><p>a</p>": "<p>a</p>",
+			'<?xml version="1.0"?><p>a</p>': "<p>a</p>",
+			"<p>a</p><!bogus><p>b</p></ bogus>": "<p>a</p><p>b</p>",
+			"<p>a</p><!-- --!><p>b</p> -->": "<p>a</p><p>b</p> -->",
+			'<p>a</p><!-- left open <p class="hidden">b</p>': "<p>a</p>",
+		}
+		for body, expected in cases.items():
+			with self.subTest(body=body):
+				self.assertEqual(C.strip_presentation(body), expected)
+
+	def test_raw_text_comes_back_as_text_never_as_markup(self):
+		"""Python reads what ``<textarea>``, ``<title>``, ``<xmp>`` and ``<plaintext>`` hold as text,
+		where a browser inside an ``<svg>`` reads markup. Unwrapped, it is written back escaped."""
+		hidden_p = "&lt;p class=&quot;hidden&quot;&gt;x&lt;/p&gt;"
+		cases = {
+			'<textarea><p class="hidden">x</p></textarea>': hidden_p,
+			'<svg><title><p class="hidden">x</p></title></svg>': hidden_p,
+			'<svg><textarea><a class="hidden">x</a></textarea></svg>': "&lt;a class=&quot;hidden&quot;&gt;x&lt;/a&gt;",
+			"<xmp><b>x</b> &amp;</xmp>": "&lt;b&gt;x&lt;/b&gt; &amp;amp;",
+			'<plaintext><p class="hidden">x</p>': hidden_p,
+			"<textarea>just words &amp; more</textarea>": "just words &amp; more",
+		}
+		for body, expected in cases.items():
+			with self.subTest(body=body):
+				out = C.strip_presentation(body)
+				self.assertEqual(out, expected)
+				self.assertOnlyKeptMarkup(out)
+
+	def test_script_and_style_go_with_what_they_hold(self):
+		self.assertEqual(
+			C.strip_presentation("<p>a</p><script>alert(1)</script><style>p { color: #fff }</style><p>b</p>"),
+			"<p>a</p><p>b</p>",
+		)
+		self.assertEqual(C.strip_presentation("<p>a</p><style>p { color: #fff }"), "<p>a</p>")
+
+	def test_a_raw_angle_bracket_in_text_is_escaped(self):
+		self.assertEqual(C.strip_presentation("<p>a < b, 3<4</p>"), "<p>a &lt; b, 3&lt;4</p>")
+		self.assertEqual(C.strip_presentation("<p>a &lt; b</p>"), "<p>a &lt; b</p>")
+
+	def test_a_cut_off_or_ignored_tag_is_not_kept(self):
+		cases = {
+			'<p>x</p><p class="hidden"': "<p>x</p>",
+			'<p>x</p class="hidden">': "<p>x</p>",
+			"<p>x</>y</p>": "<p>xy</p>",
+			"<p>x</P\n>": "<p>x</p>",
+		}
+		for body, expected in cases.items():
+			with self.subTest(body=body):
+				self.assertEqual(C.strip_presentation(body), expected)
+
+	def test_a_self_closed_element_is_unwrapped_and_its_text_kept(self):
+		"""A browser ignores the slash on ``<dialog/>`` and puts what follows inside it."""
+		self.assertEqual(C.strip_presentation("<p>a</p><dialog/>SECRET"), "<p>a</p>SECRET")
+
+	def test_a_real_v16_body_has_only_kept_elements(self):
+		for body in (QUILL_BODY, QUILL_STRUCTURE):
+			with self.subTest(body=body[:40]):
+				tags = {tag for tag, _attrs in _structure(body).tags}
+				self.assertTrue(tags <= C.KEPT_ELEMENTS, tags - C.KEPT_ELEMENTS)
+		self.assertEqual(C.strip_presentation(QUILL_STRUCTURE), QUILL_STRUCTURE)
+
+	def test_the_output_is_a_fixed_point(self):
+		bodies = [QUILL_BODY, QUILL_STRUCTURE, *NEVER_SHOWN, *PARSERS_DISAGREE, *PARSERS_DISAGREE.values()]
+		bodies += [f"<{tag}>x</{tag}>" for tag in SANITIZE_HTML_TAGS]
+		bodies += [
+			'<svg><title><p class="hidden">x</p></title></svg>',
+			"<p>a < b</p><xmp><b>&amp;</b></xmp><p>x</p class=y><p>z</p><p ",
+			"&am<dialog>p;&l</dialog>t;p class=hidden>",
+		]
+		for body in bodies:
+			with self.subTest(body=body):
+				once = C.strip_presentation(body)
+				self.assertEqual(C.strip_presentation(once), once)
+				self.assertOnlyKeptMarkup(once)
+
+	def test_the_list_is_what_the_cited_v16_and_quill_lines_name(self):
+		self.assertEqual(_derive_kept_elements(KEPT_ELEMENT_SOURCES) | TABLE_HEADER_ELEMENTS, C.KEPT_ELEMENTS)
+		self.assertFalse(TABLE_HEADER_ELEMENTS & _derive_kept_elements(KEPT_ELEMENT_SOURCES))
+
+	def test_the_derivation_reads_each_kind_of_line(self):
+		for text, expected in (
+			("static tagName = ['A1', 'B2'];", {"a1", "b2"}),
+			("X.tagName = 'Q';", {"q"}),
+			('Y.tagName = "r";', {"r"}),
+			('const u = document.createElement("ul");', {"ul"}),
+			('value = `<div class="w">${value}</div>`;', {"div"}),
+		):
+			with self.subTest(text=text):
+				self.assertEqual(_derive_kept_elements((("x", "x", 1, text),)), expected)
+
+	def test_sanitize_html_tags_and_removed_content_are_v16s(self):
+		"""Skipped where there is no frappe checkout beside this repo, CI included."""
+		checkout = _frappe_checkout()
+		if checkout is None:
+			self.skipTest("no frappe checkout beside this repo")
+		result = subprocess.run(
+			["git", "-C", str(checkout), "show", "origin/version-16:frappe/utils/html_utils.py"],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+		)
+		if result.returncode:
+			self.skipTest(f"{checkout} has no origin/version-16:frappe/utils/html_utils.py")
+		sets = {}
+		for node in ast.parse(result.stdout).body:
+			if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+				if isinstance(node.value, ast.Set):
+					sets[node.targets[0].id] = {element.value for element in node.value.elts}
+		added = re.search(r"\.union\((\[[^\]]*\])\)\s*\)", result.stdout)
+		self.assertIsNotNone(added, "sanitize_html no longer adds its own tags the way this test reads them")
+		allowed = sets["acceptable_elements"] | sets["svg_elements"] | sets["mathml_elements"]
+		self.assertEqual(allowed | set(ast.literal_eval(added.group(1))), SANITIZE_HTML_TAGS)
+		self.assertEqual(sets["REMOVE_CONTENT_TAGS"], C.DROPPED_WITH_CONTENT)
+		self.assertEqual(result.stdout.splitlines()[20], 'REMOVE_CONTENT_TAGS = {"script", "style"}')
 
 
 # ------------------------------------------------------------------ secrets

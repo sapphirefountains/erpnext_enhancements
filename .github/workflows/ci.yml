@@ -770,7 +770,10 @@ jobs:
       # months from one constant; month ends; leap years), presentation stripping (the colour,
       # size and font that hide text from a reviewer and not from a model, and every class but
       # the structural ones v16's editor writes -- `hidden`, `d-none`, Frappe's own `icon` --
-      # while tables, lists, code blocks, alignment and indent survive), the secret scan (never
+      # and the tags of every element but the ones it writes, since a browser paints none of the
+      # text of a <dialog>, <audio> or SVG <desc>; comments go whole, because Python's parser and
+      # a browser disagree on where `<!-->` ends -- while tables, lists, code blocks, alignment
+      # and indent survive), the secret scan (never
       # the value; never the base64 of a pasted screenshot; never an ordinary sentence, since
       # nothing lets an author past a finding) and the content hash. workflow.py and content.py
       # import no frappe, checked in a fresh interpreter, so no stub and nothing to cross-talk
