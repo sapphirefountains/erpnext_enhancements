@@ -1197,3 +1197,9 @@ erpnext_enhancements.patches.seed_inventory_kpi_targets
 # links the upload) and custom_receipt_total (the paper receipt's total with tax). Also in after_install, since
 # install-app marks every patch as run. update=True; cannot raise, safe twice.
 erpnext_enhancements.patches.add_store_run_receipt_fields
+# v1.537.2: Opportunity files failed for everyone but Administrator with "DocType Attendance Request not
+# found". Frappe 16.35.0's File list permission hook calls get_meta on every doctype the user's DocPerm and
+# Custom DocPerm rows name, and prod still held 161 Custom DocPerm rows for 40 HRMS/Helpdesk doctypes that
+# are not installed. Deletes Custom DocPerm rows (and DocType-parented DocPerm rows) whose parent matches no
+# tabDocType name, then clear_cache. The rows grant nothing and were never fixtures. Cannot raise, safe twice.
+erpnext_enhancements.patches.delete_orphan_docperms
