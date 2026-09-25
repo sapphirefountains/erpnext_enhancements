@@ -50,11 +50,16 @@ def get_context(context):
 		# Which invoices get Card and Bank is decided by the rule the endpoints behind them
 		# enforce (card_element.invoice_payment_block), not by the invoice's
 		# custom_stripe_payment_status stamp, which hid both buttons for good after an
-		# abandoned or failed 3-D Secure (nothing un-stamps those). "Processing" is a payment
-		# still settling, "Paid" one received on an invoice that still shows a balance (this
-		# list holds nothing else). Read-only: rendering the page cancels nothing. A tab
-		# loaded before a payment started still shows its buttons; checkout.create_payment
-		# and the card endpoints refuse them with the same verdict.
+		# abandoned or failed 3-D Secure (nothing un-stamps those). "Paid" is a payment
+		# received on an invoice that still shows a balance (this list holds nothing else),
+		# "Awaiting" a card payment waiting on the payer's bank, and any other verdict one
+		# still settling or not yet confirmed — every verdict hides both buttons (pay.html).
+		# The invoice an amended one was made from counts as the same bill. Read-only:
+		# rendering the page cancels nothing. A tab loaded before a payment started still
+		# shows its buttons; checkout.create_payment and the card endpoints refuse them with
+		# the same verdict. Each Stripe lookup gets a few seconds (card_element.READ_TIMEOUT);
+		# one that does not answer reads as "Processing…" (safe), and after it none of the
+		# rest is attempted.
 		blocks = invoice_payment_blocks([inv["name"] for inv in invoices])
 		for inv in invoices:
 			inv["amount_display"] = fmt_money(inv["outstanding_amount"], currency=inv["currency"])

@@ -25,8 +25,22 @@
  *     Pay tap before the traversal lands charges nothing) and goes through the history;
  *   - Back while a charge is in flight interrupts nothing: a success still goes to
  *     /stripe-return (with `location.replace`);
- *   - any failed charge (a refusal, a decline, 3-D Secure) spends its quote: the card step says
- *     why, and neither Pay nor Forward can send that row and token again;
+ *   - a definite failure (a refusal or a decline — a 417 naming its exc_type — or 3-D Secure
+ *     refused with a card, validation or invalid-request error) spends its quote: the card step
+ *     says why, and neither Pay nor Forward can send that row and token again;
+ *   - a refusal for the invoice rather than the card (`PaymentBlocked`: another payment
+ *     settling, the invoice paid or credited), at Pay or at Continue, never leaves a live card
+ *     form beside it: the page asks the server, which renders why; an emailed link that could
+ *     not be closed (`LinkStillOpen`) and an earlier attempt Stripe would not confirm canceled
+ *     (`AttemptUnreleased`) are ordinary refusals, at Pay and at Continue: the card form stays
+ *     and the modal says why, since a render (which never releases) would show the form with
+ *     no word of it;
+ *   - no answer (a dropped connection, a 5xx, a proxy timeout, 3-D Secure ending in any other
+ *     error type — Stripe unreachable, a rate limit, one the page does not know) is never a
+ *     failure — the charge may have gone through — so the page never shows a card form then: it
+ *     holds Pay and Back and asks the server again, which renders "being processed" for an
+ *     attempt on record; and a server that could not learn the outcome itself answers
+ *     Processing, which goes to /stripe-return;
  *   - a price that lands after the payer has moved on is dropped;
  *   - a page restored from the back-forward cache asks the server again.
  *   /itinerary
@@ -361,6 +375,23 @@ const CREDIT = {
 	surcharge_disclosure: "A 2.9% fee applies to credit cards.",
 };
 const DEBIT = { stripe_payment: "SP-2", amount_display: "$200.00", total_display: "$200.00", surcharge: 0 };
+// What frappe.call hands error() for a frappe.throw on the server (HTTP 417): the parsed body,
+// naming its exc_type. The server's definite answer that nothing was charged.
+const DECLINED = { exc_type: "ValidationError", _server_messages: '["Your card was declined."]' };
+// A refusal for the invoice rather than the card (another payment settling, the invoice paid
+// or credited): the server's PaymentBlocked. The page reloads, and /pay-card renders why.
+const BLOCKED = { exc_type: "PaymentBlocked", _server_messages: '["A payment for this invoice is already being processed."]' };
+// An emailed link Stripe could not be asked to close: a definite refusal with nothing to render.
+const LINK_OPEN = { exc_type: "LinkStillOpen", _server_messages: '["A payment link for this invoice is still open."]' };
+// An earlier card attempt that cannot charge, whose cancel Stripe would not confirm just now. A
+// PaymentBlocked subclass, so the server-side callers treat it as a refusal; but a render never
+// releases, so it would read that attempt as not blocking and show the card form with no message.
+const UNRELEASED = {
+	exc_type: "AttemptUnreleased",
+	_server_messages: '["An earlier card payment attempt for this invoice could not be released just now."]',
+};
+// What stripe.handleNextAction resolves with when the bank refuses 3-D Secure.
+const AUTH_FAILED = { type: "invalid_request_error", code: "payment_intent_authentication_failure", message: "Authentication failed." };
 
 function loadPayCard(opts) {
 	opts = opts || {};
@@ -584,13 +615,13 @@ async function testPayCard() {
 	await flush();
 	check("...which still goes to /stripe-return", p.browser.replacedWith, "/stripe-return?status=success&sp=SP-1");
 
-	// Back while the charge is in flight, then failure.
+	// Back while the charge is in flight, then a decline (a frappe.throw: a 417 naming its exc_type).
 	p = loadPayCard();
 	await p.continueWith(CREDIT);
 	confirm = await p.pay();
 	p.browser.back();
 	await p.browser.settle();
-	confirm.callback({ exc: "card declined" });
+	confirm.error(DECLINED);
 	await flush();
 	check("a failure after Back shows the card step", p.shown(), "card");
 	check("...with both buttons usable again", [p.$("pay-btn").disabled, p.$("back-btn").disabled], [false, false]);
@@ -605,7 +636,7 @@ async function testPayCard() {
 	await p.browser.settle();
 	p.browser.forward();
 	await p.browser.settle();
-	confirm.error();
+	confirm.error(DECLINED);
 	await p.browser.settle();
 	check("Back then Forward mid-charge, then a failure: the card step, off the review's entry", [p.shown(), p.browser.index, p.$("pay-btn").disabled], ["card", 1, false]);
 
@@ -626,14 +657,61 @@ async function testPayCard() {
 	confirm = await p.pay();
 	check("...while Continue prices a new one, which Pay sends", confirm && confirm.args, { stripe_payment: "SP-2", confirmation_token: "ctok_2" });
 
-	// Two answers to one charge (a callback and an error) step back once.
+	// Two answers to one charge step back once.
 	p = loadPayCard();
 	await p.continueWith(CREDIT);
 	confirm = await p.pay();
-	confirm.callback({ exc: "x" });
-	confirm.error();
+	confirm.error(DECLINED);
+	confirm.error(DECLINED);
 	await p.browser.settle();
 	check("two answers to one charge step back only once", [p.shown(), p.browser.index, p.browser.left], ["card", 1, null]);
+
+	// No answer is not a failure: the charge may have gone through (a read timeout after Stripe
+	// charged, a worker killed by a deploy). Never a fresh card form: the page asks the server
+	// again, in place of the review, and /pay-card renders "being processed" for an attempt it
+	// has on record. Pay, Back and Forward change nothing meanwhile.
+	const RELOAD = ORIGIN + "/pay-card?invoice=ACC-SINV-0001";
+	for (const [label, answer] of [
+		["a dropped connection", (c) => c.error({ readyState: 0, status: 0 })],
+		["a 5xx or a proxy timeout", (c) => c.error()],
+		["a 417 whose body would not parse", (c) => c.error("<html>")],
+		["a 200 carrying an exception", (c) => c.callback({ exc: '["Traceback"]' })],
+	]) {
+		p = loadPayCard();
+		await p.continueWith(CREDIT);
+		confirm = await p.pay();
+		answer(confirm);
+		await p.browser.settle();
+		check(`${label}: the page asks the server again`, p.browser.replacedWith, RELOAD);
+		check("...never showing the card step", p.shown(), "review");
+		check("...with Pay and Back held", [p.$("pay-btn").disabled, p.$("pay-btn").textContent, p.$("back-btn").disabled], [true, "Checking your payment…", true]);
+		p.$("pay-btn").disabled = false; // even if it were not
+		p.$("pay-btn").click();
+		await flush();
+		check("...and the quote is never sent again", p.take("portal_confirm_card_payment"), null);
+		confirm.error(DECLINED);
+		await flush();
+		check("...nor does a late answer bring the card step back", p.shown(), "review");
+	}
+
+	// Back mid-charge, then no answer: the same, from the card entry the browser is on.
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	confirm = await p.pay();
+	p.browser.back();
+	await p.browser.settle();
+	confirm.error();
+	await p.browser.settle();
+	check("Back mid-charge, then no answer: the server is asked, no card step", [p.browser.replacedWith, p.shown()], [RELOAD, "review"]);
+
+	// The server itself could not learn the outcome (Stripe never answered): it says Processing,
+	// and the page goes to "being processed".
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	confirm = await p.pay();
+	confirm.callback({ message: { stripe_payment: "SP-1", status: "Processing", requires_action: false, outcome_unknown: true } });
+	await flush();
+	check("an outcome the server could not learn goes to \"being processed\"", p.browser.replacedWith, "/stripe-return?status=success&sp=SP-1");
 
 	// 3-D Secure abandoned by Back, then refused.
 	p = loadPayCard();
@@ -644,7 +722,7 @@ async function testPayCard() {
 	p.browser.back();
 	await p.browser.settle();
 	check("Back during 3-D Secure interrupts nothing", p.shown(), "review");
-	p.stripe.nextAction({ error: { message: "Authentication failed." } });
+	p.stripe.nextAction({ error: AUTH_FAILED });
 	await p.browser.settle();
 	check("...and once it fails, the card step shows why", [p.shown(), p.$("card-error").textContent, p.browser.index], ["card", "Authentication failed.", 1]);
 
@@ -654,7 +732,7 @@ async function testPayCard() {
 	confirm = await p.pay();
 	confirm.callback({ message: { stripe_payment: "SP-1", requires_action: true, client_secret: "pi_secret" } });
 	await flush();
-	p.stripe.nextAction({ error: { message: "Authentication failed." } });
+	p.stripe.nextAction({ error: AUTH_FAILED });
 	await p.browser.settle();
 	check("3-D Secure refused, no Back: the card step says why", [p.shown(), p.$("card-error").textContent], ["card", "Authentication failed."]);
 	check("...off the review's entry", [p.browser.index, p.browser.left], [1, null]);
@@ -664,6 +742,94 @@ async function testPayCard() {
 	p.browser.forward();
 	await p.browser.settle();
 	check("...nor can Forward bring its review back", [p.shown(), p.browser.index], ["card", 1]);
+
+	// 3-D Secure whose answer says nothing about the bank's: Stripe unreachable, a rate limit, a
+	// type the page has never heard of, none at all. Whether the bank approved it is unknown.
+	for (const type of ["api_connection_error", "api_error", "rate_limit_error", "some_new_error", undefined]) {
+		p = loadPayCard();
+		await p.continueWith(CREDIT);
+		confirm = await p.pay();
+		confirm.callback({ message: { stripe_payment: "SP-1", requires_action: true, client_secret: "pi_secret" } });
+		await flush();
+		p.stripe.nextAction({ error: { type, message: "Network error." } });
+		await p.browser.settle();
+		check(`3-D Secure that ended in ${type}: the server is asked, no card step`, [p.browser.replacedWith, p.shown()], [RELOAD, "review"]);
+	}
+
+	// A card error after 3-D Secure is the bank's definite no: the card step, and why.
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	confirm = await p.pay();
+	confirm.callback({ message: { stripe_payment: "SP-1", requires_action: true, client_secret: "pi_secret" } });
+	await flush();
+	p.stripe.nextAction({ error: { type: "card_error", message: "Your card was declined." } });
+	await p.browser.settle();
+	check("3-D Secure that ended in a card_error: the card step says why", [p.shown(), p.$("card-error").textContent, p.browser.replacedWith], ["card", "Your card was declined.", null]);
+
+	// Refused for the invoice, not the card — another tab's charge, autopay holding it, an
+	// emailed link just paid, the invoice paid or credited meanwhile: nothing was charged, and
+	// there must be no live card form beside "already being processed". The page asks the server,
+	// which renders "being processed" / "received" / "paid" instead.
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	confirm = await p.pay();
+	confirm.error(BLOCKED);
+	await p.browser.settle();
+	check("Pay refused for the invoice (PaymentBlocked): the page asks the server again", p.browser.replacedWith, RELOAD);
+	check("...never showing the card step", [p.shown(), p.$("pay-btn").disabled], ["review", true]);
+	p.$("pay-btn").disabled = false; // even if it were not
+	p.$("pay-btn").click();
+	await flush();
+	check("...and the quote is never sent again", p.take("portal_confirm_card_payment"), null);
+
+	// An emailed link Stripe could not be asked to close: a definite refusal with no state to
+	// render, so the card step (the modal says why); nothing was charged, and Continue tries again.
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	confirm = await p.pay();
+	confirm.error(LINK_OPEN);
+	await p.browser.settle();
+	check("a link that could not be closed: the card step, no reload", [p.shown(), p.browser.replacedWith, p.$("pay-btn").disabled], ["card", null, false]);
+
+	// An earlier attempt Stripe would not confirm canceled: the same. Reloading used to land on a
+	// card form with no message (the render never releases it), and every tap looped; now the form
+	// stays, the modal says "could not be released just now", and Continue tries again.
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	confirm = await p.pay();
+	confirm.error(UNRELEASED);
+	await p.browser.settle();
+	check("an attempt that could not be released, at Pay: the card step, no reload", [p.shown(), p.browser.replacedWith, p.$("pay-btn").disabled, p.$("continue-btn").disabled], ["card", null, false, false]);
+	p = loadPayCard();
+	let refused = await p.continueWith(null);
+	refused.error(UNRELEASED);
+	await p.browser.settle();
+	check("...and at Continue: the card step stays, Continue usable, no reload", [p.browser.replacedWith, p.shown(), p.$("continue-btn").disabled], [null, "card", false]);
+	await p.continueWith(DEBIT);
+	check("...and the next Continue prices a quote as usual", p.shown(), "review");
+
+	// The same refusal at Continue (the quote): the page asks the server rather than leave a
+	// form for an invoice that can no longer be paid here. A refusal about the card does not.
+	p = loadPayCard();
+	let quoting = await p.continueWith(null);
+	quoting.error(BLOCKED);
+	await p.browser.settle();
+	check("Continue refused for the invoice: the page asks the server again", p.browser.replacedWith, RELOAD);
+	p = loadPayCard();
+	quoting = await p.continueWith(null);
+	quoting.error({ exc_type: "ValidationError", _server_messages: '["This page accepts card payments only."]' });
+	await p.browser.settle();
+	check("Continue refused for the card: the card step stays, Continue usable", [p.browser.replacedWith, p.shown(), p.$("continue-btn").disabled], [null, "card", false]);
+	p = loadPayCard();
+	await p.continueWith(CREDIT);
+	p.browser.back();
+	await p.browser.settle();
+	quoting = await p.continueWith(null);
+	p.browser.forward(); // the payer moved on while it was priced
+	await p.browser.settle();
+	quoting.error(BLOCKED);
+	await p.browser.settle();
+	check("...and a refusal that lands after the payer moved on is dropped", [p.browser.replacedWith, p.$("continue-btn").disabled], [null, false]);
 
 	// A price that lands after the payer moved on.
 	p = loadPayCard();

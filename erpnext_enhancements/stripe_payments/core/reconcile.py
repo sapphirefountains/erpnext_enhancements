@@ -14,11 +14,21 @@ ACH (us_bank_account) is a delayed-notification method: ``checkout.session.compl
 arrives first with ``payment_status != "paid"`` (mark Processing), then
 ``checkout.session.async_payment_succeeded`` clears it (finalize). Cards finalize
 straight from ``checkout.session.completed``.
+
+**No event moves a row backwards.** Stripe does not guarantee event order, and
+``tasks.retry_failed`` re-runs an errored or never-run event up to an hour (or a deploy's
+FLUSHDB) later, so any handler can see a row that has already moved on. A Paid or Refunded
+row is never re-opened; a hosted Checkout row is never failed by a PaymentIntent event (its
+Session stays payable, and its outcome comes only from the Session's own events); and a
+debit settling is never made to look finished. Every guard in ``card_element`` reads the
+ledger's status, so a status that runs ahead of the money — Failed while a link is still
+payable, or an ACH debit still settling — is how one invoice gets paid twice.
 """
 
 from __future__ import annotations
 
 import contextlib
+import html
 import json
 
 import frappe
@@ -50,6 +60,14 @@ HANDLED = {
 	"payout.paid",
 	"payout.failed",
 }
+
+#: Statuses no event may move a row out of, except to record a refund: the money came in.
+SETTLED = ("Paid", "Refunded")
+#: Recorded on an open emailed link when Stripe reports a declined attempt inside its Session.
+NOTE_CHECKOUT_ATTEMPT_FAILED = (
+	"An attempt to pay through this Checkout link failed; the link stays open, and payable, until "
+	"it is paid or expires. Stripe said:"
+)
 
 
 @contextlib.contextmanager
@@ -137,7 +155,15 @@ def _dispatch_event(event_name: str):
 
 
 def _on_session_completed(session):
-	"""Checkout submitted. Setup: save the method. Cards: finalize. ACH: mark Processing."""
+	"""Checkout submitted. Setup: save the method. Cards: finalize. ACH: mark Processing.
+
+	An ACH debit is marked Processing from any status that does not already say more: never a
+	Paid or Refunded row (an ``async_payment_succeeded`` retried ahead of this event already
+	posted it; re-opening it re-stamped a paid invoice "Processing"), and never a row whose
+	debit Stripe has already reported failed (this event, retried late, would hold that invoice
+	"being processed" for good — nothing settles a hosted row whose debit is dead). A row
+	marked Failed for any other reason — before this release, a declined card inside the same
+	Session did it — is marked Processing: its debit is on its way, and must block."""
 	if session.get("mode") == "setup":
 		return _handle_setup_completed(session)
 	sp = _find_payment(session)
@@ -145,32 +171,59 @@ def _on_session_completed(session):
 		return None
 	_record_session_refs(sp, session)
 	if session.get("payment_status") == "paid":
-		finalize_payment(sp, session)
-	else:
-		# Delayed method (ACH) authorized but not yet settled.
-		sp.db_set("status", "Processing")
+		# Never a settled row, as for payment_intent.succeeded: a Paid one is posted already,
+		# and a Refunded one is money given back — finalize would post it again.
+		if sp.status not in SETTLED:
+			finalize_payment(sp, session)
+	elif sp.status in ("Draft", "Link Sent", "Expired") or (
+		sp.status == "Failed" and not _debit_failure_recorded(sp)
+	):
+		# Delayed method (ACH) authorized but not yet settled. Any note from before (a declined
+		# attempt on the open link, an old failure) no longer describes it.
+		sp.db_set({"status": "Processing", "error_message": None})
 		if sp.sales_invoice:
 			_stamp_invoice(sp.sales_invoice, "Processing")
 		frappe.db.commit()
 	return sp
 
 
+def _debit_failure_recorded(sp) -> bool:
+	"""Whether Stripe's final word on this row's Checkout debit — ``async_payment_failed`` —
+	has already been processed. The Stripe Event log is the record of it: the row's status
+	alone cannot tell that failure from one no longer written (see
+	:func:`_on_payment_intent_failed`)."""
+	return bool(
+		frappe.db.exists(
+			"Stripe Event",
+			{
+				"stripe_payment": sp.name,
+				"event_type": "checkout.session.async_payment_failed",
+				"process_status": "Processed",
+			},
+		)
+	)
+
+
 def _on_session_async_succeeded(session):
-	"""Delayed (ACH) payment finally cleared -> finalize."""
+	"""Delayed (ACH) payment finally cleared -> finalize. Never a Paid or Refunded row: a
+	late or retried event for a debit that was refunded meanwhile posted a Payment Entry for
+	money given back, and marked the row Paid again."""
 	sp = _find_payment(session)
 	if not sp:
 		return None
 	_record_session_refs(sp, session)
-	finalize_payment(sp, session)
+	if sp.status not in SETTLED:
+		finalize_payment(sp, session)
 	return sp
 
 
 def _on_session_async_failed(session):
-	"""Delayed (ACH) payment failed -> mark Failed."""
+	"""Delayed (ACH) payment failed -> mark Failed. Final for the Session: a completed
+	Checkout Session cannot be paid again. Never a Paid or Refunded row."""
 	sp = _find_payment(session)
 	if not sp:
 		return None
-	if sp.status != "Paid":
+	if sp.status not in SETTLED:
 		sp.db_set("status", "Failed")
 		sp.db_set("error_message", "ACH payment failed at the bank.")
 		if sp.sales_invoice:
@@ -195,30 +248,76 @@ def _on_session_expired(session):
 def _on_payment_intent_succeeded(pi):
 	"""Backstop finalizer (also covers off-session charges in a later phase)."""
 	sp = _find_payment(pi)
-	if not sp or sp.status == "Paid":
+	if not sp or sp.status in SETTLED:
 		return sp
 	finalize_payment(sp, pi)
 	return sp
 
 
+def _is_hosted(sp) -> bool:
+	"""A hosted Checkout row: it carries its Session, or is still ``Draft`` / ``Link Sent``.
+	No other kind of row can hear of a PaymentIntent in those two: a card-page quote has none
+	until it is committed ``Processing``, and an off-session charge is written ``Processing``."""
+	return bool(sp.get("stripe_checkout_session")) or sp.status in ("Draft", "Link Sent")
+
+
 def _on_payment_intent_failed(pi):
+	"""A PaymentIntent attempt failed.
+
+	For the card page and an off-session charge this is the outcome: neither ever confirms the
+	same PaymentIntent again, so the row fails — never a Paid or Refunded one.
+
+	For a **hosted Checkout** row it is not, and the row's status is left alone. Stripe sends
+	this event for every declined attempt inside a Checkout Session, and the Session stays open
+	— payable, with another card or the bank — for the rest of its 24 hours. Marking the row
+	Failed hid a live link from every guard (they read ``Processing`` / ``Paid``;
+	``card_element._close_open_checkouts`` and ``poll_pending``'s stale-link check read ``Link
+	Sent``): a card payment on /pay-card went through beside it, and the customer could then
+	pay the emailed link as well — and ``/stripe-return`` told a customer who had retried
+	successfully inside Checkout that nothing was charged. The same event for an earlier
+	declined card, processed after ``checkout.session.completed`` made an ACH debit
+	``Processing`` (Stripe does not guarantee order; ``retry_failed`` re-runs events up to an
+	hour late), failed a debit still settling and unblocked its invoice. A hosted row's outcome
+	comes only from its Session's events — ``completed``, ``async_payment_succeeded`` /
+	``async_payment_failed``, ``expired`` — so an open link records the decline, for Accounts,
+	and nothing else changes.
+
+	A charge held with an unknown outcome (``card_element.held_unknown``) that Stripe reports
+	failed has a payer who was told they would be emailed if it did not go through: they are
+	(``card_element.notify_released_unknown``). Autopay's own alert covers an Auto row.
+	"""
 	sp = _find_payment(pi)
 	if not sp:
 		return None
-	if sp.status != "Paid":
-		was_failed = sp.status == "Failed"
-		err = (pi.get("last_payment_error") or {}).get("message") or "Payment failed."
-		sp.db_set("status", "Failed")
-		sp.db_set("error_message", error_snippet(err, 200))
-		frappe.db.commit()
-		# Async (e.g. ACH) failure of an automatic charge -> parity with the
-		# synchronous card-decline path (alert Accounts + stamp the invoice).
-		# Guard on the prior status so a redelivered webhook, or the sync path
-		# having already alerted, never re-fires.
-		if not was_failed and sp.get("channel") == "Auto":
-			from erpnext_enhancements.stripe_payments.core.saved_methods import _alert_failed_autocharge
+	err = (pi.get("last_payment_error") or {}).get("message") or "Payment failed."
+	if _is_hosted(sp):
+		if sp.status in ("Draft", "Link Sent"):
+			sp.db_set("error_message", f"{NOTE_CHECKOUT_ATTEMPT_FAILED} {error_snippet(err, 200)}")
+			frappe.db.commit()
+		return sp
+	if sp.status in SETTLED:
+		return sp
+	from erpnext_enhancements.stripe_payments.core import card_element
 
-			_alert_failed_autocharge(sp, err)
+	was_failed = sp.status == "Failed"
+	was_held_unknown = not was_failed and card_element.held_unknown(sp)
+	values = {"status": "Failed", "error_message": error_snippet(err, 200)}
+	if pi.get("id") and not sp.get("stripe_payment_intent"):
+		# A charge Stripe never answered: this is the first we hear of its PaymentIntent.
+		values["stripe_payment_intent"] = pi.get("id")
+	sp.db_set(values)
+	frappe.db.commit()
+	# Async (e.g. ACH) failure of an automatic charge -> parity with the
+	# synchronous card-decline path (alert Accounts + stamp the invoice).
+	# Guard on the prior status so a redelivered webhook, or the sync path
+	# having already alerted, never re-fires.
+	if not was_failed and sp.get("channel") == "Auto":
+		from erpnext_enhancements.stripe_payments.core.saved_methods import _alert_failed_autocharge
+
+		_alert_failed_autocharge(sp, err)
+	elif was_held_unknown:
+		card_element.notify_released_unknown(sp.name, pi.get("status"))
+		frappe.db.commit()
 	return sp
 
 
@@ -292,6 +391,23 @@ def _accounts_notify(subject, content, doctype=None, docname=None):
 			frappe.get_doc(log).insert(ignore_permissions=True)
 	except Exception:
 		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: accounts alert failed")
+
+
+def _alert_refunded_unposted(sp):
+	"""A success signal reached :func:`finalize_payment` for a row that is Refunded with no
+	Payment Entry. Nothing is posted — a refund is never booked as a receipt — but the ledger
+	never booked the receipt that refund gives back, so Accounts are told."""
+	what = getattr(sp, "sales_invoice", None) or getattr(sp, "description", None) or "no invoice"
+	_accounts_notify(
+		f"Stripe payment refunded before it was posted: {sp.name}",
+		f"Stripe reported Stripe Payment {sp.name} ({html.escape(str(what))}, customer "
+		f"{html.escape(str(getattr(sp, 'customer', None) or '—'))}) as paid, but it is marked "
+		"Refunded and no Payment Entry was ever posted for it: posting had failed before it was refunded "
+		"in Stripe. Nothing was posted now, and the row stays Refunded. If a draft refund reversal was "
+		"created for it, it reverses a receipt the ledger never booked: review it before submitting.",
+		"Stripe Payment",
+		sp.name,
+	)
 
 
 def _draft_refund_reversal(sp, refunded_total):
@@ -407,6 +523,13 @@ def finalize_payment(sp, source_obj):
 	serializes the callers; the ``for_update`` reads are current reads that see the prior
 	holder's committed work despite the snapshot; and the commit inside the lock makes that work
 	durable before the lock is released.
+
+	**A Refunded row is never finalized**, whether or not it has a Payment Entry: it is never
+	turned back into Paid, and money given back is never posted as received. One with no
+	Payment Entry — posting had failed (no deposit account, a closed period) and Accounts then
+	refunded it in Stripe — alerts Accounts instead (:func:`_alert_refunded_unposted`). The
+	event handlers already skip a settled row; this is the check made under the lock, on the
+	row as it is now.
 	"""
 	from frappe.utils.synchronization import filelock
 
@@ -417,6 +540,12 @@ def finalize_payment(sp, source_obj):
 			)
 			or frappe._dict()
 		)
+		if current.get("status") == "Refunded":
+			if not current.get("payment_entry"):
+				_alert_refunded_unposted(sp)
+				frappe.db.commit()
+			return current.get("payment_entry")
+		# Posted already: a late success event (or poll_pending) changes nothing.
 		if current.get("status") == "Paid" and current.get("payment_entry"):
 			return current.payment_entry
 

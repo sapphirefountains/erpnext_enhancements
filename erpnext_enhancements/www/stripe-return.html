@@ -7,6 +7,18 @@
 	{% if outcome == "cancel" %}
 		<h1>{{ _("Payment cancelled") }}</h1>
 		<p class="text-muted">{{ _("No charge was made. You can return and try again whenever you're ready.") }}</p>
+	{# What the ledger row says now (stripe_return.py), never just the address. #}
+	{% elif payment_status in ("Failed", "Expired") %}
+		<h1>{{ _("Payment not completed") }}</h1>
+		<p class="text-muted">{{ _("This payment did not go through, and nothing was charged. You can pay from your invoices whenever you're ready.") }}</p>
+	{% elif unconfirmed %}
+		<h1>{{ _("Checking your payment") }}</h1>
+		{# Both ways the payer can learn it did not go through (stripe_return.py): an email, or —
+		   when their own new payment is what released it — the invoice shown ready to pay again. #}
+		<p class="text-muted">{{ _("We could not confirm your payment yet. Please do not pay again for now: if it did not go through, we will email you, or, if you are back at your invoices first, you will find this one ready to pay again.") }}</p>
+	{% elif payment_status == "Refunded" %}
+		<h1>{{ _("Payment refunded") }}</h1>
+		<p class="text-muted">{{ _("This payment was refunded.") }}</p>
 	{% else %}
 		<h1>{{ _("Thank you!") }}</h1>
 		{% if payment_status == "Paid" %}

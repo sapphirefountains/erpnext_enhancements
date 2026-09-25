@@ -53,26 +53,54 @@ def create_payment(
 	``{"stripe_payment", "checkout_url", "session_id"}``. The caller is responsible
 	for permission checks (operator role for desk; ownership for portal). An invoice
 	with a Stripe payment already received or still settling is refused here, by the
-	rule every payment path shares (``card_element.invoice_payment_block``).
+	rule every payment path shares (``card_element.invoice_payment_block``); an ad hoc
+	amount is refused while the customer has any Stripe payment settling or link open
+	(``card_element._refuse_ad_hoc_beside_open_payments``).
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
 		frappe.throw("Stripe Payments is not enabled. Turn it on in Stripe Payments Settings.")
 
-	customer, amount, currency, description = _resolve_target(
-		sales_invoice, customer, amount, description, settings
+	# Imported here: card_element imports this module.
+	from erpnext_enhancements.stripe_payments.core.card_element import (
+		_close_open_checkouts,
+		_refuse_ad_hoc_beside_open_payments,
+		_refuse_if_in_flight,
+		invoice_lock,
 	)
-	if sales_invoice:
-		# The same invoice-level guard as the card page, before anything exists at Stripe.
-		# Without it a /pay tab loaded before a card payment could open a bank Checkout for
-		# an invoice whose card charge was still settling (3-D Secure done, the webhook not
-		# yet landed): two payments for one invoice. It releases an abandoned card attempt —
-		# cancels its PaymentIntent — and never touches a hosted Checkout or ACH payment,
-		# which are only ever waited on. Imported here: card_element imports this module.
-		from erpnext_enhancements.stripe_payments.core.card_element import _refuse_if_in_flight
 
-		_refuse_if_in_flight(sales_invoice, desk=channel == "Desk")
+	# Held from the guard until the new session is committed as Link Sent, so a card
+	# payment (or a second link) for the same invoice cannot pass its own guard meanwhile.
+	with invoice_lock(sales_invoice):
+		customer, amount, currency, description = _resolve_target(
+			sales_invoice, customer, amount, description, settings
+		)
+		if sales_invoice:
+			# The same invoice-level guard as the card page, before anything exists at
+			# Stripe. Without it a /pay tab loaded before a card payment could open a bank
+			# Checkout for an invoice whose card charge was still settling (3-D Secure done,
+			# the webhook not yet landed): two payments for one invoice. It releases a card
+			# attempt that can no longer charge — cancels its PaymentIntent — and never
+			# touches a hosted Checkout or ACH payment, which are only ever waited on.
+			_refuse_if_in_flight(sales_invoice, desk=channel == "Desk")
+			# And a link already sent for it (or for the invoice it was amended from) is
+			# expired first: two open Checkout Sessions for one invoice are two payments
+			# waiting to happen. A completed one refuses.
+			_close_open_checkouts(sales_invoice, desk=channel == "Desk")
+		else:
+			# An ad hoc link (the desk's Checkout link for an amount, api.create_adhoc_payment) is
+			# posted against no invoice, so no invoice guard sees it. The rule the ad hoc
+			# off-session charge has: refused while the customer has a payment settling or a link
+			# open — the moment Accounts reach for it to "pay" a bill already being paid.
+			_refuse_ad_hoc_beside_open_payments(customer)
+		return _start_checkout(
+			settings, sales_invoice, customer, amount, currency, description, channel, method
+		)
 
+
+def _start_checkout(settings, sales_invoice, customer, amount, currency, description, channel, method):
+	"""The ledger row and the Checkout Session behind :func:`create_payment`, committed
+	(``Link Sent``) before it returns — inside the caller's invoice lock."""
 	payment_method_types = _methods_for(settings, method)
 	# Always 0 on this path, by construction: hosted Checkout fixes its line items
 	# when the Session is created, which is before the payer's card — and therefore
@@ -81,6 +109,19 @@ def create_payment(
 	# through the same gate anyway so this path can never drift from the policy.
 	surcharge = _compute_surcharge(settings, pm_type=_method_hint(method), funding=None, base=amount)
 	stripe_customer_id = ensure_stripe_customer(customer, settings)
+
+	if sales_invoice:
+		from erpnext_enhancements.stripe_payments.core.card_element import PaymentBlocked, _recheck_invoice
+
+		# The Sales Invoice row lock, taken before the ledger row is inserted and held to the
+		# Link Sent commit below (across the Session call — the one wait it adds is a cancel's,
+		# for at most that call). Taken first so a cancel, which holds this lock and then reads
+		# the ledger, can never be waiting on this uncommitted insert while this waits on it:
+		# the two meet at the invoice row, in the same order, and the second sees the first
+		# (card_element.before_invoice_cancel).
+		_recheck_invoice(
+			sales_invoice, amount, for_update=True, desk=channel == "Desk", changed_exc=PaymentBlocked
+		)
 
 	# Ledger row first, so we have a stable name to use as the idempotency key and
 	# metadata back-reference before we call Stripe.

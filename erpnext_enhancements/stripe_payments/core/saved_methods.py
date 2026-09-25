@@ -26,6 +26,7 @@ from erpnext_enhancements.stripe_payments.core.checkout import (
 	_compute_surcharge,
 	_payment_method_types,
 	_resolve_target,
+	_stamp_invoice,
 )
 from erpnext_enhancements.stripe_payments.core.client import (
 	create_checkout_session,
@@ -118,90 +119,207 @@ def charge_saved_method(
 
 	Raises if the customer has no saved method. Returns
 	``{"stripe_payment", "status", "payment_intent"}``.
+
+	For an invoice it runs the rule every payment path shares, under the same invoice
+	lock (see ``card_element``): refused while another payment is paid or settling
+	(``card_element.PaymentBlocked``, which dunning reschedules on), the Sales Invoice row
+	locked and re-read just before the row is committed ``Processing``, and only then is
+	Stripe asked. An emailed Checkout link is expired first when Accounts charge from the
+	desk; autopay and dunning leave it open for the customer and are refused while it is
+	(a retry of a declined card must not kill the link the customer was sent). A decline
+	fails the row and raises; a charge Stripe never answered stays ``Processing`` — it may
+	have gone through — and is returned as such, never alerted or retried as a decline.
+	``tasks.poll_pending`` finds it at Stripe later.
+
+	With no invoice (the desk's "Charge Saved Method" when none is chosen) the charge is
+	allocated to nothing, so no invoice guard can cover it: it is refused while the customer
+	has any Stripe payment settling or link open, and a chosen invoice must be the
+	customer's own.
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
 		frappe.throw("Stripe Payments is not enabled.")
 
-	customer, amount, currency, description = _resolve_target(
-		sales_invoice, customer, amount, description, settings
+	from erpnext_enhancements.stripe_payments.core.card_element import (
+		NOTE_ACH_VERIFYING,
+		NOTE_CANCEL_UNPROVEN,
+		NOTE_OUTCOME_UNKNOWN,
+		PaymentBlocked,
+		_close_open_checkouts,
+		_recheck_invoice,
+		_refuse_ad_hoc_beside_open_payments,
+		_refuse_if_in_flight,
+		cancel_attempt,
+		create_intent_settled,
+		invoice_lock,
+		post_charged_payment,
 	)
 
-	stripe_customer_id = frappe.db.get_value("Customer", customer, "custom_stripe_customer_id")
-	payment_method = frappe.db.get_value("Customer", customer, "custom_stripe_default_payment_method")
-	if not stripe_customer_id or not payment_method:
-		frappe.throw(f"{customer} has no saved Stripe payment method. Enroll them in autopay first.")
+	requested_customer = customer
+	failure = pi = None
+	with invoice_lock(sales_invoice):
+		customer, amount, currency, description = _resolve_target(
+			sales_invoice, customer, amount, description, settings
+		)
+		if sales_invoice:
+			if requested_customer and customer != requested_customer:
+				# _resolve_target takes the invoice's customer; a desk charge started from one
+				# Customer must never charge another's saved card for another's invoice.
+				frappe.throw(
+					f"Sales Invoice {sales_invoice} belongs to {customer}, not {requested_customer}."
+				)
+			_refuse_if_in_flight(sales_invoice, desk=channel == "Desk")
+			_close_open_checkouts(
+				sales_invoice,
+				mode="off_session" if channel in ("Auto", "Dunning") else "payment",
+				desk=channel == "Desk",
+			)
+		else:
+			_refuse_ad_hoc_beside_open_payments(customer)
 
-	# Unlike hosted Checkout, the exact instrument is known *before* we charge, so
-	# the surcharge can be priced correctly up front: credit cards only, never debit,
-	# prepaid or ACH. No refund-after-the-fact is ever needed on this path.
-	pm_type, funding = _payment_method_funding(payment_method)
-	surcharge = _compute_surcharge(settings, pm_type=pm_type, funding=funding, base=amount)
+		stripe_customer_id = frappe.db.get_value("Customer", customer, "custom_stripe_customer_id")
+		payment_method = frappe.db.get_value("Customer", customer, "custom_stripe_default_payment_method")
+		if not stripe_customer_id or not payment_method:
+			frappe.throw(f"{customer} has no saved Stripe payment method. Enroll them in autopay first.")
 
-	sp = frappe.get_doc(
-		{
-			"doctype": "Stripe Payment",
-			"customer": customer,
-			"sales_invoice": sales_invoice,
-			"amount": amount,
-			"currency": currency,
-			"description": description,
-			"channel": channel,
-			"initiated_by": frappe.session.user,
-			"stripe_customer_id": stripe_customer_id,
-			"surcharge_amount": surcharge,
-			"payment_method_type": pm_type,
-			"card_funding": funding,
-			"status": "Draft",
-		}
-	).insert(ignore_permissions=True)
+		# Unlike hosted Checkout, the exact instrument is known *before* we charge, so
+		# the surcharge can be priced correctly up front: credit cards only, never debit,
+		# prepaid or ACH. No refund-after-the-fact is ever needed on this path.
+		pm_type, funding = _payment_method_funding(payment_method)
+		surcharge = _compute_surcharge(settings, pm_type=pm_type, funding=funding, base=amount)
 
-	metadata = {"erpnext_customer": customer, "stripe_payment": sp.name, "source": channel}
-	if sales_invoice:
-		metadata["erpnext_invoice"] = sales_invoice
+		if sales_invoice:
+			# The Sales Invoice row lock, held to the Processing commit below (nothing commits
+			# in between, and no Stripe call is made under it): a cancel under way is waited
+			# for and then seen, and a cancel that comes second sees this row. PaymentBlocked
+			# for every refusal — nothing was charged, so dunning must not count a decline.
+			_recheck_invoice(sales_invoice, amount, for_update=True, desk=True, changed_exc=PaymentBlocked)
 
-	params = {
-		# The invoice settles at face value; the surcharge rides on top, exactly as
-		# it does on the hosted path, and is booked to income by the companion
-		# Journal Entry in reconcile._book_surcharge.
-		"amount": to_minor_units(flt(amount) + surcharge, currency),
-		"currency": (currency or "USD").lower(),
-		"customer": stripe_customer_id,
-		"payment_method": payment_method,
-		"off_session": True,
-		"confirm": True,
-		"description": (description or "Payment")[:250],
-		"metadata": metadata,
-	}
-
-	try:
-		pi = create_payment_intent(params, idempotency_key=f"ee-offsession-{sp.name}")
-	except Exception as exc:
-		sp.db_set("status", "Failed")
-		sp.db_set("error_message", error_snippet(str(exc)))
+		# Written ahead as Processing and committed before Stripe is called: a timeout or a
+		# killed worker must leave a row that blocks the next charge (and that the webhook
+		# can find by name), never an uncommitted insert that vanishes with the charge made.
+		sp = frappe.get_doc(
+			{
+				"doctype": "Stripe Payment",
+				"customer": customer,
+				"sales_invoice": sales_invoice,
+				"amount": amount,
+				"currency": currency,
+				"description": description,
+				"channel": channel,
+				"initiated_by": frappe.session.user,
+				"stripe_customer_id": stripe_customer_id,
+				"surcharge_amount": surcharge,
+				"payment_method_type": pm_type,
+				"card_funding": funding,
+				"status": "Processing",
+			}
+		).insert(ignore_permissions=True)
+		if sales_invoice:
+			_stamp_invoice(sales_invoice, "Processing")
 		frappe.db.commit()
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: off-session charge failed")
-		if channel == "Auto":
-			_alert_failed_autocharge(sp, str(exc))
-		frappe.throw(f"Off-session charge failed: {error_snippet(str(exc), 200)}")
 
-	sp.db_set("stripe_payment_intent", pi.get("id"))
-	status = pi.get("status")
+		metadata = {"erpnext_customer": customer, "stripe_payment": sp.name, "source": channel}
+		if sales_invoice:
+			metadata["erpnext_invoice"] = sales_invoice
+
+		params = {
+			# The invoice settles at face value; the surcharge rides on top, exactly as
+			# it does on the hosted path, and is booked to income by the companion
+			# Journal Entry in reconcile._book_surcharge.
+			"amount": to_minor_units(flt(amount) + surcharge, currency),
+			"currency": (currency or "USD").lower(),
+			"customer": stripe_customer_id,
+			"payment_method": payment_method,
+			"off_session": True,
+			"confirm": True,
+			"description": (description or "Payment")[:250],
+			"metadata": metadata,
+		}
+
+		pi, failure = create_intent_settled(create_payment_intent, params, f"ee-offsession-{sp.name}")
+		# The invoice is written before the row in each branch: the order a cancel takes its
+		# locks in (card_element.before_invoice_cancel), so the two never wait on each other.
+		if failure is not None:
+			if sales_invoice:
+				_stamp_invoice(sales_invoice, "Failed")
+			sp.db_set({"status": "Failed", "error_message": error_snippet(str(failure))})
+		elif pi is None:
+			sp.db_set("error_message", NOTE_OUTCOME_UNKNOWN)
+		else:
+			values = _off_session_outcome(
+				pi, pm_type, cancel_attempt, NOTE_ACH_VERIFYING, NOTE_CANCEL_UNPROVEN
+			)
+			if values.get("status") == "Failed" and sales_invoice:
+				_stamp_invoice(sales_invoice, "Failed")
+			sp.db_set(values)
+		frappe.db.commit()
+
+	if failure is not None:
+		if channel == "Auto":
+			_alert_failed_autocharge(sp, str(failure))
+		# Outside every except block: no traceback chains back into the keyed request.
+		frappe.throw(f"Off-session charge failed: {error_snippet(str(failure), 200)}")
+
+	status = pi.get("status") if pi else None
 	if status == "succeeded":
-		# Post the Payment Entry now; the webhook is a dedupe-protected backstop.
-		from erpnext_enhancements.stripe_payments.core import reconcile
-
-		reconcile.finalize_payment(sp, pi)
-	elif status == "processing":
-		sp.db_set("status", "Processing")
-	else:
-		sp.db_set("status", "Failed")
-		sp.db_set("error_message", f"PaymentIntent status: {status}")
-		if channel == "Auto":
-			_alert_failed_autocharge(sp, f"PaymentIntent status: {status}")
-	frappe.db.commit()
+		# Post the Payment Entry now; the webhook is a dedupe-protected backstop. A failure
+		# to post leaves the charged row Processing for poll_pending, and is logged.
+		post_charged_payment(sp, pi)
+	elif pi is not None and sp.status == "Failed" and channel == "Auto":
+		_alert_failed_autocharge(sp, f"PaymentIntent status: {status}")
 	sp.reload()
-	return {"stripe_payment": sp.name, "status": sp.status, "payment_intent": pi.get("id")}
+	return {"stripe_payment": sp.name, "status": sp.status, "payment_intent": pi.get("id") if pi else None}
+
+
+#: An off-session card challenge canceled at once (see _off_session_outcome).
+NOTE_CARD_AUTH_REQUIRED = (
+	"The card asked for authentication (3-D Secure), which an off-session charge cannot give. "
+	"Canceled at Stripe; nothing was charged."
+)
+
+
+def _off_session_outcome(pi, pm_type, cancel_attempt, ach_note, unproven_note) -> dict:
+	"""The row's fields for an off-session PaymentIntent Stripe answered with.
+
+	``succeeded`` and ``processing`` are the charge (the caller posts it, or waits for it).
+	``requires_action`` means two things off-session, and neither is a decline to leave
+	live at Stripe behind a ``Failed`` row — the guard reads Failed as clear, and dunning
+	would charge again beside it:
+
+	* a **bank account**: microdeposit verification, a payment in progress that goes ahead
+	  once the customer verifies. The row stays ``Processing`` — it blocks, like a hosted
+	  ACH debit — and the PaymentIntent is never canceled (``poll_pending`` never releases
+	  it either, ``card_element._cannot_charge``). ``ach_note`` marks it, and the guard
+	  words it "waiting on the customer to verify their bank account" (``VERIFYING``);
+	* a **card**: a challenge nobody is present to finish. Canceled at Stripe at once
+	  (``card_element.cancel_attempt``) and failed only once that is proven; otherwise held
+	  ``Processing`` for ``poll_pending`` to cancel, marked ``unproven_note``, which the guard
+	  words "could not be released just now" (``UNRELEASED``) — never "will clear".
+
+	Both notes are ``card_element``'s (``NOTE_ACH_VERIFYING``, ``NOTE_CANCEL_UNPROVEN``): the
+	guard reads them there.
+
+	Anything else (``requires_payment_method``, …) cannot charge: ``Failed``. The method's
+	kind comes from the saved PaymentMethod, or the PaymentIntent when that lookup failed.
+	"""
+	status = pi.get("status")
+	kind = pm_type or ((pi.get("payment_method_types") or [None])[0])
+	values = {"stripe_payment_intent": pi.get("id")}
+	if kind and not pm_type:
+		values["payment_method_type"] = kind
+	if status in ("succeeded", "processing"):
+		return values
+	if status == "requires_action":
+		if kind == "us_bank_account":
+			values["error_message"] = ach_note
+		elif kind == "card" and cancel_attempt(pi.get("id")):
+			values.update(status="Failed", error_message=NOTE_CARD_AUTH_REQUIRED)
+		else:
+			values["error_message"] = unproven_note
+		return values
+	values.update(status="Failed", error_message=f"PaymentIntent status: {status}")
+	return values
 
 
 def _payment_method_funding(payment_method_id):
@@ -304,9 +422,17 @@ def auto_charge_on_invoice_submit(doc, method=None):
 		return
 	if flt(doc.outstanding_amount) <= 0:
 		return
-	# Don't double-charge if an active Stripe Payment already covers this invoice.
+	# Don't double-charge if an active Stripe Payment already covers this invoice — or the
+	# invoice it was amended from: a cancel-and-amend gives the copy a new name, and a
+	# payment still settling (or received) on the original is a payment for this bill. An
+	# open emailed link is the invoice being handled, as sweep_missed_autopay reads it.
+	# charge_saved_method runs the full guard either way; this only saves a doomed job.
+	from erpnext_enhancements.stripe_payments.core.card_element import _invoice_family
+
+	family = [doc.name] + (_invoice_family(doc.amended_from) if doc.get("amended_from") else [])
 	if frappe.db.exists(
-		"Stripe Payment", {"sales_invoice": doc.name, "status": ["in", ["Processing", "Paid"]]}
+		"Stripe Payment",
+		{"sales_invoice": ["in", family], "status": ["in", ["Processing", "Paid", "Link Sent"]]},
 	):
 		return
 	frappe.enqueue(

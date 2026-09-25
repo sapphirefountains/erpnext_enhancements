@@ -24,13 +24,36 @@ RETRY_BATCH = 25
 
 
 def poll_pending():
-	"""Reconcile Stripe Payments stuck in Link Sent / Processing against Stripe."""
+	"""Reconcile Stripe Payments stuck in Link Sent / Processing against Stripe.
+
+	Beyond the missed webhook, it settles the two kinds of row the payment guard
+	(``card_element.invoice_payment_block``) keeps blocking on purpose, so an invoice is
+	never "being processed" for good:
+
+	* a charge Stripe never answered (written ahead as Processing, no PaymentIntent): found
+	  at Stripe by the row's name in its metadata and settled like any other, or marked
+	  Expired once Stripe provably has no PaymentIntent for it — never Failed, which dunning
+	  would take for a declined card (``card_element.resolve_unknown_outcome``);
+	* a card or off-session attempt that can no longer charge — declined after 3-D Secure,
+	  3-D Secure untouched for 30 minutes, an off-session card challenge — canceled at Stripe
+	  and failed (``card_element.settle_dead_attempt``) — and when it is a charge Stripe never
+	  answered, found above, its payer (told "we will email you if it did not go through") is
+	  emailed and Accounts alerted, as when it proves absent. Hosted Checkout rows are never
+	  touched, nor is an off-session bank debit in ``requires_action``: an ACH debit waits on
+	  microdeposit verification for days, and is a payment;
+	* a PaymentIntent or Checkout Session Stripe answers 404 for — made in the other mode or
+	  another account — which no run will ever find: marked Expired and Accounts told
+	  (``card_element.settle_missing``), instead of failing here every hour for good;
+	* an emailed link whose invoice was canceled, amended or settled another way (a cheque,
+	  a credit note): expired at Stripe (``card_element.expire_stale_link``).
+	"""
 	settings = get_settings()
 	if not is_enabled(settings):
 		return
 
-	from erpnext_enhancements.stripe_payments.core import reconcile
+	from erpnext_enhancements.stripe_payments.core import card_element, reconcile
 	from erpnext_enhancements.stripe_payments.core.client import (
+		is_missing,
 		retrieve_checkout_session,
 		retrieve_payment_intent,
 	)
@@ -45,20 +68,42 @@ def poll_pending():
 	for name in rows:
 		try:
 			sp = frappe.get_doc("Stripe Payment", name)
+			pi = None
+			if card_element.outcome_unknown(sp):
+				pi = card_element.resolve_unknown_outcome(sp)
+				if not pi:
+					continue  # Expired (nothing reached Stripe), or not provable yet
 			if sp.stripe_payment_intent:
-				pi = retrieve_payment_intent(sp.stripe_payment_intent)
+				if not pi:
+					try:
+						pi = retrieve_payment_intent(sp.stripe_payment_intent)
+					except Exception as exc:
+						if not is_missing(exc):
+							raise
+						card_element.settle_missing(sp, "PaymentIntent")
+						continue
 				if pi.get("status") == "succeeded":
 					reconcile.finalize_payment(sp, pi)
+				elif card_element.settle_dead_attempt(sp, pi.get("status")):
+					pass  # canceled at Stripe, failed, invoice un-stamped
 				elif pi.get("status") in ("canceled",):
 					sp.db_set("status", "Failed")
 					frappe.db.commit()
 			elif sp.stripe_checkout_session:
-				session = retrieve_checkout_session(sp.stripe_checkout_session)
+				try:
+					session = retrieve_checkout_session(sp.stripe_checkout_session)
+				except Exception as exc:
+					if not is_missing(exc):
+						raise
+					card_element.settle_missing(sp, "Checkout Session")
+					continue
 				if session.get("payment_status") == "paid":
 					reconcile.finalize_payment(sp, session)
 				elif session.get("status") == "expired":
 					sp.db_set("status", "Expired")
 					frappe.db.commit()
+				elif session.get("status") == "open":
+					card_element.expire_stale_link(sp)
 		except Exception:
 			frappe.db.rollback()
 			frappe.log_error(error_snippet(frappe.get_traceback()), f"Stripe: poll_pending {name} failed")
@@ -146,7 +191,11 @@ def sweep_missed_autopay():
 	invoice that never produced a Stripe Payment at all. Find autopay-enrolled customers'
 	submitted, outstanding invoices with no active/handled Stripe Payment and re-charge
 	them. ``charge_saved_method`` is guarded and the on-submit path already skips a
-	Processing/Paid payment, so a double run is safe.
+	Processing/Paid payment, so a double run is safe. An ``Expired`` row does not count as
+	handled — a link that lapsed, or a charge proven never to have reached Stripe
+	(``card_element.resolve_unknown_outcome``) — so autopay is re-driven after one. The
+	invoice an amended one was made from counts as the same bill, one level up; the guard in
+	``charge_saved_method`` walks the whole chain.
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
@@ -165,6 +214,11 @@ def sweep_missed_autopay():
 		      select 1 from `tabStripe Payment` sp
 		      where sp.sales_invoice = si.name
 		        and sp.status in ('Processing', 'Paid', 'Failed', 'Link Sent')
+		  )
+		  and not exists (
+		      select 1 from `tabStripe Payment` sp
+		      where ifnull(si.amended_from, '') != '' and sp.sales_invoice = si.amended_from
+		        and sp.status in ('Processing', 'Paid', 'Link Sent')
 		  )
 		limit %(batch)s
 		""",
