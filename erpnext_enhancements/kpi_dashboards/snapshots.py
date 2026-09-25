@@ -285,7 +285,9 @@ STORE_RUN_SOURCE = "Purchase Receipt + QuickBooks"
 
 #: How far before the window the rows are read: a trip just before it still claims its card
 #: charge inside it (``metrics.combine_store_runs`` pairs a charge up to three days later).
-STORE_RUN_LOOKBACK_DAYS = 7
+#: Defined in ``metrics`` since v1.538.0, because the Store Run Charge Matching report reads from
+#: the same distance and its window logic is pure.
+STORE_RUN_LOOKBACK_DAYS = metrics.STORE_RUN_LOOKBACK_DAYS
 
 
 def _store_runs(suppliers, since):
@@ -332,6 +334,16 @@ def _store_run_rows(suppliers, since):
 	the receipt's own name), the receipt total and the receipt number.
 
 	Rows start :data:`STORE_RUN_LOOKBACK_DAYS` before ``since``; the pairing decides what counts.
+
+	**Identifying columns** (v1.538.0), for the Store Run Charge Matching report; the count reads
+	none of them. Each charge carries ``voucher_type``, ``voucher_no``, ``docstatus`` (a QuickBooks
+	card purchase is a draft until step S-D submits it) and ``source`` (``QuickBooks`` or
+	``ERPNext``). Each receipt carries its name (``receipt``), ``company``, ``recorded_by`` (the
+	owner), ``net_amount`` (its lines before tax), ``is_stock_item`` (a line of it went into
+	stock: it has a stock ledger entry) and ``stock_amount``: its stock lines before tax, read as
+	what the receipt credited to the company's Stock Received But Not Billed account in the GL
+	(v16 credits ``base_net_amount`` per stock line; a non-stock line posts nothing). That is the
+	amount a matching card charge must move to 2210.
 	"""
 	early = add_days(since, -STORE_RUN_LOOKBACK_DAYS)
 	params = {"since": since, "early": early, "suppliers": tuple(suppliers)}
@@ -341,7 +353,9 @@ def _store_run_rows(suppliers, since):
 	if qbo:
 		charges += frappe.db.sql(
 			"""
-			select vm.erpnext_name as supplier, je.posting_date as day, je.total_debit as amount
+			select vm.erpnext_name as supplier, je.posting_date as day, je.total_debit as amount,
+				'Journal Entry' as voucher_type, je.name as voucher_no, je.docstatus as docstatus,
+				'QuickBooks' as source
 			from `tabQuickBooks Sync Mapping` m
 			join `tabJournal Entry` je
 				on je.name = m.erpnext_name and je.docstatus < 2 and je.posting_date >= %(early)s
@@ -365,7 +379,9 @@ def _store_run_rows(suppliers, since):
 
 	charges += frappe.db.sql(
 		"""
-		select pi.supplier, pi.posting_date as day, pi.base_grand_total as amount
+		select pi.supplier, pi.posting_date as day, pi.base_grand_total as amount,
+			'Purchase Invoice' as voucher_type, pi.name as voucher_no, pi.docstatus as docstatus,
+			'ERPNext' as source
 		from `tabPurchase Invoice` pi
 		where pi.docstatus = 1 and pi.is_return = 0 and pi.posting_date >= %(early)s
 			and pi.supplier in %(suppliers)s
@@ -393,24 +409,28 @@ def _store_run_rows(suppliers, since):
 		else ""
 	)
 	# One row per party line; metrics.journal_store_charges keeps the unreferenced credits only
-	# (a debit to the store is a payment), so the rule is tested bench-free.
-	charges += metrics.journal_store_charges(
-		frappe.db.sql(
-			f"""
-			select je.name as entry, jea.party as supplier, je.posting_date as day,
-				jea.credit as credit, jea.debit as debit,
-				coalesce(jea.reference_type, '') as reference_type
-			from `tabJournal Entry` je
-			join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
-			where je.docstatus = 1 and je.posting_date >= %(early)s
-				and coalesce(je.is_opening, 'No') <> 'Yes'
-				and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
-				{not_qbo}
-			""",
-			params,
-			as_dict=True,
+	# (a debit to the store is a payment), so the rule is tested bench-free. It names the entry
+	# as the voucher; the query reads submitted entries only, hence docstatus 1.
+	charges += [
+		dict(charge, docstatus=1, source="ERPNext")
+		for charge in metrics.journal_store_charges(
+			frappe.db.sql(
+				f"""
+				select je.name as entry, jea.party as supplier, je.posting_date as day,
+					jea.credit as credit, jea.debit as debit,
+					coalesce(jea.reference_type, '') as reference_type
+				from `tabJournal Entry` je
+				join `tabJournal Entry Account` jea on jea.parent = je.name and jea.parenttype = 'Journal Entry'
+				where je.docstatus = 1 and je.posting_date >= %(early)s
+					and coalesce(je.is_opening, 'No') <> 'Yes'
+					and jea.party_type = 'Supplier' and jea.party in %(suppliers)s
+					{not_qbo}
+				""",
+				params,
+				as_dict=True,
+			)
 		)
-	)
+	]
 
 	# The run id and the receipt total exist once patches/add_store_run_receipt_fields has run;
 	# before that every receipt is its own trip, as it always was.
@@ -420,11 +440,29 @@ def _store_run_rows(suppliers, since):
 		run_expr = f"coalesce(nullif(pr.`{STORE_RUN_RECEIPT_FIELD}`, ''), pr.name)"
 	if frappe.db.has_column("Purchase Receipt", STORE_RUN_TOTAL_FIELD):
 		total_expr = f"coalesce(pr.`{STORE_RUN_TOTAL_FIELD}`, 0)"
+	# The identifying columns after receipt_number are the report's (see the docstring). Both stock
+	# columns read what the receipt POSTED, not the Item's stock flag today: an Item made a stock
+	# item after its receipt (allowed while it has no stock ledger) would otherwise count lines
+	# that credited nothing to 2210. On production MAT-PRE-2026-00038 credited 81.00 there while
+	# its Items' current flags said 205.50 (2026-09-25).
 	receipts = frappe.db.sql(
 		f"""
 		select pr.supplier, pr.posting_date as day, {run_expr} as run,
 			pr.base_grand_total as amount, {total_expr} as receipt_total,
-			coalesce(pr.supplier_delivery_note, '') as receipt_number
+			coalesce(pr.supplier_delivery_note, '') as receipt_number,
+			pr.name as receipt, pr.company, pr.owner as recorded_by, pr.base_net_total as net_amount,
+			exists(
+				select 1 from `tabStock Ledger Entry` sle
+				where sle.voucher_type = 'Purchase Receipt' and sle.voucher_no = pr.name
+					and sle.is_cancelled = 0
+			) as is_stock_item,
+			(
+				select coalesce(sum(g.credit) - sum(g.debit), 0) from `tabGL Entry` g
+				where g.voucher_type = 'Purchase Receipt' and g.voucher_no = pr.name and g.is_cancelled = 0
+					and g.account = (
+						select c.stock_received_but_not_billed from `tabCompany` c where c.name = pr.company
+					)
+			) as stock_amount
 		from `tabPurchase Receipt` pr
 		where pr.docstatus = 1 and pr.is_return = 0 and pr.posting_date >= %(early)s
 			and pr.supplier in %(suppliers)s

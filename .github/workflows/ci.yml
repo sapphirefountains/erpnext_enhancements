@@ -1171,13 +1171,20 @@ jobs:
       # test_kpi_metrics also pins combine_store_runs (v1.536.0): a store run recorded on the
       # Stock Scan page and its card charge (dated up to 3 days later, same amount) count as ONE
       # trip, a charge of another amount is never taken, and journal_store_charges counts a
-      # Journal Entry's credits to a store, never a payment.
-      - name: KPI dashboard metrics (pure math) + cockpit workspace constants
+      # Journal Entry's credits to a store, never a payment. Since v1.538.0 the pairing is
+      # metrics.pair_store_runs, checked against the v1.536.0 count on every existing case and on
+      # generated histories; test_store_run_matching covers the Store Run Charge Matching report
+      # (Accounting's list at the QuickBooks cutover) built on it: each "What to do", the 2210
+      # check to the cent, the Show buckets, trips at either edge of the range pairing as the KPI
+      # pairs them, and the report's files (placement, reads only, JS filters = Python's). All
+      # four are stub-free.
+      - name: KPI dashboard metrics (pure math) + cockpit workspace constants + store-run matching
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_kpi_metrics
           erpnext_enhancements.tests.test_custom_html_blocks
-          erpnext_enhancements.tests.test_kpi_departments -v
+          erpnext_enhancements.tests.test_kpi_departments
+          erpnext_enhancements.tests.test_store_run_matching -v
       # Department dashboard widgets: the registry, the settings toggles, the
       # seeder's placement map and the shipped workspace JSONs must agree. A
       # placement naming an unseeded block renders an empty div with no error, so

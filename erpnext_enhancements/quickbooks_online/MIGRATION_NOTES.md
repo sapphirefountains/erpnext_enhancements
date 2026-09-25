@@ -90,14 +90,19 @@ Other prerequisites:
     booked and the card accounts no longer tie out to QuickBooks.
   - So for a draft that matches a recorded trip — same store, dated on the trip's day or up to
     three days after, for the receipt total (or the lines plus tax), the pairing the Store Runs KPI
-    uses (`kpi_dashboards/metrics.combine_store_runs`) — **change the goods' debit from the expense
+    uses (`kpi_dashboards/metrics.pair_store_runs`) — **change the goods' debit from the expense
     account to `2210 - Stock Received But Not Billed - SF`**, for what the trip's receipts credited
     there (its stock lines before tax; split a line if need be), **then submit it**. That clears
     2210 and still books the card liability. The rest — the tax, and any non-stock line — stays on
     the expense account QuickBooks used, or wherever Accounting decides tax goes.
-  - The recorded trips are listed by Stock Scan Log (action *Store Run*, grouped by *Store Run*)
-    and the Purchase Receipt field *Store Run*. A read-only list pairing each trip with its draft is
-    a follow-up, not built yet. Every other draft is reviewed and submitted as above.
+  - **Before the bulk submit, run the *Store Run Charge Matching* report** (KPI Dashboards,
+    v1.538.0) from 2026-09-24 to today with **Show = Needs action**, and adjust each listed draft
+    as its *What to Do* column says before the loop. One row per recorded trip: its receipts, the
+    draft it pairs with (the KPI's own pairing, so the list and the KPI cannot disagree), the
+    amount to move (*Stock Lines Before Tax (Move to 2210)*: what the receipts credited to 2210,
+    read from the GL) and whether the draft already carries it (*Moved to 2210*, to the cent). A
+    row leaves *Needs action* once its draft carries exactly that 2210 debit, so re-running the
+    report shows what is left. Every other draft is reviewed and submitted as above.
 - **Chart of Accounts mismatch.** QBO account names carry numeric prefixes
   (`13000 US Bank Checking`). If you let the integration create accounts, expect a
   large COA. If you pre-built a COA, use the **QuickBooks Record Matching** page (Finance
