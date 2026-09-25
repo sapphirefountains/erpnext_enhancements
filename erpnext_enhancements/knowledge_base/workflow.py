@@ -4,8 +4,9 @@
 """Who may approve a Knowledge Base version, and the numbers and dates publishing writes (WI-080 PR 2).
 
 ADR 0017 section 2: **a version is published only by a KB Approver who did not write it, from a
-signed-in browser, exactly as they opened it.** This module is the rule itself, as functions of
-plain values, so the bench-free CI tier tests every branch. The controller
+signed-in browser, exactly as they opened it.** The approver is a named person with a staff login:
+never Administrator, which holds every role, and never Guest. This module is the rule itself, as
+functions of plain values, so the bench-free CI tier tests every branch. The controller
 (``knowledge_base/doctype/knowledge_article_version``) applies it in ``before_submit`` and again in
 ``on_submit``, and PR 3's ``approve_and_publish`` asks it before it tries.
 
@@ -62,6 +63,10 @@ _KB_NUMBER = re.compile(r"^KB-(\d{2})(\d{2})$", re.IGNORECASE)
 #: those separates user ids, none of which can contain them.
 _CONTRIBUTOR_SEPARATORS = re.compile(r"[\s,;]+")
 
+#: The two accounts that never approve, compared as :func:`_person` compares user ids. Unpacked for
+#: the same reason as the states above: each gets its own sentence in the refusal.
+_ADMINISTRATOR, _GUEST = (name.casefold() for name in constants.NEVER_APPROVERS)
+
 
 class BlockFullError(ValueError):
 	"""A department block has used ``01`` to ``99``. PR 3 shows the message as it stands."""
@@ -70,21 +75,31 @@ class BlockFullError(ValueError):
 # ------------------------------------------------------------------ approval
 
 
-def approval_problems(version, user, roles, *, browser, gate_flags, opened_modified):
+def approval_problems(version, user, roles, *, user_type, browser, gate_flags, opened_modified):
 	"""Why ``user`` cannot approve ``version``; an empty list means they can.
 
 	``version`` is the version **as stored** (the controller passes ``get_doc_before_save()``),
 	never the copy in memory, which the code calling ``submit()`` could have changed; ``None``
-	means there is nothing stored to approve. ``roles`` are the approver's roles.
+	means there is nothing stored to approve. ``roles`` are the approver's roles. ``user_type`` is
+	the approver's ``User.user_type`` as stored (``frappe.db.get_value("User", user,
+	"user_type")``); only ``constants.APPROVER_USER_TYPE`` approves, and ``None`` (no User row) is
+	refused. It has no default, so a caller that forgets it fails loudly rather than approving.
 	``browser`` is :func:`signed_in_browser` for this request. ``gate_flags`` is ``frappe.flags``
 	(anything with ``.get`` or attributes). ``opened_modified`` is the ``modified`` value of the
 	copy the approver had open, as the page sent it.
+
+	Approvers are named people: Administrator and Guest (``constants.NEVER_APPROVERS``) are
+	refused by name, whatever roles they hold, and so is any account that is not a System User.
 
 	Every rule is checked and every broken one is reported, so the refusal names each of them.
 	"""
 	problems = []
 	if constants.APPROVER_ROLE not in set(roles or ()):
 		problems.append(f"only a {constants.APPROVER_ROLE} can approve a version")
+	me = _person(user)
+	problem = _approver_account_problem(user, me, user_type)
+	if problem:
+		problems.append(problem)
 	if not browser:
 		problems.append(
 			"approvals are made by a person signed in to ERPNext in a browser; API keys, tokens, "
@@ -100,10 +115,7 @@ def approval_problems(version, user, roles, *, browser, gate_flags, opened_modif
 	if state != IN_REVIEW:
 		problems.append(f"it is {state}, not {IN_REVIEW}")
 
-	me = _person(user)
-	if not me:
-		problems.append("nobody is signed in")
-	else:
+	if me and me != _GUEST:
 		did = []
 		if me == _person(_get(version, "owner")):
 			did.append("created it")
@@ -119,6 +131,24 @@ def approval_problems(version, user, roles, *, browser, gate_flags, opened_modif
 	if not _same_moment(_get(version, "modified"), opened_modified):
 		problems.append("it changed after you opened it, so reload it and review it again")
 	return problems
+
+
+def _approver_account_problem(user, me, user_type):
+	"""Why this account is not a named person who may approve; ``None`` if it is."""
+	if not me or me == _GUEST:
+		return "nobody is signed in"
+	if me == _ADMINISTRATOR:
+		return (
+			"Administrator is a shared account, not a person, and only grants or revokes KB roles, "
+			f"so a named {constants.APPROVER_ROLE} must approve it"
+		)
+	if user_type != constants.APPROVER_USER_TYPE:
+		held = f"has user type {user_type}" if user_type else "has no user type"
+		return (
+			f"only a {constants.APPROVER_USER_TYPE} (a staff login) can approve, and "
+			f"{str(user).strip()} {held}"
+		)
+	return None
 
 
 def refusal(name, action, problems):

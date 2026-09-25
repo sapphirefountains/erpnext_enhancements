@@ -13,12 +13,14 @@ action sets ``doc.flags.kb_publish`` before it calls ``submit()``; any other sub
 Nobody holds the ``submit`` right either, so the refusal is reached only by server code running
 with ``ignore_permissions``. **The same two hooks then apply the approval rules**
 (``knowledge_base/workflow.py``, ``approval_problems``, PR 2): the approver holds KB Approver, is
-not the owner, the submitter, a contributor or the AI requester, is a person signed in from a
-browser and not an AI gate action, and the version is In Review and still exactly the copy they
-opened. The rules read the version **as stored** (``get_doc_before_save()``, loaded ``FOR UPDATE``
-by ``check_if_latest``, ``model/document.py:588`` -> ``:1097`` -> ``:1432``), never the copy in
-memory, which the code calling ``submit()`` could have edited; and the copy being submitted must
-match it (``_refuse_unless_approvable``).
+a named person with a System User login (never Administrator or Guest), is not the owner, the
+submitter, a contributor or the AI requester, is signed in from a browser and not an AI gate
+action, and the version is In Review and still exactly the copy they opened. The rules read the
+version **as stored** (``get_doc_before_save()``, loaded ``FOR UPDATE`` by ``check_if_latest``,
+``model/document.py:588`` -> ``:1097`` -> ``:1432``), never the copy in memory, which the code
+calling ``submit()`` could have edited; and the copy being submitted must match it
+(``_refuse_unless_approvable``). The approver's ``user_type`` is read from the User row
+(``_user_type``), because ``approval_problems`` is pure and takes it as an argument.
 
 **The flag for PR 3.** ``approve_and_publish`` sets ``doc.flags.kb_opened_modified`` to the
 ``modified`` value the approver's page had open. Without it every approval is refused as "changed
@@ -187,6 +189,7 @@ class KnowledgeArticleVersion(Document):
 			stored,
 			user,
 			frappe.get_roles(user),
+			user_type=_user_type(user),
 			browser=_browser_request(),
 			gate_flags=frappe.flags,
 			opened_modified=self.flags.get("kb_opened_modified"),
@@ -197,6 +200,15 @@ class KnowledgeArticleVersion(Document):
 			problems.append("its content looks like it contains a secret; send it back so the author can remove it")
 		if problems:
 			frappe.throw(workflow.refusal(self.name, "approved", problems), title=_("Not approved"))
+
+
+def _user_type(user):
+	"""The approver's ``User.user_type`` as stored now, not as the session recorded it at login;
+	``None`` for nobody signed in or a user with no row, which ``workflow.approval_problems``
+	refuses."""
+	if not user:
+		return None
+	return frappe.db.get_value("User", user, "user_type")
 
 
 def _browser_request():

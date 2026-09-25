@@ -51,9 +51,10 @@ whole matrix, so an added row fails the build as surely as a changed one.
 
 KB Author and KB Approver hold the same DocPerm. What makes an approver different is enforced in
 code (`workflow.approval_problems`, applied by the Version controller since PR 2; the button that
-asks arrives in PR 3): the approver holds KB Approver, is not the owner, the submitter, a
-contributor or the person who asked an AI to draft it, approves from a signed-in browser and not
-through an AI gate card, and approves the version exactly as they opened it. See "The rules" below.
+asks arrives in PR 3): the approver holds KB Approver, is a named person with a System User login
+(never Administrator or Guest), is not the owner, the submitter, a contributor or the person who
+asked an AI to draft it, approves from a signed-in browser and not through an AI gate card, and
+approves the version exactly as they opened it. See "The rules" below.
 
 ### Server-set fields
 
@@ -85,7 +86,7 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead |
 | Core `Version` rows (the change log) | `track_changes 0` on the Version doctype, because core `Version` is readable by System Manager, which includes the `triton@` service identity. The Article keeps `track_changes 1`: its rows hold only published text, and they give a tamper trail |
 | Pasted images and attachments | `make_attachments_public 0`, so pasted images are private already. `files.force_private` (PR 2) makes every other File attached to either doctype private, **bytes included**: an upload with Private unticked, a public library pick, a REST insert, and an owner unticking Private later. It also keeps a KB File attached where it is, so its owner cannot detach it and then make it public. See "Files" below |
-| Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font (as `style`, as Quill's classes, or as `<font color size face>` and `bgcolor`) and the `hidden` attribute on every content save, so nothing a reviewer cannot see stays in the HTML a model reads |
+| Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font (as `style`, or as `<font color size face>` and `bgcolor`), the `hidden` and `id` attributes, and **every class except the few v16's Text Editor writes for structure** (`KEPT_CLASSES`) on every content save, so nothing a reviewer cannot see stays in the HTML a model reads. Classes are an allowlist because any stylesheet on the page can hide text by class (`hidden`, `d-none`, `sr-only`, Frappe's `icon`) |
 | A secret pasted into an article | `content.secret_findings` (PR 2) refuses the save, naming the field, line and kind and never the value; scanned again at approval |
 | Import and export | `allow_import 0`, and no import or export right |
 | A Custom DocPerm, Property Setter or Custom Field widening a doctype | None exist, and the schema test fails if a fixture adds one |
@@ -131,6 +132,14 @@ name comes from `constants.py`.
 broken rule is reported, in one sentence that names it:
 
 - the approver holds **KB Approver**;
+- the approver is **a named person with a staff login**: never `Administrator`, which holds every
+  role implicitly (v16 `permissions.py:546-547`) and is a System User, so only its name gives it
+  away; never `Guest`; and never an account whose `User.user_type` is not exactly `System User` (a
+  portal Website User, a custom User Type, or no User row). `constants.NEVER_APPROVERS` and
+  `APPROVER_USER_TYPE`. The continuity runbook uses Administrator only to grant or revoke KB roles.
+  `approval_problems` is pure, so it takes `user_type` as a keyword argument with no default; the
+  controller reads it from the User row at approval, not from the session, which recorded it at
+  login;
 - the request comes from **a person signed in in a browser**: `signed_in_browser`, imported from
   `marketing/publish/workflow.py` so both modules share one definition. A token, an API key, a
   background job and the console are refused;
@@ -171,16 +180,42 @@ interval that is blank, 0, negative or unreadable is `constants.DEFAULT_REVIEW_E
 POL-0001).
 
 **Presentation** (`content.strip_presentation`): removes every `style` declaration except
-`text-align` (v16's Text Editor stores alignment as a style), the `ql-color-*`, `ql-bg-*`,
-`ql-size-*` and `ql-font-*` classes, and the `color`, `size`, `face`, `bgcolor` and `hidden`
-attributes. v16's `sanitize_html` keeps all of those and the `<font>` element, and a REST write
-stores a body as sent, so `<font color="#ffffff">` would otherwise be text no reader sees; a bare
-`<font>` is left in place and renders as plain text. Indent (`ql-indent-N`), direction, lists and
-tables survive.
-Only the start tags that change are rewritten; every other byte comes back as it was. An image's
-float or size set as `style` by the resize handles is dropped too; its `width` attribute is kept.
-Scripts, comments and unknown tags are left to v16's own `sanitize_html`, which runs on every Text
-Editor save after `validate`.
+`text-align` (v16's Text Editor stores alignment as a style); the `color`, `size`, `face`,
+`bgcolor` and `hidden` attributes; `id`; and every class outside `content.KEPT_CLASSES`. v16's
+`sanitize_html` keeps all of those and the `<font>` element, and a REST write stores a body as
+sent, so `<font color="#ffffff">` would otherwise be text no reader sees; a bare `<font>` is left
+in place and renders as plain text.
+
+**Classes are an allowlist.** A class means whatever the stylesheets on the page say, and the page
+carries Bootstrap, Frappe, ERPNext and this app, so a denylist of Quill's colour classes let
+`<p class="hidden">` (and `d-none`, `sr-only`, `visually-hidden`, `text-white`) through: invisible
+on the page, plain in `body_md` and to every AI tool. Two it kept come from the editor's own
+world: Frappe's `.icon` is `font-size: 0`, and Quill's `.ql-clipboard` is 100000px off-screen.
+`KEPT_CLASSES` is exactly what v16's editor writes for structure, each cited to the v16 or Quill
+2.0.3 line that emits it:
+
+| Kept | What it is |
+|---|---|
+| `ql-editor`, `read-mode` | The wrapper round every saved body (`text_editor.js:402`) |
+| `ql-indent-1` to `ql-indent-8` | Indent, and list nesting, which Quill writes as one flat list of indented items |
+| `ql-align-right`, `-center`, `-justify` | Quill's class form of alignment. v16 writes a `text-align` style instead, but reads these from pasted HTML |
+| `ql-direction-rtl` | Right-to-left text |
+| `ql-code-block-container`, `ql-code-block` | A code block (a `<pre>` in v16) |
+| `ql-ui` | The empty span each list item's bullet, number or checkbox is drawn on |
+| `table`, `table-bordered` | Added to every table the editor inserts |
+| `mention`, `ql-mention-denotation-char` | An @-mention (the KB body does not enable them, so only pasted) |
+
+Everything else goes, compared exactly and case included. `tests/test_knowledge_base_rules.py`
+holds the cited lines verbatim, derives the list from them, and checks the Frappe ones against a
+local v16 checkout when there is one (CI has none, so it skips there). `id` goes because a
+stylesheet can hide by id too: Frappe's desk gives `#freeze` `opacity: 0`, and Quill never writes
+an id.
+
+Lists, tables, code blocks, alignment, direction and indent survive. Only the start tags that
+change are rewritten; every other byte comes back as it was. An image's float or size set as
+`style` by the resize handles is dropped too; its `width` attribute is kept. Scripts, comments and
+unknown tags are left to v16's own `sanitize_html`, which runs on every Text Editor save after
+`validate`.
 
 **Secrets** (`content.secret_findings`): private keys, Stripe, AWS, Google (API key, OAuth client
 secret and tokens, service-account key id), GitHub, Slack, SendGrid, Anthropic, OpenAI, Plaid access
@@ -254,6 +289,10 @@ Granting is a Desk step, and only a System Manager can do it:
   fourth approver (approved by James on 2026-09-25), holds "Finance Team", so this is her route.
 - **Revoking** is the same step in reverse. The fast rollback of the whole Knowledge Base is to
   remove KB Approver from everyone: nothing can publish, and published articles stay readable.
+- **Administrator grants and revokes; it never approves.** The continuity runbook (not yet
+  written; ERPNext task TASK-2026-02297) uses Administrator only to grant or revoke KB roles.
+  Administrator holds every role implicitly, so the approval rules refuse it by name, as they
+  refuse Guest and any account that is not a System User: an approval is always a named person's.
 
 ## File map
 
@@ -282,6 +321,11 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
   - set `flags.kb_publish` **and** `flags.kb_opened_modified` (the `modified` the approver's page
     sent) before `submit()`, and ask `workflow.approval_problems` itself first so the button can
     explain a refusal before anything is written;
+  - pass `approval_problems` the approver's **`user_type`**, read from the User row at the moment
+    of approval (`frappe.db.get_value("User", frappe.session.user, "user_type")`, as the
+    controller's `_user_type` does), never from the session, which recorded it at login. It is a
+    keyword argument with no default, so a call without it raises `TypeError` rather than
+    approving. Administrator and Guest are refused by name whatever it says;
   - allocate with `next_kb_number` over the rows its `SELECT ... FOR UPDATE` returns for
     `kb_number_prefix(block) + "%"`;
   - compute `body_md` (`frappe.utils.to_markdown`) and `content_hash` at publish from the stored

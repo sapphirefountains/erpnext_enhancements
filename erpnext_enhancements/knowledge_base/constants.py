@@ -41,6 +41,19 @@ KB_DOCTYPES = frozenset({ARTICLE_DOCTYPE, VERSION_DOCTYPE})
 AUTHOR_ROLE = "KB Author"
 APPROVER_ROLE = "KB Approver"
 
+#: An approver is a named person with a staff login: ``User.user_type`` exactly this. Not a
+#: "Website User" (a portal contact) and not a custom User Type. ``workflow.approval_problems``
+#: takes the value as an argument, so its callers read it from the User row.
+APPROVER_USER_TYPE = "System User"
+
+#: Accounts that never approve, whatever roles they hold. Administrator is a shared account, not a
+#: person, and holds every role implicitly (v16 ``frappe.get_roles`` returns them all for it,
+#: frappe ``origin/version-16`` ``permissions.py:546-547``), so the role rule alone would let it
+#: approve; and v16 makes it a System User (``core/doctype/user/user.py:406``), so the user-type
+#: rule would not catch it either. The continuity runbook uses Administrator only to grant or revoke
+#: KB roles, never to approve. Guest is nobody signed in. Both are refused by name.
+NEVER_APPROVERS = ("Administrator", "Guest")
+
 #: The Version fields an author types into, in form order. Every other Version field is set by the
 #: Knowledge Base's own code and sits at permlevel 1. Saving a change to any of these makes the
 #: saver a contributor, who may not approve the version (``workflow.approval_problems``), and none

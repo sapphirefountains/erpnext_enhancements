@@ -114,6 +114,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 **PR 2: pure rules and content hygiene.**
 - `knowledge_base/workflow.py` (standard library only; imports `signed_in_browser` from `marketing/publish/workflow.py:64-74`). Marketing's `approval_problems` is **not** reused, because it hard-codes Marketing Manager (`:122-142`). The module's own `approval_problems` refuses when:
   - the approver lacks KB Approver;
+  - the approver is Administrator or Guest, or an account whose `user_type` is not `System User` (added in PR 2 review: approvers are named people);
   - the request is not from a browser;
   - `ai_gate_pending` or `ai_gate_bypass` is set;
   - the version is not In Review;
@@ -121,7 +122,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - `modified` is not the value the approver opened.
 - It also holds `next_kb_number(block, taken)` (`KB-{block}{01..99}`, with `00` reserved as the block index) and `review_by`.
 - `knowledge_base/content.py` (standard library only):
-  - `strip_presentation` removes `style` and the `ql-color`/`ql-bg`/`ql-size`/`ql-font` classes, and keeps tables, lists, alignment and indent.
+  - `strip_presentation` removes `style` (except `text-align`), the presentation attributes, `id`, and every class outside `KEPT_CLASSES`, the structural classes v16's Text Editor writes; it keeps tables, lists, code blocks, alignment, direction and indent.
   - `secret_findings` runs on the text **after** `data:` images are removed, because v16 extracts images only after `validate` (`document.py:594` → `:835`). It returns line and kind, never the value.
   - `content_hash`.
 - **`body_md` and `content_hash` are computed at publish, from the stored body. Never in `validate`.**
@@ -137,11 +138,13 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - **Presentation also arrives as attributes.** v16's `sanitize_html` keeps the `font` element and the `color`, `size`, `face`, `bgcolor` and `hidden` attributes (`utils/html_utils.py:267`, `:413-516`), and a REST write stores the body as sent, so `<font color="#ffffff">` or `<p hidden>` hid text from readers and not from `body_md`. `strip_presentation` drops those attributes; a bare `<font>` renders as plain text.
   - **The secret scan must not refuse ordinary sentences**, because nothing lets an author past a finding. "Basic Maintenance/Cleaning" was an HTTP Basic credential (letters and `/` are base64), and "Password: case-sensitive." or "the password is forgotten," a written-out password. A Basic token must now decode to `user:password`, and a written password ignores the sentence's punctuation and needs a digit or a symbol other than `-`, `.` or `/`.
   - **A KB File's owner could detach it and then delete it**, or detach it and make it public in one call: `attached_to_doctype` and `attached_to_name` are only `read_only`, which v16 never enforces, and the write check runs on the updated row. `force_private` (`before_validate`, which no flag skips) now refuses any change to where a KB File is attached unless KB code sets `flags.kb_action`, and treats a File as a KB File if its stored row says so. `api/comments.link_files_to_comment` moves Files with `db_set`, which runs no hook, so it skips KB Files itself.
+  - **Classes are an allowlist, not a denylist.** Dropping only `ql-color`/`ql-bg`/`ql-size`/`ql-font` kept every other class, so a REST-written `<p class="hidden">` (or `d-none`, `sr-only`, `visually-hidden`, `text-white`) was invisible on the page and plain in `body_md` and to AI. Two it kept come from the editor's own world: Frappe's `.icon` is `font-size: 0` (`scss/common/icons.scss:3`) and Quill's `.ql-clipboard` sits 100000px off-screen (Quill 2.0.3 `assets/core.styl:30-35`). `content.KEPT_CLASSES` is now exactly the structural classes v16's editor writes, derived from `text_editor.js` (the wrapper `:402`, table `:53-54`, direction class `:115-116`, code block `:7-9`), the Quill 2.0.3 formats it registers (indent, align, direction, code block, the list's `ql-ui`) and the mention blot; every other class is dropped. The rules test holds the cited lines verbatim, derives the list from them, and checks the Frappe lines against a local v16 checkout when there is one. `id` goes too: Quill never writes one, and Frappe's desk gives `#freeze` `opacity: 0` (`scss/desk/global.scss:511-514`).
+  - **Administrator could approve.** It holds every role implicitly (`permissions.py:546-547`) and v16 makes it a System User, so the role rule passed it. Approvers are named people: `approval_problems` now refuses Administrator and Guest by name, and any account whose `user_type` is not `System User`. The function is pure, so it takes `user_type` as a keyword argument with no default; the controller reads it from the User row at approval, and **PR 3 must pass it too** (see PR 3 below). The continuity runbook (TASK-2026-02297) uses Administrator only to grant or revoke KB roles.
 
 **PR 3: actions.**
 - `api/knowledge_base.py` (tabs; POST-only, with explicit permission checks; token-authenticated requests are refused on the approval path). Endpoints:
   - `start_revision`, which returns the open draft if there is one (one open draft per article);
-  - `submit_for_review`, `withdraw`, `request_changes`, `approve_and_publish`, `discard`, `confirm_still_accurate`, `retire`;
+  - `submit_for_review`, `withdraw`, `request_changes`, `approve_and_publish`, `discard`, `confirm_still_accurate`, `retire`. `approve_and_publish` asks `workflow.approval_problems` before it writes, passing `user_type=frappe.db.get_value("User", frappe.session.user, "user_type")` read at approval (from PR 2 review: a keyword argument with no default, so leaving it out raises), and sets `flags.kb_publish` and `flags.kb_opened_modified` before `submit()`;
   - GET `review_diff`: the live vs draft `html2text` diff, KB roles only.
 - `knowledge_base/publish.py` does the following in one transaction:
   1. Allocates the number with `SELECT … FOR UPDATE` (the `%` goes inside the bound parameter).
@@ -251,7 +254,7 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 - **Person test (Parker, James, a technician with no KB role, phone):**
   1. Parker drafts with a pasted screenshot and a table, and submits.
   2. `SELECT allocated_to, status FROM tabToDo WHERE reference_type LIKE 'Knowledge Article%' AND status='Open'` shows James.
-  3. Parker's own approve attempt is refused, and the message names the rule.
+  3. Parker's own approve attempt is refused, and the message names the rule. So is an approve attempt signed in as Administrator, which holds every role: the message says a named KB Approver must approve it (from PR 2 review).
   4. James presses *Request changes*, edits one word in the returned draft, and Parker resubmits. Approve is now refused for James, because he is a contributor. Content edits while In Review are refused for everyone.
   5. Nik approves from a browser.
   6. The technician reads the article and its image on a phone. The same image URL with no cookie returns 403. `GET /api/resource/Knowledge Article Version` as the technician returns 403.
@@ -259,6 +262,7 @@ All queries are read-only against prod after the deploy. From PR 1 on, the MCP d
 - **Images.** `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0` = 0.
   - From PR 2: a file attached to a draft through the sidebar **with Private unticked** is stored with `is_private = 1` and a `/private/files/` URL, and its would-be `/files/<name>` URL returns 404 with no cookie.
   - From PR 2: the uploader of an image on a published article cannot delete it. Pressing Delete on the File form, or `DELETE /api/resource/File/<name>`, is refused with a permission error. (The form still shows Delete: v16 builds that menu from the role-level `can_delete` list, `toolbar.js:504-523` and `model.js:348-351`, and never asks the permission hook.) Clearing its Attached To through `frappe.client.set_value` is refused too.
+- **Hidden text.** From PR 2 review: a draft body written with `frappe.client.set_value` as `<p class="hidden">a</p><p class="ql-indent-1 d-none">b</p><p id="freeze">c</p>` reads back as `<p>a</p><p class="ql-indent-1">b</p><p>c</p>`, and a body typed in the Desk with a nested list, a code block, a table and centred text keeps all four.
 - **Integrity.** The `Knowledge Base Integrity` report returns 0 rows: every Article has a submitted Version at its `version_number`, and `approved_by` is not in {owner, submitted_by, ai_requested_by, contributors}.
 - **Entry points.**
   - ``SELECT item_label, route FROM `tabNavbar Item` WHERE parentfield='help_dropdown' AND item_label='Company Knowledge Base'`` returns `/desk/knowledge-base`.

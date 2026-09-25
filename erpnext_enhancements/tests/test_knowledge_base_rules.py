@@ -6,18 +6,22 @@
 WI-080 PR 2, ADR 0017. ``knowledge_base/workflow.py`` and ``knowledge_base/content.py`` import no
 frappe, so every branch runs here, bench-free and with no stub:
 
-* **Approval** (``approval_problems``): a KB Approver who is not the owner, the submitter, a
-  contributor or the AI requester, signed in from a browser and not acting through an AI gate
-  card, on a version that is In Review and still the copy they opened. Each rule alone refuses,
-  and the refusal names it.
+* **Approval** (``approval_problems``): a KB Approver who is a named person with a System User
+  login (never Administrator, which holds every role, and never Guest), not the owner, the
+  submitter, a contributor or the AI requester, signed in from a browser and not acting through an
+  AI gate card, on a version that is In Review and still the copy they opened. Each rule alone
+  refuses, and the refusal names it.
 * **Content changes only in Draft**, and every saver of a change is a contributor.
 * **KB numbers** are ``KB-{block}{01..99}``: ``00`` is never allocated, a number is never reused,
   and a full block fails loudly.
 * **Review dates** default to ``constants.DEFAULT_REVIEW_EVERY_MONTHS`` (POL-0001's six months)
   and handle month ends and leap years.
-* **Presentation stripping** removes colour, background, size and font (as ``style``, as Quill's
-  classes, or as ``<font color size face>`` and ``bgcolor``) and the ``hidden`` attribute, keeps
-  alignment, indent, lists and tables, rewrites nothing else, and is idempotent.
+* **Presentation stripping** removes colour, background, size and font (as ``style``, or as
+  ``<font color size face>`` and ``bgcolor``), the ``hidden`` and ``id`` attributes, and every class
+  outside ``KEPT_CLASSES``: each hiding class goes, each kept class survives a realistic v16 body,
+  and the kept list is derived here from the v16 and Quill source lines it cites (checked against a
+  local v16 checkout when there is one). Alignment, indent, lists, code blocks and tables stay;
+  nothing else is rewritten; it is idempotent.
 * **The secret scan** finds each kind, skips ``data:`` images, reports line and kind and never the
   value, and leaves ordinary KB prose alone: nothing lets an author past a finding, so a sentence
   it refuses ("Basic Maintenance/Cleaning", "Password: case-sensitive.") is a save that cannot be
@@ -33,10 +37,13 @@ Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_rules -v
 
 import ast
 import datetime
+import inspect
 import json
+import re
 import subprocess
 import sys
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
@@ -80,9 +87,23 @@ def _in_review(**values):
 	return version
 
 
-def _approve(version, user=APPROVER, roles=(K.APPROVER_ROLE,), browser=True, gate=None, opened=OPENED):
+def _approve(
+	version,
+	user=APPROVER,
+	roles=(K.APPROVER_ROLE,),
+	browser=True,
+	gate=None,
+	opened=OPENED,
+	user_type=K.APPROVER_USER_TYPE,
+):
 	return W.approval_problems(
-		version, user, roles, browser=browser, gate_flags=gate or {}, opened_modified=opened
+		version,
+		user,
+		roles,
+		user_type=user_type,
+		browser=browser,
+		gate_flags=gate or {},
+		opened_modified=opened,
 	)
 
 
@@ -243,8 +264,9 @@ class TestApproval(unittest.TestCase):
 			browser=False,
 			gate={"ai_gate_bypass": True},
 			opened=None,
+			user_type="Website User",
 		)
-		self.assertEqual(len(problems), 6)
+		self.assertEqual(len(problems), 7)
 
 	def test_the_refusal_is_one_sentence_naming_each_rule(self):
 		message = W.refusal("KBV-00012", "approved", ["a", "b"])
@@ -252,7 +274,58 @@ class TestApproval(unittest.TestCase):
 
 	def test_the_context_arguments_are_keyword_only(self):
 		with self.assertRaises(TypeError):
-			W.approval_problems(_in_review(), APPROVER, (K.APPROVER_ROLE,), True, {}, OPENED)
+			W.approval_problems(
+				_in_review(), APPROVER, (K.APPROVER_ROLE,), K.APPROVER_USER_TYPE, True, {}, OPENED
+			)
+		parameters = inspect.signature(W.approval_problems).parameters
+		for name in ("user_type", "browser", "gate_flags", "opened_modified"):
+			with self.subTest(name=name):
+				self.assertIs(parameters[name].kind, inspect.Parameter.KEYWORD_ONLY)
+				self.assertIs(parameters[name].default, inspect.Parameter.empty)
+
+
+class TestApproversAreNamedPeople(unittest.TestCase):
+	"""Administrator holds every role implicitly (v16 ``permissions.py:546-547``), so the role rule
+	alone lets it approve; and v16 makes it a System User. Approvers are named people: the continuity
+	runbook uses Administrator only to grant or revoke KB roles, never to approve."""
+
+	EVERY_ROLE = (K.APPROVER_ROLE, K.AUTHOR_ROLE, "System Manager", "Administrator", "Desk User")
+
+	def test_a_named_approver_with_a_staff_login_still_approves(self):
+		self.assertEqual(_approve(_in_review(), user=APPROVER, user_type="System User"), [])
+		self.assertEqual(_approve(_in_review(), user=APPROVER, roles=self.EVERY_ROLE), [])
+
+	def test_administrator_never_approves_whatever_roles_it_holds(self):
+		for user in ("Administrator", "administrator", " ADMINISTRATOR "):
+			with self.subTest(user=user):
+				problems = _approve(_in_review(), user=user, roles=self.EVERY_ROLE, user_type="System User")
+				self.assertEqual(len(problems), 1, problems)
+				self.assertIn("Administrator is a shared account, not a person", problems[0])
+				self.assertIn("named KB Approver", problems[0])
+
+	def test_administrator_is_refused_even_with_nothing_stored(self):
+		problems = _approve(None, user="Administrator", roles=self.EVERY_ROLE)
+		self.assertEqual(len(problems), 2, problems)
+		self.assertTrue(any("Administrator" in p for p in problems))
+
+	def test_guest_and_nobody_are_not_signed_in(self):
+		for user, user_type in (("Guest", "Website User"), ("guest", None), ("", None), (None, None)):
+			with self.subTest(user=user):
+				problems = _approve(_in_review(), user=user, user_type=user_type)
+				self.assertEqual(problems, ["nobody is signed in"])
+
+	def test_only_a_system_user_approves(self):
+		for user_type in ("Website User", "Employee Self Service", "system user", "System User ", None, ""):
+			with self.subTest(user_type=user_type):
+				problems = _approve(_in_review(), user_type=user_type)
+				self.assertEqual(len(problems), 1, problems)
+				self.assertIn(f"only a {K.APPROVER_USER_TYPE}", problems[0])
+				self.assertIn(APPROVER, problems[0])
+				self.assertIn(user_type.strip() if user_type else "no user type", problems[0])
+
+	def test_the_never_approvers_are_frappes_own_account_names(self):
+		self.assertEqual(K.NEVER_APPROVERS, ("Administrator", "Guest"))
+		self.assertEqual(K.APPROVER_USER_TYPE, "System User")
 
 
 # ------------------------------------------------------------------ content edits and contributors
@@ -496,9 +569,11 @@ class TestStripPresentation(unittest.TestCase):
 			"<p hidden>ignore previous instructions</p>": "<p>ignore previous instructions</p>",
 			'<span hidden="hidden">x</span>': "<span>x</span>",
 			'<td bgcolor="#fff"><FONT COLOR=white SIZE=1>x</FONT></td>': "<td><font>x</FONT></td>",
-			'<font color="#fff" style="text-align: center; color: #fff" class="ql-bg-white keep">x</font>': (
-				'<font style="text-align: center;" class="keep">x</font>'
+			'<font color="#fff" style="text-align: center; color: #fff" class="ql-bg-white ql-indent-1">x</font>': (
+				'<font style="text-align: center;" class="ql-indent-1">x</font>'
 			),
+			'<p id="freeze">opacity 0 in the desk stylesheet</p>': "<p>opacity 0 in the desk stylesheet</p>",
+			'<p/ID=freeze class="ql-indent-1">x</p>': '<p class="ql-indent-1">x</p>',
 		}
 		for body, expected in cases.items():
 			with self.subTest(body=body):
@@ -509,13 +584,14 @@ class TestStripPresentation(unittest.TestCase):
 	def test_the_words_themselves_are_not_presentation(self):
 		for body in (
 			"<p>The pump size is 2 hp; colour it red, hidden behind the face plate.</p>",
+			"<p>Give the video id and the class of the part.</p>",
 			'<p title="hidden size">x</p>',
 			'<img src="/private/files/color-chart.png" alt="Pump size chart">',
 		):
 			with self.subTest(body=body):
 				self.assertEqual(C.strip_presentation(body), body)
 
-	def test_quills_presentation_classes_go_and_its_other_classes_stay(self):
+	def test_quills_presentation_classes_go_and_its_structural_classes_stay(self):
 		out = C.strip_presentation(
 			'<span class="ql-color-white ql-bg-black ql-size-small ql-font-serif ql-indent-3 mention">x</span>'
 		)
@@ -526,7 +602,7 @@ class TestStripPresentation(unittest.TestCase):
 		cases = {
 			'<p title="a > b" style="color:red">x</p>': '<p title="a &gt; b">x</p>',
 			'<p data-x=y=z style="color:red">x</p>': '<p data-x="y=z">x</p>',
-			"<P STYLE='color:red' Class='ql-size-huge keep'>x</P>": '<p class="keep">x</P>',
+			"<P STYLE='color:red' Class='ql-size-huge ql-align-center'>x</P>": '<p class="ql-align-center">x</P>',
 			'<br style="color:red"/>': "<br />",
 			'<p\nstyle="color:red">a</p>\n<p style="font-size:0">b</p>': "<p>a</p>\n<p>b</p>",
 		}
@@ -540,6 +616,276 @@ class TestStripPresentation(unittest.TestCase):
 		out = C.strip_presentation(body)
 		self.assertIn(f'<img src="data:image/png;base64,{payload}">', out)
 		self.assertTrue(out.startswith("<p>see</p>"))
+
+
+# ------------------------------------------------------------------ classes: an allowlist
+
+#: Every structure v16's Text Editor writes, as it saves it: its wrapper; a centred heading and a
+#: justified paragraph (as ``style``, v16's own form of alignment) and three paragraphs aligned with
+#: Quill's class, which pasted HTML and a REST write carry; a numbered list nested eight deep, which
+#: Quill writes as ONE flat list of indented items; a bullet list (``<ul>``, patched in by v16's
+#: ``patch_unordered_list``) with a nested item; a checklist; a right-to-left paragraph; a code block
+#: (v16 makes Quill's container a ``<pre>``); a table; an image; and an @-mention, whose guard
+#: characters are U+FEFF.
+QUILL_STRUCTURE = (
+	'<div class="ql-editor read-mode">'
+	'<h2 style="text-align: center;">Receiving a PO</h2>'
+	'<p style="text-align: justify;">Read every line before you sign.&nbsp;Then:</p>'
+	'<p class="ql-align-justify">Pasted from another Quill editor.</p>'
+	'<p class="ql-align-center">Centred, the same way.</p>'
+	'<p class="ql-align-right">And right.</p>'
+	"<ol>"
+	'<li data-list="ordered"><span class="ql-ui" contenteditable="false"></span>Open the PO.</li>'
+	+ "".join(
+		f'<li data-list="ordered" class="ql-indent-{level}"><span class="ql-ui" contenteditable="false">'
+		f"</span>Step at level {level}.</li>"
+		for level in range(1, 9)
+	)
+	+ "</ol>"
+	'<ul><li data-list="bullet"><span class="ql-ui" contenteditable="false"></span>Keep the slip.</li>'
+	'<li data-list="bullet" class="ql-indent-1"><span class="ql-ui" contenteditable="false"></span>'
+	"In the PO folder.</li></ul>"
+	'<ol><li data-list="checked"><span class="ql-ui" contenteditable="false"></span>Counted.</li>'
+	'<li data-list="unchecked"><span class="ql-ui" contenteditable="false"></span>Signed.</li></ol>'
+	'<p class="ql-direction-rtl" style="text-align: right;">שלום</p>'
+	'<pre class="ql-code-block-container" spellcheck="false">'
+	'<div class="ql-code-block">bench --site erp.example.com migrate</div>'
+	'<div class="ql-code-block">bench restart</div></pre>'
+	'<table class="table table-bordered"><tbody>'
+	'<tr><td data-row="row-k3x1">Part</td><td data-row="row-k3x1">Qty</td></tr>'
+	'<tr><td data-row="row-9f2c">Nozzle</td><td data-row="row-9f2c" style="text-align: right;">4</td></tr>'
+	"</tbody></table>"
+	'<p><img src="/private/files/slip.png" width="300"></p>'
+	'<p>Ask <span class="mention" data-id="james@example.com" data-value="James" '
+	'data-denotation-char="@" data-is-group="false">﻿<span contenteditable="false">'
+	'<span class="ql-mention-denotation-char">@</span><span>James</span></span>﻿</span> first.</p>'
+	"</div>"
+)
+
+#: Classes a stylesheet on the page uses, or could, to hide text, and near misses of the kept ones.
+#: None may survive: the page carries Bootstrap, Frappe, ERPNext and this app's CSS, and a class
+#: means whatever any of them says.
+HIDING_CLASSES = (
+	# Bootstrap and utility-class spellings of "not shown"
+	"hidden",
+	"hide",
+	"d-none",
+	"invisible",
+	"sr-only",
+	"visually-hidden",
+	"text-white",
+	"text-hide",
+	"opacity-0",
+	"collapse",
+	"fade",
+	# Frappe's own: `.icon` is font-size 0 (scss/common/icons.scss:3)
+	"icon",
+	"icon-sm",
+	"mention-link",
+	# Quill's, outside the editor's structure: `.ql-clipboard` is left -100000px (core.styl:30-35)
+	"ql-clipboard",
+	"ql-hidden",
+	"ql-blank",
+	"ql-cursor",
+	"ql-tooltip",
+	"ql-video",
+	"ql-formula",
+	"ql-syntax",
+	"ql-color-white",
+	"ql-bg-white",
+	"ql-size-small",
+	"ql-font-serif",
+	# near misses of kept classes: compared exactly
+	"ql-indent-0",
+	"ql-indent-9",
+	"QL-INDENT-1",
+	"Ql-Editor",
+	"ql-align-left",
+	"ql-direction-ltr",
+	"table-borderless",
+	"read-mode-hidden",
+	# one token to a browser, which splits classes on ASCII whitespace only
+	"ql-indent-1 hidden",
+	"ql-indent-1\x0bhidden",
+)
+
+TEXT_EDITOR = "frappe/public/js/frappe/form/controls/text_editor.js"
+MENTION_BLOT = "frappe/public/js/frappe/form/controls/quill-mention/blots/mention.js"
+COMMENT_CONTROL = "frappe/public/js/frappe/form/controls/comment.js"
+
+#: The source lines ``content.KEPT_CLASSES`` is derived from, verbatim without their indentation, as
+#: ``(origin, path, line, text)``. "frappe" is frappe ``origin/version-16``, checked below against a
+#: local checkout when there is one. "quill" is Quill 2.0.3, the version v16 pins (the first row),
+#: under ``packages/quill/src/``. No checkout carries it, so its rows were checked against the
+#: ``v2.0.3`` tag of ``slab/quill`` when this list was written.
+KEPT_CLASS_SOURCES = (
+	("frappe", "package.json", 73, '"quill": "2.0.3",'),
+	("frappe", TEXT_EDITOR, 53, 'node.classList.add("table");'),
+	("frappe", TEXT_EDITOR, 54, 'node.classList.add("table-bordered");'),
+	("frappe", TEXT_EDITOR, 402, 'value = `<div class="ql-editor read-mode">${value}</div>`;'),
+	("frappe", MENTION_BLOT, 9, 'denotationChar.className = "ql-mention-denotation-char";'),
+	("frappe", MENTION_BLOT, 49, 'MentionBlot.className = "mention";'),
+	("quill", "formats/indent.ts", 28, "const IndentClass = new IndentAttributor('indent', 'ql-indent', {"),
+	("quill", "formats/indent.ts", 31, "whitelist: [1, 2, 3, 4, 5, 6, 7, 8],"),
+	("quill", "formats/align.ts", 5, "whitelist: ['right', 'center', 'justify'],"),
+	("quill", "formats/align.ts", 9, "const AlignClass = new ClassAttributor('align', 'ql-align', config);"),
+	("quill", "formats/direction.ts", 5, "whitelist: ['rtl'],"),
+	(
+		"quill",
+		"formats/direction.ts",
+		9,
+		"const DirectionClass = new ClassAttributor('direction', 'ql-direction', config);",
+	),
+	("quill", "formats/code.ts", 46, "CodeBlock.className = 'ql-code-block';"),
+	("quill", "formats/code.ts", 49, "CodeBlockContainer.className = 'ql-code-block-container';"),
+	("quill", "core/quill.ts", 31, "Parchment.ParentBlot.uiClass = 'ql-ui';"),
+)
+
+#: The lines that put those formats in v16's editor. They name no class, so nothing is derived from
+#: them, but without them the classes above would be Quill's and not v16's.
+KEPT_CLASS_REGISTRATIONS = (
+	("frappe", TEXT_EDITOR, 7, 'const CodeBlockContainer = Quill.import("formats/code-block-container");'),
+	("frappe", TEXT_EDITOR, 8, 'CodeBlockContainer.tagName = "PRE";'),
+	("frappe", TEXT_EDITOR, 115, 'const DirectionClass = Quill.import("attributors/class/direction");'),
+	("frappe", TEXT_EDITOR, 116, "Quill.register(DirectionClass, true);"),
+	("frappe", TEXT_EDITOR, 350, '[{ indent: "-1" }, { indent: "+1" }],'),
+	("frappe", COMMENT_CONTROL, 4, 'Quill.register("modules/mention", Mention, true);'),
+	("quill", "quill.ts", 76, "'formats/align': AlignClass,"),
+	("quill", "quill.ts", 78, "'formats/indent': Indent,"),
+	("quill", "formats/list.ts", 41, "this.attachUI(ui);"),
+)
+
+
+def _derive_kept_classes(sources):
+	"""The classes the cited lines emit: a class attributor's prefix with each whitelisted value, a
+	blot's ``className``, Parchment's ``uiClass``, a ``classList.add`` and a literal ``class="..."``."""
+	by_file = {}
+	for origin, path, _line, text in sources:
+		by_file.setdefault((origin, path), []).append(text)
+	classes = set()
+	for lines in by_file.values():
+		text = "\n".join(lines)
+		attributor = re.search(r"new \w+Attributor\('\w+', '([\w-]+)'", text)
+		if attributor:
+			whitelist = re.search(r"whitelist: \[([^\]]*)\]", text).group(1)
+			for value in whitelist.split(","):
+				classes.add(f"{attributor.group(1)}-{value.strip().strip(chr(39))}")
+		classes.update(re.findall(r"(?:className|uiClass) = ['\"]([\w-]+)['\"]", text))
+		classes.update(re.findall(r'classList\.add\("([\w-]+)"\)', text))
+		for value in re.findall(r'class="([^"$]+)"', text):
+			classes.update(value.split())
+	return classes
+
+
+def _classes_in(markup):
+	found = set()
+
+	class _Collector(HTMLParser):
+		def handle_starttag(self, tag, attrs):
+			for name, value in attrs:
+				if name == "class":
+					found.update((value or "").split(" "))
+
+	collector = _Collector()
+	collector.feed(markup)
+	collector.close()
+	found.discard("")
+	return found
+
+
+def _frappe_checkout():
+	"""A frappe clone beside this repo (or beside the repo a worktree belongs to), or ``None``."""
+	for parent in REPO_ROOT.parents:
+		if (parent / "frappe" / ".git").exists():
+			return parent / "frappe"
+	return None
+
+
+class TestKeptClasses(unittest.TestCase):
+	def test_every_hiding_class_is_dropped(self):
+		for hiding in HIDING_CLASSES:
+			with self.subTest(hiding=hiding):
+				self.assertEqual(C.strip_presentation(f'<p class="{hiding}">text</p>'), "<p>text</p>")
+				self.assertEqual(
+					C.strip_presentation(
+						f'<p class="ql-indent-2 {hiding}" style="text-align: center;">text</p>'
+					),
+					'<p class="ql-indent-2" style="text-align: center;">text</p>',
+				)
+
+	def test_a_hiding_class_goes_from_every_tag_of_a_real_body(self):
+		hidden = QUILL_STRUCTURE.replace('class="', 'class="hidden ')
+		self.assertNotEqual(hidden, QUILL_STRUCTURE)
+		self.assertEqual(C.strip_presentation(hidden), QUILL_STRUCTURE)
+
+	def test_every_kept_class_survives_a_real_v16_body(self):
+		self.assertEqual(
+			_classes_in(QUILL_STRUCTURE), C.KEPT_CLASSES, "the fixture must use every kept class"
+		)
+		self.assertEqual(C.strip_presentation(QUILL_STRUCTURE), QUILL_STRUCTURE)
+
+	def test_every_kept_class_survives_on_its_own(self):
+		for kept in sorted(C.KEPT_CLASSES):
+			with self.subTest(kept=kept):
+				body = f'<p class="{kept}">x</p>'
+				self.assertEqual(C.strip_presentation(body), body)
+
+	def test_classes_are_split_where_a_browser_splits_them(self):
+		self.assertEqual(
+			C.strip_presentation('<p class="ql-indent-1\thidden\nql-align-center\r\x0cd-none">x</p>'),
+			'<p class="ql-indent-1 ql-align-center">x</p>',
+		)
+
+	def test_the_list_is_what_the_cited_v16_and_quill_lines_emit(self):
+		self.assertEqual(_derive_kept_classes(KEPT_CLASS_SOURCES), C.KEPT_CLASSES)
+
+	def test_the_derivation_reads_each_kind_of_line(self):
+		"""So the agreement above cannot pass by deriving nothing from a kind of line."""
+		for row, expected in (
+			(
+				("quill", "a.ts", 1, "A = new ClassAttributor('a', 'ql-x', config); whitelist: ['p', 'q'],"),
+				{"ql-x-p", "ql-x-q"},
+			),
+			(("quill", "b.ts", 1, "B.className = 'ql-y';"), {"ql-y"}),
+			(("quill", "c.ts", 1, "Parchment.ParentBlot.uiClass = 'ql-z';"), {"ql-z"}),
+			(("frappe", "d.js", 1, 'node.classList.add("w");'), {"w"}),
+			(("frappe", "e.js", 1, 'value = `<div class="u v">${value}</div>`;'), {"u", "v"}),
+		):
+			with self.subTest(row=row):
+				self.assertEqual(_derive_kept_classes((row,)), expected)
+
+	def test_the_cited_frappe_lines_are_v16s(self):
+		"""Skipped where there is no frappe checkout beside this repo, CI included. A failure means
+		the cited line has moved in that checkout's ``origin/version-16``: re-read the file there and
+		re-cite, in this list, in ``content.KEPT_CLASSES`` and in the knowledge_base README."""
+		checkout = _frappe_checkout()
+		if checkout is None:
+			self.skipTest("no frappe checkout beside this repo")
+		files = {}
+		for origin, path, line, text in KEPT_CLASS_SOURCES + KEPT_CLASS_REGISTRATIONS:
+			if origin != "frappe":
+				continue
+			if path not in files:
+				result = subprocess.run(
+					["git", "-C", str(checkout), "show", f"origin/version-16:{path}"],
+					capture_output=True,
+					text=True,
+					encoding="utf-8",
+				)
+				if result.returncode:
+					self.skipTest(f"{checkout} has no origin/version-16:{path}")
+				files[path] = result.stdout.splitlines()
+			with self.subTest(path=path, line=line):
+				actual = files[path][line - 1].strip() if line <= len(files[path]) else None
+				self.assertEqual(actual, text, f"{checkout} origin/version-16:{path}:{line}")
+
+	def test_an_id_goes_because_a_stylesheet_can_hide_by_it(self):
+		self.assertIn("id", C.DROPPED_ATTRIBUTES)
+		self.assertTrue(C.PRESENTATION_ATTRIBUTES < C.DROPPED_ATTRIBUTES)
+		self.assertEqual(
+			C.strip_presentation('<h2 id="freeze" style="text-align: center;">x</h2>'),
+			'<h2 style="text-align: center;">x</h2>',
+		)
 
 
 # ------------------------------------------------------------------ secrets

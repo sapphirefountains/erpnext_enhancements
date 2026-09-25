@@ -25,7 +25,9 @@ WI-080 PR 2, ADR 0017. Bench-free, with its own ``frappe`` stub. What it pins:
 * **The Version controller** strips presentation and records contributors on a content save,
   refuses a content edit outside Draft or one carrying a secret (in ``before_validate``, which
   ``flags.ignore_validate`` does not skip), and refuses a submit that breaks any approval rule, in
-  ``before_submit`` and again in ``on_submit``.
+  ``before_submit`` and again in ``on_submit``: Administrator (which holds every role), Guest and
+  any account whose ``User.user_type``, read from the User row at approval, is not System User
+  included.
 
 Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_hooks -v
 """
@@ -97,6 +99,14 @@ def _reset(**overrides):
 	STATE.update(
 		{
 			"roles": {APPROVER: ["KB Approver", "Desk User"], AUTHOR: ["KB Author", "Desk User"]},
+			# User.user_type as v16 stores it; Administrator and Guest as v16 fixes them (user.py:406).
+			"user_types": {
+				APPROVER: "System User",
+				AUTHOR: "System User",
+				"Administrator": "System User",
+				"Guest": "Website User",
+			},
+			"user_type_reads": [],
 			"file_rows": set(),
 			"exists_calls": [],
 			"deleted": [],
@@ -124,6 +134,13 @@ def _exists(doctype, filters=None):
 	return filters["file_url"] in STATE["file_rows"]
 
 
+def _get_value(doctype, name, fieldname, *args, **kwargs):
+	"""``frappe.db.get_value`` for the one read the Version controller makes: a User's user_type."""
+	assert (doctype, fieldname) == ("User", "user_type"), (doctype, fieldname)
+	STATE["user_type_reads"].append(name)
+	return STATE["user_types"].get(name)
+
+
 def _delete_file(path):
 	STATE["deleted"].append(path)
 
@@ -140,7 +157,7 @@ def _install_frappe_stub():
 	frappe._ = lambda message, *a, **k: message
 	frappe.throw = _throw
 	frappe.get_roles = lambda user=None: list(STATE["roles"].get(user, ()))
-	frappe.db = types.SimpleNamespace(exists=_exists)
+	frappe.db = types.SimpleNamespace(exists=_exists, get_value=_get_value)
 	# For api/comments.py's link_files_to_comment.
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
 	frappe.has_permission = lambda *a, **k: True
@@ -768,6 +785,33 @@ class TestVersionApprovalGate(unittest.TestCase):
 		stored = _stored(body=f"<p>{STRIPE_KEY}</p>")
 		doc = self._publishing(stored)
 		self._refused_in_both_hooks(doc, "looks like it contains a secret")
+
+	def test_administrator_cannot_publish_though_it_holds_every_role(self):
+		"""v16 gives Administrator every role (permissions.py:546-547) and makes it a System User,
+		so only its name gives it away. The runbook uses it to grant roles, never to approve."""
+		STATE["roles"]["Administrator"] = ["Administrator", "System Manager", "KB Approver", "KB Author"]
+		sys.modules["frappe"].session.user = "Administrator"
+		self._refused_in_both_hooks(self._publishing(), "Administrator is a shared account")
+
+	def test_an_account_that_is_not_a_system_user_cannot_publish(self):
+		for user_type, phrase in (("Website User", "has user type Website User"), (None, "has no user type")):
+			with self.subTest(user_type=user_type):
+				STATE["user_types"][APPROVER] = user_type
+				self._refused_in_both_hooks(self._publishing(), "only a System User")
+				self._refused_in_both_hooks(self._publishing(), phrase)
+
+	def test_guest_cannot_publish(self):
+		STATE["roles"]["Guest"] = ["Guest", "KB Approver"]
+		sys.modules["frappe"].session.user = "Guest"
+		self._refused_in_both_hooks(self._publishing(), "nobody is signed in")
+
+	def test_the_user_type_is_read_from_the_signed_in_users_row(self):
+		"""Read at approval from the User table, not taken from the session, which recorded it at
+		login; each hook reads it again."""
+		doc = self._publishing()
+		doc.before_submit()
+		doc.on_submit()
+		self.assertEqual(STATE["user_type_reads"], [APPROVER, APPROVER])
 
 
 if __name__ == "__main__":

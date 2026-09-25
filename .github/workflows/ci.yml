@@ -763,15 +763,18 @@ jobs:
       # WI-080 PR 2 (v1.539.0): the rules a KB approval turns on, as plain functions. A
       # regression here publishes text nobody independent approved and looks exactly like a
       # normal publish: the author approving their own draft, a contributor or the person who
-      # asked an AI to draft it approving, a token or a confirmed AI gate card approving, or a
+      # asked an AI to draft it approving, Administrator (which holds every role) or any
+      # non-System-User account approving, a token or a confirmed AI gate card approving, or a
       # copy that changed after the approver opened it. Also the KB number (00 never allocated,
       # a number never reused, a full block failing loudly), the review date (POL-0001's six
       # months from one constant; month ends; leap years), presentation stripping (the colour,
-      # size and font that hide text from a reviewer and not from a model, while tables, lists,
-      # alignment and indent survive), the secret scan (never the value; never the base64 of a
-      # pasted screenshot; never an ordinary sentence, since nothing lets an author past a
-      # finding) and the content hash. workflow.py and content.py import no frappe,
-      # checked in a fresh interpreter, so no stub and nothing to cross-talk with.
+      # size and font that hide text from a reviewer and not from a model, and every class but
+      # the structural ones v16's editor writes -- `hidden`, `d-none`, Frappe's own `icon` --
+      # while tables, lists, code blocks, alignment and indent survive), the secret scan (never
+      # the value; never the base64 of a pasted screenshot; never an ordinary sentence, since
+      # nothing lets an author past a finding) and the content hash. workflow.py and content.py
+      # import no frappe, checked in a fresh interpreter, so no stub and nothing to cross-talk
+      # with. The v16 source check skips here: CI has no frappe checkout beside the repo.
       - name: Knowledge base rules (who may approve, KB numbers, review dates, content hygiene)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_rules -v
       # The hooks that apply them. force_private runs on EVERY File insert and save on the site:

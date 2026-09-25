@@ -8,10 +8,13 @@ in the bench-free CI tier. Three jobs:
 
 * :func:`strip_presentation` removes the markup that can make text invisible to the person reading
   the page while leaving it in front of any AI that reads the HTML: colour, background, size and
-  font, whether they arrive as ``style``, as Quill's ``ql-color-*``/``ql-bg-*``/``ql-size-*``/
-  ``ql-font-*`` classes or as the attributes HTML had before CSS (``<font color size face>``,
-  ``bgcolor``), and the ``hidden`` attribute. White-on-white or zero-size text is exactly what a
-  reviewer would never see and a model would obey. Tables, lists, alignment and indent survive.
+  font, whether they arrive as ``style`` or as the attributes HTML had before CSS (``<font color
+  size face>``, ``bgcolor``); the ``hidden`` attribute; **every class except the few v16's Text
+  Editor writes for structure** (:data:`KEPT_CLASSES`), because any stylesheet on the page can hide
+  text by class (``hidden``, ``d-none``, ``sr-only``, Frappe's own ``icon``, Quill's own
+  ``ql-clipboard``); and ``id``, which a stylesheet can target the same way. White-on-white or
+  zero-size text is exactly what a reviewer would never see and a model would obey. Tables, lists,
+  code blocks, alignment, direction and indent survive.
 * :func:`secret_findings` finds secret-shaped strings (vendor keys, private keys, tokens, a
   password written out) and reports **where and what kind, never the value**, because the refusal
   message is shown on screen and may be logged.
@@ -42,10 +45,75 @@ from html.parser import HTMLParser
 
 # ------------------------------------------------------------------ presentation
 
-#: Quill's class attributors for colour, background, size and font. Frappe v16's Text Editor
-#: registers the *style* attributors for these instead (``text_editor.js``), so they arrive as
-#: ``style``; the classes come from pasted Quill HTML or from a REST write, and mean the same thing.
-PRESENTATION_CLASS_PREFIXES = ("ql-color-", "ql-bg-", "ql-size-", "ql-font-")
+#: The only classes kept: exactly those v16's Text Editor writes for structure, each of which moves
+#: or frames text and none of which can hide it. **Every other class is dropped**, because a class
+#: means whatever the stylesheets on the page say, and the page carries Bootstrap, Frappe, ERPNext
+#: and this app. ``hidden``, ``hide``, ``d-none``, ``invisible``, ``sr-only``, ``visually-hidden``
+#: and ``text-white`` hide text. So do two that the old denylist of Quill's presentation classes
+#: kept: Frappe's ``icon`` (``font-size: 0``, frappe ``origin/version-16``
+#: ``public/scss/common/icons.scss:3``) and Quill's own ``ql-clipboard`` (``left: -100000px``, Quill
+#: 2.0.3 ``packages/quill/src/assets/core.styl:30-35``). Compared exactly, case included, as a
+#: browser in standards mode compares them.
+#:
+#: Derived from frappe ``origin/version-16`` (the ``.js`` files below are in
+#: ``public/js/frappe/form/controls/``) and from Quill 2.0.3, the version v16 pins (the frappe
+#: repo's ``package.json:73``; Quill paths are under ``packages/quill/src/``).
+#: ``tests/test_knowledge_base_rules.py`` holds the cited lines verbatim, derives this set from
+#: them, and checks the Frappe lines against a local v16 checkout when one is present.
+#:
+#: - ``ql-editor``, ``read-mode``: the wrapper the editor puts round every body it saves
+#:   (``text_editor.js:402``, ``:405``).
+#: - ``ql-indent-1`` to ``ql-indent-8``: indent, and the nesting of a list, which Quill writes as a
+#:   flat list of indented items (toolbar ``text_editor.js:350``; ``formats/indent.ts:28-31``,
+#:   registered by ``quill.ts:78``).
+#: - ``ql-align-right``, ``ql-align-center``, ``ql-align-justify``: Quill's own form of alignment
+#:   (``formats/align.ts:5``, ``:9``, registered by ``quill.ts:76``). v16 re-registers alignment as
+#:   a style (``text_editor.js:106``, ``:111``), so its editor writes ``text-align`` instead (see
+#:   :data:`KEPT_STYLE`), but it still reads these classes from pasted HTML, and Quill's stylesheet
+#:   renders them.
+#: - ``ql-direction-rtl``: right-to-left text (``text_editor.js:115-116`` registers the class
+#:   attributor; ``formats/direction.ts:5``, ``:9``).
+#: - ``ql-code-block-container``, ``ql-code-block``: a code block, which v16 writes as a ``<pre>``
+#:   (``text_editor.js:7-9``; ``formats/code.ts:46``, ``:49``).
+#: - ``ql-ui``: the empty span at the start of every list item that the bullet, number or checkbox
+#:   is drawn on (``core/quill.ts:31``, attached by ``formats/list.ts:41``). Without it a list
+#:   loses its markers. Quill only positions it (``assets/core.styl:205-206``).
+#: - ``table``, ``table-bordered``: added to every table the editor inserts
+#:   (``text_editor.js:53-54``). Quill's own table blots carry no class (``formats/table.ts``), only
+#:   ``data-row``.
+#: - ``mention``, ``ql-mention-denotation-char``: an @-mention
+#:   (``quill-mention/blots/mention.js:49``, ``:9``; registered globally by ``comment.js:4``, used by
+#:   ``text_editor.js:281``).
+#:
+#: Deliberately not kept, though Quill or Frappe can write them: ``ql-color-*``, ``ql-bg-*``,
+#: ``ql-size-*`` and ``ql-font-*`` (presentation: v16 writes them as ``style`` instead,
+#: ``text_editor.js:44-46``, ``:103-110``); ``icon`` and ``icon-sm`` on a group mention's SVG
+#: (``mention.js:16``; ``icon`` is ``font-size: 0``, above, and the KB body does not enable
+#: mentions, ``text_editor.js:302``, so one arrives only pasted); ``ql-cursor``, a transient caret
+#: span holding one U+FEFF (``blots/cursor.ts:9``); and ``ql-video`` and ``ql-formula``, which
+#: v16's toolbar does not offer (``text_editor.js:338-365``).
+KEPT_CLASSES = frozenset(
+	{
+		"ql-editor",
+		"read-mode",
+		*(f"ql-indent-{level}" for level in range(1, 9)),
+		"ql-align-right",
+		"ql-align-center",
+		"ql-align-justify",
+		"ql-direction-rtl",
+		"ql-code-block-container",
+		"ql-code-block",
+		"ql-ui",
+		"table",
+		"table-bordered",
+		"mention",
+		"ql-mention-denotation-char",
+	}
+)
+
+#: What separates the classes in a ``class`` value: HTML's ASCII whitespace, not Python's wider
+#: ``str.split``. A value a browser reads as one token is one token here too, and matches nothing.
+_CLASS_SEPARATORS = re.compile(r"[\t\n\f\r ]+")
 
 #: The only ``style`` declarations kept. v16's Text Editor registers Quill's **style** attributor for
 #: alignment (``attributors/style/align``), so a centred paragraph is ``style="text-align:
@@ -64,8 +132,16 @@ KEPT_STYLE = {"text-align": frozenset({"left", "right", "center", "justify", "st
 #: renaming it would mean rewriting its end tag too, and nothing else here touches an end tag.
 PRESENTATION_ATTRIBUTES = frozenset({"bgcolor", "color", "face", "hidden", "size"})
 
-#: A quick test before the parser runs: no tag can need stripping without one of these in it.
-_MAY_NEED_STRIPPING = re.compile(r"style|ql-|color|face|hidden|size", re.IGNORECASE)
+#: Every attribute dropped outright: the presentation attributes, and ``id``. v16's Text Editor
+#: never writes an ``id`` (Quill has no format for one; a mention's user is ``data-id``), and a
+#: stylesheet can hide an element by its id as surely as by its class: Frappe's desk stylesheet gives
+#: ``#freeze`` ``opacity: 0`` (frappe ``origin/version-16`` ``public/scss/desk/global.scss:511-514``),
+#: so ``<p id="freeze">`` is text no reader sees.
+DROPPED_ATTRIBUTES = PRESENTATION_ATTRIBUTES | {"id"}
+
+#: A quick test before the parser runs: no tag can need stripping without one of these in it. A
+#: superset on purpose (``id`` is in "video" and "side"): a false match only costs a parse.
+_MAY_NEED_STRIPPING = re.compile(r"style|class|color|face|hidden|size|id", re.IGNORECASE)
 #: HTMLParser counts lines on "\n" alone, so positions are mapped back the same way.
 _NEWLINE = re.compile("\n")
 
@@ -73,13 +149,13 @@ _NEWLINE = re.compile("\n")
 def strip_presentation(markup):
 	"""``markup`` with presentation removed. Anything not a string is returned as it came.
 
-	Only the start tags that carry a dropped ``style`` declaration, a presentation class or a
-	presentation attribute are rewritten; every other byte (text, entities, comments, other tags,
-	end tags, ``data:`` images) is returned exactly as it was, so the function is idempotent and a
-	body with nothing to strip comes back identical. ``indent`` (``ql-indent-N``), ``direction``, table and list markup are
-	untouched. Tags are found with the standard library's HTML parser rather than a regex, so an
-	attribute value containing ``>`` or an unquoted value containing ``=`` is read the way a
-	browser reads it.
+	Only the start tags that carry a dropped ``style`` declaration, a class outside
+	:data:`KEPT_CLASSES` or a dropped attribute are rewritten; every other byte (text, entities,
+	comments, other tags, end tags, ``data:`` images) is returned exactly as it was, so the function
+	is idempotent and a body with nothing to strip comes back identical. Indent, alignment,
+	direction, code blocks, tables, lists and mentions as v16's editor writes them are untouched.
+	Tags are found with the standard library's HTML parser rather than a regex, so an attribute
+	value containing ``>`` or an unquoted value containing ``=`` is read the way a browser reads it.
 	"""
 	if not isinstance(markup, str) or not _MAY_NEED_STRIPPING.search(markup):
 		return markup
@@ -128,15 +204,15 @@ class _PresentationFinder(HTMLParser):
 def _clean_attrs(attrs):
 	cleaned = []
 	for name, value in attrs:
-		if name in PRESENTATION_ATTRIBUTES:
+		if name in DROPPED_ATTRIBUTES:
 			continue
 		if name == "style":
 			kept = _kept_style(value)
 			if kept is not None:
 				cleaned.append((name, kept))
 		elif name == "class":
-			tokens = (value or "").split()
-			kept = [t for t in tokens if not t.lower().startswith(PRESENTATION_CLASS_PREFIXES)]
+			tokens = [t for t in _CLASS_SEPARATORS.split(value or "") if t]
+			kept = [t for t in tokens if t in KEPT_CLASSES]
 			if len(kept) == len(tokens):
 				cleaned.append((name, value))
 			elif kept:

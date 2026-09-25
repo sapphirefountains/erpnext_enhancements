@@ -37,12 +37,24 @@ the read-only queries below before the next.
   `marketing/publish/workflow.py`, so Marketing and the Knowledge Base share one definition of "a
   person's login, not a token or a job"; Marketing's `approval_problems` is deliberately not reused,
   because it hard-codes Marketing Manager).
-  - `approval_problems(version, user, roles, *, browser, gate_flags, opened_modified)` refuses when
-    the approver lacks KB Approver; the request is not from a signed-in browser; `ai_gate_pending` or
+  - `approval_problems(version, user, roles, *, user_type, browser, gate_flags, opened_modified)`
+    refuses when the approver lacks KB Approver; the approver is not a named person with a staff
+    login (see below); the request is not from a signed-in browser; `ai_gate_pending` or
     `ai_gate_bypass` is set (Nik confirming a card runs the tool in his own browser session, so the
     browser test alone would pass); the version is not In Review; the approver is the owner, the
     submitter, a contributor or the AI requester (compared without case); or the stored `modified`
     is not the value the approver opened. Every broken rule is reported, in one sentence naming it.
+  - **Approvers are named people** (added in review). Administrator holds every role implicitly
+    (frappe `origin/version-16` `permissions.py:546-547`) and v16 makes it a System User
+    (`core/doctype/user/user.py:406`), so the role rule alone let it approve. `approval_problems`
+    now refuses `Administrator` and `Guest` by name (`constants.NEVER_APPROVERS`), whatever roles
+    they hold, and any account whose `User.user_type` is not exactly `System User`
+    (`constants.APPROVER_USER_TYPE`): a portal Website User, a custom User Type, or a user with no
+    row. The function is pure, so `user_type` is a **keyword argument with no default**: a caller
+    that forgets it raises `TypeError` rather than approving. The Version controller reads it from
+    the User row at approval (`frappe.db.get_value`), not from the session, which recorded it at
+    login, and **PR 3's `approve_and_publish` must pass it the same way**. The continuity runbook
+    (TASK-2026-02297) uses Administrator only to grant or revoke KB roles, never to approve.
   - `changed_content_fields` and `content_edit_problem`: content changes only while the stored
     version is a Draft. A change is judged as a reader sees it: `None` equals `""`, the review
     interval compares as a number, and the body compares after presentation is stripped.
@@ -67,6 +79,25 @@ the read-only queries below before the next.
     start tags that change are rewritten, found with the standard library's HTML parser so an
     attribute holding `>` is read as a browser reads it; every other byte, entities and pasted
     `data:` images included, comes back exactly as it was.
+  - **Classes are an allowlist** (changed in review; the first cut dropped only the `ql-color-*`,
+    `ql-bg-*`, `ql-size-*` and `ql-font-*` classes). A class means whatever the stylesheets on the
+    page say, and the page carries Bootstrap, Frappe, ERPNext and this app, so the denylist kept a
+    REST-written `<p class="hidden">`, and `d-none`, `sr-only`, `visually-hidden` and `text-white`:
+    invisible on the page, plain in `body_md` and to every AI tool. Two it kept come from the
+    editor's own world: Frappe's `.icon` is `font-size: 0` (`public/scss/common/icons.scss:3`), and
+    Quill's `.ql-clipboard` sits 100000px off-screen (Quill 2.0.3 `assets/core.styl:30-35`).
+    `content.KEPT_CLASSES` is now exactly the classes v16's Text Editor writes for structure,
+    derived from `public/js/frappe/form/controls/text_editor.js` and the Quill 2.0.3 formats it
+    registers (v16 pins `"quill": "2.0.3"`, `package.json:73`): the wrapper `ql-editor read-mode`
+    (`:402`); `ql-indent-1` to `-8` (`formats/indent.ts:28-31`); Quill's `ql-align-right`,
+    `-center` and `-justify` (`formats/align.ts:5`, `:9`; v16 writes alignment as a style but reads
+    these from pasted HTML); `ql-direction-rtl` (`text_editor.js:115-116`); the code block's
+    `ql-code-block-container` and `ql-code-block` (`:7-9`; `formats/code.ts:46`, `:49`); the list
+    marker span `ql-ui` (`core/quill.ts:31`); `table table-bordered` (`:53-54`); and the mention
+    blot's `mention` and `ql-mention-denotation-char`. **Every other class is dropped**, compared
+    exactly and case included, with classes split on HTML's ASCII whitespace as a browser splits
+    them. **`id` is dropped too**: Quill never writes one, and Frappe's desk stylesheet gives
+    `#freeze` `opacity: 0` (`public/scss/desk/global.scss:511-514`).
   - `secret_findings` finds private keys; Stripe, AWS, Google, GitHub, Slack, SendGrid, Anthropic,
     OpenAI and Plaid credentials; JWTs; a Frappe `token key:secret`; bearer and Basic credentials; a
     password inside a web address; and a password or key written out after "password:" or "API key:".
@@ -142,7 +173,8 @@ the read-only queries below before the next.
     which the code calling `submit()` could have changed. The copy being submitted must match the
     stored content, and is scanned for secrets again. PR 3's `approve_and_publish` passes the opened
     `modified` as `flags.kb_opened_modified`; without it every approval is refused. It cannot be read
-    off the document, because the save has moved `modified` on by then (`document.py:586`).
+    off the document, because the save has moved `modified` on by then (`document.py:586`). The
+    approver's `user_type` is read from their User row in each hook (`_user_type`).
   - `before_validate` strips presentation from the body, refuses a content change unless the stored
     version is a Draft (no flag gets past this), and on a save that changes content refuses a secret
     and records the saver in `contributors`. **`before_validate`, not `validate`:**
@@ -163,7 +195,13 @@ the read-only queries below before the next.
 
 - **`tests/test_knowledge_base_rules.py`** (unittest, no stub, its own CI step): every branch of
   `workflow.py` and `content.py`, a real v16 Quill body, every style and every attribute that hides
-  text, 21 secret kinds (all fixtures concatenated, never a literal key: GitHub push protection
+  text; 36 hiding or near-miss classes dropped, alone and beside a kept one; a v16 body with every
+  kept class (a list nested eight deep, aligned and right-to-left paragraphs, a code block, a
+  table, a mention) coming back byte for byte, and again with `hidden` added to every tag; the kept
+  list derived from the cited v16 and Quill lines, held verbatim, and those Frappe lines checked
+  against a local `origin/version-16` checkout when one is present (skipped in CI); Administrator
+  (holding every role, in any case), Guest, nobody, and every user type but `System User` refused,
+  while a named approver still passes; 21 secret kinds (all fixtures concatenated, never a literal key: GitHub push protection
   refused this repo's branch once for a literal Stripe-shaped string), ordinary KB prose that must
   not be flagged (slash-joined "Basic" headings and "password is <word>," sentences included), and a
   fresh-interpreter check that neither module imports frappe.
@@ -173,7 +211,8 @@ the read-only queries below before the next.
   move without `flags.kb_action`, `link_files_to_comment` leaving KB Files where they are, the
   delete refusal and the exact `True` everywhere else, the `hooks.py` registration, and the Version
   controller's content gate (pinned to `before_validate` from the syntax tree) and approval gate,
-  each approval rule refused in both hooks.
+  each approval rule refused in both hooks: Administrator, Guest and a Website User included, with
+  the user type read from the signed-in user's User row in each hook.
 
 ### After deploy
 
@@ -181,7 +220,10 @@ Read-only, on prod, after PR 1's checks pass.
 
 - A KB Author saves a draft in the Desk with a coloured word and a centred heading. After the save
   the colour is gone and the centring stays. (Check it in the Desk: the MCP denylist refuses any SQL
-  that names the Version doctype, by design.)
+  that names the Version doctype, by design.) A nested list, a code block and a table in the same
+  draft keep their indent, box and borders.
+- The same author writes the draft's body from the browser console with `frappe.client.set_value`
+  as `<p class="hidden">a</p><p id="freeze">b</p>`: it reads back as `<p>a</p><p>b</p>`.
 - The same author attaches a file through the sidebar **with Private unticked**:
   `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0`
   is 0, the File's URL starts `/private/files/`, and the would-be `/files/<name>` returns 404 with no
