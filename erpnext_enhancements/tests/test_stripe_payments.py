@@ -2685,6 +2685,51 @@ def test_pay_card_back_and_forward_harness():
 	assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_pay_card_never_uses_the_website_frappe_call():
+	"""The website build of ``frappe.call`` (frappe v16, ``website/js/website.js``) calls back on
+	an HTTP 200 only and never calls ``error()``. /pay-card relied on ``error()`` for every
+	refusal, so a declined card — a frappe.throw, HTTP 417 — left Pay on "Please wait…" with Back
+	held by the charge, and nothing said; the harness faked frappe.call *with* an error() callback
+	and passed. The page reaches the server over fetch instead, at frappe's REST route with the
+	session's CSRF token, and both calls go through the one helper that answers every outcome.
+	Runs without node, so it holds even where the harness is skipped."""
+	import re
+	from pathlib import Path
+
+	html = (Path(__file__).resolve().parents[1] / "www" / "pay-card.html").read_text(encoding="utf-8")
+	blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+	script = next(block for block in blocks if "frappe.csrf_token" in block)
+	code = re.sub(r"(?m)(^|[^:\"'])//.*$", r"\1", re.sub(r"/\*.*?\*/", "", script, flags=re.S))
+	assert not re.search(r"\bfrappe\s*\.\s*x?call\b", code), "pay-card.html must not use frappe.call"
+	assert 'fetch("/api/method/" + method' in code
+	assert '"X-Frappe-CSRF-Token": frappe.csrf_token' in code
+	assert 'credentials: "same-origin"' in code
+	assert code.count("rpc(") == 3, "one helper, and exactly the two calls (Continue, Pay) through it"
+	# Pay charges the quote its review was drawn for, and says so when there is none.
+	assert "const charge = shown;" in code and 'id="review-error"' in html
+	# Both places a refusal is written are announced to a screen reader as it is written.
+	for element in ("card-error", "review-error"):
+		assert re.search(rf'<div id="{element}"[^>]*\brole="alert"', html), f"#{element} must be role=alert"
+
+
+def test_pay_buttons_are_given_back_after_any_refusal():
+	"""/pay still uses the website frappe.call, which never calls ``error()``: its Bank, Set up
+	autopay and Cancel autopay buttons re-enabled themselves only there, so any refusal, 5xx or
+	dropped connection left them disabled until a reload. Each call now gives its button back in
+	``always`` (which the website frappe.call does run, for every outcome) unless it succeeded."""
+	import re
+	from pathlib import Path
+
+	html = (Path(__file__).resolve().parents[1] / "www" / "pay.html").read_text(encoding="utf-8")
+	script = html.split("<script>", 1)[1]
+	calls = re.findall(r"frappe\.call\(\{(.*?)\n\t\t\t\}\);", script, re.S)
+	assert len(calls) == 3, "the Bank, Set up autopay and Cancel autopay calls"
+	for call in calls:
+		assert "always: function (data)" in call and "succeeded(data)" in call, call[:80]
+		assert "error:" not in call, "the website frappe.call never calls error()"
+	assert "return !!(data && !data.exc && !data.exc_type && data.message);" in script
+
+
 # --- the bank path (hosted Checkout) and /pay run the same guard --------------
 
 
@@ -4603,7 +4648,7 @@ def test_an_unreleased_refusal_keeps_the_card_form_and_says_why(monkeypatch):
 	releases, so it read that attempt as not blocking and brought the card form back with no
 	message: each tap looped until Stripe answered the cancel. The refusal is now
 	AttemptUnreleased — still PaymentBlocked, which dunning reschedules on — and the page keeps
-	its form while the modal shows MSG_UNRELEASED, as for LinkStillOpen
+	its form and shows MSG_UNRELEASED under it, as for LinkStillOpen
 	(scripts/test_web_flow_history.js drives the page through it)."""
 	from pathlib import Path
 

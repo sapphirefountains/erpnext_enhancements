@@ -94,6 +94,16 @@
 <script>
 	frappe.csrf_token = "{{ csrf_token }}";
 
+	// frappe v16's WEBSITE frappe.call (frappe/website/js/website.js) calls back only on an HTTP
+	// 200 and never calls error(): a refusal (417, e.g. "already being processed"), a 403, a 5xx or
+	// a dropped connection reach only its `always` hook, after it has shown the server's message
+	// in a pop-up. So every button here is given back in `always` unless the call succeeded, or
+	// it stays disabled until a reload. (`always` runs before the 200 callback, so it reads the
+	// answer itself.) /pay-card does not use frappe.call at all; it needs the refusal's details.
+	const succeeded = function (data) {
+		return !!(data && !data.exc && !data.exc_type && data.message);
+	};
+
 	document.querySelectorAll(".pay-btn").forEach(function (btn) {
 		btn.addEventListener("click", function () {
 			const invoice = btn.getAttribute("data-invoice");
@@ -115,7 +125,9 @@
 						restore();
 					}
 				},
-				error: restore,
+				always: function (data) {
+					if (!succeeded(data)) restore();
+				},
 			});
 		});
 	});
@@ -141,8 +153,8 @@
 						setup.disabled = false;
 					}
 				},
-				error: function () {
-					setup.disabled = false;
+				always: function (data) {
+					if (!succeeded(data)) setup.disabled = false;
 				},
 			});
 		});
@@ -161,8 +173,8 @@
 						cancelAutopay.disabled = false;
 					}
 				},
-				error: function () {
-					cancelAutopay.disabled = false;
+				always: function (data) {
+					if (!succeeded(data)) cancelAutopay.disabled = false;
 				},
 			});
 		});
