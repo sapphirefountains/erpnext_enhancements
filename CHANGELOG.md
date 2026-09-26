@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.537.4] - 2026-09-25
+## [1.539.2] - 2026-09-26
 
 **Every Stripe request now pins its API version, `2026-06-24.dahlia`.** Upgrading the account's
 default version in the Stripe Dashboard can no longer change what these requests mean.
@@ -40,7 +40,7 @@ the PaymentIntent list lookup.
 - `test_every_request_pins_the_stripe_api_version` checks the header on `_headers` and on a real
   `_request`, and that the constant is a valid Stripe version string.
 
-## [1.537.3] - 2026-09-25
+## [1.539.1] - 2026-09-26
 
 **A declined card no longer freezes `/pay-card`.** The customer sees the bank's message and can
 correct the card and try again. The Bank and autopay buttons on `/pay` also no longer stay stuck
@@ -93,6 +93,524 @@ trap as the v1.520.1 lesson: a harness that fakes the framework proves only the 
     and no call reaches it.
 - `test_pay_card_never_uses_the_website_frappe_call` and
   `test_pay_buttons_are_given_back_after_any_refusal` run without node.
+
+## [1.539.0] - 2026-09-25
+
+**The knowledge base gets its rules (WI-080 PR 2, ADR 0017): who may approve a version, what a save
+may change, the KB number and review date publishing will write, and the content hygiene that keeps
+hidden text and secrets out of what people and AI read.** Files attached to either KB doctype are
+now private with their bytes and stay attached where they are, and an image on a published article
+cannot be deleted. Staff still see nothing new and nothing can publish: the approve button and the
+publish action are PR 3.
+
+**Hold: this merges after PR 1 (v1.538.0, #1126) and not before the QuickBooks and Workforce
+cutover is finished (~2026-11-02).** The WI-080 PRs merge one at a time, each checked on prod with
+the read-only queries below before the next.
+
+### Why
+
+- ADR 0017 section 2: a version is published only by a KB Approver who did not write it, from a
+  signed-in browser, exactly as they opened it. That rule has to exist, and be tested, before the
+  button that uses it. `workflow.py` holds it as plain functions so the bench-free CI tier covers
+  every branch, and the Version controller applies it in the hooks PR 1 reserved for it.
+- ADR 0017 section 1, "on save and publish": presentation is stripped so hidden text cannot reach
+  AI, secret-shaped strings are refused, and every attached file is private.
+- PR 1 review found that a File's owner could delete an image out of a published article. v16
+  protects attachments only on a *submitted* document, and a Knowledge Article is never submitted.
+
+### Added
+
+- **`knowledge_base/workflow.py`** (standard library only, plus `signed_in_browser` imported from
+  `marketing/publish/workflow.py`, so Marketing and the Knowledge Base share one definition of "a
+  person's login, not a token or a job"; Marketing's `approval_problems` is deliberately not reused,
+  because it hard-codes Marketing Manager).
+  - `approval_problems(version, user, roles, *, user_type, browser, gate_flags, opened_modified)`
+    refuses when the approver lacks KB Approver; the approver is not a named person with a staff
+    login (see below); the request is not from a signed-in browser; `ai_gate_pending` or
+    `ai_gate_bypass` is set (Nik confirming a card runs the tool in his own browser session, so the
+    browser test alone would pass); the version is not In Review; the approver is the owner, the
+    submitter, a contributor or the AI requester (compared without case); or the stored `modified`
+    is not the value the approver opened. Every broken rule is reported, in one sentence naming it.
+  - **Approvers are named people** (added in review). Administrator holds every role implicitly
+    (frappe `origin/version-16` `permissions.py:546-547`) and v16 makes it a System User
+    (`core/doctype/user/user.py:406`), so the role rule alone let it approve. `approval_problems`
+    now refuses `Administrator` and `Guest` by name (`constants.NEVER_APPROVERS`), whatever roles
+    they hold, and any account whose `User.user_type` is not exactly `System User`
+    (`constants.APPROVER_USER_TYPE`): a portal Website User, a custom User Type, or a user with no
+    row. The function is pure, so `user_type` is a **keyword argument with no default**: a caller
+    that forgets it raises `TypeError` rather than approving. The Version controller reads it from
+    the User row at approval (`frappe.db.get_value`), not from the session, which recorded it at
+    login, and **PR 3's `approve_and_publish` must pass it the same way**. The continuity runbook
+    (TASK-2026-02297) uses Administrator only to grant or revoke KB roles, never to approve.
+  - `changed_content_fields` and `content_edit_problem`: content changes only while the stored
+    version is a Draft. A change is judged as a reader sees it: `None` equals `""`, the review
+    interval compares as a number, and the body compares after presentation is stripped.
+  - `contributors` / `with_contributor`: one user id per line, each once.
+  - `next_kb_number(block, taken)`: `KB-{block}{01..99}`, one past the highest number in the block,
+    never a gap (a vanished number may still be cited somewhere), never `{block}00` (the block's
+    index). A full block raises `BlockFullError` with a message that says which numbers are used.
+    Names are matched without case or trailing space, as MariaDB's `_ci`/PAD SPACE collation would.
+  - `review_by(start, months)`: calendar months, clamped to a shorter month's end (31 August + 6 =
+    28 February, the 29th in a leap year). A blank, 0, negative or unreadable interval uses
+    `constants.DEFAULT_REVIEW_EVERY_MONTHS` (6, POL-0001), read at call time, never restated.
+- **`knowledge_base/content.py`** (standard library only).
+  - `strip_presentation` removes every `style` declaration except `text-align`, the
+    `ql-color-*`, `ql-bg-*`, `ql-size-*` and `ql-font-*` classes, and the `color`, `size`, `face`,
+    `bgcolor` and `hidden` attributes. **v16's Text Editor stores alignment as a style** (it
+    registers Quill's `attributors/style/align`), so removing all of `style` would have lost it.
+    **The attributes are there because v16's `sanitize_html` keeps them, and the `<font>` element**
+    (frappe `origin/version-16` `utils/html_utils.py:267`, `:413-516`), and a REST write stores a
+    body as sent: `<font color="#ffffff">` or `<p hidden>` would be text no reader sees and every AI
+    reads in `body_md`. A `<font>` left with no attributes renders as plain text, so it stays (the
+    Desk editor turns one into a `<span>` anyway, but only when someone opens the draft). A kept
+    start tag is rewritten only when it changes, found with the standard library's HTML parser so
+    an attribute holding `>` is read as a browser reads it; text, entities and pasted `data:`
+    images come back exactly as they were.
+  - **Classes are an allowlist** (changed in review; the first cut dropped only the `ql-color-*`,
+    `ql-bg-*`, `ql-size-*` and `ql-font-*` classes). A class means whatever the stylesheets on the
+    page say, and the page carries Bootstrap, Frappe, ERPNext and this app, so the denylist kept a
+    REST-written `<p class="hidden">`, and `d-none`, `sr-only`, `visually-hidden` and `text-white`:
+    invisible on the page, plain in `body_md` and to every AI tool. Two it kept come from the
+    editor's own world: Frappe's `.icon` is `font-size: 0` (`public/scss/common/icons.scss:3`), and
+    Quill's `.ql-clipboard` sits 100000px off-screen (Quill 2.0.3 `assets/core.styl:30-35`).
+    `content.KEPT_CLASSES` is now exactly the classes v16's Text Editor writes for structure,
+    derived from `public/js/frappe/form/controls/text_editor.js` and the Quill 2.0.3 formats it
+    registers (v16 pins `"quill": "2.0.3"`, `package.json:73`): the wrapper `ql-editor read-mode`
+    (`:402`); `ql-indent-1` to `-8` (`formats/indent.ts:28-31`); Quill's `ql-align-right`,
+    `-center` and `-justify` (`formats/align.ts:5`, `:9`; v16 writes alignment as a style but reads
+    these from pasted HTML); `ql-direction-rtl` (`text_editor.js:115-116`); the code block's
+    `ql-code-block-container` and `ql-code-block` (`:7-9`; `formats/code.ts:46`, `:49`); the list
+    marker span `ql-ui` (`core/quill.ts:31`); `table table-bordered` (`:53-54`); and the mention
+    blot's `mention` and `ql-mention-denotation-char`. **Every other class is dropped**, compared
+    exactly and case included, with classes split on HTML's ASCII whitespace as a browser splits
+    them. **`id` is dropped too**: Quill never writes one, and Frappe's desk stylesheet gives
+    `#freeze` `opacity: 0` (`public/scss/desk/global.scss:511-514`).
+  - **Elements are an allowlist too** (changed in review; the strip had looked only at
+    attributes). v16's `sanitize_html` lets 168 tags through (`acceptable_elements`,
+    `svg_elements`, `mathml_elements` and six more), and a browser paints none of the text of many
+    of them. Checked in Chrome 152 inside v16's read-mode wrapper: `<dialog>` and `<audio>` are
+    `display: none`; `<datalist>`, `<video>`, `<canvas>`, `<meter>`, `<progress>` and an SVG
+    `<desc>`, `<title>` or `<metadata>` render none of their text; an `<svg opacity="0">` and
+    MathML's `<mphantom>` hide what they hold. Every one came back from the strip byte for byte,
+    with its text still in the HTML and in `body_md`. `content.KEPT_ELEMENTS` is now the tags v16's
+    editor writes, each the `tagName` of a Quill 2.0.3 or v16 format (`blots/block.ts:127`,
+    `formats/bold.ts:5` and so on; `text_editor.js:8`, `:15`, `:132`, `:428`), plus `thead` and
+    `th`. **Every other element is unwrapped**: its tags go and its text stays where a reader sees
+    it. SVG and MathML go the same way. `script` and `style` go with what they hold, the same two
+    tags v16 lists as `REMOVE_CONTENT_TAGS` (`utils/html_utils.py:21`).
+  - **Comments and declarations go whole, and raw text comes back as text** (changed in review).
+    Python's `HTMLParser` and a browser disagree about where some constructs end. Python 3.14.6
+    runs a comment opened by `<!-->` to the next `-->` and a `<![CDATA[` section to `]]>`, where a
+    browser (and nh3) ends both at the first `>`. It also reads `<style>` as raw text inside an
+    `<svg>`, where a browser breaks out to HTML. So `<!--><p class="hidden">a</p><!-- -->` came
+    back unchanged, and v16 stored it as `<!----><p class="hidden">a</p><!-- -->`. Nothing Python
+    counted as inside a comment, a declaration or a processing instruction is kept now. Text Python
+    read as raw (`<textarea>`, `<title>`, `<xmp>`, `<plaintext>`) is written back escaped when its
+    element is unwrapped. A raw `<` in any other text is escaped as well; v16's editor and
+    `sanitize_html` both write `&lt;`, so a real body never has one. The output is kept tags and
+    text only, so a second strip changes nothing.
+  - `secret_findings` finds private keys; Stripe, AWS, Google, GitHub, Slack, SendGrid, Anthropic,
+    OpenAI and Plaid credentials; JWTs; a Frappe `token key:secret`; bearer and Basic credentials; a
+    password inside a web address; and a password or key written out after "password:" or "API key:".
+    It returns `(line, kind)` and **never the value**. **`data:` URIs are removed first**, because
+    v16 turns pasted images into Files only after `validate` (`model/document.py:594` then `:835`),
+    so in `validate` the body still holds every screenshot as base64. In HTML, a line is a line of the
+    page, and attribute values (a link's address, hidden `data-*`) are read with it. **Nothing lets
+    an author past a finding, so the two word-shaped kinds are checked for more than shape.** A Basic
+    credential must decode from base64 to `user:password`: letters and `/` are base64 characters,
+    so "Basic Maintenance/Cleaning" and "Basic Pumps/Filters/Lights" matched the pattern. A written
+    password ignores the sentence's punctuation around it and needs a digit or a symbol other than
+    the `-`, `.` and `/` that join words, so "If the password is forgotten, ...", "Password:
+    case-sensitive.", "Password: (optional)" and "The password is: first.last" are prose. A password
+    of letters and hyphens alone is missed, as one of letters alone always was.
+  - `content_hash`: SHA-256 over title, summary, keywords and body. The WI names no rule, so the
+    documented choice is to ignore what nobody can see (line endings, Unicode spelling, end space,
+    runs of spaces in single-line fields, keyword order and case, stripped presentation) and nothing
+    else. It is **not** computed in `validate`: PR 3 computes it, and `body_md`, at publish from the
+    stored body.
+- **`knowledge_base/files.py`**, two hooks on `File`, each returning for a File not attached to the
+  Knowledge Base after reading its attachment and, on an update, the stored row's, which v16 has
+  already loaded (they run for every File on the site, make no query for an unrelated one, and never
+  raise for it).
+  - `force_private` (`doc_events["File"]["before_insert"]` and `["before_validate"]`). **Setting the
+    flag in `before_insert` is not enough, and that is a correction to the plan:** a `doc_events`
+    handler runs after the controller's own method (v16 `Document.hook`,
+    `model/document.py:1633-1649`), and `File.before_insert` has already written the upload into
+    `public/files` (`core/doctype/file/file.py:107-144`), where nginx serves it to anyone with the
+    URL. Flipping the flag alone leaves the bytes public, and `File.validate` then refuses the insert
+    with "The File URL you've entered is incorrect". So on insert the hook re-saves the content
+    through `File.save_file` as private (reading it before the flag flips, since `get_content`
+    checks the URL against the folder `is_private` names) and deletes the public copy **only if this
+    insert wrote it**: `flags.new_file`, and no other File row using that URL. On an update, setting
+    the flag is enough, because `File.validate` moves the bytes itself (`handle_is_private_changed`),
+    which closes the owner-unticks-Private path. Pasted images were already private: v16 extracts
+    them private unless the doctype sets `make_attachments_public`.
+  - **The same hook keeps a KB File attached where it is.** `attached_to_doctype` and
+    `attached_to_name` are only `read_only` in v16's `file.json`, and the server never enforces
+    that: `frappe.client.set_value` and `PUT /api/resource/File` apply them and save
+    (`client.py:208-215`, `api/v1.py:50-58`), and the write check runs on the updated row
+    (`model/document.py:584`), which `File.has_permission` grants a File's owner. So the uploader of
+    a published article's image could clear its Attached To in one call and delete it in the next,
+    past the delete refusal below, or detach it and untick Private in one call, past the privacy
+    rule. On an update the hook now refuses any change to where a File is attached when the stored
+    row (`get_doc_before_save()`, already loaded `FOR UPDATE`) attaches it to either KB doctype,
+    unless KB code sets `flags.kb_action`, and treats a File as a KB File if either row says so.
+    `before_validate` runs even under `flags.ignore_validate` (`model/document.py:1404-1405`). PR 3's
+    publish, which moves a draft's Files onto the Article, sets the flag on each.
+  - **`api/comments.link_files_to_comment` skips a File attached to either KB doctype.** It moves
+    the caller's own Files with `db_set`, which runs no File hook, so it was the same detach by
+    another door.
+  - `file_has_permission` (`has_permission["File"]`) refuses `delete`, and only `delete`, on a File
+    attached to a Knowledge Article, unless KB code sets `flags.kb_action`
+    (`frappe.delete_doc("File", name, flags={"kb_action": True})`; nothing in v1 does). **It is a
+    permission hook rather than the `on_trash` hook first proposed**, because `File.on_trash` deletes
+    the bytes from disk before any `doc_events` `on_trash` handler runs: refusing there would roll
+    back the row and leave it pointing at a file that is already gone. The permission check runs in
+    `delete_doc` before `on_trash` (`model/delete_doc.py:173-176`). Every other answer is `True`
+    exactly, because on v16 a falsy permission-hook answer denies (`permissions.py:483-500`). **The
+    File form still shows Delete**: v16 builds that menu from the role-level `can_delete` list
+    (`toolbar.js:504-523`, `model.js:348-351`) and never asks the hook, and role `All` holds delete
+    on File. Pressing it is refused with a permission error, which is what the WI now checks.
+- **`constants.py`** gains the doctype names, the role names and `VERSION_CONTENT_FIELDS`, so the
+  new code names nothing twice. A test asserts they agree with the JSONs, the seed patch and
+  `_gate.KNOWLEDGE_BASE_DOCTYPES`.
+
+### Changed
+
+- **The Version controller applies the rules.**
+  - `before_submit` **and** `on_submit` (the one `flags.ignore_validate` cannot skip) now run the
+    approval rules after the `kb_publish` check, against the version **as stored**
+    (`get_doc_before_save()`, loaded `FOR UPDATE` by `check_if_latest`), never the copy in memory,
+    which the code calling `submit()` could have changed. The copy being submitted must match the
+    stored content, and is scanned for secrets again. PR 3's `approve_and_publish` passes the opened
+    `modified` as `flags.kb_opened_modified`; without it every approval is refused. It cannot be read
+    off the document, because the save has moved `modified` on by then (`document.py:586`). The
+    approver's `user_type` is read from their User row in each hook (`_user_type`).
+  - `before_validate` strips presentation from the body, refuses a content change unless the stored
+    version is a Draft (no flag gets past this), and on a save that changes content refuses a secret
+    and records the saver in `contributors`. **`before_validate`, not `validate`:**
+    `flags.ignore_validate` skips `validate`, but v16 runs `before_validate` before it looks at that
+    flag (`model/document.py:1404-1405`, then `:1407-1408`), so in `validate` server code could have
+    changed an In Review version's text without being recorded as a contributor. A save that changes
+    no content (a state change by the KB's own actions) is not scanned, so a version whose text
+    predates a stricter scan can still be sent back; approval scans it again. `contributors` is at
+    permlevel 1, and a value set in `before_validate` survives the user's save because v16 resets
+    higher permlevels before it runs (`:592` on save, `:483` on insert).
+- `tests/test_knowledge_base_schema.py`: its stub gains `get_doc_before_save` and a session, and
+  "a submit with the publish flag passes" becomes "reaches the approval rules", which the new hooks
+  suite exercises.
+- WI-080's acceptance check for an article's image no longer says the File form shows no Delete (it
+  does, see above); it says pressing Delete, or the REST delete, is refused.
+
+### Tests
+
+- **`tests/test_knowledge_base_rules.py`** (unittest, no stub, its own CI step): every branch of
+  `workflow.py` and `content.py`, a real v16 Quill body, every style and every attribute that hides
+  text; 36 hiding or near-miss classes dropped, alone and beside a kept one; a v16 body with every
+  kept class (a list nested eight deep, aligned and right-to-left paragraphs, a code block, a
+  table, a mention) coming back byte for byte, and again with `hidden` added to every tag; the kept
+  list derived from the cited v16 and Quill lines, held verbatim, and those Frappe lines checked
+  against a local `origin/version-16` checkout when one is present (skipped in CI); every tag v16's
+  `sanitize_html` allows (held verbatim, and checked against a local checkout the same way) either
+  kept or unwrapped with its text left outside it, the elements KB-PR2-R3-01 found hiding text
+  among them; `KEPT_ELEMENTS` derived from the cited `tagName` lines; the three inputs Python's
+  parser misread, both as sent and as a browser writes them back; comments, declarations, raw text,
+  `script`/`style`, a stray `<` and cut-off tags; and every output a fixed point; Administrator
+  (holding every role, in any case), Guest, nobody, and every user type but `System User` refused,
+  while a named approver still passes; 21 secret kinds (all fixtures concatenated, never a literal key: GitHub push protection
+  refused this repo's branch once for a literal Stripe-shaped string), ordinary KB prose that must
+  not be flagged (slash-joined "Basic" headings and "password is <word>," sentences included), and a
+  fresh-interpreter check that neither module imports frappe.
+- **`tests/test_knowledge_base_hooks.py`** (unittest, its own `frappe` stub and CI step): the File
+  hooks' fast path (no write, no query, nothing raised for an unrelated File or an object with no
+  attributes), the byte move and when the public copy may be deleted, a KB File refused a detach or
+  move without `flags.kb_action`, `link_files_to_comment` leaving KB Files where they are, the
+  delete refusal and the exact `True` everywhere else, the `hooks.py` registration, and the Version
+  controller's content gate (pinned to `before_validate` from the syntax tree) and approval gate,
+  each approval rule refused in both hooks: Administrator, Guest and a Website User included, with
+  the user type read from the signed-in user's User row in each hook.
+
+### After deploy
+
+Read-only, on prod, after PR 1's checks pass.
+
+- A KB Author saves a draft in the Desk with a coloured word and a centred heading. After the save
+  the colour is gone and the centring stays. (Check it in the Desk: the MCP denylist refuses any SQL
+  that names the Version doctype, by design.) A nested list, a code block and a table in the same
+  draft keep their indent, box and borders.
+- The same author writes the draft's body from the browser console with `frappe.client.set_value`
+  as `<p class="hidden">a</p><p id="freeze">b</p>`: it reads back as `<p>a</p><p>b</p>`. Written as
+  `<p>a</p><dialog>b</dialog><svg><desc>c</desc></svg><!--><p class="hidden">d</p><!-- -->`, it
+  reads back as `<p>a</p>bc`.
+- The same author attaches a file through the sidebar **with Private unticked**:
+  `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0`
+  is 0, the File's URL starts `/private/files/`, and the would-be `/files/<name>` returns 404 with no
+  cookie. This is the one behaviour CI cannot prove: it depends on v16's real `File.save_file`.
+- Still in the Desk, the same author runs `frappe.client.set_value` from the browser console to clear
+  that File's `attached_to_name`: it is refused with "Knowledge base files stay attached", and the
+  File is unchanged.
+- A save with `sk_live_` followed by 24 letters in the body is refused with "Body line N looks like a
+  Stripe secret key", and the message does not repeat it.
+- ``SELECT COUNT(*) FROM `tabError Log` WHERE creation > '<deploy time>' AND error LIKE '%knowledge_base/files.py%'``
+  is 0 after a day of ordinary uploads elsewhere on the site: the hook sees every one of them.
+
+## [1.538.0] - 2026-09-25
+
+**The company knowledge base gets its module, its two doctypes, its two roles and its locked
+permissions (WI-080 PR 1, ADR 0017).** Staff see nothing yet, and nothing can publish: there is no
+workspace, no action button and no AI tool, and a version can be submitted only by the publish
+action that PR 3 adds. Both tables stay empty until then.
+
+**Hold: this must not merge before the QuickBooks and Workforce cutover is finished
+(~2026-11-02).** The WI-080 PRs merge one at a time, and each is checked on prod with the read-only
+queries below before the next one merges.
+
+### Why
+
+- Nik wants one knowledge base that people and every AI tool Sapphire uses read from the same
+  place, so that Parker, James and the crews can keep the company running without him.
+- On 2026-09-25 he decided "we do our own". **ADR 0017 moves from Proposed to Accepted** with this
+  release, and Frappe Wiki is dropped rather than kept as a fallback.
+- The central rule of the design: **published text and drafts are different doctypes.** A draft
+  cannot leak through a reader path because it is not in the reader's doctype. Hiding draft fields
+  at a higher permlevel was rejected, because FAC's `get_document` checks doctype permission and
+  ignores permlevel.
+
+### Added
+
+- **The `Knowledge Base` module**: `modules.txt`, `knowledge_base/` with a README that maps every
+  leak path to what closes it, and a row in the root README's module map.
+- **`Knowledge Article`** (class `KnowledgeArticle`): the approved, published text of one KB number,
+  and nothing else.
+  - Named by `kb_number` (`KB-0612`); `allow_rename 0`; `track_changes 1`. Its core `Version` rows
+    hold only published text, and they give a tamper trail.
+  - All 25 fields are read-only, including `body` (Text Editor), `body_md` (hidden; the Markdown
+    the AI tools will read, written at publish) and `live_version`. `live_version` is Data, not a
+    Link, because readers cannot open versions, and a Link's title lookup would fail for all of them.
+- **`Knowledge Article Version`** (class `KnowledgeArticleVersion`): drafts and permanent history,
+  submittable, `KBV-.#####`, `track_changes 0`.
+  - `track_changes` is off because core `Version` rows are readable by System Manager, and that
+    includes the `triton@` service identity.
+  - Authors edit only the content fields: title, department, summary, keywords, process owner,
+    review interval, body and change note. Every review, provenance and AI field is read-only and
+    `no_copy`. The provenance fields are there for slice 2's import.
+  - **Those server-set fields are at permlevel 1, where both KB roles hold read only.**
+    `read_only` is a Desk hint that v16 never checks on the server; only permlevel is enforced
+    (`validate_higher_perm_levels`, `model/document.py:1021-1044`). At level 0, a KB Author or
+    Approver could clear `contributors` or `ai_requested_by`, or set `review_state`, with
+    `frappe.client.set_value` on a draft, and nothing would record it (`track_changes` is 0). That
+    would erase exactly what PR 2's rule "the approver is not a contributor or the AI requester"
+    reads. Now v16 puts back the stored value, or the default on a new draft, before `validate`.
+    The code that writes these fields in later PRs must therefore run with `ignore_permissions`,
+    or the write is silently undone; the module README and the controller say so.
+  - **`department_block` is required and starts blank.** v16 gives a Select with no `default` its
+    first option on every new document, on the server (`model/create_new.py:117-118`, through
+    `Document._set_defaults`) and in the Desk (`model/create_new.js:107-114`). With
+    "00 Company Wide" first, `reqd` could never fire, and a draft nobody placed would be published
+    under a block-00 KB number that can never be renamed. The options now store a blank first, so
+    the author has to choose. The Article's options match. `constants.DEPARTMENT_BLOCK_OPTIONS`
+    stays the list of valid blocks; `DEPARTMENT_BLOCK_SELECT_OPTIONS` is what the JSON stores.
+  - `review_state` is the only field that may change after submit, when a newer version supersedes
+    this one. Copy is hidden (`allow_copy 1`).
+  - **`review_every_months` defaults to 6**, on the Version and on the Article's copy. POL-0001
+    (Company Documentation - Guiding Principles) mandates a review every six months and lists the
+    Knowledge Base among the company's document types. The number lives once, in
+    `constants.DEFAULT_REVIEW_EVERY_MONTHS`, and the schema test asserts both JSON defaults equal it,
+    so Nik can change the cadence in one reviewed place. No backfill: neither table has a row yet,
+    and on a normal doctype a new column's default reaches existing rows through the `ALTER`
+    anyway. A later change of default reaches new drafts only.
+- **Both doctypes are private by construction:** `has_web_view 0`, `allow_guest_to_view 0`,
+  `show_in_global_search 0`, `make_attachments_public 0`, `allow_import 0`, and no field in global
+  search. All of these are stated explicitly in the JSON.
+- **The DocPerm matrix:**
+
+  | Role | Knowledge Article | Knowledge Article Version |
+  |---|---|---|
+  | Desk User | read, report, print | nothing |
+  | System Manager | read | nothing |
+  | KB Author | nothing (reads as a Desk User) | read, create, write, print, report; read only at permlevel 1 |
+  | KB Approver | nothing (reads as a Desk User) | read, create, write, print, report; read only at permlevel 1 |
+
+  - `share` is 0 everywhere, because v16 `assign_to.add` shares a document with an assignee who
+    cannot read it (frappe `origin/version-16` `desk/form/assign_to.py:106-118`). With no share
+    right, that call is refused instead.
+  - No role may submit, cancel, amend, delete, export, import or email.
+  - The Version doctype has no System Manager, `Desk User`, `All` or `Guest` row.
+- **Controllers that refuse every write the Knowledge Base did not announce.**
+  - The Article refuses any save without `flags.kb_action`, and every delete and rename.
+  - The Version refuses any submit without `flags.kb_publish`, any change after submit without
+    `flags.kb_action`, and every cancel, amendment, delete and rename.
+  - **Each refusal sits in two hooks**, because v16 lets a caller skip the obvious one.
+    `flags.ignore_validate` skips `validate`, `before_submit`, `before_cancel` and
+    `before_update_after_submit` (`model/document.py:1407-1408`), but never `on_update`,
+    `on_submit`, `on_cancel` or `on_update_after_submit` (`:1454-1462`).
+    `delete_doc(ignore_on_trash=True)` skips `on_trash` (`model/delete_doc.py:175-176`) but never
+    `after_delete` (`:195-196`). The second hook runs inside the same transaction, so raising there
+    rolls the write back.
+  - Nobody holds the rights these refusals guard, so they are reached only by server code running
+    with `ignore_permissions`. What they buy is that such code has to opt in by name.
+- **`knowledge_base/constants.py`**, standard library only. It holds the article statuses, the
+  review states and the ten POL-0000 department blocks (`"06 Operations"`). Every Select option on
+  both doctypes comes from here, and the code that writes those values in later PRs imports them,
+  so a misspelt state cannot save cleanly and then match nothing.
+- **`patches/seed_knowledge_base_roles.py`** (`[post_model_sync]`) creates **KB Author** and
+  **KB Approver** with `desk_access = 1`, in the shape of `seed_training_roles`.
+  - Not `fixtures/role.json`: `custom_docperm.json` imports first.
+  - v16 model sync usually creates both roles first anyway, from the DocPerm rows
+    (`DocType.on_update` → `make_module_and_roles`, `core/doctype/doctype/doctype.py:544`,
+    `:1968-1999`). The patch is what the module relies on rather than that side effect.
+- **The same patch creates a one-role "KB Approvers" Role Profile** with no members.
+  - Plural, like this repo's other one-role profiles: "PO Approvers" holds the "PO Approver"
+    role and "PO Creators" holds "PO Creator". The role keeps its singular name, KB Approver.
+  - It exists for Lisa Symanski, the fourth approver, whom James approved on 2026-09-25. She holds
+    "Finance Team", and this site rebuilds a profiled user's roles from their profiles on every
+    save, so a direct grant of KB Approver would be wiped. Nik adds this profile to her in the Desk
+    as her second profile.
+  - Not in `fixtures/role_profile.json`, because fixture sync re-inserts every listed profile on
+    every migrate. Insert-only means a Desk edit to it survives.
+  - Inserting a Role Profile `queue_action`s a "re-save every member" job, which file-locks the
+    profile until a worker runs it. The deploy FLUSHDBs the queue, so the patch releases that lock
+    itself. The profile has no members, so the job has nothing to do.
+  - Every step is guarded and commits alone. It cannot raise, and it is safe to run twice.
+
+### Changed
+
+- **The AI gate refuses `Knowledge Article Version` on every generic tool, with AI gating on or
+  off** (`assistant_tools/_gate.py`, `DENYLIST_DOCTYPES`). Raw SQL never consults DocPerm, so this is
+  the only thing between a System Manager and the drafts.
+  - It refuses KB Authors and Approvers too. A draft in a model's context is the thing being
+    prevented, whoever asked for it.
+  - `tabKnowledge Article`, the published text, is deliberately **not** refused. Its needle
+    (`knowledgearticle`) is a prefix of the Version's (`knowledgearticleversion`), and the WI-080
+    acceptance queries all read it.
+  - One over-refusal is accepted and pinned: a query that aliases `tabKnowledge Article` as
+    `version` is refused.
+- **The refusal message is now a per-doctype reason map** (`DENYLIST_REASONS`). The Triton Chat
+  Attachment message is word for word what it was. The Version message says it holds unapproved
+  drafts and points at the Knowledge Article. The AI Action Log summary for a refusal no longer
+  calls every denylisted doctype "private assistant context".
+- **Both Knowledge Base doctypes are in `NEVER_EXEMPT`.** No settings row can let an assistant's
+  write to either skip its card, and a card that targets either never starts ticked in the batch
+  dialog.
+- **ADR 0017 is Accepted (2026-09-25)**, and its index row says so. WI-080 records the decisions
+  made after the plan was written:
+  - the native build is decided;
+  - the precondition "if the editor is unworkable, stop and reopen the Wiki" is struck, and
+    Parker's Phase 0 test now decides only whether PR 4a, the Markdown import, is built;
+  - Lisa Symanski is the named fourth approver, through the "KB Approvers" Role Profile;
+  - the Restricted Drive runbook's "grant or revoke KB roles as Administrator" step is tracked as
+    ERPNext task TASK-2026-02297 ("Continuity 3: write the restricted-access runbook") on
+    PRJ-00580, because the runbook does not exist yet;
+  - an article is reviewed every six months by default, as POL-0001 requires.
+
+### Security
+
+- **Three ways past the denylist are closed.** All three predate this release, and all applied to
+  `Triton Chat Attachment` as well as to the new entry.
+  - **The free-text match stripped SQL comments before it looked, and stripping deleted text
+    MariaDB runs.** A `#` or `--` inside a string literal (`select '#', body from ...`), a `--`
+    with no space after it (`1--1` is arithmetic), and a `/*! ... */` or `/*M! ... */` comment,
+    whose contents MariaDB executes, each removed the table name from what the needle search saw.
+    FAC 3.0.0's own SELECT check accepts all of them and runs the original string, and
+    `run_database_query` is a read tool, so it raises no card: one line could have read every
+    draft body, and could read every Triton Chat Attachment row until now. Found in review of this
+    PR; the hole dates from the denylist itself (v1.271.0). The gate now
+    searches two views of the text, comments stripped and not (`_denylist_haystacks`), and refuses
+    if either names a denylisted table. A second view can only refuse more. The one new
+    over-refusal, a comment saying `version` right after `tabKnowledge Article`, is pinned in the
+    test.
+  - FAC 3.0.0's `fetch` takes one `id`, `"<doctype>/<name>"`, which the denylist never read. It now
+    reads the doctype before the first slash, as FAC splits it.
+  - `run_python_code`'s `data_query.doctype` is pre-loaded with `frappe.get_all`, which applies no
+    permissions at all (`utils/code_execution_subprocess.py`). The denylist now reads it.
+  - A `doctype` argument is now also compared with case and runs of whitespace folded, since MariaDB
+    resolves a DocType name case-insensitively.
+
+### Fixed
+
+- **The batch dialog said every never-exempt card "changes the AI gate's own records or
+  settings".** `gating_api._review_reasons` used that one phrase for every `NEVER_EXEMPT` target.
+  It was already wrong for Task (v1.528.0), and adding the two KB doctypes made it wrong for them
+  too. `NEVER_EXEMPT` is now built from three named kinds, Task, `GATE_OWN_DOCTYPES` and
+  `KNOWLEDGE_BASE_DOCTYPES`, and `_never_exempt_reason` gives each its own phrase: "creates or
+  changes a Task", "changes the AI gate's own records or settings" (unchanged), and "changes the
+  company knowledge base". An entry added without a kind would show a generic fallback, and the
+  batch suite fails the build on one.
+- The description on AI Confirmation Exempt Doctype's Document Type and on the settings'
+  Confirmation-Exempt Doctypes table said "Task and the gate's own records are never exempt". Both
+  now name the knowledge base (Knowledge Article, Knowledge Article Version) as well.
+- `assistant_tools/README.md` said there was **no denylist in `_gate.py`**. There has been one entry,
+  `Triton Chat Attachment`, since v1.426.0. The section now documents the list, the reason map, the
+  three argument shapes and the history.
+
+### Tests
+
+- **`tests/test_knowledge_base_schema.py`** (unittest, installs its own frappe stub, so it gets its
+  own CI step). It pins:
+  - every flag, and the **whole** DocPerm matrix compared as a set keyed on role and permlevel, so
+    an added row fails as surely as a changed one;
+  - every server-set Version field at permlevel 1, no write right above level 0, and every field
+    level readable by both KB roles;
+  - that a required Select with no default starts with a blank option;
+  - that no Custom DocPerm, Property Setter or Custom Field fixture targets either doctype;
+  - the exact field lists: every Article field read-only, only content fields editable on a Version,
+    `review_state` the only `allow_on_submit` field;
+  - the Select options against `constants.py`, and the controller class names Frappe derives;
+  - every controller refusal, in both of its hooks;
+  - the seed patch: registered once under `[post_model_sync]`, seeding exactly the roles the DocPerm
+    rows name, insert-only, idempotent, never raising when an insert or the unlock fails, and not
+    also a fixture;
+  - the profile named "KB Approvers", never the role's own name;
+  - `review_every_months` defaulting to `constants.DEFAULT_REVIEW_EVERY_MONTHS` on both doctypes.
+- **`tests/test_ai_gate_denylist.py`** (unittest, appended to the "AI gate + assistant-tool
+  contract" step). It covers:
+  - the Version doctype refused on every path: a `doctype` argument on every FAC 3.0.0 tool that
+    takes one, plus unknown tool names; `fetch`; `data_query`; `run_python_code` text; and
+    twenty-two raw-SQL spellings under both `query` and `sql` (comments, backticks, double quotes,
+    case, newlines and tabs, `information_schema`, and eight that use comment markers MariaDB does
+    not honour). Each of those eight, and the same tricks on `Triton Chat Attachment` and in
+    `run_python_code` text, fails against the comments-stripped search alone;
+  - the published doctype and the WI-080 acceptance queries **not** refused;
+  - Triton Chat Attachment still refused, with its message unchanged;
+  - a settings row unable to exempt either KB doctype, and both settings descriptions naming them;
+  - `_gated_execute` refusing with gating off and with the bypass flag set, without running the
+    tool.
+- **`tests/test_ai_gate_batch.py`** gains four tests: a Task card and a knowledge-base card each get
+  their own reason, the three kinds make up `NEVER_EXEMPT` without overlapping, and every
+  `NEVER_EXEMPT` doctype has a reason of its own (never the fallback, and the gate's-own phrase only
+  for the gate's own records).
+
+### After deploy
+
+Read-only, on prod. The MCP denylist refuses any SQL that names the Version doctype, so these filter
+with `LIKE 'Knowledge Article%'`.
+
+- ``SELECT name, module, is_submittable, track_changes, has_web_view, show_in_global_search FROM
+  tabDocType WHERE name LIKE 'Knowledge Article%'``: 2 rows in `Knowledge Base`. On the Version row,
+  `track_changes`, `has_web_view` and `show_in_global_search` are all 0.
+- ``SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' AND deleted_name LIKE
+  'Knowledge%'`` = 0. This is the controller-name force-delete trap.
+- `SELECT name, desk_access FROM tabRole WHERE name IN ('KB Author','KB Approver')`: 2 rows,
+  `desk_access = 1`.
+- ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Role Profile' AND parent='KB
+  Approvers'``: exactly 1 row, `KB Approver`.
+- ``SELECT parent, `default` FROM tabDocField WHERE parent LIKE 'Knowledge Article%' AND
+  fieldname='review_every_months'``: 2 rows, both `6`.
+- ``SELECT parent, role, permlevel, `write`, share, submit, `delete`, export FROM tabDocPerm WHERE
+  parent LIKE 'Knowledge Article%'``: 6 rows, and every `share`, `submit`, `delete` and `export` is
+  0. The two Version rows at `permlevel` 1 (KB Author, KB Approver) have `write` 0.
+- ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE parent LIKE 'Knowledge Article%'`` = 0.
+- ``run_database_query("select name from `tabKnowledge Article Version`")`` is refused.
+- `curl -s -o /dev/null -w '%{http_code}' https://erp.sapphirefountains.com/api/resource/Knowledge%20Article`
+  with no cookie returns 403.
+
+Then two Desk steps for Nik:
+- Grant KB Author and KB Approver directly to users who have no Role Profile. Never give such a user
+  a profile for this: it wipes their direct roles.
+- Add "KB Approvers" to Lisa Symanski as a second Role Profile, on her User form. That save rebuilds
+  her roles from her profiles there and then (v16 `User.populate_role_profile_roles`), so her
+  `tabHas Role` rows include KB Approver straight away. A later edit to the *profile itself* is
+  different: it reaches members through a queued job, which a deploy's FLUSHDB can kill.
 
 ## [1.537.2] - 2026-09-25
 
