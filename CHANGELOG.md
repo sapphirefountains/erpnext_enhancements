@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.541.0] - 2026-09-26
+
+**Customers can open a PDF of their invoice from the payment pages.** "View invoice (PDF)" is on
+`/pay` under every invoice, whatever its payment state, and on `/pay-card` beside the invoice
+header: on the card form and on every settled state ("paid", "being processed" and the rest). It
+opens in a new tab, so a phone shows it in its PDF viewer and the list, or a card already typed
+in, stays where it was.
+
+### Added
+
+- `stripe_payments.core.api.portal_invoice_pdf?invoice=<name>`: a signed-in GET, not
+  `allow_guest`. It returns the PDF inline (`Content-Disposition: inline`, `<invoice>.pdf`).
+  Both pages use a plain link, not a `frappe.call`.
+- `stripe_payments/core/invoice_pdf.py` renders it and writes every answer as a page or the PDF,
+  never JSON, because a JSON error body in a new tab is all a customer would see.
+
+### Why it is built this way
+
+- **Ownership is `/pay`'s rule, submitted invoices only.** The invoice's Customer must be one of
+  `get_portal_customers()` and `docstatus` must be 1. Someone else's invoice, a draft, a canceled
+  one and a missing name all get the same "Invoice not available" page (404), which does not echo
+  the name. They also cost the same work: the user's customers are looked up first, then one
+  query carries all three conditions, so response time does not say which invoice numbers exist.
+  A signed-out tab gets Frappe's HTML "Not Permitted" page (403), before any lookup.
+- **Always the "Sales Invoice - Sapphire" format, never the DocType default or `Standard`.** On
+  v16 `Standard` prints every permlevel-0 field with a value and no `print_hide`: `cost_center`,
+  `amount_eligible_for_commission`, `is_internal_customer`, and any custom field made on the site.
+  Following the default would also serve whatever format a staffer makes the default. If the
+  Sapphire format is missing or disabled, the customer gets a "try again" page (500) and the
+  Error Log says why.
+- **Print permission is waived for this one render, never granted (Frappe/ERPNext workaround).**
+  A Website User has no Print on Sales Invoice, and ERPNext's `has_website_permission` looks for
+  the user in the Customer's Portal Users table, not in the Contact links this portal uses. So
+  printview would refuse customers their own invoices. After the ownership check the render sets
+  `flags.ignore_print_permissions`, as Frappe's `attach_print` does, and restores it in a
+  `finally`. It never calls `frappe.set_user`, which on a web request replaces the session and
+  logs the customer out. No DocPerm changes.
+- **The request's own parameters never reach the render.** printview reads `form_dict`, which
+  on this route is the query string: `?pdf_generator=` would pick the generator, `?settings=`
+  would reach Print Settings (`allow_print_for_draft`) and `?key=` a share key. The render runs
+  against an empty `form_dict`. `?_lang=` is read earlier, into `frappe.local.lang`, and printview
+  renders in it (right to left for Arabic), so the render runs in the user's own language. Both
+  are put back afterwards.
+- **The Desk's PDF generator order (Frappe workaround).** The format's own, else Print Settings,
+  else wkhtmltopdf, as `print.js` does it. Frappe's server-side `get_print` skips Print Settings,
+  so a format whose generator had been cleared would otherwise go to the wkhtmltopdf that
+  segfaults on this host. The Sapphire format is `chrome`.
+- **Bounded for the site and per customer.** `frappe.concurrent_limit` keys a pool per wrapped
+  function and each pool defaults to half the web tier, so this render and Frappe's own
+  `download_pdf` could otherwise hold every worker between them. The portal render gets an
+  explicit pool (2 at once, 3-second wait) plus a per-user cap of 10 renders a minute: a Redis
+  counter keyed on the session user, because `frappe.rate_limit` keys only on the IP or a request
+  value. Refusals get a 503 "try again" page and are not logged.
+- **Failures are logged with `defer_insert`**, because Frappe rolls back a GET's transaction and
+  an ordinary Error Log insert would go with it.
+
+### Notes
+
+- Billable-expense rows print the material at cost and the markup on its own line ("25% markup
+  for …"), exactly as QuickBooks printed them, so a reader can work out the markup (155 invoices,
+  1,030 rows). This is not new exposure, but the portal lets a customer pull any of their
+  submitted invoices at any time. If it should change, the place is `print_lookup.ps_charge_rows`,
+  which also feeds the Desk print and emails.
+- `/pay` shows no invoices at all while Stripe Settings is switched off, so no PDF links either.
+  The endpoint itself does not look at the switch.
+
+### Tests
+
+- Nine bench-free tests in `test_stripe_payments.py`: ownership, including identical refusals and
+  a Guest never reaching the database; the endpoint's decorator; the pinned format and generator
+  order, including the fixture; that the template never reads Frappe's letter head; the
+  permission waiver, `form_dict` and language isolation, restored after a failure, with
+  `set_user` never called; the per-user cap; the inline response and failure pages; and jinja
+  renders of `/pay` and `/pay-card` in every state.
+- The four portal endpoints join `test_whitelist_placement`'s must-stay-whitelisted inventory.
+
 ## [1.539.2] - 2026-09-26
 
 **Every Stripe request now pins its API version, `2026-06-24.dahlia`.** Upgrading the account's

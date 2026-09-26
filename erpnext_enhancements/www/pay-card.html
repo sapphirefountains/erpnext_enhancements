@@ -3,6 +3,13 @@
 {% block title %}{{ _("Pay by Card") }}{% endblock %}
 
 {% block page_content %}
+{#- "View invoice (PDF)": the invoice itself, from stripe_payments.core.api.portal_invoice_pdf,
+    which checks again that it is this customer's submitted invoice. In a new tab, so the phone's
+    PDF viewer opens it and this page, with a card already entered, stays where it was. Every
+    state below that names an invoice offers it — the card form and each settled state alike. -#}
+{%- macro invoice_pdf_link(name, css="") -%}
+<a{% if css %} class="{{ css }}"{% endif %} href="/api/method/erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf?invoice={{ name | urlencode }}" target="_blank" rel="noopener">{{ _("View invoice (PDF)") }}</a>
+{%- endmacro %}
 <div class="pay-card" style="max-width:520px;">
 	<h1 class="mb-4">{{ _("Pay by Card") }}</h1>
 
@@ -17,30 +24,36 @@
 	{% elif settled == "paid" %}
 		<div class="alert alert-success">{{ _("Invoice") }} <b>{{ settled_invoice }}</b> {{ _("is paid. Thank you!") }}</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{% elif settled == "nothing" %}
 		<div class="alert alert-info">{{ _("There is nothing left to pay on invoice") }} <b>{{ settled_invoice }}</b>.</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{% elif settled == "received" %}
 		<div class="alert alert-info">
 			{{ _("A payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("was already received, so it cannot be paid again here. Please contact us about the balance.") }}
 		</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{% elif settled == "processing" %}
 		<div class="alert alert-info">
 			{{ _("A payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("is being processed, so there is nothing to pay here. It will show as paid once it clears.") }}
 		</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{% elif settled == "awaiting" %}
 		<div class="alert alert-info">
 			{{ _("A card payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("is waiting for your bank's approval. If you did not finish approving it, you can pay again in about") }}
 			{{ awaiting_minutes }} {{ _("minute") if awaiting_minutes == 1 else _("minutes") }}.
 		</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{% elif settled == "unconfirmed" %}
 		<div class="alert alert-info">
 			{{ _("We could not yet confirm whether a payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("went through, so it cannot be paid again right now. Please do not pay again; check back later.") }}
 		</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{# A bank debit that goes ahead only once the customer verifies the account: never
 	   promised to clear. #}
 	{% elif settled == "verifying" %}
@@ -48,19 +61,22 @@
 			{{ _("A bank payment for invoice") }} <b>{{ settled_invoice }}</b> {{ _("is waiting for your bank account to be verified. It goes ahead once the account is verified, so there is nothing to pay here meanwhile.") }}
 		</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{# An earlier card attempt Stripe would not confirm canceled: it will never clear. #}
 	{% elif settled == "unreleased" %}
 		<div class="alert alert-info">
 			{{ _("An earlier card payment attempt for invoice") }} <b>{{ settled_invoice }}</b> {{ _("could not be released just now, so it cannot be paid here yet. Please try again later: it can take up to an hour to clear.") }}
 		</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+		{{ invoice_pdf_link(settled_invoice, "btn btn-link") }}
 	{% elif not invoice %}
 		<div class="alert alert-warning">{{ _("That invoice is not available to pay.") }}</div>
 		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
 	{% else %}
 
 	<p class="text-muted">
-		{{ _("Invoice") }} <b>{{ invoice.name }}</b> — {{ amount_display }}
+		{{ _("Invoice") }} <b>{{ invoice.name }}</b> — {{ amount_display }}<br>
+		{{ invoice_pdf_link(invoice.name) }}
 	</p>
 
 	{# Step 1: collect the card. No amount is committed yet, so the fee (if any) can
