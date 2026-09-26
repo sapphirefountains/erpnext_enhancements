@@ -1944,6 +1944,39 @@ def test_only_a_definite_stripe_answer_counts_as_a_decline(monkeypatch):
 	)
 
 
+def test_every_request_pins_the_stripe_api_version(monkeypatch):
+	"""Requests name the API version they were written against rather than riding the account
+	default, so a Dashboard upgrade cannot change what they mean: the next major version drops
+	`payment_method_types` from PaymentIntents, which every card charge sends. The version is the
+	one the account's webhook events carry, and it is a real Stripe version string."""
+	import re
+
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import client
+
+	monkeypatch.setattr(client, "get_api_key", lambda settings=None: "sk_placeholder")
+	assert re.fullmatch(r"20\d\d-\d\d-\d\d\.[a-z]+", client.STRIPE_API_VERSION)
+	assert client._headers(object())["Stripe-Version"] == client.STRIPE_API_VERSION
+	assert client._headers(object(), "key-1") == {
+		"Authorization": "Bearer sk_placeholder",
+		"Stripe-Version": client.STRIPE_API_VERSION,
+		"Idempotency-Key": "key-1",
+	}
+
+	seen = []
+
+	def request(method, url, headers=None, data=None, params=None, timeout=None):
+		seen.append(headers)
+		response = types.SimpleNamespace(status_code=200, text="{}")
+		response.json = lambda: {}
+		return response
+
+	monkeypatch.setattr(client.requests, "request", request)
+	monkeypatch.setattr(client, "get_settings", lambda: object())
+	client._request("GET", "/payment_intents/pi_1")
+	assert seen[0]["Stripe-Version"] == client.STRIPE_API_VERSION
+
+
 def test_the_client_tells_a_decline_from_no_answer(monkeypatch):
 	"""client._request gives every HTTP failure its status (a transport error has none), and
 	Stripe's own message for a card error. Only 400/401/402/403/404 are definite."""
