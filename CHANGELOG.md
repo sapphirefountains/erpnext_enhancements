@@ -7,6 +7,211 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.542.0] - 2026-09-26
+
+**Pay rates, and the numbers that give one away, are narrowed to the pay audience ADR 0013 names
+(System Manager, HR Manager and Accounts Manager) on every path a review found them leaking
+through.** ADR 0013 put pay rates in ERPNext behind
+permlevel 1. Frappe enforces a permlevel when it reads a document out to a caller: form loads, list
+views, `frappe.client.get` and `GET /api/resource`. It does not enforce it on a Script Report's raw
+SQL, on `doc.as_dict()` or `frappe.get_doc`, on a whitelisted function's own database read, on a
+derived field that was left at permlevel 0, on a form's version history, or on the document a write
+call sends back. A review found a burdened rate, or a total that yields one, reachable along each of
+those paths. Every change below narrows access to the audience or to a subset of it. Nothing widens
+access for anyone.
+
+### Security
+
+- **Labor Cost Analysis is limited to the three pay-audience roles.** The report prints
+  per-employee pay and burdened rates from raw SQL, and raw SQL applies no permlevel, so the
+  Report's role list is the only gate on those numbers. Projects Manager (held by 15 of 18 users)
+  was on that list. It reads Job Interval at permlevel 0 but not the permlevel-1 pay block, so the
+  report showed it exactly what the doctype hides. It is dropped. The three remaining roles all read
+  Job Interval at permlevel 0 as well, so the `ref_doctype` check still passes for them.
+  - **Delivery.** A standard Report JSON is imported only when its `modified` is newer than the
+    site row, and a skipped import is silent: the Location Timeline page kept its old roles that
+    way in v1.480.0. The file's stamp moves to 2026-09-25, and the new one-shot patch
+    `reload_labor_cost_analysis_report` re-imports it with `force=True`, the half a forgotten bump
+    cannot undo. `import_doc` keeps the site's `disabled`, `prepared_report` and `add_total_row`,
+    and replaces the `Has Role` table wholesale. Every failure goes to the Error Log, because a
+    patch that raises aborts `bench migrate`, which on this repo is the deploy.
+- **`Activity Cost.costing_rate` is at permlevel 1.** Since v1.480.0 it holds each employee's
+  burdened rate, written by `workforce/costing.py`, but it sat at permlevel 0, readable and
+  writable by Projects User. It moves up through a **Property Setter fixture, deliberately not a
+  Custom DocPerm**: one Custom DocPerm row for a doctype replaces all of that doctype's standard
+  DocPerms, so granting the audience a level-1 row that way would have taken Projects User's own
+  access away unless every standard row were restated too. `billing_rate` stays at permlevel 0,
+  so T&M billing is still configured natively, as ADR 0013 requires. Every writer already bypasses
+  permlevel (`db.set_value` and `insert(ignore_permissions=True)`), and the only reader,
+  `TimesheetDetail.update_cost`, reads through `frappe.db`, so costing is unchanged. In the Desk,
+  only Administrator now sees the field; whether the audience should is an open decision.
+- **ERPNext's `get_activity_cost` is overridden on the HTTP route.** It is whitelisted and returns
+  an employee's Activity Cost rates without any permission check, which no permlevel can change.
+  `api/activity_cost.get_activity_cost` calls ERPNext's function unchanged and zeroes
+  `costing_rate` unless the caller holds a pay-audience role **and** can read that Employee, so
+  User Permissions apply. Three details are deliberate:
+  - `override_whitelisted_methods` covers HTTP only (frappe applies it in `handler.execute_cmd` and
+    the `api/v2` RPC handler). That is the point: `TimesheetDetail.update_cost` imports ERPNext's
+    function directly, so saved Timesheets still cost from the real rate.
+  - The value is zeroed, not removed. The Timesheet form's two prefills feed it straight into
+    arithmetic, and a 0 is what `update_cost` treats as unset, so the save fills in the real rate
+    on the server.
+  - `billing_rate` is never touched.
+- **Four Timesheet cost fields are at permlevel 1**: `Timesheet.total_costing_amount` and
+  `base_total_costing_amount`, and `Timesheet Detail.base_costing_rate` and `base_costing_amount`.
+  ERPNext already puts `costing_rate` and `costing_amount` at permlevel 1, but left these at
+  permlevel 0, and at an exchange rate of 1 the `base_*` pair equals them. So the kiosk's burdened
+  rate was readable by the 5 roles that read Timesheets without permlevel-1 access. Same Property Setter route: no
+  DocPerm is created, and the site's existing Timesheet permission rows are untouched. The totals
+  are recomputed in `Timesheet.validate` and aggregated server-side with raw SQL or query builder,
+  so project and task costing are unchanged.
+- **Every `Employee Pay Rate` field is at permlevel 1.** Only the Employee's Table field
+  (`custom_pay_rates`) was. Frappe checks a child field's permlevel against the parent's DocPerms,
+  but a direct query of the child doctype never consults the permlevel of the parent's Table field.
+  So the raw rates were readable by every role with permlevel-0 read on Employee (4 roles), limited
+  only by per-user User Permissions. Each child field now answers to Employee's permlevel-1 rows,
+  which are exactly the audience. The Employee form renders as before; its version history, which
+  carried whole pay-rate rows in the network response, is scrubbed separately (below). Every code
+  reader (`costing._pay_rate_rows`, `payroll_export`'s SQL, the validate hook) bypasses permissions. This
+  is ADR 0013's own rule: any new field that carries money about a person goes in at permlevel 1.
+  DocType JSON import is hash-gated, so this lands on the next migrate without a stamp bump.
+- **`Sapphire Maintenance Record.total_labor_cost` is at permlevel 1, readable by System Manager
+  only.** It was hidden on the form but at permlevel 0. Together with the clock-in, clock-out and
+  pause fields it gives away the technician's burdened rate, and it was readable by the Maintenance
+  User, Projects Manager, Maintenance Supervisor and Customer roles. The new permlevel-1 row names
+  System Manager only. HR Manager and Accounts Manager hold no permlevel-0 access to this doctype,
+  and granting it to them would open whole visit records. The writer uses `db_set`, which bypasses
+  permlevel. The service dashboard uses the field only as a SQL predicate. The portal page, the print
+  format and the customer email never carried it.
+- **The two places that hand out a whole visit record now strip it first.** The Visit Wizard's
+  `get_visit_bootstrap` returned `doc.as_dict()`, and the `maintenance_visit_history` assistant
+  tool's detail mode read the field after `get_doc`. Neither applies field-level permissions, so
+  the permlevel alone would not have covered them. Both now call
+  `doc.apply_fieldlevel_read_permissions()`. The bootstrap does it after its own save, because
+  stripping first would save the field back as null. The tool keeps the key in its payload, where
+  it reads null for a caller without permlevel-1 read, so its output schema is unchanged.
+- **A form's version history no longer carries the fields its reader cannot see.** `getdoc` strips
+  the document and then attaches `docinfo.versions`: the stored Version diffs, verbatim, with the
+  old and new value of every changed field and every added or removed child row whole. Frappe
+  filters none of it by permlevel; the browser only declines to render it. Employee and Job
+  Interval both track changes, so the first pay-rate row HR adds, and every `labor_cost` a kiosk
+  clock-out stamps, would have reached every reader of that record in the response: the Employee
+  role on its own record, HR User (which all staff hold), and Projects Manager on every Job
+  Interval. That also made the premise behind the Labor Cost Analysis change, that Projects
+  Manager reads Job Interval but not its pay block, true of the rendered form only. The new
+  `fieldlevel_read.py` overrides `getdoc`, `get_docinfo`, `savedocs` and the Desk's `cancel` and
+  `discard`, all five of which send docinfo. Each calls frappe's own function unchanged, then drops
+  from each version's `data` the `changed` entries, child rows and child-field changes at a level
+  the caller cannot read. The rule is frappe's own `apply_fieldlevel_read_permissions`: permlevel
+  0 is always kept, a child table answers to its parent's permissions, and Administrator is never
+  scrubbed. Stored Versions are not modified, so the audit trail stays whole for System Manager. A
+  history that cannot be scrubbed is sent empty.
+- **Write calls no longer send back the fields their caller cannot read.** `frappe.client.set_value`,
+  `insert`, `save`, `submit` and `cancel` return `doc.as_dict()`, `frappe.model.workflow.apply_workflow`
+  returns its document, and `POST`/`PUT /api/resource` and `POST /api/v2/document` return the
+  saved document. None of them strips it, unlike the Desk's `savedocs` and v2's document update
+  and doc-method routes, which do. So a caller with write
+  access but no permlevel-1 read could save an empty change, which the permlevel reset turns into a
+  no-op, and read the stored values out of the response: Projects User on
+  `Activity Cost.costing_rate`, any Timesheet writer on its cost fields, Projects Manager on an open
+  Job Interval's pay block, and a Maintenance User moving a visit through the Sapphire Maintenance
+  Workflow on `total_labor_cost`. The six RPC routes get the same kind of wrapper, which scrubs the
+  returned dict and never the Document (a workflow's async tasks are enqueued with it). The REST
+  routes are werkzeug routes that `override_whitelisted_methods` cannot reach, so a new
+  `after_request` hook parses the JSON body of a `POST` or `PUT` to those paths, scrubs the document
+  and writes the body back, and only when a field actually goes. It never raises, because frappe
+  logs an exception from that hook and sends the body unscrubbed. A response that cannot be scrubbed
+  is cut to `doctype` and `name`; the write itself stands.
+- **frappe's own copies of those eleven functions no longer answer HTTP under any other name.** An
+  override matches a method *name*, but frappe's whitelist check matches the function *object*, so
+  a module that imports one of them exposes the unwrapped original under its own dotted path.
+  frappe and ERPNext v16 hold twelve such aliases between them, among them
+  `frappe.email.inbox.set_value`, Workflow Action's `apply_workflow` (also reachable as
+  `/api/v2/method/Workflow Action/apply_workflow`) and `getdoc` in five test modules that ship with
+  the apps. Overriding each name would go stale on the next frappe upgrade, so a new
+  `before_request` hook, `fieldlevel_read.seal_wrapped_originals`, takes the originals off frappe's
+  whitelist once this site overrides their canonical names. Every alias, present or future, then
+  fails the whitelist check. The canonical names still reach the wrappers, and in-process Python
+  calls are unaffected, because only HTTP dispatch checks the whitelist. An original whose name is
+  not overridden is left on, or put back, so the canonical route can never be refused. The hook
+  never raises; if it cannot run, the aliases keep frappe's stock behaviour, and the failure is
+  logged once per process.
+- Scrub failures are logged with `defer_insert`. A form load is a `GET`, whose transaction frappe
+  rolls back, and the REST hook runs after the commit, so an ordinary Error Log insert would have
+  been lost on both paths.
+
+### Changed
+
+- **Projects Manager no longer opens Labor Cost Analysis.** The 8 project managers outside finance
+  lose its project cost-against-budget grouping. They keep the project's Labor actuals through the
+  Project Budget.
+- A Timesheet saved by someone without permlevel-1 access now keeps the stored `base_*` cost values.
+  Before, it saved values the browser had computed from a rate that user could not see.
+- `api/README.md` lists `activity_cost` among the package's tab-indented files. It is new, and
+  new files take the `.editorconfig` default.
+- **Every Desk form load, save, cancel and discard, and every `frappe.client` write, now passes
+  through a wrapper in `fieldlevel_read.py`.** On a doctype with nothing above permlevel 0, and for
+  the pay audience or Administrator, nothing is removed. A client script that read a level-1 value
+  out of a write response, as a user without level-1 read, now finds no key; nothing in this app
+  does that.
+- **Every request now runs a `before_request` hook** (`seal_wrapped_originals`): eleven cached
+  lookups and set operations. A call to one of the aliases above is refused as not whitelisted.
+  Nothing in frappe, ERPNext or this app calls them over HTTP.
+
+### Tests
+
+- **New `tests/test_pay_rate_permissions.py`** (bench-free: JSON and `ast`, no stub). It holds
+  the audience equal across Job Interval's permlevel-1 rows, `api/activity_cost.PAY_AUDIENCE_ROLES`
+  and `payroll_export._may_export`. It pins the report's roles, its bumped stamp and the reload
+  patch (registered after model sync, `reload_doc(..., force=True)` inside a `try`). It checks the
+  five Property Setters carry the full fixture key shape (fixture sync wipes any key a record
+  omits), and that no Custom DocPerm fixture restates those doctypes. It also covers the Employee
+  Pay Rate and `total_labor_cost` permlevels, where the two `apply_fieldlevel_read_permissions()`
+  calls sit relative to the save, the serialisation and the permission check (read from Call
+  nodes, never raw text, because the comments name the same tokens), and the override: its route,
+  ERPNext's signature, delegation, the zeroed `costing_rate`, and no assignment to `billing_rate`.
+  It runs in the existing stub-free workforce unittest step.
+- `test_workforce_report_labor_cost.py` gains the upper bound: the report's roles must be a subset
+  of Job Interval's permlevel-1 readers, and never Projects Manager.
+- **New `tests/test_fieldlevel_read.py`** (bench-free, with a `frappe` stub, so it has its own CI
+  step). It pins each override's hook key, its parameter list and HTTP methods against frappe
+  v16's own (read from `origin/version-16`, because a missing parameter is silently dropped by
+  `frappe.call` and a wider method list would let a `GET` skip the CSRF check), its delegation to
+  frappe's function, and the `after_request` registration. It runs the scrub on Employee, Job
+  Interval and Timesheet shapes: an HR User loses `ctc` and every pay-rate row, a Projects Manager
+  loses `labor_cost`, a level-0 table keeps its rows without their level-1 fields, and the audience
+  and Administrator lose nothing. Both failure paths are covered: an unscrubbable history is sent
+  empty, and an unscrubbable write response is cut to `doctype` and `name`. Both log through
+  `defer_insert`. The seal is covered too: the `before_request` registration; its list equal to the
+  overridden routes; originals, and an alias of one, off the whitelist; an original not
+  overridden kept on or put back; idempotence; and a failure that never raises and logs once.
+- **`test_stripe_payments.py`'s API-version pin test failed on CI, which left main red since
+  v1.541.0** (its own run was cancelled by the next merge, so it landed unchecked). It
+  monkeypatched `client.requests.request`, but under CI `requests` is the empty stub module the
+  suite installs, which has no `request` attribute to patch. Locally it passed only because a
+  pytest plugin had already imported the real `requests`, so run it with
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to see what CI sees. It now swaps in a namespace for the
+  whole module, as the next test in the file already does.
+
+### Follow-up, not done here
+
+- **Who writes pay rates, before the cutover (about 2026-10-21).** ADR 0013 names readers only.
+  Today nobody but Administrator can write Employee's permlevel-1 fields. The fix is a new patch
+  that sets `write` on the existing permlevel-1 rows once the writer role is chosen.
+  `seed_employee_pay_visibility` has already run and is insert-only.
+- The remaining owner decisions and hardening items from the review are tracked on the internal
+  task board rather than here.
+- Doc drift, for a separate docs-only patch: ADR 0013, the costing step's comment in `ci.yml` and
+  `tests/README.md` say `test_workforce_costing.py` pins the pay permlevels. It does not; the pins
+  are in `test_time_correction_requests.py` and the new suite.
+- After deploy, check read-only on prod, since a Patch Log row proves nothing happened: the report
+  has 3 roles, the 5 Property Setters exist, and the doctype metadata shows the new permlevels and
+  the System Manager permlevel-1 row on Sapphire Maintenance Record. Then, signed in as a user
+  without permlevel-1 access (not Administrator, who is never scrubbed), open an Employee that has
+  a pay-rate Version and check that the `getdoc` response's `docinfo.versions` holds no
+  `custom_pay_rates` entry, and that an ordinary form (a Task, a Project) opens and saves as
+  before.
+
 ## [1.541.0] - 2026-09-26
 
 **Customers can open a PDF of their invoice from the payment pages.** "View invoice (PDF)" is on
@@ -430,7 +635,7 @@ Read-only, on prod, after PR 1's checks pass.
 - ``SELECT COUNT(*) FROM `tabError Log` WHERE creation > '<deploy time>' AND error LIKE '%knowledge_base/files.py%'``
   is 0 after a day of ordinary uploads elsewhere on the site: the hook sees every one of them.
 
-## [1.538.0] - 2026-09-25
+## [1.542.0] - 2026-09-25
 
 **The company knowledge base gets its module, its two doctypes, its two roles and its locked
 permissions (WI-080 PR 1, ADR 0017).** Staff see nothing yet, and nothing can publish: there is no

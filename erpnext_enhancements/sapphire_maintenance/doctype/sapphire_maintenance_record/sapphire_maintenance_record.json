@@ -128,7 +128,8 @@
    "fieldname": "total_labor_cost",
    "fieldtype": "Currency",
    "hidden": 1,
-   "label": "Total Labor Cost"
+   "label": "Total Labor Cost",
+   "permlevel": 1
   },
   {
    "default": "0",
@@ -273,6 +274,11 @@
   {
    "read": 1,
    "role": "Customer"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager"
   }
  ],
  "sort_field": "modified",

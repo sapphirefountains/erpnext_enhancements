@@ -222,6 +222,18 @@ downstream is *derived* by `costing.py`:
   (compared against `get_doc_before_save()`), Activity Type `after_insert`, and a daily
   `sync_all_activity_costs` for future-dated rows. Every write is `ignore_permissions`, every
   failure is logged and swallowed: **a costing table must never block an Employee save.**
+  Since v1.542.0 `Activity Cost.costing_rate` sits at **permlevel 1** (a Property Setter
+  fixture, deliberately not a Custom DocPerm, which would replace the doctype's standard
+  permissions wholesale), `billing_rate` stays at permlevel 0 so T&M billing is still configured
+  natively, and ERPNext's whitelisted `get_activity_cost` is overridden over HTTP by
+  `api/activity_cost.get_activity_cost`, which zeroes `costing_rate` for anyone outside the
+  pay audience while `TimesheetDetail.update_cost` keeps calling ERPNext's own function
+  server-side. The raw pay-rate child fields (`Employee Pay Rate`) are at permlevel 1 as well.
+  Two places frappe itself skips the permlevel are covered by `fieldlevel_read.py`: a form's
+  version history, which matters here because Employee and Job Interval both track changes (a
+  pay-rate row or a stamped `labor_cost` lands in a Version whole), and the document a write
+  call sends back. Its `before_request` seal also takes frappe's own copies of the wrapped
+  functions off the whitelist, so no module that imports one can serve it unscrubbed.
 
 `validate_employee_pay_rates` (Employee `validate`) checks each row has the amount its type
 needs, no two rows share an effective date, sorts them and fills `hourly_equivalent`. It reads
@@ -241,9 +253,15 @@ closed before the employee had a pay-rate row carries no cost, and the `Unrated`
 how many rows are understating the job. **Budget appears only when grouped by Project**, from
 the budget line whose category declares Timesheets as its actual source — the budget model's
 own definition of labour, rather than the label "Labor" that somebody can rename. Roles are
-the four that read Job Interval at permlevel 0 other than `Employee`;
-`tests/test_workforce_report_labor_cost.py` pins the set, the grouping list against the JS
-Select, and that every money column is Currency.
+the three that read Job Interval at **permlevel 1** — ADR 0013's pay audience, System Manager,
+HR Manager and Accounts Manager — and nobody else. Projects Manager reads Job Interval but not
+its pay block, and the report's raw SQL applies no permlevel, so its role list is the only
+gate on the rates it prints; Projects Manager was dropped in v1.542.0 and keeps the project
+Labor actuals through the Project Budget. A Report JSON imports only when its `modified` is
+newer than the site row, so the narrowing ships with a bumped stamp **and**
+`patches/reload_labor_cost_analysis_report`. `tests/test_workforce_report_labor_cost.py` pins
+the set (a subset of both the permlevel-0 and the permlevel-1 readers), the grouping list
+against the JS Select, and that every money column is Currency.
 
 ## Overtime (v1.480.0)
 

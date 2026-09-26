@@ -1971,7 +1971,12 @@ def test_every_request_pins_the_stripe_api_version(monkeypatch):
 		response.json = lambda: {}
 		return response
 
-	monkeypatch.setattr(client.requests, "request", request)
+	# Replace the module, not one attribute: under CI `requests` is the empty stub module installed
+	# above, which has no `request` to patch (a real `requests` is only there when some other import
+	# pulled it in first). The next test does the same.
+	monkeypatch.setattr(
+		client, "requests", types.SimpleNamespace(request=request, RequestException=Exception)
+	)
 	monkeypatch.setattr(client, "get_settings", lambda: object())
 	client._request("GET", "/payment_intents/pi_1")
 	assert seen[0]["Stripe-Version"] == client.STRIPE_API_VERSION

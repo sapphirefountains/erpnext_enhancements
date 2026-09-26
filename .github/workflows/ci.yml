@@ -1902,7 +1902,16 @@ jobs:
       # request type's required proposals; the reviewer role sets agree between the JSON,
       # permissions.py and the api), the Location Timeline page (its roles equal
       # TIMELINE_MANAGER_ROLES, every method it dials exists, polling stops when the tab
-      # is hidden), and the Labor Cost Analysis report's roles and column contract.
+      # is hidden), and the Labor Cost Analysis report's roles and column contract. Plus
+      # where a pay rate can be read (v1.542.0): ADR 0013's audience is held equal across
+      # Job Interval's permlevel-1 rows, api/activity_cost and payroll_export; the labour
+      # report is no wider than the pay block its raw SQL bypasses, with its reload patch;
+      # the Activity Cost / Timesheet cost fields reach permlevel 1 by Property Setter, not
+      # by a Custom DocPerm that would replace their standard permissions wholesale; every
+      # Employee Pay Rate field is permlevel 1; Sapphire Maintenance Record's
+      # total_labor_cost is permlevel 1 and stripped before as_dict / get_doc hand the
+      # record out; and ERPNext's get_activity_cost is overridden so it zeroes costing_rate
+      # and never touches billing_rate. Unittest classes only, so this step collects it.
       - name: Workforce tracking health, overtime, corrections, timeline page, labour report
         run: >-
           python -m unittest
@@ -1914,7 +1923,20 @@ jobs:
           erpnext_enhancements.tests.test_job_interval_guards
           erpnext_enhancements.tests.test_time_editing_api
           erpnext_enhancements.tests.test_workforce_report_labor_cost
-          erpnext_enhancements.tests.test_time_kiosk_desktop_icon -v
+          erpnext_enhancements.tests.test_time_kiosk_desktop_icon
+          erpnext_enhancements.tests.test_pay_rate_permissions -v
+      # Its own step: this suite installs a frappe stub in setUpModule (v1.542.0). Frappe
+      # v16 sends a form's version history (the stored Version diffs, verbatim) and the
+      # document a write call returns without field-level read permissions, so pay rows
+      # and labor_cost reached readers the permlevel hides. Pins that each of the eleven
+      # override_whitelisted_methods wrappers in fieldlevel_read.py restates frappe v16's
+      # parameters and HTTP methods and delegates to frappe's own function, that the
+      # after_request REST scrub is registered, and runs the scrub on Employee, Job
+      # Interval and Timesheet shapes, including both fail-closed paths. Also the
+      # before_request seal that takes frappe's originals off the whitelist, so an alias
+      # such as frappe.email.inbox.set_value cannot serve them unscrubbed.
+      - name: Field-level read on version history and write responses
+        run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_read -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the
       # rate in force is the latest effective-from on or before the day worked (a rate
       # dated tomorrow must not price today), salaried -> hourly via 2080, the burden
