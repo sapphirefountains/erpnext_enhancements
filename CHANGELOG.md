@@ -185,6 +185,13 @@ access for anyone.
   `defer_insert`. The seal is covered too: the `before_request` registration; its list equal to the
   overridden routes; originals, and an alias of one, off the whitelist; an original not
   overridden kept on or put back; idempotence; and a failure that never raises and logs once.
+- **`test_stripe_payments.py`'s API-version pin test failed on CI, which left main red since
+  v1.541.0** (its own run was cancelled by the next merge, so it landed unchecked). It
+  monkeypatched `client.requests.request`, but under CI `requests` is the empty stub module the
+  suite installs, which has no `request` attribute to patch. Locally it passed only because a
+  pytest plugin had already imported the real `requests`, so run it with
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to see what CI sees. It now swaps in a namespace for the
+  whole module, as the next test in the file already does.
 
 ### Follow-up, not done here
 
