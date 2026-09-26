@@ -827,6 +827,21 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"File": {
+		# knowledge_base (WI-080 PR 2, v1.539.0): every File attached to Knowledge Article
+		# or Knowledge Article Version is private, bytes included. Runs on EVERY File on
+		# the site, so it returns after one getattr for anything else and never raises
+		# for an unrelated File. A doc_events handler runs AFTER File's own before_insert
+		# (v16 Document.hook composes controller-first), which has already written the
+		# upload to public/files -- so on insert it re-saves the content privately through
+		# File.save_file and deletes the public copy only if this insert wrote it. On an
+		# update (before_validate runs before File.validate) setting is_private is enough:
+		# File.validate moves the bytes itself. Also on an update: a File the stored row
+		# attaches to either KB doctype may not be detached or moved (read_only is never
+		# enforced on the server, so its owner could otherwise detach an article's image and
+		# then delete it) unless KB code sets flags.kb_action. before_validate runs even
+		# under flags.ignore_validate. See knowledge_base/files.py.
+		"before_insert": "erpnext_enhancements.knowledge_base.files.force_private",
+		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
@@ -2377,6 +2392,18 @@ has_permission = {
 	# per the parity doctrine. Both return an explicit bool on every path.
 	"Job Interval": "erpnext_enhancements.workforce.permissions.job_interval_has_permission",
 	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_has_permission",
+	# knowledge_base (WI-080 PR 2, v1.539.0): refuses DELETE, and only delete, on a File
+	# attached to a Knowledge Article. v16 protects attachments only on a SUBMITTED
+	# document, and an Article is never submitted, so a File's owner could otherwise
+	# delete an image out of approved text. A permission hook rather than on_trash
+	# because File.on_trash deletes the bytes BEFORE any doc_events on_trash handler
+	# runs. KB code that must delete one passes flags={"kb_action": True} to delete_doc;
+	# nothing in v1 does. Detaching the File first is refused by force_private above (a
+	# permission hook sees only the updated row). Not a query-condition twin case: it
+	# filters no list, it only takes away one right. Runs for every File permission
+	# check on the site, so every
+	# other ptype returns True explicitly (a falsy return DENIES on v16).
+	"File": "erpnext_enhancements.knowledge_base.files.file_has_permission",
 }
 
 # `notification_skip_email_types` held ["Chat Message", "Chat Mention"] from v1.267.0 until

@@ -760,6 +760,39 @@ jobs:
       # idempotence and cannot-raise. Own step: it installs its own frappe stub.
       - name: Knowledge base schema (drafts are never readable by a reader role)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_schema -v
+      # WI-080 PR 2 (v1.539.0): the rules a KB approval turns on, as plain functions. A
+      # regression here publishes text nobody independent approved and looks exactly like a
+      # normal publish: the author approving their own draft, a contributor or the person who
+      # asked an AI to draft it approving, Administrator (which holds every role) or any
+      # non-System-User account approving, a token or a confirmed AI gate card approving, or a
+      # copy that changed after the approver opened it. Also the KB number (00 never allocated,
+      # a number never reused, a full block failing loudly), the review date (POL-0001's six
+      # months from one constant; month ends; leap years), presentation stripping (the colour,
+      # size and font that hide text from a reviewer and not from a model, and every class but
+      # the structural ones v16's editor writes -- `hidden`, `d-none`, Frappe's own `icon` --
+      # and the tags of every element but the ones it writes, since a browser paints none of the
+      # text of a <dialog>, <audio> or SVG <desc>; comments go whole, because Python's parser and
+      # a browser disagree on where `<!-->` ends -- while tables, lists, code blocks, alignment
+      # and indent survive), the secret scan (never
+      # the value; never the base64 of a pasted screenshot; never an ordinary sentence, since
+      # nothing lets an author past a finding) and the content hash. workflow.py and content.py
+      # import no frappe, checked in a fresh interpreter, so no stub and nothing to cross-talk
+      # with. The v16 source check skips here: CI has no frappe checkout beside the repo.
+      - name: Knowledge base rules (who may approve, KB numbers, review dates, content hygiene)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_rules -v
+      # The hooks that apply them. force_private runs on EVERY File insert and save on the site:
+      # an unrelated File must come back untouched with no query, or every upload breaks. For a
+      # KB File it must move the BYTES, not just the flag -- a doc_events before_insert runs after
+      # File.before_insert has already written the upload to public/files, where nginx serves it
+      # to anyone -- and delete the public copy only when this insert wrote it. On an update it
+      # must refuse detaching or moving a KB File, or its owner could detach an article's image
+      # and then delete it; link_files_to_comment (db_set, no hooks) must skip them. The File
+      # permission hook sees every File permission check too, and on v16 a falsy answer DENIES,
+      # so anything but `delete` on a Knowledge Article's file must be exactly True. And the
+      # Version controller applying the approval rules in before_submit AND on_submit, against
+      # the stored row. Own step: it installs its own frappe stub.
+      - name: Knowledge base hooks (private files, article images, the Version controller)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_hooks -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the
