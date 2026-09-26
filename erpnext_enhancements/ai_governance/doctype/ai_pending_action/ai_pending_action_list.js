@@ -16,8 +16,9 @@
  * - The actions menu gets "Confirm & Execute Selected" and "Cancel Selected" for ticked rows.
  *
  * A row starts unticked when the server gives a `review_reason` (high risk, hidden values, a
- * submit or cancel, a write to the gate's own records), and never more than 50 start ticked:
- * one review stays a bounded set. Every batch asks a second time and says what will run. The
+ * submit or cancel, a write to a Task, the gate's own records or the knowledge base), and never
+ * more than 50 start ticked: one review stays a bounded set. Every batch asks a second time and
+ * says what will run. The
  * names go to the server at most 10 per request, one request after another, so no request runs
  * long enough to be killed mid-tool, and the results come back as one table. If a request
  * fails, no further one is sent, and the table says which actions may or may not have run and
