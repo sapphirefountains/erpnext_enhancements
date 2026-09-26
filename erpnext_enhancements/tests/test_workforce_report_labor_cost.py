@@ -9,7 +9,7 @@ Three things fail silently if they drift, and each is pinned here:
   doctype granted HR Manager nothing, and errored for exactly its intended reader. The
   opposite bound matters as much: the report's raw SQL applies no permlevel, so its roles
   must also be a subset of Job Interval's **permlevel-1** readers, or it hands the pay block
-  to someone the doctype hides it from. Projects Manager was exactly that until v1.538.0.
+  to someone the doctype hides it from. Projects Manager was exactly that until v1.542.0.
 * **Groupings.** The JS `group_by` Select offers a list; the Python refuses anything outside
   ``GROUP_BY``. A grouping offered but refused is a report that errors for the reader who
   picked it, so the two lists are compared verbatim.

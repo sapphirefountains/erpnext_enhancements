@@ -1,4 +1,4 @@
-"""Where a pay rate can be read, and by whom (v1.538.0).
+"""Where a pay rate can be read, and by whom (v1.542.0).
 
 ADR 0013 puts pay rates in ERPNext and grants read of them at permlevel 1 to System Manager,
 HR Manager and Accounts Manager "and to nobody else". Frappe's permlevel enforces that where
@@ -6,7 +6,7 @@ frappe reads a document out (form loads, list views, ``GET /api/resource``) and 
 else: a raw-SQL Script Report, ``doc.as_dict()``, ``frappe.get_doc`` and a whitelisted
 function's own ``frappe.db`` read all return the value to whoever reaches them. (So do a form's
 version history and a write call's response; ``tests/test_fieldlevel_read.py`` covers those.)
-v1.538.0 closed each place the rate, or a number that gives it away, was reachable around the
+v1.542.0 closed each place the rate, or a number that gives it away, was reachable around the
 permlevel. Every fix fails **open** if it drifts, and none of the drift would raise anything:
 
 * **One audience, three copies.** Job Interval's permlevel-1 rows, ``PAY_AUDIENCE_ROLES`` in

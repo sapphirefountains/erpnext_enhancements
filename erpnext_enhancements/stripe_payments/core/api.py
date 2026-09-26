@@ -11,8 +11,10 @@ to ``checkout`` / ``client`` / ``webhooks``.
 Access control: payment creation and the dashboard are restricted to accounting
 operators via ``_require_stripe_operator``. The customer portal uses a separate
 endpoint (``portal_create_payment``) that instead checks the logged-in user owns
-the invoice. The webhook is the only ``allow_guest`` endpoint and is gated by Stripe
-signature verification. Mirrors the QuickBooks module's role-gating.
+the invoice. ``portal_invoice_pdf`` (the "View invoice (PDF)" link on ``/pay`` and
+``/pay-card``) applies the same ownership rule, submitted invoices only, and answers
+every refusal alike. The webhook is the only ``allow_guest`` endpoint and is gated by
+Stripe signature verification. Mirrors the QuickBooks module's role-gating.
 """
 
 from __future__ import annotations
@@ -269,6 +271,60 @@ def portal_confirm_card_payment(stripe_payment, confirmation_token):
 	return confirm_card_payment(
 		stripe_payment=stripe_payment, confirmation_token=confirmation_token
 	)
+
+
+def _own_submitted_invoice(invoice):
+	"""Portal guard for reading an invoice: its canonical name when the logged-in user's
+	Customer owns it and it is submitted, else None.
+
+	Never raises, and every refusal is the same None — a name that is not a string, a missing
+	invoice, another customer's, a draft, a canceled one — so the caller can give them one
+	answer. The Guest check is a backstop: the endpoint is not ``allow_guest``, so a signed-out
+	tab gets Frappe's own 403 "Not Permitted" page before this runs. The ownership rule is ``/pay``'s and ``/pay-card``'s (the invoice's Customer is
+	one of ``get_portal_customers()``); submitted only because a draft is not yet the customer's
+	bill and a canceled one no longer is. A credit note that is theirs is theirs to read.
+
+	The same answer is not enough if it takes a different time, so the work done does not depend
+	on the invoice either. The user's customers are looked up first, whatever was asked for, and
+	then the invoice is one query that carries all three conditions. Looking the invoice up first
+	would have run the customer lookup (Contact, Dynamic Link, sometimes Contact Email) only for
+	a submitted invoice that exists, and the response time would have said which ones do.
+	"""
+	if frappe.session.user == "Guest" or not invoice or not isinstance(invoice, str):
+		return None
+	customers = get_portal_customers()
+	if not customers:
+		return None
+	# The stored name, not the one typed: MariaDB matches a name case-insensitively.
+	return (
+		frappe.db.get_value(
+			"Sales Invoice",
+			{"name": invoice, "customer": ["in", customers], "docstatus": 1},
+			"name",
+		)
+		or None
+	)
+
+
+@frappe.whitelist(methods=["GET"])
+def portal_invoice_pdf(invoice=None):
+	"""RPC (portal, GET): one of the logged-in customer's own invoices, as a PDF shown inline.
+
+	The "View invoice (PDF)" link on ``/pay`` and ``/pay-card``, which opens in a new tab. Reads
+	only, which is why it is GET: a link, no CSRF token, and Frappe rolls a GET's transaction
+	back. Ownership is checked here (``_own_submitted_invoice``); anything it refuses gets the
+	same "not available" page, so the answer is no oracle for which invoices exist. Rendering —
+	the customer-facing print format and no other, the Desk's PDF generator, print permission
+	waived for this render only, never ``set_user``, a site-wide and a per-user limit — and the
+	response are ``core.invoice_pdf``'s. Not gated on the Stripe switch: reading your own
+	invoice is not a payment.
+	"""
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	name = _own_submitted_invoice(invoice)
+	if not name:
+		return invoice_pdf.respond_not_available()
+	return invoice_pdf.respond_with_pdf(name)
 
 
 @frappe.whitelist()

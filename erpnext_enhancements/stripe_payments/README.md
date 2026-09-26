@@ -43,7 +43,7 @@ event id, so a redelivery cannot be ingested twice.
 | File | Purpose |
 |---|---|
 | `api.py` | Public surface — re-exports the whitelisted RPCs from `core/api.py` so callers and the registered webhook URL use the stable short path `erpnext_enhancements.stripe_payments.api.*`. Same trick the QuickBooks module uses |
-| `core/client.py` | The Stripe REST client on `requests`. Authenticates with the sandbox-guarded secret key; amounts always in minor units (cents). Also implements webhook signature verification. Higher layers never touch HTTP directly |
+| `core/client.py` | The Stripe REST client on `requests`. Authenticates with the sandbox-guarded secret key; amounts always in minor units (cents). Also implements webhook signature verification. Higher layers never touch HTTP directly. **Every request pins `Stripe-Version`** (`STRIPE_API_VERSION`, `2026-06-24.dahlia`, the version the account's webhook events carry) so a Dashboard upgrade of the account default cannot change what a request means; to upgrade, move the constant and the webhook endpoint's version together after reading Stripe's changelog, then re-run the live card test |
 | `core/api.py` | Whitelisted RPC entry points: Settings form, dashboard, the Sales Invoice button, the customer portal, and the webhook. Thin wrappers that enforce the permission boundary, then delegate |
 | `core/checkout.py` | `create_payment` — the single entry point for both initiation channels. Resolves customer and amount (from a Sales Invoice or ad hoc), records a `Stripe Payment` ledger row, creates the hosted Checkout Session whose metadata carries the reconciliation keys |
 | `core/webhooks.py` | `handle_webhook` — verify signature, record the `Stripe Event`, enqueue `reconcile.process_event` so the HTTP response returns fast |
@@ -54,6 +54,7 @@ event id, so a redelivery cannot be ingested twice.
 | `core/card_element.py` | Surcharge-aware card collection on our own page, via ConfirmationToken two-step confirmation; and the rules every payment path shares so one invoice is never paid twice — the invoice lock, the Sales Invoice row lock, the guard (amended-from invoices included), written-ahead charges, unknown outcomes, expiring emailed links, and the Sales Invoice `before_cancel` hook (see below) |
 | `core/tasks.py` | Hourly safety net: `poll_pending` reconciles payments stuck in Link Sent / Processing by re-reading Stripe — including charges Stripe never answered, attempts that can no longer charge, rows Stripe answers 404 for, and links whose invoice was canceled or settled another way; `retry_failed` re-runs events that previously errored. Both no-op when disabled |
 | `core/utils.py` | Settings doc loading, encrypted secret reads, currency ↔ minor-unit conversion, the sandbox-guarded client handle |
+| `core/invoice_pdf.py` | The PDF behind "View invoice (PDF)" on `/pay` and `/pay-card`: renders a customer's own invoice in the customer-facing print format (never a fallback) with the Desk's PDF generator, print permission waived for that render only, limited site-wide and per user, and answers inline (see below). `core.api.portal_invoice_pdf` owns the ownership check |
 | `setup.py` | `after_migrate` — idempotently creates the back-reference custom fields (Stripe ids on Customer / Sales Invoice / Payment Entry) and the Stripe and ACH Modes of Payment |
 
 ## Access control
@@ -63,7 +64,8 @@ Three distinct boundaries, and they are not interchangeable:
 - **Desk** — payment creation and the dashboard require an accounting operator
   (`_require_stripe_operator`).
 - **Customer portal** — `portal_create_payment` instead checks that the logged-in user owns
-  the invoice.
+  the invoice. `portal_invoice_pdf` applies the same rule, submitted invoices only, and gives
+  every refusal the same answer ([the invoice PDF](#the-invoice-pdf-on-pay-and-pay-card)).
 - **Webhook** — the only `allow_guest` endpoint in the module, gated entirely by Stripe
   signature verification.
 
@@ -154,21 +156,56 @@ different payment method" shows the card step at once (so a Pay tap before the t
 lands charges nothing) and goes through the same history. Back while a charge is in flight
 (the server call, then 3-D Secure) changes nothing until the charge has an answer.
 
+**The page talks to the server over `fetch`, never `frappe.call`.** The website build of
+`frappe.call` (frappe v16, `website/js/website.js` — not the Desk's) calls back on an HTTP 200
+only and never calls `error()`. The page relied on `error()` for every refusal, so in production
+a declined card — a `frappe.throw`, HTTP 417 — left Pay on "Please wait…", Back held by the
+charge, and nothing said, while the harness (which faked `frappe.call` *with* an `error()`)
+passed. Both calls now go through one in-page helper that POSTs to `/api/method/<method>` with
+the session's CSRF token and answers every outcome — each HTTP status, a dropped connection,
+and a timeout (a minute for Continue; 150 s for Pay). The Pay timer is only a backstop for a
+connection that hangs outright: a proxy normally answers a slow charge with a 504 first, which
+the page treats the same way, and neither says the request behind it has ended. What stops a
+second charge is the server — the row committed `Processing` under the invoice lock before
+Stripe is asked, the charge keyed on the row (Stripe's idempotency key), and `_check_quote`,
+which never sends a row that is no longer a Draft. Pay charges the quote its review was drawn
+for (`shown`), never the page's latest quote, and a tap with no quote behind the review says
+"Please tap Back and Continue again" rather than nothing.
+
+The message under the form is the server's, and it is only as specific as the server makes it.
+For a card error (a 402) it carries Stripe's own words for the cardholder; for any other definite
+refusal — a 400 about the shape of the request, like the `payment_method_types` one v1.537.1
+fixed — it is the generic "did not go through, and nothing was charged", and the cause is only in
+that Stripe Payment row's `error_message`. Read that before calling a decline the card's.
+
 **What the page does with the answer depends on whether it *is* one.** A definite failure —
-the server refused, or Stripe declined; to `frappe.call` a 417 whose body names its
-`exc_type` — charged nothing, and spends the quote: back to the card step with the card still
-entered, and Continue prices a new one (the server never sends a row twice). **A refusal for
+the server refused, or Stripe declined: a 4xx whose JSON body names its `exc_type` — charged
+nothing, and spends the quote: back to the card step with the card still entered and the
+server's message under it, and Continue prices a new one (the server never sends a row twice).
+A 5xx is never a definite failure, even one naming an `exc_type`: an error after Stripe charged
+is a 500. **A refusal for
 the invoice rather than the card** — `PaymentBlocked`: another payment settling or waiting on a
 bank, one already received, the invoice paid or credited meanwhile, the quote already sent — is
 different: a card form beside "already being processed" contradicts itself, so the page loads
 `/pay-card` again and the render says why (at Continue too). An emailed link Stripe could not
 be asked to close (`LinkStillOpen`), and an earlier card attempt that cannot charge whose cancel
 Stripe would not confirm just now (`AttemptUnreleased`, the `Unreleased` verdict), are ordinary
-refusals: the form stays and the modal says why. There is nothing to render for either — a
+refusals: the form stays and says why. There is nothing to render for either — a
 render never releases, so it reads that dead attempt as not blocking and used to bring the card
 form back with no word of why, every tap looping until Stripe answered the cancel. Both are
-`PaymentBlocked` subclasses, which dunning still reschedules on. Anything else is
-**not an answer**: a dropped connection, a 5xx, a proxy timeout, or 3-D Secure ending in any
+`PaymentBlocked` subclasses, which dunning still reschedules on. **A session the page no longer
+has** reloads too, at Continue and at Pay: a stale CSRF token (a 400 `CSRFTokenError`, "Invalid
+Request" — the payer signed in again in another tab), or a sign-in that expired or was ended
+elsewhere, which makes the call a Guest's and has frappe's `is_whitelisted` refuse it (a 403
+`PermissionError` whose message names the method, with `session_expired` set when the cookie named
+a session that has ended). frappe refuses both before any handler runs, so nothing moved, and every
+later call would be refused the same way: shown under the form they came back on each Continue,
+while a render hands out a new token or `pay_card.py` sends the Guest to log in. The endpoints' own
+`PermissionError` ("You can only pay your own invoices") stays an ordinary refusal, since reloading
+on a refusal nobody has traced could loop with no word of why. Anything else is
+**not an answer**: a dropped connection, a 5xx, a proxy timeout or error page, a body that
+would not parse, a 200 carrying an exception or no message, the page's own timeout, or 3-D
+Secure ending in any
 error that is not about the card or the request (`card_error`, `validation_error`,
 `invalid_request_error` are the bank's or Stripe's definite no; `api_connection_error`,
 `api_error`, a `rate_limit_error`, a type the page does not know say nothing about whether the
@@ -460,6 +497,73 @@ fails later; the rows then read `Processing` / `Link Sent` again until `poll_pen
 webhook brings them up to date, which is harmless. A no-op while the integration is off or not
 yet installed. The amended-from walk in every guard is the defence in depth for whatever got past
 it (a cancel with Stripe off, one with `ignore_validate`).
+
+## The invoice PDF on `/pay` and `/pay-card`
+
+Every invoice row on `/pay`, and the invoice header on `/pay-card` (the card form and each
+settled state), links to "View invoice (PDF)": `core.api.portal_invoice_pdf?invoice=<name>`, a
+signed-in GET in a new tab. Frappe's `pdf` response is `Content-Disposition: inline`, so a phone
+opens it in its PDF viewer, named `<invoice>.pdf`. `core/invoice_pdf.py` renders it. What it is
+careful about:
+
+- **Ownership is `/pay`'s rule, submitted invoices only.** The invoice's Customer must be one of
+  `get_portal_customers()`, and `docstatus` must be 1: a draft is not yet the customer's bill and
+  a canceled one no longer is. Someone else's invoice, a draft, a canceled one and a missing name
+  all get one "Invoice not available" page (404) that does not echo the name, so the link tells
+  nobody which invoices exist. Nor does its timing: the user's customers are looked up first,
+  whatever was asked for, and the invoice is then one query carrying all three conditions, so a
+  missing name costs what someone else's does. It is not `allow_guest`: a signed-out tab gets
+  Frappe's own HTML "Not Permitted" page (403). A credit note that is the customer's is theirs to
+  read. Not gated on the Stripe switch, because reading your own invoice is not a payment.
+- **The customer-facing print format, and no other.** Always `Sales Invoice - Sapphire`
+  (`SALES_INVOICE_FORMAT`, which `enhancements_core/setup_sales_print_formats.py` writes on every
+  migrate), not whatever `Sales Invoice.default_print_format` names. On this site the fixture
+  Property Setter makes them the same, so the customer sees what the Desk prints. Following the
+  default would fail open: a staffer could make an internal format the default, and printview's
+  last resort, `Standard`, prints every permlevel-0 field with a value and no `print_hide`
+  (`cost_center`, `amount_eligible_for_commission`, `is_internal_customer`, any custom field made
+  on the site). If the Sapphire format is missing, disabled or made for another doctype, the
+  customer gets the "could not produce the PDF" page (500) and the Error Log says why; never
+  `Standard`. No Frappe letter head is asked for: the format draws its own and never reads
+  Frappe's, so the page is the Desk's either way.
+- **The Desk's PDF generator.** The format's own, else `Print Settings.pdf_generator`, else
+  wkhtmltopdf, which is the order the Desk's Download PDF uses (`print.js`). Frappe's server-side
+  `get_print` skips Print Settings, so a format whose generator had been cleared would otherwise
+  go to the wkhtmltopdf that segfaults on this host
+  ([`docs/pdf-generation.md`](../../docs/pdf-generation.md)). The Sapphire format is `chrome`.
+- **Print permission is waived for the one render, never granted.** A Website User has no Print
+  on Sales Invoice, and ERPNext's portal rule (`has_website_permission`) looks for the user in the
+  Customer's **Portal Users** table, not in a Contact's links as this portal does, so `printview`
+  would refuse customers their own invoices. After the ownership check the render sets
+  `flags.ignore_print_permissions`, as Frappe's `attach_print` does to email a document, and puts
+  it back in a `finally`. It never calls `frappe.set_user`, which on a web request replaces the
+  session, so the customer's next request would find itself logged out. No DocPerm changes.
+- **The request's query string never reaches `printview`**, which reads `form_dict`. Otherwise
+  `?pdf_generator=` would choose the generator, `?settings=` would be merged into Print Settings
+  (`allow_print_for_draft` among them), and `?key=` would be checked as a share key. `?_lang=`
+  is read earlier, into `frappe.local.lang` when the request begins, and printview renders in it
+  (right to left for Arabic), so the render runs in the user's own language and puts the
+  request's back afterwards.
+- **Limited for the site and per customer.** Frappe's concurrency limiter keys its pool by the
+  function it wraps, and each pool defaults to half the web tier, so this render and Frappe's own
+  `download_pdf` could otherwise hold every worker between them. The render's pool is explicit
+  and small: 2 at once, waiting at most 3 seconds for a slot. Each signed-in user may also start
+  10 renders a minute (a Redis counter keyed on the session user; `frappe.rate_limit` keys only
+  on the client IP or a request value), counted before the pool so a loop is refused at once
+  instead of queueing. Both refusals are a 503 "try again" page and are not logged.
+- **Failures are logged.** A failed render is a 500 page ("try again in a few minutes") with the
+  traceback in the Error Log through `defer_insert`, because Frappe rolls back a GET's
+  transaction and an ordinary insert would go with it.
+
+The customer sees what the Desk prints: the party, the project, the lines, QuickBooks billable
+expenses, totals and taxes, payments received, terms and how to pay. It shows no internal notes.
+**It does let a reader work out our markup on billable expenses.** Those rows print the way
+QuickBooks printed them to the customer: the material at cost on one line and the markup on its
+own line ("25% markup for …"), so cost and markup percentage can both be read off the page (155
+invoices, 1,030 rows). That is not new exposure, but the portal now lets a customer pull every
+invoice, paid ones included, whenever they like. If that is not acceptable, the change belongs in
+`print_lookup.ps_charge_rows`, which composes those rows for the Desk print too, not in this
+endpoint.
 
 ## DocTypes
 

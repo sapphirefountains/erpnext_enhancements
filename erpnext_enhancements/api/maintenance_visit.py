@@ -236,7 +236,7 @@ def get_visit_bootstrap(record):
     if prior_tech:
         _reassign_todo(doc, prior_tech)
 
-    # as_dict() does not strip permlevel fields; total_labor_cost is pay-derived (v1.538.0).
+    # as_dict() does not strip permlevel fields; total_labor_cost is pay-derived (v1.542.0).
     # After the save on purpose: stripping first would save the field back as null.
     doc.apply_fieldlevel_read_permissions()
 

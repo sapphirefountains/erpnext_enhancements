@@ -1944,6 +1944,39 @@ def test_only_a_definite_stripe_answer_counts_as_a_decline(monkeypatch):
 	)
 
 
+def test_every_request_pins_the_stripe_api_version(monkeypatch):
+	"""Requests name the API version they were written against rather than riding the account
+	default, so a Dashboard upgrade cannot change what they mean: the next major version drops
+	`payment_method_types` from PaymentIntents, which every card charge sends. The version is the
+	one the account's webhook events carry, and it is a real Stripe version string."""
+	import re
+
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import client
+
+	monkeypatch.setattr(client, "get_api_key", lambda settings=None: "sk_placeholder")
+	assert re.fullmatch(r"20\d\d-\d\d-\d\d\.[a-z]+", client.STRIPE_API_VERSION)
+	assert client._headers(object())["Stripe-Version"] == client.STRIPE_API_VERSION
+	assert client._headers(object(), "key-1") == {
+		"Authorization": "Bearer sk_placeholder",
+		"Stripe-Version": client.STRIPE_API_VERSION,
+		"Idempotency-Key": "key-1",
+	}
+
+	seen = []
+
+	def request(method, url, headers=None, data=None, params=None, timeout=None):
+		seen.append(headers)
+		response = types.SimpleNamespace(status_code=200, text="{}")
+		response.json = lambda: {}
+		return response
+
+	monkeypatch.setattr(client.requests, "request", request)
+	monkeypatch.setattr(client, "get_settings", lambda: object())
+	client._request("GET", "/payment_intents/pi_1")
+	assert seen[0]["Stripe-Version"] == client.STRIPE_API_VERSION
+
+
 def test_the_client_tells_a_decline_from_no_answer(monkeypatch):
 	"""client._request gives every HTTP failure its status (a transport error has none), and
 	Stripe's own message for a card error. Only 400/401/402/403/404 are definite."""
@@ -2685,6 +2718,51 @@ def test_pay_card_back_and_forward_harness():
 	assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_pay_card_never_uses_the_website_frappe_call():
+	"""The website build of ``frappe.call`` (frappe v16, ``website/js/website.js``) calls back on
+	an HTTP 200 only and never calls ``error()``. /pay-card relied on ``error()`` for every
+	refusal, so a declined card — a frappe.throw, HTTP 417 — left Pay on "Please wait…" with Back
+	held by the charge, and nothing said; the harness faked frappe.call *with* an error() callback
+	and passed. The page reaches the server over fetch instead, at frappe's REST route with the
+	session's CSRF token, and both calls go through the one helper that answers every outcome.
+	Runs without node, so it holds even where the harness is skipped."""
+	import re
+	from pathlib import Path
+
+	html = (Path(__file__).resolve().parents[1] / "www" / "pay-card.html").read_text(encoding="utf-8")
+	blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+	script = next(block for block in blocks if "frappe.csrf_token" in block)
+	code = re.sub(r"(?m)(^|[^:\"'])//.*$", r"\1", re.sub(r"/\*.*?\*/", "", script, flags=re.S))
+	assert not re.search(r"\bfrappe\s*\.\s*x?call\b", code), "pay-card.html must not use frappe.call"
+	assert 'fetch("/api/method/" + method' in code
+	assert '"X-Frappe-CSRF-Token": frappe.csrf_token' in code
+	assert 'credentials: "same-origin"' in code
+	assert code.count("rpc(") == 3, "one helper, and exactly the two calls (Continue, Pay) through it"
+	# Pay charges the quote its review was drawn for, and says so when there is none.
+	assert "const charge = shown;" in code and 'id="review-error"' in html
+	# Both places a refusal is written are announced to a screen reader as it is written.
+	for element in ("card-error", "review-error"):
+		assert re.search(rf'<div id="{element}"[^>]*\brole="alert"', html), f"#{element} must be role=alert"
+
+
+def test_pay_buttons_are_given_back_after_any_refusal():
+	"""/pay still uses the website frappe.call, which never calls ``error()``: its Bank, Set up
+	autopay and Cancel autopay buttons re-enabled themselves only there, so any refusal, 5xx or
+	dropped connection left them disabled until a reload. Each call now gives its button back in
+	``always`` (which the website frappe.call does run, for every outcome) unless it succeeded."""
+	import re
+	from pathlib import Path
+
+	html = (Path(__file__).resolve().parents[1] / "www" / "pay.html").read_text(encoding="utf-8")
+	script = html.split("<script>", 1)[1]
+	calls = re.findall(r"frappe\.call\(\{(.*?)\n\t\t\t\}\);", script, re.S)
+	assert len(calls) == 3, "the Bank, Set up autopay and Cancel autopay calls"
+	for call in calls:
+		assert "always: function (data)" in call and "succeeded(data)" in call, call[:80]
+		assert "error:" not in call, "the website frappe.call never calls error()"
+	assert "return !!(data && !data.exc && !data.exc_type && data.message);" in script
+
+
 # --- the bank path (hosted Checkout) and /pay run the same guard --------------
 
 
@@ -3150,7 +3228,8 @@ def test_pay_page_offers_what_the_endpoints_accept_not_what_the_stamp_says(monke
 	)
 	rows = {}
 	for chunk in html.split("<tr>")[2:]:  # past the header row
-		name = chunk.split("<td>", 1)[1].split("</td>", 1)[0].strip()
+		# The Invoice cell: the name, then its "View invoice (PDF)" link beneath it.
+		name = chunk.split("<td>", 1)[1].split("<", 1)[0].strip()
 		rows[name] = chunk.split("</tr>", 1)[0]
 
 	def offers(name):
@@ -4603,7 +4682,7 @@ def test_an_unreleased_refusal_keeps_the_card_form_and_says_why(monkeypatch):
 	releases, so it read that attempt as not blocking and brought the card form back with no
 	message: each tap looped until Stripe answered the cancel. The refusal is now
 	AttemptUnreleased — still PaymentBlocked, which dunning reschedules on — and the page keeps
-	its form while the modal shows MSG_UNRELEASED, as for LinkStillOpen
+	its form and shows MSG_UNRELEASED under it, as for LinkStillOpen
 	(scripts/test_web_flow_history.js drives the page through it)."""
 	from pathlib import Path
 
@@ -4917,3 +4996,686 @@ def test_the_desk_ad_hoc_link_waits_for_payments_in_flight(monkeypatch):
 	table = readme.split("| Path | Entry point | Starts |", 1)[1].split("\n\n", 1)[0]
 	(row,) = [line for line in table.splitlines() if "create_adhoc_payment" in line]
 	assert "`checkout.create_payment`" in row and "refused" in row
+
+
+# --- the invoice PDF on /pay and /pay-card ------------------------------------------------------
+
+
+class _AttrDict(dict):
+	"""``frappe._dict``: a dict whose keys read as attributes, and None for a key it lacks."""
+
+	def __getattr__(self, key):
+		if key.startswith("__"):
+			raise AttributeError(key)
+		return self.get(key)
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+
+def _refuse_set_user(*args, **kwargs):
+	"""``frappe.set_user`` on a web request replaces the session: the customer's next request
+	finds itself logged out. Nothing on the invoice PDF path may call it."""
+	raise AssertionError("frappe.set_user must never be called for a portal PDF")
+
+
+def _pdf_request(monkeypatch, frappe_stub, **form):
+	"""A ``frappe.local`` for an HTTP request whose query string is ``form``."""
+	local = types.SimpleNamespace(flags=_AttrDict(), form_dict=_AttrDict(form), response=_AttrDict())
+	monkeypatch.setattr(frappe_stub, "local", local, raising=False)
+	monkeypatch.setattr(frappe_stub, "_dict", _AttrDict, raising=False)
+	monkeypatch.setattr(frappe_stub, "set_user", _refuse_set_user, raising=False)
+	return local
+
+
+def _pdf_links(html):
+	"""Every "View invoice (PDF)" anchor in ``html``, as its attribute dict."""
+	from html.parser import HTMLParser
+
+	class Links(HTMLParser):
+		def __init__(self):
+			super().__init__()
+			self.found, self._open = [], None
+
+		def handle_starttag(self, tag, attrs):
+			if tag == "a":
+				self._open = dict(attrs)
+
+		def handle_data(self, data):
+			if self._open is not None and data.strip() == "View invoice (PDF)":
+				self.found.append(self._open)
+
+		def handle_endtag(self, tag):
+			if tag == "a":
+				self._open = None
+
+	parser = Links()
+	parser.feed(html)
+	return parser.found
+
+
+def test_the_invoice_pdf_is_only_ever_the_customers_own_submitted_invoice(monkeypatch):
+	"""Nik: "On the /pay page they should see a PDF copy of their invoice available to review."
+	portal_invoice_pdf serves an invoice only when the signed-in user's Customer owns it (the rule
+	/pay and /pay-card use: one of get_portal_customers()) and it is submitted — a draft is not yet
+	the customer's bill and a canceled one no longer is. Someone else's, a draft, a canceled one, a
+	missing name and a Guest all get the very same page, which never echoes the name, so the
+	answer is no oracle for which invoices exist. A credit note that is theirs is theirs to read.
+
+	The same answer must also cost the same work, or the response time is the oracle. The first
+	cut looked the invoice up by name and ran get_portal_customers() (Contact, Dynamic Link,
+	sometimes Contact Email) only when it existed and was submitted, so a missing or draft name
+	came back faster than someone else's submitted invoice. Now the user's customers come first,
+	whatever was asked for, and the invoice is one query carrying all three conditions: every name
+	makes the very same calls."""
+	frappe_stub = install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import api, invoice_pdf
+
+	rows = [
+		dict(name="SINV-OWN", customer="CUST-1", docstatus=1),
+		dict(name="SINV-RETURN", customer="CUST-1", docstatus=1),
+		dict(name="SINV-OTHER", customer="CUST-2", docstatus=1),
+		dict(name="SINV-DRAFT", customer="CUST-1", docstatus=0),
+		dict(name="SINV-CANCELED", customer="CUST-1", docstatus=2),
+		dict(name="SINV-NOBODY", customer=None, docstatus=1),
+	]
+	calls = []
+
+	def get_value(doctype, filters=None, fieldname=None, *args, **kwargs):
+		calls.append(("get_value", doctype, sorted(filters), fieldname))
+		assert doctype == "Sales Invoice" and not kwargs.get("as_dict")
+		assert filters["docstatus"] == 1 and filters["customer"][0] == "in"
+		customers = filters["customer"][1]
+		for row in rows:
+			# MariaDB matches a name case-insensitively; the stored name comes back.
+			if (
+				row["name"].lower() == filters["name"].lower()
+				and row["customer"] in customers
+				and row["docstatus"] == filters["docstatus"]
+			):
+				return row["name"]
+		return None
+
+	portal_customers = {"jane@example.com": ["CUST-1"], "no-customer@example.com": []}
+
+	def get_portal_customers(user=None):
+		calls.append(("get_portal_customers",))
+		return list(portal_customers[frappe_stub.session.user])
+
+	monkeypatch.setattr(frappe_stub, "db", types.SimpleNamespace(get_value=get_value))
+	monkeypatch.setattr(api, "get_portal_customers", get_portal_customers)
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="jane@example.com"))
+	_pdf_request(monkeypatch, frappe_stub)
+	served, pages = [], []
+	monkeypatch.setattr(invoice_pdf, "respond_with_pdf", lambda name: served.append(name))
+	monkeypatch.setattr(
+		frappe_stub, "respond_as_web_page", lambda *a, **k: pages.append((a, k)), raising=False
+	)
+
+	def call(invoice):
+		served.clear()
+		pages.clear()
+		calls.clear()
+		# None: a return value would become a JSON body in place of the PDF or the page.
+		assert api.portal_invoice_pdf(invoice) is None
+		return list(served), list(pages)
+
+	one_shape = [
+		("get_portal_customers",),
+		("get_value", "Sales Invoice", ["customer", "docstatus", "name"], "name"),
+	]
+	assert call("SINV-OWN") == (["SINV-OWN"], [])
+	assert calls == one_shape
+	assert call("sinv-own") == (["SINV-OWN"], [])  # rendered under its stored name
+	assert call("SINV-RETURN") == (["SINV-RETURN"], [])
+
+	refusals = {}
+	for invoice in ("SINV-OTHER", "SINV-DRAFT", "SINV-CANCELED", "SINV-NOBODY", "SINV-MISSING"):
+		refused_served, refused_pages = call(invoice)
+		assert refused_served == [], invoice
+		# The work does not depend on the answer: the same two calls as for the customer's own.
+		assert calls == one_shape, invoice
+		refusals[repr(invoice)] = refused_pages
+	# Not a name at all: refused on the shape of the request, before any lookup.
+	for invoice in ("", None, ["SINV-OWN"]):
+		refused_served, refused_pages = call(invoice)
+		assert refused_served == [] and calls == [], invoice
+		refusals[repr(invoice)] = refused_pages
+	assert len({repr(page) for page in refusals.values()}) == 1, refusals
+	((args, kwargs),) = refusals["'SINV-OTHER'"]
+	assert kwargs["http_status_code"] == 404 and kwargs["primary_action"] == "/pay"
+	assert "not available" in args[1] and not any("SINV" in str(part) for part in args)
+
+	# A signed-in user no Customer is linked to: refused once the (empty) customers are known.
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="no-customer@example.com"))
+	assert call("SINV-OWN") == ([], refusals["'SINV-OTHER'"])
+	assert calls == [("get_portal_customers",)]
+
+	# A Guest is refused before anything is looked up.
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="Guest"))
+	assert call("SINV-OWN") == ([], refusals["'SINV-OTHER'"])
+	assert calls == []
+
+
+def test_the_invoice_pdf_endpoint_is_a_signed_in_get():
+	"""A link, so GET (no CSRF token; Frappe rolls a GET's transaction back), never allow_guest,
+	and the ownership helper above it is not itself exposed. Both pages point at it. The render's
+	concurrency limit is explicit and small: Frappe's limiter keys its pool by the wrapped
+	function and defaults each pool to half the web tier, so a defaulted limit here would sit
+	beside download_pdf's half and the two together could hold every worker."""
+	import ast
+	from pathlib import Path
+
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	def functions(path):
+		tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+		return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+
+	api_defs = functions(Path(__file__).resolve().parents[1] / "stripe_payments" / "core" / "api.py")
+	(decorator,) = api_defs["portal_invoice_pdf"].decorator_list
+	assert ast.unparse(decorator.func) == "frappe.whitelist"
+	assert {kw.arg: ast.literal_eval(kw.value) for kw in decorator.keywords} == {"methods": ["GET"]}
+	assert api_defs["_own_submitted_invoice"].decorator_list == []
+	assert (
+		invoice_pdf.PDF_ROUTE
+		== "/api/method/erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf"
+	)
+	render = functions(invoice_pdf.__file__)["render_invoice_pdf"]
+	assert [ast.unparse(d) for d in render.decorator_list] == [
+		"_concurrent_limit(limit=RENDER_CONCURRENCY, wait_timeout=RENDER_WAIT_SECONDS)"
+	]
+	assert invoice_pdf.RENDER_CONCURRENCY == 2 and invoice_pdf.RENDER_WAIT_SECONDS == 3
+
+
+def test_the_invoice_pdf_is_always_the_customer_facing_format_and_never_standard(monkeypatch):
+	"""The portal renders SALES_INVOICE_FORMAT ("Sales Invoice - Sapphire", which
+	enhancements_core.setup_sales_print_formats writes on every migrate) and nothing else. Not the
+	DocType's default_print_format, which a staffer can point at any format, an internal one
+	included; and never Standard, printview's last resort, which on v16 prints every permlevel-0
+	field with a value and no print_hide (cost_center, amount_eligible_for_commission,
+	is_internal_customer, any custom field made on the site). The first cut followed the default
+	and fell back to Standard, which fails open on a page customers see. If the Sapphire format is
+	missing, disabled or made for another doctype, the render raises, the customer gets the logged
+	500 page, and nothing is printed at all.
+
+	The generator is the format's own, else Print Settings', else wkhtmltopdf: the Desk's Download
+	PDF order (print.js get_pdf_generator), not get_print's, which skips Print Settings and would
+	send the render to the wkhtmltopdf that segfaults on this host. Print Settings is a Single,
+	read with get_single_value — never db.get_value("Singles", ...)."""
+	import json
+	from pathlib import Path
+
+	import pytest
+
+	frappe_stub = install_frappe_stub()
+	from erpnext_enhancements.enhancements_core import setup_sales_print_formats
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	sapphire = "Sales Invoice - Sapphire"
+	assert invoice_pdf.SALES_INVOICE_FORMAT == setup_sales_print_formats.SALES_INVOICE_FORMAT == sapphire
+	monkeypatch.setattr(invoice_pdf, "render_language", lambda: "en")
+	good = dict(doc_type="Sales Invoice", disabled=0, pdf_generator="chrome")
+	broken_rows = {
+		"missing": None,
+		"disabled": dict(good, disabled=1),
+		"another doctype's": dict(good, doc_type="Quotation"),
+	}
+	formats = {}
+	state = {"settings": None}
+	read = []
+
+	def get_value(doctype, name=None, fields=None, as_dict=False, **kwargs):
+		assert doctype == "Print Format", doctype
+		read.append(name)
+		row = formats.get(name)
+		if row is None:
+			return None
+		return _AttrDict({f: row[f] for f in fields}) if as_dict else row[fields]
+
+	def get_single_value(doctype, field, *args, **kwargs):
+		assert (doctype, field) == ("Print Settings", "pdf_generator")
+		return state["settings"]
+
+	def get_meta(doctype):
+		raise AssertionError("the DocType's default print format must not decide what customers see")
+
+	monkeypatch.setattr(
+		frappe_stub, "db", types.SimpleNamespace(get_value=get_value, get_single_value=get_single_value)
+	)
+	monkeypatch.setattr(frappe_stub, "get_meta", get_meta, raising=False)
+
+	def install(row):
+		formats.clear()
+		if row is not None:
+			formats[sapphire] = row
+
+	def resolve(row, settings=None):
+		install(row)
+		state["settings"] = settings
+		read.clear()
+		print_format = invoice_pdf.invoice_print_format()
+		return print_format, invoice_pdf.pdf_generator_for(print_format)
+
+	assert resolve(good, settings="wkhtmltopdf") == (sapphire, "chrome")
+	assert set(read) == {sapphire}  # no other format, and never "Standard", is even looked at
+	assert resolve(dict(good, pdf_generator=None), settings="chrome") == (sapphire, "chrome")
+	assert resolve(dict(good, pdf_generator=None)) == (sapphire, "wkhtmltopdf")
+	for why, row in broken_rows.items():
+		with pytest.raises(invoice_pdf.PrintFormatUnavailable):
+			resolve(row, settings="chrome")
+		assert set(read) == {sapphire}, why
+
+	# Through the response: the logged 500 page, and get_print — which would render Standard for a
+	# format it cannot find — is never reached.
+	local = _pdf_request(monkeypatch, frappe_stub)
+	pages, logged, printed = [], [], []
+	monkeypatch.setattr(
+		frappe_stub, "respond_as_web_page", lambda *a, **k: pages.append((a, k)), raising=False
+	)
+	monkeypatch.setattr(frappe_stub, "log_error", lambda *a, **k: logged.append(k))
+	monkeypatch.setattr(
+		frappe_stub, "get_print", lambda *a, **k: printed.append(k) or b"%PDF-1.7", raising=False
+	)
+	for why, row in broken_rows.items():
+		install(row)
+		pages.clear()
+		logged.clear()
+		invoice_pdf.respond_with_pdf("SINV-1")
+		assert printed == [], why
+		assert "type" not in local.response and "filecontent" not in local.response, why
+		((args, kwargs),) = pages
+		assert kwargs["http_status_code"] == 500 and "try again" in args[1], why
+		assert len(logged) == 1 and logged[0]["reference_name"] == "SINV-1", why
+
+	install(good)
+	pages.clear()
+	invoice_pdf.respond_with_pdf("SINV-1")
+	(kwargs,) = printed
+	assert kwargs["print_format"] == sapphire and pages == []
+	assert local.response.type == "pdf"
+
+	# On this site the Desk's default is the same format (the fixture's Property Setter), so the
+	# customer sees what the Desk prints.
+	app = Path(__file__).resolve().parents[1]
+	setters = json.loads((app / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+	(setter,) = [
+		row
+		for row in setters
+		if row.get("doc_type") == "Sales Invoice" and row.get("property") == "default_print_format"
+	]
+	assert setter["value"] == sapphire
+
+	assert invoice_pdf.pdf_filename("ACC-SINV-2026-00001") == "ACC-SINV-2026-00001.pdf"
+	assert invoice_pdf.pdf_filename("SINV 7/A") == "SINV-7-A.pdf"  # Frappe's own download_pdf rule
+
+
+def test_the_invoice_pdf_asks_for_no_letter_head_because_the_format_never_prints_one():
+	"""The Desk's print view sends the invoice's own letter head if it is enabled, else the default
+	enabled one, with no_letterhead=0 (print.js set_default_letterhead / render_page, version-16;
+	Print Settings.with_letterhead is never read there). The first cut's docstring said otherwise.
+	What makes it moot: the Sapphire format is a custom format, so printview hands a letter head
+	only to the template, as letter_head and footer, and the template never reads either — it
+	draws its own. Nor does it call _(), so the Desk's print language (doc.language first) makes
+	no difference either. The render asks for no letter head and the page is the Desk's. If the
+	template ever starts reading one of these, the render has to start matching print.js."""
+	import re
+
+	install_frappe_stub()
+	from erpnext_enhancements.enhancements_core import setup_sales_print_formats
+
+	((template,),) = [
+		(html,)
+		for name, doctype, html in setup_sales_print_formats.FORMATS
+		if name == setup_sales_print_formats.SALES_INVOICE_FORMAT
+	]
+	assert "{{ doc.name }}" in template  # the real template, not an empty string
+	for pattern in (r"\bletter_head\b", r"\bno_letterhead\b", r"\bfooter\b", r"(?<![\w.])_\("):
+		assert not re.search(pattern, template), pattern
+
+
+def test_the_invoice_pdf_render_waives_print_permission_for_that_render_only(monkeypatch):
+	"""A Website User has no Read or Print on Sales Invoice, and ERPNext's portal rule looks for the
+	user in the Customer's Portal Users table, not in a Contact's links as this portal does — so
+	printview would refuse customers their own invoices. After the endpoint's ownership check the
+	render runs with flags.ignore_print_permissions (what Frappe's attach_print sets), never
+	frappe.set_user, and puts the flag back even when the render fails. The request's own query
+	string never reaches printview, which reads form_dict: ?pdf_generator= would pick the
+	generator, ?settings= would reach Print Settings (allow_print_for_draft) and ?key= a share key.
+	?_lang= is read into frappe.local.lang before the endpoint runs, and printview renders in it
+	(right to left for ar), so the render runs in the user's own language and puts the request's back."""
+	import pytest
+
+	frappe_stub = install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	local = _pdf_request(
+		monkeypatch,
+		frappe_stub,
+		cmd="erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf",
+		invoice="SINV-1",
+		pdf_generator="wkhtmltopdf",
+		settings='{"allow_print_for_draft": 1}',
+		key="shared-key",
+		format="Standard",
+		_lang="ar",
+	)
+	local.lang = "ar"  # what frappe.auth set from ?_lang= when the request began
+	request_form = local.form_dict
+	monkeypatch.setattr(invoice_pdf, "invoice_print_format", lambda: "Sales Invoice - Sapphire")
+	monkeypatch.setattr(invoice_pdf, "pdf_generator_for", lambda print_format: "chrome")
+	real_render_language = invoice_pdf.render_language
+	monkeypatch.setattr(invoice_pdf, "render_language", lambda: "en")
+	seen = []
+
+	def get_print(doctype, name, **kwargs):
+		seen.append(
+			dict(
+				doctype=doctype,
+				name=name,
+				kwargs=kwargs,
+				waived=local.flags.get("ignore_print_permissions"),
+				form=dict(local.form_dict),
+				lang=local.lang,
+			)
+		)
+		return b"%PDF-1.7 SINV-1"
+
+	monkeypatch.setattr(frappe_stub, "get_print", get_print, raising=False)
+	assert invoice_pdf.render_invoice_pdf("SINV-1") == b"%PDF-1.7 SINV-1"
+	(call,) = seen
+	assert (call["doctype"], call["name"]) == ("Sales Invoice", "SINV-1")
+	# no_letterhead=1: the format draws its own letterhead and never reads Frappe's (the test
+	# above), so the page is the Desk's without one.
+	assert call["kwargs"] == dict(
+		print_format="Sales Invoice - Sapphire", as_pdf=True, no_letterhead=1, pdf_generator="chrome"
+	)
+	assert call["waived"] is True and call["form"] == {} and call["lang"] == "en"
+	assert local.flags.get("ignore_print_permissions") is None
+	assert local.form_dict is request_form and request_form.pdf_generator == "wkhtmltopdf"
+	assert local.lang == "ar"
+
+	# A failed render puts both back, and leaves a waiver someone else set as it was.
+	local.flags.ignore_print_permissions = "outer"
+
+	def chrome_died(*args, **kwargs):
+		raise RuntimeError("Chromium took too long to start.")
+
+	monkeypatch.setattr(frappe_stub, "get_print", chrome_died, raising=False)
+	with pytest.raises(RuntimeError):
+		invoice_pdf.render_invoice_pdf("SINV-1")
+	assert local.flags.ignore_print_permissions == "outer" and local.form_dict is request_form
+	assert local.lang == "ar"
+
+	# The language is the user's own, as Frappe picks it when a session begins, never ?_lang=.
+	translate = types.ModuleType("frappe.translate")
+	asked = []
+	translate.get_user_lang = lambda user=None: asked.append(user) or "de"
+	monkeypatch.setitem(sys.modules, "frappe.translate", translate)
+	monkeypatch.setattr(frappe_stub, "translate", translate, raising=False)
+	monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user="customer@example.com"), raising=False)
+	assert real_render_language() == "de" and asked == ["customer@example.com"]
+
+	# The limiter is Frappe's, given our limits, where there is one, and nothing where there is not.
+	monkeypatch.delattr(frappe_stub, "concurrent_limit", raising=False)
+	assert invoice_pdf._concurrent_limit(limit=2, wait_timeout=3)(chrome_died) is chrome_died
+	monkeypatch.setattr(
+		frappe_stub, "concurrent_limit", lambda **kw: (lambda fn: ("limited", kw, fn)), raising=False
+	)
+	assert invoice_pdf._concurrent_limit(limit=2, wait_timeout=3)(chrome_died) == (
+		"limited",
+		{"limit": 2, "wait_timeout": 3},
+		chrome_died,
+	)
+
+
+def test_the_invoice_pdf_is_capped_per_customer_before_it_waits_for_a_slot(monkeypatch):
+	"""Nothing stopped one portal customer looping on the link: the render's pool was half the web
+	tier, and a refused caller held a worker for up to 10 seconds first. Now the pool is small (the
+	test above) and each signed-in user may start USER_RENDER_LIMIT renders per USER_RENDER_WINDOW
+	seconds: a counter in the Redis cache keyed on the session user, since frappe.rate_limit keys
+	only on the client IP or a request value. It is counted before the render and its semaphore,
+	so a refused request never waits for a slot. The refusal is the busy page (503, Retry-After),
+	not logged. Another user's count is their own, the next window starts afresh, and outside an
+	HTTP request it is a no-op, like Frappe's limiter."""
+	import pytest
+
+	frappe_stub = install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	class Cache:
+		def __init__(self):
+			self.counts, self.ttl = {}, {}
+
+		def make_key(self, key, user=None, shared=False):
+			return (f"site|user:{user}:{key}" if user else f"site|{key}").encode()
+
+		def incrby(self, key, amount=1):
+			self.counts[key] = self.counts.get(key, 0) + amount
+			return self.counts[key]
+
+		def expire(self, key, seconds):
+			self.ttl[key] = seconds
+
+	class Headers(dict):
+		def set(self, key, value):
+			self[key] = value
+
+	cache = Cache()
+	monkeypatch.setattr(frappe_stub, "cache", cache, raising=False)
+	local = _pdf_request(monkeypatch, frappe_stub)
+	local.response_headers = Headers()
+	window = invoice_pdf.USER_RENDER_WINDOW
+	clock = {"now": 29_000_000 * window + 15}  # 15 seconds into a window
+	monkeypatch.setattr(invoice_pdf, "time", types.SimpleNamespace(time=lambda: clock["now"]))
+
+	def as_user(user):
+		monkeypatch.setattr(frappe_stub, "session", types.SimpleNamespace(user=user))
+
+	as_user("jane@example.com")
+	# Not an HTTP request (a job, the console): nothing is counted.
+	invoice_pdf.count_render_for_user()
+	assert cache.counts == {}
+
+	local.request = object()
+	for _ in range(invoice_pdf.USER_RENDER_LIMIT):
+		invoice_pdf.count_render_for_user()
+	with pytest.raises(invoice_pdf.RenderLimitReached) as refused:
+		invoice_pdf.count_render_for_user()
+	assert refused.value.retry_after == window - 15
+	assert local.response_headers == {"Retry-After": str(window - 15)}
+	(key,) = cache.counts
+	assert b"user:jane@example.com:" in key and cache.ttl[key] == window
+	assert 1 < invoice_pdf.USER_RENDER_LIMIT <= 20 and window == 60
+
+	as_user("joe@example.com")
+	invoice_pdf.count_render_for_user()  # a cap of his own
+
+	as_user("jane@example.com")
+	clock["now"] += window
+	invoice_pdf.count_render_for_user()  # the next window starts afresh
+	clock["now"] -= window
+
+	# Through the response, back in the spent window: the busy page, not logged, and the render —
+	# with its semaphore — never entered.
+	pages, logged, rendered = [], [], []
+	monkeypatch.setattr(
+		frappe_stub, "respond_as_web_page", lambda *a, **k: pages.append((a, k)), raising=False
+	)
+	monkeypatch.setattr(frappe_stub, "log_error", lambda *a, **k: logged.append(k))
+	monkeypatch.setattr(invoice_pdf, "render_invoice_pdf", lambda name: rendered.append(name) or b"%PDF")
+	invoice_pdf.respond_with_pdf("SINV-1")
+	assert rendered == [] and logged == []
+	((args, kwargs),) = pages
+	assert kwargs["http_status_code"] == 503 and "try again" in args[1]
+	assert "type" not in local.response and "filecontent" not in local.response
+
+
+def test_the_invoice_pdf_opens_inline_or_says_it_could_not(monkeypatch):
+	"""Frappe's type "pdf" response is Content-Disposition: inline (utils/response.py as_pdf,
+	version-16) — the phone's PDF viewer, not a download — named for the invoice. A render that
+	fails is a page saying to try again, with the traceback in the Error Log through defer_insert
+	(a GET's transaction is rolled back, and an ordinary insert with it); a refusal from either
+	limiter (both carry retry_after) is the same page with a 503, and is not logged."""
+	frappe_stub = install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	local = _pdf_request(monkeypatch, frappe_stub)
+	pages, logged = [], []
+	monkeypatch.setattr(
+		frappe_stub, "respond_as_web_page", lambda *a, **k: pages.append((a, k)), raising=False
+	)
+	monkeypatch.setattr(frappe_stub, "log_error", lambda *a, **k: logged.append(k))
+	monkeypatch.setattr(invoice_pdf, "render_invoice_pdf", lambda name: b"%PDF-1.7 " + name.encode())
+
+	invoice_pdf.respond_with_pdf("ACC-SINV-2026-00001")
+	assert local.response == {
+		"filename": "ACC-SINV-2026-00001.pdf",
+		"filecontent": b"%PDF-1.7 ACC-SINV-2026-00001",
+		"type": "pdf",
+	}
+	assert pages == [] and logged == []
+
+	class Busy(Exception):
+		retry_after = 10
+
+	def fails_with(exc):
+		def render(name):
+			raise exc
+
+		return render
+
+	for render, status, logs in (
+		(fails_with(RuntimeError("Chromium took too long to start.")), 500, True),
+		(lambda name: b"", 500, True),  # an empty PDF is no PDF
+		(fails_with(invoice_pdf.PrintFormatUnavailable("gone")), 500, True),
+		(fails_with(Busy("Server is busy. Please try again in a few seconds.")), 503, False),
+		(fails_with(invoice_pdf.RenderLimitReached(42)), 503, False),
+	):
+		local.response = _AttrDict()
+		pages.clear()
+		logged.clear()
+		monkeypatch.setattr(invoice_pdf, "render_invoice_pdf", render)
+		invoice_pdf.respond_with_pdf("SINV-<b>1</b>")
+		assert "type" not in local.response and "filecontent" not in local.response
+		((args, kwargs),) = pages
+		assert kwargs["http_status_code"] == status and kwargs["primary_action"] == "/pay"
+		assert "try again" in args[1] and "SINV-&lt;b&gt;1&lt;/b&gt;" in args[1]
+		if logs:
+			((log,),) = [(entry,) for entry in logged]
+			assert log["defer_insert"] is True
+			assert (log["reference_doctype"], log["reference_name"]) == ("Sales Invoice", "SINV-<b>1</b>")
+		else:
+			assert logged == []
+
+
+def test_pay_offers_the_invoice_pdf_on_every_row():
+	"""/pay: "View invoice (PDF)" under every invoice's name, whatever its payment state — payable,
+	processing, waiting on the bank, a payment received — in a new tab (the phone's PDF viewer, and
+	the list stays where it was), with rel=noopener."""
+	from pathlib import Path
+
+	import pytest
+
+	jinja2 = pytest.importorskip("jinja2")
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	source = (Path(__file__).resolve().parents[1] / "www" / "pay.html").read_text(encoding="utf-8")
+	env = jinja2.Environment(
+		loader=jinja2.DictLoader(
+			{"templates/web.html": "{% block page_content %}{% endblock %}", "pay.html": source}
+		)
+	)
+	env.globals["_"] = lambda text, *a, **k: text
+	states = {
+		"SINV-OPEN": None,
+		"SINV-SETTLING": "Processing",
+		"SINV-3DS": "Awaiting",
+		"SINV-RECEIVED": "Paid",
+		"SINV 7": None,
+	}
+	html = env.get_template("pay.html").render(
+		enabled=True,
+		invoices=[
+			dict(name=name, due_display="—", amount_display="USD 200.00", payment_block=block)
+			for name, block in states.items()
+		],
+		enable_card=True,
+		enable_ach=True,
+		autopay_consent="",
+		autopay_enrolled=False,
+		csrf_token="tok",
+	)
+	links = _pdf_links(html)
+	assert [link["href"] for link in links] == [
+		invoice_pdf.PDF_ROUTE + "?invoice=" + name.replace(" ", "%20") for name in states
+	]
+	for link in links:
+		assert (link["target"], link["rel"]) == ("_blank", "noopener"), link
+	for chunk in html.split("<tr>")[2:]:
+		assert chunk.split("</tr>", 1)[0].count("View invoice (PDF)") == 1
+
+	# No invoices, or payments switched off: no list, so no link.
+	for context in (dict(enabled=True, invoices=[]), dict(enabled=False, invoices=[])):
+		assert _pdf_links(env.get_template("pay.html").render(**context)) == []
+
+
+def test_pay_card_offers_the_invoice_pdf_in_every_state_that_names_an_invoice():
+	"""/pay-card: the same link beside the invoice header on the card form, and on every settled
+	state (paid, nothing left to pay, received, processing, awaiting, unconfirmed, verifying,
+	unreleased), each of which names an invoice the controller has already proven is this
+	customer's and submitted. Not on "not available", which names none, nor with card payments off."""
+	from pathlib import Path
+
+	import pytest
+
+	jinja2 = pytest.importorskip("jinja2")
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import invoice_pdf
+
+	source = (Path(__file__).resolve().parents[1] / "www" / "pay-card.html").read_text(encoding="utf-8")
+	env = jinja2.Environment(
+		loader=jinja2.DictLoader(
+			{"templates/web.html": "{% block page_content %}{% endblock %}", "r.html": source}
+		)
+	)
+	env.globals["_"] = lambda text, *a, **k: text
+
+	def render(**context):
+		return env.get_template("r.html").render(csrf_token="tok", enable_ach=True, **context)
+
+	expected = [{"href": invoice_pdf.PDF_ROUTE + "?invoice=SINV-9", "target": "_blank", "rel": "noopener"}]
+	settled = (
+		"paid",
+		"nothing",
+		"received",
+		"processing",
+		"awaiting",
+		"unconfirmed",
+		"verifying",
+		"unreleased",
+	)
+	for state in settled:
+		assert f'settled == "{state}"' in source, state
+		html = render(enabled=True, settled=state, settled_invoice="SINV-9", awaiting_minutes=5)
+		links = [{k: v for k, v in link.items() if k != "class"} for link in _pdf_links(html)]
+		assert links == expected, state
+		assert 'href="/pay"' in html, state
+
+	form = render(
+		enabled=True,
+		settled=None,
+		invoice=types.SimpleNamespace(name="SINV-9"),
+		amount_display="USD 200.00",
+		currency="USD",
+		publishable_key="pk_test_x",
+		amount_minor=20000,
+	)
+	assert _pdf_links(form) == expected
+	# Beside the header, above the card: visible on the card step and the review step alike.
+	assert form.index("<b>SINV-9</b>") < form.index("View invoice (PDF)") < form.index('id="step-card"')
+
+	assert _pdf_links(render(enabled=True, settled=None, invoice=None)) == []
+	assert _pdf_links(render(enabled=False, settled=None, invoice=None)) == []

@@ -56,6 +56,8 @@ from frappe import _
 from frappe.utils import get_datetime, now_datetime
 
 from erpnext_enhancements.assistant_tools._gate import (
+    GATE_OWN_DOCTYPES,
+    KNOWLEDGE_BASE_DOCTYPES,
     NEVER_EXEMPT,
     SealError,
     _changes_docstatus,
@@ -391,6 +393,23 @@ def _seconds_between(start, end):
         return None
 
 
+def _never_exempt_reason(doctype):
+    """Why a card that writes one of ``NEVER_EXEMPT`` needs its own look, by kind of target.
+
+    The three kinds are never exempt for different reasons (``_gate.NEVER_EXEMPT``), so one
+    phrase for all of them told the reviewer something false: a Task or a knowledge-base article
+    is not the gate's own record. The last line is a fallback for an entry added without a kind;
+    ``test_ai_gate_batch`` fails the build on one, so no row should ever show it.
+    """
+    if doctype == "Task":
+        return _("creates or changes a Task")
+    if doctype in GATE_OWN_DOCTYPES:
+        return _("changes the AI gate's own records or settings")
+    if doctype in KNOWLEDGE_BASE_DOCTYPES:
+        return _("changes the company knowledge base")
+    return _("changes a doctype the AI gate never exempts")
+
+
 def _review_reasons(row, has_hidden):
     """Why the batch dialog should not tick this action to begin with, as short phrases.
 
@@ -413,8 +432,9 @@ def _review_reasons(row, has_hidden):
         reasons.append(_("its arguments could not be read"))
     elif _changes_docstatus(arguments):
         reasons.append(_("submits or cancels a document"))
-    if row.get("target_doctype") in NEVER_EXEMPT:
-        reasons.append(_("changes the AI gate's own records or settings"))
+    target = row.get("target_doctype")
+    if target in NEVER_EXEMPT:
+        reasons.append(_never_exempt_reason(target))
     return reasons
 
 
@@ -428,7 +448,8 @@ def my_pending_actions():
     the ciphertext nor the asterisks the column holds ever enter this function. Nothing is
     decrypted. ``batch_default`` is whether the dialog ticks the row to begin with, and
     ``review_reason`` says why not when it doesn't (``_review_reasons``): High risk, hidden
-    values, a submit or cancel, or a write to the gate's own records.
+    values, a submit or cancel, or a write to a Task, the gate's own records or the knowledge
+    base.
 
     ``age_seconds`` and ``expires_in_seconds`` are computed here in site-local time on both
     sides, so the browser never has to compare a site-local stamp with its own clock.

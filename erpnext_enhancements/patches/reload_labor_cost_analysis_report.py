@@ -1,6 +1,6 @@
 """Force the Labor Cost Analysis report to re-sync, so its narrowed role list actually lands.
 
-v1.538.0 drops Projects Manager from ``workforce/report/labor_cost_analysis/labor_cost_analysis.json``,
+v1.542.0 drops Projects Manager from ``workforce/report/labor_cost_analysis/labor_cost_analysis.json``,
 leaving System Manager, HR Manager and Accounts Manager: the three roles that read Job Interval
 at permlevel 1, ADR 0013's pay audience. The report prints per-employee pay and burdened rates
 from raw SQL, and a raw query applies no permlevel, so the Report's own role list is the only

@@ -129,7 +129,7 @@ class MaintenanceVisitHistory(BaseTool):
                 frappe.PermissionError,
             )
         # has_permission is document-level only, and get_doc applies no permlevel: without this,
-        # total_labor_cost (permlevel 1, pay-derived; v1.538.0) reaches every reader of the visit.
+        # total_labor_cost (permlevel 1, pay-derived; v1.542.0) reaches every reader of the visit.
         # The key stays in the payload and reads None for a caller without level-1 read.
         doc.apply_fieldlevel_read_permissions()
 

@@ -1203,7 +1203,15 @@ erpnext_enhancements.patches.add_store_run_receipt_fields
 # are not installed. Deletes Custom DocPerm rows (and DocType-parented DocPerm rows) whose parent matches no
 # tabDocType name, then clear_cache. The rows grant nothing and were never fixtures. Cannot raise, safe twice.
 erpnext_enhancements.patches.delete_orphan_docperms
-# v1.538.0: Labor Cost Analysis narrows to ADR 0013's pay audience (System Manager, HR Manager, Accounts
+# v1.538.0 knowledge base (WI-080 PR 1, ADR 0017): seed "KB Author" and "KB Approver" (desk_access 1),
+# plus a one-role "KB Approvers" Role Profile with no members. NOT fixtures: custom_docperm.json imports
+# before role.json, and fixture sync re-inserts a Role Profile on every migrate. The profile exists
+# because a profiled user's roles are rebuilt from their profiles on every save, so the 4th approver
+# (Lisa Symanski, profile "Finance Team") can hold KB Approver only through a second profile, added
+# in the Desk. Insert-only: an existing role or profile is never touched. Each step commits alone;
+# cannot raise, safe twice.
+erpnext_enhancements.patches.seed_knowledge_base_roles
+# v1.542.0: Labor Cost Analysis narrows to ADR 0013's pay audience (System Manager, HR Manager, Accounts
 # Manager); Projects Manager is dropped because the report's raw SQL bypasses Job Interval's permlevel-1 pay
 # block. A Report JSON imports only when its `modified` is newer than the site row, so the file carries a
 # bumped stamp and this reload_doc(force=True) is the half a forgotten bump cannot undo. Every failure goes

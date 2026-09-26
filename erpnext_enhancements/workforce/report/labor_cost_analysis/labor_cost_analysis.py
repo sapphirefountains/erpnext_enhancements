@@ -34,7 +34,7 @@ on any period. Default window is the last 30 days.
 Roles are the three that read Job Interval at permlevel 1, ADR 0013's pay audience (System
 Manager, HR Manager, Accounts Manager). Projects Manager reads Job Interval but not its pay
 block, and this report's SQL would bypass that: a raw query applies no permlevel, so the
-report's roles are the only gate on the rates it prints (v1.538.0). Every one of the three
+report's roles are the only gate on the rates it prints (v1.542.0). Every one of the three
 also reads Job Interval at permlevel 0, because a Script Report whose readers cannot read its
 ``ref_doctype`` errors for exactly its intended audience
 (``tests/test_workforce_report_labor_cost.py`` and ``tests/test_pay_rate_permissions.py`` pin

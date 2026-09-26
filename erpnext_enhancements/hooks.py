@@ -827,6 +827,21 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"File": {
+		# knowledge_base (WI-080 PR 2, v1.539.0): every File attached to Knowledge Article
+		# or Knowledge Article Version is private, bytes included. Runs on EVERY File on
+		# the site, so it returns after one getattr for anything else and never raises
+		# for an unrelated File. A doc_events handler runs AFTER File's own before_insert
+		# (v16 Document.hook composes controller-first), which has already written the
+		# upload to public/files -- so on insert it re-saves the content privately through
+		# File.save_file and deletes the public copy only if this insert wrote it. On an
+		# update (before_validate runs before File.validate) setting is_private is enough:
+		# File.validate moves the bytes itself. Also on an update: a File the stored row
+		# attaches to either KB doctype may not be detached or moved (read_only is never
+		# enforced on the server, so its owner could otherwise detach an article's image and
+		# then delete it) unless KB code sets flags.kb_action. before_validate runs even
+		# under flags.ignore_validate. See knowledge_base/files.py.
+		"before_insert": "erpnext_enhancements.knowledge_base.files.force_private",
+		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
@@ -2106,7 +2121,11 @@ fixtures = [
 	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
 	# so re-export never sweeps user-created records. "PO Approver" and "PO Creator"
 	# are deliberately absent from the Role entry — they are owned by
-	# patches/seed_po_approver_role.py and patches/seed_po_creator_role.py.
+	# patches/seed_po_approver_role.py and patches/seed_po_creator_role.py. So are
+	# "KB Author" and "KB Approver", and the one-role "KB Approvers" Role Profile is
+	# deliberately absent from the Role Profile entry below: all three are owned by
+	# patches/seed_knowledge_base_roles.py (WI-080, v1.538.0), insert-only, so a Desk
+	# edit to the profile survives and fixture sync does not re-insert it every migrate.
 	# NOTE: this list's order governs *export* only. Fixtures IMPORT in alphabetical
 	# filename order (frappe/utils/fixtures.py sorts the directory), so
 	# custom_docperm.json lands before role.json and role.json before
@@ -2188,14 +2207,14 @@ override_whitelisted_methods = {
 	"frappe.utils.print_format.download_pdf": "erpnext_enhancements.po_pdf_filename.download_pdf",
 	# Activity Cost's costing_rate is each employee's burdened pay rate (workforce/costing.py,
 	# ADR 0013), and ERPNext's whitelisted get_activity_cost returned it to any logged-in
-	# caller with no permission check (v1.538.0). The permlevel-1 Property Setter on the field
+	# caller with no permission check (v1.542.0). The permlevel-1 Property Setter on the field
 	# cannot reach a whitelisted function's own db read, so this HTTP route is the only lever.
 	# The override calls ERPNext's function unchanged and zeroes costing_rate for anyone
 	# outside the pay audience; billing_rate is never touched. The server-side caller,
 	# TimesheetDetail.update_cost, imports ERPNext's function directly and is unaffected, so
 	# saved Timesheets still cost from the real rate. See api/activity_cost.py.
 	"erpnext.projects.doctype.timesheet.timesheet.get_activity_cost": "erpnext_enhancements.api.activity_cost.get_activity_cost",
-	# Field-level read on the responses frappe v16 sends unstripped (v1.538.0, ADR 0013).
+	# Field-level read on the responses frappe v16 sends unstripped (v1.542.0, ADR 0013).
 	# (1) The form's docinfo: getdoc strips the document, then attaches `versions`, the
 	# stored Version diffs verbatim -- old and new value of every changed field, whole child
 	# rows -- with no permlevel filter. Employee and Job Interval track changes, so pay-rate
@@ -2225,7 +2244,7 @@ override_whitelisted_methods = {
 # are werkzeug routes rather than whitelisted methods, so no override reaches them. This scrubs
 # the serialised body instead, only on those paths and only when a field actually goes; every
 # other request leaves on a method + path check. It never raises (frappe would log it and send
-# the body unscrubbed). See fieldlevel_read.scrub_rest_write_response (v1.538.0).
+# the body unscrubbed). See fieldlevel_read.scrub_rest_write_response (v1.542.0).
 after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response"]
 
 # The overrides above match a method *name*, but frappe's whitelist check matches the function
@@ -2235,7 +2254,7 @@ after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response
 # originals off frappe's whitelist once their canonical names are overridden, so every alias,
 # present or future, fails the whitelist check; the canonical names still reach the wrappers,
 # and in-process calls are unaffected. It never raises. See fieldlevel_read.seal_wrapped_originals
-# (v1.538.0).
+# (v1.542.0).
 before_request = ["erpnext_enhancements.fieldlevel_read.seal_wrapped_originals"]
 
 override_doctype_dashboards = {
@@ -2423,6 +2442,18 @@ has_permission = {
 	# per the parity doctrine. Both return an explicit bool on every path.
 	"Job Interval": "erpnext_enhancements.workforce.permissions.job_interval_has_permission",
 	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_has_permission",
+	# knowledge_base (WI-080 PR 2, v1.539.0): refuses DELETE, and only delete, on a File
+	# attached to a Knowledge Article. v16 protects attachments only on a SUBMITTED
+	# document, and an Article is never submitted, so a File's owner could otherwise
+	# delete an image out of approved text. A permission hook rather than on_trash
+	# because File.on_trash deletes the bytes BEFORE any doc_events on_trash handler
+	# runs. KB code that must delete one passes flags={"kb_action": True} to delete_doc;
+	# nothing in v1 does. Detaching the File first is refused by force_private above (a
+	# permission hook sees only the updated row). Not a query-condition twin case: it
+	# filters no list, it only takes away one right. Runs for every File permission
+	# check on the site, so every
+	# other ptype returns True explicitly (a falsy return DENIES on v16).
+	"File": "erpnext_enhancements.knowledge_base.files.file_has_permission",
 }
 
 # `notification_skip_email_types` held ["Chat Message", "Chat Mention"] from v1.267.0 until

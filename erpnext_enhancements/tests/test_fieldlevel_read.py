@@ -1,4 +1,4 @@
-"""The responses frappe v16 sends without field-level read permissions (v1.538.0).
+"""The responses frappe v16 sends without field-level read permissions (v1.542.0).
 
 Frappe strips a caller's unreadable permlevels when it reads a document out, and skips that
 step in two places, both of which carried pay (ADR 0013) past its permlevel:

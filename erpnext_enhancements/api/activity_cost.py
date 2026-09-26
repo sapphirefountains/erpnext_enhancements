@@ -1,4 +1,4 @@
-"""Activity Cost rates over HTTP, with the cost rate kept to the pay audience (v1.538.0).
+"""Activity Cost rates over HTTP, with the cost rate kept to the pay audience (v1.542.0).
 
 ERPNext's whitelisted ``erpnext.projects.doctype.timesheet.timesheet.get_activity_cost``
 answers any logged-in caller with an employee's Activity Cost ``costing_rate`` and

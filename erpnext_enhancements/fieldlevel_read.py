@@ -1,4 +1,4 @@
-"""Field-level read permissions on the responses Frappe v16 sends without them (v1.538.0).
+"""Field-level read permissions on the responses Frappe v16 sends without them (v1.542.0).
 
 ADR 0013 keeps pay behind permlevel 1. Frappe v16 honours a permlevel when it *reads* a
 document out to a caller: ``getdoc``, ``frappe.client.get``, ``GET /api/resource`` and the
