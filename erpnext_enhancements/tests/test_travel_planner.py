@@ -2098,18 +2098,28 @@ class TestContracts(unittest.TestCase):
 		# generator, whatever the Print Format says; the sheet is laid out for Chrome.
 		code = _strip_js_comments(_read(os.path.join(PAGE_DIR, "plan_a_trip.js")))
 		self.assertEqual(code.count("frappe.utils.print_format.download_pdf"), 1)
-		helper = re.search(r"\nfunction tp_sheet_url\(trip, as, base\) \{(.*?)\n\}\n", code, re.S)
+		helper = re.search(r"\nfunction tp_sheet_url\(trip, as\) \{(.*?)\n\}\n", code, re.S)
 		self.assertIsNotNone(helper, "tp_sheet_url() is gone")
 		for part in ("doctype=Travel%20Trip", "format=Trip%20Sheet", "no_letterhead=1", "pdf_generator=chrome", "&as="):
 			self.assertIn(part, helper.group(1))
-		# The server's own address is taken only when it is this site's (a relative path).
-		self.assertIn("tp_local_url(base)", helper.group(1))
 		local = re.search(r"\nfunction tp_local_url\(url\) \{(.*?)\n\}\n", code, re.S)
 		self.assertIsNotNone(local, "tp_local_url() is gone")
 		# ...and no backslash anywhere: a browser reads "/\host" as "//host".
 		self.assertIn(r"/^\/(?![/\\])[^\s\\]*$/.test(", local.group(1))
-		# Review, the Overview and View as each open it.
+		# Review, the Overview and View as each open it. Changed on purpose (2026-09-27): only
+		# Review spells the address (its answer carries none), and only when the server says the
+		# format exists; the views draw the server's address, one of this site's, or nothing.
+		# frappe prints a missing format as Standard, costs included, so a page that spelled its
+		# own address whenever the server sent none linked the priced copy.
 		self.assertEqual(code.count("this.sheet_link("), 3)
+		self.assertEqual(code.count("tp_sheet_url("), 2, "its definition and the Review step")
+		self.assertIn(
+			"if (s.sheet_available === true) "
+			'this.sheet_link($actions, __("Print the trip sheet"), tp_sheet_url(s.name));',
+			code,
+		)
+		self.assertIn("const sheet = tp_local_url(data.sheet_url);", code)
+		self.assertIn("const sheet = tp_local_url((data.people_sheet_urls || {})[employee]);", code)
 
 	def test_the_pages_trip_sheet_address_is_the_servers(self):
 		# The server spells the Trip Sheet's address in views.trip_sheet_url and sends it
@@ -2406,7 +2416,7 @@ class TestPageRouting(unittest.TestCase):
 		# history, routes, or redraws the page (a redraw would rebuild the map from Google).
 		for name, signature in (
 			("view_map", r"view_map\(\$view, data\)"),
-			("map_list", r"map_list\(\$list, places, day_list, day, all_days\)"),
+			("map_list", r"map_list\(\$list, places, day_list, day, start\)"),
 			("sheet_link", r"sheet_link\(\$parent, label, url\)"),
 			("contacts_block", r"contacts_block\(\$parent, contacts, hotels\)"),
 		):
@@ -2421,6 +2431,34 @@ class TestPageRouting(unittest.TestCase):
 		# A marker's popup is built from elements, never from HTML in the data.
 		self.assertIn("document.createElement(", tp_map.group(1))
 		self.assertIn(".textContent = ", tp_map.group(1))
+		# The one redraw the Map makes is for a flip of the desk theme (a Map ID and a
+		# colorScheme are fixed when a map is made): only on a change of data-theme, only while
+		# its map is on screen, and still no history entry.
+		watch = re.search(r"\n\twatch_map_theme\(theme, alive\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(watch, "watch_map_theme() is gone")
+		self.assertIn('attributeFilter: ["data-theme"]', watch.group(1))
+		self.assertIn("if (tp_desk_theme() === theme) return;", watch.group(1))
+		self.assertIn("if (!alive()) {", watch.group(1))
+		for forbidden in (
+			"history.",
+			"set_address(",
+			"open_view(",
+			"enter_view(",
+			"set_route(",
+			"fetch_views(",
+		):
+			self.assertNotIn(forbidden, watch.group(1), f"watch_map_theme calls {forbidden}")
+		self.assertEqual(self.code.count("new MutationObserver("), 1)
+		render = re.search(r"\n\trender\(\) \{(.*?)\n\t\}\n", self.code, re.S).group(1)
+		self.assertIn("this.stop_map_theme_watch();", render, "a redraw of anything else stops the watch")
+
+	def test_the_maps_roads_come_from_directions_service_only(self):
+		# Travel Settings' "Use Routes API" belongs to the Pick Routing Map and never reaches this
+		# view (get_maps_config sends only the key and the Map IDs), so the Routes path here could
+		# never run, and its comments said that setting switched this map to it.
+		for dead in ("use_routes_api", "computeRoutes", "by_routes", "routes_off"):
+			self.assertNotIn(dead, self.code, dead)
+		self.assertIn("new this.maps.DirectionsService()", self.code)
 
 	def test_the_uploader_is_opened_only_by_attach_a_file_on_a_saved_trip(self):
 		# frappe's uploader is a dialog loaded on demand (file_uploader.bundle.js): reached for
@@ -2486,9 +2524,10 @@ class TestItineraryBackForward(unittest.TestCase):
 	the default trip instead of the one being read. A ?trip= outside the person's own list is
 	asked for (the server's read permission decides); only a refusal replaces the entry.
 
-	Since PR 3 of the Plan a Trip program the trip also has a Contacts card at the top and a
-	"Print / save as PDF" link to the trip sheet. Neither is an entry: opening or shutting the
-	card and opening the sheet write no history."""
+	Since PR 3 of the Plan a Trip program the trip also has a Contacts card at the top (shut
+	until tapped open, as one line naming what is in it) and a "Print / save as PDF" link to the
+	trip sheet. Neither is an entry: opening or shutting the card and opening the sheet write no
+	history."""
 
 	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
 	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
@@ -2638,7 +2677,7 @@ class TestItineraryBackForward(unittest.TestCase):
 		to go Back to; the trip sheet opens in a new tab. Neither touches history, and the
 		card's toggle redraws nothing (a redraw would take focus off the button)."""
 		code = _strip_js_comments(_read(self.ITINERARY_JS))
-		for name in ("appendContacts", "contactsAreShut", "rememberContacts", "sheetLink", "sheetWhose", "appendPrint"):
+		for name in ("appendContacts", "contactsAreOpen", "rememberContacts", "sheetLink", "sheetWhose", "appendPrint"):
 			body = self._js_function(code, name)
 			for forbidden in ("writeTripEntry", "State(", "history.", "render()", "loadTrip("):
 				self.assertNotIn(forbidden, body, f"{name} calls {forbidden}")
@@ -2662,8 +2701,33 @@ class TestItineraryBackForward(unittest.TestCase):
 		# Every value is text: the one innerHTML left is the page clearing itself.
 		self.assertEqual(re.findall(r"[^\n]*innerHTML[^\n]*", code), ["\t\troot.innerHTML = '';"])
 
+	def test_the_contacts_toggles_focus_ring_is_not_clipped(self):
+		"""The toggle fills the Contacts card edge to edge and draws its focus ring outside itself
+		(outline-offset 2px). The card had overflow: hidden, which clipped that ring away: tabbing
+		onto the one control that opens the emergency card showed nothing (WCAG 2.4.7). Found in a
+		browser; a card that clips must draw the ring inside the toggle instead."""
+		path = os.path.join(APP_DIR, "public", "css", "travel", "itinerary.css")
+		css = re.sub(r"/\*.*?\*/", "", _read(path), flags=re.S)
+		rules = re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+		card = [
+			body
+			for selector, body in rules
+			if any(part.strip() in (".ti-contacts", ".ti-contacts.open") for part in selector.split(","))
+		]
+		self.assertTrue(card, "the .ti-contacts rule is gone")
+		ring = [
+			body
+			for selector, body in rules
+			if any(part.strip() == ".ti-contacts-toggle:focus-visible" for part in selector.split(","))
+		]
+		self.assertTrue(ring, "the toggle has no focus-visible style")
+		self.assertTrue(any(re.search(r"outline\s*:\s*2px solid", body) for body in ring))
+		clips = any(re.search(r"overflow(-[xy])?\s*:\s*(hidden|clip)", body) for body in card)
+		inset = any(re.search(r"outline-offset\s*:\s*-", body) for body in ring)
+		self.assertFalse(clips and not inset, "the card clips the toggle's focus ring")
+
 	def test_local_storage_is_only_touched_inside_a_try(self):
-		"""The card remembers being shut in localStorage, which throws in a private window or
+		"""The card remembers being open in localStorage, which throws in a private window or
 		with site data blocked, and is absent in the Back/Forward harness. Every use sits in a
 		try, so the page draws either way."""
 		code = _strip_js_comments(_read(self.ITINERARY_JS))

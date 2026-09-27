@@ -1638,7 +1638,9 @@ jinja = {
 		# `doc.*`: every money field on Travel Trip is permlevel 0 and the Employee role may
 		# print a trip, so only what the server hands the template keeps a crew member's copy
 		# free of money. It re-checks read/print on the trip, since a global is reachable from
-		# any template on the site.
+		# any template on the site, on the trip as saved (loaded again by name: the print view
+		# also renders a document posted as JSON), and prices no emailed copy (the email queue
+		# renders an attachment later, as Administrator).
 		"erpnext_enhancements.api.travel.ee_trip_sheet",
 	],
 }
@@ -1867,6 +1869,10 @@ after_migrate = [
 	# coordinator's copy only) for the job folder or a crew lead who won't open the app. The
 	# template is a repo file read by the setup module, so edits deploy on the next migrate.
 	# Idempotent upsert, guarded. MUST sit ABOVE ensure_chrome_pdf_generator, like the rest.
+	# It also makes the Trip Sheet Travel Trip's DEFAULT print format (Nik, 2026-09-27) with a
+	# code-owned Property Setter written after the upsert, never a fixture: fixtures sync before
+	# this hook (and install-app runs no after_migrate at all), and a default naming a format
+	# that is not there yet makes the desk drop "Standard" from the Print menu.
 	"erpnext_enhancements.travel_management.setup_print_formats.ensure_travel_print_formats",
 	# training: starter Training Badges. Insert-only and inert until gamification is on.
 	# Lives in `setup` beside the starter categories, not in `gamification`, which is

@@ -286,17 +286,20 @@ def deliver_expense_claims_generated(trip, claims):
 # ------------------------------------------------------------- itinerary
 
 
-def _itinerary_email(doc, recipient, base=None, poi_cache=None):
+def _itinerary_email(doc, recipient, base=None, poi_cache=None, hotels=None):
 	"""What the itinerary email carries for one traveler: ``{subject, template, context,
 	attachments}``. The one definition both :func:`send_itinerary_emails` and
-	:func:`render_itinerary_preview` build from, so a preview cannot drift from the send."""
+	:func:`render_itinerary_preview` build from, so a preview cannot drift from the send.
+
+	``hotels`` (``api.travel._hotel_details``) lets a send to the whole crew look each hotel up
+	once, as ``poi_cache`` does its Places, rather than every hotel once per person."""
 	from erpnext_enhancements.api.travel import _trip_contacts, shape_itinerary
 
 	itinerary = shape_itinerary(doc, viewing_employee=recipient.employee, poi_cache=poi_cache)
 	# Who to call, with this traveler's own hotels: the email's Contacts table and its links
 	# (each hotel's nearest urgent care, directions), built in views so the page, the phone,
 	# the email and the printed sheet say the same thing.
-	contacts = _trip_contacts(doc, recipient.employee)
+	contacts = _trip_contacts(doc, recipient.employee, hotels=hotels)
 	return {
 		"subject": _("Your itinerary: {0} ({1} – {2})").format(doc.purpose, doc.start_date, doc.end_date),
 		"template": "pre_travel_reminder.html",
@@ -319,13 +322,21 @@ def send_itinerary_emails(doc, employee=None, force=False):
 	if not force and (_in_maintenance_context() or not _notifications_enabled()):
 		return []
 
+	from erpnext_enhancements.api.travel import _hotel_details
+
 	base = _base_context(doc)
 	poi_cache = {}
+	recipients = _traveler_recipients(doc, employees={employee} if employee else None)
+	# Every hotel on the trip, looked up once for the whole send; each email lists its own. A
+	# failure here leaves each email to look its own up, inside the card's guard.
+	try:
+		hotels = _hotel_details(doc) if recipients else None
+	except Exception:
+		hotels = None
 
 	sent = []
-	employees = {employee} if employee else None
-	for recipient in _traveler_recipients(doc, employees=employees):
-		email = _itinerary_email(doc, recipient, base, poi_cache)
+	for recipient in recipients:
+		email = _itinerary_email(doc, recipient, base, poi_cache, hotels)
 		if _send(
 			recipient,
 			email["subject"],

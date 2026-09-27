@@ -48,9 +48,12 @@
  * page has no way to show them. Every value is typed in by people, so it is drawn as text. A
  * phone becomes a tel: link from its digits (and a leading +) only, an email a mailto: link
  * only when it is one, and the server's map links become links only when they are https. The
- * card opens and shuts with a tap. That is not a history entry, so Back never opens or shuts
- * it. This browser remembers it shut for that trip (localStorage where the browser allows it,
- * else for as long as the page is open). An answer with no `contacts` draws no card.
+ * card starts shut, as one line that says what is in it ("Contacts & emergency · travel desk,
+ * trip lead, site, 2 hotels, 911": only the parts it has, 911 always last), and a tap opens it
+ * (Nik, 2026-09-27). That is not a history entry, so Back never opens or shuts it. This
+ * browser remembers it open for that trip, so a trip someone opened stays open (localStorage
+ * where the browser allows it, else for as long as the page is open). An answer with no
+ * `contacts` draws no card.
  *
  * Trip sheet: "Print / save as PDF", under the screens, opens the trip sheet (the Trip Sheet
  * print format) for the person shown, or for the whole trip on the whole crew's view, as a PDF
@@ -678,10 +681,10 @@
 	// the top of this file). Values are typed in by people and drawn as text. What becomes a link
 	// is decided here, in telHref, mailHref and webHref, and nowhere else.
 
-	// Remembered shut, per trip, for this page load: {'t:<trip>': true|false}. Filled from
+	// Remembered open, per trip, for this page load: {'t:<trip>': true|false}. Filled from
 	// localStorage the first time a trip's card is drawn, so it holds when there is no storage.
-	var contactsShut = {};
-	var CONTACTS_KEY = 'ti-contacts-shut:';
+	var contactsOpen = {};
+	var CONTACTS_KEY = 'ti-contacts-open:';
 
 	// "(602) 555-0100 ext. 12" -> "tel:6025550100". Digits only, and a + only in front. An
 	// extension is dropped, not run into the number. A note beside the number ("Front desk
@@ -789,28 +792,38 @@
 		return value == null ? '' : String(value).trim();
 	}
 
-	// The card's rows, each with the word the shut card's summary uses for it. A part the answer
-	// leaves out (null), or sends with nothing to call, write or find, is no row.
+	// The card's rows, 911 first, and the shut card's one line: a word for each part it has, in
+	// the card's order, then 911, which is always there and always last ("travel desk, trip
+	// lead, site, 2 hotels, 911"). A part the answer leaves out (null), or sends with nobody named
+	// and nothing to call, write or find, is no row and no word: a travel desk with no phone or
+	// email, a job site with only the job's name. A booker, trip lead or site contact known only
+	// by name is still a row and a word, with no link, as the sheet, the email and Plan a Trip
+	// list them: most trip leads have no work cell on file, and the crew still needs the name.
 	function contactRows(c) {
 		var rows = [];
+		var words = [];
 		var emergency = trimmed(c.emergency) || '911';
-		rows.push({ short: emergency, node: contactRow({ role: 'Emergency', phone: emergency, callText: 'Call ' + emergency, cls: 'ti-contact-emergency' }) });
+		rows.push(contactRow({ role: 'Emergency', phone: emergency, callText: 'Call ' + emergency, cls: 'ti-contact-emergency' }));
 		var office = c.office || null;
 		if (office && (trimmed(office.phone) || trimmed(office.email))) {
-			rows.push({ short: 'Travel desk', node: contactRow({ role: 'Travel desk', name: trimmed(office.label), phone: office.phone, email: office.email }) });
+			rows.push(contactRow({ role: 'Travel desk', name: trimmed(office.label), phone: office.phone, email: office.email }));
+			words.push('travel desk');
 		}
 		var booked = c.booked_by || null;
 		if (booked && (trimmed(booked.name) || trimmed(booked.phone) || trimmed(booked.email))) {
-			rows.push({ short: 'Booked by', node: contactRow({ role: 'Booked by', name: trimmed(booked.name), phone: booked.phone, email: booked.email }) });
+			rows.push(contactRow({ role: 'Booked by', name: trimmed(booked.name), phone: booked.phone, email: booked.email }));
+			words.push('booked by');
 		}
 		var lead = c.lead || null;
 		if (lead && (trimmed(lead.name) || trimmed(lead.phone))) {
-			rows.push({ short: 'Trip lead', node: contactRow({ role: 'Trip lead', name: trimmed(lead.name), phone: lead.phone }) });
+			rows.push(contactRow({ role: 'Trip lead', name: trimmed(lead.name), phone: lead.phone }));
+			words.push('trip lead');
 		}
 		var site = c.site || null;
 		var siteAddress = site ? plainText(site.address) : '';
 		if (site && (trimmed(site.contact_name) || trimmed(site.phone) || trimmed(site.email) || siteAddress)) {
-			rows.push({ short: 'Job site', node: contactRow({
+			words.push('site');
+			rows.push(contactRow({
 				role: 'Job site',
 				name: trimmed(site.label),
 				who: trimmed(site.contact_name),
@@ -818,14 +831,14 @@
 				phone: site.phone,
 				email: site.email,
 				web: siteAddress ? [{ icon: '🧭', text: 'Directions', label: 'Directions to ' + siteAddress, href: directionsHref(siteAddress) }] : [],
-			}) });
+			}));
 		}
 		var hotels = (Array.isArray(c.hotels) ? c.hotels : []).filter(function (h) {
 			return h && (trimmed(h.name) || trimmed(h.phone) || plainText(h.address));
 		});
 		hotels.forEach(function (hotel) {
 			var where = trimmed(hotel.name) || plainText(hotel.address) || 'the hotel';
-			rows.push({ short: '', node: contactRow({
+			rows.push(contactRow({
 				role: 'Hotel',
 				name: trimmed(hotel.name),
 				lines: [plainText(hotel.address)],
@@ -834,51 +847,58 @@
 					{ icon: '🏥', text: 'Urgent care nearby', label: 'Urgent care near ' + where, href: hotel.urgent_care_url },
 					{ icon: '🧭', text: 'Directions', label: 'Directions to ' + where, href: hotel.directions_url },
 				],
-			}) });
+			}));
 		});
-		if (hotels.length) rows.push({ short: hotels.length === 1 ? '1 hotel' : hotels.length + ' hotels', node: null });
-		return rows;
+		if (hotels.length) words.push(hotels.length === 1 ? '1 hotel' : hotels.length + ' hotels');
+		words.push(emergency);
+		return { rows: rows, summary: words.join(', ') };
 	}
 
-	function contactsAreShut(trip) {
+	function contactsAreOpen(trip) {
 		var key = 't:' + trip;
-		if (Object.prototype.hasOwnProperty.call(contactsShut, key)) return contactsShut[key];
-		var shut = false;
+		if (Object.prototype.hasOwnProperty.call(contactsOpen, key)) return contactsOpen[key];
+		var open = false;
 		try {
-			shut = window.localStorage.getItem(CONTACTS_KEY + trip) === '1';
+			open = window.localStorage.getItem(CONTACTS_KEY + trip) === '1';
 		} catch (e) {
-			// No storage here (a private window, blocked site data): open, as on a first visit.
+			// No storage here (a private window, blocked site data): shut, as on a first visit.
 		}
-		contactsShut[key] = shut;
-		return shut;
+		contactsOpen[key] = open;
+		return open;
 	}
 
-	// Only a shut card is written down: open is where every trip starts.
-	function rememberContacts(trip, shut) {
-		contactsShut['t:' + trip] = shut;
+	// Only an open card is written down: shut is where every trip starts.
+	function rememberContacts(trip, open) {
+		contactsOpen['t:' + trip] = open;
 		try {
-			if (shut) window.localStorage.setItem(CONTACTS_KEY + trip, '1');
+			if (open) window.localStorage.setItem(CONTACTS_KEY + trip, '1');
 			else window.localStorage.removeItem(CONTACTS_KEY + trip);
 		} catch (e) {
 			// Kept for as long as the page is open.
 		}
 	}
 
-	// The card, open or shut as this person left it on this trip. Its button opens and shuts it
-	// in place: no redraw, no history entry.
+	// The card, shut until this person opens it on this trip: a button whose one line says what
+	// is in it, "Contacts & emergency · travel desk, trip lead, site, 2 hotels, 911". Open, the
+	// button reads "Contacts & emergency" over the rows. It opens and shuts the card in place:
+	// no redraw, no history entry, and aria-expanded says which.
 	function appendContacts(contacts) {
 		if (!contacts || typeof contacts !== 'object') return;
-		var rows = contactRows(contacts);
+		var parts = contactRows(contacts);
 		var trip = state.currentTrip;
 		var card = el('section', 'ti-contacts');
-		card.setAttribute('aria-label', 'Contacts');
+		card.setAttribute('aria-label', 'Contacts & emergency');
 		var heading = el('h2', 'ti-contacts-heading');
 		var toggle = el('button', 'ti-contacts-toggle');
 		toggle.setAttribute('type', 'button');
 		toggle.setAttribute('aria-controls', 'ti-contacts-body');
-		toggle.appendChild(el('span', 'ti-contacts-title', 'Contacts'));
-		var summary = el('span', 'ti-contacts-summary', rows.map(function (r) { return r.short; }).filter(Boolean).join(' · '));
-		toggle.appendChild(summary);
+		// One run of inline text, so the line wraps as a sentence on a narrow phone rather than
+		// cutting 911 off its end.
+		var line = el('span', 'ti-contacts-line');
+		line.appendChild(el('span', 'ti-contacts-title', 'Contacts & emergency'));
+		var summary = el('span', 'ti-contacts-summary', ' · ' + parts.summary);
+		line.appendChild(summary);
+		toggle.appendChild(line);
 		var chevron = el('span', 'ti-contacts-chevron', '▾');
 		chevron.setAttribute('aria-hidden', 'true');
 		toggle.appendChild(chevron);
@@ -886,9 +906,7 @@
 		card.appendChild(heading);
 		var body = el('div', 'ti-contacts-body');
 		body.id = 'ti-contacts-body';
-		rows.forEach(function (r) {
-			if (r.node) body.appendChild(r.node);
-		});
+		parts.rows.forEach(function (row) { body.appendChild(row); });
 		card.appendChild(body);
 		var show = function (open) {
 			body.hidden = !open;
@@ -896,11 +914,11 @@
 			toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 			card.classList.toggle('open', open);
 		};
-		show(!contactsAreShut(trip));
+		show(contactsAreOpen(trip));
 		toggle.addEventListener('click', function () {
 			var open = body.hidden;
 			show(open);
-			rememberContacts(trip, !open);
+			rememberContacts(trip, open);
 		});
 		root.appendChild(card);
 	}

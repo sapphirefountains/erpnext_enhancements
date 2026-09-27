@@ -23,7 +23,9 @@ Security:
 	  this module for a non-coordinator. ``shape_itinerary`` carries none, and
 	  the money block of ``get_trip_views`` is only built for a coordinator
 	  (``travel_management.views``). The Trip Sheet carries one total, for a
-	  coordinator's whole-trip sheet only (``ee_trip_sheet``).
+	  coordinator's whole-trip sheet printed in a web request only, never on an emailed
+	  copy (``ee_trip_sheet``), and it is built from the saved trip, never from a document
+	  posted to the print view.
 	- Contacts are not money, but ``_trip_contacts`` reads records the crew
 	  cannot open (a colleague's Employee, the customer's Contact), so it names
 	  every field it reads and returns only those: never a crew member's
@@ -323,6 +325,7 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 		viewing = as_employee
 
 	result = shape_itinerary(doc, viewing)
+	sheet = _sheet_available()
 	result.update(
 		crew=trip_views.crew(doc),
 		viewing=viewing,
@@ -331,9 +334,10 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 		# Who to call, for the person shown: their own hotels only (``_trip_contacts``).
 		contacts=_trip_contacts(doc, viewing),
 		# The printed Trip Sheet: the whole trip's, and the one for the person shown (the
-		# whole trip's again when that is the whole crew).
-		sheet_url=trip_views.trip_sheet_url(doc.name),
-		my_sheet_url=trip_views.trip_sheet_url(doc.name, viewing),
+		# whole trip's again when that is the whole crew). Null while the format is missing
+		# (``_sheet_available``): the page then draws no link.
+		sheet_url=trip_views.trip_sheet_url(doc.name) if sheet else None,
+		my_sheet_url=trip_views.trip_sheet_url(doc.name, viewing) if sheet else None,
 	)
 	return result
 
@@ -359,16 +363,38 @@ def get_trip_views(trip: str):
 		viewer_employee=_session_employee() or None,
 		currency=_trip_currency(doc) if is_coordinator else None,
 		hotels=hotels,
+		sheet_available=_sheet_available(),
 	)
 	payload.update(
-		# The whole trip's contacts: every hotel (View as shows one person's, matching a
-		# hotel's `name` to their own check-ins' `hotel`).
+		# The whole trip's contacts: every hotel.
 		contacts=_trip_contacts(doc, hotels=hotels),
+		# The hotels on each person's card, by the rule their /itinerary uses (``_hotel_contacts``:
+		# a room pinned to them or to the whole crew, dates or none), so View as shows the card
+		# their phone shows. Until 2026-09-27 the page rebuilt it from their check-in items,
+		# which leave out a room with no dates yet.
+		people_hotels={
+			row.employee: [hotel["name"] for hotel in _hotel_contacts(doc, row.employee, hotels)]
+			for row in doc.travelers
+			if row.employee
+		},
 		# The Map view's key and Map IDs: the browser key any signed-in user can already
 		# read (get_maps_config), in the same round trip.
 		maps=_maps_config_or_blank(),
 	)
 	return payload
+
+
+def _sheet_available():
+	"""Whether the Trip Sheet print format exists on this site. Every link to the sheet is sent
+	only when it does: frappe renders a ``format=`` it cannot find as **Standard**
+	(``printview.get_print_format_doc`` returns None on ``DoesNotExistError``), which prints every
+	cost on the trip, so a missing format turned "Your trip sheet" into the priced Standard copy.
+	The format is missing when ``ensure_travel_print_formats`` failed (it logs, never raises) or
+	the site has not migrated since this app was installed."""
+	try:
+		return bool(frappe.db.exists("Print Format", trip_views.TRIP_SHEET_FORMAT))
+	except Exception:
+		return False
 
 
 def _trip_currency(doc):
@@ -842,8 +868,15 @@ def _poi_address_location(address_name):
 	whole pre-v1.205.0 table reads back as 0.0, and a hand edit blanks the pair to
 	a literal 0. Testing ``is not None`` would put every legacy POI on Null Island.
 	"""
+	return _address_lookup(address_name)[:3]
+
+
+def _address_lookup(address_name, extra=()):
+	"""``(text, lat, lng, row)``: :func:`_poi_address_location`'s answer plus the Address row,
+	with any ``extra`` columns this site's Address has read in the same query (the contacts
+	card's hotel phone: one read of the Address, not two)."""
 	if not address_name:
-		return None, None, None
+		return None, None, None, {}
 
 	fields = ["address_line1", "address_line2", "city", "state", "pincode", "country"]
 	# The columns arrive with `bench migrate`, and main auto-deploys -- selecting
@@ -851,10 +884,11 @@ def _poi_address_location(address_name):
 	has_point = frappe.db.has_column("Address", "custom_latitude")
 	if has_point:
 		fields += ["custom_latitude", "custom_longitude"]
+	fields += [field for field in extra if field not in fields and frappe.db.has_column("Address", field)]
 
 	addr = frappe.db.get_value("Address", address_name, fields, as_dict=True)
 	if not addr:
-		return None, None, None
+		return None, None, None, {}
 
 	parts = [p for p in (
 		addr.address_line1,
@@ -875,7 +909,7 @@ def _poi_address_location(address_name):
 		elif not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
 			lat = lng = None
 
-	return text, lat, lng
+	return text, lat, lng, addr
 
 
 def _trip_pois(doc):
@@ -1034,14 +1068,15 @@ def _contact_name(contact):
 
 
 def _address_facts(address_name):
-	"""``(text, lat, lng, phone)`` of an Address record, any part ``None``."""
-	if not address_name:
+	"""``(text, lat, lng, phone)`` of an Address record, any part ``None``: one read of it, the
+	phone asked for only where this site's Address has the column."""
+	if not address_name or not isinstance(address_name, str):
 		return None, None, None, None
 	try:
-		text, lat, lng = _poi_address_location(address_name)
+		text, lat, lng, row = _address_lookup(address_name, extra=("phone",))
 	except Exception:
-		text = lat = lng = None
-	return text, lat, lng, _first_text(_record("Address", address_name, ("phone",)), ("phone",))
+		return None, None, None, None
+	return text, lat, lng, _first_text(row, ("phone",))
 
 
 def _employee_of_user(user):
@@ -1142,16 +1177,79 @@ def _opportunity_contact(record):
 	return found
 
 
+#: A Project's own job site (this app's Custom Fields on Project, fixtures/custom_field.json):
+#: where it is, then who is there, each in the order the rest of the app reads them —
+#: ``workforce/sites.project_address_text`` for the address, the Project Contract's prefill
+#: (``project_contract._prefill_from_project``) and the Primary Contact section for the person.
+_PROJECT_SITE_ADDRESS = "custom_project_address"
+_PROJECT_SITE_ADDRESS_LINK = "custom_customer__lead_address"
+_PROJECT_SITE_NAME = ("custom_primary_first_name", "custom_customer_name")
+_PROJECT_SITE_PHONE = ("custom_primary_phone", "custom_contact_phone", "custom_customer_phone")
+_PROJECT_SITE_EMAIL = ("custom_primary_email_address", "custom_customer_email")
+
+
+def _project_contact(record):
+	"""A Project's job site: its own address and contact first, the customer's where it has none.
+
+	The Project is where the site is. Its customer's primary Address is usually the billing
+	office (a Las Vegas install for a Salt Lake City customer), so "Directions to the job site"
+	went to the wrong city until 2026-09-27, and a Project with no customer had no site at all.
+	The address is the typed PROJECT ADDRESS, else the Customer / Lead Address link, else the
+	customer's primary Address. The person is taken whole — name, phone and email from the
+	Project, or all three from the customer's primary Contact when the Project has no phone or
+	email of its own — so one person's name is never printed over another person's number."""
+	person = {
+		"contact_name": _first_text(record, _PROJECT_SITE_NAME),
+		"phone": _first_text(record, _PROJECT_SITE_PHONE),
+		"email": _first_text(record, _PROJECT_SITE_EMAIL),
+	}
+	address = (
+		_first_text(record, (_PROJECT_SITE_ADDRESS,))
+		or _address_facts(record.get(_PROJECT_SITE_ADDRESS_LINK))[0]
+	)
+	customer = record.get("customer")
+	if customer and (not address or not (person["phone"] or person["email"])):
+		theirs = _customer_contact(customer)
+		if not (person["phone"] or person["email"]) and (
+			theirs.get("phone") or theirs.get("email") or not person["contact_name"]
+		):
+			person = {key: theirs.get(key) for key in ("contact_name", "phone", "email")}
+		address = address or theirs.get("address")
+	return dict(person, address=address)
+
+
+def _site_title(doc):
+	"""What the trip is for, by name ("Harbor Fountain"), or ``None`` when its record is gone. The
+	Trip Sheet's JOB line reads this, so the job keeps its name when there is nobody to call."""
+	doctype, name = doc.get("travel_for_doctype"), doc.get("travel_for_name")
+	if doctype not in _SITE_TITLE or not name:
+		return None
+	return _first_text(_record(doctype, name, _SITE_TITLE[doctype]), _SITE_TITLE[doctype])
+
+
 def _site_contact(doc):
-	"""The job-site contact, from what the trip is for: a Project's customer, a Customer, an
-	Opportunity or a Lead. ``None`` when that record is gone or holds no name, phone, email or
-	address — a card line that says only the job's name is nobody to call."""
+	"""The job-site contact, from what the trip is for: a Project (its own site, then its
+	customer's; :func:`_project_contact`), a Customer, an Opportunity or a Lead. ``None`` when that
+	record is gone or holds no name, phone, email or address — a card line that says only the
+	job's name is nobody to call."""
 	doctype, name = doc.get("travel_for_doctype"), doc.get("travel_for_name")
 	if doctype not in _SITE_TITLE or not name:
 		return None
 	if doctype == "Project":
-		record = _record("Project", name, ("project_name", "customer"))
-		found = _customer_contact(record.get("customer")) if record.get("customer") else {}
+		record = _record(
+			"Project",
+			name,
+			(
+				"project_name",
+				"customer",
+				_PROJECT_SITE_ADDRESS,
+				_PROJECT_SITE_ADDRESS_LINK,
+				*_PROJECT_SITE_NAME,
+				*_PROJECT_SITE_PHONE,
+				*_PROJECT_SITE_EMAIL,
+			),
+		)
+		found = _project_contact(record) if record else {}
 	elif doctype == "Customer":
 		record = _record("Customer", name, ("customer_name",))
 		found = _customer_contact(name) if record else {}
@@ -1367,9 +1465,34 @@ def ee_trip_sheet(doc):
 
 	``&as=<employee>`` prints that person's sheet (``_sheet_employee``). The caller's right to
 	the trip is checked again here, as the print view checks it (read or print), because a
-	Jinja global is reachable from any template on the site, not just this format."""
+	Jinja global is reachable from any template on the site, not just this format.
+
+	**The sheet is built from the trip as saved, never from the document it is handed.**
+	frappe v16's whitelisted ``printview.get_html_and_style`` renders a document posted as
+	JSON (``frappe.get_doc(json.loads(doc), check_permission=True)``, the desk's own print
+	preview), and the Travel Trip permission hook passes a document with no ``creation``
+	(``permissions.py``: it is being created). Built from that copy, the contacts card read
+	whichever owner, trip lead, job and hotels the caller named — any user's phone and email,
+	any customer's contact — with no record saved and no trace. Its ``creation``, ``owner`` and
+	crew are the caller's to write as well, so no check on the copy can vouch for it: the trip
+	is loaded again by name and checked, and a name that is not a saved trip is refused ("Save
+	the trip before printing its Trip Sheet."). So the sheet shows the trip as last saved, like
+	every other view of it, whatever the form holds unsaved.
+
+	**Money only for a coordinator who asked for it.** The total is added when the person
+	printing is a coordinator, in a web request, and not for an attachment. An emailed sheet
+	(the composer's "Attach Document Print", a Notification's attachment) is rendered later by
+	the email queue as Administrator (``print_utils.attach_print`` sets
+	``flags.ignore_print_permissions`` for exactly that render), and Administrator is a
+	coordinator, so a crew member who emailed the default format sent the priced copy. An
+	emailed sheet is always the unpriced one, a coordinator's included: it leaves the building.
+	"""
 	if getattr(doc, "doctype", None) != "Travel Trip":
 		return {}
+	name = doc.get("name") if hasattr(doc, "get") else getattr(doc, "name", None)
+	if not isinstance(name, str) or not name or not frappe.db.exists("Travel Trip", name):
+		frappe.throw(_("Save the trip before printing its Trip Sheet."))
+	doc = frappe.get_doc("Travel Trip", name)
 	if not (
 		frappe.has_permission("Travel Trip", "read", doc=doc)
 		or frappe.has_permission("Travel Trip", "print", doc=doc)
@@ -1377,7 +1500,11 @@ def ee_trip_sheet(doc):
 		frappe.throw(_("You do not have access to this trip."), frappe.PermissionError)
 
 	employee = _sheet_employee(doc)
-	is_coordinator = _is_coordinator()
+	is_coordinator = (
+		_is_coordinator()
+		and not getattr(frappe.flags, "ignore_print_permissions", False)
+		and getattr(frappe.local, "request", None) is not None
+	)
 	printed_on = ""
 	try:
 		from frappe.utils import format_date, nowdate
@@ -1399,6 +1526,7 @@ def ee_trip_sheet(doc):
 		format_money=_format_money,
 		itinerary_url=itinerary_url,
 		printed_on=printed_on,
+		job_title=_site_title(doc),
 	)
 
 

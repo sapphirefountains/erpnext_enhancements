@@ -95,10 +95,11 @@
  *   - the Contacts card draws what the answer's `contacts` sends for the person shown, and
  *     nothing it leaves out: 911 first, a tel: link built from a phone's digits (and a leading
  *     +) only, a mailto: only for an address that is one, a hotel's urgent care and directions
- *     only as https links in a new tab, every value as text; opening and shutting it writes no
- *     history, is kept across redraws, and is remembered per trip in localStorage when there is
- *     one (and works when storage throws, or is absent as it is here by default); an answer
- *     with no `contacts` draws no card;
+ *     only as https links in a new tab, every value as text; it starts shut, as one line naming
+ *     the parts it has with 911 last, and its button's aria-expanded says which; opening and
+ *     shutting it writes no history, is kept across redraws, and an open card is remembered per
+ *     trip in localStorage when there is one (and works when storage throws, or is absent as it
+ *     is here by default); an answer with no `contacts` draws no card;
  *   - "Print / save as PDF" opens the person shown's trip sheet (`my_sheet_url`, else the whole
  *     trip's `sheet_url`) in a new tab with no history write, and only this site's path or a web
  *     address is made a link.
@@ -1625,6 +1626,12 @@ function loadItinerary(url, opts) {
 			const card = root.find("ti-contacts")[0];
 			return card ? !card.find("ti-contacts-body")[0].hidden : null;
 		},
+		// What the card's button says: its one line while shut, the title alone while open.
+		contactsLine: () => {
+			const line = root.find("ti-contacts-line")[0];
+			if (!line) return null;
+			return line.children.filter((c) => !c.hidden).map((c) => c.textContent).join("");
+		},
 		async toggleContacts() {
 			root.find("ti-contacts-toggle")[0].click();
 			await flush();
@@ -2328,9 +2335,17 @@ async function testItineraryContacts() {
 		["ti-trip-meta", "ti-people", "ti-contacts", "ti-screens", "ti-print", "ti-day", "ti-footer"]
 	);
 	check(
-		"...open on a first visit, 911 first, and a part the answer leaves out (no job site) left out",
-		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contactRoles()],
-		[true, "true", ["Emergency", "Travel desk", "Booked by", "Trip lead", "Hotel"]]
+		"...shut on a first visit, its button one line naming the parts it has, 911 last, and not a part the answer leaves out (no job site)",
+		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contactsToggle().attrs["aria-controls"], p.contactsLine()],
+		[false, "false", "ti-contacts-body", "Contacts & emergency · travel desk, booked by, trip lead, 1 hotel, 911"]
+	);
+	const firstCard = p.contacts();
+	const beforeOpen = p.browser.calls.length;
+	await p.toggleContacts();
+	check(
+		"...a tap opens it in place, writing no history and fetching nothing: 911 first, then each part the answer sends",
+		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contacts() === firstCard, p.contactsLine(), p.browser.calls.length, p.browser.tasks.length, p.pending(), p.contactRoles()],
+		[true, "true", true, "Contacts & emergency", beforeOpen, 0, [], ["Emergency", "Travel desk", "Booked by", "Trip lead", "Hotel"]]
 	);
 	check(
 		"...with Pat's own hotel only, its address one line of text",
@@ -2381,9 +2396,9 @@ async function testItineraryContacts() {
 	const card = p.contacts();
 	await p.toggleContacts();
 	check(
-		"tapping the card's heading shuts it in place, saying in one line what is in it",
-		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contacts() === card, card.find("ti-contacts-summary")[0].hidden, p.text("ti-contacts-summary")],
-		[false, "false", true, false, ["911 · Travel desk · Booked by · Trip lead · 1 hotel"]]
+		"tapping the card's heading again shuts it in place, back to its one line",
+		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contacts() === card, card.find("ti-contacts-summary")[0].hidden, p.contactsLine()],
+		[false, "false", true, false, "Contacts & emergency · travel desk, booked by, trip lead, 1 hotel, 911"]
 	);
 	check("...writing no history and fetching nothing", [p.browser.calls.length, p.browser.tasks.length, p.pending()], [calls, 0, []]);
 	await p.screen("Documents");
@@ -2409,20 +2424,21 @@ async function testItineraryContacts() {
 	await p.pick("Whole crew");
 	await p.answer("TRIP-A");
 	check(
-		"the whole crew's view has every hotel on the trip, and prints the whole trip",
-		[p.contactNames().slice(-2), p.print().href, p.text("ti-print-sub")],
-		[["Hampton Inn", "Harborview Suites"], SHEET, ["The whole trip"]]
+		"the whole crew's view has every hotel on the trip, counted in its line, and prints the whole trip",
+		[p.contactNames().slice(-2), p.contactsLine(), p.print().href, p.text("ti-print-sub")],
+		[["Hampton Inn", "Harborview Suites"], "Contacts & emergency · travel desk, booked by, trip lead, 2 hotels, 911", SHEET, ["The whole trip"]]
 	);
 
 	// Remembered in this browser, per trip, when there is storage.
 	const storage = makeStorage();
 	p = loadItinerary("/itinerary?trip=TRIP-A", { storage });
 	await p.answer("TRIP-A");
+	check("with storage, a card nobody has opened writes nothing down", [p.contactsOpen(), storage.map.size], [false, 0]);
 	await p.toggleContacts();
-	check("with storage, a shut card is written down, for that trip alone", [...storage.map.entries()], [["ti-contacts-shut:TRIP-A", "1"]]);
+	check("...an open card is written down, for that trip alone", [...storage.map.entries()], [["ti-contacts-open:TRIP-A", "1"]]);
 	p = loadItinerary("/itinerary?trip=TRIP-A", { storage });
 	await p.answer("TRIP-A");
-	check("...so the next visit to that trip opens with it shut", p.contactsOpen(), false);
+	check("...so a trip someone opened stays open on the next visit", [p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"]], [true, "true"]);
 	const withContacts = (message) => ({
 		status: 200,
 		body: { message: Object.assign({ trip: "TRIP-X", purpose: "Trip X", status: "Booked", start_date: iso(3), end_date: iso(5), days: [], viewing: null, crew: [] }, message) },
@@ -2430,17 +2446,17 @@ async function testItineraryContacts() {
 	p = loadItinerary("/itinerary?trip=TRIP-X", { storage });
 	p.session.next = withContacts({ contacts: tripAContacts(null) });
 	await p.answer("TRIP-X");
-	check("...while another trip's card is open", p.contactsOpen(), true);
+	check("...while another trip's card is shut", p.contactsOpen(), false);
 	p = loadItinerary("/itinerary?trip=TRIP-A", { storage });
 	await p.answer("TRIP-A");
 	await p.toggleContacts();
-	check("...and opening it again forgets it: open is where every trip starts", [p.contactsOpen(), storage.map.size], [true, 0]);
+	check("...and shutting it again forgets it: shut is where every trip starts", [p.contactsOpen(), storage.map.size], [false, 0]);
 
 	p = loadItinerary("/itinerary?trip=TRIP-A", { storage: makeStorage(true) });
 	await p.answer("TRIP-A");
-	check("storage that refuses: the card still draws, open", p.contactsOpen(), true);
+	check("storage that refuses: the card still draws, shut", p.contactsOpen(), false);
 	await p.toggleContacts();
-	check("...and still shuts", [p.contactsOpen(), p.errors()], [false, 0]);
+	check("...and still opens", [p.contactsOpen(), p.errors()], [true, 0]);
 
 	// What is typed in is text, and only what is safe to follow is a link.
 	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
@@ -2467,6 +2483,11 @@ async function testItineraryContacts() {
 		"a part with nothing to call, write or find is no row (a travel desk with no phone or email, an empty hotel)",
 		p.contactRoles(),
 		["Emergency", "Booked by", "Job site", "Hotel", "Hotel", "Hotel"]
+	);
+	check(
+		"...and no word in the card's line, which names the job site as 'site'",
+		p.contactsLine(),
+		"Contacts & emergency · booked by, site, 3 hotels, 911"
 	);
 	check(
 		"a name that looks like markup is drawn as the text it is, and no element comes of it",
@@ -2500,9 +2521,44 @@ async function testItineraryContacts() {
 	await p.answer("TRIP-X");
 	check(
 		"an answer with only 911 draws only 911; one with no sheet of the person's own prints the whole trip",
-		[p.contactRoles(), p.text("ti-contacts-summary"), p.print().href, p.text("ti-print-sub")],
-		[["Emergency"], ["911"], SHEET, ["The whole trip"]]
+		[p.contactRoles(), p.contactsLine(), p.print().href, p.text("ti-print-sub")],
+		[["Emergency"], "Contacts & emergency · 911", SHEET, ["The whole trip"]]
 	);
+
+	// Most trip leads have no work cell on file, and a job site's contact can be a name alone (an
+	// Opportunity's contact_display). Known only by name, each is still a row and a word with
+	// nothing to tap, as the sheet, the email and Plan a Trip list them. A site with nothing but
+	// its job's name is nobody to call: no row, no word.
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
+	p.session.next = withContacts({
+		contacts: {
+			emergency: "911",
+			office: null,
+			booked_by: null,
+			lead: { name: "Ann Rivera", phone: null },
+			site: { label: "Civic Plaza", contact_name: "Sam Ortega", phone: null, email: null, address: null },
+			hotels: [],
+		},
+	});
+	await p.answer("TRIP-X");
+	check(
+		"a trip lead or a site contact known only by name is a row and a word, with nothing to tap",
+		[p.contactRoles(), p.contactsLine(), p.contactLinks().map((l) => l.href)],
+		[["Emergency", "Trip lead", "Job site"], "Contacts & emergency · trip lead, site, 911", ["tel:911"]]
+	);
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
+	p.session.next = withContacts({
+		contacts: {
+			emergency: "911",
+			office: null,
+			booked_by: null,
+			lead: null,
+			site: { label: "Civic Plaza", contact_name: null, phone: null, email: null, address: null },
+			hotels: [],
+		},
+	});
+	await p.answer("TRIP-X");
+	check("...but a job site with only the job's name is no row and no word", [p.contactRoles(), p.contactsLine()], [["Emergency"], "Contacts & emergency · 911"]);
 
 	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
 	p.session.next = withContacts({

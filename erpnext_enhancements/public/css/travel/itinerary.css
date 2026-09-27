@@ -321,13 +321,16 @@
 }
 
 /* Contacts: the card at the top of the trip. Who to call, each as a 44px tap target that
-   wraps onto the next line on a 320px phone. Opened and shut by its heading's button. */
+   wraps onto the next line on a 320px phone. Shut until its heading's button opens it.
+   No overflow: hidden. The toggle fills the card edge to edge, so clipping the card clipped
+   the toggle's focus ring (drawn just outside it), and a keyboard user saw no focus on the one
+   control that opens the emergency card. Nothing inside paints into the rounded corners: the
+   toggle and the rows are transparent, and the body has only a top border. */
 .ti-contacts {
 	background: var(--ti-surface);
 	border: 1px solid var(--ti-border);
 	border-radius: 12px;
 	margin: 0 0 14px;
-	overflow: hidden;
 }
 
 .ti-contacts-heading {
@@ -351,18 +354,19 @@
 	cursor: pointer;
 }
 
-.ti-contacts-title { flex: 0 0 auto; }
-
-/* Shown only while the card is shut: "911 · Travel desk · Trip lead · 2 hotels". */
-.ti-contacts-summary {
+/* The title and the summary are one run of inline text, one line where it fits. On a phone
+   it wraps like a sentence instead of an ellipsis, which would cut 911 off its end. */
+.ti-contacts-line {
 	flex: 1 1 auto;
 	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+/* Shown only while the card is shut: " · travel desk, trip lead, site, 2 hotels, 911". */
+.ti-contacts-summary {
 	color: var(--ti-muted);
-	font-size: 0.8rem;
+	font-size: 0.85rem;
 	font-weight: 500;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 }
 
 .ti-contacts-chevron {

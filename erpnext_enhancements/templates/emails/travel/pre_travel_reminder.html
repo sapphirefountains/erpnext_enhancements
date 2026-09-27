@@ -39,11 +39,14 @@
     job-site contact and each of this traveler's hotels, with each hotel's nearest urgent
     care and directions under the table. The rows are built in views.contact_rows from
     api.travel._trip_contacts, which never returns a crew member's personal phone or email,
-    next of kin or home address. A phone cell is a (tel link, number) pair, so it dials from
-    a phone. 911 is always there, so the block always prints. -#}
+    next of kin or home address. The last cell is how to reach them: a phone as a (tel link,
+    number) pair, so it dials from a phone, else an email as a (mailto link, address) pair
+    (views.mailto_href: a plain address only, since ee.table writes it into href unescaped),
+    so a travel desk set up with only an email is reachable too. 911 is always there, so the
+    block always prints. -#}
 {% if contact_rows %}
 {{ ee.h("Contacts") }}
-{{ ee.table(["Who", "Name", "Phone"], contact_rows) }}
+{{ ee.table(["Who", "Name", "Phone / email"], contact_rows) }}
 {% if contact_links %}{{ ee.links(contact_links) }}{% endif %}
 {% endif %}
 

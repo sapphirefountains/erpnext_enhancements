@@ -6,10 +6,11 @@
 
   The whole trip on one or two Letter pages, for the job folder or a crew lead who will not
   open the app: who is going, who to call, every day, every confirmation number, the
-  trip's files, and, on a travel coordinator's whole-trip sheet only, the cost total.
+  trip's files, and, on a travel coordinator's whole-trip sheet only (never an emailed copy),
+  the cost total.
 
   It reads `sheet`, from the ee_trip_sheet Jinja global (api/travel.py), and nothing from
-  `doc`, which it only hands over. Every money field on Travel Trip is permlevel 0, so a
+  `doc`, which it only hands over: the global loads the saved trip again by name. Every money field on Travel Trip is permlevel 0, so a
   template that read the document could print any of them to anyone who can print the
   trip. The payload is filtered on the server, the only place that can do it.
 

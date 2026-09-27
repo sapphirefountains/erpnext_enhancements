@@ -246,10 +246,17 @@ quotes its font names with double quotes.
 Travel Trip is permlevel 0 and the Employee role may print a trip, so a template that read
 `doc.*` would print costs on a crew member's copy. `trip_sheet.html` passes `doc` to
 `ee_trip_sheet` (`api/travel.py`) and prints only what that returns: the cost total appears
-only on a travel coordinator's whole-trip sheet. It tightens the chrome's cell padding to
+only on a travel coordinator's whole-trip sheet printed in a web request, never on an emailed
+copy (the email queue renders an attachment later as Administrator). It builds from the trip
+as saved, loaded again by name, never from the `doc` it is handed, which the print view can
+take as JSON from the browser. It tightens the chrome's cell padding to
 `3px 6px` (a later `!important` in the same style attribute wins) so a five-day, four-person
 trip fits two Letter pages. Its links name `pdf_generator=chrome`, because v16's
 `download_pdf` uses wkhtmltopdf when a request names no generator, whatever the format says.
+It is Travel Trip's default print format, but not through a fixture as the sales and
+procurement defaults are: `setup_print_formats._make_default` sets it after the upsert, once
+the format exists, because a default naming a missing format makes the desk drop "Standard"
+from the Print menu (see the travel README's *The Trip Sheet*). Standard stays selectable.
 
 Everything the app prints is now on the chrome.
 

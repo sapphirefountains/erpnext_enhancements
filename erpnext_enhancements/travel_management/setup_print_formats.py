@@ -22,8 +22,22 @@ Three things here are not obvious:
   ``pdf_generator = "chrome"`` itself, and the links name it too
   (``views.trip_sheet_url``), because frappe v16's ``download_pdf`` picks wkhtmltopdf when a
   request names no generator, whatever the format says.
-- **It is not the default format.** Travel Trip still prints "Standard" from the form, as it
-  always has; the Trip Sheet is reached from Plan a Trip and ``/itinerary``.
+- **It is Travel Trip's default format (Nik, 2026-09-27), set here and not as a fixture.**
+  ``_make_default`` writes the ``default_print_format`` Property Setter right after the upsert,
+  and only once the format exists. A fixture would name a format that is not there yet in two
+  cases, both checked against frappe ``version-16``: ``bench install-app`` syncs fixtures but
+  never runs ``after_migrate`` (``installer.install_app``), and a failed upsert here is logged,
+  not raised, while the fixture would have imported anyway (a Property Setter's ``value`` is
+  Small Text, never checked against Print Format, and fixture import sets ``ignore_links``).
+  The desk does not fail on a missing default, it misleads: ``frappe.meta.get_print_formats``
+  splices out ``indexOf(default)``, which is -1 for a missing one, so it drops the *last* entry
+  of the Print menu, "Standard" itself when the trip has no other format, and lists the
+  missing name alone, which ``printview.get_print_format_doc`` then renders as Standard. With
+  the format present the menu is "Trip Sheet", then "Standard", which stays selectable. The
+  row is ``is_system_generated`` (frappe's default), so the fixture export, which takes only
+  ``is_system_generated = 0``, never picks it up, the same disjoint-channel rule as
+  ``setup/custom_fields.py`` (fixtures/README.md). The repo owns it: a default chosen on the
+  site is put back on the next migrate, like a fixture's.
 
 The chrome is ``print_style``'s (docs/print-design-system.md), through the ``ps_*`` Jinja
 globals: the neutral stripe (a trip belongs to no one pillar), the wordmark with our
@@ -55,10 +69,42 @@ def ensure_travel_print_formats():
 		if not frappe.db.exists("DocType", DOCTYPE):
 			return
 		_upsert_print_format(TRIP_SHEET_FORMAT, DOCTYPE, trip_sheet_html())
+		_make_default(TRIP_SHEET_FORMAT, DOCTYPE)
 		frappe.db.commit()
 		frappe.logger().info(f"Travel print formats: ensured {TRIP_SHEET_FORMAT}")
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Travel print formats")
+
+
+def _make_default(name, doc_type):
+	"""Make ``name`` the default print format of ``doc_type``, only when that format exists
+	and only when the default says something else, so a migrate with nothing to change writes
+	nothing. See the module docstring for why this is not a fixture.
+
+	``frappe.make_property_setter`` is what the Print Format form's "Set as default" calls
+	(``print_format.make_default``): on insert the Property Setter deletes any other
+	``default_print_format`` setter on the doctype (``PropertySetter.validate``), so there is
+	never more than one, and it clears the doctype's cache.
+	"""
+	if not frappe.db.exists("Print Format", name):
+		return
+	current = frappe.db.get_value(
+		"Property Setter",
+		{"doc_type": doc_type, "doctype_or_field": "DocType", "property": "default_print_format"},
+		"value",
+	)
+	if current == name:
+		return
+	frappe.make_property_setter(
+		{
+			"doctype": doc_type,
+			"doctype_or_field": "DocType",
+			"property": "default_print_format",
+			"value": name,
+			"property_type": "Data",
+		},
+		validate_fields_for_doctype=False,
+	)
 
 
 def _upsert_print_format(name, doc_type, html):

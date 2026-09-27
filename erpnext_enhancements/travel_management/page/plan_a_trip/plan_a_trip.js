@@ -52,7 +52,9 @@
 // with the nearest urgent care), phones as tel: links. Review, the Overview and View as open the
 // trip sheet (the "Trip Sheet" print format as a PDF, the whole trip or one person's) in a new
 // tab: a link, not a screen, so no history entry. Its cost total is on a coordinator's copy
-// only, which the server decides.
+// only, which the server decides. The link is drawn only while the site has the format (the
+// views' addresses, or get_plan's `sheet_available` for Review): frappe prints a format it
+// cannot find as Standard, every cost on it.
 //
 // TIMES are native <input type="time">, which shows AM/PM on a US browser or phone. A stored
 // time of exactly midnight reads as "no time given": the Datetime column cannot hold a date
@@ -473,7 +475,7 @@ const TP_LEG_COLORS = { drive: "#0f766e", walk: "#0f766e", flight: "#475569" };
 // The Google Maps libraries the Map view uses, every one: EEGoogleMaps.load imports only what it
 // is asked for (and "maps"), and a symbol from a library nobody asked for is undefined at runtime
 // (tests/test_google_maps_loader.py). marker: AdvancedMarkerElement and Marker; geocoding:
-// Geocoder; routes: DirectionsService and Route.
+// Geocoder; routes: DirectionsService.
 const TP_MAP_LIBRARIES = ["marker", "geocoding", "routes"];
 
 function tp_esc(value) {
@@ -514,6 +516,28 @@ function tp_clock(datetime) {
 function tp_span(from, to) {
 	if (from && to && from !== to) return `${from} – ${to}`;
 	return from || to || "";
+}
+
+// Days from one ISO date to another ("2026-10-01" to "2026-10-03" is 2), counted in UTC from the
+// strings so no time zone or daylight-saving change moves it; NaN when either is not a date.
+function tp_days_apart(from, to) {
+	return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+
+// ISO days as runs of consecutive dates, each run written once ("Thu, Oct 1 – Sun, Oct 4", "Tue,
+// Oct 6"): a hotel is on every night of a stay, and its popup would otherwise list each one.
+function tp_day_runs(days) {
+	const runs = [];
+	(days || [])
+		.filter((day) => typeof day === "string" && day)
+		.slice()
+		.sort()
+		.forEach((day) => {
+			const last = runs[runs.length - 1];
+			if (last && tp_days_apart(last[1], day) === 1) last[1] = day;
+			else if (!last || last[1] !== day) runs.push([day, day]);
+		});
+	return runs.map(([first, end]) => tp_span(tp_pretty_date(first), tp_pretty_date(end))).filter(Boolean);
 }
 
 function tp_item_sort_key(item) {
@@ -714,15 +738,15 @@ function tp_local_url(url) {
 }
 
 // The trip sheet (the "Trip Sheet" print format, a PDF of the whole trip, or of one person's when
-// `as` names them), spelled as views.trip_sheet_url spells it. `base`: the server's own address
-// for the whole trip's sheet (get_trip_views' sheet_url), used when it is one of this site's.
-// &pdf_generator=chrome is not optional: download_pdf makes a PDF with wkhtmltopdf unless told.
-function tp_sheet_url(trip, as, base) {
-	let url =
-		tp_local_url(base) ||
-		`/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=${encodeURIComponent(
-			trip || ""
-		)}&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome`;
+// `as` names them), spelled as views.trip_sheet_url spells it, for the Review step only: its
+// answer (get_plan, save_plan) carries no address. Every view draws the server's own address
+// instead (get_trip_views' sheet_url, people_sheet_urls). Drawn only when the server says the
+// format exists (`sheet_available`): frappe prints a format it cannot find as Standard, costs
+// included. &pdf_generator=chrome is not optional: download_pdf uses wkhtmltopdf unless told.
+function tp_sheet_url(trip, as) {
+	let url = `/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=${encodeURIComponent(
+		trip || ""
+	)}&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome`;
 	if (as) url += `&as=${encodeURIComponent(as)}`;
 	return url;
 }
@@ -737,7 +761,7 @@ function tp_sheet_url(trip, as, base) {
 const TP_GEO_KEY = "tp_map_geocode_v1";
 const TP_GEO_DAYS = 30;
 const TP_GEO_KEEP = 300;
-const tp_map_memory = { places: new Map(), roads: new Map(), routes_off: false, directions_off: false };
+const tp_map_memory = { places: new Map(), roads: new Map(), directions_off: false };
 
 function tp_geo_key(query) {
 	return String(query || "")
@@ -793,13 +817,19 @@ function tp_geo_write(query, point) {
 	}
 }
 
-// A point Google handed back, as {lat, lng}: a LatLng has lat() and lng() methods, the Routes
-// library's LatLngAltitude has lat and lng properties.
+// A point Google handed back, as {lat, lng}: a LatLng has lat() and lng() methods, a plain
+// LatLngLiteral has lat and lng properties.
 function tp_lat_lng(loc) {
 	if (!loc) return null;
 	if (typeof loc.lat === "function") return { lat: loc.lat(), lng: loc.lng() };
 	if (typeof loc.lat === "number") return { lat: loc.lat, lng: loc.lng };
 	return null;
+}
+
+// The desk's theme, "dark" or "light": what a Google map is built for (EEGoogleMaps.mapOptions).
+function tp_desk_theme() {
+	const root = typeof document !== "undefined" && document ? document.documentElement : null;
+	return root && root.getAttribute("data-theme") === "dark" ? "dark" : "light";
 }
 
 // Put a marker or a line on the map, or take it off: a Marker or a Polyline has setMap, an
@@ -812,10 +842,11 @@ function tp_set_map(thing, map) {
 
 // The whole-trip map, once Google Maps has loaded: a marker per place, numbered as the list
 // under it numbers them (view_map), each opening a popup built from elements (never from HTML
-// in the data); the drives along the road (the Routes library when Travel Settings says to use
-// it, else DirectionsService), a straight dashed line where no road could be found, and each
-// flight as a dashed line along the curve of the earth. `alive()` says whether this map is still
-// the one on screen: every answer from Google that lands later is dropped.
+// in the data); the drives along the road (DirectionsService, the only road service this view
+// uses: Travel Settings' "Use Routes API" is the Pick Routing Map's setting and never reaches
+// here), a straight dashed line where no road could be found, and each flight as a dashed line
+// along the curve of the earth. `alive()` says whether this map is still the one on screen:
+// every answer from Google that lands later is dropped.
 class TpTripMap {
 	constructor(maps, container, options) {
 		this.maps = maps;
@@ -845,8 +876,12 @@ class TpTripMap {
 		this.pending = {};
 	}
 
-	// Every place on the map; resolves with how many could not be placed.
+	// Every place on the map; resolves with how many could not be placed. The day shown is the
+	// map's own (this.day): a day chip tapped while the places are still being looked up calls
+	// show_day, and the draw that finishes after it keeps that day rather than the one it was
+	// started with (which put every day back on the map under the tapped chip).
 	draw(places, legs, day) {
+		this.day = day || "";
 		const points = {};
 		const placed = places.map((place) =>
 			this.locate(place).then((point) => {
@@ -862,7 +897,7 @@ class TpTripMap {
 		);
 		return Promise.all(placed).then(() => {
 			if (!this.alive()) return 0;
-			this.show_day(day);
+			this.show_day(this.day);
 			// The markers are up; the lines follow, one road at a time.
 			this.draw_legs(legs, points).catch(() => {});
 			return places.length - this.markers.length;
@@ -940,12 +975,8 @@ class TpTripMap {
 		};
 		line(`${place.number}. ${place.label || kind.label}`, true);
 		line(`${kind.glyph} ${kind.label}`);
-		line(
-			(place.days || [])
-				.map(tp_pretty_date)
-				.filter(Boolean)
-				.join(", ")
-		);
+		// A hotel is on every night of a stay: its days as runs ("Oct 1 – Oct 4"), not each date.
+		line(tp_day_runs(place.days || []).join(", "));
 		line(place.first_time ? __("From {0}", [tp_pretty_time(place.first_time)]) : "");
 		line((place.who || []).join(", "));
 		const url = tp_maps_search(place);
@@ -1002,11 +1033,9 @@ class TpTripMap {
 		}
 	}
 
-	// The road from one point to another, as a path, or null (then a straight dashed line).
-	// Routes first when Travel Settings asks for it (use_routes_api: the Routes API has to be
-	// switched on for the key in Google's console, which no deploy can do); a failure turns it
-	// off for the rest of this page load and DirectionsService is asked instead. A key without
-	// the Directions API turns that off too, so no request is made that cannot succeed.
+	// The road from one point to another, as a path, or null (then a straight dashed line), from
+	// DirectionsService. A key without the Directions API (REQUEST_DENIED) turns it off for the
+	// rest of this page load, so no request is made that cannot succeed.
 	road(from, to, kind) {
 		const key = `${kind}|${from.lat.toFixed(5)},${from.lng.toFixed(5)}|${to.lat.toFixed(5)},${to.lng.toFixed(5)}`;
 		if (tp_map_memory.roads.has(key)) return Promise.resolve(tp_map_memory.roads.get(key));
@@ -1014,37 +1043,12 @@ class TpTripMap {
 			tp_map_memory.roads.set(key, path);
 			return path;
 		};
-		const directions = () => {
-			if (tp_map_memory.directions_off) return Promise.resolve(null);
-			return this.by_directions(from, to, kind).then(keep, (status) => {
-				if (status === "REQUEST_DENIED") tp_map_memory.directions_off = true;
-				if (status === "ZERO_RESULTS" || status === "NOT_FOUND") keep(null);
-				return null;
-			});
-		};
-		if (this.config.use_routes_api && !tp_map_memory.routes_off) {
-			return this.by_routes(from, to, kind).then(keep, () => {
-				tp_map_memory.routes_off = true;
-				return directions();
-			});
-		}
-		return directions();
-	}
-
-	async by_routes(from, to, kind) {
-		const lib = await this.maps.importLibrary("routes");
-		const Route = lib && lib.Route;
-		if (!Route) throw new Error("The Routes library has no Route.");
-		const response = await Route.computeRoutes({
-			origin: from,
-			destination: to,
-			travelMode: kind === "walk" ? "WALKING" : "DRIVING",
-			fields: ["path"],
+		if (tp_map_memory.directions_off) return Promise.resolve(null);
+		return this.by_directions(from, to, kind).then(keep, (status) => {
+			if (status === "REQUEST_DENIED") tp_map_memory.directions_off = true;
+			if (status === "ZERO_RESULTS" || status === "NOT_FOUND") keep(null);
+			return null;
 		});
-		const route = response && response.routes && response.routes[0];
-		const path = route ? Array.from(route.path || []).map(tp_lat_lng).filter(Boolean) : [];
-		if (path.length < 2) throw new Error("No road.");
-		return path;
 	}
 
 	by_directions(from, to, kind) {
@@ -1171,6 +1175,8 @@ class TripPlanner {
 		// for a map no longer on screen is dropped (view_map).
 		this.map_day = null;
 		this.map_gen = 0;
+		// The Map view's watch on the desk theme (watch_map_theme): one at a time.
+		this.map_theme_observer = null;
 		// View as asked for someone the saved trip does not have ({trip, shown}): it shows its
 		// default person instead and says so (note_missing_person, view_person).
 		this.as_missing = null;
@@ -2530,6 +2536,8 @@ class TripPlanner {
 		// ones before their inputs are thrown away.
 		(this.suggesters || []).forEach((suggester) => suggester.destroy());
 		this.suggesters = [];
+		// A Map view being drawn again starts its own watch on the theme; anything else needs none.
+		this.stop_map_theme_watch();
 		this.body.empty();
 		// A view is drawn instead of the step, across the page's full width, without the
 		// step tabs or the Back/Next bar: "Back to planning" is its way back.
@@ -4454,7 +4462,8 @@ class TripPlanner {
 		}
 		// The whole trip on a page or two, for the job folder or a crew lead who won't open the
 		// app. Anyone can print it; only a coordinator's copy carries the cost (the server's rule).
-		this.sheet_link($actions, __("Print the trip sheet"), tp_sheet_url(s.name));
+		// Only once the site has the format: a link to a missing one prints Standard, with costs.
+		if (s.sheet_available === true) this.sheet_link($actions, __("Print the trip sheet"), tp_sheet_url(s.name));
 		$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" href="${frappe.utils.get_form_link("Travel Trip", s.name)}">${__("Open the full form")}</a>`).appendTo($actions);
 		if (this.is_dirty()) {
 			$(`<div class="tp-muted">${__("The trip sheet shows the trip as last saved.")}</div>`).appendTo($step);
@@ -4796,7 +4805,9 @@ class TripPlanner {
 		if (files) tiles.push([__("Files not attached"), files, "tp-quiet"]);
 		if (money) tiles.push([__("Booked so far"), format_currency(money.total, money.currency)]);
 		const $actions = $('<div class="tp-add"></div>').appendTo($view);
-		this.sheet_link($actions, __("Print the trip sheet"), tp_sheet_url(data.trip, "", data.sheet_url));
+		// The server's address, and only one of this site's; none while the format is missing.
+		const sheet = tp_local_url(data.sheet_url);
+		if (sheet) this.sheet_link($actions, __("Print the trip sheet"), sheet);
 		$(`<div class="tp-sum">${tiles
 			.map(
 				([label, value, quiet]) =>
@@ -5124,7 +5135,8 @@ class TripPlanner {
 			)}</div>`).appendTo($view);
 			return;
 		}
-		const all_days = data.days || [];
+		// Days are numbered from the trip's first day, as the printed Trip Sheet numbers them.
+		const start = data.start_date || "";
 		const day_list = [];
 		places.forEach((place) =>
 			place.days.forEach((day) => {
@@ -5152,7 +5164,7 @@ class TripPlanner {
 			const day = this.map_day.day;
 			$chips.empty();
 			[["", __("All days")]]
-				.concat(day_list.map((date) => [date, this.map_day_words(date, all_days)]))
+				.concat(day_list.map((date) => [date, this.map_day_words(date, start)]))
 				.forEach(([date, words]) => {
 					$(`<button class="tp-vbtn tp-map-day ${date === day ? "tp-active" : ""}" data-day="${tp_esc(date)}">${tp_esc(
 						words
@@ -5165,7 +5177,7 @@ class TripPlanner {
 						});
 				});
 			$list.empty();
-			this.map_list($list, places, day_list, day, all_days);
+			this.map_list($list, places, day_list, day, start);
 			if (trip_map) trip_map.show_day(day);
 		};
 		draw_day();
@@ -5173,8 +5185,8 @@ class TripPlanner {
 
 		const key = this.views_key();
 		const alive = () => gen === this.map_gen && this.view === "map" && this.views_key() === key;
-		const theme =
-			document.documentElement && document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+		const theme = tp_desk_theme();
+		this.watch_map_theme(theme, alive);
 		window.EEGoogleMaps.load({ apiKey: maps.api_key, libraries: TP_MAP_LIBRARIES })
 			.then((google_maps) => {
 				if (!alive()) return null;
@@ -5199,6 +5211,36 @@ class TripPlanner {
 					$status.text(__("The map could not be loaded right now. The places are listed below."));
 				}
 			);
+	}
+
+	// A Map ID and a colorScheme are fixed when a Google map is made (google_maps_loader.js):
+	// setOptions() restyles neither. So when the desk's theme flips while the map is on screen (the
+	// theme toggle, or Automatic following the device), the view is drawn again for the new theme,
+	// as the location timeline and the kiosk map are: from the views' answer already here, on the
+	// day already chosen, and the old map's late answers are dropped (map_gen). One watch at a
+	// time: the next view_map and every render() stop this one, and it stops itself once its map
+	// has left the screen.
+	watch_map_theme(theme, alive) {
+		this.stop_map_theme_watch();
+		const root = typeof document !== "undefined" && document ? document.documentElement : null;
+		if (typeof MutationObserver !== "function" || !root) return;
+		const observer = new MutationObserver(() => {
+			if (!alive()) {
+				observer.disconnect();
+				if (this.map_theme_observer === observer) this.map_theme_observer = null;
+				return;
+			}
+			if (tp_desk_theme() === theme) return;
+			this.stop_map_theme_watch();
+			this.render();
+		});
+		observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+		this.map_theme_observer = observer;
+	}
+
+	stop_map_theme_watch() {
+		if (this.map_theme_observer) this.map_theme_observer.disconnect();
+		this.map_theme_observer = null;
 	}
 
 	// The places, numbered in the order the trip reaches them: by first day, then first time (a
@@ -5233,17 +5275,21 @@ class TripPlanner {
 			);
 	}
 
-	// "Day 2 · Tue, Oct 6": the day's place among the days the views show.
-	map_day_words(date, all_days) {
-		const at = all_days.indexOf(date);
+	// "Day 2 · Tue, Oct 6": numbered from the trip's first day (`start`), as the Trip Sheet
+	// numbers it (views.build_trip_sheet), so the map and the paper in a crew lead's hand say the
+	// same day. A day before the trip starts (a flight the evening before) has no number. Until
+	// 2026-09-27 this counted the days the views show, which include that evening, so every chip
+	// was one ahead of the sheet.
+	map_day_words(date, start) {
 		const pretty = tp_pretty_date(date) || date;
-		return at >= 0 ? __("Day {0} · {1}", [at + 1, pretty]) : pretty;
+		const number = start ? tp_days_apart(start, date) + 1 : NaN;
+		return number >= 1 ? __("Day {0} · {1}", [number, pretty]) : pretty;
 	}
 
 	// The list under the map: each day's places (a hotel is under every day it is on), with the
 	// map's numbers, what each is, when and who, and its Google Maps link; then the places with
 	// no day yet, on "All days" only.
-	map_list($list, places, day_list, day, all_days) {
+	map_list($list, places, day_list, day, start) {
 		const row = (place, first) => {
 			const kind = TP_PLACE_KINDS[place.kind] || TP_PLACE_KINDS.stop;
 			const url = tp_maps_search(place);
@@ -5265,7 +5311,7 @@ class TripPlanner {
 			</div>`).appendTo($list);
 		};
 		(day ? [day] : day_list).forEach((date) => {
-			$(`<div class="tp-map-day-head">${tp_esc(this.map_day_words(date, all_days))}</div>`).appendTo($list);
+			$(`<div class="tp-map-day-head">${tp_esc(this.map_day_words(date, start))}</div>`).appendTo($list);
 			places.filter((place) => place.days.includes(date)).forEach((place) => row(place, place.days[0] === date));
 		});
 		const undated = day ? [] : places.filter((place) => !place.days.length);
@@ -5351,15 +5397,23 @@ class TripPlanner {
 		});
 	}
 
-	// The hotels one person sleeps in (their itinerary's check-ins and check-outs), as `contacts`
-	// lists them: what their /itinerary's contacts show.
+	// The hotels on one person's card, as `contacts` lists them: exactly what their /itinerary's
+	// contacts show. The server says which (get_trip_views' `people_hotels`, by the rule
+	// /itinerary uses: every room pinned to them or to the whole crew, dates or none). Rebuilding
+	// it here from their check-ins left off a room with no dates yet, which has none. An answer
+	// without the list falls back to the check-ins.
 	person_hotels(data, employee) {
+		const listed = data.people_hotels && data.people_hotels[employee];
 		const names = new Set();
-		((data.people || {})[employee] || []).forEach((day) =>
-			(day.items || []).forEach((item) => {
-				if ((item.type === "hotel_checkin" || item.type === "hotel_checkout") && item.hotel) names.add(item.hotel);
-			})
-		);
+		if (Array.isArray(listed)) {
+			listed.forEach((name) => names.add(name));
+		} else {
+			((data.people || {})[employee] || []).forEach((day) =>
+				(day.items || []).forEach((item) => {
+					if ((item.type === "hotel_checkin" || item.type === "hotel_checkout") && item.hotel) names.add(item.hotel);
+				})
+			);
+		}
 		const hotels = (data.contacts && Array.isArray(data.contacts.hotels) && data.contacts.hotels) || [];
 		return hotels.filter((hotel) => hotel && names.has(hotel.name));
 	}
@@ -5390,12 +5444,10 @@ class TripPlanner {
 			return;
 		}
 		// Their own sheet: the trip as their /itinerary shows it (the server filters it by `as`),
-		// at the address the server gave for them, else the whole trip's with &as=.
-		this.sheet_link(
-			$head,
-			__("Print {0}'s sheet", [name]),
-			tp_local_url((data.people_sheet_urls || {})[employee]) || tp_sheet_url(data.trip, employee, data.sheet_url)
-		);
+		// at the address the server gave for them, and only one of this site's. None while the
+		// format is missing: the page never spells one the server did not send.
+		const sheet = tp_local_url((data.people_sheet_urls || {})[employee]);
+		if (sheet) this.sheet_link($head, __("Print {0}'s sheet", [name]), sheet);
 		// Who to call, as their phone shows it: the hotels they sleep in, not everyone's.
 		this.contacts_block($view, data.contacts, this.person_hotels(data, employee));
 		this.render_preview($view, employee, name, data);

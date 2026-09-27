@@ -257,7 +257,9 @@ def build_money(doc, currency=None):
 	}
 
 
-def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=None, hotels=None):
+def build_trip_views(
+	doc, shape, is_coordinator, viewer_employee=None, currency=None, hotels=None, sheet_available=True
+):
 	"""The payload behind Plan a Trip's Overview, Grid, Compare, View-as and Map screens.
 
 	Args:
@@ -269,6 +271,9 @@ def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=
 		hotels: ``{hotel: {address, lat, lng}}`` (``api.travel._hotel_details``), so the
 			map asks a geocoder for a hotel's street address rather than its name. Optional:
 			without it a hotel is looked up by name.
+		sheet_available: whether the Trip Sheet print format exists. When it does not,
+			``sheet_url`` is None and ``people_sheet_urls`` is empty: frappe prints a missing
+			format as Standard, costs included (``api.travel._sheet_available``).
 
 	One POI cache is shared across every person's itinerary, so a crew of eight costs one
 	lookup per place, not eight.
@@ -321,11 +326,14 @@ def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=
 		# The whole-trip map (no money: where and when, never what it cost).
 		"places": places,
 		"legs": legs,
-		# The printed Trip Sheet: the whole trip's, and each person's for View as.
-		"sheet_url": trip_sheet_url(whole["trip"]),
+		# The printed Trip Sheet: the whole trip's, and each person's for View as. None and {}
+		# while the format is missing: the page then draws no link.
+		"sheet_url": trip_sheet_url(whole["trip"]) if sheet_available else None,
 		"people_sheet_urls": {
 			p["employee"]: trip_sheet_url(whole["trip"], p["employee"]) for p in people_list
-		},
+		}
+		if sheet_available
+		else {},
 		# Built only for a coordinator: a non-coordinator's payload never holds a figure
 		# for the page to hide.
 		"money": build_money(doc, currency) if is_coordinator else None,
@@ -371,11 +379,20 @@ def _airport(text):
 
 
 def _typed_airport_code(text):
-	"""A drive's end typed as an airport code ("LAS"): the rental counter is at the airport,
-	so the drive starts at the airport's place on the map, not at a second pin for "LAS".
-	Capitals only — a three-letter word typed as a place name stays a place."""
+	"""Whether a drive's end is typed like an airport code ("LAS"): three capitals. Only half the
+	test — :func:`trip_places` also asks that one of the trip's flights uses that airport, since
+	"TBD", "TBA" or "BYU" are three capitals too."""
 	value = str(text or "").strip()
 	return len(value) == 3 and value.isalpha() and value.isupper()
+
+
+#: What the office types for a place that is not known yet. Never a pin and never looked up:
+#: "TBD airport" is a real search that answers with somewhere, and the map would zoom out to it.
+PLACEHOLDERS = frozenset({"tbd", "tba", "tbc", "n/a", "na", "none", "?", "-"})
+
+
+def _placeholder(text):
+	return str(text or "").strip().casefold() in PLACEHOLDERS
 
 
 def trip_places(days, crew_names=(), hotels=None):
@@ -385,21 +402,25 @@ def trip_places(days, crew_names=(), hotels=None):
 	A place is ``{key, kind, label, query, lat, lng, days, first_time, who, group}``:
 
 	* ``kind`` — ``airport`` (both ends of every flight), ``hotel``, ``stop`` (a schedule
-	  stop's Place), ``pickup`` / ``dropoff`` (a drive's two ends; an end typed as an airport
-	  code is that airport), ``freight`` (where a shipment is delivered);
+	  stop's Place), ``pickup`` / ``dropoff`` (a drive's two ends; an end typed as the code of
+	  an airport one of the trip's flights uses is that airport), ``freight`` (where a
+	  shipment is delivered);
 	* ``query`` — text a geocoder can use: "PHX airport", a hotel's street address (from
 	  ``hotels``, else its name), a drive's end or a delivery address as typed, a stop's
 	  Place name;
 	* ``lat`` / ``lng`` — numbers when the point is known (a stop's Place with a point, a
 	  hotel whose Address was picked from Google), else ``None`` and the page geocodes
 	  ``query``;
-	* ``days`` — the dates it comes up on, sorted; ``first_time`` — 'HH:MM' on the first of
-	  them, when a time is known; ``who`` — the names of everyone who goes there; ``group`` —
-	  the booking it first came from (``completeness.group_key``), ``None`` for a stop.
+	* ``days`` — the dates it comes up on, sorted: a hotel is on every night of each stay,
+	  check-in to check-out, since the crew starts and ends each of those days there;
+	  ``first_time`` — 'HH:MM' on the first of them, when a time is known; ``who`` — the
+	  names of everyone who goes there; ``group`` — the booking it first came from
+	  (``completeness.group_key``), ``None`` for a stop.
 
 	One place per ``(kind, point)`` when the point is known, else per ``(kind, query)``,
 	case-insensitive: two rooms at one hotel are one hotel, and the airport a flight lands
-	at is the one the next flight leaves from. ``key`` is ``<kind>-<n>``.
+	at is the one the next flight leaves from. ``key`` is ``<kind>-<n>``. A place typed as a
+	placeholder (:data:`PLACEHOLDERS`: "TBD", "N/A", ...) is left off, and so is any leg to it.
 
 	A leg is ``{day, from, to, kind, who}`` — ``flight`` from departure to arrival airport,
 	``drive`` from a drive's pickup to its drop-off — for each one with both ends. No money:
@@ -408,6 +429,21 @@ def trip_places(days, crew_names=(), hotels=None):
 	hotels = hotels or {}
 	crew_names = [name for name in crew_names if name]
 	places, by_identity, visits, legs = [], {}, {}, []
+	# Each room's stay, {(hotel place, booking): [check-in, check-out]}: its nights are added to
+	# the hotel's days after the walk, and not to its visits, so its number and time stay those
+	# of the check-in.
+	stays = {}
+	# The airports the trip's flights use, as they are looked up ("PHX airport", whether the flight
+	# says "PHX", "phx" or "PHX Airport"). A drive end typed as the code of one of them is that
+	# airport ("LAS": the rental counter is there); any other three capitals is a place as typed.
+	flight_airports = set()
+	for day in days or []:
+		for item in day.get("items") or []:
+			if item.get("type") == "flight":
+				for end in (item.get("departure_airport"), item.get("arrival_airport")):
+					query = _airport(end)[1]
+					if query and not _placeholder(end):
+						flight_airports.add(query.casefold())
 
 	def who_of(item):
 		kind = item.get("type")
@@ -449,10 +485,16 @@ def trip_places(days, crew_names=(), hotels=None):
 				entry["who"].append(name)
 		return entry["key"]
 
+	def airport(text, item, day, time):
+		if _placeholder(text):
+			return None
+		return place("airport", *_airport(text), item, day, time)
+
 	def drive_end(kind, text, item, day, time):
-		if _typed_airport_code(text):
-			label, query = _airport(text)
-			return place("airport", label, query, item, day, time)
+		if _placeholder(text):
+			return None
+		if _typed_airport_code(text) and _airport(text)[1].casefold() in flight_airports:
+			return airport(text, item, day, time)
 		return place(kind, text, text, item, day, time)
 
 	def leg(kind, day, start, end, item):
@@ -465,14 +507,12 @@ def trip_places(days, crew_names=(), hotels=None):
 			kind = item.get("type")
 			if kind == "flight":
 				leaves, lands = item.get("departure_time"), item.get("arrival_time")
-				start = place("airport", *_airport(item.get("departure_airport")), item, date, _hhmm(leaves))
-				end = place(
-					"airport", *_airport(item.get("arrival_airport")), item, _iso(lands) or date, _hhmm(lands)
-				)
+				start = airport(item.get("departure_airport"), item, date, _hhmm(leaves))
+				end = airport(item.get("arrival_airport"), item, _iso(lands) or date, _hhmm(lands))
 				leg("flight", date, start, end, item)
 			elif kind in ("hotel_checkin", "hotel_checkout"):
 				info = hotels.get(item.get("hotel")) or {}
-				place(
+				key = place(
 					"hotel",
 					item.get("hotel"),
 					info.get("address") or item.get("hotel"),
@@ -482,6 +522,9 @@ def trip_places(days, crew_names=(), hotels=None):
 					info.get("lat"),
 					info.get("lng"),
 				)
+				if key:
+					stay = stays.setdefault((key, item.get("group")), [None, None])
+					stay[0 if kind == "hotel_checkin" else 1] = date
 			elif kind == "ground":
 				arrives = item.get("arrival_datetime")
 				start = drive_end(
@@ -492,14 +535,15 @@ def trip_places(days, crew_names=(), hotels=None):
 				)
 				leg("drive", date, start, end, item)
 			elif kind == "freight":
-				place(
-					"freight",
-					item.get("deliver_to"),
-					item.get("deliver_to"),
-					item,
-					date,
-					_hhmm(item.get("delivery_from")),
-				)
+				if not _placeholder(item.get("deliver_to")):
+					place(
+						"freight",
+						item.get("deliver_to"),
+						item.get("deliver_to"),
+						item,
+						date,
+						_hhmm(item.get("delivery_from")),
+					)
 			elif kind == "agenda":
 				poi = item.get("poi") or {}
 				if poi.get("poi_name"):
@@ -513,6 +557,14 @@ def trip_places(days, crew_names=(), hotels=None):
 						poi.get("lat"),
 						poi.get("lng"),
 					)
+
+	by_key = {entry["key"]: entry for entry in places}
+	for (key, _group), (check_in, check_out) in stays.items():
+		if check_in and check_out:
+			entry = by_key[key]
+			for night in trip_days(check_in, check_out):
+				if night not in entry["days"]:
+					entry["days"].append(night)
 
 	for entry in places:
 		entry["days"].sort()
@@ -594,18 +646,41 @@ def contact_list(contacts):
 	return rows
 
 
+def mailto_href(email):
+	"""A ``mailto:`` link for an address that is plainly one, else ``None``. The same rule as
+	``/itinerary``'s ``mailHref``: ``ee.table`` writes a link cell's address into ``href``
+	unescaped, so nothing but a plain address may get there."""
+	import re  # lazily, as tel_href
+
+	text = str(email or "").strip()
+	if not re.fullmatch(r"[A-Za-z0-9._+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}", text):
+		return None
+	return "mailto:" + quote(text, safe="@")
+
+
 def contact_rows(contacts):
-	"""The itinerary email's Contacts table: ``[[who, name, (tel link, phone) or None]]`` for
-	``ee.table`` (a two-item cell is a link there). The phone is printed as
-	``print_style.format_phone`` prints it — "(801) 555-0100" for ten North American digits,
-	anything else as stored."""
+	"""The itinerary email's Contacts table: ``[[who, name, how to reach them]]`` for ``ee.table``
+	(a two-item cell is a link there). How to reach them is the phone as a ``(tel link, phone)``
+	pair, printed as ``print_style.format_phone`` prints it ("(801) 555-0100" for ten North
+	American digits, anything else as stored); else a phone that is no number to dial, as typed;
+	else the email as a ``(mailto link, email)`` pair, or as text when it is not plainly an
+	address; else ``None``. Every contact the card admits is reachable from the email: a travel
+	desk set up with only an email used to be a row reading "—" (2026-09-27)."""
 	from erpnext_enhancements.print_style import format_phone
 
 	out = []
 	for row in contact_list(contacts):
 		name = row["name"] + (f" ({row['detail']})" if row["detail"] else "")
-		phone = (row["tel"], format_phone(row["phone"])) if row["tel"] else row["phone"]
-		out.append([row["role"], name, phone])
+		if row["tel"]:
+			reach = (row["tel"], format_phone(row["phone"]))
+		elif row["phone"]:
+			reach = row["phone"]
+		elif row["email"]:
+			mailto = mailto_href(row["email"])
+			reach = (mailto, row["email"]) if mailto else row["email"]
+		else:
+			reach = None
+		out.append([row["role"], name, reach])
 	return out
 
 
@@ -654,6 +729,7 @@ def build_trip_sheet(
 	format_money=None,
 	itinerary_url=None,
 	printed_on=None,
+	job_title=None,
 ):
 	"""The Trip Sheet print format's payload: the whole trip, or one person's, on one or two
 	Letter pages — for the job folder, or a crew lead who will not open the app.
@@ -669,6 +745,9 @@ def build_trip_sheet(
 		currency, format_money: the coordinator's total, and how to write it
 			(``frappe.utils.fmt_money``; ``"USD 1,500.00"`` without one).
 		itinerary_url, printed_on: the footer's "the latest is here" link and print date.
+		job_title: what the trip is for, by name (``api.travel._site_title``), for the JOB
+			line; the contacts card's site label when not given. Separate from the card, which
+			has no site when there is nobody to call, so the job keeps its name either way.
 
 	All but money, and the sheet leaves the building: **money is only on a coordinator's
 	whole-trip sheet**, as one total. A person's sheet is printed to be handed to that person,
@@ -802,10 +881,10 @@ def build_trip_sheet(
 		)
 
 	lead = next((p for p in people if p["is_trip_lead"]), None)
-	site = (contacts or {}).get("site") or {}
+	title = str(job_title or ((contacts or {}).get("site") or {}).get("label") or "").strip()
 	job = " ".join(str(x) for x in (_get(doc, "travel_for_doctype"), _get(doc, "travel_for_name")) if x)
-	if site.get("label") and site["label"] != _get(doc, "travel_for_name"):
-		job = f"{site['label']} ({_get(doc, 'travel_for_name')})"
+	if title and title != _get(doc, "travel_for_name"):
+		job = f"{title} ({_get(doc, 'travel_for_name')})"
 
 	money = None
 	if is_coordinator and whole:

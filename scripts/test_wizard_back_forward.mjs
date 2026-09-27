@@ -1159,6 +1159,8 @@ function tripServer(trips) {
 				freight: clone(rec.freight || []),
 				stops: [],
 				gaps: clone(rec.gaps || []),
+				// planner._viewer: whether the Trip Sheet print format exists on the site.
+				sheet_available: rec.sheet_available === undefined ? true : rec.sheet_available,
 			},
 			rec.documents === undefined ? {} : { documents: clone(rec.documents) }
 		);
@@ -1266,6 +1268,9 @@ function tripServer(trips) {
 			legs: clone(rec.legs || []),
 			maps: clone(rec.maps || { api_key: "", map_id_light: "", map_id_dark: "" }),
 			contacts: rec.contacts === undefined ? null : clone(rec.contacts),
+			// The hotels on each person's card, by /itinerary's rule (api.travel._hotel_contacts);
+			// a fixture that sets none is an answer without it.
+			...(rec.people_hotels === undefined ? {} : { people_hotels: clone(rec.people_hotels) }),
 			sheet_url: rec.sheet_url !== undefined ? rec.sheet_url : sheet,
 			// views.trip_sheet_url(trip, employee): each person's own sheet, for View as.
 			people_sheet_urls:
@@ -3164,6 +3169,129 @@ async function planATripSuite() {
 		assert.deepEqual(ui.msgprints, []);
 	});
 
+	await test("a day chip tapped while the places are still being looked up is the day the map shows", async () => {
+		// Every trip's first open: nothing is in this browser's lookups yet. The draw that
+		// finished after the tap used to put back the day it started with (every day), so the
+		// chip and the list said Oct 3 while the map showed the whole trip.
+		tripServer({ "TRIP-5": { ...MAP_TRIP, maps: { api_key: "browser-key", map_id_light: "", map_id_dark: "" } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		fakeStorage();
+		const g = fakeGoogleMaps({ hold: true });
+		planner().open_view("map");
+		await settle();
+		assert.equal(g.markers.length, 1, "the place with a point is up; the others are being looked up");
+		const chips = drawn(() => press('data-day="2026-10-03"'));
+		assert.ok(chips.some((h) => h.includes('tp-map-day tp-active" data-day="2026-10-03"')));
+		g.release();
+		await settle();
+		assert.equal(g.markers.length, 5, "every place is on the map");
+		assert.deepEqual(
+			g.markers.filter((m) => m.on).map((m) => m.label.text),
+			["1"],
+			"only Oct 3's place: the airport"
+		);
+		const flight = g.lines.find((l) => l.icons);
+		assert.ok(flight && flight.on, "Oct 3's flight");
+		assert.ok(g.lines.filter((l) => !l.icons).every((l) => !l.on), "not Oct 1's drive");
+	});
+
+	await test("the Map numbers its days from the trip's first day, as the Trip Sheet does", async () => {
+		// A flight the evening before the trip starts: the views show that day, and counting
+		// the days they show made every chip one ahead of the printed sheet.
+		const early = {
+			key: "airport:SAN",
+			kind: "airport",
+			label: "SAN airport",
+			query: "SAN airport",
+			lat: 32.73,
+			lng: -117.19,
+			days: ["2026-09-30"],
+			first_time: "18:00",
+			who: ["Ana"],
+			group: "fl0",
+		};
+		tripServer({ "TRIP-5": { ...MAP_TRIP, days: ["2026-09-30", ...MAP_TRIP.days], places: [...MAP_TRIP.places, early] } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=map");
+		await settle();
+		const html = ui.drawn.join("\n");
+		assert.ok(html.includes('data-day="2026-09-30">2026-09-30</button>'), "the evening before has no number");
+		assert.ok(html.includes('data-day="2026-10-01">Day 1 · 2026-10-01</button>'), "the trip's first day is Day 1");
+		assert.ok(html.includes('data-day="2026-10-03">Day 3 · 2026-10-03</button>'));
+		assert.ok(html.includes('<div class="tp-map-day-head">2026-09-30</div>'), "the list says the same");
+		assert.ok(html.includes('<div class="tp-map-day-head">Day 2 · 2026-10-02</div>'));
+	});
+
+	await test("the Map is drawn again for the desk's theme when it flips, and only while it is on screen", async () => {
+		// A Map ID and a colorScheme are fixed when a Google map is made; setOptions restyles
+		// neither. The desk flips data-theme in place (its toggle, or Automatic following the
+		// device), so the map is made again, as the location timeline and the kiosk map are.
+		tripServer({ "TRIP-5": { ...MAP_TRIP, maps: { api_key: "browser-key", map_id_light: "light-id", map_id_dark: "dark-id" } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		const theme = { value: "light" };
+		globalThis.document.documentElement = { getAttribute: (name) => (name === "data-theme" ? theme.value : null) };
+		const observers = [];
+		globalThis.MutationObserver = class {
+			constructor(callback) {
+				this.callback = callback;
+				this.on = false;
+				observers.push(this);
+			}
+			observe(target, options) {
+				this.on = true;
+				this.target = target;
+				this.options = options;
+			}
+			disconnect() {
+				this.on = false;
+			}
+		};
+		const flip = (value) => {
+			theme.value = value;
+			observers.filter((o) => o.on).forEach((o) => o.callback([{ type: "attributes", attributeName: "data-theme" }]));
+		};
+		const watching = () => observers.filter((o) => o.on).length;
+		try {
+			fakeStorage();
+			const g = fakeGoogleMaps();
+			const p = planner();
+			p.open_view("map");
+			await settle();
+			assert.deepEqual(g.themes, ["light"]);
+			assert.equal(watching(), 1, "one watch");
+			assert.equal(observers[0].target, globalThis.document.documentElement);
+			assert.deepEqual(observers[0].options, { attributes: true, attributeFilter: ["data-theme"] });
+			drawn(() => press('data-day="2026-10-02"'));
+			const entries = browser.hist.length;
+			flip("dark");
+			await settle();
+			assert.deepEqual(g.themes, ["light", "dark"], "a new map, made for the dark theme");
+			assert.equal(watching(), 1, "still one watch: the first stopped when the map was drawn again");
+			assert.ok(ui.drawn.some((h) => h.includes('tp-map-day tp-active" data-day="2026-10-02"')), "the day chosen stays");
+			assert.deepEqual(
+				g.markers.slice(-5).filter((m) => m.on).map((m) => m.label.text).sort(),
+				["2", "3", "4"],
+				"the new map shows that day"
+			);
+			assert.equal(browser.hist.length, entries, "no history entry");
+			assert.equal(server.sent("get_trip_views").length, 1, "nothing fetched again");
+			flip("dark"); // written again with the same value: nothing to redraw
+			await settle();
+			assert.equal(g.themes.length, 2);
+			// Off the map, a flip draws nothing, and the watch ends.
+			p.open_view("overview");
+			await settle();
+			flip("light");
+			await settle();
+			assert.equal(g.themes.length, 2, "no map is made for a view that is not the map");
+			assert.equal(watching(), 0);
+			assert.equal(last().view, "overview");
+		} finally {
+			delete globalThis.MutationObserver;
+		}
+	});
+
 	await test("a get_trip_views answer for the Map that lands after the page moved on is dropped", async () => {
 		tripServer({ "TRIP-5": MAP_TRIP });
 		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
@@ -3224,6 +3352,18 @@ async function planATripSuite() {
 		assert.ok(!ben.some((h) => h.includes("Harborview Suites")), "not Ana's");
 		assert.ok(ben.some((h) => h.includes('href="tel:911"')));
 
+		// The server's list for each person (people_hotels, /itinerary's rule) is what View as
+		// shows: a room with no dates yet is on no day of their itinerary, but it is on the card
+		// their phone shows. Ana has no check-in at all here.
+		tripServer({ "TRIP-5": { ...MAP_TRIP, people_hotels: { E1: ["Harborview Suites", "Hilton"], E2: [] } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=person&as=E1");
+		await settle();
+		const ana = contact_cards(ui.drawn);
+		assert.ok(ana.some((h) => h.includes("Harborview Suites")) && ana.some((h) => h.includes("Hilton")), "both of Ana's rooms");
+		planner().open_view("person", "E2");
+		await settle();
+		assert.ok(!contact_cards(ui.drawn).some((h) => h.includes("<b>Hilton</b>") || h.includes("Harborview")), "none for Ben");
+
 		// An answer with no contacts draws no panel.
 		tripServer({ "TRIP-1": TRIP });
 		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
@@ -3251,19 +3391,38 @@ async function planATripSuite() {
 		assert.ok(ben && ben.includes(`href="${sheet}&as=E2"`), "one person's sheet, by `as`");
 		assert.equal(browser.hist.length, entries + 2, "the two views only");
 
-		// A server address that is not this site's own is never a link: the page spells its own.
+		// A server address that is not this site's own is never a link, and the page spells none
+		// in its place: a view draws only the server's address. (Changed on purpose, 2026-09-27:
+		// the page used to spell its own, which printed Standard, costs included, whenever the
+		// server had sent no address because the format was missing.)
 		tripServer({
 			// "/\host" is "//host" to a browser: another site, though it starts with one slash.
 			"TRIP-5": { ...MAP_TRIP, sheet_url: "javascript:alert(1)", people_sheet_urls: { E1: "//evil.example/a.pdf", E2: "/\\evil.example/sheet.pdf" } },
 		});
 		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=overview");
 		await settle();
-		assert.ok(ui.drawn.find((h) => h.includes("Print the trip sheet")).includes(`href="${sheet}"`));
+		assert.ok(!ui.drawn.some((h) => h.includes("Print the trip sheet")), "no link, and none spelled by the page");
 		assert.ok(!ui.drawn.join("\n").includes("javascript:"));
 		planner().open_view("person", "E2");
 		await settle();
-		assert.ok(ui.drawn.find((h) => h.includes("Print Ben's sheet")).includes(`href="${sheet}&as=E2"`));
+		assert.ok(!ui.drawn.some((h) => h.includes("Print Ben's sheet")));
 		assert.ok(!ui.drawn.join("\n").includes("evil.example"));
+
+		// The site has no Trip Sheet format (its upsert failed and logged, or no migrate since the
+		// app was installed): frappe would print Standard, every cost on it, so there is no link
+		// anywhere. The views' answer sends no address, and get_plan says so for Review.
+		tripServer({ "TRIP-5": { ...MAP_TRIP, sheet_available: false, sheet_url: null, people_sheet_urls: {} } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		assert.ok(!drawn(() => planner().step_review($stub("review"))).some((h) => h.includes("Print the trip sheet")), "Review");
+		planner().open_view("overview");
+		await settle();
+		assert.ok(!ui.drawn.some((h) => h.includes("Print the trip sheet")), "the Overview");
+		planner().open_view("person", "E2");
+		await settle();
+		assert.ok(ui.drawn.some((h) => h.includes("What Ben sees")), "View as is drawn");
+		assert.ok(!ui.drawn.some((h) => h.includes("Print Ben's sheet")), "View as");
+		assert.ok(!ui.drawn.join("\n").includes("download_pdf"));
 		// The same for a file's link: "/\host" is not this site's.
 		const chips = planner().doc_chips([
 			{ title: "Odd", kind: "Other", url: "/\\evil.example/x.pdf" },
@@ -3460,7 +3619,7 @@ function fakeStorage() {
 // `hold`: the Geocoder's answers wait for log.release().
 function fakeGoogleMaps(options) {
 	options = options || {};
-	const log = { loads: [], geocoded: [], routed: [], markers: [], lines: [], map: null, held: [] };
+	const log = { loads: [], geocoded: [], routed: [], markers: [], lines: [], map: null, held: [], themes: [] };
 	const point = (lat, lng) => ({ lat: () => lat, lng: () => lng });
 	log.release = () => log.held.splice(0).forEach((answer) => answer());
 	const maps = {
@@ -3543,7 +3702,11 @@ function fakeGoogleMaps(options) {
 			log.loads.push(clone(opts));
 			return Promise.resolve(maps);
 		},
-		mapOptions: () => ({ styles: [] }),
+		// The theme each map was built for (a Map ID and a colorScheme are fixed at construction).
+		mapOptions: (config, theme) => {
+			log.themes.push(theme);
+			return { styles: [] };
+		},
 	};
 	// A popup's text and links (it is built from elements: a minimal document for it).
 	log.popup = (marker) => {

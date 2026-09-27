@@ -1004,10 +1004,18 @@ def _viewer():
 	lets a non-coordinator email only themselves, so the everyone button always failed for
 	them. The page shows neither button until it has been told, so ``get_plan`` and
 	``save_plan`` must both keep reporting this. Imported late: ``api.travel`` needs far more
-	of frappe than this module's bench-free test stub provides."""
-	from erpnext_enhancements.api.travel import _is_coordinator, _session_employee
+	of frappe than this module's bench-free test stub provides.
 
-	return {"is_coordinator": _is_coordinator(), "viewer_employee": _session_employee() or None}
+	Also ``sheet_available``, for the Review step's "Print the trip sheet", reported here so both
+	answers carry it: whether the Trip Sheet print format exists (``api.travel._sheet_available``).
+	Until it does, a link to it prints frappe's Standard format, costs included."""
+	from erpnext_enhancements.api.travel import _is_coordinator, _session_employee, _sheet_available
+
+	return {
+		"is_coordinator": _is_coordinator(),
+		"viewer_employee": _session_employee() or None,
+		"sheet_available": _sheet_available(),
+	}
 
 
 @frappe.whitelist()
