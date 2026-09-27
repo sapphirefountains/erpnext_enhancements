@@ -18,14 +18,57 @@ ARTICLE_STATUSES = ("Published", "Retired")
 #: ``Knowledge Article Version.review_state``, in lifecycle order.
 #:
 #: - Draft: an author is writing it.
-#: - In Review: submitted to a named KB Approver; content edits are refused (PR 2).
+#: - In Review: submitted to a named KB Approver; content edits are refused (PR 2,
+#:   ``workflow.content_edit_problem``).
 #: - Published: approved and submitted; this is the live text.
 #: - Superseded: was Published; a newer version replaced it. Kept as history.
 #: - Discarded: abandoned before publishing. Kept, never deleted.
 REVIEW_STATES = ("Draft", "In Review", "Published", "Superseded", "Discarded")
 
-#: The two states in which a version is still being worked on. At most one per article (PR 2).
+#: The two states in which a version is still being worked on. At most one per article: PR 3's
+#: ``start_revision`` returns the open one rather than starting a second.
 OPEN_REVIEW_STATES = ("Draft", "In Review")
+
+#: The two doctypes, by name. ``assistant_tools/_gate.py`` keeps its own copy
+#: (``KNOWLEDGE_BASE_DOCTYPES``) because it must not import this package, and
+#: ``tests/test_knowledge_base_rules.py`` asserts the two agree with each other and with the JSONs.
+ARTICLE_DOCTYPE = "Knowledge Article"
+VERSION_DOCTYPE = "Knowledge Article Version"
+KB_DOCTYPES = frozenset({ARTICLE_DOCTYPE, VERSION_DOCTYPE})
+
+#: The two roles, seeded by ``patches/seed_knowledge_base_roles.py``. Both hold the same DocPerm;
+#: what an approver may do is decided in ``workflow.approval_problems``.
+AUTHOR_ROLE = "KB Author"
+APPROVER_ROLE = "KB Approver"
+
+#: An approver is a named person with a staff login: ``User.user_type`` exactly this. Not a
+#: "Website User" (a portal contact) and not a custom User Type. ``workflow.approval_problems``
+#: takes the value as an argument, so its callers read it from the User row.
+APPROVER_USER_TYPE = "System User"
+
+#: Accounts that never approve, whatever roles they hold. Administrator is a shared account, not a
+#: person, and holds every role implicitly (v16 ``frappe.get_roles`` returns them all for it,
+#: frappe ``origin/version-16`` ``permissions.py:546-547``), so the role rule alone would let it
+#: approve; and v16 makes it a System User (``core/doctype/user/user.py:406``), so the user-type
+#: rule would not catch it either. The continuity runbook uses Administrator only to grant or revoke
+#: KB roles, never to approve. Guest is nobody signed in. Both are refused by name.
+NEVER_APPROVERS = ("Administrator", "Guest")
+
+#: The Version fields an author types into, in form order. Every other Version field is set by the
+#: Knowledge Base's own code and sits at permlevel 1. Saving a change to any of these makes the
+#: saver a contributor, who may not approve the version (``workflow.approval_problems``), and none
+#: of them may change once the version has left Draft (``workflow.content_edit_problem``). The
+#: rules test asserts this is exactly the Version JSON's level-0 value fields, less ``amended_from``.
+VERSION_CONTENT_FIELDS = (
+	"title",
+	"department_block",
+	"summary",
+	"keywords",
+	"process_owner",
+	"review_every_months",
+	"body",
+	"change_note",
+)
 
 #: How many months a published article may go before its process owner must review it, unless
 #: the author sets another interval. POL-0001 (Company Documentation - Guiding Principles)
