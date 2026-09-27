@@ -39,6 +39,14 @@
 // computed here is the at-a-glance coverage on the step being edited, which is replaced by the
 // server's answer on the next save.
 //
+// BEDS, GUESTS AND ROUND TRIPS. Someone needs a bed only on the nights they are away: their own
+// dates, narrowed by their own flights and drives (stay_window, the rule in
+// completeness.stay_window), so a day trip needs none. A room can have guests staying free — an
+// upgraded room, a spare bed — who take no share of its cost; the server fits a guest's check-in
+// and check-out to their own nights. A round-trip ticket is one charge: a flight with no cost
+// whose confirmation number is on a flight that has one rides on that fare (fare_card, the rule
+// in completeness.on_another_ticket), and the checklist does not ask for a cost on it.
+//
 // Styling uses Frappe CSS variables so Frappe Light and Timeless Night both work. The page loader
 // serves this file version-aware, so no .bundle.* is needed.
 
@@ -877,13 +885,15 @@ class TripPlanner {
 	}
 
 	uncovered(leg) {
-		// Crew not yet on any card for this leg (or, for rooms, in no room), so a new card
-		// starts with the people who still need one.
+		// Crew not yet on any card for this leg (or, for rooms, in no room and needing a bed at
+		// all), so a new card starts with the people who still need one.
 		const covered = new Set();
 		const pool = leg ? this.leg_cards(leg) : this.cards("accommodations");
 		pool.forEach((card) => card.members.forEach((m) => covered.add(m.traveler)));
 		const everyone = this.crew().map((t) => t.employee);
-		const missing = everyone.filter((e) => !covered.has(e));
+		const missing = this.crew()
+			.filter((t) => !covered.has(t.employee) && (leg || this.needs_a_bed(t)))
+			.map((t) => t.employee);
 		return missing.length ? missing : everyone;
 	}
 
@@ -965,7 +975,12 @@ class TripPlanner {
 				label: this.card_label(card),
 				values: card.values,
 				changed: Array.from(card.changed),
-				members: card.members.map((m) => ({ name: m.name || null, traveler: m.traveler, ref: m.ref || "" })),
+				members: card.members.map((m) =>
+					Object.assign(
+						{ name: m.name || null, traveler: m.traveler, ref: m.ref || "" },
+						table === "accommodations" ? { guest: m.guest ? 1 : 0 } : {}
+					)
+				),
 				mileage: card.mileage || null,
 			}));
 		});
@@ -1248,6 +1263,12 @@ class TripPlanner {
 			return names
 				? __("{0}: no confirmation number for {1}.", [what, names])
 				: __("{0}: no confirmation number.", [what]);
+		}
+		if (gap.check === "cost" && gap.table === "flights") {
+			return __(
+				"{0}: no cost entered. If it is part of a round trip paid on another flight, give it that flight's confirmation number.",
+				[what]
+			);
 		}
 		if (gap.check === "cost") {
 			return __("{0}: no cost entered.", [what]);
@@ -1676,8 +1697,12 @@ class TripPlanner {
 	step_legs($step, step) {
 		const leg = step.leg;
 		const help = {
-			Outbound: __("How each person gets to the job: flights, a company truck, their own car. Tick who is on each one."),
-			Return: __("How each person gets home. Tick who is on each one."),
+			Outbound: __(
+				"How each person gets to the job: flights, a company truck, their own car. Tick who is on each one. A round-trip ticket's whole fare goes here."
+			),
+			Return: __(
+				"How each person gets home. Tick who is on each one. The flight home on a round-trip ticket has no cost of its own: give it the same confirmation number as the way there and leave the cost blank."
+			),
 			"During Trip": __("Rental cars, trucks and rides used while you are there. Optional."),
 		}[leg];
 		this.step_intro($step, step.title, help);
@@ -1756,6 +1781,13 @@ class TripPlanner {
 				card.values.airline = out.values.airline;
 				card.values.departure_airport = out.values.arrival_airport;
 				card.values.arrival_airport = out.values.departure_airport;
+				// A round trip is one ticket: the way home carries the way there's confirmation
+				// number and no cost, so the checklist finds its fare on the way there.
+				card.members.forEach((member) => {
+					const source = out.members.find((m) => m.traveler === member.traveler);
+					member.ref = source ? source.ref || "" : "";
+				});
+				card.same_ref = out.same_ref;
 			} else {
 				card.values.transport_type = out.values.transport_type;
 				card.values.supplier = out.values.supplier;
@@ -1840,7 +1872,42 @@ class TripPlanner {
 		this.members_block($card, card, __("Who's on this flight?"));
 		this.refs_block($card, card);
 		this.money_block($card, card, __("Total for all tickets"));
+		const fare = this.fare_card(card);
+		if (fare) {
+			$(`<div class="tp-ok-line">&#10003; ${tp_esc(
+				__("Round trip: paid with the ticket for {0}. Add a cost here only if this flight cost extra, like a fare upgrade.", [
+					this.flight_words(fare),
+				])
+			)}</div>`).appendTo($card);
+		}
 		this.card_gaps($card, card);
+	}
+
+	fare_card(card) {
+		// The flight whose fare this one rides on, or null — completeness.on_another_ticket. A
+		// round-trip ticket is one charge, so the way home has no cost of its own: a flight with
+		// no cost where everyone on it has a confirmation number that is on another flight WITH
+		// a cost is covered by that fare.
+		if (card.table !== "flights" || flt(card.values.cost)) return null;
+		const pnr = (ref) => String(ref || "").trim().toUpperCase();
+		const refs = card.members.map((m) => pnr(m.ref));
+		if (!refs.length || refs.some((ref) => !ref)) return null;
+		const paid = this.cards("flights").filter((c) => c !== card && flt(c.values.cost));
+		let fare = null;
+		for (const ref of refs) {
+			const found = paid.find((c) => c.members.some((m) => pnr(m.ref) === ref));
+			if (!found) return null;
+			fare = fare || found;
+		}
+		return fare;
+	}
+
+	flight_words(card) {
+		// "SLC → San Diego on Sun, Sep 27", or the airline and number when the airports are blank.
+		const v = card.values;
+		const route = v.departure_airport && v.arrival_airport ? `${v.departure_airport} → ${v.arrival_airport}` : this.card_label(card);
+		const day = tp_pretty_date(tp_date_part(v.departure_time));
+		return day ? __("{0} on {1}", [route, day]) : route;
 	}
 
 	ride_card($parent, card) {
@@ -1995,8 +2062,15 @@ class TripPlanner {
 		const $cost = this.field($grid, cost_label);
 		const $hint = $('<div class="tp-muted"></div>');
 		const hint = () => {
-			const n = card.members.length;
-			$hint.text(n > 1 && flt(v.cost) ? __("About {0} each", [format_currency(flt(v.cost) / n, this.lookups.currency)]) : "");
+			// A room's guests pay no share (planner.merge_bookings); a room of guests only
+			// splits as usual.
+			const payers = card.members.filter((m) => !m.guest);
+			const n = payers.length || card.members.length;
+			const free = payers.length ? card.members.filter((m) => m.guest && m.traveler) : [];
+			const parts = [];
+			if (n > 1 && flt(v.cost)) parts.push(__("About {0} each", [format_currency(flt(v.cost) / n, this.lookups.currency)]));
+			if (free.length) parts.push(__("Staying free: {0}", [free.map((m) => this.crew_name(m.traveler)).join(", ")]));
+			$hint.text(parts.join(" · "));
 		};
 		this.input($cost, "number", v.cost || "", (val) => {
 			this.set_value(card, "cost", flt(val));
@@ -2067,7 +2141,9 @@ class TripPlanner {
 		this.step_intro(
 			$step,
 			__("Where everyone sleeps"),
-			__("Add each room and tick who is in it. The grid shows who still needs a bed on which night.")
+			__(
+				"Add each room and tick who is in it, including anyone sharing it for free. The grid shows who still needs a bed on which night, going by their flights and drives: someone out and back on the same day needs none."
+			)
 		);
 		const $matrix = $('<div class="tp-matrix"></div>').appendTo($step);
 		this.draw_nights($matrix);
@@ -2102,11 +2178,11 @@ class TripPlanner {
 		const head = nights.map((n) => `<th>${tp_esc(moment(n).format("ddd D"))}</th>`).join("");
 		const rows = this.crew()
 			.map((traveler) => {
-				const from = traveler.from_date || t.start_date;
-				const to = traveler.to_date || t.end_date;
+				const [from, to] = this.stay_window(traveler);
+				const day_trip = from && from === to ? ` <span class="tp-muted">${__("day trip")}</span>` : "";
 				const cells = nights
 					.map((night) => {
-						if (night < from || night >= to) return "<td></td>";
+						if (!from || !to || night < from || night >= to) return "<td></td>";
 						const ok = this.cards("accommodations").some(
 							(card) =>
 								card.members.some((m) => !m.traveler || m.traveler === traveler.employee) &&
@@ -2118,10 +2194,82 @@ class TripPlanner {
 						return ok ? '<td class="tp-y">&#10003;</td>' : '<td class="tp-n">&#10007;</td>';
 					})
 					.join("");
-				return `<tr><td>${tp_esc(traveler.employee_name || traveler.employee)}</td>${cells}</tr>`;
+				return `<tr><td>${tp_esc(traveler.employee_name || traveler.employee)}${day_trip}</td>${cells}</tr>`;
 			})
 			.join("");
 		$matrix.html(`<table><thead><tr><th>${__("Night of")}</th>${head}</tr></thead><tbody>${rows}</tbody></table>`);
+	}
+
+	stay_window(traveler) {
+		// [first night, the morning they leave] — completeness.stay_window. Their own dates,
+		// narrowed by their own travel: no bed before the day their way there leaves, none from
+		// the day their way home leaves. Someone out and back on one day needs no bed, whatever
+		// dates the crew step has them down for.
+		const t = this.state.trip;
+		let from = traveler.from_date || t.start_date || "";
+		let to = traveler.to_date || t.end_date || "";
+		const first = { Outbound: "", Return: "" };
+		["flights", "ground_transport"].forEach((table) => {
+			this.cards(table).forEach((card) => {
+				const leg = card.values.leg;
+				if (leg !== "Outbound" && leg !== "Return") return;
+				if (!card.members.some((m) => !m.traveler || m.traveler === traveler.employee)) return;
+				const when = tp_date_part(table === "flights" ? card.values.departure_time : card.values.pickup_datetime);
+				if (when && (!first[leg] || when < first[leg])) first[leg] = when;
+			});
+		});
+		if (first.Outbound && (!from || first.Outbound > from)) from = first.Outbound;
+		if (first.Return && (!to || first.Return < to)) to = first.Return;
+		return [from, to];
+	}
+
+	needs_a_bed(traveler) {
+		const [from, to] = this.stay_window(traveler);
+		return !!(from && to && from < to);
+	}
+
+	guest_nights(card, employee) {
+		// A guest's check-in and check-out: the room's, cut to their own nights. The server
+		// stores the same (planner.fit_guest_stays); this is only what the card shows.
+		const v = card.values;
+		const traveler = this.crew().find((t) => t.employee === employee);
+		if (!traveler || !v.check_in_date || !v.check_out_date) return [v.check_in_date, v.check_out_date];
+		const [from, to] = this.stay_window(traveler);
+		const start = from && from > v.check_in_date ? from : v.check_in_date;
+		const end = to && to < v.check_out_date ? to : v.check_out_date;
+		return start < end ? [start, end] : [v.check_in_date, v.check_out_date];
+	}
+
+	guests_block($card, card) {
+		// Someone sharing a room at no cost — an upgraded room, a spare bed. They are ticked
+		// into the room like anyone else (so it is on their itinerary, with its confirmation
+		// number) and take no share of its cost.
+		const named = card.members.filter((m) => m.traveler);
+		if (named.length < 2 || named.length !== card.members.length) return;
+		const $field = this.field($card, __("Anyone staying free?"));
+		$field.css("margin-top", "12px");
+		$(`<div class="tp-muted">${__(
+			"Tick anyone sharing this room at no extra cost, like an upgraded room. They pay no share of it, and their check-in and check-out follow their own nights."
+		)}</div>`).appendTo($field);
+		const $chips = $('<div class="tp-chips"></div>').appendTo($field);
+		card.members.forEach((member) => {
+			const on = !!member.guest;
+			$(`<span class="tp-chip ${on ? "tp-on" : ""}">${on ? "&#10003; " : ""}${tp_esc(this.crew_name(member.traveler))}</span>`)
+				.appendTo($chips)
+				.on("click", () => {
+					if (card.protected) return;
+					member.guest = on ? 0 : 1;
+					this.render();
+				});
+		});
+		card.members
+			.filter((m) => m.guest)
+			.forEach((member) => {
+				const [check_in, check_out] = this.guest_nights(card, member.traveler);
+				$(`<div class="tp-muted">${tp_esc(
+					__("{0}: in {1}, out {2}", [this.crew_name(member.traveler), tp_pretty_date(check_in), tp_pretty_date(check_out)])
+				)}</div>`).appendTo($field);
+			});
 	}
 
 	room_card($parent, card) {
@@ -2154,6 +2302,7 @@ class TripPlanner {
 			this.set_value(card, "check_out_time", val)
 		);
 		this.members_block($card, card, __("Who's in this room?"));
+		this.guests_block($card, card);
 		this.refs_block($card, card);
 		this.money_block($card, card, __("Total for the room, whole stay"));
 		this.card_gaps($card, card);
@@ -2429,7 +2578,11 @@ class TripPlanner {
 				title: __("Confirmation numbers"),
 				ok: __("Every booking has its confirmation number, and every shipment its tracking number."),
 			},
-			{ check: "cost", title: __("Cost and who paid"), ok: __("Every booking has a cost.") },
+			{
+				check: "cost",
+				title: __("Cost and who paid"),
+				ok: __("Every booking has a cost, or is the way home on a round-trip ticket that has one."),
+			},
 		];
 		sections.forEach((section) => {
 			const $sec = $(`<div class="tp-review-sec"><h5>${tp_esc(section.title)}</h5></div>`).appendTo($step);

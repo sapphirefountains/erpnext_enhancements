@@ -2,9 +2,12 @@
 
 Four checks, chosen by the office (2026-09-23) as what "a complete trip" means:
 
-* **A bed every night** — every traveler has somewhere to sleep on every night between
-  their own from/to dates. A room shared by two people counts for both, because Plan a
-  Trip stores one Trip Accommodation row *per occupant* (see ``planner.py``).
+* **A bed every night** — every traveler has somewhere to sleep on every night they are
+  away: their own from/to dates, narrowed by their own travel (:func:`stay_window`), so
+  someone who flies out and back on one day needs no bed whatever dates they are down for.
+  A room shared by two people counts for both, because Plan a Trip stores one Trip
+  Accommodation row *per occupant* (see ``planner.py``) — a guest staying free in someone
+  else's room included.
 * **Travel both ways** — every traveler has a way there and a way back: a flight or a
   ground-transport row pinned to them (or to the whole crew) on the Outbound and the
   Return leg.
@@ -13,7 +16,10 @@ Four checks, chosen by the office (2026-09-23) as what "a complete trip" means:
   and Personal Vehicle rows are exempt: nothing was booked.
 * **Cost and who paid** — the same bookings carry a cost. "Who paid" is already enforced
   by the Travel Trip controller (``paid_by`` is required, and an employee-paid row must
-  name the employee), so a missing cost is the only thing left to flag.
+  name the employee), so a missing cost is the only thing left to flag. A round-trip
+  ticket is ONE charge, so the flight home carries no cost of its own: a flight with no
+  cost is not flagged when its confirmation number is on a flight that has one
+  (:func:`on_another_ticket`).
 
 These are flags, not blockers. The office asked for the trip to *show* what is missing;
 nothing here stops a save or a status change.
@@ -113,6 +119,39 @@ def leg_of(table, row, start, end):
 	if when >= end:
 		return RETURN
 	return DURING
+
+
+def stay_window(trip, traveler):
+	"""(first night, the morning they leave) — the nights one traveler needs a bed.
+
+	Their own dates (:func:`traveler_window`), narrowed by their own travel: no bed before the
+	day their way there leaves, and none from the day their way home leaves. Travel only ever
+	narrows the window, never widens it.
+
+	The first real trip is why: one of the crew flew out at 7:20 AM and home at 3:45 PM the
+	same day, but was down for the whole trip, and the checklist asked for five nights of
+	hotel. Dates are one tick box on the crew step; the flights are what actually got booked.
+
+	``plan_a_trip.js`` ``stay_window`` is the same rule for the page's nights grid.
+	"""
+	start, end = traveler_window(trip, traveler)
+	employee = _get(traveler, "employee")
+	first = {}
+	for table in ("flights", "ground_transport"):
+		for row in _get(trip, table) or []:
+			if not visible_to(row, employee):
+				continue
+			when = segment_date(table, row)
+			leg = leg_of(table, row, start, end)
+			if when is None or leg not in (OUTBOUND, RETURN):
+				continue
+			if leg not in first or when < first[leg]:
+				first[leg] = when
+	if OUTBOUND in first:
+		start = max(start, first[OUTBOUND]) if start else first[OUTBOUND]
+	if RETURN in first:
+		end = min(end, first[RETURN]) if end else first[RETURN]
+	return start, end
 
 
 def _nights(start, end):
@@ -222,7 +261,7 @@ def lodging_gaps(trip):
 
 	for traveler in _travelers(trip):
 		employee = _get(traveler, "employee")
-		start, end = traveler_window(trip, traveler)
+		start, end = stay_window(trip, traveler)
 		missing = []
 		for night in _nights(start, end):
 			covered = False
@@ -316,14 +355,53 @@ def confirmation_gaps(trip):
 	return gaps
 
 
+def _pnr(row):
+	return (_get(row, "booking_reference") or "").strip().upper()
+
+
+def _has_cost(rows):
+	return any(float(_get(row, "cost") or 0) for row in rows)
+
+
+def fares(trip):
+	"""{PNR: keys of the flight bookings that carry a cost under it}."""
+	out = {}
+	for key, rows in _bookings(trip, "flights").items():
+		if _has_cost(rows):
+			for row in rows:
+				if _pnr(row):
+					out.setdefault(_pnr(row), set()).add(key)
+	return out
+
+
+def on_another_ticket(key, rows, fare_map):
+	"""True when a flight booking with no cost of its own rides on another booking's fare.
+
+	A round-trip ticket is one charge — it shows once on the company's invoicing — so the way
+	home has no cost to enter, and splitting the fare across the two flights would give an
+	Expense Claim two lines for a charge that exists once. The fare goes on one flight; every
+	other flight on the same ticket shares its confirmation number (PNR). So: every person on
+	this booking has a PNR, and each PNR is on a *different* booking that has a cost. A fare
+	upgrade on the way home is a real extra charge, entered on that flight as its own cost,
+	and then there is nothing to decide here.
+
+	``plan_a_trip.js`` ``fare_card`` is the same rule for the note on the page's flight card.
+	"""
+	refs = [_pnr(row) for row in rows]
+	return bool(refs) and all(ref and fare_map.get(ref, set()) - {key} for ref in refs)
+
+
 def cost_gaps(trip):
-	"""Bookings with no cost entered at all."""
+	"""Bookings with no cost entered at all, except the way home on a round-trip ticket."""
 	gaps = []
+	fare_map = fares(trip)
 	for table in ("flights", "accommodations", "ground_transport", "freight"):
 		for key, rows in _bookings(trip, table).items():
 			if not _booked(table, rows):
 				continue
-			if any(float(_get(row, "cost") or 0) for row in rows):
+			if _has_cost(rows):
+				continue
+			if table == "flights" and on_another_ticket(key, rows, fare_map):
 				continue
 			gaps.append(
 				{

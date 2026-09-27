@@ -27,9 +27,15 @@ What a card write will and will not touch
   value; writing that back to every row unasked would overwrite the other one silently.
 * **The confirmation number is per person** and always written — the page shows each
   person's own value, so there is nothing to guess.
-* **The total cost is split evenly** across the booking's rows, and only when the total or
-  the set of people changed, so an uneven split typed on the form survives an unrelated
-  edit.
+* **The total cost is split evenly** across the booking's rows, and only when the total,
+  the set of people or who is a guest changed, so an uneven split typed on the form
+  survives an unrelated edit.
+* **A room can have guests** (Trip Accommodation ``guest``): someone sharing another
+  person's room at no cost — an upgraded room, a spare bed. A guest's row gets no share of
+  the cost, sorts after the people paying for the room (so "the first row" everything reads
+  a booking's dates from is the room's own), and has its check-in and check-out fitted to
+  the guest's own nights by :func:`fit_guest_stays`, so their itinerary and calendar invite
+  show the nights they are actually there.
 * **A row on an Expense Claim, or with a Vehicle Log, is never deleted**, and its traveler
   and money fields are never rewritten: the claim was built from them. The page is told.
 
@@ -54,6 +60,7 @@ from erpnext_enhancements.travel_management.completeness import (
 	UNBOOKED_TRANSPORT,
 	find_gaps,
 	group_key,
+	stay_window,
 	to_date,
 )
 
@@ -74,8 +81,8 @@ TRIP_FIELDS = (
 #: deliberate close on the form.
 PAGE_STATUSES = ("Planning", "Booked")
 
-#: The per-person booking tables: the fields one card shares across its rows, and the
-#: per-person confirmation field.
+#: The per-person booking tables: the fields one card shares across its rows, the
+#: per-person confirmation field, and whether a member can be a guest (rooms only).
 BOOKING_TABLES = {
 	"flights": {
 		"shared": (
@@ -104,6 +111,7 @@ BOOKING_TABLES = {
 			"paid_by_traveler",
 		),
 		"ref": "booking_confirmation",
+		"guests": True,
 	},
 	"ground_transport": {
 		"shared": (
@@ -247,6 +255,7 @@ def merge_bookings(existing_rows, cards, table):
 		updated in place, and plain dicts for new rows — and messages for the page.
 	"""
 	spec = BOOKING_TABLES[table]
+	guests = bool(spec.get("guests"))
 	by_name = {_get(row, "name"): row for row in existing_rows if _get(row, "name")}
 	used = set()
 	rows = []
@@ -264,6 +273,7 @@ def merge_bookings(existing_rows, cards, table):
 		}
 		card_rows = []
 		seen_travelers = set()
+		guests_changed = False
 		for member in members:
 			traveler = member.get("traveler") or None
 			if traveler and traveler in seen_travelers:
@@ -288,15 +298,28 @@ def merge_bookings(existing_rows, cards, table):
 				_set(row, field, values[field] if values[field] != "" else None)
 			if not protected:
 				_set(row, "traveler", traveler)
+				if guests:
+					guest = 1 if cint(member.get("guest")) else 0
+					if not is_new and cint(_get(row, "guest")) != guest:
+						guests_changed = True
+					_set(row, "guest", guest)
 			_set(row, spec["ref"], (member.get("ref") or "").strip() or None)
 			_set(row, "booking_group", card["group"])
 			card_rows.append((row, is_new, protected))
 
+		if guests:
+			# The people paying for the room first: the page, the checklist and the crew
+			# itinerary all read a booking's dates off its first row, and a guest's are
+			# fitted to their own nights (fit_guest_stays).
+			card_rows.sort(key=lambda item: cint(_get(item[0], "guest")))
+
 		after = {_get(row, "name") for row, is_new, _p in card_rows if not is_new}
 		membership_changed = any(is_new for _r, is_new, _p in card_rows) or after != before
-		if "cost" in values and ("cost" in changed or membership_changed):
+		if "cost" in values and ("cost" in changed or membership_changed or guests_changed):
 			fixed = sum(flt(_get(row, "cost")) for row, _n, protected in card_rows if protected)
 			open_rows = [row for row, _n, protected in card_rows if not protected]
+			# A guest pays no share. A room where everyone is a guest splits as usual.
+			payers = [row for row in open_rows if not cint(_get(row, "guest"))] or open_rows
 			remaining = flt(values.get("cost")) - fixed
 			if remaining < 0:
 				notes.append(
@@ -305,7 +328,9 @@ def merge_bookings(existing_rows, cards, table):
 					)
 				)
 				remaining = 0
-			for row, amount in zip(open_rows, split_even(remaining, len(open_rows)), strict=False):
+			for row in open_rows:
+				_set(row, "cost", 0.0)
+			for row, amount in zip(payers, split_even(remaining, len(payers)), strict=False):
 				_set(row, "cost", amount)
 
 		rows.extend(row for row, _n, _p in card_rows)
@@ -322,6 +347,43 @@ def merge_bookings(existing_rows, cards, table):
 				)
 			)
 	return rows, notes
+
+
+def fit_guest_stays(trip):
+	"""Give each room guest's row their own nights: the room's dates, cut to the guest's
+	:func:`~erpnext_enhancements.travel_management.completeness.stay_window`.
+
+	A guest usually joins for part of a stay — one night in a colleague's room booked for the
+	week — and their row is what their itinerary and calendar invite read, so it must not
+	say they check in before they have even flown out. Run after every table is merged: the
+	window depends on the flights and drives as well as the traveler's dates.
+
+	The room's dates come from its first non-guest row. A room of guests only, a guest with
+	no traveler, or a guest whose nights fall outside the room keeps the room's dates.
+	"""
+	travelers = {_get(t, "employee"): t for t in _get(trip, "travelers") or []}
+	rooms = {}
+	for row in _get(trip, "accommodations") or []:
+		rooms.setdefault(group_key(row), []).append(row)
+	for rows in rooms.values():
+		host = next((row for row in rows if not cint(_get(row, "guest"))), None)
+		if host is None:
+			continue
+		room_in = to_date(_get(host, "check_in_date"))
+		room_out = to_date(_get(host, "check_out_date"))
+		if not (room_in and room_out):
+			continue
+		for row in rows:
+			traveler = travelers.get(_get(row, "traveler"))
+			if not cint(_get(row, "guest")) or traveler is None:
+				continue
+			start, end = stay_window(trip, traveler)
+			fit_in = max(room_in, start) if start else room_in
+			fit_out = min(room_out, end) if end else room_out
+			if fit_in >= fit_out:
+				fit_in, fit_out = room_in, room_out
+			_set(row, "check_in_date", plain(fit_in))
+			_set(row, "check_out_date", plain(fit_out))
 
 
 def merge_mileage(existing_rows, ground_cards, ground_groups_before, trip_start=None):
@@ -507,17 +569,21 @@ def _cards(doc, table, mileage_by_group):
 
 	cards = []
 	for key, rows in groups.items():
-		first = rows[0]
+		# A guest's dates are their own nights, not the room's (fit_guest_stays).
+		first = next((row for row in rows if not cint(_get(row, "guest"))), rows[0])
 		card = {
 			"group": key,
 			"values": {field: plain(_get(first, field)) for field in spec["shared"]},
 			"members": [
-				{
-					"name": row.name,
-					"traveler": row.traveler or "",
-					"ref": _get(row, spec["ref"]) or "",
-					"protected": is_protected(row),
-				}
+				dict(
+					{
+						"name": row.name,
+						"traveler": row.traveler or "",
+						"ref": _get(row, spec["ref"]) or "",
+						"protected": is_protected(row),
+					},
+					**({"guest": cint(_get(row, "guest"))} if spec.get("guests") else {}),
+				)
 				for row in rows
 			],
 			"protected": any(is_protected(row) for row in rows),
@@ -807,6 +873,8 @@ def apply_plan(doc, plan):
 			)
 			_replace_table(doc, "mileage", mileage)
 			notes.extend(mileage_notes)
+	# After every table: a guest's nights depend on the flights and drives too.
+	fit_guest_stays(doc)
 
 	if "freight" in plan:
 		for shipment in plan["freight"]:
