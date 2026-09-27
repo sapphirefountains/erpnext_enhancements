@@ -798,7 +798,23 @@ def prepare_cards(cards):
 # --------------------------------------------------------------------------- reading
 
 
-def _cards(doc, table, mileage_by_group):
+def _room_address(value, cache):
+	"""A room card's address line: the street address, never the Address record's name the row
+	holds (``address`` is fetched from the hotel's primary address, a Link, so the card showed
+	"Harborview Suites-Billing" under the hotel from v1.520.0 to 2026-09-27). Resolved by
+	``api.travel._address_text``, which returns a value no Address is named as it is. Imported
+	late, as :func:`_viewer` does; if that import fails the value is shown as stored."""
+	raw = str(value or "").strip()
+	if not raw:
+		return ""
+	try:
+		from erpnext_enhancements.api.travel import _address_text
+	except Exception:
+		return raw
+	return _address_text(raw, cache) or ""
+
+
+def _cards(doc, table, mileage_by_group, addresses=None):
 	spec = BOOKING_TABLES[table]
 	groups = {}
 	for row in doc.get(table) or []:
@@ -828,8 +844,9 @@ def _cards(doc, table, mileage_by_group):
 		card["values"]["cost"] = sum(flt(row.cost) for row in rows)
 		card["values"]["billable"] = cint(_get(first, "billable"))
 		if table == "accommodations":
-			# Read-only: fetched from the hotel Supplier's primary address on save.
-			card["address"] = _get(first, "address") or ""
+			# Read-only: fetched from the hotel Supplier's primary address on save, as that
+			# Address's name; shown as its street address. The page never sends it back.
+			card["address"] = _room_address(_get(first, "address"), addresses)
 		if table == "ground_transport" and first.transport_type == "Personal Vehicle":
 			mileage = mileage_by_group.get(key)
 			card["mileage"] = (
@@ -847,6 +864,8 @@ def _cards(doc, table, mileage_by_group):
 
 def get_state(doc):
 	"""The whole trip in the page's shape, plus its checklist."""
+	# Each room's Address read once, however many rooms name it (``_room_address``).
+	addresses = {}
 	mileage_by_group = {}
 	for row in doc.get("mileage") or []:
 		if row.booking_group and row.booking_group not in mileage_by_group:
@@ -881,7 +900,7 @@ def get_state(doc):
 			}
 			for row in doc.get("travelers") or []
 		],
-		"bookings": {table: _cards(doc, table, mileage_by_group) for table in BOOKING_TABLES},
+		"bookings": {table: _cards(doc, table, mileage_by_group, addresses) for table in BOOKING_TABLES},
 		"freight": [
 			dict(
 				{field: plain(_get(row, field)) for field in FREIGHT_FIELDS},
@@ -1004,10 +1023,18 @@ def _viewer():
 	lets a non-coordinator email only themselves, so the everyone button always failed for
 	them. The page shows neither button until it has been told, so ``get_plan`` and
 	``save_plan`` must both keep reporting this. Imported late: ``api.travel`` needs far more
-	of frappe than this module's bench-free test stub provides."""
-	from erpnext_enhancements.api.travel import _is_coordinator, _session_employee
+	of frappe than this module's bench-free test stub provides.
 
-	return {"is_coordinator": _is_coordinator(), "viewer_employee": _session_employee() or None}
+	Also ``sheet_available``, for the Review step's "Print the trip sheet", reported here so both
+	answers carry it: whether the Trip Sheet print format exists (``api.travel._sheet_available``).
+	Until it does, a link to it prints frappe's Standard format, costs included."""
+	from erpnext_enhancements.api.travel import _is_coordinator, _session_employee, _sheet_available
+
+	return {
+		"is_coordinator": _is_coordinator(),
+		"viewer_employee": _session_employee() or None,
+		"sheet_available": _sheet_available(),
+	}
 
 
 @frappe.whitelist()

@@ -22,6 +22,13 @@ only a ``file`` that answer lists for that person. So a link naming a trip outsi
 the boot list, a person, a screen or a file needs nothing from this controller
 beyond keeping the query string through the login redirect.
 
+The same answer carries the trip's ``contacts`` (911, the office travel desk, who booked
+the trip, the trip lead's work mobile, the job site's contact, and the person shown's
+hotels with urgent care nearby, from ``api.travel._trip_contacts``) and the trip sheet's
+addresses (``my_sheet_url`` for the person shown, ``sheet_url`` for the whole trip), which
+``itinerary.js`` draws as the Contacts card and "Print / save as PDF". Neither is in the
+address or the boot, so this controller has no part in them either.
+
 Cache busting: raw ``/assets`` URLs are served 1-year-immutable, so
 ``itinerary.html`` appends ``?v={{ deploy_version }}`` to every mutable asset
 URL (same rationale and token as the kiosk — see

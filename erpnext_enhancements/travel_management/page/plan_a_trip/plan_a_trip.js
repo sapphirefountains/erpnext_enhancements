@@ -34,16 +34,27 @@
 // VIEWS. A saved trip can also be looked at whole, from any step: an Overview (every day, each
 // booking once with who is on it and each person's own confirmation number, and what the
 // checklist says is missing, shown where it is missing), a Crew grid (people down the side,
-// days across), Side by side (a column per person) and View as (exactly what one person's
-// /itinerary shows). A view is not a step: it adds &view= (and &as= for View as) to the
-// address of the step it was opened from, so opening one, switching views or picking another
-// person is its own history entry, and "Back to planning" returns to that step. Nothing is
-// edited in a view, so opening one is never refused: what is on the page is saved quietly
-// first, and a view drawn while a save was refused says those changes are not in it. The
-// views come from api.travel.get_trip_views, which leaves money out for everyone but a
+// days across), Side by side (a column per person), View as (exactly what one person's
+// /itinerary shows) and a Map (every airport, hotel, stop, pick-up, drop-off and freight
+// delivery, numbered in the order the trip reaches them, with the drives between them). A view
+// is not a step: it adds &view= (and &as= for View as) to the address of the step it was opened
+// from, so opening one, switching views or picking another person is its own history entry,
+// and "Back to planning" returns to that step. The Map's day chips are not: a choice on that
+// screen. Nothing is edited in a view, so opening one is never refused: what is on the page is
+// saved quietly first, and a view drawn while a save was refused says those changes are not in
+// it. The views come from api.travel.get_trip_views, which leaves money out for everyone but a
 // travel coordinator — on the server, not by hiding it here. The trip on screen is loaded
 // again when it is asked for from outside the page (the form's "Trip views", Back from the
 // form) and nothing unsaved is on it: it may have been saved over there.
+//
+// WHO TO CALL AND THE TRIP SHEET. The Overview and View as show the server's contacts (911, the
+// office's travel desk, who booked the trip, the trip lead, the job site's contact, each hotel
+// with the nearest urgent care), phones as tel: links. Review, the Overview and View as open the
+// trip sheet (the "Trip Sheet" print format as a PDF, the whole trip or one person's) in a new
+// tab: a link, not a screen, so no history entry. Its cost total is on a coordinator's copy
+// only, which the server decides. The link is drawn only while the site has the format (the
+// views' addresses, or get_plan's `sheet_available` for Review): frappe prints a format it
+// cannot find as Standard, every cost on it.
 //
 // TIMES are native <input type="time">, which shows AM/PM on a US browser or phone. A stored
 // time of exactly midnight reads as "no time given": the Datetime column cannot hold a date
@@ -265,6 +276,27 @@ a.tp-docchip:hover,a.tp-pdoc:hover{border-color:var(--primary,#2490ef);text-deco
 .tp-pdocs{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
 .tp-pdoc{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--control-bg);color:var(--text-color);font-size:14px;text-decoration:none;}
 .tp-pdoc span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tp-contacts{max-width:1000px;}
+.tp-contacts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
+.tp-contact{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.45;min-width:0;overflow-wrap:anywhere;}
+.tp-contact .tp-kicker{margin-bottom:2px;}
+.tp-contact a{display:inline-block;padding:2px 0;}
+.tp-contact.tp-sos{border-color:#dc2626;}
+.tp-contact.tp-sos a{color:#b91c1c;font-size:18px;font-weight:700;}
+.tp-map-days{margin:0 0 10px;}
+.tp-map{height:440px;width:100%;border:1px solid var(--border-color);border-radius:10px;background:var(--control-bg);}
+.tp-map-status{margin:6px 0 10px;}
+.tp-map-list{max-width:760px;}
+.tp-map-day-head{font-weight:600;font-size:15px;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border-color);}
+.tp-map-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);margin-bottom:6px;}
+.tp-map-num{flex:0 0 auto;min-width:26px;height:26px;padding:0 6px;border-radius:13px;color:#fff;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.tp-map-body{flex:1;min-width:0;overflow-wrap:anywhere;}
+.tp-map-body .tp-muted{display:block;}
+.tp-map-open{flex:0 0 auto;font-size:13px;white-space:nowrap;}
+@media (max-width:600px){.tp-map{height:340px;}
+.tp-map-row{flex-wrap:wrap;row-gap:2px;}
+.tp-map-body{flex:1 1 calc(100% - 46px);}
+.tp-map-open{margin-left:36px;}}
 @media (max-width:600px){.tp-ref-row span{flex-basis:110px;}
 .tp-tl-item{flex-wrap:wrap;}
 .tp-tl-time{flex:1 1 auto;}
@@ -276,6 +308,8 @@ a.tp-docchip:hover,a.tp-pdoc:hover{border-color:var(--primary,#2490ef);text-deco
 [data-theme="dark"] .tp-flag,[data-theme="dark"] .tp-who.tp-who-miss,[data-theme="dark"] .tp-xtable td.tp-cell-warn{background:rgba(220,38,38,.18);color:#fca5a5;}
 [data-theme="dark"] .tp-who.tp-who-miss{border-color:#f87171;}
 [data-theme="dark"] .tp-warn,[data-theme="dark"] .tp-miss-text{color:#f87171;}
+[data-theme="dark"] .tp-contact.tp-sos{border-color:#f87171;}
+[data-theme="dark"] .tp-contact.tp-sos a{color:#fca5a5;}
 `;
 
 // Steps, in order. `leg` ties a transport step to the Leg stored on its rows.
@@ -410,7 +444,7 @@ const TP_PAPERWORK = "documents";
 
 // The looks at a whole saved trip (see VIEWS in the header), by their &view= key. Not steps:
 // TP_STEPS is unchanged by them, and a view is drawn over the step it was opened from.
-const TP_VIEWS = ["overview", "grid", "compare", "person"];
+const TP_VIEWS = ["overview", "grid", "compare", "person", "map"];
 
 // One icon per kind of itinerary item (api/travel.py shape_itinerary's `type`).
 const TP_ICONS = {
@@ -421,6 +455,28 @@ const TP_ICONS = {
 	freight: "&#128230;",
 	agenda: "&#128205;",
 };
+
+// The Map view's places, by their `kind` (views.build_trip_views' `places`): the word the list
+// uses, its icon (`glyph` is the same icon as text, for the map's own popups, which are built
+// from elements), and its marker's color. The colors are literal, not theme variables: a marker
+// sits on Google's tiles, not on the desk.
+const TP_PLACE_KINDS = {
+	airport: { label: __("Airport"), icon: "&#9992;", glyph: "✈", color: "#2563eb" },
+	hotel: { label: __("Hotel"), icon: "&#127976;", glyph: "\u{1F3E8}", color: "#7c3aed" },
+	stop: { label: __("Stop"), icon: "&#128205;", glyph: "\u{1F4CD}", color: "#dc2626" },
+	pickup: { label: __("Pick-up"), icon: "&#128663;", glyph: "\u{1F697}", color: "#ea580c" },
+	dropoff: { label: __("Drop-off"), icon: "&#128663;", glyph: "\u{1F697}", color: "#c2410c" },
+	freight: { label: __("Freight delivery"), icon: "&#128230;", glyph: "\u{1F4E6}", color: "#92400e" },
+};
+
+// The lines between places on the Map view (`legs`), by their `kind`.
+const TP_LEG_COLORS = { drive: "#0f766e", walk: "#0f766e", flight: "#475569" };
+
+// The Google Maps libraries the Map view uses, every one: EEGoogleMaps.load imports only what it
+// is asked for (and "maps"), and a symbol from a library nobody asked for is undefined at runtime
+// (tests/test_google_maps_loader.py). marker: AdvancedMarkerElement and Marker; geocoding:
+// Geocoder; routes: DirectionsService.
+const TP_MAP_LIBRARIES = ["marker", "geocoding", "routes"];
 
 function tp_esc(value) {
 	return frappe.utils.escape_html(value == null ? "" : String(value));
@@ -460,6 +516,28 @@ function tp_clock(datetime) {
 function tp_span(from, to) {
 	if (from && to && from !== to) return `${from} – ${to}`;
 	return from || to || "";
+}
+
+// Days from one ISO date to another ("2026-10-01" to "2026-10-03" is 2), counted in UTC from the
+// strings so no time zone or daylight-saving change moves it; NaN when either is not a date.
+function tp_days_apart(from, to) {
+	return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+
+// ISO days as runs of consecutive dates, each run written once ("Thu, Oct 1 – Sun, Oct 4", "Tue,
+// Oct 6"): a hotel is on every night of a stay, and its popup would otherwise list each one.
+function tp_day_runs(days) {
+	const runs = [];
+	(days || [])
+		.filter((day) => typeof day === "string" && day)
+		.slice()
+		.sort()
+		.forEach((day) => {
+			const last = runs[runs.length - 1];
+			if (last && tp_days_apart(last[1], day) === 1) last[1] = day;
+			else if (!last || last[1] !== day) runs.push([day, day]);
+		});
+	return runs.map(([first, end]) => tp_span(tp_pretty_date(first), tp_pretty_date(end))).filter(Boolean);
 }
 
 function tp_item_sort_key(item) {
@@ -574,10 +652,11 @@ function tp_text_to_html(text) {
 }
 
 // A file's address, only when it is one to open: the site's own (/files/..., /private/files/...)
-// or a web link. Never a javascript: or protocol-relative address.
+// or a web link. Never a javascript: or protocol-relative address, and no backslash: a browser
+// reads "/\host" as "//host".
 function tp_file_url(url) {
 	const value = String(url || "").trim();
-	return /^(\/(?!\/)|https?:\/\/)/i.test(value) ? value : "";
+	return /^(\/(?![/\\])|https?:\/\/)/i.test(value) && !value.includes("\\") ? value : "";
 }
 
 // "/private/files/boarding-pass.pdf" -> "boarding-pass.pdf" (planner.get_state's file_name).
@@ -593,6 +672,432 @@ function tp_file_name(url) {
 
 function tp_is_image(name) {
 	return /\.(png|jpe?g|gif|webp|heic)$/i.test(String(name || ""));
+}
+
+// A phone number as a tel: address: its digits and a leading +, nothing else, and "" for one not to
+// dial. An extension ("ext. 2", "x12", "#3") is left off the link: its digits glued on would dial
+// another number. A note beside the number ("Front desk 702-555-0150") is dropped, but a number
+// spelled in letters ("1-800-FLOWERS") would dial something else entirely (1800), so it is no
+// number to dial, and neither is one with fewer than three digits or more than fifteen. The number
+// is shown as it is stored; only the link is cleaned. The same rule as /itinerary's telHref and the
+// server's views.tel_href (tests/test_travel_planner.py runs all three over one table).
+function tp_tel(phone) {
+	let text = String(phone == null ? "" : phone)
+		.replace(/^\s*tel:/i, "")
+		.split(/ext|x|#|;|,/i)[0];
+	if (/[a-z]/i.test(text)) {
+		const runs = text.match(/\+?\d[\d\s().-]*\d/g) || [];
+		if (runs.length !== 1 || runs[0].replace(/\D/g, "").length < 7) return "";
+		text = runs[0];
+	}
+	const digits = text.replace(/\D/g, "");
+	if (digits.length < 3 || digits.length > 15) return "";
+	return `tel:${/^\s*\+/.test(text) ? "+" : ""}${digits}`;
+}
+
+// An email address as a mailto: link, or "" for anything that is not plainly one (no spaces,
+// quotes, brackets, or "?" and "&", which would add a subject or a body to the email).
+function tp_mailto(email) {
+	const value = String(email || "").trim();
+	return /^[^\s@<>"'()?&]+@[^\s@<>"'()?&]+\.[^\s@<>"'()?&]+$/.test(value) ? `mailto:${value}` : "";
+}
+
+// A web link the server built (a hotel's nearest urgent care, directions): https only.
+function tp_https(url) {
+	const value = String(url || "").trim();
+	return /^https:\/\/[^\s"'<>]+$/i.test(value) ? value : "";
+}
+
+// A place's point, when it has a real one: two finite numbers, and not 0,0 (a blank point reads
+// back as 0.0 — see api/travel._poi_address_location).
+function tp_point(place) {
+	if (!place || place.lat == null || place.lng == null || place.lat === "" || place.lng === "") return null;
+	const lat = Number(place.lat);
+	const lng = Number(place.lng);
+	if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+	return { lat: lat, lng: lng };
+}
+
+// Google Maps, searched for a place: its point when it has one, else its words. Always https.
+function tp_maps_search(place) {
+	const point = tp_point(place);
+	const query = point ? `${point.lat},${point.lng}` : String((place && place.query) || "").trim();
+	return query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : "";
+}
+
+function tp_maps_directions(address) {
+	const value = String(address || "").trim();
+	return value ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(value)}` : "";
+}
+
+// An address on this site (a path), or "". Never "//host", a scheme, or a backslash anywhere: a
+// browser reads "/\host" as "//host", another site.
+function tp_local_url(url) {
+	const value = String(url || "");
+	return /^\/(?![/\\])[^\s\\]*$/.test(value) ? value : "";
+}
+
+// The trip sheet (the "Trip Sheet" print format, a PDF of the whole trip, or of one person's when
+// `as` names them), spelled as views.trip_sheet_url spells it, for the Review step only: its
+// answer (get_plan, save_plan) carries no address. Every view draws the server's own address
+// instead (get_trip_views' sheet_url, people_sheet_urls). Drawn only when the server says the
+// format exists (`sheet_available`): frappe prints a format it cannot find as Standard, costs
+// included. &pdf_generator=chrome is not optional: download_pdf uses wkhtmltopdf unless told.
+function tp_sheet_url(trip, as) {
+	let url = `/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=${encodeURIComponent(
+		trip || ""
+	)}&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome`;
+	if (as) url += `&as=${encodeURIComponent(as)}`;
+	return url;
+}
+
+// ------------------------------------------------------------------ the Map view's lookups
+//
+// Where a place the map had to look up is (its words -> {lat, lng}): kept for this page load,
+// and in this browser for 30 days, which is as long as Google's terms let a looked-up point be
+// kept. A convenience only: every read and write of the browser's storage is tried, and without
+// it the map looks the place up again. A place Google could not find is remembered for this
+// page load only. A road between two points is kept for this page load only.
+const TP_GEO_KEY = "tp_map_geocode_v1";
+const TP_GEO_DAYS = 30;
+const TP_GEO_KEEP = 300;
+const tp_map_memory = { places: new Map(), roads: new Map(), directions_off: false };
+
+function tp_geo_key(query) {
+	return String(query || "")
+		.trim()
+		.toLowerCase();
+}
+
+function tp_geo_store() {
+	try {
+		return window.localStorage || null;
+	} catch (e) {
+		return null;
+	}
+}
+
+// A point, null for "not found", or undefined for "never looked up".
+function tp_geo_read(query) {
+	const key = tp_geo_key(query);
+	if (!key) return undefined;
+	if (tp_map_memory.places.has(key)) return tp_map_memory.places.get(key);
+	try {
+		const store = tp_geo_store();
+		const all = store ? JSON.parse(store.getItem(TP_GEO_KEY) || "{}") : null;
+		const hit = all && all[key];
+		if (hit && Number.isFinite(hit.lat) && Number.isFinite(hit.lng) && Date.now() - (hit.at || 0) < TP_GEO_DAYS * 86400000) {
+			const point = { lat: hit.lat, lng: hit.lng };
+			tp_map_memory.places.set(key, point);
+			return point;
+		}
+	} catch (e) {
+		// Blocked, full or unreadable storage is the same as an empty one.
+	}
+	return undefined;
+}
+
+function tp_geo_write(query, point) {
+	const key = tp_geo_key(query);
+	if (!key) return;
+	tp_map_memory.places.set(key, point);
+	if (!point) return;
+	try {
+		const store = tp_geo_store();
+		if (!store) return;
+		const all = JSON.parse(store.getItem(TP_GEO_KEY) || "{}") || {};
+		all[key] = { lat: point.lat, lng: point.lng, at: Date.now() };
+		Object.keys(all)
+			.sort((a, b) => (all[b].at || 0) - (all[a].at || 0))
+			.slice(TP_GEO_KEEP)
+			.forEach((old) => delete all[old]);
+		store.setItem(TP_GEO_KEY, JSON.stringify(all));
+	} catch (e) {
+		// As above: the map works without it.
+	}
+}
+
+// A point Google handed back, as {lat, lng}: a LatLng has lat() and lng() methods, a plain
+// LatLngLiteral has lat and lng properties.
+function tp_lat_lng(loc) {
+	if (!loc) return null;
+	if (typeof loc.lat === "function") return { lat: loc.lat(), lng: loc.lng() };
+	if (typeof loc.lat === "number") return { lat: loc.lat, lng: loc.lng };
+	return null;
+}
+
+// The desk's theme, "dark" or "light": what a Google map is built for (EEGoogleMaps.mapOptions).
+function tp_desk_theme() {
+	const root = typeof document !== "undefined" && document ? document.documentElement : null;
+	return root && root.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+// Put a marker or a line on the map, or take it off: a Marker or a Polyline has setMap, an
+// AdvancedMarkerElement only its `map` property.
+function tp_set_map(thing, map) {
+	if (!thing) return;
+	if (typeof thing.setMap === "function") thing.setMap(map);
+	else thing.map = map;
+}
+
+// The whole-trip map, once Google Maps has loaded: a marker per place, numbered as the list
+// under it numbers them (view_map), each opening a popup built from elements (never from HTML
+// in the data); the drives along the road (DirectionsService, the only road service this view
+// uses: Travel Settings' "Use Routes API" is the Pick Routing Map's setting and never reaches
+// here), a straight dashed line where no road could be found, and each flight as a dashed line
+// along the curve of the earth. `alive()` says whether this map is still the one on screen:
+// every answer from Google that lands later is dropped.
+class TpTripMap {
+	constructor(maps, container, options) {
+		this.maps = maps;
+		this.alive = options.alive;
+		this.config = options.config || {};
+		const style = window.EEGoogleMaps.mapOptions(this.config, options.theme);
+		this.map = new maps.Map(
+			container,
+			Object.assign(
+				{
+					zoom: 4,
+					center: { lat: 39.5, lng: -98.35 },
+					mapTypeControl: false,
+					streetViewControl: false,
+					fullscreenControl: true,
+					gestureHandling: "cooperative",
+				},
+				style
+			)
+		);
+		// Advanced markers need a Map ID; without one the map uses the classic marker.
+		this.advanced = !!(style.mapId && maps.marker && maps.marker.AdvancedMarkerElement);
+		this.info = new maps.InfoWindow();
+		this.markers = [];
+		this.lines = [];
+		this.day = "";
+		this.pending = {};
+	}
+
+	// Every place on the map; resolves with how many could not be placed. The day shown is the
+	// map's own (this.day): a day chip tapped while the places are still being looked up calls
+	// show_day, and the draw that finishes after it keeps that day rather than the one it was
+	// started with (which put every day back on the map under the tapped chip).
+	draw(places, legs, day) {
+		this.day = day || "";
+		const points = {};
+		const placed = places.map((place) =>
+			this.locate(place).then((point) => {
+				if (!point || !this.alive()) return;
+				points[place.key] = point;
+				const marker = this.marker_for(place, point);
+				marker.addListener("click", () => {
+					this.info.setContent(this.popup(place));
+					this.info.open({ map: this.map, anchor: marker });
+				});
+				this.markers.push({ place: place, marker: marker, point: point });
+			})
+		);
+		return Promise.all(placed).then(() => {
+			if (!this.alive()) return 0;
+			this.show_day(this.day);
+			// The markers are up; the lines follow, one road at a time.
+			this.draw_legs(legs, points).catch(() => {});
+			return places.length - this.markers.length;
+		});
+	}
+
+	locate(place) {
+		const point = tp_point(place);
+		if (point) return Promise.resolve(point);
+		const query = String(place.query || "").trim();
+		if (!query) return Promise.resolve(null);
+		const known = tp_geo_read(query);
+		if (known !== undefined) return Promise.resolve(known);
+		const key = tp_geo_key(query);
+		if (this.pending[key]) return this.pending[key];
+		this.pending[key] = new Promise((resolve) => {
+			try {
+				this.geocoder = this.geocoder || new this.maps.Geocoder();
+				this.geocoder.geocode({ address: query }, (results, status) => {
+					if (status === "OK" && results && results[0] && results[0].geometry) {
+						const found = tp_lat_lng(results[0].geometry.location);
+						tp_geo_write(query, found);
+						resolve(found);
+						return;
+					}
+					if (status === "ZERO_RESULTS") tp_geo_write(query, null);
+					resolve(null);
+				});
+			} catch (e) {
+				resolve(null);
+			}
+		});
+		return this.pending[key];
+	}
+
+	marker_for(place, point) {
+		const kind = TP_PLACE_KINDS[place.kind] || TP_PLACE_KINDS.stop;
+		const title = `${place.number}. ${place.label || kind.label}`;
+		if (this.advanced) {
+			const pin = document.createElement("div");
+			pin.textContent = String(place.number);
+			pin.style.cssText =
+				"min-width:26px;height:26px;padding:0 6px;border-radius:13px;border:2px solid #fff;" +
+				"display:flex;align-items:center;justify-content:center;box-sizing:border-box;" +
+				`background:${kind.color};color:#fff;font:700 12px/1 sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4);`;
+			return new this.maps.marker.AdvancedMarkerElement({ position: point, content: pin, title: title });
+		}
+		return new this.maps.Marker({
+			position: point,
+			title: title,
+			label: { text: String(place.number), color: "#ffffff", fontSize: "12px", fontWeight: "700" },
+			icon: {
+				path: this.maps.SymbolPath.CIRCLE,
+				scale: 13,
+				fillColor: kind.color,
+				fillOpacity: 1,
+				strokeColor: "#ffffff",
+				strokeWeight: 2,
+			},
+		});
+	}
+
+	// A place's popup: text in elements, and its Google Maps link. The popup is always light,
+	// so its colors are literal.
+	popup(place) {
+		const kind = TP_PLACE_KINDS[place.kind] || TP_PLACE_KINDS.stop;
+		const box = document.createElement("div");
+		box.style.cssText = "min-width:170px;max-width:260px;color:#202124;font-size:13px;line-height:1.4;";
+		const line = (text, bold) => {
+			if (!text) return;
+			const el = document.createElement("div");
+			el.textContent = text;
+			if (bold) el.style.fontWeight = "600";
+			box.appendChild(el);
+		};
+		line(`${place.number}. ${place.label || kind.label}`, true);
+		line(`${kind.glyph} ${kind.label}`);
+		// A hotel is on every night of a stay: its days as runs ("Oct 1 – Oct 4"), not each date.
+		line(tp_day_runs(place.days || []).join(", "));
+		line(place.first_time ? __("From {0}", [tp_pretty_time(place.first_time)]) : "");
+		line((place.who || []).join(", "));
+		const url = tp_maps_search(place);
+		if (url) {
+			const link = document.createElement("a");
+			link.href = url;
+			link.target = "_blank";
+			link.rel = "noopener";
+			link.textContent = __("Open in Google Maps");
+			box.appendChild(link);
+		}
+		return box;
+	}
+
+	// One day's places and legs, or every day's ("").
+	show_day(day) {
+		this.day = day || "";
+		const bounds = new this.maps.LatLngBounds();
+		let shown = 0;
+		this.markers.forEach((entry) => {
+			const on = !this.day || (entry.place.days || []).includes(this.day);
+			tp_set_map(entry.marker, on ? this.map : null);
+			if (on) {
+				bounds.extend(entry.point);
+				shown += 1;
+			}
+		});
+		this.lines.forEach((entry) => tp_set_map(entry.line, this.on_day(entry.leg) ? this.map : null));
+		if (shown > 1) {
+			this.map.fitBounds(bounds, 48);
+		} else if (shown === 1) {
+			this.map.setCenter(bounds.getCenter());
+			this.map.setZoom(13);
+		}
+		this.info.close();
+	}
+
+	on_day(leg) {
+		return !this.day || leg.day === this.day;
+	}
+
+	async draw_legs(legs, points) {
+		for (const leg of legs) {
+			if (!this.alive()) return;
+			const from = points[leg.from];
+			const to = points[leg.to];
+			if (!from || !to || (from.lat === to.lat && from.lng === to.lng)) continue;
+			const kind = TP_LEG_COLORS[leg.kind] ? leg.kind : "drive";
+			const road = kind === "flight" ? null : await this.road(from, to, kind);
+			if (!this.alive()) return;
+			const line = road ? this.solid_line(road, kind) : this.dashed_line([from, to], kind);
+			this.lines.push({ leg: leg, line: line });
+			tp_set_map(line, this.on_day(leg) ? this.map : null);
+		}
+	}
+
+	// The road from one point to another, as a path, or null (then a straight dashed line), from
+	// DirectionsService. A key without the Directions API (REQUEST_DENIED) turns it off for the
+	// rest of this page load, so no request is made that cannot succeed.
+	road(from, to, kind) {
+		const key = `${kind}|${from.lat.toFixed(5)},${from.lng.toFixed(5)}|${to.lat.toFixed(5)},${to.lng.toFixed(5)}`;
+		if (tp_map_memory.roads.has(key)) return Promise.resolve(tp_map_memory.roads.get(key));
+		const keep = (path) => {
+			tp_map_memory.roads.set(key, path);
+			return path;
+		};
+		if (tp_map_memory.directions_off) return Promise.resolve(null);
+		return this.by_directions(from, to, kind).then(keep, (status) => {
+			if (status === "REQUEST_DENIED") tp_map_memory.directions_off = true;
+			if (status === "ZERO_RESULTS" || status === "NOT_FOUND") keep(null);
+			return null;
+		});
+	}
+
+	by_directions(from, to, kind) {
+		return new Promise((resolve, reject) => {
+			try {
+				this.directions = this.directions || new this.maps.DirectionsService();
+				this.directions.route(
+					{
+						origin: from,
+						destination: to,
+						travelMode: kind === "walk" ? this.maps.TravelMode.WALKING : this.maps.TravelMode.DRIVING,
+					},
+					(result, status) => {
+						const route = status === "OK" && result && result.routes && result.routes[0];
+						const path = route ? (route.overview_path || []).map(tp_lat_lng).filter(Boolean) : [];
+						if (path.length >= 2) resolve(path);
+						else reject(status || "ERROR");
+					}
+				);
+			} catch (e) {
+				reject("ERROR");
+			}
+		});
+	}
+
+	solid_line(path, kind) {
+		return new this.maps.Polyline({
+			path: path,
+			strokeColor: TP_LEG_COLORS[kind],
+			strokeOpacity: 0.85,
+			strokeWeight: 4,
+		});
+	}
+
+	// A flight, or a drive no road was found for: dashes, so it never reads as the road taken.
+	dashed_line(path, kind) {
+		return new this.maps.Polyline({
+			path: path,
+			geodesic: kind === "flight",
+			strokeOpacity: 0,
+			icons: [
+				{
+					icon: { path: "M 0,-1 0,1", strokeOpacity: 0.9, strokeColor: TP_LEG_COLORS[kind], scale: 3 },
+					offset: "0",
+					repeat: "14px",
+				},
+			],
+		});
+	}
 }
 
 function tp_is_paperwork(gap) {
@@ -665,6 +1170,13 @@ class TripPlanner {
 		// screen, not screens of their own.
 		this.preview = null;
 		this.compare_hidden = null;
+		// The Map view's day ({trip, day}, "" for every day: a choice on that screen, not a
+		// screen of its own), and a count bumped by every draw of it, so an answer from Google
+		// for a map no longer on screen is dropped (view_map).
+		this.map_day = null;
+		this.map_gen = 0;
+		// The Map view's watch on the desk theme (watch_map_theme): one at a time.
+		this.map_theme_observer = null;
 		// View as asked for someone the saved trip does not have ({trip, shown}): it shows its
 		// default person instead and says so (note_missing_person, view_person).
 		this.as_missing = null;
@@ -1941,7 +2453,7 @@ class TripPlanner {
 
 	gap_text(gap) {
 		const who = tp_esc(gap.employee_name || "");
-		const what = tp_esc(gap.label || __("A booking"));
+		const what = tp_esc(this.booking_heading(gap.group, gap.label) || __("A booking"));
 		if (gap.check === "travel") {
 			return gap.kind === "Outbound"
 				? __("{0} has no way there yet.", [who])
@@ -2024,6 +2536,8 @@ class TripPlanner {
 		// ones before their inputs are thrown away.
 		(this.suggesters || []).forEach((suggester) => suggester.destroy());
 		this.suggesters = [];
+		// A Map view being drawn again starts its own watch on the theme; anything else needs none.
+		this.stop_map_theme_watch();
 		this.body.empty();
 		// A view is drawn instead of the step, across the page's full width, without the
 		// step tabs or the Back/Next bar: "Back to planning" is its way back.
@@ -2085,6 +2599,7 @@ class TripPlanner {
 			["overview", __("Overview")],
 			["grid", __("Crew grid")],
 			["compare", __("Side by side")],
+			["map", __("Map")],
 		].forEach(([key, label]) => {
 			$(`<button class="tp-vbtn ${this.view === key ? "tp-active" : ""}">${tp_esc(label)}</button>`)
 				.appendTo($bar)
@@ -2656,6 +3171,84 @@ class TripPlanner {
 		if (card.table === "accommodations") return v.hotel_lodging || __("Room");
 		const type = TP_RIDE_TYPES.find((x) => x.value === v.transport_type);
 		return v.supplier || v.vehicle || (type ? type.label : __("Drive"));
+	}
+
+	freight_label(item) {
+		return [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment");
+	}
+
+	// What each booking is called in a list ({page key: {label, heading}}), where two bookings
+	// can have the same name: the policy is one adult to a room, so two rooms at one hotel are two
+	// bookings named after it. Only where names are alike, a heading adds who is on the booking
+	// ("Harborview Suites · Ana"), then its dates if that still leaves two alike (one person's
+	// split stay) — as /itinerary's bookingHeadings does on its Documents screen. Only the words
+	// change: a booking is still found by its key (card.group, freight_key), never by its name.
+	booking_headings() {
+		if (!this.state) return {};
+		const entries = [];
+		const people_words = (card) =>
+			card.members.some((m) => !m.traveler)
+				? __("Whole crew")
+				: this.card_people(card)
+						.map((employee) => this.crew_name(employee))
+						.join(", ");
+		["flights", "accommodations", "ground_transport"].forEach((table) => {
+			this.cards(table).forEach((card) => {
+				const v = card.values;
+				entries.push({
+					key: card.group,
+					label: this.card_label(card),
+					who: people_words(card),
+					dates: {
+						flights: [tp_date_part(v.departure_time)],
+						accommodations: [v.check_in_date, v.check_out_date],
+						ground_transport: [tp_date_part(v.pickup_datetime), tp_date_part(v.return_datetime)],
+					}[table],
+				});
+			});
+		});
+		(this.state.freight || []).forEach((item) => {
+			const key = this.freight_key(item);
+			if (!key) return;
+			entries.push({
+				key: key,
+				label: this.freight_label(item),
+				who: item.traveler ? this.crew_name(item.traveler) : __("Whole crew"),
+				dates: [tp_date_part(item.pickup_from), tp_date_part(item.delivery_from || item.delivery_to)],
+			});
+		});
+		entries.forEach((entry) => {
+			entry.heading = entry.label;
+		});
+		const tell = (describe) => {
+			const count = {};
+			entries.forEach((entry) => {
+				count[entry.heading] = (count[entry.heading] || 0) + 1;
+			});
+			entries.forEach((entry) => {
+				const more = count[entry.heading] > 1 ? describe(entry) : "";
+				if (more) entry.heading += ` · ${more}`;
+			});
+		};
+		tell((entry) => entry.who);
+		tell((entry) => {
+			const days = entry.dates.filter(Boolean).map(tp_pretty_date);
+			return tp_span(days[0] || "", days[1] || "");
+		});
+		const out = {};
+		entries.forEach((entry) => {
+			out[entry.key] = { label: entry.label, heading: entry.heading };
+		});
+		return out;
+	}
+
+	// A booking's words in a list: `label` (the server's, on a gap) or its name on the page, plus
+	// what tells it from a booking of the same name (booking_headings). A key the page does not
+	// have keeps `label` as it is.
+	booking_heading(key, label) {
+		const entry = key ? this.booking_headings()[key] : null;
+		if (!entry) return label || "";
+		return `${label || entry.label}${entry.heading.slice(entry.label.length)}`;
 	}
 
 	datetime_pair($parent, label, value, on_change, required) {
@@ -3261,7 +3854,8 @@ class TripPlanner {
 		});
 	}
 
-	// Every booking the page has, with where it is planned: the Files step lists their files.
+	// Every booking the page has, with where it is planned: the Files step lists their files,
+	// each under its name, told apart from another booking of the same name (booking_heading).
 	booking_list() {
 		const icons = { flights: "&#9992;", accommodations: "&#127976;", ground_transport: "&#128663;" };
 		const out = [];
@@ -3269,7 +3863,7 @@ class TripPlanner {
 			this.cards(table).forEach((card) => {
 				out.push({
 					key: card.group,
-					label: this.card_label(card),
+					label: this.booking_heading(card.group) || this.card_label(card),
 					icon: icons[table],
 					step: table === "accommodations" ? "lodging" : TP_LEG_STEP[card.values.leg] || "around",
 					target: this.booking_target(card),
@@ -3281,7 +3875,7 @@ class TripPlanner {
 			if (!key) return;
 			out.push({
 				key: key,
-				label: [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment"),
+				label: this.booking_heading(key) || this.freight_label(item),
 				icon: "&#128230;",
 				step: "freight",
 				target: this.freight_target(item),
@@ -3866,7 +4460,14 @@ class TripPlanner {
 				.appendTo($actions)
 				.on("click", () => this.send_itineraries(me));
 		}
+		// The whole trip on a page or two, for the job folder or a crew lead who won't open the
+		// app. Anyone can print it; only a coordinator's copy carries the cost (the server's rule).
+		// Only once the site has the format: a link to a missing one prints Standard, with costs.
+		if (s.sheet_available === true) this.sheet_link($actions, __("Print the trip sheet"), tp_sheet_url(s.name));
 		$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" href="${frappe.utils.get_form_link("Travel Trip", s.name)}">${__("Open the full form")}</a>`).appendTo($actions);
+		if (this.is_dirty()) {
+			$(`<div class="tp-muted">${__("The trip sheet shows the trip as last saved.")}</div>`).appendTo($step);
+		}
 	}
 
 	render_numbers_by_person($step) {
@@ -3993,6 +4594,7 @@ class TripPlanner {
 			grid: () => this.view_grid($view, data),
 			compare: () => this.view_compare($view, data),
 			person: () => this.view_person($view, data),
+			map: () => this.view_map($view, data),
 		})[view]();
 	}
 
@@ -4202,12 +4804,17 @@ class TripPlanner {
 		const files = tp_files_not_attached(data.gaps);
 		if (files) tiles.push([__("Files not attached"), files, "tp-quiet"]);
 		if (money) tiles.push([__("Booked so far"), format_currency(money.total, money.currency)]);
+		const $actions = $('<div class="tp-add"></div>').appendTo($view);
+		// The server's address, and only one of this site's; none while the format is missing.
+		const sheet = tp_local_url(data.sheet_url);
+		if (sheet) this.sheet_link($actions, __("Print the trip sheet"), sheet);
 		$(`<div class="tp-sum">${tiles
 			.map(
 				([label, value, quiet]) =>
 					`<div${quiet ? ` class="${quiet}"` : ""}><span class="tp-muted">${tp_esc(label)}</span><b>${tp_esc(value)}</b></div>`
 			)
 			.join("")}</div>`).appendTo($view);
+		this.contacts_block($view, data.contacts);
 		this.trip_files($view, data);
 
 		// Per-person gaps on their day; per-booking gaps on the booking, the first time it
@@ -4505,6 +5112,312 @@ class TripPlanner {
 		}${tp_esc(facts.title)}${number}${count}</div>`;
 	}
 
+	// ---- Map: every place on the trip, the drives between them, and a list of them by day
+	//
+	// The places are the server's (views.build_trip_views' `places` and `legs`: airports,
+	// hotels, stops, pick-ups and drop-offs, freight deliveries — nothing about money). A place
+	// with a point is put where it is; one with only words (a hotel's address, "PHX airport") is
+	// looked up with Google's Geocoder and remembered (tp_geo_read). Each is numbered in the
+	// order the trip reaches it — by its first day, then its first time — and the list under the
+	// map, which is drawn whether or not the map can be (no key, Google down), uses the same
+	// numbers, each place with its Google Maps link. The day chips are a choice on this screen,
+	// not a screen: no history entry.
+
+	view_map($view, data) {
+		// Any map drawn before this one is no longer on screen: its answers are dropped.
+		const gen = ++this.map_gen;
+		const trip = data.trip;
+		const places = this.map_places(data);
+		const legs = (Array.isArray(data.legs) ? data.legs : []).filter((leg) => leg && leg.from && leg.to);
+		if (!places.length) {
+			$(`<div class="tp-muted">${__(
+				"Nothing on this trip has a place yet. Airports, hotels, drives, stops and freight deliveries show here once they are entered."
+			)}</div>`).appendTo($view);
+			return;
+		}
+		// Days are numbered from the trip's first day, as the printed Trip Sheet numbers them.
+		const start = data.start_date || "";
+		const day_list = [];
+		places.forEach((place) =>
+			place.days.forEach((day) => {
+				if (!day_list.includes(day)) day_list.push(day);
+			})
+		);
+		day_list.sort();
+		if (!this.map_day || this.map_day.trip !== trip || (this.map_day.day && !day_list.includes(this.map_day.day))) {
+			this.map_day = { trip: trip, day: "" };
+		}
+		// No key, or no loader (the desk bundle did not load): the list is the map.
+		const maps = data.maps || {};
+		const blocked = !maps.api_key
+			? __("Add the Google Maps key in Travel Settings to see the map.")
+			: !window.EEGoogleMaps
+			? __("The map could not be loaded right now. The places are listed below.")
+			: "";
+		const $chips = $('<div class="tp-viewbar tp-map-days"></div>').appendTo($view);
+		const $canvas = blocked ? null : $('<div class="tp-map"></div>').appendTo($view);
+		const $status = $(`<div class="tp-muted tp-map-status">${tp_esc(blocked)}</div>`).appendTo($view);
+		const $list = $('<div class="tp-map-list"></div>').appendTo($view);
+		let trip_map = null;
+
+		const draw_day = () => {
+			const day = this.map_day.day;
+			$chips.empty();
+			[["", __("All days")]]
+				.concat(day_list.map((date) => [date, this.map_day_words(date, start)]))
+				.forEach(([date, words]) => {
+					$(`<button class="tp-vbtn tp-map-day ${date === day ? "tp-active" : ""}" data-day="${tp_esc(date)}">${tp_esc(
+						words
+					)}</button>`)
+						.appendTo($chips)
+						.on("click", () => {
+							if (this.map_day.day === date) return;
+							this.map_day = { trip: trip, day: date };
+							draw_day();
+						});
+				});
+			$list.empty();
+			this.map_list($list, places, day_list, day, start);
+			if (trip_map) trip_map.show_day(day);
+		};
+		draw_day();
+		if (blocked) return;
+
+		const key = this.views_key();
+		const alive = () => gen === this.map_gen && this.view === "map" && this.views_key() === key;
+		const theme = tp_desk_theme();
+		this.watch_map_theme(theme, alive);
+		window.EEGoogleMaps.load({ apiKey: maps.api_key, libraries: TP_MAP_LIBRARIES })
+			.then((google_maps) => {
+				if (!alive()) return null;
+				trip_map = new TpTripMap(google_maps, $canvas[0], { alive: alive, config: maps, theme: theme });
+				return trip_map.draw(places, legs, this.map_day.day);
+			})
+			.then(
+				(missing) => {
+					if (!alive() || !missing) return;
+					$status.text(
+						missing === 1
+							? __("1 place could not be found on the map. Its Google Maps link is in the list below.")
+							: __("{0} places could not be found on the map. Their Google Maps links are in the list below.", [
+									missing,
+							  ])
+					);
+				},
+				() => {
+					if (!alive()) return;
+					trip_map = null;
+					$canvas.remove();
+					$status.text(__("The map could not be loaded right now. The places are listed below."));
+				}
+			);
+	}
+
+	// A Map ID and a colorScheme are fixed when a Google map is made (google_maps_loader.js):
+	// setOptions() restyles neither. So when the desk's theme flips while the map is on screen (the
+	// theme toggle, or Automatic following the device), the view is drawn again for the new theme,
+	// as the location timeline and the kiosk map are: from the views' answer already here, on the
+	// day already chosen, and the old map's late answers are dropped (map_gen). One watch at a
+	// time: the next view_map and every render() stop this one, and it stops itself once its map
+	// has left the screen.
+	watch_map_theme(theme, alive) {
+		this.stop_map_theme_watch();
+		const root = typeof document !== "undefined" && document ? document.documentElement : null;
+		if (typeof MutationObserver !== "function" || !root) return;
+		const observer = new MutationObserver(() => {
+			if (!alive()) {
+				observer.disconnect();
+				if (this.map_theme_observer === observer) this.map_theme_observer = null;
+				return;
+			}
+			if (tp_desk_theme() === theme) return;
+			this.stop_map_theme_watch();
+			this.render();
+		});
+		observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+		this.map_theme_observer = observer;
+	}
+
+	stop_map_theme_watch() {
+		if (this.map_theme_observer) this.map_theme_observer.disconnect();
+		this.map_theme_observer = null;
+	}
+
+	// The places, numbered in the order the trip reaches them: by first day, then first time (a
+	// place with no time comes after the timed ones that day), then as the server listed them;
+	// a place with no day yet last. Each keeps its own sorted days.
+	map_places(data) {
+		const list = (Array.isArray(data.places) ? data.places : []).filter(
+			(place) => place && typeof place === "object" && (tp_point(place) || String(place.query || "").trim())
+		);
+		// Plain comparison, not localeCompare: a collation puts "~" (no time) before the digits.
+		const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+		return list
+			.map((place, index) => {
+				const days = (Array.isArray(place.days) ? place.days : []).filter((d) => typeof d === "string").sort();
+				const time = /^\d{2}:\d{2}/.test(String(place.first_time || "")) ? String(place.first_time).slice(0, 5) : "~";
+				return { place: place, index: index, days: days, time: time };
+			})
+			.sort(
+				(a, b) =>
+					(a.days.length ? 0 : 1) - (b.days.length ? 0 : 1) ||
+					compare(a.days[0] || "", b.days[0] || "") ||
+					compare(a.time, b.time) ||
+					a.index - b.index
+			)
+			.map((entry, i) =>
+				Object.assign({}, entry.place, {
+					key: entry.place.key || `place-${entry.index}`,
+					days: entry.days,
+					who: Array.isArray(entry.place.who) ? entry.place.who : [],
+					number: i + 1,
+				})
+			);
+	}
+
+	// "Day 2 · Tue, Oct 6": numbered from the trip's first day (`start`), as the Trip Sheet
+	// numbers it (views.build_trip_sheet), so the map and the paper in a crew lead's hand say the
+	// same day. A day before the trip starts (a flight the evening before) has no number. Until
+	// 2026-09-27 this counted the days the views show, which include that evening, so every chip
+	// was one ahead of the sheet.
+	map_day_words(date, start) {
+		const pretty = tp_pretty_date(date) || date;
+		const number = start ? tp_days_apart(start, date) + 1 : NaN;
+		return number >= 1 ? __("Day {0} · {1}", [number, pretty]) : pretty;
+	}
+
+	// The list under the map: each day's places (a hotel is under every day it is on), with the
+	// map's numbers, what each is, when and who, and its Google Maps link; then the places with
+	// no day yet, on "All days" only.
+	map_list($list, places, day_list, day, start) {
+		const row = (place, first) => {
+			const kind = TP_PLACE_KINDS[place.kind] || TP_PLACE_KINDS.stop;
+			const url = tp_maps_search(place);
+			const facts = [
+				kind.label,
+				first && place.first_time ? tp_pretty_time(place.first_time) : "",
+				place.who.join(", "),
+			].filter(Boolean);
+			$(`<div class="tp-map-row">
+				<span class="tp-map-num" style="background:${kind.color};">${place.number}</span>
+				<span class="tp-map-body"><b>${kind.icon} ${tp_esc(place.label || kind.label)}</b><span class="tp-muted">${tp_esc(
+					facts.join(" · ")
+				)}</span></span>
+				${
+					url
+						? `<a class="tp-map-open" target="_blank" rel="noopener" href="${tp_esc(url)}">${__("Open in Google Maps")} &#8599;</a>`
+						: ""
+				}
+			</div>`).appendTo($list);
+		};
+		(day ? [day] : day_list).forEach((date) => {
+			$(`<div class="tp-map-day-head">${tp_esc(this.map_day_words(date, start))}</div>`).appendTo($list);
+			places.filter((place) => place.days.includes(date)).forEach((place) => row(place, place.days[0] === date));
+		});
+		const undated = day ? [] : places.filter((place) => !place.days.length);
+		if (undated.length) {
+			$(`<div class="tp-map-day-head">${__("No date yet")}</div>`).appendTo($list);
+			undated.forEach((place) => row(place, false));
+		}
+	}
+
+	// ---- Who to call, and the trip sheet
+
+	// A link that opens the trip sheet (a PDF) in a new tab: no history entry, nothing saved.
+	// The sheet is the trip as saved, like every view.
+	sheet_link($parent, label, url) {
+		$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" target="_blank" rel="noopener" href="${tp_esc(
+			url
+		)}">&#128424; ${tp_esc(label)}</a>`).appendTo($parent);
+	}
+
+	// Who to call (the server's `contacts`, api/travel._trip_contacts): 911, the office's travel
+	// desk, who booked the trip, the trip lead, the job site's contact, and each hotel with the
+	// nearest urgent care and directions. Only these: a crew member's own phone, address or next
+	// of kin is never sent (the trip lead's work mobile is). A phone is a tel: link of its digits;
+	// a Google link the server built is shown only when it is https. `hotels`: the hotels to
+	// show — one person's, on View as — else every hotel on the trip.
+	contacts_block($parent, contacts, hotels) {
+		if (!contacts || typeof contacts !== "object") return;
+		const $sec = $(`<div class="tp-review-sec tp-contacts"><h5>${__("Who to call")}</h5></div>`).appendTo($parent);
+		const $grid = $('<div class="tp-contacts-grid"></div>').appendTo($sec);
+		const phone = (value) => {
+			if (!value) return "";
+			const tel = tp_tel(value);
+			return tel ? `<a href="${tp_esc(tel)}">&#128222; ${tp_esc(value)}</a>` : tp_esc(value);
+		};
+		const email = (value) => {
+			if (!value) return "";
+			const mail = tp_mailto(value);
+			return mail ? `<a href="${tp_esc(mail)}">${tp_esc(value)}</a>` : tp_esc(value);
+		};
+		const web = (url, text) =>
+			url ? `<a target="_blank" rel="noopener" href="${tp_esc(url)}">${tp_esc(text)} &#8599;</a>` : "";
+		const card = (kicker, name, lines, extra) => {
+			const body = lines
+				.filter(Boolean)
+				.map((line) => `<div>${line}</div>`)
+				.join("");
+			if (!name && !body) return;
+			$(`<div class="tp-contact ${extra || ""}"><div class="tp-kicker">${tp_esc(kicker)}</div>${
+				name ? `<b>${tp_esc(name)}</b>` : ""
+			}${body}</div>`).appendTo($grid);
+		};
+		card(__("Emergency"), "", [phone(contacts.emergency || "911")], "tp-sos");
+		const office = contacts.office;
+		if (office && typeof office === "object") {
+			card(__("Office travel desk"), office.label || __("Travel desk"), [phone(office.phone), email(office.email)]);
+		}
+		const booked = contacts.booked_by;
+		if (booked && typeof booked === "object") {
+			card(__("Booked by"), booked.name, [phone(booked.phone), email(booked.email)]);
+		}
+		const lead = contacts.lead;
+		if (lead && typeof lead === "object") card(__("Trip lead"), lead.name, [phone(lead.phone)]);
+		const site = contacts.site;
+		if (site && typeof site === "object") {
+			card(__("Job site"), site.label, [
+				site.contact_name ? tp_esc(site.contact_name) : "",
+				phone(site.phone),
+				email(site.email),
+				site.address ? tp_esc(site.address) : "",
+				web(tp_maps_directions(site.address), __("Directions")),
+			]);
+		}
+		const stays = Array.isArray(hotels) ? hotels : Array.isArray(contacts.hotels) ? contacts.hotels : [];
+		stays.forEach((hotel) => {
+			if (!hotel || typeof hotel !== "object") return;
+			card(__("Hotel"), hotel.name, [
+				phone(hotel.phone),
+				hotel.address ? tp_esc(hotel.address) : "",
+				[web(tp_https(hotel.urgent_care_url), __("Nearest urgent care")), web(tp_https(hotel.directions_url), __("Directions"))]
+					.filter(Boolean)
+					.join(" &middot; "),
+			]);
+		});
+	}
+
+	// The hotels on one person's card, as `contacts` lists them: exactly what their /itinerary's
+	// contacts show. The server says which (get_trip_views' `people_hotels`, by the rule
+	// /itinerary uses: every room pinned to them or to the whole crew, dates or none). Rebuilding
+	// it here from their check-ins left off a room with no dates yet, which has none. An answer
+	// without the list falls back to the check-ins.
+	person_hotels(data, employee) {
+		const listed = data.people_hotels && data.people_hotels[employee];
+		const names = new Set();
+		if (Array.isArray(listed)) {
+			listed.forEach((name) => names.add(name));
+		} else {
+			((data.people || {})[employee] || []).forEach((day) =>
+				(day.items || []).forEach((item) => {
+					if ((item.type === "hotel_checkin" || item.type === "hotel_checkout") && item.hotel) names.add(item.hotel);
+				})
+			);
+		}
+		const hotels = (data.contacts && Array.isArray(data.contacts.hotels) && data.contacts.hotels) || [];
+		return hotels.filter((hotel) => hotel && names.has(hotel.name));
+	}
+
 	// ---- View as: exactly what one person's /itinerary shows
 
 	view_person($view, data) {
@@ -4530,6 +5443,13 @@ class TripPlanner {
 			$(`<div class="tp-muted">${__("{0} is not on the saved trip yet.", [tp_esc(name)])}</div>`).appendTo($view);
 			return;
 		}
+		// Their own sheet: the trip as their /itinerary shows it (the server filters it by `as`),
+		// at the address the server gave for them, and only one of this site's. None while the
+		// format is missing: the page never spells one the server did not send.
+		const sheet = tp_local_url((data.people_sheet_urls || {})[employee]);
+		if (sheet) this.sheet_link($head, __("Print {0}'s sheet", [name]), sheet);
+		// Who to call, as their phone shows it: the hotels they sleep in, not everyone's.
+		this.contacts_block($view, data.contacts, this.person_hotels(data, employee));
 		this.render_preview($view, employee, name, data);
 		this.person_trip_files($view, data, employee, name);
 		if (!days.length) {

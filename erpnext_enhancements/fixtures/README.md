@@ -76,6 +76,13 @@ app keeps those channels disjoint from fixture-owned records:
   Comments tab fields. All records it manages are `is_system_generated = 1`
   (code-owned, intentionally not in fixtures); for fields that already exist it is
   insert-only or touches only its own system-generated widgets.
+- `travel_management/setup_print_formats.py` (`after_migrate`) writes the
+  `Travel Trip-main-default_print_format` Property Setter (v1.548.0) with
+  `frappe.make_property_setter`, so it is `is_system_generated = 1`: code-owned, never
+  exported, and never to be added here. It has to follow the Trip Sheet format it names, which
+  the same hook creates, and a fixture would name it before it exists — on `bench install-app`,
+  which runs no `after_migrate`, for good. A default naming a missing format makes the desk
+  drop "Standard" from the Print menu.
 - `setup/supplier_groups.py` (`after_migrate`) inserts the
   `Supplier-supplier_group-label` Property Setter **only if missing** with the same
   value the fixture carries — benign duplication, can never override the fixture.

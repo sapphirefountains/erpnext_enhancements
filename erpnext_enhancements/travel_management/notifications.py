@@ -33,7 +33,7 @@ from frappe.utils import cint, get_url, get_url_to_form
 from erpnext_enhancements import email_style
 from erpnext_enhancements.travel_management.ics import trip_events_for_traveler, trip_ics_attachment
 from erpnext_enhancements.travel_management.itinerary_text import booking_lines, day_lines
-from erpnext_enhancements.travel_management.views import itinerary_path
+from erpnext_enhancements.travel_management.views import contact_links, contact_rows, itinerary_path
 
 TEMPLATE_DIR = "erpnext_enhancements/templates/emails/travel"
 
@@ -183,15 +183,24 @@ def on_trip_update(doc, method=None):
 # -------------------------------------------------------- background jobs
 
 
-def _bookings_context(doc, employee=None):
+def _bookings_context(doc, employee=None, poi_cache=None):
 	"""The recipient's own bookings with their numbers — or, for the owner who is not on
 	the trip, every booking with who is on it — for the booked / added emails."""
 	from erpnext_enhancements.api.travel import shape_itinerary
 
 	return {
-		"bookings": booking_lines(shape_itinerary(doc, viewing_employee=employee)),
+		"bookings": booking_lines(shape_itinerary(doc, viewing_employee=employee, poi_cache=poi_cache)),
 		"bookings_title": _("Your bookings") if employee else _("Bookings"),
 	}
+
+
+def _address_resolver(cache):
+	"""A room's ``address`` as its street address, for a calendar invite's LOCATION
+	(``api.travel._address_text``; the row holds the Address record's name), sharing ``cache``
+	with the itinerary the invite goes out with, so an Address is read once per send."""
+	from erpnext_enhancements.api.travel import _address_text
+
+	return lambda value: _address_text(value, cache)
 
 
 def deliver_trip_booked(trip):
@@ -200,15 +209,16 @@ def deliver_trip_booked(trip):
 	doc = frappe.get_doc("Travel Trip", trip)
 	context = _base_context(doc)
 	subject = _("Trip booked: {0} ({1} – {2})").format(doc.purpose, doc.start_date, doc.end_date)
+	cache = {}
 
 	for recipient in _traveler_recipients(doc):
 		_send(
 			recipient,
 			subject,
 			"trip_booked.html",
-			dict(context, **_bookings_context(doc, recipient.employee)),
+			dict(context, **_bookings_context(doc, recipient.employee, cache)),
 			doc,
-			attachments=[trip_ics_attachment(doc, recipient.row)],
+			attachments=[trip_ics_attachment(doc, recipient.row, _address_resolver(cache))],
 		)
 
 	owner_email = frappe.db.get_value("User", doc.owner, "email")
@@ -218,7 +228,7 @@ def deliver_trip_booked(trip):
 			frappe._dict(email=owner_email, user_id=doc.owner, employee_name=doc.owner),
 			subject,
 			"trip_booked.html",
-			dict(context, **_bookings_context(doc)),
+			dict(context, **_bookings_context(doc, poi_cache=cache)),
 			doc,
 		)
 
@@ -229,14 +239,15 @@ def deliver_traveler_added(trip, employees):
 	subject = _("You were added to a trip: {0} ({1} – {2})").format(
 		doc.purpose, doc.start_date, doc.end_date
 	)
+	cache = {}
 	for recipient in _traveler_recipients(doc, employees=set(employees)):
 		_send(
 			recipient,
 			subject,
 			"traveler_added.html",
-			dict(context, **_bookings_context(doc, recipient.employee)),
+			dict(context, **_bookings_context(doc, recipient.employee, cache)),
 			doc,
-			attachments=[trip_ics_attachment(doc, recipient.row)],
+			attachments=[trip_ics_attachment(doc, recipient.row, _address_resolver(cache))],
 		)
 
 
@@ -286,13 +297,24 @@ def deliver_expense_claims_generated(trip, claims):
 # ------------------------------------------------------------- itinerary
 
 
-def _itinerary_email(doc, recipient, base=None, poi_cache=None):
+def _itinerary_email(doc, recipient, base=None, poi_cache=None, hotels=None):
 	"""What the itinerary email carries for one traveler: ``{subject, template, context,
 	attachments}``. The one definition both :func:`send_itinerary_emails` and
-	:func:`render_itinerary_preview` build from, so a preview cannot drift from the send."""
-	from erpnext_enhancements.api.travel import shape_itinerary
+	:func:`render_itinerary_preview` build from, so a preview cannot drift from the send.
 
+	``hotels`` (``api.travel._hotel_details``) lets a send to the whole crew look each hotel up
+	once, as ``poi_cache`` does its Places and Addresses, rather than every hotel once per
+	person. The calendar invite's check-in LOCATION is the room's street address, read through
+	the same cache (``_address_resolver``)."""
+	from erpnext_enhancements.api.travel import _trip_contacts, shape_itinerary
+
+	if poi_cache is None:
+		poi_cache = {}
 	itinerary = shape_itinerary(doc, viewing_employee=recipient.employee, poi_cache=poi_cache)
+	# Who to call, with this traveler's own hotels: the email's Contacts table and its links
+	# (each hotel's nearest urgent care, directions), built in views so the page, the phone,
+	# the email and the printed sheet say the same thing.
+	contacts = _trip_contacts(doc, recipient.employee, hotels=hotels)
 	return {
 		"subject": _("Your itinerary: {0} ({1} – {2})").format(doc.purpose, doc.start_date, doc.end_date),
 		"template": "pre_travel_reminder.html",
@@ -300,8 +322,11 @@ def _itinerary_email(doc, recipient, base=None, poi_cache=None):
 			base if base is not None else _base_context(doc),
 			itinerary=itinerary,
 			itinerary_days=day_lines(itinerary),
+			contacts=contacts,
+			contact_rows=contact_rows(contacts),
+			contact_links=contact_links(contacts),
 		),
-		"attachments": [trip_ics_attachment(doc, recipient.row)],
+		"attachments": [trip_ics_attachment(doc, recipient.row, _address_resolver(poi_cache))],
 	}
 
 
@@ -312,13 +337,22 @@ def send_itinerary_emails(doc, employee=None, force=False):
 	if not force and (_in_maintenance_context() or not _notifications_enabled()):
 		return []
 
+	from erpnext_enhancements.api.travel import _hotel_details
+
 	base = _base_context(doc)
 	poi_cache = {}
+	recipients = _traveler_recipients(doc, employees={employee} if employee else None)
+	# Every hotel on the trip, looked up once for the whole send; each email lists its own. A
+	# failure here leaves each email to look its own up, inside the card's guard. Its Address
+	# reads go into the send's cache, which every email's hotel items and invite read from.
+	try:
+		hotels = _hotel_details(doc, poi_cache) if recipients else None
+	except Exception:
+		hotels = None
 
 	sent = []
-	employees = {employee} if employee else None
-	for recipient in _traveler_recipients(doc, employees=employees):
-		email = _itinerary_email(doc, recipient, base, poi_cache)
+	for recipient in recipients:
+		email = _itinerary_email(doc, recipient, base, poi_cache, hotels)
 		if _send(
 			recipient,
 			email["subject"],
@@ -370,7 +404,17 @@ def render_itinerary_preview(doc, employee):
 			user_id=None,
 		)
 
-	email = _itinerary_email(doc, recipient)
+	from erpnext_enhancements.api.travel import _hotel_details
+
+	# As the send does: the hotels are looked up through the cache the itinerary and the invite
+	# read, so a hotel's Address is read once for the preview too (without them the contacts
+	# card looks every hotel up again, uncached). A failure leaves the card its own lookup.
+	cache = {}
+	try:
+		hotels = _hotel_details(doc, cache)
+	except Exception:
+		hotels = None
+	email = _itinerary_email(doc, recipient, poi_cache=cache, hotels=hotels)
 	_fragment, html = _render(recipient, email["subject"], email["template"], email["context"])
 	ics = email["attachments"][0]
 
@@ -390,7 +434,7 @@ def render_itinerary_preview(doc, employee):
 				"location": event.get("location") or None,
 				"description": event.get("description") or None,
 			}
-			for event in trip_events_for_traveler(doc, recipient.row)
+			for event in trip_events_for_traveler(doc, recipient.row, _address_resolver(cache))
 		],
 		"no_email": not recipient.email,
 	}

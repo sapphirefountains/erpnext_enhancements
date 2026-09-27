@@ -15,6 +15,8 @@
 	--ti-border: #e2e6ea;
 	--ti-accent: #00a0dd;
 	--ti-accent-soft: #e6f6fd;
+	/* Emergency, as words on the page (the 911 button itself is the literal red below). */
+	--ti-danger-text: #c62828;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +28,7 @@
 		--ti-border: #313a44;
 		--ti-accent: #29b6f6;
 		--ti-accent-soft: #103244;
+		--ti-danger-text: #ff8a80;
 	}
 }
 
@@ -315,6 +318,178 @@
 	border-color: var(--ti-accent);
 	background: var(--ti-accent-soft);
 	color: var(--ti-accent);
+}
+
+/* Contacts: the card at the top of the trip. Who to call, each as a 44px tap target that
+   wraps onto the next line on a 320px phone. Shut until its heading's button opens it.
+   No overflow: hidden. The toggle fills the card edge to edge, so clipping the card clipped
+   the toggle's focus ring (drawn just outside it), and a keyboard user saw no focus on the one
+   control that opens the emergency card. Nothing inside paints into the rounded corners: the
+   toggle and the rows are transparent, and the body has only a top border. */
+.ti-contacts {
+	background: var(--ti-surface);
+	border: 1px solid var(--ti-border);
+	border-radius: 12px;
+	margin: 0 0 14px;
+}
+
+.ti-contacts-heading {
+	margin: 0;
+	font-size: 1rem;
+}
+
+.ti-contacts-toggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 44px;
+	padding: 10px 14px;
+	border: 0;
+	background: transparent;
+	color: var(--ti-text);
+	font: inherit;
+	font-weight: 700;
+	text-align: left;
+	cursor: pointer;
+}
+
+/* The title and the summary are one run of inline text, one line where it fits. On a phone
+   it wraps like a sentence instead of an ellipsis, which would cut 911 off its end. */
+.ti-contacts-line {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+/* Shown only while the card is shut: " · travel desk, trip lead, site, 2 hotels, 911". */
+.ti-contacts-summary {
+	color: var(--ti-muted);
+	font-size: 0.85rem;
+	font-weight: 500;
+}
+
+.ti-contacts-chevron {
+	flex: 0 0 auto;
+	margin-left: auto;
+	color: var(--ti-muted);
+	transition: transform 0.15s ease;
+}
+
+.ti-contacts:not(.open) .ti-contacts-chevron { transform: rotate(-90deg); }
+
+.ti-contacts-body { border-top: 1px solid var(--ti-border); }
+
+/* `hidden` must win over any display a rule here gives these. */
+.ti-contacts-body[hidden],
+.ti-contacts-summary[hidden] { display: none; }
+
+/* Who on the left, their buttons on the right when both fit ("Trip lead · Pat" and one
+   number); the buttons drop underneath when they don't. */
+.ti-contact {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--ti-border);
+}
+
+.ti-contact:last-child { border-bottom: 0; }
+
+.ti-contact-who {
+	flex: 1 1 8rem;
+	min-width: 0;
+}
+
+.ti-contact-role {
+	color: var(--ti-muted);
+	font-size: 0.72rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.ti-contact-name { font-weight: 650; font-size: 0.95rem; overflow-wrap: anywhere; }
+.ti-contact-sub { color: var(--ti-muted); font-size: 0.84rem; margin-top: 2px; overflow-wrap: anywhere; }
+
+.ti-contact-links {
+	flex: 0 1 auto;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-width: 0;
+}
+
+.ti-contact-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	max-width: 100%;
+	min-height: 44px;
+	padding: 6px 12px;
+	border: 1px solid var(--ti-border);
+	border-radius: 10px;
+	background: var(--ti-bg);
+	color: var(--ti-accent);
+	font-size: 0.88rem;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+.ti-contact-link:active { background: var(--ti-accent-soft); }
+.ti-contact-icon { flex: 0 0 auto; line-height: 1; }
+.ti-contact-text { min-width: 0; overflow-wrap: anywhere; }
+
+/* 911: first on the card and the one red button on the page. White on #c62828 is 5.6:1 in
+   both themes. */
+.ti-contact-emergency .ti-contact-role { color: var(--ti-danger-text); }
+
+.ti-contact-emergency .ti-contact-link {
+	border-color: #c62828;
+	background: #c62828;
+	color: #fff;
+}
+
+.ti-contact-emergency .ti-contact-link:active { background: #a31f1f; }
+
+/* "Print / save as PDF": the trip sheet, under the screens. */
+.ti-print { padding: 0 4px 14px; }
+.ti-screens + .ti-print { margin-top: -6px; }
+
+.ti-print-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	box-sizing: border-box;
+	max-width: 100%;
+	min-height: 44px;
+	padding: 6px 14px;
+	border: 1px solid var(--ti-border);
+	border-radius: 10px;
+	background: var(--ti-surface);
+	color: var(--ti-accent);
+	text-decoration: none;
+}
+
+.ti-print-link:active { background: var(--ti-accent-soft); }
+.ti-print-icon { flex: 0 0 auto; font-size: 1.1rem; line-height: 1; }
+
+.ti-print-body {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.ti-print-title { font-weight: 600; font-size: 0.9rem; }
+.ti-print-sub { color: var(--ti-muted); font-size: 0.76rem; overflow-wrap: anywhere; }
+
+.ti-contacts-toggle:focus-visible,
+.ti-contact-link:focus-visible,
+.ti-print-link:focus-visible {
+	outline: 2px solid var(--ti-accent);
+	outline-offset: 2px;
 }
 
 /* Files: on a booking's card and on the Documents screen. Big tap targets: a boarding pass

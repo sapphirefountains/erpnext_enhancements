@@ -2041,6 +2041,9 @@ jobs:
       # the itinerary email preview. Guards money reaching a crew member's payload ("all but
       # money" is enforced by what the server sends, not by the page hiding it), a preview
       # that sends mail or writes a Notification Log, and ?as= showing a stranger's view.
+      # Since v1.548.0 also the contacts card (never a crew member's personal phone, email,
+      # next of kin or address), the Map's places, and the Trip Sheet: its real template
+      # rendered with no money on a crew member's or one person's copy.
       # Own step: it installs its own `frappe` stub (and a stand-in for email_style).
       - name: Trip views + itinerary email preview (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_travel_views -v

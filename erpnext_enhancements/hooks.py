@@ -1632,6 +1632,16 @@ jinja = {
 		"erpnext_enhancements.print_lookup.ps_rfq_suppliers",
 		"erpnext_enhancements.print_lookup.ps_charge_rows",
 		"erpnext_enhancements.print_lookup.ps_tax_rows",
+		# The Trip Sheet print format's data (travel_management/print_formats/trip_sheet.html):
+		# the whole trip, or one person's with &as=<employee> on the link, and the cost total
+		# only on a travel coordinator's whole-trip sheet. The template prints this and never
+		# `doc.*`: every money field on Travel Trip is permlevel 0 and the Employee role may
+		# print a trip, so only what the server hands the template keeps a crew member's copy
+		# free of money. It re-checks read/print on the trip, since a global is reachable from
+		# any template on the site, on the trip as saved (loaded again by name: the print view
+		# also renders a document posted as JSON), and prices no emailed copy (the email queue
+		# renders an attachment later, as Administrator).
+		"erpnext_enhancements.api.travel.ee_trip_sheet",
 	],
 }
 
@@ -1854,6 +1864,16 @@ after_migrate = [
 	# which is last on purpose and has to SEE this format to point it at the right
 	# backend -- registered after it, the certificate silently renders with the wrong one.
 	"erpnext_enhancements.training.setup_print_formats.ensure_training_print_formats",
+	# travel_management: the Trip Sheet print format on Travel Trip -- the whole trip on one or
+	# two pages (crew, who to call, day by day, every confirmation number; the cost total on a
+	# coordinator's copy only) for the job folder or a crew lead who won't open the app. The
+	# template is a repo file read by the setup module, so edits deploy on the next migrate.
+	# Idempotent upsert, guarded. MUST sit ABOVE ensure_chrome_pdf_generator, like the rest.
+	# It also makes the Trip Sheet Travel Trip's DEFAULT print format (Nik, 2026-09-27) with a
+	# code-owned Property Setter written after the upsert, never a fixture: fixtures sync before
+	# this hook (and install-app runs no after_migrate at all), and a default naming a format
+	# that is not there yet makes the desk drop "Standard" from the Print menu.
+	"erpnext_enhancements.travel_management.setup_print_formats.ensure_travel_print_formats",
 	# training: starter Training Badges. Insert-only and inert until gamification is on.
 	# Lives in `setup` beside the starter categories, not in `gamification`, which is
 	# the runtime awarding logic. This pointed at gamification and the function was

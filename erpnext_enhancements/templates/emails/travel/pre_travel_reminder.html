@@ -2,7 +2,9 @@
    use this template (notifications.send_itinerary_emails).
    Context: trip, trip_url, itinerary_url, itinerary (api.travel.shape_itinerary
    output, filtered to this traveler), itinerary_days (itinerary_text.day_lines of
-   that same itinerary: [{date, lines}]), recipient.
+   that same itinerary: [{date, lines}]), contacts (api.travel._trip_contacts, this
+   traveler's own hotels), contact_rows / contact_links (views.contact_rows and
+   views.contact_links of those contacts), recipient.
 
    A FRAGMENT — chrome comes from email_style.wrap() in travel_management/
    reminders.py.
@@ -32,6 +34,21 @@
 {% else %}
 {{ ee.callout("No itinerary entries yet — check the trip for updates.", "info") }}
 {% endfor %}
+
+{#- Who to call: 911, the office travel desk, who booked the trip, the trip lead, the
+    job-site contact and each of this traveler's hotels, with each hotel's nearest urgent
+    care and directions under the table. The rows are built in views.contact_rows from
+    api.travel._trip_contacts, which never returns a crew member's personal phone or email,
+    next of kin or home address. The last cell is how to reach them: a phone as a (tel link,
+    number) pair, so it dials from a phone, else an email as a (mailto link, address) pair
+    (views.mailto_href: a plain address only, since ee.table writes it into href unescaped),
+    so a travel desk set up with only an email is reachable too. 911 is always there, so the
+    block always prints. -#}
+{% if contact_rows %}
+{{ ee.h("Contacts") }}
+{{ ee.table(["Who", "Name", "Phone / email"], contact_rows) }}
+{% if contact_links %}{{ ee.links(contact_links) }}{% endif %}
+{% endif %}
 
 {{ ee.p("The attached calendar file keeps your calendar in sync (re-sends update, not duplicate).") }}
 

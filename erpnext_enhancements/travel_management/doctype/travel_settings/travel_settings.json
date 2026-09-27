@@ -7,6 +7,11 @@
   "auto_advance_statuses",
   "column_break_general",
   "notifications_enabled",
+  "travel_desk_section",
+  "travel_desk_label",
+  "column_break_travel_desk",
+  "travel_desk_phone",
+  "travel_desk_email",
   "expense_types_section",
   "flight_expense_type",
   "hotel_expense_type",
@@ -44,6 +49,35 @@
    "fieldname": "notifications_enabled",
    "fieldtype": "Check",
    "label": "Send Travel Notifications"
+  },
+  {
+   "description": "The office's travel desk: who the crew calls about their travel. It heads the contacts card on every itinerary (Plan a Trip, /itinerary, the itinerary email and the printed Trip Sheet), under 911 and above who booked the trip, the trip lead, the job-site contact and each hotel. Left off the card until it has a phone or an email.",
+   "fieldname": "travel_desk_section",
+   "fieldtype": "Section Break",
+   "label": "Travel Desk"
+  },
+  {
+   "description": "What the card calls it, e.g. \"Sapphire travel desk\" or a person's name. Blank reads \"Travel desk\".",
+   "fieldname": "travel_desk_label",
+   "fieldtype": "Data",
+   "label": "Travel Desk Name"
+  },
+  {
+   "fieldname": "column_break_travel_desk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "A number the crew can call while they travel.",
+   "fieldname": "travel_desk_phone",
+   "fieldtype": "Data",
+   "label": "Travel Desk Phone",
+   "options": "Phone"
+  },
+  {
+   "fieldname": "travel_desk_email",
+   "fieldtype": "Data",
+   "label": "Travel Desk Email",
+   "options": "Email"
   },
   {
    "description": "Expense Claim Types used when generating per-traveler Expense Claims. Claim generation refuses to run while a needed type is unset.",
@@ -152,7 +186,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-06-11 10:00:00.000000",
+ "modified": "2026-09-27 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel Settings",

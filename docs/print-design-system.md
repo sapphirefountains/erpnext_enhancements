@@ -212,6 +212,7 @@ and the ` - Inactive` marker QuickBooks' tax codes carry.
 | Contracts (all eight templates) | `project_enhancements/contract_style.py` + the `Project Contract Print` fixture CSS | by template: owner / architect / SOW / MSA → Build, maintenance → Service, rental → Rent, NDA and employee → neutral |
 | Project Brief | `public/js/project_enhancements/project_brief.js` | the job's leading stream: Design, Build (and Products), Service, Events → Rent |
 | Training Certificate | `training/setup_print_formats.py` | neutral |
+| Trip Sheet (Travel Trip) | `travel_management/setup_print_formats.py` + `travel_management/print_formats/trip_sheet.html` | neutral |
 | Crew Qualification Roster, Supplier Pickup List (report sheets) | the report's `.html` beside it | neutral, **without the wordmark** |
 
 **Contracts are a third door.** The chrome cannot go into the agreement body — a signed
@@ -240,6 +241,27 @@ the desk print window resolves it against the site and the PDF route makes it ab
 `scrub_urls`. Microtemplate's two traps apply to the chrome too: no double brace anywhere
 in the file, comments included, and no apostrophe in the markup, which is why the CSS
 quotes its font names with double quotes.
+
+**The Trip Sheet reads a Jinja global, not the document** (v1.548.0). Every money field on
+Travel Trip is permlevel 0 and the Employee role may print a trip, so a template that read
+`doc.*` would print costs on a crew member's copy. `trip_sheet.html` passes `doc` to
+`ee_trip_sheet` (`api/travel.py`) and prints only what that returns: the cost total appears
+only on a travel coordinator's whole-trip sheet printed in a web request, never on an emailed
+copy (the email queue renders an attachment later as Administrator). It builds from the trip
+as saved, loaded again by name, never from the `doc` it is handed, which the print view can
+take as JSON from the browser. It tightens the chrome's cell padding to
+`3px 6px` (a later `!important` in the same style attribute wins), prints the crew as one
+facts row (`ps_facts_open(False)`) when everyone is on the trip's dates, and names only the
+hotel on a check-in, whose address is under "Who to call": padding alone left a five-day,
+four-person, two-hotel trip at two full pages and a third holding only the "Printed" line
+and the footer. Measured in
+headless Chrome, it now fits two Letter pages (2026-09-27; the travel README's *Layout* has
+the numbers). Its links name `pdf_generator=chrome`, because v16's
+`download_pdf` uses wkhtmltopdf when a request names no generator, whatever the format says.
+It is Travel Trip's default print format, but not through a fixture as the sales and
+procurement defaults are: `setup_print_formats._make_default` sets it after the upsert, once
+the format exists, because a default naming a missing format makes the desk drop "Standard"
+from the Print menu (see the travel README's *The Trip Sheet*). Standard stays selectable.
 
 Everything the app prints is now on the chrome.
 
