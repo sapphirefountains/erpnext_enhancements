@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.543.0] - 2026-09-26
+## [1.546.0] - 2026-09-26
 
 **A saved trip can now be looked at whole: an Overview of every day, a crew-by-day grid, a
 side-by-side column per person, and "View as" any crew member, with their itinerary email and
@@ -296,6 +296,295 @@ landed on an empty page.
    ```
 3. On a phone, open `/itinerary?trip=<trip>&as=crew` as the trip's owner, then pick a person and
    press Back.
+
+## [1.545.0] - 2026-09-26
+
+**Assistants can cancel a submitted document through a confirmation card that works.** Before
+this, the only card that could actually cancel anything was a `run_python_code` card.
+
+Opened as 1.540.0 and renumbered on merging main (1.543.0). The Plan a Trip PR (#1133)
+merged as 1.544.0.
+
+### Why
+
+- **What happened.** On 2026-09-25 the nightly reorder job raised Material Request
+  MAT-MR-2026-00014 for 218 PVC fittings, far more than the shelves hold. An assistant proposed
+  cancelling it with `update_document` and `{"docstatus": 2}`, which is the shape `_gate.py`'s own
+  comments described as a cancel. Nik approved the card (AI-PA-2026-880995), and it failed at
+  execution with `[ToolReportedError] Cannot modify submitted document Material Request
+  MAT-MR-2026-00014`.
+- **Why it could never have worked.** Frappe Assistant Core 3.0.0 has `submit_document` but no
+  cancel tool. Its `update_document` goes through `security_config.validate_document_access`,
+  which refuses every field on a submitted document that is not `allow_on_submit`, and
+  `docstatus` is not a field at all. So `update_document` with `docstatus` 2 fails on every
+  submitted document, every time, and only after someone has approved it.
+- **What it cost.** The MR was cancelled with a `run_python_code` card (AI-PA-2026-881009), which
+  is labeled High risk as arbitrary code. That meant using the widest tool on the server for one
+  line of `doc.cancel()`.
+
+### Added
+
+- **`cancel_document`** (`assistant_tools/cancel_document.py`, registered in `hooks.py`). It takes
+  `doctype`, `name` and an optional `reason`, and calls `frappe.get_doc(doctype, name).cancel()`
+  and nothing else. That means the rules the Desk's Cancel button follows apply unchanged:
+  - **Cancel permission** belongs to the person who confirms the card.
+  - **Linked documents:** Frappe raises `LinkExistsError` while a submitted document links to this
+    one. The tool never sets `ignore_links`. It also doesn't offer the Desk's "Cancel All",
+    because each linked document is its own decision and gets its own card.
+  - **The doctype's own cancel hooks run.** On ERPNext documents those reverse GL and stock
+    ledger entries.
+  - **The Desk's workflow rule:** when a Workflow on the doctype has its own cancel transition
+    (`frappe.model.workflow.can_cancel_document`), the tool refuses and names `run_workflow`.
+  - **Savepoint:** the cancel runs inside one. FAC's `_safe_execute` turns a raised
+    `ValidationError` into a result instead of raising it, so on the ungated path a cancel that
+    failed partway through its hooks would otherwise leave its first writes to be committed.
+  - **Refusals:** it refuses a draft (and points to `delete_document`), a doctype that isn't
+    submittable, and missing permission.
+  - **Already cancelled:** it reports that as done, with nothing changed. A card can be confirmed
+    after someone has already cancelled the document in the Desk, and "Failed" would be the wrong
+    word for that.
+  - **Reason:** when given, it's left as an HTML-escaped timeline comment that names the person
+    who confirmed.
+- **Gated like `submit_document`.** It's in `APP_MUTATING` and `HIGH_RISK`, so it's always a card:
+  - The settings allowlist covers only `create_document` and `update_document`.
+  - It has no per-call decider.
+  - It advertises `destructiveHint`, and `fac_tool_categories` files it as `privileged` on the
+    next migrate.
+  - The card reads **"CANCEL <doctype> <name> (permanent): “<reason>”"**.
+- **`_gate.DOCSTATUS_TOOLS`** (`submit_document`, `cancel_document`). The batch dialog starts those
+  cards unticked with "submits or cancels a document". Their arguments carry no `docstatus`, so
+  that reason has to come from the tool name.
+
+### Changed
+
+- **An `update_document` with `docstatus` 2 is refused before it becomes a card**
+  (`_gate._cancel_refusal`). This is the same principle as v1.533.0: a write that cannot run gets
+  no card.
+  - The refusal is `AIGateValidationError` and is logged to AI Action Log. It says to call
+    `cancel_document` with the same doctype and name.
+  - It is checked before any metadata is read, and it accepts `2`, `"2"`, `2.0` and `" 2 "`.
+  - A `docstatus` 1 update and a create with `submit` still go to a card, and none of the three
+    is ever exempt.
+- **Comments and docs now describe what actually happens:**
+  - `_gate.py`: the `_changes_docstatus` docstring and the queue-time validation block, which
+    still say a cancel through `update_document` is skipped rather than refused.
+  - `gating_api._review_reasons`.
+  - `ai_governance/README.md` and `assistant_tools/README.md`.
+  - The `ee-ai-write-confirmation` skill, which now tells assistants to use `cancel_document`
+    and never `run_python_code` to cancel. FAC updates skill content on migrate when it differs.
+
+### Tests
+
+- **New:** `test_assistant_cancel_document` has 26 cases, on the AI-gate CI step:
+  - the tool against a fake Frappe, including the linked-document refusal with its rollback,
+    another failure that rolls back and raises, and a check that `ignore_links` is never set in
+    code;
+  - the workflow rule on all three branches;
+  - classification, annotations and the card wording;
+  - every spelling of `docstatus` 2;
+  - the incident call through `_gated_execute`, refused with no card, and `cancel_document`
+    always a card, even when its doctype is exempt.
+- **Changed:** two `test_ai_gate_per_call` cases expected a `docstatus` 2 update on an exempt
+  doctype to become a card. They now expect a refusal, still never executed, and keep the
+  `docstatus` 1 case as a card.
+- **Added:** one `test_ai_gate_batch` case for the tool-name reason.
+- Disabling the refusal fails four of these tests.
+
+### Notes
+
+- **Reconnect after deploying.** An MCP client caches the tool list when it connects, so
+  `cancel_document` becomes reachable only after the client reconnects. FAC discovers the tool on
+  `bench restart` and creates its `FAC Tool Configuration` row.
+- **Nothing changes on a site without FAC.** The FAC-optional invariant holds: nothing outside
+  `assistant_tools/` imports the new module.
+
+## [1.544.0] - 2026-09-26
+
+**Plan a Trip's checklist stops asking for things that were never needed, and a room can have
+a guest staying free.** On the first real trip (TRIP-2026-00001, the Kapture event) the office
+was told a day-tripper needed five nights of hotel, a one-night guest in a colleague's upgraded
+room needed a room of his own, and all four flights home needed a cost. None of that was true.
+
+### Why
+
+- **A day trip needs no bed.** One of the crew flew out at 7:20 AM and home at 3:45 PM the same
+  day. The checklist counted his nights from his dates on the crew step, and those were the whole
+  trip (Sep 27–Oct 2). The flights are what was actually booked, so they should decide.
+- **A guest in someone else's room is free.** The fourth person stayed one night in a colleague's
+  room, which had been upgraded. There was no way to say so. Ticking him into the room would have
+  split its cost in half and shown him checking in two days before he flew out.
+- **A round-trip ticket is one charge.** The flights home cost nothing unless a pricier option is
+  picked, and the fare shows as one charge on the company's invoicing. Asking for a cost on each
+  flight would split one charge into two lines, so an Expense Claim built from the trip would not
+  match what was paid.
+
+### Changed
+
+- **The checklist reads each person's travel, not only their dates**
+  (`completeness.stay_window`). Someone needs a bed from the day their way there leaves until the
+  day their way home leaves, within their own dates. Travel only narrows the window, never widens
+  it. The page's nights grid uses the same rule, marks a person who needs no nights as *day trip*,
+  and *Add a room* no longer ticks them in.
+- **A flight with no cost isn't flagged when it's on a paid ticket**
+  (`completeness.on_another_ticket`). If everyone on it has a confirmation number (PNR) that is on
+  another flight that has a cost, it's covered. A different PNR, a missing one, or no fare anywhere
+  on that PNR is still flagged. This is for flights only, because two hotel rooms on one
+  confirmation are still two charges.
+  - On the page, a flight home covered this way shows *Round trip: paid with the ticket for SLC →
+    San Diego on Sun, Sep 27*. A cost typed on it is treated as an extra charge, such as a fare
+    upgrade.
+  - *Copy the way there, reversed* now copies each person's confirmation number onto the flight
+    home.
+  - A flagged flight now also says how to clear it: give it the confirmation number of the flight
+    whose fare it shares.
+- The *Getting there*, *Getting back* and *Where everyone sleeps* help text, and the Review line for
+  costs, now explain these rules.
+
+### Added
+
+- **Room guests: Trip Accommodation `guest`** (Check, default 0, labeled *Guest (No Cost)*).
+  - On the page, tick the guest into the room, then tick them under *Anyone staying free?*. The
+    card shows their own check-in and check-out, and the cost hint reads *Staying free: …*.
+  - `planner.merge_bookings`: a guest gets no share of the cost. The split is redone when someone
+    becomes or stops being a guest. A room where everyone is a guest splits as before. Guest rows
+    sort after the people paying, because the page, the checklist and the crew itinerary all read a
+    booking's dates from its first row.
+  - `planner.fit_guest_stays`, which runs on every page save after all tables are merged: each
+    guest row's check-in and check-out become the room's dates cut to the guest's own nights. That
+    makes their `/itinerary`, itinerary email and calendar invite right. If the guest's nights fall
+    outside the room, the row keeps the room's dates.
+  - `get_state` reads a room's dates from its first non-guest row.
+
+### Result on TRIP-2026-00001 (computed from its prod rows with this code)
+
+- **Checklist: 6 flags → 1.** Before: 5 nights for the day-tripper, 1 night for the one-nighter, and
+  "no cost entered" on each of the 4 flights home. Now only the one-nighter's Monday is left.
+- **With him added to the colleague's room as a guest: 0 flags.** The room stays at $942.88 on the
+  colleague's row, the guest's row is $0 for Mon 9/28–Tue 9/29, and the trip total is unchanged at
+  $3,699.73.
+- The data on the trip itself is not changed by this release. The guest has to be added on the page.
+
+### Notes
+
+- **The day-tripper's dates were changed on 2026-09-25.** `tabVersion` shows his traveler row going
+  from Sep 28–Sep 28 to Sep 27–Oct 2 at 10:58, in a save that changed nothing else.
+  Unticking and re-ticking *Different dates* on the crew step does exactly that. His per diem and
+  his pre-travel reminder still use those dates, so they should be set back to Sep 28 if he isn't
+  away the whole trip.
+- Tests: 21 new cases in `tests/test_travel_planner.py`, including `TestTheKaptureTrip`, the real
+  trip with synthetic names and confirmation numbers. The page changes were exercised by rendering
+  the real `plan_a_trip.js` against that trip's state in a browser.
+
+## [1.543.0] - 2026-09-26
+
+**Store Run Charge Matching: Accounting's list of every store run recorded on the Stock Scan page
+beside the QuickBooks card charge it pairs with, the amount to move to 2210, and what to do.** It is
+the list v1.536.0 left as a follow-up for runbook step S-D. How Accounting uses it is in
+`quickbooks_online/MIGRATION_NOTES.md` section 8; how it works is in `kpi_dashboards/README.md`.
+
+### Added
+
+- **Report *Store Run Charge Matching*** (Script Report, KPI Dashboards, `ref_doctype` Purchase
+  Receipt; Accounts Manager, Accounts User, Purchase Manager, System Manager). Read-only: no write
+  and no button; every change is made on the voucher itself, in the Desk.
+  - **Rows**: one per recorded store run in the range, plus one for each charge or Journal Entry
+    that needs a word: a charge carrying 2210 with no store run, a linked charge whose trips are
+    all outside the range, a Reference Number to check, a draft correcting entry, and any 2210
+    amount no charge accounts for.
+  - **Columns**: Trip Day, Store, Run / Receipt No., Receipts and First Receipt, Recorded By, Lines
+    Before Tax, **Stock Lines Before Tax (Move to 2210)**, Receipt Total (Tax Included), **Matched
+    Charge**, Charge Date, Amount, Source and Status, Match Basis, **Moved to 2210** (to the cent,
+    submitted correcting entries included) and **What to Do**.
+  - **Filters**: From Date and To Date (default the last 60 days), Store (the suppliers ticked
+    *Store-Run Vendor*; Lowes also shows Lowe's), and **Show**: All, Needs action, Waiting or Done.
+  - **Summary cards**, over every row in range whatever *Show* says: store runs, matched, needs
+    action, still to move to 2210, already moved, on 2210 with no store run, and **2210 Not
+    Accounted For**, which must read $0.00 before the S-D loop.
+  - **Reference Number tokens** (a Journal Entry's `cheque_no`; separated by spaces, commas or
+    semicolons; any case). The procedure and every rule: MIGRATION_NOTES section 8.
+
+    | Token | Means |
+    |---|---|
+    | A run id `sr-…`, or a trip's receipt name `MAT-PRE-…` | This charge pays for that trip; overrides the automatic pairing. A submitted charge is linked by its correcting entry: *the charge* then the run ids |
+    | A charge's name `ACC-JV-…` | A correcting entry for that charge, followed through chains; counts once submitted |
+    | `part-paid`, right after a run id | The charge paid for that trip only in part; its 2210 target stays the whole stock lines |
+    | `not-store-run` | Not a store run: no link, no correction, no pairing (in the report only) |
+    | `not-store-run` and a Purchase Receipt's name | The entry's 2210 amount clears that receipt, which is not a store run (a PO receipt, a return) |
+- **`kpi_dashboards/store_run_matching.py`**: every rule of the report, with no frappe import. The
+  report's `.py` only reads, every query a literal `select` with bound params.
+
+### Changed
+
+- **`metrics.pair_store_runs`** is the pairing extracted from `combine_store_runs` unchanged. The
+  KPI counts through it and the report pairs with it, so a trip in range pairs exactly as the KPI
+  pairs it counted from the same From Date. It also says which pass took each charge
+  (`receipt_total` or `lines_plus_tax`). `STORE_RUN_LOOKBACK_DAYS` (7) now lives in `metrics`.
+- **`snapshots._store_run_rows`** returns identifying columns the count never reads (each charge's
+  voucher, docstatus, source and company; each receipt's name, company, owner, `net_amount`,
+  `is_stock_item` and `stock_amount`), and returns charges in a fixed order (posting date, then
+  voucher name), so an exact tie no longer depends on database order. `stock_amount` is what the
+  receipt credited to 2210 in the GL, not the Item's stock flag today: `MAT-PRE-2026-00038`
+  credited $81.00 where its Items' current flags said $205.50. KPI numbers are unchanged, except
+  where the fixed order now breaks an exact tie.
+- **Runbook step S-D** (`docs/migration/backlog-gl-posting-runbook.md`) is a five-step procedure
+  around the report, and **MIGRATION_NOTES section 8** is the single reference: the procedure, the
+  lists, the tokens, a charge already submitted, what the report checks, what is settled by hand.
+
+### Why
+
+- A QuickBooks card-charge draft submitted unchanged at S-D expenses goods that a store-run receipt
+  already put into stock (Dr 1410 / Cr 2210), so the purchase is booked twice and 2210 never
+  clears. Among ~13,000 drafts, finding those pairs by hand is impractical.
+- Beyond the KPI's own pairing, the report links a charge to its trips only **explicitly, by
+  Reference Number**, never by guessing amounts: review showed that recognizing a draft by a 2210
+  debit equal to a waiting trip's stock lines could give one trip's draft to another and double-book.
+- Wrong states are made visible instead: every Journal Entry line on 2210 must be accounted for by
+  one charge (the conservation total, *2210 Not Accounted For*), and a charge never carries more
+  than it paid (the capacity check), so a link that displaces a pair or oversteps the charge is
+  asked about rather than read as Done.
+
+### Known limits
+
+- Without guessing amounts it cannot see a wrong automatic pair consistent with every figure, or a
+  link typed on the wrong trip that contradicts nothing.
+- `part-paid` has nowhere to go on a submitted charge already carrying its trips' stock lines and
+  linked only by its own Reference Number: settled by hand.
+- An entry naming the receipt its 2210 amount clears is taken at its word; the amounts are not
+  compared.
+- One card charge that pays for both a store run and a PO receipt cannot be expressed on that
+  charge: settled by hand (MIGRATION_NOTES section 8).
+- A trip with no stock lines whose submitted charge the pairing gave to another trip is told
+  "change nothing" (a correcting entry needs an amount).
+- A submitted card charge that cleared a PO receipt takes two Journal Entries: moved back, then
+  posted again naming the receipt.
+- A submitted charge carrying 2210 that is neither paired nor linked takes two entries: moved back,
+  then moved again, linked.
+- A wrong run id in a submitted charge's own Reference Number cannot be taken out (v16).
+- A trip billed from its receipts whose own card charge never paired, carrying nothing on 2210, is
+  invisible. S-D does not meet it: a trip is billed only after the cutover, and only with no charge.
+- A standalone Purchase Invoice with *Update Stock* ticked pairs as a charge but posts to the
+  warehouse, not 2210, so its *What to Do* cannot be computed (none on production, 2026-09-25).
+- A Purchase Invoice cannot be linked by Reference Number; one carrying 2210 waits for its receipt.
+- Links and the 2210 backstop are read from 7 days before From Date (a card charge in that lookback
+  that pairs with nothing is told to widen the range); a named entry is looked up four links deep.
+- A run id split across the reader's lookback (Desk only) is linked with the receipts it read.
+- Rows for a Journal Entry ignore the Store filter: such an entry has no store.
+- From a different From Date, a chain of same-amount trips at one store can pair differently from
+  the nightly KPI (30 days back); from 2026-01-01 there is nothing earlier.
+
+### Tests
+
+- `test_store_run_matching` (new, 175 tests, bench-free; in the stub-free KPI step of `ci.yml`):
+  every *What to Do* case followed to its end, links, correction chains, capacity and `part-paid`,
+  the backstop, the Show buckets and summary, the KPI equivalence, and the report's files read by
+  `ast` (read-only, literal selects with bound params, the JS filters equal to the Python's).
+- Seeded property tests on generated histories, among them the 2210 conservation: attributed + not
+  accounted for + `not-store-run` equals every 2210 amount read, and the summary totals the rows.
+- `test_kpi_metrics` (50 tests before, 83 now): `combine_store_runs` against its v1.536.0 body, kept
+  verbatim, on every earlier case and 1,500 generated histories, bit for bit.
+- A follow-the-advice simulator (an Accounting agent doing what each row says to a fixed point, then
+  the S-D loop) over ~10,000 generated histories found no false Done the report could see, and no
+  crash, unparsed text or run without a fixed point. The simulator is not in the repo.
 
 ## [1.542.0] - 2026-09-26
 

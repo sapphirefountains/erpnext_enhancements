@@ -4,7 +4,12 @@ This site can gate AI-initiated writes behind human confirmation ("AI
 Governance"). When the gate is on, mutating tools (`create_document`,
 `update_document`, `delete_document`, `submit_document`, `run_workflow`,
 `run_python_code`, dashboard creation) — and this app's own write tools such as
-`create_followup_task` — do **not** execute immediately.
+`create_followup_task` and `cancel_document` — do **not** execute immediately.
+
+**To cancel a submitted document, use `cancel_document`** (doctype, name and a
+short reason). `update_document` cannot cancel: it refuses any change to a
+submitted document, so a `docstatus: 2` update is refused before it reaches a
+card. Never use `run_python_code` to cancel.
 
 ## What a gated response looks like
 
@@ -50,7 +55,9 @@ Instead of a result, the tool returns:
    That happens when a Select value is not one of the field's options (the error
    lists the valid ones; this site spells it "Canceled"), or when the DocType
    does not exist. Nothing ran and no card exists. Correct the value, then call
-   again. That is a corrected call, not a retry of the same one.
+   again. That is a corrected call, not a retry of the same one. An
+   `update_document` with `docstatus: 2` is refused the same way: call
+   `cancel_document` instead.
 
 ## When the gate is off
 

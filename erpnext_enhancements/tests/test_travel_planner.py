@@ -19,6 +19,9 @@ The failures guarded here all leave the screen looking right:
    deleted and its cost is never rewritten.
 5. **The page and the server disagreeing about a field.** The page's list of shared fields must
    equal the server's, or an edit is dropped with no error.
+6. **A checklist that asks for what was never needed** (``TestTheKaptureTrip``): a bed for
+   someone out and back on one day, half a room's cost for a guest staying free in it, and a
+   cost on the flight home of a round-trip ticket, whose fare is one charge on the way there.
 
 unittest, not pytest, with its own CI step: a pytest-style suite in a unittest list is collected
 as nothing, and this module's ``frappe`` stub must not share a process with another suite's.
@@ -514,6 +517,323 @@ class TestMergeMileageTravelersStops(unittest.TestCase):
 		rows, notes = planner.merge_stops([made, plain_stop], [])
 		self.assertEqual(rows, [made])
 		self.assertEqual(len(notes), 1)
+
+
+# --------------------------------------------------------------------------- beds, guests, fares
+
+
+class TestTheKaptureTrip(unittest.TestCase):
+	"""TRIP-2026-00001 as it stood on prod on 2026-09-25, and what the office said its checklist
+	got wrong. Four people: two for the week; one out at 7:20 AM and home at 3:45 PM the same
+	day, but down on the crew step for the whole trip; one for a single night, staying free in a
+	colleague's upgraded room. Every flight home is the second half of a round-trip ticket with
+	the fare on the way there, so the flights home have no cost.
+
+	Before: the checklist wanted five nights of hotel for the day-tripper, a room for the
+	one-nighter (and adding him to the room would have split its cost in half), and a cost on
+	all four flights home."""
+
+	def real_trip(self):
+		return trip(
+			start_date="2026-09-27",
+			end_date="2026-10-02",
+			travelers=[
+				traveler("EMP-K", "K", "2026-09-27", "2026-10-02"),
+				traveler("EMP-J", "J", "2026-09-27", "2026-10-02"),
+				traveler("EMP-B", "B", "2026-09-27", "2026-10-02"),
+				traveler("EMP-L", "L", "2026-09-28", "2026-09-29"),
+			],
+			flights=[
+				flight(
+					"EMP-K", "Outbound", "2026-09-27 17:10:00", booking_group="k1", ref="KKK111", cost=351.8
+				),
+				flight(
+					"EMP-J", "Outbound", "2026-09-27 17:10:00", booking_group="j1", ref="JJJ222", cost=326.8
+				),
+				flight(
+					"EMP-B", "Outbound", "2026-09-28 07:20:00", booking_group="b1", ref="BBB333", cost=261.81
+				),
+				flight(
+					"EMP-L", "Outbound", "2026-09-28 07:20:00", booking_group="l1", ref="LLL444", cost=732.8
+				),
+				flight("EMP-B", "Return", "2026-09-28 15:45:00", booking_group="b2", ref="BBB333", cost=0),
+				flight("EMP-L", "Return", "2026-09-29 07:30:00", booking_group="l2", ref="LLL444", cost=0),
+				flight("EMP-K", "Return", "2026-10-02 13:36:00", booking_group="k2", ref="KKK111", cost=0),
+				flight("EMP-J", "Return", "2026-10-02 13:36:00", booking_group="j2", ref="JJJ222", cost=0),
+			],
+			accommodations=[
+				stay(
+					"EMP-J",
+					"2026-09-27",
+					"2026-10-02",
+					name="R1",
+					booking_group="jroom",
+					ref="H-1001",
+					cost=942.88,
+				),
+				stay(
+					"EMP-K",
+					"2026-09-27",
+					"2026-10-02",
+					name="R2",
+					booking_group="kroom",
+					ref="H-1001",
+					cost=942.88,
+				),
+			],
+		)
+
+	def test_the_day_tripper_needs_no_bed(self):
+		t = self.real_trip()
+		brian = t.travelers[2]
+		start, end = completeness.stay_window(t, brian)
+		self.assertEqual((start, end), (date(2026, 9, 28), date(2026, 9, 28)))
+		gaps = checks(completeness.lodging_gaps(t), "lodging")
+		self.assertEqual([(g["employee"], g["nights"]) for g in gaps], [("EMP-L", ["2026-09-28"])])
+
+	def test_the_flights_home_need_no_cost(self):
+		self.assertEqual(completeness.cost_gaps(self.real_trip()), [])
+
+	def test_the_guest_fills_the_last_gap_and_pays_nothing(self):
+		t = self.real_trip()
+		cards = [
+			card(
+				"jroom",
+				{
+					"hotel_lodging": "The Guild Hotel",
+					"check_in_date": "2026-09-27",
+					"check_out_date": "2026-10-02",
+					"cost": 942.88,
+				},
+				[
+					{"name": "R1", "traveler": "EMP-J", "ref": "H-1001"},
+					{"traveler": "EMP-L", "ref": "H-1001", "guest": 1},
+				],
+			),
+			card("kroom", {"cost": 942.88}, [{"name": "R2", "traveler": "EMP-K", "ref": "H-1001"}]),
+		]
+		rows, notes = planner.merge_bookings(t.accommodations, cards, "accommodations")
+		self.assertEqual(notes, [])
+		t.accommodations = rows
+		planner.fit_guest_stays(t)
+
+		jesse, logan, korben = rows
+		self.assertEqual((jesse.cost, logan["cost"], korben.cost), (942.88, 0.0, 942.88))
+		self.assertEqual(logan["guest"], 1)
+		# His own night, so his itinerary does not have him checking in before he flies out.
+		self.assertEqual((logan["check_in_date"], logan["check_out_date"]), ("2026-09-28", "2026-09-29"))
+		self.assertEqual((jesse.check_in_date, jesse.check_out_date), ("2026-09-27", "2026-10-02"))
+		self.assertEqual(completeness.find_gaps(t), [])
+
+
+class TestStayWindow(unittest.TestCase):
+	def test_travel_only_narrows_the_dates(self):
+		t = trip(
+			travelers=[traveler("EMP-A", from_date="2026-10-06", to_date="2026-10-07")],
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-05 07:00:00"),
+				flight("EMP-A", "Return", "2026-10-08 18:00:00"),
+			],
+		)
+		self.assertEqual(completeness.stay_window(t, t.travelers[0]), (date(2026, 10, 6), date(2026, 10, 7)))
+
+	def test_a_late_flight_and_an_early_one_home(self):
+		t = trip(
+			travelers=[traveler("EMP-A")],
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-06 07:00:00"),
+				flight("EMP-A", "Return", "2026-10-07 18:00:00"),
+			],
+		)
+		self.assertEqual(completeness.stay_window(t, t.travelers[0]), (date(2026, 10, 6), date(2026, 10, 7)))
+		self.assertEqual(checks(completeness.lodging_gaps(t), "lodging")[0]["nights"], ["2026-10-06"])
+
+	def test_the_earliest_leg_counts_and_other_peoples_travel_does_not(self):
+		t = trip(
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-06 07:00:00"),
+				flight("EMP-A", "Outbound", "2026-10-07 07:00:00"),  # a connection
+				flight("EMP-B", "Return", "2026-10-05 18:00:00"),  # somebody else's
+			],
+		)
+		self.assertEqual(completeness.stay_window(t, t.travelers[0]), (date(2026, 10, 6), date(2026, 10, 8)))
+
+	def test_undated_or_getting_around_travel_changes_nothing(self):
+		t = trip(
+			ground_transport=[
+				row(traveler=None, leg="Outbound", transport_type="Company Fleet", pickup_datetime=None),
+				row(
+					traveler=None,
+					leg="During Trip",
+					transport_type="Rental/Third Party",
+					pickup_datetime="2026-10-06 09:00:00",
+				),
+			],
+		)
+		self.assertEqual(completeness.stay_window(t, t.travelers[0]), (date(2026, 10, 5), date(2026, 10, 8)))
+
+	def test_the_page_uses_the_same_rule(self):
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		body = re.search(r"\n\tstay_window\(traveler\) \{(.*?)\n\t\}\n", source, re.S).group(1)
+		self.assertIn('["flights", "ground_transport"]', body)
+		self.assertIn("first.Outbound > from", body)
+		self.assertIn("first.Return < to", body)
+		draw = re.search(r"\n\tdraw_nights\(\$matrix\) \{(.*?)\n\t\}\n", source, re.S).group(1)
+		self.assertIn("this.stay_window(traveler)", draw)
+
+
+class TestRoundTripFares(unittest.TestCase):
+	def test_a_flight_home_on_the_same_ticket_needs_no_cost(self):
+		t = trip(
+			flights=[
+				flight(
+					"EMP-A", "Outbound", "2026-10-05 07:00:00", booking_group="g1", ref="ABC123", cost=400
+				),
+				flight("EMP-A", "Return", "2026-10-08 18:00:00", booking_group="g2", ref=" abc123 ", cost=0),
+			]
+		)
+		self.assertEqual(completeness.cost_gaps(t), [])
+
+	def test_a_separate_one_way_ticket_still_needs_its_cost(self):
+		t = trip(
+			flights=[
+				flight(
+					"EMP-A", "Outbound", "2026-10-05 07:00:00", booking_group="g1", ref="ABC123", cost=400
+				),
+				flight("EMP-A", "Return", "2026-10-08 18:00:00", booking_group="g2", ref="XYZ789", cost=0),
+			]
+		)
+		self.assertEqual([g["group"] for g in completeness.cost_gaps(t)], ["g2"])
+
+	def test_no_fare_anywhere_flags_both_halves(self):
+		t = trip(
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-05 07:00:00", booking_group="g1", ref="ABC123", cost=0),
+				flight("EMP-A", "Return", "2026-10-08 18:00:00", booking_group="g2", ref="ABC123", cost=0),
+			]
+		)
+		self.assertEqual([g["group"] for g in completeness.cost_gaps(t)], ["g1", "g2"])
+
+	def test_everyone_on_the_flight_needs_a_paid_ticket(self):
+		t = trip(
+			flights=[
+				flight(
+					"EMP-A", "Outbound", "2026-10-05 07:00:00", booking_group="g1", ref="ABC123", cost=400
+				),
+				flight("EMP-A", "Return", "2026-10-08 18:00:00", booking_group="g2", ref="ABC123", cost=0),
+				flight("EMP-B", "Return", "2026-10-08 18:00:00", booking_group="g2", ref="", cost=0),
+			]
+		)
+		self.assertEqual([g["group"] for g in completeness.cost_gaps(t)], ["g2"])
+
+	def test_rooms_sharing_a_confirmation_still_each_need_a_cost(self):
+		# Only flights: two rooms on one hotel confirmation are still two charges.
+		t = trip(
+			accommodations=[
+				stay("EMP-A", "2026-10-05", "2026-10-08", booking_group="r1", ref="H1", cost=500),
+				stay("EMP-B", "2026-10-05", "2026-10-08", booking_group="r2", ref="H1", cost=0),
+			]
+		)
+		self.assertEqual([g["group"] for g in completeness.cost_gaps(t)], ["r2"])
+
+	def test_the_page_uses_the_same_rule_and_copies_the_confirmation_home(self):
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		body = re.search(r"\n\tfare_card\(card\) \{(.*?)\n\t\}\n", source, re.S).group(1)
+		self.assertIn('card.table !== "flights" || flt(card.values.cost)', body)
+		self.assertIn("refs.some((ref) => !ref)", body)
+		self.assertIn("toUpperCase()", body)
+		copy = re.search(r"\n\tcopy_reversed\(\) \{(.*?)\n\t\}\n", source, re.S).group(1)
+		self.assertIn("member.ref = source ? source.ref", copy)
+
+
+class TestRoomGuests(unittest.TestCase):
+	def test_a_guest_pays_no_share_and_sorts_after_the_room(self):
+		cards = [
+			card(
+				"g1",
+				{"hotel_lodging": "Hilton", "cost": 300},
+				[{"traveler": "EMP-B", "guest": 1}, {"traveler": "EMP-A"}, {"traveler": "EMP-C"}],
+				changed=["hotel_lodging", "cost"],
+				origin="new:1",
+			)
+		]
+		rows, _notes = planner.merge_bookings([], cards, "accommodations")
+		self.assertEqual(
+			[(r["traveler"], r["guest"], r["cost"]) for r in rows],
+			[
+				("EMP-A", 0, 150.0),
+				("EMP-C", 0, 150.0),
+				("EMP-B", 1, 0.0),
+			],
+		)
+
+	def test_making_someone_a_guest_resplits_without_a_cost_edit(self):
+		a = row(name="H1", traveler="EMP-A", booking_group="g1", cost=150, guest=0)
+		b = row(name="H2", traveler="EMP-B", booking_group="g1", cost=150, guest=0)
+		cards = [
+			card(
+				"g1",
+				{"cost": 300},
+				[{"name": "H1", "traveler": "EMP-A"}, {"name": "H2", "traveler": "EMP-B", "guest": 1}],
+			)
+		]
+		planner.merge_bookings([a, b], cards, "accommodations")
+		self.assertEqual((a.cost, b.cost, b.guest), (300.0, 0.0, 1))
+
+	def test_a_room_of_guests_only_splits_as_usual(self):
+		cards = [
+			card(
+				"g1",
+				{"cost": 200},
+				[{"traveler": "EMP-A", "guest": 1}, {"traveler": "EMP-B", "guest": 1}],
+				origin="new:1",
+			)
+		]
+		rows, _notes = planner.merge_bookings([], cards, "accommodations")
+		self.assertEqual([r["cost"] for r in rows], [100.0, 100.0])
+
+	def test_only_rooms_have_guests(self):
+		cards = [card("g1", {"cost": 200}, [{"traveler": "EMP-A", "guest": 1}], origin="new:1")]
+		rows, _notes = planner.merge_bookings([], cards, "flights")
+		self.assertNotIn("guest", rows[0])
+		self.assertEqual(rows[0]["cost"], 200.0)
+
+	def test_a_guest_outside_the_room_keeps_the_rooms_dates(self):
+		t = trip(
+			travelers=[traveler("EMP-A"), traveler("EMP-B", from_date="2026-10-08", to_date="2026-10-08")],
+			accommodations=[
+				stay("EMP-A", "2026-10-05", "2026-10-07", booking_group="g1"),
+				stay("EMP-B", "2026-10-05", "2026-10-07", booking_group="g1", guest=1),
+			],
+		)
+		planner.fit_guest_stays(t)
+		guest = t.accommodations[1]
+		self.assertEqual((guest.check_in_date, guest.check_out_date), ("2026-10-05", "2026-10-07"))
+
+	def test_the_card_reads_the_rooms_dates_not_the_guests(self):
+		doc = FakeDoc(
+			travelers=[],
+			accommodations=[
+				stay("EMP-B", "2026-10-06", "2026-10-07", name="H2", booking_group="g1", guest=1, cost=0),
+				stay("EMP-A", "2026-10-05", "2026-10-08", name="H1", booking_group="g1", guest=0, cost=300),
+			],
+		)
+		(room,) = planner._cards(doc, "accommodations", {})
+		self.assertEqual(
+			(room["values"]["check_in_date"], room["values"]["check_out_date"]), ("2026-10-05", "2026-10-08")
+		)
+		self.assertEqual([m["guest"] for m in room["members"]], [1, 0])
+
+	def test_the_page_sends_the_guest_flag_and_the_field_exists(self):
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		payload = re.search(r"\n\tpayload\(\) \{(.*?)\n\t\}\n", source, re.S).group(1)
+		self.assertIn('table === "accommodations" ? { guest: m.guest ? 1 : 0 } : {}', payload)
+		meta = _load_json(TRAVEL_DIR, "doctype", "trip_accommodation", "trip_accommodation.json")
+		fields = {f["fieldname"]: f for f in meta["fields"]}
+		self.assertEqual((fields["guest"]["fieldtype"], fields["guest"]["default"]), ("Check", "0"))
+		self.assertIn("guest", meta["field_order"])
+		# Child doctype JSON is age-gated on migrate: the new field needs a newer stamp.
+		self.assertGreater(meta["modified"], "2026-09-23 15:00:00.000000")
 
 
 class TestFreight(unittest.TestCase):
