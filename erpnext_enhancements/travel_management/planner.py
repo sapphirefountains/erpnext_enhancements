@@ -658,6 +658,19 @@ def _check_not_stale(doc, modified):
 # --------------------------------------------------------------------------- endpoints
 
 
+def _viewer():
+	"""Who is looking: ``is_coordinator`` and ``viewer_employee`` (the session user's
+	Employee, or None). The Review step offers "Email everyone their itinerary" to a
+	coordinator and "Email me my itinerary" to anyone else on the crew — the send endpoint
+	lets a non-coordinator email only themselves, so the everyone button always failed for
+	them. The page shows neither button until it has been told, so ``get_plan`` and
+	``save_plan`` must both keep reporting this. Imported late: ``api.travel`` needs far more
+	of frappe than this module's bench-free test stub provides."""
+	from erpnext_enhancements.api.travel import _is_coordinator, _session_employee
+
+	return {"is_coordinator": _is_coordinator(), "viewer_employee": _session_employee() or None}
+
+
 @frappe.whitelist()
 def get_plan(trip=None):
 	"""Bootstrap the page: the trip (if one is named) and the pick-lists it needs."""
@@ -666,6 +679,7 @@ def get_plan(trip=None):
 		doc.check_permission("read")
 		state = get_state(doc)
 		state["can_write"] = bool(doc.has_permission("write"))
+		state.update(_viewer())
 	else:
 		if not frappe.has_permission("Travel Trip", "create"):
 			frappe.throw(_("You are not allowed to plan trips."), frappe.PermissionError)
@@ -753,6 +767,9 @@ def save_plan(plan, trip=None, modified=None):
 	state = get_state(doc)
 	state["can_write"] = True
 	state["notes"] = notes
+	# The page adopts this state in place of the one get_plan gave it; without these the
+	# Review step would forget who is looking after the first save.
+	state.update(_viewer())
 	return state
 
 

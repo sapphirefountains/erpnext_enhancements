@@ -47,6 +47,13 @@
 
 .ti-error { color: #e03636; }
 
+/* "Your session has expired. Sign in again" — the one way out of that screen. */
+.ti-signin {
+	color: var(--ti-accent);
+	font-weight: 600;
+	text-decoration: underline;
+}
+
 /* Header */
 .ti-header {
 	position: sticky;
@@ -90,6 +97,59 @@
 
 .ti-chip-title { font-weight: 600; font-size: 0.92rem; }
 .ti-chip-sub { color: var(--ti-muted); font-size: 0.78rem; }
+
+/* A trip they own but are not traveling on. */
+.ti-chip-note {
+	color: var(--ti-muted);
+	font-size: 0.72rem;
+	font-style: italic;
+}
+
+/* Person picker: "Me", "Whole crew", then each person on the trip. One row that scrolls
+   sideways on a phone, like the trip switcher, so a big crew never pushes the day list down. */
+.ti-people {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	overflow-x: auto;
+	padding: 0 4px 12px;
+	-webkit-overflow-scrolling: touch;
+}
+
+.ti-people-label {
+	flex: 0 0 auto;
+	color: var(--ti-muted);
+	font-size: 0.78rem;
+	font-weight: 600;
+	margin-right: 2px;
+}
+
+.ti-person-chip {
+	flex: 0 0 auto;
+	min-height: 36px;
+	border: 1px solid var(--ti-border);
+	background: var(--ti-surface);
+	color: var(--ti-text);
+	border-radius: 999px;
+	padding: 6px 14px;
+	font: inherit;
+	font-size: 0.86rem;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.ti-person-chip.active {
+	border-color: var(--ti-accent);
+	background: var(--ti-accent-soft);
+	color: var(--ti-accent);
+	font-weight: 650;
+}
+
+.ti-person-chip:focus-visible,
+.ti-trip-chip:focus-visible {
+	outline: 2px solid var(--ti-accent);
+	outline-offset: 2px;
+}
 
 /* Trip meta */
 .ti-trip-meta { padding: 6px 4px 14px; }
@@ -187,6 +247,35 @@
 	font-size: 0.78rem;
 	cursor: pointer;
 }
+
+/* Whole-crew view: who is on a shared booking, each with their own number. */
+.ti-members {
+	margin-top: 8px;
+	border-top: 1px solid var(--ti-border);
+}
+
+.ti-member {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--ti-border);
+	font-size: 0.88rem;
+}
+
+.ti-member:last-child { border-bottom: 0; }
+.ti-member-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+
+.ti-member-ref {
+	margin-left: auto;
+	color: var(--ti-muted);
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+/* Leaflet marker popup (built as elements in itinerary.js). */
+.ti-popup a { display: inline-block; margin-top: 4px; }
 
 .ti-attachment,
 .ti-maps-link {

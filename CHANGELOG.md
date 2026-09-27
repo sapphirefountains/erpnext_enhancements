@@ -7,6 +7,292 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.539.0] - 2026-09-26
+
+**A saved trip can now be looked at whole: an Overview of every day, a crew-by-day grid, a
+side-by-side column per person, and "View as" any crew member, with their itinerary email and
+calendar invite shown exactly as they would get them, without sending anything.** On `/itinerary`,
+anyone who can open a trip can now switch between their own view, the whole crew and any crew
+member's (`?trip=X&as=EMPLOYEE`). This is PR 1 of the four-PR program Nik set out on 2026-09-26.
+It also fixes two bugs: a crew member's "Email everyone their itinerary" always failed, and the
+emails and calendar invites linked to bare `/itinerary`, so an owner who was not on the crew
+landed on an empty page.
+
+### Why
+
+- The office booking a crew had no single place to check a trip. They had to open each booking
+  card, or each person's phone, to see who is on what, which night someone has no bed, and whose
+  confirmation number is missing. Nik asked for four ways to look at a trip, and for any of them
+  to be open to anyone who can open the trip.
+- **"All but money" (Nik, 2026-09-26).** Anyone who can open a trip (the crew, its owner, the
+  travel coordinators) sees every person's bookings, times, confirmation numbers and booking files
+  on the new views. Money is for coordinators only on those views: cost, estimated cost, who paid,
+  billable, per diem, expense claims, advances, rollups and totals, mileage, and the claimed flags.
+  A coordinator is Administrator, System Manager, HR Manager or Travel Coordinator
+  (`travel_trip.user_is_travel_coordinator`).
+- **The rule is enforced on the server, and only on the new views.** A non-coordinator's
+  `get_trip_views` answer contains no money at all: `money` is null, and the checklist's cost gaps
+  are dropped. The page has nothing to hide. What this does **not** do: every money field on
+  Travel Trip is permlevel 0, and the Employee role can read and write the trips it can see. A
+  crew member therefore still sees costs on the trip form, on the existing Plan a Trip steps (the
+  cost fields and the Review step's "Booked so far") and through REST. Those are unchanged by this
+  release. Moving money behind a permlevel is a separate decision that has not been made.
+- Nik's standing rule holds on both pages: every screen gets its own browser history entry, and
+  Back/Forward never break.
+
+### Added
+
+- **Plan a Trip views** (`page/plan_a_trip/plan_a_trip.js`). A bar on every step of a saved trip
+  offers four views: Overview, Crew grid, Side by side, and a "View as..." person menu. The form
+  has the same four under a new **Trip views** button group (`public/js/travel_trip.js`); View as
+  asks whose itinerary when there are two or more people. While the form has unsaved changes it
+  asks for a save first: the views show the trip as saved, and View as cannot show a person added
+  on the form but not saved yet.
+  - **Overview:** every day from start to end, with a Today tag, and any booking dated outside the
+    trip dates. Items are in time order; a flight, drive or shipment stored at midnight counts as
+    having no time yet. A shared booking shows **once**, with a chip per person carrying that
+    person's own confirmation number, or "no number" in red. What the checklist says is missing is
+    shown in place, each with a Fix link to the step that fixes it:
+    - a confirmation or cost gap on its booking;
+    - "No bed tonight: X" on each night;
+    - "No way there" / "No way back" on that person's first / last day;
+    - anything that cannot be placed under "Not on any day yet".
+
+    Tiles at the top count the people, the trip's own days, and the flights, rooms, drives and
+    shipments, the last four the way the Review step counts its cards (`views.booking_counts`).
+    Counting itinerary items missed a room with no dates yet, because that room is on no day.
+    Coordinators also see each booking's cost and who paid, and a "Booked so far" tile.
+  - **Crew grid:** people down the side, days across, with an icon per flight, night in a room,
+    ride, stop and shipment. A room covers the nights from check-in to the night before
+    check-out. A room without both days covers no night, which is the checklist's rule: the
+    missing day is flagged on the room, where it used to show "Night in a room" and "No bed
+    tonight" in the same cell. Days outside a person's own dates are gray, and a warning mark
+    shows each gap. Tapping a name opens View as. It scrolls sideways with the names fixed, and
+    works at phone width.
+  - **Side by side:** one column per person, one row per day, with each person's own number on
+    every line. Chips show or hide people, on that trip only.
+  - **View as:** one person's itinerary drawn the way `/itinerary` draws it, with Copy buttons,
+    booking files, a maps link for stops and a link to their phone view. A collapsed section
+    renders their **itinerary email** and **calendar invite**: the subject, the recipient, the email
+    in a sandboxed iframe (`sandbox=""`, so nothing in it runs), the invite's events and a
+    "Download the invite (.ics)" button. "Email this to X" appears only for a coordinator, or when
+    X is you. An address naming someone the saved trip does not have (a stale link) opens on the
+    default person and corrects the address. It now also says that the person in the link is not
+    on the saved trip; before, it switched people without a word.
+  - The address is `?trip=<name>&step=<step>&view=<overview|grid|compare|person>&as=<employee>`,
+    always in that key order (`as` only with `view=person`). Opening a view, switching views or
+    picking another person pushes one entry. Back/Forward redraw the view; "Back to planning" goes
+    back through history onto its step, or pushes the step when nothing is behind it. Opening a
+    view saves what was typed first, and is never refused. If that save is refused, the view opens
+    anyway and says the latest changes are not in it. A view has no save indicator of its own,
+    so "Back to planning" shows "Not saved" on the step again. A move that lands back on the same
+    view, such as a refused Forward, asks again for any answer it has just dropped, including an
+    open email preview's. Without that, the view said "Loading..." for good.
+  - **The trip on screen is loaded again** when it is asked for from outside the page and nothing
+    unsaved is on it. That covers frappe's own entries (the form's Trip views and Plan step by
+    step, a checklist link) and any entry reached back from another page. The trip may have been
+    saved on the form meanwhile, and the views are cached per version, where the version was the
+    page's own copy of `modified`. Without the reload, the Crew grid drew the answer cached for
+    the old version, and View as showed the default person in place of someone just added on the
+    form. With something unsaved on the page, what was typed stays and only the views are asked
+    for again.
+- **`api.travel.get_trip_views(trip)`**: the payload behind all four views, in one round trip. It
+  needs read permission on the trip. It returns every day of the trip, the crew with their own
+  dates, the whole crew's itinerary, each person's itinerary, the checklist, each table's booking
+  count, and a `money` block (cost and who paid per booking, keyed like the items' `group`, plus
+  the total) **built only for a coordinator**. The assembly is pure Python in the new `travel_management/views.py`, which takes
+  the shaping function as a parameter so the suite builds it without a site. Days are capped at
+  120 from the start, so a mistyped end year cannot ask the page to draw thousands of columns.
+- **`api.travel.preview_itinerary_email(trip, employee)`**: what "Email everyone their itinerary"
+  would send that person (subject, the email as delivered, the .ics and its events), rendered and
+  **never sent**. It sends no mail, writes no Notification Log and queues no job. The recipient's
+  address is returned to coordinators only, and a person with no address still gets a preview
+  that says nothing would be sent. The HTML goes through frappe's own
+  `email_body.get_formatted_html` when it can be imported, so it matches what the inbox receives.
+- **`/itinerary` person picker.** Under the trip header: "Me" (when you are on the trip), "Whole
+  crew", and each crew member by name. The whole-crew view lists each person on a shared booking
+  with their own number and a Copy button, where it used to show one comma-joined list of
+  numbers.
+
+### Changed
+
+- **`shape_itinerary(doc, viewing_employee=None, poi_cache=None)`** only gains keys; the emails
+  read the old ones by name. Every booking and shipment carries `group`, the checklist's
+  `completeness.group_key`, so a gap can be shown on the booking it is about. A stop's `group` is
+  null. The whole-crew view adds `members` (one entry per row, in row order: `employee`,
+  `employee_name`, and that row's own `ref`) and `whole_crew`. `poi_cache` lets one trip's
+  per-person calls share their Travel POI lookups. It still carries no money.
+- **`get_trip_itinerary(trip, as_employee=None)`.** The URL key is `as`, a Python keyword, so the
+  page sends `as_employee`.
+  - Nothing: today's default (your own view if you are on the crew, else the whole crew).
+  - `crew`: the whole crew.
+  - An employee: that person's view, for anyone who can read the trip. Anyone not on the crew
+    is refused with "That person is not on this trip." The value is compared against the crew
+    and never looked up. It is annotated `str`, as is `preview_itinerary_email`'s `employee`, so
+    v16's whitelist type check refuses a dict or a list before the function runs. An earlier
+    draft looked the id up to name a known Employee in the refusal, which told anyone who could
+    read one trip the name behind any Employee id. It was also exploitable: a JSON body can send
+    a filter dict there, `frappe.db.get_value` runs it with no permission check, and the named
+    and unnamed refusals then answered yes or no about any Employee field (CTC, bank account,
+    date of birth).
+
+  The answer adds `crew`, `viewing`, `viewer_employee` and `viewer_on_trip`.
+- **The `/itinerary` boot** lists the trips you travel on plus the trips you **own** and are not on
+  (`mine: false`, shown with "Not traveling"). The owned list goes through `frappe.get_list`, so
+  the permission hooks apply. It is asked for only when the user can read Travel Trip at all.
+  For anyone else (a Website User, a profile with no Employee role), v16's `get_list` raises
+  `PermissionError`, and that turned the whole page into Frappe's "Not Permitted" page. The
+  default trip prefers one you travel on. A `?trip=` outside the list is now requested, and the
+  server's read permission decides.
+- **A refusal on `/itinerary` replaces the entry and never pushes.**
+  - A 403 or 404 falls back to your default trip, or says you don't have access.
+  - A 417 for a person no longer on the trip falls back to the trip's default view.
+  - Any other refusal, such as a 400 for a stale CSRF token, shows its error and leaves the
+    address alone.
+
+  One exception: when the page pushed the refused entry from exactly the view it would fall back
+  to, it steps back onto that entry with `history.back()`. A replace there would leave two
+  identical entries in a row, and a Back that does nothing. Each pushed entry records where it
+  came from in `history.state.itin_from`. While "Report a problem" is open, a refusal writes no
+  history, because the entry on top belongs to the panel. The page follows the address again once
+  the panel has closed.
+- **Being signed out since `/itinerary` loaded is not treated as a refusal.** Frappe v16 answers
+  a request from an expired session as Guest. Guest may not call the method, so the answer is the
+  same 403 that someone else's trip gets, with `session_expired` in the body. The page used to
+  rewrite the address to the default trip and then say "You don't have access to this trip"
+  about the traveler's own trip. It now keeps the entry and says the session has expired, with a
+  sign-in link back to the same address. A session ended in another tab sends no
+  `session_expired`; for that case the page checks the readable `user_id` cookie, which frappe
+  sets to Guest or removes.
+- **`notifications._send` is split** into `_render` (template plus `email_style.wrap`) and
+  `_deliver` (`frappe.sendmail` plus the Notification Log). `_send` keeps its name and signature,
+  because `reminders.py` imports it, and still runs both. The itinerary email for one person is
+  built in one place, `_itinerary_email`, used by both the send and the preview, so a preview
+  cannot drift from what is sent.
+- **`planner.get_plan` and `save_plan`** also return `is_coordinator` and `viewer_employee`. The
+  page keeps them across saves.
+
+### Fixed
+
+- **"Email everyone their itinerary" always failed for anyone but a coordinator.** Plan a Trip is
+  open to every Employee, but the button called `send_itinerary_email` with no employee, and the
+  endpoint lets a non-coordinator send only to themselves ("You can only send the itinerary to
+  yourself."). The Review step now shows that button only once the server has said the viewer is
+  a coordinator (`get_plan` and `save_plan` report it), and shows neither button while that is
+  unknown. A crew member instead gets **"Email me my itinerary"**, which names them.
+- **Emails and calendar invites linked to bare `/itinerary`.** That page opens whichever of *your*
+  trips is current. An owner who booked a crew they were not on clicked "Open your mobile
+  itinerary" in the "Trip booked" email and got "No upcoming or recent trips". The link in every
+  travel email (`_base_context`'s `itinerary_url`) and the invite's trip event now open
+  `/itinerary?trip=<name>`. `views.itinerary_path` is the one place that link is spelled.
+- **`/itinerary`'s "Today" was the UTC date** (`toISOString`). After 5 PM in Arizona, the Today
+  badge and the default trip treated tomorrow as today. It now uses the phone's own date.
+- **`/itinerary`'s map popup** was built by joining the place name and the stop's activity into an
+  HTML string. It is now built from elements, like every other part of the page.
+- **The `/itinerary` boot is escaped for an inline script** (`www/itinerary.py` `script_json`):
+  `<`, `>` and `&` become `\u` escapes. The template prints it `| safe`, and `frappe.as_json` leaves
+  `<` alone, so a trip purpose containing `</script>` would have ended the block early.
+
+### Tests
+
+- **New `tests/test_travel_views.py`** (bench-free `unittest`, 55 tests, its own CI step "Trip
+  views + itinerary email preview"). It covers:
+  - the new `shape_itinerary` keys, with every key the emails read still present;
+  - `build_trip_views`' days, crew dates, per-person itineraries, booking counts, cost gaps and
+    money;
+  - `get_trip_itinerary` with each kind of `as_employee`. A stranger, a filter dict and a list are
+    each refused with the same sentence and no Employee lookup, and the `str` annotations are
+    checked;
+  - the boot's owned trips, including no `get_list` call without read on Travel Trip (the stub's
+    `get_list` raises then, as v16's does);
+  - the real coordinator gate, unmocked down to `user_is_travel_coordinator`. Every other test
+    patches `_is_coordinator`, and the suite passed with it wired to True for everyone;
+  - the itinerary email template that the preview renders naming no money field. The stub
+    renderer never reads the template, so the preview's own money check could not see it;
+  - the preview recording **no** `sendmail`, Notification Log, job or error log, and the send
+    delivering exactly the preview's subject, HTML and .ics.
+
+  A recursive walk fails on a money key at any depth of a non-coordinator's payload, and the
+  fixture's distinct sentinel amounts must not appear anywhere in its JSON. Each of these
+  mutations turns the suite red:
+  - money on a flight;
+  - money built for a crew member;
+  - the preview calling `_send`;
+  - a stranger allowed as `?as=`;
+  - the refusal naming or looking up the person;
+  - the owned list asked for without the permission check;
+  - the coordinator gate wired to True.
+- **`tests/test_travel_planner.py`**: 68 to 76 tests. Among the new pins:
+  - every `api.travel` method the page calls is whitelisted;
+  - the form's Trip views equal the page's `TP_VIEWS`;
+  - the harness knows every step;
+  - `route_args` reads and consumes `view` and `as`;
+  - a view's address keeps one key order;
+  - a view is an entry the page writes through `set_address`, and `route()` asks `route_view`
+    before `jump_to`.
+
+  On `/itinerary`, the pins that changed on purpose: `writeTripEntry(true` now appears twice
+  (trip chip and person picker) while `pushState(` still appears exactly once; the race guard
+  checks the (trip, person) pair; `loadFailed` replaces and never pushes; `toISOString` and
+  string-built popup HTML are gone; `script_json` escapes and round-trips; and `login_redirect`
+  keeps `&as=`.
+- **`scripts/test_wizard_back_forward.mjs`**: Plan a Trip went from 15 to 34 tests. The 19 new
+  ones cover:
+  - opening, leaving, reloading and deep-linking a view, and the form's Trip views;
+  - switching person, and a stale `get_trip_views` answer;
+  - saving before a view, and a refused save;
+  - a tab or Fix link from a view, and a refused Forward from a view;
+  - the preview making no entry and never sending;
+  - a trip on screen that was saved on the form: Trip views onto it, Back onto it, and the same
+    with unsaved changes on the page;
+  - a move back onto a view, or onto an open preview, that is still waiting for its answer;
+  - the people hidden in Side by side, kept per trip;
+  - a room with no check-out on the Crew grid, and the Overview's tiles;
+  - the Review step's send buttons for each thing the server may have said about the viewer.
+
+  A view's render now runs the real `render_view` and keeps the markup it builds. The test for a
+  refused save used to assert `set_save_state("error")`, which does nothing on a view because a
+  view has no save indicator. Deleting the notice people actually see left every test green.
+- **`scripts/test_web_flow_history.js`**: `/itinerary` went from 21 to 93 checks. Two old checks
+  were re-specified:
+  - an unknown `?trip=` is now requested with no history call, and is replaced only after the
+    server refuses it;
+  - a pushed entry's `history.state` now also carries `itin_from`.
+
+  The fake server now answers per person, refuses with 400, 403, 404 and 417, and can answer as
+  an expired session. The clock is fixed at 8:30 PM in Arizona. The new checks cover:
+  - an expired session, and a session ended in another tab;
+  - a 403 while still signed in;
+  - a 400 with `?as=`;
+  - a refusal stepped back off after a chip tap or a person pick;
+  - a refusal while "Report a problem" is open.
+- Nothing ran against a real bench. The views were also rendered in a browser from payloads
+  produced by the real server code under the test stub: coordinator and crew member, all four
+  views, the preview, the Review step's buttons, and `/itinerary`'s picker with Back.
+
+### After deploy
+
+1. Open a real trip on Plan a Trip as a coordinator and as a crew member (an Employee on the
+   crew). As the crew member, the Overview must show no costs and no "Booked so far".
+2. Just before opening the preview, note the time the Desk shows. `creation` is written in the
+   site's time zone, but MariaDB's `now()` on prod is UTC, so a `now() - interval ...` filter
+   matches nothing and the check would pass whatever happened. On View as, open "Their itinerary
+   email and calendar invite" for one person. Nothing may be sent. Both read-only queries below
+   must return 0 for that trip. Check Email Queue first: every send is queued there, but a
+   Notification Log is written only for a recipient who has a user account.
+
+   ```sql
+   select count(*) from `tabEmail Queue`
+   where reference_doctype = 'Travel Trip' and reference_name = '<trip>'
+   and creation >= '<the Desk time noted, YYYY-MM-DD HH:MM:SS>';
+
+   select count(*) from `tabNotification Log`
+   where document_type = 'Travel Trip' and document_name = '<trip>'
+   and creation >= '<the same time>';
+   ```
+3. On a phone, open `/itinerary?trip=<trip>&as=crew` as the trip's owner, then pick a person and
+   press Back.
+
 ## [1.538.0] - 2026-09-25
 
 **The company knowledge base gets its module, its two doctypes, its two roles and its locked

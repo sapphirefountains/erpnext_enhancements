@@ -44,10 +44,23 @@
  *   - a price that lands after the payer has moved on is dropped;
  *   - a page restored from the back-forward cache asks the server again.
  *   /itinerary
- *   - boot reads `?trip=`, validated against the person's trips, and replaces the entry only
- *     when it is missing or unknown (keeping any other query and the hash);
- *   - a chip tap pushes `?trip=<name>`; Back and Forward load that entry's trip and push nothing;
- *   - a stale response (or error) for a trip no longer on screen is dropped;
+ *   - boot reads `?trip=` and `?as=` and asks the server for exactly that (`as` goes up as
+ *     `as_employee`), listed trip or not: a trip they own, or a coordinator's link, loads with no
+ *     history call, and so does a `?trip=` for someone with no trips (or no Employee record);
+ *   - the entry is replaced only when `?trip=` is missing, or when the server REFUSES it: a
+ *     trip that is gone or not theirs (403, 404) falls back to the default trip (keeping any
+ *     other query and the hash, dropping `?as=`), a person not on the trip (417, and only 417)
+ *     to the trip's default view, and with no trip to fall back on the page says so in place;
+ *     a refused entry the page pushed from the very view it would fall back to is stepped back
+ *     off instead, so no two entries in a row are the same; and while "Report a problem" is
+ *     open a refusal writes no history at all;
+ *   - signed out since the page loaded (a 403 with `session_expired`, or the `user_id` cookie
+ *     at Guest) is not a refusal: the entry stays, and the page offers to sign in back to it;
+ *   - the default trip is one they travel on (`mine`), on this phone's calendar date, not UTC's;
+ *   - a chip tap pushes `?trip=<name>` and drops `?as=`; a person pick pushes `?trip=&as=`; Back
+ *     and Forward load that entry's trip and person and push nothing;
+ *   - the whole-crew view gives each person on a shared booking their own number;
+ *   - a stale response (or error) for a trip, or a person, no longer on screen is dropped;
  *   - while "Report a problem" is open its Back is its own, and the page follows the address
  *     only once the panel has answered.
  *   /contract-sign
@@ -859,37 +872,138 @@ async function testPayCard() {
 
 // ---------------------------------------------------------------------------- /itinerary
 
+// A date on this machine's calendar, as the page now reads "today" (not UTC).
 function iso(offset) {
 	const d = new Date();
-	d.setUTCDate(d.getUTCDate() + offset);
-	return d.toISOString().slice(0, 10);
+	d.setDate(d.getDate() + offset);
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// The boot list: trips they travel on, plus one they own but are not on (Trip O, on right now
+// too, so the default has to prefer Trip A for being theirs).
 const TRIPS = [
-	{ name: "TRIP-C", purpose: "Trip C", start_date: iso(-30), end_date: iso(-20) },
-	{ name: "TRIP-A", purpose: "Trip A", start_date: iso(-1), end_date: iso(1) },
-	{ name: "TRIP-B", purpose: "Trip B", start_date: iso(10), end_date: iso(12) },
+	{ name: "TRIP-C", purpose: "Trip C", start_date: iso(-30), end_date: iso(-20), mine: true },
+	{ name: "TRIP-A", purpose: "Trip A", start_date: iso(-1), end_date: iso(1), mine: true },
+	{ name: "TRIP-O", purpose: "Trip O", start_date: iso(0), end_date: iso(2), mine: false },
+	{ name: "TRIP-B", purpose: "Trip B", start_date: iso(10), end_date: iso(12), mine: true },
 ];
+
+const PEOPLE = { "EMP-1": "Pat", "EMP-2": "Sam", "EMP-3": "Alex", "EMP-4": "Dana" };
+
+// A shared flight: one booking, one row (and one PNR) per person.
+function sharedFlight(viewing) {
+	const rows = [
+		{ employee: "EMP-1", ref: "PNR-PAT" },
+		{ employee: "EMP-2", ref: "PNR-SAM" },
+	];
+	const base = { type: "flight", date: iso(0), sort_time: "", airline: "Southwest", flight_number: "WN 1", departure_airport: "PHX", arrival_airport: "LAS", group: "g1" };
+	if (!viewing) {
+		const members = rows.map((r) => ({ employee: r.employee, employee_name: PEOPLE[r.employee], ref: r.ref }));
+		return [Object.assign({}, base, { booking_reference: "PNR-PAT, PNR-SAM", travelers: ["Pat", "Sam"], members, whole_crew: false })];
+	}
+	const own = rows.find((r) => r.employee === viewing);
+	return own ? [Object.assign({}, base, { booking_reference: own.ref, travelers: null })] : [];
+}
+
+// What the server knows. TRIP-X is readable but in nobody's boot list here (a coordinator's
+// link); TRIP-SECRET is someone else's (403); anything else is gone (404).
+const SERVER_TRIPS = {
+	"TRIP-A": { crew: ["EMP-1", "EMP-2", "EMP-3"], days: (viewing) => {
+		const items = sharedFlight(viewing);
+		return items.length ? [{ date: iso(0), items }] : [];
+	} },
+	"TRIP-B": { crew: ["EMP-1", "EMP-2"] },
+	"TRIP-C": { crew: ["EMP-1"] },
+	"TRIP-O": { crew: ["EMP-2", "EMP-3"] },
+	"TRIP-X": { purpose: "Trip X", start_date: iso(3), end_date: iso(5), crew: ["EMP-4"] },
+	"TRIP-P1": { purpose: "Ends today", start_date: "2026-09-23", end_date: "2026-09-25", crew: ["EMP-1"], days: () => [
+		{ date: "2026-09-25", items: [] },
+		{ date: "2026-09-26", items: [] },
+	] },
+	"TRIP-P2": { purpose: "Starts tomorrow", start_date: "2026-09-26", end_date: "2026-09-28", crew: ["EMP-1"] },
+};
+
+function refusal(status, excType, message) {
+	return { status, body: { exc_type: excType, _server_messages: JSON.stringify([JSON.stringify({ message })]) } };
+}
+
+// get_trip_itinerary(trip, as_employee), to the contract: read permission, then '' = the
+// viewer when on the crew else the whole crew, 'crew' = the whole crew, an employee = that
+// person or a ValidationError (417).
+function serve(trip, as, viewer) {
+	if (trip === "TRIP-SECRET") return refusal(403, "PermissionError", "Not permitted");
+	const t = SERVER_TRIPS[trip];
+	if (!t) return refusal(404, "DoesNotExistError", `Travel Trip ${trip} not found`);
+	const listed = TRIPS.find((x) => x.name === trip) || {};
+	const meta = { trip, purpose: t.purpose || listed.purpose, status: "Booked", start_date: t.start_date || listed.start_date, end_date: t.end_date || listed.end_date };
+	const onTrip = !!viewer && t.crew.includes(viewer);
+	let viewing;
+	if (!as) viewing = onTrip ? viewer : null;
+	else if (as === "crew") viewing = null;
+	else if (t.crew.includes(as)) viewing = as;
+	else return refusal(417, "ValidationError", `${PEOPLE[as] || as} is not on this trip.`);
+	const crew = t.crew.map((e) => ({ employee: e, employee_name: PEOPLE[e], from_date: meta.start_date, to_date: meta.end_date, is_trip_lead: 0 }));
+	const message = Object.assign({ days: t.days ? t.days(viewing) : [] }, meta, { crew, viewing, viewer_employee: viewer || null, viewer_on_trip: onTrip });
+	return { status: 200, body: { message } };
+}
+
+// A phone in Arizona (UTC-7, no daylight time) at 8:30 PM on Sep 25, which is already 03:30 on
+// Sep 26 in UTC. Local-calendar getters answer in Arizona whatever this machine's zone is.
+function arizonaEvening() {
+	const RealDate = Date;
+	const NOW = RealDate.UTC(2026, 8, 26, 3, 30);
+	const shifted = (d) => new RealDate(d.getTime() - 7 * 3600e3);
+	return class ArizonaDate extends RealDate {
+		constructor(...args) {
+			if (args.length) super(...args);
+			else super(NOW);
+		}
+		getFullYear() {
+			return shifted(this).getUTCFullYear();
+		}
+		getMonth() {
+			return shifted(this).getUTCMonth();
+		}
+		getDate() {
+			return shifted(this).getUTCDate();
+		}
+	};
+}
+
+// What frappe v16 answers a request whose session has expired: it carries on as Guest
+// (sessions.py sets frappe.response["session_expired"]), Guest may not call the method, so
+// is_whitelisted throws PermissionError — a 403, with the flag in the body.
+function sessionExpired() {
+	return { status: 403, body: Object.assign({ session_expired: 1 }, refusal(403, "PermissionError", "Not permitted").body) };
+}
 
 function loadItinerary(url, opts) {
 	opts = opts || {};
+	const employee = "employee" in opts ? opts.employee : "EMP-1";
 	const env = {};
 	const browser = makeBrowser(url, { prevPath: "/desk", state: opts.state });
 	env.browser = browser;
 	const document = makeDocument(env, { "itinerary-root": {} });
+	// frappe's readable cookies (a real browser always has a string here; the stand-in DOM has
+	// none unless a test gives it one).
+	if ("cookie" in opts) document.cookie = opts.cookie;
 	const fetches = [];
 	const capture = { open: false };
+	// `expired`: every answer is the one an expired session gets. `next`: the next answer is
+	// this one, whatever the fake server would have said.
+	const session = { expired: false, next: null };
 	const win = browser.window;
 	Object.assign(win, {
 		window: win,
 		document,
 		history: browser.history,
-		ITIN_BOOT: { trips: opts.trips || TRIPS, employee: "EMP-1", employee_name: "Pat" },
+		ITIN_BOOT: { trips: opts.trips || TRIPS, employee, employee_name: employee ? PEOPLE[employee] : null },
 		ITIN_CSRF: "tok",
 		ee_capture: { isOpen: () => capture.open },
 		fetch(u, o) {
+			const body = JSON.parse(o.body);
 			return new Promise((resolve, reject) => {
-				fetches.push({ trip: JSON.parse(o.body).trip, resolve, reject });
+				fetches.push({ trip: body.trip, as: body.as_employee || null, resolve, reject });
 			});
 		},
 		URLSearchParams,
@@ -898,28 +1012,38 @@ function loadItinerary(url, opts) {
 		setTimeout,
 		clearTimeout,
 	});
+	if (opts.Date) win.Date = opts.Date;
 	const source = fs.readFileSync(path.join(APP, "public", "js", "travel", "itinerary.js"), "utf8");
 	runInPage(source, win, "itinerary.js");
 	const root = document.byId["itinerary-root"];
+	const texts = (cls) => root.find(cls).map((e) => e.textContent);
 	const page = {
 		browser,
+		document,
 		fetches,
 		capture,
 		root,
-		async answer(trip, ok) {
-			const i = fetches.findIndex((f) => f.trip === trip);
+		// Answer the oldest request for `trip` (and, when given, that `as`): `ok === false` is no
+		// answer at all (offline); otherwise the fake server decides, refusals included.
+		async answer(trip, ok, as) {
+			const i = fetches.findIndex((f) => f.trip === trip && (as === undefined || f.as === as));
 			if (i === -1) {
-				check(`a request for ${trip} is waiting to be answered`, fetches.map((f) => f.trip), [trip]);
+				check(`a request for ${trip}${as === undefined ? "" : ` as ${as}`} is waiting to be answered`, page.asked(), [[trip, as === undefined ? "?" : as]]);
 				return;
 			}
 			const f = fetches.splice(i, 1)[0];
 			if (ok === false) f.reject(new Error("offline"));
 			else {
-				const t = TRIPS.find((x) => x.name === trip);
-				f.resolve({ ok: true, status: 200, json: async () => ({ message: Object.assign({ days: [] }, t) }) });
+				let r = session.expired ? sessionExpired() : serve(f.trip, f.as, employee);
+				if (session.next) {
+					r = session.next;
+					session.next = null;
+				}
+				f.resolve({ ok: r.status === 200, status: r.status, json: async () => r.body });
 			}
 			await flush();
 		},
+		session,
 		shown() {
 			const el = root.find("ti-trip-purpose")[0];
 			return el ? el.textContent : null;
@@ -929,9 +1053,31 @@ function loadItinerary(url, opts) {
 			chip.click();
 			await flush();
 		},
+		async pick(label) {
+			const chip = root.find("ti-person-chip").find((c) => c.textContent === label);
+			if (!chip) {
+				check(`the picker offers ${label}`, page.people(), [label]);
+				return;
+			}
+			chip.click();
+			await flush();
+		},
 		trip: () => new URL(browser.location.href).searchParams.get("trip"),
+		as: () => new URL(browser.location.href).searchParams.get("as"),
 		pending: () => fetches.map((f) => f.trip),
+		asked: () => fetches.map((f) => [f.trip, f.as]),
 		errors: () => root.find("ti-error").length,
+		title: () => texts("ti-header-title")[0],
+		people: () => texts("ti-person-chip"),
+		picked: () => root.find("ti-person-chip").filter((c) => c.classList.contains("active")).map((c) => c.textContent),
+		chips: () => root.find("ti-trip-chip"),
+		activeChips: () => root.find("ti-trip-chip").filter((c) => c.classList.contains("active")).map((c) => c.find("ti-chip-title")[0].textContent),
+		members: () => texts("ti-member"),
+		empty: () => texts("ti-empty"),
+		todays: () => root.find("ti-day").map((s) => s.classList.contains("today")),
+		has: (text) => root.textContent.includes(text),
+		text: texts,
+		urls: () => browser.calls.map((c) => `${c.kind} ${c.url}`),
 	};
 	return page;
 }
@@ -943,19 +1089,47 @@ async function testItinerary() {
 
 	let p = loadItinerary("/itinerary");
 	check("boot with no ?trip= replaces the entry with the default trip", p.browser.calls, [{ kind: "replace", argc: 3, url: "/itinerary?trip=TRIP-A" }]);
+	check("...a trip they travel on, not the one they only own (on now too)", p.trip(), "TRIP-A");
 	check("...and loads it", p.pending(), ["TRIP-A"]);
 	await p.answer("TRIP-A");
 	check("...and shows it", p.shown(), "Trip A");
+	check("a trip they own but are not on is a chip too, marked as such", [p.chips().length, p.text("ti-chip-note")], [4, ["Not traveling"]]);
 	p.browser.back();
 	await p.browser.settle();
 	check("Back from the first entry leaves the page", p.browser.left, ORIGIN + "/desk");
+
+	p = loadItinerary("/itinerary", { trips: [TRIPS[2], TRIPS[3]] });
+	check("the default prefers their own upcoming trip over one they only own that is on now", p.trip(), "TRIP-B");
 
 	p = loadItinerary("/itinerary?trip=TRIP-B");
 	check("boot with a valid ?trip= touches no history", p.browser.calls, []);
 	check("...and loads that trip", p.pending(), ["TRIP-B"]);
 
+	// Re-specified with ?as= (was: an unknown ?trip= replaced on sight). A trip outside the
+	// list may be one they can read — the server decides — so it is asked for, and only a
+	// refusal replaces the entry.
 	p = loadItinerary("/itinerary?trip=TRIP-GONE&x=1#top");
-	check("an unknown ?trip= is replaced, keeping the rest of the address", p.browser.calls.map((c) => c.url), ["/itinerary?trip=TRIP-A&x=1#top"]);
+	check("an unknown ?trip= is asked for, not replaced on sight", [p.browser.calls, p.pending()], [[], ["TRIP-GONE"]]);
+	await p.answer("TRIP-GONE");
+	check("...and once the server refuses it, the entry is replaced with the default trip, keeping the rest of the address", p.urls(), ["replace /itinerary?trip=TRIP-A&x=1#top"]);
+	check("...which loads", p.pending(), ["TRIP-A"]);
+	await p.answer("TRIP-A");
+	check("...and shows, with no error", [p.shown(), p.errors()], ["Trip A", 0]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-SECRET&as=EMP-2");
+	await p.answer("TRIP-SECRET", undefined, "EMP-2");
+	check("someone else's trip (403) falls back the same way, dropping ?as=", [p.urls(), p.asked()], [["replace /itinerary?trip=TRIP-A"], [["TRIP-A", null]]]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-SECRET", { trips: [] });
+	await p.answer("TRIP-SECRET");
+	check("a refused trip with none of their own to fall back on says so, in place", [p.empty(), p.browser.calls, p.errors()], [["You don't have access to this trip, or it no longer exists."], [], 0]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-X");
+	check("a ?trip= that is not in their list is asked for, with no history call", [p.browser.calls, p.pending()], [[], ["TRIP-X"]]);
+	await p.answer("TRIP-X");
+	check("...and shown when the server answers", [p.shown(), p.browser.calls.length, p.errors()], ["Trip X", 0, 0]);
+	check("...as the whole crew, since they are not on it", [p.title(), p.people(), p.picked()], ["Whole crew", ["Whole crew", "Dana"], ["Whole crew"]]);
+	check("...with their own trips offered to go back to, none of them picked", [p.chips().length, p.activeChips()], [4, []]);
 
 	p = loadItinerary("/itinerary");
 	await p.answer("TRIP-A");
@@ -993,6 +1167,121 @@ async function testItinerary() {
 	check("...and so is its error", p.errors(), 0);
 	await p.answer("TRIP-A");
 
+	// Whose itinerary: the person picker, ?as=, and Back / Forward between people.
+	p = loadItinerary("/itinerary");
+	check("the default view names no one", p.asked(), [["TRIP-A", null]]);
+	await p.answer("TRIP-A");
+	check("the picker offers Me, the whole crew and everyone else on the trip", p.people(), ["Me", "Whole crew", "Sam", "Alex"]);
+	check("...with Me picked, under 'My Itinerary'", [p.picked(), p.title(), p.document.title], [["Me"], "My Itinerary", "My Itinerary"]);
+	check("...showing my own PNR only", [p.has("PNR: PNR-PAT"), p.has("PNR-SAM")], [true, false]);
+	await p.pick("Sam");
+	check("picking a person pushes one entry, ?trip=&as=", p.browser.calls.slice(1), [{ kind: "push", argc: 3, url: "/itinerary?trip=TRIP-A&as=EMP-2" }]);
+	check("...carrying the trip and the person, and the view it was pushed from", p.browser.history.state, {
+		itin_trip: "TRIP-A",
+		itin_as: "EMP-2",
+		itin_from: { trip: "TRIP-A", as: null },
+	});
+	check("...asks the server for that person (as_employee)", p.asked(), [["TRIP-A", "EMP-2"]]);
+	check("...and keeps the picker up while it loads", [p.picked(), p.title()], [["Sam"], "Sam's itinerary"]);
+	await p.answer("TRIP-A");
+	check("...then shows their itinerary, with their own PNR", [p.title(), p.has("PNR: PNR-SAM"), p.has("PNR-PAT")], ["Sam's itinerary", true, false]);
+	check("...and the page title says whose it is", p.document.title, "Sam's itinerary");
+	await p.pick("Whole crew");
+	check("the whole crew is ?as=crew", p.urls().slice(2), ["push /itinerary?trip=TRIP-A&as=crew"]);
+	await p.answer("TRIP-A");
+	check("...titled 'Whole crew'", p.title(), "Whole crew");
+	check("...each person on a shared booking with their own number", p.members(), ["PatPNR: PNR-PATCopy", "SamPNR: PNR-SAMCopy"]);
+	check("...rather than the names and numbers joined", [p.has("With:"), p.has("PNR-PAT, PNR-SAM")], [false, false]);
+	await p.pick("Whole crew");
+	check("tapping the person on screen reloads without a new entry", [p.browser.calls.length, p.asked()], [3, [["TRIP-A", "crew"]]]);
+	await p.answer("TRIP-A");
+	await p.tap("Trip A");
+	check("tapping the trip on screen keeps the person", [p.browser.calls.length, p.asked()], [3, [["TRIP-A", "crew"]]]);
+	await p.answer("TRIP-A");
+	p.browser.back();
+	await p.browser.settle();
+	check("Back returns to the previous person, without a push", [p.as(), p.asked(), p.browser.calls.length], ["EMP-2", [["TRIP-A", "EMP-2"]], 3]);
+	await p.answer("TRIP-A");
+	check("...and shows them", p.title(), "Sam's itinerary");
+	p.browser.back();
+	await p.browser.settle();
+	check("Back again returns to the default view", [p.as(), p.asked()], [null, [["TRIP-A", null]]]);
+	await p.answer("TRIP-A");
+	check("...which is mine", [p.title(), p.picked()], ["My Itinerary", ["Me"]]);
+	p.browser.forward();
+	await p.browser.settle();
+	await p.answer("TRIP-A", undefined, "EMP-2");
+	check("Forward restores the person", p.title(), "Sam's itinerary");
+	await p.tap("Trip B");
+	check("a trip chip drops ?as=: another trip opens on its default view", [p.urls().slice(-1), p.asked()], [["push /itinerary?trip=TRIP-B"], [["TRIP-B", null]]]);
+	await p.answer("TRIP-B");
+	check("...which is mine", p.title(), "My Itinerary");
+	p.browser.back();
+	await p.browser.settle();
+	check("Back from it returns to the person on the previous trip", [p.trip(), p.as(), p.asked()], ["TRIP-A", "EMP-2", [["TRIP-A", "EMP-2"]]]);
+	await p.answer("TRIP-A");
+	check("...and popstate still never pushed or replaced", p.browser.calls.length, 4);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-2");
+	check("?as= at boot touches no history", p.browser.calls, []);
+	check("...and goes to the server as as_employee", p.asked(), [["TRIP-A", "EMP-2"]]);
+	await p.answer("TRIP-A");
+	check("...which shows that person", [p.title(), p.picked()], ["Sam's itinerary", ["Sam"]]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-9");
+	await p.answer("TRIP-A");
+	check("someone not on the trip: the entry is replaced with the trip's default view", [p.urls(), p.asked()], [["replace /itinerary?trip=TRIP-A"], [["TRIP-A", null]]]);
+	await p.answer("TRIP-A");
+	check("...which shows, with no error", [p.title(), p.errors()], ["My Itinerary", 0]);
+
+	// A stale answer is keyed on the trip AND the person.
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	await p.pick("Sam");
+	await p.pick("Alex");
+	await p.answer("TRIP-A", undefined, "EMP-2");
+	check("an answer for the person picked before is dropped", [p.title(), p.shown()], ["Alex's itinerary", null]);
+	await p.answer("TRIP-A", undefined, "EMP-3");
+	check("...and the person picked last is shown", [p.title(), p.shown()], ["Alex's itinerary", "Trip A"]);
+	await p.pick("Sam");
+	await p.pick("Whole crew");
+	await p.answer("TRIP-A", false, "EMP-2");
+	check("...and so is its error", p.errors(), 0);
+	await p.answer("TRIP-A", undefined, "crew");
+	check("...and the whole crew, picked last, is shown", [p.title(), p.shown()], ["Whole crew", "Trip A"]);
+
+	// No Employee record (a coordinator's account) with a link to a trip.
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [], employee: null });
+	check("no employee record, but a ?trip=: that trip is asked for, with no history call", [p.browser.calls, p.pending()], [[], ["TRIP-X"]]);
+	await p.answer("TRIP-X");
+	check("...and shown, not 'No employee record'", [p.shown(), p.has("No employee record")], ["Trip X", false]);
+	check("...as the whole crew, with no Me", [p.title(), p.people()], ["Whole crew", ["Whole crew", "Dana"]]);
+	await p.pick("Dana");
+	check("...where picking a person pushes an entry", p.urls(), ["push /itinerary?trip=TRIP-X&as=EMP-4"]);
+	await p.answer("TRIP-X");
+	check("...showing them", p.title(), "Dana's itinerary");
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back works with no trips of their own", [p.asked(), p.browser.calls.length], [[["TRIP-X", null]], 1]);
+	await p.answer("TRIP-X");
+	check("...back to the whole crew", p.title(), "Whole crew");
+
+	p = loadItinerary("/itinerary", { trips: [], employee: null });
+	check("no employee record and no ?trip=: says so, and touches no history", [p.empty(), p.browser.calls], [["No employee record is linked to your user account."], []]);
+
+	// "Today" is this phone's date, not UTC's.
+	p = loadItinerary("/itinerary", {
+		Date: arizonaEvening(),
+		trips: [
+			{ name: "TRIP-P1", purpose: "Ends today", start_date: "2026-09-23", end_date: "2026-09-25", mine: true },
+			{ name: "TRIP-P2", purpose: "Starts tomorrow", start_date: "2026-09-26", end_date: "2026-09-28", mine: true },
+		],
+	});
+	check("at 8:30 PM in Arizona (already tomorrow in UTC) the default trip is the one on today", p.pending(), ["TRIP-P1"]);
+	await p.answer("TRIP-P1");
+	check("...and Today is Sep 25, not Sep 26", p.todays(), [true, false]);
+
 	// "Report a problem" open: its Back is its own.
 	p = loadItinerary("/itinerary");
 	await p.answer("TRIP-A");
@@ -1017,6 +1306,125 @@ async function testItinerary() {
 
 	p = loadItinerary("/itinerary", { trips: [] });
 	check("no trips: no history call at all", p.browser.calls, []);
+
+	// Signed out since the page loaded is not a refusal, though frappe answers it with the
+	// same 403 (it carries on as Guest). It used to rewrite the address to the default trip and
+	// then say "You don't have access to this trip" about the traveler's own trip.
+	p = loadItinerary("/itinerary?trip=TRIP-B", { cookie: "user_id=pat%40example.com; full_name=Pat" });
+	await p.answer("TRIP-B");
+	await p.tap("Trip C");
+	p.session.expired = true;
+	await p.answer("TRIP-C");
+	await p.browser.settle();
+	check(
+		"an expired session keeps the entry that was tapped, and writes no history",
+		[p.urls(), p.trip(), p.pending()],
+		[["push /itinerary?trip=TRIP-C"], "TRIP-C", []]
+	);
+	check(
+		"...says so, with a way to sign in that comes back to this trip",
+		[p.empty(), p.root.find("ti-signin").map((a) => a.href), p.has("don't have access")],
+		[["Your session has expired. Sign in again"], ["/login?redirect-to=/itinerary%3Ftrip%3DTRIP-C"], false]
+	);
+	p.session.expired = false;
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back still goes to the trip before", [p.trip(), p.pending()], ["TRIP-B", ["TRIP-B"]]);
+
+	p = loadItinerary("/itinerary", { cookie: "user_id=pat%40example.com" });
+	await p.answer("TRIP-A");
+	await p.tap("Trip B");
+	p.document.cookie = "user_id=Guest"; // signed out in another tab: no session_expired in the answer
+	p.session.next = refusal(403, "PermissionError", "Not permitted");
+	await p.answer("TRIP-B");
+	await p.browser.settle();
+	check(
+		"signed out in another tab (a plain 403, and the user_id cookie back to Guest): the same",
+		[p.urls(), p.trip(), p.empty()],
+		[["replace /itinerary?trip=TRIP-A", "push /itinerary?trip=TRIP-B"], "TRIP-B", ["Your session has expired. Sign in again"]]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-SECRET", { cookie: "user_id=pat%40example.com" });
+	await p.answer("TRIP-SECRET");
+	check("a 403 while still signed in is someone else's trip, and falls back as before", p.urls(), ["replace /itinerary?trip=TRIP-A"]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-2");
+	p.session.next = refusal(400, "CSRFTokenError", "Invalid Request");
+	await p.answer("TRIP-A");
+	check(
+		"a refusal that is not about the person (a 400 for a stale CSRF token) keeps ?as= and shows the error",
+		[p.urls(), p.pending(), p.errors()],
+		[[], [], 1]
+	);
+
+	// A refusal of an entry the page just pushed, whose fallback is the entry behind it: one
+	// Back after replacing it did nothing (two identical entries in a row).
+	const GONE = { name: "TRIP-GONE", purpose: "Trip Gone", start_date: iso(20), end_date: iso(22), mine: true };
+	p = loadItinerary("/itinerary", { trips: TRIPS.concat([GONE]) });
+	await p.answer("TRIP-A");
+	await p.tap("Trip Gone"); // deleted since the page loaded
+	await p.answer("TRIP-GONE");
+	await p.browser.settle();
+	check(
+		"a trip refused after a tap on the default trip steps back onto it rather than copying it",
+		[p.urls(), p.browser.entries.map((e) => e.url.replace(ORIGIN, "")), p.browser.index],
+		[
+			["replace /itinerary?trip=TRIP-A", "push /itinerary?trip=TRIP-GONE"],
+			["/desk", "/itinerary?trip=TRIP-A", "/itinerary?trip=TRIP-GONE"],
+			1,
+		]
+	);
+	await p.answer("TRIP-A");
+	check("...showing it, with nothing left to load", [p.shown(), p.pending()], ["Trip A", []]);
+	p.browser.back();
+	await p.browser.settle();
+	check("...so one Back leaves the page", p.browser.left, ORIGIN + "/desk");
+
+	p = loadItinerary("/itinerary", { trips: TRIPS.concat([GONE]) });
+	await p.answer("TRIP-A");
+	await p.tap("Trip B");
+	await p.answer("TRIP-B");
+	await p.tap("Trip Gone");
+	await p.answer("TRIP-GONE");
+	check("...from another trip, the refused entry is replaced with the default trip, as before", p.urls().slice(-1), [
+		"replace /itinerary?trip=TRIP-A",
+	]);
+
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	SERVER_TRIPS["TRIP-A"].crew = ["EMP-1", "EMP-2"]; // Alex taken off the crew after the answer
+	try {
+		await p.pick("Alex");
+		await p.answer("TRIP-A", undefined, "EMP-3");
+		await p.browser.settle();
+		check(
+			"a person refused after a pick from the default view steps back onto it too",
+			[p.urls(), p.browser.index, p.as(), p.asked()],
+			[["replace /itinerary?trip=TRIP-A", "push /itinerary?trip=TRIP-A&as=EMP-3"], 1, null, [["TRIP-A", null]]]
+		);
+		await p.answer("TRIP-A", undefined, null);
+		check("...showing it", p.title(), "My Itinerary");
+	} finally {
+		SERVER_TRIPS["TRIP-A"].crew = ["EMP-1", "EMP-2", "EMP-3"];
+	}
+
+	// "Report a problem" opened while a refused trip was loading: the panel's entry is on top,
+	// and a replace would have rewritten it, leaving the panel unable to step back off it.
+	p = loadItinerary("/itinerary?trip=TRIP-SECRET");
+	p.capture.open = true;
+	p.browser.history.pushState({ ee_capture: "panel-1" }, "");
+	await p.answer("TRIP-SECRET");
+	check(
+		"a refusal while the report panel is open writes no history; the fallback is only shown",
+		[p.urls(), p.browser.history.state, p.pending()],
+		[["push null"], { ee_capture: "panel-1" }, ["TRIP-A"]]
+	);
+	p.capture.open = false;
+	p.browser.back(); // the panel closing with its own Back
+	await p.browser.settle();
+	check("...once it has closed, the address's trip is asked for again", p.pending(), ["TRIP-A", "TRIP-SECRET"]);
+	await p.answer("TRIP-SECRET");
+	check("...and that refusal replaces its entry", [p.urls().slice(1), p.browser.index], [["replace /itinerary?trip=TRIP-A"], 1]);
 }
 
 // ---------------------------------------------------------------------------- /contract-sign

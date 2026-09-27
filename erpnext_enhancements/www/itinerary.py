@@ -8,6 +8,16 @@ needs. Live data comes from ``erpnext_enhancements.api.travel`` (session-trust
 security model: the employee is derived server-side, trips are scoped by the
 Travel Trip permission hooks).
 
+Addresses: ``/itinerary?trip=<name>&as=<employee|crew>``. ``trip`` is the trip on
+screen; ``as`` is whose view of it (one person's bookings and their own
+confirmation numbers, or ``crew`` for the whole crew), and without it the page
+shows the viewer's own view on a trip they travel on, else the whole crew. Both are
+read by ``itinerary.js``, not here, and neither is trusted: the page sends them to
+``get_trip_itinerary``, which checks read permission on the trip (crew, the trip's
+owner and travel coordinators) and refuses a person who is not on it. So a link
+naming a trip outside the boot list, or a person, needs nothing from this
+controller beyond keeping the query string through the login redirect.
+
 Cache busting: raw ``/assets`` URLs are served 1-year-immutable, so
 ``itinerary.html`` appends ``?v={{ deploy_version }}`` to every mutable asset
 URL (same rationale and token as the kiosk — see
@@ -31,10 +41,11 @@ def get_context(context):
 	"""Route: ``/itinerary`` (rendered by ``itinerary.html``).
 
 	Guests are redirected to ``/login?redirect-to=/itinerary``, with the query
-	string kept (``?trip=``, the trip the page was showing — see itinerary.js).
-	For an authenticated user this exposes ``boot_json`` (employee + their active
-	trips + CSRF token, injected as ``window.ITIN_BOOT``), ``csrf_token``
-	(``window.ITIN_CSRF``) and ``deploy_version`` (asset cache-bust token).
+	string kept (``?trip=`` and ``&as=``, the trip and person the page was showing —
+	see itinerary.js). For an authenticated user this exposes ``boot_json`` (employee +
+	their active trips, including ones they own but are not on, + CSRF token, injected
+	as ``window.ITIN_BOOT``), ``csrf_token`` (``window.ITIN_CSRF``) and
+	``deploy_version`` (asset cache-bust token).
 	"""
 	if frappe.session.user == "Guest":
 		frappe.local.flags.redirect_location = login_redirect(
@@ -45,10 +56,22 @@ def get_context(context):
 	boot = get_itinerary_bootstrap()
 
 	context.no_cache = 1
-	context.boot_json = frappe.as_json(boot)
+	context.boot_json = script_json(boot)
 	context.csrf_token = boot.get("csrf_token") or ""
 	context.deploy_version = get_deploy_version()
 	return context
+
+
+def script_json(value):
+	"""``frappe.as_json`` made safe to print inside an inline ``<script>``.
+
+	``itinerary.html`` prints the boot with ``| safe``, and ``as_json`` leaves ``<`` alone, so
+	a trip purpose containing ``</script>`` would end the block early. The boot now carries
+	every trip the person owns as well as the ones they are on, so it is escaped here: ``<``,
+	``>`` and ``&`` become ``\\u`` escapes, which read back as the same characters. Outside a
+	string JSON has none of the three, so nothing else changes.
+	"""
+	return frappe.as_json(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def login_redirect(full_path):

@@ -18,6 +18,9 @@
  *    travel_management/completeness.py, sent as __onload.trip_gaps) and the
  *    "Plan step by step" door into the Plan a Trip page, which words each gap
  *    and fixes it. The wording lives on the page only, so the two cannot drift.
+ *  - "Trip views": the whole trip day by day (Overview), the crew by day (Crew
+ *    grid), a column per person (Side by side) and one person's own itinerary
+ *    (View as) — each opens Plan a Trip on that view for this trip.
  */
 
 const TRAVEL_FOR_DOCTYPES = ['Project', 'Opportunity', 'Lead', 'Customer'];
@@ -236,6 +239,57 @@ function send_itinerary(frm) {
 	);
 }
 
+// Plan a Trip's looks at the whole trip, by their &view= key (TP_VIEWS on the page). The
+// page reads `view` (and `as`) from frappe.route_options, as it reads `trip`.
+const TRIP_VIEWS = [
+	['overview', __('Overview')],
+	['grid', __('Crew grid')],
+	['compare', __('Side by side')],
+];
+
+// The views show the trip as saved. With unsaved changes here they would show something other
+// than this form, and View as could be asked for someone added here and not saved yet, whom
+// the page cannot show.
+function trip_views_need_a_save(frm) {
+	if (!frm.is_dirty()) return false;
+	frappe.msgprint({
+		title: __('Save the trip first'),
+		message: __('Trip views show the trip as it is saved. Save your changes, then open them.'),
+		indicator: 'orange',
+	});
+	return true;
+}
+
+function open_trip_view(frm, view, employee) {
+	if (trip_views_need_a_save(frm)) return;
+	const options = { trip: frm.doc.name, view };
+	if (employee) options.as = employee;
+	frappe.set_route('plan-a-trip', options);
+}
+
+function open_trip_view_as(frm) {
+	if (trip_views_need_a_save(frm)) return;
+	const crew = (frm.doc.travelers || []).filter((t) => t.employee);
+	if (crew.length <= 1) {
+		open_trip_view(frm, 'person', crew.length ? crew[0].employee : null);
+		return;
+	}
+	frappe.prompt(
+		[
+			{
+				fieldname: 'employee',
+				label: __('Whose itinerary?'),
+				fieldtype: 'Select',
+				options: crew.map((t) => ({ value: t.employee, label: t.employee_name || t.employee })),
+				default: crew[0].employee,
+				reqd: 1,
+			},
+		],
+		(values) => open_trip_view(frm, 'person', values.employee),
+		__('View as')
+	);
+}
+
 const CHECKLIST_LABELS = {
 	travel: __('a way there or back'),
 	lodging: __('a bed for the night'),
@@ -301,6 +355,11 @@ frappe.ui.form.on('Travel Trip', {
 		frm.add_custom_button(__('Plan step by step'), () =>
 			frappe.set_route('plan-a-trip', { trip: frm.doc.name })
 		);
+		// A saved trip only, and not while it has unsaved changes: the views read what is stored.
+		TRIP_VIEWS.forEach(([view, label]) =>
+			frm.add_custom_button(label, () => open_trip_view(frm, view), __('Trip views'))
+		);
+		frm.add_custom_button(__('View as'), () => open_trip_view_as(frm), __('Trip views'));
 
 		// HRMS is optional: the Expense Claim / Employee Advance / Vehicle Log
 		// actions need its doctypes (api.py also guards them). Hide the buttons
