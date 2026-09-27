@@ -192,6 +192,10 @@ landed on an empty page.
 - **The `/itinerary` boot is escaped for an inline script** (`www/itinerary.py` `script_json`):
   `<`, `>` and `&` become `\u` escapes. The template prints it `| safe`, and `frappe.as_json` leaves
   `<` alone, so a trip purpose containing `</script>` would have ended the block early.
+- **This changelog's knowledge base PR 1 section is headed 1.538.0 again.** The renumber that moved
+  the pay-rate release from 1.538.0 to 1.542.0 also relabeled the knowledge base's own 1.538.0
+  heading, so two sections read "1.542.0". Nothing reads past the first match, so no release
+  notes were wrong; the history was.
 
 ### Tests
 

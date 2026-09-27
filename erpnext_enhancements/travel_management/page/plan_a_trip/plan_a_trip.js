@@ -151,7 +151,7 @@ const TP_STYLE = `
 .tp-list-item{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;color:var(--text-color);cursor:pointer;}
 .tp-list-item h5{margin:0 0 4px;font-size:16px;}
 .tp-empty{text-align:center;padding:40px 16px;color:var(--text-muted);}
-.tp-wrap.tp-wide{max-width:none;}
+.tp-wrap.tp-views-wide{max-width:none;}
 .tp-viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;}
 .tp-vbtn{padding:5px 12px;border-radius:14px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:13px;cursor:pointer;white-space:nowrap;}
 .tp-vbtn.tp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
@@ -177,7 +177,7 @@ const TP_STYLE = `
 .tp-who{display:inline-block;padding:2px 9px;border-radius:12px;border:1px solid var(--border-color);background:var(--control-bg);font-size:12px;}
 .tp-who.tp-who-miss{border-color:#dc2626;color:#b91c1c;background:#fde8e8;}
 .tp-cost{color:var(--text-muted);font-size:13px;margin-top:4px;}
-.tp-xscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border-color);border-radius:10px;margin-bottom:12px;max-width:100%;}
+.tp-xscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border-color);border-radius:10px;margin-bottom:12px;max-width:100%;width:fit-content;}
 .tp-xtable{border-collapse:separate;border-spacing:0;font-size:13px;}
 .tp-xtable th,.tp-xtable td{border-right:1px solid var(--border-color);border-bottom:1px solid var(--border-color);padding:6px 8px;background:var(--card-bg);}
 .tp-xtable .tp-sticky{position:sticky;left:0;z-index:1;text-align:left;}
@@ -1127,7 +1127,7 @@ class TripPlanner {
 		this.preview = null;
 		this.set_address({});
 		this.remove_chrome();
-		this.body.removeClass("tp-wide");
+		this.body.removeClass("tp-views-wide");
 		const seq = this.nav_seq;
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
 		frappe.call({ method: "erpnext_enhancements.travel_management.planner.get_recent_plans" }).then(
@@ -1782,7 +1782,7 @@ class TripPlanner {
 		// A view is drawn instead of the step, across the page's full width, without the
 		// step tabs or the Back/Next bar: "Back to planning" is its way back.
 		const view = this.view && this.state.name ? this.view : null;
-		this.body.toggleClass("tp-wide", !!view);
+		this.body.toggleClass("tp-views-wide", !!view);
 		this.render_header();
 		this.render_view_bar();
 		if (view) {
@@ -3351,7 +3351,8 @@ class TripPlanner {
 		if (item.type === "freight" && facts.ref.value) {
 			$(`<div class="tp-tl-sub">${tp_esc(facts.ref.label)}: <b>${tp_esc(facts.ref.value)}</b></div>`).appendTo($body);
 		}
-		if (cost) {
+		// A booking with nothing entered says so through its cost gap; a company truck costs nothing.
+		if (cost && flt(cost.cost) > 0) {
 			const paid =
 				cost.paid_by === "Employee"
 					? __("paid by {0}, to reimburse", [cost.paid_by_name || __("an employee")])
