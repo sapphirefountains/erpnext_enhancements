@@ -472,7 +472,7 @@ class TestTimeBoxedExemptions(GateHarness):
             with self.subTest(tool=tool, args=args):
                 _, calls = self._run(tool, args, exempt_rows=window)
                 self.assertEqual((calls["executed"], calls["proposed"]), (0, 1))
-        # A cancel dressed as an update is not even a card since v1.540.0: FAC's update_document
+        # A cancel dressed as an update is not even a card since v1.545.0: FAC's update_document
         # refuses any change to a submitted document, so it could only fail after approval. It
         # still never executes, window or not, and the refusal names cancel_document.
         response, calls = self._run(

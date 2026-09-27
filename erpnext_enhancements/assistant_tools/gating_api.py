@@ -418,7 +418,7 @@ def _review_reasons(row, has_hidden):
     one that edits remarks are both Medium, with the same summary. These are the questions the
     gate itself treats as never exempt (``_changes_docstatus``, ``NEVER_EXEMPT``), asked of the
     redacted ``arguments`` the form shows, plus the tools whose whole job is a docstatus change
-    (``DOCSTATUS_TOOLS``: ``submit_document`` and, since v1.540.0, ``cancel_document``, which is
+    (``DOCSTATUS_TOOLS``: ``submit_document`` and, since v1.545.0, ``cancel_document``, which is
     how a cancel is proposed now that an ``update_document`` cancel is refused before it becomes
     a card). ``sealed_arguments`` is never read, and the arguments are not returned. Arguments
     that cannot be parsed need a look too.

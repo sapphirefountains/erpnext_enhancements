@@ -21,10 +21,15 @@ Security model:
           comment without needing write access to Comment).
         - Edit/delete are gated by an owner check (``comment.owner ==
           frappe.session.user``) rather than DocType permissions.
+        - ``link_files_to_comment`` never moves a File attached to the knowledge
+          base (WI-080): its ``db_set`` runs no File hook, so the refusal in
+          ``knowledge_base/files.py`` would not see it.
 """
 
 import frappe
 from frappe import _
+
+from erpnext_enhancements.knowledge_base.constants import KB_DOCTYPES
 
 
 @frappe.whitelist()
@@ -191,6 +196,11 @@ def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
 			)
 			if not (already_here or is_system_manager or file_doc.owner == frappe.session.user):
 				# Not the caller's file and not already on this document — refuse to move it.
+				continue
+			if not already_here and (file_doc.attached_to_doctype or "") in KB_DOCTYPES:
+				# A knowledge base file stays with its article or draft (knowledge_base/files.py
+				# refuses the move on save, and db_set below runs no hook): moved off a published
+				# article, its uploader could then delete the image out of approved text.
 				continue
 			file_doc.attached_to_name = parent_name
 			file_doc.attached_to_doctype = parent_doctype

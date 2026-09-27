@@ -1,4 +1,4 @@
-"""cancel_document, and the gate's refusal of a cancel dressed as an update (v1.540.0).
+"""cancel_document, and the gate's refusal of a cancel dressed as an update (v1.545.0).
 
 On 2026-09-25 an assistant proposed cancelling Material Request MAT-MR-2026-00014 as
 ``update_document`` with ``{"docstatus": 2}``, the shape the gate's own comments described as

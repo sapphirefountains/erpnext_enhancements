@@ -163,7 +163,7 @@ APP_MUTATING = {
     # draft on the wrong course and editing it for an hour. Not HIGH_RISK, so it
     # lands on the Medium band alongside publish, which is if anything generous.
     "create_training_draft_version",
-    # v1.540.0 -- cancel a submitted document. FAC ships submit_document and no cancel, and its
+    # v1.545.0 -- cancel a submitted document. FAC ships submit_document and no cancel, and its
     # update_document refuses every change to a submitted document, so `{"docstatus": 2}` through
     # it failed at execution after a human had approved the card (MAT-MR-2026-00014,
     # 2026-09-25). HIGH_RISK below, like submit_document: a cancel is permanent.
@@ -1283,7 +1283,7 @@ def _error_response(message, error_type="AIGateError"):
 # calls are refused whatever their values, because neither could ever run:
 # - a DocType that does not exist. The card's own Link to DocType fails, so it gets a plain
 #   refusal instead of an internal error;
-# - an `update_document` that cancels (`docstatus` 2), since v1.540.0 (`_cancel_refusal`).
+# - an `update_document` that cancels (`docstatus` 2), since v1.545.0 (`_cancel_refusal`).
 #   FAC 3.0.0's update_document refuses every change to a submitted document, `docstatus`
 #   included, so this card could only fail, and did: MAT-MR-2026-00014 on 2026-09-25, approved
 #   and then "Cannot modify submitted document". The refusal names `cancel_document`. The Select

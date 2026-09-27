@@ -31,6 +31,17 @@ from erpnext_enhancements.stripe_payments.core.utils import (
 )
 
 API_BASE = "https://api.stripe.com/v1"
+# Every request names the API version it was written against, so an upgrade of the Stripe
+# account's default version (a Dashboard click) cannot change what these requests mean. Without
+# it, requests ran on the account default, and Stripe's next major version removes
+# `payment_method_types` from PaymentIntents: every card charge would then be refused (a 400,
+# nothing charged), as v1.537.1's live test showed a parameter mismatch can. This is the version
+# the account's webhook events carry (Stripe Event.api_version on prod, 2026-07-28 through
+# 2026-09-25), so what the client reads back has the same shape as what the webhooks deliver.
+# To upgrade: read Stripe's changelog for every version in between, move this constant and the
+# webhook endpoint's version (Dashboard → Developers → Webhooks) together, and re-run the live
+# card test.
+STRIPE_API_VERSION = "2026-06-24.dahlia"
 TIMEOUT = 30
 # Reject webhook timestamps older/newer than this (replay protection), matching
 # Stripe's default tolerance.
@@ -138,7 +149,7 @@ def _request(method, path, *, data=None, params=None, idempotency_key=None, sett
 
 
 def _headers(settings, idempotency_key=None) -> dict:
-	headers = {"Authorization": f"Bearer {get_api_key(settings)}"}
+	headers = {"Authorization": f"Bearer {get_api_key(settings)}", "Stripe-Version": STRIPE_API_VERSION}
 	if idempotency_key:
 		headers["Idempotency-Key"] = idempotency_key
 	return headers
