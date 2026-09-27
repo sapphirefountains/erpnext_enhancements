@@ -40,6 +40,24 @@
  * which on a phone is the phone's own viewer. Never an iframe: iOS shows only the first
  * page of a PDF in one.
  *
+ * Contacts: a card at the top of the trip (get_trip_itinerary's `contacts`, built by
+ * api/travel._trip_contacts) says who to call, for the person shown: 911, the office's travel
+ * desk, who booked the trip, the trip lead's work mobile, the job site's contact, and each of
+ * their hotels with the nearest urgent care and directions. Only those. The server never
+ * sends a crew member's own phone, email, address, next of kin or health details, and this
+ * page has no way to show them. Every value is typed in by people, so it is drawn as text. A
+ * phone becomes a tel: link from its digits (and a leading +) only, an email a mailto: link
+ * only when it is one, and the server's map links become links only when they are https. The
+ * card opens and shuts with a tap. That is not a history entry, so Back never opens or shuts
+ * it. This browser remembers it shut for that trip (localStorage where the browser allows it,
+ * else for as long as the page is open). An answer with no `contacts` draws no card.
+ *
+ * Trip sheet: "Print / save as PDF", under the screens, opens the trip sheet (the Trip Sheet
+ * print format) for the person shown, or for the whole trip on the whole crew's view, as a PDF
+ * in a new tab. The phone's own viewer prints and saves it. The server builds both addresses
+ * (`my_sheet_url`, `sheet_url`) and leaves money off the sheet for anyone but a travel
+ * coordinator. The link writes no history.
+ *
  * Back / Forward: what is on screen is in the address as
  * ?trip=<name>&as=<who>&view=docs&file=<document> (same path, so a reload, Back from
  * /travel_guidelines and the login redirect all keep it). A trip chip tap, a person pick,
@@ -57,7 +75,9 @@
  * loaded is not a refusal: the address stays, and the page offers to sign in again.
  * "Report a problem" (capture/panel.js) owns its own entry: popstate is left to it
  * while window.ee_capture.isOpen(), and so is every history write. The viewer does
- * nothing while the panel is open, Escape included: the panel is on top of it.
+ * nothing while the panel is open, Escape included: the panel is on top of it. The
+ * Contacts card's open/shut and "Print / save as PDF" are not entries: neither writes
+ * history.
  */
 (function () {
 	'use strict';
@@ -446,12 +466,19 @@
 		return match ? match[1].toUpperCase() : 'File';
 	}
 
+	// An address the server sent that this page may put in a link: one of this site's paths or a
+	// web address. Never a `javascript:` one (frappe's File refuses those too; this page does not
+	// rely on it), and never one with a backslash: a browser reads "/\host" as "//host", which is
+	// another site.
+	function linkable(url) {
+		return typeof url === 'string' && /^(\/(?![/\\])|https?:\/\/)/i.test(url) && url.indexOf('\\') < 0;
+	}
+
 	// The documents in an answer that can be opened: a row with no file has nothing to show. A
-	// file's address goes into a link, so it must be one of this site's paths or a web address,
-	// never a `javascript:` one (frappe's File refuses those too; this page does not rely on it).
+	// file's address goes into a link, so it must be `linkable`.
 	function openable(docs) {
 		return (Array.isArray(docs) ? docs : []).filter(function (doc) {
-			return doc && typeof doc.url === 'string' && /^(\/(?!\/)|https?:\/\/)/i.test(doc.url);
+			return doc && linkable(doc.url);
 		});
 	}
 
@@ -644,6 +671,279 @@
 			section.appendChild(list);
 			root.appendChild(section);
 		});
+	}
+
+	// -- Contacts ------------------------------------------------------------------
+	// The card at the top of the trip: who to call, from the answer's `contacts` (see the note at
+	// the top of this file). Values are typed in by people and drawn as text. What becomes a link
+	// is decided here, in telHref, mailHref and webHref, and nowhere else.
+
+	// Remembered shut, per trip, for this page load: {'t:<trip>': true|false}. Filled from
+	// localStorage the first time a trip's card is drawn, so it holds when there is no storage.
+	var contactsShut = {};
+	var CONTACTS_KEY = 'ti-contacts-shut:';
+
+	// "(602) 555-0100 ext. 12" -> "tel:6025550100". Digits only, and a + only in front. An
+	// extension is dropped, not run into the number. A note beside the number ("Front desk
+	// 702-555-0150") is dropped too, but a number spelled in letters ("1-800-FLOWERS") would
+	// dial something else entirely (1800), so it is no number to dial, and neither is one with
+	// fewer than three digits: '' (shown as typed).
+	function telHref(phone) {
+		var text = String(phone == null ? '' : phone).replace(/^\s*tel:/i, '').split(/ext|x|#|;|,/i)[0];
+		if (/[a-z]/i.test(text)) {
+			var runs = text.match(/\+?\d[\d\s().-]*\d/g) || [];
+			if (runs.length !== 1 || runs[0].replace(/\D/g, '').length < 7) return '';
+			text = runs[0];
+		}
+		var digits = text.replace(/\D/g, '');
+		if (digits.length < 3 || digits.length > 15) return '';
+		return 'tel:' + (/^\s*\+/.test(text) ? '+' : '') + digits;
+	}
+
+	// An address that is plainly one ("travel@example.com"), else ''. Nothing that could carry
+	// a header (?cc=, &body=) or an encoding (%) past it.
+	function mailHref(email) {
+		var text = String(email == null ? '' : email).trim();
+		return /^[A-Za-z0-9._+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(text) ? 'mailto:' + text : '';
+	}
+
+	// A link the server built (urgent care, directions): an https address, else ''.
+	function webHref(url) {
+		return typeof url === 'string' && /^https:\/\/[^\s]+$/i.test(url) ? url : '';
+	}
+
+	function directionsHref(address) {
+		return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(address);
+	}
+
+	// An address as one line of text. The server sends text; a line break sent as <br> (an
+	// Address's display) becomes ", " rather than markup on the page.
+	function plainText(value) {
+		return String(value == null ? '' : value)
+			.replace(/<br\s*\/?>/gi, ', ')
+			.replace(/<[^>]*>/g, '')
+			.replace(/\s*[\r\n]+\s*/g, ', ')
+			.replace(/\s+/g, ' ')
+			.replace(/^[\s,]+|[\s,]+$/g, '');
+	}
+
+	// One contact link as a big tap target, short enough that two share a line on a phone: an
+	// icon and a word or the number. `label` is its whole name for a screen reader and a mouse
+	// ("Email Sapphire travel desk, travel@…"), since "Email" alone says neither who nor where.
+	// A web link opens in a new tab.
+	function contactLink(icon, text, href, label, external) {
+		var link = el('a', 'ti-contact-link');
+		link.href = href;
+		var mark = el('span', 'ti-contact-icon', icon);
+		mark.setAttribute('aria-hidden', 'true');
+		link.appendChild(mark);
+		link.appendChild(el('span', 'ti-contact-text', text));
+		if (external) {
+			link.target = '_blank';
+			link.rel = 'noopener';
+			label += ' (opens in a new tab)';
+		}
+		link.setAttribute('aria-label', label);
+		link.setAttribute('title', label);
+		return link;
+	}
+
+	// One person or place on the card: what they are to the trip ("Trip lead"), their name and
+	// any lines of detail, then the links. A phone that cannot be dialed from here, or an email
+	// that is not an address, is shown as typed. `callText` replaces the number on its link
+	// ("Call 911"), and `who` is whom the links reach when that is not the name (a job site's
+	// contact).
+	function contactRow(o) {
+		var who = o.who || o.name || o.role;
+		var row = el('div', 'ti-contact' + (o.cls ? ' ' + o.cls : ''));
+		var about = el('div', 'ti-contact-who');
+		about.appendChild(el('div', 'ti-contact-role', o.role));
+		if (o.name) about.appendChild(el('div', 'ti-contact-name', o.name));
+		row.appendChild(about);
+		var lines = (o.lines || []).slice();
+		var links = [];
+		var phone = o.phone == null ? '' : String(o.phone).trim();
+		var tel = telHref(phone);
+		if (tel) links.push(contactLink('📞', o.callText || phone, tel, o.callText || 'Call ' + who + ', ' + phone, false));
+		else if (phone) lines.push(phone);
+		var email = o.email == null ? '' : String(o.email).trim();
+		var mail = mailHref(email);
+		if (mail) links.push(contactLink('✉', 'Email', mail, 'Email ' + who + ', ' + email, false));
+		else if (email) lines.push(email);
+		(o.web || []).forEach(function (w) {
+			var href = webHref(w.href);
+			if (href) links.push(contactLink(w.icon, w.text, href, w.label, true));
+		});
+		lines.forEach(function (line) {
+			if (line) about.appendChild(el('div', 'ti-contact-sub', line));
+		});
+		if (links.length) {
+			var box = el('div', 'ti-contact-links');
+			links.forEach(function (link) { box.appendChild(link); });
+			row.appendChild(box);
+		}
+		return row;
+	}
+
+	function trimmed(value) {
+		return value == null ? '' : String(value).trim();
+	}
+
+	// The card's rows, each with the word the shut card's summary uses for it. A part the answer
+	// leaves out (null), or sends with nothing to call, write or find, is no row.
+	function contactRows(c) {
+		var rows = [];
+		var emergency = trimmed(c.emergency) || '911';
+		rows.push({ short: emergency, node: contactRow({ role: 'Emergency', phone: emergency, callText: 'Call ' + emergency, cls: 'ti-contact-emergency' }) });
+		var office = c.office || null;
+		if (office && (trimmed(office.phone) || trimmed(office.email))) {
+			rows.push({ short: 'Travel desk', node: contactRow({ role: 'Travel desk', name: trimmed(office.label), phone: office.phone, email: office.email }) });
+		}
+		var booked = c.booked_by || null;
+		if (booked && (trimmed(booked.name) || trimmed(booked.phone) || trimmed(booked.email))) {
+			rows.push({ short: 'Booked by', node: contactRow({ role: 'Booked by', name: trimmed(booked.name), phone: booked.phone, email: booked.email }) });
+		}
+		var lead = c.lead || null;
+		if (lead && (trimmed(lead.name) || trimmed(lead.phone))) {
+			rows.push({ short: 'Trip lead', node: contactRow({ role: 'Trip lead', name: trimmed(lead.name), phone: lead.phone }) });
+		}
+		var site = c.site || null;
+		var siteAddress = site ? plainText(site.address) : '';
+		if (site && (trimmed(site.contact_name) || trimmed(site.phone) || trimmed(site.email) || siteAddress)) {
+			rows.push({ short: 'Job site', node: contactRow({
+				role: 'Job site',
+				name: trimmed(site.label),
+				who: trimmed(site.contact_name),
+				lines: [trimmed(site.contact_name), siteAddress],
+				phone: site.phone,
+				email: site.email,
+				web: siteAddress ? [{ icon: '🧭', text: 'Directions', label: 'Directions to ' + siteAddress, href: directionsHref(siteAddress) }] : [],
+			}) });
+		}
+		var hotels = (Array.isArray(c.hotels) ? c.hotels : []).filter(function (h) {
+			return h && (trimmed(h.name) || trimmed(h.phone) || plainText(h.address));
+		});
+		hotels.forEach(function (hotel) {
+			var where = trimmed(hotel.name) || plainText(hotel.address) || 'the hotel';
+			rows.push({ short: '', node: contactRow({
+				role: 'Hotel',
+				name: trimmed(hotel.name),
+				lines: [plainText(hotel.address)],
+				phone: hotel.phone,
+				web: [
+					{ icon: '🏥', text: 'Urgent care nearby', label: 'Urgent care near ' + where, href: hotel.urgent_care_url },
+					{ icon: '🧭', text: 'Directions', label: 'Directions to ' + where, href: hotel.directions_url },
+				],
+			}) });
+		});
+		if (hotels.length) rows.push({ short: hotels.length === 1 ? '1 hotel' : hotels.length + ' hotels', node: null });
+		return rows;
+	}
+
+	function contactsAreShut(trip) {
+		var key = 't:' + trip;
+		if (Object.prototype.hasOwnProperty.call(contactsShut, key)) return contactsShut[key];
+		var shut = false;
+		try {
+			shut = window.localStorage.getItem(CONTACTS_KEY + trip) === '1';
+		} catch (e) {
+			// No storage here (a private window, blocked site data): open, as on a first visit.
+		}
+		contactsShut[key] = shut;
+		return shut;
+	}
+
+	// Only a shut card is written down: open is where every trip starts.
+	function rememberContacts(trip, shut) {
+		contactsShut['t:' + trip] = shut;
+		try {
+			if (shut) window.localStorage.setItem(CONTACTS_KEY + trip, '1');
+			else window.localStorage.removeItem(CONTACTS_KEY + trip);
+		} catch (e) {
+			// Kept for as long as the page is open.
+		}
+	}
+
+	// The card, open or shut as this person left it on this trip. Its button opens and shuts it
+	// in place: no redraw, no history entry.
+	function appendContacts(contacts) {
+		if (!contacts || typeof contacts !== 'object') return;
+		var rows = contactRows(contacts);
+		var trip = state.currentTrip;
+		var card = el('section', 'ti-contacts');
+		card.setAttribute('aria-label', 'Contacts');
+		var heading = el('h2', 'ti-contacts-heading');
+		var toggle = el('button', 'ti-contacts-toggle');
+		toggle.setAttribute('type', 'button');
+		toggle.setAttribute('aria-controls', 'ti-contacts-body');
+		toggle.appendChild(el('span', 'ti-contacts-title', 'Contacts'));
+		var summary = el('span', 'ti-contacts-summary', rows.map(function (r) { return r.short; }).filter(Boolean).join(' · '));
+		toggle.appendChild(summary);
+		var chevron = el('span', 'ti-contacts-chevron', '▾');
+		chevron.setAttribute('aria-hidden', 'true');
+		toggle.appendChild(chevron);
+		heading.appendChild(toggle);
+		card.appendChild(heading);
+		var body = el('div', 'ti-contacts-body');
+		body.id = 'ti-contacts-body';
+		rows.forEach(function (r) {
+			if (r.node) body.appendChild(r.node);
+		});
+		card.appendChild(body);
+		var show = function (open) {
+			body.hidden = !open;
+			summary.hidden = open;
+			toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+			card.classList.toggle('open', open);
+		};
+		show(!contactsAreShut(trip));
+		toggle.addEventListener('click', function () {
+			var open = body.hidden;
+			show(open);
+			rememberContacts(trip, !open);
+		});
+		root.appendChild(card);
+	}
+
+	// -- Trip sheet ------------------------------------------------------------------
+	// "Print / save as PDF": the person shown's sheet (`my_sheet_url`), else the whole trip's
+	// (`sheet_url`), as the server addresses it (views.trip_sheet_url). Only a `linkable` address
+	// is made a link. A PDF in a new tab, the phone's own viewer, and no history entry.
+	function sheetLink(trip) {
+		if (linkable(trip.my_sheet_url)) return { url: trip.my_sheet_url, whole: false };
+		if (linkable(trip.sheet_url)) return { url: trip.sheet_url, whole: true };
+		return null;
+	}
+
+	// Whose sheet it is, said under the link: "Your trip sheet", "Sam's trip sheet", or "The
+	// whole trip" (the whole crew's view, or no sheet of the person's own to open).
+	function sheetWhose(whole) {
+		var as = shownAs();
+		if (whole || as === 'crew') return 'The whole trip';
+		var me = (state.people && state.people.viewer) || BOOT.employee || null;
+		if (as === me) return 'Your trip sheet';
+		var name = personName(as);
+		return name ? name + '\'s trip sheet' : 'Trip sheet';
+	}
+
+	function appendPrint(trip) {
+		var sheet = sheetLink(trip);
+		if (!sheet) return;
+		var bar = el('div', 'ti-print');
+		var link = el('a', 'ti-print-link');
+		link.href = sheet.url;
+		link.target = '_blank';
+		link.rel = 'noopener';
+		var icon = el('span', 'ti-print-icon', '🖨');
+		icon.setAttribute('aria-hidden', 'true');
+		link.appendChild(icon);
+		var body = el('span', 'ti-print-body');
+		body.appendChild(el('span', 'ti-print-title', 'Print / save as PDF'));
+		body.appendChild(el('span', 'ti-print-sub', sheetWhose(sheet.whole)));
+		link.appendChild(body);
+		link.appendChild(el('span', 'ti-sr-only', ' (opens in a new tab)'));
+		bar.appendChild(link);
+		root.appendChild(bar);
 	}
 
 	// -- Picture viewer ----------------------------------------------------------
@@ -892,9 +1192,11 @@
 		meta.appendChild(el('div', 'ti-trip-dates', fmtDate(trip.start_date) + ' – ' + fmtDate(trip.end_date)));
 		root.appendChild(meta);
 		appendPeople();
+		appendContacts(trip.contacts);
 
 		var documents = tripDocuments(trip);
 		appendScreens(documents.length);
+		appendPrint(trip);
 		if (state.currentView === 'docs') {
 			renderDocuments(documents);
 			appendFooter();

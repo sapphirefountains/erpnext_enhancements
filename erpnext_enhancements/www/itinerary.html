@@ -18,7 +18,11 @@
   into <body>, over the root, so redrawing the page never closes it. The <title>
   below is the first paint only: itinerary.js retitles the page for whose
   itinerary is shown. Leaflet maps are lazy-loaded from frappe's bundled assets
-  on first use.
+  on first use. The Contacts card at the top of the trip (911, the travel desk,
+  who booked it, the trip lead, the job site, each hotel with urgent care
+  nearby) and the "Print / save as PDF" link to the trip sheet are drawn there
+  too, from the same answer; neither adds a history entry, and nothing here
+  changes for them.
 
   Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
   so every mutable asset URL below carries ?v={{ deploy_version }} (see

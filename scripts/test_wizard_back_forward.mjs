@@ -1243,6 +1243,9 @@ function tripServer(trips) {
 			to_date: rec.trip.end_date,
 			is_trip_lead: 0,
 		}));
+		const sheet = `/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=${encodeURIComponent(
+			trip
+		)}&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome`;
 		return {
 			trip,
 			purpose: rec.trip.purpose,
@@ -1251,12 +1254,23 @@ function tripServer(trips) {
 			is_coordinator: false,
 			viewer_employee: null,
 			itinerary_url: `/itinerary?trip=${encodeURIComponent(trip)}`,
-			days: [rec.trip.start_date, rec.trip.end_date],
+			days: clone(rec.days || [rec.trip.start_date, rec.trip.end_date]),
 			crew,
 			whole: [],
 			people: Object.fromEntries(crew.map((c) => [c.employee, []])),
 			gaps: [],
 			money: null,
+			// PR 3 (2026-09-26): the Map's places and legs, the Maps key, who to call and the trip
+			// sheet's address — a fixture that sets none gets what a trip with nothing to show gets.
+			places: clone(rec.places || []),
+			legs: clone(rec.legs || []),
+			maps: clone(rec.maps || { api_key: "", map_id_light: "", map_id_dark: "" }),
+			contacts: rec.contacts === undefined ? null : clone(rec.contacts),
+			sheet_url: rec.sheet_url !== undefined ? rec.sheet_url : sheet,
+			// views.trip_sheet_url(trip, employee): each person's own sheet, for View as.
+			people_sheet_urls:
+				rec.people_sheet_urls ||
+				Object.fromEntries(crew.map((c) => [c.employee, `${sheet}&as=${encodeURIComponent(c.employee)}`])),
 		};
 	};
 	// api.travel.preview_itinerary_email: rendered, never sent.
@@ -2938,6 +2952,619 @@ async function planATripSuite() {
 		await settle();
 		assert.ok(ui.drawn.join("\n").includes("&#128196; 1"), "Side by side counts a booking's files");
 	});
+
+	// ---- PR 3 (Nik, 2026-09-26): the Map, who to call, the trip sheet, and bookings of one name
+
+	await test("the Map is a view: one entry to open it; Back, Forward, a reload and the form's button come back to it", async () => {
+		tripServer({ "TRIP-5": MAP_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		const p = planner();
+		const before = browser.hist.length;
+		p.open_view("map");
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-5&step=review&view=map");
+		assert.equal(browser.hist.length, before + 1, browser.hist.urls().join(" | "));
+		assert.equal(last().view, "map");
+		assert.equal(last().step, "review");
+		await back();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		assert.equal(last().view, "", "Back puts the step back");
+		await forward();
+		assert.equal(last().view, "map", "Forward restores the map");
+		assert.equal(browser.hist.length, before + 1, "Back/Forward add no entries");
+		p.open_view("overview"); // from the map to another view: its own entry
+		await settle();
+		assert.equal(browser.hist.length, before + 2);
+		await back();
+		assert.equal(last().view, "map");
+		assert.equal(server.sent("get_trip_views").length, 1, "the map draws from the views' one answer");
+
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=lodging&view=map");
+		await settle();
+		assert.equal(last().view, "map", "a reload of the map's address is the map");
+		assert.equal(last().step, "lodging");
+		assert.equal(browser.hist.length, 1, "a reload adds no entry");
+
+		boot("plan-a-trip", "/desk/travel-trip/TRIP-5");
+		await settle();
+		F.set_route("plan-a-trip", { trip: "TRIP-5", view: "map" }); // the form's Trip views > Map
+		await settle();
+		assert.equal(last().view, "map");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-5&step=trip&view=map", "frappe's bare entry is named");
+		assert.equal(browser.hist.length, 2, "named in place, not pushed");
+	});
+
+	await test("without Google Maps the Map still lists every place by day, numbered, each with its Google Maps link", async () => {
+		tripServer({ "TRIP-5": MAP_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=map");
+		await settle();
+		assert.equal(last().view, "map");
+		let html = ui.drawn.join("\n");
+		assert.ok(html.includes("Add the Google Maps key in Travel Settings to see the map."), "no key: it says so");
+		assert.ok(!ui.drawn.some((h) => h.includes('<div class="tp-map">')), "and draws no empty map");
+		// Numbered in the order the trip reaches them (first day, then first time; no day last),
+		// and a place on three days is listed on each of them with its one number.
+		assert.deepEqual(map_rows(ui.drawn), [
+			["1", "PHX airport"],
+			["2", "Harborview Suites"],
+			["2", "Harborview Suites"],
+			["3", "Harbor Fountain job site"],
+			["4", "Enterprise pick-up"],
+			["1", "PHX airport"],
+			["5", "ODFL delivery"],
+		]);
+		assert.ok(html.includes("Day 1 · 2026-10-01") && html.includes("Day 3 · 2026-10-03"), "each day, by its number");
+		assert.ok(html.includes("No date yet"), "a place with no day yet is still listed");
+		const links = map_links(ui.drawn);
+		assert.equal(links.length, 7);
+		links.forEach((href) => assert.ok(href.startsWith("https://www.google.com/maps/search/?api=1&query="), href));
+		assert.ok(links.includes("https://www.google.com/maps/search/?api=1&query=32.71%2C-117.16"), "a place with a point opens at it");
+		assert.ok(links.includes("https://www.google.com/maps/search/?api=1&query=PHX%20airport"), "one without, by its words");
+		assert.ok(!html.includes("Booked so far") && !html.includes("Cost"), "nothing about money");
+
+		// A day chip is a choice on this screen: no entry, no fetch, the list shows that day.
+		const entries = browser.hist.length;
+		const chips = drawn(() => press('data-day="2026-10-02"'));
+		assert.deepEqual(map_rows(chips), [
+			["2", "Harborview Suites"],
+			["3", "Harbor Fountain job site"],
+			["4", "Enterprise pick-up"],
+		]);
+		assert.ok(chips.some((h) => h.includes('tp-map-day tp-active" data-day="2026-10-02"')), "the chip shows it is on");
+		assert.ok(!chips.some((h) => h.includes("No date yet")), "one day's list is that day's");
+		await settle();
+		assert.equal(browser.hist.length, entries, "a day chip makes no history entry");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-5&step=review&view=map");
+		assert.equal(server.sent("get_trip_views").length, 1);
+		planner().render(); // redrawn, for this trip: the same day
+		assert.deepEqual(map_rows(ui.drawn).map(([n]) => n), ["2", "3", "4"]);
+		drawn(() => press('data-day=""'));
+
+		// A key, and no loader (the desk bundle did not load): still the list, and why.
+		tripServer({ "TRIP-5": { ...MAP_TRIP, maps: { api_key: "browser-key", map_id_light: "", map_id_dark: "" } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=map");
+		await settle();
+		html = ui.drawn.join("\n");
+		assert.ok(html.includes("The map could not be loaded right now. The places are listed below."));
+		assert.equal(map_rows(ui.drawn).length, 7);
+
+		// Nothing with a place yet.
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=map");
+		await settle();
+		assert.ok(ui.drawn.join("\n").includes("Nothing on this trip has a place yet."));
+	});
+
+	await test("with Google Maps: each place looked up once and remembered, numbered markers, roads, flights, and the day chips", async () => {
+		tripServer({ "TRIP-5": { ...MAP_TRIP, maps: { api_key: "browser-key", map_id_light: "", map_id_dark: "" } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		const store = fakeStorage();
+		const g = fakeGoogleMaps();
+		const p = planner();
+		p.open_view("map");
+		await settle();
+		assert.deepEqual(g.loads, [{ apiKey: "browser-key", libraries: ["marker", "geocoding", "routes"] }]);
+		assert.ok(ui.drawn.some((h) => h.includes('<div class="tp-map">')), "the map's box");
+		// The job site has a point; the airport, the hotel and the delivery are looked up by
+		// their words, each once.
+		assert.deepEqual(g.geocoded.sort(), [
+			"1 Harbor Way, San Diego, CA",
+			"123 Dock St, San Diego",
+			"Enterprise Rent-A-Car, 5th Ave, San Diego",
+			"PHX airport",
+		]);
+		assert.deepEqual(g.markers.map((m) => m.label.text).sort(), ["1", "2", "3", "4", "5"], "one numbered marker a place");
+		assert.ok(g.markers.every((m) => m.on === g.map), "every day: every place");
+		assert.ok(g.markers.find((m) => m.label.text === "1").title.startsWith("1. PHX airport"));
+		assert.equal(g.markers.find((m) => m.label.text === "3").position.lat, 32.71, "a place with a point is put at it");
+		// The drive from the airport to the hotel follows the road; the flight is dashed, along the
+		// curve of the earth, and asks Google for no road.
+		assert.equal(g.routed.length, 1, "one road asked for: the drive");
+		const road = g.lines.find((l) => !l.icons);
+		assert.ok(road && road.path.length === 3, "the drive is drawn along the road Google gave");
+		const flight = g.lines.find((l) => l.icons);
+		assert.ok(flight && flight.geodesic === true, "the flight is a dashed great-circle line");
+		assert.ok(road.on && flight.on);
+		// A marker's popup is built from elements: the place, the day, who, and its Maps link.
+		const popup = g.popup(g.markers.find((m) => m.label.text === "2"));
+		assert.ok(popup.text.includes("2. Harborview Suites") && popup.text.includes("Ana"), popup.text);
+		assert.ok(popup.links.length === 1 && popup.links[0].startsWith("https://www.google.com/maps/"), popup.links.join(" "));
+
+		// A day chip shows that day's places and lines, and nothing else; no history.
+		const entries = browser.hist.length;
+		drawn(() => press('data-day="2026-10-03"'));
+		assert.deepEqual(
+			g.markers.filter((m) => m.on).map((m) => m.label.text),
+			["1"],
+			"the airport, on the last day"
+		);
+		assert.ok(flight.on && !road.on, "the last day's flight, not the first day's drive");
+		assert.equal(browser.hist.length, entries);
+		drawn(() => press('data-day=""'));
+		assert.equal(g.markers.filter((m) => m.on).length, 5, "All days: every place again");
+
+		// Drawn again (another view and back): nothing is looked up or routed again, and the
+		// browser kept the points it looked up, for 30 days.
+		p.open_view("overview");
+		await settle();
+		p.open_view("map");
+		await settle();
+		assert.equal(g.geocoded.length, 4, "looked up again");
+		assert.equal(g.routed.length, 1, "routed again");
+		const kept = JSON.parse(store.getItem("tp_map_geocode_v1"));
+		assert.deepEqual(Object.keys(kept).sort(), [
+			"1 harbor way, san diego, ca",
+			"123 dock st, san diego",
+			"enterprise rent-a-car, 5th ave, san diego",
+			"phx airport",
+		]);
+		// A new page load reads them back instead of asking Google.
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		window.localStorage = store;
+		const again = fakeGoogleMaps();
+		planner().open_view("map");
+		await settle();
+		assert.deepEqual(again.geocoded, [], "the browser's copy was used");
+		assert.equal(again.markers.length, 5);
+	});
+
+	await test("the Map drops Google's late answers, works with storage blocked, and falls back to a straight line", async () => {
+		tripServer({ "TRIP-5": { ...MAP_TRIP, maps: { api_key: "browser-key", map_id_light: "", map_id_dark: "" } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		// Storage that throws on every touch (a private window, blocked site data).
+		Object.defineProperty(window, "localStorage", {
+			configurable: true,
+			get() {
+				throw new Error("SecurityError");
+			},
+		});
+		const g = fakeGoogleMaps({ road: "REQUEST_DENIED", hold: true });
+		const p = planner();
+		p.open_view("map");
+		await settle();
+		assert.equal(g.markers.length, 1, "the place with a point is up; the others are being looked up");
+		await back(); // before Google answered
+		assert.equal(last().view, "");
+		g.release();
+		await settle();
+		assert.equal(g.markers.length, 1, "a map no longer on screen drew nothing more");
+		assert.ok(g.markers.every((m) => !m.on));
+		await forward();
+		assert.equal(last().view, "map");
+		assert.deepEqual(g.geocoded.length, 4, "what was looked up meanwhile is kept, storage or not");
+		assert.equal(g.markers.filter((m) => m.on).length, 5, "the map on screen drew every place");
+		const drive = g.lines.find((l) => !l.geodesic);
+		assert.ok(drive && drive.icons, "no road from Google: a straight dashed line, never a solid road");
+		assert.equal(drive.path.length, 2);
+		assert.equal(g.routed.length, 1, "one drive, asked once");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("a get_trip_views answer for the Map that lands after the page moved on is dropped", async () => {
+		tripServer({ "TRIP-5": MAP_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		const p = planner();
+		server.hold.add("get_trip_views");
+		p.open_view("map");
+		await settle();
+		assert.equal(last().view, "map");
+		assert.equal(last().loading, true);
+		await back();
+		const renders = ui.renders.length;
+		server.release("get_trip_views");
+		await settle();
+		assert.equal(ui.renders.length, renders, "the stale answer drew over the step");
+		assert.equal(p.views, null, "the stale answer was kept");
+		server.hold.delete("get_trip_views");
+		await forward();
+		assert.equal(last().view, "map");
+		assert.equal(map_rows(ui.drawn).length, 7, "the map on screen asked again and drew");
+	});
+
+	await test("who to call: 911, the office, who booked it, the lead, the site and the hotels, phones as digits-only tel: links", async () => {
+		tripServer({ "TRIP-5": MAP_TRIP });
+		const views = server.handlers.get_trip_views;
+		server.handlers.get_trip_views = (args) => {
+			const data = views(args);
+			// Each person's itinerary: Ana sleeps by the harbor, Ben at the Hilton.
+			const stay = (hotel, group) => [{ date: "2026-10-01", items: [{ type: "hotel_checkin", date: "2026-10-01", hotel, group }] }];
+			data.people = { E1: stay("Harborview Suites", "h1"), E2: stay("Hilton", "h2") };
+			return data;
+		};
+		const contact_cards = (html) => html.filter((h) => h.startsWith('<div class="tp-contact '));
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=overview");
+		await settle();
+		const cards = contact_cards(ui.drawn);
+		const html = cards.join("\n");
+		assert.ok(ui.drawn.some((h) => h.includes("<h5>Who to call</h5>")));
+		assert.ok(cards[0].includes('class="tp-contact tp-sos"') && cards[0].includes('href="tel:911"'), "911 first");
+		assert.ok(html.includes('href="tel:8015550100"'), "the travel desk, its extension left off the link");
+		assert.ok(html.includes("(801) 555-0100 ext. 2"), "...and shown as stored");
+		assert.ok(html.includes('href="tel:+18015550111"') && html.includes("Olivia Office"), "who booked it");
+		assert.ok(html.includes('href="tel:8015550122"') && html.includes("Trip lead"), "the lead's work mobile");
+		assert.ok(html.includes('href="mailto:sam@example.test"') && html.includes("Sam Site"), "the site's contact");
+		assert.ok(html.includes("https://www.google.com/maps/dir/?api=1&destination=1%20Harbor%20Way%2C%20San%20Diego%2C%20CA"));
+		assert.ok(html.includes("Nearest urgent care") && html.includes("urgent%20care%20near%2010%20Bay%20St"));
+		assert.ok(html.includes("Hilton"), "the Overview lists every hotel");
+		const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+		hrefs.forEach((href) => assert.ok(/^(tel:\+?\d+|mailto:[^?&]+|https:\/\/)/.test(href), href));
+		assert.ok(!html.includes("javascript:") && !html.includes("http://example.test"), "a server link that is not https is text at most");
+		assert.ok(!html.includes('href="tel:"'), "a hotel with no phone has no empty link");
+
+		// View as: the hotels that person sleeps in, not everyone's.
+		planner().open_view("person", "E2");
+		await settle();
+		const ben = contact_cards(ui.drawn);
+		assert.ok(ben.some((h) => h.includes("Hilton")), "Ben's hotel");
+		assert.ok(!ben.some((h) => h.includes("Harborview Suites")), "not Ana's");
+		assert.ok(ben.some((h) => h.includes('href="tel:911"')));
+
+		// An answer with no contacts draws no panel.
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		await settle();
+		assert.ok(!ui.drawn.some((h) => h.includes("Who to call")));
+	});
+
+	await test("the trip sheet opens in a new tab from Review, the Overview and View as, and makes no history entry", async () => {
+		tripServer({ "TRIP-5": MAP_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review");
+		await settle();
+		const p = planner();
+		const sheet = "/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=TRIP-5&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome";
+		const review = drawn(() => p.step_review($stub("review"))).find((h) => h.includes("Print the trip sheet"));
+		assert.ok(review, "Review offers the sheet");
+		assert.ok(review.includes(`href="${sheet}"`) && review.includes('target="_blank"'), review);
+		const entries = browser.hist.length;
+		p.open_view("overview");
+		await settle();
+		const overview = ui.drawn.find((h) => h.includes("Print the trip sheet"));
+		assert.ok(overview.includes(`href="${sheet}"`) && overview.includes('target="_blank"'));
+		p.open_view("person", "E2");
+		await settle();
+		const ben = ui.drawn.find((h) => h.includes("Print Ben's sheet"));
+		assert.ok(ben && ben.includes(`href="${sheet}&as=E2"`), "one person's sheet, by `as`");
+		assert.equal(browser.hist.length, entries + 2, "the two views only");
+
+		// A server address that is not this site's own is never a link: the page spells its own.
+		tripServer({
+			// "/\host" is "//host" to a browser: another site, though it starts with one slash.
+			"TRIP-5": { ...MAP_TRIP, sheet_url: "javascript:alert(1)", people_sheet_urls: { E1: "//evil.example/a.pdf", E2: "/\\evil.example/sheet.pdf" } },
+		});
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-5&step=review&view=overview");
+		await settle();
+		assert.ok(ui.drawn.find((h) => h.includes("Print the trip sheet")).includes(`href="${sheet}"`));
+		assert.ok(!ui.drawn.join("\n").includes("javascript:"));
+		planner().open_view("person", "E2");
+		await settle();
+		assert.ok(ui.drawn.find((h) => h.includes("Print Ben's sheet")).includes(`href="${sheet}&as=E2"`));
+		assert.ok(!ui.drawn.join("\n").includes("evil.example"));
+		// The same for a file's link: "/\host" is not this site's.
+		const chips = planner().doc_chips([
+			{ title: "Odd", kind: "Other", url: "/\\evil.example/x.pdf" },
+			{ title: "Map", kind: "Site map", url: "/private/files/site.pdf" },
+		]);
+		assert.ok(!chips.includes('href="/\\evil.example'), chips);
+		assert.ok(chips.includes('href="/private/files/site.pdf"'));
+	});
+
+	await test("two bookings with the same name are told apart by who is on each, then by their dates; their keys never change", async () => {
+		const room = (group, name, people, check_in, check_out) => ({
+			group,
+			values: { hotel_lodging: name, check_in_date: check_in, check_out_date: check_out },
+			members: people.map((traveler, i) => ({ name: `${group}-${i}`, traveler, ref: "" })),
+		});
+		const paper = (group, label) => ({ check: "documents", step: "lodging", table: "accommodations", group, label, employee_names: [], kinds: [] });
+		const rooms = [
+			room("aaaaaaaaaaaa", "Harborview Suites", ["E1"], "2026-10-01", "2026-10-03"),
+			room("bbbbbbbbbbbb", "Harborview Suites", ["E2"], "2026-10-01", "2026-10-03"),
+			room("cccccccccccc", "Hilton", ["E1"], "2026-10-03", "2026-10-04"),
+		];
+		tripServer({
+			"TRIP-2": {
+				...CREW_TRIP,
+				bookings: { flights: [], accommodations: rooms, ground_transport: [] },
+				documents: [{ ...SITE_MAP, name: "TDOC-9", title: "Ana's confirmation", booking_group: "aaaaaaaaaaaa", booking_label: "Harborview Suites" }],
+				gaps: [paper("bbbbbbbbbbbb", "Harborview Suites"), paper("cccccccccccc", "Hilton")],
+			},
+		});
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=files");
+		await settle();
+		const p = planner();
+		const files = drawn(() => p.step_files($stub("files"))).join("\n");
+		assert.ok(files.includes("Harborview Suites · Ana</span>"), "the Files step names whose room it is");
+		assert.ok(files.includes("Harborview Suites · Ben: no confirmation attached."), "so does the paperwork note");
+		assert.ok(files.includes("Hilton: no confirmation attached."), "a name nothing shares is left as it is");
+		assert.equal(p.gap_text(paper("bbbbbbbbbbbb", "Harborview Suites")), "Harborview Suites · Ben: no confirmation attached.");
+		assert.equal(p.gap_text({ ...NO_NUMBER, group: "not-on-this-trip" }), "Delta DL 88: no confirmation number for Ana.");
+
+		// One person's split stay: the same hotel, the same person, so the dates tell them apart.
+		p.cards("accommodations")[1].members = [{ name: "bbbbbbbbbbbb-0", traveler: "E1", ref: "" }];
+		p.cards("accommodations")[1].values.check_in_date = "2026-10-03";
+		p.cards("accommodations")[1].values.check_out_date = "2026-10-04";
+		const real_moment = globalThis.moment;
+		globalThis.moment = (value) => ({ format: () => String(value || ""), isSameOrBefore: () => false, add() {} });
+		try {
+			const headings = p.booking_headings();
+			assert.equal(headings.aaaaaaaaaaaa.heading, "Harborview Suites · Ana · 2026-10-01 – 2026-10-03");
+			assert.equal(headings.bbbbbbbbbbbb.heading, "Harborview Suites · Ana · 2026-10-03 – 2026-10-04");
+			assert.equal(headings.cccccccccccc.heading, "Hilton");
+		} finally {
+			globalThis.moment = real_moment;
+		}
+		// Only the words changed: every file keeps its booking's key, and what is saved says so.
+		assert.deepEqual(p.state.documents.map((d) => [d.booking_group, d.booking_label]), [["aaaaaaaaaaaa", "Harborview Suites"]]);
+		assert.deepEqual(p.payload().bookings.accommodations.map((c) => [c.group, c.label]), [
+			["aaaaaaaaaaaa", "Harborview Suites"],
+			["bbbbbbbbbbbb", "Harborview Suites"],
+			["cccccccccccc", "Hilton"],
+		]);
+	});
+}
+
+// The Map view's fixture: a trip with places and legs as views.build_trip_views sends them, and
+// who to call as api/travel._trip_contacts does. Ana has the hotel by the harbor, Ben the Hilton.
+const MAP_TRIP = {
+	...CREW_TRIP,
+	trip: { ...CREW_TRIP.trip, purpose: "Harbor install" },
+	days: ["2026-10-01", "2026-10-02", "2026-10-03"],
+	places: [
+		{
+			key: "freight:1",
+			kind: "freight",
+			label: "ODFL delivery",
+			query: "123 Dock St, San Diego",
+			lat: null,
+			lng: null,
+			days: [],
+			first_time: null,
+			who: [],
+			group: "f1",
+		},
+		// No time yet: after the timed places of its day, though it is listed first.
+		{
+			key: "pickup:1",
+			kind: "pickup",
+			label: "Enterprise pick-up",
+			query: "Enterprise Rent-A-Car, 5th Ave, San Diego",
+			lat: null,
+			lng: null,
+			days: ["2026-10-02"],
+			first_time: null,
+			who: ["Ben"],
+			group: "g2",
+		},
+		{
+			key: "stop:1",
+			kind: "stop",
+			label: "Harbor Fountain job site",
+			query: "Harbor Fountain job site",
+			lat: 32.71,
+			lng: -117.16,
+			days: ["2026-10-02"],
+			first_time: "08:00",
+			who: [],
+			group: null,
+		},
+		{
+			key: "hotel:1",
+			kind: "hotel",
+			label: "Harborview Suites",
+			query: "1 Harbor Way, San Diego, CA",
+			lat: null,
+			lng: null,
+			days: ["2026-10-02", "2026-10-01"],
+			first_time: "15:00",
+			who: ["Ana"],
+			group: "h1",
+		},
+		{
+			key: "airport:PHX",
+			kind: "airport",
+			label: "PHX airport",
+			query: "PHX airport",
+			lat: null,
+			lng: null,
+			days: ["2026-10-01", "2026-10-03"],
+			first_time: "07:15",
+			who: ["Ana", "Ben"],
+			group: "fl1",
+		},
+	],
+	legs: [
+		{ day: "2026-10-01", from: "airport:PHX", to: "hotel:1", kind: "drive", who: ["Ana"] },
+		{ day: "2026-10-03", from: "stop:1", to: "airport:PHX", kind: "flight", who: ["Ana", "Ben"] },
+	],
+	contacts: {
+		emergency: "911",
+		office: { label: "Sapphire travel desk", phone: "(801) 555-0100 ext. 2", email: "travel@sapphire.test" },
+		booked_by: { name: "Olivia Office", phone: "+1 801-555-0111", email: "olivia@sapphire.test" },
+		lead: { name: "Ana", phone: "801.555.0122" },
+		site: {
+			label: "Harbor Fountain",
+			contact_name: "Sam Site",
+			phone: "619-555-0133",
+			email: "sam@example.test",
+			address: "1 Harbor Way, San Diego, CA",
+		},
+		hotels: [
+			{
+				name: "Harborview Suites",
+				phone: "619-555-0144",
+				address: "10 Bay St, San Diego",
+				urgent_care_url: "https://www.google.com/maps/search/?api=1&query=urgent%20care%20near%2010%20Bay%20St",
+				directions_url: "https://www.google.com/maps/dir/?api=1&destination=10%20Bay%20St",
+			},
+			{ name: "Hilton", phone: "", address: "", urgent_care_url: "javascript:alert(1)", directions_url: "http://example.test/x" },
+		],
+	},
+};
+
+// The Map list's rows as [number, place], in the order drawn.
+function map_rows(html) {
+	return html
+		.filter((h) => h.includes('class="tp-map-row"'))
+		.map((h) => {
+			const match = h.match(/tp-map-num"[^>]*>(\d+)<\/span>[\s\S]*?<b>\S+ ([^<]*)<\/b>/);
+			return match ? [match[1], match[2]] : [h];
+		});
+}
+
+function map_links(html) {
+	return html
+		.filter((h) => h.includes('class="tp-map-row"'))
+		.map((h) => (h.match(/class="tp-map-open"[^>]*href="([^"]*)"/) || [])[1])
+		.filter(Boolean);
+}
+
+// window.localStorage, as a browser keeps it: strings by key.
+function fakeStorage() {
+	const data = new Map();
+	const store = {
+		getItem: (key) => (data.has(key) ? data.get(key) : null),
+		setItem: (key, value) => data.set(key, String(value)),
+		removeItem: (key) => data.delete(key),
+	};
+	window.localStorage = store;
+	return store;
+}
+
+// window.EEGoogleMaps and the google.maps it hands back: just enough of Map, Marker, Polyline,
+// Geocoder and DirectionsService to see what the Map view asks Google for and draws. Answers
+// arrive a moment later (the harness clock), as Google's do. `road`: DirectionsService's status;
+// `hold`: the Geocoder's answers wait for log.release().
+function fakeGoogleMaps(options) {
+	options = options || {};
+	const log = { loads: [], geocoded: [], routed: [], markers: [], lines: [], map: null, held: [] };
+	const point = (lat, lng) => ({ lat: () => lat, lng: () => lng });
+	log.release = () => log.held.splice(0).forEach((answer) => answer());
+	const maps = {
+		Map: class {
+			constructor() {
+				log.map = this;
+			}
+			fitBounds() {}
+			setCenter() {}
+			setZoom() {}
+		},
+		InfoWindow: class {
+			setContent(content) {
+				this.content = content;
+			}
+			open() {
+				log.opened = this.content;
+			}
+			close() {}
+		},
+		LatLngBounds: class {
+			extend() {}
+			getCenter() {
+				return { lat: 0, lng: 0 };
+			}
+		},
+		Marker: class {
+			constructor(opts) {
+				Object.assign(this, opts);
+				this.on = null;
+				this.handlers = {};
+				log.markers.push(this);
+			}
+			setMap(map) {
+				this.on = map;
+			}
+			addListener(event, fn) {
+				this.handlers[event] = fn;
+			}
+		},
+		Polyline: class {
+			constructor(opts) {
+				Object.assign(this, opts);
+				this.on = null;
+				log.lines.push(this);
+			}
+			setMap(map) {
+				this.on = map;
+			}
+		},
+		SymbolPath: { CIRCLE: 0 },
+		TravelMode: { DRIVING: "DRIVING", WALKING: "WALKING" },
+		Geocoder: class {
+			geocode(request, callback) {
+				log.geocoded.push(request.address);
+				const found = point(33.4 + log.geocoded.length, -112);
+				const answer = () => callback([{ geometry: { location: found } }], "OK");
+				if (options.hold) log.held.push(answer);
+				else fakeSetTimeout(answer, 1);
+			}
+		},
+		DirectionsService: class {
+			route(request, callback) {
+				log.routed.push(request);
+				const status = options.road || "OK";
+				fakeSetTimeout(
+					() =>
+						callback(
+							status === "OK" ? { routes: [{ overview_path: [point(1, 1), point(2, 2), point(3, 3)] }] } : null,
+							status
+						),
+					1
+				);
+			}
+		},
+		importLibrary: () => Promise.resolve({}),
+	};
+	window.EEGoogleMaps = {
+		load: (opts) => {
+			log.loads.push(clone(opts));
+			return Promise.resolve(maps);
+		},
+		mapOptions: () => ({ styles: [] }),
+	};
+	// A popup's text and links (it is built from elements: a minimal document for it).
+	log.popup = (marker) => {
+		const made = [];
+		globalThis.document.createElement = (tag) => {
+			const el = { tag, style: {}, children: [], textContent: "", appendChild: (child) => el.children.push(child) };
+			made.push(el);
+			return el;
+		};
+		try {
+			marker.handlers.click();
+		} finally {
+			delete globalThis.document.createElement;
+		}
+		const box = log.opened;
+		return {
+			text: box.children.map((c) => c.textContent).join("\n"),
+			links: box.children.filter((c) => c.tag === "a").map((c) => c.href),
+		};
+	};
+	return log;
 }
 
 // ------------------------------------------------------------------ main

@@ -1,5 +1,6 @@
 """Read-side travel endpoints: desk calendar events, the mobile itinerary
-page (``/itinerary``), and the trip-form map.
+page (``/itinerary``), the trip-form map, the trip's contacts card
+(``_trip_contacts``) and the Trip Sheet print format's data (``ee_trip_sheet``).
 
 Document creation (claims, advances, outcomes, vehicle logs) lives in
 ``erpnext_enhancements.travel_management.api`` — this module only shapes data
@@ -21,12 +22,19 @@ Security:
 	- Money (cost, who paid, billable, per diem, claims, totals) never leaves
 	  this module for a non-coordinator. ``shape_itinerary`` carries none, and
 	  the money block of ``get_trip_views`` is only built for a coordinator
-	  (``travel_management.views``).
+	  (``travel_management.views``). The Trip Sheet carries one total, for a
+	  coordinator's whole-trip sheet only (``ee_trip_sheet``).
+	- Contacts are not money, but ``_trip_contacts`` reads records the crew
+	  cannot open (a colleague's Employee, the customer's Contact), so it names
+	  every field it reads and returns only those: never a crew member's
+	  personal phone or email, next of kin, home address or health details.
 	- ``get_events`` uses ``frappe.get_list`` so the same row-level scoping
 	  applies to the calendar.
 """
 
 import json
+import re
+from html import unescape as _unescape
 
 import frappe
 from frappe import _
@@ -320,6 +328,12 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 		viewing=viewing,
 		viewer_employee=session_emp,
 		viewer_on_trip=viewer_on_trip,
+		# Who to call, for the person shown: their own hotels only (``_trip_contacts``).
+		contacts=_trip_contacts(doc, viewing),
+		# The printed Trip Sheet: the whole trip's, and the one for the person shown (the
+		# whole trip's again when that is the whole crew).
+		sheet_url=trip_views.trip_sheet_url(doc.name),
+		my_sheet_url=trip_views.trip_sheet_url(doc.name, viewing),
 	)
 	return result
 
@@ -337,13 +351,24 @@ def get_trip_views(trip: str):
 	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
 
 	is_coordinator = _is_coordinator()
-	return trip_views.build_trip_views(
+	hotels = _hotel_details(doc)
+	payload = trip_views.build_trip_views(
 		doc,
 		shape_itinerary,
 		is_coordinator=is_coordinator,
 		viewer_employee=_session_employee() or None,
 		currency=_trip_currency(doc) if is_coordinator else None,
+		hotels=hotels,
 	)
+	payload.update(
+		# The whole trip's contacts: every hotel (View as shows one person's, matching a
+		# hotel's `name` to their own check-ins' `hotel`).
+		contacts=_trip_contacts(doc, hotels=hotels),
+		# The Map view's key and Map IDs: the browser key any signed-in user can already
+		# read (get_maps_config), in the same round trip.
+		maps=_maps_config_or_blank(),
+	)
+	return payload
 
 
 def _trip_currency(doc):
@@ -797,6 +822,15 @@ def get_maps_config():
 	}
 
 
+def _maps_config_or_blank():
+	"""``get_maps_config()`` for the trip views, or blanks. The Map view says "no key" and
+	falls back to its list of places; the rest of the views must not fail with it."""
+	try:
+		return get_maps_config()
+	except Exception:
+		return {"api_key": "", "map_id_light": "", "map_id_dark": ""}
+
+
 def _poi_address_location(address_name):
 	"""``(text, lat, lng)`` for a linked Address. Any part may be None.
 
@@ -935,6 +969,437 @@ def cache_poi_geocode(poi, lat, lng):
 		}
 	)
 	frappe.db.set_value("Travel POI", poi, "geolocation", geojson)
+
+
+# ----------------------------------------------------------------- contacts
+
+#: A Contact's phone, email and name, this app's own fields first: they are the ones this
+#: site fills (print_lookup.py measured it — Contact.custom_email on 1,741 of 2,792 contacts,
+#: the stock email_id on 436). Each is asked for only where the site has the field.
+_CONTACT_PHONE = ("custom_mobile_number", "custom_phone_number", "mobile_no", "phone")
+_CONTACT_EMAIL = ("custom_email", "email_id")
+_CONTACT_NAME = ("full_name", "first_name", "last_name")
+
+#: What a trip is for, and the field that names it.
+_SITE_TITLE = {
+	"Project": ("project_name",),
+	"Opportunity": ("title", "customer_name"),
+	"Lead": ("title", "lead_name", "company_name"),
+	"Customer": ("customer_name",),
+}
+
+_TAG = re.compile(r"<[^>]+>")
+
+
+def _record(doctype, name, fields):
+	"""``{field: value}`` of one record — only the ``fields`` this site's doctype has — or
+	``{}`` for a blank name, a missing record, doctype or field, or any failure. Never raises:
+	a contacts card with a blank line is a small thing, an itinerary that will not load is not.
+
+	No permission check, as ``frappe.db.get_value`` makes none: the crew cannot read a
+	colleague's Employee record or the customer's Contact, and the card is for them. What
+	keeps that safe is that every caller names its fields and returns only those."""
+	if not name or not isinstance(name, str):
+		return {}
+	try:
+		meta = frappe.get_meta(doctype)
+		wanted = [field for field in fields if meta.has_field(field)]
+		if not wanted:
+			return {}
+		row = frappe.db.get_value(doctype, name, wanted, as_dict=True)
+	except Exception:
+		return {}
+	return dict(row or {})
+
+
+def _first_text(record, fields):
+	"""The first of ``fields`` with a value in ``record``, stripped, or ``None``."""
+	for field in fields:
+		value = str((record or {}).get(field) or "").strip()
+		if value:
+			return value
+	return None
+
+
+def _plain(html):
+	"""A snapshot's text (an Opportunity's address or contact): tags off, entities decoded, one
+	line, parts joined by commas."""
+	text = _unescape(_TAG.sub("\n", str(html or "")))
+	return ", ".join(part.strip() for part in text.splitlines() if part.strip()) or None
+
+
+def _contact_name(contact):
+	parts = (_first_text(contact, ("first_name",)), _first_text(contact, ("last_name",)))
+	return _first_text(contact, ("full_name",)) or " ".join(p for p in parts if p) or None
+
+
+def _address_facts(address_name):
+	"""``(text, lat, lng, phone)`` of an Address record, any part ``None``."""
+	if not address_name:
+		return None, None, None, None
+	try:
+		text, lat, lng = _poi_address_location(address_name)
+	except Exception:
+		text = lat = lng = None
+	return text, lat, lng, _first_text(_record("Address", address_name, ("phone",)), ("phone",))
+
+
+def _employee_of_user(user):
+	try:
+		return frappe.db.get_value("Employee", {"user_id": user}, "name")
+	except Exception:
+		return None
+
+
+def _office_contact():
+	"""The office travel desk, from Travel Settings (Travel desk section), or ``None`` until
+	it has a phone or an email. Three plain fields with no default: a default on a new field
+	of a Single never reaches the row a site already has (CLAUDE.md)."""
+	values = {}
+	for field in ("travel_desk_label", "travel_desk_phone", "travel_desk_email"):
+		try:
+			values[field] = str(frappe.db.get_single_value("Travel Settings", field) or "").strip() or None
+		except Exception:
+			values[field] = None
+	if not (values["travel_desk_phone"] or values["travel_desk_email"]):
+		return None
+	return {
+		"label": values["travel_desk_label"] or _("Travel desk"),
+		"phone": values["travel_desk_phone"],
+		"email": values["travel_desk_email"],
+	}
+
+
+def _booked_by_contact(doc):
+	"""Whoever made the trip (its owner): their User's name, mobile (else phone, else their
+	Employee's work cell) and email. Not Administrator or Guest — nobody to call there."""
+	owner = doc.get("owner")
+	if not owner or owner in ("Administrator", "Guest"):
+		return None
+	user = _record("User", owner, ("full_name", "mobile_no", "phone", "email"))
+	if not user:
+		return None
+	phone = _first_text(user, ("mobile_no", "phone"))
+	if not phone:
+		phone = _first_text(_record("Employee", _employee_of_user(owner), ("cell_number",)), ("cell_number",))
+	return {
+		"name": _first_text(user, ("full_name",)) or owner,
+		"phone": phone,
+		"email": _first_text(user, ("email",)),
+	}
+
+
+def _lead_contact(doc):
+	"""The trip lead: their name and work cell (Employee ``cell_number``) — and nothing else
+	from their Employee record, which also holds their personal email, home address, next of
+	kin and health details."""
+	row = next(
+		(t for t in doc.get("travelers") or [] if cint(t.get("is_trip_lead")) and t.get("employee")), None
+	)
+	if row is None:
+		return None
+	employee = _record("Employee", row.get("employee"), ("employee_name", "cell_number"))
+	return {
+		"name": _first_text(employee, ("employee_name",)) or row.get("employee_name") or row.get("employee"),
+		"phone": _first_text(employee, ("cell_number",)),
+	}
+
+
+def _customer_contact(customer):
+	"""A customer's primary contact (name, phone, email) and primary address."""
+	record = _record(
+		"Customer",
+		customer,
+		("customer_primary_contact", "customer_primary_address", "mobile_no", "email_id"),
+	)
+	contact = _record(
+		"Contact", record.get("customer_primary_contact"), _CONTACT_NAME + _CONTACT_PHONE + _CONTACT_EMAIL
+	)
+	return {
+		"contact_name": _contact_name(contact),
+		"phone": _first_text(contact, _CONTACT_PHONE) or _first_text(record, ("mobile_no",)),
+		"email": _first_text(contact, _CONTACT_EMAIL) or _first_text(record, ("email_id",)),
+		"address": _address_facts(record.get("customer_primary_address"))[0],
+	}
+
+
+def _opportunity_contact(record):
+	"""An Opportunity's own contact and address (v16: ``contact_person``, ``contact_display``,
+	``contact_mobile``, ``phone``, ``contact_email``, ``customer_address``, ``address_display``),
+	then its Contact's, then — when it is a customer's and has none of its own — the
+	customer's."""
+	contact = _record(
+		"Contact", record.get("contact_person"), _CONTACT_NAME + _CONTACT_PHONE + _CONTACT_EMAIL
+	)
+	found = {
+		"contact_name": _plain(record.get("contact_display")) or _contact_name(contact),
+		"phone": _first_text(record, ("contact_mobile", "phone")) or _first_text(contact, _CONTACT_PHONE),
+		"email": _first_text(record, ("contact_email",)) or _first_text(contact, _CONTACT_EMAIL),
+		"address": _address_facts(record.get("customer_address"))[0] or _plain(record.get("address_display")),
+	}
+	if not any(found.values()) and record.get("opportunity_from") == "Customer":
+		found = _customer_contact(record.get("party_name"))
+	return found
+
+
+def _site_contact(doc):
+	"""The job-site contact, from what the trip is for: a Project's customer, a Customer, an
+	Opportunity or a Lead. ``None`` when that record is gone or holds no name, phone, email or
+	address — a card line that says only the job's name is nobody to call."""
+	doctype, name = doc.get("travel_for_doctype"), doc.get("travel_for_name")
+	if doctype not in _SITE_TITLE or not name:
+		return None
+	if doctype == "Project":
+		record = _record("Project", name, ("project_name", "customer"))
+		found = _customer_contact(record.get("customer")) if record.get("customer") else {}
+	elif doctype == "Customer":
+		record = _record("Customer", name, ("customer_name",))
+		found = _customer_contact(name) if record else {}
+	elif doctype == "Opportunity":
+		record = _record(
+			"Opportunity",
+			name,
+			(
+				"title",
+				"customer_name",
+				"opportunity_from",
+				"party_name",
+				"contact_person",
+				"contact_display",
+				"contact_mobile",
+				"phone",
+				"contact_email",
+				"customer_address",
+				"address_display",
+			),
+		)
+		found = _opportunity_contact(record) if record else {}
+	else:
+		record = _record(
+			"Lead", name, ("title", "lead_name", "company_name", "mobile_no", "phone", "email_id")
+		)
+		found = {
+			"contact_name": _first_text(record, ("lead_name",)),
+			"phone": _first_text(record, ("mobile_no", "phone")),
+			"email": _first_text(record, ("email_id",)),
+			"address": None,
+		}
+	if not record or not any(found.values()):
+		return None
+	return {
+		"label": _first_text(record, _SITE_TITLE[doctype]) or name,
+		"contact_name": found.get("contact_name"),
+		"phone": found.get("phone"),
+		"email": found.get("email"),
+		"address": found.get("address"),
+	}
+
+
+def _hotel_detail(hotel, address_name=None):
+	"""``{name, phone, address, lat, lng}`` for one hotel (a Supplier).
+
+	The address is the room's own Address (a room's ``address`` is fetched from the hotel's
+	primary address, so it holds the Address record's *name* — "Harborview Suites-Billing" —
+	and is resolved here, never printed), else the Supplier's; ``lat``/``lng`` are the point
+	the Address was picked with, when it was. The phone is that Address's, else the hotel's
+	primary Contact's, else the Supplier's own."""
+	supplier = _record(
+		"Supplier",
+		hotel,
+		("supplier_primary_address", "supplier_primary_contact", "mobile_no", "custom_phone_number"),
+	)
+	text = lat = lng = phone = None
+	for candidate in dict.fromkeys(a for a in (address_name, supplier.get("supplier_primary_address")) if a):
+		text, lat, lng, phone = _address_facts(candidate)
+		if text or lat is not None or phone:
+			break
+	if not phone:
+		phone = _first_text(
+			_record("Contact", supplier.get("supplier_primary_contact"), _CONTACT_PHONE), _CONTACT_PHONE
+		) or _first_text(supplier, ("mobile_no", "custom_phone_number"))
+	return {"name": hotel, "phone": phone, "address": text, "lat": lat, "lng": lng}
+
+
+def _hotel_details(doc):
+	"""``{hotel: {name, phone, address, lat, lng}}`` for every hotel on the trip, keyed by the
+	room rows' ``hotel_lodging`` — the value an itinerary item's ``hotel`` carries. Shared by the
+	contacts card and the Map view, so each hotel is looked up once."""
+	details = {}
+	for row in doc.get("accommodations") or []:
+		hotel = row.get("hotel_lodging")
+		if not hotel or hotel in details:
+			continue
+		try:
+			details[hotel] = _hotel_detail(hotel, row.get("address"))
+		except Exception:
+			details[hotel] = {"name": hotel, "phone": None, "address": None, "lat": None, "lng": None}
+	return details
+
+
+def _hotel_contacts(doc, viewing_employee=None, hotels=None):
+	"""One entry per hotel the viewer stays at (every hotel on the trip for the whole crew), in
+	check-in order: ``{name, phone, address, urgent_care_url, directions_url}``. The two links
+	are Google Maps searches — no key and nothing stored: "urgent care near" the hotel's street
+	address (its name when there is none), and directions to it."""
+	if hotels is None:
+		hotels = _hotel_details(doc)
+	rows = [
+		row
+		for row in doc.get("accommodations") or []
+		if row.get("hotel_lodging")
+		and (not viewing_employee or not row.get("traveler") or row.get("traveler") == viewing_employee)
+	]
+	rows.sort(key=lambda row: str(row.get("check_in_date") or "9999"))
+	out, seen = [], set()
+	for row in rows:
+		hotel = row.get("hotel_lodging")
+		if hotel in seen:
+			continue
+		seen.add(hotel)
+		info = hotels.get(hotel) or {}
+		where = info.get("address") or hotel
+		out.append(
+			{
+				"name": hotel,
+				"phone": info.get("phone"),
+				"address": info.get("address"),
+				"urgent_care_url": trip_views.maps_search_url(f"urgent care near {where}"),
+				"directions_url": trip_views.maps_directions_url(where),
+			}
+		)
+	return out
+
+
+def _trip_contacts(doc, viewing_employee=None, hotels=None):
+	"""Who to call on this trip — the contacts card on Plan a Trip's Overview and View as, the
+	top of ``/itinerary``, the itinerary email and the Trip Sheet. Exactly these keys:
+
+	* ``emergency`` — ``"911"``;
+	* ``office`` — ``{label, phone, email}`` from Travel Settings' Travel Desk section, or None;
+	* ``booked_by`` — ``{name, phone, email}``, the trip's owner, or None;
+	* ``lead`` — ``{name, phone}``, the trip lead and their work cell, or None;
+	* ``site`` — ``{label, contact_name, phone, email, address}``, the job-site contact from
+	  what the trip is for, or None;
+	* ``hotels`` — ``[{name, phone, address, urgent_care_url, directions_url}]``.
+
+	``viewing_employee`` narrows ``hotels`` to that person's (rows pinned to them and rows for
+	the whole crew); the rest is the same for everyone on the trip.
+
+	Contacts are not money, so this goes to anyone who can read the trip. It reads records the
+	crew could not open themselves (a colleague's Employee, the customer's Contact) and so
+	returns only these keys, never a record: **never a crew member's personal phone or email,
+	next of kin, home address or health details.** The trip lead's work cell is the one number
+	taken from an Employee record (and the owner's, when their User has none).
+
+	Never raises: every lookup is guarded (``_record``), a missing record or field is ``None``,
+	and a part that fails for any other reason is ``None`` (``[]`` for hotels) with an Error Log.
+	Phones are returned as stored; a page builds its ``tel:`` link from the digits
+	(``views.tel_href``)."""
+	contacts = {
+		"emergency": "911",
+		"office": None,
+		"booked_by": None,
+		"lead": None,
+		"site": None,
+		"hotels": [],
+	}
+	parts = (
+		("office", _office_contact),
+		("booked_by", lambda: _booked_by_contact(doc)),
+		("lead", lambda: _lead_contact(doc)),
+		("site", lambda: _site_contact(doc)),
+		("hotels", lambda: _hotel_contacts(doc, viewing_employee, hotels)),
+	)
+	for key, build in parts:
+		try:
+			contacts[key] = build()
+		except Exception:
+			contacts[key] = [] if key == "hotels" else None
+			frappe.log_error(
+				title="Trip contacts", message=f"{doc.get('name')}: {key}\n{frappe.get_traceback()}"
+			)
+	return contacts
+
+
+# ---------------------------------------------------------------- trip sheet
+
+
+def _sheet_employee(doc):
+	"""Whose Trip Sheet is being printed: the request's ``as`` (``&as=<employee>`` on the print
+	and PDF links) when that is someone on this trip's crew, else ``None`` — the whole trip.
+
+	Read from ``frappe.form_dict`` because frappe's print routes hand a format nothing else.
+	Checked against frappe ``version-16``: ``frappe.call`` passes a whitelisted method only the
+	arguments its signature names (``get_newargs``), so ``download_pdf`` never sees ``as``, but
+	``form_dict`` keeps it, and ``print_utils.get_print`` only *sets* ``doctype``/``name``/
+	``format``/... on it before rendering ``printview`` in the same request. Compared against
+	the crew and never looked up, as ``_crew_member_or_throw`` does."""
+	form = getattr(frappe, "form_dict", None) or {}
+	try:
+		asked = form.get("as")
+	except Exception:
+		return None
+	if isinstance(asked, str) and asked and any(t.employee == asked for t in doc.get("travelers") or []):
+		return asked
+	return None
+
+
+def _format_money(total, currency):
+	try:
+		from frappe.utils import fmt_money
+
+		return fmt_money(total, currency=currency or None)
+	except Exception:
+		return f"{currency} {total:,.2f}".strip()
+
+
+def ee_trip_sheet(doc):
+	"""The Trip Sheet print format's data — a Jinja global (hooks.py ``jinja.methods``) that
+	``travel_management/print_formats/trip_sheet.html`` reads instead of ``doc``.
+
+	Why a global and not ``doc.*``: every money field on Travel Trip is permlevel 0, so a
+	template reading the document could print any of them to anyone who can print the trip
+	(the Employee role can). Only what the server hands the template can keep a crew member's
+	copy clean, so the whole payload is built here: ``views.build_trip_sheet`` from
+	``shape_itinerary`` (no money), ``_trip_contacts`` and the trip's files (titles and kinds).
+	The one figure — the cost total — is added only for a travel coordinator, and only on the
+	whole trip's sheet.
+
+	``&as=<employee>`` prints that person's sheet (``_sheet_employee``). The caller's right to
+	the trip is checked again here, as the print view checks it (read or print), because a
+	Jinja global is reachable from any template on the site, not just this format."""
+	if getattr(doc, "doctype", None) != "Travel Trip":
+		return {}
+	if not (
+		frappe.has_permission("Travel Trip", "read", doc=doc)
+		or frappe.has_permission("Travel Trip", "print", doc=doc)
+	):
+		frappe.throw(_("You do not have access to this trip."), frappe.PermissionError)
+
+	employee = _sheet_employee(doc)
+	is_coordinator = _is_coordinator()
+	printed_on = ""
+	try:
+		from frappe.utils import format_date, nowdate
+
+		printed_on = format_date(nowdate())
+	except Exception:
+		pass
+	try:
+		itinerary_url = frappe.utils.get_url(trip_views.itinerary_path(doc.name))
+	except Exception:
+		itinerary_url = None
+	return trip_views.build_trip_sheet(
+		doc,
+		shape_itinerary,
+		is_coordinator=is_coordinator,
+		contacts=_trip_contacts(doc, employee),
+		employee=employee,
+		currency=_trip_currency(doc) if is_coordinator and not employee else None,
+		format_money=_format_money,
+		itinerary_url=itinerary_url,
+		printed_on=printed_on,
+	)
 
 
 # -------------------------------------------------------------------- email

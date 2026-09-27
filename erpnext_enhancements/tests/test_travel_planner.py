@@ -2055,12 +2055,162 @@ class TestContracts(unittest.TestCase):
 		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
 		form = _read(os.path.join(APP_DIR, "public", "js", "travel_trip.js"))
 		views = re.findall(r'"(\w+)"', re.search(r"const TP_VIEWS = \[(.*?)\];", page, re.S).group(1))
-		self.assertEqual(views, ["overview", "grid", "compare", "person"])
+		# The Map joined the four views in PR 3 of the program (Nik, 2026-09-26).
+		self.assertEqual(views, ["overview", "grid", "compare", "person", "map"])
 		block = re.search(r"const TRIP_VIEWS = \[(.*?)\n\];", form, re.S).group(1)
 		offered = re.findall(r"\['(\w+)', __\(", block) + re.findall(r"open_trip_view\(frm, '(\w+)'", form)
 		self.assertTrue(offered)
 		self.assertLessEqual(set(offered), set(views))
 		self.assertEqual(set(offered), set(views), "every view is offered on the form")
+		# ...and on the page's own view bar (View as is its person menu), and each one is drawn.
+		bar = re.search(r"\n\trender_view_bar\(\) \{(.*?)\n\t\}\n", page, re.S).group(1)
+		self.assertEqual(set(re.findall(r'\["(\w+)", __\(', bar)) | {"person"}, set(views))
+		draw = re.search(r"\n\trender_view\(view\) \{(.*?)\n\t\}\n", page, re.S).group(1)
+		self.assertEqual(set(re.findall(r"\n\t\t\t(\w+): \(\) => this\.view_", draw)), set(views))
+
+	def test_the_map_loads_google_maps_only_through_the_shared_loader(self):
+		# One loader per page (google_maps_loader.js): the Map asks it for every library whose
+		# symbols it uses, or those symbols are undefined at runtime. tests/test_google_maps_loader
+		# walks public/js only, and this page lives in the Travel Management module.
+		code = _strip_js_comments(_read(os.path.join(PAGE_DIR, "plan_a_trip.js")))
+		self.assertNotIn("maps.googleapis.com/maps/api/js", code)
+		self.assertNotIn("(g=>{", code.replace(" ", ""))
+		self.assertEqual(code.count("EEGoogleMaps.load("), 1)
+		self.assertIn("window.EEGoogleMaps.load({ apiKey: maps.api_key, libraries: TP_MAP_LIBRARIES })", code)
+		libraries = set(re.findall(r'"(\w+)"', re.search(r"const TP_MAP_LIBRARIES = \[(.*?)\];", code).group(1)))
+		needs = {
+			"AdvancedMarkerElement": "marker",
+			"maps.Marker(": "marker",
+			"Geocoder(": "geocoding",
+			"DirectionsService(": "routes",
+			"computeRoutes": "routes",
+			"PlaceAutocompleteElement": "places",
+			"spherical": "geometry",
+		}
+		for symbol, library in needs.items():
+			if symbol in code:
+				self.assertIn(library, libraries, f"the page uses {symbol} without loading '{library}'")
+		# The map's style comes from the loader too: a Map ID or the dark styles, never both.
+		self.assertIn("window.EEGoogleMaps.mapOptions(", code)
+
+	def test_the_trip_sheet_is_spelled_in_one_place_and_asks_for_chrome(self):
+		# frappe's download_pdf makes the PDF with wkhtmltopdf unless the request names a
+		# generator, whatever the Print Format says; the sheet is laid out for Chrome.
+		code = _strip_js_comments(_read(os.path.join(PAGE_DIR, "plan_a_trip.js")))
+		self.assertEqual(code.count("frappe.utils.print_format.download_pdf"), 1)
+		helper = re.search(r"\nfunction tp_sheet_url\(trip, as, base\) \{(.*?)\n\}\n", code, re.S)
+		self.assertIsNotNone(helper, "tp_sheet_url() is gone")
+		for part in ("doctype=Travel%20Trip", "format=Trip%20Sheet", "no_letterhead=1", "pdf_generator=chrome", "&as="):
+			self.assertIn(part, helper.group(1))
+		# The server's own address is taken only when it is this site's (a relative path).
+		self.assertIn("tp_local_url(base)", helper.group(1))
+		local = re.search(r"\nfunction tp_local_url\(url\) \{(.*?)\n\}\n", code, re.S)
+		self.assertIsNotNone(local, "tp_local_url() is gone")
+		# ...and no backslash anywhere: a browser reads "/\host" as "//host".
+		self.assertIn(r"/^\/(?![/\\])[^\s\\]*$/.test(", local.group(1))
+		# Review, the Overview and View as each open it.
+		self.assertEqual(code.count("this.sheet_link("), 3)
+
+	def test_the_pages_trip_sheet_address_is_the_servers(self):
+		# The server spells the Trip Sheet's address in views.trip_sheet_url and sends it
+		# (get_trip_views' sheet_url and people_sheet_urls, get_trip_itinerary's sheet_url and
+		# my_sheet_url). The page spells it once more, for the Review step, whose answer
+		# (get_plan) carries none. Run, not grepped: the two must be the same address, character
+		# for character, and so must the two harnesses' fake servers.
+		from erpnext_enhancements.travel_management import views
+
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		code = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		helpers = "".join(
+			re.search(rf"\nfunction {name}\(.*?\n\}}\n", code, re.S).group(0) for name in ("tp_local_url", "tp_sheet_url")
+		)
+		cases = [["TRIP-2026-00001", ""], ["TRIP-2026-00001", "HR-EMP-00042"], ["TRIP 7/B", "EMP #1&x=2"]]
+		script = helpers + f"process.stdout.write(JSON.stringify({json.dumps(cases)}.map(([t, a]) => tp_sheet_url(t, a))));"
+		result = subprocess.run(
+			[node, "-e", script], capture_output=True, text=True, encoding="utf-8", check=False, timeout=60
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(json.loads(result.stdout), [views.trip_sheet_url(t, a or None) for t, a in cases])
+		# The fake servers in both harnesses send what the real one would.
+		web = _read(os.path.join(os.path.dirname(APP_DIR), "scripts", "test_web_flow_history.js"))
+		self.assertIn(f'const SHEET = "{views.trip_sheet_url("TRIP-A")}";', web)
+		wizard = _read(os.path.join(os.path.dirname(APP_DIR), "scripts", "test_wizard_back_forward.mjs"))
+		self.assertIn(f'const sheet = "{views.trip_sheet_url("TRIP-5")}";', wizard)
+
+	def test_a_contact_link_is_built_in_one_place_each(self):
+		# A phone or an email on the contacts is typed in by people (a Supplier's address, a
+		# Contact): tel: is built from digits and a leading + only, mailto: only from an address
+		# that is plainly one, and a link the server built is shown only when it is https.
+		code = _strip_js_comments(_read(os.path.join(PAGE_DIR, "plan_a_trip.js")))
+		for scheme, helper in (("tel:", "tp_tel"), ("mailto:", "tp_mailto")):
+			# The scheme as it opens a string (a bare "tel:" is also the end of "hotel:").
+			self.assertEqual(len(re.findall(rf"[`\"']{scheme}", code)), 1, scheme)
+			body = re.search(rf"\nfunction {helper}\((\w+)\) \{{(.*?)\n\}}\n", code, re.S).group(2)
+			self.assertIn(f"`{scheme}", body)
+		# Changed on purpose in PR 3's integration: tp_tel follows /itinerary's telHref and the
+		# server's views.tel_href (a spelled-out number is not dialed), run below, rather than
+		# keeping every digit and plus sign.
+		tel = re.search(r"\nfunction tp_tel\(phone\) \{(.*?)\n\}\n", code, re.S).group(1)
+		self.assertIn('.replace(/\\D/g, "")', tel)
+		contacts = re.search(r"\n\tcontacts_block\(\$parent, contacts, hotels\) \{(.*?)\n\t\}\n", code, re.S).group(1)
+		self.assertIn("tp_https(hotel.urgent_care_url)", contacts)
+		self.assertIn("tp_https(hotel.directions_url)", contacts)
+
+	#: A phone as people type it, and the tel: link every surface makes of it (None: shown as
+	#: typed, never dialed).
+	PHONES = (
+		("(801) 555-0100", "tel:8015550100"),
+		("+1 801.555.0100", "tel:+18015550100"),
+		("  +44 20 7946 0958 ", "tel:+442079460958"),
+		("801-555-0100 ext. 4", "tel:8015550100"),
+		("(801) 555-0100 x12", "tel:8015550100"),
+		("801-555-0100#3", "tel:8015550100"),
+		("tel:+1 (702) 555-0123;ext=4", "tel:+17025550123"),
+		("Front desk: 702-555-0150", "tel:7025550150"),
+		("911", "tel:911"),
+		("1-800-FLOWERS", None),
+		("555-CALL-123", None),
+		("702-555-0150 or 702-555-0151", None),
+		("12", None),
+		("1234567890123456", None),
+		("call the front desk", None),
+		("", None),
+		(None, None),
+	)
+
+	def test_every_surface_dials_the_same_number(self):
+		# Plan a Trip (tp_tel), /itinerary (telHref) and the server (views.tel_href: the email's
+		# Contacts table and the printed Trip Sheet) each make the tel: links for the same
+		# contacts card. Before PR 3's integration they had three rules, and the server's and the
+		# page's dialed "1-800-FLOWERS" as 1800. Run, not grepped.
+		from erpnext_enhancements.travel_management import views
+
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		phone = _read(os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js"))
+		tp_tel = re.search(r"\nfunction tp_tel\(phone\) \{.*?\n\}\n", page, re.S).group(0)
+		start = phone.index("\n\tfunction telHref(")
+		tel_href = phone[start : phone.index("\n\t}\n", start) + 3]
+		cases = [value for value, _ in self.PHONES]
+		script = (
+			tp_tel
+			+ tel_href
+			+ f"const cases = {json.dumps(cases)};"
+			+ "process.stdout.write(JSON.stringify({page: cases.map(tp_tel), phone: cases.map(telHref)}));"
+		)
+		result = subprocess.run(
+			[node, "-e", script], capture_output=True, text=True, encoding="utf-8", check=False, timeout=60
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		got = json.loads(result.stdout)
+		expected = [want for _, want in self.PHONES]
+		self.assertEqual([views.tel_href(value) for value in cases], expected, "views.tel_href")
+		self.assertEqual([value or None for value in got["page"]], expected, "plan_a_trip.js tp_tel")
+		self.assertEqual([value or None for value in got["phone"]], expected, "itinerary.js telHref")
 
 	def test_the_harness_knows_every_step(self):
 		# scripts/test_wizard_back_forward.mjs records each render by TP_KEYS[this.step], a
@@ -2249,6 +2399,29 @@ class TestPageRouting(unittest.TestCase):
 		route = re.search(r"\n\troute\(args, mark\) \{(.*?)\n\t\}\n", self.code, re.S).group(1)
 		self.assertLess(route.index("this.route_view(args, mark)"), route.index("this.jump_to("))
 
+	def test_the_maps_day_chips_and_the_trip_sheet_write_no_history(self):
+		# The Map is a view (its own entry, through enter_view like the others); its day chips are
+		# a choice on that screen, and the trip sheet opens in a new tab: neither is a place to go
+		# Back to. Nothing in the map's drawing, its Google Maps helper or the sheet's link touches
+		# history, routes, or redraws the page (a redraw would rebuild the map from Google).
+		for name, signature in (
+			("view_map", r"view_map\(\$view, data\)"),
+			("map_list", r"map_list\(\$list, places, day_list, day, all_days\)"),
+			("sheet_link", r"sheet_link\(\$parent, label, url\)"),
+			("contacts_block", r"contacts_block\(\$parent, contacts, hotels\)"),
+		):
+			body = re.search(rf"\n\t{signature} \{{(.*?)\n\t\}}\n", self.code, re.S)
+			self.assertIsNotNone(body, f"{name}() is gone")
+			for forbidden in ("history.", "set_address(", "open_view(", "enter_view(", "set_route(", "this.render()", "window.open("):
+				self.assertNotIn(forbidden, body.group(1), f"{name} calls {forbidden}")
+		tp_map = re.search(r"\nclass TpTripMap \{(.*?)\n\}\n", self.code, re.S)
+		self.assertIsNotNone(tp_map, "TpTripMap is gone")
+		for forbidden in ("history.", "set_address(", "set_route(", "innerHTML", ".render("):
+			self.assertNotIn(forbidden, tp_map.group(1))
+		# A marker's popup is built from elements, never from HTML in the data.
+		self.assertIn("document.createElement(", tp_map.group(1))
+		self.assertIn(".textContent = ", tp_map.group(1))
+
 	def test_the_uploader_is_opened_only_by_attach_a_file_on_a_saved_trip(self):
 		# frappe's uploader is a dialog loaded on demand (file_uploader.bundle.js): reached for
 		# while a step draws or a route is handled, it is missing on a desk that has not loaded
@@ -2311,7 +2484,11 @@ class TestItineraryBackForward(unittest.TestCase):
 	trip and person, or only redraw its screen and picture. Before, Back after switching trips
 	left the page (or the home-screen app), and a reload or Back from /travel_guidelines showed
 	the default trip instead of the one being read. A ?trip= outside the person's own list is
-	asked for (the server's read permission decides); only a refusal replaces the entry."""
+	asked for (the server's read permission decides); only a refusal replaces the entry.
+
+	Since PR 3 of the Plan a Trip program the trip also has a Contacts card at the top and a
+	"Print / save as PDF" link to the trip sheet. Neither is an entry: opening or shutting the
+	card and opening the sheet write no history."""
 
 	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
 	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
@@ -2451,6 +2628,50 @@ class TestItineraryBackForward(unittest.TestCase):
 		self.assertNotIn("iframe", code.lower())
 		self.assertNotIn(".download", code)
 		self.assertNotIn("'download'", code)
+
+	def _js_function(self, code, name):
+		start = code.index(f"\n\tfunction {name}(")
+		return code[start : code.index("\n\t}\n", start) + 3]
+
+	def test_the_contacts_card_and_the_sheet_link_write_no_history(self):
+		"""Opening or shutting the Contacts card is how this person likes the page, not a place
+		to go Back to; the trip sheet opens in a new tab. Neither touches history, and the
+		card's toggle redraws nothing (a redraw would take focus off the button)."""
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		for name in ("appendContacts", "contactsAreShut", "rememberContacts", "sheetLink", "sheetWhose", "appendPrint"):
+			body = self._js_function(code, name)
+			for forbidden in ("writeTripEntry", "State(", "history.", "render()", "loadTrip("):
+				self.assertNotIn(forbidden, body, f"{name} calls {forbidden}")
+		# The sheet is opened as a link in a new tab, never navigated to from script.
+		print_link = self._js_function(code, "appendPrint")
+		self.assertIn("link.target = '_blank'", print_link)
+		self.assertIn("link.rel = 'noopener'", print_link)
+		self.assertNotIn("location", print_link)
+
+	def test_a_contact_link_is_built_in_one_place_each(self):
+		"""Phones, emails and map links are typed in by people (a Supplier's address, a
+		Contact): a tel: link is built from digits and a leading + only, a mailto: only from an
+		address that is one, and a web link only from https. One builder each, so no other
+		render can put a raw value into an href."""
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		for scheme, builder in (("'tel:'", "telHref"), ("'mailto:'", "mailHref")):
+			self.assertEqual(code.count(scheme), 1, scheme)
+			self.assertIn(scheme, self._js_function(code, builder))
+		self.assertIn(".replace(/\\D/g, '')", self._js_function(code, "telHref"))
+		self.assertIn("/^https:\\/\\/[^\\s]+$/i", self._js_function(code, "webHref"))
+		# Every value is text: the one innerHTML left is the page clearing itself.
+		self.assertEqual(re.findall(r"[^\n]*innerHTML[^\n]*", code), ["\t\troot.innerHTML = '';"])
+
+	def test_local_storage_is_only_touched_inside_a_try(self):
+		"""The card remembers being shut in localStorage, which throws in a private window or
+		with site data blocked, and is absent in the Back/Forward harness. Every use sits in a
+		try, so the page draws either way."""
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		uses = [m.start() for m in re.finditer(r"localStorage", code)]
+		self.assertEqual(len(uses), 3)
+		for at in uses:
+			before = code[:at]
+			self.assertGreater(before.rfind("try {"), before.rfind("} catch"), code[at - 80 : at + 40])
 
 	def test_the_page_in_a_fake_browser(self):
 		node = shutil.which("node")

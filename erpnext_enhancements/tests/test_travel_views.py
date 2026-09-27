@@ -330,6 +330,7 @@ def make_trip(name="TRIP-1", **overrides):
 	Money is set everywhere the doctype has it — rows, travelers, the trip's rollups — so
 	a payload that copied a row or a doc wholesale would carry it."""
 	doc = FakeDoc(
+		doctype="Travel Trip",
 		name=name,
 		purpose="Install",
 		status="Booked",
@@ -1404,9 +1405,15 @@ class TestGetTripItinerary(MoneyAssertions):
 					"viewing": "EMP-C",
 					"viewer_employee": None,
 					"viewer_on_trip": False,
+					# PR 3: who to call (Cy's own hotels: none) and the printed sheet, the
+					# whole trip's and Cy's.
+					"contacts": travel._trip_contacts(self.doc, "EMP-C"),
+					"sheet_url": views.trip_sheet_url("TRIP-1"),
+					"my_sheet_url": views.trip_sheet_url("TRIP-1", "EMP-C"),
 				},
 			),
 		)
+		self.assertTrue(result["my_sheet_url"].endswith("&as=EMP-C"))
 		self.assertNoMoney(result)
 
 	def looked_up(self):
@@ -1765,3 +1772,1137 @@ class TestEndpointShapes(unittest.TestCase):
 			"get_itinerary_bootstrap",
 		):
 			self.assertRegex(source, re.compile(r"@frappe\.whitelist\(\)\ndef " + name + r"\("), name)
+
+
+# --------------------------------------------------------------------------- PR 3: contacts
+#
+# The contacts card (Nik, 2026-09-26): 911, the office travel desk, who booked the trip, the
+# trip lead, the job-site contact and each hotel with its nearest urgent care. Contacts are
+# not money, so everyone who can read the trip gets them — which is exactly why the one
+# thing that must never ride along is a crew member's own phone, email, next of kin, home
+# address or health details: `_trip_contacts` reads Employee records the crew could not open.
+
+#: The fields each doctype has on the fake site (frappe.get_meta). Contact and Supplier lack
+#: custom_phone_number here: a field a site does not have is never asked for.
+META_FIELDS = {
+	"User": {"full_name", "mobile_no", "phone", "email"},
+	"Employee": {
+		"employee_name",
+		"user_id",
+		"cell_number",
+		"prefered_email",
+		"company_email",
+		"personal_email",
+		"emergency_phone_number",
+		"person_to_be_contacted",
+		"relation",
+		"current_address",
+		"permanent_address",
+		"blood_group",
+		"health_details",
+		"passport_number",
+	},
+	"Customer": {
+		"customer_name",
+		"customer_primary_contact",
+		"customer_primary_address",
+		"mobile_no",
+		"email_id",
+	},
+	"Contact": {
+		"full_name",
+		"first_name",
+		"last_name",
+		"mobile_no",
+		"phone",
+		"email_id",
+		"custom_mobile_number",
+		"custom_email",
+	},
+	"Address": {
+		"address_line1",
+		"address_line2",
+		"city",
+		"state",
+		"pincode",
+		"country",
+		"phone",
+		"email_id",
+		"custom_latitude",
+		"custom_longitude",
+	},
+	"Supplier": {"supplier_name", "supplier_primary_address", "supplier_primary_contact", "mobile_no"},
+	"Project": {"project_name", "customer"},
+	"Opportunity": {
+		"title",
+		"customer_name",
+		"opportunity_from",
+		"party_name",
+		"contact_person",
+		"contact_display",
+		"contact_mobile",
+		"phone",
+		"contact_email",
+		"customer_address",
+		"address_display",
+	},
+	"Lead": {"title", "lead_name", "company_name", "mobile_no", "phone", "email_id"},
+}
+
+#: What an Employee record also holds, and no payload may ever carry: a crew member's own
+#: email, next of kin, home address, health details and passport. Each value is distinct so a
+#: leak is findable, and Bo's cell is here too — only the trip lead's work cell is shown.
+PERSONAL = {
+	"EMP-A": {
+		"personal_email": "ann.home@example.net",
+		"emergency_phone_number": "(801) 555-9911",
+		"person_to_be_contacted": "Pat Kinsman",
+		"relation": "Spouse-Sentinel",
+		"current_address": "12 Home Lane Sentinel",
+		"permanent_address": "34 Old Home Road Sentinel",
+		"blood_group": "BLOOD-SENTINEL",
+		"health_details": "HEALTH-SENTINEL",
+		"passport_number": "PASSPORT-SENTINEL",
+	},
+	"EMP-B": {"personal_email": "bo.home@example.net", "emergency_phone_number": "(801) 555-8822"},
+}
+PERSONAL_VALUES = [value for record in PERSONAL.values() for value in record.values()] + ["8015550102"]
+PERSONAL_KEY_PARTS = (
+	"personal",
+	"emergency_",
+	"relation",
+	"person_to_be_contacted",
+	"current_address",
+	"permanent_address",
+	"blood",
+	"health",
+	"passport",
+	"prefered_email",
+	"company_email",
+	"cell_number",
+	"user_id",
+)
+
+
+def personal_paths(value, path="$"):
+	"""Every key in ``value`` that names a crew member's own details. ``emergency: "911"`` (the
+	contacts card's first line) is the one key allowed to say "emergency"."""
+	found = []
+	if isinstance(value, dict):
+		for key, child in value.items():
+			text = str(key)
+			if text == "emergency" and child != "911":
+				found.append(f"{path}.{key}")
+			elif any(part in text for part in PERSONAL_KEY_PARTS):
+				found.append(f"{path}.{key}")
+			found.extend(personal_paths(child, f"{path}.{key}"))
+	elif isinstance(value, (list, tuple)):
+		for index, child in enumerate(value):
+			found.extend(personal_paths(child, f"{path}[{index}]"))
+	return found
+
+
+class ContactsSite:
+	"""A site with the records the contacts card reads: the trip's owner, the lead's Employee
+	(with every personal field filled), the Project's customer, its primary contact and
+	address, and the hotel's Supplier, Address and Contact. ``get_value`` answers like v16:
+	only the fields asked for, and an unknown column raises."""
+
+	SETTINGS = {
+		"travel_desk_label": "Sapphire travel desk",
+		"travel_desk_phone": "+1 801-555-0142",
+		"travel_desk_email": "travel@sapphire.example",
+	}
+
+	def __init__(self, test, doc):
+		frappe = sys.modules["frappe"]
+		doc.owner = "office@example.com"
+		self.settings = dict(self.SETTINGS)
+		self.requests = []
+		self.records = {
+			("User", "office@example.com"): {
+				"full_name": "Olive Office",
+				"mobile_no": "801-555-0000",
+				"email": "office@example.com",
+			},
+			("Project", "PRJ-1"): {"project_name": "Harbor Fountain", "customer": "CUST-1"},
+			("Customer", "CUST-1"): {
+				"customer_name": "Harbor Resort",
+				"customer_primary_contact": "CON-1",
+				"customer_primary_address": "ADDR-SITE",
+				"mobile_no": "(208) 555-0100",
+				"email_id": "front@harbor.example",
+			},
+			("Contact", "CON-1"): {
+				"full_name": "Sam Site",
+				"custom_mobile_number": "",
+				"mobile_no": "208-555-0199",
+				"email_id": "sam@harbor.example",
+			},
+			("Address", "ADDR-SITE"): {
+				"address_line1": "500 Harbor Way",
+				"city": "Boise",
+				"state": "ID",
+				"pincode": "83702",
+				"country": "United States",
+			},
+			# The room's `address` is the Address record's name, fetched from the hotel.
+			("Supplier", "Hotel One"): {
+				"supplier_primary_address": "1 Main",
+				"supplier_primary_contact": "CON-H",
+				"mobile_no": "7025550000",
+			},
+			("Address", "1 Main"): {
+				"address_line1": "1 Main St",
+				"city": "Las Vegas",
+				"state": "NV",
+				"phone": "(702) 555-0123",
+				"custom_latitude": 36.17,
+				"custom_longitude": -115.14,
+			},
+			("Contact", "CON-H"): {"mobile_no": "7025550999"},
+		}
+		SITE.employees["EMP-A"].update(cell_number="8015550101", **PERSONAL["EMP-A"])
+		SITE.employees["EMP-B"].update(cell_number="8015550102", **PERSONAL["EMP-B"])
+		original = frappe.db.get_value
+
+		def get_value(doctype, name=None, fieldname=None, as_dict=False, **kwargs):
+			fields = tuple(fieldname) if isinstance(fieldname, (list, tuple)) else (fieldname,)
+			self.requests.append((doctype, name if isinstance(name, str) else "<filters>", fields))
+			if doctype in ("Employee", "Travel POI", "Company"):
+				return original(doctype, name, fieldname, as_dict, **kwargs)
+			unknown = [f for f in fields if f and f != "name" and f not in META_FIELDS.get(doctype, ())]
+			if unknown:
+				raise Exception(f"(1054, \"Unknown column '{unknown[0]}' in 'SELECT'\")")
+			record = self.records.get((doctype, name))
+			if record is None:
+				return None
+			if isinstance(fieldname, (list, tuple)):
+				return _dict({f: record.get(f) for f in fieldname})
+			return record.get(fieldname)
+
+		class Meta:
+			def __init__(self, doctype):
+				if doctype not in META_FIELDS:
+					raise Exception(f"DocType {doctype} not found")
+				self.fields = META_FIELDS[doctype]
+
+			def has_field(self, fieldname):
+				return fieldname in self.fields
+
+		for patcher in (
+			mock.patch.object(frappe.db, "get_value", get_value),
+			mock.patch.object(
+				frappe.db, "get_single_value", lambda doctype, field, *a, **k: self.settings.get(field)
+			),
+			mock.patch.object(
+				frappe.db, "has_column", lambda doctype, column: column in META_FIELDS.get(doctype, ())
+			),
+			mock.patch.object(frappe, "get_meta", Meta, create=True),
+		):
+			patcher.start()
+			test.addCleanup(patcher.stop)
+
+
+class TestTripContacts(MoneyAssertions):
+	def setUp(self):
+		self.doc = install_site()
+		self.site = ContactsSite(self, self.doc)
+
+	def assertNothingPersonal(self, payload):
+		self.assertEqual(personal_paths(payload), [], "a crew member's own details reached a payload")
+		text = json.dumps(payload, default=str)
+		for value in PERSONAL_VALUES:
+			self.assertNotIn(value, text, f"{value} reached a payload")
+
+	def test_the_whole_card(self):
+		hotel = "1 Main St, Las Vegas, NV"
+		self.assertEqual(
+			travel._trip_contacts(self.doc),
+			{
+				"emergency": "911",
+				"office": {
+					"label": "Sapphire travel desk",
+					"phone": "+1 801-555-0142",
+					"email": "travel@sapphire.example",
+				},
+				"booked_by": {"name": "Olive Office", "phone": "801-555-0000", "email": "office@example.com"},
+				"lead": {"name": "Ann", "phone": "8015550101"},
+				"site": {
+					"label": "Harbor Fountain",
+					"contact_name": "Sam Site",
+					"phone": "208-555-0199",
+					"email": "sam@harbor.example",
+					"address": "500 Harbor Way, Boise, ID, 83702, United States",
+				},
+				"hotels": [
+					{
+						"name": "Hotel One",
+						"phone": "(702) 555-0123",
+						"address": hotel,
+						"urgent_care_url": "https://www.google.com/maps/search/?api=1&query="
+						"urgent%20care%20near%201%20Main%20St%2C%20Las%20Vegas%2C%20NV",
+						"directions_url": "https://www.google.com/maps/dir/?api=1&destination="
+						"1%20Main%20St%2C%20Las%20Vegas%2C%20NV",
+					}
+				],
+			},
+		)
+
+	def test_one_persons_card_has_only_their_hotels(self):
+		self.assertEqual(
+			[h["name"] for h in travel._trip_contacts(self.doc, "EMP-A")["hotels"]], ["Hotel One"]
+		)
+		# Cy has no room (both rooms are pinned to Ann and Bo), so no hotel on his card; the
+		# rest of the card is the same for everyone on the trip.
+		cy = travel._trip_contacts(self.doc, "EMP-C")
+		self.assertEqual(cy["hotels"], [])
+		self.assertEqual(cy["lead"], {"name": "Ann", "phone": "8015550101"})
+		# A room for the whole crew is everyone's.
+		doc = make_trip()
+		doc.accommodations.append(
+			FakeRow(
+				name="R9",
+				traveler=None,
+				booking_group="g9",
+				hotel_lodging="Crew House",
+				check_in_date="2026-10-04",
+			)
+		)
+		self.assertEqual([h["name"] for h in travel._trip_contacts(doc, "EMP-C")["hotels"]], ["Crew House"])
+		# In check-in order.
+		self.assertEqual(
+			[h["name"] for h in travel._trip_contacts(doc)["hotels"]], ["Crew House", "Hotel One"]
+		)
+
+	def test_the_lead_is_the_only_crew_member_with_a_number(self):
+		card = travel._trip_contacts(self.doc)
+		self.assertNotIn("8015550102", json.dumps(card), "Bo is not the lead: his cell is his own")
+		doc = make_trip()
+		for row in doc.travelers:
+			row.is_trip_lead = 0
+		self.assertIsNone(travel._trip_contacts(doc)["lead"])
+
+	def test_the_employee_record_is_asked_for_two_fields_and_no_more(self):
+		# The strongest form of the privacy rule: the personal fields are never even read.
+		self.site.requests.clear()
+		travel._trip_contacts(self.doc)
+		asked = {
+			field
+			for doctype, _name, fields in self.site.requests
+			if doctype == "Employee"
+			for field in fields
+		}
+		self.assertLessEqual(asked, {"employee_name", "cell_number", "name"})
+		asked_user = {
+			field for doctype, _n, fields in self.site.requests if doctype == "User" for field in fields
+		}
+		self.assertLessEqual(asked_user, {"full_name", "mobile_no", "phone", "email"})
+
+	def test_a_crew_members_own_details_reach_no_payload(self):
+		frappe = sys.modules["frappe"]
+		for coordinator in (False, True):
+			with mock.patch.object(travel, "_is_coordinator", return_value=coordinator):
+				views_payload = travel.get_trip_views("TRIP-1")
+				self.assertNothingPersonal(views_payload)
+				for as_employee in (None, "crew", "EMP-A", "EMP-B", "EMP-C"):
+					self.assertNothingPersonal(travel.get_trip_itinerary("TRIP-1", as_employee))
+				for employee in ("EMP-A", "EMP-B"):
+					with mock.patch.object(frappe, "form_dict", _dict({"as": employee}), create=True):
+						self.assertNothingPersonal(travel.ee_trip_sheet(self.doc))
+				self.assertNothingPersonal(travel.ee_trip_sheet(self.doc))
+			self.assertEqual(views_payload["contacts"]["lead"], {"name": "Ann", "phone": "8015550101"})
+		# The itinerary email's contacts.
+		SITE.rendered.clear()
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			travel.preview_itinerary_email("TRIP-1", "EMP-A")
+		context = SITE.rendered[-1][1]
+		for key in ("contacts", "contact_rows", "contact_links"):
+			self.assertNothingPersonal(context[key])
+
+	def test_the_payloads_carry_the_card_and_still_no_money(self):
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			views_payload = travel.get_trip_views("TRIP-1")
+			itinerary = travel.get_trip_itinerary("TRIP-1", "EMP-B")
+		self.assertEqual(views_payload["contacts"], travel._trip_contacts(self.doc))
+		self.assertEqual(itinerary["contacts"], travel._trip_contacts(self.doc, "EMP-B"))
+		self.assertNoMoney(views_payload)
+		self.assertNoMoney(itinerary)
+
+	def test_every_kind_of_job_with_its_records_missing_never_raises(self):
+		frappe = sys.modules["frappe"]
+		for doctype in ("Project", "Opportunity", "Lead", "Customer", "Supplier", None, ""):
+			with self.subTest(doctype=doctype):
+				doc = make_trip(travel_for_doctype=doctype, travel_for_name="GONE-1")
+				doc.owner = "gone@example.com"
+				card = travel._trip_contacts(doc)
+				self.assertIsNone(card["site"])
+				self.assertIsNone(card["booked_by"], "a deleted owner has no card line")
+				self.assertEqual(card["emergency"], "911")
+		# A record that is there but holds nobody to call is no card line either.
+		self.site.records[("Project", "PRJ-2")] = {"project_name": "Bare", "customer": None}
+		self.assertIsNone(travel._trip_contacts(make_trip(travel_for_name="PRJ-2"))["site"])
+
+		# Every lookup failing at once — no meta, every read raising, settings raising — still
+		# answers, with 911 and the hotel's name.
+		def boom(*args, **kwargs):
+			raise RuntimeError("the database is down")
+
+		with (
+			mock.patch.object(frappe, "get_meta", boom),
+			mock.patch.object(frappe.db, "get_value", boom),
+			mock.patch.object(frappe.db, "get_single_value", boom),
+			mock.patch.object(frappe.db, "has_column", boom),
+		):
+			card = travel._trip_contacts(self.doc)
+		self.assertEqual(card["emergency"], "911")
+		self.assertEqual(
+			[card[k] for k in ("office", "booked_by", "lead", "site")],
+			[None, None, {"name": "Ann", "phone": None}, None],
+		)
+		self.assertEqual(card["hotels"][0]["name"], "Hotel One")
+		self.assertIsNone(card["hotels"][0]["phone"])
+		self.assertEqual(SITE.side_effects, [], "a guarded lookup logged or wrote something")
+
+	def test_a_part_that_breaks_is_null_with_an_error_log(self):
+		with mock.patch.object(travel, "_site_contact", side_effect=KeyError("bug")):
+			card = travel._trip_contacts(self.doc)
+		self.assertIsNone(card["site"])
+		self.assertEqual(card["lead"], {"name": "Ann", "phone": "8015550101"})
+		self.assertIn(("log_error", "Trip contacts"), SITE.side_effects)
+
+	def test_an_opportunity_its_own_contact_then_its_customers(self):
+		self.site.records[("Opportunity", "OPP-1")] = {
+			"title": "Lobby fountain",
+			"opportunity_from": "Customer",
+			"party_name": "CUST-1",
+			"contact_person": "CON-1",
+			"contact_display": "Sam Site",
+			"contact_mobile": "208-555-0111",
+			"contact_email": "",
+			"address_display": "77 Lake St<br>Boise, ID<br>",
+		}
+		site = travel._trip_contacts(make_trip(travel_for_doctype="Opportunity", travel_for_name="OPP-1"))[
+			"site"
+		]
+		self.assertEqual(
+			site,
+			{
+				"label": "Lobby fountain",
+				"contact_name": "Sam Site",
+				"phone": "208-555-0111",
+				"email": "sam@harbor.example",  # the Contact's, as the Opportunity has none
+				"address": "77 Lake St, Boise, ID",
+			},
+		)
+		# Nothing of its own and no contact: the customer's.
+		self.site.records[("Opportunity", "OPP-2")] = {
+			"title": "Bare",
+			"opportunity_from": "Customer",
+			"party_name": "CUST-1",
+		}
+		site = travel._trip_contacts(make_trip(travel_for_doctype="Opportunity", travel_for_name="OPP-2"))[
+			"site"
+		]
+		self.assertEqual(
+			(site["label"], site["contact_name"], site["address"][:14]),
+			("Bare", "Sam Site", "500 Harbor Way"),
+		)
+
+	def test_a_lead_and_a_customer(self):
+		self.site.records[("Lead", "CRM-LEAD-1")] = {
+			"title": "Kim's Garden Co",
+			"lead_name": "Kim Lee",
+			"company_name": "Kim's Garden Co",
+			"phone": "385-555-0100",
+			"email_id": "kim@garden.example",
+		}
+		self.assertEqual(
+			travel._trip_contacts(make_trip(travel_for_doctype="Lead", travel_for_name="CRM-LEAD-1"))["site"],
+			{
+				"label": "Kim's Garden Co",
+				"contact_name": "Kim Lee",
+				"phone": "385-555-0100",
+				"email": "kim@garden.example",
+				"address": None,
+			},
+		)
+		customer = travel._trip_contacts(make_trip(travel_for_doctype="Customer", travel_for_name="CUST-1"))[
+			"site"
+		]
+		self.assertEqual((customer["label"], customer["contact_name"]), ("Harbor Resort", "Sam Site"))
+
+	def test_the_office_line_needs_a_phone_or_an_email(self):
+		self.site.settings = {"travel_desk_label": "Travel desk only"}
+		self.assertIsNone(travel._trip_contacts(self.doc)["office"])
+		self.site.settings = {"travel_desk_email": "travel@sapphire.example"}
+		self.assertEqual(
+			travel._trip_contacts(self.doc)["office"],
+			{"label": "Travel desk", "phone": None, "email": "travel@sapphire.example"},
+		)
+
+	def test_who_booked_it(self):
+		doc = make_trip()
+		doc.owner = "Administrator"
+		self.assertIsNone(travel._trip_contacts(doc)["booked_by"])
+		# No phone on the User: the owner's own Employee's work cell.
+		self.site.records[("User", "bo@example.com")] = {"full_name": "Bo B", "email": "bo@example.com"}
+		doc.owner = "bo@example.com"
+		self.assertEqual(
+			travel._trip_contacts(doc)["booked_by"],
+			{"name": "Bo B", "phone": "8015550102", "email": "bo@example.com"},
+		)
+
+	def test_a_hotel_with_no_address_is_searched_by_name(self):
+		del self.site.records[("Address", "1 Main")]
+		del self.site.records[("Supplier", "Hotel One")]
+		(hotel,) = travel._trip_contacts(self.doc)["hotels"]
+		self.assertEqual((hotel["name"], hotel["phone"], hotel["address"]), ("Hotel One", None, None))
+		self.assertTrue(hotel["urgent_care_url"].endswith("query=urgent%20care%20near%20Hotel%20One"))
+		self.assertTrue(hotel["directions_url"].endswith("destination=Hotel%20One"))
+
+	def test_a_hotels_phone_falls_back_to_its_contact(self):
+		self.site.records[("Address", "1 Main")].pop("phone")
+		self.assertEqual(travel._trip_contacts(self.doc)["hotels"][0]["phone"], "7025550999")
+
+	def test_the_card_as_rows_for_print_and_email(self):
+		card = travel._trip_contacts(self.doc)
+		rows = views.contact_list(card)
+		self.assertEqual(
+			[(r["role"], r["name"], r["tel"]) for r in rows],
+			[
+				("Emergency", "Call 911", "tel:911"),
+				("Travel desk", "Sapphire travel desk", "tel:+18015550142"),
+				("Booked by", "Olive Office", "tel:8015550000"),
+				("Trip lead", "Ann", "tel:8015550101"),
+				("Job site", "Sam Site", "tel:2085550199"),
+				("Hotel", "Hotel One", "tel:7025550123"),
+			],
+		)
+		self.assertEqual(rows[4]["detail"], "Harbor Fountain")
+		email = views.contact_rows(card)
+		self.assertEqual(email[0], ["Emergency", "Call 911", ("tel:911", "911")])
+		self.assertEqual(email[3], ["Trip lead", "Ann", ("tel:8015550101", "(801) 555-0101")])
+		self.assertEqual(email[4][1], "Sam Site (Harbor Fountain)")
+		self.assertEqual(
+			[label for _url, label in views.contact_links(card)],
+			["Directions to the job site", "Nearest urgent care: Hotel One", "Directions: Hotel One"],
+		)
+		# A card with nothing on it but 911 is still a card.
+		self.assertEqual(views.contact_rows({})[0][0], "Emergency")
+
+	def test_tel_links_are_digits(self):
+		self.assertEqual(views.tel_href("(801) 555-0100"), "tel:8015550100")
+		self.assertEqual(views.tel_href("+1 801.555.0100"), "tel:+18015550100")
+		self.assertEqual(views.tel_href("801-555-0100 ext. 4"), "tel:8015550100")
+		self.assertIsNone(views.tel_href("call the front desk"))
+		self.assertIsNone(views.tel_href(None))
+
+
+class TestTheItineraryEmailShowsTheCard(unittest.TestCase):
+	"""The real template, rendered with the real email macros (``_components.html``), from the
+	context the send and the preview build (``notifications._itinerary_email``)."""
+
+	def setUp(self):
+		try:
+			import jinja2
+		except ImportError:  # pragma: no cover
+			self.skipTest("jinja2 not installed")
+		self.doc = install_site()
+		ContactsSite(self, self.doc)
+
+	def render(self, employee):
+		from jinja2 import Environment, FileSystemLoader
+
+		recipient = _dict(
+			row=next(t for t in self.doc.travelers if t.employee == employee),
+			employee=employee,
+			employee_name=employee,
+			email="x@example.com",
+			user_id=None,
+		)
+		email = notifications._itinerary_email(self.doc, recipient)
+		env = Environment(loader=FileSystemLoader(os.path.dirname(APP_DIR)), autoescape=False)
+		template = env.get_template(TestTheEmailTemplateCarriesNoMoney.TEMPLATE)
+		context = dict(email["context"], recipient=recipient, frappe=types.SimpleNamespace(format_date=str))
+		return template.render(**context), email["context"]
+
+	def test_the_contacts_block(self):
+		html, context = self.render("EMP-B")
+		self.assertIn(">Contacts</h2>", html)
+		self.assertIn('href="tel:911"', html)
+		self.assertIn('href="tel:8015550101"', html)  # the trip lead
+		self.assertIn("(801) 555-0101", html)
+		self.assertIn("Nearest urgent care: Hotel One", html)
+		self.assertIn(views.maps_search_url("urgent care near 1 Main St, Las Vegas, NV"), html)
+		self.assertIn("Sapphire travel desk", html)
+		self.assertEqual(context["contacts"], travel._trip_contacts(self.doc, "EMP-B"))
+		for value in PERSONAL_VALUES:
+			self.assertNotIn(value, html)
+
+	def test_someone_with_no_room_gets_no_hotel(self):
+		html, _context = self.render("EMP-C")
+		self.assertIn('href="tel:911"', html)
+		self.assertNotIn("Nearest urgent care", html)
+
+
+# --------------------------------------------------------------------------- PR 3: the map
+
+
+class TestTripPlaces(MoneyAssertions):
+	HOTELS = {"Hotel One": {"address": "1 Main St, Las Vegas, NV", "lat": 36.17, "lng": -115.14}}
+
+	def setUp(self):
+		self.doc = install_site()
+
+	def places(self, doc=None, hotels=HOTELS):
+		doc = doc or self.doc
+		names = [p["employee_name"] for p in views.crew(doc)]
+		return views.trip_places(travel.shape_itinerary(doc)["days"], names, hotels)
+
+	def test_a_realistic_trip(self):
+		places, legs = self.places()
+		by_key = {p["key"]: p for p in places}
+		self.assertEqual(
+			[(p["key"], p["kind"], p["label"], p["query"]) for p in places],
+			[
+				("airport-1", "airport", "PHX", "PHX airport"),
+				("airport-2", "airport", "LAS", "LAS airport"),
+				("hotel-1", "hotel", "Hotel One", "1 Main St, Las Vegas, NV"),
+				# In itinerary order: Tuesday's 9:30 stop comes up before the 10:00 delivery.
+				("stop-1", "stop", "The site", "The site"),
+				("freight-1", "freight", "Site", "Site"),
+			],
+		)
+		phx, las = by_key["airport-1"], by_key["airport-2"]
+		# Two flights leave PHX (the whole crew's the evening before, then Ann and Bo's): one
+		# place, both days, the time on the first of them.
+		self.assertEqual(phx["days"], ["2026-10-04", "2026-10-05"])
+		self.assertEqual(phx["first_time"], "18:00")
+		self.assertEqual(phx["who"], ["Ann", "Bo", "Cy"])
+		self.assertEqual(phx["group"], "row:F3")
+		self.assertEqual((phx["lat"], phx["lng"]), (None, None))
+		# The rental is picked up at "LAS": the airport, not a second pin.
+		self.assertEqual(las["days"], ["2026-10-04", "2026-10-05"])
+		self.assertIsNone(las["first_time"], "the first flight's landing time is not known")
+		self.assertNotIn("pickup", {p["kind"] for p in places})
+		hotel = by_key["hotel-1"]
+		self.assertEqual((hotel["lat"], hotel["lng"]), (36.17, -115.14))
+		self.assertEqual(hotel["days"], ["2026-10-05", "2026-10-08"])
+		self.assertEqual(hotel["who"], ["Ann", "Bo"])
+		self.assertEqual(hotel["group"], "g3")
+		self.assertEqual(by_key["freight-1"]["who"], ["Cy"])
+		self.assertEqual(by_key["freight-1"]["first_time"], "10:00")
+		stop = by_key["stop-1"]
+		# A stop's Place with a point keeps it; two visits are one place.
+		self.assertEqual((stop["lat"], stop["lng"]), (36.1, -115.1))
+		self.assertEqual(stop["days"], ["2026-10-06", "2026-10-07"])
+		self.assertEqual(stop["first_time"], "09:30")
+		self.assertIsNone(stop["group"])
+		self.assertEqual(
+			legs,
+			[
+				{
+					"day": "2026-10-04",
+					"from": "airport-1",
+					"to": "airport-2",
+					"kind": "flight",
+					"who": ["Ann", "Bo", "Cy"],
+				},
+				{
+					"day": "2026-10-05",
+					"from": "airport-1",
+					"to": "airport-2",
+					"kind": "flight",
+					"who": ["Ann", "Bo"],
+				},
+			],
+		)
+		for place in places:
+			self.assertEqual(
+				set(place),
+				{"key", "kind", "label", "query", "lat", "lng", "days", "first_time", "who", "group"},
+			)
+
+	def test_drives_and_their_ends(self):
+		doc = make_trip()
+		doc.ground_transport = [
+			FakeRow(
+				name="G2",
+				traveler=None,
+				booking_group="g5",
+				transport_type="Company Fleet",
+				pickup_location="las",  # lower case: a place name, not a code
+				dropoff_location="500 Harbor Way, Boise",
+				pickup_datetime="2026-10-06 00:00:00",  # no time given
+				arrival_datetime="2026-10-06 11:45:00",
+			),
+			FakeRow(
+				name="G3",
+				traveler="EMP-A",
+				booking_group="g6",
+				transport_type="Personal Vehicle",
+				pickup_location="500 HARBOR WAY, BOISE",  # the same place, typed differently
+				dropoff_location="PHX",
+				pickup_datetime="2026-10-08 07:00:00",
+			),
+		]
+		places, legs = self.places(doc)
+		kinds = [(p["key"], p["label"]) for p in places if p["kind"] in ("pickup", "dropoff")]
+		self.assertEqual(
+			kinds,
+			[
+				("pickup-1", "las"),
+				("dropoff-1", "500 Harbor Way, Boise"),
+				("pickup-2", "500 HARBOR WAY, BOISE"),
+			],
+		)
+		pickup = next(p for p in places if p["key"] == "pickup-1")
+		self.assertIsNone(pickup["first_time"], "midnight is no time given")
+		dropoff = next(p for p in places if p["key"] == "dropoff-1")
+		self.assertEqual(dropoff["first_time"], "11:45")
+		drives = [leg for leg in legs if leg["kind"] == "drive"]
+		self.assertEqual(
+			drives,
+			[
+				{
+					"day": "2026-10-06",
+					"from": "pickup-1",
+					"to": "dropoff-1",
+					"kind": "drive",
+					"who": ["Ann", "Bo", "Cy"],
+				},
+				# Driven home to the airport: PHX's place, the one the flights left from.
+				{"day": "2026-10-08", "from": "pickup-2", "to": "airport-1", "kind": "drive", "who": ["Ann"]},
+			],
+		)
+
+	def test_a_hotel_with_no_address_is_asked_for_by_name(self):
+		places, _legs = self.places(hotels=None)
+		hotel = next(p for p in places if p["kind"] == "hotel")
+		self.assertEqual((hotel["query"], hotel["lat"], hotel["lng"]), ("Hotel One", None, None))
+
+	def test_nothing_to_place_is_left_off(self):
+		doc = make_trip(
+			itinerary=[FakeRow(name="A9", date="2026-10-06", activity_description="Call the office")]
+		)
+		doc.freight[0].deliver_to = None
+		places, _legs = self.places(doc)
+		self.assertNotIn("stop", {p["kind"] for p in places})
+		self.assertNotIn("freight", {p["kind"] for p in places})
+
+	def test_the_views_payload_carries_the_map_and_no_money(self):
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			payload = travel.get_trip_views("TRIP-1")
+		self.assertEqual(
+			[p["key"] for p in payload["places"]],
+			["airport-1", "airport-2", "hotel-1", "stop-1", "freight-1"],
+		)
+		self.assertEqual(len(payload["legs"]), 2)
+		self.assertEqual(payload["maps"], {"api_key": "", "map_id_light": "", "map_id_dark": ""})
+		self.assertEqual(payload["sheet_url"], views.trip_sheet_url("TRIP-1"))
+		self.assertEqual(
+			payload["people_sheet_urls"],
+			{e: views.trip_sheet_url("TRIP-1", e) for e in ("EMP-A", "EMP-B", "EMP-C")},
+		)
+		self.assertNoMoney(payload)
+
+	def test_the_views_hand_the_map_the_hotels_street_address(self):
+		ContactsSite(self, self.doc)
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			payload = travel.get_trip_views("TRIP-1")
+		hotel = next(p for p in payload["places"] if p["kind"] == "hotel")
+		self.assertEqual(
+			(hotel["query"], hotel["lat"], hotel["lng"]), ("1 Main St, Las Vegas, NV", 36.17, -115.14)
+		)
+
+	def test_the_map_key_is_the_one_every_signed_in_user_reads(self):
+		frappe = sys.modules["frappe"]
+		settings = {"google_maps_api_key": "browser-key", "google_maps_map_id_light": "light-id"}
+		with (
+			mock.patch.object(
+				frappe.db, "get_single_value", lambda doctype, field, *a, **k: settings.get(field)
+			),
+			mock.patch.object(travel, "_is_coordinator", return_value=False),
+		):
+			payload = travel.get_trip_views("TRIP-1")
+			self.assertEqual(payload["maps"], travel.get_maps_config())
+		self.assertEqual(
+			payload["maps"], {"api_key": "browser-key", "map_id_light": "light-id", "map_id_dark": ""}
+		)
+
+
+# --------------------------------------------------------------------------- PR 3: the trip sheet
+
+SHEET_TEMPLATE = os.path.join(APP_DIR, "travel_management", "print_formats", "trip_sheet.html")
+SHEET_SETUP = "erpnext_enhancements.travel_management.setup_print_formats"
+
+
+def _sheet_source():
+	with open(SHEET_TEMPLATE, encoding="utf-8") as fh:
+		return fh.read()
+
+
+class TestTripSheet(MoneyAssertions):
+	"""The Trip Sheet: its payload (``views.build_trip_sheet`` through ``ee_trip_sheet``) and
+	the real template rendered with jinja2 and the real ``ps_*`` globals — nothing else compiles
+	a print format before somebody is holding the paper."""
+
+	#: Every number on the fixture: each person's own on the whole trip's sheet.
+	REFS = ("PNR-A", "PNR-B", "H-A", "H-B", "RC-1", "PRO-1")
+
+	def setUp(self):
+		try:
+			import jinja2
+		except ImportError:  # pragma: no cover
+			self.skipTest("jinja2 not installed")
+		self.doc = install_site()
+		ContactsSite(self, self.doc)
+
+	def sheet(self, coordinator=False, employee=None, doc=None):
+		frappe = sys.modules["frappe"]
+		with (
+			mock.patch.object(travel, "_is_coordinator", return_value=coordinator),
+			mock.patch.object(frappe, "form_dict", _dict({"as": employee} if employee else {}), create=True),
+		):
+			return travel.ee_trip_sheet(doc or self.doc)
+
+	def render(self, sheet):
+		from jinja2 import Environment, StrictUndefined
+
+		from erpnext_enhancements import print_style as ps
+
+		env = Environment(undefined=StrictUndefined)
+		env.globals.update({name: getattr(ps, name) for name in dir(ps) if name.startswith("ps_")})
+		env.globals["ee_trip_sheet"] = lambda doc: sheet
+		return env.from_string(_sheet_source()).render(doc=self.doc)
+
+	def test_a_crew_member_gets_every_number_and_no_money(self):
+		sheet = self.sheet()
+		self.assertIsNone(sheet["money"])
+		self.assertNoMoney(sheet)
+		html = self.render(sheet)
+		for ref in self.REFS:
+			self.assertIn(ref, html)
+		for amount in (*SENTINELS, "1,499.99", "1499.99"):
+			self.assertNotIn(amount, html)
+		self.assertNotIn("BOOKED SO FAR", html)
+		self.assertNotIn("{{", html)
+		self.assertNotIn("None", html)
+		self.assertNotIn(RECEIPT_MARK, html)
+
+	def test_a_coordinator_gets_the_total(self):
+		sheet = self.sheet(coordinator=True)
+		self.assertEqual(sheet["money"]["total"], round(422.22 + 644.44 + 433.33, 2))
+		self.assertEqual(sheet["money"]["currency"], "USD")
+		html = self.render(sheet)
+		self.assertIn("BOOKED SO FAR", html)
+		self.assertIn("USD 1,499.99", html)
+		self.assertNoReceipt(sheet)
+
+	def test_a_persons_sheet_is_theirs_alone_and_never_priced(self):
+		for coordinator in (False, True):
+			sheet = self.sheet(coordinator=coordinator, employee="EMP-A")
+			self.assertIsNone(sheet["money"], "a person's sheet is handed to that person")
+			self.assertEqual((sheet["for_employee"], sheet["for_name"]), ("EMP-A", "Ann"))
+			self.assertEqual(sheet["eyebrow"], "TRIP SHEET · ANN")
+			html = self.render(sheet)
+			for ref in ("PNR-A", "H-A", "RC-1"):
+				self.assertIn(ref, html)
+			for ref in ("PNR-B", "H-B", "PRO-1"):
+				self.assertNotIn(ref, html)
+			self.assertNotIn(">Who</th>", html)
+			self.assertNotIn("BOOKED SO FAR", html)
+			self.assertNoMoney(sheet)
+		# Ann's own files, the whole trip's and her bookings' — not Bo's boarding pass.
+		self.assertEqual(
+			[d["title"] for d in self.sheet(employee="EMP-A")["documents"]],
+			[d["title"] or d["file_name"] for d in travel.shape_itinerary(self.doc, "EMP-A")["documents"]],
+		)
+		self.assertNotIn("bo-pass.pdf", json.dumps(self.sheet(employee="EMP-A")))
+
+	def test_anyone_not_on_the_crew_prints_the_whole_trip(self):
+		whole = self.sheet()
+		for asked in ("EMP-Z", "crew", "<b>x</b>"):
+			self.assertEqual(self.sheet(employee=asked), whole, asked)
+		frappe = sys.modules["frappe"]
+		with (
+			mock.patch.object(frappe, "form_dict", _dict({"as": {"name": "EMP-A"}}), create=True),
+			mock.patch.object(travel, "_is_coordinator", return_value=False),
+		):
+			self.assertIsNone(travel.ee_trip_sheet(self.doc)["for_employee"])
+		self.assertIsNone(whole["for_name"])
+
+	def test_the_whole_sheet(self):
+		sheet = self.sheet()
+		self.assertEqual(sheet["eyebrow"], "TRIP SHEET")
+		self.assertEqual(sheet["dates_text"], "Mon Oct 5 – Thu Oct 8")
+		self.assertEqual(sheet["job"], "Harbor Fountain (PRJ-1)")
+		self.assertEqual(sheet["lead_name"], "Ann")
+		self.assertEqual(
+			sheet["crew"],
+			[
+				{"name": "Ann", "dates": "Mon Oct 5 – Thu Oct 8", "is_trip_lead": True, "is_you": False},
+				{"name": "Bo", "dates": "Tue Oct 6 – Thu Oct 8", "is_trip_lead": False, "is_you": False},
+				{"name": "Cy", "dates": "Mon Oct 5 – Thu Oct 8", "is_trip_lead": False, "is_you": False},
+			],
+		)
+		self.assertEqual(
+			[day["label"] for day in sheet["days"]],
+			["Sun Oct 4", "Day 1 · Mon Oct 5", "Day 2 · Tue Oct 6", "Day 3 · Wed Oct 7", "Day 4 · Thu Oct 8"],
+		)
+		flight = sheet["days"][1]["rows"][0]
+		self.assertEqual(
+			flight,
+			{
+				"time": "7:15 AM",
+				"what": "Flight: Southwest WN 1",
+				"detail": "PHX → LAS, lands 8:20 AM",
+				"who": "Ann, Bo",
+				"refs": [{"name": "Ann", "ref": "PNR-A"}, {"name": "Bo", "ref": "PNR-B"}],
+				"ref_kind": "PNR",
+				"ref_note": "",
+			},
+		)
+		self.assertEqual(sheet["days"][0]["rows"][0]["ref_note"], "no PNR yet")
+		checkin = next(r for r in sheet["days"][1]["rows"] if r["what"] == "Check in: Hotel One")
+		self.assertEqual(
+			checkin["detail"],
+			"1 Main St, Las Vegas, NV",
+			"the street address, never the Address record's name",
+		)
+		freight = next(r for r in sheet["days"][2]["rows"] if r["what"].startswith("Freight"))
+		self.assertEqual((freight["who"], freight["refs"]), ("Cy", [{"name": "", "ref": "PRO-1"}]))
+		self.assertEqual((freight["time"], freight["detail"]), ("10:00 AM", "to Site"))
+		self.assertEqual(sheet["contacts"][0]["name"], "Call 911")
+		self.assertEqual(sheet["itinerary_url"], "https://example.com/itinerary?trip=TRIP-1")
+		# Files by title and kind only: a printed link to a private file is no use on paper.
+		self.assertEqual(set(sheet["documents"][0]), {"title", "kind", "for_name", "booking_label"})
+		self.assertNotIn("/private/files", json.dumps(sheet))
+
+	def test_it_renders_the_whole_sheet(self):
+		html = self.render(self.sheet())
+		for text in (
+			"TRIP SHEET",
+			"Install",
+			"TRIP-1",
+			"Harbor Fountain (PRJ-1)",
+			"Call 911",
+			'href="tel:911"',
+			'href="tel:8015550101"',
+			"(801) 555-0101",
+			"Nearest urgent care",
+			"Day 1 · Mon Oct 5",
+			"Ann: ",
+			"no PNR yet",
+			"Site map",
+			"The whole trip",
+			"https://example.com/itinerary?trip=TRIP-1",
+			"Trip lead",
+		):
+			self.assertIn(text, html)
+		self.assertEqual(html.count("linear-gradient(90deg"), 2, "the stripe top and bottom")
+		self.assertIn("<svg", html)
+
+	def test_the_sparsest_sheet_renders(self):
+		doc = make_trip(
+			flights=[],
+			accommodations=[],
+			ground_transport=[],
+			freight=[],
+			itinerary=[],
+			documents=[],
+			travel_for_doctype=None,
+			travel_for_name=None,
+		)
+		doc.travelers = [FakeRow(name="T1", employee="EMP-A", employee_name="Ann")]
+		SITE.trips["TRIP-1"] = doc
+		sheet = self.sheet(doc=doc)
+		self.assertIsNone(sheet["lead_name"])
+		html = self.render(sheet)
+		self.assertIn("Nothing booked.", html)
+		self.assertIn("Not set", html)
+		self.assertNotIn(">Files</h2>", html)
+		self.assertNotIn("None", html)
+
+	def test_what_people_typed_is_escaped(self):
+		doc = make_trip(purpose="<script>x</script>")
+		doc.flights[0].booking_reference = "<b>PNR</b>"
+		SITE.trips["TRIP-1"] = doc
+		html = self.render(self.sheet(doc=doc))
+		self.assertNotIn("<script>x", html)
+		self.assertIn("&lt;script&gt;x&lt;/script&gt;", html)
+		self.assertIn("&lt;b&gt;PNR&lt;/b&gt;", html)
+
+	def test_the_template_is_print_safe_and_reads_no_field_of_the_trip(self):
+		source = _sheet_source()
+		code = re.sub(r"\{#.*?#\}", "", source, flags=re.S)
+		squashed = code.replace(" ", "")
+		self.assertNotIn("display:flex", squashed)
+		self.assertNotIn("display:grid", squashed)
+		self.assertIn("display:table", squashed)
+		self.assertIn("page-break-inside:avoid", squashed)
+		# `doc` is handed to ee_trip_sheet and read nowhere: every money field is on it.
+		self.assertEqual(re.findall(r"\bdoc\b[^)]", code), [], "the template reads the trip directly")
+		self.assertIn("ee_trip_sheet(doc)", code)
+		self.assertNotIn("letter_head", code, "print_style draws the wordmark: two logos otherwise")
+		# No colour of its own: the chrome's, through ps_*.
+		self.assertEqual(re.findall(r"#[0-9a-fA-F]{3,6}\b", code), [])
+
+	def test_the_sheet_checks_the_trip_and_the_reader(self):
+		frappe = sys.modules["frappe"]
+		self.assertEqual(travel.ee_trip_sheet(types.SimpleNamespace(doctype="Sales Invoice")), {})
+		SITE.deny = True
+		with mock.patch.object(travel, "_is_coordinator", return_value=True):
+			with self.assertRaises(frappe.PermissionError):
+				travel.ee_trip_sheet(self.doc)
+
+	def test_the_links(self):
+		self.assertEqual(
+			views.trip_sheet_url("TRIP-2026-00001"),
+			"/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip"
+			"&name=TRIP-2026-00001&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome",
+		)
+		self.assertEqual(
+			views.trip_sheet_url("TRIP 1&x", "EMP/1"),
+			"/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip"
+			"&name=TRIP%201%26x&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome&as=EMP%2F1",
+		)
+		self.assertEqual(
+			views.trip_sheet_url("TRIP-1", "EMP-A", printview=True),
+			"/printview?doctype=Travel%20Trip&name=TRIP-1&format=Trip%20Sheet&no_letterhead=1&as=EMP-A",
+		)
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			itinerary = travel.get_trip_itinerary("TRIP-1")
+			crew = travel.get_trip_itinerary("TRIP-1", "crew")
+		self.assertEqual(itinerary["sheet_url"], views.trip_sheet_url("TRIP-1"))
+		self.assertEqual(itinerary["my_sheet_url"], views.trip_sheet_url("TRIP-1", "EMP-B"))
+		self.assertEqual(
+			crew["my_sheet_url"], views.trip_sheet_url("TRIP-1"), "the whole crew's is the whole trip's"
+		)
+
+
+class TestTheTripSheetFormat(unittest.TestCase):
+	"""The after_migrate upsert, its place in hooks.py, and the Jinja global's registration."""
+
+	def setUp(self):
+		install_site()
+		sys.modules.pop(SHEET_SETUP, None)
+		import importlib
+
+		self.setup = importlib.import_module(SHEET_SETUP)
+		self.saved = []
+		self.existing = set()
+		frappe = sys.modules["frappe"]
+		test = self
+
+		class PrintFormat(types.SimpleNamespace):
+			def save(self, ignore_permissions=False):
+				test.saved.append(dict(vars(self)))
+				test.existing.add(self.name)
+
+		def exists(doctype, name=None, *a, **k):
+			if doctype == "DocType":
+				return name == "Travel Trip"
+			return name in self.existing
+
+		for patcher in (
+			mock.patch.object(frappe.db, "exists", exists, create=True),
+			mock.patch.object(frappe.db, "commit", lambda: None, create=True),
+			mock.patch.object(frappe.db, "has_column", lambda doctype, column: True),
+			mock.patch.object(frappe, "new_doc", lambda doctype: PrintFormat(), create=True),
+			mock.patch.object(
+				frappe, "get_doc", lambda doctype, name: PrintFormat(name=name, html="old"), create=True
+			),
+			mock.patch.object(
+				frappe,
+				"logger",
+				lambda *a, **k: types.SimpleNamespace(info=lambda *a, **k: None),
+				create=True,
+			),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def test_it_is_upserted_from_the_repo_file(self):
+		self.setup.ensure_travel_print_formats()
+		self.setup.ensure_travel_print_formats()
+		self.assertEqual(len(self.saved), 2)
+		for saved in self.saved:
+			self.assertEqual(
+				{
+					k: saved[k]
+					for k in (
+						"name",
+						"doc_type",
+						"module",
+						"print_format_type",
+						"custom_format",
+						"standard",
+						"disabled",
+						"pdf_generator",
+					)
+				},
+				{
+					"name": "Trip Sheet",
+					"doc_type": "Travel Trip",
+					"module": "Travel Management",
+					"print_format_type": "Jinja",
+					"custom_format": 1,
+					"standard": "No",
+					"disabled": 0,
+					"pdf_generator": "chrome",
+				},
+			)
+			self.assertEqual(saved["html"], _sheet_source())
+		self.assertEqual(views.TRIP_SHEET_FORMAT, "Trip Sheet")
+
+	def test_a_failure_logs_and_never_aborts_the_migrate(self):
+		frappe = sys.modules["frappe"]
+		logged = []
+		with (
+			mock.patch.object(frappe, "new_doc", side_effect=RuntimeError("boom"), create=True),
+			mock.patch.object(frappe, "log_error", lambda *a, **k: logged.append(a[1:] or k.get("title"))),
+		):
+			self.setup.ensure_travel_print_formats()
+		self.assertEqual(logged, [("Travel print formats",)])
+		self.assertEqual(self.saved, [])
+
+	def test_hooks_run_it_before_the_chrome_pass_and_register_the_global(self):
+		with open(os.path.join(APP_DIR, "hooks.py"), encoding="utf-8") as fh:
+			hooks = fh.read()
+		upsert = '"erpnext_enhancements.travel_management.setup_print_formats.ensure_travel_print_formats"'
+		chrome = '"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_chrome_pdf_generator"'
+		self.assertIn(upsert, hooks)
+		self.assertLess(hooks.index(upsert), hooks.index(chrome))
+		self.assertIn('"erpnext_enhancements.api.travel.ee_trip_sheet"', hooks)
+		self.assertRegex(inspect.getsource(travel), r"\ndef ee_trip_sheet\(doc\):")
+		# A Jinja global, not an endpoint.
+		self.assertNotRegex(inspect.getsource(travel), r"@frappe\.whitelist\([^)]*\)\ndef ee_trip_sheet")
+
+
+class TestTheTravelDeskSettings(unittest.TestCase):
+	PATH = os.path.join(APP_DIR, "travel_management", "doctype", "travel_settings", "travel_settings.json")
+
+	def test_the_fields_have_no_default(self):
+		# A default on a new field of a Single never reaches the row a site already has
+		# (CLAUDE.md): the field would read blank on prod while the JSON said otherwise.
+		with open(self.PATH, encoding="utf-8") as fh:
+			meta = json.load(fh)
+		fields = {f["fieldname"]: f for f in meta["fields"]}
+		for fieldname, fieldtype, options in (
+			("travel_desk_label", "Data", None),
+			("travel_desk_phone", "Data", "Phone"),
+			("travel_desk_email", "Data", "Email"),
+		):
+			with self.subTest(fieldname):
+				self.assertIn(fieldname, meta["field_order"])
+				self.assertEqual(fields[fieldname]["fieldtype"], fieldtype)
+				self.assertEqual(fields[fieldname].get("options"), options)
+				self.assertNotIn("default", fields[fieldname])
+		self.assertEqual(fields["travel_desk_section"]["fieldtype"], "Section Break")
+
+	def test_they_are_read_as_a_single(self):
+		source = inspect.getsource(travel._office_contact)
+		self.assertIn('frappe.db.get_single_value("Travel Settings", field)', source)
+		self.assertNotIn('"Singles"', source)

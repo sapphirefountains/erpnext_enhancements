@@ -1,0 +1,158 @@
+{#-
+  Trip Sheet: the Print Format "Trip Sheet" on Travel Trip. travel_management/
+  setup_print_formats.py stores this file as the format's html on every migrate, so an
+  edit here deploys with the next migrate. Linked from Plan a Trip and /itinerary as a PDF
+  (views.trip_sheet_url); &as=<employee> on the link prints that person's sheet.
+
+  The whole trip on one or two Letter pages, for the job folder or a crew lead who will not
+  open the app: who is going, who to call, every day, every confirmation number, the
+  trip's files, and, on a travel coordinator's whole-trip sheet only, the cost total.
+
+  It reads `sheet`, from the ee_trip_sheet Jinja global (api/travel.py), and nothing from
+  `doc`, which it only hands over. Every money field on Travel Trip is permlevel 0, so a
+  template that read the document could print any of them to anyone who can print the
+  trip. The payload is filtered on the server, the only place that can do it.
+
+  frappe's print Jinja has no autoescape: every value a person typed goes through the e
+  filter (ps_phone escapes its own output). Print-safe CSS only, as
+  docs/print-design-system.md sets out: tables and display:table, cell geometry inline
+  with !important (ps_td, ps_th), no tinted fills, the neutral stripe.
+-#}
+{%- set sheet = ee_trip_sheet(doc) -%}
+{#- The chrome's cells, tightened: a sheet is a dense page and must fit two. The later
+    padding in the same style attribute wins over the chrome's, both being !important. -#}
+{%- set TD = ps_td() ~ ";padding:3px 6px !important" -%}
+{%- set TH = ps_th(None) ~ ";padding:3px 6px !important" -%}
+{%- set LABEL = ps_style("label") -%}
+{%- set STRONG = ps_style("strong") -%}
+{%- set SMALL = "font-size:10.5px;line-height:1.35" -%}
+{%- set TABLE = "width:100%;border-collapse:collapse;font-size:11.5px;line-height:1.35" -%}
+{%- set wide = not sheet.for_name -%}
+{%- set columns = 4 if wide else 3 -%}
+{%- set meta -%}
+<span style="{{ STRONG }}">{{ sheet.trip | e }}</span><br>{{ sheet.travel_type | e }}<br>{{ sheet.status | e }}
+{%- endset -%}
+{{ ps_page_open(None) }}
+{{ ps_letterhead(None, sheet.eyebrow | e, sheet.purpose | e, meta) }}
+{{ ps_facts_open() }}
+{{ ps_fact("DATES", sheet.dates_text | e, "28%") }}
+{{ ps_fact("JOB", (sheet.job or "Not set") | e, "44%") }}
+{{ ps_fact("TRIP LEAD", (sheet.lead_name or "Not set") | e, "28%") }}
+{{ ps_facts_close() }}
+
+{{ ps_section_title("Who to call") }}
+<table style="{{ TABLE }};page-break-inside:avoid">
+  <tbody>
+  {%- for c in sheet.contacts %}
+    <tr style="page-break-inside:avoid">
+      <td style="{{ TD }};width:13%"><span style="{{ LABEL }}">{{ c.role | e }}</span></td>
+      <td style="{{ TD }};width:29%"><span style="{{ STRONG }}">{{ c.name | e }}</span>
+        {%- if c.detail %}<br><span style="{{ SMALL }}">{{ c.detail | e }}</span>{% endif %}</td>
+      <td style="{{ TD }};width:18%;white-space:nowrap">
+        {%- if c.tel %}<a href="{{ c.tel | e }}" style="color:inherit;text-decoration:none">{{ ps_phone(c.phone) }}</a>
+        {%- elif c.phone %}{{ ps_phone(c.phone) }}{% endif %}</td>
+      <td style="{{ TD }};width:40%">
+        {%- if c.email %}{{ c.email | e }}{% endif %}
+        {%- if c.email and c.address %}<br>{% endif %}
+        {%- if c.address %}{{ c.address | e }}{% endif %}
+        {%- for link in c.links %}{% if loop.first %}{% if c.email or c.address %}<br>{% endif %}{% else %} &middot; {% endif %}<a href="{{ link[0] | e }}" style="color:inherit">{{ link[1] | e }}</a>{% endfor %}</td>
+    </tr>
+  {%- endfor %}
+  </tbody>
+</table>
+
+{{ ps_section_title("Crew") }}
+<table style="{{ TABLE }}">
+  <thead style="display:table-header-group">
+    <tr>
+      <th style="{{ TH }};width:44%">Name</th>
+      <th style="{{ TH }};width:36%">Dates</th>
+      <th style="{{ TH }};width:20%"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {%- for person in sheet.crew %}
+    <tr style="page-break-inside:avoid">
+      <td style="{{ TD }}"><span style="{{ STRONG }}">{{ person.name | e }}</span></td>
+      <td style="{{ TD }}">{{ person.dates | e }}</td>
+      <td style="{{ TD }}">{% if person.is_trip_lead %}Trip lead{% endif %}</td>
+    </tr>
+  {%- endfor %}
+  </tbody>
+</table>
+
+{{ ps_section_title("Day by day") }}
+<table style="{{ TABLE }}">
+  <thead style="display:table-header-group">
+    <tr>
+      <th style="{{ TH }};width:15%">Time</th>
+      <th style="{{ TH }};width:{{ '37%' if wide else '55%' }}">What</th>
+      {%- if wide %}
+      <th style="{{ TH }};width:18%">Who</th>
+      {%- endif %}
+      <th style="{{ TH }};width:30%">Confirmation #</th>
+    </tr>
+  </thead>
+  <tbody>
+  {%- for day in sheet.days %}
+    <tr style="page-break-inside:avoid;page-break-after:avoid">
+      <td colspan="{{ columns }}" style="{{ TD }};padding-top:10px !important"><span style="{{ LABEL }}">{{ day.label | e }}</span></td>
+    </tr>
+    {%- for row in day.rows %}
+    <tr style="page-break-inside:avoid">
+      <td style="{{ TD }};white-space:nowrap">{{ row.time | e }}</td>
+      <td style="{{ TD }}"><span style="{{ STRONG }}">{{ row.what | e }}</span>
+        {%- if row.detail %}<br>{{ row.detail | e }}{% endif %}</td>
+      {%- if wide %}
+      <td style="{{ TD }}">{{ row.who | e }}</td>
+      {%- endif %}
+      <td style="{{ TD }}">
+        {%- for ref in row.refs %}{% if not loop.first %}<br>{% endif %}{% if ref.name %}{{ ref.name | e }}: {% endif %}<span style="{{ STRONG }}">{{ ref.ref | e }}</span>{% endfor %}
+        {%- if row.ref_note %}{% if row.refs %}<br>{% endif %}<span style="{{ SMALL }}">{{ row.ref_note | e }}</span>{% endif %}</td>
+    </tr>
+    {%- else %}
+    <tr style="page-break-inside:avoid">
+      <td colspan="{{ columns }}" style="{{ TD }}"><span style="{{ SMALL }}">Nothing booked.</span></td>
+    </tr>
+    {%- endfor %}
+  {%- endfor %}
+  </tbody>
+</table>
+
+{%- if sheet.documents %}
+{{ ps_section_title("Files") }}
+<table style="{{ TABLE }}">
+  <thead style="display:table-header-group">
+    <tr>
+      <th style="{{ TH }};width:36%">File</th>
+      <th style="{{ TH }};width:20%">What it is</th>
+      <th style="{{ TH }};width:26%">On</th>
+      <th style="{{ TH }};width:18%">For</th>
+    </tr>
+  </thead>
+  <tbody>
+  {%- for file in sheet.documents %}
+    <tr style="page-break-inside:avoid">
+      <td style="{{ TD }}"><span style="{{ STRONG }}">{{ file.title | e }}</span></td>
+      <td style="{{ TD }}">{{ file.kind | e }}</td>
+      <td style="{{ TD }}">{{ (file.booking_label or "The whole trip") | e }}</td>
+      <td style="{{ TD }}">{{ (file.for_name or "Everyone") | e }}</td>
+    </tr>
+  {%- endfor %}
+  </tbody>
+</table>
+<div style="margin-top:4px;{{ SMALL }}">Open the files in the app: they are attached to the trip.</div>
+{%- endif %}
+
+{%- if sheet.money %}
+<div style="display:table;width:100%;margin-top:14px;padding-top:8px;page-break-inside:avoid">
+  <div style="display:table-cell;vertical-align:top"><span style="{{ LABEL }}">BOOKED SO FAR</span> <span style="{{ SMALL }}">(travel coordinators only)</span></div>
+  <div style="display:table-cell;vertical-align:top;text-align:right"><span style="{{ STRONG }}">{{ sheet.money.total_text | e }}</span></div>
+</div>
+{%- endif %}
+
+<div style="margin-top:14px;{{ SMALL }};page-break-inside:avoid">
+  {%- if sheet.printed_on %}Printed {{ sheet.printed_on | e }}. {% endif -%}
+  Bookings change: the latest is on your phone at <a href="{{ sheet.itinerary_url | e }}" style="color:inherit">{{ sheet.itinerary_url | e }}</a>.
+</div>
+{{ ps_page_close(None) }}

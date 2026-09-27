@@ -33,7 +33,7 @@ from frappe.utils import cint, get_url, get_url_to_form
 from erpnext_enhancements import email_style
 from erpnext_enhancements.travel_management.ics import trip_events_for_traveler, trip_ics_attachment
 from erpnext_enhancements.travel_management.itinerary_text import booking_lines, day_lines
-from erpnext_enhancements.travel_management.views import itinerary_path
+from erpnext_enhancements.travel_management.views import contact_links, contact_rows, itinerary_path
 
 TEMPLATE_DIR = "erpnext_enhancements/templates/emails/travel"
 
@@ -290,9 +290,13 @@ def _itinerary_email(doc, recipient, base=None, poi_cache=None):
 	"""What the itinerary email carries for one traveler: ``{subject, template, context,
 	attachments}``. The one definition both :func:`send_itinerary_emails` and
 	:func:`render_itinerary_preview` build from, so a preview cannot drift from the send."""
-	from erpnext_enhancements.api.travel import shape_itinerary
+	from erpnext_enhancements.api.travel import _trip_contacts, shape_itinerary
 
 	itinerary = shape_itinerary(doc, viewing_employee=recipient.employee, poi_cache=poi_cache)
+	# Who to call, with this traveler's own hotels: the email's Contacts table and its links
+	# (each hotel's nearest urgent care, directions), built in views so the page, the phone,
+	# the email and the printed sheet say the same thing.
+	contacts = _trip_contacts(doc, recipient.employee)
 	return {
 		"subject": _("Your itinerary: {0} ({1} – {2})").format(doc.purpose, doc.start_date, doc.end_date),
 		"template": "pre_travel_reminder.html",
@@ -300,6 +304,9 @@ def _itinerary_email(doc, recipient, base=None, poi_cache=None):
 			base if base is not None else _base_context(doc),
 			itinerary=itinerary,
 			itinerary_days=day_lines(itinerary),
+			contacts=contacts,
+			contact_rows=contact_rows(contacts),
+			contact_links=contact_links(contacts),
 		),
 		"attachments": [trip_ics_attachment(doc, recipient.row)],
 	}

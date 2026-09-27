@@ -7,6 +7,232 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.548.0] - 2026-09-27
+
+**A trip can now be printed, mapped and called.** A new **Trip Sheet** print format puts the whole
+trip on one or two Letter pages: who is going, who to call, every day, every confirmation number and
+the trip's files. It is for the job folder, or a crew lead who won't open the app, and it prints any
+one person's sheet the same way. A fifth trip view, the **Map**, shows every airport, hotel, stop,
+pick-up, drop-off and freight delivery on one map, with the flights and drives between them,
+numbered in the order the trip reaches them. Every itinerary now has a **Who to call** card: 911, the
+office travel desk, who booked the trip, the trip lead, the job site's contact, and each hotel with
+the nearest urgent care and directions. It is on Plan a Trip's Overview and View as, at the top of
+`/itinerary`, in the itinerary email and on the sheet. Plan a Trip also tells apart two bookings with
+the same name (two rooms at "Harborview Suites") in its paperwork notes, Files step and gap text.
+This is PR 3 of the four-PR program Nik set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2
+(#1136, 1.547.0).
+
+### Why
+
+- **The trip still has to work on paper.** The office asked for something to put in the job folder
+  and to hand a crew lead who won't open the app. It is a real Print Format, so it is also on the
+  form's Print menu, and it comes out as a PDF from Plan a Trip and `/itinerary`.
+- **"All but money" holds on paper too.** The sheet's template reads a Jinja global
+  (`ee_trip_sheet`), never the document. Every money field on Travel Trip is permlevel 0 and the
+  Employee role can print a trip, so a template that read `doc.*` would print costs on a crew
+  member's copy. Only what the server hands the template can keep that copy clean. The one figure,
+  the cost total, is printed only on a **travel coordinator's whole-trip sheet**. A person's sheet
+  carries none, even when a coordinator prints it, because it is printed to be handed to that
+  person.
+- **What the sheet does not protect.** The Trip Sheet is **not** Travel Trip's default print format.
+  The form's Print menu still offers **Standard**, which prints every field of the trip, costs
+  included, to anyone who can print it, and the Employee role can print every trip it can see. That
+  is the same limit PR 1 stated for the form, the Plan a Trip steps and REST. Making the Trip Sheet
+  the default would need a Property Setter, and that is a separate decision.
+- **Contacts are not money, but a crew member's own details are not the trip's (Nik, 2026-09-26).**
+  The card goes to anyone who can read the trip. It reads records the crew cannot open themselves (a
+  colleague's Employee record, the customer's Contact) without a permission check, so it names every
+  field it reads and returns only its own keys. It **never** carries a crew member's personal phone
+  or email, emergency contact (next of kin), home address or health details. The trip lead's work
+  cell (`Employee.cell_number`) is the one number read from an Employee record, and the owner's work
+  cell only when their User has no phone.
+- **The card never stops an itinerary loading.** Every lookup is guarded. A missing record, field or
+  doctype is a blank line, and a part that fails for any other reason is left off with an Error Log
+  ("Trip contacts"). A card with a blank line is a small thing; an itinerary that will not load is
+  not.
+- **The Travel Desk fields have no default, so there is no backfill patch.** Travel Settings is a
+  Single, and a new field's default never reaches the row a site already has (CLAUDE.md). The three
+  fields ship blank and are read with `get_single_value`. The office line stays off the card until
+  someone types a phone or an email into Travel Settings.
+- **How `&as=` reaches the sheet.** Checked against frappe `version-16`: `frappe.call` passes
+  `download_pdf` only the arguments its signature names (`get_newargs`), so `as` never reaches it as
+  an argument. It stays in `frappe.form_dict`, though, and `get_print` only sets its own keys on
+  `form_dict` while it renders, in the same request. `ee_trip_sheet` reads it there and uses it only
+  when it names someone on the crew; anyone else gets the whole trip.
+- **Why the link names `pdf_generator=chrome`.** v16's `download_pdf` sets wkhtmltopdf when the
+  request names no generator, before it ever reads the format's own setting. Without it the sheet
+  would render on the backend this site moved off, however the format is set.
+- **One rule for dialing.** Three surfaces make `tel:` links for the same card: the server (the
+  email and the sheet), Plan a Trip and `/itinerary`. As built in parallel they had three rules, and
+  two of them dialed "1-800-FLOWERS" as 1800. All three now follow `/itinerary`'s: an extension or a
+  note beside the number is left off, and a number spelled in letters is shown, never dialed.
+- **The Map costs Google calls, and caches what it may.** Each open can bill a Geocoding request for
+  each place with no stored point that this browser has not looked up in the last 30 days (Google's
+  limit on keeping a looked-up point), and a Directions request for each drive (kept for the page
+  load). A stop's Place with a point, or a hotel whose Address was picked from Google, costs
+  nothing. The browser key needs the Geocoding and Directions APIs, which the trip form's map and
+  the pick-up route already use.
+- Nik's standing rule holds on both pages: the Map is a view with its own history entry. Its day
+  chips, the sheet links and opening or shutting the contacts card write no history.
+
+### Added
+
+- **Trip Sheet** (Print Format on Travel Trip: Jinja, custom format, standard "No", `pdf_generator`
+  chrome). The template is a repo file, `travel_management/print_formats/trip_sheet.html`, upserted
+  on every migrate by the new `travel_management/setup_print_formats.py`
+  (`ensure_travel_print_formats`, `after_migrate`, **above** `ensure_chrome_pdf_generator`, guarded
+  so a failure logs and never aborts the migrate). It uses `print_style`'s chrome (neutral stripe,
+  tables and `display:table`, cell padding tightened inline to `3px 6px`) and prints a header (trip,
+  dates, job, status, lead), Who to call, the crew with their own dates, every day with each
+  booking's time, what, who and confirmation numbers (each person's own on the whole trip's sheet),
+  the files by title and kind, and on a coordinator's whole-trip sheet the cost total. A 5-day,
+  4-person trip came to two Letter pages in headless Chrome.
+- **`api.travel.ee_trip_sheet`**, a Jinja global (`hooks.py` `jinja.methods`): the sheet's data from
+  `views.build_trip_sheet`, built from `shape_itinerary`, the contacts card and the trip's files. It
+  re-checks read or print on the trip, since a global is reachable from any template on the site,
+  and returns nothing for anything that is not a Travel Trip.
+- **`views.trip_sheet_url(trip, as_employee=None, printview=False)`**, the one place the server spells
+  the sheet's address: `/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=<trip>&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome`,
+  plus `&as=<employee>` for one person's, or the `/printview?...` equivalent. `get_trip_views` sends
+  `sheet_url` and `people_sheet_urls`; `get_trip_itinerary` sends `sheet_url` and `my_sheet_url` (the
+  person shown's).
+- **The contacts card**, `api.travel._trip_contacts(doc, viewing_employee=None, hotels=None)`:
+  `{emergency: "911", office, booked_by, lead, site, hotels}`.
+  - `office`: Travel Settings' new **Travel Desk** section (`travel_desk_label`, `travel_desk_phone`,
+    `travel_desk_email`).
+  - `booked_by`: the trip's owner, never Administrator or Guest. Their User's name and mobile (else
+    phone, else their Employee's work cell), and the User's email.
+  - `lead`: the traveler marked *Trip lead*, their `employee_name` and `cell_number` only.
+  - `site`: the job-site contact, from what the trip is for. A Project's customer's primary Contact
+    and Address; a Customer's; an Opportunity's own contact fields, then its Contact, then its
+    customer's; a Lead's.
+  - `hotels`: each hotel in check-in order, only the person shown's on one person's view. The room's
+    Address is resolved to a street address (a room's `address` holds the Address record's *name*),
+    the phone falls back from the Address to the hotel's Contact to the Supplier, and the "urgent
+    care near" and directions links are Google Maps searches that need no key.
+
+  It is in `get_trip_views` (every hotel), `get_trip_itinerary` (the person shown's hotels), the
+  itinerary email (`contacts`, `contact_rows`, `contact_links`; `pre_travel_reminder.html` prints a
+  Contacts table and links with the `ee` macros) and the sheet (`views.contact_list`).
+- **The Map view** (`view=map`):
+  - `views.trip_places` turns the whole crew's itinerary into `places` (`key`, `kind`, `label`,
+    `query`, `lat`, `lng`, `days`, `first_time`, `who`, `group`) and `legs` (`day`, `from`, `to`,
+    `kind`, `who`). Places are airports, hotels, stops, pick-ups, drop-offs and freight deliveries,
+    one per kind and point, else per kind and address, so two rooms at one hotel are one pin. An
+    airport code is looked up as "PHX airport", and a drive end typed as a capitalized code ("LAS")
+    is that airport. Legs are one per flight and one per drive with both ends. No money.
+  - `get_trip_views` carries them, plus `maps` (`get_maps_config()`, the browser key any signed-in
+    user can already read, and the Map IDs).
+  - On Plan a Trip (`TpTripMap`), Google Maps loads only through the shared loader (`marker`,
+    `geocoding`, `routes`). Markers are numbered in the order the trip reaches them and colored by
+    kind; they are `AdvancedMarkerElement` with a Map ID, else the classic `Marker`, with popups
+    built from DOM nodes. A place without a point is geocoded once and kept in `localStorage`
+    (`tp_map_geocode_v1`, 30 days, at most 300, every access in try/catch). Drives follow the road
+    through `DirectionsService`, else a straight dashed line; flights are dashed great-circle lines.
+    Day chips filter in place. A list under the map, with an https "Open in Google Maps" link per
+    place, is drawn even with no key or no loader. An answer from Google after the map left the
+    screen is dropped.
+- **Plan a Trip**: *Who to call* on the Overview and on View as (that person's hotels only); "Print
+  the trip sheet" on the Review step's actions and the Overview; "Print <name>'s sheet" on View as.
+  Each opens the PDF in a new tab. `tp_sheet_url` spells the address for the Review step, whose
+  `get_plan` answer carries none, and a test runs it against `views.trip_sheet_url`.
+- **Plan a Trip, same-label headings** (carried over from PR 2's review): where two bookings have the
+  same name, the paperwork notes, the Files step's headings and the gap text add " · <who>", then
+  " · <dates>" if that still leaves two alike (`booking_headings`, mirroring `/itinerary`'s
+  `bookingHeadings`). A booking is still found by its key, and the saved `booking_label` is
+  unchanged.
+- **`/itinerary`**:
+  - A **Contacts** card at the top of the trip: a red "Call 911", then each part the answer sends
+    with something to call, write or find. It opens and shuts in place, remembered shut per trip in
+    `localStorage` (`ti-contacts-shut:<trip>`, inside a try). An answer with no `contacts` draws no
+    card.
+  - **"Print / save as PDF"** under the Day by day / Documents tabs: the person shown's sheet
+    (`my_sheet_url`, else the whole trip's), in a new tab, saying whose it is ("Your trip sheet",
+    "Sam's trip sheet", "The whole trip").
+- **The form's Trip views** group gains **Map** (`travel_trip.js`).
+
+### Changed
+
+- **`tel:` links follow one rule everywhere**: `views.tel_href` (the email and the sheet),
+  Plan a Trip's `tp_tel` and `/itinerary`'s `telHref`. Digits and a leading + only; an extension
+  ("ext. 4", "x12", "#3", ";ext=4") or a note beside the number ("Front desk 702-555-0150") is left
+  off; a number spelled in letters, or with under 3 or over 15 digits, is shown as typed and never
+  dialed.
+- **Travel Settings** has a **Travel Desk** section (name, phone, email), all blank and optional.
+
+### Fixed
+
+- **A file address starting with `/\` was made a link** on Plan a Trip (`tp_file_url`) and on
+  `/itinerary`'s booking cards and Documents screen (`openable`). A browser reads "/\host" as
+  "//host", which is another site, and a Trip Document's file added on the desk form is checked by
+  nothing on the way in. Both pages now refuse an address with a backslash anywhere in it, and so
+  does the new sheet link (`/itinerary`'s shared `linkable`).
+
+### Tests
+
+- **`tests/test_travel_views.py`**: 73 to 114 tests.
+  - The contacts card: every kind of job with its records missing never raising, one person's
+    hotels, the lead the only crew member with a number, the Employee record asked for two fields
+    and no more, and a walk of every payload for personal keys and values. The email's Contacts
+    block is rendered with the real macros.
+  - The Map's places and legs.
+  - The Trip Sheet's payload, and the real template rendered under `StrictUndefined`: no money for
+    the crew or on a person's sheet, the total for a coordinator, every confirmation number, what
+    people typed escaped, no flex or grid, and no field of the trip read directly.
+  - The upsert and its `hooks.py` order, and the Travel Desk fields having no default.
+  - Pins changed on purpose: the fixture trip now has `doctype="Travel Trip"` (the sheet returns
+    nothing for anything else), and the `get_trip_itinerary` equality test includes `contacts`, `sheet_url` and
+    `my_sheet_url`.
+- **`tests/test_travel_planner.py`**: 144 to 153 tests.
+  - The Map loads Google Maps only through the shared loader, with every library it uses.
+  - The day chips, the sheet links and both contacts cards touch no history.
+  - Each contact link is built in one place per page, and `/itinerary`'s `localStorage` is touched
+    only inside a try.
+  - `test_the_pages_trip_sheet_address_is_the_servers`: the page's `tp_sheet_url`, run in node,
+    equals `views.trip_sheet_url`, and both harnesses' fake servers send that address.
+  - `test_every_surface_dials_the_same_number`: `views.tel_href`, `tp_tel` and `telHref` over one
+    table of 17 phones.
+  - Pins changed on purpose: `TP_VIEWS` now ends with `map`, and the test also checks the page's
+    view bar and `render_view` cover every view. `tp_tel`'s pin moved from keeping every digit and
+    plus sign to the shared rule.
+- **`scripts/test_wizard_back_forward.mjs`**: Plan a Trip from 51 to 59 tests (80 with the Visit
+  Wizard's).
+  - The Map's routing (open, Back, Forward, reload, the form's button).
+  - The list without Google Maps.
+  - A fake Google Maps: each place geocoded once and remembered across a reload, roads versus dashed
+    flights, the day filter, popups from elements, late answers dropped, storage that throws.
+  - Contacts, the sheet links and same-label headings.
+  - The fake `get_trip_views` now also sends places, legs, maps, contacts and the sheet addresses.
+- **`scripts/test_web_flow_history.js`**: 376 to 408 checks.
+  - The Contacts card: rows, links, markup drawn as text, per-person and whole-crew hotels, shut
+    remembered per trip, storage that throws.
+  - The print link and its fallback.
+  - File and sheet addresses with a backslash never made links.
+- Nothing ran against a real bench or a live Google key. The sheet was rendered from stub data and
+  printed in headless Chrome (two Letter pages each for the crew, coordinator and one-person
+  copies). Plan a Trip was checked in a browser at 390px and 1280px, light and dark, and `/itinerary`
+  at 320px and 375px, both against stub data.
+
+### After deploy
+
+1. `bench migrate`, then check **Print Format "Trip Sheet"** exists on Travel Trip with PDF Generator
+   `chrome`. If it is missing, look for an Error Log titled "Travel print formats". Nothing here has
+   run on a bench, so check these first: Print Format's own validation of the template, `/printview`
+   with a real document, the chrome PDF route, and the `ee_trip_sheet` global in a real print.
+2. As a coordinator, open Plan a Trip on a real trip → Review → *Print the trip sheet*. A PDF opens
+   in a new tab, fits one or two pages, and ends with "Booked so far".
+3. As a crew member with only the Employee role, open `/itinerary?trip=<trip>` → *Print / save as
+   PDF*. Their sheet opens and shows **no** total. Their `sheet_url` (the whole trip) shows none
+   either.
+4. **Travel Settings → Travel Desk**: enter the travel desk's phone (and email). The office line then
+   appears on the card at the top of `/itinerary`.
+5. Open the **Map** view on a trip with flights, a hotel and a drive. If it says places could not be
+   found, or drives are straight dashed lines, check that the browser key's Google Cloud project has
+   the Geocoding API and the Directions API enabled.
+6. Expect a sparse card at first. Few Employees have a cell number, and hotel Suppliers rarely have a
+   primary Address, so many hotels will show only their name, and the urgent-care search will be by
+   the hotel's name.
+
 ## [1.547.0] - 2026-09-26
 
 **A trip now keeps its paperwork.** On Plan a Trip every flight, room, ride and shipment card has

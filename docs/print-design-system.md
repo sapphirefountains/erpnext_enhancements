@@ -212,6 +212,7 @@ and the ` - Inactive` marker QuickBooks' tax codes carry.
 | Contracts (all eight templates) | `project_enhancements/contract_style.py` + the `Project Contract Print` fixture CSS | by template: owner / architect / SOW / MSA → Build, maintenance → Service, rental → Rent, NDA and employee → neutral |
 | Project Brief | `public/js/project_enhancements/project_brief.js` | the job's leading stream: Design, Build (and Products), Service, Events → Rent |
 | Training Certificate | `training/setup_print_formats.py` | neutral |
+| Trip Sheet (Travel Trip) | `travel_management/setup_print_formats.py` + `travel_management/print_formats/trip_sheet.html` | neutral |
 | Crew Qualification Roster, Supplier Pickup List (report sheets) | the report's `.html` beside it | neutral, **without the wordmark** |
 
 **Contracts are a third door.** The chrome cannot go into the agreement body — a signed
@@ -240,6 +241,15 @@ the desk print window resolves it against the site and the PDF route makes it ab
 `scrub_urls`. Microtemplate's two traps apply to the chrome too: no double brace anywhere
 in the file, comments included, and no apostrophe in the markup, which is why the CSS
 quotes its font names with double quotes.
+
+**The Trip Sheet reads a Jinja global, not the document** (v1.548.0). Every money field on
+Travel Trip is permlevel 0 and the Employee role may print a trip, so a template that read
+`doc.*` would print costs on a crew member's copy. `trip_sheet.html` passes `doc` to
+`ee_trip_sheet` (`api/travel.py`) and prints only what that returns: the cost total appears
+only on a travel coordinator's whole-trip sheet. It tightens the chrome's cell padding to
+`3px 6px` (a later `!important` in the same style attribute wins) so a five-day, four-person
+trip fits two Letter pages. Its links name `pdf_generator=chrome`, because v16's
+`download_pdf` uses wkhtmltopdf when a request names no generator, whatever the format says.
 
 Everything the app prints is now on the chrome.
 

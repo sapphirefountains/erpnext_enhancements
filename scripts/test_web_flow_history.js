@@ -91,7 +91,17 @@
  *   - a picture pushes `&file=`: Back closes the viewer and Forward reopens it, Close and
  *     Escape go Back (or, opened straight from a link, rewrite the entry), a reload reopens
  *     it, a file the answer does not list (or a PDF) is not opened, and nothing about the
- *     viewer moves while "Report a problem" is open.
+ *     viewer moves while "Report a problem" is open;
+ *   - the Contacts card draws what the answer's `contacts` sends for the person shown, and
+ *     nothing it leaves out: 911 first, a tel: link built from a phone's digits (and a leading
+ *     +) only, a mailto: only for an address that is one, a hotel's urgent care and directions
+ *     only as https links in a new tab, every value as text; opening and shutting it writes no
+ *     history, is kept across redraws, and is remembered per trip in localStorage when there is
+ *     one (and works when storage throws, or is absent as it is here by default); an answer
+ *     with no `contacts` draws no card;
+ *   - "Print / save as PDF" opens the person shown's trip sheet (`my_sheet_url`, else the whole
+ *     trip's `sheet_url`) in a new tab with no history write, and only this site's path or a web
+ *     address is made a link.
  *   /contract-sign
  *   - no history entry is ever added: signing and declining swap in place (declining no
  *     longer reloads into "This link isn't available");
@@ -1327,13 +1337,35 @@ function sharedFlight(viewing) {
 	return own ? [Object.assign({}, base, { booking_reference: own.ref, travelers: null })] : [];
 }
 
+// Trip A's contacts, as api/travel._trip_contacts sends them: the hotels are the person shown's
+// only (every one on the whole crew's view), and there is no job-site contact. Phones are as
+// people typed them.
+const URGENT = "https://www.google.com/maps/search/?api=1&query=urgent%20care%20near%20";
+const DIRECTIONS = "https://www.google.com/maps/dir/?api=1&destination=";
+const HOTELS = {
+	"EMP-1": { name: "Hampton Inn", phone: "(702) 555-0142", address: "1 Main St<br>Las Vegas, NV", urgent_care_url: URGENT + "1%20Main%20St", directions_url: DIRECTIONS + "1%20Main%20St" },
+	"EMP-2": { name: "Harborview Suites", phone: "+1 702.555.0199", address: "", urgent_care_url: URGENT + "Harborview%20Suites", directions_url: DIRECTIONS + "Harborview%20Suites" },
+};
+function tripAContacts(viewing) {
+	return {
+		emergency: "911",
+		office: { label: "Sapphire travel desk", phone: "(602) 555-0100 ext. 12", email: "travel@example.com" },
+		booked_by: { name: "Nik", phone: null, email: "nik@example.com" },
+		lead: { name: "Pat", phone: "602-555-0111" },
+		site: null,
+		hotels: viewing ? (HOTELS[viewing] ? [HOTELS[viewing]] : []) : Object.values(HOTELS),
+	};
+}
+const SHEET = "/api/method/frappe.utils.print_format.download_pdf?doctype=Travel%20Trip&name=TRIP-A&format=Trip%20Sheet&no_letterhead=1&pdf_generator=chrome";
+
 // What the server knows. TRIP-X is readable but in nobody's boot list here (a coordinator's
 // link); TRIP-SECRET is someone else's (403); anything else is gone (404).
 const SERVER_TRIPS = {
 	"TRIP-A": { crew: ["EMP-1", "EMP-2", "EMP-3"], days: (viewing) => {
 		const items = sharedFlight(viewing);
 		return items.length ? [{ date: iso(0), items }] : [];
-	}, documents: (viewing) => visibleFiles(viewing) },
+	}, documents: (viewing) => visibleFiles(viewing), contacts: tripAContacts,
+	sheet: (viewing) => ({ sheet_url: SHEET, my_sheet_url: viewing ? `${SHEET}&as=${viewing}` : null }) },
 	// A room Pat pays for and Sam shares as a guest for one night of it.
 	"TRIP-H": { purpose: "Trip H", start_date: iso(0), end_date: iso(2), crew: ["EMP-1", "EMP-2"], days: (viewing) => viewing ? [] : [
 		{ date: iso(0), items: [{
@@ -1376,8 +1408,11 @@ function serve(trip, as, viewer) {
 	else return refusal(417, "ValidationError", `${PEOPLE[as] || as} is not on this trip.`);
 	const crew = t.crew.map((e) => ({ employee: e, employee_name: PEOPLE[e], from_date: meta.start_date, to_date: meta.end_date, is_trip_lead: 0 }));
 	const message = Object.assign({ days: t.days ? t.days(viewing) : [] }, meta, { crew, viewing, viewer_employee: viewer || null, viewer_on_trip: onTrip });
-	// Only a trip with files sends `documents`: the page must manage without the key.
+	// Only a trip with files sends `documents`: the page must manage without the key. And only
+	// Trip A sends `contacts` and its sheet's addresses, so every other answer is one without.
 	if (t.documents) message.documents = t.documents(viewing);
+	if (t.contacts) message.contacts = t.contacts(viewing);
+	if (t.sheet) Object.assign(message, t.sheet(viewing));
 	return { status: 200, body: { message } };
 }
 
@@ -1450,6 +1485,8 @@ function loadItinerary(url, opts) {
 		clearTimeout,
 	});
 	if (opts.Date) win.Date = opts.Date;
+	// No localStorage unless a test gives it one (makeStorage): the page must manage without.
+	if ("storage" in opts) win.localStorage = opts.storage;
 	const source = fs.readFileSync(path.join(APP, "public", "js", "travel", "itinerary.js"), "utf8");
 	runInPage(source, win, "itinerary.js");
 	const root = document.byId["itinerary-root"];
@@ -1559,6 +1596,40 @@ function loadItinerary(url, opts) {
 			document.dispatch("keydown", { key: name });
 			await flush();
 		},
+		// What the trip's page is made of, top to bottom, by each part's first class.
+		order: () => root.children.map((c) => c.className.split(" ")[0]),
+		// Every tag drawn under the root.
+		tags: () => {
+			const out = [];
+			const walk = (n) => n.children.forEach((c) => {
+				out.push(c.tagName);
+				walk(c);
+			});
+			walk(root);
+			return out;
+		},
+		// The Contacts card: its rows, its links and whether it is open.
+		contacts: () => root.find("ti-contacts")[0] || null,
+		contactRoles: () => texts("ti-contact-role"),
+		contactNames: () => texts("ti-contact-name"),
+		contactSubs: () => texts("ti-contact-sub"),
+		contactLinks: () => root.find("ti-contact-link").map((a) => ({
+			href: a.href,
+			text: a.find("ti-contact-text")[0].textContent,
+			target: a.target || null,
+			rel: a.rel || null,
+			label: a.attrs["aria-label"] || null,
+		})),
+		contactsToggle: () => root.find("ti-contacts-toggle")[0] || null,
+		contactsOpen: () => {
+			const card = root.find("ti-contacts")[0];
+			return card ? !card.find("ti-contacts-body")[0].hidden : null;
+		},
+		async toggleContacts() {
+			root.find("ti-contacts-toggle")[0].click();
+			await flush();
+		},
+		print: () => root.find("ti-print-link")[0] || null,
 	};
 	return page;
 }
@@ -1908,6 +1979,7 @@ async function testItinerary() {
 	check("...and that refusal replaces its entry", [p.urls().slice(1), p.browser.index], [["replace /itinerary?trip=TRIP-A"], 1]);
 
 	await testItineraryDocuments();
+	await testItineraryContacts();
 }
 
 // The trip's files: on each booking's card, on the Documents screen (&view=docs), and pictures in
@@ -2139,12 +2211,19 @@ async function testItineraryDocuments() {
 		status: 200,
 		body: { message: {
 			trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(-1), end_date: iso(1), days: [], crew: [], viewing: null,
-			documents: [other("TD-JS", "Script", "javascript:alert(1)"), other("TD-PR", "Elsewhere", "//evil.example/x.pdf"), other("TD-OK", "Good", "/files/ok.pdf")],
+			documents: [
+				other("TD-JS", "Script", "javascript:alert(1)"),
+				other("TD-PR", "Elsewhere", "//evil.example/x.pdf"),
+				// A browser reads "/\host" as "//host": another site, however it starts.
+				other("TD-BS", "Backslash", "/\\evil.example/x.pdf"),
+				other("TD-BS2", "Backslash inside", "/files/..\\..\\x.pdf"),
+				other("TD-OK", "Good", "/files/ok.pdf"),
+			],
 		} },
 	};
 	await p.answer("TRIP-A");
 	check(
-		"a file whose address is neither this site's path nor a web address is never made a link",
+		"a file whose address is neither this site's path nor a web address (or has a backslash in it) is never made a link",
 		[p.docs(), p.hrefs().filter((h) => h !== "/travel_guidelines"), p.screens()],
 		[["Good"], ["/files/ok.pdf"], ["Day by day", "Documents (1)"]]
 	);
@@ -2236,6 +2315,223 @@ async function testItineraryDocuments() {
 		p.text("ti-member-note"),
 		[`guest · ${day("2026-09-28")} – ${day("2026-09-29")}`]
 	);
+}
+
+// The Contacts card and "Print / save as PDF": what the answer sends for the person shown, drawn
+// as text and safe links, and neither of them ever a history entry.
+async function testItineraryContacts() {
+	let p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	check(
+		"the Contacts card is at the top of the trip: under the person picker, above the screens and the print link",
+		p.order().filter((c) => c !== "ti-header" && c !== "ti-switcher"),
+		["ti-trip-meta", "ti-people", "ti-contacts", "ti-screens", "ti-print", "ti-day", "ti-footer"]
+	);
+	check(
+		"...open on a first visit, 911 first, and a part the answer leaves out (no job site) left out",
+		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contactRoles()],
+		[true, "true", ["Emergency", "Travel desk", "Booked by", "Trip lead", "Hotel"]]
+	);
+	check(
+		"...with Pat's own hotel only, its address one line of text",
+		[p.contactNames(), p.contactSubs()],
+		[["Sapphire travel desk", "Nik", "Pat", "Hampton Inn"], ["1 Main St, Las Vegas, NV"]]
+	);
+	check(
+		"every phone is a tel: link of its digits alone (an extension dropped, 911 included), every email a mailto:, then the hotel's map links",
+		p.contactLinks().map((l) => l.href),
+		["tel:911", "tel:6025550100", "mailto:travel@example.com", "mailto:nik@example.com", "tel:6025550111", "tel:7025550142", URGENT + "1%20Main%20St", DIRECTIONS + "1%20Main%20St"]
+	);
+	check(
+		"...showing 911 as 'Call 911', every other number as it was typed, and an email as a short 'Email'",
+		p.contactLinks().slice(0, 3).map((l) => l.text),
+		["Call 911", "(602) 555-0100 ext. 12", "Email"]
+	);
+	check(
+		"...each link naming who it reaches and where, for a screen reader (the address is not on the button)",
+		p.contactLinks().map((l) => l.label),
+		[
+			"Call 911",
+			"Call Sapphire travel desk, (602) 555-0100 ext. 12",
+			"Email Sapphire travel desk, travel@example.com",
+			"Email Nik, nik@example.com",
+			"Call Pat, 602-555-0111",
+			"Call Hampton Inn, (702) 555-0142",
+			"Urgent care near Hampton Inn (opens in a new tab)",
+			"Directions to Hampton Inn (opens in a new tab)",
+		]
+	);
+	check(
+		"...a call or an email opens in place (the phone's dialer or mail app), and urgent care and directions in a new tab",
+		p.contactLinks().map((l) => [l.text, l.target, l.rel]).filter((l, i) => i < 1 || i > 5),
+		[["Call 911", null, null], ["Urgent care nearby", "_blank", "noopener"], ["Directions", "_blank", "noopener"]]
+	);
+
+	const print = p.print();
+	check(
+		"'Print / save as PDF' opens this person's own trip sheet in a new tab",
+		[print.href, print.target, print.rel, p.text("ti-print-sub")],
+		[SHEET + "&as=EMP-1", "_blank", "noopener", ["Your trip sheet"]]
+	);
+	const calls = p.browser.calls.length;
+	print.click();
+	await p.browser.settle();
+	check("...and tapping it writes no history and fetches nothing", [p.browser.calls.length, p.pending(), p.browser.left], [calls, [], null]);
+
+	const card = p.contacts();
+	await p.toggleContacts();
+	check(
+		"tapping the card's heading shuts it in place, saying in one line what is in it",
+		[p.contactsOpen(), p.contactsToggle().attrs["aria-expanded"], p.contacts() === card, card.find("ti-contacts-summary")[0].hidden, p.text("ti-contacts-summary")],
+		[false, "false", true, false, ["911 · Travel desk · Booked by · Trip lead · 1 hotel"]]
+	);
+	check("...writing no history and fetching nothing", [p.browser.calls.length, p.browser.tasks.length, p.pending()], [calls, 0, []]);
+	await p.screen("Documents");
+	check(
+		"...and it stays shut when the page redraws, with no storage to keep it in (the Documents screen has it too)",
+		[p.onScreen(), p.contactsOpen()],
+		[["Documents (3)"], false]
+	);
+	await p.toggleContacts();
+	check(
+		"...and opens again, still writing no history (the one entry since is the Documents tap)",
+		[p.contactsOpen(), p.browser.calls.length, p.contacts().find("ti-contacts-summary")[0].hidden],
+		[true, calls + 1, true]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-2");
+	await p.answer("TRIP-A");
+	check(
+		"someone else's view has their hotel, not the viewer's, and their own sheet",
+		[p.contactNames().slice(-1), p.contactLinks().filter((l) => l.href.startsWith("tel:")).map((l) => l.href), p.print().href, p.text("ti-print-sub")],
+		[["Harborview Suites"], ["tel:911", "tel:6025550100", "tel:6025550111", "tel:+17025550199"], SHEET + "&as=EMP-2", ["Sam's trip sheet"]]
+	);
+	await p.pick("Whole crew");
+	await p.answer("TRIP-A");
+	check(
+		"the whole crew's view has every hotel on the trip, and prints the whole trip",
+		[p.contactNames().slice(-2), p.print().href, p.text("ti-print-sub")],
+		[["Hampton Inn", "Harborview Suites"], SHEET, ["The whole trip"]]
+	);
+
+	// Remembered in this browser, per trip, when there is storage.
+	const storage = makeStorage();
+	p = loadItinerary("/itinerary?trip=TRIP-A", { storage });
+	await p.answer("TRIP-A");
+	await p.toggleContacts();
+	check("with storage, a shut card is written down, for that trip alone", [...storage.map.entries()], [["ti-contacts-shut:TRIP-A", "1"]]);
+	p = loadItinerary("/itinerary?trip=TRIP-A", { storage });
+	await p.answer("TRIP-A");
+	check("...so the next visit to that trip opens with it shut", p.contactsOpen(), false);
+	const withContacts = (message) => ({
+		status: 200,
+		body: { message: Object.assign({ trip: "TRIP-X", purpose: "Trip X", status: "Booked", start_date: iso(3), end_date: iso(5), days: [], viewing: null, crew: [] }, message) },
+	});
+	p = loadItinerary("/itinerary?trip=TRIP-X", { storage });
+	p.session.next = withContacts({ contacts: tripAContacts(null) });
+	await p.answer("TRIP-X");
+	check("...while another trip's card is open", p.contactsOpen(), true);
+	p = loadItinerary("/itinerary?trip=TRIP-A", { storage });
+	await p.answer("TRIP-A");
+	await p.toggleContacts();
+	check("...and opening it again forgets it: open is where every trip starts", [p.contactsOpen(), storage.map.size], [true, 0]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A", { storage: makeStorage(true) });
+	await p.answer("TRIP-A");
+	check("storage that refuses: the card still draws, open", p.contactsOpen(), true);
+	await p.toggleContacts();
+	check("...and still shuts", [p.contactsOpen(), p.errors()], [false, 0]);
+
+	// What is typed in is text, and only what is safe to follow is a link.
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
+	p.session.next = withContacts({
+		contacts: {
+			emergency: "911",
+			office: { label: "Office", phone: null, email: " " },
+			booked_by: { name: "<img src=x onerror=alert(1)>", phone: "1-800-FLOWERS", email: "a@b.co?cc=x@evil.example" },
+			lead: null,
+			site: { label: "PRJ-0042 Bellagio", contact_name: "Jane Doe", phone: "tel:+1 (702) 555-0123;ext=4", email: "jane@example.com", address: "3600 S Las Vegas Blvd\nLas Vegas, NV" },
+			hotels: [
+				{ name: "Motel", phone: "12", address: "", urgent_care_url: "javascript:alert(1)", directions_url: "http://maps.example/x" },
+				null,
+				{ name: "", phone: "", address: "" },
+				{ name: "Inn", phone: "Front desk: 702-555-0150", address: "", urgent_care_url: null, directions_url: null },
+				{ name: "Lodge", phone: "555-CALL-123", address: "", urgent_care_url: null, directions_url: null },
+			],
+		},
+		sheet_url: "javascript:alert(1)",
+		my_sheet_url: "//evil.example/sheet.pdf",
+	});
+	await p.answer("TRIP-X");
+	check(
+		"a part with nothing to call, write or find is no row (a travel desk with no phone or email, an empty hotel)",
+		p.contactRoles(),
+		["Emergency", "Booked by", "Job site", "Hotel", "Hotel", "Hotel"]
+	);
+	check(
+		"a name that looks like markup is drawn as the text it is, and no element comes of it",
+		[p.contactNames()[0], p.tags().includes("IMG")],
+		["<img src=x onerror=alert(1)>", false]
+	);
+	check(
+		"a number spelled in letters (which would dial 1800), one in two pieces or too short, and an address that is not one, are shown as typed, never linked",
+		p.contactSubs(),
+		["1-800-FLOWERS", "a@b.co?cc=x@evil.example", "Jane Doe", "3600 S Las Vegas Blvd, Las Vegas, NV", "12", "555-CALL-123"]
+	);
+	check(
+		"the job site gets a call, an email and directions to its address; a hotel link that is not https is dropped; a note beside a number is not dialed",
+		p.contactLinks().map((l) => l.href),
+		["tel:911", "tel:+17025550123", "mailto:jane@example.com", DIRECTIONS + encodeURIComponent("3600 S Las Vegas Blvd, Las Vegas, NV"), "tel:7025550150"]
+	);
+	check(
+		"...its call and email reaching the site's contact by name",
+		p.contactLinks().slice(1, 3).map((l) => l.label),
+		["Call Jane Doe, tel:+1 (702) 555-0123;ext=4", "Email Jane Doe, jane@example.com"]
+	);
+	check("a sheet address that is neither this site's path nor a web address is no print link", p.print(), null);
+
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
+	p.session.next = withContacts({
+		viewing: "EMP-4",
+		crew: [{ employee: "EMP-4", employee_name: "Dana" }],
+		contacts: { emergency: "911", office: null, booked_by: null, lead: null, site: null, hotels: [] },
+		sheet_url: SHEET,
+	});
+	await p.answer("TRIP-X");
+	check(
+		"an answer with only 911 draws only 911; one with no sheet of the person's own prints the whole trip",
+		[p.contactRoles(), p.text("ti-contacts-summary"), p.print().href, p.text("ti-print-sub")],
+		[["Emergency"], ["911"], SHEET, ["The whole trip"]]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
+	p.session.next = withContacts({
+		viewing: "EMP-4",
+		crew: [{ employee: "EMP-4", employee_name: "Dana" }],
+		contacts: { emergency: "911", office: null, booked_by: null, lead: null, site: null, hotels: [] },
+		sheet_url: SHEET,
+		// A browser reads "/\host" as "//host": another site.
+		my_sheet_url: "/\\evil.example/sheet.pdf",
+	});
+	await p.answer("TRIP-X");
+	check(
+		"a person's sheet address with a backslash is no link: the whole trip's is printed instead",
+		[p.print().href, p.text("ti-print-sub")],
+		[SHEET, ["The whole trip"]]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-B");
+	await p.answer("TRIP-B");
+	check(
+		"an answer with no `contacts` and no sheet (an older server) draws neither, and the trip as before",
+		[p.contacts(), p.print(), p.shown(), p.errors()],
+		[null, null, "Trip B", 0]
+	);
+	p = loadItinerary("/itinerary?trip=TRIP-X", { trips: [] });
+	p.session.next = withContacts({ contacts: null });
+	await p.answer("TRIP-X");
+	check("...nor does `contacts: null`", [p.contacts(), p.shown()], [null, "Trip X"]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
 }
 
 // ---------------------------------------------------------------------------- /contract-sign

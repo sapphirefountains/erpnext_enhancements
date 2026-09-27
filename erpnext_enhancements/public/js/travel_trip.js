@@ -21,8 +21,9 @@
  *    Paperwork gaps are not in the headline's count: they are a quiet
  *    "N files not attached yet" line under it, linking to the Files step.
  *  - "Trip views": the whole trip day by day (Overview), the crew by day (Crew
- *    grid), a column per person (Side by side) and one person's own itinerary
- *    (View as) — each opens Plan a Trip on that view for this trip.
+ *    grid), a column per person (Side by side), every place on one map (Map)
+ *    and one person's own itinerary (View as) — each opens Plan a Trip on that
+ *    view for this trip.
  */
 
 const TRAVEL_FOR_DOCTYPES = ['Project', 'Opportunity', 'Lead', 'Customer'];
@@ -247,6 +248,7 @@ const TRIP_VIEWS = [
 	['overview', __('Overview')],
 	['grid', __('Crew grid')],
 	['compare', __('Side by side')],
+	['map', __('Map')],
 ];
 
 // The views show the trip as saved. With unsaved changes here they would show something other
