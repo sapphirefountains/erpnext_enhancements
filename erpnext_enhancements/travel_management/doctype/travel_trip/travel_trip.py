@@ -5,8 +5,10 @@
 
 A Travel Trip is the non-submittable hub of the Travel Management module:
 a crew of travelers (``travelers`` -> Trip Traveler), logistics child tables
-(``flights`` / ``accommodations`` / ``ground_transport`` / ``other_costs`` /
-``mileage``) and an itinerary (``itinerary`` -> Trip Agenda). The lifecycle is
+(``flights`` / ``accommodations`` / ``ground_transport`` / ``freight`` /
+``other_costs`` / ``mileage``), an itinerary (``itinerary`` -> Trip Agenda) and
+the trip's files (``documents`` -> Trip Document: boarding passes,
+confirmations, a site map; never a receipt, which stays on its cost row). The lifecycle is
 a plain ``status`` Select (Planning -> Booked -> In Progress -> Completed ->
 Closed); In Progress and Completed are auto-advanced from the trip dates by
 ``travel_management.tasks.auto_advance_trip_statuses``, Booked and Closed are

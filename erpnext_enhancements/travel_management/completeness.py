@@ -1,6 +1,7 @@
 """The trip checklist: what a Travel Trip is still missing before the crew leaves.
 
-Four checks, chosen by the office (2026-09-23) as what "a complete trip" means:
+Four checks, chosen by the office (2026-09-23) as what "a complete trip" means, and a fifth
+added with trip files (2026-09-26):
 
 * **A bed every night** — every traveler has somewhere to sleep on every night they are
   away: their own from/to dates, narrowed by their own travel (:func:`stay_window`), so
@@ -20,6 +21,11 @@ Four checks, chosen by the office (2026-09-23) as what "a complete trip" means:
   ticket is ONE charge, so the flight home carries no cost of its own: a flight with no
   cost is not flagged when its confirmation number is on a flight that has one
   (:func:`on_another_ticket`).
+* **Paperwork** — the booking is made, so its paperwork should be here: each person's
+  boarding pass (or the ticket confirmation), the hotel's confirmation, the rental
+  agreement, the bill of lading, as a Trip Document on that booking
+  (:func:`document_gaps`). Only a booking that already has its confirmation or tracking
+  number is asked — one without is already flagged above, and one flag is enough.
 
 These are flags, not blockers. The office asked for the trip to *show* what is missing;
 nothing here stops a save or a status change.
@@ -45,6 +51,43 @@ DURING = "During Trip"
 
 #: Which page step fixes a gap, keyed by leg. Blank legs are inferred from dates.
 STEP_FOR_LEG = {OUTBOUND: "there", RETURN: "back", DURING: "around"}
+
+#: The tables whose rows are bookings, and each one's confirmation field: the PNR, the
+#: hotel's confirmation, the rental's reference, the shipment's tracking / PRO / BOL number.
+REF_FIELDS = (
+	("flights", "booking_reference"),
+	("accommodations", "booking_confirmation"),
+	("ground_transport", "booking_reference"),
+	("freight", "tracking_number"),
+)
+
+#: Trip Document ``kind`` — exactly the Select options in trip_document.json.
+DOCUMENT_KINDS = (
+	"Boarding pass",
+	"Booking confirmation",
+	"Rental agreement",
+	"Bill of lading",
+	"Site map",
+	"Safety plan",
+	"Insurance certificate",
+	"Job packet",
+	"Other",
+)
+
+#: What counts as a booking's paperwork, per table (:func:`document_gaps`).
+PAPERWORK = {
+	"flights": ("Boarding pass", "Booking confirmation"),
+	"accommodations": ("Booking confirmation",),
+	"ground_transport": ("Rental agreement", "Booking confirmation"),
+	"freight": ("Bill of lading", "Booking confirmation"),
+}
+
+#: The only ground transport that comes with paperwork: our own truck, a personal car and a
+#: taxi or rideshare come with nothing to file.
+PAPERWORK_TRANSPORT = frozenset({"Rental/Third Party"})
+
+#: File extensions ``/itinerary`` opens inside the page rather than handing to the phone.
+IMAGE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "heic"})
 
 
 def _get(row, field):
@@ -186,6 +229,49 @@ def _bookings(trip, table):
 	return groups
 
 
+def booking_index(trip):
+	"""{group key: (table, rows)} for every booking and shipment on the trip — what a Trip
+	Document's ``booking_group`` points at."""
+	index = {}
+	for table, _field in REF_FIELDS:
+		for key, rows in _bookings(trip, table).items():
+			index.setdefault(key, (table, rows))
+	return index
+
+
+def document_group(document, index):
+	"""The booking a Trip Document belongs to, or None for a file for the whole trip.
+
+	A file whose booking is gone (deleted on the form, or on the page) reads as a file for the
+	whole trip: it is still on the trip, and hiding it would lose it."""
+	group = _get(document, "booking_group") or None
+	return group if group in index else None
+
+
+def document_visible_to(document, employee, index):
+	"""True when one person sees this file on their own itinerary: it is for them, or it is
+	for nobody in particular and either belongs to the whole trip or to a booking they are on
+	(any of its rows :func:`visible_to` them)."""
+	traveler = _get(document, "traveler")
+	if traveler:
+		return traveler == employee
+	group = document_group(document, index)
+	if group is None:
+		return True
+	return any(visible_to(row, employee) for row in index[group][1])
+
+
+def file_name_of(url):
+	"""The last path segment of a file URL: ``/private/files/pass.png`` -> ``pass.png``."""
+	text = str(url or "").split("?", 1)[0].split("#", 1)[0].rstrip("/")
+	return text.rsplit("/", 1)[-1]
+
+
+def is_image_file(url):
+	name = file_name_of(url)
+	return "." in name and name.rsplit(".", 1)[-1].lower() in IMAGE_EXTENSIONS
+
+
 #: Ground transport that is hired for getting around, not for getting there: an undated
 #: one is placed under "Getting around" rather than "Getting there".
 HIRED_TRANSPORT = frozenset({"Rental/Third Party", "Taxi/Rideshare"})
@@ -319,20 +405,19 @@ def _booked(table, rows):
 	return not (table == "ground_transport" and _get(rows[0], "transport_type") in UNBOOKED_TRANSPORT)
 
 
+def _has_ref(row, field):
+	return bool(str(_get(row, field) or "").strip())
+
+
 def confirmation_gaps(trip):
 	"""Bookings where someone on them has no confirmation number."""
 	gaps = []
 	names = _names(trip)
-	for table, field in (
-		("flights", "booking_reference"),
-		("accommodations", "booking_confirmation"),
-		("ground_transport", "booking_reference"),
-		("freight", "tracking_number"),
-	):
+	for table, field in REF_FIELDS:
 		for key, rows in _bookings(trip, table).items():
 			if not _booked(table, rows):
 				continue
-			without = [row for row in rows if not (_get(row, field) or "").strip()]
+			without = [row for row in rows if not _has_ref(row, field)]
 			if not without:
 				continue
 			gaps.append(
@@ -415,6 +500,80 @@ def cost_gaps(trip):
 	return gaps
 
 
+def _papers_by_group(trip):
+	"""{booking group: [Trip Document]} — the trip's files that belong to a booking."""
+	out = {}
+	for document in _get(trip, "documents") or []:
+		group = _get(document, "booking_group")
+		if group and str(_get(document, "file") or "").strip():
+			out.setdefault(group, []).append(document)
+	return out
+
+
+def document_gaps(trip):
+	"""Bookings that are made but whose paperwork is not on the trip.
+
+	The rule is "the booking is made, so its paperwork should be here". So only a booking
+	that already has its confirmation number is asked — a shipment, its tracking
+	number — and one without gets no second flag: :func:`confirmation_gaps` has already
+	flagged it. Flights are per person, because a boarding pass is: each person with their
+	PNR needs a Boarding pass or Booking confirmation that is theirs or is for everyone on
+	the flight, and ``employee_names`` names who is still missing one. The rest are per
+	booking: a room its Booking confirmation, a rental its Rental agreement (or the
+	confirmation), a shipment its Bill of lading (or the confirmation). Our own truck, a
+	personal car and a taxi come with no paperwork. ``kinds`` says which files count.
+
+	Reads the Trip Document rows only (``trip.documents``); never asks whether the File is
+	still there.
+	"""
+	gaps = []
+	names = _names(trip)
+	crew = [_get(t, "employee") for t in _travelers(trip)]
+	papers_by_group = _papers_by_group(trip)
+	for table, field in REF_FIELDS:
+		kinds = PAPERWORK[table]
+		for key, rows in _bookings(trip, table).items():
+			if table == "ground_transport" and _get(rows[0], "transport_type") not in PAPERWORK_TRANSPORT:
+				continue
+			papers = [d for d in papers_by_group.get(key, []) if _get(d, "kind") in kinds]
+			numbered = [row for row in rows if _has_ref(row, field)]
+			if table == "flights":
+				if not numbered or any(not _get(d, "traveler") for d in papers):
+					continue
+				covered = {_get(d, "traveler") for d in papers}
+				missing = []
+				for row in numbered:
+					# A whole-crew row is everyone's seat.
+					for person in [_get(row, "traveler")] if _get(row, "traveler") else crew:
+						if person not in covered and person not in missing:
+							missing.append(person)
+				if not missing:
+					continue
+				employee_names = [names.get(person, person) for person in missing]
+			else:
+				if len(numbered) < len(rows) or papers:
+					continue
+				employee_names = []
+			gaps.append(
+				{
+					"check": "documents",
+					"step": _step(table, rows, trip),
+					"table": table,
+					"group": key,
+					"label": booking_label(table, rows[0]),
+					"employee_names": employee_names,
+					"kinds": list(kinds),
+				}
+			)
+	return gaps
+
+
 def find_gaps(trip):
 	"""Every gap, in the order the page's steps run."""
-	return travel_gaps(trip) + lodging_gaps(trip) + confirmation_gaps(trip) + cost_gaps(trip)
+	return (
+		travel_gaps(trip)
+		+ lodging_gaps(trip)
+		+ confirmation_gaps(trip)
+		+ cost_gaps(trip)
+		+ document_gaps(trip)
+	)

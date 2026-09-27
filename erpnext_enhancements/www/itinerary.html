@@ -12,10 +12,13 @@
       below safe.
 
   The day-by-day UI is rendered client-side by itinerary.js into #itinerary-root,
-  for the trip and person in the address (?trip=<name>&as=<employee|crew>); the
-  server decides whether the viewer may see them. The <title> below is the
-  first paint only: itinerary.js retitles the page for whose itinerary is shown.
-  Leaflet maps are lazy-loaded from frappe's bundled assets on first use.
+  for the trip, person, screen and picture in the address
+  (?trip=<name>&as=<employee|crew>&view=docs&file=<Trip Document>); the server
+  decides whether the viewer may see them. The picture viewer is drawn straight
+  into <body>, over the root, so redrawing the page never closes it. The <title>
+  below is the first paint only: itinerary.js retitles the page for whose
+  itinerary is shown. Leaflet maps are lazy-loaded from frappe's bundled assets
+  on first use.
 
   Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
   so every mutable asset URL below carries ?v={{ deploy_version }} (see
@@ -41,8 +44,10 @@
 {% block page_breadcrumbs %}{% endblock %}
 
 {% block style %}
+{# `footer` spares the page's own (.ti-footer, the travel guidelines link): the bare element
+   selector hid it along with the website's. #}
 <style>
-  .navbar, nav.navbar, .web-footer, footer, .footer,
+  .navbar, nav.navbar, .web-footer, footer:not(.ti-footer), .footer,
   .page-breadcrumbs, .breadcrumb-container,
   .page-header, .page-content-wrapper > .page-header { display: none !important; }
   body { background: var(--ti-bg, #f6f7f9); margin: 0; }

@@ -2,8 +2,8 @@
 //
 // A desk Page (/desk/plan-a-trip, or ?trip=TRIP-... to carry on with one) that walks through a
 // Travel Trip one question at a time: the trip, who's going, getting there, getting back, where
-// everyone sleeps, getting around, the schedule — and ends on a checklist of what is still
-// missing. It reads and writes the same Travel Trip as the desk form, through
+// everyone sleeps, getting around, the schedule, the files — and ends on a checklist of what is
+// still missing. It reads and writes the same Travel Trip as the desk form, through
 // travel_management/planner.py, and every save runs the Travel Trip controller.
 //
 // BOOKINGS HERE, ONE ROW PER PERSON THERE. The office books for the crew, so a card on this page
@@ -60,6 +60,18 @@
 // and check-out to their own nights. A round-trip ticket is one charge: a flight with no cost
 // whose confirmation number is on a flight that has one rides on that fare (fare_card, the rule
 // in completeness.on_another_ticket), and the checklist does not ask for a cost on it.
+//
+// PAPERWORK. Every booking card has its files (a boarding pass, the hotel confirmation, the
+// rental agreement, a bill of lading), and the Files step has the trip's own (a site map, the
+// safety plan, an insurance certificate, the job packet). Each is a Trip Document row, for
+// everyone on the booking (the whole crew, for a trip-wide file) or for one person. The file
+// itself is uploaded straight to the trip as a File by frappe's uploader, private by default,
+// which leaves the trip's `modified` alone; the row naming it is saved with everything else,
+// so a file attached to a booking not saved yet ("new:<n>") follows that booking to the id it
+// is given on save (planner.merge_documents). Uploading needs a saved trip: a File is attached
+// to a trip by its name. A receipt is not paperwork: it is money, and stays on the cost row.
+// The checklist asks for a booking's paperwork only once it has its confirmation number, and
+// only flags it, like everything else on the checklist.
 //
 // Styling uses Frappe CSS variables so Frappe Light and Timeless Night both work. The page loader
 // serves this file version-aware, so no .bundle.* is needed.
@@ -215,12 +227,34 @@ const TP_STYLE = `
 .tp-preview dt{color:var(--text-muted);font-weight:normal;}
 .tp-preview dd{margin:0;min-width:0;overflow-wrap:anywhere;}
 .tp-events{margin:6px 0 10px;padding-left:18px;font-size:14px;}
+.tp-docs{margin-top:12px;}
+.tp-docs-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;margin-bottom:6px;}
+.tp-docs-head label{font-size:13px;color:var(--text-muted);margin:0;}
+.tp-doc{border:1px solid var(--border-color);border-radius:8px;padding:6px 8px 6px 10px;margin-bottom:6px;background:var(--control-bg);}
+.tp-doc-line{display:flex;align-items:center;gap:8px;min-width:0;}
+.tp-doc-icon{flex:0 0 22px;font-size:17px;text-align:center;}
+.tp-doc-title{flex:1;min-width:0;font-size:14px;line-height:1.3;overflow-wrap:anywhere;}
+.tp-doc-title .tp-muted{display:block;}
+.tp-doc-open{flex:0 0 auto;display:inline-flex;align-items:center;min-height:36px;padding:0 6px;font-size:14px;font-weight:600;white-space:nowrap;}
+.tp-doc-x{flex:0 0 auto;min-width:36px;min-height:36px;border:none;background:none;color:var(--text-muted);font-size:17px;line-height:1;cursor:pointer;}
+.tp-doc-edit{display:flex;flex-wrap:wrap;gap:6px 8px;margin:4px 0 2px 30px;}
+.tp-doc-edit select{flex:1 1 160px;min-width:0;padding:6px 8px;border-radius:8px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:14px;}
+.tp-docchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+.tp-docchip{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 9px;border-radius:12px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:12px;text-decoration:none;}
+a.tp-docchip:hover,a.tp-pdoc:hover{border-color:var(--primary,#2490ef);text-decoration:none;}
+.tp-bookdocs{margin-bottom:14px;}
+.tp-bookdocs-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;font-weight:600;margin:0 0 6px;}
+.tp-bookdocs-head .tp-btn-link{font-weight:normal;}
+.tp-pdocs{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+.tp-pdoc{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--control-bg);color:var(--text-color);font-size:14px;text-decoration:none;}
+.tp-pdoc span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 @media (max-width:600px){.tp-ref-row span{flex-basis:110px;}
 .tp-tl-item{flex-wrap:wrap;}
 .tp-tl-time{flex:1 1 auto;}
 .tp-tl-body{flex:1 1 100%;padding-left:32px;}
 .tp-cmp th,.tp-cmp td{min-width:170px;}
-.tp-preview iframe{height:460px;}}
+.tp-preview iframe{height:460px;}
+.tp-doc-edit{margin-left:0;}}
 [data-theme="dark"] .tp-notice{background:rgba(245,158,11,.15);color:#fcd34d;border-color:#b45309;}
 [data-theme="dark"] .tp-flag,[data-theme="dark"] .tp-who.tp-who-miss,[data-theme="dark"] .tp-xtable td.tp-cell-warn{background:rgba(220,38,38,.18);color:#fca5a5;}
 [data-theme="dark"] .tp-who.tp-who-miss{border-color:#f87171;}
@@ -237,6 +271,7 @@ const TP_STEPS = [
 	{ key: "around", title: __("Getting around"), leg: "During Trip" },
 	{ key: "freight", title: __("Freight") },
 	{ key: "schedule", title: __("Schedule") },
+	{ key: "files", title: __("Files") },
 	{ key: "review", title: __("Review") },
 ];
 
@@ -309,7 +344,46 @@ const TP_FREIGHT = [
 	"billable",
 	"paid_by",
 	"paid_by_traveler",
+	"booking_group",
 ];
+
+// Trip Document fields: mirrors planner.DOCUMENT_FIELDS. `booking_group` is the page key of the
+// card the file is on ("" for the whole trip), which the server swaps for the stored id.
+const TP_DOCUMENT = ["title", "kind", "file", "traveler", "booking_group"];
+
+// What a file is: the Trip Document `kind` options, in their order, each with its icon.
+const TP_DOC_KINDS = [
+	"Boarding pass",
+	"Booking confirmation",
+	"Rental agreement",
+	"Bill of lading",
+	"Site map",
+	"Safety plan",
+	"Insurance certificate",
+	"Job packet",
+	"Other",
+];
+
+const TP_DOC_ICONS = {
+	"Boarding pass": "&#127915;",
+	"Booking confirmation": "&#128196;",
+	"Rental agreement": "&#128221;",
+	"Bill of lading": "&#128230;",
+	"Site map": "&#128506;",
+	"Safety plan": "&#9888;",
+	"Insurance certificate": "&#128737;",
+	"Job packet": "&#128450;",
+	Other: "&#128196;",
+};
+
+// What a file attached to a booking starts as, by its table; a file for the whole trip starts
+// as "Other". The kind can be changed on the page.
+const TP_DOC_DEFAULT_KIND = {
+	flights: "Boarding pass",
+	accommodations: "Booking confirmation",
+	ground_transport: "Rental agreement",
+	freight: "Bill of lading",
+};
 
 const TP_UNBOOKED = ["Company Fleet", "Personal Vehicle"];
 
@@ -476,6 +550,28 @@ function tp_text_to_html(text) {
 		.split(/\n/)
 		.map((line) => `<p>${tp_esc(line) || "<br>"}</p>`)
 		.join("");
+}
+
+// A file's address, only when it is one to open: the site's own (/files/..., /private/files/...)
+// or a web link. Never a javascript: or protocol-relative address.
+function tp_file_url(url) {
+	const value = String(url || "").trim();
+	return /^(\/(?!\/)|https?:\/\/)/i.test(value) ? value : "";
+}
+
+// "/private/files/boarding-pass.pdf" -> "boarding-pass.pdf" (planner.get_state's file_name).
+function tp_file_name(url) {
+	const path = String(url || "").split(/[?#]/)[0];
+	const name = path.split("/").pop() || "";
+	try {
+		return decodeURIComponent(name);
+	} catch (e) {
+		return name;
+	}
+}
+
+function tp_is_image(name) {
+	return /\.(png|jpe?g|gif|webp|heic)$/i.test(String(name || ""));
 }
 
 function tp_server_messages(xhr) {
@@ -1233,6 +1329,7 @@ class TripPlanner {
 			bookings: { flights: [], accommodations: [], ground_transport: [] },
 			freight: [],
 			stops: [],
+			documents: [],
 			gaps: [],
 		};
 	}
@@ -1248,6 +1345,11 @@ class TripPlanner {
 			state.bookings[table].forEach((card) => this.prepare_card(card, table));
 		});
 		state.freight = state.freight || [];
+		// The trip's files (Trip Document rows). A file on a booking names the card's key; one
+		// on a card that was "new:<n>" comes back from save_plan already naming the id that
+		// card was given, so nothing is re-keyed here.
+		state.documents = state.documents || [];
+		this.rehome_documents(state);
 		state.description_text = tp_html_to_text(state.trip.trip_description);
 		state.description_changed = false;
 		this.state = state;
@@ -1312,6 +1414,7 @@ class TripPlanner {
 			),
 			freight: s.freight,
 			stops: s.stops,
+			documents: s.documents || [],
 		});
 	}
 
@@ -1332,6 +1435,28 @@ class TripPlanner {
 
 	cards(table) {
 		return this.state.bookings[table];
+	}
+
+	// A shipment's key, the way completeness.group_key reads it: its stored booking_group, else
+	// its own row. A shipment added on the page has a "new:<n>" key until its first save gives
+	// it an id (planner.merge_freight), the same as a new card.
+	freight_key(item) {
+		return item.booking_group || (item.name ? `row:${item.name}` : "");
+	}
+
+	documents() {
+		return (this.state && this.state.documents) || [];
+	}
+
+	// The files on one booking (its page key), or, for "", the trip's own.
+	documents_for(key) {
+		return this.documents().filter((doc) => (doc.booking_group || "") === (key || ""));
+	}
+
+	// Who is on a card: its people, or everyone for a whole-crew card entered on the form.
+	card_people(card) {
+		if (card.members.some((m) => !m.traveler)) return this.crew().map((t) => t.employee);
+		return card.members.map((m) => m.traveler).filter(Boolean);
 	}
 
 	leg_cards(leg) {
@@ -1484,6 +1609,19 @@ class TripPlanner {
 				TP_FREIGHT.forEach((field) => {
 					out[field] = item[field] == null ? "" : item[field];
 				});
+				// Its page key, as a card sends its `group`: the stored id, or "row:<name>" /
+				// "new:<n>" for one the server gives an id to (and remaps its files to).
+				out.booking_group = this.freight_key(item);
+				return out;
+			}),
+			// Every file the trip lists: an existing row by name, a new one without. The file is
+			// already attached to the trip; this is the row that says what it is and whose.
+			documents: (s.documents || []).map((doc) => {
+				const out = { name: doc.name || null };
+				TP_DOCUMENT.forEach((field) => {
+					out[field] = doc[field] == null ? "" : doc[field];
+				});
+				if (!out.title) out.title = doc.file_name || tp_file_name(doc.file);
 				return out;
 			}),
 			stops: tp_sorted_stops(s.stops).map((stop) => ({
@@ -1770,7 +1908,25 @@ class TripPlanner {
 		if (gap.check === "cost") {
 			return __("{0}: no cost entered.", [what]);
 		}
+		if (gap.check === "documents") {
+			return __("{0}: {1}", [what, this.paperwork_missing(gap)]);
+		}
 		return what;
+	}
+
+	// What a "documents" gap says is missing (completeness.document_gaps), without the booking's
+	// name: the booking has its confirmation number, and its paperwork is not attached yet.
+	paperwork_missing(gap) {
+		if (gap.table === "flights") {
+			const names = (gap.employee_names || []).map(tp_esc).join(", ");
+			return names
+				? __("no boarding pass or ticket for {0}.", [names])
+				: __("no boarding pass or ticket attached.");
+		}
+		if (gap.table === "accommodations") return __("no confirmation attached.");
+		if (gap.table === "ground_transport") return __("no rental agreement attached.");
+		if (gap.table === "freight") return __("no bill of lading attached.");
+		return __("no paperwork attached.");
 	}
 
 	render_gap_list($parent, gaps, with_fix) {
@@ -1826,6 +1982,7 @@ class TripPlanner {
 			around: () => this.step_legs($step, step),
 			freight: () => this.step_freight($step),
 			schedule: () => this.step_schedule($step),
+			files: () => this.step_files($step),
 			review: () => this.step_review($step),
 		})[step.key]();
 		this.render_nav();
@@ -2230,6 +2387,18 @@ class TripPlanner {
 				if (card.mileage && card.mileage.driver === employee) card.mileage.driver = "";
 			});
 		});
+		// A shipment they were to receive goes to the whole crew, and one they paid for back to
+		// the company, as on a card: the server refuses a receiver who is not in the crew.
+		(this.state.freight || []).forEach((item) => {
+			if (item.traveler === employee) item.traveler = "";
+			if (item.paid_by_traveler === employee) {
+				item.paid_by = "Company";
+				item.paid_by_traveler = "";
+			}
+		});
+		// And their own files (a boarding pass in their name): the server refuses a file for
+		// someone who is not on the trip. The files stay attached to the trip on the form.
+		this.state.documents = this.documents().filter((doc) => doc.traveler !== employee);
 	}
 
 	// ------------------------------------------------------------------ steps 3, 4, 6: getting there / back / around
@@ -2355,9 +2524,15 @@ class TripPlanner {
 			$(`<button class="tp-btn-link tp-remove">${__("Remove")}</button>`)
 				.appendTo($card.find(".tp-card-head"))
 				.on("click", () => {
-					frappe.confirm(__("Remove this booking for everyone on it?"), () => {
+					const files = this.documents_for(card.group).length;
+					const question = files
+						? __("Remove this booking for everyone on it? Its files come off the trip's list with it; they stay attached to the trip on the full form.")
+						: __("Remove this booking for everyone on it?");
+					frappe.confirm(question, () => {
 						const list = this.cards(card.table);
 						list.splice(list.indexOf(card), 1);
+						// A file must name a booking the trip has (planner.merge_documents).
+						this.state.documents = this.documents().filter((doc) => doc.booking_group !== card.group);
 						this.render();
 					});
 				});
@@ -2411,6 +2586,7 @@ class TripPlanner {
 		this.datetime_pair($grid, __("Lands"), v.arrival_time, (val) => this.set_value(card, "arrival_time", val));
 		this.members_block($card, card, __("Who's on this flight?"));
 		this.refs_block($card, card);
+		this.paperwork_block($card, this.booking_target(card));
 		this.money_block($card, card, __("Total for all tickets"));
 		const fare = this.fare_card(card);
 		if (fare) {
@@ -2510,10 +2686,11 @@ class TripPlanner {
 		}
 		this.members_block($card, card, __("Who's riding?"));
 		if (v.transport_type === "Personal Vehicle") this.mileage_block($card, card);
-		if (!unbooked) {
-			this.refs_block($card, card);
-			this.money_block($card, card, __("Total cost"));
-		}
+		if (!unbooked) this.refs_block($card, card);
+		// On every ride: a company truck's or a personal car's paperwork is welcome, it is just
+		// never asked for (completeness.document_gaps checks a rental only).
+		this.paperwork_block($card, this.booking_target(card));
+		if (!unbooked) this.money_block($card, card, __("Total cost"));
 		this.card_gaps($card, card);
 	}
 
@@ -2673,6 +2850,273 @@ class TripPlanner {
 			this.gaps().filter((g) => g.group === card.group),
 			false
 		);
+	}
+
+	// ------------------------------------------------------------------ paperwork
+	//
+	// Where a file goes, for paperwork_block and the uploader (a "target"):
+	//   key()     the booking's page key now (card.group, freight_key), "" for the whole trip,
+	//             or null once the booking is gone from the page (removed, or redrawn by a save
+	//             that finished while a file was uploading — a save hands the page new cards);
+	//   label()   the booking's name, as the server will store it (booking_label);
+	//   kind      what a file attached here starts as;
+	//   people()  whom a file here can be for, one at a time;
+	//   everyone  the "for everyone" choice, in the words of this booking or the trip;
+	//   need      what the checklist asks for here (completeness.document_gaps), or "".
+
+	booking_target(card) {
+		const rental = card.values.transport_type === "Rental/Third Party";
+		const needs = {
+			flights: __("The checklist asks for each person's boarding pass or ticket once the flight has a confirmation number."),
+			accommodations: __("The checklist asks for the booking confirmation once the room has a confirmation number."),
+			ground_transport: rental
+				? __("The checklist asks for the rental agreement once the rental has a confirmation number.")
+				: "",
+		};
+		return {
+			key: () => {
+				if (!this.state) return null;
+				const list = this.cards(card.table);
+				if (list.includes(card)) return card.group;
+				// A save redrew the cards while the file uploaded: the same booking is still here
+				// when it already had its id. One that was "new:<n>" has been given another.
+				return list.some((other) => other.group === card.group) ? card.group : null;
+			},
+			label: () => this.card_label(card),
+			// A company truck or a personal car has no rental agreement.
+			kind: card.table === "ground_transport" && !rental ? "Other" : TP_DOC_DEFAULT_KIND[card.table],
+			people: () => this.card_people(card),
+			everyone: __("Everyone on this booking"),
+			everyone_short: __("everyone on this booking"),
+			need: needs[card.table] || "",
+		};
+	}
+
+	freight_target(item) {
+		return {
+			key: () => {
+				if (!this.state) return null;
+				const key = this.freight_key(item);
+				if (this.state.freight.includes(item)) return key || null;
+				// Redrawn by a save while the file uploaded: the same shipment, by its id.
+				return key && this.state.freight.some((other) => this.freight_key(other) === key) ? key : null;
+			},
+			label: () => [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment"),
+			kind: TP_DOC_DEFAULT_KIND.freight,
+			people: () => this.crew().map((t) => t.employee),
+			everyone: __("Everyone who sees this shipment"),
+			everyone_short: __("everyone who sees this shipment"),
+			need: __("The checklist asks for the bill of lading once the shipment has a tracking number."),
+		};
+	}
+
+	trip_target() {
+		return {
+			key: () => "",
+			label: () => "",
+			kind: "Other",
+			people: () => this.crew().map((t) => t.employee),
+			everyone: __("Whole crew"),
+			everyone_short: __("the whole crew"),
+			need: __("A site map, the safety plan, an insurance certificate, the job packet: for the whole crew or one person."),
+		};
+	}
+
+	// A booking's files (or the trip's own), each with what it is and who it is for, editable in
+	// place, and "Attach a file" once the trip is saved. `heading`: false where the card around
+	// it already says what these are (the Files step).
+	paperwork_block($parent, target, heading) {
+		const $box = $('<div class="tp-docs"></div>').appendTo($parent);
+		const draw = () => {
+			$box.empty();
+			const key = target.key();
+			const docs = key === null ? [] : this.documents_for(key);
+			const $head = $(
+				`<div class="tp-docs-head">${heading === false ? "" : `<label>${__("Paperwork")}</label>`}</div>`
+			).appendTo($box);
+			if (target.need) $(`<span class="tp-muted">${tp_esc(target.need)}</span>`).appendTo($head);
+			docs.forEach((doc) => this.doc_row($box, doc, target, draw));
+			if (!this.state.can_write) {
+				if (!docs.length) $(`<div class="tp-muted">${__("No files yet.")}</div>`).appendTo($box);
+				return;
+			}
+			if (!this.state.name) {
+				$(`<div class="tp-muted">${__("Save the trip first to attach files.")}</div>`).appendTo($box);
+				return;
+			}
+			$(`<button class="tp-btn">&#128206; ${__("Attach a file")}</button>`)
+				.appendTo($box)
+				.on("click", () => this.attach_files(target));
+		};
+		draw();
+		return $box;
+	}
+
+	// One file: its icon, name, who it is for and an Open link; and, for anyone who may change
+	// the trip, what it is, who it is for, and a way to take it off the list.
+	doc_row($parent, doc, target, redraw) {
+		const kind = TP_DOC_KINDS.includes(doc.kind) ? doc.kind : "Other";
+		const title = doc.title || doc.file_name || tp_file_name(doc.file) || __("File");
+		const url = tp_file_url(doc.file);
+		const who = doc.traveler ? __("for {0}", [this.crew_name(doc.traveler)]) : target.everyone_short;
+		// Who it is for is said in words only where it cannot be changed: otherwise the "Who is
+		// it for?" menu under it says it.
+		const $row = $(`<div class="tp-doc">
+			<div class="tp-doc-line">
+				<span class="tp-doc-icon" title="${tp_esc(__(kind))}">${TP_DOC_ICONS[kind]}</span>
+				<span class="tp-doc-title" title="${tp_esc(title)}">${tp_esc(title)}${
+					this.state.can_write ? "" : `<span class="tp-muted">${tp_esc(who)}</span>`
+				}</span>
+				${url ? `<a class="tp-doc-open" target="_blank" rel="noopener" href="${tp_esc(url)}">${__("Open")} &#8599;</a>` : ""}
+			</div>
+		</div>`).appendTo($parent);
+		if (!this.state.can_write) return;
+		$(`<button class="tp-doc-x" title="${__("Take this file off")}" aria-label="${__("Take this file off")}">&#10005;</button>`)
+			.appendTo($row.find(".tp-doc-line"))
+			.on("click", () => {
+				frappe.confirm(
+					__("Take {0} off the trip's files? It stays attached to the trip on the full form.", [tp_esc(title)]),
+					() => {
+						const list = this.documents();
+						const at = list.indexOf(doc);
+						if (at >= 0) list.splice(at, 1);
+						redraw();
+					}
+				);
+			});
+		const $edit = $('<div class="tp-doc-edit"></div>').appendTo($row);
+		const $kind = $(`<select aria-label="${__("What is it?")}"></select>`).appendTo($edit);
+		TP_DOC_KINDS.forEach((value) => $("<option></option>").val(value).text(__(value)).appendTo($kind));
+		$kind.val(kind).on("change", () => {
+			doc.kind = $kind.val();
+			redraw();
+		});
+		const $for = $(`<select aria-label="${__("Who is it for?")}"></select>`).appendTo($edit);
+		$("<option></option>").val("").text(target.everyone).appendTo($for);
+		const people = target.people();
+		people.forEach((employee) => {
+			$("<option></option>").val(employee).text(__("Only {0}", [this.crew_name(employee)])).appendTo($for);
+		});
+		if (doc.traveler && !people.includes(doc.traveler)) {
+			$("<option></option>")
+				.val(doc.traveler)
+				.text(__("Only {0} (not on this booking)", [this.crew_name(doc.traveler)]))
+				.appendTo($for);
+		}
+		$for.val(doc.traveler || "").on("change", () => {
+			doc.traveler = $for.val();
+			redraw();
+		});
+	}
+
+	// "Attach a file": frappe's own uploader, private by default, onto the saved trip — a File
+	// is attached to a trip by its name, so a trip not saved yet has no button. Opened only
+	// from that button: nothing on the way to a step touches frappe.ui, and the Back/Forward
+	// harness, like a page that has not loaded the uploader yet, has none.
+	attach_files(target) {
+		const s = this.state;
+		if (!s || !s.name || !s.can_write) return;
+		const trip = s.name;
+		const open = () => {
+			new frappe.ui.FileUploader({
+				doctype: "Travel Trip",
+				docname: trip,
+				folder: "Home/Attachments",
+				make_attachments_public: false,
+				allow_multiple: true,
+				on_success: (file) => this.add_document(trip, target, file),
+			});
+		};
+		if (frappe.ui.FileUploader) open();
+		else frappe.require("file_uploader.bundle.js", open);
+	}
+
+	// One uploaded file (the uploader calls this once per file): a new file on the list, on the
+	// booking it was attached from, for everyone on it. It is saved with the next save, like any
+	// other edit; the File itself is already on the trip.
+	add_document(trip, target, file) {
+		if (!file || !file.file_url) return;
+		const file_name = file.file_name || tp_file_name(file.file_url);
+		const s = this.state;
+		if (!s || s.name !== trip) {
+			// Another trip, or the list, came on screen while it uploaded.
+			frappe.show_alert({
+				message: __("{0} is attached to {1}, which is no longer open here.", [tp_esc(file_name), tp_esc(trip)]),
+				indicator: "orange",
+			});
+			return;
+		}
+		let key = target.key();
+		if (key === null) {
+			// The booking is gone from the page: listed with the whole trip, never lost.
+			key = "";
+			frappe.show_alert({
+				message: __("{0} is with the whole trip's files: the booking changed while it uploaded.", [tp_esc(file_name)]),
+				indicator: "orange",
+			});
+		}
+		s.documents = s.documents || [];
+		s.documents.push({
+			name: null,
+			title: file_name,
+			kind: target.kind,
+			file: file.file_url,
+			traveler: "",
+			booking_group: key,
+			booking_label: key ? target.label() : "",
+			file_name: file_name,
+			is_image: tp_is_image(file_name) ? 1 : 0,
+		});
+		if (!this.view) this.render();
+	}
+
+	// Every booking the page has, with where it is planned: the Files step lists their files.
+	booking_list() {
+		const icons = { flights: "&#9992;", accommodations: "&#127976;", ground_transport: "&#128663;" };
+		const out = [];
+		["flights", "accommodations", "ground_transport"].forEach((table) => {
+			this.cards(table).forEach((card) => {
+				out.push({
+					key: card.group,
+					label: this.card_label(card),
+					icon: icons[table],
+					step: table === "accommodations" ? "lodging" : TP_LEG_STEP[card.values.leg] || "around",
+					target: this.booking_target(card),
+				});
+			});
+		});
+		this.state.freight.forEach((item) => {
+			const key = this.freight_key(item);
+			if (!key) return;
+			out.push({
+				key: key,
+				label: [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment"),
+				icon: "&#128230;",
+				step: "freight",
+				target: this.freight_target(item),
+			});
+		});
+		return out;
+	}
+
+	// A file whose booking the trip no longer has (deleted on the form) is listed with the whole
+	// trip's files, which is where the next save stores it (planner.merge_documents). get_state
+	// already sends it that way; this is for an answer that does not, since a file sent naming
+	// a booking the trip does not have can be refused, and that would stop every later save of
+	// the trip, not only this file's. Who it is for stays.
+	rehome_documents(state) {
+		const keys = new Set();
+		Object.keys(state.bookings).forEach((table) => state.bookings[table].forEach((card) => keys.add(card.group)));
+		(state.freight || []).forEach((item) => {
+			const key = this.freight_key(item);
+			if (key) keys.add(key);
+		});
+		state.documents.forEach((doc) => {
+			if (doc.booking_group && !keys.has(doc.booking_group)) {
+				doc.booking_group = "";
+				doc.booking_label = "";
+			}
+		});
 	}
 
 	// ------------------------------------------------------------------ step 5: lodging
@@ -2844,6 +3288,7 @@ class TripPlanner {
 		this.members_block($card, card, __("Who's in this room?"));
 		this.guests_block($card, card);
 		this.refs_block($card, card);
+		this.paperwork_block($card, this.booking_target(card));
 		this.money_block($card, card, __("Total for the room, whole stay"));
 		this.card_gaps($card, card);
 	}
@@ -2870,14 +3315,17 @@ class TripPlanner {
 				item.paid_by = "Company";
 				item.cost = 0;
 				item.billable = this.state.trip.billable ? 1 : 0;
+				// A key for it before it is saved, so a file can be attached to it now.
+				item.booking_group = `new:${++this.card_seq}`;
 				this.state.freight.push(item);
 				this.render();
 			});
 	}
 
 	freight_card($parent, item) {
-		// A shipment is one row, so its checklist key is the row's (completeness.group_key).
-		const key = item.name ? `row:${item.name}` : null;
+		// A shipment is one row; its checklist key is completeness.group_key's, its stored
+		// booking_group (a row from before shipments had one: "row:<name>").
+		const key = this.freight_key(item);
 		const gaps = key ? this.gaps().filter((g) => g.group === key) : [];
 		const title = [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment");
 		const $card = $(`<div class="tp-card ${gaps.length ? "tp-bad" : ""}">
@@ -2887,8 +3335,16 @@ class TripPlanner {
 			$(`<button class="tp-btn-link tp-remove">${__("Remove")}</button>`)
 				.appendTo($card.find(".tp-card-head"))
 				.on("click", () => {
-					frappe.confirm(__("Remove this shipment?"), () => {
+					const shipment = this.freight_key(item);
+					const files = shipment ? this.documents_for(shipment).length : 0;
+					const question = files
+						? __("Remove this shipment? Its files come off the trip's list with it; they stay attached to the trip on the full form.")
+						: __("Remove this shipment?");
+					frappe.confirm(question, () => {
 						this.state.freight.splice(this.state.freight.indexOf(item), 1);
+						if (shipment) {
+							this.state.documents = this.documents().filter((doc) => doc.booking_group !== shipment);
+						}
 						this.render();
 					});
 				});
@@ -2935,6 +3391,7 @@ class TripPlanner {
 		$who.val(item.traveler || "").on("change", () => {
 			item.traveler = $who.val();
 		});
+		this.paperwork_block($card, this.freight_target(item));
 		// money_block works on a card; a shipment's fields ARE its values, with nobody to
 		// split the cost between.
 		this.money_block($card, { values: item, members: [], changed: new Set() }, __("Freight cost"));
@@ -3078,7 +3535,51 @@ class TripPlanner {
 		);
 	}
 
-	// ------------------------------------------------------------------ step 8: review
+	// ------------------------------------------------------------------ step 9: files
+
+	step_files($step) {
+		this.step_intro(
+			$step,
+			__("Files"),
+			__(
+				"Paperwork for the whole trip, like a site map, the safety plan, an insurance certificate or the job packet, and every file attached to a booking. A boarding pass, a hotel confirmation or a rental agreement goes on its booking: attach it there. Receipts go with the cost on the full form, not here."
+			)
+		);
+		const $trip = $('<div class="tp-card"></div>').appendTo($step);
+		$(`<div class="tp-card-head"><b>${__("For the whole trip")}</b></div>`).appendTo($trip);
+		this.paperwork_block($trip, this.trip_target(), false);
+
+		const $on = $('<div class="tp-card"></div>').appendTo($step);
+		$(`<div class="tp-card-head"><b>${__("On bookings")}</b></div>`).appendTo($on);
+		let any = false;
+		this.booking_list().forEach((booking) => {
+			const docs = this.documents_for(booking.key);
+			if (!docs.length) return;
+			any = true;
+			const $booking = $('<div class="tp-bookdocs"></div>').appendTo($on);
+			const $head = $(`<div class="tp-bookdocs-head"><span>${booking.icon} ${tp_esc(booking.label)}</span></div>`).appendTo(
+				$booking
+			);
+			const step = TP_STEPS.find((s) => s.key === booking.step);
+			$(`<button class="tp-btn-link">${__("Go to {0}", [tp_esc(step ? step.title : booking.step)])} &rarr;</button>`)
+				.appendTo($head)
+				.on("click", () => this.jump_to(booking.step));
+			docs.forEach((doc) => this.doc_row($booking, doc, booking.target, () => this.render()));
+		});
+		if (!any) {
+			$(`<div class="tp-muted">${__(
+				"No files on a booking yet. Attach a boarding pass, a confirmation or a rental agreement on the booking itself."
+			)}</div>`).appendTo($on);
+		}
+		// What the checklist says is missing, with the step that fixes each.
+		const gaps = this.gaps().filter((g) => g.check === "documents");
+		if (gaps.length) {
+			$(`<div class="tp-docs-head" style="margin-top:12px;"><label>${__("Still missing")}</label></div>`).appendTo($on);
+			this.render_gap_list($on, gaps, true);
+		}
+	}
+
+	// ------------------------------------------------------------------ step 10: review
 
 	step_review($step) {
 		const s = this.state;
@@ -3105,6 +3606,7 @@ class TripPlanner {
 			<div><span class="tp-muted">${__("Rooms")}</span><b>${this.cards("accommodations").length}</b></div>
 			<div><span class="tp-muted">${__("Drives and rentals")}</span><b>${this.cards("ground_transport").length}</b></div>
 			<div><span class="tp-muted">${__("Shipments")}</span><b>${s.freight.length}</b></div>
+			<div><span class="tp-muted">${__("Files")}</span><b>${this.documents().length}</b></div>
 			<div><span class="tp-muted">${__("Booked so far")}</span><b>${tp_esc(format_currency(total, this.lookups.currency))}</b></div>
 		</div>`).appendTo($step);
 
@@ -3122,6 +3624,11 @@ class TripPlanner {
 				check: "cost",
 				title: __("Cost and who paid"),
 				ok: __("Every booking has a cost, or is the way home on a round-trip ticket that has one."),
+			},
+			{
+				check: "documents",
+				title: __("Paperwork"),
+				ok: __("Every booking that's made has its paperwork attached."),
 			},
 		];
 		sections.forEach((section) => {
@@ -3389,7 +3896,48 @@ class TripPlanner {
 		}
 		if (gap.check === "cost") return __("No cost entered.");
 		if (gap.check === "lodging") return __("The check-in or check-out day is missing.");
+		if (gap.check === "documents") {
+			// Plain text here (view_flag escapes it); paperwork_missing escapes its names for the
+			// steps' HTML.
+			if (gap.table === "flights") {
+				const names = (gap.employee_names || []).join(", ");
+				return names ? __("No boarding pass or ticket for {0}.", [names]) : __("No boarding pass or ticket attached.");
+			}
+			if (gap.table === "accommodations") return __("No confirmation attached.");
+			if (gap.table === "ground_transport") return __("No rental agreement attached.");
+			if (gap.table === "freight") return __("No bill of lading attached.");
+			return __("No paperwork attached.");
+		}
 		return gap.label || "";
+	}
+
+	// A booking's files on a view (the itinerary's `documents`: never a receipt, which is
+	// money), each a link to the file: its name and who it is for.
+	doc_chips(docs) {
+		return (docs || [])
+			.map((doc) => {
+				const url = tp_file_url(doc.url);
+				const kind = TP_DOC_KINDS.includes(doc.kind) ? doc.kind : "Other";
+				const text = `${doc.title || doc.file_name || __("File")} · ${
+					doc.for_name ? __("for {0}", [doc.for_name]) : __("everyone")
+				}`;
+				return url
+					? `<a class="tp-docchip" target="_blank" rel="noopener" href="${tp_esc(url)}" title="${tp_esc(
+							text
+					  )}">${TP_DOC_ICONS[kind]} ${tp_esc(text)}</a>`
+					: `<span class="tp-docchip">${TP_DOC_ICONS[kind]} ${tp_esc(text)}</span>`;
+			})
+			.join("");
+	}
+
+	// The trip's own files (no booking) on the Overview: every one, whoever it is for. A file's
+	// `group` is its booking's key and is null for the whole trip's (shape_itinerary), which is
+	// also how a file whose booking has been removed reads; its label can be blank either way.
+	trip_files($parent, data) {
+		const docs = (data.documents || []).filter((doc) => !doc.group);
+		if (!docs.length) return;
+		const $sec = $(`<div class="tp-review-sec"><h5>${__("Files for the whole trip")}</h5></div>`).appendTo($parent);
+		$(`<div class="tp-docchips">${this.doc_chips(docs)}</div>`).appendTo($sec);
 	}
 
 	// A checklist item where it applies, with the step that fixes it.
@@ -3443,6 +3991,7 @@ class TripPlanner {
 		$(`<div class="tp-sum">${tiles
 			.map(([label, value]) => `<div><span class="tp-muted">${tp_esc(label)}</span><b>${tp_esc(value)}</b></div>`)
 			.join("")}</div>`).appendTo($view);
+		this.trip_files($view, data);
 
 		// Per-person gaps on their day; per-booking gaps on the booking, the first time it
 		// shows; anything with nowhere to go at the end.
@@ -3501,6 +4050,9 @@ class TripPlanner {
 		const $body = $item.find(".tp-tl-body");
 		const chips = this.item_chips(item, facts);
 		if (chips) $(`<div class="tp-whos">${chips}</div>`).appendTo($body);
+		if ((item.documents || []).length) {
+			$(`<div class="tp-docchips">${this.doc_chips(item.documents)}</div>`).appendTo($body);
+		}
 		if (item.type === "freight" && facts.ref.value) {
 			$(`<div class="tp-tl-sub">${tp_esc(facts.ref.label)}: <b>${tp_esc(facts.ref.value)}</b></div>`).appendTo($body);
 		}
@@ -3538,9 +4090,21 @@ class TripPlanner {
 			const names = (item.travelers || []).map((name) => chip(name, "", false)).join("");
 			return names + (ref && ref.value ? chip(ref.label, ref.value, false) : "");
 		}
-		return item.members
-			.map((m) => chip(m.employee ? m.employee_name || m.employee : __("Whole crew"), m.ref, true))
-			.join("");
+		return item.members.map((m) => chip(this.member_label(item, m), m.ref, true)).join("");
+	}
+
+	// A person on a booking, as a chip names them. A room's guest (staying free in someone
+	// else's room) is marked, with their own nights when they are not the room's: shape_itinerary
+	// gives a member its own row's check-in and check-out only when they differ.
+	member_label(item, member) {
+		const name = member.employee ? member.employee_name || member.employee : __("Whole crew");
+		if (!member.guest) return name;
+		const day = (date) => (date ? moment(date).format("ddd") : "");
+		const nights =
+			member.check_in_date || member.check_out_date
+				? [day(member.check_in_date || item.date), day(member.check_out_date)].filter(Boolean).join("–")
+				: "";
+		return nights ? __("{0} (guest, {1})", [name, nights]) : __("{0} (guest)", [name]);
 	}
 
 	// ---- Crew grid: people down the side, days across
@@ -3706,9 +4270,13 @@ class TripPlanner {
 		let number = "";
 		if (ref && ref.value) number = ` &middot; ${tp_esc(ref.value)}`;
 		else if (ref && ref.needed) number = ` &middot; <span class="tp-miss-text">${__("no number")}</span>`;
+		const files = (item.documents || []).length;
+		const count = files
+			? ` <span class="tp-muted" title="${tp_esc(__("{0} files", [files]))}">&middot; &#128196; ${files}</span>`
+			: "";
 		return `<div class="tp-line">${TP_ICONS[item.type] || ""} ${
 			facts.time ? `<span class="tp-muted">${tp_esc(facts.time)}</span> ` : ""
-		}${tp_esc(facts.title)}${number}</div>`;
+		}${tp_esc(facts.title)}${number}${count}</div>`;
 	}
 
 	// ---- View as: exactly what one person's /itinerary shows
@@ -3737,6 +4305,7 @@ class TripPlanner {
 			return;
 		}
 		this.render_preview($view, employee, name, data);
+		this.person_trip_files($view, data, employee, name);
 		if (!days.length) {
 			$(`<div class="tp-muted">${__("Nothing on {0}'s itinerary yet.", [tp_esc(name)])}</div>`).appendTo($view);
 			return;
@@ -3749,7 +4318,7 @@ class TripPlanner {
 	}
 
 	// One item as /itinerary draws it (public/js/travel/itinerary.js RENDERERS): the kicker,
-	// the title, the lines under it, the number with a Copy button, the booking's file, and
+	// the title, the lines under it, the number with a Copy button, the booking's files, and
 	// a maps link for a stop that has a point.
 	person_card($parent, item) {
 		const kinds = {
@@ -3838,17 +4407,54 @@ class TripPlanner {
 				.appendTo($ref)
 				.on("click", () => this.copy_text(value));
 		}
-		if (item.attachment && /^(\/|https?:)/.test(String(item.attachment))) {
-			$(`<a class="tp-muted" target="_blank" rel="noopener" href="${tp_esc(item.attachment)}">&#128206; ${__(
-				"Attachment"
-			)}</a>`).appendTo($card);
-		}
+		// The booking's files this person can see (a boarding pass in their name, the hotel
+		// confirmation for everyone in the room). Never the cost row's receipt: that is money,
+		// and shape_itinerary no longer sends it.
+		this.person_files($card, item.documents);
 		if (item.type === "agenda" && item.poi && item.poi.lat != null && item.poi.lng != null) {
 			const point = `${Number(item.poi.lat)},${Number(item.poi.lng)}`;
 			$(`<div><a target="_blank" rel="noopener" href="https://maps.google.com/?q=${encodeURIComponent(point)}">${__(
 				"Open in Maps"
 			)} &#8599;</a></div>`).appendTo($card);
 		}
+	}
+
+	// View as: the trip's own files this person sees (for the whole crew, or for them), and a
+	// link to the Documents screen of their phone view, which lists every file they can see.
+	// The server lists each person's files (people_documents, shape_itinerary's own rule), so
+	// nothing here decides who sees what; a file whose `group` is null is the whole trip's.
+	person_trip_files($view, data, employee, name) {
+		const docs = ((data.people_documents || {})[employee] || []).filter((doc) => !doc.group);
+		if (!docs.length && !data.itinerary_url) return;
+		const $sec = $(`<div class="tp-review-sec" style="max-width:640px;"><h5>${__("Files for the whole trip")}</h5></div>`).appendTo(
+			$view
+		);
+		if (docs.length) this.person_files($sec, docs);
+		else $(`<div class="tp-muted">${__("None for {0}.", [tp_esc(name)])}</div>`).appendTo($sec);
+		if (data.itinerary_url) {
+			$(`<div style="margin-top:8px;"><a class="tp-btn-link" target="_blank" rel="noopener" href="${tp_esc(
+				`${data.itinerary_url}&as=${encodeURIComponent(employee)}&view=docs`
+			)}">${__("All of {0}'s files, as their phone shows them", [tp_esc(name)])} &#8599;</a></div>`).appendTo($sec);
+		}
+	}
+
+	// Files as View as lists them: one row each, big enough to tap, opening the file.
+	person_files($parent, docs) {
+		if (!(docs || []).length) return;
+		const $list = $('<div class="tp-pdocs"></div>').appendTo($parent);
+		docs.forEach((doc) => {
+			const url = tp_file_url(doc.url);
+			const kind = TP_DOC_KINDS.includes(doc.kind) ? doc.kind : "Other";
+			const text = [doc.title || doc.file_name || __("File"), doc.for_name ? __("for {0}", [doc.for_name]) : ""]
+				.filter(Boolean)
+				.join(" · ");
+			const inner = `${TP_DOC_ICONS[kind]} <span>${tp_esc(text)}</span>${url ? ` <b>${__("Open")} &#8599;</b>` : ""}`;
+			$(
+				url
+					? `<a class="tp-pdoc" target="_blank" rel="noopener" href="${tp_esc(url)}">${inner}</a>`
+					: `<div class="tp-pdoc">${inner}</div>`
+			).appendTo($list);
+		});
 	}
 
 	copy_text(text) {

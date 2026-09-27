@@ -295,6 +295,7 @@ const CHECKLIST_LABELS = {
 	lodging: __('a bed for the night'),
 	confirmation: __('a confirmation number'),
 	cost: __('a cost'),
+	documents: __('paperwork'),
 };
 
 function show_trip_checklist(frm) {
@@ -346,6 +347,8 @@ frappe.ui.form.on('Travel Trip', {
 		frm.set_query('traveler', 'mileage', () => traveler_employee_query(frm));
 		// Freight's "Received By" is someone on the crew.
 		frm.set_query('traveler', 'freight', () => traveler_employee_query(frm));
+		// A trip file's "Only For" is someone on the crew (Plan a Trip refuses anyone else).
+		frm.set_query('traveler', 'documents', () => traveler_employee_query(frm));
 	},
 
 	refresh(frm) {

@@ -8,15 +8,19 @@ needs. Live data comes from ``erpnext_enhancements.api.travel`` (session-trust
 security model: the employee is derived server-side, trips are scoped by the
 Travel Trip permission hooks).
 
-Addresses: ``/itinerary?trip=<name>&as=<employee|crew>``. ``trip`` is the trip on
-screen; ``as`` is whose view of it (one person's bookings and their own
-confirmation numbers, or ``crew`` for the whole crew), and without it the page
-shows the viewer's own view on a trip they travel on, else the whole crew. Both are
-read by ``itinerary.js``, not here, and neither is trusted: the page sends them to
+Addresses: ``/itinerary?trip=<name>&as=<employee|crew>&view=docs&file=<document>``.
+``trip`` is the trip on screen; ``as`` is whose view of it (one person's bookings and
+their own confirmation numbers, or ``crew`` for the whole crew), and without it the
+page shows the viewer's own view on a trip they travel on, else the whole crew.
+``view=docs`` is the Documents screen (every file that person can see: the whole
+trip's, then each booking's), and ``file`` a Trip Document open in the picture viewer
+over whichever screen it was opened from. All four are read by ``itinerary.js``, not
+here, and none is trusted: the page sends ``trip`` and ``as`` to
 ``get_trip_itinerary``, which checks read permission on the trip (crew, the trip's
-owner and travel coordinators) and refuses a person who is not on it. So a link
-naming a trip outside the boot list, or a person, needs nothing from this
-controller beyond keeping the query string through the login redirect.
+owner and travel coordinators) and refuses a person who is not on it, and it opens
+only a ``file`` that answer lists for that person. So a link naming a trip outside
+the boot list, a person, a screen or a file needs nothing from this controller
+beyond keeping the query string through the login redirect.
 
 Cache busting: raw ``/assets`` URLs are served 1-year-immutable, so
 ``itinerary.html`` appends ``?v={{ deploy_version }}`` to every mutable asset
@@ -41,8 +45,9 @@ def get_context(context):
 	"""Route: ``/itinerary`` (rendered by ``itinerary.html``).
 
 	Guests are redirected to ``/login?redirect-to=/itinerary``, with the query
-	string kept (``?trip=`` and ``&as=``, the trip and person the page was showing —
-	see itinerary.js). For an authenticated user this exposes ``boot_json`` (employee +
+	string kept (``?trip=``, ``&as=``, ``&view=`` and ``&file=``: the trip, person,
+	screen and picture the page was showing — see itinerary.js). For an authenticated
+	user this exposes ``boot_json`` (employee +
 	their active trips, including ones they own but are not on, + CSRF token, injected
 	as ``window.ITIN_BOOT``), ``csrf_token`` (``window.ITIN_CSRF``) and
 	``deploy_version`` (asset cache-bust token).

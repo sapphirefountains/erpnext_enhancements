@@ -6,10 +6,12 @@
 Child table (``istable``) embedded in Travel Trip via the ``accommodations``
 field. Each row captures one lodging stay: hotel/lodging (Supplier link),
 fetched primary address, check-in/check-out dates, booking confirmation,
-optional single ``traveler`` (blank = whole crew), attachment, and the shared
-cost block (estimated_cost / cost / paid_by / paid_by_traveler / billable /
-expense_claim stamp). Employee-paid rows are pulled onto that traveler's
-Expense Claim by ``travel_management.api.create_expense_claim``.
+optional single ``traveler`` (blank = whole crew), and the shared cost block
+(estimated_cost / cost / paid_by / paid_by_traveler / billable / the Receipt,
+fieldname ``attachment`` / expense_claim stamp). Employee-paid rows are pulled
+onto that traveler's Expense Claim by
+``travel_management.api.create_expense_claim``. The hotel's confirmation is not
+the Receipt: it is a Trip Document on the parent trip.
 
 All validation lives in the parent Travel Trip controller, so this is a plain
 pass-through ``Document`` subclass.

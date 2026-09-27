@@ -39,6 +39,22 @@ What a card write will and will not touch
 * **A row on an Expense Claim, or with a Vehicle Log, is never deleted**, and its traveler
   and money fields are never rewritten: the claim was built from them. The page is told.
 
+Files
+-----
+A boarding pass, a hotel confirmation, a rental agreement, a bill of lading, or a file for
+the whole trip (a site map, a safety plan) is a **Trip Document** row: which booking it is
+on (the booking's ``booking_group``; a shipment has one too, :func:`merge_freight`), and
+who it is for. The page uploads the File itself, attached to the trip, and the row travels
+in the next save (:func:`merge_documents`). Uploading does not change the trip's
+``modified``: in frappe v16 ``handler.upload_file`` only inserts the File, and
+``File.after_insert`` only adds an "Attachment" Comment to the trip, which neither saves it
+nor touches its timestamp (``Comment.on_update`` returns early for anything but a
+"Comment", and writes ``_comments`` with raw SQL when it does run). So an upload never makes
+the page's next save "out of date". A receipt is not a Trip Document: it is money, and stays
+on its cost row's Receipt — the per-row ``attachment`` field, relabeled from "Attachment"
+(and freight's "BOL / Paperwork") when files arrived. Prod held no attachment on any travel
+row when that was done (checked 2026-09-26), so no patch moves anything.
+
 A save based on a version somebody else has since replaced is refused, not merged — the
 same optimistic lock as ``api/quality_wizard.py``.
 
@@ -55,11 +71,17 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
-from erpnext_enhancements.travel_management import RELATED_PARTY_DOCTYPES, TRAVEL_FOR_DOCTYPES
+from erpnext_enhancements.travel_management import COST_TABLES, RELATED_PARTY_DOCTYPES, TRAVEL_FOR_DOCTYPES
 from erpnext_enhancements.travel_management.completeness import (
+	DOCUMENT_KINDS,
 	UNBOOKED_TRANSPORT,
+	booking_index,
+	booking_label,
+	document_group,
+	file_name_of,
 	find_gaps,
 	group_key,
+	is_image_file,
 	stay_window,
 	to_date,
 )
@@ -139,6 +161,8 @@ MONEY_FIELDS = frozenset({"cost", "paid_by", "paid_by_traveler", "billable"})
 #: Trip Freight fields the page may write. A shipment is ONE row, not one per person —
 #: nobody has their own seat on a crate — so freight skips the booking fan-out and is
 #: merged like the schedule. ``traveler`` is who receives it (blank = the whole crew).
+#: ``booking_group`` is the shipment's id, so a file (its bill of lading) can belong to it;
+#: it is last because the page's ``TP_FREIGHT`` must list these in this order.
 FREIGHT_FIELDS = (
 	"carrier",
 	"tracking_number",
@@ -154,7 +178,16 @@ FREIGHT_FIELDS = (
 	"billable",
 	"paid_by",
 	"paid_by_traveler",
+	"booking_group",
 )
+
+#: Trip Document fields the page may write: one row per file. ``traveler`` is who it is for
+#: (blank = everyone on the booking, or the whole crew for a file for the whole trip) and
+#: ``booking_group`` the booking it belongs to (blank = the whole trip), sent as the page's
+#: own key for that booking card and stored as the booking's id (:func:`merge_documents`).
+#: ``booking_label`` is the server's to set. The page's ``TP_DOCUMENT`` lists these in this
+#: order.
+DOCUMENT_FIELDS = ("title", "kind", "file", "traveler", "booking_group")
 
 STOP_FIELDS = (
 	"date",
@@ -499,11 +532,24 @@ def merge_stops(existing_rows, stops):
 	return rows, notes
 
 
-def merge_freight(existing_rows, shipments):
+def merge_freight(existing_rows, shipments, group_map=None):
 	"""The trip's shipments, one row each. A shipment already on an Expense Claim keeps its
-	money fields and is kept even when the page drops it — same rule as a booking."""
+	money fields and is kept even when the page drops it — same rule as a booking.
+
+	Every shipment gets a ``booking_group`` of its own, the way a booking card does, so a
+	file can belong to it: a shipment that has one keeps it, whatever the page sends, and one
+	without — new, or typed on the form — gets the page's id if it is a safe one
+	(:func:`normalize_group`) and a fresh one otherwise. Two shipments never share one.
+	``group_map`` (optional) is filled with the page's key for each shipment -> the id it was
+	stored under: its ``booking_group`` as sent (``new:<n>`` for one not saved yet), or
+	``row:<name>`` for a saved row that had none — the key the checklist gave it
+	(``completeness.group_key``).
+	"""
 	by_name = {_get(row, "name"): row for row in existing_rows if _get(row, "name")}
+	# A saved shipment's id is its own: a new one may not take it, whatever order they come in.
+	taken = {_get(row, "booking_group") for row in existing_rows if _get(row, "booking_group")}
 	used = set()
+	groups = set()
 	rows = []
 	notes = []
 	for shipment in shipments:
@@ -516,16 +562,166 @@ def merge_freight(existing_rows, shipments):
 			used.add(_get(row, "name"))
 		protected = is_protected(row)
 		for field in FREIGHT_FIELDS:
-			if field not in shipment or (protected and field in MONEY_FIELDS):
+			if field == "booking_group" or field not in shipment or (protected and field in MONEY_FIELDS):
 				continue
 			value = shipment[field]
 			_set(row, field, flt(value) if field == "cost" else (value if value != "" else None))
+
+		sent = (shipment.get("booking_group") or "").strip()
+		stored = _get(row, "booking_group")
+		group = stored or normalize_group(sent)
+		while group in groups or (not stored and group in taken):
+			group = new_group_id()
+		groups.add(group)
+		_set(row, "booking_group", group)
+		if group_map is not None:
+			origin = sent or (f"row:{shipment['name']}" if shipment.get("name") else "")
+			if origin:
+				group_map[origin] = group
 		rows.append(row)
 	for row in existing_rows:
 		if _get(row, "name") not in used and is_protected(row):
 			rows.append(row)
 			notes.append(_("Kept a freight shipment that is already on an Expense Claim."))
 	return rows, notes
+
+
+def _receipt_urls(doc):
+	"""Every Receipt on the trip's cost rows. A receipt is money: it stays on its cost row,
+	which the trip views never show, and cannot become a trip file everyone can open."""
+	urls = set()
+	for table in COST_TABLES:
+		for row in _get(doc, table) or []:
+			url = str(_get(row, "attachment") or "").strip()
+			if url:
+				urls.add(url)
+	return urls
+
+
+def _file_on_trip(trip):
+	"""The real check behind :func:`merge_documents`: a File attached to this trip. Plan a
+	Trip uploads with ``doctype=Travel Trip, docname=<trip>``, so its uploads always are; a
+	URL typed or pasted from somewhere else is not."""
+
+	def check(url):
+		return bool(
+			frappe.db.exists(
+				"File", {"file_url": url, "attached_to_doctype": "Travel Trip", "attached_to_name": trip}
+			)
+		)
+
+	return check
+
+
+def merge_documents(doc, documents, group_map, crew, file_check=None):
+	"""The trip's files, one Trip Document row each: updated by ``name``, added, and dropped
+	when the page no longer sends them. Dropping a row leaves its File alone: it is still
+	attached to the trip, in the form's sidebar.
+
+	Run after the bookings and the freight are merged, so ``booking_index`` sees their stored
+	ids. The page names a file's booking by its own key for the card — the saved id,
+	``row:<name>`` for a booking typed on the form, ``new:<n>`` for one not saved yet — and
+	``group_map`` (page key -> stored id, from :func:`prepare_cards` and
+	:func:`merge_freight`) turns that into the id the booking was stored under in this save.
+
+	Refused (:class:`PlanError`): a file for someone not on the crew, a kind that is not one
+	of the options, a row with no file, a file not attached to this trip, a file that is one
+	of the trip's receipts, a booking that is not on the trip, and any file at all on a trip
+	that has not been saved (its uploads have nothing to attach to). A file is checked when
+	it is new or changed; one already on the row was checked when it got there, and a File
+	deleted since must not make the whole trip unsaveable. A file whose booking was removed
+	— on the form, or on the page in this same save — becomes a file for the whole trip, and
+	the page is told.
+
+	Args:
+		doc: the Travel Trip, its bookings and freight already merged.
+		documents: the page's files — ``{name, title, kind, file, traveler, booking_group}``.
+		group_map: page key -> stored group id.
+		crew: the employees on the trip.
+		file_check: ``url -> bool``, whether that File is attached to this trip; defaults to
+			a database check (:func:`_file_on_trip`). The tests pass their own.
+
+	Returns:
+		(rows, notes)
+	"""
+	documents = documents or []
+	is_new = doc.is_new() if hasattr(doc, "is_new") else False
+	trip = None if is_new else _get(doc, "name")
+	if documents and not trip:
+		raise PlanError(_("Save the trip before adding files to it."))
+	if file_check is None:
+		file_check = _file_on_trip(trip)
+
+	index = booking_index(doc)
+	receipts = _receipt_urls(doc)
+	existing = _get(doc, "documents") or []
+	by_name = {_get(row, "name"): row for row in existing if _get(row, "name")}
+	used = set()
+	rows = []
+	notes = []
+	for item in documents:
+		row = by_name.get(item.get("name")) if item.get("name") else None
+		if row is not None and _get(row, "name") in used:
+			row = None
+		new_row = row is None
+		if new_row:
+			row = {}
+		else:
+			used.add(_get(row, "name"))
+
+		url = str(item.get("file") or "").strip()
+		if not url:
+			raise PlanError(_("A trip file has no file. Upload it again, or remove it."))
+		title = (str(item.get("title") or "").strip() or file_name_of(url))[:140]
+
+		kind = str(item.get("kind") or "").strip() or "Other"
+		if kind not in DOCUMENT_KINDS:
+			raise PlanError(_("{0}: {1} is not a kind of trip file.").format(title, kind))
+
+		traveler = str(item.get("traveler") or "").strip() or None
+		if traveler and traveler not in crew:
+			raise PlanError(_("{0} is not on this trip.").format(traveler))
+
+		if new_row or url != str(_get(row, "file") or "").strip():
+			if url in receipts:
+				raise PlanError(
+					_(
+						"{0} is a receipt on one of this trip's costs. A receipt stays with its cost, where the trip views never show it."
+					).format(title)
+				)
+			if not file_check(url):
+				raise PlanError(_("That file is not attached to this trip."))
+
+		asked = str(item.get("booking_group") or "").strip()
+		group = group_map.get(asked, asked) if asked else None
+		if group and group not in index:
+			stored = None if new_row else _get(row, "booking_group")
+			if asked != stored:
+				raise PlanError(
+					_(
+						"{0}: the booking it is on is not on this trip. Put it on another booking, or on the whole trip."
+					).format(title)
+				)
+			notes.append(_("{0} is now a file for the whole trip: its booking was removed.").format(title))
+			group = None
+
+		_set(row, "title", title)
+		_set(row, "kind", kind)
+		_set(row, "file", url)
+		_set(row, "traveler", traveler)
+		_set(row, "booking_group", group)
+		_set(row, "booking_label", _booking_label(index, group) or None)
+		rows.append(row)
+	return rows, notes
+
+
+def _booking_label(index, group):
+	"""What a file's booking is called — "Southwest WN 1422", the hotel, the rental supplier,
+	"Carrier TRACKING" — read from the booking as it is now."""
+	if not group or group not in index:
+		return ""
+	table, rows = index[group]
+	return booking_label(table, rows[0])
 
 
 def poi_geolocation(lat, lng):
@@ -671,8 +867,37 @@ def get_state(doc):
 			}
 			for row in doc.get("itinerary") or []
 		],
+		"documents": _documents_state(doc),
 		"gaps": find_gaps(doc),
 	}
+
+
+def _documents_state(doc):
+	"""The trip's files for the page. ``traveler`` "" is everyone (on the booking, or the whole
+	crew); ``booking_group`` "" is the whole trip — including a file whose booking has been
+	removed since, so the page shows it where the next save will put it. ``booking_label`` is
+	read from the booking as it is now. Not money: a receipt is never a Trip Document."""
+	index = booking_index(doc)
+	out = []
+	for row in doc.get("documents") or []:
+		url = str(_get(row, "file") or "")
+		group = document_group(row, index)
+		out.append(
+			{
+				"name": _get(row, "name"),
+				"title": _get(row, "title") or file_name_of(url),
+				"kind": _get(row, "kind") or "Other",
+				"file": url,
+				"traveler": _get(row, "traveler") or "",
+				"booking_group": group or "",
+				"booking_label": (_booking_label(index, group) or _get(row, "booking_label") or "")
+				if group
+				else "",
+				"file_name": file_name_of(url),
+				"is_image": is_image_file(url),
+			}
+		)
+	return out
 
 
 def _default_company(companies=None):
@@ -807,8 +1032,9 @@ def save_plan(plan, trip=None, modified=None):
 	"""Create or update a Travel Trip from the page's state and return the fresh state.
 
 	Args:
-		plan: JSON — ``{trip, status, travelers, bookings: {table: [card]}, stops}``. Every
-			key is optional except on a first save, which needs the trip and the crew.
+		plan: JSON — ``{trip, status, travelers, bookings: {table: [card]}, freight, stops,
+			documents}``. Every key is optional except on a first save, which needs the trip
+			and the crew; a first save can carry no files (:func:`merge_documents`).
 		trip: the Travel Trip to update; omitted on the first save.
 		modified: the ``modified`` the page loaded. A mismatch is refused.
 	"""
@@ -869,10 +1095,14 @@ def apply_plan(doc, plan):
 		for row in doc.get("ground_transport") or []
 		if row.transport_type == "Personal Vehicle"
 	}
+	# The page's key for each booking card and shipment -> the id it is stored under after
+	# this save: what a file's booking_group arrives as, and what it must be stored as.
+	group_map = {}
 	for table in BOOKING_TABLES:
 		if table not in bookings:
 			continue
 		cards = prepare_cards(bookings[table])
+		group_map.update((card["origin"], card["group"]) for card in cards if card.get("origin"))
 		for card in cards:
 			for member in card.get("members") or []:
 				if member.get("traveler") and member["traveler"] not in crew:
@@ -901,7 +1131,7 @@ def apply_plan(doc, plan):
 						shipment["traveler"]
 					)
 				)
-		rows, freight_notes = merge_freight(doc.get("freight") or [], plan["freight"])
+		rows, freight_notes = merge_freight(doc.get("freight") or [], plan["freight"], group_map)
 		_replace_table(doc, "freight", rows)
 		notes.extend(freight_notes)
 
@@ -915,6 +1145,13 @@ def apply_plan(doc, plan):
 		rows, stop_notes = merge_stops(doc.get("itinerary") or [], plan["stops"])
 		_replace_table(doc, "itinerary", rows)
 		notes.extend(stop_notes)
+
+	if "documents" in plan:
+		# Last: a file names its booking by the page's key, which only means something once
+		# the bookings and the freight have their stored ids.
+		rows, document_notes = merge_documents(doc, plan["documents"], group_map, crew)
+		_replace_table(doc, "documents", rows)
+		notes.extend(document_notes)
 	return notes
 
 

@@ -320,6 +320,9 @@ def tearDownModule():
 #: Amounts that must never reach a non-coordinator. Distinct, so a leak is findable.
 SENTINELS = ("211.11", "322.22", "433.33", "544.44", "655.55", "766.66", "877.77", "988.88")
 
+#: Every receipt on the fixture's cost rows is named receipt-*: none may reach any payload.
+RECEIPT_MARK = "receipt-"
+
 
 def make_trip(name="TRIP-1", **overrides):
 	"""Ann and Bo share a flight and a room; a whole-crew rental; Cy receives a shipment.
@@ -363,6 +366,7 @@ def make_trip(name="TRIP-1", **overrides):
 				estimated_cost=211.11,
 				paid_by="Company",
 				billable=1,
+				attachment="/private/files/receipt-f1.pdf",
 			),
 			FakeRow(
 				name="F2",
@@ -407,6 +411,7 @@ def make_trip(name="TRIP-1", **overrides):
 				cost=322.22,
 				paid_by="Employee",
 				paid_by_traveler="EMP-A",
+				attachment="/private/files/receipt-r1.pdf",
 			),
 			FakeRow(
 				name="R2",
@@ -434,6 +439,7 @@ def make_trip(name="TRIP-1", **overrides):
 				booking_reference="RC-1",
 				cost=0,
 				paid_by="Company",
+				attachment="/private/files/receipt-g1.pdf",
 			),
 		],
 		freight=[
@@ -447,9 +453,18 @@ def make_trip(name="TRIP-1", **overrides):
 				cost=433.33,
 				paid_by="Company",
 				billable=1,
+				attachment="/private/files/receipt-s1.pdf",
 			),
 		],
-		other_costs=[FakeRow(name="X1", cost=544.44, paid_by="Employee", paid_by_traveler="EMP-B")],
+		other_costs=[
+			FakeRow(
+				name="X1",
+				cost=544.44,
+				paid_by="Employee",
+				paid_by_traveler="EMP-B",
+				attachment="/private/files/receipt-x1.pdf",
+			)
+		],
 		mileage=[FakeRow(name="M1", distance=655.55, amount=655.55)],
 		itinerary=[
 			FakeRow(
@@ -466,6 +481,53 @@ def make_trip(name="TRIP-1", **overrides):
 				activity_description="Start-up",
 				location="POI-1",
 			),
+		],
+		# The trip's files (Trip Document). Not money: anyone who can open the trip sees
+		# them on the views, each person the ones that are theirs or their bookings'.
+		documents=[
+			FakeRow(name="D1", title="Site map", kind="Site map", file="/files/site-map.png"),
+			FakeRow(
+				name="D2",
+				title="",
+				kind="Boarding pass",
+				file="/private/files/bo-pass.pdf",
+				traveler="EMP-B",
+				booking_group="g1",
+			),
+			FakeRow(
+				name="D3",
+				title="Hotel One confirmation",
+				kind="Booking confirmation",
+				file="/private/files/hotel.pdf",
+				booking_group="g3",
+				booking_label="Hotel One",
+			),
+			FakeRow(
+				name="D4",
+				title="Ann's job packet",
+				kind="Job packet",
+				file="/private/files/ann-packet.pdf",
+				traveler="EMP-A",
+				traveler_name="Ann",
+			),
+			FakeRow(
+				name="D5",
+				title="Rental agreement",
+				kind="Rental agreement",
+				file="/private/files/rental.pdf",
+				booking_group="g4",
+			),
+			# Its booking was deleted on the form: it reads as a file for the whole trip.
+			FakeRow(
+				name="D6",
+				title="Old booking",
+				kind="Other",
+				file="/private/files/old.pdf",
+				booking_group="gone00000001",
+				booking_label="Gone",
+			),
+			# Nothing to open.
+			FakeRow(name="D7", title="No file", kind="Other", file=None),
 		],
 	)
 	for key, value in overrides.items():
@@ -522,6 +584,10 @@ MONEY_KEYS = frozenset(
 		"protected",
 		"amount",
 		"money",
+		# A receipt is money (trip files, 2026-09-26): the rows' Receipt field is named
+		# "attachment", and shape_itinerary stopped emitting it.
+		"attachment",
+		"receipt",
 	}
 )
 MONEY_PREFIXES = ("per_diem", "advance", "claim", "total_", "expense_", "estimated_", "mileage")
@@ -549,6 +615,15 @@ class MoneyAssertions(unittest.TestCase):
 		text = json.dumps(payload, default=str)
 		for amount in SENTINELS:
 			self.assertNotIn(amount, text, f"the amount {amount} reached a non-coordinator payload")
+		self.assertNoReceipt(payload)
+
+	def assertNoReceipt(self, payload):
+		"""No receipt in any payload, a coordinator's included: the views, /itinerary and the
+		emails never carry one (the coordinator's money block is cost and who paid)."""
+		self.assertEqual(
+			[path for path in money_paths(payload) if path.endswith((".attachment", ".receipt"))], []
+		)
+		self.assertNotIn(RECEIPT_MARK, json.dumps(payload, default=str), "a receipt reached a payload")
 
 
 class TestMoneyWalk(unittest.TestCase):
@@ -557,6 +632,19 @@ class TestMoneyWalk(unittest.TestCase):
 		self.assertEqual(money_paths({"a": [{"b": {"cost": 1}}]}), ["$.a[0].b.cost"])
 		self.assertEqual(money_paths({"per_diem_amount": 1, "money": None}), ["$.per_diem_amount"])
 		self.assertEqual(money_paths({"money": {"total": 1}}), ["$.money", "$.money.total"])
+		self.assertEqual(money_paths({"days": [{"attachment": "/x"}]}), ["$.days[0].attachment"])
+
+	def test_the_fixture_has_receipts_to_leak(self):
+		# Or assertNoReceipt passes vacuously.
+		doc = make_trip()
+		receipts = [
+			row.attachment
+			for table in ("flights", "accommodations", "ground_transport", "freight", "other_costs")
+			for row in getattr(doc, table)
+			if row.attachment
+		]
+		self.assertEqual(len(receipts), 5)
+		self.assertTrue(all(RECEIPT_MARK in url for url in receipts))
 
 
 def items_of(days):
@@ -655,9 +743,8 @@ class TestShapeItinerary(MoneyAssertions):
 				"arrival_time",
 				"booking_reference",
 				"travelers",
-				"attachment",
 			},
-			"hotel_checkin": {"time", "hotel", "address", "booking_confirmation", "travelers", "attachment"},
+			"hotel_checkin": {"time", "hotel", "address", "booking_confirmation", "travelers"},
 			"ground": {
 				"transport_type",
 				"provider",
@@ -669,7 +756,6 @@ class TestShapeItinerary(MoneyAssertions):
 				"cargo",
 				"booking_reference",
 				"travelers",
-				"attachment",
 			},
 			"freight": {
 				"carrier",
@@ -682,7 +768,6 @@ class TestShapeItinerary(MoneyAssertions):
 				"delivery_from",
 				"delivery_to",
 				"received_by",
-				"attachment",
 			},
 			"agenda": {
 				"time",
@@ -699,6 +784,12 @@ class TestShapeItinerary(MoneyAssertions):
 				self.assertLessEqual(
 					required[item["type"]] | {"type", "date", "sort_time"}, set(item), item["type"]
 				)
+			# Changed on purpose with trip files (2026-09-26): "attachment" used to be required
+			# here. It is the row's Receipt, and a receipt is money, so no item carries it now;
+			# no email or template ever read it. Booking paperwork is "documents".
+			self.assertNotIn("attachment", item)
+			if item["type"] != "agenda":
+				self.assertIn("documents", item)
 
 	def test_one_poi_cache_serves_several_people(self):
 		cache = {}
@@ -710,6 +801,184 @@ class TestShapeItinerary(MoneyAssertions):
 	def test_no_money_in_any_view(self):
 		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
 			self.assertNoMoney(travel.shape_itinerary(self.doc, viewer))
+
+	def test_a_room_guest_is_marked_with_their_own_nights(self):
+		# #1133's guests: in the whole-crew view each person on a room says whether they stay
+		# free, and a guest fitted to fewer nights says which, so the Overview can read
+		# "Bo (guest, Tue–Wed)".
+		room = next(
+			i for i in items_of(travel.shape_itinerary(self.doc)["days"]) if i["type"] == "hotel_checkin"
+		)
+		self.assertEqual([m["guest"] for m in room["members"]], [False, False])
+		self.assertNotIn("check_in_date", room["members"][1])
+
+		self.doc.accommodations[1].guest = 1
+		self.doc.accommodations[1].check_in_date = "2026-10-06"
+		self.doc.accommodations[1].check_out_date = "2026-10-07"
+		whole = items_of(travel.shape_itinerary(self.doc)["days"])
+		room = next(i for i in whole if i["type"] == "hotel_checkin" and i["group"] == "g3")
+		self.assertEqual(room["date"], "2026-10-05")  # the room's dates: its first row's
+		self.assertEqual(
+			room["members"],
+			[
+				{"employee": "EMP-A", "employee_name": "Ann", "ref": "H-A", "guest": False},
+				{
+					"employee": "EMP-B",
+					"employee_name": "Bo",
+					"ref": "H-B",
+					"guest": True,
+					"check_in_date": "2026-10-06",
+					"check_out_date": "2026-10-07",
+				},
+			],
+		)
+		# Only hotels have guests, and a person's own view has no members at all.
+		flight = next(i for i in whole if i["group"] == "g1")
+		self.assertNotIn("guest", flight["members"][0])
+		for item in items_of(travel.shape_itinerary(self.doc, "EMP-B")["days"]):
+			self.assertNotIn("members", item)
+		self.assertNoMoney(travel.shape_itinerary(self.doc))
+
+
+class TestTripFiles(MoneyAssertions):
+	"""Trip files on the views and /itinerary. All but money: everyone who can open the trip
+	sees every booking's files on the whole-crew view; one person's view shows the files that
+	are theirs, their bookings', and the whole trip's; and no receipt anywhere."""
+
+	def setUp(self):
+		self.doc = install_site()
+
+	def names(self, documents):
+		return [d["name"] for d in documents]
+
+	def test_the_whole_crew_sees_every_file_trip_wide_first_then_in_itinerary_order(self):
+		shaped = travel.shape_itinerary(self.doc)
+		# D1, D4 and D6 (its booking is gone) are the whole trip's, in row order; then the
+		# bookings as the days come: the flight (7:15), the rental (9:00), the hotel (evening).
+		# D7 has no file.
+		self.assertEqual(self.names(shaped["documents"]), ["D1", "D4", "D6", "D2", "D5", "D3"])
+		by_name = {d["name"]: d for d in shaped["documents"]}
+		self.assertEqual(
+			by_name["D2"],
+			{
+				"name": "D2",
+				"title": "bo-pass.pdf",
+				"kind": "Boarding pass",
+				"url": "/private/files/bo-pass.pdf",
+				"file_name": "bo-pass.pdf",
+				"is_image": False,
+				"for_name": "Bo",
+				"for_employee": "EMP-B",
+				"group": "g1",
+				"booking_label": "Southwest WN 1",
+			},
+		)
+		self.assertIs(by_name["D1"]["is_image"], True)
+		self.assertEqual(
+			(by_name["D1"]["for_name"], by_name["D1"]["group"], by_name["D1"]["booking_label"]),
+			(None, None, None),
+		)
+		self.assertEqual((by_name["D4"]["for_name"], by_name["D4"]["group"]), ("Ann", None))
+		self.assertEqual((by_name["D6"]["group"], by_name["D6"]["booking_label"]), (None, None))
+		self.assertEqual(by_name["D3"]["booking_label"], "Hotel One")
+		self.assertEqual(by_name["D5"]["booking_label"], "Enterprise")
+
+	def test_each_person_sees_their_own_their_bookings_and_the_whole_trips(self):
+		expected = {
+			# Ann: not Bo's boarding pass, but her job packet, her room and the crew's rental.
+			"EMP-A": ["D1", "D4", "D6", "D5", "D3"],
+			"EMP-B": ["D1", "D6", "D2", "D5", "D3"],
+			# Cy is on no flight and in no room: the whole trip's files and the crew's rental.
+			"EMP-C": ["D1", "D6", "D5"],
+		}
+		for employee, names in expected.items():
+			shaped = travel.shape_itinerary(self.doc, employee)
+			self.assertEqual(self.names(shaped["documents"]), names, employee)
+			self.assertNoMoney(shaped)
+
+	def test_each_booking_carries_its_own_files(self):
+		def files(viewer, kind, group):
+			items = items_of(travel.shape_itinerary(self.doc, viewer)["days"])
+			return [self.names(i["documents"]) for i in items if i["type"] == kind and i["group"] == group]
+
+		self.assertEqual(files(None, "flight", "g1"), [["D2"]])
+		self.assertEqual(files(None, "flight", "row:F3"), [[]])
+		self.assertEqual(files(None, "hotel_checkin", "g3"), [["D3"]])
+		self.assertEqual(files(None, "hotel_checkout", "g3"), [["D3"]])
+		self.assertEqual(files(None, "ground", "g4"), [["D5"]])
+		self.assertEqual(files(None, "freight", "row:S1"), [[]])
+		# Bo's boarding pass is on Bo's flight, not on Ann's.
+		self.assertEqual(files("EMP-A", "flight", "g1"), [[]])
+		self.assertEqual(files("EMP-B", "flight", "g1"), [["D2"]])
+		agenda = [i for i in items_of(travel.shape_itinerary(self.doc)["days"]) if i["type"] == "agenda"]
+		self.assertTrue(agenda)
+		self.assertTrue(all("documents" not in i for i in agenda))
+
+	def test_a_file_for_everyone_on_a_booking_follows_who_is_on_it(self):
+		# The rental is a whole-crew row, so its file is everyone's; pin the rental to Ann and
+		# its file is hers alone.
+		self.doc.ground_transport[0].traveler = "EMP-A"
+		self.assertIn("D5", self.names(travel.shape_itinerary(self.doc, "EMP-A")["documents"]))
+		self.assertNotIn("D5", self.names(travel.shape_itinerary(self.doc, "EMP-B")["documents"]))
+		self.assertIn("D5", self.names(travel.shape_itinerary(self.doc)["documents"]))
+
+	def test_a_shipments_files_follow_its_id(self):
+		self.doc.freight[0].booking_group = "ship00000001"
+		self.doc.documents.append(
+			FakeRow(
+				name="D8", kind="Bill of lading", file="/private/files/bol.pdf", booking_group="ship00000001"
+			)
+		)
+		items = items_of(travel.shape_itinerary(self.doc)["days"])
+		shipment = next(i for i in items if i["type"] == "freight")
+		self.assertEqual(shipment["group"], "ship00000001")
+		self.assertEqual(self.names(shipment["documents"]), ["D8"])
+		self.assertEqual(shipment["documents"][0]["booking_label"], "Old Dominion PRO-1")
+		# A file for nobody in particular on a shipment is its receiver's: Cy's, not Ann's.
+		self.assertIn("D8", self.names(travel.shape_itinerary(self.doc, "EMP-C")["documents"]))
+		self.assertNotIn("D8", self.names(travel.shape_itinerary(self.doc, "EMP-A")["documents"]))
+
+	def test_a_file_on_a_booking_with_no_name_yet_is_still_on_that_booking(self):
+		# /itinerary heads a booking's files with its label; a flight with no airline or number
+		# yet must not read as blank (the whole trip's), so it is called what it is.
+		for row in self.doc.flights:
+			if row.booking_group == "g1":
+				row.airline = ""
+				row.flight_number = ""
+		by_name = {d["name"]: d for d in travel.shape_itinerary(self.doc)["documents"]}
+		self.assertEqual((by_name["D2"]["group"], by_name["D2"]["booking_label"]), ("g1", "Flight"))
+
+	def test_no_receipt_in_any_payload(self):
+		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
+			self.assertNoReceipt(travel.shape_itinerary(self.doc, viewer))
+		for coordinator in (False, True):
+			with mock.patch.object(travel, "_is_coordinator", return_value=coordinator):
+				self.assertNoReceipt(travel.get_trip_views("TRIP-1"))
+				self.assertNoReceipt(travel.preview_itinerary_email("TRIP-1", "EMP-A"))
+		for as_employee in (None, "crew", "EMP-C"):
+			self.assertNoReceipt(travel.get_trip_itinerary("TRIP-1", as_employee))
+		# Nor is the Receipt field read at all (the docstrings may name it).
+		code = "".join(inspect.getsource(travel.shape_itinerary).split('"""')[0::2])
+		self.assertNotIn("attachment", code)
+
+	def test_the_real_file_names_are_the_last_path_segment(self):
+		from erpnext_enhancements.travel_management import completeness
+
+		self.assertEqual(
+			completeness.file_name_of("/private/files/Boarding Pass.JPG?fid=1"), "Boarding Pass.JPG"
+		)
+		self.assertEqual(completeness.file_name_of(None), "")
+		for url, image in (
+			("/files/a.png", True),
+			("/files/a.JPEG", True),
+			("/files/a.webp", True),
+			("/files/a.heic", True),
+			("/files/a.gif", True),
+			("/files/a.pdf", False),
+			("/files/png", False),
+			("", False),
+		):
+			self.assertIs(completeness.is_image_file(url), image, url)
 
 
 # --------------------------------------------------------------------------- build_trip_views
@@ -798,6 +1067,41 @@ class TestBuildTripViews(MoneyAssertions):
 		self.assertEqual(groups["row:F3"], {"cost": 0.0, "paid_by": None, "paid_by_name": None})
 		# Bookings plus freight, as the Review step's "Booked so far".
 		self.assertEqual(money["total"], round(422.22 + 644.44 + 433.33, 2))
+
+	def test_a_shipments_money_is_keyed_by_its_id_like_its_item(self):
+		# Shipments gained a booking_group with trip files; the money block, the items and the
+		# checklist must all key one by it (was: always row:<name>).
+		doc = make_trip()
+		doc.freight[0].booking_group = "ship00000001"
+		payload = self.build(True, doc)
+		groups = payload["money"]["groups"]
+		self.assertIn("ship00000001", groups)
+		self.assertNotIn("row:S1", groups)
+		self.assertEqual(groups["ship00000001"]["cost"], 433.33)
+		item_groups = {i["group"] for i in items_of(payload["whole"]) if i["type"] != "agenda"}
+		self.assertEqual(set(groups), item_groups)
+		self.assertIn("ship00000001", {g.get("group") for g in payload["gaps"]})
+		self.assertNoReceipt(payload)
+
+	def test_the_payload_carries_the_trips_files(self):
+		payload = self.build(False)
+		self.assertEqual(payload["documents"], travel.shape_itinerary(self.doc)["documents"])
+		self.assertEqual([d["name"] for d in payload["documents"]], ["D1", "D4", "D6", "D2", "D5", "D3"])
+		self.assertEqual(set(payload["people_documents"]), {"EMP-A", "EMP-B", "EMP-C"})
+		for employee, documents in payload["people_documents"].items():
+			self.assertEqual(documents, travel.shape_itinerary(self.doc, employee)["documents"])
+		# The files are not money: a crew member gets them all.
+		self.assertEqual(self.build(True)["documents"], payload["documents"])
+		self.assertNoMoney(payload)
+
+	def test_paperwork_gaps_reach_a_crew_member(self):
+		payload = self.build(False)
+		paperwork = [g for g in payload["gaps"] if g["check"] == "documents"]
+		# Ann has her PNR and no boarding pass (Bo's is his alone); the shipment has its
+		# tracking number and no bill of lading. The room and the rental have theirs.
+		self.assertEqual(
+			[(g["group"], g["employee_names"]) for g in paperwork], [("g1", ["Ann"]), ("row:S1", [])]
+		)
 
 	def test_each_payer_is_named(self):
 		doc = make_trip()

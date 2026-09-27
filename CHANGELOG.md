@@ -7,6 +7,220 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.547.0] - 2026-09-26
+
+**A trip now keeps its paperwork.** On Plan a Trip every flight, room, ride and shipment card has
+*Attach a file*, for a boarding pass, the hotel's confirmation, a rental agreement or a bill of
+lading, for everyone on the booking or for one person. A new **Files** step holds the files for the
+whole trip: a site map, the safety plan, an insurance certificate, the job packet. On `/itinerary`
+each booking lists its files as big tap targets. A picture opens in a viewer inside the page (a
+boarding pass shown at the gate), a PDF opens in the phone's own viewer, and a new **Documents**
+screen lists every file that person can see. The trip checklist flags a booking that is made but
+whose paperwork is not attached; it never blocks anything. This is PR 2 of the four-PR program Nik
+set out on 2026-09-26. It is numbered on top of PR 1 (#1135, 1.546.0), which merges first, so the
+number may change at merge.
+
+### Why
+
+- **The crew had nowhere to find their paperwork.** Each booking row had one "Attachment" field
+  (freight's said "BOL / Paperwork"), and `/itinerary` showed it as a bare download link. One field
+  per row could not hold each person's boarding pass on a shared flight, and a site map or safety
+  plan belongs to no booking at all.
+- **A receipt is money; a booking's paperwork is not.** PR 1's rule is "all but money": anyone who
+  can open a trip sees every booking and its files, and money stays with the coordinators. A
+  receipt says what was paid, so it is money. The old field held whichever file someone chose,
+  receipt or boarding pass, so the views could not tell which rule applied. The field is now the
+  cost row's **Receipt**, in the cost section, and nothing on the views, `/itinerary` or the emails
+  carries it. Booking paperwork is a new **Trip Document** row, which everyone on the trip can
+  open.
+- **No data patch.** Prod held no attachment on any travel row when this was built (checked
+  2026-09-26), so there is nothing to move from the old field into Trip Documents. The field keeps
+  its fieldname (`attachment`); only its label and place changed.
+- **The paperwork flag fires only for a booking that is already made.** Nik's rule: the booking is
+  made, so its paperwork should be here. A booking with no confirmation number (a shipment, no
+  tracking number) is already flagged for that, and one flag is enough. Flights are checked per
+  person, because a boarding pass is per person. Flags only; nothing is blocked.
+- **Only files attached to this trip.** A file is saved on a trip only when a File with that URL is
+  attached to that same trip. The page's uploads always are. A pasted URL, or another trip's file,
+  is refused ("That file is not attached to this trip.").
+- **Taking a file off the list keeps its File on the trip.** Removing a Trip Document row (the page's
+  ✕, a removed booking, a person taken off the crew) deletes only the row. The File stays attached
+  to the trip, in the form's sidebar, and frappe v16 deletes no File when a child row changes. The
+  ✕ means "not one of this trip's files", not "delete this upload", and a File two rows share must
+  not disappear from under the other.
+- **An upload does not make the next save "out of date".** Plan a Trip refuses a save based on a
+  version that has since been replaced, so an upload that moved the trip's `modified` would have
+  refused the save right after it. It does not, checked against frappe `version-16`:
+  - `handler.upload_file` only inserts the File;
+  - `File.after_insert` → `add_comment_in_reference_doc` → `Document.add_comment` only inserts an
+    "Attachment" Comment;
+  - `Comment.on_update`'s `update_comment_in_doc` returns early for anything but a plain
+    "Comment", and even then writes `_comments` without touching `modified`;
+  - this app's File `after_insert` hook returns early for a Travel Trip.
+
+  So no extra endpoint was needed.
+
+### Added
+
+- **Trip Document** (new child doctype, Travel Management), on a new **Documents** tab of Travel
+  Trip as the `documents` table. Fields: `title`, `kind` (Boarding pass, Booking confirmation,
+  Rental agreement, Bill of lading, Site map, Safety plan, Insurance certificate, Job packet,
+  Other), `file`, `traveler` ("Only For"; blank = everyone on the booking, or the whole crew),
+  `traveler_name`, hidden `booking_group` (the booking it is on; blank = the whole trip) and
+  `booking_label`, set by the planner.
+- **Plan a Trip** (`page/plan_a_trip/plan_a_trip.js`):
+  - A **Paperwork** block on every flight, room, ride and shipment card. It lists each file with an
+    Open link and lets anyone who may change the trip pick what the file is and who it is for, or
+    take it off the list. It says what the checklist asks for there. *Attach a file* opens frappe's
+    own uploader, private, several files at once, and appears only on a saved trip. An unsaved trip
+    says "Save the trip first to attach files."
+  - A new **Files** step (`step=files`, between Schedule and Review): the whole trip's files, every
+    booking's files with a "Go to" link, and the paperwork still missing.
+  - The Review step gains a **Paperwork** section and a Files tile.
+  - The views: each booking's files as chips on the Overview, with "Files for the whole trip"
+    under the tiles; a file count on each line of Side by side. View as shows the booking's files
+    as large rows, the person's files for the whole trip, and a link to their phone's Documents
+    screen. A room guest's chip on the Overview reads "Name (guest, Mon–Tue)".
+- **`planner.merge_documents`** and `DOCUMENT_FIELDS`. It adds, updates and drops Trip Document rows
+  by name. It refuses a person not on the crew, a kind that is not an option, a row with no file, a
+  file not attached to this trip, a file that is one of the trip's receipts (frappe reuses a
+  `file_url` when the same content is uploaded again), a booking the trip does not have, and any
+  file on a trip that has not been saved. A file already on its row is not checked again, so a File
+  deleted since cannot make the whole trip unsaveable. A saved file whose booking was removed
+  becomes a file for the whole trip, and the page is told. A file on a card that is not saved yet
+  names the card's page key (`new:<n>`) and is stored under the id that booking gets in the same
+  save. `get_state` returns `documents`.
+- **`completeness.document_gaps`**, last in `find_gaps`. Flights need a Boarding pass or Booking
+  confirmation per person with a PNR, and the gap names who is still missing one. A room needs its
+  Booking confirmation, a rental (Rental/Third Party) its Rental agreement or confirmation, and a
+  shipment its Bill of lading or confirmation. A company truck, a personal car and a taxi need
+  nothing. The form's checklist headline counts these as "missing paperwork".
+- **`shape_itinerary`**: every flight, check-in, check-out, ride and shipment carries `documents`,
+  its files this viewer sees, and the answer carries `documents`, every file this viewer sees: the
+  whole trip's first, then by booking in itinerary order. Each file is `{name, title, kind, url,
+  file_name, is_image, for_name, for_employee, group, booking_label}`. One person sees the files
+  for them, plus the ones for nobody in particular on the whole trip or on a booking they are on.
+  The whole-crew view sees them all. A booking with no name yet is labeled "Flight", "Room", "Ride"
+  or "Shipment", so its files are never taken for the whole trip's. On the whole-crew view each room
+  member also carries `guest` and, when they differ from the room's, their own check-in and
+  check-out dates.
+- **`views.build_trip_views`** passes `documents` and `people_documents` (each person's list, which
+  View as shows).
+- **`/itinerary`** (`public/js/travel/itinerary.js`, `itinerary.css`):
+  - Files on each booking card, as tap targets at least 48px tall. A picture opens the viewer, and
+    Ctrl-click or a long press still gets the browser's own menu. Anything else opens in a new tab,
+    never in an iframe (iOS shows only a PDF's first page in one) and with no `download`.
+  - The **Documents** screen (`&view=docs`, "Day by day | Documents (N)" under the person picker).
+    It groups by booking, not by name, so two rooms at one hotel are two groups.
+  - The **picture viewer** (`&file=<Trip Document>`): full screen, drawn outside the page root so a
+    redraw never closes it, with Close and "Open original", `role=dialog`, the page behind
+    `inert`, and focus kept inside. A picture the browser cannot draw (HEIC, anywhere but Safari)
+    says so.
+  - On the whole-crew view a room guest reads "guest · Mon, Sep 28 – Tue, Sep 29".
+  - **History:** each screen and each picture is its own entry, and there is still exactly one
+    `pushState(`. Four taps push: a trip chip (drops `as`, `view` and `file`), a person pick (keeps
+    the screen), a screen tab and a picture. Back/Forward on the same trip and person only redraw
+    and fetch nothing. "Day by day", Close and Escape go Back when the entry behind is exactly where
+    they lead. A viewer opened straight from a link has nothing of the page behind it, so Close
+    replaces the entry instead of leaving the page. A reload reopens the screen and the picture. A
+    `file` the answer does not list for that person, or that names a PDF, is not opened. The
+    viewer does nothing while "Report a problem" is open.
+- **The desk form** limits a trip file's *Only For* to the crew (`travel_trip.js` `set_query`).
+
+### Changed
+
+- **Each booking row's Attach field is now its Receipt**, in the row's cost section: Trip Flight,
+  Trip Accommodation, Trip Ground Transport, and Trip Freight (was "BOL / Paperwork"). Trip Expense
+  already said Receipt. `shape_itinerary` no longer sends `attachment` on any item. No email or
+  template read it. `www/travel_guidelines.html` now says receipts go on the cost row's Receipt,
+  and booking paperwork in the trip's files.
+- **Trip Freight has a `booking_group`**, one per shipment, so a bill of lading can belong to it.
+  `merge_freight` keeps a stored id and gives a shipment without one the page's key or a fresh id.
+  Two shipments never share one. Every freight key is now `completeness.group_key`: `shape_itinerary`'s
+  freight `group`, `views.build_money` and the page's freight gap matching. A shipment typed on the
+  form before this reads as `row:<name>` until the page next saves it. `FREIGHT_FIELDS` and the
+  page's `TP_FREIGHT` gain `booking_group` at the end. The page sends each shipment's page key as its
+  `booking_group`, as a card sends its `group`.
+- **Removing someone from the crew on Plan a Trip** now also drops the files pinned to them (the
+  server refuses a file for someone not on the trip; the Files stay attached).
+
+### Fixed
+
+- **Removing a shipment's receiver from the crew made every later save of the trip fail**, with
+  "… receives a shipment but is not in the crew". The page took the person off every booking but
+  not off the shipment. The shipment now goes to the whole crew, and one they paid for goes back to
+  the company, as on a booking card.
+- **`/itinerary`'s own footer was hidden** (the "Company travel guidelines" link). The page hides
+  the website's chrome with a bare `footer` selector, which also matched the page's own `<footer
+  class="ti-footer">`. Found by reading the CSS, not in a browser: both went in together in
+  v1.15.0, so the link has probably never shown. It is now `footer:not(.ti-footer)`.
+
+### Tests
+
+- **`tests/test_travel_planner.py`**: 97 to 130 tests. New classes cover trip files
+  (`merge_documents`) and the paperwork check (`document_gaps`). New pins: freight ids,
+  `get_state`'s documents, `TP_DOCUMENT` against `planner.DOCUMENT_FIELDS` and the doctype,
+  `TP_DOC_KINDS` against the `kind` options, `booking_group` last in `FREIGHT_FIELDS`, and the
+  uploader opened only from *Attach a file*, after its saved-trip guard. Pins changed on purpose:
+  - `test_the_guest_fills_the_last_gap_and_pays_nothing` asserted `find_gaps == []`. It now asserts
+    no gaps but paperwork, and lists the ten paperwork gaps. Its trip, modeled on TRIP-2026-00001,
+    has every confirmation number and no files, so eight flights (one person each) and two rooms
+    each ask for theirs. **Expect the same on prod**: an existing trip with numbers and no files
+    shows paperwork flags from the first load after deploy.
+  - `test_find_gaps_runs_in_step_order`: five checks, all present.
+  - `/itinerary`: `writeTripEntry(true` from two calls to four, with the exact set pinned; the
+    person pick passes `state.currentView`; `openScreen`, `openPicture` and `closePicture` check
+    `captureOpen()`, and `closePicture` uses `history.back()`; no `attachment`, `iframe` or
+    `download` in the code; the login redirect keeps `view` and `file`.
+- **`tests/test_travel_views.py`**: 55 to 68 tests. New: who sees which file and in what order, each
+  booking's own files, a shipment's files by its id, a booking with no name yet, the guest keys,
+  the views' payload, and freight money keyed by its id. The fixture now carries receipts and trip
+  files. Every payload, a coordinator's included, is checked for the receipt URLs and for an
+  `attachment` or `receipt` key. Changed on purpose:
+  `test_the_keys_the_emails_read_are_all_still_there` no longer requires `attachment`; it asserts
+  that key is gone from every item and that `documents` is there.
+- **`scripts/test_wizard_back_forward.mjs`**: Plan a Trip from 34 to 43 tests. The existing 34 are
+  unchanged. The fake `save_plan` now stores bookings, freight and files, gives page keys ids the
+  way `normalize_group` does, and refuses a file on a booking the trip lacks, a receiver or a file
+  for someone not on the crew. The new tests cover:
+  - files through a save, and an answer with no `documents`;
+  - files on a `new:<n>` card and a new shipment following them to their ids;
+  - an upload that finishes after a save redrew its booking (kept on a saved booking, moved to the
+    whole trip's files for a new one), or after another trip opened;
+  - `step=files` deep links, Back/Forward through it, and no uploader access on the way;
+  - no *Attach a file* without a saved trip or without write access;
+  - removing a booking or a person, including the shipment they received;
+  - the views: file chips, a file on a booking with a blank label, the guest label, no receipt,
+    each person's files from `people_documents`, the Documents link and the Side by side count.
+- **`scripts/test_web_flow_history.js`**: `/itinerary` gains 60 checks, and the whole file goes from
+  311 to 371. They cover files on cards, the Documents screen and its grouping by booking, the
+  viewer, every history move above, a stale answer that still carries `attachment` drawing nothing,
+  and unsafe URLs never made links. The shared fake DOM gained focus tracking, `removeChild`,
+  `isConnected` and event objects; every existing check still passes.
+- Nothing ran against a real bench. Plan a Trip was checked in a browser at 375px, light and dark,
+  against stub data (Getting there, Files, Review, Overview, View as); `/itinerary` only through
+  its harness.
+
+### After deploy
+
+1. `bench migrate` creates Trip Document and the Trip Freight `booking_group` column. Open a trip:
+   there is a Documents tab, and each booking row's cost section has a Receipt field.
+2. Confirm nothing landed in the old field since it was checked. This read-only query must return
+   0:
+
+   ```sql
+   select (select count(*) from `tabTrip Flight` where coalesce(attachment, '') <> '')
+        + (select count(*) from `tabTrip Accommodation` where coalesce(attachment, '') <> '')
+        + (select count(*) from `tabTrip Ground Transport` where coalesce(attachment, '') <> '')
+        + (select count(*) from `tabTrip Freight` where coalesce(attachment, '') <> '');
+   ```
+3. On Plan a Trip, as a coordinator, attach a PDF and a photo to a flight, change the second file to
+   "Only" one person, and move to the next step. The save must go through, not be refused as out of
+   date: the source reading above has not been run on a bench.
+4. On a phone, open `/itinerary?trip=<trip>` as that person: tap the photo (the viewer opens), press
+   Back (it closes), tap the PDF (the phone's viewer opens), then open Documents.
+5. Expect paperwork flags on existing trips that have confirmation numbers and no files.
+
 ## [1.546.0] - 2026-09-26
 
 **A saved trip can now be looked at whole: an Overview of every day, a crew-by-day grid, a

@@ -39,6 +39,7 @@ import sys
 import types
 import unittest
 from datetime import date
+from unittest import mock
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRAVEL_DIR = os.path.join(APP_DIR, "travel_management")
@@ -100,6 +101,7 @@ def traveler(employee, name=None, from_date=None, to_date=None):
 		name=f"T-{employee}",
 		employee=employee,
 		employee_name=name or employee,
+		is_trip_lead=0,
 		from_date=from_date,
 		to_date=to_date,
 	)
@@ -335,9 +337,18 @@ class TestConfirmationAndCost(unittest.TestCase):
 		self.assertEqual(completeness.cost_gaps(t), [])
 
 	def test_find_gaps_runs_in_step_order(self):
-		t = trip(accommodations=[stay(None, "2026-10-05", "2026-10-08", ref="", cost=0)])
+		# Paperwork (trip files, 2026-09-26) is the fifth check and runs last.
+		t = trip(
+			accommodations=[
+				stay(None, "2026-10-05", "2026-10-08", ref="", cost=0),
+				stay(None, None, None, name="R9", booking_group="r9"),
+			],
+			flights=[flight("EMP-A", "Outbound", "2026-10-05 07:00:00", booking_group="g1", ref="ABC")],
+		)
+		every = ["travel", "lodging", "confirmation", "cost", "documents"]
 		order = [g["check"] for g in completeness.find_gaps(t)]
-		self.assertEqual(order, sorted(order, key=["travel", "lodging", "confirmation", "cost"].index))
+		self.assertEqual(order, sorted(order, key=every.index))
+		self.assertEqual(set(order), set(every))
 
 
 # --------------------------------------------------------------------------- fan-out
@@ -623,7 +634,16 @@ class TestTheKaptureTrip(unittest.TestCase):
 		# His own night, so his itinerary does not have him checking in before he flies out.
 		self.assertEqual((logan["check_in_date"], logan["check_out_date"]), ("2026-09-28", "2026-09-29"))
 		self.assertEqual((jesse.check_in_date, jesse.check_out_date), ("2026-09-27", "2026-10-02"))
-		self.assertEqual(completeness.find_gaps(t), [])
+		# Changed on purpose with trip files (was: find_gaps == []). The checklist gained a
+		# fifth check, paperwork, and this trip has every confirmation number and no files, so
+		# each booking now asks for its own: eight flights (one person each) and two rooms.
+		# Everything the 1.544.0 fix was about is still clear.
+		gaps = completeness.find_gaps(t)
+		self.assertEqual([g for g in gaps if g["check"] != "documents"], [])
+		self.assertEqual(
+			sorted(g["group"] for g in gaps),
+			sorted(["k1", "j1", "b1", "l1", "b2", "l2", "k2", "j2", "jroom", "kroom"]),
+		)
 
 
 class TestStayWindow(unittest.TestCase):
@@ -877,6 +897,492 @@ class TestFreight(unittest.TestCase):
 		t = trip(travelers=[traveler("EMP-A")], freight=[row(name="FR1", traveler="EMP-A", carrier="ODFL")])
 		self.assertEqual(len(completeness.travel_gaps(t)), 2)
 
+	def test_every_shipment_gets_an_id_of_its_own_and_keeps_it(self):
+		# A file (a bill of lading) belongs to a shipment by its booking_group, so a shipment
+		# needs one that does not change: minted once, then kept whatever the page sends.
+		legacy = row(name="FR1", carrier="ODFL", booking_group=None, cost=0)
+		saved = row(name="FR2", carrier="Estes", booking_group="keepme123456", cost=0)
+		group_map = {}
+		rows, _notes = planner.merge_freight(
+			[legacy, saved],
+			[
+				{"name": "FR1", "carrier": "ODFL", "booking_group": ""},
+				{"name": "FR2", "carrier": "Estes", "booking_group": "otherid99999"},
+				{"name": None, "carrier": "Saia", "booking_group": "new:3"},
+				{"name": None, "carrier": "XPO", "booking_group": "safeid777777"},
+			],
+			group_map,
+		)
+		minted_legacy, kept, minted_new, safe = (planner._get(r, "booking_group") for r in rows)
+		self.assertRegex(minted_legacy, r"^[0-9a-f]{12}$")
+		self.assertEqual(kept, "keepme123456")
+		self.assertRegex(minted_new, r"^[0-9a-f]{12}$")
+		self.assertEqual(safe, "safeid777777")
+		self.assertEqual(
+			group_map,
+			{
+				"row:FR1": minted_legacy,
+				"otherid99999": "keepme123456",
+				"new:3": minted_new,
+				"safeid777777": "safeid777777",
+			},
+		)
+		# ...and the next save keeps what this one stored.
+		again, _notes = planner.merge_freight(rows, [{"name": "FR1", "carrier": "ODFL", "booking_group": ""}])
+		self.assertEqual(legacy.booking_group, minted_legacy)
+		self.assertEqual(again, [legacy])
+
+	def test_two_shipments_never_share_an_id(self):
+		rows, _notes = planner.merge_freight(
+			[],
+			[
+				{"name": None, "carrier": "ODFL", "booking_group": "same00000001"},
+				{"name": None, "carrier": "ODFL", "booking_group": "same00000001"},
+			],
+		)
+		self.assertEqual(rows[0]["booking_group"], "same00000001")
+		self.assertNotEqual(rows[1]["booking_group"], "same00000001")
+		# A new one sent first with a saved shipment's id does not take it from that shipment.
+		saved = row(name="FR1", carrier="ODFL", booking_group="saved0000001", cost=0)
+		rows, _notes = planner.merge_freight(
+			[saved],
+			[
+				{"name": None, "carrier": "Estes", "booking_group": "saved0000001"},
+				{"name": "FR1", "carrier": "ODFL", "booking_group": "saved0000001"},
+			],
+		)
+		self.assertNotEqual(rows[0]["booking_group"], "saved0000001")
+		self.assertEqual(saved.booking_group, "saved0000001")
+
+	def test_the_checklist_keys_a_shipment_by_its_id(self):
+		t = trip(freight=[row(name="FR1", carrier="ODFL", tracking_number="", cost=0, booking_group="s1s1s1")])
+		self.assertEqual([g["group"] for g in completeness.confirmation_gaps(t)], ["s1s1s1"])
+
+
+# --------------------------------------------------------------------------- trip files
+
+
+def doc_row(name, kind, url, booking_group=None, traveler=None, **kwargs):
+	return row(
+		name=name, kind=kind, file=url, booking_group=booking_group, traveler=traveler, **kwargs
+	)
+
+
+class FakeTrip(types.SimpleNamespace):
+	"""Enough of a Travel Trip for apply_plan: tables that turn dict rows into objects, the way
+	``Document.append`` makes a child row of them."""
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
+
+	def is_new(self):
+		return not self.name
+
+	def set(self, key, value):
+		setattr(self, key, list(value))
+
+	def append(self, key, value):
+		if isinstance(value, dict):
+			value = row(**value)
+		getattr(self, key).append(value)
+		return value
+
+
+def files_trip(**kwargs):
+	base = dict(
+		name="TRIP-1",
+		company="SF",
+		status="Planning",
+		start_date="2026-10-05",
+		end_date="2026-10-08",
+		travelers=[traveler("EMP-A", "Ann"), traveler("EMP-B", "Bo")],
+		flights=[],
+		accommodations=[],
+		ground_transport=[],
+		mileage=[],
+		freight=[],
+		other_costs=[],
+		itinerary=[],
+		documents=[],
+	)
+	base.update(kwargs)
+	return FakeTrip(**base)
+
+
+def attached(*urls):
+	"""A stand-in for the File check: these URLs are attached to the trip, nothing else is."""
+	return lambda url: url in urls
+
+
+class TestDocuments(unittest.TestCase):
+	"""Trip files: a boarding pass, a hotel confirmation, a bill of lading, or a file for the
+	whole trip, one Trip Document row each (``planner.merge_documents``). What must not
+	happen: a file for someone not on the trip, a file pointed at a booking that is not there,
+	a URL that is not this trip's upload, a receipt shown to the crew, or a file left pointing
+	at the page's temporary key for a booking."""
+
+	CREW = {"EMP-A", "EMP-B"}
+
+	def flight_trip(self, **kwargs):
+		return files_trip(
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-05 07:00:00", name="F1", booking_group="g1flight", ref="A1"),
+				flight("EMP-B", "Outbound", "2026-10-05 07:00:00", name="F2", booking_group="g1flight", ref="B1"),
+			],
+			**kwargs,
+		)
+
+	def merge(self, doc, documents, group_map=None, check=None):
+		return planner.merge_documents(
+			doc, documents, group_map or {}, self.CREW, file_check=check or attached(*[d["file"] for d in documents])
+		)
+
+	def test_add_update_and_drop_by_name(self):
+		old = doc_row("D1", "Other", "/private/files/old.pdf", title="Old")
+		gone = doc_row("D2", "Site map", "/private/files/map.png", title="Map")
+		doc = self.flight_trip(documents=[old, gone])
+		rows, notes = self.merge(
+			doc,
+			[
+				{"name": "D1", "title": "Job packet", "kind": "Job packet", "file": "/private/files/old.pdf"},
+				{"name": None, "title": "", "kind": "Boarding pass", "file": "/private/files/pass.png",
+					"traveler": "EMP-B", "booking_group": "g1flight"},
+			],
+		)
+		self.assertEqual(notes, [])
+		self.assertIs(rows[0], old)
+		self.assertEqual((old.title, old.kind), ("Job packet", "Job packet"))
+		self.assertNotIn(gone, rows)  # dropped from the table; its File is left alone
+		new = rows[1]
+		self.assertEqual(new["title"], "pass.png")  # blank title: the file's name
+		self.assertEqual((new["traveler"], new["booking_group"]), ("EMP-B", "g1flight"))
+		self.assertEqual(new["booking_label"], "Southwest WN1")
+
+	def test_for_everyone_or_for_one_person(self):
+		rows, _notes = self.merge(
+			self.flight_trip(),
+			[
+				{"kind": "Booking confirmation", "file": "/f/conf.pdf", "traveler": "", "booking_group": "g1flight"},
+				{"kind": "Boarding pass", "file": "/f/ann.png", "traveler": "EMP-A", "booking_group": "g1flight"},
+				{"kind": "Site map", "file": "/f/map.png", "traveler": None, "booking_group": ""},
+			],
+		)
+		self.assertEqual([r["traveler"] for r in rows], [None, "EMP-A", None])
+		# A file for the whole trip belongs to no booking and is named after none.
+		self.assertEqual((rows[2]["booking_group"], rows[2]["booking_label"]), (None, None))
+
+	def test_someone_not_on_the_trip_is_refused(self):
+		with self.assertRaises(planner.PlanError) as refused:
+			self.merge(self.flight_trip(), [{"kind": "Other", "file": "/f/x.pdf", "traveler": "EMP-Z"}])
+		self.assertEqual(str(refused.exception), "EMP-Z is not on this trip.")
+
+	def test_a_kind_that_is_not_an_option_is_refused_and_a_blank_one_is_other(self):
+		with self.assertRaises(planner.PlanError):
+			self.merge(self.flight_trip(), [{"kind": "Receipt", "file": "/f/x.pdf"}])
+		rows, _notes = self.merge(self.flight_trip(), [{"kind": "", "file": "/f/x.pdf"}])
+		self.assertEqual(rows[0]["kind"], "Other")
+
+	def test_a_row_with_no_file_is_refused(self):
+		with self.assertRaises(planner.PlanError):
+			self.merge(self.flight_trip(), [{"kind": "Other", "file": " "}])
+
+	def test_a_file_not_attached_to_this_trip_is_refused(self):
+		with self.assertRaises(planner.PlanError) as refused:
+			self.merge(self.flight_trip(), [{"kind": "Other", "file": "/private/files/hr.pdf"}], check=attached())
+		self.assertEqual(str(refused.exception), "That file is not attached to this trip.")
+
+	def test_the_file_is_checked_only_when_it_is_new_or_changed(self):
+		# A File deleted since it was put on the row must not make the trip unsaveable.
+		kept = doc_row("D1", "Other", "/private/files/deleted-since.pdf")
+		rows, _notes = self.merge(
+			self.flight_trip(documents=[kept]),
+			[{"name": "D1", "kind": "Other", "file": "/private/files/deleted-since.pdf"}],
+			check=attached(),
+		)
+		self.assertEqual(rows, [kept])
+		with self.assertRaises(planner.PlanError):
+			self.merge(
+				self.flight_trip(documents=[doc_row("D1", "Other", "/private/files/a.pdf")]),
+				[{"name": "D1", "kind": "Other", "file": "/private/files/elsewhere.pdf"}],
+				check=attached(),
+			)
+
+	def test_the_real_check_asks_for_a_file_attached_to_this_trip(self):
+		calls = []
+		fake = types.SimpleNamespace(
+			db=types.SimpleNamespace(exists=lambda doctype, filters: calls.append((doctype, filters)) or True)
+		)
+		with mock.patch.object(planner, "frappe", fake):
+			self.assertTrue(planner._file_on_trip("TRIP-1")("/private/files/pass.png"))
+		self.assertEqual(
+			calls,
+			[
+				(
+					"File",
+					{
+						"file_url": "/private/files/pass.png",
+						"attached_to_doctype": "Travel Trip",
+						"attached_to_name": "TRIP-1",
+					},
+				)
+			],
+		)
+
+	def test_a_receipt_cannot_become_a_trip_file(self):
+		# A receipt is money: it stays on its cost row, which the views never show.
+		doc = self.flight_trip(
+			other_costs=[row(name="X1", cost=40, attachment="/private/files/parking-receipt.pdf")]
+		)
+		doc.flights[0].attachment = "/private/files/fare-receipt.pdf"
+		for url in ("/private/files/parking-receipt.pdf", "/private/files/fare-receipt.pdf"):
+			with self.assertRaises(planner.PlanError):
+				self.merge(doc, [{"kind": "Booking confirmation", "file": url, "booking_group": "g1flight"}])
+
+	def test_a_booking_that_is_not_on_the_trip_is_refused(self):
+		with self.assertRaises(planner.PlanError):
+			self.merge(self.flight_trip(), [{"kind": "Other", "file": "/f/x.pdf", "booking_group": "nothere12345"}])
+
+	def test_a_file_whose_booking_was_removed_becomes_a_file_for_the_whole_trip(self):
+		# Removed on the form, or on the page in this same save: the file stays on the trip.
+		orphan = doc_row("D1", "Boarding pass", "/f/pass.png", booking_group="gone00000001", title="Pass")
+		rows, notes = self.merge(
+			self.flight_trip(documents=[orphan]),
+			[
+				{
+					"name": "D1",
+					"title": "Pass",
+					"kind": "Boarding pass",
+					"file": "/f/pass.png",
+					"booking_group": "gone00000001",
+				}
+			],
+		)
+		self.assertEqual((orphan.booking_group, orphan.booking_label), (None, None))
+		self.assertEqual(notes, ["Pass is now a file for the whole trip: its booking was removed."])
+
+	def test_a_trip_not_saved_yet_has_no_files(self):
+		with self.assertRaises(planner.PlanError):
+			self.merge(files_trip(name=None), [{"kind": "Other", "file": "/f/x.pdf"}])
+		rows, _notes = self.merge(files_trip(name=None), [])
+		self.assertEqual(rows, [])
+
+	def test_the_pages_card_keys_become_the_stored_ids(self):
+		# The page names a booking by its own key: new:<n> for a card not saved yet,
+		# row:<name> for one typed on the form. Both get an id in this same save, and the file
+		# must be stored under that id, not the key.
+		doc = files_trip(
+			flights=[
+				row(name="F9", traveler="EMP-A", booking_group=None, leg="Outbound", airline="Delta",
+					flight_number="DL9", departure_time="2026-10-05 06:00:00", booking_reference="Q1", cost=0),
+			],
+			freight=[
+				row(name="FR1", carrier="ODFL", tracking_number="PRO1", booking_group=None, traveler=None, cost=0)
+			],
+		)
+		plan = {
+			"bookings": {
+				"flights": [
+					{
+						"group": "new:1",
+						"values": {"leg": "Outbound", "airline": "Southwest", "flight_number": "WN1", "cost": 100},
+						"changed": ["leg", "airline", "flight_number", "cost"],
+						"members": [{"traveler": "EMP-A", "ref": "A1"}, {"traveler": "EMP-B", "ref": "B1"}],
+					},
+					{
+						"group": "row:F9",
+						"values": {"airline": "Delta", "flight_number": "DL9", "cost": 0},
+						"members": [{"name": "F9", "traveler": "EMP-A", "ref": "Q1"}],
+					},
+				]
+			},
+			"freight": [
+				{"name": "FR1", "carrier": "ODFL", "tracking_number": "PRO1", "booking_group": ""},
+				{"name": None, "carrier": "Estes", "tracking_number": "E2", "booking_group": "new:7"},
+			],
+			"documents": [
+				{"kind": "Boarding pass", "file": "/f/bo.png", "traveler": "EMP-B", "booking_group": "new:1"},
+				{"kind": "Booking confirmation", "file": "/f/dl9.pdf", "booking_group": "row:F9"},
+				{"kind": "Bill of lading", "file": "/f/bol1.pdf", "booking_group": "row:FR1"},
+				{"kind": "Bill of lading", "file": "/f/bol2.pdf", "booking_group": "new:7"},
+				{"kind": "Site map", "file": "/f/map.png", "booking_group": ""},
+			],
+		}
+		with mock.patch.object(planner, "_file_on_trip", lambda trip: (lambda url: True)):
+			notes = planner.apply_plan(doc, plan)
+		self.assertEqual(notes, [])
+		southwest = next(r for r in doc.flights if r.airline == "Southwest").booking_group
+		delta = next(r for r in doc.flights if r.airline == "Delta").booking_group
+		odfl, estes = (r.booking_group for r in doc.freight)
+		for stored in (southwest, delta, odfl, estes):
+			self.assertRegex(stored, r"^[0-9a-f]{12}$")
+		self.assertEqual(
+			[(d.booking_group, d.booking_label) for d in doc.documents],
+			[
+				(southwest, "Southwest WN1"),
+				(delta, "Delta DL9"),
+				(odfl, "ODFL PRO1"),
+				(estes, "Estes E2"),
+				(None, None),
+			],
+		)
+		self.assertEqual([d.idx for d in doc.documents], [1, 2, 3, 4, 5])
+		# ...and the state the page gets back names them the same way.
+		state_docs = planner._documents_state(doc)
+		self.assertEqual([d["booking_group"] for d in state_docs], [southwest, delta, odfl, estes, ""])
+
+	def test_the_doctype_is_the_one_the_planner_writes(self):
+		meta = _load_json(TRAVEL_DIR, "doctype", "trip_document", "trip_document.json")
+		fields = {f["fieldname"]: f for f in meta["fields"]}
+		self.assertEqual((meta["name"], meta["module"], meta["istable"]), ("Trip Document", "Travel Management", 1))
+		self.assertEqual(
+			meta["field_order"],
+			["title", "kind", "file", "traveler", "traveler_name", "booking_group", "booking_label"],
+		)
+		self.assertEqual(tuple(fields["kind"]["options"].split("\n")), completeness.DOCUMENT_KINDS)
+		self.assertEqual((fields["kind"]["default"], fields["kind"]["reqd"]), ("Other", 1))
+		self.assertEqual((fields["file"]["fieldtype"], fields["file"]["reqd"]), ("Attach", 1))
+		self.assertEqual((fields["traveler"]["options"], fields["traveler"]["ignore_user_permissions"]), ("Employee", 1))
+		self.assertEqual(fields["traveler_name"]["fetch_from"], "traveler.employee_name")
+		self.assertEqual((fields["booking_group"]["hidden"], fields["booking_group"]["read_only"]), (1, 1))
+		self.assertEqual(fields["booking_label"]["read_only"], 1)
+		self.assertLessEqual(set(planner.DOCUMENT_FIELDS), set(fields))
+		# The server names the booking; the page never writes it.
+		self.assertNotIn("booking_label", planner.DOCUMENT_FIELDS)
+		controller = _read(os.path.join(TRAVEL_DIR, "doctype", "trip_document", "trip_document.py"))
+		self.assertIn("class TripDocument(Document):", controller)
+
+	def test_the_trip_has_a_documents_tab(self):
+		meta = _load_json(TRAVEL_DIR, "doctype", "travel_trip", "travel_trip.json")
+		fields = {f["fieldname"]: f for f in meta["fields"]}
+		order = meta["field_order"]
+		self.assertEqual((fields["documents"]["fieldtype"], fields["documents"]["options"]), ("Table", "Trip Document"))
+		self.assertEqual(fields["documents"]["label"], "Trip Documents")
+		self.assertEqual(fields["documents_tab"]["fieldtype"], "Tab Break")
+		self.assertEqual(order.index("documents"), order.index("documents_tab") + 1)
+		# Child doctype and parent JSON are age-gated on migrate.
+		self.assertGreater(meta["modified"], "2026-09-23 15:00:00.000000")
+
+	def test_the_row_attachments_are_receipts_in_the_cost_section(self):
+		# A receipt is money. Booking paperwork is a Trip Document now; the old per-row field
+		# is the cost's Receipt, and sits with the cost. Prod had no row attachments on any
+		# travel table (checked 2026-09-26), so nothing moves.
+		for doctype in ("trip_flight", "trip_accommodation", "trip_ground_transport", "trip_freight", "trip_expense"):
+			meta = _load_json(TRAVEL_DIR, "doctype", doctype, f"{doctype}.json")
+			fields = {f["fieldname"]: f for f in meta["fields"]}
+			order = meta["field_order"]
+			self.assertEqual(fields["attachment"]["label"], "Receipt", doctype)
+			if doctype != "trip_expense":  # a misc cost is all cost; its Receipt was already there
+				self.assertGreater(order.index("attachment"), order.index("cost_section"), doctype)
+				self.assertGreater(meta["modified"], "2026-09-25 16:00:00.000000", doctype)
+		freight = _load_json(TRAVEL_DIR, "doctype", "trip_freight", "trip_freight.json")
+		group = next(f for f in freight["fields"] if f["fieldname"] == "booking_group")
+		self.assertEqual((group["fieldtype"], group["hidden"], group["read_only"]), ("Data", 1, 1))
+		self.assertEqual(planner.FREIGHT_FIELDS[-1], "booking_group")
+
+
+class TestPaperworkGaps(unittest.TestCase):
+	"""The fifth check: a booking that is made (it has its confirmation or tracking number)
+	but whose paperwork is not on the trip. It flags, never blocks, and never flags a booking
+	twice: one with no number is the confirmation check's."""
+
+	def two_on_a_flight(self, documents=(), refs=("A1", "B1"), leg="Outbound", when="2026-10-05 07:00:00"):
+		return trip(
+			flights=[
+				flight("EMP-A", leg, when, name="F1", booking_group="g1", ref=refs[0]),
+				flight("EMP-B", leg, when, name="F2", booking_group="g1", ref=refs[1]),
+			],
+			documents=list(documents),
+		)
+
+	def paperwork(self, t):
+		return checks(completeness.find_gaps(t), "documents")
+
+	def test_each_person_on_a_flight_needs_their_boarding_pass(self):
+		gaps = self.paperwork(self.two_on_a_flight([doc_row("D1", "Boarding pass", "/f/a.png", "g1", "EMP-A")]))
+		self.assertEqual(len(gaps), 1)
+		gap = gaps[0]
+		self.assertEqual(
+			(gap["table"], gap["group"], gap["step"], gap["label"], gap["employee_names"]),
+			("flights", "g1", "there", "Southwest WN1", ["Bo"]),
+		)
+		self.assertEqual(gap["kinds"], ["Boarding pass", "Booking confirmation"])
+		# Nobody has one: both are named.
+		self.assertEqual(self.paperwork(self.two_on_a_flight())[0]["employee_names"], ["Ann", "Bo"])
+
+	def test_a_file_for_everyone_on_the_flight_covers_everyone(self):
+		t = self.two_on_a_flight([doc_row("D1", "Booking confirmation", "/f/conf.pdf", "g1", None)])
+		self.assertEqual(self.paperwork(t), [])
+
+	def test_no_number_no_paperwork_flag(self):
+		t = self.two_on_a_flight(refs=("", "B1"))
+		self.assertEqual(checks(completeness.find_gaps(t), "confirmation")[0]["employee_names"], ["Ann"])
+		# Ann is the confirmation check's; only Bo is asked for paperwork.
+		self.assertEqual(self.paperwork(t)[0]["employee_names"], ["Bo"])
+		self.assertEqual(self.paperwork(self.two_on_a_flight(refs=("", " "))), [])
+
+	def test_the_wrong_kind_booking_or_an_empty_file_does_not_count(self):
+		for document in (
+			doc_row("D1", "Site map", "/f/map.png", "g1", None),
+			doc_row("D1", "Boarding pass", "/f/pass.png", "other1", None),
+			doc_row("D1", "Boarding pass", "", "g1", None),
+		):
+			self.assertEqual(len(self.paperwork(self.two_on_a_flight([document]))), 1, document.kind)
+
+	def test_a_whole_crew_flight_row_is_everyones_seat(self):
+		t = trip(flights=[flight(None, "Outbound", "2026-10-05 07:00:00", name="F1", ref="X1")])
+		self.assertEqual(self.paperwork(t)[0]["employee_names"], ["Ann", "Bo"])
+		t.documents = [doc_row("D1", "Boarding pass", "/f/ann.png", "row:F1", "EMP-A")]
+		self.assertEqual(self.paperwork(t)[0]["employee_names"], ["Bo"])
+
+	def test_the_step_is_the_one_the_confirmation_gap_names(self):
+		t = self.two_on_a_flight(refs=("", "B1"), leg="Return", when="2026-10-08 18:00:00")
+		self.assertEqual(checks(completeness.find_gaps(t), "confirmation")[0]["step"], "back")
+		self.assertEqual(self.paperwork(t)[0]["step"], "back")
+
+	def test_a_room_needs_its_confirmation_once(self):
+		rooms = [
+			stay("EMP-A", "2026-10-05", "2026-10-08", name="R1", booking_group="r1", ref="H-A"),
+			stay("EMP-B", "2026-10-05", "2026-10-08", name="R2", booking_group="r1", ref="H-B"),
+		]
+		gaps = self.paperwork(trip(accommodations=rooms))
+		self.assertEqual(
+			[(g["group"], g["step"], g["employee_names"], g["kinds"]) for g in gaps],
+			[("r1", "lodging", [], ["Booking confirmation"])],
+		)
+		# One confirmation on the booking is enough, whoever it names.
+		t = trip(accommodations=rooms, documents=[doc_row("D1", "Booking confirmation", "/f/h.pdf", "r1", "EMP-A")])
+		self.assertEqual(self.paperwork(t), [])
+		# A room where someone still has no number is flagged for that, not for its paperwork.
+		rooms[1].booking_confirmation = ""
+		self.assertEqual(self.paperwork(trip(accommodations=rooms)), [])
+
+	def test_a_rental_needs_its_agreement_and_our_own_vehicles_do_not(self):
+		def ride(kind, **kwargs):
+			return row(
+				name="G1", traveler=None, booking_group="v1", leg="During Trip", transport_type=kind,
+				supplier="Enterprise", booking_reference="RC-1", cost=10, pickup_datetime=None, **kwargs
+			)
+
+		gaps = self.paperwork(trip(ground_transport=[ride("Rental/Third Party")]))
+		self.assertEqual([(g["group"], g["step"], g["label"]) for g in gaps], [("v1", "around", "Enterprise")])
+		agreement = [doc_row("D1", "Rental agreement", "/f/ra.pdf", "v1")]
+		self.assertEqual(self.paperwork(trip(ground_transport=[ride("Rental/Third Party")], documents=agreement)), [])
+		for kind in ("Company Fleet", "Personal Vehicle", "Taxi/Rideshare"):
+			self.assertEqual(self.paperwork(trip(ground_transport=[ride(kind)])), [], kind)
+
+	def test_a_shipment_needs_its_bill_of_lading(self):
+		def shipment(tracking):
+			return row(name="S1", carrier="ODFL", tracking_number=tracking, booking_group="s1s1s1", cost=5, traveler=None)
+
+		gaps = self.paperwork(trip(freight=[shipment("PRO 1")]))
+		self.assertEqual(
+			[(g["table"], g["group"], g["step"], g["label"], g["employee_names"]) for g in gaps],
+			[("freight", "s1s1s1", "freight", "ODFL PRO 1", [])],
+		)
+		bol = [doc_row("D1", "Bill of lading", "/f/bol.pdf", "s1s1s1")]
+		self.assertEqual(self.paperwork(trip(freight=[shipment("PRO 1")], documents=bol)), [])
+		self.assertEqual(self.paperwork(trip(freight=[shipment("")])), [])
+
 
 class TestPlaces(unittest.TestCase):
 	def test_a_picked_point_becomes_the_geojson_the_maps_read(self):
@@ -1003,6 +1509,80 @@ class TestState(unittest.TestCase):
 		self.assertEqual([m["traveler"] for m in cards[0]["members"]], ["EMP-A", "EMP-B"])
 		self.assertEqual(cards[0]["values"]["cost"], 150)
 		self.assertIn("gaps", state)
+		self.assertEqual(state["documents"], [])
+
+	def test_the_trips_files_read_back_for_the_page(self):
+		doc = files_trip(
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-05 07:00:00", name="F1", booking_group="g1", airline="Delta"),
+			],
+			freight=[row(name="S1", carrier="ODFL", tracking_number="PRO 1", booking_group="s1s1s1", cost=0,
+				billable=0, traveler=None)],
+			documents=[
+				doc_row("D1", "Boarding pass", "/private/files/Ann Pass.PNG", "g1", "EMP-A", title="",
+					booking_label="stale"),
+				doc_row("D2", "Bill of lading", "/files/bol.pdf?v=1", "s1s1s1", None, title="BOL"),
+				doc_row("D3", "Site map", "/files/map.pdf", None, None, title="Site"),
+				# Its booking was removed on the form: shown where the next save puts it.
+				doc_row("D4", "Other", "/files/x.heic", "gone00000001", None, title="X", booking_label="Gone"),
+			],
+		)
+		doc.modified = "2026-09-26 09:00:00"
+		doc.purpose = doc.travel_type = doc.travel_for_doctype = doc.travel_for_name = None
+		doc.billable = 0
+		doc.trip_description = None
+		state = planner.get_state(doc)
+		self.assertEqual(
+			state["documents"],
+			[
+				{
+					"name": "D1",
+					"title": "Ann Pass.PNG",
+					"kind": "Boarding pass",
+					"file": "/private/files/Ann Pass.PNG",
+					"traveler": "EMP-A",
+					"booking_group": "g1",
+					"booking_label": "Delta WN1",  # read from the booking as it is now
+					"file_name": "Ann Pass.PNG",
+					"is_image": True,
+				},
+				{
+					"name": "D2",
+					"title": "BOL",
+					"kind": "Bill of lading",
+					"file": "/files/bol.pdf?v=1",
+					"traveler": "",
+					"booking_group": "s1s1s1",
+					"booking_label": "ODFL PRO 1",
+					"file_name": "bol.pdf",
+					"is_image": False,
+				},
+				{
+					"name": "D3",
+					"title": "Site",
+					"kind": "Site map",
+					"file": "/files/map.pdf",
+					"traveler": "",
+					"booking_group": "",
+					"booking_label": "",
+					"file_name": "map.pdf",
+					"is_image": False,
+				},
+				{
+					"name": "D4",
+					"title": "X",
+					"kind": "Other",
+					"file": "/files/x.heic",
+					"traveler": "",
+					"booking_group": "",
+					"booking_label": "",
+					"file_name": "x.heic",
+					"is_image": True,
+				},
+			],
+		)
+		# A shipment's id reaches the page with the rest of its fields.
+		self.assertEqual(state["freight"][0]["booking_group"], "s1s1s1")
 
 
 # --------------------------------------------------------------------------- contracts
@@ -1034,6 +1614,32 @@ class TestContracts(unittest.TestCase):
 		meta = _load_json(TRAVEL_DIR, "doctype", "trip_freight", "trip_freight.json")
 		fields = {f["fieldname"] for f in meta["fields"]}
 		self.assertTrue(set(planner.FREIGHT_FIELDS) <= fields)
+		# A shipment's id (trip files, 2026-09-26), last on both lists: the page sends its key
+		# there, as a card sends its group.
+		self.assertEqual(planner.FREIGHT_FIELDS[-1], "booking_group")
+
+	def test_page_and_server_share_the_document_fields(self):
+		# A file's row, as the page sends it and planner.merge_documents reads it. A field on one
+		# list and not the other is dropped with no error.
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		block = re.search(r"const TP_DOCUMENT = \[(.*?)\];", source, re.S).group(1)
+		self.assertEqual(re.findall(r'"([a-z_]+)"', block), list(planner.DOCUMENT_FIELDS))
+		meta = _load_json(TRAVEL_DIR, "doctype", "trip_document", "trip_document.json")
+		self.assertTrue(set(planner.DOCUMENT_FIELDS) <= {f["fieldname"] for f in meta["fields"]})
+
+	def test_the_pages_file_kinds_are_the_trip_document_kinds(self):
+		# The page's Kind menu, in the Select's order: a kind the page offers and the server does
+		# not know makes the whole save refused.
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		kinds = re.findall(r'"([^"]+)"', re.search(r"const TP_DOC_KINDS = \[(.*?)\];", source, re.S).group(1))
+		meta = _load_json(TRAVEL_DIR, "doctype", "trip_document", "trip_document.json")
+		field = next(f for f in meta["fields"] if f["fieldname"] == "kind")
+		self.assertEqual(kinds, [o for o in field["options"].split("\n") if o])
+		icons = re.search(r"const TP_DOC_ICONS = \{(.*?)\n\};", source, re.S).group(1)
+		keys = [quoted or bare for quoted, bare in re.findall(r'^\t(?:"([^"]+)"|(\w+)):', icons, re.M)]
+		self.assertEqual(sorted(keys), sorted(kinds), "every kind has its icon")
+		defaults = re.search(r"const TP_DOC_DEFAULT_KIND = \{(.*?)\n\};", source, re.S).group(1)
+		self.assertLessEqual(set(re.findall(r':\s*"([^"]+)"', defaults)), set(kinds))
 
 	def test_freight_is_a_cost_table_everywhere_money_is_counted(self):
 		from erpnext_enhancements.travel_management import COST_TABLES
@@ -1280,6 +1886,27 @@ class TestPageRouting(unittest.TestCase):
 		route = re.search(r"\n\troute\(args, mark\) \{(.*?)\n\t\}\n", self.code, re.S).group(1)
 		self.assertLess(route.index("this.route_view(args, mark)"), route.index("this.jump_to("))
 
+	def test_the_uploader_is_opened_only_by_attach_a_file_on_a_saved_trip(self):
+		# frappe's uploader is a dialog loaded on demand (file_uploader.bundle.js): reached for
+		# while a step draws or a route is handled, it is missing on a desk that has not loaded
+		# it yet, and in the Back/Forward harness. A File is attached to a trip by its name, so
+		# a trip not saved yet cannot have one. attach_files, called only from the button, is
+		# the one place that touches it, after its guard.
+		body = re.search(r"\n\tattach_files\(target\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(body, "attach_files() is gone")
+		code = body.group(1)
+		self.assertEqual(self.code.count("frappe.ui.FileUploader"), code.count("frappe.ui.FileUploader"))
+		self.assertEqual(self.code.count("new frappe.ui.FileUploader("), 1)
+		guard = code.index("if (!s || !s.name || !s.can_write) return;")
+		self.assertLess(guard, code.index("new frappe.ui.FileUploader("))
+		self.assertIn('doctype: "Travel Trip"', code)
+		self.assertIn("make_attachments_public: false", code)
+		# ...and the only caller is a click.
+		self.assertEqual(
+			re.findall(r"[^\n]*this\.attach_files\([^\n]*", self.code),
+			['\t\t\t\t.on("click", () => this.attach_files(target));'],
+		)
+
 	def test_no_hand_built_app_links(self):
 		# The v16 desk is /desk; the router only intercepts /desk links, so an in-desk
 		# href="/app/..." costs a full reload and a redirect.
@@ -1315,12 +1942,13 @@ def _strip_js_comments(source):
 
 
 class TestItineraryBackForward(unittest.TestCase):
-	"""/itinerary: the trip and person on screen are ?trip=<name>&as=<employee|crew>, a chip
-	tap or a person pick is one history entry, and Back / Forward load the entry's trip and
-	person. Before, Back after switching trips left the page (or the home-screen app), and a
-	reload or Back from /travel_guidelines showed the default trip instead of the one being
-	read. A ?trip= outside the person's own list is asked for (the server's read permission
-	decides); only a refusal replaces the entry."""
+	"""/itinerary: the trip, person, screen and picture on screen are
+	?trip=<name>&as=<employee|crew>&view=docs&file=<Trip Document>. A chip tap, a person pick,
+	"Documents" and a picture are each one history entry, and Back / Forward load the entry's
+	trip and person, or only redraw its screen and picture. Before, Back after switching trips
+	left the page (or the home-screen app), and a reload or Back from /travel_guidelines showed
+	the default trip instead of the one being read. A ?trip= outside the person's own list is
+	asked for (the server's read permission decides); only a refusal replaces the entry."""
 
 	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
 	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
@@ -1376,17 +2004,35 @@ class TestItineraryBackForward(unittest.TestCase):
 			login_redirect("/itinerary?trip=TRIP-0007&as=HR-EMP-00002"),
 			"/login?redirect-to=/itinerary%3Ftrip%3DTRIP-0007%26as%3DHR-EMP-00002",
 		)
+		# ...and the Documents screen, with the picture open on it.
+		self.assertEqual(
+			login_redirect("/itinerary?trip=TRIP-0007&view=docs&file=a1b2c3"),
+			"/login?redirect-to=/itinerary%3Ftrip%3DTRIP-0007%26view%3Ddocs%26file%3Da1b2c3",
+		)
 		# Never anywhere but this page.
 		self.assertEqual(login_redirect("//evil.example/x"), "/login?redirect-to=/itinerary")
 
 	def test_history_calls_come_only_from_the_tap_and_the_boot(self):
 		code = _strip_js_comments(_read(self.ITINERARY_JS))
 		self.assertNotIn("beforeunload", code)
-		# One push, in writeTripEntry. It is called with push=true from exactly two taps: a trip
-		# chip (the trip only, which drops ?as=) and a person in the picker (trip and person).
-		# Deliberately two since the person picker (was: one, the chip alone).
+		# One push, in writeTripEntry. It is called with push=true from exactly four taps, pinned
+		# as the whole set: a trip chip (the trip only, which drops ?as=, ?view= and ?file=), a
+		# person in the picker (trip and person, keeping the screen), a screen tab ("Documents",
+		# or "Day by day" when the day list is not the entry behind) and a picture (the viewer,
+		# &file=, over the screen it was opened from). Deliberately four since the Documents
+		# screen and the picture viewer (was: two, the chip and the person picker).
 		self.assertEqual(code.count("pushState("), 1)
-		self.assertEqual(code.count("writeTripEntry(true"), 2)
+		self.assertEqual(
+			sorted(re.findall(r"writeTripEntry\(true[^;]*\);", code)),
+			sorted(
+				[
+					"writeTripEntry(true, trip.name);",
+					"writeTripEntry(true, state.currentTrip, choice.as, state.currentView);",
+					"writeTripEntry(true, state.currentTrip, state.currentAs, view);",
+					"writeTripEntry(true, state.currentTrip, state.currentAs, state.currentView, doc.name);",
+				]
+			),
+		)
 		self.assertRegex(
 			code,
 			r"chip\.addEventListener\('click', function \(\) \{\s*"
@@ -1395,8 +2041,19 @@ class TestItineraryBackForward(unittest.TestCase):
 		self.assertRegex(
 			code,
 			r"chip\.addEventListener\('click', function \(\) \{\s*"
-			r"if \(choice\.as !== shown\) writeTripEntry\(true, state\.currentTrip, choice\.as\);",
+			r"if \(choice\.as !== shown\) writeTripEntry\(true, state\.currentTrip, choice\.as, state\.currentView\);",
 		)
+		# The screen tab and the picture push only from their own functions, which do nothing
+		# while "Report a problem" is open: the panel owns Back and every history write then.
+		for name in ("openScreen", "openPicture", "closePicture"):
+			start = code.index(f"function {name}(")
+			fn = code[start : code.index("\n\tfunction ", start + 1)]
+			self.assertIn("captureOpen()", fn, name)
+		# Close and Escape go Back onto the screen underneath rather than pushing it again.
+		start = code.index("function closePicture(")
+		close = code[start : code.index("\n\tfunction ", start + 1)]
+		self.assertIn("window.history.back()", close)
+		self.assertNotIn("writeTripEntry(true", close)
 		# loadTrip, which popstate calls, never writes history...
 		body = code[code.index("function loadTrip(") : code.index("function defaultTrip(")]
 		self.assertNotIn("writeTripEntry", body)
@@ -1419,6 +2076,18 @@ class TestItineraryBackForward(unittest.TestCase):
 		# activity is typed in by people).
 		self.assertNotIn("bindPopup('", code)
 		self.assertNotIn(".innerHTML = '<", code)
+
+	def test_no_receipts_and_no_pdf_in_a_frame(self):
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		# A booking row's own `attachment` is its receipt now: money, which this page never
+		# shows. Its files come from Trip Document (`documents`) instead.
+		self.assertNotIn("attachment", code.lower())
+		self.assertIn("item.documents", code)
+		# A PDF opens in a new tab (the phone's own viewer): iOS draws only the first page of a
+		# PDF in an iframe. And never as a download, which a boarding pass at the gate is not.
+		self.assertNotIn("iframe", code.lower())
+		self.assertNotIn(".download", code)
+		self.assertNotIn("'download'", code)
 
 	def test_the_page_in_a_fake_browser(self):
 		node = shutil.which("node")
