@@ -40,6 +40,16 @@
 {{ ps_fact("JOB", (sheet.job or "Not set") | e, "44%") }}
 {{ ps_fact("TRIP LEAD", (sheet.lead_name or "Not set") | e, "28%") }}
 {{ ps_facts_close() }}
+{%- if sheet.crew_dates_text %}
+{#- Everyone is on the trip for all of it (the usual crew): the crew is one line under the
+    facts, the dates said once, rather than a table printing the trip's dates on every row. -#}
+{%- set crew_line -%}
+{%- for person in sheet.crew %}{% if not loop.first %}, {% endif %}{{ person.name | e }}{% endfor %} &middot; {% if sheet.crew | length > 1 %}everyone {% endif %}{{ sheet.crew_dates_text | e }}
+{%- endset %}
+{{ ps_facts_open(False) }}
+{{ ps_fact("CREW", crew_line, "100%") }}
+{{ ps_facts_close() }}
+{%- endif %}
 
 {{ ps_section_title("Who to call") }}
 <table style="{{ TABLE }};page-break-inside:avoid">
@@ -62,6 +72,7 @@
   </tbody>
 </table>
 
+{%- if not sheet.crew_dates_text %}
 {{ ps_section_title("Crew") }}
 <table style="{{ TABLE }}">
   <thead style="display:table-header-group">
@@ -81,6 +92,7 @@
   {%- endfor %}
   </tbody>
 </table>
+{%- endif %}
 
 {{ ps_section_title("Day by day") }}
 <table style="{{ TABLE }}">
@@ -89,15 +101,15 @@
       <th style="{{ TH }};width:15%">Time</th>
       <th style="{{ TH }};width:{{ '37%' if wide else '55%' }}">What</th>
       {%- if wide %}
-      <th style="{{ TH }};width:18%">Who</th>
+      <th style="{{ TH }};width:24%">Who</th>
       {%- endif %}
-      <th style="{{ TH }};width:30%">Confirmation #</th>
+      <th style="{{ TH }};width:{{ '24%' if wide else '30%' }}">Confirmation #</th>
     </tr>
   </thead>
   <tbody>
   {%- for day in sheet.days %}
     <tr style="page-break-inside:avoid;page-break-after:avoid">
-      <td colspan="{{ columns }}" style="{{ TD }};padding-top:10px !important"><span style="{{ LABEL }}">{{ day.label | e }}</span></td>
+      <td colspan="{{ columns }}" style="{{ TD }};padding-top:7px !important"><span style="{{ LABEL }}">{{ day.label | e }}</span></td>
     </tr>
     {%- for row in day.rows %}
     <tr style="page-break-inside:avoid">
@@ -146,13 +158,13 @@
 {%- endif %}
 
 {%- if sheet.money %}
-<div style="display:table;width:100%;margin-top:14px;padding-top:8px;page-break-inside:avoid">
+<div style="display:table;width:100%;margin-top:10px;page-break-inside:avoid">
   <div style="display:table-cell;vertical-align:top"><span style="{{ LABEL }}">BOOKED SO FAR</span> <span style="{{ SMALL }}">(travel coordinators only)</span></div>
   <div style="display:table-cell;vertical-align:top;text-align:right"><span style="{{ STRONG }}">{{ sheet.money.total_text | e }}</span></div>
 </div>
 {%- endif %}
 
-<div style="margin-top:14px;{{ SMALL }};page-break-inside:avoid">
+<div style="margin-top:10px;{{ SMALL }};page-break-inside:avoid">
   {%- if sheet.printed_on %}Printed {{ sheet.printed_on | e }}. {% endif -%}
   Bookings change: the latest is on your phone at <a href="{{ sheet.itinerary_url | e }}" style="color:inherit">{{ sheet.itinerary_url | e }}</a>.
 </div>

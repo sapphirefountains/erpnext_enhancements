@@ -919,6 +919,25 @@ class TestRoomGuests(unittest.TestCase):
 		)
 		self.assertEqual([m["guest"] for m in room["members"]], [1, 0])
 
+	def test_the_cards_address_line_never_fails_the_page(self):
+		"""The room card shows its street address (``_room_address``: the row holds the Address
+		record's name, resolved through ``api.travel._address_text``, which
+		``tests/test_travel_views.py`` runs against a site). Resolving it must never cost the page
+		its trip: with ``api.travel`` unimportable the value shows as stored, and a room with no
+		address shows nothing."""
+		with mock.patch.dict(sys.modules, {"erpnext_enhancements.api.travel": None}):
+			stored = planner._room_address(" Harborview Suites-Billing ", {})
+			self.assertEqual(stored, "Harborview Suites-Billing")
+			self.assertEqual(planner._room_address(None, {}), "")
+			doc = FakeDoc(
+				travelers=[],
+				accommodations=[stay("EMP-A", "2026-10-05", "2026-10-08", name="H1", address="12 Typed Rd")],
+			)
+			(room,) = planner._cards(doc, "accommodations", {}, {})
+		self.assertEqual(room["address"], "12 Typed Rd")
+		bare = FakeDoc(accommodations=[stay("EMP-A", "2026-10-05", "2026-10-08")])
+		self.assertEqual(planner._cards(bare, "accommodations", {})[0]["address"], "")
+
 	def test_the_page_sends_the_guest_flag_and_the_field_exists(self):
 		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
 		payload = re.search(r"\n\tpayload\(\) \{(.*?)\n\t\}\n", source, re.S).group(1)

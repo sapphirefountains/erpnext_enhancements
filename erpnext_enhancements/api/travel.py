@@ -34,6 +34,7 @@ Security:
 	  applies to the calendar.
 """
 
+import functools
 import json
 import re
 from html import unescape as _unescape
@@ -324,7 +325,9 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 		_crew_member_or_throw(doc, as_employee)
 		viewing = as_employee
 
-	result = shape_itinerary(doc, viewing)
+	# One lookup cache for the itinerary and the contacts card: a hotel's Address is read once.
+	cache = {}
+	result = shape_itinerary(doc, viewing, poi_cache=cache)
 	sheet = _sheet_available()
 	result.update(
 		crew=trip_views.crew(doc),
@@ -332,7 +335,7 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 		viewer_employee=session_emp,
 		viewer_on_trip=viewer_on_trip,
 		# Who to call, for the person shown: their own hotels only (``_trip_contacts``).
-		contacts=_trip_contacts(doc, viewing),
+		contacts=_trip_contacts(doc, viewing, hotels=_hotel_details(doc, cache)),
 		# The printed Trip Sheet: the whole trip's, and the one for the person shown (the
 		# whole trip's again when that is the whole crew). Null while the format is missing
 		# (``_sheet_available``): the page then draws no link.
@@ -355,7 +358,9 @@ def get_trip_views(trip: str):
 	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
 
 	is_coordinator = _is_coordinator()
-	hotels = _hotel_details(doc)
+	# One lookup cache for every person's itinerary and the hotels: an Address is read once.
+	cache = {}
+	hotels = _hotel_details(doc, cache)
 	payload = trip_views.build_trip_views(
 		doc,
 		shape_itinerary,
@@ -364,6 +369,7 @@ def get_trip_views(trip: str):
 		currency=_trip_currency(doc) if is_coordinator else None,
 		hotels=hotels,
 		sheet_available=_sheet_available(),
+		poi_cache=cache,
 	)
 	payload.update(
 		# The whole trip's contacts: every hotel.
@@ -459,8 +465,21 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 	(``_booking_facts``). A Trip Document naming one of the trip's receipts is never
 	sent.
 
+	A hotel item's ``address`` is the room's street address as one line
+	("1 Harbor Dr, San Diego, CA 92101"). The room row's ``address`` is fetched
+	from the hotel Supplier's primary address, a Link, so it holds the Address
+	record's *name* ("Harborview Suites-Billing"), and until 2026-09-27 that name
+	was what ``/itinerary`` (since v1.15.0) and Plan a Trip's views printed under
+	the hotel. It is resolved here (``_address_text``); a
+	value no Address is named is text someone typed and is sent as it is.
+
 	``poi_cache`` lets several calls on one trip (one per crew member, on Plan
-	a Trip's views) share their Travel POI lookups."""
+	a Trip's views; one per recipient of an itinerary send) share their Travel
+	POI and Address lookups. Addresses are kept under ``("Address", name)``
+	keys, which no POI name can equal, so the one dict serves both."""
+
+	if poi_cache is None:
+		poi_cache = {}
 
 	def visible(row_traveler):
 		return not row_traveler or not viewing_employee or row_traveler == viewing_employee
@@ -551,7 +570,8 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 		check_out_time = _clock(row.get("check_out_time"))
 		base = {
 			"hotel": row.hotel_lodging,
-			"address": row.address,
+			# The street address, never the Address record's name the row holds.
+			"address": _address_text(row.address, poi_cache),
 			"booking_confirmation": ref,
 			"travelers": who,
 			**extra,
@@ -633,9 +653,6 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 				"documents": files_for(extra["group"]),
 			}
 		)
-
-	if poi_cache is None:
-		poi_cache = {}
 
 	def poi_details(poi_name):
 		if not poi_name:
@@ -871,10 +888,34 @@ def _poi_address_location(address_name):
 	return _address_lookup(address_name)[:3]
 
 
+def _home_country():
+	"""The country this company works in, which an address printed for its crew need not name:
+	Global Defaults' ``country``, else the default company's. ``None`` when neither can be read
+	(``views.one_line_address`` then leaves out "United States" only). Never raises.
+
+	Both reads are cached by frappe (``get_single_value`` for the request, ``get_cached_value``
+	across requests), so asking once per address costs nothing; the Company is read only on a
+	site whose Global Defaults name no country."""
+	try:
+		country = frappe.db.get_single_value("Global Defaults", "country")
+		if not country:
+			company = frappe.db.get_single_value("Global Defaults", "default_company")
+			country = frappe.get_cached_value("Company", company, "country") if company else None
+	except Exception:
+		return None
+	return str(country or "").strip() or None
+
+
 def _address_lookup(address_name, extra=()):
 	"""``(text, lat, lng, row)``: :func:`_poi_address_location`'s answer plus the Address row,
 	with any ``extra`` columns this site's Address has read in the same query (the contacts
-	card's hotel phone: one read of the Address, not two)."""
+	card's hotel phone: one read of the Address, not two). ``row`` is ``{}`` when no Address
+	has that name.
+
+	``text`` is one line, "1 Harbor Dr, San Diego, CA 92101" (``views.one_line_address``: state
+	and ZIP together, the country only when it is not this company's), for every reader: the
+	contacts card, a hotel on the itinerary and the Trip Sheet, the Map's geocoding query and
+	the trip form's map."""
 	if not address_name:
 		return None, None, None, {}
 
@@ -890,15 +931,15 @@ def _address_lookup(address_name, extra=()):
 	if not addr:
 		return None, None, None, {}
 
-	parts = [p for p in (
+	text = trip_views.one_line_address(
 		addr.address_line1,
 		addr.address_line2,
 		addr.city,
 		addr.state,
 		addr.pincode,
 		addr.country,
-	) if p]
-	text = ", ".join(parts) if parts else None
+		home_country=_home_country() if addr.country else None,
+	)
 
 	lat = lng = None
 	if has_point:
@@ -1067,16 +1108,47 @@ def _contact_name(contact):
 	return _first_text(contact, ("full_name",)) or " ".join(p for p in parts if p) or None
 
 
-def _address_facts(address_name):
+def _address_row(address_name, cache=None):
+	"""``(text, lat, lng, row)`` of an Address record (:func:`_address_lookup`, its phone
+	included), read once per ``cache``: a dict shared by the calls that serve one answer
+	(``shape_itinerary``'s ``poi_cache``, ``_hotel_details``), keyed ``("Address", name)``.
+	``row`` is ``{}`` when no Address has that name or the read failed. Never raises."""
+	key = ("Address", address_name)
+	if cache is not None and key in cache:
+		return cache[key]
+	try:
+		found = _address_lookup(address_name, extra=("phone",))
+	except Exception:
+		found = (None, None, None, {})
+	if cache is not None:
+		cache[key] = found
+	return found
+
+
+def _address_facts(address_name, cache=None):
 	"""``(text, lat, lng, phone)`` of an Address record, any part ``None``: one read of it, the
 	phone asked for only where this site's Address has the column."""
 	if not address_name or not isinstance(address_name, str):
 		return None, None, None, None
-	try:
-		text, lat, lng, row = _address_lookup(address_name, extra=("phone",))
-	except Exception:
-		return None, None, None, None
+	text, lat, lng, row = _address_row(address_name, cache)
 	return text, lat, lng, _first_text(row, ("phone",))
+
+
+def _address_text(value, cache=None):
+	"""A room's ``address`` as something to print, or ``None``. Never raises.
+
+	Trip Accommodation's ``address`` is ``fetch_from: hotel_lodging.supplier_primary_address``,
+	and that is a Link, so the row holds the Address record's **name** ("Harborview
+	Suites-Billing"), which is what every itinerary printed under the hotel from v1.15.0 to
+	2026-09-27. A value that names an Address is its street address as one line
+	(:func:`_address_lookup`), or ``None`` for an Address with nothing written on it — never the
+	record's name. A value no Address is named is text somebody typed, and is returned as it is.
+	``cache`` as :func:`_address_row`."""
+	raw = str(value or "").strip()
+	if not raw:
+		return None
+	text, _lat, _lng, row = _address_row(raw, cache)
+	return text if row else raw
 
 
 def _employee_of_user(user):
@@ -1293,14 +1365,14 @@ def _site_contact(doc):
 	}
 
 
-def _hotel_detail(hotel, address_name=None):
+def _hotel_detail(hotel, address_name=None, cache=None):
 	"""``{name, phone, address, lat, lng}`` for one hotel (a Supplier).
 
 	The address is the room's own Address (a room's ``address`` is fetched from the hotel's
 	primary address, so it holds the Address record's *name* — "Harborview Suites-Billing" —
 	and is resolved here, never printed), else the Supplier's; ``lat``/``lng`` are the point
 	the Address was picked with, when it was. The phone is that Address's, else the hotel's
-	primary Contact's, else the Supplier's own."""
+	primary Contact's, else the Supplier's own. ``cache`` as ``_address_row``."""
 	supplier = _record(
 		"Supplier",
 		hotel,
@@ -1308,7 +1380,7 @@ def _hotel_detail(hotel, address_name=None):
 	)
 	text = lat = lng = phone = None
 	for candidate in dict.fromkeys(a for a in (address_name, supplier.get("supplier_primary_address")) if a):
-		text, lat, lng, phone = _address_facts(candidate)
+		text, lat, lng, phone = _address_facts(candidate, cache)
 		if text or lat is not None or phone:
 			break
 	if not phone:
@@ -1318,17 +1390,19 @@ def _hotel_detail(hotel, address_name=None):
 	return {"name": hotel, "phone": phone, "address": text, "lat": lat, "lng": lng}
 
 
-def _hotel_details(doc):
+def _hotel_details(doc, cache=None):
 	"""``{hotel: {name, phone, address, lat, lng}}`` for every hotel on the trip, keyed by the
 	room rows' ``hotel_lodging`` — the value an itinerary item's ``hotel`` carries. Shared by the
-	contacts card and the Map view, so each hotel is looked up once."""
+	contacts card and the Map view, so each hotel is looked up once; ``cache`` (the
+	``poi_cache`` handed to ``shape_itinerary`` for the same answer) shares its Address reads
+	with the itinerary's hotel items."""
 	details = {}
 	for row in doc.get("accommodations") or []:
 		hotel = row.get("hotel_lodging")
 		if not hotel or hotel in details:
 			continue
 		try:
-			details[hotel] = _hotel_detail(hotel, row.get("address"))
+			details[hotel] = _hotel_detail(hotel, row.get("address"), cache)
 		except Exception:
 			details[hotel] = {"name": hotel, "phone": None, "address": None, "lat": None, "lng": None}
 	return details
@@ -1516,11 +1590,13 @@ def ee_trip_sheet(doc):
 		itinerary_url = frappe.utils.get_url(trip_views.itinerary_path(doc.name))
 	except Exception:
 		itinerary_url = None
+	# One lookup cache for the itinerary and the contacts card: a hotel's Address is read once.
+	cache = {}
 	return trip_views.build_trip_sheet(
 		doc,
-		shape_itinerary,
+		functools.partial(shape_itinerary, poi_cache=cache),
 		is_coordinator=is_coordinator,
-		contacts=_trip_contacts(doc, employee),
+		contacts=_trip_contacts(doc, employee, hotels=_hotel_details(doc, cache)),
 		employee=employee,
 		currency=_trip_currency(doc) if is_coordinator and not employee else None,
 		format_money=_format_money,

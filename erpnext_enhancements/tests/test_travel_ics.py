@@ -328,3 +328,30 @@ def test_an_unknown_time_is_an_all_day_event_not_midnight():
 		assert event["start"] == "2026-07-01"
 	assert "Confirmation" not in ride["description"]
 	assert "DTSTART;VALUE=DATE:20260701" in ics.build_ics([ride])
+
+
+def test_a_rooms_address_record_is_resolved_for_the_location():
+	"""A room's ``address`` is fetched from the hotel's primary address, a Link, so it holds the
+	Address record's name ("Grand Hotel-Billing"), which the check-in's LOCATION printed until
+	2026-09-27. The itinerary emails pass a resolver (``api.travel._address_text``)."""
+	trip = make_trip()
+	trip.accommodations[0].address = "Grand Hotel-Billing"
+	seen = []
+
+	def resolve(value):
+		seen.append(value)
+		return "1 Main St, Reno, NV 89501"
+
+	def stay_of(events):
+		return next(e for e in events if "Check-in" in e["summary"])
+
+	stay = stay_of(ics.trip_events_for_traveler(trip, make_traveler(), resolve))
+	assert stay["location"] == "1 Main St, Reno, NV 89501"
+	assert seen == ["Grand Hotel-Billing"]
+	calendar = ics.trip_ics_attachment(trip, make_traveler(), resolve)["fcontent"]
+	assert "LOCATION:1 Main St\\, Reno\\, NV 89501" in calendar
+	assert "Grand Hotel-Billing" not in calendar
+	# Without a resolver, the value as stored; a resolver that finds nothing leaves no LOCATION.
+	assert stay_of(ics.trip_events_for_traveler(trip, make_traveler()))["location"] == "Grand Hotel-Billing"
+	nothing = stay_of(ics.trip_events_for_traveler(trip, make_traveler(), lambda value: None))
+	assert "LOCATION" not in ics.build_ics([nothing])

@@ -20,8 +20,11 @@ them, numbered in the order the trip reaches them. Every itinerary now has a **W
 hotel with the nearest urgent care and directions. It is on Plan a Trip's Overview and View as, at
 the top of `/itinerary` (shut, as one line, until tapped open), in the itinerary email and on the
 sheet. Plan a Trip also tells apart two bookings with the same name (two rooms at "Harborview
-Suites") in its paperwork notes, Files step and gap text. This is PR 3 of the four-PR program Nik
-set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
+Suites") in its paperwork notes, Files step and gap text. And a bug from v1.15.0 is fixed:
+`/itinerary`, Plan a Trip and the calendar invite showed a hotel's Address *record name*
+("Harborview Suites-Billing") where its street address belonged; addresses now read as one line,
+"1 Harbor Dr, San Diego, CA 92101". This is PR 3 of the four-PR program Nik set out on 2026-09-26, on top of PR 1
+(1.546.0) and PR 2 (#1136, 1.547.0).
 
 ### Why
 
@@ -140,6 +143,19 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
 - Nik's standing rule holds on both pages: the Map is a view with its own history entry. Its day
   chips, its redraw when the desk theme flips, the sheet links and opening or shutting the
   contacts card write no history.
+- **Why a room's address printed as a record name, for so long.** Trip Accommodation's `address` is
+  `fetch_from: hotel_lodging.supplier_primary_address`, and `supplier_primary_address` is a Link, so
+  what the fetch copies into the row is the Address record's *name*, not its text. Every reader
+  printed it as text. The bench-free fixture's rooms carry "1 Main", which reads as a street
+  whether it names a record or not, so no test told the two apart; the contacts card, new in this
+  release, was the first reader that resolved it. A value that names no Address is still sent as
+  typed, so a row someone typed by hand, or one of those fixtures, reads as before.
+- **One address format, the Map's geocoding included.** The contacts card, the sheet, the hotel on
+  every itinerary and the trip form's map all read an Address through one function, so they now
+  write it one way. The Map geocodes that same line rather than a longer one with the country:
+  street, city, state and ZIP pin a US address without it, and an address abroad keeps its country
+  (it is not home), which is the one case a geocoder needs it. A hotel whose Address was picked
+  from Google has a point and is not geocoded at all.
 
 ### Added
 
@@ -149,10 +165,12 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
   (`ensure_travel_print_formats`, `after_migrate`, **above** `ensure_chrome_pdf_generator`, guarded
   so a failure logs and never aborts the migrate). It uses `print_style`'s chrome (neutral stripe,
   tables and `display:table`, cell padding tightened inline to `3px 6px`) and prints a header (trip,
-  dates, job, status, lead), Who to call, the crew with their own dates, every day with each
-  booking's time, what, who and confirmation numbers (each person's own on the whole trip's sheet),
-  the files by title and kind, and on a coordinator's whole-trip sheet the cost total. A 5-day,
-  4-person trip came to two Letter pages in headless Chrome. It is Travel Trip's default print
+  dates, job, status, lead), Who to call, the crew (one line under the header when everyone is on
+  the trip's dates, else a table of each person's own dates), every day with each booking's time,
+  what, who and confirmation numbers (each person's own on the whole trip's sheet; a check-in names
+  the hotel only, its address being under Who to call), the files by title and kind, and on a
+  coordinator's whole-trip sheet the cost total. A 5-day, 4-person, 2-hotel trip fits two Letter
+  pages in headless Chrome (see Fixed: it did not at first). It is Travel Trip's default print
   format (`_make_default`, a code-owned Property Setter written after the upsert; see Why).
 - **`api.travel.ee_trip_sheet`**, a Jinja global (`hooks.py` `jinja.methods`): the sheet's data from
   `views.build_trip_sheet`, built from `shape_itinerary`, the contacts card and the trip's files. It
@@ -175,9 +193,10 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
     customer's primary Contact and Address where it has none; a Customer's; an Opportunity's own
     contact fields, then its Contact, then its customer's; a Lead's.
   - `hotels`: each hotel in check-in order, only the person shown's on one person's view. The room's
-    Address is resolved to a street address (a room's `address` holds the Address record's *name*),
-    the phone falls back from the Address to the hotel's Contact to the Supplier, and the "urgent
-    care near" and directions links are Google Maps searches that need no key.
+    Address is resolved to a street address, one line (a room's `address` holds the Address
+    record's *name*; see Fixed), the phone falls back from the Address to the hotel's Contact to the
+    Supplier, and the "urgent care near" and directions links are Google Maps searches that need no
+    key.
 
   It is in `get_trip_views` (every hotel, plus `people_hotels`: each person's hotels by
   `/itinerary`'s rule, which View as shows), `get_trip_itinerary` (the person shown's hotels), the
@@ -253,10 +272,47 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
   "//host", which is another site, and a Trip Document's file added on the desk form is checked by
   nothing on the way in. Both pages now refuse an address with a backslash anywhere in it, and so
   does the new sheet link (`/itinerary`'s shared `linkable`).
+- **A hotel showed its Address record name where its street belonged** (since v1.15.0, when the
+  room's `address` was made a fetch from the hotel's primary address, a Link; see Why). Plan a
+  Trip's Overview and View as and `/itinerary` showed "Harborview Suites-Billing" under the hotel
+  where "1 Harbor Dr, San Diego, CA 92101" belonged, the calendar invite the itinerary, booked and
+  added emails attach used it as the check-in's LOCATION (the emails' own text never printed a
+  room's address), and since v1.520.0 the planner's room card showed it under the Hotel box.
+  Now resolved on each path by `api.travel._address_text`: in `shape_itinerary` (the views,
+  `/itinerary`, the emails, the sheet), in `planner.get_state`'s room cards (`_room_address`,
+  imported late, the value as stored if that import fails) and in the invite
+  (`ics.trip_events_for_traveler(..., address_text)` and `trip_ics_attachment`, passed by
+  `notifications._address_resolver` for the itinerary, booked and added emails and the preview). A
+  value no Address is named is text somebody typed and is sent as it is; an Address with nothing
+  written on it is no address, never its name; a read that fails leaves the value as stored; none
+  of it raises. Each Address is read once per answer: `shape_itinerary`'s `poi_cache` also keeps
+  Address rows (under `("Address", name)` keys, which no Travel POI name can equal), and
+  `get_trip_views` (through `build_trip_views`' new `poi_cache` argument), `get_trip_itinerary`,
+  `ee_trip_sheet`, each send and the email preview hand the same dict to `_hotel_details(doc,
+  cache)`.
+- **An address was five parts where one line would do.** Every Address the travel surfaces print (a
+  hotel on the contacts card, the itinerary and the sheet, the job site, the Map's geocoding query,
+  a stop's Place on the trip form's map) read "1 Harbor Dr, San Diego, CA, 92101, United States". It
+  is now `views.one_line_address`: "1 Harbor Dr, San Diego, CA 92101", state and ZIP one part, and
+  the country only when it is not home (`api.travel._home_country`: Global Defaults' `country`,
+  else the default company's, read safely; when neither can be read, only "United States" goes
+  unsaid). A hotel in Vancouver still says "Canada".
+- **The Trip Sheet did not fit two pages.** A realistic 5-day, 4-person, 2-hotel trip printed two
+  full pages and a third holding only the "Printed …" line and the footer, though these notes said
+  two. Measured again the same way (stub data through the real code, printed to Letter in headless
+  Chrome) it is now two pages for the crew's copy, the coordinator's, one person's, and the whole
+  trip with someone joining a day late, with room to spare on page two. A check-in names the hotel
+  only (its address was printed again on every check-in, over two more lines; it is under Who to
+  call); the crew is one facts row under the header when everyone's dates are the trip's
+  (`crew_dates_text`; the table printed the trip's dates on every row); the whole trip's Who column
+  is 24% and its Confirmation # 24% (18% and 30%: "Cy Alvarez, Dee Walker" wrapped beside a column
+  of white space); a day's heading has 7px above it (10px), and the total and the "Printed" line
+  10px (14px, and 8px padding above the total). Every time, who and confirmation number is still on
+  its row.
 
 ### Tests
 
-- **`tests/test_travel_views.py`**: 73 to 131 tests.
+- **`tests/test_travel_views.py`**: 73 to 141 tests.
   - The contacts card: every kind of job with its records missing never raising, one person's
     hotels, the lead the only crew member with a number, the Employee record asked for two fields
     and no more, and a walk of every payload for personal keys and values. The email's Contacts
@@ -282,10 +338,34 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
   - The default print format: set once after the upsert and not again while it holds, put back
     when the site chose another, never set when the format is missing or the upsert failed, and
     code-owned (not `is_system_generated = 0`, no Travel Trip row in `property_setter.json`).
+  - A room's Address record name (the prod shape, "Hotel One-Billing") printed as its street on
+    every surface: `shape_itinerary` for everyone, `get_trip_views`' whole and per-person days,
+    `get_trip_itinerary` (default, crew, one person), the email preview's calendar events and .ics
+    LOCATION, and the planner's room card, with the record's name in none of them; text no Address
+    is named sent as typed, an Address with nothing on it sent as nothing, and a failing read
+    leaving the value as stored with nothing logged; the Address read once for `get_trip_views`,
+    `get_trip_itinerary`, `get_state`, the sheet and the email preview (its contacts card read
+    every hotel a second time, uncached, until it looked the hotels up as the send does), and
+    once for a send to the crew, whose every invite carries the street.
+  - `views.one_line_address`: state and ZIP one part, blanks skipped, nothing to write is None; the
+    country dropped for home and kept otherwise (home unknown drops "United States" only; a
+    company at home in Canada names the United States). `_home_country` reads Global Defaults'
+    country, else the default company's, and never raises. The card and the itinerary use it.
+  - The sheet: a check-in or check-out row names the hotel only, the street is printed once (in
+    Who to call), on the whole trip's sheet and one person's, and the row keeps who and every
+    confirmation number; a crew on the trip's dates is one line ("Ann, Bo, Cy · everyone Mon Oct
+    5 – Thu Oct 8"; no "everyone" for one person), and one joining late brings back the table.
   - Pins changed on purpose: the fixture trip now has `doctype="Travel Trip"` (the sheet returns
     nothing for anything else), and the `get_trip_itinerary` equality test includes `contacts`, `sheet_url` and
-    `my_sheet_url`.
-- **`tests/test_travel_planner.py`**: 144 to 155 tests.
+    `my_sheet_url`. The contacts card's site address is "500 Harbor Way, Boise, ID 83702" (was
+    "…, ID, 83702, United States"), and the sheet's check-in `detail` is "" (it was the hotel's
+    street).
+- **`tests/test_travel_ics.py`** (pytest): 16 to 17 tests. A check-in's LOCATION is what the
+  `address_text` resolver returns, the stored value without one, and no LOCATION when it finds
+  nothing.
+- **`tests/test_travel_planner.py`**: 144 to 156 tests.
+  - The room card's address line never fails the page: with `api.travel` unimportable it shows the
+    value as stored, and a room with no address shows nothing.
   - The Map loads Google Maps only through the shared loader, with every library it uses.
   - The day chips, the sheet links and both contacts cards touch no history.
   - Each contact link is built in one place per page, and `/itinerary`'s `localStorage` is touched
@@ -321,10 +401,11 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
     trip lead or site contact known only by name listed, a site with only the job's name not.
   - The print link and its fallback.
   - File and sheet addresses with a backslash never made links.
-- Nothing ran against a real bench or a live Google key. The sheet was rendered from stub data and
-  printed in headless Chrome (two Letter pages each for the crew, coordinator and one-person
-  copies). Plan a Trip was checked in a browser at 390px and 1280px, light and dark, and `/itinerary`
-  at 320px and 375px, both against stub data.
+- Nothing ran against a real bench or a live Google key. The sheet was rendered from stub data
+  through the real code and printed to Letter in headless Chrome: two pages each for the crew's,
+  the coordinator's and one person's copies, and for the whole trip with one person joining a day
+  late (the page count read with pypdf, each page looked at). Plan a Trip was checked in a browser
+  at 390px and 1280px, light and dark, and `/itinerary` at 320px and 375px, both against stub data.
 
 ### After deploy
 
@@ -352,6 +433,10 @@ set out on 2026-09-26, on top of PR 1 (1.546.0) and PR 2 (#1136, 1.547.0).
 6. Expect a sparse card at first. Few Employees have a cell number, and hotel Suppliers rarely have a
    primary Address, so many hotels will show only their name, and the urgent-care search will be by
    the hotel's name.
+7. On a trip whose hotel Supplier has a primary Address, open `/itinerary?trip=<trip>` and Plan a
+   Trip's *Where everyone sleeps* step: under the hotel is its street as one line ("1 Harbor Dr, San
+   Diego, CA 92101"), not the Address record's name ("Harborview Suites-Billing"). The same line is
+   on the contacts card and the sheet, without ", United States" (Global Defaults' country).
 
 ## [1.547.0] - 2026-09-26
 

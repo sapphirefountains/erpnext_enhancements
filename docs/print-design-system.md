@@ -250,8 +250,13 @@ only on a travel coordinator's whole-trip sheet printed in a web request, never 
 copy (the email queue renders an attachment later as Administrator). It builds from the trip
 as saved, loaded again by name, never from the `doc` it is handed, which the print view can
 take as JSON from the browser. It tightens the chrome's cell padding to
-`3px 6px` (a later `!important` in the same style attribute wins) so a five-day, four-person
-trip fits two Letter pages. Its links name `pdf_generator=chrome`, because v16's
+`3px 6px` (a later `!important` in the same style attribute wins), prints the crew as one
+facts row (`ps_facts_open(False)`) when everyone is on the trip's dates, and names only the
+hotel on a check-in, whose address is under "Who to call": padding alone left a five-day,
+four-person, two-hotel trip at two full pages and a third holding only the "Printed" line
+and the footer. Measured in
+headless Chrome, it now fits two Letter pages (2026-09-27; the travel README's *Layout* has
+the numbers). Its links name `pdf_generator=chrome`, because v16's
 `download_pdf` uses wkhtmltopdf when a request names no generator, whatever the format says.
 It is Travel Trip's default print format, but not through a fixture as the sales and
 procurement defaults are: `setup_print_formats._make_default` sets it after the upsert, once

@@ -2064,7 +2064,9 @@ class TestTripContacts(MoneyAssertions):
 					"contact_name": "Sam Site",
 					"phone": "208-555-0199",
 					"email": "sam@harbor.example",
-					"address": "500 Harbor Way, Boise, ID, 83702, United States",
+					# One line, state and ZIP together, and no "United States": changed on purpose
+					# (2026-09-27) from "500 Harbor Way, Boise, ID, 83702, United States".
+					"address": "500 Harbor Way, Boise, ID 83702",
 				},
 				"hotels": [
 					{
@@ -2319,10 +2321,8 @@ class TestTripContacts(MoneyAssertions):
 		project["custom_customer__lead_address"] = "1 Main"
 		self.assertEqual(travel._trip_contacts(self.doc)["site"]["address"], "1 Main St, Las Vegas, NV")
 		del project["custom_customer__lead_address"]
-		self.assertEqual(
-			travel._trip_contacts(self.doc)["site"]["address"],
-			"500 Harbor Way, Boise, ID, 83702, United States",
-		)
+		site = travel._trip_contacts(self.doc)["site"]
+		self.assertEqual(site["address"], "500 Harbor Way, Boise, ID 83702")
 
 		# No customer at all, and a site of its own.
 		self.site.records[("Project", "PRJ-3")] = {
@@ -2500,7 +2500,9 @@ class TestTheItineraryEmailShowsTheCard(unittest.TestCase):
 
 	def test_a_send_to_the_crew_looks_each_hotel_up_once(self):
 		"""Each person's email carries their own hotels; the whole send looks every hotel up
-		once, as it shares the Places (``poi_cache``), not once per person."""
+		once, as it shares the Places (``poi_cache``), not once per person. Since 2026-09-27 the
+		same cache also serves each email's hotel items and its calendar invite's LOCATION, which
+		resolve the room's Address too: still one read of it for the whole send."""
 		SITE.allow_side_effects = True
 		self.site.requests.clear()
 		self.assertEqual(notifications.send_itinerary_emails(self.doc, force=True), ["EMP-A", "EMP-B"])
@@ -2508,6 +2510,215 @@ class TestTheItineraryEmailShowsTheCard(unittest.TestCase):
 		self.assertEqual(
 			[n for d, n, _f in self.site.requests if d == "Address" and n == "1 Main"], ["1 Main"]
 		)
+		sent = [effect[1] for effect in SITE.side_effects if effect[0] == "sendmail"]
+		for mail in sent:
+			(invite,) = mail["attachments"]
+			self.assertIn("LOCATION:1 Main St\\, Las Vegas\\, NV", invite["fcontent"])
+
+
+# --------------------------------------------------------------------------- 2026-09-27: room addresses
+
+
+class TestTheRoomsStreetAddress(MoneyAssertions):
+	"""A room's ``address`` is ``fetch_from: hotel_lodging.supplier_primary_address``, a Link, so
+	the row holds the Address record's NAME. That name was shown where the street belonged
+	("Harborview Suites-Billing") from v1.15.0 until 2026-09-27: Plan a Trip's Overview and View
+	as, ``/itinerary``, the calendar invite the emails attach (the emails' own text never printed
+	a room's address) and the planner's room card.
+	The fixture's rooms carry "1 Main", which reads as a street whether it names a record or not,
+	which is why nothing caught it: this class names the record the way prod does."""
+
+	RECORD = "Hotel One-Billing"
+	STREET = "1 Main St, Las Vegas, NV"
+
+	def setUp(self):
+		self.doc = install_site()
+		self.site = ContactsSite(self, self.doc)
+		# As on prod: the rows hold the Address record's name, and so does the Supplier.
+		self.site.records[("Address", self.RECORD)] = dict(self.site.records[("Address", "1 Main")])
+		self.site.records[("Supplier", "Hotel One")]["supplier_primary_address"] = self.RECORD
+		for row in self.doc.accommodations:
+			row.address = self.RECORD
+
+	def hotel_addresses(self, days):
+		return [item["address"] for item in items_of(days) if item["type"].startswith("hotel_")]
+
+	def address_reads(self):
+		"""Every read of the rooms' Address (the job site's own Address is read once more)."""
+		return [
+			name for doctype, name, _f in self.site.requests if doctype == "Address" and name == self.RECORD
+		]
+
+	def room_card_address(self):
+		return planner.get_state(self.doc)["bookings"]["accommodations"][0]["address"]
+
+	def test_every_itinerary_prints_the_street_not_the_record(self):
+		for viewer in (None, "EMP-A", "EMP-B"):
+			with self.subTest(viewer=viewer):
+				days = travel.shape_itinerary(self.doc, viewer)["days"]
+				self.assertEqual(set(self.hotel_addresses(days)), {self.STREET})
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			views_payload = travel.get_trip_views("TRIP-1")
+			itineraries = [travel.get_trip_itinerary("TRIP-1", who) for who in (None, "crew", "EMP-A")]
+			preview = travel.preview_itinerary_email("TRIP-1", "EMP-A")
+		self.assertEqual(set(self.hotel_addresses(views_payload["whole"])), {self.STREET})
+		self.assertEqual(set(self.hotel_addresses(views_payload["people"]["EMP-A"])), {self.STREET})
+		for itinerary in itineraries:
+			self.assertEqual(set(self.hotel_addresses(itinerary["days"])), {self.STREET})
+		# The calendar invite the email carries, and the events View as lists from it.
+		(stay,) = [event for event in preview["events"] if "Check-in" in event["summary"]]
+		self.assertEqual(stay["location"], self.STREET)
+		self.assertIn("LOCATION:1 Main St\\, Las Vegas\\, NV", preview["ics"])
+		# The planner's room card.
+		(room,) = planner.get_state(self.doc)["bookings"]["accommodations"]
+		self.assertEqual(room["address"], self.STREET)
+		for payload in (views_payload, *itineraries, preview, room):
+			self.assertNotIn(self.RECORD, json.dumps(payload, default=str))
+		self.assertNoMoney(views_payload)
+
+	def test_text_no_address_is_named_is_printed_as_typed(self):
+		"""A value that names no Address is text somebody typed, and is sent as it is — which is
+		also why every other class here, whose base stub has no Address at all, still reads the
+		fixture's "1 Main"."""
+		for row in self.doc.accommodations:
+			row.address = "12 Typed Rd, Reno NV"
+		days = travel.shape_itinerary(self.doc)["days"]
+		self.assertEqual(set(self.hotel_addresses(days)), {"12 Typed Rd, Reno NV"})
+		self.assertEqual(self.room_card_address(), "12 Typed Rd, Reno NV")
+		# An Address with nothing written on it is no address, and never its own name.
+		self.site.records[("Address", self.RECORD)] = {}
+		for row in self.doc.accommodations:
+			row.address = self.RECORD
+		self.assertEqual(set(self.hotel_addresses(travel.shape_itinerary(self.doc)["days"])), {None})
+		self.assertEqual(self.room_card_address(), "")
+		# No address at all.
+		for row in self.doc.accommodations:
+			row.address = None
+		self.assertEqual(set(self.hotel_addresses(travel.shape_itinerary(self.doc)["days"])), {None})
+
+	def test_a_read_that_fails_never_stops_the_itinerary(self):
+		frappe = sys.modules["frappe"]
+		original = frappe.db.get_value
+
+		def get_value(doctype, *args, **kwargs):
+			if doctype == "Address":
+				raise RuntimeError("the database is down")
+			return original(doctype, *args, **kwargs)
+
+		with mock.patch.object(frappe.db, "get_value", get_value):
+			days = travel.shape_itinerary(self.doc)["days"]
+			room = self.room_card_address()
+		self.assertEqual(set(self.hotel_addresses(days)), {self.RECORD}, "the value as stored")
+		self.assertEqual(room, self.RECORD)
+		self.assertEqual(SITE.side_effects, [], "nothing logged for a line of text")
+
+	def test_one_read_of_the_address_per_answer(self):
+		"""Every person's itinerary on the views, the contacts card and the Map share one cache:
+		the rooms' Address is read once for the whole payload, however many rooms and people name
+		it. The same for /itinerary, the sheet, the planner's cards and the email preview (whose
+		contacts card read every hotel again, uncached, until the preview looked the hotels up
+		through its cache as the send does)."""
+		frappe = sys.modules["frappe"]
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			for name, call in (
+				("get_trip_views", lambda: travel.get_trip_views("TRIP-1")),
+				("get_trip_itinerary", lambda: travel.get_trip_itinerary("TRIP-1", "crew")),
+				("get_state", lambda: planner.get_state(self.doc)),
+				("preview_itinerary_email", lambda: travel.preview_itinerary_email("TRIP-1", "EMP-A")),
+			):
+				with self.subTest(name):
+					self.site.requests.clear()
+					call()
+					self.assertEqual(self.address_reads(), [self.RECORD])
+			with (
+				mock.patch.object(frappe, "form_dict", _dict({}), create=True),
+				mock.patch.object(frappe.local, "request", object(), create=True),
+				mock.patch.object(frappe.flags, "ignore_print_permissions", False, create=True),
+			):
+				self.site.requests.clear()
+				travel.ee_trip_sheet(self.doc)
+				self.assertEqual(self.address_reads(), [self.RECORD])
+
+
+class TestOneLineAddress(unittest.TestCase):
+	"""An address as one line (2026-09-27): "1 Harbor Dr, San Diego, CA 92101" — state and ZIP
+	together, and the country only when it is not home. It was "1 Harbor Dr, San Diego, CA,
+	92101, United States", which wrapped every hotel's line on the sheet and the card."""
+
+	def test_state_and_zip_are_one_part_and_home_is_not_named(self):
+		line = views.one_line_address
+		self.assertEqual(
+			line("1 Harbor Dr", None, "San Diego", "CA", "92101", "United States"),
+			"1 Harbor Dr, San Diego, CA 92101",
+		)
+		self.assertEqual(
+			line(" 1 Harbor Dr ", "Suite 200", "San Diego", "CA", " 92101", "united states"),
+			"1 Harbor Dr, Suite 200, San Diego, CA 92101",
+		)
+		self.assertEqual(line("1 Harbor Dr", None, "Reno", None, "89501"), "1 Harbor Dr, Reno, 89501")
+		self.assertEqual(line("1 Harbor Dr", None, "San Diego", "CA"), "1 Harbor Dr, San Diego, CA")
+		self.assertIsNone(line())
+		self.assertIsNone(line("", " ", None, "", None, "United States"))
+
+	def test_the_country_is_named_only_when_it_is_not_home(self):
+		line = views.one_line_address
+		vancouver = ("1055 Canada Pl", None, "Vancouver", "BC", "V6C 0C3", "Canada")
+		# Home unknown: only "United States" goes unsaid.
+		self.assertEqual(line(*vancouver), "1055 Canada Pl, Vancouver, BC V6C 0C3, Canada")
+		self.assertEqual(line(*vancouver, home_country="United States"), line(*vancouver))
+		# A company at home in Canada names the United States and not Canada.
+		self.assertEqual(line(*vancouver, home_country="Canada"), "1055 Canada Pl, Vancouver, BC V6C 0C3")
+		self.assertEqual(
+			line("1 Harbor Dr", None, "San Diego", "CA", "92101", "United States", home_country="Canada"),
+			"1 Harbor Dr, San Diego, CA 92101, United States",
+		)
+
+	def test_home_is_the_sites_country_read_safely(self):
+		frappe = sys.modules["frappe"]
+		install_site()
+		settings = {"country": "Canada", "default_company": "SF"}
+		asked = []
+
+		def get_cached_value(doctype, name=None, fieldname=None, *a, **k):
+			asked.append((doctype, name, fieldname))
+			return {"SF": "Mexico"}.get(name)
+
+		def get_single_value(doctype, field, *args, **kwargs):
+			self.assertEqual(doctype, "Global Defaults")
+			return settings.get(field)
+
+		with (
+			mock.patch.object(frappe.db, "get_single_value", get_single_value),
+			mock.patch.object(frappe, "get_cached_value", get_cached_value, create=True),
+		):
+			self.assertEqual(travel._home_country(), "Canada", "Global Defaults' country first")
+			self.assertEqual(asked, [])
+			settings.pop("country")
+			self.assertEqual(travel._home_country(), "Mexico", "else the default company's")
+			self.assertEqual(asked, [("Company", "SF", "country")])
+			settings.pop("default_company")
+			self.assertIsNone(travel._home_country())
+
+		def boom(*args, **kwargs):
+			raise RuntimeError("the database is down")
+
+		with mock.patch.object(frappe.db, "get_single_value", boom):
+			self.assertIsNone(travel._home_country())
+
+	def test_the_card_and_the_itinerary_use_it(self):
+		doc = install_site()
+		site = ContactsSite(self, doc)
+		# Global Defaults says Canada: the Boise site's country is named, a Canadian hotel's is not.
+		site.settings["country"] = "Canada"
+		site.records[("Address", "1 Main")].update(
+			address_line1="1055 Canada Pl", city="Vancouver", state="BC", pincode="V6C 0C3", country="Canada"
+		)
+		card = travel._trip_contacts(doc)
+		self.assertEqual(card["site"]["address"], "500 Harbor Way, Boise, ID 83702, United States")
+		self.assertEqual(card["hotels"][0]["address"], "1055 Canada Pl, Vancouver, BC V6C 0C3")
+		items = items_of(travel.shape_itinerary(doc)["days"])
+		addresses = {i["address"] for i in items if i["type"] == "hotel_checkin"}
+		self.assertEqual(addresses, {"1055 Canada Pl, Vancouver, BC V6C 0C3"})
 
 
 # --------------------------------------------------------------------------- PR 3: the map
@@ -3050,12 +3261,16 @@ class TestTripSheet(MoneyAssertions):
 			},
 		)
 		self.assertEqual(sheet["days"][0]["rows"][0]["ref_note"], "no PNR yet")
+		# Changed on purpose (2026-09-27): the check-in row is the hotel's name only. Its street
+		# address is under "Who to call" (never the Address record's name the row holds), and
+		# printing it again on every check-in pushed a five-day trip onto a third page.
 		checkin = next(r for r in sheet["days"][1]["rows"] if r["what"] == "Check in: Hotel One")
+		self.assertEqual(checkin["detail"], "")
 		self.assertEqual(
-			checkin["detail"],
-			"1 Main St, Las Vegas, NV",
-			"the street address, never the Address record's name",
+			[c["address"] for c in sheet["contacts"] if c["role"] == "Hotel"], ["1 Main St, Las Vegas, NV"]
 		)
+		# Bo joins a day late, so the crew is the per-person table, not the one line.
+		self.assertIsNone(sheet["crew_dates_text"])
 		freight = next(r for r in sheet["days"][2]["rows"] if r["what"].startswith("Freight"))
 		self.assertEqual((freight["who"], freight["refs"]), ("Cy", [{"name": "", "ref": "PRO-1"}]))
 		self.assertEqual((freight["time"], freight["detail"]), ("10:00 AM", "to Site"))
@@ -3064,6 +3279,50 @@ class TestTripSheet(MoneyAssertions):
 		# Files by title and kind only: a printed link to a private file is no use on paper.
 		self.assertEqual(set(sheet["documents"][0]), {"title", "kind", "for_name", "booking_label"})
 		self.assertNotIn("/private/files", json.dumps(sheet))
+
+	def test_the_check_in_rows_name_the_hotel_only(self):
+		"""The hotel's street address is under "Who to call", once. Printed again on every check-in
+		it pushed a five-day, four-person trip onto a third page (2026-09-27); the row keeps what a
+		crew lead needs there: the time, the hotel, who and every confirmation number."""
+		for employee in (None, "EMP-A"):
+			with self.subTest(employee=employee):
+				sheet = self.sheet(employee=employee)
+				rows = [r for day in sheet["days"] for r in day["rows"] if r["what"].startswith("Check ")]
+				self.assertEqual([r["what"] for r in rows], ["Check in: Hotel One", "Check out: Hotel One"])
+				self.assertEqual({r["detail"] for r in rows}, {""})
+				html = self.render(sheet)
+				self.assertEqual(html.count("1 Main St, Las Vegas, NV"), 1, "in Who to call only")
+		rows = [r for day in self.sheet()["days"] for r in day["rows"]]
+		checkin = next(r for r in rows if r["what"] == "Check in: Hotel One")
+		self.assertEqual(checkin["refs"], [{"name": "Ann", "ref": "H-A"}, {"name": "Bo", "ref": "H-B"}])
+		self.assertEqual(checkin["who"], "Ann, Bo")
+
+	def test_a_crew_on_the_trips_dates_is_one_line(self):
+		"""Everyone on the trip for all of it (the usual crew): one line under the facts, the dates
+		said once, instead of a table printing the trip's dates on every row."""
+		for row in self.doc.travelers:
+			row.from_date = row.to_date = None
+		self.doc.travelers[2].from_date, self.doc.travelers[2].to_date = "2026-10-05", "2026-10-08"
+		sheet = self.sheet()
+		self.assertEqual(sheet["crew_dates_text"], "Mon Oct 5 – Thu Oct 8")
+		html = self.render(sheet)
+		self.assertIn(">CREW</div>", html)
+		self.assertIn("Ann, Bo, Cy &middot; everyone Mon Oct 5 – Thu Oct 8", html)
+		self.assertNotIn(">Crew</h2>", html)
+		self.assertNotIn(">Dates</th>", html)
+		self.assertIn(">TRIP LEAD</div>", html)
+		# One person: no "everyone".
+		self.doc.travelers = self.doc.travelers[:1]
+		self.assertIn("Ann &middot; Mon Oct 5 – Thu Oct 8", self.render(self.sheet()))
+		# Someone joining a day late: the table, with each person's own dates.
+		late = FakeRow(name="T2", employee="EMP-B", employee_name="Bo", from_date="2026-10-06")
+		self.doc.travelers.append(late)
+		sheet = self.sheet()
+		self.assertIsNone(sheet["crew_dates_text"])
+		html = self.render(sheet)
+		self.assertIn(">Crew</h2>", html)
+		self.assertIn("Tue Oct 6 – Thu Oct 8", html)
+		self.assertNotIn(">CREW</div>", html)
 
 	def test_it_renders_the_whole_sheet(self):
 		html = self.render(self.sheet())

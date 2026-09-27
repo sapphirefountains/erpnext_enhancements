@@ -124,6 +124,41 @@ def maps_directions_url(text):
 	return MAPS_DIRECTIONS_URL + quote(str(text or "").strip(), safe="")
 
 
+#: The country an address need not name when the site cannot say which country is home
+#: (``api.travel._home_country`` reads Global Defaults, then the default company).
+HOME_COUNTRY_FALLBACK = "United States"
+
+
+def one_line_address(
+	line1=None, line2=None, city=None, state=None, pincode=None, country=None, home_country=None
+):
+	"""An Address record as one line, written the way it goes on an envelope:
+	"1 Harbor Dr, San Diego, CA 92101", or ``None`` when there is nothing to write.
+
+	State and ZIP are one part, joined by a space ("CA 92101"), not two ("CA, 92101"). The
+	country is named only when it is not the home country (``home_country``, else
+	:data:`HOME_COUNTRY_FALLBACK`), so a hotel in Vancouver says "Canada" and one in San Diego
+	does not repeat "United States" on every line. Until 2026-09-27 every address read
+	"1 Harbor Dr, San Diego, CA, 92101, United States", which wrapped a hotel's line on the
+	Trip Sheet and the contacts card for no information at all.
+
+	The Map view geocodes this same line (a hotel with no stored point), on purpose: a street,
+	city, state and ZIP pin a US address without the country, and an address abroad keeps its
+	country — the one case a geocoder needs it. One format also means the Map's list, the card
+	and the sheet say the same words for a place."""
+
+	def clean(value):
+		return str(value or "").strip()
+
+	home = clean(home_country) or HOME_COUNTRY_FALLBACK
+	country = clean(country)
+	if country.casefold() == home.casefold():
+		country = ""
+	region = " ".join(part for part in (clean(state), clean(pincode)) if part)
+	parts = [part for part in (clean(line1), clean(line2), clean(city), region, country) if part]
+	return ", ".join(parts) or None
+
+
 def tel_href(phone):
 	"""A ``tel:`` link for a phone number stored as text, or ``None`` for one not to dial.
 
@@ -258,7 +293,14 @@ def build_money(doc, currency=None):
 
 
 def build_trip_views(
-	doc, shape, is_coordinator, viewer_employee=None, currency=None, hotels=None, sheet_available=True
+	doc,
+	shape,
+	is_coordinator,
+	viewer_employee=None,
+	currency=None,
+	hotels=None,
+	sheet_available=True,
+	poi_cache=None,
 ):
 	"""The payload behind Plan a Trip's Overview, Grid, Compare, View-as and Map screens.
 
@@ -274,11 +316,15 @@ def build_trip_views(
 		sheet_available: whether the Trip Sheet print format exists. When it does not,
 			``sheet_url`` is None and ``people_sheet_urls`` is empty: frappe prints a missing
 			format as Standard, costs included (``api.travel._sheet_available``).
+		poi_cache: the lookup cache to share (``shape_itinerary``'s Travel POIs and Address
+			records); ``api.travel.get_trip_views`` passes the one it built ``hotels`` with,
+			so a hotel's Address is read once for the whole payload. A new one when not given.
 
-	One POI cache is shared across every person's itinerary, so a crew of eight costs one
+	One cache is shared across every person's itinerary, so a crew of eight costs one
 	lookup per place, not eight.
 	"""
-	poi_cache = {}
+	if poi_cache is None:
+		poi_cache = {}
 	whole = shape(doc, None, poi_cache=poi_cache)
 	people_list = crew(doc)
 	people, people_documents = {}, {}
@@ -764,9 +810,6 @@ def build_trip_sheet(
 	viewing = person["employee"] if person else None
 	shaped = shape(doc, viewing)
 	whole = viewing is None
-	# A hotel's street address, as the contacts card resolved it: a room's own `address` is
-	# the Address record's name ("Harborview Suites-Billing"), not something to print.
-	hotel_addresses = {h.get("name"): h.get("address") for h in (contacts or {}).get("hotels") or []}
 
 	def date_text(first, last):
 		first, last = pretty_date(first), pretty_date(last)
@@ -822,11 +865,11 @@ def build_trip_sheet(
 			detail += f", lands {lands}" if lands else ""
 			what = f"Flight: {what}"
 		elif kind == "hotel_checkin":
+			# The hotel's name only: its address and phone are under "Who to call", and
+			# printing the address again on every check-in cost the sheet a third page
+			# (2026-09-27). Time, who and every confirmation number stay on the row.
 			time = span(item.get("time"), None)
-			what, detail = (
-				f"Check in: {item.get('hotel') or ''}",
-				hotel_addresses.get(item.get("hotel")) or "",
-			)
+			what, detail = f"Check in: {item.get('hotel') or ''}", ""
 		elif kind == "hotel_checkout":
 			time = span(item.get("time"), None)
 			what, detail = f"Check out: {item.get('hotel') or ''}", ""
@@ -881,6 +924,10 @@ def build_trip_sheet(
 		)
 
 	lead = next((p for p in people if p["is_trip_lead"]), None)
+	# Everyone on the trip for all of it (the usual crew): the sheet prints the crew as one line
+	# with the dates once, not a table repeating the trip's dates on every row.
+	trip_span = (_iso(_get(doc, "start_date")), _iso(_get(doc, "end_date")))
+	same_dates = bool(people) and all((p["from_date"], p["to_date"]) == trip_span for p in people)
 	title = str(job_title or ((contacts or {}).get("site") or {}).get("label") or "").strip()
 	job = " ".join(str(x) for x in (_get(doc, "travel_for_doctype"), _get(doc, "travel_for_name")) if x)
 	if title and title != _get(doc, "travel_for_name"):
@@ -915,6 +962,9 @@ def build_trip_sheet(
 			}
 			for p in people
 		],
+		# The trip's dates when every crew member's own dates are the trip's, else None: the
+		# template then prints the crew as one line, and the per-person table otherwise.
+		"crew_dates_text": date_text(*trip_span) if same_dates else None,
 		"contacts": contact_list(contacts),
 		"days": days,
 		"documents": [

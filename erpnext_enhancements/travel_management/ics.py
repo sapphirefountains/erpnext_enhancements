@@ -152,12 +152,18 @@ def _friendly(value):
 	return f"{dt:%a %b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
 
 
-def trip_events_for_traveler(trip_doc, traveler_row):
+def trip_events_for_traveler(trip_doc, traveler_row, address_text=None):
 	"""Calendar events for one traveler: the trip span (all-day), each visible
 	flight, each hotel check-in, each rental, ride or drive with a pickup time, and
 	each freight delivery (or pickup) window they receive. Every booking event
 	carries its confirmation or tracking number when there is one. Segments pinned
-	to a different single traveler are skipped."""
+	to a different single traveler are skipped.
+
+	``address_text`` turns a room's ``address`` into the check-in's LOCATION. The row
+	holds the Address record's *name* ("Harborview Suites-Billing"; it is fetched from
+	the hotel's primary address, a Link), so the itinerary emails pass
+	``api.travel._address_text``, which resolves it to the street address. Without it the
+	value is used as stored."""
 	# Imported here, not at the top: this module must stay importable under the bench-free
 	# suites' minimal frappe stub, and ``views`` is the one place the link is spelled.
 	from erpnext_enhancements.travel_management.views import itinerary_path
@@ -224,7 +230,7 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 				"start": stay.check_in_date,
 				"all_day": True,
 				"description": description,
-				"location": stay.address,
+				"location": address_text(stay.address) if address_text else stay.address,
 			}
 		)
 
@@ -297,9 +303,10 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 	return events
 
 
-def trip_ics_attachment(trip_doc, traveler_row):
-	"""``frappe.sendmail`` attachment dict for one traveler's trip calendar."""
+def trip_ics_attachment(trip_doc, traveler_row, address_text=None):
+	"""``frappe.sendmail`` attachment dict for one traveler's trip calendar
+	(``address_text`` as :func:`trip_events_for_traveler`)."""
 	return {
 		"fname": f"{frappe.scrub(trip_doc.name)}.ics",
-		"fcontent": build_ics(trip_events_for_traveler(trip_doc, traveler_row)),
+		"fcontent": build_ics(trip_events_for_traveler(trip_doc, traveler_row, address_text)),
 	}
