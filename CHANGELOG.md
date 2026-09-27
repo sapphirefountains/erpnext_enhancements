@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.539.0] - 2026-09-25
+## [1.544.0] - 2026-09-26
 
 **Plan a Trip's checklist stops asking for things that were never needed, and a room can have
 a guest staying free.** On the first real trip (TRIP-2026-00001, the Kapture event) the office
@@ -83,6 +83,744 @@ room needed a room of his own, and all four flights home needed a cost. None of 
 - Tests: 21 new cases in `tests/test_travel_planner.py`, including `TestTheKaptureTrip`, the real
   trip with synthetic names and confirmation numbers. The page changes were exercised by rendering
   the real `plan_a_trip.js` against that trip's state in a browser.
+
+## [1.543.0] - 2026-09-26
+
+**Store Run Charge Matching: Accounting's list of every store run recorded on the Stock Scan page
+beside the QuickBooks card charge it pairs with, the amount to move to 2210, and what to do.** It is
+the list v1.536.0 left as a follow-up for runbook step S-D. How Accounting uses it is in
+`quickbooks_online/MIGRATION_NOTES.md` section 8; how it works is in `kpi_dashboards/README.md`.
+
+### Added
+
+- **Report *Store Run Charge Matching*** (Script Report, KPI Dashboards, `ref_doctype` Purchase
+  Receipt; Accounts Manager, Accounts User, Purchase Manager, System Manager). Read-only: no write
+  and no button; every change is made on the voucher itself, in the Desk.
+  - **Rows**: one per recorded store run in the range, plus one for each charge or Journal Entry
+    that needs a word: a charge carrying 2210 with no store run, a linked charge whose trips are
+    all outside the range, a Reference Number to check, a draft correcting entry, and any 2210
+    amount no charge accounts for.
+  - **Columns**: Trip Day, Store, Run / Receipt No., Receipts and First Receipt, Recorded By, Lines
+    Before Tax, **Stock Lines Before Tax (Move to 2210)**, Receipt Total (Tax Included), **Matched
+    Charge**, Charge Date, Amount, Source and Status, Match Basis, **Moved to 2210** (to the cent,
+    submitted correcting entries included) and **What to Do**.
+  - **Filters**: From Date and To Date (default the last 60 days), Store (the suppliers ticked
+    *Store-Run Vendor*; Lowes also shows Lowe's), and **Show**: All, Needs action, Waiting or Done.
+  - **Summary cards**, over every row in range whatever *Show* says: store runs, matched, needs
+    action, still to move to 2210, already moved, on 2210 with no store run, and **2210 Not
+    Accounted For**, which must read $0.00 before the S-D loop.
+  - **Reference Number tokens** (a Journal Entry's `cheque_no`; separated by spaces, commas or
+    semicolons; any case). The procedure and every rule: MIGRATION_NOTES section 8.
+
+    | Token | Means |
+    |---|---|
+    | A run id `sr-…`, or a trip's receipt name `MAT-PRE-…` | This charge pays for that trip; overrides the automatic pairing. A submitted charge is linked by its correcting entry: *the charge* then the run ids |
+    | A charge's name `ACC-JV-…` | A correcting entry for that charge, followed through chains; counts once submitted |
+    | `part-paid`, right after a run id | The charge paid for that trip only in part; its 2210 target stays the whole stock lines |
+    | `not-store-run` | Not a store run: no link, no correction, no pairing (in the report only) |
+    | `not-store-run` and a Purchase Receipt's name | The entry's 2210 amount clears that receipt, which is not a store run (a PO receipt, a return) |
+- **`kpi_dashboards/store_run_matching.py`**: every rule of the report, with no frappe import. The
+  report's `.py` only reads, every query a literal `select` with bound params.
+
+### Changed
+
+- **`metrics.pair_store_runs`** is the pairing extracted from `combine_store_runs` unchanged. The
+  KPI counts through it and the report pairs with it, so a trip in range pairs exactly as the KPI
+  pairs it counted from the same From Date. It also says which pass took each charge
+  (`receipt_total` or `lines_plus_tax`). `STORE_RUN_LOOKBACK_DAYS` (7) now lives in `metrics`.
+- **`snapshots._store_run_rows`** returns identifying columns the count never reads (each charge's
+  voucher, docstatus, source and company; each receipt's name, company, owner, `net_amount`,
+  `is_stock_item` and `stock_amount`), and returns charges in a fixed order (posting date, then
+  voucher name), so an exact tie no longer depends on database order. `stock_amount` is what the
+  receipt credited to 2210 in the GL, not the Item's stock flag today: `MAT-PRE-2026-00038`
+  credited $81.00 where its Items' current flags said $205.50. KPI numbers are unchanged, except
+  where the fixed order now breaks an exact tie.
+- **Runbook step S-D** (`docs/migration/backlog-gl-posting-runbook.md`) is a five-step procedure
+  around the report, and **MIGRATION_NOTES section 8** is the single reference: the procedure, the
+  lists, the tokens, a charge already submitted, what the report checks, what is settled by hand.
+
+### Why
+
+- A QuickBooks card-charge draft submitted unchanged at S-D expenses goods that a store-run receipt
+  already put into stock (Dr 1410 / Cr 2210), so the purchase is booked twice and 2210 never
+  clears. Among ~13,000 drafts, finding those pairs by hand is impractical.
+- Beyond the KPI's own pairing, the report links a charge to its trips only **explicitly, by
+  Reference Number**, never by guessing amounts: review showed that recognizing a draft by a 2210
+  debit equal to a waiting trip's stock lines could give one trip's draft to another and double-book.
+- Wrong states are made visible instead: every Journal Entry line on 2210 must be accounted for by
+  one charge (the conservation total, *2210 Not Accounted For*), and a charge never carries more
+  than it paid (the capacity check), so a link that displaces a pair or oversteps the charge is
+  asked about rather than read as Done.
+
+### Known limits
+
+- Without guessing amounts it cannot see a wrong automatic pair consistent with every figure, or a
+  link typed on the wrong trip that contradicts nothing.
+- `part-paid` has nowhere to go on a submitted charge already carrying its trips' stock lines and
+  linked only by its own Reference Number: settled by hand.
+- An entry naming the receipt its 2210 amount clears is taken at its word; the amounts are not
+  compared.
+- One card charge that pays for both a store run and a PO receipt cannot be expressed on that
+  charge: settled by hand (MIGRATION_NOTES section 8).
+- A trip with no stock lines whose submitted charge the pairing gave to another trip is told
+  "change nothing" (a correcting entry needs an amount).
+- A submitted card charge that cleared a PO receipt takes two Journal Entries: moved back, then
+  posted again naming the receipt.
+- A submitted charge carrying 2210 that is neither paired nor linked takes two entries: moved back,
+  then moved again, linked.
+- A wrong run id in a submitted charge's own Reference Number cannot be taken out (v16).
+- A trip billed from its receipts whose own card charge never paired, carrying nothing on 2210, is
+  invisible. S-D does not meet it: a trip is billed only after the cutover, and only with no charge.
+- A standalone Purchase Invoice with *Update Stock* ticked pairs as a charge but posts to the
+  warehouse, not 2210, so its *What to Do* cannot be computed (none on production, 2026-09-25).
+- A Purchase Invoice cannot be linked by Reference Number; one carrying 2210 waits for its receipt.
+- Links and the 2210 backstop are read from 7 days before From Date (a card charge in that lookback
+  that pairs with nothing is told to widen the range); a named entry is looked up four links deep.
+- A run id split across the reader's lookback (Desk only) is linked with the receipts it read.
+- Rows for a Journal Entry ignore the Store filter: such an entry has no store.
+- From a different From Date, a chain of same-amount trips at one store can pair differently from
+  the nightly KPI (30 days back); from 2026-01-01 there is nothing earlier.
+
+### Tests
+
+- `test_store_run_matching` (new, 175 tests, bench-free; in the stub-free KPI step of `ci.yml`):
+  every *What to Do* case followed to its end, links, correction chains, capacity and `part-paid`,
+  the backstop, the Show buckets and summary, the KPI equivalence, and the report's files read by
+  `ast` (read-only, literal selects with bound params, the JS filters equal to the Python's).
+- Seeded property tests on generated histories, among them the 2210 conservation: attributed + not
+  accounted for + `not-store-run` equals every 2210 amount read, and the summary totals the rows.
+- `test_kpi_metrics` (50 tests before, 83 now): `combine_store_runs` against its v1.536.0 body, kept
+  verbatim, on every earlier case and 1,500 generated histories, bit for bit.
+- A follow-the-advice simulator (an Accounting agent doing what each row says to a fixed point, then
+  the S-D loop) over ~10,000 generated histories found no false Done the report could see, and no
+  crash, unparsed text or run without a fixed point. The simulator is not in the repo.
+## [1.542.0] - 2026-09-26
+
+**Pay rates, and the numbers that give one away, are narrowed to the pay audience ADR 0013 names
+(System Manager, HR Manager and Accounts Manager) on every path a review found them leaking
+through.** ADR 0013 put pay rates in ERPNext behind
+permlevel 1. Frappe enforces a permlevel when it reads a document out to a caller: form loads, list
+views, `frappe.client.get` and `GET /api/resource`. It does not enforce it on a Script Report's raw
+SQL, on `doc.as_dict()` or `frappe.get_doc`, on a whitelisted function's own database read, on a
+derived field that was left at permlevel 0, on a form's version history, or on the document a write
+call sends back. A review found a burdened rate, or a total that yields one, reachable along each of
+those paths. Every change below narrows access to the audience or to a subset of it. Nothing widens
+access for anyone.
+
+### Security
+
+- **Labor Cost Analysis is limited to the three pay-audience roles.** The report prints
+  per-employee pay and burdened rates from raw SQL, and raw SQL applies no permlevel, so the
+  Report's role list is the only gate on those numbers. Projects Manager (held by 15 of 18 users)
+  was on that list. It reads Job Interval at permlevel 0 but not the permlevel-1 pay block, so the
+  report showed it exactly what the doctype hides. It is dropped. The three remaining roles all read
+  Job Interval at permlevel 0 as well, so the `ref_doctype` check still passes for them.
+  - **Delivery.** A standard Report JSON is imported only when its `modified` is newer than the
+    site row, and a skipped import is silent: the Location Timeline page kept its old roles that
+    way in v1.480.0. The file's stamp moves to 2026-09-25, and the new one-shot patch
+    `reload_labor_cost_analysis_report` re-imports it with `force=True`, the half a forgotten bump
+    cannot undo. `import_doc` keeps the site's `disabled`, `prepared_report` and `add_total_row`,
+    and replaces the `Has Role` table wholesale. Every failure goes to the Error Log, because a
+    patch that raises aborts `bench migrate`, which on this repo is the deploy.
+- **`Activity Cost.costing_rate` is at permlevel 1.** Since v1.480.0 it holds each employee's
+  burdened rate, written by `workforce/costing.py`, but it sat at permlevel 0, readable and
+  writable by Projects User. It moves up through a **Property Setter fixture, deliberately not a
+  Custom DocPerm**: one Custom DocPerm row for a doctype replaces all of that doctype's standard
+  DocPerms, so granting the audience a level-1 row that way would have taken Projects User's own
+  access away unless every standard row were restated too. `billing_rate` stays at permlevel 0,
+  so T&M billing is still configured natively, as ADR 0013 requires. Every writer already bypasses
+  permlevel (`db.set_value` and `insert(ignore_permissions=True)`), and the only reader,
+  `TimesheetDetail.update_cost`, reads through `frappe.db`, so costing is unchanged. In the Desk,
+  only Administrator now sees the field; whether the audience should is an open decision.
+- **ERPNext's `get_activity_cost` is overridden on the HTTP route.** It is whitelisted and returns
+  an employee's Activity Cost rates without any permission check, which no permlevel can change.
+  `api/activity_cost.get_activity_cost` calls ERPNext's function unchanged and zeroes
+  `costing_rate` unless the caller holds a pay-audience role **and** can read that Employee, so
+  User Permissions apply. Three details are deliberate:
+  - `override_whitelisted_methods` covers HTTP only (frappe applies it in `handler.execute_cmd` and
+    the `api/v2` RPC handler). That is the point: `TimesheetDetail.update_cost` imports ERPNext's
+    function directly, so saved Timesheets still cost from the real rate.
+  - The value is zeroed, not removed. The Timesheet form's two prefills feed it straight into
+    arithmetic, and a 0 is what `update_cost` treats as unset, so the save fills in the real rate
+    on the server.
+  - `billing_rate` is never touched.
+- **Four Timesheet cost fields are at permlevel 1**: `Timesheet.total_costing_amount` and
+  `base_total_costing_amount`, and `Timesheet Detail.base_costing_rate` and `base_costing_amount`.
+  ERPNext already puts `costing_rate` and `costing_amount` at permlevel 1, but left these at
+  permlevel 0, and at an exchange rate of 1 the `base_*` pair equals them. So the kiosk's burdened
+  rate was readable by the 5 roles that read Timesheets without permlevel-1 access. Same Property Setter route: no
+  DocPerm is created, and the site's existing Timesheet permission rows are untouched. The totals
+  are recomputed in `Timesheet.validate` and aggregated server-side with raw SQL or query builder,
+  so project and task costing are unchanged.
+- **Every `Employee Pay Rate` field is at permlevel 1.** Only the Employee's Table field
+  (`custom_pay_rates`) was. Frappe checks a child field's permlevel against the parent's DocPerms,
+  but a direct query of the child doctype never consults the permlevel of the parent's Table field.
+  So the raw rates were readable by every role with permlevel-0 read on Employee (4 roles), limited
+  only by per-user User Permissions. Each child field now answers to Employee's permlevel-1 rows,
+  which are exactly the audience. The Employee form renders as before; its version history, which
+  carried whole pay-rate rows in the network response, is scrubbed separately (below). Every code
+  reader (`costing._pay_rate_rows`, `payroll_export`'s SQL, the validate hook) bypasses permissions. This
+  is ADR 0013's own rule: any new field that carries money about a person goes in at permlevel 1.
+  DocType JSON import is hash-gated, so this lands on the next migrate without a stamp bump.
+- **`Sapphire Maintenance Record.total_labor_cost` is at permlevel 1, readable by System Manager
+  only.** It was hidden on the form but at permlevel 0. Together with the clock-in, clock-out and
+  pause fields it gives away the technician's burdened rate, and it was readable by the Maintenance
+  User, Projects Manager, Maintenance Supervisor and Customer roles. The new permlevel-1 row names
+  System Manager only. HR Manager and Accounts Manager hold no permlevel-0 access to this doctype,
+  and granting it to them would open whole visit records. The writer uses `db_set`, which bypasses
+  permlevel. The service dashboard uses the field only as a SQL predicate. The portal page, the print
+  format and the customer email never carried it.
+- **The two places that hand out a whole visit record now strip it first.** The Visit Wizard's
+  `get_visit_bootstrap` returned `doc.as_dict()`, and the `maintenance_visit_history` assistant
+  tool's detail mode read the field after `get_doc`. Neither applies field-level permissions, so
+  the permlevel alone would not have covered them. Both now call
+  `doc.apply_fieldlevel_read_permissions()`. The bootstrap does it after its own save, because
+  stripping first would save the field back as null. The tool keeps the key in its payload, where
+  it reads null for a caller without permlevel-1 read, so its output schema is unchanged.
+- **A form's version history no longer carries the fields its reader cannot see.** `getdoc` strips
+  the document and then attaches `docinfo.versions`: the stored Version diffs, verbatim, with the
+  old and new value of every changed field and every added or removed child row whole. Frappe
+  filters none of it by permlevel; the browser only declines to render it. Employee and Job
+  Interval both track changes, so the first pay-rate row HR adds, and every `labor_cost` a kiosk
+  clock-out stamps, would have reached every reader of that record in the response: the Employee
+  role on its own record, HR User (which all staff hold), and Projects Manager on every Job
+  Interval. That also made the premise behind the Labor Cost Analysis change, that Projects
+  Manager reads Job Interval but not its pay block, true of the rendered form only. The new
+  `fieldlevel_read.py` overrides `getdoc`, `get_docinfo`, `savedocs` and the Desk's `cancel` and
+  `discard`, all five of which send docinfo. Each calls frappe's own function unchanged, then drops
+  from each version's `data` the `changed` entries, child rows and child-field changes at a level
+  the caller cannot read. The rule is frappe's own `apply_fieldlevel_read_permissions`: permlevel
+  0 is always kept, a child table answers to its parent's permissions, and Administrator is never
+  scrubbed. Stored Versions are not modified, so the audit trail stays whole for System Manager. A
+  history that cannot be scrubbed is sent empty.
+- **Write calls no longer send back the fields their caller cannot read.** `frappe.client.set_value`,
+  `insert`, `save`, `submit` and `cancel` return `doc.as_dict()`, `frappe.model.workflow.apply_workflow`
+  returns its document, and `POST`/`PUT /api/resource` and `POST /api/v2/document` return the
+  saved document. None of them strips it, unlike the Desk's `savedocs` and v2's document update
+  and doc-method routes, which do. So a caller with write
+  access but no permlevel-1 read could save an empty change, which the permlevel reset turns into a
+  no-op, and read the stored values out of the response: Projects User on
+  `Activity Cost.costing_rate`, any Timesheet writer on its cost fields, Projects Manager on an open
+  Job Interval's pay block, and a Maintenance User moving a visit through the Sapphire Maintenance
+  Workflow on `total_labor_cost`. The six RPC routes get the same kind of wrapper, which scrubs the
+  returned dict and never the Document (a workflow's async tasks are enqueued with it). The REST
+  routes are werkzeug routes that `override_whitelisted_methods` cannot reach, so a new
+  `after_request` hook parses the JSON body of a `POST` or `PUT` to those paths, scrubs the document
+  and writes the body back, and only when a field actually goes. It never raises, because frappe
+  logs an exception from that hook and sends the body unscrubbed. A response that cannot be scrubbed
+  is cut to `doctype` and `name`; the write itself stands.
+- **frappe's own copies of those eleven functions no longer answer HTTP under any other name.** An
+  override matches a method *name*, but frappe's whitelist check matches the function *object*, so
+  a module that imports one of them exposes the unwrapped original under its own dotted path.
+  frappe and ERPNext v16 hold twelve such aliases between them, among them
+  `frappe.email.inbox.set_value`, Workflow Action's `apply_workflow` (also reachable as
+  `/api/v2/method/Workflow Action/apply_workflow`) and `getdoc` in five test modules that ship with
+  the apps. Overriding each name would go stale on the next frappe upgrade, so a new
+  `before_request` hook, `fieldlevel_read.seal_wrapped_originals`, takes the originals off frappe's
+  whitelist once this site overrides their canonical names. Every alias, present or future, then
+  fails the whitelist check. The canonical names still reach the wrappers, and in-process Python
+  calls are unaffected, because only HTTP dispatch checks the whitelist. An original whose name is
+  not overridden is left on, or put back, so the canonical route can never be refused. The hook
+  never raises; if it cannot run, the aliases keep frappe's stock behaviour, and the failure is
+  logged once per process.
+- Scrub failures are logged with `defer_insert`. A form load is a `GET`, whose transaction frappe
+  rolls back, and the REST hook runs after the commit, so an ordinary Error Log insert would have
+  been lost on both paths.
+
+### Changed
+
+- **Projects Manager no longer opens Labor Cost Analysis.** The 8 project managers outside finance
+  lose its project cost-against-budget grouping. They keep the project's Labor actuals through the
+  Project Budget.
+- A Timesheet saved by someone without permlevel-1 access now keeps the stored `base_*` cost values.
+  Before, it saved values the browser had computed from a rate that user could not see.
+- `api/README.md` lists `activity_cost` among the package's tab-indented files. It is new, and
+  new files take the `.editorconfig` default.
+- **Every Desk form load, save, cancel and discard, and every `frappe.client` write, now passes
+  through a wrapper in `fieldlevel_read.py`.** On a doctype with nothing above permlevel 0, and for
+  the pay audience or Administrator, nothing is removed. A client script that read a level-1 value
+  out of a write response, as a user without level-1 read, now finds no key; nothing in this app
+  does that.
+- **Every request now runs a `before_request` hook** (`seal_wrapped_originals`): eleven cached
+  lookups and set operations. A call to one of the aliases above is refused as not whitelisted.
+  Nothing in frappe, ERPNext or this app calls them over HTTP.
+
+### Tests
+
+- **New `tests/test_pay_rate_permissions.py`** (bench-free: JSON and `ast`, no stub). It holds
+  the audience equal across Job Interval's permlevel-1 rows, `api/activity_cost.PAY_AUDIENCE_ROLES`
+  and `payroll_export._may_export`. It pins the report's roles, its bumped stamp and the reload
+  patch (registered after model sync, `reload_doc(..., force=True)` inside a `try`). It checks the
+  five Property Setters carry the full fixture key shape (fixture sync wipes any key a record
+  omits), and that no Custom DocPerm fixture restates those doctypes. It also covers the Employee
+  Pay Rate and `total_labor_cost` permlevels, where the two `apply_fieldlevel_read_permissions()`
+  calls sit relative to the save, the serialisation and the permission check (read from Call
+  nodes, never raw text, because the comments name the same tokens), and the override: its route,
+  ERPNext's signature, delegation, the zeroed `costing_rate`, and no assignment to `billing_rate`.
+  It runs in the existing stub-free workforce unittest step.
+- `test_workforce_report_labor_cost.py` gains the upper bound: the report's roles must be a subset
+  of Job Interval's permlevel-1 readers, and never Projects Manager.
+- **New `tests/test_fieldlevel_read.py`** (bench-free, with a `frappe` stub, so it has its own CI
+  step). It pins each override's hook key, its parameter list and HTTP methods against frappe
+  v16's own (read from `origin/version-16`, because a missing parameter is silently dropped by
+  `frappe.call` and a wider method list would let a `GET` skip the CSRF check), its delegation to
+  frappe's function, and the `after_request` registration. It runs the scrub on Employee, Job
+  Interval and Timesheet shapes: an HR User loses `ctc` and every pay-rate row, a Projects Manager
+  loses `labor_cost`, a level-0 table keeps its rows without their level-1 fields, and the audience
+  and Administrator lose nothing. Both failure paths are covered: an unscrubbable history is sent
+  empty, and an unscrubbable write response is cut to `doctype` and `name`. Both log through
+  `defer_insert`. The seal is covered too: the `before_request` registration; its list equal to the
+  overridden routes; originals, and an alias of one, off the whitelist; an original not
+  overridden kept on or put back; idempotence; and a failure that never raises and logs once.
+- **`test_stripe_payments.py`'s API-version pin test failed on CI, which left main red since
+  v1.541.0** (its own run was cancelled by the next merge, so it landed unchecked). It
+  monkeypatched `client.requests.request`, but under CI `requests` is the empty stub module the
+  suite installs, which has no `request` attribute to patch. Locally it passed only because a
+  pytest plugin had already imported the real `requests`, so run it with
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to see what CI sees. It now swaps in a namespace for the
+  whole module, as the next test in the file already does.
+
+### Follow-up, not done here
+
+- **Who writes pay rates, before the cutover (about 2026-10-21).** ADR 0013 names readers only.
+  Today nobody but Administrator can write Employee's permlevel-1 fields. The fix is a new patch
+  that sets `write` on the existing permlevel-1 rows once the writer role is chosen.
+  `seed_employee_pay_visibility` has already run and is insert-only.
+- The remaining owner decisions and hardening items from the review are tracked on the internal
+  task board rather than here.
+- Doc drift, for a separate docs-only patch: ADR 0013, the costing step's comment in `ci.yml` and
+  `tests/README.md` say `test_workforce_costing.py` pins the pay permlevels. It does not; the pins
+  are in `test_time_correction_requests.py` and the new suite.
+- After deploy, check read-only on prod, since a Patch Log row proves nothing happened: the report
+  has 3 roles, the 5 Property Setters exist, and the doctype metadata shows the new permlevels and
+  the System Manager permlevel-1 row on Sapphire Maintenance Record. Then, signed in as a user
+  without permlevel-1 access (not Administrator, who is never scrubbed), open an Employee that has
+  a pay-rate Version and check that the `getdoc` response's `docinfo.versions` holds no
+  `custom_pay_rates` entry, and that an ordinary form (a Task, a Project) opens and saves as
+  before.
+
+## [1.541.0] - 2026-09-26
+
+**Customers can open a PDF of their invoice from the payment pages.** "View invoice (PDF)" is on
+`/pay` under every invoice, whatever its payment state, and on `/pay-card` beside the invoice
+header: on the card form and on every settled state ("paid", "being processed" and the rest). It
+opens in a new tab, so a phone shows it in its PDF viewer and the list, or a card already typed
+in, stays where it was.
+
+### Added
+
+- `stripe_payments.core.api.portal_invoice_pdf?invoice=<name>`: a signed-in GET, not
+  `allow_guest`. It returns the PDF inline (`Content-Disposition: inline`, `<invoice>.pdf`).
+  Both pages use a plain link, not a `frappe.call`.
+- `stripe_payments/core/invoice_pdf.py` renders it and writes every answer as a page or the PDF,
+  never JSON, because a JSON error body in a new tab is all a customer would see.
+
+### Why it is built this way
+
+- **Ownership is `/pay`'s rule, submitted invoices only.** The invoice's Customer must be one of
+  `get_portal_customers()` and `docstatus` must be 1. Someone else's invoice, a draft, a canceled
+  one and a missing name all get the same "Invoice not available" page (404), which does not echo
+  the name. They also cost the same work: the user's customers are looked up first, then one
+  query carries all three conditions, so response time does not say which invoice numbers exist.
+  A signed-out tab gets Frappe's HTML "Not Permitted" page (403), before any lookup.
+- **Always the "Sales Invoice - Sapphire" format, never the DocType default or `Standard`.** On
+  v16 `Standard` prints every permlevel-0 field with a value and no `print_hide`: `cost_center`,
+  `amount_eligible_for_commission`, `is_internal_customer`, and any custom field made on the site.
+  Following the default would also serve whatever format a staffer makes the default. If the
+  Sapphire format is missing or disabled, the customer gets a "try again" page (500) and the
+  Error Log says why.
+- **Print permission is waived for this one render, never granted (Frappe/ERPNext workaround).**
+  A Website User has no Print on Sales Invoice, and ERPNext's `has_website_permission` looks for
+  the user in the Customer's Portal Users table, not in the Contact links this portal uses. So
+  printview would refuse customers their own invoices. After the ownership check the render sets
+  `flags.ignore_print_permissions`, as Frappe's `attach_print` does, and restores it in a
+  `finally`. It never calls `frappe.set_user`, which on a web request replaces the session and
+  logs the customer out. No DocPerm changes.
+- **The request's own parameters never reach the render.** printview reads `form_dict`, which
+  on this route is the query string: `?pdf_generator=` would pick the generator, `?settings=`
+  would reach Print Settings (`allow_print_for_draft`) and `?key=` a share key. The render runs
+  against an empty `form_dict`. `?_lang=` is read earlier, into `frappe.local.lang`, and printview
+  renders in it (right to left for Arabic), so the render runs in the user's own language. Both
+  are put back afterwards.
+- **The Desk's PDF generator order (Frappe workaround).** The format's own, else Print Settings,
+  else wkhtmltopdf, as `print.js` does it. Frappe's server-side `get_print` skips Print Settings,
+  so a format whose generator had been cleared would otherwise go to the wkhtmltopdf that
+  segfaults on this host. The Sapphire format is `chrome`.
+- **Bounded for the site and per customer.** `frappe.concurrent_limit` keys a pool per wrapped
+  function and each pool defaults to half the web tier, so this render and Frappe's own
+  `download_pdf` could otherwise hold every worker between them. The portal render gets an
+  explicit pool (2 at once, 3-second wait) plus a per-user cap of 10 renders a minute: a Redis
+  counter keyed on the session user, because `frappe.rate_limit` keys only on the IP or a request
+  value. Refusals get a 503 "try again" page and are not logged.
+- **Failures are logged with `defer_insert`**, because Frappe rolls back a GET's transaction and
+  an ordinary Error Log insert would go with it.
+
+### Notes
+
+- Billable-expense rows print the material at cost and the markup on its own line ("25% markup
+  for …"), exactly as QuickBooks printed them, so a reader can work out the markup (155 invoices,
+  1,030 rows). This is not new exposure, but the portal lets a customer pull any of their
+  submitted invoices at any time. If it should change, the place is `print_lookup.ps_charge_rows`,
+  which also feeds the Desk print and emails.
+- `/pay` shows no invoices at all while Stripe Settings is switched off, so no PDF links either.
+  The endpoint itself does not look at the switch.
+
+### Tests
+
+- Nine bench-free tests in `test_stripe_payments.py`: ownership, including identical refusals and
+  a Guest never reaching the database; the endpoint's decorator; the pinned format and generator
+  order, including the fixture; that the template never reads Frappe's letter head; the
+  permission waiver, `form_dict` and language isolation, restored after a failure, with
+  `set_user` never called; the per-user cap; the inline response and failure pages; and jinja
+  renders of `/pay` and `/pay-card` in every state.
+- The four portal endpoints join `test_whitelist_placement`'s must-stay-whitelisted inventory.
+
+## [1.539.2] - 2026-09-26
+
+**Every Stripe request now pins its API version, `2026-06-24.dahlia`.** Upgrading the account's
+default version in the Stripe Dashboard can no longer change what these requests mean.
+
+### Why
+
+The REST client (`stripe_payments/core/client.py`) sent no `Stripe-Version` header, so every
+request ran on the account's default version. Stripe's `2026-08-26.preview` removes
+`payment_method_types` from PaymentIntents in favour of `allowed_payment_method_types`, and every
+card charge sends that parameter (v1.537.1). Once that version is released, one Dashboard click
+would make every card charge fail with a 400; nothing would be charged, and nobody would be paid.
+
+`2026-06-24.dahlia` is the version the account's webhook events already carry (prod
+`Stripe Event.api_version`, 2026-07-28 through 2026-09-25). Pinning it changes nothing today, and it
+keeps what the client reads back in the same shape as what the webhooks deliver. It supports
+everything the code uses: ConfirmationTokens, `payment_method_types`, Checkout Session expiry and
+the PaymentIntent list lookup.
+
+### Changed
+
+- `client.STRIPE_API_VERSION`, sent as `Stripe-Version` on every request by `client._headers`.
+  To upgrade:
+  1. Read Stripe's changelog for every version in between.
+  2. Move the constant and the webhook endpoint's version (Dashboard → Developers → Webhooks)
+     together.
+  3. Re-run the live card test.
+
+### Tests
+
+- `test_every_request_pins_the_stripe_api_version` checks the header on `_headers` and on a real
+  `_request`, and that the constant is a valid Stripe version string.
+
+## [1.539.1] - 2026-09-26
+
+**A declined card no longer freezes `/pay-card`.** The customer sees the bank's message and can
+correct the card and try again. The Bank and autopay buttons on `/pay` also no longer stay stuck
+after a refusal.
+
+### Why
+
+The second live test (TASK-2026-02293) reached Stripe. The issuer declined the card twice:
+Mastercard debit, `incorrect_number` and then `generic_decline`, so nothing was charged. After
+each decline the page locked up: Pay stayed on "Please wait…", and Back and Forward stopped
+working.
+
+**Frappe v16's website `frappe.call` (`frappe/website/js/website.js`) calls back only on an HTTP
+200 and never calls `error()`.** On a 417 (a `frappe.throw`, which is what a decline is) it shows
+the server's message in a pop-up and does nothing else. `/pay-card` handled every refusal in
+`error()`: a decline, the invoice already being paid, a dropped connection. None of it ever ran.
+The page harness faked `frappe.call` with an `error()` callback, so it passed. This is the same
+trap as the v1.520.1 lesson: a harness that fakes the framework proves only the fake.
+
+### Fixed
+
+- **`/pay-card` talks to the server over `fetch`.**
+  - One in-page `rpc()` helper posts to `/api/method/<method>` with the session's CSRF token.
+  - It answers every outcome: a 2xx, a 4xx refusal naming its `exc_type`, a 5xx, a dropped
+    connection or a timeout (60 s for Continue, 150 s for Pay).
+  - A definite refusal returns the payer to the card step with the server's message, for example
+    "Your card was declined. Nothing was charged."
+  - `PaymentBlocked` reloads the page so it can say why.
+  - Anything uncertain after Pay goes to "Checking your payment…", never to a fresh card form.
+- **Pay charges exactly the review on screen.** `show_review` records its own quote and token,
+  and Pay reads that instead of the shared `quote` that the Payment Element's `change` handler
+  and the Forward logic may clear.
+  - The owner once saw Pay do nothing at all on the review. That symptom matches this dependency,
+    though the cause was not proven.
+  - A Pay tap with no quote behind it now says "Please tap Back and Continue again." instead of
+    being ignored.
+  - `#card-error` and `#review-error` are `role="alert"`.
+- **`/pay`: Bank, Set up autopay and Cancel autopay** re-enabled themselves only in `error()`. They
+  now get their button back in the website `frappe.call`'s `always` hook, which it does run for
+  every outcome after its own pop-up, unless the call succeeded.
+
+### Tests
+
+- `scripts/test_web_flow_history.js` fakes `fetch`, not `frappe.call`: 239 checks.
+  - It covers the production failure and a decline at Continue.
+  - It covers twelve uncertain outcomes after Pay. Each one reloads and none shows the card form.
+  - It covers a `change` event under the review, Pay with no quote, the timeouts, and the CSRF
+    header and URL.
+  - A `frappe.call` stand-in that, like the real one, never answers a refusal sits on `window`,
+    and no call reaches it.
+- `test_pay_card_never_uses_the_website_frappe_call` and
+  `test_pay_buttons_are_given_back_after_any_refusal` run without node.
+
+## [1.539.0] - 2026-09-25
+
+**The knowledge base gets its rules (WI-080 PR 2, ADR 0017): who may approve a version, what a save
+may change, the KB number and review date publishing will write, and the content hygiene that keeps
+hidden text and secrets out of what people and AI read.** Files attached to either KB doctype are
+now private with their bytes and stay attached where they are, and an image on a published article
+cannot be deleted. Staff still see nothing new and nothing can publish: the approve button and the
+publish action are PR 3.
+
+**Hold: this merges after PR 1 (v1.538.0, #1126) and not before the QuickBooks and Workforce
+cutover is finished (~2026-11-02).** The WI-080 PRs merge one at a time, each checked on prod with
+the read-only queries below before the next.
+
+### Why
+
+- ADR 0017 section 2: a version is published only by a KB Approver who did not write it, from a
+  signed-in browser, exactly as they opened it. That rule has to exist, and be tested, before the
+  button that uses it. `workflow.py` holds it as plain functions so the bench-free CI tier covers
+  every branch, and the Version controller applies it in the hooks PR 1 reserved for it.
+- ADR 0017 section 1, "on save and publish": presentation is stripped so hidden text cannot reach
+  AI, secret-shaped strings are refused, and every attached file is private.
+- PR 1 review found that a File's owner could delete an image out of a published article. v16
+  protects attachments only on a *submitted* document, and a Knowledge Article is never submitted.
+
+### Added
+
+- **`knowledge_base/workflow.py`** (standard library only, plus `signed_in_browser` imported from
+  `marketing/publish/workflow.py`, so Marketing and the Knowledge Base share one definition of "a
+  person's login, not a token or a job"; Marketing's `approval_problems` is deliberately not reused,
+  because it hard-codes Marketing Manager).
+  - `approval_problems(version, user, roles, *, user_type, browser, gate_flags, opened_modified)`
+    refuses when the approver lacks KB Approver; the approver is not a named person with a staff
+    login (see below); the request is not from a signed-in browser; `ai_gate_pending` or
+    `ai_gate_bypass` is set (Nik confirming a card runs the tool in his own browser session, so the
+    browser test alone would pass); the version is not In Review; the approver is the owner, the
+    submitter, a contributor or the AI requester (compared without case); or the stored `modified`
+    is not the value the approver opened. Every broken rule is reported, in one sentence naming it.
+  - **Approvers are named people** (added in review). Administrator holds every role implicitly
+    (frappe `origin/version-16` `permissions.py:546-547`) and v16 makes it a System User
+    (`core/doctype/user/user.py:406`), so the role rule alone let it approve. `approval_problems`
+    now refuses `Administrator` and `Guest` by name (`constants.NEVER_APPROVERS`), whatever roles
+    they hold, and any account whose `User.user_type` is not exactly `System User`
+    (`constants.APPROVER_USER_TYPE`): a portal Website User, a custom User Type, or a user with no
+    row. The function is pure, so `user_type` is a **keyword argument with no default**: a caller
+    that forgets it raises `TypeError` rather than approving. The Version controller reads it from
+    the User row at approval (`frappe.db.get_value`), not from the session, which recorded it at
+    login, and **PR 3's `approve_and_publish` must pass it the same way**. The continuity runbook
+    (TASK-2026-02297) uses Administrator only to grant or revoke KB roles, never to approve.
+  - `changed_content_fields` and `content_edit_problem`: content changes only while the stored
+    version is a Draft. A change is judged as a reader sees it: `None` equals `""`, the review
+    interval compares as a number, and the body compares after presentation is stripped.
+  - `contributors` / `with_contributor`: one user id per line, each once.
+  - `next_kb_number(block, taken)`: `KB-{block}{01..99}`, one past the highest number in the block,
+    never a gap (a vanished number may still be cited somewhere), never `{block}00` (the block's
+    index). A full block raises `BlockFullError` with a message that says which numbers are used.
+    Names are matched without case or trailing space, as MariaDB's `_ci`/PAD SPACE collation would.
+  - `review_by(start, months)`: calendar months, clamped to a shorter month's end (31 August + 6 =
+    28 February, the 29th in a leap year). A blank, 0, negative or unreadable interval uses
+    `constants.DEFAULT_REVIEW_EVERY_MONTHS` (6, POL-0001), read at call time, never restated.
+- **`knowledge_base/content.py`** (standard library only).
+  - `strip_presentation` removes every `style` declaration except `text-align`, the
+    `ql-color-*`, `ql-bg-*`, `ql-size-*` and `ql-font-*` classes, and the `color`, `size`, `face`,
+    `bgcolor` and `hidden` attributes. **v16's Text Editor stores alignment as a style** (it
+    registers Quill's `attributors/style/align`), so removing all of `style` would have lost it.
+    **The attributes are there because v16's `sanitize_html` keeps them, and the `<font>` element**
+    (frappe `origin/version-16` `utils/html_utils.py:267`, `:413-516`), and a REST write stores a
+    body as sent: `<font color="#ffffff">` or `<p hidden>` would be text no reader sees and every AI
+    reads in `body_md`. A `<font>` left with no attributes renders as plain text, so it stays (the
+    Desk editor turns one into a `<span>` anyway, but only when someone opens the draft). A kept
+    start tag is rewritten only when it changes, found with the standard library's HTML parser so
+    an attribute holding `>` is read as a browser reads it; text, entities and pasted `data:`
+    images come back exactly as they were.
+  - **Classes are an allowlist** (changed in review; the first cut dropped only the `ql-color-*`,
+    `ql-bg-*`, `ql-size-*` and `ql-font-*` classes). A class means whatever the stylesheets on the
+    page say, and the page carries Bootstrap, Frappe, ERPNext and this app, so the denylist kept a
+    REST-written `<p class="hidden">`, and `d-none`, `sr-only`, `visually-hidden` and `text-white`:
+    invisible on the page, plain in `body_md` and to every AI tool. Two it kept come from the
+    editor's own world: Frappe's `.icon` is `font-size: 0` (`public/scss/common/icons.scss:3`), and
+    Quill's `.ql-clipboard` sits 100000px off-screen (Quill 2.0.3 `assets/core.styl:30-35`).
+    `content.KEPT_CLASSES` is now exactly the classes v16's Text Editor writes for structure,
+    derived from `public/js/frappe/form/controls/text_editor.js` and the Quill 2.0.3 formats it
+    registers (v16 pins `"quill": "2.0.3"`, `package.json:73`): the wrapper `ql-editor read-mode`
+    (`:402`); `ql-indent-1` to `-8` (`formats/indent.ts:28-31`); Quill's `ql-align-right`,
+    `-center` and `-justify` (`formats/align.ts:5`, `:9`; v16 writes alignment as a style but reads
+    these from pasted HTML); `ql-direction-rtl` (`text_editor.js:115-116`); the code block's
+    `ql-code-block-container` and `ql-code-block` (`:7-9`; `formats/code.ts:46`, `:49`); the list
+    marker span `ql-ui` (`core/quill.ts:31`); `table table-bordered` (`:53-54`); and the mention
+    blot's `mention` and `ql-mention-denotation-char`. **Every other class is dropped**, compared
+    exactly and case included, with classes split on HTML's ASCII whitespace as a browser splits
+    them. **`id` is dropped too**: Quill never writes one, and Frappe's desk stylesheet gives
+    `#freeze` `opacity: 0` (`public/scss/desk/global.scss:511-514`).
+  - **Elements are an allowlist too** (changed in review; the strip had looked only at
+    attributes). v16's `sanitize_html` lets 168 tags through (`acceptable_elements`,
+    `svg_elements`, `mathml_elements` and six more), and a browser paints none of the text of many
+    of them. Checked in Chrome 152 inside v16's read-mode wrapper: `<dialog>` and `<audio>` are
+    `display: none`; `<datalist>`, `<video>`, `<canvas>`, `<meter>`, `<progress>` and an SVG
+    `<desc>`, `<title>` or `<metadata>` render none of their text; an `<svg opacity="0">` and
+    MathML's `<mphantom>` hide what they hold. Every one came back from the strip byte for byte,
+    with its text still in the HTML and in `body_md`. `content.KEPT_ELEMENTS` is now the tags v16's
+    editor writes, each the `tagName` of a Quill 2.0.3 or v16 format (`blots/block.ts:127`,
+    `formats/bold.ts:5` and so on; `text_editor.js:8`, `:15`, `:132`, `:428`), plus `thead` and
+    `th`. **Every other element is unwrapped**: its tags go and its text stays where a reader sees
+    it. SVG and MathML go the same way. `script` and `style` go with what they hold, the same two
+    tags v16 lists as `REMOVE_CONTENT_TAGS` (`utils/html_utils.py:21`).
+  - **Comments and declarations go whole, and raw text comes back as text** (changed in review).
+    Python's `HTMLParser` and a browser disagree about where some constructs end. Python 3.14.6
+    runs a comment opened by `<!-->` to the next `-->` and a `<![CDATA[` section to `]]>`, where a
+    browser (and nh3) ends both at the first `>`. It also reads `<style>` as raw text inside an
+    `<svg>`, where a browser breaks out to HTML. So `<!--><p class="hidden">a</p><!-- -->` came
+    back unchanged, and v16 stored it as `<!----><p class="hidden">a</p><!-- -->`. Nothing Python
+    counted as inside a comment, a declaration or a processing instruction is kept now. Text Python
+    read as raw (`<textarea>`, `<title>`, `<xmp>`, `<plaintext>`) is written back escaped when its
+    element is unwrapped. A raw `<` in any other text is escaped as well; v16's editor and
+    `sanitize_html` both write `&lt;`, so a real body never has one. The output is kept tags and
+    text only, so a second strip changes nothing.
+  - `secret_findings` finds private keys; Stripe, AWS, Google, GitHub, Slack, SendGrid, Anthropic,
+    OpenAI and Plaid credentials; JWTs; a Frappe `token key:secret`; bearer and Basic credentials; a
+    password inside a web address; and a password or key written out after "password:" or "API key:".
+    It returns `(line, kind)` and **never the value**. **`data:` URIs are removed first**, because
+    v16 turns pasted images into Files only after `validate` (`model/document.py:594` then `:835`),
+    so in `validate` the body still holds every screenshot as base64. In HTML, a line is a line of the
+    page, and attribute values (a link's address, hidden `data-*`) are read with it. **Nothing lets
+    an author past a finding, so the two word-shaped kinds are checked for more than shape.** A Basic
+    credential must decode from base64 to `user:password`: letters and `/` are base64 characters,
+    so "Basic Maintenance/Cleaning" and "Basic Pumps/Filters/Lights" matched the pattern. A written
+    password ignores the sentence's punctuation around it and needs a digit or a symbol other than
+    the `-`, `.` and `/` that join words, so "If the password is forgotten, ...", "Password:
+    case-sensitive.", "Password: (optional)" and "The password is: first.last" are prose. A password
+    of letters and hyphens alone is missed, as one of letters alone always was.
+  - `content_hash`: SHA-256 over title, summary, keywords and body. The WI names no rule, so the
+    documented choice is to ignore what nobody can see (line endings, Unicode spelling, end space,
+    runs of spaces in single-line fields, keyword order and case, stripped presentation) and nothing
+    else. It is **not** computed in `validate`: PR 3 computes it, and `body_md`, at publish from the
+    stored body.
+- **`knowledge_base/files.py`**, two hooks on `File`, each returning for a File not attached to the
+  Knowledge Base after reading its attachment and, on an update, the stored row's, which v16 has
+  already loaded (they run for every File on the site, make no query for an unrelated one, and never
+  raise for it).
+  - `force_private` (`doc_events["File"]["before_insert"]` and `["before_validate"]`). **Setting the
+    flag in `before_insert` is not enough, and that is a correction to the plan:** a `doc_events`
+    handler runs after the controller's own method (v16 `Document.hook`,
+    `model/document.py:1633-1649`), and `File.before_insert` has already written the upload into
+    `public/files` (`core/doctype/file/file.py:107-144`), where nginx serves it to anyone with the
+    URL. Flipping the flag alone leaves the bytes public, and `File.validate` then refuses the insert
+    with "The File URL you've entered is incorrect". So on insert the hook re-saves the content
+    through `File.save_file` as private (reading it before the flag flips, since `get_content`
+    checks the URL against the folder `is_private` names) and deletes the public copy **only if this
+    insert wrote it**: `flags.new_file`, and no other File row using that URL. On an update, setting
+    the flag is enough, because `File.validate` moves the bytes itself (`handle_is_private_changed`),
+    which closes the owner-unticks-Private path. Pasted images were already private: v16 extracts
+    them private unless the doctype sets `make_attachments_public`.
+  - **The same hook keeps a KB File attached where it is.** `attached_to_doctype` and
+    `attached_to_name` are only `read_only` in v16's `file.json`, and the server never enforces
+    that: `frappe.client.set_value` and `PUT /api/resource/File` apply them and save
+    (`client.py:208-215`, `api/v1.py:50-58`), and the write check runs on the updated row
+    (`model/document.py:584`), which `File.has_permission` grants a File's owner. So the uploader of
+    a published article's image could clear its Attached To in one call and delete it in the next,
+    past the delete refusal below, or detach it and untick Private in one call, past the privacy
+    rule. On an update the hook now refuses any change to where a File is attached when the stored
+    row (`get_doc_before_save()`, already loaded `FOR UPDATE`) attaches it to either KB doctype,
+    unless KB code sets `flags.kb_action`, and treats a File as a KB File if either row says so.
+    `before_validate` runs even under `flags.ignore_validate` (`model/document.py:1404-1405`). PR 3's
+    publish, which moves a draft's Files onto the Article, sets the flag on each.
+  - **`api/comments.link_files_to_comment` skips a File attached to either KB doctype.** It moves
+    the caller's own Files with `db_set`, which runs no File hook, so it was the same detach by
+    another door.
+  - `file_has_permission` (`has_permission["File"]`) refuses `delete`, and only `delete`, on a File
+    attached to a Knowledge Article, unless KB code sets `flags.kb_action`
+    (`frappe.delete_doc("File", name, flags={"kb_action": True})`; nothing in v1 does). **It is a
+    permission hook rather than the `on_trash` hook first proposed**, because `File.on_trash` deletes
+    the bytes from disk before any `doc_events` `on_trash` handler runs: refusing there would roll
+    back the row and leave it pointing at a file that is already gone. The permission check runs in
+    `delete_doc` before `on_trash` (`model/delete_doc.py:173-176`). Every other answer is `True`
+    exactly, because on v16 a falsy permission-hook answer denies (`permissions.py:483-500`). **The
+    File form still shows Delete**: v16 builds that menu from the role-level `can_delete` list
+    (`toolbar.js:504-523`, `model.js:348-351`) and never asks the hook, and role `All` holds delete
+    on File. Pressing it is refused with a permission error, which is what the WI now checks.
+- **`constants.py`** gains the doctype names, the role names and `VERSION_CONTENT_FIELDS`, so the
+  new code names nothing twice. A test asserts they agree with the JSONs, the seed patch and
+  `_gate.KNOWLEDGE_BASE_DOCTYPES`.
+
+### Changed
+
+- **The Version controller applies the rules.**
+  - `before_submit` **and** `on_submit` (the one `flags.ignore_validate` cannot skip) now run the
+    approval rules after the `kb_publish` check, against the version **as stored**
+    (`get_doc_before_save()`, loaded `FOR UPDATE` by `check_if_latest`), never the copy in memory,
+    which the code calling `submit()` could have changed. The copy being submitted must match the
+    stored content, and is scanned for secrets again. PR 3's `approve_and_publish` passes the opened
+    `modified` as `flags.kb_opened_modified`; without it every approval is refused. It cannot be read
+    off the document, because the save has moved `modified` on by then (`document.py:586`). The
+    approver's `user_type` is read from their User row in each hook (`_user_type`).
+  - `before_validate` strips presentation from the body, refuses a content change unless the stored
+    version is a Draft (no flag gets past this), and on a save that changes content refuses a secret
+    and records the saver in `contributors`. **`before_validate`, not `validate`:**
+    `flags.ignore_validate` skips `validate`, but v16 runs `before_validate` before it looks at that
+    flag (`model/document.py:1404-1405`, then `:1407-1408`), so in `validate` server code could have
+    changed an In Review version's text without being recorded as a contributor. A save that changes
+    no content (a state change by the KB's own actions) is not scanned, so a version whose text
+    predates a stricter scan can still be sent back; approval scans it again. `contributors` is at
+    permlevel 1, and a value set in `before_validate` survives the user's save because v16 resets
+    higher permlevels before it runs (`:592` on save, `:483` on insert).
+- `tests/test_knowledge_base_schema.py`: its stub gains `get_doc_before_save` and a session, and
+  "a submit with the publish flag passes" becomes "reaches the approval rules", which the new hooks
+  suite exercises.
+- WI-080's acceptance check for an article's image no longer says the File form shows no Delete (it
+  does, see above); it says pressing Delete, or the REST delete, is refused.
+
+### Tests
+
+- **`tests/test_knowledge_base_rules.py`** (unittest, no stub, its own CI step): every branch of
+  `workflow.py` and `content.py`, a real v16 Quill body, every style and every attribute that hides
+  text; 36 hiding or near-miss classes dropped, alone and beside a kept one; a v16 body with every
+  kept class (a list nested eight deep, aligned and right-to-left paragraphs, a code block, a
+  table, a mention) coming back byte for byte, and again with `hidden` added to every tag; the kept
+  list derived from the cited v16 and Quill lines, held verbatim, and those Frappe lines checked
+  against a local `origin/version-16` checkout when one is present (skipped in CI); every tag v16's
+  `sanitize_html` allows (held verbatim, and checked against a local checkout the same way) either
+  kept or unwrapped with its text left outside it, the elements KB-PR2-R3-01 found hiding text
+  among them; `KEPT_ELEMENTS` derived from the cited `tagName` lines; the three inputs Python's
+  parser misread, both as sent and as a browser writes them back; comments, declarations, raw text,
+  `script`/`style`, a stray `<` and cut-off tags; and every output a fixed point; Administrator
+  (holding every role, in any case), Guest, nobody, and every user type but `System User` refused,
+  while a named approver still passes; 21 secret kinds (all fixtures concatenated, never a literal key: GitHub push protection
+  refused this repo's branch once for a literal Stripe-shaped string), ordinary KB prose that must
+  not be flagged (slash-joined "Basic" headings and "password is <word>," sentences included), and a
+  fresh-interpreter check that neither module imports frappe.
+- **`tests/test_knowledge_base_hooks.py`** (unittest, its own `frappe` stub and CI step): the File
+  hooks' fast path (no write, no query, nothing raised for an unrelated File or an object with no
+  attributes), the byte move and when the public copy may be deleted, a KB File refused a detach or
+  move without `flags.kb_action`, `link_files_to_comment` leaving KB Files where they are, the
+  delete refusal and the exact `True` everywhere else, the `hooks.py` registration, and the Version
+  controller's content gate (pinned to `before_validate` from the syntax tree) and approval gate,
+  each approval rule refused in both hooks: Administrator, Guest and a Website User included, with
+  the user type read from the signed-in user's User row in each hook.
+
+### After deploy
+
+Read-only, on prod, after PR 1's checks pass.
+
+- A KB Author saves a draft in the Desk with a coloured word and a centred heading. After the save
+  the colour is gone and the centring stays. (Check it in the Desk: the MCP denylist refuses any SQL
+  that names the Version doctype, by design.) A nested list, a code block and a table in the same
+  draft keep their indent, box and borders.
+- The same author writes the draft's body from the browser console with `frappe.client.set_value`
+  as `<p class="hidden">a</p><p id="freeze">b</p>`: it reads back as `<p>a</p><p>b</p>`. Written as
+  `<p>a</p><dialog>b</dialog><svg><desc>c</desc></svg><!--><p class="hidden">d</p><!-- -->`, it
+  reads back as `<p>a</p>bc`.
+- The same author attaches a file through the sidebar **with Private unticked**:
+  `SELECT COUNT(*) FROM tabFile WHERE attached_to_doctype LIKE 'Knowledge Article%' AND is_private = 0`
+  is 0, the File's URL starts `/private/files/`, and the would-be `/files/<name>` returns 404 with no
+  cookie. This is the one behaviour CI cannot prove: it depends on v16's real `File.save_file`.
+- Still in the Desk, the same author runs `frappe.client.set_value` from the browser console to clear
+  that File's `attached_to_name`: it is refused with "Knowledge base files stay attached", and the
+  File is unchanged.
+- A save with `sk_live_` followed by 24 letters in the body is refused with "Body line N looks like a
+  Stripe secret key", and the message does not repeat it.
+- ``SELECT COUNT(*) FROM `tabError Log` WHERE creation > '<deploy time>' AND error LIKE '%knowledge_base/files.py%'``
+  is 0 after a day of ordinary uploads elsewhere on the site: the hook sees every one of them.
 
 ## [1.538.0] - 2026-09-25
 
@@ -409,6 +1147,7 @@ Helpdesk doctypes this site does not have, which Frappe 16.35.0 began to trip ov
   - the patch is safe twice;
   - a failed read, delete or cache clear is logged and never raised;
   - the patch is registered under `[post_model_sync]`.
+
 
 ## [1.537.1] - 2026-09-25
 

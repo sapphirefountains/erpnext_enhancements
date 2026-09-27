@@ -1211,3 +1211,9 @@ erpnext_enhancements.patches.delete_orphan_docperms
 # in the Desk. Insert-only: an existing role or profile is never touched. Each step commits alone;
 # cannot raise, safe twice.
 erpnext_enhancements.patches.seed_knowledge_base_roles
+# v1.542.0: Labor Cost Analysis narrows to ADR 0013's pay audience (System Manager, HR Manager, Accounts
+# Manager); Projects Manager is dropped because the report's raw SQL bypasses Job Interval's permlevel-1 pay
+# block. A Report JSON imports only when its `modified` is newer than the site row, so the file carries a
+# bumped stamp and this reload_doc(force=True) is the half a forgotten bump cannot undo. Every failure goes
+# to log_error; cannot raise, safe twice.
+erpnext_enhancements.patches.reload_labor_cost_analysis_report
