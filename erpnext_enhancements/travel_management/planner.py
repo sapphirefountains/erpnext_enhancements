@@ -71,7 +71,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
-from erpnext_enhancements.travel_management import COST_TABLES, RELATED_PARTY_DOCTYPES, TRAVEL_FOR_DOCTYPES
+from erpnext_enhancements.travel_management import RELATED_PARTY_DOCTYPES, TRAVEL_FOR_DOCTYPES
 from erpnext_enhancements.travel_management.completeness import (
 	DOCUMENT_KINDS,
 	UNBOOKED_TRANSPORT,
@@ -82,6 +82,7 @@ from erpnext_enhancements.travel_management.completeness import (
 	find_gaps,
 	group_key,
 	is_image_file,
+	receipt_urls,
 	stay_window,
 	to_date,
 )
@@ -576,7 +577,11 @@ def merge_freight(existing_rows, shipments, group_map=None):
 		_set(row, "booking_group", group)
 		if group_map is not None:
 			origin = sent or (f"row:{shipment['name']}" if shipment.get("name") else "")
-			if origin:
+			# A key two shipments send stays with the one that kept it as its id. A shipment
+			# duplicated on the form arrives with its original's id; it is given a new one above,
+			# and must not take the original's files with it (the last write used to win, and the
+			# original's bill of lading moved to the copy).
+			if origin and (origin not in group_map or group == origin):
 				group_map[origin] = group
 		rows.append(row)
 	for row in existing_rows:
@@ -586,29 +591,27 @@ def merge_freight(existing_rows, shipments, group_map=None):
 	return rows, notes
 
 
-def _receipt_urls(doc):
-	"""Every Receipt on the trip's cost rows. A receipt is money: it stays on its cost row,
-	which the trip views never show, and cannot become a trip file everyone can open."""
-	urls = set()
-	for table in COST_TABLES:
-		for row in _get(doc, table) or []:
-			url = str(_get(row, "attachment") or "").strip()
-			if url:
-				urls.add(url)
-	return urls
-
-
 def _file_on_trip(trip):
-	"""The real check behind :func:`merge_documents`: a File attached to this trip. Plan a
-	Trip uploads with ``doctype=Travel Trip, docname=<trip>``, so its uploads always are; a
-	URL typed or pasted from somewhere else is not."""
+	"""The real check behind :func:`merge_documents`: a File attached to this trip, and
+	whether it is private. Plan a Trip uploads with ``doctype=Travel Trip, docname=<trip>``, so
+	its uploads always are attached; a URL typed or pasted from somewhere else is not.
+
+	Returns ``url -> None | bool``: None when no File with that URL is attached to this trip,
+	else True only when every such File is private. A public file is served at
+	``/files/<its name>`` to anyone, logged in or not, and frappe keeps the uploaded name, so a
+	boarding pass there — a name and a PNR, enough to change the booking on the airline's
+	site — is one guess away. The page's uploader offers no way to make one public
+	(``allow_toggle_private: false``), but frappe's own offers "Set all public" by default."""
 
 	def check(url):
-		return bool(
-			frappe.db.exists(
-				"File", {"file_url": url, "attached_to_doctype": "Travel Trip", "attached_to_name": trip}
-			)
+		flags = frappe.get_all(
+			"File",
+			filters={"file_url": url, "attached_to_doctype": "Travel Trip", "attached_to_name": trip},
+			pluck="is_private",
 		)
+		if not flags:
+			return None
+		return all(cint(flag) for flag in flags)
 
 	return check
 
@@ -625,21 +628,27 @@ def merge_documents(doc, documents, group_map, crew, file_check=None):
 	:func:`merge_freight`) turns that into the id the booking was stored under in this save.
 
 	Refused (:class:`PlanError`): a file for someone not on the crew, a kind that is not one
-	of the options, a row with no file, a file not attached to this trip, a file that is one
-	of the trip's receipts, a booking that is not on the trip, and any file at all on a trip
-	that has not been saved (its uploads have nothing to attach to). A file is checked when
-	it is new or changed; one already on the row was checked when it got there, and a File
-	deleted since must not make the whole trip unsaveable. A file whose booking was removed
-	— on the form, or on the page in this same save — becomes a file for the whole trip, and
-	the page is told.
+	of the options, a row with no file, a file not attached to this trip, a public file, a
+	file that is one of the trip's receipts, a booking that is not on the trip, and any file
+	at all on a trip that has not been saved (its uploads have nothing to attach to). A file
+	is checked when it is new or changed; one already on the row was checked when it got
+	there, and a File deleted since must not make the whole trip unsaveable.
+
+	What changed elsewhere since is never a refusal, because the page sends every file on
+	every save and a refusal would stop every later save of the trip, not only this file's:
+	a file whose booking was removed — on the form, or on the page in this same save —
+	becomes a file for the whole trip; a file still pinned to someone taken off the crew on
+	the form, and a file that has since become one of the trip's receipts, come off the
+	trip's files. The page is told each time, and the File stays attached to the trip.
 
 	Args:
 		doc: the Travel Trip, its bookings and freight already merged.
 		documents: the page's files — ``{name, title, kind, file, traveler, booking_group}``.
 		group_map: page key -> stored group id.
 		crew: the employees on the trip.
-		file_check: ``url -> bool``, whether that File is attached to this trip; defaults to
-			a database check (:func:`_file_on_trip`). The tests pass their own.
+		file_check: ``url -> None | bool``: None when no File with that URL is attached to
+			this trip, else whether it is private; defaults to a database check
+			(:func:`_file_on_trip`). The tests pass their own.
 
 	Returns:
 		(rows, notes)
@@ -653,12 +662,18 @@ def merge_documents(doc, documents, group_map, crew, file_check=None):
 		file_check = _file_on_trip(trip)
 
 	index = booking_index(doc)
-	receipts = _receipt_urls(doc)
+	receipts = receipt_urls(doc)
 	existing = _get(doc, "documents") or []
 	by_name = {_get(row, "name"): row for row in existing if _get(row, "name")}
 	used = set()
 	rows = []
 	notes = []
+
+	def receipt_note(title):
+		return _(
+			"{0} is a receipt on one of this trip's costs, so it is off the trip's files. A receipt stays with its cost, where the trip views never show it."
+		).format(title)
+
 	for item in documents:
 		row = by_name.get(item.get("name")) if item.get("name") else None
 		if row is not None and _get(row, "name") in used:
@@ -673,6 +688,7 @@ def merge_documents(doc, documents, group_map, crew, file_check=None):
 		if not url:
 			raise PlanError(_("A trip file has no file. Upload it again, or remove it."))
 		title = (str(item.get("title") or "").strip() or file_name_of(url))[:140]
+		changed_file = new_row or url != str(_get(row, "file") or "").strip()
 
 		kind = str(item.get("kind") or "").strip() or "Other"
 		if kind not in DOCUMENT_KINDS:
@@ -680,17 +696,37 @@ def merge_documents(doc, documents, group_map, crew, file_check=None):
 
 		traveler = str(item.get("traveler") or "").strip() or None
 		if traveler and traveler not in crew:
-			raise PlanError(_("{0} is not on this trip.").format(traveler))
+			if not new_row and traveler == (_get(row, "traveler") or None):
+				# Pinned to them before they were taken off the crew on the form, which checks
+				# nothing on this tab: dropped, as the page's own crew removal drops it.
+				notes.append(
+					_(
+						"{0} was only for {1}, who is no longer on the trip, so it is off the trip's files. It is still attached to the trip on the full form."
+					).format(title, _get(row, "traveler_name") or traveler)
+				)
+				continue
+			raise PlanError(_("{0}: {1} is not on this trip.").format(title, traveler))
 
-		if new_row or url != str(_get(row, "file") or "").strip():
-			if url in receipts:
+		if url in receipts:
+			if not changed_file:
+				# Became a receipt since (the same content uploaded to a cost, one URL).
+				notes.append(receipt_note(title))
+				continue
+			raise PlanError(
+				_(
+					"{0} is a receipt on one of this trip's costs. A receipt stays with its cost, where the trip views never show it."
+				).format(title)
+			)
+		if changed_file:
+			private = file_check(url)
+			if private is None:
+				raise PlanError(_("That file is not attached to this trip."))
+			if not private:
 				raise PlanError(
 					_(
-						"{0} is a receipt on one of this trip's costs. A receipt stays with its cost, where the trip views never show it."
+						"{0} is public: anyone with the link can open it, without signing in. Upload it again as private."
 					).format(title)
 				)
-			if not file_check(url):
-				raise PlanError(_("That file is not attached to this trip."))
 
 		asked = str(item.get("booking_group") or "").strip()
 		group = group_map.get(asked, asked) if asked else None
@@ -712,6 +748,11 @@ def merge_documents(doc, documents, group_map, crew, file_check=None):
 		_set(row, "booking_group", group)
 		_set(row, "booking_label", _booking_label(index, group) or None)
 		rows.append(row)
+	# A receipt is never sent to the page (_documents_state), so the page never sends it back:
+	# the row it was comes off here, and the page is told why.
+	for row in existing:
+		if _get(row, "name") not in used and str(_get(row, "file") or "").strip() in receipts:
+			notes.append(receipt_note(_get(row, "title") or file_name_of(_get(row, "file"))))
 	return rows, notes
 
 
@@ -868,6 +909,8 @@ def get_state(doc):
 			for row in doc.get("itinerary") or []
 		],
 		"documents": _documents_state(doc),
+		# Paperwork included, as data (check "documents"); the page counts it apart from the
+		# rest (completeness.counted_gaps / files_not_attached), never in a badge or a total.
 		"gaps": find_gaps(doc),
 	}
 
@@ -876,11 +919,16 @@ def _documents_state(doc):
 	"""The trip's files for the page. ``traveler`` "" is everyone (on the booking, or the whole
 	crew); ``booking_group`` "" is the whole trip — including a file whose booking has been
 	removed since, so the page shows it where the next save will put it. ``booking_label`` is
-	read from the booking as it is now. Not money: a receipt is never a Trip Document."""
+	read from the booking as it is now. Not money: a row naming one of the trip's receipts
+	(``completeness.receipt_urls``) is left out, and the next save takes it off the trip's
+	files with a note (:func:`merge_documents`)."""
 	index = booking_index(doc)
+	receipts = receipt_urls(doc)
 	out = []
 	for row in doc.get("documents") or []:
 		url = str(_get(row, "file") or "")
+		if url.strip() in receipts:
+			continue
 		group = document_group(row, index)
 		out.append(
 			{

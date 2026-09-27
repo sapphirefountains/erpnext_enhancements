@@ -520,6 +520,12 @@ function installFrappe(browser) {
 		flt: (v) => parseFloat(v) || 0,
 		moment: () => ({ format: () => "", isSameOrBefore: () => false, add() {} }),
 		format_currency: (v) => String(v),
+		// tp_html_to_text's parser (the Overview's "Not on any day yet"): the text of the markup.
+		DOMParser: class {
+			parseFromString(html) {
+				return { body: { textContent: String(html).replace(/<[^>]+>/g, "") } };
+			}
+		},
 	});
 	globalThis.document.activeElement = globalThis.document.body;
 	return frappe;
@@ -2236,15 +2242,18 @@ async function planATripSuite() {
 			[opts.doctype, opts.docname, opts.folder, opts.make_attachments_public, opts.allow_multiple],
 			["Travel Trip", "TRIP-1", "Home/Attachments", false, true]
 		);
+		// frappe offers a "Private" box per file and "Set all public" unless told not to; a
+		// public File is served to anyone at /files/<name>. And a trip's files are uploads.
+		assert.deepEqual([opts.allow_toggle_private, opts.allow_web_link], [false, false]);
 		opts.on_success({ name: "F-1", file_url: "/private/files/ana-bp.pdf", file_name: "ana-bp.pdf" });
 		opts.on_success({ name: "F-2", file_url: "/private/files/ana-bp-2.png", file_name: "ana-bp-2.png" });
 		assert.deepEqual(
 			p.state.documents.map((d) => [d.name, d.booking_group, d.kind, d.traveler, d.title, d.is_image]),
 			[
-				[null, key, "Boarding pass", "", "ana-bp.pdf", 0],
-				[null, key, "Boarding pass", "", "ana-bp-2.png", 1],
+				[null, key, "Boarding pass", "E1", "ana-bp.pdf", 0],
+				[null, key, "Boarding pass", "E1", "ana-bp-2.png", 1],
 			],
-			"one file per upload, on the card, for everyone on it, named after the file"
+			"one file per upload, on the card, for the flight's one person, named after the file"
 		);
 		assert.ok(p.is_dirty(), "a file attached is an edit, saved with the next save");
 		assert.equal(browser.hist.length, 1, "attaching a file is not a screen");
@@ -2343,6 +2352,219 @@ async function planATripSuite() {
 		assert.equal(ui.alerts.length, alerts, "nothing to say");
 	});
 
+	// An upload keeps going when its dialog is closed: by the phone's Back (frappe closes every
+	// dialog on a route change), its X, or a tap outside it. So a file can land while a save is
+	// in flight. That save sent the page before the file was on it, and its answer replaces the
+	// page's trip, so the file's row was dropped without a word, the page read as saved, and the
+	// File was left attached to the trip but on no list.
+	const SHARED_FLIGHT = {
+		group: "aaaaaaaaaaaa",
+		values: { leg: "Outbound", airline: "Southwest", flight_number: "WN 1", departure_time: "", arrival_time: "" },
+		members: [
+			{ name: "R1", traveler: "E1", ref: "" },
+			{ name: "R2", traveler: "E2", ref: "" },
+		],
+	};
+	const SHARED_TRIP = {
+		...CREW_TRIP,
+		bookings: { flights: [SHARED_FLIGHT], accommodations: [], ground_transport: [] },
+		documents: [],
+	};
+	const filed = (p) => p.state.documents.map((d) => [d.booking_group, d.title, d.traveler]);
+	const lost = () => ui.alerts.filter((a) => /no longer open here|whole trip's files/.test(a));
+
+	await test("a file that lands while a save is in flight is kept: the phone's Back between steps", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=crew");
+		await settle();
+		const p = planner();
+		p.go(2);
+		await settle();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		p.set_value(p.cards("flights")[0], "flight_number", "WN 2"); // an edit, so Back saves
+		server.hold.add("save_plan");
+		await back(); // closes the uploader; the upload goes on
+		assert.equal(server.held.length, 1, "the save is in flight");
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/mid.pdf", file_name: "mid.pdf" });
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.equal(last().step, "crew");
+		assert.equal(p.cards("flights")[0].values.flight_number, "WN 2", "the save's answer is on the page");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "mid.pdf", "E1"]], "on its flight, for the first person on it without one");
+		assert.ok(p.is_dirty(), "and saved with the next save, not taken for saved");
+		assert.deepEqual(lost(), []);
+		p.go(2);
+		await settle();
+		assert.equal(server.sent("save_plan").length, 2);
+		assert.deepEqual(JSON.parse(server.sent("save_plan")[1].args.plan).documents.map((d) => d.file), ["/private/files/mid.pdf"]);
+	});
+
+	await test("a file that lands while a save is in flight is kept: leaving for the form, and Back onto the page", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		p.state.trip.purpose = "Crew install, phase 2";
+		server.hold.add("save_plan");
+		F.set_route("travel-trip", "TRIP-2"); // "Open the full form": on_hide saves quietly
+		await settle();
+		assert.equal(server.held.length, 1, "the save is in flight");
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/mid.pdf", file_name: "mid.pdf" });
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "mid.pdf", "E1"]]);
+		assert.ok(p.is_dirty());
+		await back(); // onto the page: something unsaved, so what is on it stays
+		assert.equal(last().step, "there");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "mid.pdf", "E1"]]);
+		assert.deepEqual(lost(), []);
+	});
+
+	await test("files that land during a Next's save are kept, each for the next person on the flight without one", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		// Two boarding passes picked at once: the first lands, the dialog is closed with its X
+		// while the second uploads, and Next saves.
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/ana-bp.pdf", file_name: "ana-bp.pdf" });
+		server.hold.add("save_plan");
+		p.go(3);
+		await settle();
+		opened[0].on_success({ name: "F-2", file_url: "/private/files/ben-bp.pdf", file_name: "ben-bp.pdf" });
+		assert.deepEqual(
+			JSON.parse(server.held[0].call.args.plan).documents.map((d) => d.title),
+			["ana-bp.pdf"],
+			"the save in flight was sent before the second one landed"
+		);
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.equal(last().step, "back");
+		assert.deepEqual(filed(p), [
+			["aaaaaaaaaaaa", "ana-bp.pdf", "E1"],
+			["aaaaaaaaaaaa", "ben-bp.pdf", "E2"],
+		]);
+		assert.ok(p.is_dirty());
+		// Everyone on it has theirs: a third file is for everyone on the flight (the ticket).
+		opened[0].on_success({ name: "F-3", file_url: "/private/files/ticket.pdf", file_name: "ticket.pdf" });
+		assert.deepEqual(filed(p)[2], ["aaaaaaaaaaaa", "ticket.pdf", ""]);
+		assert.deepEqual(lost(), []);
+	});
+
+	await test("a file that lands once its trip was put aside unsaved goes on that trip, and Carry on brings it back", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		press("tp-list-item", { currentTarget: { __attrs: { "data-name": "TRIP-2" } } });
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		p.state.trip.purpose = "Changed";
+		server.fail.add("save_plan"); // no answer: the trip is kept, not dropped
+		await back();
+		assert.deepEqual(last(), { landing: true });
+		assert.deepEqual(Object.keys(p.kept), ["TRIP-2"]);
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/late.pdf", file_name: "late.pdf" });
+		assert.deepEqual(lost(), [], "it is not gone: it is kept here");
+		assert.ok(ui.alerts.some((a) => a.includes("late.pdf is on Changed's files")));
+		server.fail.delete("save_plan");
+		p.carry_on("TRIP-2");
+		await settle();
+		assert.equal(p.state.trip.purpose, "Changed");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "late.pdf", "E1"]]);
+		assert.ok(p.is_dirty());
+	});
+
+	await test("a file that lands while its trip is loading again (Back from the form) goes on it once it is here", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		F.set_route("travel-trip", "TRIP-2"); // nothing unsaved
+		await settle();
+		server.hold.add("get_plan");
+		await back(); // onto the page: it may have been saved on the form, so it loads again
+		assert.equal(p.state, null, "loading");
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/late.pdf", file_name: "late.pdf" });
+		server.hold.delete("get_plan");
+		server.release("get_plan");
+		await settle();
+		assert.equal(last().step, "there");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "late.pdf", "E1"]]);
+		assert.ok(p.is_dirty());
+		assert.deepEqual(lost(), []);
+	});
+
+	await test("unticking someone on a booking or with files of their own asks first; ticking them stays until yes", async () => {
+		tripServer({
+			"TRIP-2": { ...SHARED_TRIP, documents: [{ ...SITE_MAP, name: "TDOC-2", traveler: "E2" }] },
+		});
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=crew");
+		await settle();
+		const p = planner();
+		p.lookups.employees = [
+			{ name: "E1", employee_name: "Ana" },
+			{ name: "E2", employee_name: "Ben" },
+			{ name: "E3", employee_name: "Cy" },
+		];
+		const asked = [];
+		let yes = null;
+		F.confirm = (message, ok) => {
+			asked.push(message);
+			yes = ok;
+		};
+		const untick = (name) => {
+			clicks.length = 0;
+			// The stand-in jQuery holds no values: the "Find a person" box reads as empty.
+			const real = globalThis.$;
+			globalThis.$ = (arg) => {
+				const out = real(arg);
+				if (typeof arg !== "string" || !arg.includes("Find a person")) return out;
+				const search = new Proxy(out, {
+					get: (t, prop) => (prop === "val" ? () => "" : prop === "appendTo" ? () => search : Reflect.get(t, prop)),
+				});
+				return search;
+			};
+			try {
+				p.step_crew($stub("crew"));
+			} finally {
+				globalThis.$ = real;
+			}
+			const box = clicks.find((c) => c.event === "change" && c.src.includes(name) && c.src.endsWith('input[type="checkbox"]'));
+			const target = { checked: false };
+			box.fn({ target });
+			return target;
+		};
+		const box = untick("Ben");
+		assert.deepEqual(asked, [
+			"Take Ben off the trip? They come off 1 booking, and their confirmation number on it. 1 file for them comes off the trip's list; it stays attached to the trip on the full form.",
+		]);
+		assert.equal(box.checked, true, "still ticked until they say yes");
+		assert.deepEqual(p.crew().map((t) => t.employee), ["E1", "E2"], "nothing taken yet");
+		yes();
+		assert.deepEqual(p.crew().map((t) => t.employee), ["E1"]);
+		assert.deepEqual(p.cards("flights")[0].members.map((m) => m.traveler), ["E1"]);
+		assert.deepEqual(p.state.documents, []);
+		// Nothing to lose: no question.
+		p.add_traveler({ name: "E3", employee_name: "Cy" });
+		asked.length = 0;
+		untick("Cy");
+		assert.deepEqual(asked, []);
+		assert.deepEqual(p.crew().map((t) => t.employee), ["E1"]);
+		assert.equal(browser.hist.length, 1, "a question is not a screen");
+	});
+
 	await test("the Files step is a step like the others, and nothing on the way to it touches the uploader", async () => {
 		tripServer({ "TRIP-1": TRIP });
 		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=files");
@@ -2409,33 +2631,155 @@ async function planATripSuite() {
 		assert.equal(later.length, 0);
 	});
 
-	await test("Review and a booking's card say what paperwork is missing, and Review counts the files", async () => {
-		const gap = {
-			check: "documents",
-			step: "there",
-			table: "flights",
-			group: "0123456789ab",
-			label: "Southwest WN 1422",
-			employee_names: ["Ana"],
-		};
-		tripServer({ "TRIP-4": { ...DOC_TRIP, gaps: [gap] } });
+	// Paperwork (completeness.document_gaps, check "documents") is a separate, quieter tally (Nik,
+	// 2026-09-26): shown on the card, the Files step and Review, counted as files, muted, and never
+	// in a tab's badge, "Mark as booked"'s count, a red card or the Overview's "Still missing".
+	const PAPER = {
+		check: "documents",
+		step: "there",
+		table: "flights",
+		group: "0123456789ab",
+		label: "Southwest WN 1422",
+		employee_names: ["Ana"],
+		kinds: ["Boarding pass", "Booking confirmation"],
+	};
+	const NO_NUMBER = {
+		check: "confirmation",
+		step: "there",
+		table: "flights",
+		group: "fedcba987654",
+		label: "Delta DL 88",
+		employee_names: ["Ana"],
+	};
+
+	await test("Review, the Files step and a booking's card show paperwork quietly, counted as files", async () => {
+		// Two people on one flight without their boarding passes are two files; a room is one.
+		const room = { ...PAPER, step: "lodging", table: "accommodations", group: "abcdefabcdef", label: "Hilton", employee_names: [] };
+		const pair = { ...PAPER, employee_names: ["Ana", "Ben"] };
+		tripServer({ "TRIP-4": { ...DOC_TRIP, gaps: [PAPER] } });
 		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-4&step=review");
 		await settle();
 		const p = planner();
 		const review = drawn(() => p.step_review($stub("review")));
 		assert.ok(review.some((h) => h.includes("<h5>Paperwork</h5>")), "a Paperwork section");
-		assert.ok(review.some((h) => h.includes("Southwest WN 1422: no boarding pass or ticket for Ana.")));
+		const line = review.find((h) => h.includes("Southwest WN 1422: no boarding pass or ticket for Ana."));
+		assert.ok(line, "the booking and who is missing theirs");
+		assert.ok(line.includes('class="tp-paper"') && !line.includes("tp-gap"), "a muted note, not a missing item");
+		assert.ok(review.some((h) => h.includes("tp-paper-count") && h.includes("1 file not attached yet")), "its own count");
+		assert.ok(review.some((h) => h.includes("Attach") && h.includes("tp-btn-link")), "and a way to the card that takes it");
+		assert.ok(!review.some((h) => h.includes('class="tp-gap"')), "nothing on Review reads as missing");
 		assert.ok(review.some((h) => /Files<\/span><b>1<\/b>/.test(h)), "the Files tile counts the trip's files");
-		assert.deepEqual(p.gaps_for_step("there"), [gap], "on the Getting there tab's badge");
 		const files = drawn(() => p.step_files($stub("files")));
-		assert.ok(files.some((h) => h.includes("Still missing")), "the Files step lists it too, with a Fix link");
+		assert.ok(files.some((h) => h.includes("1 file not attached yet")), "the Files step lists it, counted as files");
+		assert.ok(!files.some((h) => h.includes("Still missing")), "...and not as missing");
+		assert.ok(files.some((h) => h.includes('class="tp-paper"') && h.includes("Southwest WN 1422")));
 		const wording = { accommodations: "no confirmation attached.", ground_transport: "no rental agreement attached.", freight: "no bill of lading attached." };
 		Object.entries(wording).forEach(([table, words]) => {
-			assert.equal(p.gap_text({ ...gap, table, employee_names: [] }), `Southwest WN 1422: ${words}`);
+			assert.equal(p.gap_text({ ...PAPER, table, employee_names: [] }), `Southwest WN 1422: ${words}`);
 		});
+
+		p.state.gaps = [pair, room];
+		const count = drawn(() => p.step_review($stub("review"))).find((h) => h.includes("tp-paper-count"));
+		assert.ok(count.includes("3 files not attached yet"), `each person's boarding pass, and the room's confirmation: ${count}`);
+
+		// A booking's card: paperwork alone leaves it unframed, with a quiet note; a real gap
+		// frames it red.
+		const card = { group: PAPER.group, table: "flights", values: {}, members: [] };
+		p.state.gaps = [PAPER];
+		let shell = drawn(() => p.card_shell($stub("there"), card, "Flight"));
+		assert.ok(shell.some((h) => h.includes('class="tp-card "')), "paperwork alone does not make the card red");
+		const notes = drawn(() => p.card_gaps($stub("there"), card));
+		assert.ok(notes.some((h) => h.includes('class="tp-paper"') && h.includes("no boarding pass or ticket for Ana")));
+		assert.ok(!notes.some((h) => h.includes('class="tp-gap"')));
+		p.state.gaps = [PAPER, { ...NO_NUMBER, group: PAPER.group }];
+		shell = drawn(() => p.card_shell($stub("there"), card, "Flight"));
+		assert.ok(shell.some((h) => h.includes("tp-card tp-bad")), "a real gap still does");
+
 		p.state.gaps = [];
 		const clear = drawn(() => p.step_review($stub("review")));
 		assert.ok(clear.some((h) => h.includes("Every booking that's made has its paperwork attached.")));
+		assert.ok(!clear.some((h) => h.includes("not attached yet")));
+	});
+
+	await test("a step's badge and Mark as booked count every gap but paperwork", async () => {
+		tripServer({ "TRIP-4": { ...DOC_TRIP, gaps: [PAPER] } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-4&step=review");
+		await settle();
+		const p = planner();
+		const badges = () =>
+			drawn(() => p.render_tabs())
+				.filter((h) => h.includes('class="tp-tab'))
+				.map((h) => [h.replace(/<span class="tp-badge">.*<\/span>/, "").replace(/<[^>]+>/g, ""), (h.match(/tp-badge">(\d+)</) || [])[1]])
+				.filter(([, count]) => count);
+		assert.deepEqual(p.gaps_for_step("there"), [], "paperwork is on Getting there, and not in its badge");
+		assert.deepEqual(badges(), [], "no tab carries a badge for paperwork alone");
+		p.state.gaps = [NO_NUMBER, PAPER];
+		assert.deepEqual(p.gaps_for_step("there"), [NO_NUMBER]);
+		assert.deepEqual(badges(), [["Getting there", "1"]], "the missing number is counted, the paperwork beside it is not");
+
+		// Mark as booked: a trip whose only open items are files is booked without a question...
+		const asked = [];
+		F.confirm = (message, yes) => {
+			asked.push(message);
+			yes();
+		};
+		p.state.gaps = [PAPER];
+		p.mark_booked();
+		await settle();
+		assert.deepEqual(asked, [], "paperwork alone asks nothing");
+		assert.equal(JSON.parse(server.sent("save_plan")[0].args.plan).status, "Booked");
+		// ...and one with a real gap is asked about that gap alone.
+		p.state.status = "Planning";
+		p.state.gaps = [NO_NUMBER, PAPER, { ...PAPER, group: "abcdefabcdef" }];
+		p.mark_booked();
+		await settle();
+		assert.deepEqual(asked, ["1 things on the checklist are still missing. Mark the trip as booked anyway?"]);
+	});
+
+	await test("the Overview counts paperwork apart: its own muted tile and notes, never a red flag", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		const views = server.handlers.get_trip_views;
+		let gaps = [];
+		server.handlers.get_trip_views = (args) => {
+			const data = views(args);
+			data.days = ["2026-10-01", "2026-10-02", "2026-10-03"];
+			data.whole = [
+				{
+					date: "2026-10-01",
+					items: [
+						{ type: "flight", date: "2026-10-01", group: PAPER.group, airline: "Southwest", flight_number: "WN 1422", members: [] },
+						{ type: "flight", date: "2026-10-01", group: NO_NUMBER.group, airline: "Delta", flight_number: "DL 88", members: [] },
+					],
+				},
+			];
+			data.gaps = gaps;
+			return data;
+		};
+		gaps = [NO_NUMBER, PAPER, { ...PAPER, group: "abcdefabcdef", label: "Hilton", table: "accommodations", employee_names: [] }];
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		await settle();
+		const tiles = ui.drawn.find((html) => html.includes('class="tp-sum"'));
+		const tile = (label) => (tiles.match(new RegExp(`${label}</span><b>([^<]*)</b>`)) || [])[1];
+		assert.equal(tile("Still missing"), "1", "the missing number only");
+		assert.equal(tile("Files not attached"), "2", "the paperwork, counted as files");
+		assert.ok(tiles.includes('<div class="tp-quiet"><span class="tp-muted">Files not attached'), "a muted tile");
+		const southwest = ui.drawn.find((h) => h.includes("tp-tl-item") && h.includes("WN 1422"));
+		const delta = ui.drawn.find((h) => h.includes("tp-tl-item") && h.includes("DL 88"));
+		assert.ok(southwest && !southwest.includes("tp-bad"), "paperwork alone does not frame the booking red");
+		assert.ok(delta.includes("tp-bad"), "a missing number does");
+		const flags = ui.drawn.filter((h) => h.includes('class="tp-flag"'));
+		const notes = ui.drawn.filter((h) => h.includes('class="tp-paper"'));
+		assert.deepEqual(flags.length, 1, flags.join("\n"));
+		assert.ok(flags[0].includes("No confirmation number for Ana."));
+		assert.ok(notes.some((h) => h.includes("No boarding pass or ticket for Ana.")), "a muted note on the booking");
+		assert.ok(notes.some((h) => h.includes("Hilton")), "the room on no day: a note under 'Not on any day yet'");
+
+		// No paperwork, no tile.
+		gaps = [NO_NUMBER];
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		await settle();
+		const plain = ui.drawn.find((html) => html.includes('class="tp-sum"'));
+		assert.ok(!plain.includes("Files not attached"));
 	});
 
 	await test("a booking taken off takes its files off the list; so does someone taken off the crew, for their own", async () => {

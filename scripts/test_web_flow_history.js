@@ -2167,15 +2167,65 @@ async function testItineraryDocuments() {
 		[["For the whole trip", "Hampton Inn", "Hampton Inn", "Booking"], ["map", "room-1", "room-2", "unnamed"]]
 	);
 
+	// Two rooms at one hotel (one adult to a room, the policy): the headings say whose room each
+	// is on the whole crew's list, and when on one person's, rather than one name twice.
+	const room = (name, group, people, dates) => Object.assign(onBooking(name, group, "Hampton Inn"), { booking_people: people, booking_dates: dates });
+	const rooms = (viewing, docs) => ({
+		status: 200,
+		body: { message: {
+			trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(-1), end_date: iso(1), days: [], viewing,
+			crew: ["EMP-1", "EMP-2", "EMP-3"].map((e) => ({ employee: e, employee_name: PEOPLE[e] })),
+			documents: docs,
+		} },
+	});
+	const shortDay = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=crew&view=docs");
+	p.session.next = rooms(null, [
+		room("room-pat", "r1", ["Pat"], ["2026-09-28", "2026-09-30"]),
+		Object.assign(room("room-sam", "r2", ["Sam"], ["2026-09-28", "2026-09-30"]), { url: "/files/room-sam.png", file_name: "room-sam.png", is_image: true }),
+		room("room-crew", "r3", [], ["2026-09-28", "2026-09-30"]),
+		Object.assign(onBooking("rental", "g4", "Enterprise"), { booking_people: ["Pat"], booking_dates: ["2026-09-28", null] }),
+	]);
+	await p.answer("TRIP-A");
+	check(
+		"...on the whole crew's list, by who is in each (a label nobody else has is left alone)",
+		p.docGroups(),
+		["Hampton Inn · Pat", "Hampton Inn · Sam", "Hampton Inn · Whole crew", "Enterprise"]
+	);
+	p.doc("room-sam").click();
+	await flush();
+	check("...and so does the picture viewer's line under a file's name", p.document.body.find("ti-viewer-sub").map((e) => e.textContent), ["Other · Hampton Inn · Sam"]);
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-2&view=docs");
+	p.session.next = rooms("EMP-2", [
+		room("first-night", "r1", undefined, ["2026-09-28", "2026-09-29"]),
+		room("second-night", "r2", undefined, ["2026-09-29", "2026-09-30"]),
+	]);
+	await p.answer("TRIP-A");
+	check(
+		"...and by when on one person's (a split stay)",
+		p.docGroups(),
+		[`Hampton Inn · ${shortDay("2026-09-28")} – ${shortDay("2026-09-29")}`, `Hampton Inn · ${shortDay("2026-09-29")} – ${shortDay("2026-09-30")}`]
+	);
+
 	p = loadItinerary("/itinerary?trip=TRIP-B&view=docs");
 	await p.answer("TRIP-B");
 	check(
-		"the Documents screen of a trip with no files (an answer with no `documents` at all) says so, and still offers the day list",
+		"the Documents screen of a trip with no files (an answer with no `documents` at all) says so, for the person shown, and still offers the day list",
 		[p.empty(), p.screens()],
-		[["No documents for this trip yet."], ["Day by day", "Documents (0)"]]
+		[["No files for you on this trip yet."], ["Day by day", "Documents (0)"]]
 	);
 	await p.screen("Day by day");
 	check("...which, with nothing of the page's behind it, is a new entry", [p.urls(), p.days(), p.screens()], [["push /itinerary?trip=TRIP-B"], 0, []]);
+
+	// One person's list leaves out what is not theirs: it never says the trip has none.
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-3&view=docs");
+	p.session.next = rooms("EMP-3", []);
+	await p.answer("TRIP-A");
+	check("someone else's empty list says whose it is, not that the trip has no documents", p.empty(), ["No files for Alex on this trip yet."]);
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=crew&view=docs");
+	p.session.next = rooms(null, []);
+	await p.answer("TRIP-A");
+	check("...and only the whole crew's says the trip has none", p.empty(), ["No documents for this trip yet."]);
 
 	// Room guests on the whole crew's view.
 	const day = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });

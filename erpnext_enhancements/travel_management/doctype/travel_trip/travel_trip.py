@@ -41,7 +41,7 @@ from erpnext_enhancements.travel_management import (
 	TRAVEL_FOR_DOCTYPES,
 	expense_claims_available,
 )
-from erpnext_enhancements.travel_management.completeness import find_gaps
+from erpnext_enhancements.travel_management.completeness import find_gaps, repeated_freight_groups
 
 # Status transitions a plain Employee may perform manually. Coordinators are
 # unrestricted; the date-driven transitions belong to the daily job.
@@ -87,7 +87,10 @@ class TravelTrip(Document):
 		self.set_onload("expense_claims_available", expense_claims_available())
 		# The trip checklist (a bed every night, travel both ways, confirmation
 		# numbers, costs) for the form's headline. savedocs runs onload again
-		# after every save, so the headline follows the edits.
+		# after every save, so the headline follows the edits. The paperwork gaps
+		# (check "documents") come along as data, and travel_trip.js tallies them
+		# apart as a quiet "N files not attached yet" line: they are never in the
+		# headline's count (completeness.counted_gaps / files_not_attached).
 		self.set_onload("trip_gaps", find_gaps(self))
 
 	def validate(self):
@@ -97,6 +100,7 @@ class TravelTrip(Document):
 		self._validate_travel_for()
 		self._validate_travelers()
 		self._validate_cost_rows()
+		self._validate_trip_files()
 		self._compute_mileage()
 		self._compute_per_diem()
 		self._compute_rollups()
@@ -285,6 +289,46 @@ class TravelTrip(Document):
 						row.idx, row.traveler
 					)
 				)
+
+	# ------------------------------------------------------------- trip files
+
+	def _validate_trip_files(self):
+		"""The rules the trip's files keep on every save, the form's included (Plan a Trip's
+		own checks are in ``planner.merge_documents``, on its saves only).
+
+		* **A receipt is never a trip file.** A receipt is money, which the trip views,
+		  ``/itinerary`` and the emails never carry, and every Trip Document is shown to the
+		  crew. frappe v16 reuses a ``file_url`` for the same content uploaded again to the
+		  same trip, so paperwork uploaded first and the same PDF later as a cost's Receipt
+		  would be one URL on both, in either order. Refused here, naming both.
+		* **A shipment's id is its own.** The grid's Duplicate copies the hidden
+		  ``booking_group`` too (``completeness.repeated_freight_groups``); the copy's is
+		  cleared, so the two shipments' files, checklist and money stay apart.
+		"""
+		receipts = {}
+		for fieldname in COST_TABLES:
+			for row in self.get(fieldname) or []:
+				url = str(getattr(row, "attachment", None) or "").strip()
+				if url and url not in receipts:
+					receipts[url] = (fieldname, row)
+		for document in self.get("documents") or []:
+			url = str(getattr(document, "file", None) or "").strip()
+			if url not in receipts:
+				continue
+			fieldname, row = receipts[url]
+			frappe.throw(
+				_(
+					"Trip Documents row {0} ({1}) is also the Receipt on {2} row {3}. A receipt is money and stays with its cost, where the trip views never show it: remove it from Trip Documents, or take it off that cost's Receipt."
+				).format(
+					document.idx,
+					getattr(document, "title", None) or url.rsplit("/", 1)[-1],
+					_(self.meta.get_label(fieldname)),
+					row.idx,
+				)
+			)
+
+		for row in repeated_freight_groups(self.get("freight") or []):
+			row.booking_group = None
 
 	# ------------------------------------------------------ computed amounts
 

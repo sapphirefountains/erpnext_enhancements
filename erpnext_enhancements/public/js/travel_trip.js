@@ -18,6 +18,8 @@
  *    travel_management/completeness.py, sent as __onload.trip_gaps) and the
  *    "Plan step by step" door into the Plan a Trip page, which words each gap
  *    and fixes it. The wording lives on the page only, so the two cannot drift.
+ *    Paperwork gaps are not in the headline's count: they are a quiet
+ *    "N files not attached yet" line under it, linking to the Files step.
  *  - "Trip views": the whole trip day by day (Overview), the crew by day (Crew
  *    grid), a column per person (Side by side) and one person's own itinerary
  *    (View as) — each opens Plan a Trip on that view for this trip.
@@ -290,23 +292,46 @@ function open_trip_view_as(frm) {
 	);
 }
 
+// What the headline counts. Paperwork (check "documents") is not here on purpose: it is a
+// separate, quieter tally (Nik, 2026-09-26), the muted line under the headline.
 const CHECKLIST_LABELS = {
 	travel: __('a way there or back'),
 	lodging: __('a bed for the night'),
 	confirmation: __('a confirmation number'),
 	cost: __('a cost'),
-	documents: __('paperwork'),
 };
 
+const PAPERWORK_CHECK = 'documents';
+
+// How many files the paperwork gaps stand for: each person on a flight still without a boarding
+// pass or ticket, one file for any other booking — completeness.files_not_attached.
+function files_not_attached(gaps) {
+	return gaps
+		.filter((gap) => gap.check === PAPERWORK_CHECK)
+		.reduce((count, gap) => count + Math.max(1, (gap.employee_names || []).length), 0);
+}
+
+// The trip checklist as the form's headline: what is missing, counted and linked to Review;
+// and, apart from it and quieter, the paperwork not attached yet, linked to the Files step.
+// Paperwork never makes the headline orange and is never in its count: v1.544.0 had just taken
+// the first real trip from six flags to none, and counting its paperwork would have put ten
+// back — every booking on it has its number and no file yet.
 function show_trip_checklist(frm) {
 	if (frm.is_new() || frm.doc.status === 'Closed') {
 		frm.dashboard.clear_headline();
 		return;
 	}
-	const gaps = (frm.doc.__onload && frm.doc.__onload.trip_gaps) || [];
-	const plan_url = `/desk/plan-a-trip?trip=${encodeURIComponent(frm.doc.name)}&step=review`;
+	const all = (frm.doc.__onload && frm.doc.__onload.trip_gaps) || [];
+	const gaps = all.filter((gap) => gap.check !== PAPERWORK_CHECK);
+	const files = files_not_attached(all);
+	const plan_url = `/desk/plan-a-trip?trip=${encodeURIComponent(frm.doc.name)}`;
+	const paperwork = files
+		? `<div class="small text-muted" style="margin-top:2px;"><a class="text-muted" href="${plan_url}&step=files">${
+				files === 1 ? __('1 file not attached yet') : __('{0} files not attached yet', [files])
+		  }</a></div>`
+		: '';
 	if (!gaps.length) {
-		frm.dashboard.set_headline_alert(__('Trip checklist: nothing missing.'), 'green');
+		frm.dashboard.set_headline_alert(`${__('Trip checklist: nothing missing.')}${paperwork}`, 'green');
 		return;
 	}
 	const counts = {};
@@ -318,7 +343,7 @@ function show_trip_checklist(frm) {
 		.map((check) => __('{0} missing {1}', [counts[check], CHECKLIST_LABELS[check]]));
 	frm.dashboard.set_headline_alert(
 		`${__('Trip checklist')}: ${frappe.utils.escape_html(parts.join('; '))}.
-		 <a href="${plan_url}">${__('See what and fix it')}</a>`,
+		 <a href="${plan_url}&step=review">${__('See what and fix it')}</a>${paperwork}`,
 		'orange'
 	);
 }

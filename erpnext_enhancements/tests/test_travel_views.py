@@ -871,9 +871,13 @@ class TestTripFiles(MoneyAssertions):
 				"for_employee": "EMP-B",
 				"group": "g1",
 				"booking_label": "Southwest WN 1",
+				# Who is on the booking and when: what tells two same-named bookings apart.
+				"booking_dates": ["2026-10-05", None],
+				"booking_people": ["Ann", "Bo"],
 			},
 		)
 		self.assertIs(by_name["D1"]["is_image"], True)
+		self.assertNotIn("booking_people", by_name["D1"], "a file for the whole trip is on no booking")
 		self.assertEqual(
 			(by_name["D1"]["for_name"], by_name["D1"]["group"], by_name["D1"]["booking_label"]),
 			(None, None, None),
@@ -947,6 +951,64 @@ class TestTripFiles(MoneyAssertions):
 				row.flight_number = ""
 		by_name = {d["name"]: d for d in travel.shape_itinerary(self.doc)["documents"]}
 		self.assertEqual((by_name["D2"]["group"], by_name["D2"]["booking_label"]), ("g1", "Flight"))
+
+	def test_a_trip_file_that_is_a_receipt_reaches_no_payload(self):
+		# A row added on the form's Documents tab is checked by nothing on the way in, and
+		# frappe reuses a file_url for the same content uploaded again, so a Trip Document can
+		# name a cost's Receipt. What is SENT keeps the rule: every reader leaves it out.
+		self.doc.documents.append(
+			FakeRow(
+				name="D9",
+				title="Flight confirmation",
+				kind="Booking confirmation",
+				file="/private/files/receipt-f1.pdf",
+				booking_group="g1",
+			)
+		)
+		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
+			shaped = travel.shape_itinerary(self.doc, viewer)
+			self.assertNotIn("D9", self.names(shaped["documents"]), viewer)
+			self.assertNoReceipt(shaped)
+		for coordinator in (False, True):
+			with mock.patch.object(travel, "_is_coordinator", return_value=coordinator):
+				payload = travel.get_trip_views("TRIP-1")
+				self.assertNoReceipt(payload)
+				# ...nor does it count as the flight's paperwork: Ann still has none of her own.
+				paperwork = [g for g in payload["gaps"] if g["check"] == "documents" and g["group"] == "g1"]
+				self.assertEqual([g["employee_names"] for g in paperwork], [["Ann"]])
+		for as_employee in (None, "crew", "EMP-A"):
+			self.assertNoReceipt(travel.get_trip_itinerary("TRIP-1", as_employee))
+		self.assertNotIn("D9", [d["name"] for d in planner._documents_state(self.doc)])
+
+	def test_two_bookings_with_one_name_carry_who_is_on_each_and_when(self):
+		# One adult to a room (the travel policy): four rooms at one hotel are four bookings
+		# called the same. /itinerary's Documents screen tells them apart by these.
+		ann, bo = self.doc.accommodations
+		bo.booking_group = "g5"
+		bo.check_in_date = "2026-10-06"
+		self.doc.documents.append(
+			FakeRow(name="D8", title="Hotel One confirmation", kind="Booking confirmation", file="/private/files/hotel-bo.pdf", booking_group="g5")
+		)
+		by_name = {d["name"]: d for d in travel.shape_itinerary(self.doc)["documents"]}
+		self.assertEqual(
+			[(by_name[n]["booking_label"], by_name[n]["booking_people"], by_name[n]["booking_dates"]) for n in ("D3", "D8")],
+			[
+				("Hotel One", ["Ann"], ["2026-10-05", "2026-10-08"]),
+				("Hotel One", ["Bo"], ["2026-10-06", "2026-10-08"]),
+			],
+		)
+		# A booking the whole crew is on names nobody; a guest's own nights are not the room's.
+		self.assertEqual((by_name["D5"]["booking_people"], by_name["D5"]["booking_dates"]), ([], ["2026-10-05", None]))
+		ann.guest = 1
+		ann.check_in_date = "2026-10-07"
+		bo.booking_group = "g3"
+		by_name = {d["name"]: d for d in travel.shape_itinerary(self.doc)["documents"]}
+		self.assertEqual(by_name["D3"]["booking_dates"], ["2026-10-06", "2026-10-08"])
+		# One person's own list has the dates, and does not name the others on the booking.
+		mine = {d["name"]: d for d in travel.shape_itinerary(self.doc, "EMP-B")["documents"]}
+		self.assertEqual(mine["D3"]["booking_dates"], ["2026-10-06", "2026-10-08"])
+		self.assertNotIn("booking_people", mine["D3"])
+		self.assertNoMoney(travel.shape_itinerary(self.doc, "EMP-B"))
 
 	def test_no_receipt_in_any_payload(self):
 		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
@@ -1233,6 +1295,67 @@ class TestTheCoordinatorGate(MoneyAssertions):
 		self.assertIs(payload["is_coordinator"], True)
 		self.assertEqual(payload["money"]["groups"]["g1"]["cost"], 422.22)
 		self.assertEqual(travel.preview_itinerary_email("TRIP-1", "EMP-B")["to_email"], "bo@corp.example")
+
+
+class TestTheControllersFileRules(unittest.TestCase):
+	"""What the Travel Trip controller enforces on every save, the form's included — Plan a
+	Trip's own checks (``planner.merge_documents``) run on its saves only. The real
+	controller, imported with the same stand-ins as ``TestTheCoordinatorGate``."""
+
+	def setUp(self):
+		install_site()
+		frappe = sys.modules["frappe"]
+		document = types.ModuleType("frappe.model.document")
+		document.Document = type(
+			"Document", (), {"get": lambda self, key, default=None: getattr(self, key, default)}
+		)
+		model = types.ModuleType("frappe.model")
+		model.document = document
+		for patcher in (
+			mock.patch.dict(sys.modules, {"frappe.model": model, "frappe.model.document": document}),
+			mock.patch.object(frappe, "get_roles", lambda user=None: [], create=True),
+			mock.patch.object(frappe.utils, "date_diff", lambda a, b: 0, create=True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		sys.modules.pop(CONTROLLER, None)
+		import importlib
+
+		self.controller = importlib.import_module(CONTROLLER)
+
+	def trip(self, **tables):
+		doc = self.controller.TravelTrip()
+		for table in ("flights", "accommodations", "ground_transport", "freight", "other_costs", "documents"):
+			setattr(doc, table, tables.get(table, []))
+		doc.meta = types.SimpleNamespace(get_label=lambda fieldname: fieldname.replace("_", " ").title())
+		return doc
+
+	def test_a_receipt_is_never_a_trip_file_in_either_order(self):
+		# Paperwork first and the same PDF later as the cost's Receipt, or the other way round:
+		# frappe reuses the file_url either way, so both end as this one state.
+		url = "/private/files/wn1.pdf"
+		doc = self.trip(
+			flights=[FakeRow(name="F1", idx=1, attachment=url)],
+			documents=[FakeRow(name="D1", idx=2, title="WN1 confirmation", file=url)],
+		)
+		with self.assertRaises(sys.modules["frappe"].ValidationError) as refused:
+			doc._validate_trip_files()
+		self.assertIn("Trip Documents row 2 (WN1 confirmation) is also the Receipt on Flights row 1", str(refused.exception))
+		# Any other file is fine, and so is a trip with no files at all.
+		doc.documents = [FakeRow(name="D1", idx=1, title="Pass", file="/private/files/pass.png")]
+		doc._validate_trip_files()
+		self.trip()._validate_trip_files()
+
+	def test_a_shipment_duplicated_on_the_form_gets_its_own_id_back(self):
+		original = FakeRow(name="FR1", idx=1, booking_group="aaaaaaaaaaaa")
+		copy = FakeRow(name="FR2", idx=2, booking_group="aaaaaaaaaaaa")
+		doc = self.trip(freight=[original, copy])
+		doc._validate_trip_files()
+		self.assertEqual((original.booking_group, copy.booking_group), ("aaaaaaaaaaaa", None))
+
+	def test_validate_runs_it(self):
+		source = inspect.getsource(self.controller.TravelTrip.validate)
+		self.assertIn("self._validate_trip_files()", source)
 
 
 class TestGetTripItinerary(MoneyAssertions):

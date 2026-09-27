@@ -212,6 +212,9 @@ def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=
 	if not is_coordinator:
 		# "No cost entered" is itself a fact about money.
 		gaps = [gap for gap in gaps if gap.get("check") != "cost"]
+	# Paperwork gaps stay, for everyone: a booking's files are not money. They are the quieter
+	# tally (completeness.counted_gaps / files_not_attached), so the Overview counts them apart
+	# from "Still missing" and shows them muted, never as a red flag.
 
 	return {
 		"trip": whole["trip"],

@@ -149,6 +149,55 @@ def checks(gaps, check):
 	return [g for g in gaps if g["check"] == check]
 
 
+# The Travel Trip form's checklist headline, executed: public/js/travel_trip.js is run in a node
+# vm with just enough of frappe to load it, and show_trip_checklist is called once per list of
+# gaps (as __onload.trip_gaps). Prints, per case, every headline call as {html, color}.
+_FORM_HEADLINE_JS = r"""
+const fs = require("fs");
+const vm = require("vm");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const escape = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const ctx = {
+	__: (text, args) => String(text).replace(/\{(\d+)\}/g, (_m, i) => (args || [])[i]),
+	cint: (v) => parseInt(v, 10) || 0,
+	frappe: { ui: { form: { on() {} } }, utils: { escape_html: escape } },
+};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(input.path, "utf8"), ctx, { filename: input.path });
+const out = input.cases.map((gaps) => {
+	const shown = [];
+	ctx.show_trip_checklist({
+		doc: { name: "TRIP-2026-00001", status: "Planning", __onload: { trip_gaps: gaps } },
+		is_new: () => false,
+		dashboard: {
+			set_headline_alert: (html, color) => shown.push({ html: String(html), color: color }),
+			clear_headline: () => shown.push({ html: "", color: "" }),
+		},
+	});
+	return shown;
+});
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def form_headlines(cases):
+	node = shutil.which("node")
+	if not node:
+		raise unittest.SkipTest("node is not installed")
+	result = subprocess.run(
+		[node, "-e", _FORM_HEADLINE_JS],
+		input=json.dumps({"path": os.path.join(APP_DIR, "public", "js", "travel_trip.js"), "cases": cases}),
+		capture_output=True,
+		text=True,
+		encoding="utf-8",
+		check=False,
+		timeout=60,
+	)
+	if result.returncode:
+		raise AssertionError(result.stderr)
+	return json.loads(result.stdout)
+
+
 # --------------------------------------------------------------------------- checklist
 
 
@@ -605,7 +654,9 @@ class TestTheKaptureTrip(unittest.TestCase):
 	def test_the_flights_home_need_no_cost(self):
 		self.assertEqual(completeness.cost_gaps(self.real_trip()), [])
 
-	def test_the_guest_fills_the_last_gap_and_pays_nothing(self):
+	def with_the_guest(self):
+		"""The trip once the one-nighter is ticked into his colleague's room as a guest: the
+		rows ``merge_bookings`` writes, with ``fit_guest_stays`` run."""
 		t = self.real_trip()
 		cards = [
 			card(
@@ -627,23 +678,47 @@ class TestTheKaptureTrip(unittest.TestCase):
 		self.assertEqual(notes, [])
 		t.accommodations = rows
 		planner.fit_guest_stays(t)
+		return t
 
-		jesse, logan, korben = rows
+	def test_the_guest_fills_the_last_gap_and_pays_nothing(self):
+		t = self.with_the_guest()
+		jesse, logan, korben = t.accommodations
 		self.assertEqual((jesse.cost, logan["cost"], korben.cost), (942.88, 0.0, 942.88))
 		self.assertEqual(logan["guest"], 1)
 		# His own night, so his itinerary does not have him checking in before he flies out.
 		self.assertEqual((logan["check_in_date"], logan["check_out_date"]), ("2026-09-28", "2026-09-29"))
 		self.assertEqual((jesse.check_in_date, jesse.check_out_date), ("2026-09-27", "2026-10-02"))
-		# Changed on purpose with trip files (was: find_gaps == []). The checklist gained a
+		# Changed on purpose twice with trip files (was: find_gaps == []). The checklist gained a
 		# fifth check, paperwork, and this trip has every confirmation number and no files, so
-		# each booking now asks for its own: eight flights (one person each) and two rooms.
-		# Everything the 1.544.0 fix was about is still clear.
+		# each booking asks for its own: eight flights (one person each) and two rooms. Then Nik
+		# made paperwork a separate, quieter tally: the checklist still COUNTS nothing on this
+		# trip, as it did after 1.544.0, and the ten are counted apart, as files.
 		gaps = completeness.find_gaps(t)
-		self.assertEqual([g for g in gaps if g["check"] != "documents"], [])
+		self.assertEqual(completeness.counted_gaps(gaps), [])
+		paperwork = completeness.paperwork_gaps(gaps)
+		self.assertEqual(len(paperwork), 10)
 		self.assertEqual(
-			sorted(g["group"] for g in gaps),
+			sorted(g["group"] for g in paperwork),
 			sorted(["k1", "j1", "b1", "l1", "b2", "l2", "k2", "j2", "jroom", "kroom"]),
 		)
+		self.assertEqual(completeness.files_not_attached(gaps), 10)
+		# Still data: every consumer gets them, told apart by their check.
+		self.assertEqual(len(gaps), 10)
+		self.assertTrue(all(completeness.is_paperwork(g) for g in gaps))
+
+	def test_the_forms_headline_reads_all_set_with_a_quiet_files_line(self):
+		# travel_trip.js, run: nothing counted is missing, so the headline is green and says so;
+		# the ten are one muted line under it, linked to the Files step. Before the quieter
+		# tally it read "Trip checklist: 10 missing paperwork" in orange.
+		(shown,) = form_headlines([completeness.find_gaps(self.with_the_guest())])
+		self.assertEqual(len(shown), 1)
+		html, color = shown[0]["html"], shown[0]["color"]
+		self.assertEqual(color, "green")
+		self.assertTrue(html.startswith("Trip checklist: nothing missing."), html)
+		self.assertIn("10 files not attached yet", html)
+		self.assertIn('href="/desk/plan-a-trip?trip=TRIP-2026-00001&step=files"', html)
+		self.assertIn('class="small text-muted"', html)
+		self.assertNotIn("paperwork", html.lower())
 
 
 class TestStayWindow(unittest.TestCase):
@@ -958,6 +1033,61 @@ class TestFreight(unittest.TestCase):
 		t = trip(freight=[row(name="FR1", carrier="ODFL", tracking_number="", cost=0, booking_group="s1s1s1")])
 		self.assertEqual([g["group"] for g in completeness.confirmation_gaps(t)], ["s1s1s1"])
 
+	def test_a_shipment_duplicated_on_the_form_does_not_take_the_originals_files(self):
+		# The form's grid Duplicate copies the hidden booking_group too (v16 duplicate_row
+		# ignores no_copy): two shipments arrive under one id. The page sends both with it. The
+		# copy is given a new id, and the original's bill of lading must stay on the original —
+		# the last write to group_map used to win, and it moved to the copy.
+		doc = files_trip(
+			freight=[
+				row(name="FR1", carrier="ODFL", tracking_number="PRO1", booking_group="aaaaaaaaaaaa", traveler=None, cost=500),
+				row(name="FR2", carrier="ODFL", tracking_number="PRO2", booking_group="aaaaaaaaaaaa", traveler=None, cost=0),
+			],
+			documents=[doc_row("D1", "Bill of lading", "/f/bol1.pdf", "aaaaaaaaaaaa", title="BOL 1")],
+		)
+		plan = {
+			"freight": [
+				{"name": "FR1", "carrier": "ODFL", "tracking_number": "PRO1", "booking_group": "aaaaaaaaaaaa"},
+				{"name": "FR2", "carrier": "ODFL", "tracking_number": "PRO2", "booking_group": "aaaaaaaaaaaa"},
+			],
+			"documents": [
+				{"name": "D1", "title": "BOL 1", "kind": "Bill of lading", "file": "/f/bol1.pdf", "booking_group": "aaaaaaaaaaaa"}
+			],
+		}
+		notes = planner.apply_plan(doc, plan)
+		self.assertEqual(notes, [])
+		original, copy = doc.freight
+		self.assertEqual(original.booking_group, "aaaaaaaaaaaa")
+		self.assertRegex(copy.booking_group, r"^[0-9a-f]{12}$")
+		self.assertNotEqual(copy.booking_group, "aaaaaaaaaaaa")
+		self.assertEqual([(d.booking_group, d.booking_label) for d in doc.documents], [("aaaaaaaaaaaa", "ODFL PRO1")])
+		# A key a shipment kept as its id stays its own, whichever order they are sent in.
+		group_map = {}
+		planner.merge_freight(
+			[row(name="FR1", carrier="ODFL", booking_group="saved0000001", cost=0)],
+			[
+				{"name": None, "carrier": "Estes", "booking_group": "saved0000001"},
+				{"name": "FR1", "carrier": "ODFL", "booking_group": "saved0000001"},
+			],
+			group_map,
+		)
+		self.assertEqual(group_map, {"saved0000001": "saved0000001"})
+
+	def test_the_controller_clears_a_copied_shipments_id(self):
+		# What the controller runs on every save (TravelTrip._validate_trip_files): the later of
+		# two shipments sharing an id gives it up, and reads as its own row until the page
+		# gives it one. Bookings are not touched: sharing an id is how a flight holds four.
+		first = row(name="FR1", booking_group="aaaaaaaaaaaa")
+		copy = row(name="FR2", booking_group="aaaaaaaaaaaa")
+		alone = row(name="FR3", booking_group=None)
+		other = row(name="FR4", booking_group="bbbbbbbbbbbb")
+		third = row(name="FR5", booking_group="aaaaaaaaaaaa")
+		self.assertEqual(completeness.repeated_freight_groups([first, copy, alone, other, third]), [copy, third])
+		self.assertEqual(completeness.repeated_freight_groups(None), [])
+		# Read through the checklist, the copy stands alone once cleared.
+		copy.booking_group = None
+		self.assertEqual([completeness.group_key(r) for r in (first, copy)], ["aaaaaaaaaaaa", "row:FR2"])
+
 
 # --------------------------------------------------------------------------- trip files
 
@@ -1009,9 +1139,10 @@ def files_trip(**kwargs):
 	return FakeTrip(**base)
 
 
-def attached(*urls):
-	"""A stand-in for the File check: these URLs are attached to the trip, nothing else is."""
-	return lambda url: url in urls
+def attached(*urls, public=()):
+	"""A stand-in for the File check (``planner._file_on_trip``): these URLs are attached to
+	the trip as private files, ``public`` ones as public files, and nothing else is (None)."""
+	return lambda url: True if url in urls else (False if url in public else None)
 
 
 class TestDocuments(unittest.TestCase):
@@ -1072,9 +1203,39 @@ class TestDocuments(unittest.TestCase):
 		self.assertEqual((rows[2]["booking_group"], rows[2]["booking_label"]), (None, None))
 
 	def test_someone_not_on_the_trip_is_refused(self):
+		# Named with its file: the refusal stops the whole save, so it must say which file.
 		with self.assertRaises(planner.PlanError) as refused:
 			self.merge(self.flight_trip(), [{"kind": "Other", "file": "/f/x.pdf", "traveler": "EMP-Z"}])
-		self.assertEqual(str(refused.exception), "EMP-Z is not on this trip.")
+		self.assertEqual(str(refused.exception), "x.pdf: EMP-Z is not on this trip.")
+		# ...and so is an existing file the page re-pins to them.
+		kept = doc_row("D1", "Other", "/f/x.pdf", traveler="EMP-A", title="Packet")
+		with self.assertRaises(planner.PlanError) as refused:
+			self.merge(
+				self.flight_trip(documents=[kept]),
+				[{"name": "D1", "title": "Packet", "kind": "Other", "file": "/f/x.pdf", "traveler": "EMP-Z"}],
+			)
+		self.assertEqual(str(refused.exception), "Packet: EMP-Z is not on this trip.")
+
+	def test_a_file_left_pinned_to_someone_taken_off_the_crew_on_the_form_comes_off_not_refused(self):
+		# Bo was removed on the form's Travelers table, which checks nothing on the Documents
+		# tab, and the page sends every file on every save. Refusing his boarding pass refused
+		# every save of the trip, each step change included, naming only an employee id.
+		stale = doc_row("D1", "Boarding pass", "/f/bo.png", "g1flight", "EMP-C", title="Bo's pass", traveler_name="Bo")
+		other = doc_row("D2", "Site map", "/f/map.png", title="Map")
+		doc = self.flight_trip(documents=[stale, other])
+		rows, notes = self.merge(
+			doc,
+			[
+				{"name": "D1", "title": "Bo's pass", "kind": "Boarding pass", "file": "/f/bo.png", "traveler": "EMP-C", "booking_group": "g1flight"},
+				{"name": "D2", "title": "Map", "kind": "Site map", "file": "/f/map.png"},
+			],
+			check=attached(),
+		)
+		self.assertEqual(rows, [other])
+		self.assertEqual(
+			notes,
+			["Bo's pass was only for Bo, who is no longer on the trip, so it is off the trip's files. It is still attached to the trip on the full form."],
+		)
 
 	def test_a_kind_that_is_not_an_option_is_refused_and_a_blank_one_is_other(self):
 		with self.assertRaises(planner.PlanError):
@@ -1090,6 +1251,21 @@ class TestDocuments(unittest.TestCase):
 		with self.assertRaises(planner.PlanError) as refused:
 			self.merge(self.flight_trip(), [{"kind": "Other", "file": "/private/files/hr.pdf"}], check=attached())
 		self.assertEqual(str(refused.exception), "That file is not attached to this trip.")
+
+	def test_a_public_file_is_refused_with_its_own_reason(self):
+		# frappe's uploader offers "Set all public" unless told not to, and a public File is
+		# served to anyone at /files/<the name it was uploaded with>: a boarding pass there is a
+		# name and a PNR one guess away. Not "not attached": it is, and that would mislead.
+		with self.assertRaises(planner.PlanError) as refused:
+			self.merge(
+				self.flight_trip(),
+				[{"kind": "Boarding pass", "file": "/files/pass.png", "booking_group": "g1flight"}],
+				check=attached(public=("/files/pass.png",)),
+			)
+		self.assertEqual(
+			str(refused.exception),
+			"pass.png is public: anyone with the link can open it, without signing in. Upload it again as private.",
+		)
 
 	def test_the_file_is_checked_only_when_it_is_new_or_changed(self):
 		# A File deleted since it was put on the row must not make the trip unsaveable.
@@ -1107,25 +1283,33 @@ class TestDocuments(unittest.TestCase):
 				check=attached(),
 			)
 
-	def test_the_real_check_asks_for_a_file_attached_to_this_trip(self):
+	def test_the_real_check_asks_for_a_file_attached_to_this_trip_and_whether_it_is_private(self):
 		calls = []
-		fake = types.SimpleNamespace(
-			db=types.SimpleNamespace(exists=lambda doctype, filters: calls.append((doctype, filters)) or True)
-		)
-		with mock.patch.object(planner, "frappe", fake):
-			self.assertTrue(planner._file_on_trip("TRIP-1")("/private/files/pass.png"))
+		found = {}
+
+		def get_all(doctype, filters=None, pluck=None, **kwargs):
+			calls.append((doctype, filters, pluck, kwargs))
+			return found.get(filters["file_url"], [])
+
+		with mock.patch.object(planner, "frappe", types.SimpleNamespace(get_all=get_all)):
+			check = planner._file_on_trip("TRIP-1")
+			found.update({"/private/files/pass.png": [1], "/files/pass.png": [0], "/private/files/twice.png": [1, 0]})
+			self.assertIs(check("/private/files/pass.png"), True)
+			self.assertIs(check("/files/pass.png"), False)
+			self.assertIs(check("/private/files/twice.png"), False, "one public copy is a public file")
+			self.assertIsNone(check("/private/files/elsewhere.png"))
 		self.assertEqual(
-			calls,
-			[
-				(
-					"File",
-					{
-						"file_url": "/private/files/pass.png",
-						"attached_to_doctype": "Travel Trip",
-						"attached_to_name": "TRIP-1",
-					},
-				)
-			],
+			calls[0],
+			(
+				"File",
+				{
+					"file_url": "/private/files/pass.png",
+					"attached_to_doctype": "Travel Trip",
+					"attached_to_name": "TRIP-1",
+				},
+				"is_private",
+				{},
+			),
 		)
 
 	def test_a_receipt_cannot_become_a_trip_file(self):
@@ -1137,6 +1321,27 @@ class TestDocuments(unittest.TestCase):
 		for url in ("/private/files/parking-receipt.pdf", "/private/files/fare-receipt.pdf"):
 			with self.assertRaises(planner.PlanError):
 				self.merge(doc, [{"kind": "Booking confirmation", "file": url, "booking_group": "g1flight"}])
+
+	def test_a_file_that_became_a_receipt_since_is_never_sent_and_comes_off_with_a_note(self):
+		# Paperwork first, then the same PDF as the flight's Receipt: frappe reuses the URL, so
+		# both name one file. The page is never sent it (a receipt is money), and a save —
+		# whether or not an old page sends it back — takes it off rather than refusing every
+		# save of the trip.
+		url = "/private/files/wn1.pdf"
+		became = doc_row("D1", "Booking confirmation", url, "g1flight", title="WN1")
+		kept = doc_row("D2", "Site map", "/f/map.png", title="Map")
+		doc = self.flight_trip(documents=[became, kept])
+		doc.flights[0].attachment = url
+		self.assertEqual([d["name"] for d in planner._documents_state(doc)], ["D2"])
+		note = "WN1 is a receipt on one of this trip's costs, so it is off the trip's files. A receipt stays with its cost, where the trip views never show it."
+		sent_back = {"name": "D1", "title": "WN1", "kind": "Booking confirmation", "file": url, "booking_group": "g1flight"}
+		map_row = {"name": "D2", "title": "Map", "kind": "Site map", "file": "/f/map.png"}
+		for documents in ([map_row], [sent_back, map_row]):
+			rows, notes = self.merge(doc, documents, check=attached())
+			self.assertEqual((rows, notes), ([kept], [note]))
+		# ...and it covers no booking's paperwork meanwhile.
+		self.assertEqual(completeness.receipt_urls(doc), {url})
+		self.assertEqual(completeness._papers_by_group(doc), {})
 
 	def test_a_booking_that_is_not_on_the_trip_is_refused(self):
 		with self.assertRaises(planner.PlanError):
@@ -1259,8 +1464,30 @@ class TestDocuments(unittest.TestCase):
 		self.assertEqual(fields["documents"]["label"], "Trip Documents")
 		self.assertEqual(fields["documents_tab"]["fieldtype"], "Tab Break")
 		self.assertEqual(order.index("documents"), order.index("documents_tab") + 1)
+		# The form's Duplicate copies a table's rows unless it is no_copy (v16 copy_doc), and a
+		# copy's rows would point at Files attached to the ORIGINAL trip: its crew gets
+		# "Forbidden" at the gate, and the checklist counts the old trip's paperwork as done.
+		self.assertEqual(fields["documents"].get("no_copy"), 1)
 		# Child doctype and parent JSON are age-gated on migrate.
-		self.assertGreater(meta["modified"], "2026-09-23 15:00:00.000000")
+		self.assertGreater(meta["modified"], "2026-09-26 12:00:00.000000")
+
+	def test_booking_paperwork_is_sent_to_its_booking_never_to_the_files_step(self):
+		# A file added on the Files step, or on the form's Documents tab, is for the whole
+		# trip and can never be moved onto a booking: a boarding pass there is not on the flight
+		# at the gate, and its paperwork gap never clears. Every text that says where booking
+		# paperwork goes must say "on its booking".
+		for doctype in ("trip_flight", "trip_accommodation", "trip_ground_transport", "trip_freight"):
+			meta = _load_json(TRAVEL_DIR, "doctype", doctype, f"{doctype}.json")
+			receipt = next(f for f in meta["fields"] if f["fieldname"] == "attachment")
+			self.assertIn("goes on its booking", receipt["description"], doctype)
+			self.assertNotIn("Files", receipt["description"], doctype)
+			self.assertGreater(meta["modified"], "2026-09-26 12:00:00.000000", doctype)
+		trip_meta = _load_json(TRAVEL_DIR, "doctype", "travel_trip", "travel_trip.json")
+		table = next(f for f in trip_meta["fields"] if f["fieldname"] == "documents")
+		self.assertIn("always for the whole trip", table["description"])
+		policy = re.sub(r"\s+", " ", _read(os.path.join(APP_DIR, "www", "travel_guidelines.html")))
+		self.assertNotIn("files instead (Plan a Trip → <i>Files</i>", policy)
+		self.assertIn("goes on its booking instead", policy)
 
 	def test_the_row_attachments_are_receipts_in_the_cost_section(self):
 		# A receipt is money. Booking paperwork is a Trip Document now; the old per-row field
@@ -1312,6 +1539,29 @@ class TestPaperworkGaps(unittest.TestCase):
 	def test_a_file_for_everyone_on_the_flight_covers_everyone(self):
 		t = self.two_on_a_flight([doc_row("D1", "Booking confirmation", "/f/conf.pdf", "g1", None)])
 		self.assertEqual(self.paperwork(t), [])
+
+	def test_a_boarding_pass_for_nobody_in_particular_covers_a_shared_flight_for_nobody(self):
+		# One person's boarding pass, uploaded without saying whose it is, used to clear the
+		# whole flight: everyone's gap went, and it showed on everyone's itinerary as theirs.
+		t = self.two_on_a_flight([doc_row("D1", "Boarding pass", "/f/ann.png", "g1", None)])
+		self.assertEqual(self.paperwork(t)[0]["employee_names"], ["Ann", "Bo"])
+		# A whole-crew row is a shared flight too: two on the crew.
+		t = trip(
+			flights=[flight(None, "Outbound", "2026-10-05 07:00:00", name="F1", ref="X1")],
+			documents=[doc_row("D1", "Boarding pass", "/f/pass.png", "row:F1", None)],
+		)
+		self.assertEqual(self.paperwork(t)[0]["employee_names"], ["Ann", "Bo"])
+		# On a flight with one person it can only be theirs.
+		t = trip(
+			flights=[flight("EMP-A", "Outbound", "2026-10-05 07:00:00", name="F1", booking_group="g1", ref="A1")],
+			documents=[doc_row("D1", "Boarding pass", "/f/ann.png", "g1", None)],
+		)
+		self.assertEqual(self.paperwork(t), [])
+		# Each person's own pass still covers them, beside a pass for nobody.
+		t = self.two_on_a_flight(
+			[doc_row("D1", "Boarding pass", "/f/x.png", "g1", None), doc_row("D2", "Boarding pass", "/f/bo.png", "g1", "EMP-B")]
+		)
+		self.assertEqual(self.paperwork(t)[0]["employee_names"], ["Ann"])
 
 	def test_no_number_no_paperwork_flag(self):
 		t = self.two_on_a_flight(refs=("", "B1"))
@@ -1382,6 +1632,119 @@ class TestPaperworkGaps(unittest.TestCase):
 		bol = [doc_row("D1", "Bill of lading", "/f/bol.pdf", "s1s1s1")]
 		self.assertEqual(self.paperwork(trip(freight=[shipment("PRO 1")], documents=bol)), [])
 		self.assertEqual(self.paperwork(trip(freight=[shipment("")])), [])
+
+
+class TestTheQuieterTally(unittest.TestCase):
+	"""Nik, 2026-09-26: paperwork is a separate, quieter tally. find_gaps keeps it as data; what
+	a headline counts is counted_gaps, and the paperwork is counted on its own, as files."""
+
+	def mixed(self):
+		# Ann has no number (a counted gap); Bo has his and no boarding pass (paperwork); the
+		# room has its number and no confirmation attached (paperwork).
+		return trip(
+			flights=[
+				flight("EMP-A", "Outbound", "2026-10-05 07:00:00", name="F1", booking_group="g1", ref=""),
+				flight("EMP-B", "Outbound", "2026-10-05 07:00:00", name="F2", booking_group="g1", ref="B1"),
+				flight(
+					"EMP-A", "Return", "2026-10-08 18:00:00", name="F3", booking_group="g2", ref="A2", cost=0
+				),
+				flight(
+					"EMP-B", "Return", "2026-10-08 18:00:00", name="F4", booking_group="g2", ref="B1", cost=0
+				),
+			],
+			accommodations=[
+				stay("EMP-A", "2026-10-05", "2026-10-08", name="R1", booking_group="r1"),
+				stay("EMP-B", "2026-10-05", "2026-10-08", name="R2", booking_group="r1"),
+			],
+			documents=[],
+		)
+
+	def test_the_counted_gaps_are_every_check_but_paperwork(self):
+		gaps = completeness.find_gaps(self.mixed())
+		counted = completeness.counted_gaps(gaps)
+		paperwork = completeness.paperwork_gaps(gaps)
+		self.assertEqual(len(counted) + len(paperwork), len(gaps))
+		self.assertNotIn("documents", {g["check"] for g in counted})
+		self.assertEqual({g["check"] for g in paperwork}, {"documents"})
+		self.assertIn("confirmation", {g["check"] for g in counted})
+		# Ann's flight home rides on no paid ticket (A2 has no fare anywhere): a cost gap, counted.
+		self.assertIn("cost", {g["check"] for g in counted})
+
+	def test_files_are_counted_per_person_on_a_flight_and_one_per_other_booking(self):
+		gaps = completeness.find_gaps(self.mixed())
+		by_group = {g["group"]: g["employee_names"] for g in completeness.paperwork_gaps(gaps)}
+		# The way there: Bo (Ann has no number yet); the way home: both; the room: one file.
+		self.assertEqual(by_group, {"g1": ["Bo"], "g2": ["Ann", "Bo"], "r1": []})
+		self.assertEqual(completeness.files_not_attached(gaps), 1 + 2 + 1)
+		# The same shapes as the page's harness ("3 files not attached yet").
+		pair = {"check": "documents", "table": "flights", "employee_names": ["Ana", "Ben"]}
+		room = {"check": "documents", "table": "accommodations", "employee_names": []}
+		self.assertEqual(completeness.files_not_attached([pair, room, {"check": "cost"}]), 3)
+		self.assertEqual(completeness.files_not_attached([]), 0)
+		self.assertEqual(completeness.files_not_attached(None), 0)
+
+	def test_it_is_only_ever_the_documents_check(self):
+		self.assertEqual(completeness.PAPERWORK_CHECK, "documents")
+		self.assertTrue(completeness.is_paperwork({"check": "documents"}))
+		for check in ("travel", "lodging", "confirmation", "cost", None):
+			self.assertFalse(completeness.is_paperwork({"check": check}), check)
+		self.assertFalse(completeness.is_paperwork(None))
+		# The page names the same check (TP_PAPERWORK), and so does the form.
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		form = _read(os.path.join(APP_DIR, "public", "js", "travel_trip.js"))
+		self.assertIn('const TP_PAPERWORK = "documents";', page)
+		self.assertIn("const PAPERWORK_CHECK = 'documents';", form)
+
+
+class TestTheFormsChecklistHeadline(unittest.TestCase):
+	"""The Travel Trip form's headline counts every gap but paperwork. Paperwork is one muted
+	line under it ("N files not attached yet", to the Files step), and never turns it orange."""
+
+	CONFIRMATION = {"check": "confirmation", "step": "there", "group": "g1", "employee_names": ["Ann"]}
+	PAPER = {
+		"check": "documents",
+		"step": "there",
+		"group": "g2",
+		"table": "flights",
+		"employee_names": ["Ann", "Bo"],
+	}
+
+	def test_the_headline_never_counts_paperwork(self):
+		clear, only_paper, mixed, only_counted = form_headlines(
+			[[], [self.PAPER], [self.CONFIRMATION, self.PAPER], [self.CONFIRMATION]]
+		)
+		self.assertEqual(clear, [{"html": "Trip checklist: nothing missing.", "color": "green"}])
+
+		(shown,) = only_paper
+		self.assertEqual(shown["color"], "green", "only paperwork open: all set")
+		self.assertTrue(shown["html"].startswith("Trip checklist: nothing missing."))
+		self.assertIn(">2 files not attached yet</a>", shown["html"])
+		self.assertIn("&step=files", shown["html"])
+
+		(shown,) = mixed
+		self.assertEqual(shown["color"], "orange")
+		headline, _sep, quiet = shown["html"].partition('<div class="small text-muted"')
+		self.assertIn("1 missing a confirmation number.", headline)
+		self.assertNotIn("paperwork", headline)
+		self.assertNotIn("2 missing", headline)
+		self.assertIn("&step=review", headline)
+		self.assertIn("2 files not attached yet", quiet)
+		self.assertIn("&step=files", quiet)
+
+		(shown,) = only_counted
+		self.assertEqual(shown["color"], "orange")
+		self.assertNotIn("not attached", shown["html"])
+
+	def test_one_file_is_singular(self):
+		((shown,),) = form_headlines([[dict(self.PAPER, employee_names=["Ann"])]])
+		self.assertIn(">1 file not attached yet</a>", shown["html"])
+
+	def test_the_labels_it_counts_leave_paperwork_out(self):
+		form = _strip_js_comments(_read(os.path.join(APP_DIR, "public", "js", "travel_trip.js")))
+		labels = re.search(r"const CHECKLIST_LABELS = \{(.*?)\n\};", form, re.S).group(1)
+		self.assertEqual(
+			re.findall(r"^\t(\w+):", labels, re.M), ["travel", "lodging", "confirmation", "cost"]
+		)
 
 
 class TestPlaces(unittest.TestCase):

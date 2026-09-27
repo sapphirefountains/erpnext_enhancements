@@ -41,6 +41,7 @@ from erpnext_enhancements.travel_management.completeness import (
 	file_name_of,
 	group_key,
 	is_image_file,
+	receipt_urls,
 )
 
 # Calendar event colors per trip status (frappe palette names).
@@ -402,7 +403,10 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 	or for nobody in particular on the whole trip or on a booking they are on
 	(``completeness.document_visible_to``); the whole-crew view sees every file.
 	Each file is ``{name, title, kind, url, file_name, is_image, for_name,
-	for_employee, group, booking_label}``.
+	for_employee, group, booking_label}``, and a booking's file also carries
+	``booking_dates`` and, on the whole-crew view, ``booking_people``
+	(``_booking_facts``). A Trip Document naming one of the trip's receipts is never
+	sent.
 
 	``poi_cache`` lets several calls on one trip (one per crew member, on Plan
 	a Trip's views) share their Travel POI lookups."""
@@ -673,31 +677,78 @@ _BOOKING_NOUN = {
 }
 
 
+def _iso_day(value):
+	return str(getdate(value)) if value else None
+
+
+def _booking_facts(table, rows, names):
+	"""Who is on a booking and when, for telling two bookings with one name apart (four rooms at
+	one hotel, one adult to a room): ``(people, [from, to])``. ``people`` names each person on
+	it in row order, and is empty for a booking the whole crew is on (a shipment: its receiver).
+	The dates are ISO days or None — a room's nights, else the day it happens."""
+	people = []
+	if not any(not row.get("traveler") for row in rows):
+		for row in rows:
+			name = names.get(row.traveler, row.traveler)
+			if name not in people:
+				people.append(name)
+	if table == "accommodations":
+		# A guest's dates are their own nights, not the room's (planner.fit_guest_stays).
+		first = next((row for row in rows if not cint(row.get("guest"))), rows[0])
+		return people, [_iso_day(first.get("check_in_date")), _iso_day(first.get("check_out_date"))]
+	first = rows[0]
+	when = {
+		"flights": first.get("departure_time"),
+		"ground_transport": first.get("pickup_datetime"),
+		"freight": first.get("delivery_from") or first.get("pickup_from"),
+	}.get(table)
+	return people, [_iso_day(when), None]
+
+
 def _trip_files(doc, viewing_employee, names):
 	"""The trip's files one viewer sees (everyone's, for the whole-crew view), shaped for
 	display: ``({group or None: [file]}, [groups in row order])``. Each file is
 	``{name, title, kind, url, file_name, is_image, for_name, for_employee, group,
-	booking_label}``; ``group`` and ``booking_label`` are None for a file for the whole trip,
-	which is also what a file whose booking has been removed reads as. A row with no file has
-	nothing to open and is left out. Not money: a receipt is never a Trip Document."""
+	booking_label, booking_dates, booking_people}``; ``group`` and ``booking_label`` are None
+	for a file for the whole trip, which is also what a file whose booking has been removed
+	reads as. ``booking_dates`` and, on the whole-crew view, ``booking_people``
+	(:func:`_booking_facts`) are only on a booking's file, for /itinerary's Documents screen to
+	tell same-named bookings apart. A row with no file has nothing to open and is left out.
+
+	Not money: a row naming one of the trip's receipts (``completeness.receipt_urls``) is left
+	out too. The controller refuses to save one, and this is what keeps the rule in what is
+	sent — the views, /itinerary, View as — whatever order the file and the receipt came in."""
 	index = booking_index(doc)
+	receipts = receipt_urls(doc)
+	facts = {}
 	by_group, order = {}, []
 	for row in doc.get("documents") or []:
 		url = str(row.get("file") or "").strip()
-		if not url:
+		if not url or url in receipts:
 			continue
 		if viewing_employee and not document_visible_to(row, viewing_employee, index):
 			continue
 		group = document_group(row, index)
 		traveler = row.get("traveler") or None
 		for_name = (names.get(traveler) or row.get("traveler_name") or traveler) if traveler else None
-		if group is None:
-			label = None
-		else:
+		extra = {"group": group, "booking_label": None}
+		if group is not None:
 			# A booking with no name yet (a flight with no airline or number) is still a
 			# booking: /itinerary heads its files with a word for it, never "the whole trip".
 			table, rows = index[group]
-			label = booking_label(table, rows[0]) or row.get("booking_label") or _BOOKING_NOUN.get(table)
+			if group not in facts:
+				facts[group] = _booking_facts(table, rows, names)
+			extra = {
+				"group": group,
+				"booking_label": booking_label(table, rows[0])
+				or row.get("booking_label")
+				or _BOOKING_NOUN.get(table),
+				"booking_dates": list(facts[group][1]),
+			}
+			# Who is on it tells bookings apart on the whole crew's list; one person's own
+			# list tells theirs apart by date.
+			if not viewing_employee:
+				extra["booking_people"] = list(facts[group][0])
 		if group not in by_group:
 			order.append(group)
 		by_group.setdefault(group, []).append(
@@ -710,8 +761,7 @@ def _trip_files(doc, viewing_employee, names):
 				"is_image": is_image_file(url),
 				"for_name": for_name,
 				"for_employee": traveler,
-				"group": group,
-				"booking_label": label,
+				**extra,
 			}
 		)
 	return by_group, order

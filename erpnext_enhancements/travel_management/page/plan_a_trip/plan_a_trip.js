@@ -64,14 +64,26 @@
 // PAPERWORK. Every booking card has its files (a boarding pass, the hotel confirmation, the
 // rental agreement, a bill of lading), and the Files step has the trip's own (a site map, the
 // safety plan, an insurance certificate, the job packet). Each is a Trip Document row, for
-// everyone on the booking (the whole crew, for a trip-wide file) or for one person. The file
-// itself is uploaded straight to the trip as a File by frappe's uploader, private by default,
-// which leaves the trip's `modified` alone; the row naming it is saved with everything else,
-// so a file attached to a booking not saved yet ("new:<n>") follows that booking to the id it
-// is given on save (planner.merge_documents). Uploading needs a saved trip: a File is attached
+// everyone on the booking (the whole crew, for a trip-wide file) or for one person — a flight's
+// boarding pass starts as its person's (flight_pass_for). The file itself is uploaded straight
+// to the trip as a File by frappe's uploader, always private (attach_files), which leaves the
+// trip's `modified` alone; the row naming it is saved with everything else, so a file attached
+// to a booking not saved yet ("new:<n>") follows that booking to the id it is given on save
+// (planner.merge_documents). An upload keeps going after its dialog closes, and lands whenever
+// it lands — during a save, a reload of the trip, or once the trip is put aside — and
+// add_document puts it where it is not lost. Uploading needs a saved trip: a File is attached
 // to a trip by its name. A receipt is not paperwork: it is money, and stays on the cost row.
 // The checklist asks for a booking's paperwork only once it has its confirmation number, and
 // only flags it, like everything else on the checklist.
+//
+// PAPERWORK IS A SEPARATE, QUIETER TALLY (Nik, 2026-09-26). A paperwork gap (check "documents")
+// is never counted with the rest: not in a step tab's badge, not in "Mark as booked"'s "N things
+// missing", not in the Overview's "Still missing" tile, not in the form's headline. It is counted
+// on its own as files ("10 files not attached yet", tp_files_not_attached, the rule in
+// completeness.files_not_attached) and shown muted (tp-paper), never as a red gap or a red card:
+// on a card, on the Files step, in Review's Paperwork section and as a note on the Overview. The
+// first real trip is why: v1.544.0 had just taken it from six flags to none, and every booking on
+// it has its number and no file yet, so counted as gaps its paperwork would have put ten back.
 //
 // Styling uses Frappe CSS variables so Frappe Light and Timeless Night both work. The page loader
 // serves this file version-aware, so no .bundle.* is needed.
@@ -144,6 +156,9 @@ const TP_STYLE = `
 .tp-gap{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:8px;background:#fde8e8;color:#b91c1c;font-size:14px;margin-top:8px;}
 .tp-gap .tp-btn-link{margin-left:auto;white-space:nowrap;}
 .tp-ok-line{padding:8px 10px;border-radius:8px;background:#e7f7ed;color:#15803d;font-size:14px;margin-top:8px;}
+.tp-paper{display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;border:1px dashed var(--border-color);color:var(--text-muted);font-size:13px;margin-top:6px;}
+.tp-paper .tp-btn-link{margin-left:auto;white-space:nowrap;font-size:13px;}
+.tp-paper-count{color:var(--text-muted);font-size:13px;}
 .tp-crew-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-color);border-radius:10px;margin-bottom:8px;background:var(--card-bg);}
 .tp-crew-row.tp-on{border-color:var(--primary,#2490ef);}
 .tp-crew-row .tp-crew-name{flex:1;min-width:0;}
@@ -161,6 +176,8 @@ const TP_STYLE = `
 .tp-sum{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
 .tp-sum div{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:10px 12px;}
 .tp-sum b{display:block;font-size:18px;}
+.tp-sum div.tp-quiet{border-style:dashed;}
+.tp-sum div.tp-quiet b{color:var(--text-muted);font-weight:500;}
 .tp-nav{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:var(--bg-color);border-top:1px solid var(--border-color);z-index:5;}
 .tp-nav button{flex:1;min-height:48px;border-radius:9px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:16px;cursor:pointer;}
 .tp-nav button.tp-primary{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
@@ -387,6 +404,10 @@ const TP_DOC_DEFAULT_KIND = {
 
 const TP_UNBOOKED = ["Company Fleet", "Personal Vehicle"];
 
+// A paperwork gap's `check` (completeness.PAPERWORK_CHECK): the quieter tally, counted apart
+// from every other gap (see PAPERWORK in the header).
+const TP_PAPERWORK = "documents";
+
 // The looks at a whole saved trip (see VIEWS in the header), by their &view= key. Not steps:
 // TP_STEPS is unchanged by them, and a view is drawn over the step it was opened from.
 const TP_VIEWS = ["overview", "grid", "compare", "person"];
@@ -574,6 +595,23 @@ function tp_is_image(name) {
 	return /\.(png|jpe?g|gif|webp|heic)$/i.test(String(name || ""));
 }
 
+function tp_is_paperwork(gap) {
+	return !!gap && gap.check === TP_PAPERWORK;
+}
+
+// The quieter tally's number: each person on a flight still without a boarding pass or ticket,
+// one file for any other booking — completeness.files_not_attached.
+function tp_files_not_attached(gaps) {
+	return (gaps || [])
+		.filter(tp_is_paperwork)
+		.reduce((count, gap) => count + Math.max(1, (gap.employee_names || []).length), 0);
+}
+
+function tp_files_not_attached_text(gaps) {
+	const count = tp_files_not_attached(gaps);
+	return count === 1 ? __("1 file not attached yet") : __("{0} files not attached yet", [count]);
+}
+
 function tp_server_messages(xhr) {
 	// What frappe.request.cleanup shows for a refused call — its _server_messages, which
 	// frappe.msgprint takes as they are — for a call made silent (see TripPlanner.save).
@@ -595,6 +633,8 @@ class TripPlanner {
 		this.state = null;
 		this.lookups = null;
 		this.saving = null;
+		// The trip load() is fetching ({name, promise}), until it answers.
+		this.loading = null;
 		this.card_seq = 0;
 		// Bumped by every move, so an answer for a screen already left (a slow load, a save
 		// that finishes after Back) is dropped instead of drawn.
@@ -1137,16 +1177,23 @@ class TripPlanner {
 
 	// load() and start_new() replace the trip on screen (route() has kept it first if it
 	// needed keeping), so it is cleared before the fetch: a failed load must not leave the old
-	// trip in `state` looking as if it were the one showing.
+	// trip in `state` looking as if it were the one showing. `loading` says which trip is on
+	// its way, for a file that finishes uploading meanwhile (add_document waits for it).
 	load(name, step_key, draft) {
 		const seq = this.nav_seq;
 		this.state = null;
 		this.remove_chrome();
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
-		frappe
+		const loading = { name: name, promise: null };
+		const done = () => {
+			if (this.loading === loading) this.loading = null;
+		};
+		this.loading = loading;
+		loading.promise = frappe
 			.call({ method: "erpnext_enhancements.travel_management.planner.get_plan", args: { trip: name } })
 			.then(
 				(r) => {
+					done();
 					// Moved on while it loaded (Back again, another trip): that screen wins.
 					if (seq !== this.nav_seq) return;
 					const data = (r && r.message) || {};
@@ -1162,6 +1209,7 @@ class TripPlanner {
 					this.fetch_views();
 				},
 				() => {
+					done();
 					if (seq !== this.nav_seq) return;
 					this.body.html(`<div class="tp-empty">${__("This trip could not be opened.")}</div>`);
 				}
@@ -1454,8 +1502,10 @@ class TripPlanner {
 	}
 
 	// Who is on a card: its people, or everyone for a whole-crew card entered on the form.
-	card_people(card) {
-		if (card.members.some((m) => !m.traveler)) return this.crew().map((t) => t.employee);
+	// `state`: the trip the card is on, when it is not the one on screen.
+	card_people(card, state) {
+		const crew = state ? state.travelers || [] : this.crew();
+		if (card.members.some((m) => !m.traveler)) return crew.map((t) => t.employee);
 		return card.members.map((m) => m.traveler).filter(Boolean);
 	}
 
@@ -1867,12 +1917,26 @@ class TripPlanner {
 
 	// ------------------------------------------------------------------ gaps
 
+	// Every gap the server sent, paperwork included: what a card or a list shows.
 	gaps() {
 		return (this.state && this.state.gaps) || [];
 	}
 
+	// What the checklist counts: every gap but paperwork. The step badges, "Mark as booked" and
+	// a red card read these.
+	counted_gaps() {
+		return this.gaps().filter((g) => !tp_is_paperwork(g));
+	}
+
+	// The quieter tally (see PAPERWORK in the header).
+	paperwork_gaps() {
+		return this.gaps().filter(tp_is_paperwork);
+	}
+
+	// A step's counted gaps: its tab's badge. A booking's paperwork is on the same step as its
+	// confirmation gap, and still never in the badge.
 	gaps_for_step(key) {
-		return this.gaps().filter((g) => g.step === key);
+		return this.counted_gaps().filter((g) => g.step === key);
 	}
 
 	gap_text(gap) {
@@ -1929,11 +1993,16 @@ class TripPlanner {
 		return __("no paperwork attached.");
 	}
 
+	// Each gap as a line. A paperwork gap is the quieter tally: a muted note (tp-paper) whose
+	// link says "Attach", never the red line of a real gap.
 	render_gap_list($parent, gaps, with_fix) {
 		gaps.forEach((gap) => {
-			const $gap = $(`<div class="tp-gap"><span>${this.gap_text(gap)}</span></div>`).appendTo($parent);
+			const quiet = tp_is_paperwork(gap);
+			const $gap = $(
+				`<div class="${quiet ? "tp-paper" : "tp-gap"}"><span>${quiet ? "&#128196; " : ""}${this.gap_text(gap)}</span></div>`
+			).appendTo($parent);
 			if (with_fix) {
-				$(`<button class="tp-btn-link">${__("Fix")} &rarr;</button>`)
+				$(`<button class="tp-btn-link">${quiet ? __("Attach") : __("Fix")} &rarr;</button>`)
 					.appendTo($gap)
 					.on("click", () => this.jump_to(gap.step));
 			}
@@ -2296,9 +2365,25 @@ class TripPlanner {
 						</div>
 					</div>`).appendTo($list);
 					$row.find('input[type="checkbox"]').on("change", (e) => {
-						if (e.target.checked) this.add_traveler(employee);
-						else this.remove_traveler(employee.name);
-						draw();
+						if (e.target.checked) {
+							this.add_traveler(employee);
+							draw();
+							return;
+						}
+						// Unticking takes them off every booking and takes their files off the
+						// list, and ticking them again brings neither back: asked first, the way
+						// a booking's Remove asks, unless they have nothing to lose.
+						const question = this.untick_question(employee.name);
+						if (!question) {
+							this.remove_traveler(employee.name);
+							draw();
+							return;
+						}
+						e.target.checked = true; // until they say yes
+						frappe.confirm(question, () => {
+							this.remove_traveler(employee.name);
+							draw();
+						});
 					});
 					if (!traveler) return;
 					const $extra = $row.find(".tp-crew-extra");
@@ -2370,6 +2455,26 @@ class TripPlanner {
 			from_date: "",
 			to_date: "",
 		});
+	}
+
+	// What unticking someone on Who's going would take with them, in words, or "" when there is
+	// nothing: their place on each booking (their confirmation number with it), and their own
+	// files. Ticking them again brings neither back.
+	untick_question(employee) {
+		let bookings = 0;
+		Object.keys(this.state.bookings).forEach((table) => {
+			this.cards(table).forEach((card) => {
+				if (card.members.some((m) => m.traveler === employee)) bookings += 1;
+			});
+		});
+		const files = this.documents().filter((doc) => doc.traveler === employee).length;
+		if (!bookings && !files) return "";
+		const parts = [__("Take {0} off the trip?", [tp_esc(this.crew_name(employee))])];
+		if (bookings === 1) parts.push(__("They come off 1 booking, and their confirmation number on it."));
+		else if (bookings) parts.push(__("They come off {0} bookings, and their confirmation numbers on them.", [bookings]));
+		if (files === 1) parts.push(__("1 file for them comes off the trip's list; it stays attached to the trip on the full form."));
+		else if (files) parts.push(__("{0} files for them come off the trip's list; they stay attached to the trip on the full form.", [files]));
+		return parts.join(" ");
 	}
 
 	remove_traveler(employee) {
@@ -2516,7 +2621,8 @@ class TripPlanner {
 	}
 
 	card_shell($parent, card, title) {
-		const bad = this.gaps().some((g) => g.group === card.group);
+		// Red for a real gap only: missing paperwork is a quiet note on the card (card_gaps).
+		const bad = this.counted_gaps().some((g) => g.group === card.group);
 		const $card = $(`<div class="tp-card ${bad ? "tp-bad" : ""}">
 			<div class="tp-card-head"><b>${tp_esc(title)}</b></div>
 		</div>`).appendTo($parent);
@@ -2844,6 +2950,7 @@ class TripPlanner {
 		note();
 	}
 
+	// The booking's gaps on its card: a real gap red, its paperwork a muted note (render_gap_list).
 	card_gaps($card, card) {
 		this.render_gap_list(
 			$card,
@@ -2855,14 +2962,17 @@ class TripPlanner {
 	// ------------------------------------------------------------------ paperwork
 	//
 	// Where a file goes, for paperwork_block and the uploader (a "target"):
-	//   key()     the booking's page key now (card.group, freight_key), "" for the whole trip,
-	//             or null once the booking is gone from the page (removed, or redrawn by a save
-	//             that finished while a file was uploading — a save hands the page new cards);
-	//   label()   the booking's name, as the server will store it (booking_label);
-	//   kind      what a file attached here starts as;
-	//   people()  whom a file here can be for, one at a time;
-	//   everyone  the "for everyone" choice, in the words of this booking or the trip;
-	//   need      what the checklist asks for here (completeness.document_gaps), or "".
+	//   key(state)  the booking's page key now (card.group, freight_key), "" for the whole
+	//               trip, or null once the booking is gone (removed, or redrawn by a save that
+	//               finished while a file was uploading — a save hands the page new cards).
+	//               `state` is the trip on screen unless given (a trip kept aside: add_document);
+	//   label()     the booking's name, as the server will store it (booking_label);
+	//   kind        what a file attached here starts as;
+	//   for_whom(state)  whom a file attached here starts as being for ("" = everyone), when
+	//               that is not everyone on it: a flight's boarding pass (flight_pass_for);
+	//   people()    whom a file here can be for, one at a time;
+	//   everyone    the "for everyone" choice, in the words of this booking or the trip;
+	//   need        what the checklist asks for here (completeness.document_gaps), or "".
 
 	booking_target(card) {
 		const rental = card.values.transport_type === "Rental/Third Party";
@@ -2873,18 +2983,24 @@ class TripPlanner {
 				? __("The checklist asks for the rental agreement once the rental has a confirmation number.")
 				: "",
 		};
+		// This booking on `state`: the card itself, or — redrawn by a save while a file uploaded
+		// — the card with its id. One that was "new:<n>" has been given another, and is gone.
+		const find = (state) => {
+			state = state || this.state;
+			if (!state) return null;
+			const list = state.bookings[card.table] || [];
+			if (list.includes(card)) return card;
+			return list.find((other) => other.group === card.group) || null;
+		};
 		return {
-			key: () => {
-				if (!this.state) return null;
-				const list = this.cards(card.table);
-				if (list.includes(card)) return card.group;
-				// A save redrew the cards while the file uploaded: the same booking is still here
-				// when it already had its id. One that was "new:<n>" has been given another.
-				return list.some((other) => other.group === card.group) ? card.group : null;
+			key: (state) => {
+				const found = find(state);
+				return found ? found.group : null;
 			},
 			label: () => this.card_label(card),
 			// A company truck or a personal car has no rental agreement.
 			kind: card.table === "ground_transport" && !rental ? "Other" : TP_DOC_DEFAULT_KIND[card.table],
+			for_whom: card.table === "flights" ? (state) => this.flight_pass_for(find(state), state || this.state) : null,
 			people: () => this.card_people(card),
 			everyone: __("Everyone on this booking"),
 			everyone_short: __("everyone on this booking"),
@@ -2892,14 +3008,35 @@ class TripPlanner {
 		};
 	}
 
+	// Whom a file attached to a flight starts as being for. A boarding pass is one person's:
+	// uploaded as everyone's, one person's pass cleared the whole flight's paperwork and showed
+	// on everyone's itinerary as theirs (completeness counts a pass for nobody in particular
+	// only on a one-person flight). So: the flight's one person, or the first on it with no
+	// boarding pass or ticket of their own yet — "upload everyone's passes" fills them in card
+	// order — and everyone once each has theirs. "Who is it for?" under the file changes it.
+	flight_pass_for(card, state) {
+		if (!card || !state) return "";
+		const people = this.card_people(card, state);
+		if (people.length === 1) return people[0];
+		const has = new Set(
+			(state.documents || [])
+				.filter((doc) => (doc.booking_group || "") === card.group && doc.traveler)
+				.filter((doc) => doc.kind === "Boarding pass" || doc.kind === "Booking confirmation")
+				.map((doc) => doc.traveler)
+		);
+		return people.find((employee) => !has.has(employee)) || "";
+	}
+
 	freight_target(item) {
 		return {
-			key: () => {
-				if (!this.state) return null;
+			key: (state) => {
+				state = state || this.state;
+				if (!state) return null;
+				const freight = state.freight || [];
 				const key = this.freight_key(item);
-				if (this.state.freight.includes(item)) return key || null;
+				if (freight.includes(item)) return key || null;
 				// Redrawn by a save while the file uploaded: the same shipment, by its id.
-				return key && this.state.freight.some((other) => this.freight_key(other) === key) ? key : null;
+				return key && freight.some((other) => this.freight_key(other) === key) ? key : null;
 			},
 			label: () => [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment"),
 			kind: TP_DOC_DEFAULT_KIND.freight,
@@ -2998,9 +3135,16 @@ class TripPlanner {
 			$("<option></option>").val(employee).text(__("Only {0}", [this.crew_name(employee)])).appendTo($for);
 		});
 		if (doc.traveler && !people.includes(doc.traveler)) {
+			// Someone taken off the crew on the full form is not on the trip at all; the next
+			// save takes their file off the list, and says so (planner.merge_documents).
+			const on_trip = this.crew().some((t) => t.employee === doc.traveler);
 			$("<option></option>")
 				.val(doc.traveler)
-				.text(__("Only {0} (not on this booking)", [this.crew_name(doc.traveler)]))
+				.text(
+					on_trip
+						? __("Only {0} (not on this booking)", [this.crew_name(doc.traveler)])
+						: __("Only {0} (not on the trip)", [this.crew_name(doc.traveler)])
+				)
 				.appendTo($for);
 		}
 		$for.val(doc.traveler || "").on("change", () => {
@@ -3009,10 +3153,14 @@ class TripPlanner {
 		});
 	}
 
-	// "Attach a file": frappe's own uploader, private by default, onto the saved trip — a File
-	// is attached to a trip by its name, so a trip not saved yet has no button. Opened only
-	// from that button: nothing on the way to a step touches frappe.ui, and the Back/Forward
-	// harness, like a page that has not loaded the uploader yet, has none.
+	// "Attach a file": frappe's own uploader onto the saved trip — a File is attached to a trip
+	// by its name, so a trip not saved yet has no button. Always private: frappe offers a
+	// "Private" box per file and "Set all public" unless told not to, and a public File is
+	// served to anyone, signed in or not, at /files/<the name it was uploaded with> — a
+	// boarding pass is a name and a PNR (the server refuses one too: planner.merge_documents).
+	// No web link: a trip's files are uploads. Opened only from that button: nothing on the way
+	// to a step touches frappe.ui, and the Back/Forward harness, like a page that has not loaded
+	// the uploader yet, has none.
 	attach_files(target) {
 		const s = this.state;
 		if (!s || !s.name || !s.can_write) return;
@@ -3023,6 +3171,8 @@ class TripPlanner {
 				docname: trip,
 				folder: "Home/Attachments",
 				make_attachments_public: false,
+				allow_toggle_private: false,
+				allow_web_link: false,
 				allow_multiple: true,
 				on_success: (file) => this.add_document(trip, target, file),
 			});
@@ -3031,43 +3181,84 @@ class TripPlanner {
 		else frappe.require("file_uploader.bundle.js", open);
 	}
 
-	// One uploaded file (the uploader calls this once per file): a new file on the list, on the
-	// booking it was attached from, for everyone on it. It is saved with the next save, like any
-	// other edit; the File itself is already on the trip.
+	// One uploaded file (the uploader calls this once per file, whenever each one lands): a new
+	// file on the list, on the booking it was attached from, and for whom that booking's
+	// paperwork is still missing (target.for_whom; everyone on it otherwise). It is saved with
+	// the next save, like any other edit; the File itself is already on the trip.
+	//
+	// An upload keeps going when its dialog is closed — by the phone's Back (frappe closes any
+	// dialog on a route change), by its X, or a tap outside it — so a file can land at any
+	// moment, and never where it would be lost:
+	// - during a save: that save sent the page before this file was on it, and its answer
+	//   replaces the page's trip, so the file waits for the answer and goes on the trip it
+	//   brings (a booking that had its id keeps it; one that was "new:<n>" has another now,
+	//   and the file goes with the whole trip's, with a note);
+	// - while its trip is loading again (Back onto the page from the form): it waits for it;
+	// - on a trip put aside unsaved (keep_current): it goes on that trip, and "Carry on"
+	//   brings it back with the rest of its changes.
+	// Only a trip that is no longer on the page at all gets "no longer open here": the File is
+	// attached to it, on its full form, but not on its list.
 	add_document(trip, target, file) {
 		if (!file || !file.file_url) return;
+		if (this.saving) {
+			this.saving.then(() => this.add_document(trip, target, file));
+			return;
+		}
 		const file_name = file.file_name || tp_file_name(file.file_url);
 		const s = this.state;
-		if (!s || s.name !== trip) {
-			// Another trip, or the list, came on screen while it uploaded.
+		if (s && s.name === trip) {
+			this.push_document(s, target, file, file_name, true);
+			if (!this.view) this.render();
+			return;
+		}
+		const kept = this.kept[trip];
+		if (kept) {
+			this.push_document(kept.state, target, file, file_name, false);
 			frappe.show_alert({
-				message: __("{0} is attached to {1}, which is no longer open here.", [tp_esc(file_name), tp_esc(trip)]),
-				indicator: "orange",
+				message: __("{0} is on {1}'s files, with its changes that are not saved yet.", [
+					tp_esc(file_name),
+					tp_esc(kept.state.trip.purpose || trip),
+				]),
+				indicator: "blue",
 			});
 			return;
 		}
-		let key = target.key();
-		if (key === null) {
-			// The booking is gone from the page: listed with the whole trip, never lost.
-			key = "";
-			frappe.show_alert({
-				message: __("{0} is with the whole trip's files: the booking changed while it uploaded.", [tp_esc(file_name)]),
-				indicator: "orange",
-			});
+		if (!s && this.loading && this.loading.name === trip) {
+			this.loading.promise.then(() => this.add_document(trip, target, file));
+			return;
 		}
-		s.documents = s.documents || [];
-		s.documents.push({
+		// Another trip, or the list, came on screen while it uploaded.
+		frappe.show_alert({
+			message: __("{0} is attached to {1}, which is no longer open here.", [tp_esc(file_name), tp_esc(trip)]),
+			indicator: "orange",
+		});
+	}
+
+	// add_document's row, on `state` (the trip on screen, or one kept aside): on its booking
+	// when `state` still has it, else with the whole trip's files, said out loud on screen.
+	push_document(state, target, file, file_name, on_screen) {
+		let key = target.key(state);
+		if (key === null) {
+			key = "";
+			if (on_screen) {
+				frappe.show_alert({
+					message: __("{0} is with the whole trip's files: the booking changed while it uploaded.", [tp_esc(file_name)]),
+					indicator: "orange",
+				});
+			}
+		}
+		state.documents = state.documents || [];
+		state.documents.push({
 			name: null,
 			title: file_name,
 			kind: target.kind,
 			file: file.file_url,
-			traveler: "",
+			traveler: key && target.for_whom ? target.for_whom(state) : "",
 			booking_group: key,
 			booking_label: key ? target.label() : "",
 			file_name: file_name,
 			is_image: tp_is_image(file_name) ? 1 : 0,
 		});
-		if (!this.view) this.render();
 	}
 
 	// Every booking the page has, with where it is planned: the Files step lists their files.
@@ -3327,8 +3518,10 @@ class TripPlanner {
 		// booking_group (a row from before shipments had one: "row:<name>").
 		const key = this.freight_key(item);
 		const gaps = key ? this.gaps().filter((g) => g.group === key) : [];
+		// Red for a real gap only; a bill of lading not attached yet is a quiet note.
+		const bad = gaps.some((g) => !tp_is_paperwork(g));
 		const title = [item.carrier, item.tracking_number].filter(Boolean).join(" ") || __("Shipment");
-		const $card = $(`<div class="tp-card ${gaps.length ? "tp-bad" : ""}">
+		const $card = $(`<div class="tp-card ${bad ? "tp-bad" : ""}">
 			<div class="tp-card-head"><b>${tp_esc(__("Freight"))}: ${tp_esc(title)}</b></div>
 		</div>`).appendTo($parent);
 		if (!item.protected) {
@@ -3571,11 +3764,14 @@ class TripPlanner {
 				"No files on a booking yet. Attach a boarding pass, a confirmation or a rental agreement on the booking itself."
 			)}</div>`).appendTo($on);
 		}
-		// What the checklist says is missing, with the step that fixes each.
-		const gaps = this.gaps().filter((g) => g.check === "documents");
-		if (gaps.length) {
-			$(`<div class="tp-docs-head" style="margin-top:12px;"><label>${__("Still missing")}</label></div>`).appendTo($on);
-			this.render_gap_list($on, gaps, true);
+		// The paperwork not attached yet, counted as files and muted (the quieter tally), each with
+		// the step whose card takes it.
+		const paperwork = this.paperwork_gaps();
+		if (paperwork.length) {
+			$(`<div class="tp-docs-head" style="margin-top:12px;"><label>${tp_esc(
+				tp_files_not_attached_text(paperwork)
+			)}</label></div>`).appendTo($on);
+			this.render_gap_list($on, paperwork, true);
 		}
 	}
 
@@ -3625,21 +3821,28 @@ class TripPlanner {
 				title: __("Cost and who paid"),
 				ok: __("Every booking has a cost, or is the way home on a round-trip ticket that has one."),
 			},
-			{
-				check: "documents",
-				title: __("Paperwork"),
-				ok: __("Every booking that's made has its paperwork attached."),
-			},
 		];
 		sections.forEach((section) => {
 			const $sec = $(`<div class="tp-review-sec"><h5>${tp_esc(section.title)}</h5></div>`).appendTo($step);
-			const gaps = this.gaps().filter((g) => g.check === section.check);
+			const gaps = this.counted_gaps().filter((g) => g.check === section.check);
 			if (!gaps.length) {
 				$(`<div class="tp-ok-line">&#10003; ${tp_esc(section.ok)}</div>`).appendTo($sec);
 			} else {
 				this.render_gap_list($sec, gaps, true);
 			}
 		});
+		// The fifth section is the quieter tally: its own count, in files, and muted notes rather
+		// than missing items. It is not in "Mark as booked"'s count below.
+		const $paper = $(`<div class="tp-review-sec"><h5>${__("Paperwork")}</h5></div>`).appendTo($step);
+		const paperwork = this.paperwork_gaps();
+		if (!paperwork.length) {
+			$(`<div class="tp-ok-line">&#10003; ${__("Every booking that's made has its paperwork attached.")}</div>`).appendTo(
+				$paper
+			);
+		} else {
+			$(`<div class="tp-paper-count">${tp_esc(tp_files_not_attached_text(paperwork))}</div>`).appendTo($paper);
+			this.render_gap_list($paper, paperwork, true);
+		}
 
 		const $actions = $('<div class="tp-add" style="margin-top:18px;"></div>').appendTo($step);
 		if (s.status === "Planning" && s.can_write) {
@@ -3711,7 +3914,9 @@ class TripPlanner {
 				this.render();
 			});
 		};
-		const count = this.gaps().length;
+		// Paperwork not attached yet is not "missing" here: it is the quieter tally, and a trip
+		// whose only open items are files is booked without a question.
+		const count = this.counted_gaps().length;
 		if (!count) {
 			book();
 			return;
@@ -3950,6 +4155,12 @@ class TripPlanner {
 		}
 	}
 
+	// Paperwork not attached yet, on a view: a muted note, never a flag, and no Fix button — the
+	// quieter tally (see PAPERWORK in the header). Plain text in, escaped here.
+	view_note($parent, text) {
+		$(`<div class="tp-paper"><span>&#128196; ${tp_esc(text)}</span></div>`).appendTo($parent);
+	}
+
 	day_heading(date, data, today) {
 		const outside = (data.start_date && date < data.start_date) || (data.end_date && date > data.end_date);
 		return `${tp_esc(tp_pretty_date(date))}${
@@ -3985,11 +4196,17 @@ class TripPlanner {
 			[__("Rooms"), bookings("accommodations", ["hotel_checkin", "hotel_checkout"])],
 			[__("Drives and rides"), bookings("ground_transport", ["ground"])],
 			[__("Shipments"), bookings("freight", ["freight"])],
-			[__("Still missing"), (data.gaps || []).length],
+			// Paperwork is not "missing": it has its own muted tile, and only when there is some.
+			[__("Still missing"), (data.gaps || []).filter((gap) => !tp_is_paperwork(gap)).length],
 		];
+		const files = tp_files_not_attached(data.gaps);
+		if (files) tiles.push([__("Files not attached"), files, "tp-quiet"]);
 		if (money) tiles.push([__("Booked so far"), format_currency(money.total, money.currency)]);
 		$(`<div class="tp-sum">${tiles
-			.map(([label, value]) => `<div><span class="tp-muted">${tp_esc(label)}</span><b>${tp_esc(value)}</b></div>`)
+			.map(
+				([label, value, quiet]) =>
+					`<div${quiet ? ` class="${quiet}"` : ""}><span class="tp-muted">${tp_esc(label)}</span><b>${tp_esc(value)}</b></div>`
+			)
 			.join("")}</div>`).appendTo($view);
 		this.trip_files($view, data);
 
@@ -4030,13 +4247,21 @@ class TripPlanner {
 		const rest = (data.gaps || []).filter((gap) => !placed.has(gap));
 		if (rest.length) {
 			const $rest = $(`<div class="tp-review-sec"><h5>${__("Not on any day yet")}</h5></div>`).appendTo($view);
-			rest.forEach((gap) => this.view_flag($rest, tp_html_to_text(this.gap_text(gap)), gap));
+			rest.forEach((gap) => {
+				const text = tp_html_to_text(this.gap_text(gap));
+				if (tp_is_paperwork(gap)) this.view_note($rest, text);
+				else this.view_flag($rest, text, gap);
+			});
 		}
 	}
 
+	// A booking's gaps on the Overview: a real gap is a red flag and frames the booking red; its
+	// paperwork not attached yet is only a muted note (the quieter tally).
 	overview_item($parent, item, gaps, cost, money) {
+		const flags = gaps.filter((gap) => !tp_is_paperwork(gap));
+		const papers = gaps.filter(tp_is_paperwork);
 		const facts = this.item_facts(item);
-		const $item = $(`<div class="tp-tl-item ${gaps.length ? "tp-bad" : ""}">
+		const $item = $(`<div class="tp-tl-item ${flags.length ? "tp-bad" : ""}">
 			<div class="tp-tl-icon">${TP_ICONS[item.type] || ""}</div>
 			<div class="tp-tl-time">${tp_esc(facts.time)}</div>
 			<div class="tp-tl-body">
@@ -4068,7 +4293,8 @@ class TripPlanner {
 				[`${__("Cost")}: ${format_currency(cost.cost, money.currency)}`, paid].filter(Boolean).join(" · ")
 			)}</div>`).appendTo($body);
 		}
-		gaps.forEach((gap) => this.view_flag($body, this.booking_gap_text(gap), gap));
+		flags.forEach((gap) => this.view_flag($body, this.booking_gap_text(gap), gap));
+		papers.forEach((gap) => this.view_note($body, this.booking_gap_text(gap)));
 	}
 
 	// Who is on a booking, each with their own number (the Overview shows each booking once).

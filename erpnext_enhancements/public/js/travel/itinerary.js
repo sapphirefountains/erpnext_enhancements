@@ -551,33 +551,94 @@
 		root.appendChild(nav);
 	}
 
+	// A file's booking, as the Documents screen groups it: its `group` (null for the whole
+	// trip's), else its label from an answer that has no group.
+	function bookingKey(doc) {
+		return doc.group ? 'g:' + doc.group : (doc.booking_label ? 'l:' + doc.booking_label : '');
+	}
+
+	// Who is on a booking ("Ann Rivera, Bo"; "Whole crew") and when ("Mon, Oct 5 – Thu, Oct 8"),
+	// from what the server sends with each of its files. '' when it sent nothing.
+	function bookingPeople(doc) {
+		if (!Array.isArray(doc.booking_people)) return '';
+		return doc.booking_people.length ? doc.booking_people.join(', ') : 'Whole crew';
+	}
+
+	function bookingDates(doc) {
+		var dates = Array.isArray(doc.booking_dates) ? doc.booking_dates : [];
+		return dates.filter(function (iso) { return typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso); })
+			.map(fmtDate).join(' – ');
+	}
+
+	// What each booking is called on the Documents screen, {bookingKey: heading}. Usually its
+	// label. Two bookings can be called the same: the policy is one adult to a room, so four
+	// rooms at one hotel are four bookings named after it, each with a confirmation for nobody
+	// in particular. Those say who is on each on the whole crew's list, and when on one
+	// person's (theirs: a split stay), and when as well if who is the same.
+	function bookingHeadings(docs) {
+		var groups = [];
+		var seen = {};
+		docs.forEach(function (doc) {
+			var key = bookingKey(doc);
+			if (!key || seen[key]) return;
+			seen[key] = true;
+			groups.push({ key: key, doc: doc, heading: doc.booking_label || 'Booking' });
+		});
+		var crew = shownAs() === 'crew';
+		var tell = function (describe) {
+			var count = {};
+			groups.forEach(function (g) { count[g.heading] = (count[g.heading] || 0) + 1; });
+			groups.forEach(function (g) {
+				var more = count[g.heading] > 1 ? describe(g.doc) : '';
+				if (more) g.heading += ' · ' + more;
+			});
+		};
+		if (crew) tell(bookingPeople);
+		tell(bookingDates);
+		var out = {};
+		groups.forEach(function (g) { out[g.key] = g.heading; });
+		return out;
+	}
+
+	// What an empty Documents screen says. A person's own list leaves out what is not theirs,
+	// so "no documents for this trip" would be false beside the whole crew's ten.
+	function noDocumentsText() {
+		var as = shownAs();
+		if (as === 'crew') return 'No documents for this trip yet.';
+		var me = (state.people && state.people.viewer) || BOOT.employee || null;
+		if (as === me) return 'No files for you on this trip yet.';
+		var name = personName(as);
+		return name ? 'No files for ' + name + ' on this trip yet.' : 'No files on this view yet.';
+	}
+
 	// The Documents screen: "For the whole trip" first, then each booking's files under its
 	// name, in the order the answer lists them (the itinerary's). A file's booking is its
 	// `group` (null for the whole trip's), not its label: two rooms at the same hotel are two
-	// bookings, and a booking's label can be blank.
+	// bookings, and a booking's label can be blank (bookingHeadings tells them apart).
 	function renderDocuments(docs) {
 		if (!docs.length) {
-			root.appendChild(el('div', 'ti-empty', 'No documents for this trip yet.'));
+			root.appendChild(el('div', 'ti-empty', noDocumentsText()));
 			return;
 		}
 		var groups = [];
 		docs.forEach(function (doc) {
-			var key = doc.group ? 'g:' + doc.group : (doc.booking_label ? 'l:' + doc.booking_label : '');
+			var key = bookingKey(doc);
 			var group = null;
 			for (var i = 0; i < groups.length; i++) {
 				if (groups[i].key === key) group = groups[i];
 			}
 			if (!group) {
-				group = { key: key, label: doc.booking_label || '', docs: [] };
+				group = { key: key, docs: [] };
 				groups.push(group);
 			}
 			group.docs.push(doc);
 		});
 		groups.sort(function (a, b) { return (a.key ? 1 : 0) - (b.key ? 1 : 0); });
+		var headings = bookingHeadings(docs);
 		groups.forEach(function (group) {
 			var section = el('section', 'ti-doc-group');
 			section.appendChild(el('h2', 'ti-doc-group-title',
-				group.key ? (group.label || 'Booking') : 'For the whole trip'));
+				group.key ? headings[group.key] : 'For the whole trip'));
 			var list = el('div', 'ti-docs');
 			group.docs.forEach(function (doc) { list.appendChild(docLink(doc)); });
 			section.appendChild(list);
@@ -623,7 +684,8 @@
 		var sub = [];
 		if (doc.kind && doc.kind !== title) sub.push(doc.kind);
 		if (doc.for_name) sub.push('for ' + doc.for_name);
-		if (doc.booking_label) sub.push(doc.booking_label);
+		// Its booking as the Documents screen names it: which of four rooms at one hotel.
+		if (bookingKey(doc)) sub.push(bookingHeadings(tripDocuments(state.itinerary))[bookingKey(doc)] || doc.booking_label);
 		if (sub.length) heading.appendChild(el('div', 'ti-viewer-sub', sub.join(' · ')));
 		bar.appendChild(heading);
 		var close = el('button', 'ti-viewer-close', 'Close');
