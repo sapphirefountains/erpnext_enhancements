@@ -1070,6 +1070,40 @@ class TestContracts(unittest.TestCase):
 		for method in called:
 			self.assertRegex(planner_source, rf"@frappe\.whitelist\([^)]*\)\ndef {method}\(")
 
+	def test_every_travel_endpoint_the_page_calls_is_whitelisted(self):
+		# The views (get_trip_views), View as's email preview and the itinerary email live in
+		# api/travel.py, not planner.py, so the set above does not see them.
+		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		api_source = _read(os.path.join(APP_DIR, "api", "travel.py"))
+		called = set(re.findall(r"erpnext_enhancements\.api\.travel\.(\w+)", source))
+		self.assertEqual(called, {"get_trip_views", "preview_itinerary_email", "send_itinerary_email"})
+		for method in called:
+			self.assertRegex(api_source, rf"@frappe\.whitelist\([^)]*\)\ndef {method}\(")
+
+	def test_the_forms_trip_views_are_views_the_page_has(self):
+		# The form opens the page on a view by its key (frappe.set_route with {trip, view}); a
+		# key the page does not know would open the step instead, with no error.
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		form = _read(os.path.join(APP_DIR, "public", "js", "travel_trip.js"))
+		views = re.findall(r'"(\w+)"', re.search(r"const TP_VIEWS = \[(.*?)\];", page, re.S).group(1))
+		self.assertEqual(views, ["overview", "grid", "compare", "person"])
+		block = re.search(r"const TRIP_VIEWS = \[(.*?)\n\];", form, re.S).group(1)
+		offered = re.findall(r"\['(\w+)', __\(", block) + re.findall(r"open_trip_view\(frm, '(\w+)'", form)
+		self.assertTrue(offered)
+		self.assertLessEqual(set(offered), set(views))
+		self.assertEqual(set(offered), set(views), "every view is offered on the form")
+
+	def test_the_harness_knows_every_step(self):
+		# scripts/test_wizard_back_forward.mjs records each render by TP_KEYS[this.step], a
+		# copy of the page's step order: a step added to one and not the other mislabels every
+		# render, and the views, which are not steps, must not be added to either.
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		harness = _read(os.path.join(os.path.dirname(APP_DIR), "scripts", "test_wizard_back_forward.mjs"))
+		steps = re.findall(r'key: "(\w+)"', re.search(r"const TP_STEPS = \[(.*?)\n\];", page, re.S).group(1))
+		keys = re.findall(r'"(\w+)"', re.search(r"const TP_KEYS = \[(.*?)\];", harness).group(1))
+		self.assertEqual(keys, steps)
+		self.assertEqual(steps[-1], "review")
+
 	def test_the_page_is_open_to_everyone_who_can_create_a_trip(self):
 		page = _load_json(PAGE_DIR, "plan_a_trip.json")
 		trip_meta = _load_json(TRAVEL_DIR, "doctype", "travel_trip", "travel_trip.json")
@@ -1218,6 +1252,34 @@ class TestPageRouting(unittest.TestCase):
 		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 		self.assertIn(" 0 failed", result.stdout)
 
+	def test_the_views_are_read_from_the_route_and_consumed(self):
+		# &view= and &as= reach the page in frappe.route_options like &trip= does (the form's
+		# "Trip views" buttons, a reload of a view). Read and deleted there, or a later plain
+		# visit to the page replays the last view.
+		body = re.search(r"\n\troute_args\(\) \{(.*?)\n\t\}\n", self.source, re.S).group(1)
+		self.assertIn('view: pick("view")', body)
+		self.assertIn('as: pick("as")', body)
+
+	def test_a_views_address_keeps_one_key_order(self):
+		# leave_view and back_one_step compare query strings as written: trip, step, view, as.
+		body = re.search(r"\n\taddress_args\(\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(body, "address_args() is gone")
+		code = body.group(1)
+		self.assertIn("{ trip: this.state.name, step: step }", code)
+		self.assertLess(code.index("args.view ="), code.index("args.as ="))
+
+	def test_a_view_is_an_entry_the_page_writes_and_redraws(self):
+		# Opening a view pushes through set_address once it is drawn (never raw pushState, never
+		# frappe.set_route to this page); Back/Forward onto or off a view is handled before
+		# jump_to, because go() with the step already on screen draws nothing.
+		enter = re.search(r"\n\tenter_view\(view, as, from_route, step\) \{(.*?)\n\t\}\n", self.code, re.S)
+		self.assertIsNotNone(enter, "enter_view() is gone")
+		self.assertIn("this.set_address(this.address_args(), !from_route)", enter.group(1))
+		self.assertNotIn("pushState", enter.group(1))
+		self.assertLess(enter.group(1).index("this.render()"), enter.group(1).index("this.set_address("))
+		route = re.search(r"\n\troute\(args, mark\) \{(.*?)\n\t\}\n", self.code, re.S).group(1)
+		self.assertLess(route.index("this.route_view(args, mark)"), route.index("this.jump_to("))
+
 	def test_no_hand_built_app_links(self):
 		# The v16 desk is /desk; the router only intercepts /desk links, so an in-desk
 		# href="/app/..." costs a full reload and a redirect.
@@ -1253,30 +1315,51 @@ def _strip_js_comments(source):
 
 
 class TestItineraryBackForward(unittest.TestCase):
-	"""/itinerary: the trip on screen is ?trip=<name>, a chip tap is one history entry, and
-	Back / Forward load the entry's trip. Before, Back after switching trips left the page (or
-	the home-screen app), and a reload or Back from /travel_guidelines showed the default trip
-	instead of the one being read."""
+	"""/itinerary: the trip and person on screen are ?trip=<name>&as=<employee|crew>, a chip
+	tap or a person pick is one history entry, and Back / Forward load the entry's trip and
+	person. Before, Back after switching trips left the page (or the home-screen app), and a
+	reload or Back from /travel_guidelines showed the default trip instead of the one being
+	read. A ?trip= outside the person's own list is asked for (the server's read permission
+	decides); only a refusal replaces the entry."""
 
 	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
 	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
 
-	def _login_redirect(self):
-		"""The real ``login_redirect``, extracted with ast: importing the controller pulls in
-		api.travel and the kiosk controller, far more than this suite's stub provides."""
+	def _controller_function(self, name, namespace):
+		"""A real function from the controller, extracted with ast: importing the controller
+		pulls in api.travel and the kiosk controller, far more than this suite's stub provides."""
 		import ast
-		from urllib.parse import quote
 
 		tree = ast.parse(_read(self.CONTROLLER))
 		wanted = [
 			n
 			for n in tree.body
-			if (isinstance(n, ast.FunctionDef) and n.name == "login_redirect")
+			if (isinstance(n, ast.FunctionDef) and n.name == name)
 			or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "ROUTE" for t in n.targets))
 		]
-		namespace = {"quote": quote}
 		exec(compile(ast.Module(body=wanted, type_ignores=[]), self.CONTROLLER, "exec"), namespace)
-		return namespace["login_redirect"]
+		return namespace[name]
+
+	def _login_redirect(self):
+		from urllib.parse import quote
+
+		return self._controller_function("login_redirect", {"quote": quote})
+
+	def test_the_boot_cannot_end_its_script_block(self):
+		"""itinerary.html prints the boot with ``| safe``; a trip purpose is typed by people and
+		the boot now carries every trip the person owns."""
+		import json
+		import types
+
+		fake_frappe = types.SimpleNamespace(as_json=lambda value: json.dumps(value, indent=1, sort_keys=True))
+		script_json = self._controller_function("script_json", {"frappe": fake_frappe})
+		boot = {"trips": [{"purpose": "</script><script>alert(1)</script> R&D"}]}
+		out = script_json(boot)
+		for char in "<>&":
+			self.assertNotIn(char, out)
+		self.assertEqual(json.loads(out), boot)
+		self.assertIn("boot_json | safe", _read(os.path.join(APP_DIR, "www", "itinerary.html")))
+		self.assertIn("context.boot_json = script_json(boot)", _read(self.CONTROLLER))
 
 	def test_the_login_redirect_keeps_the_trip(self):
 		login_redirect = self._login_redirect()
@@ -1288,24 +1371,54 @@ class TestItineraryBackForward(unittest.TestCase):
 			login_redirect("/itinerary?trip=TRIP-0007&x=1"),
 			"/login?redirect-to=/itinerary%3Ftrip%3DTRIP-0007%26x%3D1",
 		)
+		# ...and so does the person being viewed.
+		self.assertEqual(
+			login_redirect("/itinerary?trip=TRIP-0007&as=HR-EMP-00002"),
+			"/login?redirect-to=/itinerary%3Ftrip%3DTRIP-0007%26as%3DHR-EMP-00002",
+		)
 		# Never anywhere but this page.
 		self.assertEqual(login_redirect("//evil.example/x"), "/login?redirect-to=/itinerary")
 
 	def test_history_calls_come_only_from_the_tap_and_the_boot(self):
 		code = _strip_js_comments(_read(self.ITINERARY_JS))
 		self.assertNotIn("beforeunload", code)
-		# One push, in writeTripEntry, called with push=true only from the chip's click.
+		# One push, in writeTripEntry. It is called with push=true from exactly two taps: a trip
+		# chip (the trip only, which drops ?as=) and a person in the picker (trip and person).
+		# Deliberately two since the person picker (was: one, the chip alone).
 		self.assertEqual(code.count("pushState("), 1)
-		self.assertEqual(code.count("writeTripEntry(true"), 1)
+		self.assertEqual(code.count("writeTripEntry(true"), 2)
 		self.assertRegex(
 			code,
 			r"chip\.addEventListener\('click', function \(\) \{\s*"
 			r"if \(trip\.name !== state\.currentTrip\) writeTripEntry\(true, trip\.name\);",
 		)
-		# loadTrip, which popstate calls, never writes history.
+		self.assertRegex(
+			code,
+			r"chip\.addEventListener\('click', function \(\) \{\s*"
+			r"if \(choice\.as !== shown\) writeTripEntry\(true, state\.currentTrip, choice\.as\);",
+		)
+		# loadTrip, which popstate calls, never writes history...
 		body = code[code.index("function loadTrip(") : code.index("function defaultTrip(")]
 		self.assertNotIn("writeTripEntry", body)
 		self.assertNotIn("State(", body)
+		# ...and its answer is only shown while the same trip AND person are still asked for.
+		self.assertEqual(body.count("state.currentTrip !== name || state.currentAs !== as"), 2)
+		# The one history write a failed load makes is a replace: a refused trip or person
+		# falls back in place, never as a new entry.
+		start = code.index("function loadFailed(")
+		failed = code[start : code.index("\n\tfunction ", start + 1)]
+		self.assertIn("writeTripEntry(false", failed)
+		self.assertNotIn("writeTripEntry(true", failed)
+		self.assertNotIn("pushState", failed)
+
+	def test_today_is_the_phones_date_and_data_is_never_markup(self):
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		# toISOString() is the UTC date: after 5 PM in Arizona "Today" moved to tomorrow.
+		self.assertNotIn("toISOString", code)
+		# The map popup is built from elements, like every other render (a POI name or an
+		# activity is typed in by people).
+		self.assertNotIn("bindPopup('", code)
+		self.assertNotIn(".innerHTML = '<", code)
 
 	def test_the_page_in_a_fake_browser(self):
 		node = shutil.which("node")
@@ -1313,7 +1426,12 @@ class TestItineraryBackForward(unittest.TestCase):
 			self.skipTest("node is not installed")
 		harness = os.path.join(os.path.dirname(APP_DIR), "scripts", "test_web_flow_history.js")
 		result = subprocess.run(
-			[node, harness, "itinerary"], capture_output=True, text=True, check=False, timeout=120
+			[node, harness, "itinerary"],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			check=False,
+			timeout=120,
 		)
 		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

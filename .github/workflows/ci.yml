@@ -2037,6 +2037,13 @@ jobs:
       # its own `frappe` stub.
       - name: Plan a Trip (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_travel_planner -v
+      # Trip views: Plan a Trip's Overview / Grid / Compare / View-as, /itinerary?as=, and
+      # the itinerary email preview. Guards money reaching a crew member's payload ("all but
+      # money" is enforced by what the server sends, not by the page hiding it), a preview
+      # that sends mail or writes a Notification Log, and ?as= showing a stranger's view.
+      # Own step: it installs its own `frappe` stub (and a stand-in for email_style).
+      - name: Trip views + itinerary email preview (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_travel_views -v
       # Product Configurator engine (found unwired the same way, same day). 27
       # bench-free unittest tests, green, and named nowhere in this file.
       - name: Product Configurator engine (bench-free)

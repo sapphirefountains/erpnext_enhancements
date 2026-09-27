@@ -158,6 +158,10 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 	each freight delivery (or pickup) window they receive. Every booking event
 	carries its confirmation or tracking number when there is one. Segments pinned
 	to a different single traveler are skipped."""
+	# Imported here, not at the top: this module must stay importable under the bench-free
+	# suites' minimal frappe stub, and ``views`` is the one place the link is spelled.
+	from erpnext_enhancements.travel_management.views import itinerary_path
+
 	site = getattr(frappe.local, "site", None) or "site"
 	employee = traveler_row.employee
 
@@ -175,7 +179,8 @@ def trip_events_for_traveler(trip_doc, traveler_row):
 			"end": traveler_row.to_date or trip_doc.end_date,
 			"all_day": True,
 			"description": f"Travel Trip {trip_doc.name} ({trip_doc.travel_type})",
-			"url": frappe.utils.get_url("/itinerary"),
+			# This trip's page, not bare /itinerary (which opens whichever trip is current).
+			"url": frappe.utils.get_url(itinerary_path(trip_doc.name)),
 		}
 	]
 

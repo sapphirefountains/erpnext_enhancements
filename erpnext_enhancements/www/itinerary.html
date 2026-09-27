@@ -5,10 +5,16 @@
   WITHOUT the PWA/service-worker layer. Its jobs:
     * load the itinerary styles (css/travel/itinerary.css) and front-end
       script (js/travel/itinerary.js);
-    * hand the server-computed boot payload (employee, active trips, csrf) to
-      the front-end as window.ITIN_BOOT / ITIN_CSRF / ITIN_BUILD.
+    * hand the server-computed boot payload (employee, active trips — the ones
+      they travel on and the ones they own — csrf) to the front-end as
+      window.ITIN_BOOT / ITIN_CSRF / ITIN_BUILD. boot_json is escaped for an
+      inline script by itinerary.py (script_json), which is what makes `| safe`
+      below safe.
 
-  The day-by-day UI is rendered client-side by itinerary.js into #itinerary-root.
+  The day-by-day UI is rendered client-side by itinerary.js into #itinerary-root,
+  for the trip and person in the address (?trip=<name>&as=<employee|crew>); the
+  server decides whether the viewer may see them. The <title> below is the
+  first paint only: itinerary.js retitles the page for whose itinerary is shown.
   Leaflet maps are lazy-loaded from frappe's bundled assets on first use.
 
   Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
@@ -59,7 +65,7 @@
 </script>
 <script src="{{ bundled_asset('capture.bundle.js') }}"></script>
 <script>
-  // Server-injected boot payload (employee, active trips, csrf).
+  // Server-injected boot payload (employee, their trips and the ones they own, csrf).
   window.ITIN_BOOT = {{ boot_json | safe }};
   window.ITIN_CSRF = "{{ csrf_token }}";
   window.ITIN_BUILD = "{{ deploy_version }}";

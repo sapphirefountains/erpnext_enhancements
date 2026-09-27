@@ -8,11 +8,20 @@ for display.
 Security:
 	- ``get_my_trips`` / ``get_itinerary_bootstrap`` derive the employee from
 	  the SESSION user (same model as ``api.time_kiosk``) — never from a
-	  client-supplied parameter.
-	- ``get_trip_itinerary`` / ``get_trip_map_data`` gate through
-	  ``frappe.has_permission`` on the trip, which the Travel Trip permission
-	  hooks scope to owner/crew/coordinators
-	  (``travel_management.permissions``).
+	  client-supplied parameter. The bootstrap adds the trips the user owns
+	  through ``frappe.get_list``, so the row-level hooks still apply (and asks
+	  only when the user can read Travel Trip at all).
+	- ``get_trip_itinerary`` / ``get_trip_views`` / ``preview_itinerary_email`` /
+	  ``get_trip_map_data`` gate through ``frappe.has_permission`` on the trip,
+	  which the Travel Trip permission hooks scope to owner/crew/coordinators
+	  (``travel_management.permissions``). Anyone who can read a trip may see
+	  any crew member's itinerary on it ("all but money", 2026-09-26): the crew
+	  already read the whole trip on the form. A person asked for is compared
+	  against the crew and never looked up (``_crew_member_or_throw``).
+	- Money (cost, who paid, billable, per diem, claims, totals) never leaves
+	  this module for a non-coordinator. ``shape_itinerary`` carries none, and
+	  the money block of ``get_trip_views`` is only built for a coordinator
+	  (``travel_management.views``).
 	- ``get_events`` uses ``frappe.get_list`` so the same row-level scoping
 	  applies to the calendar.
 """
@@ -22,6 +31,9 @@ import json
 import frappe
 from frappe import _
 from frappe.utils import add_days, flt, getdate, today
+
+from erpnext_enhancements.travel_management import views as trip_views
+from erpnext_enhancements.travel_management.completeness import group_key
 
 # Calendar event colors per trip status (frappe palette names).
 STATUS_COLOR = {
@@ -36,6 +48,36 @@ STATUS_COLOR = {
 def _session_employee():
 	"""Employee linked to the current session user, or None."""
 	return frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
+
+
+def _is_coordinator():
+	"""True for Administrator, System Manager, HR Manager and Travel Coordinator — the
+	people who see money on the trip views. Imported late: the controller module pulls in
+	``frappe.model.document``, which nothing else here needs."""
+	from erpnext_enhancements.travel_management.doctype.travel_trip.travel_trip import (
+		user_is_travel_coordinator,
+	)
+
+	return bool(user_is_travel_coordinator())
+
+
+def _crew_member_or_throw(doc, employee):
+	"""Refuse anything but a person on this trip's crew, with one plain sentence, and
+	without looking up who was asked for.
+
+	The value comes from a request (``?as=``, the preview's ``employee``). It used to be
+	looked up so a known Employee could be named in the refusal, which had two problems.
+	First, anyone who could read one trip could learn the name behind any Employee id.
+	Second, a JSON body can send a filter dict instead of a string, which
+	``frappe.db.get_value`` takes as a filter without a permission check. The named and
+	unnamed refusals then answered yes/no about any Employee field (CTC, bank account, date
+	of birth). Now only the crew is compared against, only a string can match, and the
+	refusal never says who. The endpoints also declare ``str``, so v16's whitelist type check
+	turns a dict or list away before this runs.
+	"""
+	if isinstance(employee, str) and employee and any(t.employee == employee for t in doc.travelers):
+		return
+	frappe.throw(_("That person is not on this trip."))
 
 
 def _poi_latlng(geolocation_json):
@@ -129,6 +171,19 @@ def get_events(start, end, filters=None):
 # ---------------------------------------------------------------- itinerary
 
 
+#: The columns every /itinerary trip chip is built from.
+_TRIP_LIST_FIELDS = [
+	"name",
+	"purpose",
+	"status",
+	"travel_type",
+	"start_date",
+	"end_date",
+	"travel_for_doctype",
+	"travel_for_name",
+]
+
+
 @frappe.whitelist()
 def get_itinerary_bootstrap():
 	"""Boot payload for the /itinerary page (www/itinerary.py)."""
@@ -139,9 +194,54 @@ def get_itinerary_bootstrap():
 		"employee_name": frappe.db.get_value("Employee", employee, "employee_name")
 		if employee
 		else None,
-		"trips": get_my_trips(),
+		"trips": _itinerary_trips(),
 		"csrf_token": frappe.sessions.get_csrf_token(),
 	}
+
+
+def _itinerary_trips():
+	"""The trip chips on /itinerary: the trips the user travels on (``mine``), plus the ones
+	they own but are not on — the office person who booked a crew opens the page and finds
+	that crew's trip, where until 2026-09-26 they found "No upcoming or recent trips".
+
+	Same window for both: not Closed, ended less than a week ago. The owned list goes
+	through ``get_list``, so the Travel Trip permission hooks decide, not this function.
+
+	``get_list`` does not return an empty list to someone with no read on Travel Trip at all
+	(a Website User, or a staff account whose profile has no Employee role). v16 raises
+	``PermissionError`` first, and the web page turns that into Frappe's "Not Permitted" page,
+	where the page used to show its own empty state. Such a person can open no trip they own,
+	so their owned list is empty and the query is not run. A ``has_permission`` with no
+	document queues no message, unlike catching the error, which ``frappe.throw`` has already
+	put on screen.
+	"""
+	mine = get_my_trips()
+	owned = (
+		frappe.get_list(
+			"Travel Trip",
+			filters={
+				"owner": frappe.session.user,
+				"status": ["!=", "Closed"],
+				"end_date": [">=", add_days(today(), -7)],
+			},
+			fields=_TRIP_LIST_FIELDS,
+			order_by="start_date asc",
+			limit_page_length=100,
+		)
+		if frappe.has_permission("Travel Trip", "read")
+		else []
+	)
+
+	trips, seen = [], set()
+	for row, travels in [(row, True) for row in mine] + [(row, False) for row in owned]:
+		if row["name"] in seen:
+			continue
+		seen.add(row["name"])
+		row["mine"] = travels
+		trips.append(row)
+	# sorted() is stable: two trips starting the same day keep the order they came in.
+	trips = sorted(trips, key=lambda row: str(row.get("start_date") or ""))
+	return trips
 
 
 @frappe.whitelist()
@@ -167,35 +267,81 @@ def get_my_trips():
 			"status": ["!=", "Closed"],
 			"end_date": [">=", add_days(today(), -7)],
 		},
-		fields=[
-			"name",
-			"purpose",
-			"status",
-			"travel_type",
-			"start_date",
-			"end_date",
-			"travel_for_doctype",
-			"travel_for_name",
-		],
+		fields=list(_TRIP_LIST_FIELDS),
 		order_by="start_date asc",
 	)
 
 
 @frappe.whitelist()
-def get_trip_itinerary(trip):
+def get_trip_itinerary(trip: str, as_employee: str | None = None):
 	"""Day-by-day itinerary for one trip, shaped for the mobile page:
-	``{trip, purpose, status, days: [{date, items: [...]}]}`` with typed items
-	(flight / hotel_checkin / hotel_checkout / ground / agenda) merged
-	chronologically. When the viewer is a traveler (not a coordinator),
-	segments pinned to a different single traveler are filtered out."""
+	``{trip, purpose, status, days: [{date, items: [...]}], crew, viewing, ...}`` with typed
+	items (flight / hotel_checkin / hotel_checkout / ground / freight / agenda) merged
+	chronologically.
+
+	Whose itinerary (``/itinerary?trip=X&as=Y`` — ``as`` is a Python keyword, so the page
+	sends it as ``as_employee``):
+
+	* nothing — the viewer's own when they are on the crew, else the whole crew (the
+	  only behavior until 2026-09-26);
+	* ``"crew"`` — the whole crew, every booking once with who is on it;
+	* an Employee — that person's, exactly as they see it. Anyone who can read the trip may
+	  ask (owner's rule, 2026-09-26: crew, owner and coordinators alike); anything else is
+	  refused with "That person is not on this trip." (``_crew_member_or_throw``).
+
+	No money in any of them.
+	"""
 	doc = frappe.get_doc("Travel Trip", trip)
 	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
 
-	session_emp = _session_employee()
-	viewing_employee = (
-		session_emp if any(t.employee == session_emp for t in doc.travelers) else None
+	session_emp = _session_employee() or None
+	viewer_on_trip = bool(session_emp) and any(t.employee == session_emp for t in doc.travelers)
+
+	if not as_employee:
+		viewing = session_emp if viewer_on_trip else None
+	elif as_employee == "crew":
+		viewing = None
+	else:
+		_crew_member_or_throw(doc, as_employee)
+		viewing = as_employee
+
+	result = shape_itinerary(doc, viewing)
+	result.update(
+		crew=trip_views.crew(doc),
+		viewing=viewing,
+		viewer_employee=session_emp,
+		viewer_on_trip=viewer_on_trip,
 	)
-	return shape_itinerary(doc, viewing_employee)
+	return result
+
+
+@frappe.whitelist()
+def get_trip_views(trip: str):
+	"""Everything Plan a Trip's Overview, Grid, Compare and View-as screens draw, in one
+	round trip: the whole crew's day-by-day, each person's, every day of the trip, the
+	crew and the checklist — see ``travel_management.views.build_trip_views``.
+
+	Read access to the trip is enough. Money comes back only for a coordinator; for anyone
+	else ``money`` is null and the checklist's cost gaps are left out, so there is nothing
+	on the wire for the page to hide."""
+	doc = frappe.get_doc("Travel Trip", trip)
+	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
+
+	is_coordinator = _is_coordinator()
+	return trip_views.build_trip_views(
+		doc,
+		shape_itinerary,
+		is_coordinator=is_coordinator,
+		viewer_employee=_session_employee() or None,
+		currency=_trip_currency(doc) if is_coordinator else None,
+	)
+
+
+def _trip_currency(doc):
+	"""The trip company's currency (the one every cost row is entered in)."""
+	if not doc.get("company"):
+		return ""
+	return frappe.db.get_value("Company", doc.company, "default_currency") or ""
 
 
 def _clock(value):
@@ -218,13 +364,26 @@ def _sort_time(value):
 	return str(value)[11:19] if value else ""
 
 
-def shape_itinerary(doc, viewing_employee=None):
+def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 	"""Build the typed day-by-day itinerary dict from a Travel Trip document.
 
 	No permission checks — callers gate access. ``viewing_employee`` filters
 	out segments pinned to a different single traveler (used both by the
 	/itinerary page and the per-traveler itinerary emails in
-	travel_management.notifications)."""
+	travel_management.notifications).
+
+	No money, ever: this dict goes into emails and to every reader of the trip.
+
+	Keys are only ever ADDED here — the emails (``itinerary_text``) read the
+	existing ones by name. Every booking and shipment carries ``group``, the
+	same key the trip checklist and Plan a Trip's cards use
+	(``completeness.group_key``), so a gap can be shown on the booking it is
+	about; a stop's ``group`` is None. The whole-crew view also carries
+	``members`` — each row's own person and confirmation number, which the
+	joined ``booking_reference`` string loses — and ``whole_crew``.
+
+	``poi_cache`` lets several calls on one trip (one per crew member, on Plan
+	a Trip's views) share their Travel POI lookups."""
 
 	def visible(row_traveler):
 		return not row_traveler or not viewing_employee or row_traveler == viewing_employee
@@ -232,7 +391,7 @@ def shape_itinerary(doc, viewing_employee=None):
 	names = {t.employee: t.employee_name or t.employee for t in doc.travelers}
 
 	def bookings(rows, ref_field):
-		"""(first row, who is on it, confirmation) per booking.
+		"""(first row, who is on it, confirmation, extra keys) per booking.
 
 		Plan a Trip stores one row per person, so each traveler's own view holds only their
 		own row and their own confirmation number — that view is unchanged here. The
@@ -242,7 +401,7 @@ def shape_itinerary(doc, viewing_employee=None):
 		"""
 		shown = [row for row in rows if visible(row.traveler)]
 		if viewing_employee:
-			return [(row, None, row.get(ref_field)) for row in shown]
+			return [(row, None, row.get(ref_field), {"group": group_key(row)}) for row in shown]
 		groups = {}
 		for row in shown:
 			groups.setdefault(row.get("booking_group") or row.name, []).append(row)
@@ -254,12 +413,25 @@ def shape_itinerary(doc, viewing_employee=None):
 				if ref and ref not in refs:
 					refs.append(ref)
 			who = [names.get(m.traveler, m.traveler) for m in members if m.traveler]
-			out.append((members[0], who or None, ", ".join(refs) or None))
+			extra = {
+				"group": group_key(members[0]),
+				# One entry per row, in row order; a blank employee is a whole-crew row.
+				"members": [
+					{
+						"employee": m.traveler or "",
+						"employee_name": names.get(m.traveler, m.traveler) if m.traveler else "",
+						"ref": m.get(ref_field) or "",
+					}
+					for m in members
+				],
+				"whole_crew": any(not m.traveler for m in members),
+			}
+			out.append((members[0], who or None, ", ".join(refs) or None, extra))
 		return out
 
 	items = []
 
-	for row, who, ref in bookings(doc.flights, "booking_reference"):
+	for row, who, ref, extra in bookings(doc.flights, "booking_reference"):
 		date = getdate(row.departure_time) if row.departure_time else getdate(doc.start_date)
 		items.append(
 			{
@@ -275,10 +447,11 @@ def shape_itinerary(doc, viewing_employee=None):
 				"booking_reference": ref,
 				"travelers": who,
 				"attachment": row.attachment,
+				**extra,
 			}
 		)
 
-	for row, who, ref in bookings(doc.accommodations, "booking_confirmation"):
+	for row, who, ref, extra in bookings(doc.accommodations, "booking_confirmation"):
 		check_in_time = _clock(row.get("check_in_time"))
 		check_out_time = _clock(row.get("check_out_time"))
 		base = {
@@ -287,6 +460,7 @@ def shape_itinerary(doc, viewing_employee=None):
 			"booking_confirmation": ref,
 			"travelers": who,
 			"attachment": row.attachment,
+			**extra,
 		}
 		if row.check_in_date:
 			items.append(
@@ -309,7 +483,7 @@ def shape_itinerary(doc, viewing_employee=None):
 				)
 			)
 
-	for row, who, ref in bookings(doc.ground_transport, "booking_reference"):
+	for row, who, ref, extra in bookings(doc.ground_transport, "booking_reference"):
 		date = getdate(row.pickup_datetime) if row.pickup_datetime else getdate(doc.start_date)
 		items.append(
 			{
@@ -327,6 +501,7 @@ def shape_itinerary(doc, viewing_employee=None):
 				"booking_reference": ref,
 				"travelers": who,
 				"attachment": row.attachment,
+				**extra,
 			}
 		)
 
@@ -336,6 +511,11 @@ def shape_itinerary(doc, viewing_employee=None):
 		if not visible(row.traveler):
 			continue
 		when = row.delivery_from or row.pickup_from
+		# One row is one shipment (Trip Freight has no booking_group), so its key is always
+		# its row; in the whole-crew view nobody is "on" it, only the receiver named.
+		extra = {"group": f"row:{row.name}"}
+		if not viewing_employee:
+			extra.update(members=[], whole_crew=not row.traveler)
 		items.append(
 			{
 				"type": "freight",
@@ -352,10 +532,12 @@ def shape_itinerary(doc, viewing_employee=None):
 				"delivery_to": str(row.delivery_to) if row.delivery_to else None,
 				"received_by": names.get(row.traveler, row.traveler) if row.traveler else None,
 				"attachment": row.attachment,
+				**extra,
 			}
 		)
 
-	poi_cache = {}
+	if poi_cache is None:
+		poi_cache = {}
 
 	def poi_details(poi_name):
 		if not poi_name:
@@ -404,6 +586,7 @@ def shape_itinerary(doc, viewing_employee=None):
 				"related_party": row.related_party_name,
 				"poi": poi_details(row.location),
 				"visit_notes": row.visit_notes,
+				"group": None,
 			}
 		)
 
@@ -621,3 +804,29 @@ def send_itinerary_email(trip, employee=None):
 	if not sent:
 		frappe.throw(_("No traveler with an email address matched."))
 	return sent
+
+
+@frappe.whitelist()
+def preview_itinerary_email(trip: str, employee: str):
+	"""The itinerary email and calendar invite exactly as ``employee`` would get them from
+	"Email everyone their itinerary" — rendered, never sent.
+
+	Nothing on this path sends, queues or logs: it renders the same template, context and
+	.ics that ``notifications.send_itinerary_emails`` delivers, through the render half of
+	the split ``_send`` (``notifications.render_itinerary_preview``). No email, no
+	Notification Log, no background job.
+
+	Anyone who can read the trip may preview anyone on its crew (the emails carry no
+	money). The address it would go to is shown to coordinators only; ``no_email`` says
+	whether there is one at all, so the page can warn that this person would get nothing.
+	"""
+	from erpnext_enhancements.travel_management import notifications
+
+	doc = frappe.get_doc("Travel Trip", trip)
+	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
+	_crew_member_or_throw(doc, employee)
+
+	preview = notifications.render_itinerary_preview(doc, employee)
+	if not _is_coordinator():
+		preview["to_email"] = None
+	return preview

@@ -37,8 +37,10 @@
  *     _server_messages, which frappe.request.cleanup shows as a dialog unless the call was
  *     `silent`. No answer at all is status 0. A page that retries has to tell them apart.
  *
- * Rendering is replaced by a recorder (the DOM is not what is under test); jQuery is a
- * chainable stub that keeps click handlers so the page's own buttons can be pressed; the
+ * Rendering is replaced by a recorder (the DOM is not what is under test), except for a Plan a
+ * Trip view: its real render_view runs and the markup it builds is kept (ui.drawn), because a
+ * view's own lines ("not saved yet", "Loading...") are the only way it tells anyone anything.
+ * jQuery is a chainable stub that keeps click handlers so the page's own buttons can be pressed; the
  * server is a fake with an optimistic lock on `modified`, like the real save endpoints; time
  * is a virtual clock, so a 4-second autosave and a retry backoff run in microseconds.
  *
@@ -326,7 +328,7 @@ function call(opts, args) {
 
 // `dialog` is the message dialog open now: frappe.msgprint opens it, and every route change
 // closes it (router.set_history -> frappe.ui.hide_open_dialog), as on the real desk.
-let ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null };
+let ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null, drawn: [] };
 
 function installFrappe(browser) {
 	const { hist, location, window } = browser;
@@ -549,7 +551,27 @@ function patchRender(name, klass) {
 	if (name === "plan-a-trip") {
 		klass.prototype.render = function () {
 			if (!this.state) return;
-			ui.renders.push({ trip: this.state.name || "(new)", step: TP_KEYS[this.step], purpose: this.state.trip.purpose });
+			// `view` / `as`: the look at the whole trip drawn over the step (Overview, Crew grid,
+			// Side by side, View as) — "" while the step itself is on screen.
+			const entry = {
+				trip: this.state.name || "(new)",
+				step: TP_KEYS[this.step],
+				purpose: this.state.trip.purpose,
+				view: this.view || "",
+				as: this.view_as || "",
+			};
+			// A view's own lines are all it has to tell the person looking something: that the
+			// latest changes are not in it (a view has no "Not saved" pill, which lives in the
+			// Back/Next bar a view does not draw), that it is still loading, who is missing. So
+			// the real render_view runs, and every piece of markup it builds is kept (ui.drawn).
+			// An earlier version checked set_save_state("error") instead, which does nothing on
+			// a view, and deleting the notice people actually see left every test green.
+			if (this.view && this.state.name) {
+				ui.drawn = drawn(() => this.render_view(this.view));
+				entry.unsaved = ui.drawn.some((html) => html.includes("latest changes are not saved yet"));
+				entry.loading = ui.drawn.some((html) => html.includes('class="tp-empty">Loading...'));
+			}
+			ui.renders.push(entry);
 		};
 		const render_landing = klass.prototype.render_landing;
 		klass.prototype.render_landing = function () {
@@ -567,6 +589,23 @@ function patchRender(name, klass) {
 
 const TP_KEYS = ["trip", "crew", "there", "back", "lodging", "around", "freight", "schedule", "review"];
 
+// Every piece of markup `fn` hands to $(): the page builds each element from a template
+// string, so this is what it drew. The page reads `$` as a global on every call.
+function drawn(fn) {
+	const seen = [];
+	const real = globalThis.$;
+	globalThis.$ = (arg) => {
+		if (typeof arg === "string") seen.push(arg);
+		return real(arg);
+	};
+	try {
+		fn();
+	} finally {
+		globalThis.$ = real;
+	}
+	return seen;
+}
+
 // ------------------------------------------------------------------ harness
 
 let browser;
@@ -575,7 +614,7 @@ let F;
 function boot(page, startUrl) {
 	for (const key of Object.keys(PAGES)) delete globalThis[`__klass_${PAGES[key].klass}`];
 	clicks.length = 0;
-	ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null };
+	ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null, drawn: [] };
 	clock.timers.clear();
 	browser = makeBrowser(startUrl);
 	F = installFrappe(browser);
@@ -1121,6 +1160,44 @@ function tripServer(trips) {
 		db[name] = { name, trip: p.trip, travelers: p.travelers, modified: `${name}@${++seq + 1}` };
 		return state(db[name]);
 	};
+	// api.travel.get_trip_views: the saved trip, as every view draws it. Minimal — the views'
+	// drawing is not under test, where they sit in history is.
+	server.handlers.get_trip_views = ({ trip }) => {
+		const rec = db[trip];
+		const crew = (rec.travelers || []).map((t) => ({
+			employee: t.employee,
+			employee_name: t.employee_name || t.employee,
+			from_date: rec.trip.start_date,
+			to_date: rec.trip.end_date,
+			is_trip_lead: 0,
+		}));
+		return {
+			trip,
+			purpose: rec.trip.purpose,
+			start_date: rec.trip.start_date,
+			end_date: rec.trip.end_date,
+			is_coordinator: false,
+			viewer_employee: null,
+			itinerary_url: `/itinerary?trip=${encodeURIComponent(trip)}`,
+			days: [rec.trip.start_date, rec.trip.end_date],
+			crew,
+			whole: [],
+			people: Object.fromEntries(crew.map((c) => [c.employee, []])),
+			gaps: [],
+			money: null,
+		};
+	};
+	// api.travel.preview_itinerary_email: rendered, never sent.
+	server.handlers.preview_itinerary_email = ({ trip, employee }) => ({
+		subject: `Your itinerary: ${db[trip].trip.purpose}`,
+		to_name: employee,
+		to_email: null,
+		html: "<p>Your itinerary</p>",
+		ics: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+		ics_filename: "trip.ics",
+		events: [],
+		no_email: false,
+	});
 	return db;
 }
 
@@ -1128,6 +1205,17 @@ const TRIP = {
 	trip: { purpose: "Install", travel_type: "Domestic", start_date: "2026-10-01", end_date: "2026-10-03", trip_description: "" },
 	travelers: [{ employee: "E1", employee_name: "Ana" }],
 };
+
+const CREW_TRIP = {
+	trip: { ...TRIP.trip, purpose: "Crew install" },
+	travelers: [
+		{ employee: "E1", employee_name: "Ana" },
+		{ employee: "E2", employee_name: "Ben" },
+	],
+};
+
+// The methods the page has called, in order, by their short name.
+const called = () => server.calls.map((c) => c.method.split(".").pop());
 
 async function planATripSuite() {
 	console.log("Plan a Trip");
@@ -1447,6 +1535,554 @@ async function planATripSuite() {
 		await back();
 		assert.equal(last().purpose, "Keep me", "Back onto frappe's entry found the list");
 		assert.equal(last().step, "trip");
+	});
+
+	// ---- the views: Overview, Crew grid, Side by side, View as (&view=, &as=)
+
+	await test("a view is one entry: opening it pushes once, Back returns to the step, Forward restores it", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		await settle();
+		const p = planner();
+		const before = browser.hist.length;
+		p.open_view("grid");
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=review&view=grid");
+		assert.equal(browser.hist.length, before + 1, browser.hist.urls().join(" | "));
+		assert.equal(last().view, "grid");
+		assert.equal(last().step, "review");
+		assert.equal(server.sent("get_trip_views").length, 1);
+		assert.ok(p.views && p.views.data, "the views' answer is kept for the other views");
+		await back();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		assert.equal(last().view, "", "Back must put the step back");
+		assert.equal(last().step, "review");
+		assert.equal(browser.hist.length, before + 1, "Back must not push");
+		await forward();
+		assert.equal(last().view, "grid", "Forward must restore the view");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=review&view=grid");
+		assert.equal(browser.hist.length, before + 1, "Forward must not push");
+		p.open_view("overview"); // another view, from a view: its own entry
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		assert.equal(browser.hist.length, before + 2);
+		assert.equal(server.sent("get_trip_views").length, 1, "one fetch per version of the trip, shared by every view");
+		await back();
+		assert.equal(last().view, "grid");
+		await back();
+		assert.equal(last().view, "");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("'Back to planning' goes back through history onto its step, and pushes the step when nothing is behind", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		await settle();
+		const p = planner();
+		p.open_view("overview");
+		await settle();
+		const entries = browser.hist.length;
+		p.leave_view();
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		assert.equal(last().view, "");
+		assert.equal(browser.hist.length, entries, "view, Back to planning, view must pile nothing up");
+		await forward();
+		assert.equal(last().view, "overview");
+
+		// A view opened from a link or a reload has nothing of the page's behind it.
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=lodging&view=compare");
+		await settle();
+		assert.equal(last().view, "compare");
+		planner().leave_view();
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=lodging");
+		assert.equal(last().view, "");
+		assert.equal(last().step, "lodging");
+		assert.equal(browser.hist.length, 2, "the step is a new entry");
+		await back();
+		assert.equal(last().view, "compare", "and Back returns to the view");
+	});
+
+	await test("a reload or deep link of a view's address lands on that view, and corrects an unknown person in place", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review&view=grid");
+		await settle();
+		assert.equal(last().view, "grid");
+		assert.equal(last().step, "review");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=review&view=grid");
+		assert.equal(browser.hist.length, 1, "a reload adds no entry");
+		assert.equal(server.sent("get_trip_views").length, 1);
+
+		const says_missing = () => ui.drawn.some((html) => html.includes("not on the saved trip, so this shows"));
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=trip&view=person&as=E2");
+		await settle();
+		assert.equal(last().view, "person");
+		assert.equal(last().as, "E2");
+		assert.equal(says_missing(), false);
+
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=trip&view=person&as=NOBODY");
+		await settle();
+		assert.equal(last().as, "E1", "someone not on the trip: the first person instead");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=trip&view=person&as=E1");
+		assert.equal(browser.hist.length, 1);
+		assert.equal(says_missing(), true, "...and it says so, rather than swapping people silently");
+		assert.ok(!ui.drawn.some((html) => html.includes("NOBODY")), "an id from the address is never drawn");
+		planner().open_view("person", "E2"); // a person picked on the page: nobody is missing
+		await settle();
+		assert.equal(says_missing(), false);
+
+		const fetched = server.sent("get_trip_views").length;
+		boot("plan-a-trip", "/desk/plan-a-trip?new=1&step=trip&view=grid");
+		await settle();
+		assert.equal(last().view, "", "a trip not saved yet has no views");
+		assert.equal(server.sent("get_trip_views").length, fetched);
+		planner().open_view("grid");
+		await settle();
+		assert.equal(last().view, "");
+		assert.equal(browser.hist.length, 1, "nor a view entry");
+	});
+
+	await test("the form's 'Trip views' (frappe.set_route, v16: no query string) open a view, consumed once", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/travel-trip/TRIP-2");
+		await settle();
+		F.set_route("plan-a-trip", { trip: "TRIP-2", view: "person", as: "E2" });
+		await settle();
+		assert.equal(last().view, "person");
+		assert.equal(last().as, "E2");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=trip&view=person&as=E2", "frappe's bare entry is named");
+		assert.equal(browser.hist.length, 2, "named in place, not pushed");
+		// The trip already on screen: the form's button again, for another view.
+		F.set_route("travel-trip", "TRIP-2");
+		await settle();
+		F.set_route("plan-a-trip", { trip: "TRIP-2", view: "grid" });
+		await settle();
+		assert.equal(last().view, "grid");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=trip&view=grid");
+		// ...and "Plan step by step" onto it puts the steps back.
+		F.set_route("travel-trip", "TRIP-2");
+		await settle();
+		F.set_route("plan-a-trip", { trip: "TRIP-2" });
+		await settle();
+		assert.equal(last().view, "");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=trip");
+		// Consumed: a later plain visit shows the list, not a view.
+		F.set_route("plan-a-trip");
+		await settle();
+		assert.deepEqual(last(), { landing: true });
+	});
+
+	await test("picking another person for View as is a new entry; Back walks back through the people", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review");
+		await settle();
+		const p = planner();
+		const before = browser.hist.length;
+		p.open_view("person"); // "View as" with nobody picked: the first person
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=review&view=person&as=E1");
+		p.open_view("person", "E2");
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=review&view=person&as=E2");
+		assert.equal(browser.hist.length, before + 2);
+		p.open_view("person", "E2"); // the same person again: nothing new
+		await settle();
+		assert.equal(browser.hist.length, before + 2);
+		p.open_view("grid");
+		await settle();
+		p.open_view("person", "E1"); // a name tapped on the crew grid
+		await settle();
+		assert.equal(browser.hist.length, before + 4);
+		await back();
+		assert.equal(last().view, "grid");
+		await back();
+		assert.equal(last().view, "person");
+		assert.equal(last().as, "E2");
+		await back();
+		assert.equal(last().as, "E1");
+		await back();
+		assert.equal(last().view, "");
+		assert.equal(last().step, "review");
+		assert.equal(server.sent("get_trip_views").length, 1);
+	});
+
+	await test("a get_trip_views answer that lands after the page moved on is dropped, not drawn or kept", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		await settle();
+		const p = planner();
+		server.hold.add("get_trip_views");
+		p.open_view("grid");
+		await settle();
+		assert.equal(last().view, "grid");
+		await back(); // before the views arrived
+		assert.equal(last().view, "");
+		const renders = ui.renders.length;
+		server.release("get_trip_views");
+		await settle();
+		assert.equal(ui.renders.length, renders, "the stale answer drew over the step");
+		assert.equal(last().view, "");
+		assert.equal(p.views, null, "the stale answer was kept");
+		server.hold.delete("get_trip_views");
+		await forward();
+		assert.equal(last().view, "grid");
+		assert.equal(server.sent("get_trip_views").length, 2, "the view on screen asks again");
+		assert.ok(p.views && p.views.data);
+	});
+
+	await test("opening a view saves what was typed first, then shows the saved trip", async () => {
+		const db = tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=trip");
+		await settle();
+		const p = planner();
+		const before = browser.hist.length;
+		p.state.trip.purpose = "Install, phase 2";
+		p.open_view("overview");
+		await settle();
+		assert.equal(last().view, "overview");
+		assert.equal(browser.hist.length, before + 1);
+		assert.equal(db["TRIP-1"].trip.purpose, "Install, phase 2");
+		assert.equal(p.is_dirty(), false);
+		const order = called();
+		assert.ok(order.indexOf("save_plan") >= 0 && order.indexOf("save_plan") < order.indexOf("get_trip_views"), order.join(","));
+		assert.equal(p.views.key, `TRIP-1@${db["TRIP-1"].modified}`, "the views are the saved version's");
+	});
+
+	await test("a refused save never holds a view up: it opens, and the edit stays on the page, not saved", async () => {
+		const db = tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		await settle();
+		const p = planner();
+		const before = browser.hist.length;
+		p.state.trip.purpose = ""; // problems(): refused before it reaches the server
+		p.open_view("grid");
+		await settle();
+		assert.equal(last().view, "grid");
+		assert.equal(browser.hist.length, before + 1);
+		assert.deepEqual(ui.msgprints, [], "a view asked 'A few things to fill in first'");
+		assert.equal(server.sent("save_plan").length, 0);
+		assert.ok(p.is_dirty(), "the edit is still on the page");
+		assert.equal(last().unsaved, true, "the view says the latest changes are not in it");
+		assert.equal(last().loading, false, "the view is drawn");
+		ui.save_state = null;
+		await back();
+		assert.equal(last().view, "");
+		assert.equal(ui.save_state, "error", "back on the step, the edit is marked Not saved again");
+
+		// Refused by the server (saved on the form meanwhile): the view still opens.
+		p.state.trip.purpose = "Install, phase 2";
+		db["TRIP-1"].modified = "TRIP-1@form";
+		p.open_view("compare");
+		await settle();
+		assert.equal(last().view, "compare");
+		assert.equal(server.sent("save_plan").length, 1);
+		assert.ok(p.is_dirty());
+		assert.equal(last().unsaved, true);
+
+		// A view drawn with nothing unsaved says nothing of the kind.
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=grid");
+		await settle();
+		assert.equal(last().view, "grid");
+		assert.equal(last().unsaved, false);
+	});
+
+	await test("a tab or a checklist 'Fix' link in a view puts the step back as a new entry", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		await settle();
+		const p = planner();
+		p.open_view("grid");
+		await settle();
+		const entries = browser.hist.length;
+		p.go(p.step); // the tab of the step the view is drawn over
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=review");
+		assert.equal(last().view, "");
+		assert.equal(browser.hist.length, entries + 1);
+		await back();
+		assert.equal(last().view, "grid");
+		p.jump_to("lodging"); // a "Fix" link on a missing bed
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=lodging");
+		assert.equal(last().view, "");
+		assert.equal(last().step, "lodging");
+		assert.equal(browser.hist.length, entries + 1, "the entry after the view is replaced by the new move");
+		await back();
+		assert.equal(last().view, "grid");
+		assert.equal(last().step, "review");
+		await forward();
+		assert.equal(last().view, "");
+		assert.equal(last().step, "lodging");
+	});
+
+	await test("a Forward refused from a view's entry goes back to the view and says why there", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=crew");
+		await settle();
+		const p = planner();
+		p.open_view("grid");
+		await settle();
+		p.jump_to("review"); // a "Fix" link to a later step: a move forward, saved
+		await settle();
+		assert.equal(last().step, "review");
+		assert.equal(last().view, "");
+		await back();
+		assert.equal(last().view, "grid");
+		assert.equal(last().step, "crew");
+		p.state.trip.purpose = ""; // a later step is refused now
+		const entries = browser.hist.urls();
+		const at = browser.hist.index;
+		await forward();
+		assert.equal(last().view, "grid", "the refused Forward must come back to the view");
+		assert.equal(browser.hist.index, at);
+		assert.deepEqual(browser.hist.urls(), entries, "the entry asked for stays, to go Forward to once fixed");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=crew&view=grid");
+		assert.equal(ui.dialog, "A few things to fill in first", "the reason must be open after the return");
+	});
+
+	await test("View as's email preview is part of its screen: no entry, never sends, and a late answer is dropped", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review&view=person&as=E1");
+		await settle();
+		const p = planner();
+		const entries = browser.hist.length;
+		p.toggle_preview("E1");
+		await settle();
+		assert.deepEqual(server.sent("preview_itinerary_email").map((c) => c.args), [{ trip: "TRIP-2", employee: "E1" }]);
+		assert.equal(p.preview.data.subject, "Your itinerary: Crew install");
+		assert.equal(browser.hist.length, entries, "opening the preview must not push");
+		assert.equal(server.sent("send_itinerary_email").length, 0, "a preview must never send");
+		p.toggle_preview("E1"); // closed
+		p.toggle_preview("E1"); // open again: the answer is kept
+		await settle();
+		assert.equal(server.sent("preview_itinerary_email").length, 1);
+
+		server.hold.add("preview_itinerary_email");
+		p.open_view("person", "E2");
+		await settle();
+		p.toggle_preview("E2");
+		await settle();
+		p.open_view("person", "E1"); // someone else before the preview arrived
+		await settle();
+		const renders = ui.renders.length;
+		server.release("preview_itinerary_email");
+		await settle();
+		assert.equal(ui.renders.length, renders, "the late preview drew over the next person");
+		assert.equal(p.preview, null);
+	});
+
+	// ---- the trip on screen, saved elsewhere meanwhile
+
+	await test("the form's Trip views onto the trip on screen show what the form saved, not the page's old copy", async () => {
+		const db = tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review");
+		await settle();
+		const p = planner();
+		p.open_view("overview");
+		await settle();
+		assert.equal(server.sent("get_trip_views").length, 1);
+		// "Open the full form", where Cy is added and saved.
+		F.set_route("travel-trip", "TRIP-2");
+		await settle();
+		db["TRIP-2"].travelers = [...db["TRIP-2"].travelers, { employee: "E3", employee_name: "Cy" }];
+		db["TRIP-2"].modified = "TRIP-2@form";
+		F.set_route("plan-a-trip", { trip: "TRIP-2", view: "grid" }); // Trip views > Crew grid
+		await settle();
+		assert.equal(last().view, "grid");
+		assert.equal(last().step, "review", "the step showing is kept");
+		assert.equal(p.state.modified, "TRIP-2@form", "the trip was loaded again");
+		assert.equal(server.sent("get_trip_views").length, 2, "the grid drew the old version's cached answer");
+		assert.deepEqual(p.views.data.crew.map((c) => c.employee), ["E1", "E2", "E3"]);
+		F.set_route("travel-trip", "TRIP-2");
+		await settle();
+		F.set_route("plan-a-trip", { trip: "TRIP-2", view: "person", as: "E3" }); // Trip views > View as Cy
+		await settle();
+		assert.equal(last().as, "E3", "View as swapped in the default person for Cy");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=review&view=person&as=E3");
+		assert.ok(!ui.drawn.some((html) => html.includes("not on the saved trip")));
+
+		// Back from the form onto one of the page's own entries, after another save there.
+		F.set_route("travel-trip", "TRIP-2");
+		await settle();
+		db["TRIP-2"].travelers = db["TRIP-2"].travelers.filter((t) => t.employee !== "E2");
+		db["TRIP-2"].modified = "TRIP-2@form2";
+		await back();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-2&step=review&view=person&as=E3");
+		assert.equal(last().as, "E3");
+		assert.equal(p.state.modified, "TRIP-2@form2");
+		assert.deepEqual(p.views.data.crew.map((c) => c.employee), ["E1", "E3"]);
+		// A later save from the page is not refused as changed elsewhere.
+		p.state.trip.purpose = "Crew install, phase 2";
+		p.leave_view();
+		await settle();
+		p.jump_to("crew");
+		await settle();
+		assert.equal(db["TRIP-2"].trip.purpose, "Crew install, phase 2");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("with unsaved changes on the page, the form's Trip views keep them and ask only for the views again", async () => {
+		const db = tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review");
+		await settle();
+		const p = planner();
+		p.open_view("grid");
+		await settle();
+		p.state.trip.purpose = ""; // half-finished: leaving the page cannot save it
+		F.set_route("travel-trip", "TRIP-2");
+		await settle();
+		db["TRIP-2"].travelers = [...db["TRIP-2"].travelers, { employee: "E3", employee_name: "Cy" }];
+		db["TRIP-2"].modified = "TRIP-2@form";
+		F.set_route("plan-a-trip", { trip: "TRIP-2", view: "overview" });
+		await settle();
+		assert.equal(last().view, "overview");
+		assert.equal(p.state.trip.purpose, "", "what was typed is still on the page");
+		assert.equal(server.sent("get_plan").length, 1, "the trip was loaded again over what was typed");
+		assert.equal(server.sent("get_trip_views").length, 2, "the views were not asked for again");
+		assert.deepEqual(p.views.data.crew.map((c) => c.employee), ["E1", "E2", "E3"]);
+		assert.equal(last().unsaved, true);
+	});
+
+	await test("a move that lands back on a view still waiting for its answer asks again: never Loading... for good", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=crew");
+		await settle();
+		const p = planner();
+		p.open_view("grid");
+		await settle();
+		p.state.trip.purpose = "Changed";
+		p.jump_to("review"); // a Fix link forward: saved, so the trip has a new version
+		await settle();
+		assert.equal(last().step, "review");
+		server.hold.add("get_trip_views");
+		await back(); // onto the grid's entry: the new version's views are asked for, and held
+		assert.equal(last().view, "grid");
+		assert.equal(last().loading, true);
+		p.state.trip.purpose = ""; // the next Forward is refused, and comes straight back here
+		await forward();
+		assert.equal(last().view, "grid");
+		assert.equal(ui.dialog, "A few things to fill in first");
+		assert.equal(server.sent("get_trip_views").length, 3, "the view on screen did not ask again");
+		server.release("get_trip_views"); // the first answer: for a move since overtaken, dropped
+		await settle();
+		server.release("get_trip_views"); // the one asked again once the page was back here
+		await settle();
+		assert.equal(p.views && p.views.key, p.views_key());
+		assert.equal(last().view, "grid");
+		assert.equal(last().loading, false, "the view was left saying Loading...");
+	});
+
+	await test("an open preview still waiting for its answer is asked for again when a move comes straight back to it", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=crew");
+		await settle();
+		const p = planner();
+		p.open_view("person", "E1");
+		await settle();
+		p.jump_to("review");
+		await settle();
+		await back(); // onto View as Ana
+		assert.equal(last().as, "E1");
+		server.hold.add("preview_itinerary_email");
+		p.toggle_preview("E1");
+		await settle();
+		p.state.trip.purpose = "";
+		await forward(); // refused: straight back to this view
+		assert.equal(last().as, "E1");
+		assert.equal(server.sent("preview_itinerary_email").length, 2, "the preview did not ask again");
+		server.release("preview_itinerary_email");
+		await settle();
+		server.release("preview_itinerary_email");
+		await settle();
+		assert.equal(p.preview && p.preview.data && p.preview.data.subject, "Your itinerary: Crew install");
+	});
+
+	// ---- what the views draw
+
+	await test("people left out of Side by side on one trip are not left out of another's", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP, "TRIP-3": { ...CREW_TRIP, trip: { ...CREW_TRIP.trip, purpose: "Second crew" } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review&view=compare");
+		await settle();
+		const chip = (name) => ui.drawn.find((html) => html.includes('class="tp-chip ') && html.includes(name));
+		assert.ok(chip("Ana").includes("tp-on"));
+		press("&#10003; Ana"); // leave Ana out
+		assert.ok(!chip("Ana").includes("tp-on"), "Ana is left out on this trip");
+		F.set_route("plan-a-trip", { trip: "TRIP-3", view: "compare" });
+		await settle();
+		assert.equal(last().trip, "TRIP-3");
+		assert.equal(last().view, "compare");
+		assert.ok(chip("Ana").includes("tp-on"), "...and was left out on the next trip too");
+	});
+
+	await test("the Crew grid counts no night in a room with no check-out day: the missing bed stands alone", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		const views = server.handlers.get_trip_views;
+		server.handlers.get_trip_views = (args) => {
+			const data = views(args);
+			data.days = ["2026-10-01", "2026-10-02", "2026-10-03"];
+			data.people.E1 = [
+				{
+					date: "2026-10-01",
+					items: [{ type: "hotel_checkin", date: "2026-10-01", group: "g7", hotel: "Half Booked Inn" }],
+				},
+			];
+			// What completeness.lodging_gaps says about it: no bed either night, and the room's
+			// check-out day missing.
+			data.gaps = [
+				{ check: "lodging", kind: "nights", step: "lodging", employee: "E1", nights: ["2026-10-01", "2026-10-02"] },
+				{ check: "lodging", kind: "dates", step: "lodging", group: "g7", label: "Half Booked Inn" },
+			];
+			return data;
+		};
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=grid");
+		await settle();
+		const grid = ui.drawn.find((html) => html.includes("Check in: Half Booked Inn"));
+		assert.ok(grid, "the grid drew the check-in");
+		assert.ok(grid.includes("No bed tonight"));
+		assert.ok(!grid.includes("Night in a room"), "the same cell said 'Night in a room' and 'No bed tonight'");
+	});
+
+	await test("the Overview's tiles count bookings like Review does, and a trip's days as the trip's own", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		const views = server.handlers.get_trip_views;
+		server.handlers.get_trip_views = (args) => {
+			const data = views(args);
+			// A flight the day before the trip starts, and one of two rooms with no dates yet,
+			// which is on no day at all.
+			data.days = ["2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03"];
+			data.whole = [
+				{ date: "2026-09-30", items: [{ type: "flight", date: "2026-09-30", group: "g1", members: [] }] },
+				{ date: "2026-10-01", items: [{ type: "hotel_checkin", date: "2026-10-01", group: "g3", members: [] }] },
+			];
+			data.bookings = { flights: 1, accommodations: 2, ground_transport: 0, freight: 0 };
+			return data;
+		};
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		await settle();
+		const tiles = ui.drawn.find((html) => html.includes('class="tp-sum"'));
+		const tile = (label) => (tiles.match(new RegExp(`${label}</span><b>([^<]*)</b>`)) || [])[1];
+		assert.equal(tile("Rooms"), "2", "the room with no dates went uncounted");
+		assert.equal(tile("Flights"), "1");
+		assert.equal(tile("Days"), "3", "the day before the trip made it a day longer");
+	});
+
+	await test("Review offers 'Email everyone' only once the server has said the viewer is a coordinator", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review");
+		await settle();
+		const p = planner();
+		const offered = (viewer) => {
+			p.viewer = viewer;
+			return drawn(() => p.step_review($stub("review")))
+				.filter((html) => /Email (everyone|me)/.test(html))
+				.map((html) => html.replace(/<[^>]+>/g, ""));
+		};
+		// "Email everyone" fails every time for anyone but a coordinator (send_itinerary_email).
+		assert.deepEqual(offered({ is_coordinator: null, employee: "E1" }), [], "not known yet: neither");
+		assert.deepEqual(offered({ is_coordinator: false, employee: "E1" }), ["Email me my itinerary"]);
+		assert.deepEqual(offered({ is_coordinator: false, employee: "E9" }), [], "not on the crew: nothing to send");
+		assert.deepEqual(offered({ is_coordinator: true, employee: null }), ["Email everyone their itinerary"]);
 	});
 }
 

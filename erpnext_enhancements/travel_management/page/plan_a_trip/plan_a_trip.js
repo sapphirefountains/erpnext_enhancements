@@ -31,6 +31,20 @@
 // not take yet (nobody on it, or a save refused) is kept in memory when the list replaces it —
 // never dropped.
 //
+// VIEWS. A saved trip can also be looked at whole, from any step: an Overview (every day, each
+// booking once with who is on it and each person's own confirmation number, and what the
+// checklist says is missing, shown where it is missing), a Crew grid (people down the side,
+// days across), Side by side (a column per person) and View as (exactly what one person's
+// /itinerary shows). A view is not a step: it adds &view= (and &as= for View as) to the
+// address of the step it was opened from, so opening one, switching views or picking another
+// person is its own history entry, and "Back to planning" returns to that step. Nothing is
+// edited in a view, so opening one is never refused: what is on the page is saved quietly
+// first, and a view drawn while a save was refused says those changes are not in it. The
+// views come from api.travel.get_trip_views, which leaves money out for everyone but a
+// travel coordinator — on the server, not by hiding it here. The trip on screen is loaded
+// again when it is asked for from outside the page (the form's "Trip views", Back from the
+// form) and nothing unsaved is on it: it may have been saved over there.
+//
 // TIMES are native <input type="time">, which shows AM/PM on a US browser or phone. A stored
 // time of exactly midnight reads as "no time given": the Datetime column cannot hold a date
 // without a time, so a flight whose time is not known yet is stored at 00:00:00.
@@ -59,7 +73,7 @@ frappe.pages["plan-a-trip"].on_page_load = function (wrapper) {
 	wrapper.trip_planner = new TripPlanner(page, wrapper);
 	// Leaving the page (a link, the sidebar, "create a new Supplier" opening a form) saves
 	// what is there. Frappe triggers "hide" on the page wrapper when another page takes over.
-	$(wrapper).on("hide", () => wrapper.trip_planner.save_quietly());
+	$(wrapper).on("hide", () => wrapper.trip_planner.on_hide());
 };
 
 frappe.pages["plan-a-trip"].on_page_show = function (wrapper) {
@@ -145,7 +159,72 @@ const TP_STYLE = `
 .tp-list-item{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;color:var(--text-color);cursor:pointer;}
 .tp-list-item h5{margin:0 0 4px;font-size:16px;}
 .tp-empty{text-align:center;padding:40px 16px;color:var(--text-muted);}
-@media (max-width:600px){.tp-ref-row span{flex-basis:110px;}}
+.tp-wrap.tp-views-wide{max-width:none;}
+.tp-viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;}
+.tp-vbtn{padding:5px 12px;border-radius:14px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:13px;cursor:pointer;white-space:nowrap;}
+.tp-vbtn.tp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
+.tp-viewbar select{padding:5px 10px;border-radius:14px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:13px;max-width:210px;}
+.tp-viewbar select.tp-active{border-color:var(--primary,#2490ef);font-weight:600;}
+.tp-view-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 12px;}
+.tp-view-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;}
+.tp-view-head .tp-step-title{margin:0;}
+.tp-notice{padding:8px 10px;border-radius:8px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;font-size:14px;margin-bottom:12px;}
+.tp-flag{display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;background:#fde8e8;color:#b91c1c;font-size:13px;margin-top:6px;}
+.tp-flag .tp-btn-link{margin-left:auto;white-space:nowrap;font-size:13px;}
+.tp-tl-day{margin-bottom:16px;}
+.tp-tl-date{font-weight:600;font-size:15px;margin:0 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border-color);}
+.tp-today-tag{display:inline-block;margin-left:6px;padding:0 8px;border-radius:9px;background:var(--primary,#2490ef);color:#fff;font-size:12px;font-weight:600;}
+.tp-tl-item{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);margin-bottom:6px;}
+.tp-tl-item.tp-bad{border-color:#dc2626;}
+.tp-tl-icon{flex:0 0 22px;font-size:17px;line-height:1.3;text-align:center;}
+.tp-tl-time{flex:0 0 130px;color:var(--text-muted);font-size:13px;padding-top:2px;}
+.tp-tl-body{flex:1;min-width:0;}
+.tp-tl-title{font-weight:600;}
+.tp-tl-sub{color:var(--text-muted);font-size:13px;}
+.tp-whos{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+.tp-who{display:inline-block;padding:2px 9px;border-radius:12px;border:1px solid var(--border-color);background:var(--control-bg);font-size:12px;}
+.tp-who.tp-who-miss{border-color:#dc2626;color:#b91c1c;background:#fde8e8;}
+.tp-cost{color:var(--text-muted);font-size:13px;margin-top:4px;}
+.tp-xscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border-color);border-radius:10px;margin-bottom:12px;max-width:100%;width:fit-content;}
+.tp-xtable{border-collapse:separate;border-spacing:0;font-size:13px;}
+.tp-xtable th,.tp-xtable td{border-right:1px solid var(--border-color);border-bottom:1px solid var(--border-color);padding:6px 8px;background:var(--card-bg);}
+.tp-xtable .tp-sticky{position:sticky;left:0;z-index:1;text-align:left;}
+.tp-xtable td.tp-off,.tp-xtable th.tp-off{background:var(--control-bg);color:var(--text-muted);}
+.tp-xtable .tp-today{box-shadow:inset 0 3px 0 var(--primary,#2490ef);}
+.tp-xtable td.tp-cell-warn{background:#fde8e8;}
+.tp-cgrid th{text-align:center;white-space:nowrap;font-weight:600;}
+.tp-cgrid td{text-align:center;white-space:nowrap;min-width:54px;font-size:15px;}
+.tp-cgrid .tp-sticky{min-width:110px;max-width:150px;}
+.tp-cgrid .tp-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;}
+.tp-warn{color:#b91c1c;font-weight:700;}
+.tp-cmp th{text-align:left;vertical-align:top;min-width:210px;}
+.tp-cmp td{vertical-align:top;min-width:210px;max-width:290px;white-space:normal;}
+.tp-cmp .tp-sticky{min-width:96px;max-width:120px;}
+.tp-line{font-size:13px;line-height:1.35;margin-bottom:5px;}
+.tp-miss-text{color:#b91c1c;font-weight:600;}
+.tp-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--text-muted);margin-bottom:12px;}
+.tp-pday{font-weight:600;margin:14px 0 6px;max-width:640px;}
+.tp-pcard{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:8px;max-width:640px;}
+.tp-kicker{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;}
+.tp-ptitle{font-size:16px;font-weight:600;margin:2px 0;}
+.tp-psub{font-size:13px;color:var(--text-muted);}
+.tp-pnr{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:14px;font-weight:600;}
+.tp-preview{max-width:760px;}
+.tp-preview iframe{display:block;width:100%;height:560px;border:1px solid var(--border-color);border-radius:8px;background:#fff;margin:10px 0;}
+.tp-preview dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:10px 0 0;font-size:14px;}
+.tp-preview dt{color:var(--text-muted);font-weight:normal;}
+.tp-preview dd{margin:0;min-width:0;overflow-wrap:anywhere;}
+.tp-events{margin:6px 0 10px;padding-left:18px;font-size:14px;}
+@media (max-width:600px){.tp-ref-row span{flex-basis:110px;}
+.tp-tl-item{flex-wrap:wrap;}
+.tp-tl-time{flex:1 1 auto;}
+.tp-tl-body{flex:1 1 100%;padding-left:32px;}
+.tp-cmp th,.tp-cmp td{min-width:170px;}
+.tp-preview iframe{height:460px;}}
+[data-theme="dark"] .tp-notice{background:rgba(245,158,11,.15);color:#fcd34d;border-color:#b45309;}
+[data-theme="dark"] .tp-flag,[data-theme="dark"] .tp-who.tp-who-miss,[data-theme="dark"] .tp-xtable td.tp-cell-warn{background:rgba(220,38,38,.18);color:#fca5a5;}
+[data-theme="dark"] .tp-who.tp-who-miss{border-color:#f87171;}
+[data-theme="dark"] .tp-warn,[data-theme="dark"] .tp-miss-text{color:#f87171;}
 `;
 
 // Steps, in order. `leg` ties a transport step to the Leg stored on its rows.
@@ -234,6 +313,20 @@ const TP_FREIGHT = [
 
 const TP_UNBOOKED = ["Company Fleet", "Personal Vehicle"];
 
+// The looks at a whole saved trip (see VIEWS in the header), by their &view= key. Not steps:
+// TP_STEPS is unchanged by them, and a view is drawn over the step it was opened from.
+const TP_VIEWS = ["overview", "grid", "compare", "person"];
+
+// One icon per kind of itinerary item (api/travel.py shape_itinerary's `type`).
+const TP_ICONS = {
+	flight: "&#9992;",
+	hotel_checkin: "&#127976;",
+	hotel_checkout: "&#127976;",
+	ground: "&#128663;",
+	freight: "&#128230;",
+	agenda: "&#128205;",
+};
+
 function tp_esc(value) {
 	return frappe.utils.escape_html(value == null ? "" : String(value));
 }
@@ -260,6 +353,86 @@ function tp_pretty_date(date) {
 
 function tp_pretty_time(time) {
 	return time ? moment(time, "HH:mm:ss").format("h:mm A") : "";
+}
+
+function tp_clock(datetime) {
+	// A datetime's time of day, "2:30 PM" — nothing at exactly midnight, which is "no time
+	// given" (see the header). A Time field is read by tp_pretty_time instead: there 00:00 is
+	// a real midnight.
+	return tp_pretty_time(tp_time_part(datetime));
+}
+
+function tp_span(from, to) {
+	if (from && to && from !== to) return `${from} – ${to}`;
+	return from || to || "";
+}
+
+function tp_item_sort_key(item) {
+	// The server orders a day by time of day; a flight, drive or shipment stored at midnight
+	// has no time yet, so it goes with the untimed items at the top, never as 12 AM.
+	const datetime = {
+		flight: item.departure_time,
+		ground: item.pickup_datetime,
+		freight: item.delivery_from || item.pickup_from,
+	}[item.type];
+	if (datetime && !tp_time_part(datetime)) return "";
+	return String(item.sort_time || "");
+}
+
+function tp_by_time(items) {
+	return (items || [])
+		.map((item, index) => ({ item, index, key: tp_item_sort_key(item) }))
+		.sort((a, b) => a.key.localeCompare(b.key) || a.index - b.index)
+		.map((entry) => entry.item);
+}
+
+function tp_items_by_date(days) {
+	const out = {};
+	(days || []).forEach((day) => {
+		out[day.date] = tp_by_time(day.items);
+	});
+	return out;
+}
+
+function tp_nights(days) {
+	// The nights one person sleeps in a booked room: a check-in and a check-out of the same
+	// booking cover every night from the one to the day before the other. A room without both
+	// days, or checking out on (or before) the day it checks in, covers no night — the rule in
+	// completeness.lodging_gaps. Counting its first night put "Night in a room" and "No bed
+	// tonight" in the same grid cell; the checklist flags the missing day on the room instead.
+	const stays = {};
+	(days || []).forEach((day) =>
+		(day.items || []).forEach((item) => {
+			if (item.type !== "hotel_checkin" && item.type !== "hotel_checkout") return;
+			const key = item.group || item.hotel || "";
+			const stay = (stays[key] = stays[key] || {});
+			if (item.type === "hotel_checkin") stay.in = item.date;
+			else stay.out = item.date;
+		})
+	);
+	const nights = new Set();
+	Object.values(stays).forEach((stay) => {
+		if (!stay.in || !stay.out || stay.out <= stay.in) return;
+		tp_days_between(stay.in, stay.out)
+			.slice(0, -1)
+			.forEach((night) => nights.add(night));
+	});
+	return nights;
+}
+
+function tp_event_when(event) {
+	// A calendar invite's event, as a line: "Mon, Oct 5, 7:15 AM – 8:30 AM".
+	const day = (value) => tp_pretty_date(tp_date_part(value));
+	if (event.all_day) {
+		return tp_span(day(event.start), event.end ? day(event.end) : "");
+	}
+	const start = [day(event.start), tp_clock(event.start)].filter(Boolean).join(", ");
+	if (!event.end) return start;
+	const end =
+		tp_date_part(event.end) === tp_date_part(event.start)
+			? tp_clock(event.end)
+			: [day(event.end), tp_clock(event.end)].filter(Boolean).join(", ");
+	return tp_span(start, end);
 }
 
 function tp_days_between(start, end) {
@@ -343,6 +516,27 @@ class TripPlanner {
 		this.pos = null;
 		this.route_delta = 0;
 		this.return_notice = null;
+		// The view drawn over the step, if any (TP_VIEWS; see open_view), and whose itinerary
+		// View as shows. `views` is get_trip_views' answer for one trip version
+		// ({key: name@modified, data}), shared by every view until the trip is saved again.
+		this.view = null;
+		this.view_as = "";
+		this.views = null;
+		this.views_failed = null;
+		this.views_pending = null;
+		// View as's email and calendar invite preview ({employee, open, data, failed}), and the
+		// people Side by side leaves out ({trip, people}, for one trip only): things on one
+		// screen, not screens of their own.
+		this.preview = null;
+		this.compare_hidden = null;
+		// View as asked for someone the saved trip does not have ({trip, shown}): it shows its
+		// default person instead and says so (note_missing_person, view_person).
+		this.as_missing = null;
+		// Who is looking, as the server says (get_plan, get_trip_views): whether they are a
+		// travel coordinator, and their own Employee. null until it has said.
+		this.viewer = { is_coordinator: null, employee: null };
+		// Another desk page has been shown since this one last routed (on_hide, route()).
+		this.away = false;
 		this.bind_unload();
 		// No handle_route() here: frappe fires on_page_show right after on_page_load, and
 		// route_args() consumes frappe.route_options — a second pass would find them gone
@@ -355,6 +549,13 @@ class TripPlanner {
 				return __("This trip has changes that are not saved yet.");
 			}
 		});
+	}
+
+	// Another desk page took over (the form, a link, the sidebar). Save what is here, and note
+	// that the trip on screen may be saved over there before this page is shown again (route()).
+	on_hide() {
+		this.away = true;
+		this.save_quietly();
 	}
 
 	// ------------------------------------------------------------------ routing and loading
@@ -399,7 +600,8 @@ class TripPlanner {
 	}
 
 	route_args() {
-		// What the page was asked to open: {trip, new, step}.
+		// What the page was asked to open: {trip, new, step, view, as} — `view` and `as` are a
+		// look at the whole trip (see open_view), `as` the person View as shows.
 		//
 		// Frappe v16 delivers these in frappe.route_options, not the address bar.
 		// frappe.set_route("plan-a-trip", {trip: ...}) (the form's button, the list's + Add)
@@ -418,7 +620,13 @@ class TripPlanner {
 			delete options[key];
 			return value == null ? "" : String(value);
 		};
-		const args = { trip: pick("trip"), new: pick("new"), step: pick("step") };
+		const args = {
+			trip: pick("trip"),
+			new: pick("new"),
+			step: pick("step"),
+			view: pick("view"),
+			as: pick("as"),
+		};
 		if (frappe.route_options && !Object.keys(frappe.route_options).length) {
 			frappe.route_options = null;
 		}
@@ -427,7 +635,27 @@ class TripPlanner {
 
 	route(args, mark) {
 		const draft = (mark && mark.draft) || "";
+		// Back on this page from another one (on_hide), whichever entry that lands on.
+		const away = this.away;
+		this.away = false;
 		if (this.is_on_screen(args, mark)) {
+			// The trip on screen, asked for from outside this page's own entries (the form's
+			// "Trip views" or "Plan step by step", a checklist link), or come back to from
+			// another page (Back from the form). It may have been changed and saved there. The
+			// page used to keep what it had: the Crew grid drew the answer cached for the old
+			// version (views_key is this page's copy of `modified`), and View as swapped a person
+			// added on the form for the default one, because it checked against the old crew.
+			// With nothing unsaved on it the trip is loaded again. With something unsaved, what
+			// was typed stays, and only the views are asked for again.
+			if (args.trip && (!mark || away)) {
+				if (!this.is_dirty() && !this.saving) {
+					this.reload_on_screen(args, mark);
+					return;
+				}
+				this.views = null;
+			}
+			// Onto one of this trip's views, or from one back to a step (route_view).
+			if (this.route_view(args, mark)) return;
 			// Back/Forward between this trip's own steps, or a deep link's &step=. A plain visit
 			// to the trip on screen (the form's button, no step) keeps the step showing.
 			if (args.step || mark) this.jump_to(args.step || "trip", { from_route: true });
@@ -444,6 +672,13 @@ class TripPlanner {
 			return;
 		}
 		this.keep_current();
+		// A view belongs to the trip it names (a reload of a view, Back onto one of another
+		// trip, the form's "Trip views"); a new trip and the list have none. Who View as shows
+		// is checked once the trip is here (settle_view).
+		const want = this.wanted_view(args);
+		this.view = want.view || null;
+		this.view_as = want.as;
+		this.preview = null;
 		if (args.trip) {
 			if (!this.restore_kept(args.trip, args.step)) this.load(args.trip, args.step, draft);
 			return;
@@ -460,6 +695,17 @@ class TripPlanner {
 			return;
 		}
 		this.render_landing();
+	}
+
+	// route(), for the trip on screen: load it again, on the step and view the address asks
+	// for. The step is the one showing when a frappe entry names none, as route() keeps it.
+	// View as's person is checked against the crew as stored, once it has loaded (settle_view).
+	reload_on_screen(args, mark) {
+		const step = args.step || (mark ? "trip" : TP_STEPS[this.step].key);
+		this.view = TP_VIEWS.includes(args.view) ? args.view : null;
+		this.view_as = this.view === "person" ? args.as || "" : "";
+		this.preview = null;
+		this.load(args.trip, step, (mark && mark.draft) || this.draft_id || "");
 	}
 
 	// The trip on screen is about to give way to the list, another trip or a new one. One the
@@ -482,8 +728,10 @@ class TripPlanner {
 		this.draft_id = kept.draft;
 		this.step = kept.step;
 		if (step_key) this.jump_to(step_key, { silent: true });
+		this.settle_view();
 		this.set_address(this.address_args());
 		this.render();
+		this.fetch_views();
 		return true;
 	}
 
@@ -491,10 +739,16 @@ class TripPlanner {
 		return Object.keys(this.kept).filter((key) => this.serialize(this.kept[key].state) !== this.kept[key].baseline);
 	}
 
-	// The address of the step on screen.
+	// The address of the step on screen, and of the view drawn over it. The keys are always in
+	// this order — trip, step, view, as — because back_one_step and leave_view compare query
+	// strings as they are written.
 	address_args() {
 		const step = TP_STEPS[this.step].key;
-		return this.state && this.state.name ? { trip: this.state.name, step: step } : { new: 1, step: step };
+		if (!this.state || !this.state.name) return { new: 1, step: step };
+		const args = { trip: this.state.name, step: step };
+		if (this.view) args.view = this.view;
+		if (this.view === "person" && this.view_as) args.as = this.view_as;
+		return args;
 	}
 
 	query_for(args) {
@@ -568,6 +822,223 @@ class TripPlanner {
 		say();
 	}
 
+	// ------------------------------------------------------------------ views: routing
+	//
+	// A view is drawn over the step it was opened from and is addressed as that step plus
+	// &view= (and &as=). Opening one, switching to another, or picking another person for
+	// View as is a move the user made: one new history entry, pushed after it is drawn.
+	// Back/Forward onto a view's entry redraws it (route_view — go() with the step already on
+	// screen draws nothing), and one from a view to its step's entry puts the step back.
+
+	// The view an address asks for: {view, as}, "" for none. Only a saved trip has views, and
+	// only View as has a person — checked against the crew once the trip is on screen.
+	wanted_view(args) {
+		let view = args.trip && TP_VIEWS.includes(args.view) ? args.view : "";
+		let as = "";
+		if (view === "person") {
+			as = args.as || "";
+			if (this.state && this.state.name && this.state.name === args.trip) {
+				const asked = as;
+				as = this.person_or_default(asked);
+				this.note_missing_person(asked, as);
+				if (!as) view = "";
+			}
+		}
+		return { view: view, as: as };
+	}
+
+	// After a load: drop a view the trip cannot have, and put a person View as can show.
+	settle_view() {
+		if (!this.view) return;
+		if (!this.state || !this.state.name || !TP_VIEWS.includes(this.view)) {
+			this.view = null;
+			this.view_as = "";
+			return;
+		}
+		if (this.view !== "person") {
+			this.view_as = "";
+			return;
+		}
+		const asked = this.view_as;
+		this.view_as = this.person_or_default(asked);
+		this.note_missing_person(asked, this.view_as);
+		if (!this.view_as) this.view = null;
+	}
+
+	person_or_default(employee) {
+		if (employee && this.crew().some((t) => t.employee === employee)) return employee;
+		return this.default_person();
+	}
+
+	// An address naming someone the trip does not have (a link from before they were taken off,
+	// or a typo): View as shows its default person, as it always has, but no longer silently —
+	// view_person says the person asked for is not on the saved trip. Never named: the id came
+	// from an address.
+	note_missing_person(asked, shown) {
+		this.as_missing =
+			asked && shown && asked !== shown && this.state ? { trip: this.state.name, shown: shown } : null;
+	}
+
+	// Whom View as opens on: the person looking, when they are going; else the trip lead;
+	// else whoever is first.
+	default_person() {
+		const crew = this.crew().filter((t) => t.employee);
+		const me = this.viewer.employee;
+		if (me && crew.some((t) => t.employee === me)) return me;
+		const lead = crew.find((t) => t.is_trip_lead);
+		return lead ? lead.employee : crew.length ? crew[0].employee : "";
+	}
+
+	// route(), for the trip already on screen: true when it was a view's move and is handled.
+	route_view(args, mark) {
+		const want = this.wanted_view(args);
+		const key = args.step || (mark ? "trip" : "");
+		const index = key ? TP_STEPS.findIndex((s) => s.key === key) : this.step;
+		if (want.view) {
+			// Onto a view's entry (Back/Forward, the form's "Trip views" onto the trip on
+			// screen). Its step is only where "Back to planning" returns to, so it is taken as
+			// it is, with no checks: nothing is edited under a view.
+			const step = index >= 0 ? index : this.step;
+			if (want.view === this.view && want.as === this.view_as && step === this.step) {
+				this.note_entry();
+				if (!mark) this.set_address(this.address_args());
+				// Nothing to redraw, but this move bumped nav_seq, so an answer still on its way
+				// for this very screen will be dropped when it lands (a Forward refused while the
+				// views loaded comes straight back here). Ask again for whatever it is waiting
+				// on, or it says "Loading..." for good: fetch_views does nothing when the answer
+				// is already here.
+				this.fetch_views();
+				this.retry_preview();
+				return true;
+			}
+			this.enter_view(want.view, want.as, true, step);
+			return true;
+		}
+		if (!this.view) return false;
+		// From a view to its own step's entry (Back, or the form's "Plan step by step"): the
+		// step comes back, and nothing is saved — nothing was edited.
+		if (index < 0 || index === this.step) {
+			this.close_view(false);
+			if (!mark || index < 0) this.set_address(this.address_args());
+			else this.note_entry();
+			return true;
+		}
+		// To another step's entry: go() moves there and show_step() puts the view away. A
+		// Forward it refuses goes back to the view's entry, and the view is still on screen.
+		return false;
+	}
+
+	// A view picked on the page (the view bar, a name on the crew grid, the person menu): a
+	// new history entry. Never refused — only a saved trip has views, and nothing is edited in
+	// one.
+	open_view(view, as) {
+		if (!this.state || !this.state.name || !TP_VIEWS.includes(view)) return;
+		as = view === "person" ? this.person_or_default(as) : "";
+		if (view === "person" && !as) return;
+		if (view === this.view && as === this.view_as) return;
+		// Picked on the page, from the crew: nobody is missing.
+		this.as_missing = null;
+		this.enter_view(view, as, false);
+	}
+
+	// Draw a view: a user's move pushes an entry once it is drawn, one Back/Forward asked for
+	// is already in the address (which is corrected in place, e.g. an unknown &as=). Anything
+	// unsaved on the page is saved quietly first — a view shows the saved trip — and when that
+	// save is refused the view opens anyway and says the changes are not in it (render_view:
+	// a view has no "Not saved" pill, since the pill belongs to the Back/Next bar a view does
+	// not draw). `step`: the step a view's entry was opened from, which it is drawn over.
+	enter_view(view, as, from_route, step) {
+		const seq = from_route ? this.nav_seq : ++this.nav_seq;
+		const draw = () => {
+			// Back/Forward, or another tap, while that saved: that move decides.
+			if (seq !== this.nav_seq) return;
+			if (step != null) this.step = step;
+			this.view = view;
+			this.view_as = as;
+			this.preview = null;
+			this.render();
+			frappe.utils.scroll_to(0);
+			this.set_address(this.address_args(), !from_route);
+			this.fetch_views();
+		};
+		if (this.is_dirty()) this.save({ quiet: true }).then(draw);
+		else draw();
+	}
+
+	// Put the view away and show its step again; `push` for a move made on the page. What a
+	// refused save left on the page is marked "Not saved" again: render() draws a new, empty
+	// pill.
+	close_view(push) {
+		this.view = null;
+		this.view_as = "";
+		this.preview = null;
+		this.render();
+		if (this.is_dirty()) this.set_save_state("error");
+		frappe.utils.scroll_to(0);
+		if (push) this.set_address(this.address_args(), true);
+	}
+
+	// "Back to planning": the same as the browser's Back when the entry behind is this view's
+	// step — so view, Back to planning, view piles nothing up — and a new entry for the step
+	// otherwise (a view opened from a link or a reload has nothing of this page's behind it).
+	leave_view() {
+		if (!this.view || !this.state) return;
+		const plain = { trip: this.state.name, step: TP_STEPS[this.step].key };
+		const mark = this.history_mark();
+		if (mark && mark.back === `?${this.query_for(plain)}`) {
+			window.history.back();
+			return;
+		}
+		++this.nav_seq;
+		this.close_view(true);
+	}
+
+	views_key() {
+		return this.state && this.state.name ? `${this.state.name}@${this.state.modified || ""}` : "";
+	}
+
+	// Every view draws from one get_trip_views answer per version of the trip: fetched once,
+	// kept until a save gives the trip a new `modified`. An answer for a screen already left
+	// is dropped, like load()'s, and not kept either.
+	fetch_views() {
+		if (!this.view || !this.state || !this.state.name) return;
+		const key = this.views_key();
+		if (this.views && this.views.key === key) return;
+		const seq = this.nav_seq;
+		const pending = this.views_pending;
+		if (pending && pending.key === key && pending.seq === seq) return;
+		const asked = { key: key, seq: seq };
+		this.views_pending = asked;
+		this.views_failed = null;
+		const done = (data) => {
+			if (this.views_pending === asked) this.views_pending = null;
+			// Moved on while it loaded (Back, another view, another trip): that screen wins.
+			if (seq !== this.nav_seq) return;
+			if (data && typeof data === "object") {
+				this.views = { key: key, data: data };
+				this.note_viewer(data);
+			} else {
+				this.views_failed = key;
+			}
+			if (this.view) this.render();
+		};
+		frappe
+			.call({ method: "erpnext_enhancements.api.travel.get_trip_views", args: { trip: this.state.name } })
+			.then(
+				(r) => done(r && r.message),
+				() => done(null)
+			);
+	}
+
+	// What the server says about the person looking (get_plan's state, get_trip_views).
+	note_viewer(source) {
+		if (!source) return;
+		if (source.is_coordinator !== undefined && source.is_coordinator !== null) {
+			this.viewer.is_coordinator = !!source.is_coordinator;
+		}
+		if (source.viewer_employee !== undefined) this.viewer.employee = source.viewer_employee || null;
+	}
+
 	// load() and start_new() replace the trip on screen (route() has kept it first if it
 	// needed keeping), so it is cleared before the fetch: a failed load must not leave the old
 	// trip in `state` looking as if it were the one showing.
@@ -588,8 +1059,11 @@ class TripPlanner {
 					this.adopt(data.state);
 					this.step = 0;
 					if (step_key) this.jump_to(step_key, { silent: true });
+					// A view asked for with the trip (a reload of one, the form's "Trip views").
+					this.settle_view();
 					this.set_address(this.address_args());
 					this.render();
+					this.fetch_views();
 				},
 				() => {
 					if (seq !== this.nav_seq) return;
@@ -628,6 +1102,8 @@ class TripPlanner {
 			return;
 		}
 		++this.nav_seq;
+		this.view = null;
+		this.view_as = "";
 		if (args.trip) {
 			this.draft_id = null;
 			this.set_address({ trip: args.trip, step: "trip" }, true);
@@ -643,6 +1119,8 @@ class TripPlanner {
 		const kept = this.kept[key];
 		if (!kept) return;
 		++this.nav_seq;
+		this.view = null;
+		this.view_as = "";
 		this.draft_id = kept.draft;
 		const step = TP_STEPS[kept.step].key;
 		this.set_address(kept.state.name ? { trip: kept.state.name, step: step } : { new: 1, step: step }, true);
@@ -652,8 +1130,12 @@ class TripPlanner {
 	render_landing() {
 		this.state = null;
 		this.draft_id = null;
+		this.view = null;
+		this.view_as = "";
+		this.preview = null;
 		this.set_address({});
 		this.remove_chrome();
+		this.body.removeClass("tp-views-wide");
 		const seq = this.nav_seq;
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
 		frappe.call({ method: "erpnext_enhancements.travel_management.planner.get_recent_plans" }).then(
@@ -757,7 +1239,10 @@ class TripPlanner {
 
 	adopt(state) {
 		// Server state -> page state. Cards get a page id, an empty `changed` set, and the
-		// "same confirmation for everyone" switch set from what is stored.
+		// "same confirmation for everyone" switch set from what is stored. Who is looking
+		// (is_coordinator, viewer_employee: planner.get_plan) is about the person, not the
+		// trip, so it is kept on the page and outlives a save that does not repeat it.
+		this.note_viewer(state);
 		state.bookings = state.bookings || { flights: [], accommodations: [], ground_transport: [] };
 		Object.keys(state.bookings).forEach((table) => {
 			state.bookings[table].forEach((card) => this.prepare_card(card, table));
@@ -1140,7 +1625,14 @@ class TripPlanner {
 	go(index, from_route) {
 		if (!this.state) return;
 		if (index === this.step) {
-			if (from_route) this.note_entry();
+			if (from_route) {
+				this.note_entry();
+			} else if (this.view) {
+				// A tab or a checklist "Fix" link to the step a view is drawn over: the step
+				// comes back, as a new entry — Back returns to the view.
+				++this.nav_seq;
+				this.close_view(true);
+			}
 			return;
 		}
 		const seq = from_route ? this.nav_seq : ++this.nav_seq;
@@ -1195,6 +1687,11 @@ class TripPlanner {
 	// the entry already there for one Back/Forward made.
 	show_step(index, push) {
 		this.step = Math.max(0, Math.min(TP_STEPS.length - 1, index));
+		// A step is on screen now, not a view: a tab, Next or a "Fix" link tapped in a view,
+		// or Back/Forward from a view's entry to another step's.
+		this.view = null;
+		this.view_as = "";
+		this.preview = null;
 		this.render();
 		frappe.utils.scroll_to(0);
 		this.set_address(this.address_args(), push);
@@ -1290,6 +1787,8 @@ class TripPlanner {
 	// ------------------------------------------------------------------ rendering
 
 	remove_chrome() {
+		// The Back/Next bar and the save pill live outside `body`; render() puts them back for
+		// a step. (A view, the list and "Loading..." have neither.)
 		this.page.main.find(".tp-nav, .tp-savestate").remove();
 		this.save_state_el = null;
 	}
@@ -1301,7 +1800,17 @@ class TripPlanner {
 		(this.suggesters || []).forEach((suggester) => suggester.destroy());
 		this.suggesters = [];
 		this.body.empty();
+		// A view is drawn instead of the step, across the page's full width, without the
+		// step tabs or the Back/Next bar: "Back to planning" is its way back.
+		const view = this.view && this.state.name ? this.view : null;
+		this.body.toggleClass("tp-views-wide", !!view);
 		this.render_header();
+		this.render_view_bar();
+		if (view) {
+			this.remove_chrome();
+			this.render_view(view);
+			return;
+		}
 		this.render_tabs();
 		const $step = $('<div class="tp-step"></div>').appendTo(this.body);
 		const step = TP_STEPS[this.step];
@@ -1339,6 +1848,37 @@ class TripPlanner {
 				"Open the full form"
 			)}</a>`).appendTo($head);
 		}
+	}
+
+	// The ways to look at the whole trip, on every step of a saved trip and on each view.
+	render_view_bar() {
+		if (!this.state.name) return;
+		const $bar = $('<div class="tp-viewbar"></div>').appendTo(this.body);
+		$(`<span class="tp-muted">${__("See the whole trip:")}</span>`).appendTo($bar);
+		[
+			["overview", __("Overview")],
+			["grid", __("Crew grid")],
+			["compare", __("Side by side")],
+		].forEach(([key, label]) => {
+			$(`<button class="tp-vbtn ${this.view === key ? "tp-active" : ""}">${tp_esc(label)}</button>`)
+				.appendTo($bar)
+				.on("click", () => this.open_view(key));
+		});
+		const crew = this.crew().filter((t) => t.employee);
+		if (!crew.length) return;
+		const person = this.view === "person" ? this.view_as : "";
+		const $who = $(`<select class="${person ? "tp-active" : ""}" aria-label="${__("View as")}"></select>`).appendTo($bar);
+		if (!person) $("<option></option>").val("").text(__("View as...")).appendTo($who);
+		crew.forEach((t) => {
+			$("<option></option>")
+				.val(t.employee)
+				.text(person ? __("View as {0}", [t.employee_name || t.employee]) : t.employee_name || t.employee)
+				.appendTo($who);
+		});
+		$who.val(person).on("change", () => {
+			const employee = $who.val();
+			if (employee) this.open_view("person", employee);
+		});
 	}
 
 	render_tabs() {
@@ -2600,9 +3140,22 @@ class TripPlanner {
 				.appendTo($actions)
 				.on("click", () => this.mark_booked());
 		}
-		$(`<button class="tp-btn">${__("Email everyone their itinerary")}</button>`)
-			.appendTo($actions)
-			.on("click", () => this.send_itineraries());
+		// Only a travel coordinator may email the whole crew (api.travel.send_itinerary_email);
+		// anyone else on the crew may email themselves. Each button waits for the server to say
+		// who is looking. It always has by now, since get_plan and save_plan both report the
+		// viewer, and only a saved trip reaches these buttons. If an answer ever came without
+		// it, showing neither is safe. Showing "Email everyone" is not: for anyone but a
+		// coordinator it fails every time, which is the bug this replaced.
+		const me = this.viewer.employee;
+		if (this.viewer.is_coordinator === true) {
+			$(`<button class="tp-btn">${__("Email everyone their itinerary")}</button>`)
+				.appendTo($actions)
+				.on("click", () => this.send_itineraries());
+		} else if (this.viewer.is_coordinator === false && me && this.crew().some((t) => t.employee === me)) {
+			$(`<button class="tp-btn">${__("Email me my itinerary")}</button>`)
+				.appendTo($actions)
+				.on("click", () => this.send_itineraries(me));
+		}
 		$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" href="${frappe.utils.get_form_link("Travel Trip", s.name)}">${__("Open the full form")}</a>`).appendTo($actions);
 	}
 
@@ -2662,25 +3215,774 @@ class TripPlanner {
 		);
 	}
 
-	send_itineraries() {
-		frappe.confirm(
-			__("Email each person on this trip their own itinerary, with a calendar invite?"),
-			() => {
-				this.save().then((ok) => {
-					if (!ok) return;
-					frappe
-						.call({
-							method: "erpnext_enhancements.api.travel.send_itinerary_email",
-							args: { trip: this.state.name },
-						})
-						.then((r) => {
-							frappe.show_alert({
-								message: __("Itinerary sent to {0} people", [((r && r.message) || []).length]),
-								indicator: "green",
-							});
-						});
+	// Everyone on the trip (a coordinator), or one person: yourself, or anyone for a
+	// coordinator (View as's "Email this to ...").
+	send_itineraries(employee) {
+		const name = employee ? this.crew_name(employee) : "";
+		const yourself = !!employee && employee === this.viewer.employee;
+		let question = __("Email each person on this trip their own itinerary, with a calendar invite?");
+		if (yourself) question = __("Email you your itinerary, with a calendar invite?");
+		else if (employee) question = __("Email {0} their itinerary, with a calendar invite?", [tp_esc(name)]);
+		frappe.confirm(question, () => {
+			this.save().then((ok) => {
+				if (!ok) return;
+				const args = { trip: this.state.name };
+				if (employee) args.employee = employee;
+				frappe
+					.call({ method: "erpnext_enhancements.api.travel.send_itinerary_email", args: args })
+					.then((r) => {
+						const count = ((r && r.message) || []).length;
+						let message = __("Itinerary sent to {0} people", [count]);
+						if (yourself) message = __("Your itinerary is on its way.");
+						else if (employee) message = __("Itinerary sent to {0}", [tp_esc(name)]);
+						frappe.show_alert({ message: message, indicator: "green" });
+					});
+			});
+		});
+	}
+
+	// ------------------------------------------------------------------ views: drawing
+	//
+	// Everything below draws from get_trip_views' answer (fetch_views), never from the page's
+	// own state: that answer is the saved trip, shaped by the same code as /itinerary and the
+	// itinerary email, with money in it only for a travel coordinator.
+
+	render_view(view) {
+		const $view = $('<div class="tp-view"></div>').appendTo(this.body);
+		const $top = $('<div class="tp-view-top"></div>').appendTo($view);
+		$(`<button class="tp-btn">&larr; ${__("Back to planning")}</button>`)
+			.appendTo($top)
+			.on("click", () => this.leave_view());
+		$(`<span class="tp-muted">${tp_esc(TP_STEPS[this.step].title)}</span>`).appendTo($top);
+		if (this.is_dirty()) {
+			$(`<div class="tp-notice">${__(
+				"Your latest changes are not saved yet, so they are not shown here."
+			)}</div>`).appendTo($view);
+		}
+		const key = this.views_key();
+		const data = this.views && this.views.key === key ? this.views.data : null;
+		if (!data) {
+			if (this.views_failed === key) {
+				const $failed = $(`<div class="tp-empty">${__("This could not be loaded.")} </div>`).appendTo($view);
+				$(`<button class="tp-btn-link">${__("Try again")}</button>`)
+					.appendTo($failed)
+					.on("click", () => {
+						this.views_failed = null;
+						this.render();
+					});
+			} else {
+				$(`<div class="tp-empty">${__("Loading...")}</div>`).appendTo($view);
+				this.fetch_views();
+			}
+			return;
+		}
+		({
+			overview: () => this.view_overview($view, data),
+			grid: () => this.view_grid($view, data),
+			compare: () => this.view_compare($view, data),
+			person: () => this.view_person($view, data),
+		})[view]();
+	}
+
+	// One itinerary item, in the few words the Overview, the grid and Side by side use:
+	// {time, title, sub: [lines], ref: {label, value, needed} | null}. Plain text, escaped
+	// where it is drawn.
+	item_facts(item) {
+		const arrow = (from, to) => (from || to ? `${from || "?"} → ${to || "?"}` : "");
+		const ride = TP_RIDE_TYPES.find((x) => x.value === item.transport_type);
+		if (item.type === "flight") {
+			return {
+				time: tp_span(tp_clock(item.departure_time), tp_clock(item.arrival_time)),
+				title: [item.airline, item.flight_number].filter(Boolean).join(" ") || __("Flight"),
+				sub: [arrow(item.departure_airport, item.arrival_airport)],
+				ref: { label: __("PNR"), value: item.booking_reference, needed: true },
+			};
+		}
+		if (item.type === "hotel_checkin" || item.type === "hotel_checkout") {
+			const hotel = item.hotel || __("Hotel");
+			return {
+				time: tp_pretty_time(item.time),
+				title: item.type === "hotel_checkin" ? __("Check in: {0}", [hotel]) : __("Check out: {0}", [hotel]),
+				sub: [item.address],
+				ref: { label: __("Confirmation"), value: item.booking_confirmation, needed: true },
+			};
+		}
+		if (item.type === "ground") {
+			return {
+				time: tp_span(tp_clock(item.pickup_datetime), tp_clock(item.arrival_datetime)),
+				title: item.provider || (ride ? ride.label : item.transport_type) || __("Drive"),
+				sub: [
+					arrow(item.pickup_location, item.dropoff_location),
+					item.cargo ? __("Hauling: {0}", [item.cargo]) : "",
+				],
+				ref: {
+					label: __("Confirmation"),
+					value: item.booking_reference,
+					needed: !TP_UNBOOKED.includes(item.transport_type),
+				},
+			};
+		}
+		if (item.type === "freight") {
+			const delivery = !!item.delivery_from;
+			return {
+				time: delivery
+					? tp_span(tp_clock(item.delivery_from), tp_clock(item.delivery_to))
+					: tp_span(tp_clock(item.pickup_from), tp_clock(item.pickup_to)),
+				title: __("Freight: {0}", [item.carrier || __("Shipment")]),
+				sub: [
+					item.contents,
+					delivery
+						? item.deliver_to
+							? __("Delivers to {0}", [item.deliver_to])
+							: ""
+						: item.ship_from
+						? __("Picked up from {0}", [item.ship_from])
+						: "",
+				],
+				ref: { label: __("Tracking"), value: item.tracking_number, needed: true },
+			};
+		}
+		return {
+			time: tp_span(tp_pretty_time(item.time), tp_pretty_time(item.end_time)),
+			title: item.activity || __("Stop"),
+			sub: [[item.related_party, item.poi && item.poi.poi_name].filter(Boolean).join(" · ")],
+			ref: null,
+		};
+	}
+
+	// The checklist's per-person gaps that belong on a day: a night with no bed, and the first
+	// (or last) day of someone with no way there (or back).
+	day_gaps(data) {
+		const crew = data.crew || [];
+		const out = [];
+		(data.gaps || []).forEach((gap) => {
+			const person = crew.find((c) => c.employee === gap.employee);
+			const who = gap.employee_name || (person && person.employee_name) || gap.employee || "";
+			if (gap.check === "lodging" && gap.kind === "nights") {
+				(gap.nights || []).forEach((date) => {
+					out.push({ gap: gap, employee: gap.employee, who: who, date: date, text: __("No bed tonight") });
+				});
+			} else if (gap.check === "travel") {
+				const there = gap.kind === "Outbound";
+				const date = there
+					? (person && person.from_date) || data.start_date
+					: (person && person.to_date) || data.end_date;
+				if (!date) return;
+				out.push({
+					gap: gap,
+					employee: gap.employee,
+					who: who,
+					date: date,
+					text: there ? __("No way there") : __("No way back"),
 				});
 			}
+		});
+		return out;
+	}
+
+	// What the checklist says about one booking, on the booking.
+	booking_gap_text(gap) {
+		if (gap.check === "confirmation") {
+			if (gap.table === "freight") return __("No tracking, PRO or BOL number yet.");
+			const names = (gap.employee_names || []).join(", ");
+			return names ? __("No confirmation number for {0}.", [names]) : __("No confirmation number yet.");
+		}
+		if (gap.check === "cost") return __("No cost entered.");
+		if (gap.check === "lodging") return __("The check-in or check-out day is missing.");
+		return gap.label || "";
+	}
+
+	// A checklist item where it applies, with the step that fixes it.
+	view_flag($parent, text, gap) {
+		const $flag = $(`<div class="tp-flag"><span>&#9888; ${tp_esc(text)}</span></div>`).appendTo($parent);
+		if (gap && gap.step && TP_STEPS.some((s) => s.key === gap.step)) {
+			$(`<button class="tp-btn-link">${__("Fix")} &rarr;</button>`)
+				.appendTo($flag)
+				.on("click", () => this.jump_to(gap.step));
+		}
+	}
+
+	day_heading(date, data, today) {
+		const outside = (data.start_date && date < data.start_date) || (data.end_date && date > data.end_date);
+		return `${tp_esc(tp_pretty_date(date))}${
+			date === today ? ` <span class="tp-today-tag">${__("Today")}</span>` : ""
+		}${outside ? ` <span class="tp-muted">${__("(outside the trip dates)")}</span>` : ""}`;
+	}
+
+	// ---- Overview: every day, each booking once, the checklist where it applies
+
+	view_overview($view, data) {
+		const crew = data.crew || [];
+		const days = data.days || [];
+		const money = data.money || null;
+		const whole = tp_items_by_date(data.whole);
+		const all = [].concat(...Object.values(whole));
+		// Counted by the server the way Review counts its cards (views.booking_counts). Counting
+		// the items here missed a room with no dates yet, which is on no day: "Rooms 3" here,
+		// "Rooms 4" on Review. An answer without the counts falls back to the items.
+		const counts = data.bookings || {};
+		const bookings = (table, types) =>
+			typeof counts[table] === "number"
+				? counts[table]
+				: new Set(all.filter((i) => types.includes(i.type)).map((i) => i.group || JSON.stringify(i))).size;
+		// The trip's own days: a day before or after it is drawn when something is booked on
+		// it, but it does not make a four-day trip five days long.
+		const trip_days = days.filter(
+			(date) => (!data.start_date || date >= data.start_date) && (!data.end_date || date <= data.end_date)
 		);
+		const tiles = [
+			[__("People"), crew.length],
+			[__("Days"), trip_days.length],
+			[__("Flights"), bookings("flights", ["flight"])],
+			[__("Rooms"), bookings("accommodations", ["hotel_checkin", "hotel_checkout"])],
+			[__("Drives and rides"), bookings("ground_transport", ["ground"])],
+			[__("Shipments"), bookings("freight", ["freight"])],
+			[__("Still missing"), (data.gaps || []).length],
+		];
+		if (money) tiles.push([__("Booked so far"), format_currency(money.total, money.currency)]);
+		$(`<div class="tp-sum">${tiles
+			.map(([label, value]) => `<div><span class="tp-muted">${tp_esc(label)}</span><b>${tp_esc(value)}</b></div>`)
+			.join("")}</div>`).appendTo($view);
+
+		// Per-person gaps on their day; per-booking gaps on the booking, the first time it
+		// shows; anything with nowhere to go at the end.
+		const on_days = {};
+		const placed = new Set();
+		this.day_gaps(data).forEach((entry) => {
+			(on_days[entry.date] = on_days[entry.date] || []).push(entry);
+		});
+		const by_group = {};
+		(data.gaps || []).forEach((gap) => {
+			if (gap.group) (by_group[gap.group] = by_group[gap.group] || []).push(gap);
+		});
+		const shown = new Set();
+		const today = frappe.datetime.get_today();
+		days.forEach((date) => {
+			const $day = $('<div class="tp-tl-day"></div>').appendTo($view);
+			$(`<div class="tp-tl-date">${this.day_heading(date, data, today)}</div>`).appendTo($day);
+			(on_days[date] || []).forEach((entry) => {
+				placed.add(entry.gap);
+				this.view_flag($day, `${entry.text}: ${entry.who}`, entry.gap);
+			});
+			const items = whole[date] || [];
+			if (!items.length) {
+				$(`<div class="tp-muted">${__("Nothing scheduled")}</div>`).appendTo($day);
+				return;
+			}
+			items.forEach((item) => {
+				const first = item.group && !shown.has(item.group);
+				if (item.group) shown.add(item.group);
+				const gaps = first ? by_group[item.group] || [] : [];
+				gaps.forEach((gap) => placed.add(gap));
+				this.overview_item($day, item, gaps, first && money ? (money.groups || {})[item.group] : null, money);
+			});
+		});
+
+		const rest = (data.gaps || []).filter((gap) => !placed.has(gap));
+		if (rest.length) {
+			const $rest = $(`<div class="tp-review-sec"><h5>${__("Not on any day yet")}</h5></div>`).appendTo($view);
+			rest.forEach((gap) => this.view_flag($rest, tp_html_to_text(this.gap_text(gap)), gap));
+		}
+	}
+
+	overview_item($parent, item, gaps, cost, money) {
+		const facts = this.item_facts(item);
+		const $item = $(`<div class="tp-tl-item ${gaps.length ? "tp-bad" : ""}">
+			<div class="tp-tl-icon">${TP_ICONS[item.type] || ""}</div>
+			<div class="tp-tl-time">${tp_esc(facts.time)}</div>
+			<div class="tp-tl-body">
+				<div class="tp-tl-title">${tp_esc(facts.title)}</div>
+				${facts.sub
+					.filter(Boolean)
+					.map((line) => `<div class="tp-tl-sub">${tp_esc(line)}</div>`)
+					.join("")}
+			</div>
+		</div>`).appendTo($parent);
+		const $body = $item.find(".tp-tl-body");
+		const chips = this.item_chips(item, facts);
+		if (chips) $(`<div class="tp-whos">${chips}</div>`).appendTo($body);
+		if (item.type === "freight" && facts.ref.value) {
+			$(`<div class="tp-tl-sub">${tp_esc(facts.ref.label)}: <b>${tp_esc(facts.ref.value)}</b></div>`).appendTo($body);
+		}
+		// A booking with nothing entered says so through its cost gap; a company truck costs nothing.
+		if (cost && flt(cost.cost) > 0) {
+			const paid =
+				cost.paid_by === "Employee"
+					? __("paid by {0}, to reimburse", [cost.paid_by_name || __("an employee")])
+					: cost.paid_by === "Company"
+					? __("paid by the company")
+					: "";
+			$(`<div class="tp-cost">${tp_esc(
+				[`${__("Cost")}: ${format_currency(cost.cost, money.currency)}`, paid].filter(Boolean).join(" · ")
+			)}</div>`).appendTo($body);
+		}
+		gaps.forEach((gap) => this.view_flag($body, this.booking_gap_text(gap), gap));
+	}
+
+	// Who is on a booking, each with their own number (the Overview shows each booking once).
+	item_chips(item, facts) {
+		if (item.type === "agenda") return "";
+		if (item.type === "freight") {
+			const who = item.whole_crew || !item.received_by ? __("Whole crew") : __("Received by {0}", [item.received_by]);
+			return `<span class="tp-who">${tp_esc(who)}</span>`;
+		}
+		const ref = facts.ref;
+		const chip = (name, number, check) => {
+			const missing = check && ref && ref.needed && !number;
+			return `<span class="tp-who ${missing ? "tp-who-miss" : ""}">${tp_esc(name)}${
+				number ? `: <b>${tp_esc(number)}</b>` : missing ? ` &middot; ${__("no number")}` : ""
+			}</span>`;
+		};
+		if (!Array.isArray(item.members)) {
+			// An answer without per-person numbers: the names, and the numbers as one line.
+			const names = (item.travelers || []).map((name) => chip(name, "", false)).join("");
+			return names + (ref && ref.value ? chip(ref.label, ref.value, false) : "");
+		}
+		return item.members
+			.map((m) => chip(m.employee ? m.employee_name || m.employee : __("Whole crew"), m.ref, true))
+			.join("");
+	}
+
+	// ---- Crew grid: people down the side, days across
+
+	view_grid($view, data) {
+		const crew = data.crew || [];
+		const days = data.days || [];
+		if (!crew.length || !days.length) {
+			$(`<div class="tp-muted">${__("Nobody is on this trip yet.")}</div>`).appendTo($view);
+			return;
+		}
+		const today = frappe.datetime.get_today();
+		const warnings = {};
+		this.day_gaps(data).forEach((entry) => {
+			const key = `${entry.employee}|${entry.date}`;
+			(warnings[key] = warnings[key] || []).push(entry.text);
+		});
+		const head = days
+			.map(
+				(date) =>
+					`<th class="${date === today ? "tp-today" : ""}">${tp_esc(moment(date).format("ddd"))}<br>${tp_esc(
+						moment(date).format("MMM D")
+					)}</th>`
+			)
+			.join("");
+		const rows = crew
+			.map((person) => {
+				const own = (data.people || {})[person.employee] || [];
+				const by_date = tp_items_by_date(own);
+				const nights = tp_nights(own);
+				const cells = days
+					.map((date) => {
+						const off = date < person.from_date || date > person.to_date;
+						const icons = [];
+						const lines = [];
+						(by_date[date] || []).forEach((item) => {
+							// Stops are the whole crew's: only on the days this person is there.
+							if (item.type === "agenda" && off) return;
+							const facts = this.item_facts(item);
+							lines.push([facts.time, facts.title].filter(Boolean).join(" "));
+							// A room shows as the nights slept in it, not as its two days.
+							if (item.type !== "hotel_checkin" && item.type !== "hotel_checkout") {
+								icons.push(TP_ICONS[item.type]);
+							}
+						});
+						if (nights.has(date)) {
+							icons.push(TP_ICONS.hotel_checkin);
+							lines.push(__("Night in a room"));
+						}
+						const warn = warnings[`${person.employee}|${date}`] || [];
+						if (warn.length) {
+							icons.push('<span class="tp-warn">&#9888;</span>');
+							lines.push(...warn);
+						}
+						const classes = [off ? "tp-off" : "", warn.length ? "tp-cell-warn" : ""];
+						return `<td class="${classes.join(" ")}" title="${tp_esc(lines.join("\n"))}">${icons.join(" ")}</td>`;
+					})
+					.join("");
+				return `<tr><th class="tp-sticky"><button class="tp-btn-link tp-name" data-employee="${tp_esc(
+					person.employee
+				)}" title="${__("See what {0} sees", [tp_esc(person.employee_name)])}">${tp_esc(
+					person.employee_name
+				)}</button></th>${cells}</tr>`;
+			})
+			.join("");
+		const $scroll = $(`<div class="tp-xscroll"><table class="tp-xtable tp-cgrid">
+			<thead><tr><th class="tp-sticky">${__("Who")}</th>${head}</tr></thead>
+			<tbody>${rows}</tbody>
+		</table></div>`).appendTo($view);
+		$scroll.find("[data-employee]").on("click", (event) => {
+			this.open_view("person", String($(event.currentTarget).attr("data-employee")));
+		});
+		$(`<div class="tp-legend">
+			<span>&#9992; ${__("flight")}</span>
+			<span>&#127976; ${__("night in a room")}</span>
+			<span>&#128663; ${__("drive or ride")}</span>
+			<span>&#128205; ${__("stop")}</span>
+			<span>&#128230; ${__("shipment")}</span>
+			<span><span class="tp-warn">&#9888;</span> ${__("something missing")}</span>
+			<span>${__("Gray: not on the trip that day. Tap a name to see what that person sees.")}</span>
+		</div>`).appendTo($view);
+	}
+
+	// ---- Side by side: a column per person, a row per day
+
+	view_compare($view, data) {
+		const crew = data.crew || [];
+		const days = data.days || [];
+		// Who is left out is a choice about this trip: another trip starts with everyone, even
+		// when the same people are on it.
+		if (!this.compare_hidden || this.compare_hidden.trip !== data.trip) {
+			this.compare_hidden = { trip: data.trip, people: new Set() };
+		}
+		const hidden = this.compare_hidden.people;
+		const $pick = $('<div class="tp-chips" style="margin-bottom:12px;"></div>').appendTo($view);
+		crew.forEach((person) => {
+			const on = !hidden.has(person.employee);
+			$(`<span class="tp-chip ${on ? "tp-on" : ""}">${on ? "&#10003; " : ""}${tp_esc(person.employee_name)}</span>`)
+				.appendTo($pick)
+				.on("click", () => {
+					// Who is shown is a choice on this screen, not a screen: no history entry.
+					if (on) hidden.add(person.employee);
+					else hidden.delete(person.employee);
+					this.render();
+				});
+		});
+		const shown = crew.filter((person) => !hidden.has(person.employee));
+		if (!shown.length) {
+			$(`<div class="tp-muted">${__("Pick at least one person above.")}</div>`).appendTo($view);
+			return;
+		}
+		const today = frappe.datetime.get_today();
+		const warnings = {};
+		this.day_gaps(data).forEach((entry) => {
+			const key = `${entry.employee}|${entry.date}`;
+			(warnings[key] = warnings[key] || []).push(entry.text);
+		});
+		const by_person = {};
+		shown.forEach((person) => {
+			by_person[person.employee] = tp_items_by_date((data.people || {})[person.employee]);
+		});
+		const head = shown
+			.map(
+				(person) => `<th><b>${tp_esc(person.employee_name)}</b><div class="tp-muted">${tp_esc(
+					tp_span(tp_pretty_date(person.from_date), tp_pretty_date(person.to_date))
+				)}</div></th>`
+			)
+			.join("");
+		const rows = days
+			.map((date) => {
+				const cells = shown
+					.map((person) => {
+						const off = date < person.from_date || date > person.to_date;
+						const lines = [];
+						(by_person[person.employee][date] || []).forEach((item) => {
+							if (item.type === "agenda" && off) return;
+							lines.push(this.compare_line(item));
+						});
+						(warnings[`${person.employee}|${date}`] || []).forEach((text) => {
+							lines.push(`<div class="tp-line tp-miss-text">&#9888; ${tp_esc(text)}</div>`);
+						});
+						return `<td class="${off ? "tp-off" : ""}">${
+							lines.join("") || '<span class="tp-muted">&ndash;</span>'
+						}</td>`;
+					})
+					.join("");
+				return `<tr><th class="tp-sticky ${date === today ? "tp-today" : ""}">${this.day_heading(
+					date,
+					data,
+					today
+				)}</th>${cells}</tr>`;
+			})
+			.join("");
+		$(`<div class="tp-xscroll"><table class="tp-xtable tp-cmp">
+			<thead><tr><th class="tp-sticky">${__("Day")}</th>${head}</tr></thead>
+			<tbody>${rows}</tbody>
+		</table></div>`).appendTo($view);
+	}
+
+	compare_line(item) {
+		const facts = this.item_facts(item);
+		const ref = facts.ref;
+		let number = "";
+		if (ref && ref.value) number = ` &middot; ${tp_esc(ref.value)}`;
+		else if (ref && ref.needed) number = ` &middot; <span class="tp-miss-text">${__("no number")}</span>`;
+		return `<div class="tp-line">${TP_ICONS[item.type] || ""} ${
+			facts.time ? `<span class="tp-muted">${tp_esc(facts.time)}</span> ` : ""
+		}${tp_esc(facts.title)}${number}</div>`;
+	}
+
+	// ---- View as: exactly what one person's /itinerary shows
+
+	view_person($view, data) {
+		const employee = this.view_as;
+		const person = (data.crew || []).find((c) => c.employee === employee);
+		const name = (person && person.employee_name) || this.crew_name(employee);
+		const $head = $('<div class="tp-view-head"></div>').appendTo($view);
+		$(`<div class="tp-step-title">${__("What {0} sees", [tp_esc(name)])}</div>`).appendTo($head);
+		const missing = this.as_missing;
+		if (missing && missing.trip === data.trip && missing.shown === employee) {
+			$(`<div class="tp-notice">${__(
+				"The person in that link is not on the saved trip, so this shows {0} instead.",
+				[tp_esc(name)]
+			)}</div>`).appendTo($view);
+		}
+		if (data.itinerary_url) {
+			$(`<a class="tp-btn" style="display:inline-flex;align-items:center;" target="_blank" rel="noopener" href="${tp_esc(
+				`${data.itinerary_url}&as=${encodeURIComponent(employee)}`
+			)}">${__("Open {0}'s phone view", [tp_esc(name)])} &#8599;</a>`).appendTo($head);
+		}
+		const days = (data.people || {})[employee];
+		if (!days) {
+			$(`<div class="tp-muted">${__("{0} is not on the saved trip yet.", [tp_esc(name)])}</div>`).appendTo($view);
+			return;
+		}
+		this.render_preview($view, employee, name, data);
+		if (!days.length) {
+			$(`<div class="tp-muted">${__("Nothing on {0}'s itinerary yet.", [tp_esc(name)])}</div>`).appendTo($view);
+			return;
+		}
+		const today = frappe.datetime.get_today();
+		days.forEach((day) => {
+			$(`<div class="tp-pday">${this.day_heading(day.date, data, today)}</div>`).appendTo($view);
+			tp_by_time(day.items).forEach((item) => this.person_card($view, item));
+		});
+	}
+
+	// One item as /itinerary draws it (public/js/travel/itinerary.js RENDERERS): the kicker,
+	// the title, the lines under it, the number with a Copy button, the booking's file, and
+	// a maps link for a stop that has a point.
+	person_card($parent, item) {
+		const kinds = {
+			flight: () => ({
+				kicker: [__("Flight"), item.airline],
+				title: `${item.flight_number || ""}  ${item.departure_airport || "?"} → ${item.arrival_airport || "?"}`,
+				sub: [tp_span(tp_clock(item.departure_time), tp_clock(item.arrival_time))],
+				ref: [__("PNR"), item.booking_reference],
+			}),
+			hotel_checkin: () => ({
+				kicker: [__("Hotel check-in"), tp_pretty_time(item.time)],
+				title: item.hotel,
+				sub: [item.address],
+				ref: [__("Confirmation"), item.booking_confirmation],
+			}),
+			hotel_checkout: () => ({
+				kicker: [__("Hotel check-out"), tp_pretty_time(item.time)],
+				title: item.hotel,
+				sub: [item.address],
+				ref: [__("Confirmation"), item.booking_confirmation],
+			}),
+			ground: () => {
+				const ride = TP_RIDE_TYPES.find((x) => x.value === item.transport_type);
+				return {
+					kicker: [ride ? ride.label : item.transport_type || __("Ground transport")],
+					title: `${item.pickup_location || "?"} → ${item.dropoff_location || "?"}`,
+					sub: [
+						[item.provider, tp_span(tp_clock(item.pickup_datetime), tp_clock(item.arrival_datetime))]
+							.filter(Boolean)
+							.join(" · "),
+						tp_clock(item.return_datetime)
+							? __("Return by {0} ({1})", [tp_clock(item.return_datetime), tp_date_part(item.return_datetime)])
+							: "",
+						item.cargo ? __("Hauling: {0}", [item.cargo]) : "",
+					],
+					ref: [__("Confirmation"), item.booking_reference],
+				};
+			},
+			freight: () => {
+				const delivery = tp_span(tp_clock(item.delivery_from), tp_clock(item.delivery_to));
+				const pickup = tp_span(tp_clock(item.pickup_from), tp_clock(item.pickup_to));
+				return {
+					kicker: [__("Freight"), item.carrier],
+					title: item.contents || __("Shipment"),
+					sub: [
+						item.deliver_to || delivery
+							? [__("Delivers"), delivery, item.deliver_to ? __("to {0}", [item.deliver_to]) : ""]
+									.filter(Boolean)
+									.join(" ")
+							: "",
+						item.ship_from || pickup
+							? [
+									__("Picked up"),
+									pickup,
+									item.pickup_from ? __("on {0}", [tp_date_part(item.pickup_from)]) : "",
+									item.ship_from ? __("from {0}", [item.ship_from]) : "",
+							  ]
+									.filter(Boolean)
+									.join(" ")
+							: "",
+						item.received_by ? __("Received by {0}", [item.received_by]) : "",
+					],
+					ref: [__("Tracking"), item.tracking_number],
+				};
+			},
+			agenda: () => ({
+				kicker: [__("Stop"), tp_span(tp_pretty_time(item.time), tp_pretty_time(item.end_time))],
+				title: item.activity,
+				sub: [[item.related_party, item.poi && item.poi.poi_name].filter(Boolean).join(" · "), item.visit_notes],
+				ref: null,
+			}),
+		};
+		const card = (kinds[item.type] || kinds.agenda)();
+		const $card = $(`<div class="tp-pcard">
+			<div class="tp-kicker">${TP_ICONS[item.type] || ""} ${tp_esc(card.kicker.filter(Boolean).join(" · "))}</div>
+			<div class="tp-ptitle">${tp_esc(card.title || "")}</div>
+			${card.sub
+				.filter(Boolean)
+				.map((line) => `<div class="tp-psub">${tp_esc(line)}</div>`)
+				.join("")}
+		</div>`).appendTo($parent);
+		if (card.ref && card.ref[1]) {
+			const value = String(card.ref[1]);
+			const $ref = $(`<div class="tp-pnr"><span>${tp_esc(card.ref[0])}: ${tp_esc(value)}</span></div>`).appendTo($card);
+			$(`<button class="tp-btn-link">${__("Copy")}</button>`)
+				.appendTo($ref)
+				.on("click", () => this.copy_text(value));
+		}
+		if (item.attachment && /^(\/|https?:)/.test(String(item.attachment))) {
+			$(`<a class="tp-muted" target="_blank" rel="noopener" href="${tp_esc(item.attachment)}">&#128206; ${__(
+				"Attachment"
+			)}</a>`).appendTo($card);
+		}
+		if (item.type === "agenda" && item.poi && item.poi.lat != null && item.poi.lng != null) {
+			const point = `${Number(item.poi.lat)},${Number(item.poi.lng)}`;
+			$(`<div><a target="_blank" rel="noopener" href="https://maps.google.com/?q=${encodeURIComponent(point)}">${__(
+				"Open in Maps"
+			)} &#8599;</a></div>`).appendTo($card);
+		}
+	}
+
+	copy_text(text) {
+		if (frappe.utils.copy_to_clipboard) {
+			frappe.utils.copy_to_clipboard(text);
+		} else if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(() => frappe.show_alert({ message: __("Copied"), indicator: "green" }));
+		}
+	}
+
+	// ---- View as: their itinerary email and calendar invite, rendered and never sent
+
+	render_preview($view, employee, name, data) {
+		const open = !!(this.preview && this.preview.employee === employee && this.preview.open);
+		const $sec = $('<div class="tp-card tp-preview"></div>').appendTo($view);
+		$(`<button class="tp-btn-link" aria-expanded="${open}">${open ? "&#9662;" : "&#9656;"} ${__(
+			"Their itinerary email and calendar invite"
+		)}</button>`)
+			.appendTo($sec)
+			.on("click", () => this.toggle_preview(employee));
+		if (!open) {
+			$(`<div class="tp-muted">${__("See exactly what {0} would get, before anything is sent.", [
+				tp_esc(name),
+			])}</div>`).appendTo($sec);
+			return;
+		}
+		const preview = this.preview;
+		if (preview.failed) {
+			$(`<div class="tp-muted">${__("The preview could not be made.")}</div>`).appendTo($sec);
+			return;
+		}
+		if (!preview.data) {
+			$(`<div class="tp-muted">${__("Loading...")}</div>`).appendTo($sec);
+			return;
+		}
+		const mail = preview.data;
+		const to = mail.to_email ? `${mail.to_name || name} <${mail.to_email}>` : mail.to_name || name;
+		$(`<dl>
+			<dt>${__("Subject")}</dt><dd>${tp_esc(mail.subject || "")}</dd>
+			<dt>${__("To")}</dt><dd>${tp_esc(to)}</dd>
+		</dl>`).appendTo($sec);
+		if (mail.no_email) {
+			$(`<div class="tp-notice" style="margin-top:10px;">${__(
+				"{0} has no email address on file, so nothing would be sent.",
+				[tp_esc(name)]
+			)}</div>`).appendTo($sec);
+		}
+		// A sandbox with nothing allowed: the email is shown, never run.
+		$('<iframe sandbox=""></iframe>')
+			.attr("title", __("Itinerary email"))
+			.attr("srcdoc", mail.html || "")
+			.appendTo($sec);
+		$(`<h5 style="margin:6px 0 0;">${__("Calendar invite")}</h5>`).appendTo($sec);
+		const events = mail.events || [];
+		if (events.length) {
+			$(`<ul class="tp-events">${events
+				.map(
+					(event) =>
+						`<li><b>${tp_esc(event.summary || "")}</b> &middot; ${tp_esc(tp_event_when(event))}${
+							event.location ? ` &middot; ${tp_esc(event.location)}` : ""
+						}</li>`
+				)
+				.join("")}</ul>`).appendTo($sec);
+		} else {
+			$(`<div class="tp-muted">${__("No events.")}</div>`).appendTo($sec);
+		}
+		const $actions = $('<div class="tp-add"></div>').appendTo($sec);
+		if (mail.ics) {
+			$(`<button class="tp-btn">${__("Download the invite (.ics)")}</button>`)
+				.appendTo($actions)
+				.on("click", () => this.download_ics(mail.ics, mail.ics_filename));
+		}
+		const coordinator = data.is_coordinator || this.viewer.is_coordinator;
+		const me = data.viewer_employee || this.viewer.employee;
+		if (!mail.no_email && (coordinator || employee === me)) {
+			$(`<button class="tp-btn tp-btn-primary">${__("Email this to {0}", [tp_esc(name)])}</button>`)
+				.appendTo($actions)
+				.on("click", () => this.send_itineraries(employee));
+		}
+	}
+
+	// Open or close the preview. It is part of the View as screen, not a screen of its own,
+	// so it makes no history entry; its answer is dropped once the page has moved on.
+	toggle_preview(employee) {
+		if (!this.state || !this.state.name) return;
+		if (this.preview && this.preview.employee === employee && this.preview.open) {
+			this.preview.open = false;
+			this.render();
+			return;
+		}
+		if (this.preview && this.preview.employee === employee && this.preview.data) {
+			this.preview.open = true;
+			this.render();
+			return;
+		}
+		const seq = this.nav_seq;
+		const asked = { employee: employee, open: true, data: null, failed: false };
+		this.preview = asked;
+		this.render();
+		const done = (data) => {
+			if (seq !== this.nav_seq || this.preview !== asked) return;
+			asked.data = data && typeof data === "object" ? data : null;
+			asked.failed = !asked.data;
+			this.render();
+		};
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.travel.preview_itinerary_email",
+				args: { trip: this.state.name, employee: employee },
+			})
+			.then(
+				(r) => done(r && r.message),
+				() => done(null)
+			);
+	}
+
+	// An open preview still waiting for its answer, when a move that stayed on this screen has
+	// made toggle_preview drop that answer (route_view): ask for it again.
+	retry_preview() {
+		const preview = this.preview;
+		if (!preview || !preview.open || preview.data || preview.failed) return;
+		this.preview = null;
+		this.toggle_preview(preview.employee);
+	}
+
+	download_ics(text, filename) {
+		const blob = new Blob([text], { type: "text/calendar;charset=utf-8" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = filename || "itinerary.ics";
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
 	}
 }
