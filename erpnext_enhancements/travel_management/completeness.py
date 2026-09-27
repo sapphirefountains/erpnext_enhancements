@@ -1,6 +1,7 @@
 """The trip checklist: what a Travel Trip is still missing before the crew leaves.
 
-Four checks, chosen by the office (2026-09-23) as what "a complete trip" means:
+Four checks, chosen by the office (2026-09-23) as what "a complete trip" means, and a fifth
+added with trip files (2026-09-26):
 
 * **A bed every night** — every traveler has somewhere to sleep on every night they are
   away: their own from/to dates, narrowed by their own travel (:func:`stay_window`), so
@@ -20,9 +21,28 @@ Four checks, chosen by the office (2026-09-23) as what "a complete trip" means:
   ticket is ONE charge, so the flight home carries no cost of its own: a flight with no
   cost is not flagged when its confirmation number is on a flight that has one
   (:func:`on_another_ticket`).
+* **Paperwork** — the booking is made, so its paperwork should be here: each person's
+  boarding pass (or the ticket confirmation), the hotel's confirmation, the rental
+  agreement, the bill of lading, as a Trip Document on that booking
+  (:func:`document_gaps`). Only a booking that already has its confirmation or tracking
+  number is asked — one without is already flagged above, and one flag is enough. Tallied
+  apart from the other four, below.
 
 These are flags, not blockers. The office asked for the trip to *show* what is missing;
 nothing here stops a save or a status change.
+
+**Paperwork is a separate, quieter tally** (Nik, 2026-09-26). The first four checks are what
+the checklist *counts*: the form's headline, the page's step badges, "Mark as booked"'s "N
+things missing" and the views' "Still missing" tile. A paperwork gap is kept as data like the
+others — :func:`find_gaps` still returns it, and it carries ``check: "documents"`` so every
+consumer can tell it apart (:func:`is_paperwork`) — but it is counted on its own, as "N files
+not attached yet" (:func:`files_not_attached`), and shown muted, never as a red flag. The
+reason is the trip that prompted the checklist rules: v1.544.0 (#1133) had just cut
+TRIP-2026-00001's flags from six to zero by no longer asking for what was never needed (six
+to one by its rules, the last cleared by its new room guest), and counted as gaps its
+paperwork would have put ten back — every flight and room on it has its number and no file
+yet (``TestTheKaptureTrip``). A paperwork flag is real but it is not the same kind of thing as a
+person with no bed, and a headline that cannot tell the two apart gets ignored.
 
 The functions return data, never sentences. The page (``plan_a_trip.js``) and the Travel
 Trip form both word the result in the browser, so the wording lives in one language layer
@@ -35,6 +55,8 @@ Rows are read with :func:`_get`, which accepts a Frappe ``Document``, a plain ``
 
 from datetime import date, datetime, timedelta
 
+from erpnext_enhancements.travel_management import COST_TABLES
+
 #: Ground transport that nobody books or buys, so it has no confirmation number or cost to
 #: chase. It still counts as a way there / a way back.
 UNBOOKED_TRANSPORT = frozenset({"Company Fleet", "Personal Vehicle"})
@@ -45,6 +67,43 @@ DURING = "During Trip"
 
 #: Which page step fixes a gap, keyed by leg. Blank legs are inferred from dates.
 STEP_FOR_LEG = {OUTBOUND: "there", RETURN: "back", DURING: "around"}
+
+#: The tables whose rows are bookings, and each one's confirmation field: the PNR, the
+#: hotel's confirmation, the rental's reference, the shipment's tracking / PRO / BOL number.
+REF_FIELDS = (
+	("flights", "booking_reference"),
+	("accommodations", "booking_confirmation"),
+	("ground_transport", "booking_reference"),
+	("freight", "tracking_number"),
+)
+
+#: Trip Document ``kind`` — exactly the Select options in trip_document.json.
+DOCUMENT_KINDS = (
+	"Boarding pass",
+	"Booking confirmation",
+	"Rental agreement",
+	"Bill of lading",
+	"Site map",
+	"Safety plan",
+	"Insurance certificate",
+	"Job packet",
+	"Other",
+)
+
+#: What counts as a booking's paperwork, per table (:func:`document_gaps`).
+PAPERWORK = {
+	"flights": ("Boarding pass", "Booking confirmation"),
+	"accommodations": ("Booking confirmation",),
+	"ground_transport": ("Rental agreement", "Booking confirmation"),
+	"freight": ("Bill of lading", "Booking confirmation"),
+}
+
+#: The only ground transport that comes with paperwork: our own truck, a personal car and a
+#: taxi or rideshare come with nothing to file.
+PAPERWORK_TRANSPORT = frozenset({"Rental/Third Party"})
+
+#: File extensions ``/itinerary`` opens inside the page rather than handing to the phone.
+IMAGE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "heic"})
 
 
 def _get(row, field):
@@ -186,6 +245,91 @@ def _bookings(trip, table):
 	return groups
 
 
+def booking_index(trip):
+	"""{group key: (table, rows)} for every booking and shipment on the trip — what a Trip
+	Document's ``booking_group`` points at."""
+	index = {}
+	for table, _field in REF_FIELDS:
+		for key, rows in _bookings(trip, table).items():
+			index.setdefault(key, (table, rows))
+	return index
+
+
+def document_group(document, index):
+	"""The booking a Trip Document belongs to, or None for a file for the whole trip.
+
+	A file whose booking is gone (deleted on the form, or on the page) reads as a file for the
+	whole trip: it is still on the trip, and hiding it would lose it."""
+	group = _get(document, "booking_group") or None
+	return group if group in index else None
+
+
+def document_visible_to(document, employee, index):
+	"""True when one person sees this file on their own itinerary: it is for them, or it is
+	for nobody in particular and either belongs to the whole trip or to a booking they are on
+	(any of its rows :func:`visible_to` them)."""
+	traveler = _get(document, "traveler")
+	if traveler:
+		return traveler == employee
+	group = document_group(document, index)
+	if group is None:
+		return True
+	return any(visible_to(row, employee) for row in index[group][1])
+
+
+def receipt_urls(trip):
+	"""Every Receipt on the trip's cost rows (their ``attachment``).
+
+	A receipt is money, so it is never one of the trip's files. It can still end up named by a
+	Trip Document: frappe v16 reuses a ``file_url`` when the same content is uploaded again to
+	the same trip (``File.validate_duplicate_entry``), so a PDF put on the trip as paperwork and
+	later as a cost's Receipt is one URL, and a row added on the form's Documents tab is checked
+	by nothing on the way in. The Travel Trip controller refuses a save that has one, and every
+	reader of the files leaves them out (``api/travel._trip_files``, ``planner._documents_state``,
+	:func:`document_gaps`), so what the server sends keeps the rule whatever order they came in."""
+	urls = set()
+	for table in COST_TABLES:
+		for row in _get(trip, table) or []:
+			url = str(_get(row, "attachment") or "").strip()
+			if url:
+				urls.add(url)
+	return urls
+
+
+def repeated_freight_groups(rows):
+	"""The shipments whose ``booking_group`` an earlier shipment already has, in row order.
+
+	A shipment's id is its own: its files (a bill of lading) belong to it by that id. But the
+	form's grid Duplicate copies every field, the hidden ones too (v16 ``grid.js``
+	``duplicate_row`` ignores ``no_copy``), so a duplicated shipment arrives sharing its
+	original's id, and the checklist, the money block and the page would take two shipments for
+	one. The controller clears the copy's, which then reads as its own ``row:<name>`` until Plan a
+	Trip gives it an id (``planner.merge_freight``). Bookings are not checked: rows sharing a
+	booking's id is how one flight holds four people."""
+	seen = set()
+	repeated = []
+	for row in rows or []:
+		group = _get(row, "booking_group")
+		if not group:
+			continue
+		if group in seen:
+			repeated.append(row)
+		else:
+			seen.add(group)
+	return repeated
+
+
+def file_name_of(url):
+	"""The last path segment of a file URL: ``/private/files/pass.png`` -> ``pass.png``."""
+	text = str(url or "").split("?", 1)[0].split("#", 1)[0].rstrip("/")
+	return text.rsplit("/", 1)[-1]
+
+
+def is_image_file(url):
+	name = file_name_of(url)
+	return "." in name and name.rsplit(".", 1)[-1].lower() in IMAGE_EXTENSIONS
+
+
 #: Ground transport that is hired for getting around, not for getting there: an undated
 #: one is placed under "Getting around" rather than "Getting there".
 HIRED_TRANSPORT = frozenset({"Rental/Third Party", "Taxi/Rideshare"})
@@ -319,20 +463,19 @@ def _booked(table, rows):
 	return not (table == "ground_transport" and _get(rows[0], "transport_type") in UNBOOKED_TRANSPORT)
 
 
+def _has_ref(row, field):
+	return bool(str(_get(row, field) or "").strip())
+
+
 def confirmation_gaps(trip):
 	"""Bookings where someone on them has no confirmation number."""
 	gaps = []
 	names = _names(trip)
-	for table, field in (
-		("flights", "booking_reference"),
-		("accommodations", "booking_confirmation"),
-		("ground_transport", "booking_reference"),
-		("freight", "tracking_number"),
-	):
+	for table, field in REF_FIELDS:
 		for key, rows in _bookings(trip, table).items():
 			if not _booked(table, rows):
 				continue
-			without = [row for row in rows if not (_get(row, field) or "").strip()]
+			without = [row for row in rows if not _has_ref(row, field)]
 			if not without:
 				continue
 			gaps.append(
@@ -415,6 +558,146 @@ def cost_gaps(trip):
 	return gaps
 
 
+def _papers_by_group(trip):
+	"""{booking group: [Trip Document]} — the trip's files that belong to a booking. A receipt
+	is not paperwork (:func:`receipt_urls`): the crew never sees it, so it covers nothing."""
+	receipts = receipt_urls(trip)
+	out = {}
+	for document in _get(trip, "documents") or []:
+		group = _get(document, "booking_group")
+		url = str(_get(document, "file") or "").strip()
+		if group and url and url not in receipts:
+			out.setdefault(group, []).append(document)
+	return out
+
+
+def _seats(rows, crew):
+	"""Everyone on a flight, in row order: each row's person, or the whole crew for a row
+	pinned to nobody."""
+	seats = []
+	for row in rows:
+		for person in [_get(row, "traveler")] if _get(row, "traveler") else crew:
+			if person not in seats:
+				seats.append(person)
+	return seats
+
+
+def _covers_everyone(document, seats):
+	"""True when a flight's file for nobody in particular is everyone's paperwork: a booking
+	confirmation (the ticket, which names them all), or a boarding pass on a flight with one
+	person. A boarding pass for nobody on a shared flight is somebody's, and nobody knows
+	whose: one person's pass uploaded without saying who it is for used to clear the whole
+	flight, and showed on everyone's itinerary as theirs."""
+	if _get(document, "traveler"):
+		return False
+	return _get(document, "kind") == "Booking confirmation" or len(seats) <= 1
+
+
+def document_gaps(trip):
+	"""Bookings that are made but whose paperwork is not on the trip.
+
+	The rule is "the booking is made, so its paperwork should be here". So only a booking
+	that already has its confirmation number is asked — a shipment, its tracking
+	number — and one without gets no second flag: :func:`confirmation_gaps` has already
+	flagged it. Flights are per person, because a boarding pass is: each person with their
+	PNR needs a Boarding pass or Booking confirmation of their own, and ``employee_names``
+	names who is still missing one. A file for nobody in particular covers the whole flight
+	only when it can be everyone's (:func:`_covers_everyone`): the Booking confirmation, or a
+	boarding pass on a flight with one person. The rest are per booking: a room its Booking
+	confirmation, a rental its Rental agreement (or the confirmation), a shipment its Bill of
+	lading (or the confirmation). Our own truck, a personal car and a taxi come with no
+	paperwork. ``kinds`` says which files count.
+
+	Reads the Trip Document rows only (``trip.documents``), never a receipt; never asks
+	whether the File is still there. These gaps are the quieter tally: :func:`counted_gaps`
+	leaves them out, and :func:`files_not_attached` counts them.
+	"""
+	gaps = []
+	names = _names(trip)
+	crew = [_get(t, "employee") for t in _travelers(trip)]
+	papers_by_group = _papers_by_group(trip)
+	for table, field in REF_FIELDS:
+		kinds = PAPERWORK[table]
+		for key, rows in _bookings(trip, table).items():
+			if table == "ground_transport" and _get(rows[0], "transport_type") not in PAPERWORK_TRANSPORT:
+				continue
+			papers = [d for d in papers_by_group.get(key, []) if _get(d, "kind") in kinds]
+			numbered = [row for row in rows if _has_ref(row, field)]
+			if table == "flights":
+				if not numbered:
+					continue
+				seats = _seats(rows, crew)
+				if any(_covers_everyone(d, seats) for d in papers):
+					continue
+				covered = {_get(d, "traveler") for d in papers if _get(d, "traveler")}
+				missing = []
+				for row in numbered:
+					# A whole-crew row is everyone's seat.
+					for person in [_get(row, "traveler")] if _get(row, "traveler") else crew:
+						if person not in covered and person not in missing:
+							missing.append(person)
+				if not missing:
+					continue
+				employee_names = [names.get(person, person) for person in missing]
+			else:
+				if len(numbered) < len(rows) or papers:
+					continue
+				employee_names = []
+			gaps.append(
+				{
+					"check": "documents",
+					"step": _step(table, rows, trip),
+					"table": table,
+					"group": key,
+					"label": booking_label(table, rows[0]),
+					"employee_names": employee_names,
+					"kinds": list(kinds),
+				}
+			)
+	return gaps
+
+
 def find_gaps(trip):
-	"""Every gap, in the order the page's steps run."""
-	return travel_gaps(trip) + lodging_gaps(trip) + confirmation_gaps(trip) + cost_gaps(trip)
+	"""Every gap, in the order the page's steps run — paperwork included, as data.
+
+	What a headline or a total counts is :func:`counted_gaps` of this, never its length:
+	paperwork is tallied apart (:func:`files_not_attached`; see the module docstring)."""
+	return (
+		travel_gaps(trip)
+		+ lodging_gaps(trip)
+		+ confirmation_gaps(trip)
+		+ cost_gaps(trip)
+		+ document_gaps(trip)
+	)
+
+
+# --------------------------------------------------------------------------- the two tallies
+
+#: The ``check`` of a paperwork gap (:func:`document_gaps`).
+PAPERWORK_CHECK = "documents"
+
+
+def is_paperwork(gap):
+	"""True for a paperwork gap: tallied apart and shown quietly, never counted as missing."""
+	return _get(gap, "check") == PAPERWORK_CHECK
+
+
+def counted_gaps(gaps):
+	"""The gaps a headline or a total counts: every check but paperwork."""
+	return [gap for gap in gaps or [] if not is_paperwork(gap)]
+
+
+def paperwork_gaps(gaps):
+	"""The paperwork gaps alone — the quieter tally's items."""
+	return [gap for gap in gaps or [] if is_paperwork(gap)]
+
+
+def files_not_attached(gaps):
+	"""The quieter tally's number, "N files not attached yet": each person on a flight who still
+	has no boarding pass or ticket (a boarding pass is per person), and one file for any other
+	booking. TRIP-2026-00001 — eight one-person flights and two rooms, every number in and no
+	file yet — is 10.
+
+	``plan_a_trip.js`` ``tp_files_not_attached`` and ``travel_trip.js``
+	``files_not_attached`` count the same way."""
+	return sum(max(1, len(_get(gap, "employee_names") or [])) for gap in paperwork_gaps(gaps))

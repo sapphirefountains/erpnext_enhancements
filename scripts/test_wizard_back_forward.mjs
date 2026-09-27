@@ -520,6 +520,12 @@ function installFrappe(browser) {
 		flt: (v) => parseFloat(v) || 0,
 		moment: () => ({ format: () => "", isSameOrBefore: () => false, add() {} }),
 		format_currency: (v) => String(v),
+		// tp_html_to_text's parser (the Overview's "Not on any day yet"): the text of the markup.
+		DOMParser: class {
+			parseFromString(html) {
+				return { body: { textContent: String(html).replace(/<[^>]+>/g, "") } };
+			}
+		},
 	});
 	globalThis.document.activeElement = globalThis.document.body;
 	return frappe;
@@ -587,7 +593,7 @@ function patchRender(name, klass) {
 	}
 }
 
-const TP_KEYS = ["trip", "crew", "there", "back", "lodging", "around", "freight", "schedule", "review"];
+const TP_KEYS = ["trip", "crew", "there", "back", "lodging", "around", "freight", "schedule", "files", "review"];
 
 // Every piece of markup `fn` hands to $(): the page builds each element from a template
 // string, so this is what it drew. The page reads `$` as a global on every call.
@@ -1134,30 +1140,96 @@ async function visitWizardSuite() {
 
 function tripServer(trips) {
 	const db = {};
-	Object.entries(trips).forEach(([name, trip]) => (db[name] = { ...trip, name, modified: `${name}@1` }));
+	Object.entries(trips).forEach(([name, trip]) => (db[name] = { ...clone(trip), name, modified: `${name}@1` }));
 	let seq = 0;
-	const state = (rec) => ({
-		name: rec.name,
-		modified: rec.modified,
-		status: "Planning",
-		can_write: true,
-		trip: { ...rec.trip },
-		travelers: clone(rec.travelers || []),
-		bookings: { flights: [], accommodations: [], ground_transport: [] },
-		freight: [],
-		stops: [],
-		gaps: [],
-	});
+	let rows = 0;
+	let ids = 0;
+	// A trip's files (Trip Document rows) are in the state only once the trip has any record of
+	// them: a fixture without `documents` is a server that sends none, which the page must take.
+	const state = (rec) =>
+		Object.assign(
+			{
+				name: rec.name,
+				modified: rec.modified,
+				status: "Planning",
+				can_write: true,
+				trip: { ...rec.trip },
+				travelers: clone(rec.travelers || []),
+				bookings: clone(rec.bookings || { flights: [], accommodations: [], ground_transport: [] }),
+				freight: clone(rec.freight || []),
+				stops: [],
+				gaps: clone(rec.gaps || []),
+			},
+			rec.documents === undefined ? {} : { documents: clone(rec.documents) }
+		);
 	server.handlers.get_recent_plans = () => Object.keys(db).map((name) => ({ name, purpose: db[name].trip.purpose }));
 	server.handlers.get_plan = (args) => ({
 		lookups: { default_company: "SF", employees: [], currency: "USD" },
 		state: args && args.trip ? state(db[args.trip]) : undefined,
 	});
+	// planner.save_plan, as far as keys go: a stored group id is kept and a page key
+	// ("new:<n>", "row:<name>") is given an id (normalize_group), for cards and shipments alike;
+	// then each file's booking, named by the page key, is remapped to that id (merge_documents),
+	// and a file naming no booking the trip has is refused.
 	server.handlers.save_plan = ({ plan, trip, modified }) => {
 		const p = JSON.parse(plan);
 		if (trip && db[trip].modified !== modified) return new Error("changed elsewhere");
 		const name = trip || `TRIP-NEW-${++seq}`;
-		db[name] = { name, trip: p.trip, travelers: p.travelers, modified: `${name}@${++seq + 1}` };
+		const map = {};
+		const labels = {};
+		const stored = (key) => {
+			if (/^[0-9a-f]{12}$/.test(key || "")) return key;
+			if (!map[key]) map[key] = (++ids).toString(16).padStart(12, "0");
+			return map[key];
+		};
+		const bookings = { flights: [], accommodations: [], ground_transport: [] };
+		Object.entries(p.bookings || {}).forEach(([table, cards]) => {
+			bookings[table] = cards.map((card) => {
+				const group = stored(card.group);
+				labels[group] = card.label;
+				return {
+					group,
+					values: card.values,
+					members: card.members.map((m) => ({ name: m.name || `ROW-${++rows}`, traveler: m.traveler, ref: m.ref })),
+					protected: false,
+				};
+			});
+		});
+		// apply_plan's crew checks: a shipment's receiver and a file's person must be on the trip.
+		const crew = new Set((p.travelers || []).map((t) => t.employee));
+		if ((p.freight || []).some((item) => item.traveler && !crew.has(item.traveler))) {
+			return new Error("receives a shipment but is not in the crew");
+		}
+		if ((p.documents || []).some((doc) => doc.traveler && !crew.has(doc.traveler))) {
+			return new Error("is not on this trip");
+		}
+		const freight = (p.freight || []).map((item) => {
+			const booking_group = stored(item.booking_group || `row:${item.name}`);
+			labels[booking_group] = item.carrier;
+			return { ...item, name: item.name || `FRT-${++rows}`, booking_group, protected: false };
+		});
+		const documents = [];
+		for (const doc of p.documents || []) {
+			const group = doc.booking_group ? stored(doc.booking_group) : "";
+			if (group && !(group in labels)) return new Error("That file is on a booking this trip does not have.");
+			documents.push({
+				...doc,
+				name: doc.name || `TDOC-${++rows}`,
+				booking_group: group,
+				booking_label: group ? labels[group] : null,
+				file_name: String(doc.file).split("/").pop(),
+				is_image: /\.(png|jpe?g)$/i.test(doc.file) ? 1 : 0,
+			});
+		}
+		db[name] = {
+			name,
+			trip: p.trip,
+			travelers: p.travelers,
+			bookings,
+			freight,
+			documents,
+			modified: `${name}@${++seq + 1}`,
+		};
 		return state(db[name]);
 	};
 	// api.travel.get_trip_views: the saved trip, as every view draws it. Minimal — the views'
@@ -1213,6 +1285,37 @@ const CREW_TRIP = {
 		{ employee: "E2", employee_name: "Ben" },
 	],
 };
+
+// A trip with a file of its own (a Trip Document with no booking), as get_state sends it.
+const SITE_MAP = {
+	name: "TDOC-1",
+	title: "Site map",
+	kind: "Site map",
+	file: "/private/files/site-map.pdf",
+	traveler: "",
+	booking_group: "",
+	booking_label: null,
+	file_name: "site-map.pdf",
+	is_image: 0,
+};
+
+const DOC_TRIP = {
+	trip: { ...TRIP.trip, purpose: "Install with files" },
+	travelers: TRIP.travelers,
+	documents: [SITE_MAP],
+};
+
+// frappe.ui.FileUploader, which the page may construct only from "Attach a file": records each
+// uploader opened, so a test can hand it the files it "uploaded" (on_success, once per file).
+function fakeUploader() {
+	const opened = [];
+	F.ui.FileUploader = class {
+		constructor(opts) {
+			opened.push(opts);
+		}
+	};
+	return opened;
+}
 
 // The methods the page has called, in order, by their short name.
 const called = () => server.calls.map((c) => c.method.split(".").pop());
@@ -2083,6 +2186,757 @@ async function planATripSuite() {
 		assert.deepEqual(offered({ is_coordinator: false, employee: "E1" }), ["Email me my itinerary"]);
 		assert.deepEqual(offered({ is_coordinator: false, employee: "E9" }), [], "not on the crew: nothing to send");
 		assert.deepEqual(offered({ is_coordinator: true, employee: null }), ["Email everyone their itinerary"]);
+	});
+
+	// ---- files: the paperwork on each booking and the trip's own (Trip Document rows)
+
+	await test("a trip's files survive a save, and a server that sends none is taken as none", async () => {
+		const db = tripServer({ "TRIP-1": TRIP, "TRIP-4": DOC_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=trip");
+		await settle();
+		let p = planner();
+		assert.deepEqual(p.state.documents, [], "no documents in the answer: none");
+		assert.deepEqual(p.payload().documents, []);
+		assert.equal(p.is_dirty(), false);
+
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-4&step=trip");
+		await settle();
+		p = planner();
+		assert.equal(p.is_dirty(), false, "a file as loaded is not an edit");
+		const row = { name: "TDOC-1", title: "Site map", kind: "Site map", file: "/private/files/site-map.pdf", booking_group: "" };
+		assert.deepEqual(p.payload().documents, [{ ...row, traveler: "" }]);
+		p.state.documents[0].traveler = "E1"; // For: only Ana
+		assert.ok(p.is_dirty(), "who a file is for is an edit");
+		p.go(1);
+		await settle();
+		assert.equal(last().step, "crew");
+		const sent = JSON.parse(server.sent("save_plan")[0].args.plan).documents;
+		assert.deepEqual(sent, [{ ...row, traveler: "E1" }], "sent as a row: name, title, kind, file, traveler, booking");
+		assert.equal(db["TRIP-4"].documents[0].traveler, "E1");
+		assert.deepEqual(
+			p.state.documents.map((d) => [d.name, d.traveler, d.booking_group]),
+			[["TDOC-1", "E1", ""]],
+			"the saved trip's files are on the page"
+		);
+		assert.equal(p.is_dirty(), false);
+		p.go(2); // nothing changed since: no second save
+		await settle();
+		assert.equal(server.sent("save_plan").length, 1);
+	});
+
+	await test("files attached to a booking not saved yet follow it to the id its first save gives it", async () => {
+		const db = tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		const card = p.new_card("flights", "Outbound", ["E1"]);
+		Object.assign(card.values, { airline: "Southwest", flight_number: "WN 1422" });
+		p.cards("flights").push(card);
+		const key = card.group;
+		assert.match(key, /^new:\d+$/);
+		p.attach_files(p.booking_target(card)); // "Attach a file" on the card
+		assert.equal(opened.length, 1);
+		const opts = opened[0];
+		assert.deepEqual(
+			[opts.doctype, opts.docname, opts.folder, opts.make_attachments_public, opts.allow_multiple],
+			["Travel Trip", "TRIP-1", "Home/Attachments", false, true]
+		);
+		// frappe offers a "Private" box per file and "Set all public" unless told not to; a
+		// public File is served to anyone at /files/<name>. And a trip's files are uploads.
+		assert.deepEqual([opts.allow_toggle_private, opts.allow_web_link], [false, false]);
+		opts.on_success({ name: "F-1", file_url: "/private/files/ana-bp.pdf", file_name: "ana-bp.pdf" });
+		opts.on_success({ name: "F-2", file_url: "/private/files/ana-bp-2.png", file_name: "ana-bp-2.png" });
+		assert.deepEqual(
+			p.state.documents.map((d) => [d.name, d.booking_group, d.kind, d.traveler, d.title, d.is_image]),
+			[
+				[null, key, "Boarding pass", "E1", "ana-bp.pdf", 0],
+				[null, key, "Boarding pass", "E1", "ana-bp-2.png", 1],
+			],
+			"one file per upload, on the card, for the flight's one person, named after the file"
+		);
+		assert.ok(p.is_dirty(), "a file attached is an edit, saved with the next save");
+		assert.equal(browser.hist.length, 1, "attaching a file is not a screen");
+
+		// A shipment added now, with its bill of lading.
+		p.state.freight.push({ name: null, carrier: "Old Dominion", booking_group: `new:${++p.card_seq}` });
+		const shipment = p.state.freight[0];
+		p.attach_files(p.freight_target(shipment));
+		opened[1].on_success({ name: "F-3", file_url: "/private/files/bol.pdf", file_name: "bol.pdf" });
+		assert.deepEqual(p.state.documents[2].booking_group, shipment.booking_group);
+		assert.equal(p.state.documents[2].kind, "Bill of lading");
+
+		p.go(3); // Next: the save
+		await settle();
+		assert.equal(last().step, "back");
+		assert.deepEqual(ui.msgprints, []);
+		const sent = JSON.parse(server.sent("save_plan")[0].args.plan);
+		assert.equal(sent.bookings.flights[0].group, key);
+		assert.equal(sent.freight[0].booking_group, shipment.booking_group, "a shipment sends its page key, like a card");
+		assert.deepEqual(
+			sent.documents.map((d) => d.booking_group),
+			[key, key, shipment.booking_group],
+			"each file names its booking by the page key"
+		);
+		const flight = p.cards("flights")[0];
+		const freight = p.state.freight[0];
+		assert.match(flight.group, /^[0-9a-f]{12}$/, "the card has its id");
+		assert.match(freight.booking_group, /^[0-9a-f]{12}$/, "the shipment has its id");
+		assert.equal(p.documents_for(flight.group).length, 2, "the boarding passes came back on the flight");
+		assert.equal(p.documents_for(p.freight_key(freight)).length, 1, "the bill of lading came back on the shipment");
+		assert.deepEqual(p.documents_for(key), []);
+		assert.equal(p.is_dirty(), false);
+		assert.equal(db["TRIP-1"].documents.length, 3);
+	});
+
+	await test("a file that finishes uploading after its booking changed is listed with the whole trip, never lost", async () => {
+		tripServer({ "TRIP-1": TRIP, "TRIP-4": DOC_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=crew");
+		await settle();
+		const p = planner();
+		p.go(2);
+		await settle();
+		const opened = fakeUploader();
+		const card = p.new_card("flights", "Outbound", ["E1"]);
+		Object.assign(card.values, { airline: "Southwest", flight_number: "WN 1422" });
+		p.cards("flights").push(card);
+		p.attach_files(p.booking_target(card));
+		await back(); // the phone's Back while it uploads: saved quietly, the cards are new ones
+		assert.equal(last().step, "crew");
+		assert.equal(server.sent("save_plan").length, 1);
+		assert.ok(!p.cards("flights").includes(card));
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/late.pdf", file_name: "late.pdf" });
+		assert.deepEqual(
+			p.state.documents.map((d) => [d.booking_group, d.title]),
+			[["", "late.pdf"]],
+			"listed with the trip's own files"
+		);
+		assert.ok(ui.alerts.some((a) => a.includes("whole trip's files")), "and it says so");
+
+		// Another trip on screen by the time it lands: nothing is added to that one.
+		p.attach_files(p.trip_target());
+		F.set_route("plan-a-trip", { trip: "TRIP-4" });
+		await settle();
+		assert.equal(p.state.name, "TRIP-4");
+		opened[1].on_success({ name: "F-2", file_url: "/private/files/elsewhere.pdf", file_name: "elsewhere.pdf" });
+		assert.deepEqual(p.state.documents.map((d) => d.name), ["TDOC-1"]);
+		assert.ok(ui.alerts.some((a) => a.includes("no longer open here")));
+	});
+
+	await test("a file that finishes uploading after a save redrew its saved booking stays on that booking", async () => {
+		const flight = {
+			group: "aaaaaaaaaaaa",
+			values: { leg: "Outbound", airline: "Southwest", flight_number: "WN 1", departure_time: "", arrival_time: "" },
+			members: [{ name: "R1", traveler: "E1", ref: "" }],
+		};
+		tripServer({ "TRIP-2": { ...CREW_TRIP, bookings: { flights: [flight], accommodations: [], ground_transport: [] } } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=crew");
+		await settle();
+		const p = planner();
+		p.go(2);
+		await settle();
+		const opened = fakeUploader();
+		const card = p.cards("flights")[0];
+		p.attach_files(p.booking_target(card));
+		p.set_value(card, "flight_number", "WN 2"); // an edit, so Back saves
+		const alerts = ui.alerts.length;
+		await back(); // saved quietly while it uploads: the cards are new ones
+		assert.equal(server.sent("save_plan").length, 1);
+		assert.ok(!p.cards("flights").includes(card));
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/late.pdf", file_name: "late.pdf" });
+		assert.deepEqual(
+			p.state.documents.map((d) => [d.booking_group, d.title]),
+			[["aaaaaaaaaaaa", "late.pdf"]],
+			"still on the flight: it had its id before the save"
+		);
+		assert.equal(ui.alerts.length, alerts, "nothing to say");
+	});
+
+	// An upload keeps going when its dialog is closed: by the phone's Back (frappe closes every
+	// dialog on a route change), its X, or a tap outside it. So a file can land while a save is
+	// in flight. That save sent the page before the file was on it, and its answer replaces the
+	// page's trip, so the file's row was dropped without a word, the page read as saved, and the
+	// File was left attached to the trip but on no list.
+	const SHARED_FLIGHT = {
+		group: "aaaaaaaaaaaa",
+		values: { leg: "Outbound", airline: "Southwest", flight_number: "WN 1", departure_time: "", arrival_time: "" },
+		members: [
+			{ name: "R1", traveler: "E1", ref: "" },
+			{ name: "R2", traveler: "E2", ref: "" },
+		],
+	};
+	const SHARED_TRIP = {
+		...CREW_TRIP,
+		bookings: { flights: [SHARED_FLIGHT], accommodations: [], ground_transport: [] },
+		documents: [],
+	};
+	const filed = (p) => p.state.documents.map((d) => [d.booking_group, d.title, d.traveler]);
+	const lost = () => ui.alerts.filter((a) => /no longer open here|whole trip's files/.test(a));
+
+	await test("a file that lands while a save is in flight is kept: the phone's Back between steps", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=crew");
+		await settle();
+		const p = planner();
+		p.go(2);
+		await settle();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		p.set_value(p.cards("flights")[0], "flight_number", "WN 2"); // an edit, so Back saves
+		server.hold.add("save_plan");
+		await back(); // closes the uploader; the upload goes on
+		assert.equal(server.held.length, 1, "the save is in flight");
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/mid.pdf", file_name: "mid.pdf" });
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.equal(last().step, "crew");
+		assert.equal(p.cards("flights")[0].values.flight_number, "WN 2", "the save's answer is on the page");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "mid.pdf", "E1"]], "on its flight, for the first person on it without one");
+		assert.ok(p.is_dirty(), "and saved with the next save, not taken for saved");
+		assert.deepEqual(lost(), []);
+		p.go(2);
+		await settle();
+		assert.equal(server.sent("save_plan").length, 2);
+		assert.deepEqual(JSON.parse(server.sent("save_plan")[1].args.plan).documents.map((d) => d.file), ["/private/files/mid.pdf"]);
+	});
+
+	await test("a file that lands while a save is in flight is kept: leaving for the form, and Back onto the page", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		p.state.trip.purpose = "Crew install, phase 2";
+		server.hold.add("save_plan");
+		F.set_route("travel-trip", "TRIP-2"); // "Open the full form": on_hide saves quietly
+		await settle();
+		assert.equal(server.held.length, 1, "the save is in flight");
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/mid.pdf", file_name: "mid.pdf" });
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "mid.pdf", "E1"]]);
+		assert.ok(p.is_dirty());
+		await back(); // onto the page: something unsaved, so what is on it stays
+		assert.equal(last().step, "there");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "mid.pdf", "E1"]]);
+		assert.deepEqual(lost(), []);
+	});
+
+	await test("files that land during a Next's save are kept, each for the next person on the flight without one", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		// Two boarding passes picked at once: the first lands, the dialog is closed with its X
+		// while the second uploads, and Next saves.
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/ana-bp.pdf", file_name: "ana-bp.pdf" });
+		server.hold.add("save_plan");
+		p.go(3);
+		await settle();
+		opened[0].on_success({ name: "F-2", file_url: "/private/files/ben-bp.pdf", file_name: "ben-bp.pdf" });
+		assert.deepEqual(
+			JSON.parse(server.held[0].call.args.plan).documents.map((d) => d.title),
+			["ana-bp.pdf"],
+			"the save in flight was sent before the second one landed"
+		);
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.equal(last().step, "back");
+		assert.deepEqual(filed(p), [
+			["aaaaaaaaaaaa", "ana-bp.pdf", "E1"],
+			["aaaaaaaaaaaa", "ben-bp.pdf", "E2"],
+		]);
+		assert.ok(p.is_dirty());
+		// Everyone on it has theirs: a third file is for everyone on the flight (the ticket).
+		opened[0].on_success({ name: "F-3", file_url: "/private/files/ticket.pdf", file_name: "ticket.pdf" });
+		assert.deepEqual(filed(p)[2], ["aaaaaaaaaaaa", "ticket.pdf", ""]);
+		assert.deepEqual(lost(), []);
+	});
+
+	await test("a file that lands once its trip was put aside unsaved goes on that trip, and Carry on brings it back", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		press("tp-list-item", { currentTarget: { __attrs: { "data-name": "TRIP-2" } } });
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		p.state.trip.purpose = "Changed";
+		server.fail.add("save_plan"); // no answer: the trip is kept, not dropped
+		await back();
+		assert.deepEqual(last(), { landing: true });
+		assert.deepEqual(Object.keys(p.kept), ["TRIP-2"]);
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/late.pdf", file_name: "late.pdf" });
+		assert.deepEqual(lost(), [], "it is not gone: it is kept here");
+		assert.ok(ui.alerts.some((a) => a.includes("late.pdf is on Changed's files")));
+		server.fail.delete("save_plan");
+		p.carry_on("TRIP-2");
+		await settle();
+		assert.equal(p.state.trip.purpose, "Changed");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "late.pdf", "E1"]]);
+		assert.ok(p.is_dirty());
+	});
+
+	await test("a file that lands while its trip is loading again (Back from the form) goes on it once it is here", async () => {
+		tripServer({ "TRIP-2": SHARED_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		const opened = fakeUploader();
+		p.attach_files(p.booking_target(p.cards("flights")[0]));
+		F.set_route("travel-trip", "TRIP-2"); // nothing unsaved
+		await settle();
+		server.hold.add("get_plan");
+		await back(); // onto the page: it may have been saved on the form, so it loads again
+		assert.equal(p.state, null, "loading");
+		opened[0].on_success({ name: "F-1", file_url: "/private/files/late.pdf", file_name: "late.pdf" });
+		server.hold.delete("get_plan");
+		server.release("get_plan");
+		await settle();
+		assert.equal(last().step, "there");
+		assert.deepEqual(filed(p), [["aaaaaaaaaaaa", "late.pdf", "E1"]]);
+		assert.ok(p.is_dirty());
+		assert.deepEqual(lost(), []);
+	});
+
+	await test("unticking someone on a booking or with files of their own asks first; ticking them stays until yes", async () => {
+		tripServer({
+			"TRIP-2": { ...SHARED_TRIP, documents: [{ ...SITE_MAP, name: "TDOC-2", traveler: "E2" }] },
+		});
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=crew");
+		await settle();
+		const p = planner();
+		p.lookups.employees = [
+			{ name: "E1", employee_name: "Ana" },
+			{ name: "E2", employee_name: "Ben" },
+			{ name: "E3", employee_name: "Cy" },
+		];
+		const asked = [];
+		let yes = null;
+		F.confirm = (message, ok) => {
+			asked.push(message);
+			yes = ok;
+		};
+		const untick = (name) => {
+			clicks.length = 0;
+			// The stand-in jQuery holds no values: the "Find a person" box reads as empty.
+			const real = globalThis.$;
+			globalThis.$ = (arg) => {
+				const out = real(arg);
+				if (typeof arg !== "string" || !arg.includes("Find a person")) return out;
+				const search = new Proxy(out, {
+					get: (t, prop) => (prop === "val" ? () => "" : prop === "appendTo" ? () => search : Reflect.get(t, prop)),
+				});
+				return search;
+			};
+			try {
+				p.step_crew($stub("crew"));
+			} finally {
+				globalThis.$ = real;
+			}
+			const box = clicks.find((c) => c.event === "change" && c.src.includes(name) && c.src.endsWith('input[type="checkbox"]'));
+			const target = { checked: false };
+			box.fn({ target });
+			return target;
+		};
+		const box = untick("Ben");
+		assert.deepEqual(asked, [
+			"Take Ben off the trip? They come off 1 booking, and their confirmation number on it. 1 file for them comes off the trip's list; it stays attached to the trip on the full form.",
+		]);
+		assert.equal(box.checked, true, "still ticked until they say yes");
+		assert.deepEqual(p.crew().map((t) => t.employee), ["E1", "E2"], "nothing taken yet");
+		yes();
+		assert.deepEqual(p.crew().map((t) => t.employee), ["E1"]);
+		assert.deepEqual(p.cards("flights")[0].members.map((m) => m.traveler), ["E1"]);
+		assert.deepEqual(p.state.documents, []);
+		// Nothing to lose: no question.
+		p.add_traveler({ name: "E3", employee_name: "Cy" });
+		asked.length = 0;
+		untick("Cy");
+		assert.deepEqual(asked, []);
+		assert.deepEqual(p.crew().map((t) => t.employee), ["E1"]);
+		assert.equal(browser.hist.length, 1, "a question is not a screen");
+	});
+
+	await test("the Files step is a step like the others, and nothing on the way to it touches the uploader", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=files");
+		// Watched from before the page loads: a load, a route or a step's drawing that reaches
+		// for frappe.ui.FileUploader would find it missing on a desk that has not loaded it.
+		let touched = 0;
+		Object.defineProperty(F.ui, "FileUploader", {
+			configurable: true,
+			get() {
+				touched += 1;
+				return undefined;
+			},
+		});
+		await settle();
+		assert.equal(last().step, "files");
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=files");
+		const p = planner();
+		p.go(9); // Next: Review
+		await settle();
+		assert.equal(last().step, "review");
+		await back();
+		assert.equal(last().step, "files");
+		p.go(7); // the Schedule tab
+		await settle();
+		p.go(8); // Next: Files
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?trip=TRIP-1&step=files");
+		await back();
+		assert.equal(last().step, "schedule");
+		await forward();
+		assert.equal(last().step, "files");
+		assert.equal(browser.hist.length, 3, browser.hist.urls().join(" | "));
+		const html = drawn(() => p.step_files($stub("files")));
+		assert.ok(html.some((h) => h.includes("Attach a file")), "a saved trip offers Attach a file");
+		assert.equal(touched, 0, "frappe.ui.FileUploader was touched outside a click");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("Attach a file is inert on a trip not saved yet, and for someone who may not change the trip", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		press('data-action="new"');
+		await settle();
+		let p = planner();
+		const opened = fakeUploader();
+		Object.assign(p.state.trip, { purpose: "Survey", start_date: "2026-11-01", end_date: "2026-11-02" });
+		const html = drawn(() => p.step_files($stub("files")));
+		assert.ok(html.some((h) => h.includes("Save the trip first to attach files")));
+		assert.ok(!html.some((h) => h.includes("Attach a file")), "no button without a saved trip");
+		p.attach_files(p.trip_target());
+		p.attach_files(p.booking_target(p.new_card("flights", "Outbound", [])));
+		assert.equal(opened.length, 0, "a File is attached to a trip by its name: there is none yet");
+		assert.deepEqual(p.state.documents, []);
+
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=files");
+		await settle();
+		p = planner();
+		const later = fakeUploader();
+		p.state.can_write = false;
+		const view_only = drawn(() => p.step_files($stub("files")));
+		assert.ok(!view_only.some((h) => h.includes("Attach a file")));
+		p.attach_files(p.trip_target());
+		assert.equal(later.length, 0);
+	});
+
+	// Paperwork (completeness.document_gaps, check "documents") is a separate, quieter tally (Nik,
+	// 2026-09-26): shown on the card, the Files step and Review, counted as files, muted, and never
+	// in a tab's badge, "Mark as booked"'s count, a red card or the Overview's "Still missing".
+	const PAPER = {
+		check: "documents",
+		step: "there",
+		table: "flights",
+		group: "0123456789ab",
+		label: "Southwest WN 1422",
+		employee_names: ["Ana"],
+		kinds: ["Boarding pass", "Booking confirmation"],
+	};
+	const NO_NUMBER = {
+		check: "confirmation",
+		step: "there",
+		table: "flights",
+		group: "fedcba987654",
+		label: "Delta DL 88",
+		employee_names: ["Ana"],
+	};
+
+	await test("Review, the Files step and a booking's card show paperwork quietly, counted as files", async () => {
+		// Two people on one flight without their boarding passes are two files; a room is one.
+		const room = { ...PAPER, step: "lodging", table: "accommodations", group: "abcdefabcdef", label: "Hilton", employee_names: [] };
+		const pair = { ...PAPER, employee_names: ["Ana", "Ben"] };
+		tripServer({ "TRIP-4": { ...DOC_TRIP, gaps: [PAPER] } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-4&step=review");
+		await settle();
+		const p = planner();
+		const review = drawn(() => p.step_review($stub("review")));
+		assert.ok(review.some((h) => h.includes("<h5>Paperwork</h5>")), "a Paperwork section");
+		const line = review.find((h) => h.includes("Southwest WN 1422: no boarding pass or ticket for Ana."));
+		assert.ok(line, "the booking and who is missing theirs");
+		assert.ok(line.includes('class="tp-paper"') && !line.includes("tp-gap"), "a muted note, not a missing item");
+		assert.ok(review.some((h) => h.includes("tp-paper-count") && h.includes("1 file not attached yet")), "its own count");
+		assert.ok(review.some((h) => h.includes("Attach") && h.includes("tp-btn-link")), "and a way to the card that takes it");
+		assert.ok(!review.some((h) => h.includes('class="tp-gap"')), "nothing on Review reads as missing");
+		assert.ok(review.some((h) => /Files<\/span><b>1<\/b>/.test(h)), "the Files tile counts the trip's files");
+		const files = drawn(() => p.step_files($stub("files")));
+		assert.ok(files.some((h) => h.includes("1 file not attached yet")), "the Files step lists it, counted as files");
+		assert.ok(!files.some((h) => h.includes("Still missing")), "...and not as missing");
+		assert.ok(files.some((h) => h.includes('class="tp-paper"') && h.includes("Southwest WN 1422")));
+		const wording = { accommodations: "no confirmation attached.", ground_transport: "no rental agreement attached.", freight: "no bill of lading attached." };
+		Object.entries(wording).forEach(([table, words]) => {
+			assert.equal(p.gap_text({ ...PAPER, table, employee_names: [] }), `Southwest WN 1422: ${words}`);
+		});
+
+		p.state.gaps = [pair, room];
+		const count = drawn(() => p.step_review($stub("review"))).find((h) => h.includes("tp-paper-count"));
+		assert.ok(count.includes("3 files not attached yet"), `each person's boarding pass, and the room's confirmation: ${count}`);
+
+		// A booking's card: paperwork alone leaves it unframed, with a quiet note; a real gap
+		// frames it red.
+		const card = { group: PAPER.group, table: "flights", values: {}, members: [] };
+		p.state.gaps = [PAPER];
+		let shell = drawn(() => p.card_shell($stub("there"), card, "Flight"));
+		assert.ok(shell.some((h) => h.includes('class="tp-card "')), "paperwork alone does not make the card red");
+		const notes = drawn(() => p.card_gaps($stub("there"), card));
+		assert.ok(notes.some((h) => h.includes('class="tp-paper"') && h.includes("no boarding pass or ticket for Ana")));
+		assert.ok(!notes.some((h) => h.includes('class="tp-gap"')));
+		p.state.gaps = [PAPER, { ...NO_NUMBER, group: PAPER.group }];
+		shell = drawn(() => p.card_shell($stub("there"), card, "Flight"));
+		assert.ok(shell.some((h) => h.includes("tp-card tp-bad")), "a real gap still does");
+
+		p.state.gaps = [];
+		const clear = drawn(() => p.step_review($stub("review")));
+		assert.ok(clear.some((h) => h.includes("Every booking that's made has its paperwork attached.")));
+		assert.ok(!clear.some((h) => h.includes("not attached yet")));
+	});
+
+	await test("a step's badge and Mark as booked count every gap but paperwork", async () => {
+		tripServer({ "TRIP-4": { ...DOC_TRIP, gaps: [PAPER] } });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-4&step=review");
+		await settle();
+		const p = planner();
+		const badges = () =>
+			drawn(() => p.render_tabs())
+				.filter((h) => h.includes('class="tp-tab'))
+				.map((h) => [h.replace(/<span class="tp-badge">.*<\/span>/, "").replace(/<[^>]+>/g, ""), (h.match(/tp-badge">(\d+)</) || [])[1]])
+				.filter(([, count]) => count);
+		assert.deepEqual(p.gaps_for_step("there"), [], "paperwork is on Getting there, and not in its badge");
+		assert.deepEqual(badges(), [], "no tab carries a badge for paperwork alone");
+		p.state.gaps = [NO_NUMBER, PAPER];
+		assert.deepEqual(p.gaps_for_step("there"), [NO_NUMBER]);
+		assert.deepEqual(badges(), [["Getting there", "1"]], "the missing number is counted, the paperwork beside it is not");
+
+		// Mark as booked: a trip whose only open items are files is booked without a question...
+		const asked = [];
+		F.confirm = (message, yes) => {
+			asked.push(message);
+			yes();
+		};
+		p.state.gaps = [PAPER];
+		p.mark_booked();
+		await settle();
+		assert.deepEqual(asked, [], "paperwork alone asks nothing");
+		assert.equal(JSON.parse(server.sent("save_plan")[0].args.plan).status, "Booked");
+		// ...and one with a real gap is asked about that gap alone.
+		p.state.status = "Planning";
+		p.state.gaps = [NO_NUMBER, PAPER, { ...PAPER, group: "abcdefabcdef" }];
+		p.mark_booked();
+		await settle();
+		assert.deepEqual(asked, ["1 things on the checklist are still missing. Mark the trip as booked anyway?"]);
+	});
+
+	await test("the Overview counts paperwork apart: its own muted tile and notes, never a red flag", async () => {
+		tripServer({ "TRIP-1": TRIP });
+		const views = server.handlers.get_trip_views;
+		let gaps = [];
+		server.handlers.get_trip_views = (args) => {
+			const data = views(args);
+			data.days = ["2026-10-01", "2026-10-02", "2026-10-03"];
+			data.whole = [
+				{
+					date: "2026-10-01",
+					items: [
+						{ type: "flight", date: "2026-10-01", group: PAPER.group, airline: "Southwest", flight_number: "WN 1422", members: [] },
+						{ type: "flight", date: "2026-10-01", group: NO_NUMBER.group, airline: "Delta", flight_number: "DL 88", members: [] },
+					],
+				},
+			];
+			data.gaps = gaps;
+			return data;
+		};
+		gaps = [NO_NUMBER, PAPER, { ...PAPER, group: "abcdefabcdef", label: "Hilton", table: "accommodations", employee_names: [] }];
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		await settle();
+		const tiles = ui.drawn.find((html) => html.includes('class="tp-sum"'));
+		const tile = (label) => (tiles.match(new RegExp(`${label}</span><b>([^<]*)</b>`)) || [])[1];
+		assert.equal(tile("Still missing"), "1", "the missing number only");
+		assert.equal(tile("Files not attached"), "2", "the paperwork, counted as files");
+		assert.ok(tiles.includes('<div class="tp-quiet"><span class="tp-muted">Files not attached'), "a muted tile");
+		const southwest = ui.drawn.find((h) => h.includes("tp-tl-item") && h.includes("WN 1422"));
+		const delta = ui.drawn.find((h) => h.includes("tp-tl-item") && h.includes("DL 88"));
+		assert.ok(southwest && !southwest.includes("tp-bad"), "paperwork alone does not frame the booking red");
+		assert.ok(delta.includes("tp-bad"), "a missing number does");
+		const flags = ui.drawn.filter((h) => h.includes('class="tp-flag"'));
+		const notes = ui.drawn.filter((h) => h.includes('class="tp-paper"'));
+		assert.deepEqual(flags.length, 1, flags.join("\n"));
+		assert.ok(flags[0].includes("No confirmation number for Ana."));
+		assert.ok(notes.some((h) => h.includes("No boarding pass or ticket for Ana.")), "a muted note on the booking");
+		assert.ok(notes.some((h) => h.includes("Hilton")), "the room on no day: a note under 'Not on any day yet'");
+
+		// No paperwork, no tile.
+		gaps = [NO_NUMBER];
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-1&step=review&view=overview");
+		await settle();
+		const plain = ui.drawn.find((html) => html.includes('class="tp-sum"'));
+		assert.ok(!plain.includes("Files not attached"));
+	});
+
+	await test("a booking taken off takes its files off the list; so does someone taken off the crew, for their own", async () => {
+		const flight = {
+			group: "aaaaaaaaaaaa",
+			values: { leg: "Outbound", airline: "Southwest", flight_number: "WN 1", departure_time: "", arrival_time: "" },
+			members: [
+				{ name: "R1", traveler: "E1", ref: "" },
+				{ name: "R2", traveler: "E2", ref: "" },
+			],
+		};
+		const doc = (name, booking_group, traveler) => ({ ...SITE_MAP, name, booking_group, traveler });
+		const db = tripServer({
+			"TRIP-2": {
+				...CREW_TRIP,
+				bookings: { flights: [flight], accommodations: [], ground_transport: [] },
+				// Ben receives this shipment and paid for it: taking him off the crew must not
+				// leave the save refused for a receiver who is not on the trip.
+				freight: [
+					{
+						name: "S1",
+						carrier: "ODFL",
+						tracking_number: "PRO-1",
+						traveler: "E2",
+						paid_by: "Employee",
+						paid_by_traveler: "E2",
+						cost: 0,
+						booking_group: "cccccccccccc",
+					},
+				],
+				documents: [
+					doc("TDOC-1", "aaaaaaaaaaaa", ""),
+					doc("TDOC-2", "", "E2"),
+					// On a booking deleted on the form: the server would refuse every save that
+					// still named it, so the page lists it with the trip's own files.
+					doc("TDOC-3", "bbbbbbbbbbbb", "E1"),
+				],
+			},
+		});
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=there");
+		await settle();
+		const p = planner();
+		assert.deepEqual(
+			p.state.documents.map((d) => [d.name, d.booking_group, d.traveler]),
+			[
+				["TDOC-1", "aaaaaaaaaaaa", ""],
+				["TDOC-2", "", "E2"],
+				["TDOC-3", "", "E1"],
+			]
+		);
+		assert.equal(p.is_dirty(), false, "a file moved to the trip's own list is not an edit by itself");
+		p.remove_traveler("E2");
+		assert.deepEqual(p.state.documents.map((d) => d.name), ["TDOC-1", "TDOC-3"]);
+		assert.deepEqual(
+			p.state.freight.map((f) => [f.traveler, f.paid_by, f.paid_by_traveler]),
+			[["", "Company", ""]],
+			"their shipment goes to the whole crew, paid by the company"
+		);
+		p.card_shell($stub("there"), p.cards("flights")[0], "Flight"); // its Remove link
+		press("Remove");
+		assert.deepEqual(p.cards("flights"), []);
+		assert.deepEqual(p.state.documents.map((d) => d.name), ["TDOC-3"]);
+		p.go(3);
+		await settle();
+		assert.deepEqual(ui.msgprints, [], "the save was refused");
+		assert.deepEqual(
+			db["TRIP-2"].documents.map((d) => [d.name, d.booking_group, d.traveler]),
+			[["TDOC-3", "", "E1"]]
+		);
+	});
+
+	await test("the views show each booking's files, a room's guest, and never a receipt", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		const views = server.handlers.get_trip_views;
+		// shape_itinerary's file: `group` is its booking's key (null for the whole trip's), and
+		// `for_employee` / `for_name` who it is for (null for everyone).
+		const file = (name, title, kind, url, for_employee, for_name, group, booking_label) => ({
+			name,
+			title,
+			kind,
+			url,
+			file_name: url.split("/").pop(),
+			is_image: 0,
+			for_name,
+			for_employee,
+			group,
+			booking_label,
+		});
+		const pass = file("TDOC-1", "Ana boarding pass", "Boarding pass", "/private/files/ana-bp.pdf", "E1", "Ana", "g1", "Southwest WN 1422");
+		const hotel = file("TDOC-2", "Hotel confirmation", "Booking confirmation", "/private/files/hotel.pdf", null, null, "g2", "Hilton");
+		const map = file("TDOC-3", "Site map", "Site map", "/private/files/site.pdf", null, null, null, null);
+		const ben = file("TDOC-4", "Ben's badge", "Other", "/private/files/ben.pdf", "E2", "Ben", null, null);
+		// A booking whose label is blank (no airline or flight number yet) is still a booking:
+		// its file is not one of the whole trip's.
+		const unnamed = file("TDOC-5", "Unnamed flight pass", "Boarding pass", "/private/files/unnamed.pdf", null, null, "g9", null);
+		const flight = {
+			type: "flight",
+			date: "2026-10-01",
+			group: "g1",
+			airline: "Southwest",
+			flight_number: "WN 1422",
+			members: [{ employee: "E1", employee_name: "Ana", ref: "ABC123" }],
+			documents: [pass],
+		};
+		server.handlers.get_trip_views = (args) => {
+			const data = views(args);
+			data.days = ["2026-10-01", "2026-10-02", "2026-10-03"];
+			data.whole = [
+				{
+					date: "2026-10-01",
+					items: [
+						flight,
+						{
+							type: "hotel_checkin",
+							date: "2026-10-01",
+							group: "g2",
+							hotel: "Hilton",
+							members: [
+								{ employee: "E1", employee_name: "Ana", ref: "H1", guest: false },
+								{ employee: "E2", employee_name: "Ben", ref: "H1", guest: true, check_in_date: "2026-10-02", check_out_date: "2026-10-03" },
+							],
+							documents: [hotel],
+						},
+					],
+				},
+			];
+			// Even if a receipt ever reached an item, View as must not draw it: it is money.
+			data.people.E1 = [{ date: "2026-10-01", items: [{ ...flight, attachment: "/private/files/receipt.pdf" }] }];
+			data.documents = [map, ben, pass, hotel, unnamed];
+			// What each person's /itinerary lists (shape_itinerary per person): Ana has the
+			// trip's map and her own pass, never Ben's badge.
+			data.people_documents = { E1: [map, pass], E2: [map, ben, hotel] };
+			return data;
+		};
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review&view=overview");
+		await settle();
+		let html = ui.drawn.join("\n");
+		assert.ok(html.includes('href="/private/files/ana-bp.pdf"'), "a booking's file links to it");
+		assert.ok(html.includes("Ana boarding pass · for Ana"));
+		assert.ok(html.includes("Hotel confirmation · everyone"));
+		assert.ok(html.includes("Ben (guest"), "the guest is marked on the room");
+		assert.ok(html.includes("Files for the whole trip") && html.includes("Site map · everyone"));
+		assert.ok(html.includes("Ben's badge · for Ben"), "the Overview lists every file for the whole trip");
+		assert.ok(!html.includes("Unnamed flight pass"), "a file on a booking with a blank label is not the whole trip's");
+
+		planner().open_view("person", "E1");
+		await settle();
+		html = ui.drawn.join("\n");
+		assert.ok(html.includes('href="/private/files/ana-bp.pdf"'), "their boarding pass");
+		assert.ok(html.includes("Site map"), "the trip's file for everyone");
+		assert.ok(!html.includes("Ben's badge"), "not a trip file for someone else");
+		assert.ok(!html.includes("receipt.pdf"), "a receipt is money: never drawn");
+		assert.ok(html.includes("&as=E1&view=docs"), "a link to their phone's Documents screen");
+
+		planner().open_view("compare");
+		await settle();
+		assert.ok(ui.drawn.join("\n").includes("&#128196; 1"), "Side by side counts a booking's files");
 	});
 }
 

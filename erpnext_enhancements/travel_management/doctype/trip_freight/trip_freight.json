@@ -12,7 +12,6 @@
   "column_break_1",
   "ship_from",
   "deliver_to",
-  "attachment",
   "windows_section",
   "pickup_from",
   "pickup_to",
@@ -26,7 +25,9 @@
   "column_break_cost",
   "paid_by",
   "paid_by_traveler",
-  "expense_claim"
+  "attachment",
+  "expense_claim",
+  "booking_group"
  ],
  "fields": [
   {
@@ -71,11 +72,6 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Deliver To"
-  },
-  {
-   "fieldname": "attachment",
-   "fieldtype": "Attach",
-   "label": "BOL / Paperwork"
   },
   {
    "fieldname": "windows_section",
@@ -152,6 +148,12 @@
    "options": "Employee"
   },
   {
+   "description": "The receipt for this cost. Booking paperwork (a boarding pass, a confirmation, a rental agreement, a bill of lading) goes on its booking: Attach a file on that booking's card in Plan a Trip.",
+   "fieldname": "attachment",
+   "fieldtype": "Attach",
+   "label": "Receipt"
+  },
+  {
    "fieldname": "expense_claim",
    "fieldtype": "Link",
    "hidden": 1,
@@ -159,11 +161,19 @@
    "no_copy": 1,
    "options": "Expense Claim",
    "read_only": 1
+  },
+  {
+   "description": "One shipment's id, so a file (a bill of lading) can belong to it. Set by Plan a Trip.",
+   "fieldname": "booking_group",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Booking Group",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-09-23 15:00:00.000000",
+ "modified": "2026-09-26 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Trip Freight",

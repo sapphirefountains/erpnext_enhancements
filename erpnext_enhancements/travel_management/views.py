@@ -133,8 +133,8 @@ def booking_counts(doc):
 
 def build_money(doc, currency=None):
 	"""Coordinators only: what each booking cost and who paid, keyed exactly like the
-	itinerary items' ``group`` — a booking's ``booking_group`` (or ``row:<name>`` for a row
-	typed on the form) and ``row:<name>`` for a shipment.
+	itinerary items' ``group`` — the checklist's :func:`group_key`: a booking's or a
+	shipment's ``booking_group``, or ``row:<name>`` for a row typed on the form without one.
 
 	``cost`` is the sum of the booking's rows (one row per person, the total split across
 	them). ``paid_by`` is the first row's, as the page's cards read it; ``paid_by_name``
@@ -165,8 +165,10 @@ def build_money(doc, currency=None):
 		for row in _get(doc, table) or []:
 			add(group_key(row), row)
 	for row in _get(doc, "freight") or []:
-		# Trip Freight has no booking_group: one row is one shipment.
-		add(f"row:{_get(row, 'name')}", row)
+		# One row is one shipment; since trip files it has a booking_group of its own, and
+		# a row typed on the form before that is still row:<name>. group_key covers both,
+		# as shape_itinerary's freight items do.
+		add(group_key(row), row)
 
 	for entry in groups.values():
 		payers = entry.pop("_payers")
@@ -196,10 +198,11 @@ def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=
 	poi_cache = {}
 	whole = shape(doc, None, poi_cache=poi_cache)
 	people_list = crew(doc)
-	people = {
-		person["employee"]: shape(doc, person["employee"], poi_cache=poi_cache)["days"]
-		for person in people_list
-	}
+	people, people_documents = {}, {}
+	for person in people_list:
+		shaped = shape(doc, person["employee"], poi_cache=poi_cache)
+		people[person["employee"]] = shaped["days"]
+		people_documents[person["employee"]] = shaped.get("documents") or []
 
 	item_dates = [day["date"] for day in whole["days"]]
 	for days in people.values():
@@ -209,6 +212,9 @@ def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=
 	if not is_coordinator:
 		# "No cost entered" is itself a fact about money.
 		gaps = [gap for gap in gaps if gap.get("check") != "cost"]
+	# Paperwork gaps stay, for everyone: a booking's files are not money. They are the quieter
+	# tally (completeness.counted_gaps / files_not_attached), so the Overview counts them apart
+	# from "Still missing" and shows them muted, never as a red flag.
 
 	return {
 		"trip": whole["trip"],
@@ -226,6 +232,10 @@ def build_trip_views(doc, shape, is_coordinator, viewer_employee=None, currency=
 		"crew": people_list,
 		"whole": whole["days"],
 		"people": people,
+		# The trip's files, as shape_itinerary lists them (no receipts: a receipt is money):
+		# every file for the whole crew, and the ones each person sees on their /itinerary.
+		"documents": whole.get("documents") or [],
+		"people_documents": people_documents,
 		"bookings": booking_counts(doc),
 		"gaps": gaps,
 		# Built only for a coordinator: a non-coordinator's payload never holds a figure

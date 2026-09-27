@@ -43,6 +43,8 @@
   "itinerary",
   "agenda_map_section",
   "agenda_map_html",
+  "documents_tab",
+  "documents",
   "financials_tab",
   "totals_section",
   "total_estimated_cost",
@@ -288,6 +290,19 @@
    "label": "Agenda Map"
   },
   {
+   "fieldname": "documents_tab",
+   "fieldtype": "Tab Break",
+   "label": "Documents"
+  },
+  {
+   "description": "Files for the whole trip (site map, safety plan, insurance certificate, job packet), and the files Plan a Trip put on a booking. Everyone on the trip can open these. A row added here is always for the whole trip: attach a booking's paperwork (a boarding pass, a confirmation, a rental agreement, a bill of lading) from that booking's card on Plan a Trip. Receipts go on the cost row's Receipt, not here.",
+   "fieldname": "documents",
+   "fieldtype": "Table",
+   "label": "Trip Documents",
+   "no_copy": 1,
+   "options": "Trip Document"
+  },
+  {
    "fieldname": "financials_tab",
    "fieldtype": "Tab Break",
    "label": "Financials"
@@ -359,7 +374,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-23 15:00:00.000000",
+ "modified": "2026-09-26 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel Trip",

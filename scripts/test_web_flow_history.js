@@ -80,7 +80,18 @@
  *   - the whole-crew view gives each person on a shared booking their own number;
  *   - a stale response (or error) for a trip, or a person, no longer on screen is dropped;
  *   - while "Report a problem" is open its Back is its own, and the page follows the address
- *     only once the panel has answered.
+ *     only once the panel has answered;
+ *   - a booking row's `attachment` (its receipt: money) is never drawn, even from a stale
+ *     answer; each booking lists its files, a picture opening the viewer and anything else
+ *     (a PDF) opening in a new tab with no history write;
+ *   - "Documents" pushes `&view=docs` and lists the files for the person shown, the whole
+ *     trip's first; Back returns to the day list and Forward restores it, a person pick keeps
+ *     the screen, a trip chip drops it (and `&file=`), and a reload lands on it; "Day by day"
+ *     steps Back when the day list is the entry behind;
+ *   - a picture pushes `&file=`: Back closes the viewer and Forward reopens it, Close and
+ *     Escape go Back (or, opened straight from a link, rewrite the entry), a reload reopens
+ *     it, a file the answer does not list (or a PDF) is not opened, and nothing about the
+ *     viewer moves while "Report a problem" is open.
  *   /contract-sign
  *   - no history entry is ever added: signing and declining swap in place (declining no
  *     longer reloads into "This link isn't available");
@@ -154,12 +165,18 @@ class El {
 		return this.text + this.children.map((c) => c.textContent).join("");
 	}
 	set textContent(v) {
-		this.children = [];
+		this.detachChildren();
 		this.text = v == null ? "" : String(v);
 	}
 	set innerHTML(v) {
-		this.children = [];
+		this.detachChildren();
 		this.text = "";
+	}
+	detachChildren() {
+		this.children.forEach((c) => {
+			c.parentNode = null;
+		});
+		this.children = [];
 	}
 	get classList() {
 		const self = this;
@@ -181,6 +198,17 @@ class El {
 		this.children.push(c);
 		return c;
 	}
+	removeChild(c) {
+		this.children = this.children.filter((x) => x !== c);
+		c.parentNode = null;
+		return c;
+	}
+	// In the page: under a <body>. An element a redraw threw away is not.
+	get isConnected() {
+		let n = this;
+		while (n.parentNode) n = n.parentNode;
+		return n.tagName === "BODY";
+	}
 	setAttribute(k, v) {
 		this.attrs[k] = String(v);
 	}
@@ -199,7 +227,9 @@ class El {
 		this.env.browser.activation = true; // a tap: the licence for one push
 		this.dispatch("click");
 	}
-	focus() {}
+	focus() {
+		this.env.focused = this; // document.activeElement
+	}
 	getBoundingClientRect() {
 		return { width: 0, height: 0, left: 0, top: 0 };
 	}
@@ -222,11 +252,20 @@ function makeDocument(env, ids) {
 		head: new El("head", env),
 		createElement: (tag) => new El(tag, env),
 		getElementById: (id) => byId[id] || null,
+		get activeElement() {
+			return env.focused || null;
+		},
 		addEventListener(type, fn) {
 			(this.listeners[type] = this.listeners[type] || []).push(fn);
 		},
-		dispatch(type) {
-			(this.listeners[type] || []).slice().forEach((fn) => fn({ type }));
+		// `ev` for an event that carries more than its type (a keydown's `key`).
+		dispatch(type, ev) {
+			const event = Object.assign({ type, defaultPrevented: false }, ev || {});
+			event.preventDefault = () => {
+				event.defaultPrevented = true;
+			};
+			(this.listeners[type] || []).slice().forEach((fn) => fn(event));
+			return event;
 		},
 	};
 	for (const [id, init] of Object.entries(ids)) {
@@ -246,15 +285,19 @@ function makeDocument(env, ids) {
  * One tab's session history: the page before this one (`prev`), then the page under test.
  * `back()` / `forward()` are the browser's buttons (no activation); the page's own
  * `history.back()` is the same traversal. Leaving the document is recorded, never followed.
+ * `opts.behind` puts entries of this same page between the two ([{url, state}], oldest
+ * first): the page reloaded on an entry it had pushed, with the ones behind it still there.
  */
 function makeBrowser(url, opts) {
 	opts = opts || {};
+	const behind = (opts.behind || []).map((e) => ({ doc: "page", url: ORIGIN + e.url, state: clone(e.state) }));
 	const browser = {
 		entries: [
 			{ doc: "prev", url: ORIGIN + (opts.prevPath || "/pay"), state: null },
+			...behind,
 			{ doc: "page", url: ORIGIN + url, state: clone(opts.state) },
 		],
-		index: 1,
+		index: 1 + behind.length,
 		calls: [], // every pushState / replaceState: {kind, argc, url}
 		unactivated: 0,
 		activation: false,
@@ -1227,13 +1270,55 @@ const TRIPS = [
 
 const PEOPLE = { "EMP-1": "Pat", "EMP-2": "Sam", "EMP-3": "Alex", "EMP-4": "Dana" };
 
-// A shared flight: one booking, one row (and one PNR) per person.
+// Trip A's files (Trip Document rows): `traveler` "" is everyone on the booking, or the whole
+// crew when `group` is "" too (a trip-wide file). The trip-wide site map is listed LAST here, so
+// the Documents screen is seen to put "For the whole trip" first whatever order it is sent in.
+const TRIP_A_FILES = [
+	{ name: "TD-PASS-PAT", title: "Pat's boarding pass", kind: "Boarding pass", file: "/private/files/pat-pass.png", traveler: "EMP-1", group: "g1" },
+	{ name: "TD-PASS-SAM", title: "", kind: "Boarding pass", file: "/private/files/sam-pass.jpg", traveler: "EMP-2", group: "g1" },
+	{ name: "TD-CONF", title: "Southwest confirmation", kind: "Booking confirmation", file: "/private/files/wn1-confirmation.pdf", traveler: "", group: "g1" },
+	{ name: "TD-MAP", title: "Site map", kind: "Site map", file: "/private/files/site-map.pdf", traveler: "", group: "" },
+];
+const GROUP_PEOPLE = { g1: ["EMP-1", "EMP-2"] };
+const GROUP_LABELS = { g1: "Southwest WN 1" };
+const RECEIPT = "/private/files/wn1-receipt.pdf";
+
+// A Trip Document as get_trip_itinerary sends it (the contract's DOC).
+function tripDoc(f) {
+	const fileName = f.file.split("/").pop();
+	return {
+		name: f.name,
+		title: f.title || fileName,
+		kind: f.kind,
+		url: f.file,
+		file_name: fileName,
+		is_image: /\.(png|jpe?g|gif|webp|heic)$/i.test(fileName),
+		for_name: f.traveler ? PEOPLE[f.traveler] : null,
+		for_employee: f.traveler || null,
+		group: f.group || null,
+		booking_label: f.group ? GROUP_LABELS[f.group] : null,
+	};
+}
+
+// The contract's visibility rule: the whole crew sees every file; one person sees theirs, and a
+// file for everyone when it is trip-wide or on a booking they are on. `group` narrows to one
+// booking's files.
+function visibleFiles(viewing, group) {
+	return TRIP_A_FILES.filter(
+		(f) =>
+			(group === undefined || f.group === group) &&
+			(!viewing || f.traveler === viewing || (!f.traveler && (!f.group || GROUP_PEOPLE[f.group].includes(viewing))))
+	).map(tripDoc);
+}
+
+// A shared flight: one booking, one row (and one PNR) per person, with its files. `attachment`
+// is its receipt, which the server no longer sends: carried here as a stale answer would.
 function sharedFlight(viewing) {
 	const rows = [
 		{ employee: "EMP-1", ref: "PNR-PAT" },
 		{ employee: "EMP-2", ref: "PNR-SAM" },
 	];
-	const base = { type: "flight", date: iso(0), sort_time: "", airline: "Southwest", flight_number: "WN 1", departure_airport: "PHX", arrival_airport: "LAS", group: "g1" };
+	const base = { type: "flight", date: iso(0), sort_time: "", airline: "Southwest", flight_number: "WN 1", departure_airport: "PHX", arrival_airport: "LAS", group: "g1", attachment: RECEIPT, documents: visibleFiles(viewing, "g1") };
 	if (!viewing) {
 		const members = rows.map((r) => ({ employee: r.employee, employee_name: PEOPLE[r.employee], ref: r.ref }));
 		return [Object.assign({}, base, { booking_reference: "PNR-PAT, PNR-SAM", travelers: ["Pat", "Sam"], members, whole_crew: false })];
@@ -1248,7 +1333,17 @@ const SERVER_TRIPS = {
 	"TRIP-A": { crew: ["EMP-1", "EMP-2", "EMP-3"], days: (viewing) => {
 		const items = sharedFlight(viewing);
 		return items.length ? [{ date: iso(0), items }] : [];
-	} },
+	}, documents: (viewing) => visibleFiles(viewing) },
+	// A room Pat pays for and Sam shares as a guest for one night of it.
+	"TRIP-H": { purpose: "Trip H", start_date: iso(0), end_date: iso(2), crew: ["EMP-1", "EMP-2"], days: (viewing) => viewing ? [] : [
+		{ date: iso(0), items: [{
+			type: "hotel_checkin", date: iso(0), sort_time: "23:00", hotel: "Hampton Inn", address: "", booking_confirmation: "H-1", travelers: ["Pat", "Sam"], group: "h1", whole_crew: false,
+			members: [
+				{ employee: "EMP-1", employee_name: "Pat", ref: "H-1", guest: false },
+				{ employee: "EMP-2", employee_name: "Sam", ref: "H-1", guest: true, check_in_date: "2026-09-28", check_out_date: "2026-09-29" },
+			],
+		}] },
+	] },
 	"TRIP-B": { crew: ["EMP-1", "EMP-2"] },
 	"TRIP-C": { crew: ["EMP-1"] },
 	"TRIP-O": { crew: ["EMP-2", "EMP-3"] },
@@ -1281,6 +1376,8 @@ function serve(trip, as, viewer) {
 	else return refusal(417, "ValidationError", `${PEOPLE[as] || as} is not on this trip.`);
 	const crew = t.crew.map((e) => ({ employee: e, employee_name: PEOPLE[e], from_date: meta.start_date, to_date: meta.end_date, is_trip_lead: 0 }));
 	const message = Object.assign({ days: t.days ? t.days(viewing) : [] }, meta, { crew, viewing, viewer_employee: viewer || null, viewer_on_trip: onTrip });
+	// Only a trip with files sends `documents`: the page must manage without the key.
+	if (t.documents) message.documents = t.documents(viewing);
 	return { status: 200, body: { message } };
 }
 
@@ -1318,9 +1415,12 @@ function loadItinerary(url, opts) {
 	opts = opts || {};
 	const employee = "employee" in opts ? opts.employee : "EMP-1";
 	const env = {};
-	const browser = makeBrowser(url, { prevPath: "/desk", state: opts.state });
+	const browser = makeBrowser(url, { prevPath: "/desk", state: opts.state, behind: opts.behind });
 	env.browser = browser;
 	const document = makeDocument(env, { "itinerary-root": {} });
+	// The picture viewer is drawn into <body>, beside the root.
+	document.body = new El("body", env);
+	document.body.appendChild(document.byId["itinerary-root"]);
 	// frappe's readable cookies (a real browser always has a string here; the stand-in DOM has
 	// none unless a test gives it one).
 	if ("cookie" in opts) document.cookie = opts.cookie;
@@ -1415,6 +1515,50 @@ function loadItinerary(url, opts) {
 		has: (text) => root.textContent.includes(text),
 		text: texts,
 		urls: () => browser.calls.map((c) => `${c.kind} ${c.url}`),
+		view: () => new URL(browser.location.href).searchParams.get("view"),
+		file: () => new URL(browser.location.href).searchParams.get("file"),
+		// The screen tabs ("Day by day", "Documents (N)"), and a tap on the one starting `label`.
+		screens: () => texts("ti-screen-tab"),
+		onScreen: () => root.find("ti-screen-tab").filter((c) => c.classList.contains("active")).map((c) => c.textContent),
+		async screen(label) {
+			const tab = root.find("ti-screen-tab").find((c) => c.textContent.startsWith(label));
+			if (!tab) {
+				check(`the page offers the ${label} screen`, page.screens(), [label]);
+				return;
+			}
+			tab.click();
+			await flush();
+		},
+		days: () => root.find("ti-day").length,
+		docs: () => texts("ti-doc-title"),
+		docSubs: () => texts("ti-doc-sub"),
+		docGroups: () => texts("ti-doc-group-title"),
+		// A file's link, by its title as drawn.
+		doc: (title) => root.find("ti-doc").find((a) => a.find("ti-doc-title")[0].textContent === title) || null,
+		// Every link on the page, anywhere.
+		hrefs: () => {
+			const out = [];
+			const walk = (n) => n.children.forEach((c) => {
+				if (c.href) out.push(c.href);
+				walk(c);
+			});
+			walk(root);
+			return out;
+		},
+		viewer: () => document.body.find("ti-viewer")[0] || null,
+		viewerTitle: () => {
+			const v = document.body.find("ti-viewer")[0];
+			return v ? v.find("ti-viewer-title")[0].textContent : null;
+		},
+		async closeViewer() {
+			document.body.find("ti-viewer-close")[0].click();
+			await flush();
+		},
+		focused: () => env.focused || null,
+		async key(name) {
+			document.dispatch("keydown", { key: name });
+			await flush();
+		},
 	};
 	return page;
 }
@@ -1762,6 +1906,336 @@ async function testItinerary() {
 	check("...once it has closed, the address's trip is asked for again", p.pending(), ["TRIP-A", "TRIP-SECRET"]);
 	await p.answer("TRIP-SECRET");
 	check("...and that refusal replaces its entry", [p.urls().slice(1), p.browser.index], [["replace /itinerary?trip=TRIP-A"], 1]);
+
+	await testItineraryDocuments();
+}
+
+// The trip's files: on each booking's card, on the Documents screen (&view=docs), and pictures in
+// the viewer (&file=). Every screen and the viewer is an entry of its own.
+async function testItineraryDocuments() {
+	let p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	check(
+		"a booking row's attachment (its receipt, which is money) draws nothing, even from a stale answer that still sends one",
+		[p.has("Attachment"), p.hrefs().includes(RECEIPT)],
+		[false, false]
+	);
+	check("the flight lists its files for the person shown: their own boarding pass, and the one for everyone on it", p.docs(), ["Pat's boarding pass", "Southwest confirmation"]);
+	check("...each saying what it is, with no 'for <name>' on one person's own view", p.docSubs(), ["Boarding pass · Picture", "Booking confirmation · PDF"]);
+	check("the trip's two screens are offered, counting the files this person can see", [p.screens(), p.onScreen()], [["Day by day", "Documents (3)"], ["Day by day"]]);
+
+	const pdf = p.doc("Southwest confirmation");
+	check(
+		"a PDF is a link to the file that opens in a new tab (the phone's own viewer), never a download",
+		[pdf.href, pdf.target, pdf.rel, "download" in pdf.attrs],
+		["/private/files/wn1-confirmation.pdf", "_blank", "noopener", false]
+	);
+	pdf.click();
+	await p.browser.settle();
+	check("...and tapping it writes no history and opens no viewer", [p.urls(), p.viewer()], [["replace /itinerary?trip=TRIP-A"], null]);
+
+	const pass = p.doc("Pat's boarding pass");
+	check(
+		"a picture is a real link too (a long press still offers a new tab), marked as opening a dialog",
+		[pass.href, pass.target || null, pass.attrs["aria-haspopup"]],
+		["/private/files/pat-pass.png", null, "dialog"]
+	);
+	pass.focus(); // as a keyboard would reach it
+	pass.click();
+	await flush();
+	check("tapping a picture pushes one entry, &file=<document>", p.urls().slice(1), ["push /itinerary?trip=TRIP-A&file=TD-PASS-PAT"]);
+	check("...remembering the screen it was opened over", p.browser.history.state, {
+		itin_trip: "TRIP-A",
+		itin_as: null,
+		itin_file: "TD-PASS-PAT",
+		itin_from: { trip: "TRIP-A", as: null },
+	});
+	let v = p.viewer();
+	check("...and opens the viewer over the page, as a modal dialog", [!!v, v && v.attrs.role, v && v.attrs["aria-modal"], p.viewerTitle()], [true, "dialog", "true", "Pat's boarding pass"]);
+	check(
+		"...showing the picture itself, and 'Open original' in a new tab",
+		[v.find("ti-viewer-img")[0].src, v.find("ti-viewer-original")[0].href, v.find("ti-viewer-original")[0].target],
+		["/private/files/pat-pass.png", "/private/files/pat-pass.png", "_blank"]
+	);
+	check(
+		"...with focus on Close, and the page underneath out of reach",
+		[p.focused() === v.find("ti-viewer-close")[0], p.root.attrs.inert, p.root.attrs["aria-hidden"], p.document.body.classList.contains("ti-viewer-open")],
+		[true, "", "true", true]
+	);
+	v.find("ti-viewer-original")[0].focus();
+	v.dispatch("keydown", { key: "Tab" });
+	check("...and Tab stays inside it", p.focused() === v.find("ti-viewer-close")[0], true);
+	check("...fetching nothing", p.pending(), []);
+	p.browser.back();
+	await p.browser.settle();
+	check("Back closes it, fetching nothing and writing no history", [p.viewer(), p.file(), p.pending(), p.browser.calls.length], [null, null, [], 2]);
+	check(
+		"...handing focus back to the picture's link, and the page back",
+		[p.focused() === pass, p.root.attrs.inert || null, p.document.body.classList.contains("ti-viewer-open")],
+		[true, null, false]
+	);
+	p.browser.forward();
+	await p.browser.settle();
+	check("Forward reopens it", [p.viewerTitle(), p.file(), p.pending(), p.browser.calls.length], ["Pat's boarding pass", "TD-PASS-PAT", [], 2]);
+	const entries = p.browser.entries.length;
+	await p.closeViewer();
+	check("its Close button goes Back (history.back()), adding no entry, and shuts at once", [p.browser.calls.length, p.browser.tasks.length, p.viewer()], [2, 1, null]);
+	await p.browser.settle();
+	check("...leaving the picture's entry ahead for Forward", [p.file(), p.browser.index, p.browser.entries.length], [null, 1, entries]);
+	p.browser.forward();
+	await p.browser.settle();
+	await p.key("Escape");
+	check("Escape goes Back the same way", [p.browser.tasks.length, p.viewer()], [1, null]);
+	await p.browser.settle();
+	check("...onto the screen underneath", [p.file(), p.browser.index, p.browser.calls.length], [null, 1, 2]);
+
+	// "Report a problem" over the viewer: it owns Escape and Back, and the viewer does nothing.
+	p.browser.forward();
+	await p.browser.settle();
+	p.capture.open = true;
+	await p.key("Escape");
+	await p.closeViewer();
+	check(
+		"with 'Report a problem' open over the viewer, neither Escape nor Close touches the viewer or history",
+		[!!p.viewer(), p.browser.tasks.length, p.browser.calls.length],
+		[true, 0, 2]
+	);
+	p.capture.open = false;
+	await p.key("Escape");
+	await p.browser.settle();
+	check("...and once it has closed, Escape closes the viewer again", [p.viewer(), p.file()], [null, null]);
+	p.capture.open = true;
+	p.doc("Pat's boarding pass").click();
+	await flush();
+	check("...a picture tapped while the panel is open opens nothing", [p.viewer(), p.browser.calls.length], [null, 2]);
+	p.capture.open = false;
+
+	// The Documents screen.
+	await p.screen("Documents");
+	check("'Documents' pushes one entry, &view=docs, fetching nothing", [p.urls().slice(2), p.pending()], [["push /itinerary?trip=TRIP-A&view=docs"], []]);
+	check(
+		"...and lists every file this person can see: the whole trip's first, then each booking's",
+		[p.docGroups(), p.docs()],
+		[["For the whole trip", "Southwest WN 1"], ["Site map", "Pat's boarding pass", "Southwest confirmation"]]
+	);
+	check("...on a screen of its own, named in the page title", [p.onScreen(), p.days(), p.document.title], [["Documents (3)"], 0, "Documents – My Itinerary"]);
+	p.browser.back();
+	await p.browser.settle();
+	check("Back returns to the day list, fetching nothing", [p.view(), p.onScreen(), p.days(), p.pending(), p.browser.calls.length], [null, ["Day by day"], 1, [], 3]);
+	p.browser.forward();
+	await p.browser.settle();
+	check("Forward restores the Documents screen", [p.view(), p.onScreen(), p.pending()], ["docs", ["Documents (3)"], []]);
+	p.doc("Pat's boarding pass").click();
+	await flush();
+	check("a picture opened from the Documents screen is over it: &view=docs&file=", p.urls().slice(-1), ["push /itinerary?trip=TRIP-A&view=docs&file=TD-PASS-PAT"]);
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back leaves the Documents screen showing", [p.viewer(), p.view(), p.onScreen()], [null, "docs", ["Documents (3)"]]);
+	await p.screen("Day by day");
+	check(
+		"'Day by day' goes Back to the day list the Documents screen was opened from, adding no entry",
+		[p.browser.calls.length, p.browser.tasks.length, p.days()],
+		[4, 1, 1]
+	);
+	await p.browser.settle();
+	check("...so the Documents screen is still ahead for Forward", [p.view(), p.browser.index, p.browser.entries.length], [null, 1, 4]);
+
+	// People and trips.
+	await p.screen("Documents");
+	await p.pick("Sam");
+	check("picking a person keeps the Documents screen: &as=&view=docs", p.urls().slice(-2), ["push /itinerary?trip=TRIP-A&view=docs", "push /itinerary?trip=TRIP-A&as=EMP-2&view=docs"]);
+	await p.answer("TRIP-A");
+	check("...showing their files (a file with no title goes by its file name)", [p.onScreen(), p.docs()], [["Documents (3)"], ["Site map", "sam-pass.jpg", "Southwest confirmation"]]);
+	await p.pick("Whole crew");
+	await p.answer("TRIP-A");
+	check(
+		"the whole crew has every file, each saying who it is for",
+		[p.docs(), p.docSubs()],
+		[
+			["Site map", "Pat's boarding pass", "sam-pass.jpg", "Southwest confirmation"],
+			["PDF", "Boarding pass · for Pat · Picture", "Boarding pass · for Sam · Picture", "Booking confirmation · PDF"],
+		]
+	);
+	await p.pick("Alex");
+	await p.answer("TRIP-A");
+	check("someone on none of the bookings has only the whole trip's", [p.screens(), p.docs()], [["Day by day", "Documents (1)"], ["Site map"]]);
+	p.browser.back();
+	await p.browser.settle();
+	check("Back returns to the person before, on the Documents screen", [p.as(), p.view(), p.asked()], ["crew", "docs", [["TRIP-A", "crew"]]]);
+	await p.answer("TRIP-A");
+	await p.tap("Trip B");
+	check("a trip chip drops ?as=, ?view= and ?file=", p.urls().slice(-1), ["push /itinerary?trip=TRIP-B"]);
+	await p.answer("TRIP-B");
+	check("...opening that trip day by day, with no screens offered when it has no files", [p.view(), p.screens(), p.days()], [null, [], 0]);
+	p.browser.back();
+	await p.browser.settle();
+	check("Back from it returns to the Documents screen of the trip before", [p.trip(), p.view(), p.asked()], ["TRIP-A", "docs", [["TRIP-A", "crew"]]]);
+	await p.answer("TRIP-A");
+	check("...drawn as it was", p.onScreen(), ["Documents (4)"]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+
+	// Back or Forward onto another trip with the viewer open shuts it.
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	await p.tap("Trip B");
+	await p.answer("TRIP-B");
+	await p.tap("Trip A");
+	await p.answer("TRIP-A");
+	p.doc("Pat's boarding pass").click();
+	await flush();
+	p.browser.traverse(-2);
+	await p.browser.settle();
+	check("Back two entries at once, onto another trip, shuts the viewer and loads that trip", [p.viewer(), p.pending(), p.browser.calls.length], [null, ["TRIP-B"], 4]);
+	await p.answer("TRIP-B");
+
+	// Reloads and links.
+	p = loadItinerary("/itinerary?trip=TRIP-A&view=docs");
+	check("a reload of the Documents screen touches no history", p.browser.calls, []);
+	await p.answer("TRIP-A");
+	check("...and lands on it", [p.onScreen(), p.docGroups()], [["Documents (3)"], ["For the whole trip", "Southwest WN 1"]]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&view=docs&file=TD-PASS-PAT", {
+		behind: [{ url: "/itinerary?trip=TRIP-A&view=docs", state: { itin_trip: "TRIP-A", itin_as: null, itin_view: "docs" } }],
+		state: { itin_trip: "TRIP-A", itin_as: null, itin_view: "docs", itin_file: "TD-PASS-PAT", itin_from: { trip: "TRIP-A", as: null, view: "docs" } },
+	});
+	check("a reload of a picture's entry draws no viewer before the answer, and touches no history", [p.viewer(), p.browser.calls], [null, []]);
+	await p.answer("TRIP-A");
+	check("...then reopens it over its screen", [p.viewerTitle(), p.onScreen()], ["Pat's boarding pass", ["Documents (3)"]]);
+	await p.closeViewer();
+	await p.browser.settle();
+	check(
+		"...and Close goes Back onto that screen's entry, still behind it",
+		[p.viewer(), p.browser.left, p.browser.index, p.view(), p.file(), p.browser.calls],
+		[null, null, 1, "docs", null, []]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&file=TD-PASS-PAT");
+	await p.answer("TRIP-A");
+	check("a link straight to a picture opens it", p.viewerTitle(), "Pat's boarding pass");
+	v = p.viewer();
+	v.find("ti-viewer-img")[0].dispatch("error");
+	check("...and a picture this browser cannot draw (a HEIC photo off an iPhone) says so, keeping Open original", [p.document.body.find("ti-viewer-error").length, v.find("ti-viewer-original").length], [1, 1]);
+	await p.closeViewer();
+	await p.browser.settle();
+	check(
+		"...with nothing of the page's behind it, Close does not leave the page: the entry stops naming the file",
+		[p.viewer(), p.browser.left, p.urls()],
+		[null, null, ["replace /itinerary?trip=TRIP-A"]]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-2&file=TD-PASS-PAT");
+	await p.answer("TRIP-A");
+	check("a picture the person shown cannot see (Pat's pass, on Sam's view) is not opened, and nothing is written", [p.viewer(), p.browser.calls], [null, []]);
+	await p.screen("Documents");
+	check("...and the next entry written drops it", p.urls(), ["push /itinerary?trip=TRIP-A&as=EMP-2&view=docs"]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A&file=TD-CONF");
+	await p.answer("TRIP-A");
+	check("a PDF named as the picture is never drawn in the viewer", [p.viewer(), p.browser.calls], [null, []]);
+
+	const other = (name, title, url) => ({ name, title, kind: "Other", url, file_name: "x.pdf", is_image: false, for_name: null, booking_label: null });
+	p = loadItinerary("/itinerary?trip=TRIP-A&view=docs");
+	p.session.next = {
+		status: 200,
+		body: { message: {
+			trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(-1), end_date: iso(1), days: [], crew: [], viewing: null,
+			documents: [other("TD-JS", "Script", "javascript:alert(1)"), other("TD-PR", "Elsewhere", "//evil.example/x.pdf"), other("TD-OK", "Good", "/files/ok.pdf")],
+		} },
+	};
+	await p.answer("TRIP-A");
+	check(
+		"a file whose address is neither this site's path nor a web address is never made a link",
+		[p.docs(), p.hrefs().filter((h) => h !== "/travel_guidelines"), p.screens()],
+		[["Good"], ["/files/ok.pdf"], ["Day by day", "Documents (1)"]]
+	);
+
+	// A file's booking is its `group`, not its label: two rooms at one hotel are two bookings,
+	// and a booking with no name yet is still not the whole trip.
+	const onBooking = (name, group, label) => Object.assign(other(name, name, "/files/" + name + ".pdf"), { group, booking_label: label });
+	p = loadItinerary("/itinerary?trip=TRIP-A&view=docs");
+	p.session.next = {
+		status: 200,
+		body: { message: {
+			trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(-1), end_date: iso(1), days: [], crew: [], viewing: null,
+			documents: [onBooking("room-1", "r1", "Hampton Inn"), onBooking("room-2", "r2", "Hampton Inn"), onBooking("unnamed", "r3", null), onBooking("map", null, null)],
+		} },
+	};
+	await p.answer("TRIP-A");
+	check(
+		"the Documents screen groups files by booking, whatever the bookings are called",
+		[p.docGroups(), p.docs()],
+		[["For the whole trip", "Hampton Inn", "Hampton Inn", "Booking"], ["map", "room-1", "room-2", "unnamed"]]
+	);
+
+	// Two rooms at one hotel (one adult to a room, the policy): the headings say whose room each
+	// is on the whole crew's list, and when on one person's, rather than one name twice.
+	const room = (name, group, people, dates) => Object.assign(onBooking(name, group, "Hampton Inn"), { booking_people: people, booking_dates: dates });
+	const rooms = (viewing, docs) => ({
+		status: 200,
+		body: { message: {
+			trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(-1), end_date: iso(1), days: [], viewing,
+			crew: ["EMP-1", "EMP-2", "EMP-3"].map((e) => ({ employee: e, employee_name: PEOPLE[e] })),
+			documents: docs,
+		} },
+	});
+	const shortDay = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=crew&view=docs");
+	p.session.next = rooms(null, [
+		room("room-pat", "r1", ["Pat"], ["2026-09-28", "2026-09-30"]),
+		Object.assign(room("room-sam", "r2", ["Sam"], ["2026-09-28", "2026-09-30"]), { url: "/files/room-sam.png", file_name: "room-sam.png", is_image: true }),
+		room("room-crew", "r3", [], ["2026-09-28", "2026-09-30"]),
+		Object.assign(onBooking("rental", "g4", "Enterprise"), { booking_people: ["Pat"], booking_dates: ["2026-09-28", null] }),
+	]);
+	await p.answer("TRIP-A");
+	check(
+		"...on the whole crew's list, by who is in each (a label nobody else has is left alone)",
+		p.docGroups(),
+		["Hampton Inn · Pat", "Hampton Inn · Sam", "Hampton Inn · Whole crew", "Enterprise"]
+	);
+	p.doc("room-sam").click();
+	await flush();
+	check("...and so does the picture viewer's line under a file's name", p.document.body.find("ti-viewer-sub").map((e) => e.textContent), ["Other · Hampton Inn · Sam"]);
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-2&view=docs");
+	p.session.next = rooms("EMP-2", [
+		room("first-night", "r1", undefined, ["2026-09-28", "2026-09-29"]),
+		room("second-night", "r2", undefined, ["2026-09-29", "2026-09-30"]),
+	]);
+	await p.answer("TRIP-A");
+	check(
+		"...and by when on one person's (a split stay)",
+		p.docGroups(),
+		[`Hampton Inn · ${shortDay("2026-09-28")} – ${shortDay("2026-09-29")}`, `Hampton Inn · ${shortDay("2026-09-29")} – ${shortDay("2026-09-30")}`]
+	);
+
+	p = loadItinerary("/itinerary?trip=TRIP-B&view=docs");
+	await p.answer("TRIP-B");
+	check(
+		"the Documents screen of a trip with no files (an answer with no `documents` at all) says so, for the person shown, and still offers the day list",
+		[p.empty(), p.screens()],
+		[["No files for you on this trip yet."], ["Day by day", "Documents (0)"]]
+	);
+	await p.screen("Day by day");
+	check("...which, with nothing of the page's behind it, is a new entry", [p.urls(), p.days(), p.screens()], [["push /itinerary?trip=TRIP-B"], 0, []]);
+
+	// One person's list leaves out what is not theirs: it never says the trip has none.
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=EMP-3&view=docs");
+	p.session.next = rooms("EMP-3", []);
+	await p.answer("TRIP-A");
+	check("someone else's empty list says whose it is, not that the trip has no documents", p.empty(), ["No files for Alex on this trip yet."]);
+	p = loadItinerary("/itinerary?trip=TRIP-A&as=crew&view=docs");
+	p.session.next = rooms(null, []);
+	await p.answer("TRIP-A");
+	check("...and only the whole crew's says the trip has none", p.empty(), ["No documents for this trip yet."]);
+
+	// Room guests on the whole crew's view.
+	const day = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+	p = loadItinerary("/itinerary?trip=TRIP-H&as=crew", { trips: [] });
+	await p.answer("TRIP-H");
+	check(
+		"the whole crew's room card marks a guest, with their own nights",
+		p.text("ti-member-note"),
+		[`guest · ${day("2026-09-28")} – ${day("2026-09-29")}`]
+	);
 }
 
 // ---------------------------------------------------------------------------- /contract-sign

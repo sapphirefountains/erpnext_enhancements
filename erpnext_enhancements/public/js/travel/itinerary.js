@@ -26,11 +26,29 @@
  * gets its own small map with that day's POI stops. "Open in Maps" deep links
  * are the no-tiles fallback.
  *
- * Back / Forward: what is on screen is in the address as ?trip=<name>&as=<who>
- * (same path, so a reload, Back from /travel_guidelines and the login redirect all
- * keep it). A trip chip tap or a person pick pushes one entry, from the tap itself
- * (a trip chip drops ?as=: another trip opens on its default view); Back and Forward
- * arrive as popstate and load that entry's trip and person without pushing. The
+ * Documents (Trip Document rows, Plan a Trip's uploads): a booking's files — a boarding
+ * pass, a hotel confirmation, a rental agreement, a bill of lading — are listed on its
+ * card, and the Documents screen (?view=docs) lists every file this person can see: "For
+ * the whole trip" first (a site map, a safety plan, an insurance certificate), then each
+ * booking's. The server decides which files those are (get_trip_itinerary's `documents`,
+ * on each booking and at the top): one person's view has the files for them, plus the
+ * ones for everyone on a booking they are on or on the whole trip; the whole crew has
+ * them all. A receipt is money, so none is ever sent. A booking row's own `attachment` is
+ * its receipt now and has left the answer; a stale answer that still carries one draws
+ * nothing. A picture opens in the viewer over the page (&file=<Trip Document>, big enough
+ * to show a boarding pass at the gate). Anything else, a PDF say, opens in a new tab,
+ * which on a phone is the phone's own viewer. Never an iframe: iOS shows only the first
+ * page of a PDF in one.
+ *
+ * Back / Forward: what is on screen is in the address as
+ * ?trip=<name>&as=<who>&view=docs&file=<document> (same path, so a reload, Back from
+ * /travel_guidelines and the login redirect all keep it). A trip chip tap, a person pick,
+ * "Documents" and a picture each push one entry, from the tap itself. A trip chip drops
+ * ?as=, ?view= and ?file=, so another trip opens on its default view; a person pick keeps
+ * the screen. Back and Forward arrive as popstate and load that entry's trip and person
+ * without pushing, or only redraw its screen and picture when those are all that changed.
+ * The viewer's Close and Escape, and "Day by day" on the Documents screen, go Back when
+ * the entry behind is exactly where they lead, so no copy of it is left in between. The
  * entry the page opened on is replaced only when ?trip= is missing, or when the
  * server refuses it (someone else's trip, a deleted one, a person no longer on it),
  * never pushed, so Back from it leaves the page. A refused entry the page pushed
@@ -38,7 +56,8 @@
  * two entries in a row are the same (see loadFailed). Signed out since the page
  * loaded is not a refusal: the address stays, and the page offers to sign in again.
  * "Report a problem" (capture/panel.js) owns its own entry: popstate is left to it
- * while window.ee_capture.isOpen(), and so is every history write.
+ * while window.ee_capture.isOpen(), and so is every history write. The viewer does
+ * nothing while the panel is open, Escape included: the panel is on top of it.
  */
 (function () {
 	'use strict';
@@ -52,6 +71,10 @@
 		currentTrip: null,
 		// '' = the server's default view, 'crew' = the whole crew, else an employee id.
 		currentAs: '',
+		// '' = the day-by-day screen, 'docs' = the Documents screen.
+		currentView: '',
+		// The Trip Document open in the picture viewer, '' for none. Only a picture opens there.
+		currentFile: '',
 		itinerary: null,
 		// The server refused the trip on screen and there is no trip of their own to fall back on.
 		denied: false,
@@ -268,7 +291,7 @@
 				(item.arrival_time ? ' – ' + fmtTime(item.arrival_time) : '');
 			card.appendChild(times);
 			appendWhoAndRefs(card, item, 'PNR', item.booking_reference);
-			appendAttachment(card, item.attachment);
+			appendDocuments(card, item.documents);
 			return card;
 		},
 		hotel_checkin: function (item) { return hotelCard(item, 'Check-in'); },
@@ -289,7 +312,7 @@
 			}
 			if (item.cargo) card.appendChild(el('div', 'ti-notes', 'Hauling: ' + item.cargo));
 			appendWhoAndRefs(card, item, 'Confirmation', item.booking_reference);
-			appendAttachment(card, item.attachment);
+			appendDocuments(card, item.documents);
 			return card;
 		},
 		freight: function (item) {
@@ -310,7 +333,7 @@
 			}
 			if (item.received_by) card.appendChild(el('div', 'ti-card-sub', 'Received by ' + item.received_by));
 			appendRef(card, 'Tracking', item.tracking_number);
-			appendAttachment(card, item.attachment);
+			appendDocuments(card, item.documents);
 			return card;
 		},
 		agenda: function (item) {
@@ -343,7 +366,7 @@
 		if (item.address) sub.push(item.address);
 		if (sub.length) card.appendChild(el('div', 'ti-card-sub', sub.join(' · ')));
 		appendWhoAndRefs(card, item, 'Confirmation', item.booking_confirmation);
-		appendAttachment(card, item.attachment);
+		appendDocuments(card, item.documents);
 		return card;
 	}
 
@@ -366,6 +389,8 @@
 			var row = el('div', 'ti-member');
 			row.appendChild(el('span', 'ti-member-name',
 				member.employee ? (member.employee_name || member.employee) : 'Everyone'));
+			var note = memberNote(member);
+			if (note) row.appendChild(el('span', 'ti-member-note', note));
 			if (member.ref) {
 				row.appendChild(el('span', 'ti-member-ref', label + ': ' + member.ref));
 				row.appendChild(copyButton(member.ref));
@@ -380,26 +405,433 @@
 		card.appendChild(el('div', 'ti-card-sub', 'With: ' + item.travelers.join(', ')));
 	}
 
-	function appendAttachment(card, fileUrl) {
-		if (!fileUrl) return;
-		var link = el('a', 'ti-attachment', '📎 Attachment');
-		link.href = fileUrl;
-		link.target = '_blank';
-		link.rel = 'noopener';
-		card.appendChild(link);
+	// A room guest (someone staying in another person's room, Trip Accommodation `guest`), and
+	// anyone whose own nights in a room are not the booking's: "guest · Mon, Sep 28 – Tue, Sep 29".
+	// The server sends both on the whole-crew view only, and the dates only where they differ.
+	function memberNote(member) {
+		var bits = [];
+		if (member.guest) bits.push('guest');
+		var nights = [member.check_in_date, member.check_out_date].filter(Boolean).map(function (iso) {
+			return fmtDate(String(iso).slice(0, 10));
+		});
+		if (nights.length) bits.push(nights.join(' – '));
+		return bits.join(' · ');
+	}
+
+	// -- Documents -------------------------------------------------------------
+	// Trip Document kinds (the Select's options), each with its icon. Anything else is a page.
+	var KIND_ICONS = {
+		'Boarding pass': '🎫',
+		'Booking confirmation': '📋',
+		'Rental agreement': '🔑',
+		'Bill of lading': '📦',
+		'Site map': '🗺',
+		'Safety plan': '🦺',
+		'Insurance certificate': '🛡',
+		'Job packet': '🗂',
+	};
+
+	function kindIcon(kind) {
+		return Object.prototype.hasOwnProperty.call(KIND_ICONS, kind) ? KIND_ICONS[kind] : '📄';
+	}
+
+	function docTitle(doc) {
+		return doc.title || doc.file_name || doc.kind || 'Document';
+	}
+
+	// "Picture" for anything the viewer opens, else the file's extension ("PDF").
+	function fileType(doc) {
+		if (doc.is_image) return 'Picture';
+		var match = String(doc.file_name || doc.url || '').match(/\.([a-z0-9]{1,5})(?:[?#].*)?$/i);
+		return match ? match[1].toUpperCase() : 'File';
+	}
+
+	// The documents in an answer that can be opened: a row with no file has nothing to show. A
+	// file's address goes into a link, so it must be one of this site's paths or a web address,
+	// never a `javascript:` one (frappe's File refuses those too; this page does not rely on it).
+	function openable(docs) {
+		return (Array.isArray(docs) ? docs : []).filter(function (doc) {
+			return doc && typeof doc.url === 'string' && /^(\/(?!\/)|https?:\/\/)/i.test(doc.url);
+		});
+	}
+
+	// Every file this person can see: the answer's own list, or, from an answer without one, each
+	// booking's, once each.
+	function tripDocuments(itinerary) {
+		if (!itinerary) return [];
+		if (Array.isArray(itinerary.documents)) return openable(itinerary.documents);
+		var out = [];
+		var seen = {};
+		(itinerary.days || []).forEach(function (day) {
+			(day.items || []).forEach(function (item) {
+				openable(item.documents).forEach(function (doc) {
+					if (seen['d:' + doc.name]) return;
+					seen['d:' + doc.name] = true;
+					out.push(doc);
+				});
+			});
+		});
+		return out;
+	}
+
+	function findDocument(name) {
+		var docs = tripDocuments(state.itinerary);
+		for (var i = 0; i < docs.length; i++) {
+			if (docs[i].name === name) return docs[i];
+		}
+		return null;
+	}
+
+	// One file, as a big tap target (a boarding pass is shown at the gate): its kind's icon, its
+	// title, then its kind, who it is for (on the whole-crew view) and what sort of file it is. A
+	// picture opens in the viewer over the page; anything else opens in a new tab, which on a
+	// phone is its own viewer. Both are real links, so a long press or a Ctrl+click still offers
+	// the browser's own "open in new tab".
+	function docLink(doc) {
+		var link = el('a', 'ti-doc');
+		link.href = doc.url;
+		link.setAttribute('data-doc', doc.name);
+		var icon = el('span', 'ti-doc-icon', kindIcon(doc.kind));
+		icon.setAttribute('aria-hidden', 'true');
+		link.appendChild(icon);
+		var title = docTitle(doc);
+		var body = el('span', 'ti-doc-body');
+		body.appendChild(el('span', 'ti-doc-title', title));
+		var sub = [];
+		if (doc.kind && doc.kind !== title) sub.push(doc.kind);
+		if (doc.for_name && shownAs() === 'crew') sub.push('for ' + doc.for_name);
+		sub.push(fileType(doc));
+		body.appendChild(el('span', 'ti-doc-sub', sub.join(' · ')));
+		link.appendChild(body);
+		var go = el('span', 'ti-doc-go', doc.is_image ? 'View' : 'Open ↗');
+		go.setAttribute('aria-hidden', 'true');
+		link.appendChild(go);
+		if (doc.is_image) {
+			link.setAttribute('aria-haspopup', 'dialog');
+			link.addEventListener('click', function (ev) {
+				// A click asking for a new tab or a download is the browser's to answer.
+				if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || (ev.button && ev.button !== 0)) return;
+				ev.preventDefault();
+				openPicture(doc);
+			});
+		} else {
+			link.target = '_blank';
+			link.rel = 'noopener';
+			link.appendChild(el('span', 'ti-sr-only', ' (opens in a new tab)'));
+		}
+		return link;
+	}
+
+	function appendDocuments(card, docs) {
+		var list = openable(docs);
+		if (!list.length) return;
+		var box = el('div', 'ti-docs');
+		list.forEach(function (doc) { box.appendChild(docLink(doc)); });
+		card.appendChild(box);
+	}
+
+	// "Day by day" and "Documents (N)", the trip's two screens. Drawn when there is a file to
+	// show, and always on the Documents screen, so a reload of one whose files have since gone
+	// still has a way back.
+	function appendScreens(count) {
+		if (!count && state.currentView !== 'docs') return;
+		var nav = el('div', 'ti-screens');
+		nav.setAttribute('role', 'group');
+		nav.setAttribute('aria-label', 'Screen');
+		[
+			{ view: '', label: 'Day by day' },
+			{ view: 'docs', label: 'Documents (' + count + ')' },
+		].forEach(function (screen) {
+			var on = screen.view === state.currentView;
+			var tab = el('button', 'ti-screen-tab' + (on ? ' active' : ''), screen.label);
+			tab.setAttribute('aria-pressed', on ? 'true' : 'false');
+			tab.addEventListener('click', function () { openScreen(screen.view); });
+			nav.appendChild(tab);
+		});
+		root.appendChild(nav);
+	}
+
+	// A file's booking, as the Documents screen groups it: its `group` (null for the whole
+	// trip's), else its label from an answer that has no group.
+	function bookingKey(doc) {
+		return doc.group ? 'g:' + doc.group : (doc.booking_label ? 'l:' + doc.booking_label : '');
+	}
+
+	// Who is on a booking ("Ann Rivera, Bo"; "Whole crew") and when ("Mon, Oct 5 – Thu, Oct 8"),
+	// from what the server sends with each of its files. '' when it sent nothing.
+	function bookingPeople(doc) {
+		if (!Array.isArray(doc.booking_people)) return '';
+		return doc.booking_people.length ? doc.booking_people.join(', ') : 'Whole crew';
+	}
+
+	function bookingDates(doc) {
+		var dates = Array.isArray(doc.booking_dates) ? doc.booking_dates : [];
+		return dates.filter(function (iso) { return typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso); })
+			.map(fmtDate).join(' – ');
+	}
+
+	// What each booking is called on the Documents screen, {bookingKey: heading}. Usually its
+	// label. Two bookings can be called the same: the policy is one adult to a room, so four
+	// rooms at one hotel are four bookings named after it, each with a confirmation for nobody
+	// in particular. Those say who is on each on the whole crew's list, and when on one
+	// person's (theirs: a split stay), and when as well if who is the same.
+	function bookingHeadings(docs) {
+		var groups = [];
+		var seen = {};
+		docs.forEach(function (doc) {
+			var key = bookingKey(doc);
+			if (!key || seen[key]) return;
+			seen[key] = true;
+			groups.push({ key: key, doc: doc, heading: doc.booking_label || 'Booking' });
+		});
+		var crew = shownAs() === 'crew';
+		var tell = function (describe) {
+			var count = {};
+			groups.forEach(function (g) { count[g.heading] = (count[g.heading] || 0) + 1; });
+			groups.forEach(function (g) {
+				var more = count[g.heading] > 1 ? describe(g.doc) : '';
+				if (more) g.heading += ' · ' + more;
+			});
+		};
+		if (crew) tell(bookingPeople);
+		tell(bookingDates);
+		var out = {};
+		groups.forEach(function (g) { out[g.key] = g.heading; });
+		return out;
+	}
+
+	// What an empty Documents screen says. A person's own list leaves out what is not theirs,
+	// so "no documents for this trip" would be false beside the whole crew's ten.
+	function noDocumentsText() {
+		var as = shownAs();
+		if (as === 'crew') return 'No documents for this trip yet.';
+		var me = (state.people && state.people.viewer) || BOOT.employee || null;
+		if (as === me) return 'No files for you on this trip yet.';
+		var name = personName(as);
+		return name ? 'No files for ' + name + ' on this trip yet.' : 'No files on this view yet.';
+	}
+
+	// The Documents screen: "For the whole trip" first, then each booking's files under its
+	// name, in the order the answer lists them (the itinerary's). A file's booking is its
+	// `group` (null for the whole trip's), not its label: two rooms at the same hotel are two
+	// bookings, and a booking's label can be blank (bookingHeadings tells them apart).
+	function renderDocuments(docs) {
+		if (!docs.length) {
+			root.appendChild(el('div', 'ti-empty', noDocumentsText()));
+			return;
+		}
+		var groups = [];
+		docs.forEach(function (doc) {
+			var key = bookingKey(doc);
+			var group = null;
+			for (var i = 0; i < groups.length; i++) {
+				if (groups[i].key === key) group = groups[i];
+			}
+			if (!group) {
+				group = { key: key, docs: [] };
+				groups.push(group);
+			}
+			group.docs.push(doc);
+		});
+		groups.sort(function (a, b) { return (a.key ? 1 : 0) - (b.key ? 1 : 0); });
+		var headings = bookingHeadings(docs);
+		groups.forEach(function (group) {
+			var section = el('section', 'ti-doc-group');
+			section.appendChild(el('h2', 'ti-doc-group-title',
+				group.key ? headings[group.key] : 'For the whole trip'));
+			var list = el('div', 'ti-docs');
+			group.docs.forEach(function (doc) { list.appendChild(docLink(doc)); });
+			section.appendChild(list);
+			root.appendChild(section);
+		});
+	}
+
+	// -- Picture viewer ----------------------------------------------------------
+	// Drawn over the page, outside #itinerary-root, from the state: open while the address
+	// names a picture this person can see, shut otherwise. A name the answer does not have (a
+	// file since removed, one for someone else, a PDF) is dropped and nothing opens. The address
+	// keeps it until the next entry is written, which does not carry it.
+	var viewer = null; // {node, doc, close, original, returnFocus}
+
+	function syncViewer() {
+		var doc = null;
+		if (state.currentFile && state.itinerary) {
+			doc = findDocument(state.currentFile);
+			if (!doc || !doc.is_image) {
+				doc = null;
+				state.currentFile = '';
+			}
+		}
+		if (viewer && (!doc || viewer.doc.name !== doc.name)) shutViewer();
+		if (doc && !viewer) drawViewer(doc);
+	}
+
+	function drawViewer(doc) {
+		var host = document.body;
+		if (!host) return;
+		var returnFocus = document.activeElement || null;
+		var title = docTitle(doc);
+		var box = el('div', 'ti-viewer');
+		box.setAttribute('role', 'dialog');
+		box.setAttribute('aria-modal', 'true');
+		box.setAttribute('aria-labelledby', 'ti-viewer-title');
+
+		var bar = el('div', 'ti-viewer-bar');
+		var heading = el('div', 'ti-viewer-heading');
+		var name = el('div', 'ti-viewer-title', title);
+		name.id = 'ti-viewer-title';
+		heading.appendChild(name);
+		var sub = [];
+		if (doc.kind && doc.kind !== title) sub.push(doc.kind);
+		if (doc.for_name) sub.push('for ' + doc.for_name);
+		// Its booking as the Documents screen names it: which of four rooms at one hotel.
+		if (bookingKey(doc)) sub.push(bookingHeadings(tripDocuments(state.itinerary))[bookingKey(doc)] || doc.booking_label);
+		if (sub.length) heading.appendChild(el('div', 'ti-viewer-sub', sub.join(' · ')));
+		bar.appendChild(heading);
+		var close = el('button', 'ti-viewer-close', 'Close');
+		close.setAttribute('type', 'button');
+		close.addEventListener('click', function () { closePicture(); });
+		bar.appendChild(close);
+		box.appendChild(bar);
+
+		var stage = el('div', 'ti-viewer-stage');
+		var img = el('img', 'ti-viewer-img');
+		img.alt = title;
+		// A picture this browser cannot draw (a HEIC photo anywhere but Safari), or a sign-in
+		// that has run out: say so, and leave "Open original".
+		img.addEventListener('error', function () {
+			stage.textContent = '';
+			stage.appendChild(el('div', 'ti-viewer-error', 'This picture can\'t be shown here. Try Open original.'));
+		});
+		img.src = doc.url;
+		stage.appendChild(img);
+		box.appendChild(stage);
+
+		var foot = el('div', 'ti-viewer-foot');
+		var original = el('a', 'ti-viewer-original', 'Open original');
+		original.href = doc.url;
+		original.target = '_blank';
+		original.rel = 'noopener';
+		foot.appendChild(original);
+		box.appendChild(foot);
+
+		// Tab stays inside: Close and "Open original" are all there is.
+		box.addEventListener('keydown', function (ev) {
+			if (ev.key !== 'Tab') return;
+			var active = document.activeElement;
+			if (ev.shiftKey && active === close) {
+				ev.preventDefault();
+				focusOn(original);
+			} else if (!ev.shiftKey && active === original) {
+				ev.preventDefault();
+				focusOn(close);
+			}
+		});
+
+		host.appendChild(box);
+		host.classList.add('ti-viewer-open');
+		// The page underneath is out of reach until the viewer closes (inert where the browser
+		// has it, hidden from screen readers either way).
+		root.setAttribute('inert', '');
+		root.setAttribute('aria-hidden', 'true');
+		viewer = { node: box, doc: doc, close: close, original: original, returnFocus: returnFocus };
+		focusOn(close);
+	}
+
+	function shutViewer() {
+		var open = viewer;
+		viewer = null;
+		if (open.node.parentNode) open.node.parentNode.removeChild(open.node);
+		if (document.body) document.body.classList.remove('ti-viewer-open');
+		root.removeAttribute('inert');
+		root.removeAttribute('aria-hidden');
+		// Back to what opened it, while that is still on the page.
+		var back = open.returnFocus;
+		if (back && back.isConnected !== false) focusOn(back);
+	}
+
+	function focusOn(node) {
+		try {
+			if (node && typeof node.focus === 'function') node.focus();
+		} catch (e) {
+			// Nothing to focus: the courtesy is lost, never the page.
+		}
+	}
+
+	// A picture tapped: the viewer, as an entry of its own (&file=), from the tap.
+	function openPicture(doc) {
+		if (captureOpen() || !doc || !doc.is_image || state.currentFile === doc.name) return;
+		writeTripEntry(true, state.currentTrip, state.currentAs, state.currentView, doc.name);
+		state.currentFile = doc.name;
+		syncViewer();
+	}
+
+	// Close and Escape. When the entry behind is the screen the picture was opened over (always,
+	// when a tap here opened it, reloaded or not), closing is Back, which leaves the picture's
+	// entry for Forward instead of a copy of the screen on top of it. Opened straight from an
+	// address (a link with &file=), there is nothing of this page's behind it and Back would
+	// leave the page, so the entry stops naming the file instead. Shut at once either way: a
+	// second tap on Close before the Back lands must not go Back again.
+	function closePicture() {
+		if (!state.currentFile || captureOpen()) return;
+		var under = { trip: state.currentTrip, as: state.currentAs, view: state.currentView };
+		if (samePlace(pushedFrom(), under)) {
+			window.history.back();
+		} else {
+			writeTripEntry(false, state.currentTrip, state.currentAs, state.currentView);
+		}
+		state.currentFile = '';
+		syncViewer();
+	}
+
+	document.addEventListener('keydown', function (ev) {
+		if (!viewer || ev.key !== 'Escape' || ev.defaultPrevented) return;
+		// "Report a problem" is over the viewer: its Escape is its own.
+		if (captureOpen()) return;
+		ev.preventDefault();
+		closePicture();
+	});
+
+	// A tap on "Day by day" or "Documents": one entry, from the tap. Back onto the screen it was
+	// opened from is a step Back rather than a new entry when that screen is the entry behind
+	// (the Documents screen reached from the day list, then "Day by day"), or the same screen
+	// would be in history twice in a row, with a Back between them that changes nothing.
+	function openScreen(view) {
+		if (captureOpen() || view === state.currentView) return;
+		if (samePlace(pushedFrom(), { trip: state.currentTrip, as: state.currentAs, view: view })) {
+			window.history.back();
+		} else {
+			writeTripEntry(true, state.currentTrip, state.currentAs, view);
+		}
+		showScreen(view, '');
+	}
+
+	// The screen and picture an entry names, for the trip and person already on screen: nothing
+	// is fetched. With no answer on screen yet (still loading, or an error) nothing is drawn: the
+	// answer draws the screen asked for.
+	function showScreen(view, file) {
+		var redraw = view !== state.currentView;
+		state.currentView = view;
+		state.currentFile = file;
+		if (redraw && state.itinerary) render();
+		else syncViewer();
 	}
 
 	// -- Rendering ---------------------------------------------------------------
 	function render() {
 		root.innerHTML = '';
 		root.removeAttribute('aria-busy');
+		// The viewer is outside the root: shut when its trip or person is gone, opened once the
+		// answer holds the picture the address names.
+		syncViewer();
 
 		var view = viewTitle();
 		var header = el('header', 'ti-header');
 		header.appendChild(el('div', 'ti-header-title', view.title));
 		if (view.sub) header.appendChild(el('div', 'ti-header-sub', view.sub));
 		root.appendChild(header);
-		setDocumentTitle(view.page);
+		var onDocs = state.currentView === 'docs' && state.currentTrip && !state.denied && !state.signedOut;
+		setDocumentTitle(onDocs ? 'Documents – ' + view.page : view.page);
 
 		if (state.signedOut) {
 			var expired = el('div', 'ti-empty', 'Your session has expired. ');
@@ -430,9 +862,10 @@
 				if (someMine && trip.mine === false) chip.appendChild(el('span', 'ti-chip-note', 'Not traveling'));
 				chip.addEventListener('click', function () {
 					if (trip.name !== state.currentTrip) writeTripEntry(true, trip.name);
-					// A different trip is a new entry and opens on its default view; the one on
-					// screen just reloads, as it is shown.
-					loadTrip(trip.name, trip.name === state.currentTrip ? state.currentAs : '');
+					// A different trip is a new entry and opens on its default view, day by day;
+					// the one on screen just reloads, as it is shown.
+					var same = trip.name === state.currentTrip;
+					loadTrip(trip.name, same ? state.currentAs : '', same ? state.currentView : '');
 				});
 				switcher.appendChild(chip);
 			});
@@ -459,6 +892,14 @@
 		meta.appendChild(el('div', 'ti-trip-dates', fmtDate(trip.start_date) + ' – ' + fmtDate(trip.end_date)));
 		root.appendChild(meta);
 		appendPeople();
+
+		var documents = tripDocuments(trip);
+		appendScreens(documents.length);
+		if (state.currentView === 'docs') {
+			renderDocuments(documents);
+			appendFooter();
+			return;
+		}
 
 		var days = trip.days || [];
 		if (!days.length) {
@@ -528,9 +969,9 @@
 			var chip = el('button', 'ti-person-chip' + (on ? ' active' : ''), choice.label);
 			chip.setAttribute('aria-pressed', on ? 'true' : 'false');
 			chip.addEventListener('click', function () {
-				if (choice.as !== shown) writeTripEntry(true, state.currentTrip, choice.as);
-				// Another person is a new entry; the one on screen just reloads.
-				loadTrip(state.currentTrip, choice.as);
+				if (choice.as !== shown) writeTripEntry(true, state.currentTrip, choice.as, state.currentView);
+				// Another person is a new entry, on the same screen; the one on screen just reloads.
+				loadTrip(state.currentTrip, choice.as, state.currentView);
 			});
 			picker.appendChild(chip);
 		});
@@ -548,11 +989,14 @@
 	// Never pushes: popstate calls this too, and a push from there would eat the
 	// Forward entries and spend no tap (Chrome then skips the entry on Back).
 	// `as` is '' (the default view), 'crew' or an employee id; an answer is only shown
-	// while that same trip AND person are still the ones asked for.
-	function loadTrip(name, as) {
+	// while that same trip AND person are still the ones asked for. `view` and `file` are
+	// the screen and the picture to draw once it lands (none, for a different trip).
+	function loadTrip(name, as, view, file) {
 		as = as || '';
 		state.currentTrip = name;
 		state.currentAs = as;
+		state.currentView = view || '';
+		state.currentFile = file || '';
 		state.itinerary = null;
 		state.denied = false;
 		state.signedOut = false;
@@ -595,8 +1039,9 @@
 	//
 	// A refusal falls back. A person no longer on the trip (the server's 417, and only that:
 	// a 400 for a stale CSRF token is not about the person) falls back to the trip's default
-	// view. A trip that is not theirs to see, or is gone (403, 404), falls back to their
-	// default trip, or the page says so when they have none. The fallback replaces the
+	// view, on the same screen. A trip that is not theirs to see, or is gone (403, 404), falls
+	// back to their default trip, day by day, or the page says so when they have none. A
+	// picture named in the address is dropped either way. The fallback replaces the
 	// refused entry and never pushes, so Back still goes where it went. The one exception is
 	// an entry the page pushed from exactly the view it would fall back to. Replacing it would
 	// leave two identical entries in a row, and a Back that changes nothing, so the page steps
@@ -613,7 +1058,7 @@
 		}
 		var fallback = null;
 		if (status === 417 && as) {
-			fallback = { trip: name, as: '' };
+			fallback = { trip: name, as: '', view: state.currentView };
 		} else if (status === 403 || status === 404) {
 			var trip = state.trips.length ? defaultTrip() : null;
 			if (!trip || trip === name) {
@@ -621,24 +1066,33 @@
 				render();
 				return;
 			}
-			fallback = { trip: trip, as: '' };
+			fallback = { trip: trip, as: '', view: '' };
 		}
 		if (!fallback) {
 			root.appendChild(el('div', 'ti-error', 'Could not load the trip: ' + ((err && err.message) || 'no answer')));
 			return;
 		}
 		if (!captureOpen()) {
-			var from = pushedFrom();
-			if (from && from.trip === fallback.trip && (from.as || '') === fallback.as) {
+			if (samePlace(pushedFrom(), fallback)) {
 				window.history.back();
 			} else {
-				writeTripEntry(false, fallback.trip, fallback.as);
+				writeTripEntry(false, fallback.trip, fallback.as, fallback.view);
 			}
 		}
-		loadTrip(fallback.trip, fallback.as);
+		loadTrip(fallback.trip, fallback.as, fallback.view);
 	}
 
-	// The view the entry on screen was pushed from ({trip, as}), when this page pushed it.
+	// Whether a place the page remembered (history.state.itin_from) is exactly this trip,
+	// person, screen and picture.
+	function samePlace(from, place) {
+		return !!from && from.trip === place.trip &&
+			(from.as || '') === (place.as || '') &&
+			(from.view || '') === (place.view || '') &&
+			(from.file || '') === (place.file || '');
+	}
+
+	// The place the entry on screen was pushed from ({trip, as}, plus `view` and `file` when it
+	// had them), when this page pushed it.
 	function pushedFrom() {
 		try {
 			var entry = window.history.state;
@@ -718,38 +1172,54 @@
 		}
 	}
 
-	// ?trip= and ?as= from the address. ?as= means nothing without a trip.
+	// ?trip=, ?as=, ?view= and ?file= from the address. None of the others means anything
+	// without a trip, and `docs` is the only screen besides the day list.
 	function addressed() {
 		try {
 			var params = new URLSearchParams(window.location.search);
 			var trip = params.get('trip') || '';
-			return { trip: trip, as: trip ? (params.get('as') || '') : '' };
+			if (!trip) return { trip: '', as: '', view: '', file: '' };
+			return {
+				trip: trip,
+				as: params.get('as') || '',
+				view: params.get('view') === 'docs' ? 'docs' : '',
+				file: params.get('file') || '',
+			};
 		} catch (e) {
-			return { trip: '', as: '' };
+			return { trip: '', as: '', view: '', file: '' };
 		}
 	}
 
-	// This page's address for a trip and person. No `as` drops ?as=: another trip opens on its
-	// default view.
-	function tripUrl(name, as) {
+	// This page's address for a trip, person, screen and picture, always in that order after the
+	// trip, and any other query kept. What is not given is dropped: a trip chip names the trip
+	// alone, so another trip opens on its default view, day by day.
+	function tripUrl(name, as, view, file) {
 		var params = new URLSearchParams(window.location.search);
 		params.set('trip', name);
+		params.delete('as');
+		params.delete('view');
+		params.delete('file');
 		if (as) params.set('as', as);
-		else params.delete('as');
+		if (view) params.set('view', view);
+		if (file) params.set('file', file);
 		return window.location.pathname + '?' + params.toString() + window.location.hash;
 	}
 
-	function writeTripEntry(push, name, as) {
+	function writeTripEntry(push, name, as, view, file) {
 		var entry = { itin_trip: name, itin_as: as || null };
-		// A pushed entry remembers the view it was pushed from, which is the entry behind it,
-		// so a refusal that would fall back to exactly that view can step back onto it
-		// (loadFailed). A replace keeps what the entry it rewrites remembered: the entry behind
-		// it has not changed.
+		if (view) entry.itin_view = view;
+		if (file) entry.itin_file = file;
+		// A pushed entry remembers the place it was pushed from, which is the entry behind it, so
+		// a refusal that would fall back to exactly that place can step back onto it (loadFailed),
+		// and so can the viewer's Close and "Day by day". A replace keeps what the entry it
+		// rewrites remembered: the entry behind it has not changed.
 		var from = push ? { trip: state.currentTrip, as: state.currentAs || null } : pushedFrom();
+		if (push && state.currentView) from.view = state.currentView;
+		if (push && state.currentFile) from.file = state.currentFile;
 		if (from && from.trip) entry.itin_from = from;
 		try {
-			if (push) window.history.pushState(entry, '', tripUrl(name, as));
-			else window.history.replaceState(entry, '', tripUrl(name, as));
+			if (push) window.history.pushState(entry, '', tripUrl(name, as, view, file));
+			else window.history.replaceState(entry, '', tripUrl(name, as, view, file));
 		} catch (e) {
 			// Safari refuses bursts of history calls: lose the entry, never the page.
 		}
@@ -766,11 +1236,13 @@
 		}
 	}
 
+	// Another trip or person is fetched; the same one only has its screen and picture drawn.
 	function showTripFromUrl() {
 		var want = addressed();
 		var name = want.trip || (state.trips.length ? defaultTrip() : null);
 		if (!name) return;
-		if (name !== state.currentTrip || want.as !== state.currentAs) loadTrip(name, want.as);
+		if (name !== state.currentTrip || want.as !== state.currentAs) loadTrip(name, want.as, want.view, want.file);
+		else showScreen(want.view, want.file);
 	}
 
 	window.addEventListener('popstate', function () {
@@ -788,10 +1260,11 @@
 
 	// -- Boot --------------------------------------------------------------------
 	// A ?trip= is always asked for, listed or not (the server decides; a refusal falls back
-	// in loadFailed). Without one, the default trip is named in place.
+	// in loadFailed), and a reload lands on the screen and picture it names. Without one, the
+	// default trip is named in place.
 	var first = addressed();
 	if (first.trip) {
-		loadTrip(first.trip, first.as);
+		loadTrip(first.trip, first.as, first.view, first.file);
 	} else if (state.trips.length) {
 		first.trip = defaultTrip();
 		writeTripEntry(false, first.trip);
