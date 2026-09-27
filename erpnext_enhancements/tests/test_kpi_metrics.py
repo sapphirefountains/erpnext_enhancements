@@ -285,7 +285,7 @@ class TestJournalStoreCharges(unittest.TestCase):
 		"""The shape QuickBooks' Bill/BillPayment imports have at the flagged stores (ACC-JV-2026-25882
 		Cr 2110 Bolt & Nut Supply 26.58; ACC-JV-2026-26711 Dr 2110 Bolt & Nut Supply 26.58)."""
 		lines = [self.line("JV-BILL", credit=26.58), self.line("JV-PAY", debit=26.58, day="2026-09-05")]
-		# The voucher (v1.538.0) is for the Store Run Charge Matching report; the count reads none of it.
+		# The voucher (v1.543.0) is for the Store Run Charge Matching report; the count reads none of it.
 		self.assertEqual(
 			metrics.journal_store_charges(lines),
 			[
@@ -332,7 +332,7 @@ class TestJournalStoreCharges(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# v1.538.0: the pairing moved out of combine_store_runs into pair_store_runs, so the Store Run
+# v1.543.0: the pairing moved out of combine_store_runs into pair_store_runs, so the Store Run
 # Charge Matching report pairs exactly as the KPI counts. The v1.536.0 body is kept below,
 # verbatim, as the reference the refactored function must equal on every input.
 # ---------------------------------------------------------------------------
@@ -519,7 +519,7 @@ def _generated_case(rng):
 
 class TestPairStoreRuns(unittest.TestCase):
 	"""``metrics.pair_store_runs``: the trips and charges ``combine_store_runs`` counts, with the
-	pairing kept so the Store Run Charge Matching report can list it (v1.538.0)."""
+	pairing kept so the Store Run Charge Matching report can list it (v1.543.0)."""
 
 	def test_generated_histories_count_exactly_as_v1_536_0(self):
 		rng = random.Random(15380)
@@ -606,7 +606,7 @@ class TestPairStoreRuns(unittest.TestCase):
 
 		The expectation still depends on input order, and is meant to: the pure function has no
 		other key to break the tie with. What was loose was the input -- snapshots._store_run_rows
-		had no ORDER BY, so the database chose the order. Since the v1.538.0 review each charge arm
+		had no ORDER BY, so the database chose the order. Since the v1.543.0 review each charge arm
 		orders by posting date and voucher name (test_store_run_matching pins the clauses), so the
 		reversed call below is the order a different database return would have given, not one the
 		report can now see."""
@@ -630,7 +630,7 @@ class TestPairStoreRuns(unittest.TestCase):
 		self.assertEqual([bill["index"] for bill in bills], [1])
 
 	def test_extra_keys_change_nothing(self):
-		"""The identifying columns snapshots._store_run_rows adds for the report (v1.538.0) are
+		"""The identifying columns snapshots._store_run_rows adds for the report (v1.543.0) are
 		never read by the count: the same history with and without them counts the same."""
 		rng = random.Random(1538)
 		extra_charge = {"voucher_type": "Journal Entry", "voucher_no": "ACC-JV-1", "docstatus": 0, "source": "QuickBooks"}

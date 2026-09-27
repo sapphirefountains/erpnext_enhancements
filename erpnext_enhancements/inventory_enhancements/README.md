@@ -445,7 +445,7 @@ Standard Buying price at the store's retail rate (`auto_insert_price_list_rate_i
 and Standard Buying is company-wide, so it pre-fills every later PO line for that item from any
 supplier. Submitting a receipt also updates the Item's `last_purchase_rate`.
 
-**Accounting's side** (v1.538.0). The receipts post Dr 1410 / Cr 2210 and nothing on this page
+**Accounting's side** (v1.543.0). The receipts post Dr 1410 / Cr 2210 and nothing on this page
 bills them; the card charge for the same trip arrives from QuickBooks as a draft Journal Entry.
 The **Store Run Charge Matching** report (KPI Dashboards) lists every recorded run beside the
 charge the Store Runs KPI pairs it with, the amount the charge must move to 2210, and what to do;

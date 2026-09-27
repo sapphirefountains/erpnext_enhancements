@@ -1,4 +1,4 @@
-"""Bench-free tests for the Store Run Charge Matching report (v1.538.0).
+"""Bench-free tests for the Store Run Charge Matching report (v1.543.0).
 
 Accounting's list of recorded store runs beside the card charge each pairs with, used at the
 QuickBooks cutover (runbook step S-D) to move a matching draft's goods debit to 2210 before it
@@ -203,7 +203,7 @@ def report(*args, **kwargs):
 
 
 #: The two halves of every Waiting text: the charge is found and fixed, OR -- only when there is
-#: none -- the trip is billed from its receipts. Never both (v1.538.0 second review).
+#: none -- the trip is billed from its receipts. Never both (v1.543.0 second review).
 ONLY_IF_NONE = "Only if it has no card charge at all, bill it from the receipts after the cutover."
 
 
@@ -520,7 +520,7 @@ class TestWhatToDo(unittest.TestCase):
 
 	def test_a_submitted_charge_without_the_move_books_the_goods_twice(self):
 		"""One correcting Journal Entry naming the charge, never an amendment: amending a QuickBooks
-		charge detaches it from its sync mapping, and so from this list (v1.538.0 review). It names the
+		charge detaches it from its sync mapping, and so from this list (v1.543.0 review). It names the
 		trip too, so the correction links them (fourth review, item 3)."""
 		row = self.one([charge("2026-09-03", 48.26, docstatus=1)], [receipt("2026-09-03", total=48.26)])
 		self.assertEqual(
@@ -562,7 +562,7 @@ class TestWhatToDo(unittest.TestCase):
 		self.assertEqual(row["show"], matching.NEEDS_ACTION)
 
 	def test_no_charge_yet_is_waiting(self):
-		"""An either/or that cannot read as both (v1.538.0 second review): the first version said
+		"""An either/or that cannot read as both (v1.543.0 second review): the first version said
 		"before the cutover, move it; after the cutover, bill it from the receipts", which read as
 		"fix the draft AND bill from the receipts" -- the purchase booked twice. The run id goes
 		in the draft's Reference Number, which links the two; a submitted draft's cannot be
@@ -695,7 +695,7 @@ class TestWhatToDo(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2b. Correcting entries, charges with no store run (v1.538.0 review), links (second review)
+# 2b. Correcting entries, charges with no store run (v1.543.0 review), links (second review)
 # ---------------------------------------------------------------------------
 
 JV1 = ("Journal Entry", "ACC-JV-1")
@@ -775,7 +775,7 @@ class TestCorrectingEntries(unittest.TestCase):
 	def test_a_draft_over_moved_by_its_correcting_entry_names_the_entry(self):
 		"""Its own lines carry the stock lines and a correcting entry adds them again. The first
 		version said "reduce it to $45.00" -- which read as the draft's own lines, already at
-		$45.00, so following it changed nothing and the row never left Needs action (v1.538.0
+		$45.00, so following it changed nothing and the row never left Needs action (v1.543.0
 		second review). The correcting entry is what is too many, so it is what is reversed."""
 		row = self.one({"ACC-JV-1": {"ACC-JV-900": 45.0}}, on_2210={JV1: 45.0}, docstatus=0)
 		self.assertEqual(
@@ -965,7 +965,7 @@ class TestChargesWithNoStoreRun(unittest.TestCase):
 
 
 class TestLinks(unittest.TestCase):
-	"""A Journal Entry whose Reference Number lists a trip's run id is that trip's charge (v1.538.0
+	"""A Journal Entry whose Reference Number lists a trip's run id is that trip's charge (v1.543.0
 	second review). It replaces recognizing a draft "found by hand" by a 2210 debit equal to a
 	waiting trip's stock lines, which could not serve two runs of one purchase (one draft, one
 	target each), lost a trip dated before From Date -- its adjusted draft was then listed to be
@@ -2324,7 +2324,7 @@ class TestPurchaseInvoiceRow(unittest.TestCase):
 class TestFourthReview(unittest.TestCase):
 	"""The round-4 verifier's minimal cases, each with its new outcome. The verifier followed every
 	row's text to a fixed point on generated histories and checked, per purchase, that the goods on
-	2210 equal its trips' stock lines and nothing is billed twice (v1.538.0 fourth review)."""
+	2210 equal its trips' stock lines and nothing is billed twice (v1.543.0 fourth review)."""
 
 	# M1: sr-a's charge ACC-JV-1 arrived five days late; the pairing gave it to sr-b on the lines plus
 	# tax, and sr-b's own charge ACC-JV-2 paired with nothing.
@@ -2823,7 +2823,7 @@ def po_receipt(name="MAT-PRE-PO1", docstatus=1, store_run=0):
 
 
 class TestFifthReview(unittest.TestCase):
-	"""The round-5 verifier's findings, each a regression test with its new outcome (v1.538.0 fifth
+	"""The round-5 verifier's findings, each a regression test with its new outcome (v1.543.0 fifth
 	review). Each case is followed to the end the row's text describes, and must end with the list
 	clean and the books right."""
 
@@ -3874,7 +3874,7 @@ class TestReportFiles(unittest.TestCase):
 		"""Links and correcting entries both come from the Reference Number (cheque_no) of Journal
 		Entries, draft or submitted, read for EVERY vendor: a QuickBooks draft under a vendor that is
 		not ticked Store-Run Vendor is invisible to the KPI's reader, and linking it is how Accounting
-		says it is a trip's charge (v1.538.0 second review). Which entry is what is decided in
+		says it is a trip's charge (v1.543.0 second review). Which entry is what is decided in
 		``resolve_links``, tested above; no SQL decides it any more."""
 		query = self._query("je.posting_date >= %(early)s")
 		for needle in (
@@ -4099,7 +4099,7 @@ class TestReportFiles(unittest.TestCase):
 
 	def test_the_kpi_reader_returns_charges_in_a_fixed_order(self):
 		"""pair_store_runs breaks an exact tie by input order, so each charge arm of the KPI's
-		reader orders by posting date and voucher name (v1.538.0 review); before, a tie went to
+		reader orders by posting date and voucher name (v1.543.0 review); before, a tie went to
 		whichever row the database returned first."""
 		source = SNAPSHOTS.read_text(encoding="utf-8")
 		function = next(

@@ -25,7 +25,9 @@ parts of it that are about safety rather than convenience:
 - an oversized ``names`` is refused before the loop looks at it, and the loop stops at the
   first name past the cap;
 - ``batch_default`` is also false, with a ``review_reason``, for a submit or cancel, a write to
-  the gate's own records and unreadable arguments, and the arguments are never returned.
+  one of ``NEVER_EXEMPT`` and unreadable arguments, and the arguments are never returned. The
+  reason names the kind of never-exempt target: a Task, the gate's own records, or (v1.538.0)
+  the company knowledge base.
 
 Plain ``unittest`` under the stub set ``test_assistant_tools_schema.install_stubs`` provides,
 like the sibling gate suites. ``frappe.whitelist`` is installed once for the module, because
@@ -664,6 +666,40 @@ class TestReviewReasons(BatchHarness):
         self.assertFalse(rows["AI-PA-1"]["batch_default"])
         self.assertEqual(rows["AI-PA-1"]["review_reason"], "changes the AI gate's own records or settings")
 
+    def test_a_task_card_says_it_is_a_task(self):
+        """Task is never exempt for its own reason (ADR 0016 §6); it is not one of the gate's records."""
+        arguments = json.dumps({"doctype": "Task", "data": {"subject": "Follow up"}})
+        rows = self.rows(FakeAction("AI-PA-1", arguments=arguments, target_doctype="Task"))
+        self.assertFalse(rows["AI-PA-1"]["batch_default"])
+        self.assertEqual(rows["AI-PA-1"]["review_reason"], "creates or changes a Task")
+
+    def test_a_knowledge_base_card_says_it_is_the_knowledge_base(self):
+        """v1.538.0 put both KB doctypes in NEVER_EXEMPT, and the dialog called them the gate's own."""
+        rows = self.rows(
+            self.update("AI-PA-1", {"summary": "x"}, doctype="Knowledge Article"),
+            self.update("AI-PA-2", {"summary": "x"}, doctype="Knowledge Article Version"),
+        )
+        for name in ("AI-PA-1", "AI-PA-2"):
+            with self.subTest(action=name):
+                self.assertFalse(rows[name]["batch_default"])
+                self.assertEqual(rows[name]["review_reason"], "changes the company knowledge base")
+
+    def test_the_three_kinds_make_up_never_exempt_and_do_not_overlap(self):
+        kinds = ({"Task"}, _gate.GATE_OWN_DOCTYPES, _gate.KNOWLEDGE_BASE_DOCTYPES)
+        self.assertEqual(frozenset().union(*kinds), _gate.NEVER_EXEMPT)
+        self.assertEqual(sum(len(kind) for kind in kinds), len(_gate.NEVER_EXEMPT))
+
+    def test_every_never_exempt_doctype_has_a_reason_of_its_own(self):
+        """An entry added to NEVER_EXEMPT without a kind would fall through to the generic phrase,
+        and one labelled as the gate's own records would say something false about it."""
+        fallback = gating_api._never_exempt_reason("A Doctype Nobody Listed")
+        own_records = gating_api._never_exempt_reason("AI Action Log")
+        for doctype in sorted(_gate.NEVER_EXEMPT):
+            with self.subTest(doctype=doctype):
+                reason = gating_api._never_exempt_reason(doctype)
+                self.assertNotEqual(reason, fallback)
+                self.assertEqual(reason == own_records, doctype in _gate.GATE_OWN_DOCTYPES)
+
     def test_unreadable_arguments_need_a_look(self):
         rows = self.rows(
             FakeAction("AI-PA-1", minutes_old=20, arguments="{not json"),
@@ -913,6 +949,7 @@ class TestEndpointSurface(unittest.TestCase):
             "_batch_names",
             "_batch_plan",
             "_review_reasons",
+            "_never_exempt_reason",
             "_require_desk_session",
         ):
             with self.subTest(helper=name):

@@ -234,7 +234,7 @@ def pair_store_runs(charges, receipts, store_key, pair_days=STORE_RUN_PAIR_DAYS)
 	at most one charge at the same store, dated on the trip's day or up to ``pair_days`` after,
 	first on the receipt total, then on the lines plus tax, nearest day first, then nearest amount;
 	an exact tie goes to the charge that comes first in ``charges`` (``snapshots._store_run_rows``
-	returns them in a fixed order since v1.538.0).
+	returns them in a fixed order since v1.543.0).
 
 	* ``trips``, sorted by day, store and key: ``{key, store, day, net, total, receipts, charge,
 	  basis}``. ``receipts`` are the input rows of the trip, in input order and unchanged (so a

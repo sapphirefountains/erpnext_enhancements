@@ -373,7 +373,7 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=(),
 	**A submitted QuickBooks entry marked not-store-run** can never have the mark taken out, so a
 	submitted entry that names it beside trip keys links it anyway: it is *overridden* -- still out of
 	the automatic pairing, since its own Reference Number says so, but otherwise a charge like any
-	other, and every entry naming it is its correction, those marked ``not-store-run`` included (v1.538.0
+	other, and every entry naming it is its correction, those marked ``not-store-run`` included (v1.543.0
 	fifth review).
 
 	Returns ``{"links", "corrections", "drafts", "excluded", "marks", "clears", "overridden",
@@ -543,7 +543,7 @@ def resolve_references(references, charges, receipts, far_receipts=(), named=(),
 		elif bad(found):
 			# A submitted QuickBooks entry naming what cannot be resolved still names itself: its
 			# Reference Number can never be corrected, so a correcting entry naming it is the only
-			# way its 2210 comes back (v1.538.0 fourth review).
+			# way its 2210 comes back (v1.543.0 fourth review).
 			result = ("charge", name) if fixed(name) else ("bad", name)
 		elif found["roots"]:
 			result = ("charge", found["roots"][0])
@@ -1068,7 +1068,7 @@ def attribute_2210(window, resolution=None, on_2210=None, corrections=None, jour
 	exception: a **QuickBooks entry** whose 2210, with that of the entries marked ``not-store-run``
 	that name it (``marks``), does not net to zero, and whose Reference Number names no Purchase
 	Receipt it clears (``clears``). Nothing then says what that amount clears, and marking the entry
-	hid it from the backstop (v1.538.0 fourth review), so it is unaccounted, and ``marked`` maps each
+	hid it from the backstop (v1.543.0 fourth review), so it is unaccounted, and ``marked`` maps each
 	such entry to the QuickBooks entry whose row shows them. An entry that names the receipt it
 	clears, one that is not a store run (a card charge that paid for a PO receipt, fifth review), is
 	excluded whatever it carries, and its amount counts with no other entry's; so is an ERPNext entry
@@ -1214,7 +1214,7 @@ def _find_its_draft(stock, account, key):
 	Reference Number cannot be changed -- with a correcting entry that names the charge and the trip.
 
 	A draft that is already another trip's charge in this list lists both trips' run ids **only when
-	it pays for both** (v1.538.0 fourth review): said unconditionally, a draft the pairing had given
+	it pays for both** (v1.543.0 fourth review): said unconditionally, a draft the pairing had given
 	to the wrong trip was linked to both, carried both trips' stock lines, and read Done while the
 	other trip's own charge was submitted with its goods on the expense."""
 	return (
@@ -1232,7 +1232,7 @@ def _find_its_draft(stock, account, key):
 def _no_stock_find(key):
 	"""How a waiting trip with no stock lines finds its charge: nothing moves, but a draft that is
 	already another trip's charge is still linked, with the same clause as :func:`_find_its_draft`
-	(v1.538.0 fifth review: "change nothing" left the other trip holding this trip's charge, and the
+	(v1.543.0 fifth review: "change nothing" left the other trip holding this trip's charge, and the
 	list read Done)."""
 	return (
 		f"find its QuickBooks draft, if it has one: nothing on it needs to move (optionally put {key} in its "
@@ -1262,7 +1262,7 @@ def _out_of(group, trips):
 
 def _fits(group, extra=0.0):
 	"""Whether ``group``'s charge can pay for the stock lines of its trips plus ``extra``: a card
-	charge never moves more to 2210 than it paid (v1.538.0 fourth review). The pairing's own
+	charge never moves more to 2210 than it paid (v1.543.0 fourth review). The pairing's own
 	tolerance is allowed, so no automatic pair on the lines plus tax ever fails it. A trip a
 	``part-paid`` acknowledges (the charge paid for it only in part) is left out (fifth review)."""
 	paid = group.get("part_paid") or ()
@@ -1277,7 +1277,7 @@ def _waiting(stock, account, key, displaced=None):
 	billed from its receipts (that would credit the card twice). ``displaced`` is the group of the
 	charge the trip was paired with until that charge's Reference Number linked other trips.
 
-	**A displaced trip is asked all three ways** (v1.538.0 fourth review): the charge pays for this
+	**A displaced trip is asked all three ways** (v1.543.0 fourth review): the charge pays for this
 	trip as well as the ones it links, for this trip and not for them (the link is the mistake), or
 	for them alone. Asked only "does it pay for this trip too?", a link typed on the wrong trip
 	gained this one beside it and read Done. When the charge cannot pay for both (:func:`_fits`),
@@ -1330,7 +1330,7 @@ def _over_draft(shown, target, own, corrections, fixes, account, voucher_no):
 	"""A draft whose own lines plus its correcting entries carry more than ``target`` on 2210.
 
 	The correcting entries are named, and the draft's own lines are never cut below the target to
-	make up for them (v1.538.0 review): a correcting entry too many is reversed by another one."""
+	make up for them (v1.543.0 review): a correcting entry too many is reversed by another one."""
 	names = ", ".join(fixes)
 	reverse = "Dr the expense account the charge used / Cr " + account
 	if corrections > 0 and own <= target:
@@ -1359,7 +1359,7 @@ def _also_pays(group, target, moved, account):
 	"If this draft also pays for sr-a, add sr-a to its Reference Number …; if it pays for sr-a and not
 	for sr-b, …". The "otherwise" the caller appends is the third answer: the trips it links alone.
 
-	Both of the first two are asked (v1.538.0 fourth review): asked only whether it *also* pays, a
+	Both of the first two are asked (v1.543.0 fourth review): asked only whether it *also* pays, a
 	link typed on the wrong trip kept it and gained the right one. An answer the charge cannot pay
 	for (:func:`_fits`) is not offered. Returns "" when neither is."""
 	before = [link_key(trip) for trip in group["displaced"]]
@@ -1417,7 +1417,7 @@ def _billed_text(row, group, invoices, linked, account):
 	"""A charge paired or linked with a trip that is billed from its receipts: the invoice, already
 	submitted, books the purchase, so the charge must not book it too.
 
-	Each branch ends in a state the report can see (v1.538.0 fourth review: "its debit belongs on the
+	Each branch ends in a state the report can see (v1.543.0 fourth review: "its debit belongs on the
 	store's payable" left the row in Needs action for good). A draft that is the invoice's payment is
 	marked ``not-store-run`` once nothing of it is on the expense or on 2210, which frees the trip; a
 	submitted charge's Reference Number cannot change, so the invoice is cancelled and the charge
@@ -1463,7 +1463,7 @@ def _billed_text(row, group, invoices, linked, account):
 def _billed_displaced(invoices, displaced):
 	"""A trip billed from its receipts whose paired charge a link took for other trips. Billed, it
 	reads Done; but if that charge is this trip's after all, the purchase is booked twice and nothing
-	else would say so (v1.538.0 fifth review: a link typed on the wrong trip took a billed trip's own
+	else would say so (v1.543.0 fifth review: a link typed on the wrong trip took a billed trip's own
 	charge, and the list read clean). The charge's own row then says what a billed trip's charge needs."""
 	row = displaced["charge"]["row"]
 	charge = row.get("voucher_no") or ""
@@ -1522,7 +1522,7 @@ def _acknowledge(group, trips, target, moved, account):
 
 def _over_capacity(group, target, moved, account, linked):
 	"""A charge whose trips' stock lines add up to more than the charge itself (:func:`_fits`). No
-	amount is guessed (v1.538.0 fourth review): the row names the trips and what carries each run
+	amount is guessed (v1.543.0 fourth review): the row names the trips and what carries each run
 	id, and asks Accounting which it is.
 
 	An automatic pair over capacity is always a receipt-total pair (the lines-plus-tax pass never
@@ -1597,11 +1597,11 @@ def _decide(charge, group, target, own, corrections, fixes, account, invoices, l
 	together = f" (the stock lines of {', '.join(keys)} together)" if len(keys) > 1 else ""
 	# A correcting entry for a submitted charge names the charge and every trip it pays for, so it
 	# links them explicitly: a later link naming one more trip then adds to the group instead of
-	# displacing the first (v1.538.0 fourth review: the first correction was reversed and posted again).
+	# displacing the first (v1.543.0 fourth review: the first correction was reversed and posted again).
 	reference = f"{voucher_no} followed by {_and(keys)}" if keys else voucher_no
 	# A linked draft whose link took another trip's automatic pair asks first whether it pays for
 	# that trip too (two runs of one purchase), or for that trip and not the linked ones (the link is
-	# the mistake), then says what to do if neither (v1.538.0 third and fourth reviews).
+	# the mistake), then says what to do if neither (v1.543.0 third and fourth reviews).
 	ask = _also_pays(group, target, moved, account) if linked and draft and group["displaced"] else ""
 	if moved > target:
 		shown = f"The {account} debit is {_money(moved)} but {lines} are {_money(target)}"
@@ -1679,7 +1679,7 @@ def _issue_sentences(issues, trips_of=None):
 	"""What is wrong with a Reference Number, one sentence per problem of :func:`resolve_references`.
 
 	``trips_of``: ``{charge: [run ids of its trips]}``, so a draft correcting entry names the row that
-	says whether it is needed -- the trip's, since a charge with trips has no row of its own (v1.538.0
+	says whether it is needed -- the trip's, since a charge with trips has no row of its own (v1.543.0
 	fourth review)."""
 	trips_of = trips_of or {}
 	said = []
@@ -1766,7 +1766,7 @@ def _charge_row(bill, amount, account, fixes, issues=(), trips_of=None):
 	if not amount and unlinked:
 		# Nothing on 2210, but a link overrode the pairing, and the link may be the mistake: a
 		# charge linked to the wrong trip took that trip from its own charge, and nothing else
-		# would ever say so (v1.538.0 fourth review).
+		# would ever say so (v1.543.0 fourth review).
 		key = link_key(unlinked["trip"])
 		taken = f"It was paired with {key} until {_linked_by(unlinked['groups'], unlinked['trip'])}"
 		if draft:
@@ -1789,7 +1789,7 @@ def _charge_row(bill, amount, account, fixes, issues=(), trips_of=None):
 		taken = f"It was paired with {key} until {_linked_by(unlinked['groups'], unlinked['trip'])}"
 		if invoice:
 			# Either answer leaves a correct booking behind (v16 books the invoice's stock lines to 2210
-			# itself), so it waits, like any invoice waiting for its receipt (v1.538.0 fourth review).
+			# itself), so it waits, like any invoice waiting for its receipt (v1.543.0 fourth review).
 			what = (
 				f"{taken}: keep one charge for {key}. A Purchase Invoice books its stock lines to {account} "
 				f"itself, so do not move them: if this invoice is {key}'s charge, take {key} out of the "
@@ -1815,7 +1815,7 @@ def _charge_row(bill, amount, account, fixes, issues=(), trips_of=None):
 			)
 	elif amount > 0 and invoice:
 		# v16 books a stock line of an invoice made without a receipt to 2210 itself, where it waits
-		# for the receipt: moving it off would undo a correct booking (v1.538.0 third review).
+		# for the receipt: moving it off would undo a correct booking (v1.543.0 third review).
 		what = (
 			f"Waiting for its receipt: a Purchase Invoice books its stock lines ({_money(amount)}) to {account} "
 			"itself and its Purchase Receipt clears them, so leave its lines as they are. If its goods were "
@@ -1925,7 +1925,7 @@ _AGAIN = "If you moved it for a trip, that trip's row then says how to move it a
 
 def _marked_row_text(entry, amount, account, with_entries=()):
 	"""A QuickBooks entry marked ``not-store-run`` that still carries 2210 and names no receipt it
-	clears (v1.538.0 fourth review: marking it hid the amount from the backstop, and the report read
+	clears (v1.543.0 fourth review: marking it hid the amount from the backstop, and the report read
 	clean with the money still on 2210 and nothing to clear it). Three answers: it clears a receipt
 	that is no store run (fifth review), it was moved for a trip, or it goes back."""
 	name = entry.get("name") or ""
@@ -1983,7 +1983,7 @@ def _entry_row(entry, amount, issues, outside, account, trips_of=None, marked=No
 		if amount and stuck and outside is None:
 			# Its Reference Number never changes, so waiting for it would wait for good: its 2210 goes
 			# back to the expense with a correcting entry naming it, which counts for it whatever its
-			# own Reference Number lists (v1.538.0 fourth review).
+			# own Reference Number lists (v1.543.0 fourth review).
 			back = "move it back to the expense" if amount > 0 else "bring it back to $0.00"
 			held = f"Its {_money(amount)} on" if amount > 0 else f"The {_money(-amount)} it takes off"
 			said.append(
@@ -2278,7 +2278,7 @@ def build_rows(
 		amount = carried(bill)
 		row = bill["row"]
 		# A Journal Entry a link took from its trip is listed even with nothing on 2210 (Waiting): the
-		# link may be the mistake, and this row is the only place that asks (v1.538.0 fourth review).
+		# link may be the mistake, and this row is the only place that asks (v1.543.0 fourth review).
 		taken = bill.get("unlinked") and row.get("voucher_type") == "Journal Entry"
 		if amount == 0 and not taken:
 			continue
@@ -2361,7 +2361,7 @@ def build_rows(
 			day = metrics._as_day(entry.get("day"))
 			# A marked entry's row is shown whatever its date: the money is its entries' in range. So
 			# is a draft correcting entry of a charge accounted for here, dated after To Date: the S-D
-			# loop submits it all the same (v1.538.0 fourth review).
+			# loop submits it all the same (v1.543.0 fourth review).
 			late_draft = (
 				day is not None
 				and day >= early

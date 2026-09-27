@@ -30,3 +30,4 @@ Marketing
 Product Feedback
 HR Enhancements
 Quality
+Knowledge Base

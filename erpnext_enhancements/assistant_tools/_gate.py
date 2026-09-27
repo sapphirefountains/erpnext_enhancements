@@ -274,23 +274,38 @@ PER_CALL_GATED = {
     "update_document": _update_document_needs_human,
 }
 
-#: Doctypes the settings allowlist may never exempt, whatever a row says. The exemption step
-#: applies to create_document and update_document alike, so exempting Task would ungate Task
-#: creation along with its updates — the one write ADR 0016 §6 exists to confirm.
-#:
-#: The rest are the gate's own records. Exempting the settings or its exemption table would let
-#: an assistant open its own exemption window (v1.525.0). Exempting AI Pending Action would let
-#: it rewrite a card's arguments after a human had read it but before they confirmed. Exempting
-#: AI Action Log would let it edit its own audit trail.
-NEVER_EXEMPT = frozenset(
+#: The gate's own records (v1.525.0). Exempting the settings or its exemption table would let an
+#: assistant open its own exemption window. Exempting AI Pending Action would let it rewrite a
+#: card's arguments after a human had read it but before they confirmed. Exempting AI Action Log
+#: would let it edit its own audit trail.
+GATE_OWN_DOCTYPES = frozenset(
     {
-        "Task",
         "ERPNext Enhancements Settings",
         "AI Confirmation Exempt Doctype",
         "AI Pending Action",
         "AI Action Log",
     }
 )
+
+#: The Knowledge Base's two doctypes (v1.538.0, WI-080, ADR 0017). Company knowledge is published
+#: only by a person approving someone else's draft, so no settings row may let an assistant's
+#: write to either skip its card. The Version doctype is on the denylist below as well, so a
+#: generic-tool write to it is refused before it could become a card.
+KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Version"})
+
+#: Doctypes the settings allowlist may never exempt, whatever a row says. There are three kinds,
+#: each never exempt for its own reason:
+#:
+#: - Task. The exemption step applies to create_document and update_document alike, so exempting
+#:   Task would ungate Task creation along with its updates — the one write ADR 0016 §6 exists
+#:   to confirm.
+#: - The gate's own records, ``GATE_OWN_DOCTYPES``.
+#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES``.
+#:
+#: A card that targets any of them never starts ticked in the batch dialog, and the reason it
+#: shows names the kind (`gating_api._never_exempt_reason`). A new entry joins one of the three
+#: kinds or gets its own phrase in that function; `test_ai_gate_batch` fails on one with neither.
+NEVER_EXEMPT = frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES
 
 # ------------------------------------------------- private-context denylist
 #
@@ -324,7 +339,49 @@ NEVER_EXEMPT = frozenset(
 # substring match on an unrelated feature's name. Add to it whenever a doctype's content is
 # private to one person and its hooks are the only thing between a System Manager and
 # everybody else's rows.
-DENYLIST_DOCTYPES = frozenset({"Triton Chat Attachment"})
+#
+# `Knowledge Article Version` (v1.538.0, WI-080, ADR 0017) is the second entry, for a different
+# reason with the same shape: it holds knowledge-base DRAFTS, text no second person has approved,
+# and the rule of the Knowledge Base is that only approved text reaches an assistant. Its DocPerm
+# already keeps every reader role and System Manager out, and raw SQL ignores DocPerm. Two
+# properties of the entry are load-bearing:
+#
+#   * its needle is `knowledgearticleversion`, so `tabKnowledge Article` (the PUBLISHED doctype,
+#     needle `knowledgearticle`) is NOT refused. Published articles are what every staff user
+#     reads anyway, and refusing them would break the generic tools for no gain;
+#   * it refuses KB Authors and KB Approvers too, who can open drafts in the Desk. A draft in a
+#     model's context is the thing being prevented, whoever asked for it.
+#
+# The needle also matches a query that merely aliases `tabKnowledge Article` as `version`. That
+# over-refusal is accepted, for the reason `_normalise_for_denylist` gives.
+#
+# Every entry needs a reason in DENYLIST_REASONS, because the refusal is read by a model and the
+# person behind it, and "private assistant context" is the wrong explanation for a draft.
+DENYLIST_DOCTYPES = frozenset({"Triton Chat Attachment", "Knowledge Article Version"})
+
+#: Why each denylisted doctype is refused, completing "Refused: <doctype> ...". Keyed on exactly
+#: the members of DENYLIST_DOCTYPES; `test_ai_gate_denylist` fails the build if the two drift.
+DENYLIST_REASONS = {
+    "Triton Chat Attachment": (
+        "holds one person's private assistant context and is not readable through the generic "
+        "Frappe tools, by any role, with AI gating on or off. Raw SQL consults no permission "
+        "hook, so this refusal is the only thing standing between a System Manager and "
+        "everybody else's rows. Ask the person, or read it as yourself in the Triton widget."
+    ),
+    "Knowledge Article Version": (
+        "holds knowledge-base drafts and the history behind them: text that a second person has "
+        "not approved, or that has since been replaced. It is not readable through the generic "
+        "Frappe tools, by any role, with AI gating on or off. Company knowledge is only what "
+        "has been approved and published: read the Knowledge Article instead. A draft's author "
+        "and reviewer can open it themselves, in the Desk."
+    ),
+}
+
+#: Said of a denylisted doctype with no entry in DENYLIST_REASONS. The call is refused either
+#: way; a missing reason must never be what lets one through.
+_DENYLIST_DEFAULT_REASON = (
+    "is not readable through the generic Frappe tools, by any role, with AI gating on or off."
+)
 
 # Arguments whose *text* is searched for a denylisted table name, per tool. A SQL string and a
 # Python program are both free text: there is no `doctype` argument to compare, so the table
@@ -333,6 +390,18 @@ DENYLIST_TEXT_ARGUMENTS = {
     "run_database_query": ("query", "sql"),
     "run_python_code": ("code",),
 }
+
+# Two FAC 3.0.0 tools name a doctype somewhere other than a top-level `doctype` argument, and
+# both reach a row without the caller's DocPerm being the whole story (found for WI-080, v1.538.0):
+#
+#   * `fetch` takes one `id`, "<doctype>/<name>", and splits it on the FIRST slash
+#     (plugins/core/tools/chatgpt_fetch.py) -- so the doctype is everything before it;
+#   * `run_python_code` takes an optional `data_query` object whose `doctype` it pre-loads with
+#     `frappe.get_all` (utils/code_execution_subprocess.py), which applies NO permissions at all.
+#
+# Neither is free text, so each is read in its own shape rather than by the contact match.
+DENYLIST_ID_ARGUMENTS = {"fetch": ("id",)}
+DENYLIST_NESTED_DOCTYPE_ARGUMENTS = {"run_python_code": ("data_query",)}
 
 _SQL_COMMENT_BLOCK = re.compile(r"/\*.*?\*/", re.DOTALL)
 _SQL_COMMENT_LINE = re.compile(r"(--|#)[^\n]*")
@@ -367,6 +436,19 @@ def _normalise_for_denylist(text):
     parse; it wins only if it refuses on contact. Over-refusal costs an analyst one rephrase.
     Under-refusal costs the invariant, silently, with a correct answer delivered to the wrong
     reader.
+
+    **This is only one of the two views the contact match searches** (see
+    :func:`_denylist_haystacks`). Stripping comments is itself parsing, and it deletes text
+    MariaDB *executes*:
+      * a ``#`` or ``--`` inside a string literal: in ``select '#', body from ...`` everything
+        after the ``#`` is deleted, table name included;
+      * a ``--`` with no whitespace after it: ``1--1`` is arithmetic, not a comment;
+      * the whole of a ``/*! ... */`` or ``/*M! ... */`` comment, which MariaDB runs.
+    Searched on its own, this view let each of those read a denylisted table through
+    ``run_database_query`` (a read tool, so no card). That hole dates from the denylist itself
+    (v1.271.0) and applied to ``Triton Chat Attachment`` too; the review of WI-080 PR 1 found
+    it, and v1.538.0 added the raw view. Stripping still earns its place: it is what joins
+    ``tabKnowledge/**/Article/**/Version`` back into one needle.
     """
     if not isinstance(text, str):
         return ""
@@ -374,6 +456,21 @@ def _normalise_for_denylist(text):
     lowered = _SQL_COMMENT_BLOCK.sub(" ", lowered)
     lowered = _SQL_COMMENT_LINE.sub(" ", lowered)
     return _NON_WORD.sub("", lowered)
+
+
+def _denylist_haystacks(text):
+    """Both views of ``text`` the contact match searches: comments stripped, and not.
+
+    A needle found in **either** is a refusal. The stripped view catches a name split by
+    comments; the raw view catches a name that the stripping deleted although MariaDB runs it
+    (see :func:`_normalise_for_denylist`). Searching a second view can only ever refuse more,
+    never less, which is the only direction a denylist may err in. The price is one more
+    accepted over-refusal: a comment that says ``version`` right after ``tabKnowledge Article``.
+    """
+    if not isinstance(text, str):
+        return ()
+    views = (_normalise_for_denylist(text), _NON_WORD.sub("", text.lower()))
+    return tuple(view for view in views if view)
 
 
 def _denylist_needles():
@@ -384,14 +481,34 @@ def _denylist_needles():
     return sorted((needle, dt) for needle, dt in pairs if needle)
 
 
+def _denylisted_name(value):
+    """The denylisted DocType ``value`` names, or ``None``.
+
+    Compared with case and runs of whitespace folded, and answered with the canonical name.
+    MariaDB resolves a DocType name case-insensitively, so ``knowledge article version`` may
+    well reach the same meta; whether it does is not worth finding out on a denylist, which
+    refuses on contact.
+    """
+    if not isinstance(value, str):
+        return None
+    folded = " ".join(value.split()).casefold()
+    for doctype in DENYLIST_DOCTYPES:
+        if doctype.casefold() == folded:
+            return doctype
+    return None
+
+
 def denylist_hit(tool_name, arguments):
     """The denylisted DocType this call would reach, or ``None``.
 
-    Two shapes, because the tools come in two shapes. ``get_document`` / ``list_documents`` /
-    ``search_documents`` and friends take a literal ``doctype`` argument, so that half is a
-    string comparison rather than a parse. ``run_database_query`` and ``run_python_code`` take
-    free text, so that half is the contact match described on
-    :func:`_normalise_for_denylist`.
+    Three shapes, because the tools come in three shapes. ``get_document`` / ``list_documents``
+    / ``search_documents`` and friends take a literal ``doctype`` argument, so that half is a
+    string comparison rather than a parse. ``fetch`` names its doctype inside an ``id``
+    ("<doctype>/<name>") and ``run_python_code`` inside ``data_query.doctype``, so those are
+    read in their own shape (``DENYLIST_ID_ARGUMENTS`` / ``DENYLIST_NESTED_DOCTYPE_ARGUMENTS``).
+    ``run_database_query`` and ``run_python_code`` also take free text, so that half is the
+    contact match described on :func:`_normalise_for_denylist`, run over both views of the text
+    that :func:`_denylist_haystacks` returns.
 
     The ``doctype`` check is applied to **every** tool rather than to a named list: a tool
     added to FAC tomorrow that takes a ``doctype`` is covered the day it appears, which is the
@@ -401,29 +518,39 @@ def denylist_hit(tool_name, arguments):
     if not isinstance(args, dict):
         return None
 
-    target = args.get("doctype")
-    if isinstance(target, str) and target.strip() in DENYLIST_DOCTYPES:
-        return target.strip()
+    hit = _denylisted_name(args.get("doctype"))
+    if hit:
+        return hit
+
+    for key in DENYLIST_ID_ARGUMENTS.get(tool_name, ()):
+        value = args.get(key)
+        if isinstance(value, str) and "/" in value:
+            hit = _denylisted_name(value.split("/", 1)[0])
+            if hit:
+                return hit
+
+    for key in DENYLIST_NESTED_DOCTYPE_ARGUMENTS.get(tool_name, ()):
+        nested = args.get(key)
+        if isinstance(nested, dict):
+            hit = _denylisted_name(nested.get("doctype"))
+            if hit:
+                return hit
 
     needles = _denylist_needles()
     for key in DENYLIST_TEXT_ARGUMENTS.get(tool_name, ()):
-        haystack = _normalise_for_denylist(args.get(key))
-        if not haystack:
+        haystacks = _denylist_haystacks(args.get(key))
+        if not haystacks:
             continue
         for needle, doctype in reversed(needles):
-            if needle in haystack:
+            if any(needle in haystack for haystack in haystacks):
                 return doctype
     return None
 
 
 def _denylist_refusal_message(doctype):
-    return (
-        f"Refused: {doctype} holds one person's private assistant context and is not "
-        "readable through the generic Frappe tools, by any role, with AI gating on or off. "
-        "Raw SQL consults no permission hook, so this refusal is the only thing standing "
-        "between a System Manager and everybody else's rows. Ask the person, or read it as "
-        "yourself in the Triton widget."
-    )
+    """The refusal a model (and the person behind it) reads: the doctype and why, per doctype."""
+    reason = DENYLIST_REASONS.get(doctype) or _DENYLIST_DEFAULT_REASON
+    return f"Refused: {doctype} {reason}"
 
 
 def classify_risk(tool_name, category=None):
@@ -1287,25 +1414,25 @@ def _precheck_refusal(tool, arguments):
 
 
 def _gated_execute(tool, original, arguments):
-    # 0) Private-context doctypes are refused outright, and this branch is first for a
-    #    reason. Everything below it can be switched off -- the confirm-flow bypass by a flag,
-    #    the rest by `ai_write_gating_enabled`, which ships dormant. A refusal reachable only
-    #    while a settings checkbox is ticked is not an invariant, and this one is: no role, no
-    #    flag and no confirmation makes one person's private assistant context readable
-    #    through a generic tool.
+    # 0) Denylisted doctypes are refused outright, and this branch is first for a reason.
+    #    Everything below it can be switched off -- the confirm-flow bypass by a flag, the
+    #    rest by `ai_write_gating_enabled`. A refusal reachable only while a settings checkbox
+    #    is ticked is not an invariant, and this one is: no role, no flag and no confirmation
+    #    makes one person's private assistant context, or an unapproved knowledge-base draft,
+    #    readable through a generic tool.
     denied = denylist_hit(getattr(tool, "name", ""), arguments)
     if denied:
         message = _denylist_refusal_message(denied)
-        # Evidence, not silence. An attempt to read private context through a generic tool is
-        # exactly the event an operator wants to find later, and AI Action Log is already
-        # append-only and already purged on a schedule.
+        # Evidence, not silence. An attempt to reach a denylisted doctype through a generic
+        # tool is exactly the event an operator wants to find later, and AI Action Log is
+        # already append-only and already purged on a schedule.
         insert_action_log(
             user=getattr(getattr(frappe, "session", None), "user", None),
             tool_name=getattr(tool, "name", ""),
             arguments=arguments,
             success=False,
             risk="High",
-            summary=f"Refused a generic-tool read of private assistant context ({denied}).",
+            summary=f"Refused a generic-tool call on a denylisted doctype ({denied}).",
             error=message,
             error_type="AIGateError",
         )

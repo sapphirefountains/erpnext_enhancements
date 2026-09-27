@@ -340,7 +340,7 @@ Re-check by hand at any time (writes nothing):
 
 ## 8. Store runs at the cutover (step S-D)
 
-The single reference for the *Store Run Charge Matching* report (KPI Dashboards, v1.538.0) at
+The single reference for the *Store Run Charge Matching* report (KPI Dashboards, v1.543.0) at
 runbook step S-D (`docs/migration/backlog-gl-posting-runbook.md`). Each row's *What to Do* says what
 that row needs; this section is the procedure and the rules behind it.
 
@@ -432,7 +432,7 @@ semicolons, and matched ignoring case.
 - **Every 2210 line**: each Journal Entry line on 2210 from 7 days before From Date to To Date
   belongs to one charge, or gets a row of its own; *2210 Not Accounted For* totals them.
 - **No amounts are guessed.** A wrong automatic pair consistent with every figure, and a link typed
-  on the wrong trip that contradicts nothing, stay invisible (CHANGELOG `[1.538.0]`, Known limits).
+  on the wrong trip that contradicts nothing, stay invisible (CHANGELOG `[1.543.0]`, Known limits).
 
 ### Settled by hand
 

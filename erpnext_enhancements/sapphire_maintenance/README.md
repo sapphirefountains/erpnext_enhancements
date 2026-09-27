@@ -140,7 +140,7 @@ The wizard's no-param picker shows two lists plus an always-present escape hatch
 **On submit**, `SapphireMaintenanceRecord.on_submit` enqueues [`api/maintenance_workflow.py::process_maintenance_submission`](../api/README.md) (background, "default" queue) which runs isolated steps:
 
 - `create_stock_entry` — Material Issue for consumables with qty > 0 (untouched dosing prefills don't move stock); per-row warehouse falls back feature store → technician's vehicle (`Employee.custom_default_vehicle_warehouse`) → settings default.
-- `create_timesheet` — labour = `clock_out − clock_in − paused_duration`; writes `total_labor_cost`.
+- `create_timesheet` — labour = `clock_out − clock_in − paused_duration`; writes `total_labor_cost`. That field is at **permlevel 1**, readable by System Manager only (v1.542.0), because with the clock times it gives away the technician's burdened pay rate; it is written by `db_set`, which bypasses permlevel, and it is stripped with `apply_fieldlevel_read_permissions()` from the Visit Wizard bootstrap (`get_visit_bootstrap`) and from the `maintenance_visit_history` assistant tool, since `as_dict()` and `get_doc` apply no field-level permissions of their own.
 - `check_warranty_and_rma` — Fail/Replace rows grouped per in-warranty feature → one native **Warranty Claim** each + `warranty_rma_flag`.
 - `create_sales_invoice` — only when the contract bills **Per Visit**; draft SI from the fee item/services group (Settings) + consumed consumables, against the contract's Sales Order.
 - `log_out_of_range_readings` — timeline Comment listing flagged readings.

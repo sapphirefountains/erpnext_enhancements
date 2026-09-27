@@ -285,7 +285,7 @@ STORE_RUN_SOURCE = "Purchase Receipt + QuickBooks"
 
 #: How far before the window the rows are read: a trip just before it still claims its card
 #: charge inside it (``metrics.combine_store_runs`` pairs a charge up to three days later).
-#: Defined in ``metrics`` since v1.538.0, because the Store Run Charge Matching report reads from
+#: Defined in ``metrics`` since v1.543.0, because the Store Run Charge Matching report reads from
 #: the same distance and its window logic is pure.
 STORE_RUN_LOOKBACK_DAYS = metrics.STORE_RUN_LOOKBACK_DAYS
 
@@ -335,7 +335,7 @@ def _store_run_rows(suppliers, since):
 
 	Rows start :data:`STORE_RUN_LOOKBACK_DAYS` before ``since``; the pairing decides what counts.
 
-	**Identifying columns** (v1.538.0), for the Store Run Charge Matching report; the count reads
+	**Identifying columns** (v1.543.0), for the Store Run Charge Matching report; the count reads
 	none of them. Each charge carries ``voucher_type``, ``voucher_no``, ``docstatus`` (a QuickBooks
 	card purchase is a draft until step S-D submits it), ``source`` (``QuickBooks`` or
 	``ERPNext``) and ``company``. Each receipt carries its name (``receipt``), ``company``,
@@ -345,7 +345,7 @@ def _store_run_rows(suppliers, since):
 	the GL (v16 credits ``base_net_amount`` per stock line; a non-stock line posts nothing). That is
 	the amount a matching card charge must move to 2210.
 
-	**Charges come back in a fixed order** (v1.538.0): the QuickBooks arm, then Purchase Invoices,
+	**Charges come back in a fixed order** (v1.543.0): the QuickBooks arm, then Purchase Invoices,
 	then Journal Entries, each by posting date and voucher name (a Journal Entry's lines by row
 	too). ``metrics.pair_store_runs`` breaks an exact tie -- same day, same distance from the amount
 	-- by input order, and without an ``order by`` that was the database's return order, which is

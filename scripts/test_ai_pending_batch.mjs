@@ -5,9 +5,10 @@
  * The list view lets someone confirm several AI proposals in one go, and most of its rules are
  * about safety rather than convenience:
  *
- * - a row with a `review_reason` (high risk, hidden values, a submit or cancel, a write to the
- *   gate's own records), or High risk or hidden values whatever the server said, never starts
- *   ticked, and never more than 50 start ticked or are ticked by "Select all";
+ * - a row with a `review_reason` (high risk, hidden values, a submit or cancel, a write to a
+ *   Task, the gate's own records or the knowledge base), or High risk or hidden values whatever
+ *   the server said, never starts ticked, and never more than 50 start ticked or are ticked by
+ *   "Select all";
  * - more than 50 ticked is refused with the review dialog left open;
  * - the second confirmation says how many will run and how many are high-risk, and it is a
  *   Dialog with an HTML field, because frappe.confirm wraps its message in a <p>;

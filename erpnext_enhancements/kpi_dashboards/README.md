@@ -22,7 +22,7 @@ master switch and hands a batch to the `long` queue.
 |---|---|
 | `snapshots.py` | The snapshot engine. Builds one `KPI Snapshot` per department, **committing per department** so one slow or broken aggregator cannot sink the rest of the run |
 | `metrics.py` | Pure KPI math — **no `frappe` import**, so it runs in the bench-free CI suite. Turns a raw value plus its target into the presentation fields: Good/Watch/Bad status, period-over-period trend, display string, source-staleness check. Deterministic, side-effect free, `now` injectable |
-| `store_run_matching.py` | Pure rules of the **Store Run Charge Matching** report (v1.538.0) — **no `frappe` import**: the report's window over the KPI's pairing, one row per recorded store run, the 2210 check (correcting entries included, through chains), links by Reference Number, `not-store-run` (and the receipt it clears), `part-paid`, *What to Do*, a charge carrying 2210 with no store run, a charge never carrying more than it paid (`_fits`), the 2210 backstop (`attribute_2210`), the Show buckets and the summary |
+| `store_run_matching.py` | Pure rules of the **Store Run Charge Matching** report (v1.543.0) — **no `frappe` import**: the report's window over the KPI's pairing, one row per recorded store run, the 2210 check (correcting entries included, through chains), links by Reference Number, `not-store-run` (and the receipt it clears), `part-paid`, *What to Do*, a charge carrying 2210 with no store run, a charge never carrying more than it paid (`_fits`), the 2210 backstop (`attribute_2210`), the Show buckets and the summary |
 | `report/store_run_charge_matching/` | Accounting's list of recorded store runs and the card charge each pairs with, for the QuickBooks cutover (runbook step S-D). Read-only; it only reads, the rules are above |
 
 ## Aggregators read ERPNext, never the upstream APIs
@@ -107,7 +107,7 @@ returns), $16.3k, and almost none since July 7 on the Amex card that carried 168
 gap is uncategorized QuickBooks data, not an improvement, until bookkeeping says otherwise.
 
 **Since v1.536.0 a trip is counted once, whichever records it** (`metrics.combine_store_runs`,
-pure and tested bench-free; since v1.538.0 the pairing itself is `metrics.pair_store_runs`, which it
+pure and tested bench-free; since v1.543.0 the pairing itself is `metrics.pair_store_runs`, which it
 calls, so the Store Run Charge Matching report pairs exactly as it does when counted from the same From Date). The Stock Scan page records a run the same day as Purchase Receipts
 carrying a run id (`custom_store_run`) and the receipt total; the card charge arrives in QuickBooks
 about four weeks later. *Charges* are the money records — QuickBooks card purchases, standalone
@@ -139,7 +139,7 @@ the old figure. The review-queue KPI (`stock_scan_review_queue`, key unchanged) 
 
 `tests/test_kpi_departments.py` checks that the seven places a department is named agree.
 
-## Store Run Charge Matching: the pairs, listed for Accounting (v1.538.0)
+## Store Run Charge Matching: the pairs, listed for Accounting (v1.543.0)
 
 A store run recorded on the Stock Scan page has already posted Dr 1410 / Cr 2210 for its stock
 lines before tax, and QuickBooks holds the same purchase as a **draft** Journal Entry (Dr the
@@ -223,7 +223,7 @@ docstring):
   advises amending a QuickBooks entry: amending a QuickBooks-synced Journal Entry cancels the
   original, `tabQuickBooks Sync Mapping` stays on the cancelled one, and the pairing follows the
   mapping, so the charge would drop out of the list.
-- **Links by Reference Number** (v1.538.0 second review). A Journal Entry whose Reference Number
+- **Links by Reference Number** (v1.543.0 second review). A Journal Entry whose Reference Number
   lists trip keys is those trips' charge: a key is a receipt's run id (`sr-…`), or the name of
   any receipt of the trip (the report's First Receipt, whether or not it has a run id); several may
   be listed, separated by commas, semicolons or spaces, each matched trimmed and ignoring case. A link **overrides** the
@@ -320,7 +320,7 @@ procedure at step S-D is in MIGRATION_NOTES section 8.
 **What the report cannot see** (fourth review): it compares no amounts beyond the KPI's own
 pairing, so a wrong automatic pair consistent with every figure, and a link typed on the wrong trip
 that contradicts no automatic pair and fits the charge, stay invisible. A simulator that follows
-every row's text found no other false *Done* on the generated histories it ran (CHANGELOG 1.538.0,
+every row's text found no other false *Done* on the generated histories it ran (CHANGELOG 1.543.0,
 Tests; the simulator is not in the repo). The limits Accounting settles by hand are in
 MIGRATION_NOTES section 8.
 

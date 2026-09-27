@@ -82,7 +82,10 @@ with `docstatus` in its data, always goes to a card (`_changes_docstatus`).
   table, and both are in `NEVER_EXEMPT`, so that update is itself a card. AI Pending Action and AI
   Action Log are in `NEVER_EXEMPT` too. Otherwise an assistant could rewrite a card's arguments
   after someone had read it, or edit its own audit trail. Task is there because exempting it would
-  ungate Task creation along with its updates (ADR 0016 §6).
+  ungate Task creation along with its updates (ADR 0016 §6). Knowledge Article and Knowledge Article
+  Version are there since v1.538.0 (WI-080, ADR 0017): company knowledge is published only by a
+  person approving someone else's draft. The Version doctype is also on the gate's denylist, so a
+  generic tool cannot reach it at all.
 
 ## Confirmation is desk-only, on purpose
 
@@ -107,6 +110,8 @@ count. They call three endpoints in `gating_api`:
   says whether each has hidden values without reading or decrypting them. A row starts unticked
   (`batch_default` false, with a `review_reason`) for High risk, hidden values, a submit or cancel
   (`_gate._changes_docstatus`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
+  For a never-exempt target the reason names its kind (`gating_api._never_exempt_reason`): a Task,
+  the gate's own records, or since v1.538.0 the company knowledge base.
   It reads the redacted `arguments` for that and never returns them.
 - `confirm_actions` / `cancel_actions` take up to 50 names. The actions run oldest first, through
   the same `_confirm_one` / `_cancel_one` the form's buttons use. An action that is not yours, not
