@@ -831,6 +831,22 @@ jobs:
       # The node part fails, never skips, in CI (ubuntu-latest ships node).
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
+      # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace
+      # vanishes for anyone holding no DocPerm on a non-child doctype of its module (so Knowledge
+      # Article's Desk User read, its module and its not being a child, single or read_only are
+      # pinned); a desk tile never renders without a same-named sidebar holding an item the viewer
+      # may see; a workspace or sidebar JSON whose `modified` did not move is never re-imported
+      # (each file is fingerprinted with its stamp); a URL item is never permission-filtered; a
+      # filter on a wrong field or option reads as an empty queue. Also the Help item's route, and
+      # the two Script Reports: their roles and ref_doctype (who can run them, in the Desk or through
+      # an AI tool's generate_report), bound SQL with no function strings, no draft text ever
+      # selected and none ever quoted in a row, and every rule of Due for Review and Integrity.
+      # Since PR 4's review also: the tile appended to every saved home-screen layout (v16 draws a
+      # saved Desktop Layout instead of the site's icons), the Auto Email Report guard (a scheduled
+      # send runs as Administrator), and the README's Check table equal to reporting.CHECKS.
+      # Own step: it installs its own frappe stub.
+      - name: Knowledge base entry points (workspace, tile, help item, the two reports)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_entry_points -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the

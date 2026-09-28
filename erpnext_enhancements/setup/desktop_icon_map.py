@@ -93,6 +93,11 @@ TILES = {
 	"Google Drive": ("google_drive", "hard-drive", INTEGRATION),
 	"Process Documentation": ("process_documentation", "file-text", INTEGRATION),
 	"QuickBooks Time": ("quickbooks_time", "clock", INTEGRATION),
+	# The company knowledge base (WI-080 PR 4). Slate with the other documents; `book-marked`
+	# because a handbook is a book with a ribbon in it, and no other tile uses it. It has no roles
+	# (its workspace has none), so every staff user sees it: the Article's `Desk User` read is
+	# what lets them open the workspace behind it (the module gate).
+	"Knowledge Base": ("knowledge_base", "book-marked", INTEGRATION),
 	# People
 	"HR": ("hr", "id-card", PEOPLE),
 	"Workforce": ("workforce", "users-round", PEOPLE),

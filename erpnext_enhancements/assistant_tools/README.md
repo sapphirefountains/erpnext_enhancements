@@ -141,7 +141,9 @@ with the write gate on or off, and whatever a confirmation says. It holds two to
 user reads it anyway, and its needle (`knowledgearticle`) is a prefix of the Version's, so adding
 it would refuse every generic read of the published text and the WI-080 acceptance queries. The
 operators' own integrity check over drafts therefore lives in a Script Report (WI-080 PR 4), not in
-MCP SQL.
+MCP SQL. `generate_report` on it is **not** refused (v1.557.0): v16 applies the report's roles (KB
+Approver) on every run, and its rows are names, numbers, states, user ids and the rule broken, never
+a draft's text. See the knowledge_base README, "The two reports".
 
 Each entry has its own reason in `_gate.DENYLIST_REASONS`, and the refusal reads
 "Refused: <doctype> <reason>". A model and the person behind it read that message, and "private

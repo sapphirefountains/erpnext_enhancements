@@ -1,0 +1,115 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"kb_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Company Knowledge Base</b></span>\",\"col\":12}},{\"id\":\"kb_intro\",\"type\":\"paragraph\",\"data\":{\"text\":\"Short how-to articles for everyone at Sapphire. Every article here was written by one person and approved by another before it was published. To find one, open <b>Published articles</b> and type in the <b>Title</b> or <b>Keywords</b> box at the top of the list (on a phone, first tap the up-and-down arrows button next to <b>Filter</b> to show those boxes), or a KB number such as KB-0612 in the <b>ID</b> box. Something missing or out of date? Tell the process owner named on the article.\",\"col\":12}},{\"id\":\"kb_sc_published\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Published articles\",\"col\":4}},{\"id\":\"kb_ql_newest\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Newest articles\",\"col\":8}},{\"id\":\"kb_sc_drafts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My drafts\",\"col\":3}},{\"id\":\"kb_sc_review\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"In review\",\"col\":3}},{\"id\":\"kb_sc_due\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Due for review\",\"col\":3}},{\"id\":\"kb_sc_new\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"New draft\",\"col\":3}},{\"id\":\"kb_card_writing\",\"type\":\"card\",\"data\":{\"card_name\":\"Writing and review\",\"col\":4}}]",
+ "creation": "2026-09-28 21:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "book-marked",
+ "is_hidden": 0,
+ "label": "Knowledge Base",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Writing and review",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "All versions",
+   "link_count": 0,
+   "link_to": "Knowledge Article Version",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Due for review",
+   "link_count": 0,
+   "link_to": "Knowledge Articles Due for Review",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Integrity check",
+   "link_count": 0,
+   "link_to": "Knowledge Base Integrity",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-28 22:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Knowledge Base",
+ "name": "Knowledge Base",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [
+  {
+   "document_type": "Knowledge Article",
+   "label": "Newest articles",
+   "quick_list_filter": "[[\"Knowledge Article\",\"status\",\"=\",\"Published\"]]"
+  }
+ ],
+ "roles": [],
+ "sequence_id": 62,
+ "shortcuts": [
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "format": "{} published",
+   "label": "Published articles",
+   "link_to": "Knowledge Article",
+   "stats_filter": "{\"status\":[\"=\",\"Published\"]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "format": "{} drafts",
+   "label": "My drafts",
+   "link_to": "Knowledge Article Version",
+   "stats_filter": "{\"review_state\":[\"=\",\"Draft\"],\"owner\":[\"=\",frappe.session.user]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} in review",
+   "label": "In review",
+   "link_to": "Knowledge Article Version",
+   "stats_filter": "{\"review_state\":[\"=\",\"In Review\"]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "label": "Due for review",
+   "link_to": "Knowledge Articles Due for Review",
+   "type": "Report"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "New",
+   "label": "New draft",
+   "link_to": "Knowledge Article Version",
+   "type": "DocType"
+  }
+ ],
+ "title": "Knowledge Base",
+ "type": "Workspace"
+}

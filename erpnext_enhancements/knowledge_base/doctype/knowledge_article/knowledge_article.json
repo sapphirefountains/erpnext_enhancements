@@ -119,6 +119,7 @@
    "description": "Acronyms and other words people search with, such as PO or QBO.",
    "fieldname": "keywords",
    "fieldtype": "Small Text",
+   "in_standard_filter": 1,
    "label": "Keywords",
    "read_only": 1
   },
@@ -264,7 +265,7 @@
  "index_web_pages_for_search": 0,
  "links": [],
  "make_attachments_public": 0,
- "modified": "2026-09-25 12:00:00.000000",
+ "modified": "2026-09-28 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Knowledge Base",
  "name": "Knowledge Article",
