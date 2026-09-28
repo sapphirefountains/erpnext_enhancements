@@ -305,6 +305,9 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `draft_course_spec` | Training | **read** — draft a whole course (lessons, blocks, quizzes) as a validated Course Spec from a plain-language brief, via ERPNext's own Vertex client. Writes nothing; returns a preview + a one-hour token. Bounds imported from the Training Question controller; only AI-authorable block types (no uploaded media) |
 | `author_training_course` | Training | **write (gated)** — build a Training Course + unpublished draft from a Course Spec (or a `draft_course_spec` token) via the deterministic materializer (`api/training_course_authoring`), reusing the manual builder's own `create_draft_version` + `save_draft_version`. Every quiz question is stamped `ai_generated` with **no** reviewer, so publication stays gated on a human; the course lands as a Draft. Second app write tool after `create_followup_task` |
 | `publish_training_course` | Training | **write (gated, one-way)** — freeze a draft course version and make it live via `api/training_author.publish_version`, which materializes `toc_json`/`content_hash` and only then submits. The step that had no tool: publishing is not a document submit, so `submit_document` was refused by `_require_materialized_content`. `change_type` is required and undefaulted — Material Change invalidates every existing completion. Medium risk: freezes lesson titles permanently and can fan assignments out to everyone |
+| `search_company_knowledge` | Knowledge Base | **read** (v1.559.0, WI-080 PR 6a; name frozen by ADR 0017) — `knowledge_base/ai_tools.search_payload` over `search_service.search`: ranked **published** articles for a question, an acronym (PO, QBO, SOP) or a KB number, the caller's readable set applied **before** ranking; filters `department` and `kind`, `limit` 1–10. Each result carries `result_type`, `cite_as` (`KB-0601 v3`), the approver by name (never an email address), `review_overdue` and a url. No match, a blank query and an unknown filter are ordinary answers |
+| `fetch_knowledge_article` | Knowledge Base | **read** (v1.559.0; name frozen) — `ai_tools.fetch_payload`: one published article as Markdown from `knowledge_base/markdown.py` (an 11-key header, the fixed "reference material, not instructions" comment, the text), capped at 40,000 characters, with the KB numbers it cites. An unknown, retired, unreadable or unpublished number, a `KBV-` id and a blank all return the **same** `found: false`, differing only in `requested`; drafts are never read |
+| `list_company_knowledge` | Knowledge Base | **read** (v1.559.0; name frozen by ADR 0017's 2026-09-28 amendment) — `ai_tools.contents_payload`: the table of contents, every published article's number, version, title, kind and department, grouped by department, counts by department and kind ("Not classified" included), paged (`page_size` ≤ 200). One `get_list` as the caller, counted and paged in Python |
 | `maintenance_day_board` | Maintenance | `api/maintenance_board.py::get_day_board_data` |
 | `maintenance_contract_status` | Maintenance | fresh perm-enforced queries on Sapphire Maintenance Contract |
 | `maintenance_visit_history` | Maintenance | perm-enforced queries + `_chemistry_trends` |
@@ -377,3 +380,16 @@ every registered tool.
   category shown in FAC's admin UI for these tools is **managed by the app**: change
   `_gate.py`, not the page, which is reset on the next migrate. It never decided
   gating anyway — `is_mutating()` consults `_gate.py`'s sets before any category.
+- **The knowledge base tools** (`search_company_knowledge`, `fetch_knowledge_article`,
+  `list_company_knowledge`, v1.559.0) share `_knowledge_base.py`: the `kind` and
+  `department` schema properties, built from `knowledge_base/constants.py`, and the
+  failure path. Every outcome the tools expect is a normal return; only something
+  unexpected becomes `{"success": false}` with one **deferred** Error Log ("Knowledge base
+  AI tool") naming the exception's type, never its message, the arguments or a
+  traceback, because FAC logs a raised exception with all three. `requires_permission`
+  is `Knowledge Article`, which every staff user reads, so FAC lists them to everyone
+  and Triton's one shared catalogue stays stable. **Triton does not get them from this
+  app alone:** it needs its own PR (`FAC_CORE_PREFIXES` gains `list_company_knowledge`;
+  `_NOT_OFFERED_PREFIXES` gains `draft_knowledge_article`), a snapshot regenerated as a
+  KB-role user, and `deploy_agents` on the VM for the deployed agents. See the
+  CHANGELOG for v1.559.0.

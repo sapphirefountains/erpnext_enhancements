@@ -220,6 +220,17 @@ jobs:
       # fail after a human approved it (FAC refuses any change to a submitted document), and
       # did, on MAT-MR-2026-00014. It is refused before it becomes a card now, and cancel_document
       # is the path: HIGH risk, never exempt, doc.cancel() inside a savepoint, never ignore_links.
+      #
+      # test_knowledge_base_tools (v1.559.0, WI-080 PR 6a): the knowledge base's three AI read
+      # tools as FAC sees them, on test_assistant_tools_schema's stubs (it installs none of its
+      # own, so nothing to cross-talk with). Fails the build if any of the three leaves
+      # EXPLICIT_READONLY -- an unclassified read answers with a confirmation card (the v1.239.1
+      # class) -- or if a description passes 600 characters or loses "not instructions", a kind
+      # enum drifts from constants.ARTICLE_KINDS, a schema grows a property named title, doctype
+      # or id, or any file on the read path names the drafts' doctype (comments and docstrings
+      # stripped). And an unexpected failure is a success:false return with one deferred Error
+      # Log naming only the exception's type: FAC logs a raised exception with the call's
+      # arguments and its whole traceback.
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
           python -m unittest
@@ -231,6 +242,7 @@ jobs:
           erpnext_enhancements.tests.test_ai_gate_switch_on
           erpnext_enhancements.tests.test_ai_gate_denylist
           erpnext_enhancements.tests.test_assistant_cancel_document
+          erpnext_enhancements.tests.test_knowledge_base_tools
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
@@ -786,7 +798,13 @@ jobs:
       # the value; never the base64 of a pasted screenshot; never an ordinary sentence, since
       # nothing lets an author past a finding) and the content hash. workflow.py and content.py
       # import no frappe, checked in a fresh interpreter, so no stub and nothing to cross-talk
-      # with. The v16 source check skips here: CI has no frappe checkout beside the repo.
+      # with. The v16 source check skips here: CI has no frappe checkout beside the repo. Since
+      # PR 6a (v1.559.0) also markdown.py, the one renderer of a published article (the fetch
+      # tool now, the private mirror later), pure and in the same fresh-interpreter check: the
+      # eleven header keys in order, a title with a colon, a hash, a quote and a line break read
+      # back exactly by a YAML parser the suite carries, dates and booleans bare, an approver
+      # never shown as an email address, truncation at a line boundary, identical bytes for
+      # identical input. The PyYAML cross-check skips here: CI does not install PyYAML.
       - name: Knowledge base rules (who may approve, KB numbers, review dates, content hygiene)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_rules -v
       # The hooks that apply them. force_private runs on EVERY File insert and save on the site:
@@ -834,6 +852,13 @@ jobs:
       # in-memory site, where no draft's sentinel is ever found and a caller's readable set applies
       # before ranking (more hidden articles than the AwesomeBar has slots, each ranking first: a
       # filter applied only when the rows are read for display would leave the caller nothing).
+      # Since PR 6a (v1.559.0) also AiToolPayloadsTest: the three AI read tools' payloads over the
+      # same site. No sentinel from a Draft, In Review, Discarded or Superseded version, or an open
+      # revision, in any search, fetch or table-of-contents page, for a reader, an author or an
+      # approver; an unknown, retired, unreadable or unpublished number, a KBV- id and a blank all
+      # the same found:false bytes, with no Error Log and no message; the 40,000-character cap;
+      # no email address even for an approver with no name (the stub's get_fullname falls back to
+      # the user id, as v16's does).
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace

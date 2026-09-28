@@ -53,7 +53,7 @@ import time
 import frappe
 from frappe.utils import get_fullname, get_url, getdate, nowdate
 
-from erpnext_enhancements.knowledge_base import constants
+from erpnext_enhancements.knowledge_base import constants, markdown
 from erpnext_enhancements.knowledge_base import search as engine
 
 ARTICLE = constants.ARTICLE_DOCTYPE
@@ -107,19 +107,7 @@ def search(query, *, department=None, kind=None, limit=10, snippets=True):
 	kind returns no results and says so in ``problems``, rather than silently ignoring the filter.
 	Returns ``{"results": [...], "problems": [...]}``; see the README for a result's fields.
 	"""
-	problems = []
-	department_filter = kind_filter = None
-	if department not in (None, ""):
-		department_filter = constants.department_option(department)
-		if department_filter is None:
-			problems.append(
-				f"unknown department {_quoted(department)}; use one of "
-				+ ", ".join(constants.DEPARTMENT_BLOCK_OPTIONS)
-			)
-	if kind not in (None, ""):
-		kind_filter = constants.kind_option(kind)
-		if kind_filter is None:
-			problems.append(f"unknown kind {_quoted(kind)}; use one of Policy, Process or SOP")
+	department_filter, kind_filter, problems = read_filters(department, kind)
 	empty = {"results": [], "problems": problems}
 	if problems or not isinstance(query, str) or not query.strip():
 		return empty
@@ -161,6 +149,27 @@ def search(query, *, department=None, kind=None, limit=10, snippets=True):
 	return {"results": results, "problems": []}
 
 
+def read_filters(department=None, kind=None):
+	"""``(department, kind, problems)``: a department and a kind filter as a person or a tool typed
+	them, read with ``constants.department_option`` and ``constants.kind_option``. Blank is no filter.
+	One that names no department or kind is a problem, in words that list the valid values, and never a
+	filter silently ignored. Shared by search and the AI tools' table of contents (PR 6a)."""
+	problems = []
+	department_filter = kind_filter = None
+	if department not in (None, ""):
+		department_filter = constants.department_option(department)
+		if department_filter is None:
+			problems.append(
+				f"unknown department {_quoted(department)}; use one of "
+				+ ", ".join(constants.DEPARTMENT_BLOCK_OPTIONS)
+			)
+	if kind not in (None, ""):
+		kind_filter = constants.kind_option(kind)
+		if kind_filter is None:
+			problems.append(f"unknown kind {_quoted(kind)}; use one of Policy, Process or SOP")
+	return department_filter, kind_filter, problems
+
+
 def _result(row, hit, query, today, snippets):
 	name = row.get("name")
 	review_by = getdate(row.get("review_by")) if row.get("review_by") else None
@@ -175,7 +184,7 @@ def _result(row, hit, query, today, snippets):
 		"department": row.get("department_block"),
 		"summary": row.get("summary"),
 		"snippet": None,
-		"approved_by": get_fullname(approver) if approver else None,
+		"approved_by": approver_name(approver),
 		"approved_on": approved_on.isoformat() if approved_on else None,
 		"review_by": review_by.isoformat() if review_by else None,
 		"review_overdue": bool(review_by and review_by < today),
@@ -187,6 +196,20 @@ def _result(row, hit, query, today, snippets):
 	if snippets:
 		result["snippet"] = engine.snippet(row.get("body_md"), query, fallback=row.get("summary") or "")
 	return result
+
+
+def approver_name(user):
+	"""The approver's name as a result and the AI tools show it, **never an email address**
+	(WI-080 PR 6a). ``None`` when there is no approver.
+
+	v16's ``get_fullname`` answers the user id, which is the user's email address, when the User has
+	no first or last name (``utils/__init__.py:59-76``), and before PR 6a this returned it as it came.
+	``markdown.approver_display_name`` makes that ``"Unnamed approver"``, so the fetch tool's header
+	and a search result say the same thing. ``get_fullname`` caches per request, so a page of results
+	costs one read per approver."""
+	if not user:
+		return None
+	return markdown.approver_display_name(get_fullname(user), user)
 
 
 def awesomebar_hits(txt):

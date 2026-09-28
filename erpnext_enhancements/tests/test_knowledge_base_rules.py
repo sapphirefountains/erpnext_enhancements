@@ -34,6 +34,12 @@ frappe, so every branch runs here, bench-free and with no stub:
 * **The article's kind** (PR 5): a content field, left out of the hash, read from what people type
   (every kind in any case, every alias, any separator) and nothing else; the department filter's
   reader and folder names; and the Integrity report reading a kind only with approved text.
+* **The Markdown renderer** (PR 6a, ``markdown.py``): the eleven header keys in order; a title with
+  ``:``, ``#``, ``"`` and a line break quoted so it reads back exactly; bare dates, integers and
+  booleans, ``null`` for what is missing; keyword splitting; related KB numbers; truncation at a line
+  boundary; site paths made absolute and nothing else; identical input, identical bytes; an approver
+  never shown as an email address; and the header read back as YAML front matter by a parser this
+  file carries (and by PyYAML too, where it is installed).
 
 **Every secret-shaped fixture is built by concatenation.** GitHub push protection refused a
 branch of this repo once for a literal Stripe-key-shaped test string; a split literal is the same
@@ -60,6 +66,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from erpnext_enhancements.knowledge_base import constants as K
 from erpnext_enhancements.knowledge_base import content as C
+from erpnext_enhancements.knowledge_base import markdown as M
 from erpnext_enhancements.knowledge_base import workflow as W
 from erpnext_enhancements.marketing.publish import workflow as marketing_workflow
 
@@ -125,6 +132,8 @@ class TestStandardLibraryOnly(unittest.TestCase):
 			"import erpnext_enhancements.knowledge_base.workflow\n"
 			"import erpnext_enhancements.knowledge_base.content\n"
 			"import erpnext_enhancements.knowledge_base.constants\n"
+			# PR 6a: the Markdown renderer, which the mirror (Slice 6) will run too.
+			"import erpnext_enhancements.knowledge_base.markdown\n"
 			"bad = sorted(m for m in sys.modules if m == 'frappe' or m.startswith('frappe.'))\n"
 			"print(','.join(bad))\n"
 		)
@@ -1556,6 +1565,311 @@ class TestContentHash(unittest.TestCase):
 
 	def test_the_fields_are_distinct_in_the_hash(self):
 		self.assertNotEqual(C.content_hash({"title": "a", "summary": "b"}), C.content_hash({"title": "b", "summary": "a"}))
+
+
+# ------------------------------------------------------------------ the Markdown renderer (PR 6a)
+
+#: YAML 1.2's double-quoted escapes (spec 5.7), as a front-matter reader decodes them.
+_YAML_ESCAPES = {
+	"0": "\0", "a": "\a", "b": "\b", "t": "\t", "\t": "\t", "n": "\n", "v": "\v", "f": "\f", "r": "\r",
+	"e": "\x1b", " ": " ", '"': '"', "/": "/", "\\": "\\", "N": "\x85", "_": "\xa0", "L": " ", "P": " ",
+}
+#: YAML 1.2 ``c-printable`` less the line breaks: what a one-line double-quoted scalar may hold raw.
+_YAML_RAW = re.compile("[\t\x20-\x7e\xa0-퟿-�\U00010000-\U0010ffff]*")
+_FLOW_ITEM = re.compile(r'\s*("(?:[^"\\]|\\.)*")\s*(?:,|$)')
+
+
+def _yaml_scalar(text):
+	"""One header value as a YAML 1.2 reader reads it: a double-quoted scalar, a flow sequence of them,
+	or a plain ``null``, ``true``, ``false``, integer or ISO date. Anything else fails the test."""
+	if text.startswith('"'):
+		body = text[1:-1]
+		assert text.endswith('"') and len(text) > 1 and _YAML_RAW.fullmatch(body), text
+		out, i = [], 0
+		while i < len(body):
+			assert body[i] != '"', f"a raw quote in {text}"
+			if body[i] != "\\":
+				out.append(body[i])
+				i += 1
+			elif body[i + 1] in "xuU":
+				width = {"x": 2, "u": 4, "U": 8}[body[i + 1]]
+				out.append(chr(int(body[i + 2 : i + 2 + width], 16)))
+				i += 2 + width
+			else:
+				out.append(_YAML_ESCAPES[body[i + 1]])
+				i += 2
+		return "".join(out)
+	if text.startswith("["):
+		inner = text[1:-1]
+		assert text.endswith("]") and "".join(m.group(0) for m in _FLOW_ITEM.finditer(inner)) == inner, text
+		return [_yaml_scalar(m.group(1)) for m in _FLOW_ITEM.finditer(inner)]
+	if text in ("null", "true", "false"):
+		return {"null": None, "true": True, "false": False}[text]
+	if re.fullmatch(r"-?[0-9]+", text):
+		return int(text)
+	assert re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", text), f"not a value the header writes: {text!r}"
+	return datetime.date.fromisoformat(text)
+
+
+def _front_matter(text):
+	"""``(header, the lines after it)``: a ``---`` line, one ``key: value`` per line, a ``---`` line."""
+	lines = text.split("\n")
+	assert lines[0] == "---", lines[0]
+	end = lines.index("---", 1)
+	header = {}
+	for line in lines[1:end]:
+		key, separator, value = line.partition(": ")
+		assert separator and re.fullmatch(r"[a-z_]+", key) and key not in header, line
+		header[key] = _yaml_scalar(value)
+	return header, lines[end + 1 :]
+
+
+def _article(**changes):
+	row = {
+		"kb_number": "KB-0698",
+		"version_number": 3,
+		"title": "Logging a fictitious widget return",
+		"kind": "SOP",
+		"department_block": "06 Operations",
+		"approved_by_name": "Alex Example",
+		"approved_on": datetime.datetime(2026, 10, 2, 14, 30, 5, 123456),
+		"review_by": datetime.date(2027, 4, 2),
+		"ai_drafted": 0,
+		"keywords": "RMA, widget return; return slip\nSOP-9001",
+		"summary": "How a fictitious widget comes back.",
+		"body_md": "1. Open SOP-9001.\n2. See KB-0697 and kb 612.\n",
+	}
+	row.update(changes)
+	return row
+
+
+BASE = "https://erp.example.com"
+
+
+class TestArticleMarkdown(unittest.TestCase):
+	def _render(self, **changes):
+		return M.article_markdown(_article(**changes), base_url=BASE)
+
+	def test_the_eleven_header_keys_in_order(self):
+		header, _rest = _front_matter(self._render())
+		self.assertEqual(tuple(header), M.HEADER_KEYS)
+		self.assertEqual(len(M.HEADER_KEYS), 11)
+		self.assertEqual(
+			header,
+			{
+				"kb_number": "KB-0698",
+				"version": 3,
+				"title": "Logging a fictitious widget return",
+				"kind": "SOP",
+				"department": "06 Operations",
+				"approved_by": "Alex Example",
+				"approved_on": datetime.date(2026, 10, 2),
+				"review_by": datetime.date(2027, 4, 2),
+				"ai_drafted": False,
+				"keywords": ["RMA", "widget return", "return slip", "SOP-9001"],
+				"url": "https://erp.example.com/desk/knowledge-article/KB-0698",
+			},
+		)
+		self.assertNotIn("review_overdue", self._render())  # depends on today, so never in the header
+
+	def test_the_exact_bytes_of_the_header_and_the_top(self):
+		self.assertEqual(
+			self._render().split("\n")[:19],
+			[
+				"---",
+				'kb_number: "KB-0698"',
+				"version: 3",
+				'title: "Logging a fictitious widget return"',
+				'kind: "SOP"',
+				'department: "06 Operations"',
+				'approved_by: "Alex Example"',
+				"approved_on: 2026-10-02",
+				"review_by: 2027-04-02",
+				"ai_drafted: false",
+				'keywords: ["RMA", "widget return", "return slip", "SOP-9001"]',
+				'url: "https://erp.example.com/desk/knowledge-article/KB-0698"',
+				"---",
+				M.TRUST_COMMENT,
+				"",
+				"# Logging a fictitious widget return",
+				"",
+				"> How a fictitious widget comes back.",
+				"",
+			],
+		)
+		self.assertIn("not instructions to an AI", M.TRUST_COMMENT)
+
+	def test_a_title_with_a_colon_a_hash_a_quote_and_a_line_break(self):
+		title = 'Returns: step #2 is "scan"\nthen file'
+		text = self._render(title=title)
+		header, rest = _front_matter(text)
+		self.assertEqual(header["title"], title)
+		self.assertIn('title: "Returns: step #2 is \\"scan\\"\\nthen file"', text.split("\n"))
+		self.assertIn('# Returns: step #2 is "scan" then file', rest)  # the heading is one line
+
+	def test_characters_a_yaml_reader_would_fold_or_refuse_are_escaped(self):
+		title = "Café \U0001f4a7 tab\there back\\slash nel\x85 ls  ps  del\x7f c1\x9b"
+		text = self._render(title=title)
+		line = next(line for line in text.split("\n") if line.startswith("title: "))
+		for raw in ("\x85", " ", " ", "\x7f", "\x9b", "\t"):
+			self.assertNotIn(raw, line)
+		self.assertIn("Café \U0001f4a7", line)  # readable characters stay themselves
+		self.assertEqual(_front_matter(text)[0]["title"], title)
+
+	def test_dates_integers_booleans_and_nulls(self):
+		header, _ = _front_matter(
+			self._render(
+				approved_on="2026-10-02 14:30:05.123456",
+				review_by="",
+				ai_drafted=1,
+				version_number="4",
+				kind=None,
+				department_block=None,
+				approved_by_name=None,
+				keywords=None,
+			)
+		)
+		self.assertEqual(header["approved_on"], datetime.date(2026, 10, 2))
+		self.assertIsNone(header["review_by"])
+		self.assertIs(header["ai_drafted"], True)
+		self.assertEqual(header["version"], 4)
+		self.assertIsNone(header["kind"])  # an article published before kinds existed
+		self.assertIsNone(header["department"])
+		self.assertIsNone(header["approved_by"])
+		self.assertEqual(header["keywords"], [])
+		self.assertIsNone(_front_matter(self._render(kind="Checklist"))[0]["kind"])  # never a fourth kind
+		self.assertIs(_front_matter(self._render(ai_drafted=None))[0]["ai_drafted"], False)
+
+	def test_keyword_splitting(self):
+		self.assertEqual(
+			M.keyword_list("PO, purchase order; packing slip\nreceiving,, po ;  Purchase   Order\r\n"),
+			["PO", "purchase order", "packing slip", "receiving"],
+		)
+		self.assertEqual(M.keyword_list(None), [])
+		self.assertEqual(M.keyword_list(" ; , \n"), [])
+
+	def test_related_numbers(self):
+		text = "See KB-0612, then kb 601 and KB0601 (itself), KBV-00001 (a version), kb_7, KB-0612 again, KB-12345."
+		self.assertEqual(M.related_numbers(text, "KB-0601"), ["KB-0612", "KB-0007"])
+		self.assertEqual(M.related_numbers(text, "kb 612"), ["KB-0601", "KB-0007"])
+		many = " ".join(f"KB-{n:04d}" for n in range(1, 30))
+		self.assertEqual(M.related_numbers(many, "KB-0002"), [f"KB-{n:04d}" for n in range(1, 22) if n != 2])
+		self.assertEqual(len(M.related_numbers(many, None)), M.RELATED_LIMIT)
+		self.assertEqual(M.related_numbers(None, "KB-0601"), [])
+
+	def test_truncation_at_a_line_boundary(self):
+		lines = [f"Step {n}: turn the fictitious valve a quarter turn." for n in range(2000)]
+		text = "\n".join(lines) + "\n"
+		self.assertGreater(len(text), M.TRUNCATE_AT)
+		cut, truncated = M.truncate(text)
+		self.assertTrue(truncated)
+		self.assertTrue(cut.endswith(M.TRUNCATION_NOTE))
+		head = cut[: -len(M.TRUNCATION_NOTE)]
+		self.assertLessEqual(len(head), M.TRUNCATE_AT)
+		self.assertTrue(text.startswith(head + "\n"))  # whole lines only
+		self.assertIn(head.split("\n")[-1], lines)
+		self.assertEqual(M.TRUNCATION_NOTE, "\n\n[Truncated at 40,000 characters: open the url for the rest.]\n")
+		self.assertEqual(M.truncate("short\n"), ("short\n", False))
+		exact = "x" * M.TRUNCATE_AT
+		self.assertEqual(M.truncate(exact), (exact, False))
+		one_line, truncated = M.truncate("y" * (M.TRUNCATE_AT + 5))
+		self.assertTrue(truncated)
+		self.assertEqual(one_line, "y" * M.TRUNCATE_AT + M.TRUNCATION_NOTE)
+
+	def test_site_paths_become_absolute_and_nothing_else_changes(self):
+		body = (
+			"![slip](/private/files/slip.png?fid=abc)\n"
+			'[the form](/desk/knowledge-article/KB-0612 "KB-0612")\n'
+			"![spaced](</files/a b.png>)\n"
+			"[vendor](https://vendor.example.com/a)\n"
+			"[cdn](//cdn.example.com/x.png)\n"
+			"[mail](mailto:someone@example.com)\n"
+			"[anchor](#step-2)\n"
+			"[1]: /files/ref.pdf\n"
+			"Plain /private/files/not-a-link.png stays text.\n"
+		)
+		text = M.article_markdown(_article(body_md=body), base_url=BASE + "/")
+		self.assertIn("![slip](https://erp.example.com/private/files/slip.png?fid=abc)", text)
+		self.assertIn('[the form](https://erp.example.com/desk/knowledge-article/KB-0612 "KB-0612")', text)
+		self.assertIn("![spaced](<https://erp.example.com/files/a b.png>)", text)
+		self.assertIn("[1]: https://erp.example.com/files/ref.pdf", text)
+		for unchanged in (
+			"[vendor](https://vendor.example.com/a)",
+			"[cdn](//cdn.example.com/x.png)",
+			"[mail](mailto:someone@example.com)",
+			"[anchor](#step-2)",
+			"Plain /private/files/not-a-link.png stays text.",
+		):
+			self.assertIn(unchanged, text)
+		self.assertNotIn("https://erp.example.com//", text)
+
+	def test_it_ends_with_exactly_one_newline(self):
+		for body in ("Text.\n\n\n", "Text.", "Text.\r\n\r\n", "", None, "   \n"):
+			with self.subTest(body=body):
+				text = self._render(body_md=body)
+				self.assertTrue(text.endswith("\n") and not text.endswith("\n\n"), repr(text[-20:]))
+				self.assertNotIn("\r", text)
+		self.assertTrue(self._render(body_md="", summary="").endswith("# Logging a fictitious widget return\n"))
+
+	def test_identical_input_gives_identical_bytes(self):
+		class Row:
+			def __init__(self, values):
+				self._values = values
+
+			def get(self, key, default=None):
+				return self._values.get(key, default)
+
+		first = self._render().encode("utf-8")
+		self.assertEqual(first, self._render().encode("utf-8"))
+		self.assertEqual(first, M.article_markdown(Row(_article()), base_url=BASE).encode("utf-8"))
+		self.assertNotEqual(first, self._render(version_number=4).encode("utf-8"))
+
+	def test_the_approver_is_never_an_email_address(self):
+		for name, user, expected in (
+			("Alex Example", "alex@example.com", "Alex Example"),
+			("  Alex   Example ", "alex@example.com", "Alex Example"),
+			("alex@example.com", "alex@example.com", M.UNNAMED_APPROVER),  # v16's fallback: the user id
+			("ALEX@example.com", None, M.UNNAMED_APPROVER),
+			("", "alex@example.com", M.UNNAMED_APPROVER),
+			(None, "alex@example.com", M.UNNAMED_APPROVER),
+			("Svc", "Svc", M.UNNAMED_APPROVER),  # the id again, even when it is not an address
+			(None, None, None),  # no approver at all
+		):
+			with self.subTest(name=name, user=user):
+				self.assertEqual(M.approver_display_name(name, user), expected)
+		header, _ = _front_matter(self._render(approved_by_name="alex@example.com"))
+		self.assertEqual(header["approved_by"], M.UNNAMED_APPROVER)
+		self.assertNotIn("@", "".join(line for line in self._render(approved_by_name="a@b.example").split("\n")[:13]))
+
+	def test_the_header_reads_as_yaml_with_pyyaml_too(self):
+		"""The parser above is this file's own; PyYAML (a YAML 1.1 reader, not installed in CI) is a
+		second opinion where it is installed."""
+		try:
+			import yaml
+		except ImportError:
+			self.skipTest("PyYAML is not installed")
+		title = 'Returns: "scan" #2\nCafé nel\x85 ls  del\x7f'
+		text = self._render(title=title)
+		loaded = yaml.safe_load(text.split("---\n")[1])
+		self.assertEqual(list(loaded), list(M.HEADER_KEYS))
+		self.assertEqual(loaded["title"], title)
+		self.assertEqual(loaded["approved_on"], datetime.date(2026, 10, 2))
+		self.assertEqual(loaded["keywords"], ["RMA", "widget return", "return slip", "SOP-9001"])
+		self.assertIsNone(yaml.safe_load(self._render(kind=None).split("---\n")[1])["kind"])
+
+	def test_mirror_path(self):
+		self.assertEqual(M.mirror_path(_article()), "kb/06-operations/KB-0698.md")
+		self.assertEqual(M.mirror_path(_article(department_block="07 Product Management")), "kb/07-product-management/KB-0698.md")
+		self.assertIsNone(M.mirror_path(_article(department_block="Warehouse")))
+		self.assertIsNone(M.mirror_path(_article(department_block=None)))
+		self.assertIsNone(M.mirror_path(_article(kb_number="KBV-00001")))
+		self.assertRegex(M.mirror_path(_article()), r"^kb/\d{2}-[a-z-]+/KB-\d{4}\.md$")
+
+	def test_a_missing_field_never_raises(self):
+		text = M.article_markdown({}, base_url="")
+		header, _ = _front_matter(text)
+		self.assertEqual(tuple(header), M.HEADER_KEYS)
+		self.assertTrue(all(value in (None, False, []) for value in header.values()), header)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (v1 in eight PRs, S to M each; v1.1 M; the training slice S)
 **Blocked by:**
 - Slice 0: nothing.
-- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written on 2026-09-28 and opened as a draft pull request. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
+- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written on 2026-09-28 and opened as a draft pull request. PR 6a (the three read tools, v1.559.0) was written the same day, stacked on PR 5, and opened as a draft pull request. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
 - Slice 4: the Google setup.
 - Slice 5: its content trigger.
 
@@ -562,6 +562,8 @@ PR 6b also changes one existing file's shape: `api/knowledge_base.py` (tabs) mov
 
 #### PR 6a: the three read tools [S–M, 1–1.5 d]
 
+Written 2026-09-28 as v1.559.0, stacked on PR 5, and opened as a draft pull request (see "Found while building PR 6a" below).
+
 **6a.1 `knowledge_base/markdown.py`** (pure; also used by Slice 6)
 
 - `article_markdown(row, *, base_url) -> str`. The output is a pure function of `row` and `base_url`: no clock, no lookups.
@@ -697,6 +699,16 @@ url: "https://<site>/desk/knowledge-article/KB-0601"
 - CHANGELOG, Added: the three tools. Record finding 5.
 - `assistant_tools/README.md`: the tool table.
 - `knowledge_base/README.md`: the leak table and the file map.
+
+**Found while building PR 6a (v1.559.0):**
+  - **PR 5's search results could carry an email address as `approved_by`.** v16's `get_fullname` answers the user id, which is the user's email address, for a User with no first or last name (`utils/__init__.py:59-76`), and `search_service` passed it on; the actions suite's stub answered `"Full <user id>"` for everyone, so no test could see it. `search_service.approver_name` now goes through `markdown.approver_display_name`, which answers "Unnamed approver" for a blank name, a name holding an `@`, or the user id again, and the stub's `get_fullname` falls back to the user id as v16's does. The fetch header uses the same function, so a search result and a fetched article name the approver alike, and neither is ever an address.
+  - **The spec's notes quoted `'KB-0601 v3'` as a literal.** A model handed a number it did not search for may cite it, so the search note names the top result's `cite_as` and the fetch note the article's own (the spec's example is exactly that for a one-result search). The table of contents' note keeps the literal example, since it names no single article; every entry carries its own `cite_as`.
+  - **`related` lists every KB number the text cites**, each `available: true` with its version, title and kind, or only `available: false`. That reconciles "an unavailable number does not say whether it was retired or never existed" with the acceptance check "`related` lists the KB numbers its text cites". It reads the summary and the body only, never the header: a site host such as `kb-1.example.com` in the header's url would otherwise read as KB-0001.
+  - **A JSON string literal alone is not always a safe YAML scalar.** `json.dumps(..., ensure_ascii=False)` leaves DEL, the C1 controls, U+0085, U+2028 and U+2029 raw; YAML 1.2 forbids the first two raw, and YAML 1.1 readers (PyYAML) fold the last three as line breaks. The renderer escapes them as `\uXXXX`, which JSON and YAML read the same way, and keeps every other character itself so a name with an accent stays readable in the mirror. The header's `title` is the stored title with a line break escaped (so it reads back exactly), and the `#` heading is the title on one line. The rules suite reads the header back with a small YAML parser of its own, and with PyYAML where it is installed (CI does not install it).
+  - **A database failure in search is a `success: false`, not an empty answer.** `search_service` keeps its old index when a rebuild fails, but the caller's readable set (`get_list`) is read outside that guard, so a failing list call raises to the wrapper like fetch's and the table of contents'. That is the right answer for a tool: "could not be read" is not "no match".
+  - **Additive fields the spec did not name:** `contents_payload` returns `problems` (an unknown department or kind, in `search_service.read_filters`' words, which the table of contents shares with search); `search_payload` adds "no query was given" to `problems` for a blank query; `fetch_payload`'s `characters` is the length of the whole Markdown before any truncation; and each table-of-contents entry carries `review_overdue`.
+  - **FAC checks two things before a tool's `execute`, and logs both itself.** `BaseTool.validate_arguments` refuses a missing required key or a value of the wrong JSON type (a string `limit`), and `check_permission` refuses a caller without read on `requires_permission`; each is FAC's own Error Log ("Validation Error", "Permission Error") naming the tool and the message, not the arguments. Outside this app, and rare: `tools/list` hides the tools from anyone without read, and the schemas are plain strings, integers and one boolean. FAC does not enforce an `enum`, so a model that sends `kind: "procedure"` or `department: "Operations"` is read through `constants.kind_option`/`department_option` like a person's filter, and a word that names nothing is a `problems` entry.
+  - **The wrappers share `assistant_tools/_knowledge_base.py`**: the `kind` and `department` schema properties and the failure path. It imports `knowledge_base.constants` at module scope (standard library only, so FAC's loader and the schema test's stubs import it freely) and `knowledge_base.ai_tools` only inside `run`, which is what "the tools import `knowledge_base` inside `execute`" guards against. It is on the static check's list of files that may not name the drafts' doctype.
 
 #### PR 6b: the drafting tool, `draft_knowledge_article`, which may also submit for review [M, 1.5–2 d]
 
