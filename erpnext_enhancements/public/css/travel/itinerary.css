@@ -369,6 +369,10 @@ summary.ti-place-notes-head:focus-visible {
 /* The place's notes in its marker's popup: Leaflet's own colors, the line breaks kept, and a
    long note scrolls inside the popup rather than covering the map. */
 .ti-popup-notes {
+	/* Leaflet sizes a popup by measuring its content with white-space: nowrap, which pre-wrap
+	   overrides, so the notes add nothing to the width: a short place name left them in a
+	   ~110px column on a phone. */
+	min-width: 200px;
 	margin-top: 4px;
 	font-size: 0.8rem;
 	white-space: pre-wrap;
