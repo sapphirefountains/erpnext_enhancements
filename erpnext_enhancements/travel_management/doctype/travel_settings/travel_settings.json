@@ -7,6 +7,7 @@
   "auto_advance_statuses",
   "column_break_general",
   "notifications_enabled",
+  "change_alerts_enabled",
   "travel_desk_section",
   "travel_desk_label",
   "column_break_travel_desk",
@@ -49,6 +50,12 @@
    "fieldname": "notifications_enabled",
    "fieldtype": "Check",
    "label": "Send Travel Notifications"
+  },
+  {
+   "description": "When a flight, hotel, ride, shipment or stop changes on a trip that is Booked or In Progress, email only the people it affects: what it was, what it is now, and an updated calendar invite. One email per person, sent 10 minutes after the last edit, so a round of edits is one email. The person who made the change is not emailed about it. Needs Send Travel Notifications on as well.",
+   "fieldname": "change_alerts_enabled",
+   "fieldtype": "Check",
+   "label": "Send Change Alerts"
   },
   {
    "description": "The office's travel desk: who the crew calls about their travel. It heads the contacts card on every itinerary (Plan a Trip, /itinerary, the itinerary email and the printed Trip Sheet), under 911 and above who booked the trip, the trip lead, the job-site contact and each hotel. Left off the card until it has a phone or an email.",
@@ -186,7 +193,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-27 10:00:00.000000",
+ "modified": "2026-09-27 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel Settings",

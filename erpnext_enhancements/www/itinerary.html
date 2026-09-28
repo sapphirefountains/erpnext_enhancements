@@ -1,8 +1,10 @@
 {#
   Traveler itinerary shell (served at /itinerary; controller: itinerary.py).
 
-  Chrome-free mobile page following the Time Kiosk shell pattern (kiosk.html)
-  WITHOUT the PWA/service-worker layer. Its jobs:
+  Chrome-free mobile page following the Time Kiosk shell pattern (kiosk.html).
+  Its jobs:
+    * declare the home-screen app (itinerary-manifest.json: "Sapphire Itinerary",
+      scope /itinerary) and its touch icon;
     * load the itinerary styles (css/travel/itinerary.css) and front-end
       script (js/travel/itinerary.js);
     * hand the server-computed boot payload (employee, active trips — the ones
@@ -24,9 +26,20 @@
   too, from the same answer; neither adds a history entry, and nothing here
   changes for them.
 
+  Offline: itinerary.js registers /itinerary-sw.js?v=<ITIN_BUILD> with scope
+  /itinerary (never the site root, which is the kiosk's). The worker keeps this
+  page, its stylesheet and script, and the person's files; the page keeps each
+  answer in IndexedDB. A page kept on the phone still carries the boot of whoever
+  opened it, so before it shows anything saved itinerary.js checks the boot's
+  offline_key against the ee_itinerary_key cookie (the offline marker, which
+  itinerary.py sets and every sign-out deletes) and the boot's user against the
+  session's user_id cookie.
+
   Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
   so every mutable asset URL below carries ?v={{ deploy_version }} (see
-  itinerary.py / kiosk.py::get_deploy_version).
+  itinerary.py / kiosk.py::get_deploy_version). The worker's precache list is
+  exactly the two ?v= assets below (tests/test_itinerary_service_worker.py). The
+  icons are the Sapphire mark the kiosk uses, unversioned on purpose.
 #}
 {% extends "templates/web.html" %}
 
@@ -35,6 +48,9 @@
 {% block head_include %}
 <meta name="theme-color" content="#00a0dd">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/itinerary-manifest.json?v={{ deploy_version }}">
+<meta name="apple-mobile-web-app-title" content="Itinerary">
+<link rel="apple-touch-icon" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png">
 <link rel="stylesheet" href="/assets/erpnext_enhancements/css/travel/itinerary.css?v={{ deploy_version }}">
 {% endblock %}
 

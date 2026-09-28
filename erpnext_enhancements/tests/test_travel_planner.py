@@ -1967,6 +1967,691 @@ class TestState(unittest.TestCase):
 		self.assertEqual(state["freight"][0]["booking_group"], "s1s1s1")
 
 
+# --------------------------------------------------------------------------- copying a trip
+
+
+class Refused(Exception):
+	"""What the stubbed ``frappe.throw`` raises when it is given no exception of its own."""
+
+
+class NewTrip(FakeTrip):
+	"""A Travel Trip not saved yet, for a copy's first save: ``apply_plan`` sets the header's
+	values with ``set`` too, and a header value is not a table."""
+
+	def set(self, key, value):
+		setattr(self, key, list(value) if isinstance(value, list) else value)
+
+
+def new_trip():
+	return NewTrip(
+		name=None,
+		status=None,
+		company=None,
+		start_date=None,
+		end_date=None,
+		travelers=[],
+		flights=[],
+		accommodations=[],
+		ground_transport=[],
+		mileage=[],
+		freight=[],
+		other_costs=[],
+		itinerary=[],
+		documents=[],
+	)
+
+
+def repeat_job(**kwargs):
+	"""A finished trip worth copying: a pump rebuild at the same site every year. Ann and Bo on
+	one flight out, with Ann's seat already on an Expense Claim; a flight home typed on the form
+	for the whole crew, with a day and no time yet; one room, with Bo as Ann's guest for his two
+	nights; a rental; Ann's own car, its miles claimed; a shipment for Bo; a stop that made a
+	Lead; and Ann's boarding pass. Cy was on the crew and has since left the company."""
+	from datetime import timedelta
+
+	base = dict(
+		name="TRIP-2026-00007",
+		modified="2026-10-09 12:00:00",
+		status="Completed",
+		purpose="Pump rebuild",
+		travel_type="Domestic",
+		company="SF",
+		start_date="2026-10-05",
+		end_date="2026-10-08",
+		travel_for_doctype="Project",
+		travel_for_name="PRJ-00580",
+		billable=1,
+		trip_description="<p>Annual rebuild</p>",
+		travelers=[
+			row(name="T1", employee="EMP-A", employee_name="Ann", is_trip_lead=1, from_date="2026-10-05",
+				to_date="2026-10-08"),
+			row(name="T2", employee="EMP-B", employee_name="Bo", is_trip_lead=0, from_date="2026-10-06",
+				to_date="2026-10-08"),
+			row(name="T3", employee="EMP-C", employee_name="Cy", is_trip_lead=0, from_date=None, to_date=None),
+		],
+		flights=[
+			flight("EMP-A", "Outbound", "2026-10-05 07:05:00", name="F1", booking_group="a1a1a1a1a1a1", ref="PNR-A",
+				cost=150, arrival_time="2026-10-05 08:20:00", billable=1, paid_by="Employee",
+				paid_by_traveler="EMP-A", expense_claim="HR-EXP-1"),
+			flight("EMP-B", "Outbound", "2026-10-05 07:05:00", name="F2", booking_group="a1a1a1a1a1a1", ref="PNR-B",
+				cost=150, arrival_time="2026-10-05 08:20:00", billable=1, paid_by="Company"),
+			flight(None, "Return", "2026-10-08 00:00:00", name="F3", booking_group=None, ref="PNR-H", cost=0,
+				airline="Delta", flight_number="DL9"),
+		],
+		accommodations=[
+			stay("EMP-A", "2026-10-05", "2026-10-08", name="H1", booking_group="b2b2b2b2b2b2", ref="CONF-1",
+				cost=600, guest=0, check_in_time=timedelta(hours=15)),
+			stay("EMP-B", "2026-10-06", "2026-10-08", name="H2", booking_group="b2b2b2b2b2b2", ref="CONF-1",
+				cost=0, guest=1),
+		],
+		ground_transport=[
+			row(name="G1", traveler="EMP-A", booking_group="c3c3c3c3c3c3", transport_type="Rental/Third Party",
+				supplier="Enterprise", leg="During Trip", pickup_datetime="2026-10-05 09:00:00",
+				return_datetime="2026-10-08 12:00:00", booking_reference="R-77", cost=300),
+			row(name="G2", traveler="EMP-B", booking_group="c3c3c3c3c3c3", transport_type="Rental/Third Party",
+				supplier="Enterprise", leg="During Trip", pickup_datetime="2026-10-05 09:00:00",
+				return_datetime="2026-10-08 12:00:00", booking_reference="R-77", cost=0),
+			row(name="G3", traveler="EMP-A", booking_group="d4d4d4d4d4d4", transport_type="Personal Vehicle",
+				leg="Outbound", pickup_datetime="2026-10-05 05:00:00", pickup_location="Shop",
+				dropoff_location="Site", booking_reference=None, cost=0),
+		],
+		mileage=[row(name="M1", booking_group="d4d4d4d4d4d4", traveler="EMP-A", distance=42, expense_claim="HR-EXP-2")],
+		freight=[
+			row(name="S1", carrier="ODFL", tracking_number="PRO1", contents="Pump", booking_group="e5e5e5e5e5e5",
+				traveler="EMP-B", ship_from="Shop", deliver_to="Site", pickup_from="2026-09-30 08:00:00",
+				pickup_to="2026-09-30 17:00:00", delivery_from="2026-10-05 00:00:00", delivery_to=None, cost=400,
+				billable=1, paid_by="Company", paid_by_traveler=None),
+		],
+		itinerary=[
+			row(name="S-1", date="2026-10-06", time=timedelta(hours=8), end_time=timedelta(hours=12),
+				activity_description="Pump rebuild", related_party_doctype="Customer", related_party_name="Bellagio",
+				location="POI-1", outcome_doctype="Lead", outcome_name="CRM-LEAD-9"),
+		],
+		documents=[doc_row("D1", "Boarding pass", "/private/files/ann.png", "a1a1a1a1a1a1", "EMP-A", title="Pass")],
+	)
+	base.update(kwargs)
+	return files_trip(**base)
+
+
+_POIS = [types.SimpleNamespace(name="POI-1", poi_name="Bellagio loading dock")]
+
+
+def page_payload(state):
+	"""What ``plan_a_trip.js`` ``payload()`` posts for a state it adopted as it came: the copy's
+	first save. The description goes too, as it does once the page marks it changed."""
+	bookings = {
+		table: [
+			{
+				"group": card["group"],
+				"label": "",
+				"values": card["values"],
+				"changed": card["changed"],
+				"members": [
+					dict(
+						{"name": m["name"], "traveler": m["traveler"], "ref": m["ref"]},
+						**({"guest": 1 if m.get("guest") else 0} if table == "accommodations" else {}),
+					)
+					for m in card["members"]
+				],
+				"mileage": card.get("mileage"),
+			}
+			for card in cards
+		]
+		for table, cards in state["bookings"].items()
+	}
+	freight = []
+	for item in state["freight"]:
+		out = {"name": item["name"]}
+		for field in planner.FREIGHT_FIELDS:
+			out[field] = "" if item.get(field) is None else item[field]
+		out["booking_group"] = item["booking_group"] or (f"row:{item['name']}" if item["name"] else "")
+		freight.append(out)
+	payload = {
+		"trip": dict(state["trip"]),
+		"status": state["status"],
+		"travelers": [
+			{
+				"employee": t["employee"],
+				"is_trip_lead": 1 if t["is_trip_lead"] else 0,
+				"from_date": t["from_date"] or "",
+				"to_date": t["to_date"] or "",
+			}
+			for t in state["travelers"]
+		],
+		"bookings": bookings,
+		"freight": freight,
+		"documents": [],
+		"stops": [
+			{
+				"name": stop["name"],
+				"date": stop["date"] or "",
+				"time": stop["time"] or "",
+				"end_time": stop["end_time"] or "",
+				"activity_description": stop["activity_description"] or "",
+				"related_party_doctype": stop["related_party_doctype"] or "",
+				"related_party_name": stop["related_party_name"] or "",
+				"location": stop["location"] or "",
+				"location_title": "",
+			}
+			for stop in state["stops"]
+		],
+	}
+	# Over the wire, as the page sends it.
+	return json.loads(json.dumps(payload))
+
+
+class TestCopyATrip(unittest.TestCase):
+	"""Copy a past trip: "Plan another trip like this one" (``planner.copy_plan``, PR 4). A repeat
+	job at the same site brings over the crew, the rooms, the rental, the schedule and the freight
+	on the new dates. What must not happen: a date that moves by the wrong amount, or a time of
+	day that moves at all; anything the old trip's bookings were (a confirmation number, a cost,
+	who paid, a claim, a Lead, a file) turning up on the new one; a copy that the first save
+	cannot create; and a copy for someone who may not see the trip or plan one."""
+
+	def source(self, **kwargs):
+		with mock.patch.object(planner.frappe, "get_all", lambda *a, **k: _POIS, create=True):
+			return planner.get_state(repeat_job(**kwargs))
+
+	def copy(self, start="2026-11-02", keep_crew=True, active=("EMP-A", "EMP-B")):
+		return planner.copy_state(
+			self.source(),
+			date.fromisoformat(start),
+			keep_crew=keep_crew,
+			active=None if active is None else set(active),
+		)
+
+	def call(self, *args, create=True, read=True, **kwargs):
+		"""``copy_plan`` against a stubbed frappe; what it asked for is in ``self.calls``."""
+		self.calls = calls = []
+		source = repeat_job()
+
+		def check_permission(ptype):
+			calls.append(("check_permission", ptype))
+			if not read:
+				raise planner.frappe.PermissionError("No permission for Travel Trip")
+
+		source.check_permission = check_permission
+
+		def has_permission(doctype, ptype="read", *a, **k):
+			calls.append(("has_permission", doctype, ptype))
+			return create
+
+		def get_doc(doctype, name):
+			calls.append(("get_doc", doctype, name))
+			return source
+
+		def throw(message, exc=None, **k):
+			raise (exc or Refused)(message)
+
+		lookups = {"employees": [{"name": "EMP-A"}, {"name": "EMP-B"}], "companies": ["SF"]}
+		with mock.patch.multiple(
+			planner.frappe,
+			create=True,
+			has_permission=has_permission,
+			get_doc=get_doc,
+			throw=throw,
+			get_all=lambda *a, **k: _POIS,
+		), mock.patch.object(planner, "_lookups", lambda: lookups):
+			return planner.copy_plan(*args, **kwargs)
+
+	# ------------------------------------------------------------------ dates
+
+	def test_every_date_moves_by_the_days_between_the_first_days(self):
+		# 2026-10-05 to 2026-11-02: 28 days, both Mondays.
+		state = self.copy()
+		self.assertEqual((state["trip"]["start_date"], state["trip"]["end_date"]), ("2026-11-02", "2026-11-05"))
+		self.assertEqual(
+			[(t["from_date"], t["to_date"]) for t in state["travelers"]],
+			[("2026-11-02", "2026-11-05"), ("2026-11-03", "2026-11-05")],
+		)
+		out, home = state["bookings"]["flights"]
+		self.assertEqual(
+			(out["values"]["departure_time"], out["values"]["arrival_time"], home["values"]["departure_time"]),
+			("2026-11-02 07:05:00", "2026-11-02 08:20:00", "2026-11-05 00:00:00"),
+		)
+		room = state["bookings"]["accommodations"][0]["values"]
+		self.assertEqual(
+			(room["check_in_date"], room["check_out_date"], room["check_in_time"]),
+			("2026-11-02", "2026-11-05", "15:00:00"),
+		)
+		rental = state["bookings"]["ground_transport"][0]["values"]
+		self.assertEqual(
+			(rental["pickup_datetime"], rental["return_datetime"], rental["arrival_datetime"]),
+			("2026-11-02 09:00:00", "2026-11-05 12:00:00", None),
+		)
+		shipment = state["freight"][0]
+		self.assertEqual(
+			(shipment["pickup_from"], shipment["pickup_to"], shipment["delivery_from"], shipment["delivery_to"]),
+			("2026-10-28 08:00:00", "2026-10-28 17:00:00", "2026-11-02 00:00:00", None),
+		)
+		stop = state["stops"][0]
+		self.assertEqual((stop["date"], stop["time"], stop["end_time"]), ("2026-11-03", "08:00:00", "12:00:00"))
+
+	def test_month_ends_year_ends_and_leap_days(self):
+		from datetime import datetime
+
+		shift = planner.shift_date
+		self.assertEqual(shift("2026-12-30", 3), "2027-01-02")
+		self.assertEqual(shift("2027-01-31 18:30:00", 28), "2027-02-28 18:30:00")
+		self.assertEqual(shift("2028-02-28", 1), "2028-02-29")
+		self.assertEqual(shift("2027-02-28", 1), "2027-03-01")
+		self.assertEqual(shift("2026-10-05", -7), "2026-09-28", "a copy can start earlier than its source")
+		# A Document holds dates and datetimes, not text.
+		self.assertEqual(shift(datetime(2026, 12, 31, 23, 30), 1), "2027-01-01 23:30:00")
+		self.assertEqual(shift(date(2026, 12, 31), 1), "2027-01-01")
+		for blank in (None, ""):
+			self.assertEqual(shift(blank, 5), blank)
+		self.assertEqual(shift("soon", 5), "soon")
+
+		# The whole trip over New Year: 2026-10-05 to 2026-12-30 is 86 days.
+		state = self.copy(start="2026-12-30")
+		self.assertEqual((state["trip"]["start_date"], state["trip"]["end_date"]), ("2026-12-30", "2027-01-02"))
+		self.assertEqual(state["stops"][0]["date"], "2026-12-31")
+		self.assertEqual(state["bookings"]["flights"][1]["values"]["departure_time"], "2027-01-02 00:00:00")
+		self.assertEqual(state["bookings"]["accommodations"][0]["values"]["check_out_date"], "2027-01-02")
+		self.assertEqual(state["freight"][0]["pickup_from"], "2026-12-25 08:00:00")
+
+	def test_a_time_of_day_never_moves_when_the_clocks_change(self):
+		# October to November crosses the end of daylight saving time (2026-11-01 in the US).
+		# frappe stores the site's wall time, so 7:05 AM is 7:05 AM on the new day: nothing is
+		# converted, and nothing is added in hours.
+		source, state = self.source(), self.copy()
+		for table, cards in state["bookings"].items():
+			for old, new in zip(source["bookings"][table], cards, strict=True):
+				for field in planner.DATED_FIELDS & set(new["values"]):
+					if old["values"][field]:
+						self.assertEqual(old["values"][field][10:], new["values"][field][10:], f"{table}.{field}")
+		# Into daylight saving time too, and a wall time that does not exist on that day in the
+		# US is kept as typed rather than "corrected".
+		self.assertEqual(planner.shift_date("2027-03-13 02:30:00", 1), "2027-03-14 02:30:00")
+		self.assertEqual(planner.shift_date("2027-03-12 22:30:00", 3), "2027-03-15 22:30:00")
+
+	def test_midnight_stays_midnight(self):
+		# The page stores a flight or drive with a day and no time yet at 00:00:00, and reads it
+		# back as "no time given".
+		from datetime import datetime
+
+		state = self.copy()
+		self.assertEqual(state["bookings"]["flights"][1]["values"]["departure_time"], "2026-11-05 00:00:00")
+		self.assertEqual(state["freight"][0]["delivery_from"], "2026-11-02 00:00:00")
+		self.assertEqual(planner.shift_date("2026-10-05 00:00:00", 400), "2027-11-09 00:00:00")
+		self.assertEqual(planner.shift_date(datetime(2026, 10, 5), 3), "2026-10-08 00:00:00")
+
+	def test_every_date_the_page_writes_moves_and_no_time_of_day_does(self):
+		# A Date or Datetime the page writes that is not on the list would keep the old trip's
+		# date on the new one; a Time on it would be mangled.
+		written = {
+			"travel_trip": set(planner.TRIP_FIELDS),
+			"trip_traveler": {"from_date", "to_date"},
+			"trip_flight": set(planner.BOOKING_TABLES["flights"]["shared"]),
+			"trip_accommodation": set(planner.BOOKING_TABLES["accommodations"]["shared"]),
+			"trip_ground_transport": set(planner.BOOKING_TABLES["ground_transport"]["shared"]),
+			"trip_freight": set(planner.FREIGHT_FIELDS),
+			"trip_agenda": set(planner.STOP_FIELDS),
+		}
+		dated, timed = set(), set()
+		for doctype, fields in written.items():
+			meta = _load_json(TRAVEL_DIR, "doctype", doctype, f"{doctype}.json")
+			fieldtypes = {f["fieldname"]: f["fieldtype"] for f in meta["fields"]}
+			for field in fields:
+				self.assertIn(field, fieldtypes, f"{doctype}.{field}")
+				if fieldtypes[field] in ("Date", "Datetime"):
+					dated.add(field)
+				elif fieldtypes[field] == "Time":
+					timed.add(field)
+		self.assertEqual(dated, set(planner.DATED_FIELDS))
+		self.assertEqual(timed, {"check_in_time", "check_out_time", "time", "end_time"})
+
+	def test_the_page_moves_a_copy_by_the_same_list(self):
+		# A copy not saved yet moves every date with a new First day on the page (shift_copy): a
+		# field on one list and not the other would be left on the old day there, or here.
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		found = re.search(r"\nconst TP_DATED = \[(.*?)\];", page, re.S)
+		self.assertIsNotNone(found, "TP_DATED is gone")
+		self.assertEqual(set(re.findall(r'"([a-z_]+)"', found.group(1))), set(planner.DATED_FIELDS))
+		# ...and the same whole-day, keep-the-time rule as shift_date.
+		shift = re.search(r"\nfunction tp_shift_date\(value, days\) \{(.*?)\n\}\n", page, re.S)
+		self.assertIsNotNone(shift, "tp_shift_date is gone")
+		self.assertIn("text.slice(10)", shift.group(1))
+
+	# ------------------------------------------------------------------ what comes over
+
+	def test_nothing_the_old_bookings_were_comes_over(self):
+		source, state = self.source(), self.copy()
+		self.assertEqual(
+			(state["name"], state["modified"], state["status"], state["can_write"], state["documents"]),
+			(None, None, "Planning", True, []),
+		)
+		self.assertTrue(source["documents"], "the old trip had a boarding pass")
+		keys = []
+		for table, cards in state["bookings"].items():
+			for card in cards:
+				keys.append(card["group"])
+				self.assertFalse(card["protected"])
+				# The page's new_card marks: every shared field, and the cost.
+				self.assertEqual(card["changed"], [*planner.BOOKING_TABLES[table]["shared"], "cost"])
+				values = card["values"]
+				self.assertEqual((values["cost"], values["paid_by"], values["paid_by_traveler"]), (0, "", ""))
+				for member in card["members"]:
+					self.assertEqual((member["name"], member["ref"], member["protected"]), (None, "", False))
+		shipment = state["freight"][0]
+		keys.append(shipment["booking_group"])
+		self.assertEqual(
+			(shipment["name"], shipment["tracking_number"], shipment["cost"], shipment["paid_by"],
+				shipment["paid_by_traveler"], shipment["protected"]),
+			(None, "", 0, "", "", False),
+		)
+		# Every booking and shipment keyed as not saved yet, no two alike.
+		self.assertEqual(keys, [f"new:{n}" for n in range(1, len(keys) + 1)])
+		stop = state["stops"][0]
+		self.assertEqual((stop["name"], stop["outcome_name"]), (None, None))
+		self.assertEqual(source["stops"][0]["outcome_name"], "CRM-LEAD-9")
+		# The drive is the same distance; its claim was the old trip's.
+		self.assertTrue(source["bookings"]["ground_transport"][1]["mileage"]["claimed"])
+		self.assertEqual(
+			state["bookings"]["ground_transport"][1]["mileage"], {"driver": "EMP-A", "distance": 42.0, "claimed": False}
+		)
+
+		# No money anywhere in it, however deep.
+		def costs(value):
+			if isinstance(value, dict):
+				return [v for k, v in value.items() if k == "cost"] + [c for v in value.values() for c in costs(v)]
+			if isinstance(value, list):
+				return [c for v in value for c in costs(v)]
+			return []
+
+		self.assertTrue(costs(state))
+		self.assertEqual(set(costs(state)), {0})
+		for card in [c for cards in state["bookings"].values() for c in cards]:
+			self.assertEqual((card["values"]["paid_by"], card["values"]["paid_by_traveler"]), ("", ""))
+		json.dumps(state)  # the page gets it as JSON: nothing a Document holds is left in it
+
+	def test_the_jobs_pattern_comes_over(self):
+		state = self.copy()
+		trip = state["trip"]
+		self.assertEqual(
+			{k: trip[k] for k in ("purpose", "travel_type", "company", "travel_for_doctype", "travel_for_name",
+				"billable", "trip_description")},
+			{
+				"purpose": "Pump rebuild",
+				"travel_type": "Domestic",
+				"company": "SF",
+				"travel_for_doctype": "Project",
+				"travel_for_name": "PRJ-00580",
+				"billable": 1,
+				"trip_description": "<p>Annual rebuild</p>",
+			},
+		)
+		out, home = state["bookings"]["flights"]
+		self.assertEqual((out["values"]["airline"], out["values"]["flight_number"], out["values"]["leg"]),
+			("Southwest", "WN1", "Outbound"))
+		self.assertEqual(out["values"]["billable"], 1)
+		room = state["bookings"]["accommodations"][0]
+		self.assertEqual(room["values"]["hotel_lodging"], "Hilton")
+		rental, drive = state["bookings"]["ground_transport"]
+		self.assertEqual((rental["values"]["transport_type"], rental["values"]["supplier"]),
+			("Rental/Third Party", "Enterprise"))
+		self.assertEqual((drive["values"]["pickup_location"], drive["values"]["dropoff_location"]), ("Shop", "Site"))
+		shipment = state["freight"][0]
+		self.assertEqual((shipment["carrier"], shipment["contents"], shipment["ship_from"], shipment["deliver_to"],
+			shipment["billable"]), ("ODFL", "Pump", "Shop", "Site", 1))
+		stop = state["stops"][0]
+		self.assertEqual(
+			(stop["activity_description"], stop["related_party_doctype"], stop["related_party_name"],
+				stop["location"], stop["location_title"]),
+			("Pump rebuild", "Customer", "Bellagio", "POI-1", "Bellagio loading dock"),
+		)
+
+	def test_the_same_people_on_the_same_bookings(self):
+		state = self.copy()
+		# Cy has left the company: he is not on the crew, and on no booking.
+		self.assertEqual(
+			[(t["name"], t["employee"], t["employee_name"], t["is_trip_lead"]) for t in state["travelers"]],
+			[(None, "EMP-A", "Ann", 1), (None, "EMP-B", "Bo", 0)],
+		)
+		out, home = state["bookings"]["flights"]
+		self.assertEqual([m["traveler"] for m in out["members"]], ["EMP-A", "EMP-B"])
+		# The flight home was typed on the form for the whole crew; the page cannot write a row for
+		# nobody, so its copy seats everyone on the new crew.
+		self.assertEqual([m["traveler"] for m in home["members"]], ["EMP-A", "EMP-B"])
+		room = state["bookings"]["accommodations"][0]
+		self.assertEqual([(m["traveler"], m["guest"]) for m in room["members"]], [("EMP-A", 0), ("EMP-B", 1)])
+		self.assertEqual(state["freight"][0]["traveler"], "EMP-B")
+
+		# With no one to leave off, everyone comes.
+		everyone = self.copy(active=None)
+		self.assertEqual([t["employee"] for t in everyone["travelers"]], ["EMP-A", "EMP-B", "EMP-C"])
+		self.assertEqual([m["traveler"] for m in everyone["bookings"]["flights"][1]["members"]],
+			["EMP-A", "EMP-B", "EMP-C"])
+
+		# The lead left behind: the next person leads, and Ann's own car stays behind with her.
+		# A booking with nobody on it could never be saved: the page refuses it on its first step,
+		# where no booking can be reached ("Every booking needs at least one person ticked").
+		without_ann = self.copy(active=("EMP-B",))
+		self.assertEqual([(t["employee"], t["is_trip_lead"]) for t in without_ann["travelers"]], [("EMP-B", 1)])
+		self.assertEqual([m["traveler"] for m in without_ann["bookings"]["flights"][0]["members"]], ["EMP-B"])
+		(rental,) = without_ann["bookings"]["ground_transport"]
+		self.assertEqual(rental["values"]["transport_type"], "Rental/Third Party")
+		self.assertEqual([m["traveler"] for m in rental["members"]], ["EMP-B"])
+		self.assertEqual(
+			without_ann["notes"],
+			[
+				"The Personal Vehicle drive was only for Ann, who can no longer travel, "
+				"so it is not on the copy."
+			],
+		)
+		self.assertEqual(state["notes"], [], "nobody left: nothing to say")
+
+	def test_a_copy_with_its_crew_is_always_one_the_page_can_save(self):
+		# What plan_a_trip.js problems() refuses before the first save, which runs on the first
+		# step — where no booking can be reached to fix it: a booking with nobody ticked, and a
+		# personal drive with a distance and no driver. For every set of people still able to
+		# travel, the copy with its crew has neither.
+		from itertools import combinations
+
+		people = ("EMP-A", "EMP-B", "EMP-C")
+		source = self.source()
+		for size in range(1, len(people) + 1):
+			for active in combinations(people, size):
+				state = planner.copy_state(source, date(2026, 11, 2), keep_crew=True, active=set(active))
+				crew = {t["employee"] for t in state["travelers"]}
+				self.assertTrue(crew, active)
+				for table, cards in state["bookings"].items():
+					for card in cards:
+						people_on_it = [m["traveler"] for m in card["members"]]
+						self.assertTrue(people_on_it, (active, table, card["values"]))
+						self.assertLessEqual(set(people_on_it), crew, (active, table))
+						mileage = card.get("mileage") or {}
+						if float(mileage.get("distance") or 0) > 0:
+							self.assertIn(mileage.get("driver"), people_on_it, (active, table))
+				# Everything left off is said.
+				dropped = sum(len(c) for c in source["bookings"].values()) - sum(
+					len(c) for c in state["bookings"].values()
+				)
+				self.assertEqual(dropped, sum("not on the copy" in n for n in state["notes"]), active)
+
+	def test_a_drive_whose_driver_left_is_driven_by_someone_still_on_it(self):
+		source = self.source()
+		drive = source["bookings"]["ground_transport"][1]
+		self.assertEqual(drive["mileage"]["driver"], "EMP-A")
+		drive["members"].append({"name": "G9", "traveler": "EMP-B", "ref": "", "protected": False})
+		state = planner.copy_state(source, date(2026, 11, 2), keep_crew=True, active={"EMP-B"})
+		copied = state["bookings"]["ground_transport"][1]
+		self.assertEqual([m["traveler"] for m in copied["members"]], ["EMP-B"])
+		self.assertEqual(copied["mileage"], {"driver": "EMP-B", "distance": 42.0, "claimed": False})
+		self.assertEqual(
+			state["notes"],
+			["Bo now drives on the Personal Vehicle drive: whoever drove it before can no longer travel."],
+		)
+
+	def test_without_the_crew_every_booking_waits_for_its_people(self):
+		state = self.copy(keep_crew=False)
+		self.assertEqual(state["travelers"], [])
+		# The bookings still come, with nobody on them until the office ticks someone.
+		self.assertEqual({t: len(c) for t, c in state["bookings"].items()},
+			{"flights": 2, "accommodations": 1, "ground_transport": 2})
+		self.assertEqual([c["members"] for cards in state["bookings"].values() for c in cards], [[]] * 5)
+		self.assertEqual(state["freight"][0]["traveler"], "", "a shipment for nobody goes to the whole crew")
+		self.assertEqual(state["bookings"]["ground_transport"][1]["mileage"]["driver"], "")
+		self.assertEqual([g for g in state["gaps"] if g.get("employee")], [])
+		# Nobody on the crew yet: nothing is dropped, the page seats whoever is ticked.
+		self.assertEqual(state["notes"], [])
+		self.assertEqual(planner.copy_state(self.source(), date(2026, 11, 2), active=set())["notes"], [])
+
+	def test_the_copy_opens_with_the_gaps_its_first_save_will_show(self):
+		state = self.copy()
+		found = {(g["check"], g.get("group")) for g in state["gaps"]}
+		(out, home), (room,), (rental, drive) = (state["bookings"][t] for t in planner.BOOKING_TABLES)
+		shipment = state["freight"][0]["booking_group"]
+		for key in (out["group"], home["group"], room["group"], rental["group"]):
+			self.assertIn(("confirmation", key), found)
+			self.assertIn(("cost", key), found)
+		self.assertIn(("confirmation", shipment), found)
+		self.assertIn(("cost", shipment), found)
+		# Nobody books their own car.
+		self.assertNotIn(("confirmation", drive["group"]), found)
+		# No number yet, so no paperwork asked for; and everyone still has a bed and a way both
+		# ways, the guest on his own two nights.
+		self.assertEqual(completeness.paperwork_gaps(state["gaps"]), [])
+		self.assertEqual([g for g in state["gaps"] if g["check"] in ("lodging", "travel")], [])
+		named = next(g for g in state["gaps"] if g["check"] == "confirmation" and g["group"] == out["group"])
+		self.assertEqual(named["employee_names"], ["Ann", "Bo"])
+
+	# ------------------------------------------------------------------ the first save
+
+	def test_the_first_save_creates_new_bookings_with_no_numbers_and_no_costs(self):
+		source, state = self.source(), self.copy()
+		doc = new_trip()
+		notes = planner.apply_plan(doc, page_payload(state))
+		self.assertEqual(notes, [])
+		self.assertEqual(
+			(doc.status, doc.purpose, doc.start_date, doc.end_date, doc.travel_for_name, doc.company),
+			("Planning", "Pump rebuild", "2026-11-02", "2026-11-05", "PRJ-00580", "SF"),
+		)
+		self.assertEqual(
+			[(t.employee, t.is_trip_lead, t.from_date, t.to_date) for t in doc.travelers],
+			[("EMP-A", 1, "2026-11-02", "2026-11-05"), ("EMP-B", 0, "2026-11-03", "2026-11-05")],
+		)
+		old = {c["group"] for cards in source["bookings"].values() for c in cards}
+		old |= {s["booking_group"] for s in source["freight"]}
+		for table, ref in (("flights", "booking_reference"), ("accommodations", "booking_confirmation"),
+				("ground_transport", "booking_reference"), ("freight", "tracking_number")):
+			for r in getattr(doc, table):
+				self.assertRegex(r.booking_group, r"^[0-9a-f]{12}$", table)
+				self.assertNotIn(r.booking_group, old, table)
+				self.assertIsNone(getattr(r, ref), table)
+				self.assertEqual(r.cost, 0.0, table)
+				self.assertEqual((r.paid_by, r.paid_by_traveler), (None, None), table)
+				self.assertIsNone(getattr(r, "expense_claim", None), table)
+		# One booking per card, one row per person on it.
+		self.assertEqual(len({r.booking_group for r in doc.flights}), 2)
+		self.assertEqual(
+			[(r.traveler, r.departure_time) for r in doc.flights],
+			[("EMP-A", "2026-11-02 07:05:00"), ("EMP-B", "2026-11-02 07:05:00"),
+				("EMP-A", "2026-11-05 00:00:00"), ("EMP-B", "2026-11-05 00:00:00")],
+		)
+		# The guest is still a guest, pays nothing, and has his own two nights.
+		self.assertEqual(
+			[(r.traveler, r.guest, r.check_in_date, r.check_out_date) for r in doc.accommodations],
+			[("EMP-A", 0, "2026-11-02", "2026-11-05"), ("EMP-B", 1, "2026-11-03", "2026-11-05")],
+		)
+		# The drive's miles, for the new trip's own claim.
+		(miles,) = doc.mileage
+		self.assertEqual(
+			(miles.traveler, miles.distance, miles.date, miles.booking_group),
+			("EMP-A", 42.0, "2026-11-02", doc.ground_transport[2].booking_group),
+		)
+		self.assertIsNone(getattr(miles, "expense_claim", None))
+		(shipment,) = doc.freight
+		self.assertEqual(
+			(shipment.carrier, shipment.traveler, shipment.pickup_from, shipment.delivery_from),
+			("ODFL", "EMP-B", "2026-10-28 08:00:00", "2026-11-02 00:00:00"),
+		)
+		(stop,) = doc.itinerary
+		self.assertEqual((stop.date, stop.location, stop.activity_description), ("2026-11-03", "POI-1", "Pump rebuild"))
+		self.assertIsNone(getattr(stop, "outcome_name", None))
+		self.assertEqual(doc.documents, [])
+
+	def test_without_the_crew_the_first_save_waits_for_people_on_every_booking(self):
+		state = self.copy(keep_crew=False)
+		with self.assertRaises(planner.PlanError):
+			planner.apply_plan(new_trip(), page_payload(state))
+		# The office picks Di and ticks her on everything.
+		state["travelers"] = [
+			{"name": None, "employee": "EMP-D", "employee_name": "Di", "is_trip_lead": 1, "from_date": None,
+				"to_date": None}
+		]
+		for cards in state["bookings"].values():
+			for card in cards:
+				card["members"] = [{"name": None, "traveler": "EMP-D", "ref": "", "guest": 0}]
+		doc = new_trip()
+		self.assertEqual(planner.apply_plan(doc, page_payload(state)), [])
+		self.assertEqual({r.traveler for r in doc.flights + doc.accommodations + doc.ground_transport}, {"EMP-D"})
+		self.assertIsNone(doc.freight[0].traveler)  # the whole crew
+		self.assertEqual(doc.mileage, [], "no driver named yet, so no miles")
+
+	# ------------------------------------------------------------------ the endpoints
+
+	def test_a_copy_needs_create_on_trips_and_read_on_the_trip(self):
+		with self.assertRaises(planner.frappe.PermissionError):
+			self.call("TRIP-2026-00007", "2026-11-02", create=False)
+		self.assertEqual(self.calls, [("has_permission", "Travel Trip", "create")], "refused before it is even loaded")
+		with self.assertRaises(planner.frappe.PermissionError):
+			self.call("TRIP-2026-00007", "2026-11-02", read=False)
+		self.assertEqual(self.calls[-2:], [("get_doc", "Travel Trip", "TRIP-2026-00007"), ("check_permission", "read")])
+		for bad in ("", None, "next week"):
+			with self.assertRaises(Refused) as refused:
+				self.call("TRIP-2026-00007", bad)
+			self.assertEqual(str(refused.exception), "Pick the new trip's first day.")
+
+	def test_the_answer_is_the_state_the_lookups_and_the_trip_copied(self):
+		answer = self.call("TRIP-2026-00007", "2026-11-02")
+		self.assertEqual(set(answer), {"state", "lookups", "copied_from"})
+		self.assertEqual(answer["copied_from"], "TRIP-2026-00007")
+		self.assertEqual(answer["lookups"]["companies"], ["SF"])
+		self.assertEqual(answer["state"]["name"], None)
+		self.assertEqual(answer["state"]["trip"]["start_date"], "2026-11-02")
+		# Only the lookups' (active) employees come over: Cy has left.
+		self.assertEqual([t["employee"] for t in answer["state"]["travelers"]], ["EMP-A", "EMP-B"])
+		# "Bring the same crew", however the desk posts the tick box: a JavaScript true arrives as
+		# the text "true", which cint reads as 0.
+		for flag in (0, "0", "false", "False", False):
+			self.assertEqual(self.call("TRIP-2026-00007", "2026-11-02", keep_crew=flag)["state"]["travelers"], [], flag)
+		for flag in (1, "1", "true", True, None):
+			answer = self.call("TRIP-2026-00007", "2026-11-02", keep_crew=flag)
+			self.assertEqual(len(answer["state"]["travelers"]), 2, flag)
+
+	def test_the_list_is_every_trip_this_user_can_see_newest_first(self):
+		asked = []
+
+		def get_list(doctype, **kwargs):
+			asked.append((doctype, kwargs))
+			return []
+
+		with mock.patch.object(planner.frappe, "get_list", get_list, create=True):
+			self.assertEqual(planner.get_copyable_trips(), [])
+		# Scoped by get_list, any status (the trip worth copying has usually finished), no money.
+		self.assertEqual(
+			asked,
+			[
+				(
+					"Travel Trip",
+					{
+						"fields": ["name", "purpose", "status", "start_date", "end_date", "travel_for_doctype",
+							"travel_for_name"],
+						"order_by": "start_date desc",
+						"limit_page_length": 50,
+					},
+				)
+			],
+		)
+
+	def test_both_endpoints_are_whitelisted(self):
+		source = _read(os.path.join(TRAVEL_DIR, "planner.py"))
+		for method in ("get_copyable_trips", "copy_plan"):
+			self.assertRegex(source, rf"@frappe\.whitelist\(\)\ndef {method}\(")
+
+
 # --------------------------------------------------------------------------- contracts
 
 
@@ -2054,7 +2739,12 @@ class TestContracts(unittest.TestCase):
 		source = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
 		planner_source = _read(os.path.join(TRAVEL_DIR, "planner.py"))
 		called = set(re.findall(r"travel_management\.planner\.(\w+)", source))
-		self.assertEqual(called, {"get_plan", "get_recent_plans", "save_plan", "place_to_poi"})
+		# Changed on purpose in PR 4 (Nik, 2026-09-26): "Copy a past trip" lists the trips to copy
+		# (get_copyable_trips) and asks for the copy (copy_plan).
+		self.assertEqual(
+			called,
+			{"get_plan", "get_recent_plans", "save_plan", "place_to_poi", "get_copyable_trips", "copy_plan"},
+		)
 		for method in called:
 			self.assertRegex(planner_source, rf"@frappe\.whitelist\([^)]*\)\ndef {method}\(")
 
@@ -2292,6 +2982,84 @@ class TestContracts(unittest.TestCase):
 		self.assertIn("erpnext_enhancements.patches.reload_travel_workspace_for_plan_a_trip", patches)
 		self.assertLess(patches.index("[post_model_sync]"), patches.index("reload_travel_workspace_for_plan_a_trip"))
 
+	def test_the_copy_screens_days_are_counted_in_utc(self):
+		# The copy screen's first day (the next weekday after today) and its "The new trip: ..."
+		# line are date arithmetic in the browser. Counted from the ISO strings in UTC, a
+		# daylight-saving change or a phone in another time zone never moves a day; the same sum
+		# on local midnights puts Sun, Mar 8 2026 plus a day at 11 PM on the 8th in Denver. Run,
+		# not grepped, in two time zones either side of the date line.
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		code = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		helpers = "".join(
+			re.search(rf"\nfunction {name}\(.*?\n\}}\n", code, re.S).group(0)
+			for name in ("tp_add_days", "tp_next_weekday")
+		)
+		adds = [
+			["2026-12-31", 1],
+			["2026-03-07", 1],
+			["2026-03-08", 1],
+			["2026-10-31", 2],
+			["2028-02-28", 1],
+			["2026-10-01", -1],
+			["2026-10-01", 0],
+			["", 3],
+			["not a date", 1],
+		]
+		days = ["2026-09-24", "2026-09-25", "2026-09-26", "2026-09-27", "2026-12-31", ""]
+		script = helpers + (
+			f"process.stdout.write(JSON.stringify({{add: {json.dumps(adds)}.map(([d, n]) => tp_add_days(d, n)),"
+			f" next: {json.dumps(days)}.map(tp_next_weekday)}}));"
+		)
+		for tz in ("America/Denver", "Pacific/Auckland"):
+			# Set inside the script: node on Windows ignores a TZ in its environment at start-up.
+			zoned = f"process.env.TZ = {json.dumps(tz)};" + script
+			result = subprocess.run(
+				[node, "-e", zoned], capture_output=True, text=True, encoding="utf-8", check=False, timeout=60
+			)
+			self.assertEqual(result.returncode, 0, result.stderr)
+			got = json.loads(result.stdout)
+			self.assertEqual(
+				got["add"],
+				["2027-01-01", "2026-03-08", "2026-03-09", "2026-11-02", "2028-02-29", "2026-09-30", "2026-10-01", "", ""],
+				tz,
+			)
+			# Thu -> Fri; Fri, Sat and Sun -> Mon; the last Thursday of the year -> Fri, Jan 1.
+			self.assertEqual(
+				got["next"], ["2026-09-25", "2026-09-28", "2026-09-28", "2026-09-28", "2027-01-01", ""], tz
+			)
+
+	def test_the_forms_copy_trip_opens_the_pages_copy_screen(self):
+		# The form's "Copy trip" hands its trip over the way its other buttons do, through
+		# frappe.route_options, as `copy`, which the page reads and consumes in route_args. A key
+		# the page did not read would open the list instead, with no error.
+		form = _strip_js_comments(_read(os.path.join(APP_DIR, "public", "js", "travel_trip.js")))
+		self.assertIn("frappe.set_route('plan-a-trip', { copy: frm.doc.name });", form)
+		self.assertIn("frm.add_custom_button(__('Copy trip'), () => copy_trip(frm));", form)
+		# ...for a saved trip only: after refresh's return for a new one.
+		refresh = re.search(r"\n\trefresh\(frm\) \{(.*?)\n\t\},\n", form, re.S).group(1)
+		self.assertLess(refresh.index("if (frm.is_new()) return;"), refresh.index("__('Copy trip')"))
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		body = re.search(r"\n\troute_args\(\) \{(.*?)\n\t\}\n", page, re.S).group(1)
+		self.assertIn('copy: pick("copy")', body)
+
+	def test_the_copy_list_and_screen_show_no_money(self):
+		# "All but money" (Nik, 2026-09-26): the past trips on the list and the copy screen's
+		# account of what a trip had name no cost, payer or bill — the copy leaves them behind,
+		# and a crew member can open this page. (The words "costs are left behind" are fine.)
+		code = _strip_js_comments(_read(os.path.join(PAGE_DIR, "plan_a_trip.js")))
+		for signature in (
+			r"copy_list\(past\)",
+			r"copy_source_card\(\$parent, s, trip\)",
+			r"draw_copy\(\)",
+			r"copy_made_note\(\$parent\)",
+		):
+			found = re.search(rf"\n\t{signature} \{{(.*?)\n\t\}}\n", code, re.S)
+			self.assertIsNotNone(found, f"{signature} is gone")
+			for money in (".cost", "paid_by", "billable", "format_currency", "mileage", "currency"):
+				self.assertNotIn(money, found.group(1), f"{signature} reads {money}")
+
 	def test_node_check(self):
 		self._node_check()
 
@@ -2415,6 +3183,59 @@ class TestPageRouting(unittest.TestCase):
 		code = body.group(1)
 		self.assertIn("{ trip: this.state.name, step: step }", code)
 		self.assertLess(code.index("args.view ="), code.index("args.as ="))
+		# A trip with no name yet is {new, step}: a copy of a past trip starts on that address
+		# too (test_the_copy_screen_and_its_copy_are_entries_the_page_writes).
+		self.assertIn("{ new: 1, step: step }", code)
+
+	def test_the_copy_screen_is_read_from_the_route_and_consumed(self):
+		# ?copy= reaches the page in frappe.route_options like &trip= does (the form's "Copy
+		# trip", a reload of the copy screen). Read and deleted there, or a later plain visit to
+		# the page replays the copy screen instead of showing the list.
+		body = re.search(r"\n\troute_args\(\) \{(.*?)\n\t\}\n", self.source, re.S).group(1)
+		self.assertIn('copy: pick("copy")', body)
+
+	def test_the_copy_screen_and_its_copy_are_entries_the_page_writes(self):
+		# The copy screen is its own entry, ?copy=<trip> and nothing else. The copy it makes
+		# starts as a new trip does, on its own "?new=1&step=trip" entry — address_args' key
+		# order for a trip with no name, which back_one_step compares as written — pushed once
+		# it is drawn, with a draft of its own. All through set_address: never raw pushState,
+		# never frappe.set_route to this page.
+		def body(signature):
+			found = re.search(rf"\n\t{signature} \{{(.*?)\n\t\}}\n", self.code, re.S)
+			self.assertIsNotNone(found, f"{signature} is gone")
+			return found.group(1)
+
+		open_copy = body(r"open_copy\(trip\)")
+		self.assertIn("this.set_address({ copy: trip }, true);", open_copy)
+		self.assertLess(open_copy.index("++this.nav_seq"), open_copy.index("this.set_address("))
+		# Back/Forward onto it, a reload, the form's button: its entry is named in place.
+		self.assertIn("this.set_address({ copy: trip });", body(r"render_copy\(trip\)"))
+		start = body(r"start_copy\(data, source\)")
+		self.assertIn('this.set_address({ new: 1, step: "trip" }, true);', start)
+		self.assertLess(start.index("this.render()"), start.index("this.set_address("))
+		self.assertLess(start.index("this.draft_id = frappe.utils.get_random(8);"), start.index("this.set_address("))
+		# A copy_plan answer for a screen already left is dropped, and one press makes one copy.
+		make = body(r"make_copy\(\)")
+		self.assertIn("if (seq !== this.nav_seq || this.away || this.copy !== copy) return false;", make)
+		self.assertIn("if (!copy || !copy.source || copy.making) return;", make)
+		# Back/Forward onto the copy screen is route()'s: after a trip and a new one, before the list.
+		route = body(r"route\(args, mark\)")
+		self.assertLess(route.index("if (args.new) {"), route.index("if (args.copy) {"))
+		self.assertLess(route.index("this.render_copy(args.copy)"), route.index("this.render_landing()"))
+		# A copy is unsaved until its first save, so its first Next saves it as a new trip's does.
+		self.assertIn('this.baseline = "";', body(r"adopt_copy\(state\)"))
+		for signature in (
+			r"open_copy\(trip\)",
+			r"render_copy\(trip\)",
+			r"draw_copy\(\)",
+			r"make_copy\(\)",
+			r"start_copy\(data, source\)",
+			r"leave_copy\(\)",
+			r"copy_made_note\(\$parent\)",
+		):
+			code = body(signature)
+			for forbidden in ("pushState", "replaceState", "set_route("):
+				self.assertNotIn(forbidden, code, f"{signature} calls {forbidden}")
 
 	def test_a_view_is_an_entry_the_page_writes_and_redraws(self):
 		# Opening a view pushes through set_address once it is drawn (never raw pushState, never
@@ -2546,10 +3367,44 @@ class TestItineraryBackForward(unittest.TestCase):
 	Since PR 3 of the Plan a Trip program the trip also has a Contacts card at the top (shut
 	until tapped open, as one line naming what is in it) and a "Print / save as PDF" link to the
 	trip sheet. Neither is an entry: opening or shutting the card and opening the sheet write no
-	history."""
+	history.
+
+	Since PR 4 the page works offline: every answer is saved on the phone, and when the server
+	cannot be reached at all the saved copy is drawn where the answer would have been. That is
+	not an entry either, and it changes nothing about which taps are: the saved copy is drawn in
+	loadTrip's place and writes no history, and a page drawn for somebody other than this session
+	shows nothing saved and writes none. The fake browser drives it
+	(scripts/test_web_flow_history.js, "/itinerary offline"); the worker and the page's storage
+	rules are pinned in tests/test_itinerary_service_worker.py.
+
+	The controller sets the offline marker (the ``ee_itinerary_key`` cookie, and the boot's
+	``offline_key``) for a signed-in person, and never for a guest; the marker itself is
+	``TestItineraryOfflineMarker`` below."""
 
 	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
 	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
+
+	def test_the_saved_copy_is_drawn_in_loadtrips_place_and_writes_no_history(self):
+		"""Only an answer that never came (fetch itself failed) draws the saved copy; a refusal still
+		falls back through loadFailed, which is the one function that may rewrite the entry. The
+		saved copy, and the refusal for another person, write nothing."""
+		code = _strip_js_comments(_read(self.ITINERARY_JS))
+		body = code[code.index("function loadTrip(") : code.index("function defaultTrip(")]
+		self.assertIn("if (err && err.unreachable) showSaved(name, as, err);", body)
+		# A refusal settles a page drawn with another marker than the phone's first (answered),
+		# then falls back as before.
+		self.assertIn("else if (!answered(err)) loadFailed(name, as, err);", body)
+		start = code.index("function showSaved(")
+		saved = code[start : code.index("\n\tfunction ", start + 1)]
+		for forbidden in ("writeTripEntry", "State(", "history."):
+			self.assertNotIn(forbidden, saved)
+		# Its answer is dropped, like loadTrip's, once another trip or person is asked for.
+		self.assertIn("state.currentTrip !== name || state.currentAs !== as", saved)
+		# The boot's refusal for a page drawn for somebody else writes no history either.
+		boot = code[code.index("var first = addressed();") :]
+		refusal = boot[: boot.index("} else if (first.trip)")]
+		self.assertIn("state.otherUser = true;", refusal)
+		self.assertNotIn("writeTripEntry", refusal)
 
 	def _controller_function(self, name, namespace):
 		"""A real function from the controller, extracted with ast: importing the controller
@@ -2570,6 +3425,76 @@ class TestItineraryBackForward(unittest.TestCase):
 		from urllib.parse import quote
 
 		return self._controller_function("login_redirect", {"quote": quote})
+
+	def _get_context(self, user, marker="k" * 64):
+		"""The real get_context (with script_json and login_redirect), extracted with ast, over a
+		stand-in frappe, bootstrap and set_marker. Returns (get_context, marked, fake frappe)."""
+		import ast
+		from urllib.parse import quote
+
+		marked = []
+		fake = types.SimpleNamespace(
+			session=types.SimpleNamespace(user=user),
+			local=types.SimpleNamespace(flags=types.SimpleNamespace()),
+			request=types.SimpleNamespace(full_path="/itinerary?trip=TRIP-7"),
+			Redirect=type("Redirect", (Exception,), {}),
+			as_json=lambda value: json.dumps(value, sort_keys=True),
+		)
+
+		def set_marker(who):
+			marked.append(who)
+			return marker
+
+		namespace = {
+			"frappe": fake,
+			"quote": quote,
+			"get_itinerary_bootstrap": lambda: {"user": user, "csrf_token": "tok", "trips": []},
+			"get_deploy_version": lambda: "v7",
+			"set_marker": set_marker,
+		}
+		tree = ast.parse(_read(self.CONTROLLER))
+		wanted = [
+			n
+			for n in tree.body
+			if (isinstance(n, ast.FunctionDef) and n.name in ("get_context", "script_json", "login_redirect"))
+			or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "ROUTE" for t in n.targets))
+		]
+		exec(compile(ast.Module(body=wanted, type_ignores=[]), self.CONTROLLER, "exec"), namespace)
+		return namespace["get_context"], marked, fake
+
+	def test_the_page_sets_the_offline_marker_for_a_signed_in_person(self):
+		"""Shared phones: offline, the page shows a saved copy only while the browser still holds
+		the marker it was saved under, and every sign-out deletes it. The controller sets it (and
+		puts the same value in the boot) on every render for a signed-in person."""
+		get_context, marked, _fake = self._get_context("pat@example.com")
+		context = get_context(types.SimpleNamespace())
+		self.assertEqual(marked, ["pat@example.com"])
+		boot = json.loads(context.boot_json)
+		self.assertEqual(boot["offline_key"], "k" * 64)
+		self.assertEqual(boot["user"], "pat@example.com")
+		self.assertEqual(context.no_cache, 1)
+		source = _read(self.CONTROLLER)
+		self.assertIn(
+			"from erpnext_enhancements.travel_management.itinerary_offline import set_marker", source
+		)
+		self.assertIn("BOOT.offline_key", _read(self.ITINERARY_JS))
+		# The cookie only leaves on a response whose Cache-Control is not public: the page stays
+		# uncached, at module level and on the context.
+		self.assertIn("\nno_cache = 1\n", source)
+
+	def test_a_guest_is_sent_to_log_in_with_no_marker(self):
+		get_context, marked, fake = self._get_context("Guest")
+		with self.assertRaises(fake.Redirect):
+			get_context(types.SimpleNamespace())
+		self.assertEqual(marked, [])
+		self.assertEqual(fake.local.flags.redirect_location, "/login?redirect-to=/itinerary%3Ftrip%3DTRIP-7")
+
+	def test_a_marker_that_cannot_be_made_leaves_the_page_as_it_was(self):
+		"""set_marker answers "" (and sets no cookie) when it cannot make one: the boot says so and
+		the page keeps nothing offline."""
+		get_context, _marked, _fake = self._get_context("pat@example.com", marker="")
+		boot = json.loads(get_context(types.SimpleNamespace()).boot_json)
+		self.assertEqual(boot["offline_key"], "")
 
 	def test_the_boot_cannot_end_its_script_block(self):
 		"""itinerary.html prints the boot with ``| safe``; a trip purpose is typed by people and
@@ -2770,6 +3695,217 @@ class TestItineraryBackForward(unittest.TestCase):
 			timeout=120,
 		)
 		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class _CookieJar:
+	"""frappe v16's CookieManager by its signature (frappe/auth.py, origin/version-16): what was set
+	and what deleted. A keyword it does not take (``path``, say) raises TypeError here as there."""
+
+	def __init__(self):
+		self.cookies = {}
+		self.to_delete = []
+
+	def set_cookie(
+		self,
+		key,
+		value,
+		expires=None,
+		secure=False,
+		httponly=False,
+		samesite="Lax",
+		max_age=None,
+		deduplicate=False,
+	):
+		self.cookies[key] = {
+			"value": value,
+			"expires": expires,
+			"secure": secure,
+			"httponly": httponly,
+			"samesite": samesite,
+			"max_age": max_age,
+		}
+
+	def delete_cookie(self, to_delete):
+		if not isinstance(to_delete, list | tuple):
+			to_delete = [to_delete]
+		self.to_delete.extend(to_delete)
+
+
+class TestItineraryOfflineMarker(unittest.TestCase):
+	"""``travel_management/itinerary_offline.py``: the cookie that says whose saved itinerary a
+	phone may show with no signal (Plan a Trip PR 4).
+
+	frappe's ``user_id`` cookie cannot say it: it is a session cookie, which a home-screen app
+	started again has dropped whether or not anybody signed out, so after a sign-out the next person
+	to open the app offline could see the last one's trip. The marker is set with every
+	``/itinerary`` render, deleted by every sign-out (``on_logout``) and by a sign-in as anybody else
+	(``on_login``), and read by ``itinerary.js``. Here: that it is a keyed hash and never the email,
+	that the page can read it (not HttpOnly, Path=/, Lax, Secure on https, 30 days), that a guest
+	gets none, which hook deletes it when, and that nothing in it can raise into a login or logout.
+
+	The module is run from its source over a stand-in ``frappe`` (patched into ``sys.modules`` only
+	while it is exec'd), so this suite's own stub is untouched."""
+
+	MODULE = os.path.join(APP_DIR, "travel_management", "itinerary_offline.py")
+	SECRET = "site-encryption-key"
+
+	def _module(self, scheme="https", url="https://erp.example.com", held=None, cookies=True):
+		jar = _CookieJar() if cookies else None
+		request = types.SimpleNamespace(scheme=scheme, cookies=dict(held or {}))
+		fake = types.SimpleNamespace(
+			local=types.SimpleNamespace(cookie_manager=jar, request=request),
+			utils=types.SimpleNamespace(get_url=lambda: url),
+		)
+		namespace = {"__name__": "itinerary_offline_under_test"}
+		with mock.patch.dict(sys.modules, {"frappe": fake}):
+			exec(compile(_read(self.MODULE), self.MODULE, "exec"), namespace)
+		namespace["_secret"] = lambda: self.SECRET
+		return namespace, jar
+
+	def test_the_key_is_a_keyed_hash_never_the_email(self):
+		import hashlib
+		import hmac
+
+		m, _jar = self._module()
+		key = m["key_for"]("pat@example.com")
+		self.assertRegex(key, r"^[0-9a-f]{64}$")
+		self.assertNotIn("pat", key)
+		self.assertEqual(key, m["key_for"]("pat@example.com"))
+		self.assertNotEqual(key, m["key_for"]("sam@example.com"))
+		self.assertEqual(
+			key,
+			hmac.new(self.SECRET.encode(), m["_CONTEXT"] + b"pat@example.com", hashlib.sha256).hexdigest(),
+		)
+		# Not the plain hash of the email, which anyone could compute from a list of addresses.
+		self.assertNotEqual(key, hashlib.sha256(b"pat@example.com").hexdigest())
+		m["_secret"] = lambda: "another-site"
+		self.assertNotEqual(key, m["key_for"]("pat@example.com"))
+		for nobody in ("Guest", "", None):
+			self.assertEqual(m["key_for"](nobody), "")
+
+	def test_the_cookie_is_one_the_page_can_read(self):
+		m, jar = self._module()
+		key = m["set_marker"]("pat@example.com")
+		self.assertEqual(key, m["key_for"]("pat@example.com"))
+		self.assertEqual(
+			jar.cookies,
+			{
+				"ee_itinerary_key": {
+					"value": key,
+					"expires": None,
+					"secure": True,
+					"httponly": False,
+					"samesite": "Lax",
+					"max_age": 30 * 24 * 60 * 60,
+				}
+			},
+		)
+		self.assertEqual(m["COOKIE"], "ee_itinerary_key")
+		# The page reads it by the same name, and never writes it.
+		page = _read(os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js"))
+		self.assertIn("ee_itinerary_key=([^;]*)", page)
+
+	def test_it_is_set_at_the_site_root(self):
+		"""Path=/: frappe v16's set_cookie and delete_cookie take no path and write at werkzeug's
+		"/", and the logout and login requests that must see it are not under /itinerary. Every
+		keyword the module passes is one v16's set_cookie takes."""
+		import ast
+		import inspect
+
+		allowed = set(inspect.signature(_CookieJar.set_cookie).parameters) - {"self"}
+		calls = [
+			node
+			for node in ast.walk(ast.parse(_read(self.MODULE)))
+			if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "set_cookie"
+		]
+		self.assertEqual(len(calls), 1)
+		keywords = {k.arg for k in calls[0].keywords}
+		self.assertNotIn("path", keywords)
+		self.assertLessEqual(keywords, allowed)
+		self.assertEqual(keywords, {"max_age", "secure", "httponly", "samesite"})
+
+	def test_secure_whenever_the_site_is_https(self):
+		for scheme, url, secure in (
+			("https", "http://localhost:8000", True),
+			("http", "https://erp.example.com", True),  # TLS ends at a proxy: the site's address says
+			("http", "http://localhost:8000", False),
+		):
+			with self.subTest(scheme=scheme, url=url):
+				m, jar = self._module(scheme=scheme, url=url)
+				m["set_marker"]("pat@example.com")
+				self.assertIs(jar.cookies["ee_itinerary_key"]["secure"], secure)
+
+	def test_a_guest_gets_none_and_nothing_raises(self):
+		m, jar = self._module()
+		self.assertEqual(m["set_marker"]("Guest"), "")
+		self.assertEqual(jar.cookies, {})
+
+		def broken():
+			raise RuntimeError("no encryption key")
+
+		m["_secret"] = broken
+		self.assertEqual(m["set_marker"]("pat@example.com"), "")
+		self.assertEqual(jar.cookies, {})
+		# Outside a request (no cookie manager): no key for the boot either.
+		m, _jar = self._module(cookies=False)
+		self.assertEqual(m["set_marker"]("pat@example.com"), "")
+
+	def test_every_sign_out_deletes_it(self):
+		m, jar = self._module(held={"ee_itinerary_key": "a" * 64})
+		m["forget_on_logout"](login_manager=types.SimpleNamespace(user="pat@example.com"))
+		self.assertEqual(jar.to_delete, ["ee_itinerary_key"])
+		# frappe calls it with login_manager= (LoginManager.run_trigger), and with nothing held
+		# too: deleting a cookie that is not there costs one header.
+		m, jar = self._module()
+		m["forget_on_logout"]()
+		self.assertEqual(jar.to_delete, ["ee_itinerary_key"])
+
+	def test_a_sign_in_as_anybody_else_deletes_it(self):
+		"""A session that merely expires runs no hook, so the last person's marker would still be on
+		the phone when the next person signs in."""
+		m, _jar = self._module()
+		pats = m["key_for"]("pat@example.com")
+		for user, deleted in (
+			("sam@example.com", ["ee_itinerary_key"]),
+			("Guest", ["ee_itinerary_key"]),  # login_as_guest, at the end of a sign-out
+			("pat@example.com", []),  # their own: kept
+		):
+			with self.subTest(user=user):
+				m, jar = self._module(held={"ee_itinerary_key": pats})
+				m["forget_on_login"](login_manager=types.SimpleNamespace(user=user))
+				self.assertEqual(jar.to_delete, deleted)
+		# Nothing held: no cookie is sent at all.
+		m, jar = self._module()
+		m["forget_on_login"](login_manager=types.SimpleNamespace(user="sam@example.com"))
+		self.assertEqual(jar.to_delete, [])
+		# A key that cannot be made is nobody's: the marker goes.
+		m, jar = self._module(held={"ee_itinerary_key": pats})
+
+		def broken():
+			raise RuntimeError("no encryption key")
+
+		m["_secret"] = broken
+		m["forget_on_login"](login_manager=types.SimpleNamespace(user="pat@example.com"))
+		self.assertEqual(jar.to_delete, ["ee_itinerary_key"])
+
+	def test_the_hooks_never_raise(self):
+		"""frappe runs them inside LoginManager: an exception would fail the login or the logout."""
+
+		class Exploding:
+			def delete_cookie(self, *a, **k):
+				raise RuntimeError("boom")
+
+			def set_cookie(self, *a, **k):
+				raise RuntimeError("boom")
+
+		m, _jar = self._module(held={"ee_itinerary_key": "b" * 64})
+		m["frappe"].local.cookie_manager = Exploding()
+		m["forget_on_logout"](login_manager=None)
+		m["forget_on_login"](login_manager=types.SimpleNamespace(user="sam@example.com"))
+		self.assertEqual(m["set_marker"]("pat@example.com"), "")
+		m["frappe"].local = types.SimpleNamespace()
+		m["forget_on_logout"]()
+		m["forget_on_login"]()
 
 
 if __name__ == "__main__":

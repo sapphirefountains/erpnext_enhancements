@@ -3,7 +3,7 @@
  *
  * A trimmed clone of kiosk-sw.js: same automatic per-deploy cache versioning
  * (registered as /wall-sw.js?v=<deploy token>, the CACHE name embeds the token,
- * activate deletes every other cache), same network-first-with-fallback
+ * activate deletes its own older caches), same network-first-with-fallback
  * strategies — minus the kiosk's entire IndexedDB geolocation queue, which a
  * read-only display doesn't need.
  *
@@ -53,7 +53,10 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    // This worker's own caches from earlier deploys ('wall-display-<old token>'), and nothing
+    // else. It used to delete every cache on the site but its own, which wiped the kiosk's
+    // shell and the traveler itinerary's offline copy on any browser that also opened /wall.
+    await Promise.all(keys.filter((k) => k.startsWith('wall-display-') && k !== CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -113,7 +116,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       // `ignoreSearch` is right for THESE files and only these: page and worker can
       // disagree by one `?v=` token mid-update, and the shell must still resolve.
-      // `activate` drops every other cache, so these entries are this deploy's.
+      // `activate` drops this worker's older caches, and no other worker keeps these
+      // paths, so these entries are this deploy's.
       const cached = await caches.match(req, { ignoreSearch: true });
       const network = fetch(req).then((res) => {
         if (res && res.ok) {

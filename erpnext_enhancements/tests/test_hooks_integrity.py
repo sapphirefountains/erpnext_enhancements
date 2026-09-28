@@ -305,5 +305,57 @@ class TestLogRetention(unittest.TestCase):
             "next daily run and retention will silently never happen",
         )
 
+
+class TestLoginAndLogoutHooks(unittest.TestCase):
+    """`on_login` / `on_logout` run inside frappe's `LoginManager` (v16 `frappe/auth.py`:
+    `run_trigger` calls each one with `login_manager=self`), on every sign-in and sign-out of every
+    user. A handler that raises fails the login or the logout itself, for everybody.
+
+    The two here (Plan a Trip PR 4, v1.549.0) delete the /itinerary offline marker, the cookie
+    that decides whose itinerary a phone may show with no signal. Without `on_logout` a signed-out
+    phone keeps showing the last person's trip offline; without `on_login` so does one whose
+    session merely expired, to whoever signs in next.
+    """
+
+    TARGETS = {
+        "on_logout": "erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout",
+        "on_login": "erpnext_enhancements.travel_management.itinerary_offline.forget_on_login",
+    }
+
+    def _function(self, dotted):
+        module, name = dotted.rsplit(".", 1)
+        path = REPO_ROOT.joinpath(*module.split(".")).with_suffix(".py")
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        self.fail(f"{dotted} is not a function in {path}")
+
+    def test_the_offline_marker_is_deleted_on_login_and_logout(self):
+        hooks = top_level_assignments()
+        for hook, target in self.TARGETS.items():
+            with self.subTest(hook=hook):
+                self.assertIn(hook, hooks, f"hooks.py has no {hook}")
+                value = ast.literal_eval(hooks[hook])
+                self.assertIn(target, value if isinstance(value, list) else [value])
+
+    def test_each_takes_login_manager_and_cannot_raise(self):
+        """`frappe.call` passes only the keywords a function names, so `login_manager` must be one
+        of them for on_login to see who is signing in; and the whole body sits in a try whose
+        handler catches Exception."""
+        for hook, target in self.TARGETS.items():
+            with self.subTest(hook=hook):
+                fn = self._function(target)
+                self.assertIn("login_manager", [a.arg for a in fn.args.args])
+                body = [
+                    n
+                    for n in fn.body
+                    if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))
+                ]
+                self.assertEqual(len(body), 1, f"{target}: everything inside one try")
+                self.assertIsInstance(body[0], ast.Try)
+                caught = [getattr(h.type, "id", None) for h in body[0].handlers]
+                self.assertIn("Exception", caught)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -584,6 +584,12 @@ function patchRender(name, klass) {
 			ui.renders.push({ landing: true });
 			return render_landing.call(this);
 		};
+		// The copy screen for a past trip (?copy=): a screen of its own, like the list.
+		const render_copy = klass.prototype.render_copy;
+		klass.prototype.render_copy = function (trip) {
+			ui.renders.push({ copy: trip });
+			return render_copy.call(this, trip);
+		};
 		// The "Saving... / Saved / Not saved" pill, which lives in the nav bar render() draws.
 		const set_save_state = klass.prototype.set_save_state;
 		klass.prototype.set_save_state = function (kind) {
@@ -1165,6 +1171,69 @@ function tripServer(trips) {
 			rec.documents === undefined ? {} : { documents: clone(rec.documents) }
 		);
 	server.handlers.get_recent_plans = () => Object.keys(db).map((name) => ({ name, purpose: db[name].trip.purpose }));
+	// planner.get_copyable_trips: every trip, of any status, the latest first.
+	server.handlers.get_copyable_trips = () =>
+		Object.keys(db)
+			.map((name) => ({
+				name,
+				purpose: db[name].trip.purpose,
+				status: db[name].status || "Planning",
+				start_date: db[name].trip.start_date,
+				end_date: db[name].trip.end_date,
+				travel_for_doctype: db[name].trip.travel_for_doctype || "",
+				travel_for_name: db[name].trip.travel_for_name || "",
+			}))
+			.sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)));
+	// planner.copy_plan, as far as the page can tell: get_plan's shape for a trip not saved yet —
+	// every date moved by whole days to the new first day, every booking and shipment under a
+	// "new:<n>" key with no rows, confirmation or tracking numbers, costs or payers, no files, and
+	// the crew only when it is kept.
+	server.handlers.copy_plan = ({ trip, start_date, keep_crew }) => {
+		const rec = db[trip];
+		const days = Math.round((Date.parse(`${start_date}T00:00:00Z`) - Date.parse(`${rec.trip.start_date}T00:00:00Z`)) / 86400000);
+		const shift = (value) =>
+			/^\d{4}-\d{2}-\d{2}/.test(value || "")
+				? new Date(Date.parse(`${value.slice(0, 10)}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10) + value.slice(10)
+				: value;
+		const dated = (values) => Object.fromEntries(Object.entries(values).map(([key, value]) => [key, shift(value)]));
+		let n = 0;
+		const bookings = { flights: [], accommodations: [], ground_transport: [] };
+		Object.entries(rec.bookings || {}).forEach(([table, cards]) => {
+			bookings[table] = cards.map((card) => ({
+				group: `new:${++n}`,
+				values: { ...dated(card.values), cost: 0, paid_by: "", paid_by_traveler: "" },
+				members: keep_crew ? card.members.map((m) => ({ name: null, traveler: m.traveler, ref: "", protected: false })) : [],
+				protected: false,
+			}));
+		});
+		return {
+			copied_from: trip,
+			lookups: { default_company: "SF", employees: [], currency: "USD" },
+			state: {
+				name: null,
+				modified: null,
+				status: "Planning",
+				can_write: true,
+				trip: { ...rec.trip, start_date: shift(rec.trip.start_date), end_date: shift(rec.trip.end_date) },
+				travelers: keep_crew ? clone(rec.travelers || []) : [],
+				bookings,
+				freight: (rec.freight || []).map((item) => ({
+					...dated(item),
+					name: null,
+					traveler: keep_crew ? item.traveler || "" : "",
+					booking_group: `new:${++n}`,
+					tracking_number: "",
+					cost: 0,
+					paid_by: "",
+					paid_by_traveler: "",
+					protected: false,
+				})),
+				stops: [],
+				documents: [],
+				gaps: [],
+			},
+		};
+	};
 	server.handlers.get_plan = (args) => ({
 		lookups: { default_company: "SF", employees: [], currency: "USD" },
 		state: args && args.trip ? state(db[args.trip]) : undefined,
@@ -1322,6 +1391,56 @@ const DOC_TRIP = {
 	trip: { ...TRIP.trip, purpose: "Install with files" },
 	travelers: TRIP.travelers,
 	documents: [SITE_MAP],
+};
+
+// A past job to plan again (Copy a past trip): its crew, a flight both took with their own
+// confirmation numbers and a cost, a shared room, and a shipment with its tracking number.
+const COPY_TRIP = {
+	status: "Completed",
+	trip: {
+		...CREW_TRIP.trip,
+		purpose: "Pump swap",
+		travel_for_doctype: "Project",
+		travel_for_name: "PRJ-1",
+		trip_description: "<p>Bring the <b>big</b> pump.</p>",
+	},
+	travelers: CREW_TRIP.travelers,
+	bookings: {
+		flights: [
+			{
+				group: "f1f1f1f1f1f1",
+				values: {
+					leg: "Outbound",
+					airline: "Delta",
+					flight_number: "DL 88",
+					departure_airport: "SLC",
+					departure_time: "2026-10-01 07:05:00",
+					arrival_airport: "LAS",
+					arrival_time: "2026-10-01 08:20:00",
+					cost: 400,
+					billable: 1,
+					paid_by: "Company",
+					paid_by_traveler: "",
+				},
+				members: [
+					{ name: "FL-1", traveler: "E1", ref: "ABC123" },
+					{ name: "FL-2", traveler: "E2", ref: "DEF456" },
+				],
+			},
+		],
+		accommodations: [
+			{
+				group: "r1r1r1r1r1r1",
+				values: { hotel_lodging: "Harborview Suites", check_in_date: "2026-10-01", check_out_date: "2026-10-03", cost: 300 },
+				members: [
+					{ name: "AC-1", traveler: "E1", ref: "H-77" },
+					{ name: "AC-2", traveler: "E2", ref: "H-77" },
+				],
+			},
+		],
+		ground_transport: [],
+	},
+	freight: [{ name: "FRT-9", carrier: "ODFL", tracking_number: "PRO-5", traveler: "E1", delivery_from: "2026-10-02 08:00:00", cost: 90, booking_group: "s1s1s1s1s1s1" }],
 };
 
 // frappe.ui.FileUploader, which the page may construct only from "Attach a file": records each
@@ -3483,6 +3602,531 @@ async function planATripSuite() {
 			["bbbbbbbbbbbb", "Harborview Suites"],
 			["cccccccccccc", "Hilton"],
 		]);
+	});
+
+	// ---- Copy a past trip (?copy=): the list, the copy screen, and the new trip it starts
+
+	const pick_past = (name) => press("data-copy", { currentTarget: { __attrs: { "data-copy": name } } });
+
+	await test("copy a past trip: the list, the copy screen and the copy are each an entry; Back walks back, Forward restores", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		assert.deepEqual(last(), { landing: true });
+		assert.equal(server.sent("get_copyable_trips").length, 1, "the list asks for the past trips");
+		pick_past("TRIP-9");
+		await settle();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(url(), "/desk/plan-a-trip?copy=TRIP-9");
+		assert.equal(browser.hist.length, 2, "the copy screen is its own entry");
+		const p = planner();
+		assert.equal(p.state, null, "no trip is on the copy screen");
+		assert.equal(p.copy.start_date, "2026-09-25", "the next weekday after today (Thu, Sep 24)");
+		assert.equal(p.copy.keep_crew, true, "the same crew, to start with");
+		assert.equal(p.copy.source.trip.purpose, "Pump swap", "the trip it copies is read");
+		p.copy.start_date = "2026-11-02";
+		press("Make the copy");
+		await settle();
+		assert.deepEqual(
+			server.sent("copy_plan").map((c) => c.args),
+			[{ trip: "TRIP-9", start_date: "2026-11-02", keep_crew: 1 }]
+		);
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=trip");
+		assert.equal(browser.hist.length, 3, browser.hist.urls().join(" | "));
+		assert.equal(last().trip, "(new)");
+		assert.equal(last().step, "trip");
+		assert.equal(last().purpose, "Pump swap");
+		assert.equal(p.state.trip.start_date, "2026-11-02");
+		assert.ok(p.is_dirty(), "a copy is unsaved until its first Next saves it");
+		assert.equal(server.sent("save_plan").length, 0, "nothing is saved by making it");
+		const mark = browser.hist.state.tp;
+		assert.equal(mark.draft, p.draft_id, "its entry carries its own draft, as a new trip's does");
+		assert.equal(mark.back, "?copy=TRIP-9");
+
+		// Worked on: the office renames it. (An untouched copy is kept unsaved by Back instead:
+		// see "Back from a copy nobody has touched".)
+		p.state.trip.purpose = "Pump swap, again";
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" }, "Back returns to the copy screen");
+		assert.equal(url(), "/desk/plan-a-trip?copy=TRIP-9");
+		// Leaving a trip saves what the server will take, and the copy has its basics and crew.
+		assert.equal(server.sent("save_plan").length, 1);
+		const name = Object.keys(db).find((key) => key.startsWith("TRIP-NEW"));
+		assert.ok(name, "the copy was saved on the way out");
+		const screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes(`You made a copy of this trip already: ${name}.`), "...and the copy screen says so");
+		assert.equal(p.copy.start_date, "2026-11-02", "what was picked on it is still there");
+
+		await back();
+		assert.deepEqual(last(), { landing: true });
+		assert.equal(browser.hist.length, 3, "Back adds no entries");
+		await forward();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		await forward();
+		assert.equal(last().trip, name, "Forward onto the copy's '?new=1' entry opens the trip it became");
+		assert.equal(last().step, "trip");
+		assert.equal(url(), `/desk/plan-a-trip?trip=${name}&step=trip`);
+		assert.equal(browser.hist.length, 3, "Forward adds no entries");
+		assert.deepEqual(ui.msgprints, []);
+		for (const entry of browser.hist.urls()) assert.ok(!entry.startsWith("/app/"), entry);
+	});
+
+	await test("the copy saves on its first Next with its draft's marks: new bookings, no numbers, no costs, the notes as written", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9"); // a reload of the copy screen
+		await settle();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(url(), "/desk/plan-a-trip?copy=TRIP-9");
+		assert.equal(browser.hist.length, 1, "a reload adds no entry");
+		const p = planner();
+		p.copy.start_date = "2026-12-30"; // across the new year
+		press("Make the copy");
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=trip");
+		assert.equal(browser.hist.length, 2);
+		const draft = p.draft_id;
+		assert.ok(draft);
+		// A booking added to the copy takes a key none of the copy's own bookings or shipments has.
+		const keys = ["flights", "accommodations", "ground_transport"]
+			.flatMap((table) => p.cards(table).map((card) => card.group))
+			.concat(p.state.freight.map((item) => item.booking_group));
+		assert.equal(new Set(keys).size, 3);
+		assert.ok(!keys.includes(p.new_card("ground_transport").group), keys.join(","));
+		p.go(1); // Next: the first save
+		await settle();
+		const sent = server.sent("save_plan");
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0].args.trip, undefined, "saved as a new trip");
+		assert.equal(sent[0].args.modified, undefined);
+		const plan = JSON.parse(sent[0].args.plan);
+		assert.equal(plan.status, "Planning");
+		assert.deepEqual(plan.travelers.map((t) => t.employee), ["E1", "E2"]);
+		assert.deepEqual([plan.trip.start_date, plan.trip.end_date], ["2026-12-30", "2027-01-01"]);
+		assert.equal(plan.trip.trip_description, COPY_TRIP.trip.trip_description, "the notes go with it as written");
+		const flight = plan.bookings.flights[0];
+		assert.match(flight.group, /^new:\d+$/);
+		assert.deepEqual(flight.members.map((m) => [m.name, m.traveler, m.ref]), [[null, "E1", ""], [null, "E2", ""]]);
+		assert.equal(flight.values.cost, 0);
+		assert.equal(flight.values.departure_time, "2026-12-30 07:05:00", "moved with the trip, the time kept");
+		for (const field of ["leg", "airline", "flight_number", "departure_time", "arrival_time", "paid_by", "cost"]) {
+			assert.ok(flight.changed.includes(field), `every shared field is sent as changed: ${field}`);
+		}
+		const room = plan.bookings.accommodations[0];
+		assert.deepEqual(room.members.map((m) => [m.name, m.ref]), [[null, ""], [null, ""]]);
+		assert.notEqual(room.group, flight.group);
+		const [shipment] = plan.freight;
+		assert.equal(shipment.name, null);
+		assert.equal(shipment.tracking_number, "");
+		assert.equal(shipment.cost, 0);
+		assert.match(shipment.booking_group, /^new:\d+$/);
+		assert.deepEqual(plan.documents, []);
+
+		const name = p.state.name;
+		assert.ok(name && name.startsWith("TRIP-NEW"), "the copy has a name now");
+		assert.equal(p.drafts[draft], name);
+		assert.equal(url(), `/desk/plan-a-trip?trip=${name}&step=crew`);
+		assert.equal(p.is_dirty(), false, "saved");
+		assert.equal(db[name].trip.purpose, "Pump swap");
+
+		await back();
+		assert.equal(url(), `/desk/plan-a-trip?trip=${name}&step=trip`, "the entry it was saved on now names it");
+		assert.equal(browser.hist.state.tp.draft, draft, "and keeps its draft's mark");
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(server.sent("save_plan").length, 1, "nothing left to save on the way back");
+		await forward();
+		assert.equal(last().trip, name);
+		assert.equal(last().step, "trip");
+	});
+
+	await test("the form's Copy trip (frappe.set_route, v16: no query string) opens the copy screen, consumed once", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/travel-trip/TRIP-9");
+		await settle();
+		F.set_route("plan-a-trip", { copy: "TRIP-9" }); // travel_trip.js "Copy trip"
+		await settle();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(url(), "/desk/plan-a-trip?copy=TRIP-9", "frappe's bare entry is named");
+		assert.equal(browser.hist.length, 2, "named in place, not pushed");
+		assert.equal(F.route_options, null, "consumed");
+		// "Back to the list" with nothing of the page's behind it: the list, as a new entry.
+		press("Back to the list");
+		await settle();
+		assert.deepEqual(last(), { landing: true });
+		assert.equal(url(), "/desk/plan-a-trip");
+		assert.equal(browser.hist.length, 3);
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		await back();
+		assert.equal(url(), "/desk/travel-trip/TRIP-9", "Back from the first screen leaves the page");
+		// Consumed: a later plain visit shows the list, not the copy screen.
+		F.set_route("plan-a-trip");
+		await settle();
+		assert.deepEqual(last(), { landing: true });
+
+		// From the list, "Back to the list" is the browser's Back: nothing piles up.
+		pick_past("TRIP-9");
+		await settle();
+		const entries = browser.hist.length;
+		press("Back to the list");
+		await settle();
+		assert.deepEqual(last(), { landing: true });
+		assert.equal(browser.hist.length, entries);
+		await forward();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("a copy_plan answer that lands after the page moved on is dropped, and one press makes one copy", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		pick_past("TRIP-9");
+		await settle();
+		const p = planner();
+		server.hold.add("copy_plan");
+		press("Make the copy");
+		await settle();
+		assert.equal(p.copy.making, true);
+		press("Make the copy"); // a second tap while it is being made
+		await settle();
+		assert.equal(server.sent("copy_plan").length, 1, "one copy asked for");
+		await back(); // before the copy arrived
+		assert.deepEqual(last(), { landing: true });
+		const renders = ui.renders.length;
+		const entries = browser.hist.urls();
+		server.release("copy_plan");
+		await settle();
+		assert.equal(ui.renders.length, renders, "the stale copy drew over the list");
+		assert.deepEqual(browser.hist.urls(), entries, "...or pushed an entry");
+		assert.equal(url(), "/desk/plan-a-trip");
+		assert.equal(p.state, null);
+		assert.deepEqual(p.copies, {}, "no draft appeared behind the list");
+		assert.equal(p.unsaved_kept().length, 0);
+		// Forward to the copy screen: it can be made again.
+		server.hold.delete("copy_plan");
+		await forward();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(p.copy.making, false);
+		press("Make the copy");
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=trip");
+		assert.equal(last().purpose, "Pump swap");
+	});
+
+	await test("without the same crew the copy is kept unsaved when Back leaves it, and the copy screen offers to carry on", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		p.copy.keep_crew = false;
+		press("Make the copy");
+		await settle();
+		assert.equal(server.sent("copy_plan")[0].args.keep_crew, 0);
+		assert.deepEqual(p.state.travelers, []);
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(server.sent("save_plan").length, 0, "nobody on it: nothing the server would take");
+		assert.equal(p.unsaved_kept().length, 1, "kept, never dropped");
+		const screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes("You made a copy of this trip that is not saved yet."), screen);
+		press("Carry on");
+		await settle();
+		assert.equal(last().trip, "(new)");
+		assert.equal(last().purpose, "Pump swap");
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=trip");
+		assert.equal(p.unsaved_kept().length, 0);
+		assert.deepEqual(ui.msgprints, []);
+
+		// Whoever is ticked on Who's going goes on every booking that was waiting for people, so
+		// the first Next past the crew can save the copy; before this it was refused ("Every
+		// booking needs at least one person ticked") on a step with no booking to tick anyone on.
+		p.go(1);
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=crew");
+		p.add_traveler({ name: "E2", employee_name: "Ben" });
+		p.add_traveler({ name: "E1", employee_name: "Ana" });
+		p.add_traveler({ name: "E1", employee_name: "Ana" }); // ticked twice: on each booking once
+		p.go(2);
+		await settle();
+		assert.deepEqual(ui.msgprints, [], "nothing refused");
+		const sent = server.sent("save_plan");
+		assert.equal(sent.length, 1, "the first Next saved the copy");
+		const plan = JSON.parse(sent[0].args.plan);
+		assert.deepEqual(plan.travelers.map((t) => [t.employee, t.is_trip_lead]), [["E2", 1], ["E1", 0]]);
+		for (const table of ["flights", "accommodations"]) {
+			for (const card of plan.bookings[table]) {
+				assert.deepEqual(card.members.map((m) => [m.name, m.traveler, m.ref]), [[null, "E2", ""], [null, "E1", ""]], table);
+			}
+		}
+		assert.ok(p.state.name && p.state.name.startsWith("TRIP-NEW"), "the copy is a trip now");
+		// The server's cards replace the waiting ones: someone ticked later is not put on them.
+		p.go(1);
+		await settle();
+		p.add_traveler({ name: "E3", employee_name: "Cy" });
+		for (const table of ["flights", "accommodations"]) {
+			for (const card of p.cards(table)) assert.ok(!card.members.some((m) => m.traveler === "E3"), table);
+		}
+	});
+
+	await test("Back from a copy nobody has touched keeps it unsaved: no trip is made, and Forward or Carry on brings it back", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		press("Make the copy"); // on the day offered, with the crew: the natural thing to undo
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=trip");
+		assert.ok(p.untouched_copy());
+		assert.ok(ui.alerts.some((a) => a.includes("not saved yet")), ui.alerts.join(" | "));
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(server.sent("save_plan").length, 0, "Back is an undo, not a trip in Planning");
+		assert.deepEqual(Object.keys(db).filter((k) => k.startsWith("TRIP-NEW")), []);
+		const screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes("You made a copy of this trip that is not saved yet."), screen);
+		// Forward onto its entry: the copy as it was, still unsaved.
+		await forward();
+		assert.equal(last().trip, "(new)");
+		assert.equal(last().purpose, "Pump swap");
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=trip");
+		assert.ok(p.untouched_copy());
+		// Leaving for another desk page does not make a trip of it either.
+		p.on_hide();
+		await settle();
+		assert.equal(server.sent("save_plan").length, 0);
+		// Worked on, it is a trip like any other: its first Next saves it.
+		p.go(1);
+		await settle();
+		assert.equal(server.sent("save_plan").length, 1, "Next saves it");
+		assert.ok(p.state.name && p.state.name.startsWith("TRIP-NEW"));
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("a copy re-dated on the trip step moves every booking, stop and shipment with it", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		assert.equal(p.copy.start_date, "2026-09-25", "the day offered");
+		press("Make the copy");
+		await settle();
+		assert.equal(p.cards("flights")[0].values.departure_time, "2026-09-25 07:05:00");
+		// "Check the dates": the office moves the First day on the trip step (step_trip's handler).
+		p.set_first_day("2026-11-02");
+		const t = p.state.trip;
+		assert.deepEqual([t.start_date, t.end_date], ["2026-11-02", "2026-11-04"], "the trip keeps its length");
+		p.go(1);
+		await settle();
+		const plan = JSON.parse(server.sent("save_plan")[0].args.plan);
+		assert.deepEqual([plan.trip.start_date, plan.trip.end_date], ["2026-11-02", "2026-11-04"]);
+		assert.equal(plan.bookings.flights[0].values.departure_time, "2026-11-02 07:05:00", "moved, the time kept");
+		assert.equal(plan.bookings.flights[0].values.arrival_time, "2026-11-02 08:20:00");
+		const room = plan.bookings.accommodations[0].values;
+		assert.deepEqual([room.check_in_date, room.check_out_date], ["2026-11-02", "2026-11-04"]);
+		assert.equal(plan.freight[0].delivery_from, "2026-11-03 08:00:00");
+		// Once saved, it is a trip like any other: a new First day moves only the trip's dates.
+		p.go(0);
+		await settle();
+		p.set_first_day("2026-11-03");
+		assert.equal(p.cards("flights")[0].values.departure_time, "2026-11-02 07:05:00", "a saved trip's bookings stay");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("keep the crew when someone has left: the copy the server sends can leave its first step", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		// planner.copy_state with Ana gone: her own room is left off (a note says so), and the drive
+		// she drove comes with Ben on it — the page gives it to him if the server has not.
+		server.handlers.copy_plan = () => ({
+			copied_from: "TRIP-9",
+			lookups: { default_company: "SF", employees: [{ name: "E2", employee_name: "Ben" }], currency: "USD" },
+			state: {
+				name: null,
+				modified: null,
+				status: "Planning",
+				can_write: true,
+				trip: { ...COPY_TRIP.trip, start_date: "2026-11-02", end_date: "2026-11-04" },
+				travelers: [{ name: null, employee: "E2", employee_name: "Ben", is_trip_lead: 1, from_date: "", to_date: "" }],
+				bookings: {
+					flights: [],
+					accommodations: [],
+					ground_transport: [
+						{
+							group: "new:1",
+							values: { leg: "Outbound", transport_type: "Personal Vehicle", pickup_datetime: "2026-11-02 05:00:00", cost: 0 },
+							members: [{ name: null, traveler: "E2", ref: "", protected: false }],
+							mileage: { driver: "", distance: 42, claimed: false },
+							protected: false,
+						},
+					],
+				},
+				freight: [],
+				stops: [],
+				documents: [],
+				gaps: [],
+				notes: ["The room at Harborview Suites was only for Ana, who can no longer travel, so it is not on the copy."],
+			},
+		});
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		press("Make the copy");
+		await settle();
+		assert.deepEqual(ui.msgprints, ["Copied, with notes"], "what was left off is said");
+		assert.equal(p.cards("ground_transport")[0].mileage.driver, "E2");
+		assert.deepEqual(p.problems(), []);
+		ui.msgprints.length = 0;
+		p.go(1);
+		await settle();
+		assert.equal(server.sent("save_plan").length, 1);
+		assert.equal(url(), `/desk/plan-a-trip?trip=${p.state.name}&step=crew`, "saved, and past the first step");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("a copy without its crew: tick Ana, tick Ben, untick Ana, and the drive goes to Ben", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		const copy_plan = server.handlers.copy_plan;
+		server.handlers.copy_plan = (args) => {
+			const out = copy_plan(args);
+			out.state.bookings.ground_transport = [
+				{
+					group: "new:9",
+					values: { leg: "Outbound", transport_type: "Personal Vehicle", pickup_datetime: "2026-09-25 05:00:00", cost: 0 },
+					members: [],
+					mileage: { driver: "", distance: 42, claimed: false },
+					protected: false,
+				},
+			];
+			return out;
+		};
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		p.copy.keep_crew = false;
+		press("Make the copy");
+		await settle();
+		p.go(1);
+		await settle();
+		assert.equal(url(), "/desk/plan-a-trip?new=1&step=crew");
+		p.add_traveler({ name: "E1", employee_name: "Ana" });
+		p.add_traveler({ name: "E2", employee_name: "Ben" });
+		assert.equal(p.cards("ground_transport")[0].mileage.driver, "E1", "the first ticked drives");
+		p.remove_traveler("E1"); // ticked by mistake
+		assert.equal(p.cards("ground_transport")[0].mileage.driver, "E2", "the drive goes to the next person on it");
+		assert.deepEqual(p.problems(), []);
+		p.go(2);
+		await settle();
+		assert.equal(server.sent("save_plan").length, 1);
+		assert.equal(url(), `/desk/plan-a-trip?trip=${p.state.name}&step=there`, "saved, and on to Getting there");
+		const plan = JSON.parse(server.sent("save_plan")[0].args.plan);
+		assert.equal(plan.bookings.ground_transport[0].mileage.driver, "E2");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("the copy screen reads the trip again on a new visit: a fresh pick, or the form's Copy trip", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		pick_past("TRIP-9");
+		await settle();
+		const p = planner();
+		assert.equal(server.sent("get_plan").length, 1);
+		p.copy.start_date = "2026-12-01";
+		await back();
+		assert.deepEqual(last(), { landing: true });
+		// Forward onto the page's own entry: as it was left.
+		await forward();
+		assert.equal(p.copy.start_date, "2026-12-01");
+		assert.equal(server.sent("get_plan").length, 1, "Back/Forward keeps what was picked");
+		// The trip changes on the form (Ben taken off, a day longer); the list picks it again.
+		db["TRIP-9"] = { ...db["TRIP-9"], trip: { ...db["TRIP-9"].trip, end_date: "2026-10-04" }, travelers: [CREW_TRIP.travelers[0]] };
+		await back();
+		pick_past("TRIP-9");
+		await settle();
+		assert.equal(server.sent("get_plan").length, 2, "a new pick reads it again");
+		assert.equal(p.copy.source.trip.end_date, "2026-10-04");
+		assert.deepEqual(p.copy.source.travelers.map((t) => t.employee), ["E1"]);
+		assert.equal(p.copy.start_date, "2026-09-25", "the day offered from today again");
+		// The form's Copy trip (frappe's entry, no mark) reads it again too.
+		db["TRIP-9"] = { ...db["TRIP-9"], trip: { ...db["TRIP-9"].trip, end_date: "2026-10-05" } };
+		F.set_route("plan-a-trip", { copy: "TRIP-9" });
+		await settle();
+		assert.equal(server.sent("get_plan").length, 3);
+		assert.equal(p.copy.source.trip.end_date, "2026-10-05");
+	});
+
+	await test("Back while a copy's first save is on its way: the screen catches up, and Carry on opens the trip it became", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		press("Make the copy");
+		await settle();
+		const draft = p.draft_id;
+		server.hold.add("save_plan");
+		p.go(1); // Next: the first save, held
+		await settle();
+		await back(); // before it answers
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		let screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes("not saved yet"), screen);
+		let redraws = 0;
+		const draw_copy = p.draw_copy;
+		p.draw_copy = function () {
+			redraws += 1;
+			return draw_copy.call(this);
+		};
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		const name = Object.keys(db).find((k) => k.startsWith("TRIP-NEW"));
+		assert.ok(name, "saved");
+		assert.equal(redraws, 1, "the copy screen says what it is now");
+		p.draw_copy = draw_copy;
+		screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes(`You made a copy of this trip already: ${name}.`), screen);
+		// The Carry on drawn before it landed still leads somewhere.
+		p.carry_on(`draft:${draft}`);
+		await settle();
+		assert.equal(last().trip, name);
+		assert.equal(url(), `/desk/plan-a-trip?trip=${name}&step=trip`, "an entry of its own");
+		assert.equal(server.sent("save_plan").length, 1, "one trip");
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" }, "Back returns to the copy screen");
+	});
+
+	await test("the list offers past trips to copy, the latest few first; a server with none offers none", async () => {
+		tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		const p = planner();
+		const past = Array.from({ length: 8 }, (_, i) => ({
+			name: `TRIP-P${i}`,
+			purpose: `Job ${i}`,
+			status: "Completed",
+			start_date: "2026-08-01",
+			end_date: "2026-08-03",
+			travel_for_name: i ? "" : "PRJ-1",
+		}));
+		// The section the list draws (draw_landing puts it in with body.html, not through $()).
+		const list = p.copy_list(past);
+		assert.ok(list.includes("Copy a past trip"));
+		for (const row of past) assert.ok(list.includes(`data-copy="${row.name}"`), row.name);
+		assert.ok(list.includes("for PRJ-1"), "the job it was for");
+		assert.ok(list.includes("Show 2 more"), "the rest behind a choice on the list, not a screen");
+		assert.ok(list.indexOf('data-copy="TRIP-P5"') < list.indexOf("Show 2 more"), "the latest six first");
+		assert.ok(list.indexOf("Show 2 more") < list.indexOf('data-copy="TRIP-P6"'));
+		assert.equal(p.copy_list([]), "");
+		assert.equal(p.copy_list(null), "");
+		// Each one opens its copy screen: a handler on the list's [data-copy] buttons.
+		assert.ok(clicks.some((c) => c.event === "click" && c.src.includes("[data-copy]")));
+		// A server that does not know the list yet (an answer with nothing in it) leaves it off,
+		// never the landing with it.
+		delete server.handlers.get_copyable_trips;
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		assert.deepEqual(last(), { landing: true });
+		assert.ok(clicks.some((c) => c.src.includes('data-action="new"')));
 	});
 }
 

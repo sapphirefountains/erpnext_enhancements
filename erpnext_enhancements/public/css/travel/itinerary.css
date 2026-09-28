@@ -17,6 +17,9 @@
 	--ti-accent-soft: #e6f6fd;
 	/* Emergency, as words on the page (the 911 button itself is the literal red below). */
 	--ti-danger-text: #c62828;
+	/* "You're offline — showing your itinerary as saved …": 6.8:1 (dark: 10:1). */
+	--ti-offline-bg: #fff4e5;
+	--ti-offline-text: #7a4b00;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -29,6 +32,8 @@
 		--ti-accent: #29b6f6;
 		--ti-accent-soft: #103244;
 		--ti-danger-text: #ff8a80;
+		--ti-offline-bg: #3a2a0d;
+		--ti-offline-text: #ffd58a;
 	}
 }
 
@@ -55,6 +60,37 @@
 	color: var(--ti-accent);
 	font-weight: 600;
 	text-decoration: underline;
+}
+
+/* A page this session may not see (saved for someone else, or nobody signed in): what it is,
+   and the way out under it — a reload, or signing in. Never a dead end. */
+.ti-refused {
+	text-align: center;
+	padding-bottom: 24px;
+}
+
+.ti-refused .ti-empty { padding-bottom: 12px; }
+
+.ti-reload {
+	border: 1px solid var(--ti-border);
+	background: var(--ti-surface);
+	color: var(--ti-accent);
+	border-radius: 8px;
+	padding: 8px 18px;
+	font: inherit;
+	font-weight: 600;
+}
+
+/* The copy saved on this phone is on screen: the server could not be reached. */
+.ti-offline {
+	margin: 0 0 10px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--ti-offline-bg);
+	color: var(--ti-offline-text);
+	font-size: 0.88rem;
+	font-weight: 600;
+	line-height: 1.4;
 }
 
 /* Header */
@@ -542,6 +578,15 @@
 	font-weight: 600;
 	white-space: nowrap;
 }
+
+/* Offline, a file that is not saved on this phone: why it did not open. */
+.ti-doc-note {
+	color: var(--ti-offline-text);
+	font-size: 0.82rem;
+	padding: 2px 4px;
+}
+
+.ti-viewer .ti-doc-note { color: #ffd58a; }
 
 /* The Documents screen: "For the whole trip", then a group per booking. */
 .ti-doc-group { margin-bottom: 18px; }
