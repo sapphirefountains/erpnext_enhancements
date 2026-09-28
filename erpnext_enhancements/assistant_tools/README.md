@@ -165,7 +165,7 @@ check and a read-only-SQL check. Raw SQL sits *underneath* DocPerm,
 touches it, and a System Manager is otherwise one ``select …`` away from the whole table,
 delivered into a model's context window. Note that `run_database_query` is exempt from
 *confirmation* (above) and must **not** be exempt from a content denylist. So the refusal
-comes in three shapes, because the tools do:
+comes in four shapes, because the tools do:
 
 - a **`doctype` argument**, compared on *every* tool rather than a named list, so a tool added to
   FAC tomorrow that takes a `doctype` is covered the day it appears. Case and runs of whitespace
@@ -174,7 +174,14 @@ comes in three shapes, because the tools do:
   `"<doctype>/<name>"`, split on the first slash as FAC splits it; and `run_python_code`'s
   `data_query.doctype`, which FAC pre-loads with `frappe.get_all`, applying no permissions at all.
   Both were open before v1.538.0;
-- **free text**: `run_database_query`'s `query` (or `sql`) and `run_python_code`'s `code`.
+- **free text**: `run_database_query`'s `query` (or `sql`) and `run_python_code`'s `code`;
+- **a File, by what it is attached to** (since v1.550.0, WI-080 PR 3): `extract_file_content`
+  names a `file_url` or `file_name`, and FAC 3.0.0 then asks only whether the caller can read the
+  document the File is attached to, which a KB Author can for a draft's screenshot. So the gate
+  looks up every File with that url or name (`_gate.DENYLIST_FILE_ARGUMENTS`,
+  `denylisted_file_hit`) and refuses if any is attached to a denylisted doctype; a lookup that
+  fails refuses too. A published article's images are attached to `Knowledge Article` and stay
+  readable.
 
 **And the refusal belongs at the top of `_gated_execute`** — above the confirm-flow bypass
 and above the `ai_write_gating_enabled` check. A refusal reachable only while a settings

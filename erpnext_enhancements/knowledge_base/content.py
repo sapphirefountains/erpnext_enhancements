@@ -24,6 +24,11 @@ in the bench-free CI tier. Three jobs:
 * :func:`content_hash` answers "did the text people and AI read change?", for the Drive copy
   (slice 4) to compare.
 
+PR 3 adds three readers the publish action and the review screen use: :func:`shows_anything` (a
+body with no words and no picture is not sent for review), :func:`referenced_files` (which Files a
+body uses, so publishing moves exactly those onto the article) and :func:`text_diff` (the
+live-vs-draft diff a reviewer reads).
+
 **When they run.** The Version controller strips on every save and scans on every save that
 changes content (``before_validate``, which runs before v16's own ``sanitize_html``), and scans
 again at approval. ``body_md`` and ``content_hash`` are **not** computed
@@ -39,6 +44,7 @@ up by chance. The scan never looks at them.
 """
 
 import base64
+import difflib
 import hashlib
 import html
 import json
@@ -46,6 +52,7 @@ import re
 import unicodedata
 from collections import namedtuple
 from html.parser import HTMLParser
+from urllib.parse import parse_qs, unquote, urlsplit
 
 # ------------------------------------------------------------------ presentation
 
@@ -722,3 +729,106 @@ def _keywords(value):
 	words = {_line_text(word).casefold() for word in _KEYWORD_SEPARATORS.split(_text(value))}
 	words.discard("")
 	return sorted(words)
+
+
+# ------------------------------------------------------------------ what publishing reads (PR 3)
+
+
+def shows_anything(markup):
+	"""Whether a Text Editor body shows a reader anything: a word, or a picture.
+
+	Quill's empty editor saves ``<div class="ql-editor read-mode"><p><br></p></div>``, and an empty
+	list item carries only attributes (``data-list="bullet"``) and the empty ``ql-ui`` span, so this
+	reads text and ``<img src>``, never attribute values. Comments, ``script`` and ``style`` show
+	nothing. A plain string with no markup is its own text.
+	"""
+	if not isinstance(markup, str) or not markup.strip():
+		return False
+	if "<" not in markup:
+		return bool(markup.strip())
+	reader = _Visible()
+	reader.feed(markup)
+	reader.close()
+	return reader.found
+
+
+class _Visible(HTMLParser):
+	def __init__(self):
+		super().__init__(convert_charrefs=True)
+		self.found = False
+
+	def handle_starttag(self, tag, attrs):
+		if tag == "img" and any(name == "src" and (value or "").strip() for name, value in attrs):
+			self.found = True
+
+	handle_startendtag = handle_starttag
+
+	def handle_data(self, data):
+		if self.cdata_elem not in DROPPED_WITH_CONTENT and data.strip():
+			self.found = True
+
+
+#: Where a private File's bytes live. A body names one by this path, with ``?fid=<File name>``
+#: after it when v16 wrote the link (``File.unique_url``, frappe ``origin/version-16``
+#: ``core/doctype/file/file.py:963-971``, used by ``extract_images_from_html``,
+#: ``core/doctype/file/utils.py:265-280``).
+PRIVATE_FILES_PREFIX = "/private/files/"
+
+#: The attributes a body can name a File in: an image's ``src`` and a link's ``href``.
+_FILE_ATTRIBUTES = frozenset({"src", "href"})
+
+
+def referenced_files(markup):
+	"""The Files a body uses, as ``(file names, private paths)``: two frozensets.
+
+	A pasted or dropped image becomes a private File and an ``<img src="/private/files/x.png?fid=
+	<File name>">`` when v16 saves the body, so the ``fid`` names the File exactly; a link or image
+	written with the plain path (no ``fid``) is matched by the path, which is the File's
+	``file_url`` (stored unquoted: ``File.before_insert``, ``file.py:112``). Only ``src`` and
+	``href`` are read, only a path under ``/private/files/`` counts (a KB File is always private),
+	and the scheme and host are ignored, so a link pasted with the site's full address matches too.
+	Publishing moves the Files a version uses onto the article; this is how it knows which.
+	"""
+	if not isinstance(markup, str) or "<" not in markup:
+		return frozenset(), frozenset()
+	reader = _FileLinks()
+	reader.feed(markup)
+	reader.close()
+	return frozenset(reader.fids), frozenset(reader.paths)
+
+
+class _FileLinks(HTMLParser):
+	def __init__(self):
+		super().__init__(convert_charrefs=True)
+		self.fids, self.paths = set(), set()
+
+	def handle_starttag(self, tag, attrs):
+		for name, value in attrs:
+			if name in _FILE_ATTRIBUTES and value:
+				self._read(value.strip())
+
+	handle_startendtag = handle_starttag
+
+	def _read(self, url):
+		parts = urlsplit(url)
+		path = unquote(parts.path)
+		for fid in parse_qs(parts.query).get("fid", ()):
+			if fid.strip():
+				self.fids.add(fid.strip())
+		if path.startswith(PRIVATE_FILES_PREFIX):
+			self.paths.add(path)
+
+
+def text_diff(before, after, context=3):
+	"""A unified diff of two texts, line by line, without the ``---``/``+++`` file header.
+
+	``review_diff`` passes the Markdown of the published body and of the draft (v16's
+	``frappe.utils.to_markdown``, which is ``html2text``, the same conversion that writes
+	``body_md``), so the reviewer sees the change the way the AI tools will read it. Lines start
+	with ``@@`` (a hunk), ``-`` (only in the published text), ``+`` (only in the draft) or a space.
+	Identical texts give an empty list.
+	"""
+	old = _text(before).split("\n") if _text(before) else []
+	new = _text(after).split("\n") if _text(after) else []
+	lines = difflib.unified_diff(old, new, lineterm="", n=context)
+	return [line for line in lines if not line.startswith(("---", "+++"))]

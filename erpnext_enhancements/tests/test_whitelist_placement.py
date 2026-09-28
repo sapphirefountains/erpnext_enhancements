@@ -98,6 +98,21 @@ MUST_STAY_WHITELISTED = {
         "portal_confirm_card_payment",
         "portal_invoice_pdf",
     ),
+    # The knowledge base's review actions (v1.550.0, WI-080 PR 3). Private helpers (`_name`,
+    # `_require_kb_role`, `_load_version`, `_refuse`, `_text_problems`) sit directly below the
+    # endpoints, and each endpoint holds a nested `attempt()`. A lost decorator here shows every
+    # button on the form and answers each press with "not whitelisted", so nothing can publish.
+    "api/knowledge_base.py": (
+        "start_revision",
+        "submit_for_review",
+        "withdraw",
+        "request_changes",
+        "approve_and_publish",
+        "discard",
+        "review_diff",
+        "confirm_still_accurate",
+        "retire",
+    ),
 }
 
 

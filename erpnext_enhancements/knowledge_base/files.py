@@ -64,13 +64,17 @@ purpose:** ``File.on_trash`` deletes the bytes from disk before any ``doc_events
 ["on_trash"]`` handler runs (the same controller-first order), so refusing there would roll back
 the row and leave it pointing at a file that is already gone. A permission check runs in
 ``delete_doc`` before ``on_trash`` (``model/delete_doc.py:173-176``), while nothing has been
-touched.
+touched. **Since PR 3 it also refuses ``delete`` on a File attached to a version that has left
+Draft** (In Review, Published, Superseded or Discarded): a version's pictures change only while its
+text can, and a submitted version's Files are part of the permanent record of what was approved.
+That is the one case in which the hook reads anything: the version's ``review_state``, by name.
 
 **The flag for PR 3.** The Knowledge Base's own code may delete such a File, or move a KB File to
 another document, only by saying so: ``file.flags.kb_action = True`` before ``file.save()``, or
 ``frappe.delete_doc("File", name, flags={"kb_action": True})`` (``delete_doc`` copies ``flags``
 onto the document before it checks permission). **Publishing moves a draft's Files onto the
-Article, so PR 3 sets it on each File it moves.** Nothing in v1 deletes one (retiring keeps them).
+Article, so PR 3 sets it on each File it moves** (``publish.move_files``). Nothing in v1 deletes
+one (retiring keeps them).
 Code running with ``ignore_permissions`` does not consult permission hooks at all; that is Frappe's
 rule for every doctype, and the Knowledge Base Integrity report (PR 4) is what would notice.
 Administrator is never refused a delete, by Frappe.
@@ -79,11 +83,18 @@ Administrator is never refused a delete, by Frappe.
 import frappe
 from frappe.utils import cint
 
-from erpnext_enhancements.knowledge_base.constants import ARTICLE_DOCTYPE, KB_DOCTYPES
+from erpnext_enhancements.knowledge_base.constants import (
+	ARTICLE_DOCTYPE,
+	KB_DOCTYPES,
+	REVIEW_STATES,
+	VERSION_DOCTYPE,
+)
 
-#: The flag KB code sets on a File to delete one attached to a Knowledge Article, or to move a
-#: File off either KB doctype.
+#: The flag KB code sets on a File to delete one attached to a Knowledge Article or to a version
+#: that has left Draft, or to move a File off either KB doctype.
 ACTION_FLAG = "kb_action"
+
+DRAFT_STATE = REVIEW_STATES[0]
 
 
 def force_private(doc, method=None):
@@ -129,19 +140,45 @@ def _resave_private(doc, public_url):
 
 
 def file_has_permission(doc, ptype=None, user=None, debug=False):
-	"""Refuse ``delete`` on a File attached to a Knowledge Article, unless KB code flags it.
+	"""Refuse ``delete`` on a File attached to a Knowledge Article, or to a Knowledge Article Version
+	that is no longer a Draft, unless KB code flags it.
 
-	On v16 a ``has_permission`` hook that returns anything falsy **denies**
-	(``permissions.py:483-500``), so every other path returns ``True`` explicitly: this hook only
-	ever takes a right away, and only that one.
+	**A version's Files change only while its content can** (PR 3, decision (a)): in Draft. Once it
+	is In Review, the approver is reading those pictures; once it is Published or Superseded it is
+	the permanent record of what was approved (the ones its body used were moved onto the article,
+	and any others stay as part of that record); a Discarded one is kept as history. v16's own
+	protection (``File.validate_protected_file``, ``file.py:586-614``) covers only a submitted
+	document whose doctype sets ``protect_attached_files``, and only from ``on_trash``, which
+	``delete_doc(ignore_on_trash=True)`` skips. Detaching one first is already refused by
+	:func:`force_private`. A draft's own Files may still be deleted, by their uploader, as before:
+	that is how a picture is taken out of a draft.
+
+	Only a delete of a version's File reads anything (the version's state, one indexed row). On v16
+	a ``has_permission`` hook that returns anything falsy **denies** (``permissions.py:483-500``),
+	so every other path returns ``True`` explicitly: this hook only ever takes a right away, and
+	only that one.
 	"""
 	if ptype != "delete":
 		return True
-	if (getattr(doc, "attached_to_doctype", None) or "") != ARTICLE_DOCTYPE:
+	attached = getattr(doc, "attached_to_doctype", None) or ""
+	if attached not in KB_DOCTYPES:
 		return True
 	if _flag(doc, ACTION_FLAG):
 		return True
-	return False
+	if attached == ARTICLE_DOCTYPE:
+		return False
+	return _version_is_a_draft(getattr(doc, "attached_to_name", None) or "")
+
+
+def _version_is_a_draft(name):
+	"""Whether the version a File is attached to is still a Draft. A version that cannot be found
+	is not one: versions are never deleted, so an orphan is left for Administrator to judge."""
+	if not name:
+		return False
+	row = frappe.db.get_value(VERSION_DOCTYPE, name, ["review_state", "docstatus"], as_dict=True)
+	if not row:
+		return False
+	return (row.get("review_state") or DRAFT_STATE) == DRAFT_STATE and not cint(row.get("docstatus"))
 
 
 def _refuse_moving(doc, stored):

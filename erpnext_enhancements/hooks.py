@@ -373,6 +373,15 @@ doctype_js = {
 	# <module>/doctype/<name>/<name>.js and doctype_js appends to the same string with no
 	# dedupe, so a top-level `const` becomes a SyntaxError and the form loses every button.
 	"Non Conformance": "public/js/quality/non_conformance.js",
+	# knowledge_base (WI-080 PR 3, v1.550.0): the review buttons -- Submit for Review, Approve and
+	# Publish, Request Changes, Withdraw, Discard, View Changes on a version; Start Revision,
+	# Confirm Still Accurate, Retire on an article. Each form shows exactly the buttons the server
+	# would let this person press now, from __onload.kb, which the controllers' onload fills with
+	# the same workflow.*_problems the endpoints (api/knowledge_base.py) refuse with. In public/js,
+	# not the doctype folders, and those folders hold no .js, so neither is loaded twice (the
+	# double-load note above).
+	"Knowledge Article Version": "public/js/knowledge_base/knowledge_article_version.js",
+	"Knowledge Article": "public/js/knowledge_base/knowledge_article.js",
 }
 
 doctype_list_js = {
@@ -845,6 +854,23 @@ doc_events = {
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
+	},
+	# knowledge_base (WI-080 PR 3, v1.550.0): no typed text about a DRAFT is kept outside the
+	# draft. A System Manager reads every Comment and every ToDo on the site (v16 comment.json's
+	# DocPerm; todo.py's permission query exempts System Manager), and so do the AI tools acting
+	# for one, triton@ included -- list_documents(doctype="Comment") names no denylisted doctype.
+	# So a Comment of type "Comment" (the one people type) on a Knowledge Article Version is
+	# refused, and so is a ToDo on one that the knowledge base did not raise, or an edit to the
+	# text of one it did (the Assign To dialog's comment becomes the description). KB code opts in
+	# with flags.kb_action (notify.py does, for its review ToDos: title and link only). Runs on
+	# EVERY Comment and ToDo, so it returns after reading the row for anything else and never
+	# raises for an unrelated row. before_validate runs even under flags.ignore_validate. Not on
+	# on_trash: deleting one is the safe direction. See knowledge_base/references.py.
+	"Comment": {
+		"before_validate": "erpnext_enhancements.knowledge_base.references.guard_comment",
+	},
+	"ToDo": {
+		"before_validate": "erpnext_enhancements.knowledge_base.references.guard_todo",
 	},
 	"Activity Log": {
 		# Email on every Administrator authentication, success or failure. Frappe's
@@ -2491,7 +2517,11 @@ has_permission = {
 	"Job Interval": "erpnext_enhancements.workforce.permissions.job_interval_has_permission",
 	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_has_permission",
 	# knowledge_base (WI-080 PR 2, v1.539.0): refuses DELETE, and only delete, on a File
-	# attached to a Knowledge Article. v16 protects attachments only on a SUBMITTED
+	# attached to a Knowledge Article -- and since PR 3 (v1.550.0) on a File attached to a
+	# Knowledge Article Version that has left Draft (in review, published, superseded or
+	# discarded: its pictures change only while its text can, and a submitted version's Files
+	# are part of the record of what was approved). That case reads the version's review_state,
+	# by name; every other File answers without a query. v16 protects attachments only on a SUBMITTED
 	# document, and an Article is never submitted, so a File's owner could otherwise
 	# delete an image out of approved text. A permission hook rather than on_trash
 	# because File.on_trash deletes the bytes BEFORE any doc_events on_trash handler

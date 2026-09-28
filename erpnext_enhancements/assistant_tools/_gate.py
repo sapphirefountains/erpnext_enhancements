@@ -416,6 +416,19 @@ DENYLIST_TEXT_ARGUMENTS = {
 DENYLIST_ID_ARGUMENTS = {"fetch": ("id",)}
 DENYLIST_NESTED_DOCTYPE_ARGUMENTS = {"run_python_code": ("data_query",)}
 
+# A tool that reads a stored File's BYTES names the File, not a doctype, so the denylist has to
+# look the File up (found for WI-080 PR 3, v1.550.0). FAC 3.0.0's `extract_file_content` resolves
+# `file_url` (or, failing that, `file_name`) to a File row with `frappe.get_all(..., limit=1)` and
+# then asks only `frappe.has_permission(file.attached_to_doctype, "read", file.attached_to_name)`
+# (plugins/data_science/tools/extract_file_content.py, `_get_file_document` and
+# `_check_file_access`) -- which a KB Author passes for a draft's pasted screenshot, so the model
+# acting for them would read the picture's text (OCR) or a draft's attached PDF. A File attached to
+# a denylisted doctype is refused here instead. Every File row with the named url or name is
+# checked, not only the one FAC would pick: a deduplicated upload shares its url, and refusing on
+# contact is the only direction a denylist may err in. A published article's Files are attached to
+# `Knowledge Article`, which is not denylisted, so they stay readable.
+DENYLIST_FILE_ARGUMENTS = {"extract_file_content": ("file_url", "file_name")}
+
 _SQL_COMMENT_BLOCK = re.compile(r"/\*.*?\*/", re.DOTALL)
 _SQL_COMMENT_LINE = re.compile(r"(--|#)[^\n]*")
 _NON_WORD = re.compile(r"[^a-z0-9_]+")
@@ -558,6 +571,42 @@ def denylist_hit(tool_name, arguments):
             if any(needle in haystack for haystack in haystacks):
                 return doctype
     return None
+
+
+def denylisted_file_hit(tool_name, arguments, attachments):
+    """The denylisted DocType a File named in this call is attached to, or ``None``.
+
+    For the tools in ``DENYLIST_FILE_ARGUMENTS``. ``attachments(fieldname, value)`` returns the
+    ``attached_to_doctype`` of every File whose ``fieldname`` equals ``value`` -- the lookup FAC
+    itself makes -- so this function stays pure and the lookup is :func:`_file_attachments`.
+    A blank or non-string argument names no File and is skipped; FAC refuses those itself.
+    """
+    keys = DENYLIST_FILE_ARGUMENTS.get(tool_name, ())
+    if not keys or not isinstance(arguments, dict):
+        return None
+    for key in keys:
+        value = arguments.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        for doctype in attachments(key, value) or ():
+            hit = _denylisted_name(doctype)
+            if hit:
+                return hit
+    return None
+
+
+def _file_attachments(fieldname, value):
+    """What every File whose ``fieldname`` equals ``value`` is attached to. No permission check:
+    this decides a refusal, and it must see the rows the caller cannot."""
+    return frappe.get_all("File", filters={fieldname: value}, pluck="attached_to_doctype")
+
+
+#: Said when the File lookup itself fails. A denylist that cannot check refuses.
+_FILE_UNCHECKED_MESSAGE = (
+    "Refused: the file this call names could not be checked against the list of doctypes whose "
+    "files are not readable through the generic Frappe tools, so it was not read. Try again, or "
+    "open the file yourself in the Desk."
+)
 
 
 def _denylist_refusal_message(doctype):
@@ -1485,8 +1534,17 @@ def _gated_execute(tool, original, arguments):
     #    makes one person's private assistant context, or an unapproved knowledge-base draft,
     #    readable through a generic tool.
     denied = denylist_hit(getattr(tool, "name", ""), arguments)
-    if denied:
-        message = _denylist_refusal_message(denied)
+    #    A file-reading tool names a File, not a doctype: look up what it is attached to
+    #    (DENYLIST_FILE_ARGUMENTS). A lookup that fails refuses; a denylist that cannot check
+    #    must not read.
+    unchecked = False
+    if not denied:
+        try:
+            denied = denylisted_file_hit(getattr(tool, "name", ""), arguments, _file_attachments)
+        except Exception:
+            unchecked = True
+    if denied or unchecked:
+        message = _denylist_refusal_message(denied) if denied else _FILE_UNCHECKED_MESSAGE
         # Evidence, not silence. An attempt to reach a denylisted doctype through a generic
         # tool is exactly the event an operator wants to find later, and AI Action Log is
         # already append-only and already purged on a schedule.
@@ -1496,7 +1554,11 @@ def _gated_execute(tool, original, arguments):
             arguments=arguments,
             success=False,
             risk="High",
-            summary=f"Refused a generic-tool call on a denylisted doctype ({denied}).",
+            summary=(
+                f"Refused a generic-tool call on a denylisted doctype ({denied})."
+                if denied
+                else "Refused a file read whose attachment could not be checked against the denylist."
+            ),
             error=message,
             error_type="AIGateError",
         )
