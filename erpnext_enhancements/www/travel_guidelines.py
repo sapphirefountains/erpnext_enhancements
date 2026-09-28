@@ -4,8 +4,8 @@
 A static, login-gated policy document (the Sapphire Fountains "General Travel
 Guidelines"), version-controlled here like every other customization. The
 content lives in the sibling ``travel_guidelines.html``; policy wording maps
-each rule onto the Travel Management flows (Travel Trip rows, Travel POIs,
-Expense Claims, the Time Kiosk).
+each rule onto the Travel Management flows (Travel Trip rows and the receipts
+on them, Travel POIs, the Time Kiosk).
 
 Linked from the Travel workspace shortcut and the /itinerary page footer.
 """

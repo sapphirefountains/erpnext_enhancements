@@ -281,7 +281,9 @@ def deliver_traveler_added(trip, employees):
 
 def deliver_trip_closed(trip):
 	"""Closed notice — only travelers whose Expense Claim is missing or still
-	a draft get it (it is a nudge, not a broadcast)."""
+	a draft get it (it is a nudge, not a broadcast). Production has no HRMS, so no
+	traveler there has a claim and every traveler gets it: the email asks for the
+	receipts on the trip and names who can reopen it, never a claim (trip_closed.html)."""
 	doc = frappe.get_doc("Travel Trip", trip)
 	context = _base_context(doc)
 	subject = _("Trip closed: {0} — check your expenses").format(doc.purpose)
