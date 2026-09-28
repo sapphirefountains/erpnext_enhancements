@@ -1,12 +1,25 @@
-{# Sent on Close — only to travelers whose Expense Claim is missing or still draft.
-   Context: trip, trip_url, itinerary_url, recipient.
+{# Sent on Close (notifications.deliver_trip_closed) to each traveler whose Expense
+   Claim is missing or still a draft. HRMS is not installed on production and cannot
+   be (accounting_intake/actions/receipt_expense.py), so no traveler there ever has a
+   claim and every traveler on the trip gets this.
+   Context: trip, trip_url, itinerary_url, guidelines_url, recipient.
+
+   So it never mentions a claim. How travelers are reimbursed is Nik's call
+   (2026-09-28): each itemized receipt goes on its cost row's Receipt, and accounting
+   reimburses employee-paid costs, per diem and mileage from the trip. And a Closed
+   trip is locked to everyone but a Travel Coordinator (travel_trip._check_closed_lock;
+   only api.reopen_trip reopens it), so a traveler with a receipt still to add cannot
+   add it: the email says who can. Until v1.552.1 it told them to finish and submit an
+   Expense Claim that did not exist.
 
    A FRAGMENT — chrome comes from email_style.wrap() in travel_management/
    notifications.py. NOTE: no autoescape in frappe's Jinja env. #}
 {% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-{{ ee.callout("Trip " ~ trip.name ~ " (" ~ trip.start_date ~ " – " ~ trip.end_date ~ ") has been closed, but your expenses are not settled yet — your Expense Claim is missing or still a draft.", "warning") }}
+{{ ee.callout("Trip " ~ trip.name ~ " (" ~ trip.start_date ~ " – " ~ trip.end_date ~ ") has been closed. Accounting reimburses your employee-paid costs, per diem and mileage from the receipts on the trip, so check that each of your itemized receipts is attached to its cost.", "warning") }}
 
-{{ ee.p("Please finish and submit your claim so reimbursement is not delayed. If a cost is missing from the trip, ask a Travel Coordinator to reopen it.") }}
+{{ ee.p("Only a Travel Coordinator can change a closed trip. If a receipt or a cost of yours is still missing from it, ask one to reopen the trip, then attach each receipt to the Receipt field of the cost it paid for.") }}
 
 {{ ee.button(trip_url, "View the trip") }}
+
+{{ ee.links([(guidelines_url, "Travel guidelines")]) }}

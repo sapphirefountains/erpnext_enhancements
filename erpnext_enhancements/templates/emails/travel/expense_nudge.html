@@ -1,17 +1,37 @@
-{# Single-shot post-trip nudge: traveler still has unclaimed employee-paid
-   costs / per diem / mileage days after the trip ended.
-   Context: trip, trip_url, itinerary_url, unclaimed_amount (formatted),
-   days_since_end, recipient.
+{# Single-shot post-trip nudge (reminders.send_post_trip_expense_nudges): sent once, on
+   the first daily run at least three days after a Completed or Closed trip ended, to
+   each traveler the trip shows as owed employee-paid costs, per diem or mileage
+   (reminders._unclaimed_total).
+   Context: trip, trip_url, itinerary_url, guidelines_url, unclaimed_amount
+   (formatted), days_since_end, recipient.
+
+   It asks for receipts, not a claim. HRMS is not installed on production and cannot
+   be (accounting_intake/actions/receipt_expense.py), so Expense Claim does not exist,
+   the trip form hides its Create buttons (travel_management.expense_claims_available)
+   and nothing ever stamps a row as claimed. `unclaimed_amount` is therefore
+   everything the trip says the company owes this person, hence "To reimburse". How
+   that is paid is Nik's call (2026-09-28): the traveler attaches each itemized
+   receipt to its cost row's Receipt, and accounting reimburses from the trip. Until
+   v1.552.1 this email told travelers to use a Create button none of them could see.
+
+   A Closed trip is locked to everyone but a Travel Coordinator
+   (travel_trip._check_closed_lock), so on one the email says who can reopen it.
 
    A FRAGMENT — chrome comes from email_style.wrap() in travel_management/
    reminders.py. NOTE: no autoescape in frappe's Jinja env. #}
 {% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-{{ ee.kpis([{"label": "Unclaimed", "value": unclaimed_amount, "tone": "warning"},
+{{ ee.kpis([{"label": "To reimburse", "value": unclaimed_amount, "tone": "warning"},
             {"label": "Days since trip ended", "value": days_since_end, "tone": "info"}]) }}
 
-{{ ee.p("Trip " ~ trip.name ~ " ended " ~ days_since_end ~ " day(s) ago and " ~ unclaimed_amount ~ " of your employee-paid costs, per diem or mileage is not on an Expense Claim yet.") }}
+{{ ee.p("Trip " ~ trip.name ~ " ended " ~ days_since_end ~ " day(s) ago, and it shows " ~ unclaimed_amount ~ " owed to you for employee-paid costs, per diem or mileage.") }}
 
-{{ ee.note_rich("Open the trip and use <b>Create &rarr; Expense Claim</b> (or ask a Travel Coordinator) to get reimbursed.") }}
+{{ ee.rich("Attach your itemized receipts to the trip so accounting can reimburse you: open the trip and put each receipt in the <b>Receipt</b> field of the cost it paid for. There is no claim to submit — accounting reimburses you from the trip. The travel guidelines ask for your receipts within a week of getting back.") }}
+
+{% if trip.status == "Closed" %}
+{{ ee.note("This trip is already closed, so only a Travel Coordinator can change it: ask one to reopen it, then attach your receipts.") }}
+{% endif %}
 
 {{ ee.button(trip_url, "View the trip") }}
+
+{{ ee.links([(guidelines_url, "Travel guidelines")]) }}

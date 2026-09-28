@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.552.1] - 2026-09-28
+
+**The travel guidelines and the two post-trip emails now tell travelers how they actually get
+reimbursed: attach each itemized receipt to its cost on the trip, and accounting pays from
+there.** Until now all three told travelers to file an Expense Claim from the trip, using a
+Create button that no traveler on production has ever seen.
+
+### Fixed
+
+- **The travel text sent travelers to features production does not have.**
+  - **Symptom:** section 6 of `/travel_guidelines` said "use Create → Expense Claim on the
+    trip … review it, attach anything missing, and submit". The post-trip expense nudge
+    (`templates/emails/travel/expense_nudge.html`) said the same. The Closed notice
+    (`trip_closed.html`) told every recipient their "Expense Claim is missing or still a
+    draft" and asked them to "finish and submit your claim". A traveler who followed either
+    email found nothing to click.
+  - **Cause:** HRMS is not installed on production and cannot simply be installed. It
+    collides with this app's `HR` module label and six `Training *` doctype names (see the
+    header of `accounting_intake/actions/receipt_expense.py`). So Expense Claim, Employee
+    Advance, Vehicle Log and Expense Claim Type do not exist there,
+    `travel_management.expense_claims_available()` is False, and the Travel Trip form hides
+    Create → Expense Claim / Employee Advance / Vehicle Log. The text described the HRMS path,
+    which never runs there. HRMS was **not** installed to make the text true.
+  - **Fix:** Nik decided the process on 2026-09-28: travelers attach each itemized receipt to
+    its cost on the Travel Trip (the row's *Receipt* field, fieldname `attachment`), and
+    accounting reimburses employee-paid costs, per diem and mileage from there. The traveler
+    has no claim to submit. Section 6's "In the system" callout now says exactly that and
+    keeps the rest (Paid By on every cost row, the receipt on the row's Receipt, booking
+    paperwork on its booking). The reminder sentence now matches `reminders.py`: nothing is
+    ever stamped as claimed without HRMS, so the nudge goes **once**, about three days after
+    the trip ends, to anyone the trip shows as owed employee-paid costs, per diem or mileage.
+  - **The Closed notice:** on production no traveler ever has a claim, so it goes to
+    **every** traveler on a trip when it is closed. A Closed trip refuses every save except a
+    Travel Coordinator's (`travel_trip._check_closed_lock`), and only a coordinator can reopen
+    it (`api.reopen_trip`). A traveler with a receipt still to add therefore cannot add it
+    themselves. The email now says the trip is closed, that accounting reimburses from the
+    receipts on it, and that a missing receipt or cost means asking a Travel Coordinator to
+    reopen the trip. It never mentions a claim.
+  - **The expense nudge:** its headline number was labeled "Unclaimed". Nothing is ever
+    claimed on production, so that number is everything the trip says the company owes the
+    traveler. It is now labeled "To reimburse". The ask is to attach the itemized receipts to
+    the trip so accounting can reimburse them, with "There is no claim to submit". On a trip
+    that is already Closed the email adds who can reopen it. The subject changed from
+    "Unclaimed travel expenses: …" to "Attach your travel receipts: …". Both emails now link
+    the travel guidelines. Who gets each email and when is unchanged.
+- **Three smaller false claims on `/travel_guidelines`:**
+  - **Section 4** told travelers taking a company truck to "create its Vehicle Log from the
+    trip". Vehicle Log is an HRMS doctype. The callout now says a Company Fleet row records
+    the truck on the trip and a company vehicle is never reimbursed.
+  - **Section 4 also said** personal-vehicle miles are "reimbursed at the company rate".
+    Travel Settings' mileage rate is 0 on production, so a Mileage row comes to $0 unless it
+    carries a rate of its own. The text now says accounting reimburses those miles with the rest of the trip's
+    expenses, and names no rate.
+  - **Section 5** said a traveler's per diem shows "in your itinerary email". It never has:
+    `pre_travel_reminder.html` carries no money, under the rule that crew see everything
+    about a trip except money. It now points only at the trip's Travelers table.
+  - **Left alone on purpose:** section 2's sentence about POI Notes showing on the mobile
+    itinerary. A separate change makes `/itinerary` show a place's Notes.
+
+### Tests
+
+- `tests/test_travel_views.py` gains `TestTheTravelerIsToldWhatProductionCanDo` (6 tests):
+  - Both emails are rendered with the real macros under `StrictUndefined`, from the context
+    their senders build.
+  - The guidelines' source is read with Jinja and HTML comments removed first, because those
+    comments explain the absence and so name what is absent.
+  - None of the three may mention Expense Claim, Vehicle Log, Employee Advance or a Create
+    button. All three must ask for receipts attached to the trip.
+  - Both emails must name who can reopen a closed trip. The nudge may only show that line on
+    a Closed trip.
+  - The guidelines must promise no "company rate" and no per diem in the itinerary email, and
+    must keep their seven numbered sections, each with its "In the system" callout.
+  - Each template may only read keys its sender passes.
+  - A self-check proves the matcher finds all three spellings of the old wording.
+  - Against the old text, 5 of the 6 fail.
+
 ## [1.549.1] - 2026-09-27
 
 **On a phone, every email's button now spans the column with its label centered.** Until now

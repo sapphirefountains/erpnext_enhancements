@@ -1698,6 +1698,139 @@ class TestTheEmailTemplateCarriesNoMoney(unittest.TestCase):
 		self.assertIsNone(self.money_in("{# the cost is left out on purpose #}{{ trip.name }}"))
 
 
+class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
+	"""The travel guidelines and the two post-trip emails may only send a traveler to something
+	production has (v1.552.1). HRMS is not installed there and cannot be
+	(``accounting_intake/actions/receipt_expense.py``), so Expense Claim, Employee Advance and
+	Vehicle Log do not exist and the trip form hides their Create buttons — yet the guidelines
+	told every traveler to use Create → Expense Claim and to create a Vehicle Log, the expense
+	nudge said the same, and the Closed notice asked them to finish a claim. Nik's decision
+	(2026-09-28): each itemized receipt goes on its cost row on the trip, and accounting
+	reimburses from there. There is no claim to submit.
+
+	The emails are rendered with the real macros, from the context their senders build. The
+	guidelines extend the website's base template, so their source is read instead, with
+	comments removed first: the comments explain the absence and so name what is absent."""
+
+	GUIDELINES = os.path.join(APP_DIR, "www", "travel_guidelines.html")
+	EMAILS = "erpnext_enhancements/templates/emails/travel"
+	HRMS = re.compile(r"Expense Claim|Vehicle Log|Employee Advance|Create\s*(?:→|&rarr;|&nbsp;)", re.I)
+
+	def setUp(self):
+		try:
+			import jinja2
+		except ImportError:  # pragma: no cover
+			self.skipTest("jinja2 not installed")
+		self.doc = install_site()
+
+	@staticmethod
+	def code(source):
+		"""``source`` without Jinja or HTML comments, whitespace collapsed."""
+		source = re.sub(r"\{#.*?#\}", "", source, flags=re.S)
+		source = re.sub(r"<!--.*?-->", "", source, flags=re.S)
+		return re.sub(r"\s+", " ", source)
+
+	def hrms_in(self, source):
+		found = self.HRMS.search(self.code(source))
+		return found.group(0) if found else None
+
+	def env(self):
+		from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+		return Environment(
+			loader=FileSystemLoader(os.path.dirname(APP_DIR)), autoescape=False, undefined=StrictUndefined
+		)
+
+	def render(self, template, status="Completed", **extra):
+		self.doc.status = status
+		context = dict(notifications._base_context(self.doc), recipient=None, **extra)
+		return self.code(self.env().get_template(f"{self.EMAILS}/{template}").render(**context))
+
+	def nudge(self, status="Completed"):
+		# The two keys reminders.send_post_trip_expense_nudges adds to the base context.
+		return self.render("expense_nudge.html", status, unclaimed_amount="$ 612.50", days_since_end=3)
+
+	def test_the_check_catches_the_old_wording(self):
+		self.assertEqual(self.hrms_in("use <b>Create&nbsp;→&nbsp;Expense Claim</b>"), "Create&nbsp;")
+		self.assertEqual(self.hrms_in("use <b>Create &rarr; Expense Claim</b>"), "Create &rarr;")
+		self.assertEqual(self.hrms_in("create its <b>Vehicle Log</b>"), "Vehicle Log")
+		self.assertIsNone(self.hrms_in("{# no Expense Claim here #}<!-- nor a Vehicle Log --> receipts"))
+
+	def test_each_template_reads_only_what_its_sender_passes(self):
+		from jinja2 import meta
+
+		base = set(notifications._base_context(self.doc)) | {"recipient"}
+		for template, extra in (
+			("expense_nudge.html", {"unclaimed_amount", "days_since_end"}),
+			("trip_closed.html", set()),
+		):
+			env = self.env()
+			source = env.loader.get_source(env, f"{self.EMAILS}/{template}")[0]
+			with self.subTest(template):
+				self.assertLessEqual(meta.find_undeclared_variables(env.parse(source)), base | extra)
+		with open(os.path.join(APP_DIR, "travel_management", "reminders.py"), encoding="utf-8") as fh:
+			reminders = fh.read()
+		self.assertIn('"expense_nudge.html"', reminders)
+		self.assertIn("unclaimed_amount=", reminders)
+		self.assertIn("days_since_end=", reminders)
+		# The subject asks for the receipts too; "Unclaimed" promised a claim to make.
+		self.assertIn('_("Attach your travel receipts: {0}")', reminders)
+		self.assertNotIn("Unclaimed travel expenses", reminders)
+
+	def test_the_expense_nudge_asks_for_receipts_on_the_trip(self):
+		html = self.nudge()
+		self.assertIsNone(self.hrms_in(html))
+		self.assertIn("Attach your itemized receipts to the trip so accounting can reimburse you", html)
+		self.assertIn("<b>Receipt</b> field of the cost it paid for", html)
+		self.assertIn("There is no claim to submit", html)
+		# Nothing is ever stamped as claimed without HRMS: the amount is what the trip says the
+		# company owes this person, not something left off a claim.
+		self.assertIn(">To reimburse<", html)
+		self.assertIn("$ 612.50", html)
+		self.assertNotIn("nclaimed", html)
+		self.assertIn('href="https://example.com/travel_guidelines"', html)
+		# An open trip can take the receipts: no word about reopening it.
+		self.assertNotIn("Travel Coordinator", html)
+
+	def test_the_nudge_on_a_closed_trip_says_who_can_reopen_it(self):
+		# travel_trip._check_closed_lock: a Closed trip refuses every save but a coordinator's.
+		html = self.nudge("Closed")
+		self.assertIn("only a Travel Coordinator can change it: ask one to reopen it", html)
+		self.assertIsNone(self.hrms_in(html))
+
+	def test_the_closed_notice_asks_for_receipts_and_names_who_can_reopen(self):
+		html = self.render("trip_closed.html", "Closed")
+		self.assertIsNone(self.hrms_in(html))
+		self.assertNotIn("claim", html.lower())
+		self.assertIn("has been closed", html)
+		self.assertIn("from the receipts on the trip", html)
+		self.assertIn("each of your itemized receipts is attached to its cost", html)
+		self.assertIn("Only a Travel Coordinator can change a closed trip", html)
+		self.assertIn("ask one to reopen the trip, then attach each receipt to the Receipt field", html)
+
+	def test_the_guidelines_send_travelers_nowhere_production_lacks(self):
+		with open(self.GUIDELINES, encoding="utf-8") as fh:
+			source = fh.read()
+		policy = self.code(source)
+		self.assertIsNone(self.hrms_in(source))
+		# Section 6: the process that works.
+		self.assertIn("there is no claim to fill in", policy)
+		self.assertIn("attach each itemized receipt to its cost on the Travel Trip form", policy)
+		self.assertIn(
+			"accounting reimburses your employee-paid costs, per diem, and mileage from the trip", policy
+		)
+		self.assertIn("a one-time reminder about three days after the trip ends", policy)
+		self.assertIn("a closed trip can only be changed by a Travel Coordinator", policy)
+		# Section 4: no rate is promised (Travel Settings.mileage_rate is 0 on production).
+		self.assertNotIn("company rate", policy)
+		self.assertIn("accounting reimburses them with the rest of your trip expenses", policy)
+		# Section 5: the itinerary email carries no money (pre_travel_reminder.html).
+		self.assertNotIn("itinerary email", policy)
+		# The page keeps its shape: seven numbered sections, each with its callout.
+		self.assertEqual(re.findall(r"<h2>(\d)\. ", policy), ["1", "2", "3", "4", "5", "6", "7"])
+		self.assertEqual(policy.count('<div class="tg-system"> <b>In the system</b>'), 7)
+
+
 # --------------------------------------------------------------------------- links + planner
 
 
