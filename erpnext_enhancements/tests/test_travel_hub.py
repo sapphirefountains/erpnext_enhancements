@@ -16,7 +16,7 @@ Four things make the hub, and each can drift in silence:
   aborts ``bench migrate``, which on this repo is the deploy. A patch runs once per site, so each
   release that changes the hub brings its own.
 
-Since v1.555.0 the hub's "Trips" (the shortcut, the sidebar item and a link in the block) opens
+Since v1.556.0 the hub's "Trips" (the shortcut, the sidebar item and a link in the block) opens
 everyone's trips on the web itinerary, ``/itinerary?view=trips``, where any staff member may open
 any trip with the money left out. The desk Travel Trip list stays scoped to the viewer's own
 trips, so "My trips" pointing at it could never show a colleague's (Nik, 2026-09-28).
@@ -558,7 +558,7 @@ class TestTheWorkspace(unittest.TestCase):
 						self.assertNotIn(key, row)
 
 	def test_trips_opens_everyones_trips_not_the_desk_list(self):
-		"""v1.555.0 (Nik, 2026-09-28): "Change it from My Trips to just Trips so anyone can see
+		"""v1.556.0 (Nik, 2026-09-28): "Change it from My Trips to just Trips so anyone can see
 		anyone's trips". The desk list shows a crew member only the trips they own or travel on, and
 		its form carries the money, so "Trips" is the web itinerary's list of every trip instead."""
 		rows = {row["label"]: row for row in workspace()["shortcuts"]}
@@ -696,7 +696,7 @@ class TestTheSidebar(unittest.TestCase):
 	def test_a_travel_trip_page_keeps_this_sidebar(self):
 		"""v16 picks the sidebar for a Travel Trip list, form or calendar by the sidebars that have an
 		item linking to Travel Trip (sidebar.js resolve_sidebar), else the module's auto-generated
-		one. When "My trips" became a URL (v1.555.0) this sidebar lost its only such item, and every
+		one. When "My trips" became a URL (v1.556.0) this sidebar lost its only such item, and every
 		trip page swapped it for frappe's "Travel Management" sidebar; "Trip list" under Office is the
 		item that keeps it."""
 		links = [
@@ -872,7 +872,7 @@ class TestTheReloadPatch(_PatchHarness, unittest.TestCase):
 
 
 class TestTheTripsReloadPatch(_PatchHarness, unittest.TestCase):
-	"""v1.555.0 turned "My trips" into "Trips" on both the workspace and the sidebar. Both are
+	"""v1.556.0 turned "My trips" into "Trips" on both the workspace and the sidebar. Both are
 	timestamp-gated on import, and reload_travel_hub has already run on production, so the release
 	carries a patch of its own: that patch's workspace and sidebar steps, and not its report step
 	(the report did not change)."""
@@ -892,7 +892,7 @@ class TestTheTripsReloadPatch(_PatchHarness, unittest.TestCase):
 			start -= 1
 		comment = lines[start:index]
 		self.assertTrue(2 <= len(comment) <= 4, comment)
-		self.assertTrue(comment[0].startswith("# v1.555.0"), comment[0])
+		self.assertTrue(comment[0].startswith("# v1.556.0"), comment[0])
 
 	def test_both_files_it_forces_are_newer_than_the_rows_production_holds(self):
 		"""The stamp is the half that does the work on its own on a site whose rows are older."""

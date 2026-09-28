@@ -483,7 +483,7 @@ class TestThePageSide(unittest.TestCase):
 		self.assertIn("pruneSaved(marker);", boot)
 		self.assertIn("saved.key !== key", _function("pruneSaved", PAGE_JS))
 		# The cap keeps the person's own trips ahead of colleagues' trips opened from the list of all
-		# trips (v1.555.0), then the newest: never the newest alone.
+		# trips (v1.556.0), then the newest: never the newest alone.
 		prune = _function("pruneSaved", PAGE_JS)
 		self.assertIn("own: listed[saved.trip] ? 1 : 0", prune)
 		self.assertIn("return (b.own - a.own) || (b.at - a.at);", prune)

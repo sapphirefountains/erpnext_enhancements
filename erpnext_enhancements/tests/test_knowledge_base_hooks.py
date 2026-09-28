@@ -18,9 +18,11 @@ WI-080 PR 2, ADR 0017. Bench-free, with its own ``frappe`` stub. What it pins:
   code sets ``flags.kb_action``; otherwise its owner could detach an article's image and then
   delete it, or detach it and make it public in one call. ``link_files_to_comment``, which moves
   Files with ``db_set`` and so runs no hook, skips KB Files itself.
-* **Delete is refused on a File attached to a Knowledge Article**, and only delete, and only there,
-  unless KB code sets ``flags.kb_action``. Every other answer is ``True`` exactly: on v16 a falsy
-  permission-hook answer denies, and this hook sees every File permission check on the site.
+* **Delete is refused on a File attached to a Knowledge Article**, and only delete, unless KB code
+  sets ``flags.kb_action``. (Since PR 3 also on a version's File once the version has left Draft;
+  that case reads the version, and ``test_knowledge_base_actions`` pins it.) Every other answer is
+  ``True`` exactly: on v16 a falsy permission-hook answer denies, and this hook sees every File
+  permission check on the site.
 * **The hooks are registered** where ``hooks.py`` says.
 * **The Version controller** strips presentation and records contributors on a content save,
   refuses a content edit outside Draft or one carrying a secret (in ``before_validate``, which
@@ -292,6 +294,10 @@ class TestUnrelatedFilesAreLeftAlone(unittest.TestCase):
 	def test_the_permission_hook_says_true_for_every_other_file_and_right(self):
 		for doctype in ("Opportunity", VERSION, "", None):
 			for ptype in ("read", "select", "write", "create", "delete", "share", "print", "email", None):
+				# Since PR 3 (decision (a)) a delete of a version's File reads the version's state;
+				# that case is pinned in test_knowledge_base_actions. Everything else stays query-free.
+				if doctype == VERSION and ptype == "delete":
+					continue
 				with self.subTest(doctype=doctype, ptype=ptype):
 					doc = types.SimpleNamespace(attached_to_doctype=doctype, flags=_Flags())
 					self.assertIs(files.file_has_permission(doc, ptype), True)

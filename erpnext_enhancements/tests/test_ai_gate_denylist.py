@@ -107,8 +107,21 @@ VERSION_SQL = (
 #: Queries that must keep working: the WI-080 PR 1 acceptance checks, and ordinary reads of the
 #: published doctype. Every one names `Knowledge Article` and none reaches a draft.
 ARTICLE_SQL = (
-    "SELECT name, module, is_submittable, track_changes, has_web_view, show_in_global_search "
+    # The doctype acceptance query as fixed in PR 3 (v1.555.0): v16's DocType has no
+    # `show_in_global_search`; the name flag is `show_name_in_global_search`, and a field is indexed
+    # by its own `in_global_search` or a Global Search Settings row.
+    "SELECT name, module, is_submittable, track_changes, has_web_view, show_name_in_global_search "
     "FROM tabDocType WHERE name LIKE 'Knowledge Article%'",
+    "SELECT parent, fieldname FROM tabDocField WHERE parent LIKE 'Knowledge Article%' "
+    "AND in_global_search = 1",
+    "SELECT COUNT(*) FROM `tabGlobal Search DocType` WHERE document_type LIKE 'Knowledge Article%'",
+    "SELECT allocated_to, status FROM tabToDo WHERE reference_type LIKE 'Knowledge Article%' "
+    "AND status='Open'",
+    # PR 3's acceptance checks: the space before `%` selects the Version doctype's rows without
+    # naming it, so they run over MCP.
+    "SELECT COUNT(*) FROM tabComment WHERE comment_type='Comment' "
+    "AND reference_doctype LIKE 'Knowledge Article %'",
+    "SELECT description FROM tabToDo WHERE reference_type LIKE 'Knowledge Article %'",
     "SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' "
     "AND deleted_name LIKE 'Knowledge%'",
     "SELECT parent, role, share, submit, `delete`, export FROM tabDocPerm "
@@ -410,6 +423,109 @@ class TestTheRefusalComesFirst(unittest.TestCase):
         self.assertEqual(calls["executed"], 1)
         self.assertEqual(calls["logged"], [])
         self.assertTrue(response["success"])
+
+
+#: The File rows a lookup would find: `attached_to_doctype` per (field, value).
+FILES = {
+    ("file_url", "/private/files/draft-shot.png"): [VERSION],
+    ("file_name", "draft-shot.png"): [VERSION],
+    ("file_url", "/private/files/shared.png"): [ARTICLE, VERSION],
+    ("file_url", "/private/files/article-shot.png"): [ARTICLE],
+    ("file_url", "/private/files/chat-upload.pdf"): [ATTACHMENT],
+    ("file_url", "/private/files/unattached.pdf"): [None],
+}
+
+
+def _lookup(field, value):
+    return FILES.get((field, value), [])
+
+
+class TestAFilesAttachmentIsChecked(unittest.TestCase):
+    """WI-080 PR 3, decision (b): FAC 3.0.0's ``extract_file_content`` resolves a ``file_url`` or
+    ``file_name`` to a File and then asks only whether the caller can read what it is attached
+    to, which a KB Author can for a draft's screenshot. The gate looks the File up."""
+
+    def test_a_drafts_file_is_refused_by_url_or_name(self):
+        for arguments in (
+            {"file_url": "/private/files/draft-shot.png"},
+            {"file_name": "draft-shot.png"},
+            {"file_url": "/private/files/unknown.png", "file_name": "draft-shot.png"},
+            {"file_url": "/private/files/shared.png"},
+        ):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(_gate.denylisted_file_hit("extract_file_content", arguments, _lookup), VERSION)
+
+    def test_a_triton_chat_upload_is_refused_too(self):
+        self.assertEqual(
+            _gate.denylisted_file_hit("extract_file_content", {"file_url": "/private/files/chat-upload.pdf"}, _lookup),
+            ATTACHMENT,
+        )
+
+    def test_a_published_articles_file_and_other_files_are_not(self):
+        for arguments in (
+            {"file_url": "/private/files/article-shot.png"},
+            {"file_url": "/private/files/unattached.pdf"},
+            {"file_url": "/private/files/nothing.png"},
+            {"file_url": ""},
+            {"file_url": None},
+            {"file_url": ["/private/files/draft-shot.png"]},
+            {},
+        ):
+            with self.subTest(arguments=arguments):
+                self.assertIsNone(_gate.denylisted_file_hit("extract_file_content", arguments, _lookup))
+
+    def test_only_the_file_reading_tools_look_anything_up(self):
+        def forbidden(field, value):
+            raise AssertionError("looked up a File for a tool that reads none")
+
+        for tool_name in ("get_document", "list_documents", "fetch", "run_database_query", ""):
+            with self.subTest(tool=tool_name):
+                self.assertIsNone(
+                    _gate.denylisted_file_hit(tool_name, {"file_url": "/private/files/draft-shot.png"}, forbidden)
+                )
+
+    def test_the_lookup_finds_every_file_with_the_url_without_permissions(self):
+        calls = []
+
+        def get_all(doctype, filters=None, pluck=None, **kwargs):
+            calls.append((doctype, filters, pluck, kwargs))
+            return [ARTICLE]
+
+        with mock.patch.object(_gate.frappe, "get_all", get_all, create=True):
+            self.assertEqual(_gate._file_attachments("file_url", "/private/files/x.png"), [ARTICLE])
+        self.assertEqual(calls, [("File", {"file_url": "/private/files/x.png"}, "attached_to_doctype", {})])
+
+    def test_refused_through_gated_execute_with_gating_off_and_logged(self):
+        runner = TestTheRefusalComesFirst()
+        with mock.patch.object(_gate, "_file_attachments", _lookup):
+            for gating, bypass in ((False, False), (True, False), (False, True)):
+                with self.subTest(gating=gating, bypass=bypass):
+                    response, calls = runner._run(
+                        "extract_file_content",
+                        {"file_url": "/private/files/draft-shot.png"},
+                        gating=gating,
+                        bypass=bypass,
+                    )
+                    self.assertEqual(calls["executed"], 0)
+                    self.assertEqual(response["error"], _gate._denylist_refusal_message(VERSION))
+                    self.assertEqual(calls["logged"][0]["risk"], "High")
+            response, calls = runner._run("extract_file_content", {"file_url": "/private/files/article-shot.png"})
+            self.assertEqual(calls["executed"], 1)
+
+    def test_a_lookup_that_fails_refuses(self):
+        def broken(field, value):
+            raise RuntimeError("database gone")
+
+        runner = TestTheRefusalComesFirst()
+        with mock.patch.object(_gate, "_file_attachments", broken):
+            response, calls = runner._run("extract_file_content", {"file_url": "/private/files/x.png"})
+        self.assertEqual(calls["executed"], 0)
+        self.assertFalse(response["success"])
+        self.assertEqual(response["error"], _gate._FILE_UNCHECKED_MESSAGE)
+        self.assertIn("could not be checked", calls["logged"][0]["summary"])
+
+    def test_every_file_argument_tool_is_one_fac_ships(self):
+        self.assertEqual(_gate.DENYLIST_FILE_ARGUMENTS, {"extract_file_content": ("file_url", "file_name")})
 
 
 if __name__ == "__main__":

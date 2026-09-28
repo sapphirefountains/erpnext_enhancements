@@ -1,14 +1,15 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Who may approve a Knowledge Base version, and the numbers and dates publishing writes (WI-080 PR 2).
+"""Who may do what to a Knowledge Base version or article, and the numbers and dates publishing
+writes (WI-080 PRs 2 and 3).
 
 ADR 0017 section 2: **a version is published only by a KB Approver who did not write it, from a
 signed-in browser, exactly as they opened it.** The approver is a named person with a staff login:
 never Administrator, which holds every role, and never Guest. This module is the rule itself, as
 functions of plain values, so the bench-free CI tier tests every branch. The controller
 (``knowledge_base/doctype/knowledge_article_version``) applies it in ``before_submit`` and again in
-``on_submit``, and PR 3's ``approve_and_publish`` asks it before it tries.
+``on_submit``, and ``api/knowledge_base.approve_and_publish`` asks it before it writes anything.
 
 Standard library only, apart from ``signed_in_browser``, which comes from
 ``marketing/publish/workflow.py`` so that Marketing and the Knowledge Base share one definition of
@@ -16,12 +17,20 @@ Standard library only, apart from ``signed_in_browser``, which comes from
 is deliberately **not** reused: it hard-codes Marketing Manager and knows nothing of contributors
 or AI requesters.
 
-The lifecycle (``constants.REVIEW_STATES``)::
+The lifecycle (``constants.REVIEW_STATES``), and the action that makes each move (:data:`TRANSITIONS`,
+PR 3)::
 
-    Draft --submit for review--> In Review --approve and publish--> Published --newer--> Superseded
+    Draft --submit_for_review--> In Review --approve_and_publish--> Published --supersede--> Superseded
       ^                              |
-      +--withdraw / request changes--+
+      +--withdraw / request_changes--+
     Draft --discard--> Discarded
+
+``TRANSITIONS`` is the whole state machine. ``knowledge_base/publish.transition`` is the only code
+that writes ``review_state``, and it refuses any move that is not in the table. Who may make each
+move is a ``*_problems`` function below; each returns every broken rule, in words, and an empty
+list means the move is allowed. The same functions decide which buttons the form shows
+(:func:`version_actions`, :func:`article_actions`), so a button is never offered for a move the
+server would refuse, and never hidden from someone the server would let through.
 
 Content (``constants.VERSION_CONTENT_FIELDS``) changes only in Draft. Anyone who saves a change to
 it is recorded in ``contributors``, one user per line, and may not approve that version.
@@ -32,22 +41,54 @@ import datetime
 import re
 
 from erpnext_enhancements.knowledge_base import constants
-from erpnext_enhancements.knowledge_base.content import strip_presentation
+from erpnext_enhancements.knowledge_base.content import FIELD_LABELS, shows_anything, strip_presentation
 from erpnext_enhancements.marketing.publish.workflow import signed_in_browser
 
 __all__ = [
+	"APPROVE_AND_PUBLISH",
+	"ARTICLE_ACTIONS",
+	"CONFIRM_STILL_ACCURATE",
+	"DISCARD",
+	"REQUEST_CHANGES",
+	"RETIRE",
+	"REVIEW_DIFF",
+	"START_REVISION",
+	"SUBMIT_FOR_REVIEW",
+	"SUPERSEDE",
+	"TRANSITIONS",
+	"VERBS",
+	"VERSION_ACTIONS",
+	"WITHDRAW",
 	"BlockFullError",
 	"approval_problems",
+	"article_actions",
 	"changed_content_fields",
+	"confirm_problems",
 	"content_edit_problem",
 	"contributors",
+	"discard_problems",
+	"holds_kb_role",
 	"kb_number_prefix",
 	"next_kb_number",
+	"next_state",
+	"publish_problems",
 	"refusal",
+	"request_changes_problems",
+	"required_text_problem",
+	"retire_problems",
 	"review_by",
+	"review_diff_problems",
 	"review_interval",
+	"reviewers_for",
+	"secret_problem",
 	"signed_in_browser",
+	"start_revision_problems",
+	"state_of",
+	"submit_problems",
+	"transition_problem",
+	"version_actions",
 	"with_contributor",
+	"withdraw_problems",
 ]
 
 # The states by name, unpacked from the one definition. If constants.REVIEW_STATES ever gains or
@@ -93,59 +134,98 @@ def approval_problems(version, user, roles, *, user_type, browser, gate_flags, o
 
 	Every rule is checked and every broken one is reported, so the refusal names each of them.
 	"""
-	problems = []
-	if constants.APPROVER_ROLE not in set(roles or ()):
-		problems.append(f"only a {constants.APPROVER_ROLE} can approve a version")
-	me = _person(user)
-	problem = _approver_account_problem(user, me, user_type)
-	if problem:
-		problems.append(problem)
-	if not browser:
-		problems.append(
-			"approvals are made by a person signed in to ERPNext in a browser; API keys, tokens, "
-			"background jobs and the console cannot approve"
-		)
-	if _flag(gate_flags, "ai_gate_pending") or _flag(gate_flags, "ai_gate_bypass"):
-		problems.append("an AI assistant's action cannot approve a version, even once it is confirmed")
+	problems = _reviewer_problems(
+		user, roles, user_type=user_type, browser=browser, gate_flags=gate_flags, verb="approve"
+	)
 	if version is None:
 		problems.append("there is no saved version to approve")
 		return problems
 
-	state = _get(version, "review_state") or DRAFT
+	state = state_of(version)
 	if state != IN_REVIEW:
 		problems.append(f"it is {state}, not {IN_REVIEW}")
 
-	if me and me != _GUEST:
-		did = []
-		if me == _person(_get(version, "owner")):
-			did.append("created it")
-		if me == _person(_get(version, "submitted_by")):
-			did.append("submitted it for review")
-		if me in {_person(name) for name in contributors(_get(version, "contributors"))}:
-			did.append("changed its content")
-		if me == _person(_get(version, "ai_requested_by")):
-			did.append("asked an AI to draft it")
-		if did:
-			problems.append(f"you {_and(did)}, so a different {constants.APPROVER_ROLE} must approve it")
+	did = _hands_in(version, _person(user))
+	if did:
+		problems.append(f"you {_and(did)}, so a different {constants.APPROVER_ROLE} must approve it")
 
 	if not _same_moment(_get(version, "modified"), opened_modified):
 		problems.append("it changed after you opened it, so reload it and review it again")
 	return problems
 
 
-def _approver_account_problem(user, me, user_type):
-	"""Why this account is not a named person who may approve; ``None`` if it is."""
+def _reviewer_problems(user, roles, *, user_type, browser, gate_flags, verb):
+	"""The rules on the person, whatever the version: a KB Approver who is a named person with a
+	staff login, signed in to a browser, not acting through an AI gate card. ``verb`` completes
+	"only a KB Approver can ... a version" ("approve", "send back", "retire")."""
+	problems = []
+	if constants.APPROVER_ROLE not in set(roles or ()):
+		problems.append(f"only a {constants.APPROVER_ROLE} can {verb} a version")
+	problem = _approver_account_problem(user, _person(user), user_type, verb=verb)
+	if problem:
+		problems.append(problem)
+	if not browser:
+		problems.append(_NOT_A_BROWSER[verb])
+	if _gate_action(gate_flags):
+		problems.append(f"an AI assistant's action cannot {verb} a version, even once it is confirmed")
+	return problems
+
+
+#: Why a request that is not a person's browser session is refused, per action. The approval
+#: sentence is PR 2's, word for word.
+_NOT_A_BROWSER = {
+	"approve": (
+		"approvals are made by a person signed in to ERPNext in a browser; API keys, tokens, "
+		"background jobs and the console cannot approve"
+	),
+	"send back": (
+		"a version is sent back by a person signed in to ERPNext in a browser; API keys, tokens, "
+		"background jobs and the console cannot send one back"
+	),
+	"retire": (
+		"an article is retired by a person signed in to ERPNext in a browser; API keys, tokens, "
+		"background jobs and the console cannot retire one"
+	),
+	"confirm": (
+		"an article is confirmed by a person signed in to ERPNext in a browser; API keys, tokens, "
+		"background jobs and the console cannot confirm one"
+	),
+	"compare": (
+		"a draft is shown only to a person signed in to ERPNext in a browser; API keys, tokens, "
+		"background jobs and the console cannot read one"
+	),
+}
+
+
+def _hands_in(version, me):
+	"""What ``me`` did to ``version`` that stops them approving or reviewing it, as phrases."""
+	if not me or me == _GUEST:
+		return []
+	did = []
+	if me == _person(_get(version, "owner")):
+		did.append("created it")
+	if me == _person(_get(version, "submitted_by")):
+		did.append("submitted it for review")
+	if me in {_person(name) for name in contributors(_get(version, "contributors"))}:
+		did.append("changed its content")
+	if me == _person(_get(version, "ai_requested_by")):
+		did.append("asked an AI to draft it")
+	return did
+
+
+def _approver_account_problem(user, me, user_type, verb="approve"):
+	"""Why this account is not a named person who may approve (or ``verb``); ``None`` if it is."""
 	if not me or me == _GUEST:
 		return "nobody is signed in"
 	if me == _ADMINISTRATOR:
 		return (
 			"Administrator is a shared account, not a person, and only grants or revokes KB roles, "
-			f"so a named {constants.APPROVER_ROLE} must approve it"
+			f"so a named {constants.APPROVER_ROLE} must {verb} it"
 		)
 	if user_type != constants.APPROVER_USER_TYPE:
 		held = f"has user type {user_type}" if user_type else "has no user type"
 		return (
-			f"only a {constants.APPROVER_USER_TYPE} (a staff login) can approve, and "
+			f"only a {constants.APPROVER_USER_TYPE} (a staff login) can {verb}, and "
 			f"{str(user).strip()} {held}"
 		)
 	return None
@@ -154,6 +234,377 @@ def _approver_account_problem(user, me, user_type):
 def refusal(name, action, problems):
 	"""One sentence for the person who asked: ``KBV-00012 cannot be approved: a; b.``"""
 	return f"{name} cannot be {action}: " + "; ".join(problems) + "."
+
+
+# ------------------------------------------------------------------ the state machine (PR 3)
+
+#: The actions, by the names of the endpoints in ``api/knowledge_base.py`` that perform them.
+SUBMIT_FOR_REVIEW = "submit_for_review"
+WITHDRAW = "withdraw"
+REQUEST_CHANGES = "request_changes"
+APPROVE_AND_PUBLISH = "approve_and_publish"
+DISCARD = "discard"
+#: Not an endpoint: publishing a newer version does this to the one it replaces.
+SUPERSEDE = "supersede"
+START_REVISION = "start_revision"
+CONFIRM_STILL_ACCURATE = "confirm_still_accurate"
+RETIRE = "retire"
+#: A read, not a move: the live-vs-draft diff (``review_diff``). Listed so the form knows whether
+#: to offer it.
+REVIEW_DIFF = "review_diff"
+
+#: **The whole state machine.** Every move a version's ``review_state`` can make, as
+#: ``action: (states it may start from, state it ends in)``. ``publish.transition`` is the only
+#: writer of ``review_state`` and refuses any move not listed here; a version starts as a Draft
+#: when it is created (the field's default), and nothing else moves it. Published, Superseded and
+#: Discarded are history: Superseded and Discarded are final, and Published only ever becomes
+#: Superseded, when a newer version of the same article is approved.
+TRANSITIONS = {
+	SUBMIT_FOR_REVIEW: ((DRAFT,), IN_REVIEW),
+	WITHDRAW: ((IN_REVIEW,), DRAFT),
+	REQUEST_CHANGES: ((IN_REVIEW,), DRAFT),
+	APPROVE_AND_PUBLISH: ((IN_REVIEW,), PUBLISHED),
+	DISCARD: ((DRAFT,), DISCARDED),
+	SUPERSEDE: ((PUBLISHED,), SUPERSEDED),
+}
+
+#: The buttons a version's form can show, in the order it shows them.
+VERSION_ACTIONS = (SUBMIT_FOR_REVIEW, APPROVE_AND_PUBLISH, REQUEST_CHANGES, WITHDRAW, DISCARD, REVIEW_DIFF)
+#: The buttons an article's form can show.
+ARTICLE_ACTIONS = (START_REVISION, CONFIRM_STILL_ACCURATE, RETIRE)
+
+#: How each action completes "KBV-00012 cannot be ...", for :func:`refusal`.
+VERBS = {
+	SUBMIT_FOR_REVIEW: "submitted for review",
+	WITHDRAW: "withdrawn",
+	REQUEST_CHANGES: "sent back for changes",
+	APPROVE_AND_PUBLISH: "approved",
+	DISCARD: "discarded",
+	SUPERSEDE: "superseded",
+	START_REVISION: "revised",
+	CONFIRM_STILL_ACCURATE: "confirmed as still accurate",
+	RETIRE: "retired",
+	REVIEW_DIFF: "compared with the published text",
+}
+
+_ARTICLE_PUBLISHED, _ARTICLE_RETIRED = constants.ARTICLE_STATUSES
+
+
+def state_of(version):
+	"""A version's ``review_state``; a row with none is a Draft (the field's default)."""
+	return _get(version, "review_state") or DRAFT
+
+
+def transition_problem(action, state):
+	"""Why ``action`` cannot move a version that is ``state``; ``None`` if :data:`TRANSITIONS`
+	allows it. An action that is not a move at all is refused too."""
+	if action not in TRANSITIONS:
+		return f"{action!r} does not move a version"
+	sources, _target = TRANSITIONS[action]
+	state = state or DRAFT
+	if state in sources:
+		return None
+	return f"it is {state}, and only a version that is {_or(sources)} can be {VERBS[action]}"
+
+
+def next_state(action, state):
+	"""The state ``action`` moves a ``state`` version to. Raises ``ValueError`` (with the reason)
+	for a move :data:`TRANSITIONS` does not allow."""
+	problem = transition_problem(action, state)
+	if problem:
+		raise ValueError(problem)
+	return TRANSITIONS[action][1]
+
+
+def holds_kb_role(roles):
+	"""KB Author or KB Approver: the two roles that can open a version at all."""
+	return bool({constants.AUTHOR_ROLE, constants.APPROVER_ROLE} & set(roles or ()))
+
+
+def required_text_problem(value, what):
+	"""``what`` ("say what needs to change") when ``value`` is blank; ``None`` otherwise."""
+	return None if str(value or "").strip() else what
+
+
+# ------------------------------------------------------------------ who may move a version
+
+
+def submit_problems(version, user, roles, *, article=None, secrets=()):
+	"""Why ``user`` cannot send ``version`` for review; empty means they can.
+
+	Any KB Author or KB Approver may submit any draft (the DocPerm is not owner-scoped, and the
+	submitter is recorded, so they cannot then approve it). ``article`` is the article a revision
+	belongs to (``None`` for a first version); ``secrets`` is ``content.document_secret_findings``
+	for the version, which a save already refused but a stricter scan may find since: an approver
+	is never asked to approve something that cannot be published.
+	"""
+	problems = []
+	if not holds_kb_role(roles):
+		problems.append(
+			f"only a {constants.AUTHOR_ROLE} or {constants.APPROVER_ROLE} can submit a version for review"
+		)
+	problem = transition_problem(SUBMIT_FOR_REVIEW, state_of(version))
+	if problem:
+		problems.append(problem)
+	if not str(_get(version, "title") or "").strip():
+		problems.append("it has no title")
+	if constants.block_code(_get(version, "department_block")) is None:
+		problems.append("it has no department")
+	if not shows_anything(_get(version, "body")):
+		problems.append("it has no text")
+	problems.extend(publish_problems(version, article))
+	if secrets:
+		problems.append(secret_problem(secrets))
+	return problems
+
+
+def withdraw_problems(version, user, roles):
+	"""Why ``user`` cannot take ``version`` back out of review; empty means they can.
+
+	The author's side withdraws: whoever created it, submitted it or changed its content. A KB
+	Approver who wants changes uses Request Changes, which says what to change.
+	"""
+	problems = []
+	if not holds_kb_role(roles):
+		problems.append(f"only a {constants.AUTHOR_ROLE} or {constants.APPROVER_ROLE} can withdraw a version")
+	problem = transition_problem(WITHDRAW, state_of(version))
+	if problem:
+		problems.append(problem)
+	if not _hands_in(version, _person(user)):
+		problems.append(
+			"only the person who created it, submitted it or changed its content can withdraw it; "
+			f"a {constants.APPROVER_ROLE} sends it back with Request Changes"
+		)
+	return problems
+
+
+def request_changes_problems(version, user, roles, *, user_type, browser, gate_flags):
+	"""Why ``user`` cannot send ``version`` back to its author; empty means they can.
+
+	The reviewer's side of the same move as :func:`withdraw_problems`: a KB Approver who is a named
+	person, from a browser and not through an AI gate card, **who had no hand in it** (the same
+	rule as approving). Someone who did is on the author's side, and withdraws it instead. The
+	note saying what to change is checked by the endpoint (:func:`required_text_problem`).
+	"""
+	problems = _reviewer_problems(
+		user, roles, user_type=user_type, browser=browser, gate_flags=gate_flags, verb="send back"
+	)
+	problem = transition_problem(REQUEST_CHANGES, state_of(version))
+	if problem:
+		problems.append(problem)
+	did = _hands_in(version, _person(user))
+	if did:
+		problems.append(
+			f"you {_and(did)}, so a different {constants.APPROVER_ROLE} must review it; you can "
+			"withdraw it instead"
+		)
+	return problems
+
+
+def discard_problems(version, user, roles):
+	"""Why ``user`` cannot discard ``version``; empty means they can.
+
+	A draft is discarded by someone on its author's side, or by a KB Approver tidying up. It is
+	kept, as Discarded, and never deleted. Only a Draft: a version in review is withdrawn first.
+	"""
+	problems = []
+	if not holds_kb_role(roles):
+		problems.append(f"only a {constants.AUTHOR_ROLE} or {constants.APPROVER_ROLE} can discard a version")
+	problem = transition_problem(DISCARD, state_of(version))
+	if problem:
+		problems.append(problem)
+	if constants.APPROVER_ROLE not in set(roles or ()) and not _hands_in(version, _person(user)):
+		problems.append(
+			f"only the person who created it, submitted it or changed its content, or a "
+			f"{constants.APPROVER_ROLE}, can discard it"
+		)
+	return problems
+
+
+def publish_problems(version, article):
+	"""What about the article stops ``version`` being published into it; empty if nothing does.
+
+	``article`` is the Knowledge Article a revision belongs to (anything with ``.get``), or
+	``None`` for a first version. A retired article takes no new version (v1 has no way back from
+	retirement, WI-080 "Explicitly NOT"), and **an article keeps its department**: its KB number
+	carries the block (``KB-0612`` is in 06), and a number never changes.
+	"""
+	if article is None:
+		return []
+	problems = []
+	name = _get(article, "name") or _get(article, "kb_number") or "its article"
+	if (_get(article, "status") or _ARTICLE_PUBLISHED) != _ARTICLE_PUBLISHED:
+		problems.append(f"{name} is {_get(article, 'status')}, so it takes no new version")
+	block = _get(article, "department_block")
+	if block and _get(version, "department_block") != block:
+		problems.append(
+			f"an article keeps its department: {name} is numbered in {block}; start a new article "
+			"for another department"
+		)
+	return problems
+
+
+def start_revision_problems(article, roles):
+	"""Why a new revision of ``article`` cannot be started; empty means it can.
+
+	One open version per article is not a refusal: ``start_revision`` answers with the open one.
+	"""
+	problems = []
+	if not holds_kb_role(roles):
+		problems.append(f"only a {constants.AUTHOR_ROLE} or {constants.APPROVER_ROLE} can revise an article")
+	if article is None:
+		problems.append("there is no published article to revise")
+		return problems
+	status = _get(article, "status") or _ARTICLE_PUBLISHED
+	if status != _ARTICLE_PUBLISHED:
+		problems.append(f"it is {status}")
+	return problems
+
+
+def retire_problems(article, user, roles, *, user_type, browser, gate_flags, open_version=None):
+	"""Why ``user`` cannot retire ``article``; empty means they can.
+
+	A KB Approver who is a named person, from a browser and not through an AI gate card: retiring
+	takes approved text away from every reader, so it is an approver's decision, though not a
+	second person's (stopping should never be the hard direction). Not while a revision is open,
+	which would otherwise publish into a retired article; publish or discard it first. The reason
+	readers are shown is checked by the endpoint (:func:`required_text_problem`).
+	"""
+	problems = _reviewer_problems(
+		user, roles, user_type=user_type, browser=browser, gate_flags=gate_flags, verb="retire"
+	)
+	if article is None:
+		problems.append("there is no article to retire")
+		return problems
+	status = _get(article, "status") or _ARTICLE_PUBLISHED
+	if status != _ARTICLE_PUBLISHED:
+		problems.append(f"it is already {status}")
+	if open_version:
+		problems.append(f"{open_version} is still open on it; publish or discard it first")
+	return problems
+
+
+def confirm_problems(article, user, roles, *, user_type, browser, gate_flags):
+	"""Why ``user`` cannot confirm ``article`` is still accurate; empty means they can.
+
+	The article's process owner or a KB Approver (the process owner need hold no KB role: they own
+	the process, not the knowledge base), as a named person with a staff login, from a browser and
+	not through an AI gate card: a review date an assistant could push forward is not a review.
+	"""
+	me = _person(user)
+	problems = []
+	is_owner = bool(me) and me == _person(_get(article, "process_owner"))
+	if not is_owner and constants.APPROVER_ROLE not in set(roles or ()):
+		problems.append(f"only its process owner or a {constants.APPROVER_ROLE} can confirm it is still accurate")
+	problem = _approver_account_problem(user, me, user_type, verb="confirm")
+	if problem:
+		problems.append(problem)
+	if not browser:
+		problems.append(_NOT_A_BROWSER["confirm"])
+	if _gate_action(gate_flags):
+		problems.append("an AI assistant's action cannot confirm an article, even once it is confirmed")
+	if article is None:
+		problems.append("there is no article to confirm")
+		return problems
+	status = _get(article, "status") or _ARTICLE_PUBLISHED
+	if status != _ARTICLE_PUBLISHED:
+		problems.append(f"it is {status}")
+	return problems
+
+
+def review_diff_problems(roles, *, browser, gate_flags):
+	"""Why the live-vs-draft diff cannot be shown; empty means it can.
+
+	It returns draft text, so it answers only what the Version doctype itself answers (a KB role)
+	and only a person's browser, never a token and never an AI gate card: drafts do not reach an
+	assistant by any path (ADR 0017).
+	"""
+	problems = []
+	if not holds_kb_role(roles):
+		problems.append(f"only a {constants.AUTHOR_ROLE} or {constants.APPROVER_ROLE} can read a draft")
+	if not browser:
+		problems.append(_NOT_A_BROWSER["compare"])
+	if _gate_action(gate_flags):
+		problems.append("an AI assistant's action cannot read a draft")
+	return problems
+
+
+# ------------------------------------------------------------------ what the forms offer
+
+
+def version_actions(version, user, roles, *, user_type, browser, gate_flags, article=None):
+	"""The version actions ``user`` may take now, in :data:`VERSION_ACTIONS` order.
+
+	Each is offered exactly when its ``*_problems`` function has nothing to say, so the form never
+	shows a button the server would refuse. Approve is judged as the page will send it (the
+	``modified`` the form loaded), and Request Changes without its note, which the dialog asks for.
+	"""
+	allowed = []
+	for action in VERSION_ACTIONS:
+		if action == SUBMIT_FOR_REVIEW:
+			problems = submit_problems(version, user, roles, article=article)
+		elif action == APPROVE_AND_PUBLISH:
+			problems = approval_problems(
+				version,
+				user,
+				roles,
+				user_type=user_type,
+				browser=browser,
+				gate_flags=gate_flags,
+				opened_modified=_get(version, "modified"),
+			) + publish_problems(version, article)
+		elif action == REQUEST_CHANGES:
+			problems = request_changes_problems(
+				version, user, roles, user_type=user_type, browser=browser, gate_flags=gate_flags
+			)
+		elif action == WITHDRAW:
+			problems = withdraw_problems(version, user, roles)
+		elif action == DISCARD:
+			problems = discard_problems(version, user, roles)
+		else:
+			problems = review_diff_problems(roles, browser=browser, gate_flags=gate_flags)
+		if not problems:
+			allowed.append(action)
+	return tuple(allowed)
+
+
+def article_actions(article, user, roles, *, user_type, browser, gate_flags, open_version=None):
+	"""The article actions ``user`` may take now, in :data:`ARTICLE_ACTIONS` order.
+
+	Start Revision is offered to KB roles on a published article whether or not a revision is
+	already open, because the action then opens that one.
+	"""
+	allowed = []
+	if not start_revision_problems(article, roles):
+		allowed.append(START_REVISION)
+	context = {"user_type": user_type, "browser": browser, "gate_flags": gate_flags}
+	if not confirm_problems(article, user, roles, **context):
+		allowed.append(CONFIRM_STILL_ACCURATE)
+	if not retire_problems(article, user, roles, open_version=open_version, **context):
+		allowed.append(RETIRE)
+	return tuple(allowed)
+
+
+def reviewers_for(version, candidates):
+	"""Who is asked to review ``version``: every candidate (the enabled System Users holding KB
+	Approver) except Administrator and Guest and anyone with a hand in it (its owner, submitter,
+	contributors and AI requester), the people :func:`approval_problems` would refuse anyway.
+	First-seen order, each once."""
+	seen, chosen = set(), []
+	never = {name.casefold() for name in constants.NEVER_APPROVERS}
+	for candidate in candidates or ():
+		me = _person(candidate)
+		if not me or me in seen or me in never or _hands_in(version, me):
+			continue
+		seen.add(me)
+		chosen.append(str(candidate).strip())
+	return chosen
+
+
+def secret_problem(found):
+	"""``content.document_secret_findings`` as one clause: where and what kind, never the value."""
+	places = [f"{FIELD_LABELS.get(field, field)} line {f.line} looks like {f.kind}" for field, f in found]
+	return "its content looks like it contains a secret (" + "; ".join(places) + "), so take it out first"
 
 
 # ------------------------------------------------------------------ content edits and contributors
@@ -382,6 +833,18 @@ def _and(parts):
 	if len(parts) == 1:
 		return parts[0]
 	return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _or(parts):
+	parts = list(parts)
+	if len(parts) == 1:
+		return parts[0]
+	return ", ".join(parts[:-1]) + " or " + parts[-1]
+
+
+def _gate_action(gate_flags):
+	"""Whether this request is an AI gate card being queued or run (``frappe.flags``)."""
+	return bool(_flag(gate_flags, "ai_gate_pending") or _flag(gate_flags, "ai_gate_bypass"))
 
 
 def _get(obj, key):

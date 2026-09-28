@@ -211,7 +211,10 @@ jobs:
       # search until PR 1 review -- while `tabKnowledge Article`, the published text, is NOT.
       # Raw SQL never consults DocPerm, so a needle that misses one spelling hands a
       # model unapproved text, and a needle one word shorter breaks every read of the
-      # published doctype. Both fail silently; this fails the build.
+      # published doctype. Both fail silently; this fails the build. Since v1.555.0 (WI-080
+      # PR 3) also extract_file_content, which names a File rather than a doctype: a File
+      # attached to a denylisted doctype (a draft's screenshot) is refused, and a lookup that
+      # fails refuses too.
       #
       # test_assistant_cancel_document (v1.545.0): an update_document with docstatus 2 could only
       # fail after a human approved it (FAC refuses any change to a submitted document), and
@@ -799,6 +802,30 @@ jobs:
       # the stored row. Own step: it installs its own frappe stub.
       - name: Knowledge base hooks (private files, article images, the Version controller)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_hooks -v
+      # WI-080 PR 3 (v1.555.0): the state machine, as pure rules. workflow.TRANSITIONS is the whole
+      # lifecycle, and a regression here is a version that moves where it should not -- a
+      # Discarded draft back in review, a Published one edited -- or a button offered to someone
+      # the server then refuses (or hidden from someone it would let through: the form's buttons
+      # are these same functions). Every (action, state) pair, every rule of every move alone,
+      # who is asked to review (never anyone with a hand in it), what publishing reads (a body
+      # that shows nothing, the Files a body uses, the review diff), and decision (c): the example
+      # key placeholder the README shows passes the secret scan while a real key shape does not.
+      # No stub (workflow.py and content.py import no frappe), so nothing to cross-talk with.
+      - name: Knowledge base transitions (the state machine, who may make each move)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_transitions -v
+      # And the actions end to end, over an in-memory Frappe that runs the real controllers, the
+      # real doc_events handlers hooks.py names, and a request that is a transaction. A regression
+      # here publishes something nobody independent approved, or publishes half: an article with
+      # no submitted version, a number given twice, an image left behind on the draft, a
+      # superseded version still marked Published, or a ToDo or Comment carrying draft text to
+      # every System Manager and the AI tools acting for them. Pins the publish steps and their
+      # order (the number under FOR UPDATE with the % bound, the article from the STORED version,
+      # the Files moved under kb_action, the submit with kb_publish and the opened modified, the
+      # supersede), a failure at any step writing nothing, a deadlock retried from the start, a
+      # double-click publishing once, token and AI-card refusals on the approval path, and
+      # decisions (a) and (b). Own step: it installs its own frappe stub.
+      - name: Knowledge base actions (review, approve and publish, retire, end to end)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the

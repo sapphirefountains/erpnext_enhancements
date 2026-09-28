@@ -1,6 +1,6 @@
 """Force the Travel hub's "Trips" shortcut and sidebar item to re-sync from the repo.
 
-v1.555.0 turned "My trips" into "Trips" in two places, and both now open the list of everyone's
+v1.556.0 turned "My trips" into "Trips" in two places, and both now open the list of everyone's
 trips on the web itinerary (``/itinerary?view=trips``) instead of the desk Travel Trip list:
 
 * the workspace shortcut (``travel_management/workspace/travel_management/travel_management.json``)

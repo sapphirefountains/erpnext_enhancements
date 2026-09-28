@@ -1223,7 +1223,7 @@ erpnext_enhancements.patches.reload_labor_cost_analysis_report
 # import_file_by_path(force=True) for the flat sidebar file; also the Trip Cost Summary report, whose roles
 # no longer include Employee. Every failure goes to log_error; cannot raise.
 erpnext_enhancements.patches.reload_travel_hub
-# v1.555.0 "My trips" becomes "Trips" (Nik, 2026-09-28): the Travel workspace shortcut and sidebar item are URL
+# v1.556.0 "My trips" becomes "Trips" (Nik, 2026-09-28): the Travel workspace shortcut and sidebar item are URL
 # links to /itinerary?view=trips, everyone's trips money-free, not the row-scoped desk list. Both are timestamp-
 # gated and reload_travel_hub has already run: reload_doc(force=True) for the workspace, import_file_by_path
 # (force=True) for the flat sidebar file. Every failure goes to log_error; cannot raise, safe twice.

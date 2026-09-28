@@ -28,7 +28,7 @@ and the manifest have no controller, and must not have one:
 ``scripts/check_www_controllers.py`` fails on a ``.py`` with no page template beside it.
 
 Addresses: ``/itinerary?trip=<name>&as=<employee|crew>&view=docs&file=<document>``, and
-``/itinerary?view=trips`` for the list of every trip (v1.555.0).
+``/itinerary?view=trips`` for the list of every trip (v1.556.0).
 ``trip`` is the trip on screen; ``as`` is whose view of it (one person's bookings and
 their own confirmation numbers, or ``crew`` for the whole crew), and without it the
 page shows the viewer's own view on a trip they travel on, else the whole crew.
@@ -38,7 +38,7 @@ over whichever screen it was opened from. All four are read by ``itinerary.js``,
 here, and none is trusted: the page sends ``trip`` and ``as`` to
 ``get_trip_itinerary``, which gives the full answer to anyone with read permission on the
 trip (crew, the trip's owner and travel coordinators), a *limited* one to any other staff
-member (the Employee role: no confirmation numbers, files or sheet links, since v1.555.0)
+member (the Employee role: no confirmation numbers, files or sheet links, since v1.556.0)
 and refuses everyone else, and it refuses a person who is not on the crew, and it opens
 only a ``file`` that answer lists for that person. So a link naming a trip outside
 the boot list, a person, a screen, the list of all trips (``get_all_trips``, staff only) or a file needs
