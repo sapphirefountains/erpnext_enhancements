@@ -91,7 +91,7 @@ It is enforced by what the server sends, never by the page hiding it:
 - `api/travel.preview_itinerary_email` returns the address the email would go to only to a coordinator.
 - The person asked for (`get_trip_itinerary`'s `as_employee`, the preview's `employee`) is compared against the crew and never looked up. Anyone else gets "That person is not on this trip." and no name. Both arguments are annotated `str`, so v16's whitelist type check refuses a filter dict before it can reach `frappe.db.get_value` as a filter. That combination briefly turned the refusal into a permission-free yes/no question about any Employee field, CTC included.
 
-**What this does not protect.** Every money field on Travel Trip is permlevel 0 and the Employee role has read and write on the trips it can see, so a crew member still sees costs on the trip form, on the existing Plan a Trip steps (the cost fields and the Review step's "Booked so far") and through REST. Those are unchanged. The rule is about the new views, not a lock on money in general; moving money behind a permlevel is a separate decision.
+**What this does not protect.** Every money field on Travel Trip is permlevel 0 and the Employee role has read and write on the trips it can see, so a crew member still sees costs on the trip form, on the existing Plan a Trip steps (the cost fields and the Review step's "Booked so far") and through REST. Those are unchanged. The one money *report* a crew member could open, Travel Trip Cost Summary, has been coordinators-only since v1.554.0. The rule is about the new views, not a lock on money in general; moving money behind a permlevel is a separate decision.
 
 `tests/test_travel_views.py` walks every non-coordinator payload for money keys at any depth and checks that the fixture's sentinel amounts appear nowhere in its JSON. It also runs the real coordinator gate once, unmocked, down to `user_is_travel_coordinator`, and checks that the itinerary email template (which every preview renders) names no money field. Since v1.547.0 its fixture carries receipts, and every payload — a coordinator's included — is checked for their URLs and for an `attachment` or `receipt` key.
 
@@ -206,6 +206,64 @@ v1.549.0 (Nik, 2026-09-26): "Plan another trip like this one". A repeat job at t
 - **The copy screen is read afresh** on a new pick from the list and on the form's *Copy trip*: the trip may have changed since, and the day offered is the next weekday from today. What was picked on it is kept only for Back/Forward onto the page's own `?copy=` entry.
 - **Without the crew.** Every booking comes with nobody on it, and the page will not save a booking with nobody on it. Each such card waits for the crew (`awaiting_crew`): whoever is ticked on *Who's going* goes on every waiting booking, and drives a personal drive that has a distance and no driver, so the first Next past the crew can save the copy. Unticking the person who was given the drive hands it to the next person on it (`remove_traveler`), or every Next would be refused for a drive on a later step. Who is on each booking is then changed on the booking steps. The first save replaces those cards with the server's, which ends it.
 
+## The Travel hub
+
+`/desk/travel` (the **Travel** workspace, v1.554.0) is built for someone who has never used the
+system and just wants their trip. Before this, two travelers on the one live trip opened it and
+found a calendar, a planner and three reports.
+
+- **My Travel** comes first. It is a per-viewer Custom HTML Block
+  (`custom_html_blocks/travel_home.*`) drawn from one call, `home.get_travel_home`.
+  - The trip you are on now, or else your next one: its dates, "day 2 of 6" or "Starts in 5 days",
+    and buttons for *Open my itinerary*, *My trip sheet*, *My documents (N)* and *Trip details*.
+  - A *Who to call* list that starts closed, the same as on `/itinerary`.
+  - Your other trips: current and upcoming, plus any that ended in the last 14 days. It also lists
+    the trips you organize but don't travel on, with *Keep planning*.
+  - A receipts reminder 1–7 days after your own last day on a trip. It says to attach receipts to
+    the trip, and accounting reimburses from there (Nik, 2026-09-28). HRMS is not installed, so
+    there is no claim to submit.
+  - **By your own days.** On a trip you travel on, all of the above goes by your own *Trip
+    Traveler* From and To dates, which Plan a Trip edits for someone who joins late or leaves
+    early. That covers which trip is yours now, "day N of M", "Starts in N days", the dates on
+    your card and your other trips, and the receipts week. The pre-travel reminder, the `&as=`
+    trip sheet, the calendar invite and the change alerts already work this way. A blank date is
+    the trip's. A trip you only organize shows the trip's dates, and *Keep planning* follows the
+    trip, not your part of it.
+  - For coordinators, *Needs attention*: trips starting within 14 days that are still Planning,
+    the checklist's missing items and missing files, Completed trips ready to close, and failed
+    change alerts. It is capped at 20, with "…and N more". Setup notes appear when there is no
+    Travel Desk contact or travel emails are off.
+  - **Ready to close waits out the receipts week.** Closing locks a trip to everyone but a
+    coordinator (`_check_closed_lock`), so a Completed trip is offered for closing only once its
+    end date is more than 7 days ago: the day after the last receipts reminder. The trip's end
+    bounds every traveler's own, because `_validate_dates` clamps each traveler's dates inside
+    the trip on every save. If the whole crew left early, it waits a few extra days.
+  - It carries no money for anyone. The server works out every date and every rule, and the block
+    only draws them.
+  - It reloads when you come back from a trip form or Plan a Trip. v16's `Workspace.show()`
+    returns early for the workspace already shown, so the block is not rebuilt on the way back.
+    The block reloads itself on the router's `change` to the Travel route instead: one handler per
+    page load, since `frappe.router.off()` cannot unbind one.
+- **I want to…** holds six plain-language shortcuts, all visible to an Employee so none leaves a
+  gap: *See my itinerary*, *Plan a Trip*, *My trips*, *Who's away when* (the calendar),
+  *Travel rules & per diem* and *Places & job sites*.
+- **How a work trip works** walks through four steps: the office plans it, before you go, on the
+  road, when you're back.
+- **Records, reports and setup** has the Trips, Reports and Setup cards. Setup is last, so the card
+  an Employee cannot see leaves its gap at the end of the row. The dead *Expense Claim Type* link
+  is gone, and `hide_custom` drops frappe's automatic "Custom Documents" and "Custom Reports" cards.
+- The **Travel sidebar** now ships from the repo as `workspace_sidebar/travel.json`. It replaced
+  the sidebar production had generated for itself, whose *My Itinerary* and *Travel Guidelines*
+  items had no URL, which still offered *New Travel Trip*, and which had no *Plan a Trip*.
+- Patch `reload_travel_hub` forces both past the import age gate.
+- **Travel Trip Cost Summary is for coordinators only** (Nik, 2026-09-28). The report is all money, and
+  its roles included Employee until v1.554.0. Its roles are now exactly the coordinator roles; an
+  empty list would fall back to ref_doctype read, which every Employee has.
+- The block is registered in `setup/custom_html_blocks.py` `BLOCKS` only. A `DEPARTMENT_DASHBOARD_BLOCKS`
+  entry would fail `tests/test_dashboard_widgets.py`, because that test looks for
+  `travel/travel.json` and this workspace's folder is `travel_management`. The workspace JSON
+  places the block itself.
+
 ## Offline /itinerary
 
 v1.549.0 (Nik, 2026-09-26). Each person's itinerary and files are kept on their phone, so confirmation numbers and boarding passes still open in airplane mode or at a job site with no signal. `itinerary.js` keeps every answer in IndexedDB and saves the person's upcoming trips ahead (in progress, or starting within 14 days); a service worker scoped to `/itinerary` (`www/itinerary-sw.js`) keeps the page itself and the person's pictures and PDFs; `www/itinerary-manifest.json` makes it a home-screen app. With no usable answer (no signal, the gateway's 502/503/504 during a deploy, a body cut off, a stale CSRF token that could not be replaced), or none after 6 seconds, the saved copy is shown under "You're offline — showing your itinerary as saved <time>." (or "The server isn't answering right now — …", "Can't reach the server — …"), and only to the person it was saved for. No money is in any of it: the answer has none. The whole design, and what it does not cover, is in [`www/README.md`](../www/README.md#offline-the-itinerary-on-the-phone).
@@ -236,7 +294,8 @@ v1.549.0 (Nik, 2026-09-26). Each person's itinerary and files are kept on their 
 | `itinerary_text.py` | The travel emails' wording, pure Python: one line per itinerary item with its PNR / confirmation / tracking number (or "no … yet"), times on a 12-hour clock. Used by the itinerary email and by "Trip booked" / "You were added", which now list the recipient's own bookings | `clock`, `item_line`, `day_lines`, `booking_lines` |
 | `dashboard.py` | Travel group on Opportunity/Lead/Customer dashboards (dynamic-link counts) | `get_*_dashboard_data` |
 | `report/…` | Script Reports | Travel Trip Cost Summary, Travel Spend by Category, Unclaimed Travel Expenses |
-| `workspace/travel_management/` | "Travel" workspace (links, calendar/new-trip/itinerary shortcuts) | — |
+| `home.py` | The Travel hub's one read ([The Travel hub](#the-travel-hub)): the viewer's current or next trip, other trips, receipts due, and the coordinator attention list. No money | `get_travel_home` |
+| `workspace/travel_management/` | The "Travel" workspace (v1.554.0): the My Travel block, *I want to…* shortcuts, *How a work trip works*, and the Trips / Reports / Setup cards | — |
 
 Read-side endpoints (calendar events, `/itinerary` page data, the trip views' payload `get_trip_views`, the itinerary email preview `preview_itinerary_email`, the trip form's Google Maps agenda map) live in [`api/travel.py`](../api/README.md). Since v1.548.0 `get_trip_views` also carries `places`, `legs` and `maps` (the Map view), `contacts` (every hotel), `people_hotels` and `sheet_url` / `people_sheet_urls`, and `get_trip_itinerary` carries `contacts` (the person shown's hotels), `sheet_url` and `my_sheet_url`; the contacts card and the Trip Sheet's Jinja global `ee_trip_sheet` live there too; the form scripts are `public/js/travel_trip.js` + `public/js/travel/travel_trip_map.js` (the latter needs the **Google Maps API Key** set in Travel Settings; a POI whose linked Address was picked from the Places autocomplete is plotted from that stored point instead of being geocoded, which is also the only way the Leaflet `/itinerary` map — it has no geocoder — can place a POI with no Geolocation of its own), the calendar config `public/js/travel_trip_calendar.js`, and the mobile page `www/itinerary.*` + `public/js|css/travel/itinerary.*`. The page addresses what it shows as `/itinerary?trip=<name>&as=<employee|crew>` — a trip chip tap or a person pick is one browser history entry, so Back returns to the previous trip or person, a trip chip drops `as`, and a reload or a login keeps both ([`www/README.md`](../www/README.md)). Since v1.547.0 it also names the screen and the picture: `&view=docs` is the **Documents** screen (every file that person can see, the whole trip's first, then each booking's), and `&file=<Trip Document>` a picture open in the viewer over whichever screen it was opened from; each is an entry of its own, a person pick keeps the screen, a trip chip drops both, and the viewer's Close and Escape go Back when the entry behind is the screen underneath. A PDF (anything that is not a picture) opens in a new tab, which on a phone is the phone's own viewer — never an iframe, which on iOS shows only a PDF's first page. `/itinerary`'s own footer (the travel guidelines link) had been hidden by the page's chrome-hiding `footer` rule since v1.15.0; fixed in v1.547.0. `as` names whose view is shown: one person's (their bookings and their own confirmation numbers), `crew` for the whole crew, or nothing for the default (your own on a trip you travel on, else the whole crew). Anyone who can read the trip may ask for any crew member's view; `get_trip_itinerary` refuses a person who is not on the crew. The boot lists the trips the person travels on plus the ones they own and are not on (`mine: false`, marked "Not traveling"), and a `?trip=` outside that list is still asked for — the server's read permission decides. The trip emails and calendar invites (`notifications.py`, `ics.py`) link to `/itinerary?trip=<name>` (v1.546.0; before that they opened bare `/itinerary`, which showed whichever trip was current, and an owner not on the crew landed on "No upcoming or recent trips").
 
@@ -256,6 +315,7 @@ Row scoping is hook-based (`permission_query_conditions` + `has_permission`), tr
 
 - `doctype_js["Travel Trip"]`, `doctype_calendar_js["Travel Trip"]`, `doctype_list_js["Travel Trip"]` (`public/js/travel/travel_trip_list.js`: *+ Add Travel Trip* opens Plan a Trip).
 - Patch `reload_travel_workspace_for_plan_a_trip` forces the workspace past the import age gate (its "New Travel Trip" tile became "Plan a Trip").
+- Patch `reload_travel_hub` (v1.554.0) does the same for the revamped workspace, with `reload_doc(force=True)`, and for `workspace_sidebar/travel.json`, with `import_file_by_path(force=True)`.
 - `doc_events`: Travel Trip `on_update` (notifications dispatcher); Expense Claim / Employee Advance (status sync + stamp clearing); Vehicle Log `on_trash`.
 - `scheduler_events.daily`: `auto_advance_trip_statuses` **before** the two reminder jobs (they must see today's statuses).
 - `scheduler_events.cron` `"*/5 * * * *"`: `change_alerts.send_due_change_alerts` (v1.549.0), a key of its own in that dict (a repeated key would silently replace the entry it collided with). With nothing Pending a tick is one indexed query.
