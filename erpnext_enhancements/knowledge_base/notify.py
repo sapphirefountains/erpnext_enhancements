@@ -197,7 +197,12 @@ def _quietly(fn, *args, what):
 		frappe.flags.mute_messages = muted
 	if detail is not None:
 		# Logged outside the except block, so no exception context rides along into the Error Log.
-		frappe.log_error(title="Knowledge base to-do", message=f"Could not {what}.\n\n{detail}")
+		# Deferred (v1.555.1): a plain log_error is a row in this request's transaction, and a later
+		# step of the same action that raises, or publish.run's deadlock retry, rolls it back with
+		# everything else (see publish.body_markdown).
+		frappe.log_error(
+			title="Knowledge base to-do", message=f"Could not {what}.\n\n{detail}", defer_insert=True
+		)
 		return False
 	frappe.db.release_savepoint(SAVEPOINT)
 	return True

@@ -120,8 +120,10 @@ running with `ignore_permissions`; the point is that such code has to opt in by 
 `flags.ignore_validate` skips `validate`, `before_submit`, `before_cancel` and
 `before_update_after_submit` (`model/document.py:1407-1408`) but never `on_update`, `on_submit`,
 `on_cancel` or `on_update_after_submit` (`:1454-1462`). `delete_doc(ignore_on_trash=True)` skips
-`on_trash` (`model/delete_doc.py:175-176`) but never `after_delete` (`:195-196`). The second hook
-runs inside the same transaction, so raising there rolls the write back. **The exception is
+`on_trash` (`model/delete_doc.py:175-176`) but never `after_delete` (`:195-196`). Frappe's own
+Discard (`Document.discard`, `:1357-1373`) runs `before_discard`, then `db_set("docstatus", 2)`,
+then `on_discard`, and neither cancel hook, so the Version refuses it in both of those (v1.555.1).
+The second hook runs inside the same transaction, so raising there rolls the write back. **The exception is
 `before_validate`**, which v16 runs on every save and submit *before* it looks at `ignore_validate`
 (`:1404-1405`): the content rules and the File attachment check sit there, in one hook that no flag
 skips.
@@ -394,6 +396,37 @@ Draft. Every action is a dialog or a `frappe.set_route`, so Back and Forward wor
 - **Author actions accept any login** (submit, withdraw, discard, start a revision). They move a
   draft between people; none of them publishes or returns draft text.
 
+### Fixed after PR 3's review (v1.555.1)
+
+All four were found in the review of PR 3 (#1144), which merged before they were fixed. Each needs
+a KB role (or a draft, which needs one) to reach, and nobody held one on prod in between. Grant the
+roles once v1.555.1 is live.
+
+- **Frappe's own Discard is refused.** v16 puts a Discard of its own on the form menu of every
+  submittable draft (`form/toolbar.js:385-397`), next to the KB's Actions > Discard, and
+  `Document.discard` is whitelisted and checks only `write`, which every KB role holds. It sets
+  docstatus 2 with `db_set` and runs neither cancel hook, so it used to leave a version at docstatus
+  2 that still read as Draft or In Review: `start_revision` answered with it forever, `retire`
+  refused because of it, and every KB action on it failed with "Cannot edit cancelled document".
+  Only a database edit could free the article. The Version now refuses it in `before_discard` and
+  `on_discard`, the form removes the menu item and stops it in its own `before_discard`, and
+  `publish.open_version` counts only docstatus 0 rows as open. The KB's Discard is a `review_state`
+  move and a save, so a Discarded version stays at docstatus 0.
+- **Retire asks for a KB role first**, as every endpoint but Confirm does. It used to lock the
+  article and read its open version before any check, so a reader (every Desk User can read an
+  article) was told the open draft's name in the refusal.
+- **The Error Log a failed publish points to now exists.** `body_markdown` logged the
+  `to_markdown` failure and then refused, and v16 inserts a plain Error Log in the request's own
+  transaction, which the refusal rolls back (`utils/error.py:95-98`, `app.py:181-184`). It is a
+  deferred insert now, and so is `notify._quietly`'s log of a ToDo that could not be written. The
+  test stub's Error Log is part of the transaction, so a plain log before a refusal vanishes there
+  too; before, the test passed on a log prod never kept.
+- **Submit for Review stops when the save before it is refused.** v16's `frm.save()` resolves
+  whether or not the server stored the doc (`form.js:850-851`), so a save refused by the secret
+  scan, or by a co-author's newer save, used to send the older stored copy for review and then
+  throw the unsaved edits away on reload. The form now goes on only when the save cleared
+  `__unsaved`, which only a stored save does (`model/sync.js:240`).
+
 ## Files
 
 `files.py`, registered in `hooks.py`. Both hooks run for every File on the site, so each returns
@@ -454,7 +487,10 @@ Granting is a Desk step, and only a System Manager can do it:
   refuse Guest and any account that is not a System User: an approval is always a named person's.
 
 **The Desk steps after PR 3 deploys (Nik).** Nobody holds a KB role on prod yet, so until these are
-done every KB button is hidden and every action is refused. No code grants a role: a seeded grant
+done every KB button is hidden and every action is refused. **Do them once v1.555.1, PR 3's review
+fixes, is live**, not on PR 3 alone: before it, one click on the form menu's own Discard left an
+article that could never be revised or retired again (see "Fixed after PR 3's review"). No code
+grants a role: a seeded grant
 would bypass the Role Profile rule above for Lisa, and who may approve company knowledge is a
 person's decision. The people WI-080 names:
 

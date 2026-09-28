@@ -35,6 +35,13 @@ on top of it.** What it pins:
   Comment or a hand-made ToDo on a version is refused, and every other Comment and ToDo on the site
   is untouched.
 * **The forms' buttons** (``onload``) are the rules, for each person.
+* **The PR 3 review fixes** (v1.555.1): Retire asks for a KB role before it reads anything, so a
+  reader never learns a draft's name; Frappe's own Discard (``Document.discard``, which the stub
+  runs as v16 does: ``before_discard``, ``db_set``, ``on_discard``) is refused, and a Draft row at
+  docstatus 2 does not hold an article open; the Error Log a refusal promises is a deferred insert,
+  and the stub's Error Log is a table in the transaction, so a plain ``log_error`` before a refusal
+  vanishes here as it does on prod; and the version form, run in node, submits for review only
+  after a save the server accepted.
 
 Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
 """
@@ -43,7 +50,11 @@ import ast
 import copy
 import datetime
 import importlib
+import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 import types
 import unittest
@@ -169,13 +180,15 @@ def _reset():
 				"File": {},
 				"ToDo": {},
 				"Comment": {},
+				"Error Log": {},
 			},
 			"committed": None,
 			"savepoints": {},
 			"writes": [],
 			"locks": [],
 			"sql": [],
-			"errors": [],
+			# log_error(defer_insert=True): redis, which no rollback touches.
+			"deferred_errors": [],
 			"bells": [],
 			"markdown": [],
 			"fail": {},
@@ -394,6 +407,24 @@ class _Document:
 		self.docstatus = 1
 		return self.save()
 
+	def discard(self):
+		"""v16 ``Document.discard`` (``model/document.py:1357-1373``), whitelisted and on every
+		submittable draft's form menu: a draft only, ``write`` only, then ``before_discard``,
+		``docstatus`` 2 by ``db_set`` (no save, no validate, no cancel hook), then ``on_discard``."""
+		stored = _row(self.doctype, self.name)
+		if stored is None:
+			raise DoesNotExist(self.name)
+		if stored.get("modified") != self.get("modified"):
+			raise Stale(f"{self.name} has been modified after you opened it")
+		if (self.get("docstatus") or 0) != 0:
+			raise Refused("Only draft documents can be discarded")
+		_check_perm(self.doctype, "write")
+		self._run("before_discard")
+		self.docstatus = 2
+		stored["docstatus"] = 2
+		self._record("discard")
+		self._run("on_discard")
+
 
 class _ToDo(_Document):
 	def after_insert(self):
@@ -503,11 +534,18 @@ def _sql(query, values=(), as_dict=False, pluck=False, **kwargs):
 		names = sorted(n for n in _db()[ARTICLE] if n.casefold().startswith(prefix))
 		return names if pluck else [(n,) for n in names]
 	if lowered.startswith(
-		"select name, review_state from `tabknowledge article version` where article = %s and review_state in %s"
+		"select name, review_state from `tabknowledge article version` "
+		"where article = %s and docstatus = 0 and review_state in %s"
 	):
 		article, states = values
 		rows = sorted(
-			(r for r in _db()[VERSION].values() if r.get("article") == article and (r.get("review_state") or "Draft") in states),
+			(
+				r
+				for r in _db()[VERSION].values()
+				if r.get("article") == article
+				and (r.get("docstatus") or 0) == 0
+				and (r.get("review_state") or "Draft") in states
+			),
 			key=lambda r: r["creation"],
 		)
 		out = [_Flags(name=r["name"], review_state=r.get("review_state")) for r in rows]
@@ -525,6 +563,23 @@ def _rollback(save_point=None, **kwargs):
 		return
 	STATE["rollbacks"] += 1
 	STATE["db"] = copy.deepcopy(STATE["committed"])
+
+
+def _log_error(title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False):
+	"""v16 ``frappe.log_error`` (``utils/error.py:95-98``): an Error Log row inserted in the request's
+	own transaction, so the rollback of a refused request takes it with everything else, unless
+	``defer_insert`` (or ``flags.read_only``) queues it in redis, which no rollback touches."""
+	if defer_insert or frappe_module().flags.read_only:
+		STATE["deferred_errors"].append((title, message))
+		return
+	n = STATE["counters"].get("Error Log", 0) + 1
+	STATE["counters"]["Error Log"] = n
+	_db()["Error Log"][f"error-{n}"] = {"name": f"error-{n}", "method": title, "error": message}
+
+
+def logged():
+	"""Every Error Log that exists or will: the rows in the store and the deferred queue."""
+	return [(r["method"], r["error"]) for r in _db()["Error Log"].values()] + list(STATE["deferred_errors"])
 
 
 def _to_markdown(html):
@@ -559,7 +614,7 @@ def _install_frappe_stub():
 	frappe.new_doc = _new_doc
 	frappe.get_all = _get_all
 	frappe.has_permission = lambda doctype, ptype="read", *a, **k: _allowed(doctype, ptype)
-	frappe.log_error = lambda title=None, message=None, **k: STATE["errors"].append((title, message))
+	frappe.log_error = _log_error
 	frappe.get_traceback = lambda *a, **k: "Traceback (most recent call last): stub"
 	frappe.clear_messages = lambda: setattr(frappe.local, "message_log", [])
 	frappe.session = _Flags(user=AUTHOR, sid="a1b2c3d4")
@@ -846,7 +901,7 @@ class TestThePersonTest(Base):
 		texts = [r.get("description") or "" for r in _db()["ToDo"].values()]
 		texts += [r.get("content") or "" for r in _db()["Comment"].values()]
 		texts += [str(bell) for bell in STATE["bells"]]
-		texts += [str(e) for e in STATE["errors"]]
+		texts += [str(e) for e in logged()]
 		self.assertTrue(texts)
 		for text in texts:
 			for field, sentinel in SENTINELS.items():
@@ -937,9 +992,36 @@ class TestPublishTransaction(Base):
 		self.assertEqual(_db()["File"], before["File"])
 		self.assertEqual(version(name)["review_state"], "In Review")
 		self.assertEqual(open_todos(name), [APPROVER, SECOND, NIK])
-		# Only the exception's type is logged, never the text.
-		self.assertTrue(any("AttributeError" in (m or "") for _t, m in STATE["errors"]))
-		self.assertFalse(any(SENTINELS["body"] in (m or "") for _t, m in STATE["errors"]))
+		# Only the exception's type is logged, never the text. And the log outlives the refusal: the
+		# message sends Nik to it, and the request it was written in has just been rolled back.
+		self.assertTrue(any("AttributeError" in (m or "") for _t, m in logged()))
+		self.assertFalse(any(SENTINELS["body"] in (m or "") for _t, m in logged()))
+		self.assertIn("Error Log", message)
+
+	def test_the_stubs_error_log_is_in_the_transaction_as_v16s_is(self):
+		"""What makes the assertion above mean something: a plain log_error before a refusal is
+		rolled back with the request here, as on prod, and only a deferred one survives. Before
+		v1.555.1 the stub kept every log whatever happened, and the test above passed on a log that
+		prod never kept."""
+
+		def refuses():
+			frappe_module().log_error(title="t", message="plain")
+			frappe_module().log_error(title="t", message="deferred", defer_insert=True)
+			frappe_module().throw("refused")
+
+		refused(self, refuses)
+		self.assertEqual([m for _t, m in logged()], ["deferred"])
+		self.assertEqual(_db()["Error Log"], {})
+
+	def test_the_publish_log_is_one_deferred_row_naming_only_the_type(self):
+		name = draft()
+		submitted(name)
+		STATE["fail"]["markdown"] = [AttributeError("HTMLParseError")]
+		refused(self, approve, name)
+		self.assertEqual(len(STATE["deferred_errors"]), 1)
+		title, message = STATE["deferred_errors"][0]
+		self.assertEqual(title, "Knowledge base publish")
+		self.assertEqual(message, f"to_markdown raised AttributeError on {name}")
 
 	def test_the_approval_rules_are_asked_before_anything_is_written(self):
 		name = draft()
@@ -1142,11 +1224,15 @@ class TestEveryTransitionThroughTheEndpoints(Base):
 			(api.approve_and_publish, (name, None)),
 			(api.discard, (name,)),
 			(api.start_revision, ("KB-0601",)),
+			# v1.555.1: retire read the article and its open version before any role check.
+			(api.retire, ("KB-0601", "x")),
 		):
 			with self.subTest(fn=fn.__name__):
 				STATE["locks"].clear()
+				STATE["sql"].clear()
 				refused(self, fn, *args, user=TECH, exc=PermissionRefused)
 				self.assertEqual(STATE["locks"], [])
+				self.assertEqual(STATE["sql"], [])
 
 	def test_a_note_is_required_and_may_not_carry_a_secret(self):
 		name = draft()
@@ -1155,6 +1241,90 @@ class TestEveryTransitionThroughTheEndpoints(Base):
 		message = refused(self, api.request_changes, name, "Use " + STRIPE_KEY, user=APPROVER)
 		self.assertIn("looks like a Stripe secret key", message)
 		self.assertNotIn(STRIPE_KEY, message)
+
+
+# ------------------------------------------------------------------ Frappe's own Discard (v1.555.1)
+
+
+class TestFrappesOwnDiscardIsRefused(Base):
+	"""v16 puts a Discard of its own on the menu of every submittable draft (``form/toolbar.js:385-397``)
+	and whitelists ``Document.discard``, which checks only ``write`` (every KB role holds it) and sets
+	docstatus 2 with ``db_set``, running neither cancel hook. Before v1.555.1 one click left a version
+	at docstatus 2 with ``review_state`` still Draft or In Review: open by every KB rule, unsaveable by
+	every KB action ("Cannot edit cancelled document"), and its article could never be revised or
+	retired again."""
+
+	def _native_discard(self, name, user):
+		def go():
+			frappe_module().get_doc(VERSION, name).discard()
+
+		return refused(self, go, user=user)
+
+	def _live(self):
+		name = draft()
+		submitted(name)
+		approve(name)
+		return name
+
+	def _dead_row(self):
+		"""A Draft at docstatus 2: what Frappe's Discard would leave, or a write past the ORM."""
+		_db()[VERSION]["KBV-09000"] = {
+			"doctype": VERSION,
+			"name": "KBV-09000",
+			"article": "KB-0601",
+			"review_state": "Draft",
+			"docstatus": 2,
+			"owner": AUTHOR,
+			"creation": _tick(),
+			"modified": _tick(),
+		}
+		STATE["committed"] = copy.deepcopy(_db())
+
+	def test_refused_on_a_draft_and_in_review_and_nothing_changes(self):
+		name = draft()
+		self.assertIn("cannot be discarded from the menu", self._native_discard(name, AUTHOR))
+		self.assertEqual((version(name)["docstatus"], version(name)["review_state"]), (0, "Draft"))
+		submitted(name)
+		for user in (AUTHOR, NIK):
+			with self.subTest(user=user):
+				self.assertIn("cannot be discarded from the menu", self._native_discard(name, user))
+				self.assertEqual(
+					(version(name)["docstatus"], version(name)["review_state"]), (0, "In Review")
+				)
+		self.assertEqual(open_todos(name), [APPROVER, SECOND, NIK])
+		self.assertEqual([w for w in STATE["writes"] if w["action"] == "discard"], [])
+		# The KB's own moves still work on it.
+		self.assertEqual(approve(name)["article"], "KB-0601")
+
+	def test_on_discard_alone_still_rolls_the_write_back(self):
+		name = draft()
+		cls = CONTROLLERS[VERSION]
+		original = cls.before_discard
+		cls.before_discard = lambda doc: None
+		try:
+			self.assertIn("cannot be discarded from the menu", self._native_discard(name, AUTHOR))
+		finally:
+			cls.before_discard = original
+		self.assertEqual(version(name)["docstatus"], 0)
+
+	def test_the_kb_discard_is_a_state_move_not_frappes_discard(self):
+		name = draft()
+		request(api.discard, name, user=AUTHOR)
+		self.assertEqual((version(name)["docstatus"], version(name)["review_state"]), (0, "Discarded"))
+		self.assertNotIn("discard", [w["action"] for w in writes(VERSION)])
+
+	def test_a_draft_at_docstatus_2_does_not_hold_the_article_open(self):
+		self._live()
+		self._dead_row()
+		out = request(api.start_revision, "KB-0601", user=AUTHOR)
+		self.assertTrue(out["created"])
+		self.assertNotEqual(out["version"], "KBV-09000")
+
+	def test_nor_block_its_retirement(self):
+		self._live()
+		self._dead_row()
+		out = request(api.retire, "KB-0601", "Replaced by the scanner SOP.", user=APPROVER)
+		self.assertEqual(out["status"], "Retired")
 
 
 # ------------------------------------------------------------------ tokens, AI cards, and who
@@ -1226,6 +1396,21 @@ class TestArticleActions(Base):
 		)
 		revision = request(api.start_revision, "KB-0601", user=AUTHOR)["version"]
 		self.assertIn(f"{revision} is still open on it", refused(self, api.retire, "KB-0601", "x", user=APPROVER))
+
+	def test_a_reader_learns_nothing_of_an_open_draft_from_retire(self):
+		"""Knowledge Article is readable by every Desk User, so any staff member can call retire on
+		one. Before v1.555.1 the answer named the open revision ("KBV-00002 is still open on it"),
+		after locking the article and its versions; a reader is told nothing about drafts."""
+		revision = request(api.start_revision, "KB-0601", user=AUTHOR)["version"]
+		STATE["locks"].clear()
+		STATE["sql"].clear()
+		message = refused(self, api.retire, "KB-0601", "x", user=TECH, exc=PermissionRefused)
+		self.assertNotIn(revision, message)
+		self.assertNotIn("KBV-", message)
+		self.assertNotIn("still open", message)
+		self.assertEqual(STATE["locks"], [])
+		self.assertEqual(STATE["sql"], [])
+		self.assertEqual(_row(ARTICLE, "KB-0601")["status"], "Published")
 
 	def test_confirm_by_the_process_owner_restarts_the_review_clock(self):
 		out = request(api.confirm_still_accurate, "KB-0601", user=SECOND)
@@ -1315,7 +1500,20 @@ class TestReviewToDos(Base):
 		self.assertEqual(sorted(p["user"] for p in out["notified"]), [APPROVER, NIK])
 		self.assertEqual(open_todos(name), [APPROVER, NIK])
 		self.assertEqual(frappe_module().local.message_log, [])
-		self.assertTrue(any("raise a review to-do for lisa" in (m or "") for _t, m in STATE["errors"]))
+		self.assertTrue(any("raise a review to-do for lisa" in (m or "") for _t, m in logged()))
+
+	def test_a_todo_failure_stays_logged_when_a_later_step_refuses(self):
+		"""v1.555.1: the to-do log is deferred, so the rollback of a later refusal in the same action
+		(or publish.run's deadlock retry) does not take the only record of the failure with it."""
+
+		def action():
+			notify._quietly(
+				lambda: frappe_module().throw("ToDo broke"), what="raise a review to-do for lisa on KBV-00001"
+			)
+			frappe_module().throw("a later step refused")
+
+		refused(self, action)
+		self.assertTrue(any("raise a review to-do for lisa" in (m or "") for _t, m in logged()))
 
 	def test_a_deadlock_inside_a_todo_write_is_not_swallowed(self):
 		name = draft()
@@ -1562,6 +1760,158 @@ class TestWiring(Base):
 	def test_approve_sends_the_modified_the_page_loaded(self):
 		source = (APP / "public" / "js" / "knowledge_base" / "knowledge_article_version.js").read_text(encoding="utf-8")
 		self.assertIn("{ version: frm.doc.name, modified: frm.doc.modified }", source)
+
+
+# ------------------------------------------------------------------ the version form, run (v1.555.1)
+
+VERSION_FORM = APP / "public" / "js" / "knowledge_base" / "knowledge_article_version.js"
+
+#: Runs the real form script in a node ``vm`` over a stub ``frappe``, ``__`` and ``$``, and prints
+#: what it did as JSON. ``frm.save()`` here behaves as v16's does: the promise resolves whether or not
+#: the server stored the doc (``form.js:850-851``), and only a stored save clears ``__unsaved``
+#: (``model/sync.js:240``, which drops every key the server's copy lacks).
+FORM_HARNESS = r"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(__SOURCE__, "utf8");
+
+function fakeMenu(items) {
+	const lis = items.map((it) => ({ label: it.label, userAction: !!it.userAction, removed: false }));
+	return {
+		lis,
+		find(selector) {
+			const hits = selector === ".menu-item-label" ? lis : [];
+			return { each(fn) { hits.forEach((li) => fn.call({ li })); } };
+		},
+	};
+}
+
+function fakeJQuery(el) {
+	return {
+		text: () => "  " + el.li.label + " ",
+		closest: (sel) => ({
+			not: (cls) => ({
+				remove: () => {
+					if (sel === "li" && !(cls === ".user-action" && el.li.userAction)) el.li.removed = true;
+				},
+			}),
+		}),
+	};
+}
+
+function sandbox() {
+	const state = { calls: [], messages: [], handlers: null };
+	const frappe = {
+		validated: true,
+		ui: { form: { on: (doctype, handlers) => { state.handlers = handlers; } } },
+		call: (opts) => {
+			state.calls.push(opts.method.split(".").pop());
+			return Promise.resolve({ message: { notified: [{ user: "nik@example.com", full_name: "Nik" }] } });
+		},
+		show_alert: () => {},
+		msgprint: (m) => state.messages.push(m),
+		utils: { escape_html: (s) => String(s) },
+		user: { full_name: (u) => u },
+		set_route: () => {},
+		confirm: (message, yes) => yes(),
+	};
+	const context = {
+		frappe,
+		__: (text, args) => String(text).replace(/\{(\d+)\}/g, (m, i) => (args || [])[i]),
+		$: fakeJQuery,
+		console,
+	};
+	vm.createContext(context);
+	vm.runInContext(source, context);
+	return { state, frappe, context };
+}
+
+async function submitCase(outcome, dirty) {
+	const s = sandbox();
+	const frm = {
+		doc: Object.assign({ name: "KBV-00001" }, dirty ? { __unsaved: 1 } : {}),
+		saves: 0,
+		reloads: 0,
+		is_dirty() { return !!this.doc.__unsaved; },
+		save() {
+			this.saves += 1;
+			if (outcome === "stored") delete this.doc.__unsaved;
+			return Promise.resolve();
+		},
+		reload_doc() { this.reloads += 1; },
+	};
+	s.context.kb_submit(frm);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	return { saves: frm.saves, calls: s.state.calls, reloads: frm.reloads, dirty: frm.is_dirty() };
+}
+
+(async () => {
+	const out = {};
+	out.refused_save = await submitCase("refused", true);
+	out.stored_save = await submitCase("stored", true);
+	out.clean = await submitCase("stored", false);
+
+	const s = sandbox();
+	s.frappe.validated = true;
+	s.state.handlers.before_discard({ doc: { name: "KBV-00001" } });
+	out.before_discard = { validated: s.frappe.validated, messages: s.state.messages.length };
+
+	const menu = fakeMenu([
+		{ label: "Print" },
+		{ label: "Discard" },
+		{ label: "Actions > Discard", userAction: true },
+		{ label: "Discard", userAction: true },
+	]);
+	const r = sandbox();
+	r.state.handlers.refresh({ page: { menu }, footer: null, is_new: () => true });
+	out.menu = menu.lis.map((li) => ({ label: li.label, userAction: li.userAction, removed: li.removed }));
+	process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e && e.stack ? e.stack : e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node") or os.environ.get("CI"), "node is not on PATH")
+class TestTheVersionFormScript(unittest.TestCase):
+	"""The version form, executed. Skipped only where node is genuinely absent (a laptop); in CI a
+	missing node fails, because a skip reports OK and these would pass without running."""
+
+	@classmethod
+	def setUpClass(cls):
+		node = shutil.which("node")
+		if node is None:
+			raise AssertionError("no node on PATH in CI: the version form script did not run")
+		script = FORM_HARNESS.replace("__SOURCE__", json.dumps(str(VERSION_FORM)))
+		result = subprocess.run(
+			[node, "-"], input=script, capture_output=True, text=True, encoding="utf-8", timeout=120
+		)
+		if result.returncode != 0:
+			raise AssertionError(f"the form harness failed:\n{result.stderr}")
+		cls.out = json.loads(result.stdout)
+
+	def test_a_refused_save_does_not_send_the_stored_copy_for_review(self):
+		"""v1.555.1: kb_submit ran ``frm.save().then(go)``, and v16's promise resolves on a refused
+		save too, so the older stored copy went to review, approvers were asked, and the reload after
+		it threw the author's edits away."""
+		out = self.out["refused_save"]
+		self.assertEqual(out["saves"], 1)
+		self.assertEqual(out["calls"], [])
+		self.assertEqual(out["reloads"], 0)
+		self.assertTrue(out["dirty"])
+
+	def test_a_stored_save_then_submits(self):
+		out = self.out["stored_save"]
+		self.assertEqual((out["saves"], out["calls"], out["reloads"]), (1, ["submit_for_review"], 1))
+
+	def test_a_clean_form_submits_without_saving(self):
+		out = self.out["clean"]
+		self.assertEqual((out["saves"], out["calls"], out["reloads"]), (0, ["submit_for_review"], 1))
+
+	def test_frappes_own_discard_is_stopped_in_the_form(self):
+		self.assertEqual(self.out["before_discard"], {"validated": False, "messages": 1})
+
+	def test_the_menus_own_discard_is_removed_and_nothing_else(self):
+		removed = {(m["label"], m["userAction"]) for m in self.out["menu"] if m["removed"]}
+		self.assertEqual(removed, {("Discard", False)})
 
 
 if __name__ == "__main__":
