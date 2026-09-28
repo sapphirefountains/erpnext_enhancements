@@ -35,7 +35,9 @@ v1.558.0 (PR 5), which it needs for search and the article's kind.
   `available: false`, which does not say whether it was retired, never existed or cannot be read). An
   unknown number, a retired article, one the caller cannot read, a version's `KBV-` id, a blank and
   anything that is not a KB number all get **the same** `found: false` answer, differing only in
-  `requested`, and none of them throws, logs or queues a message.
+  `requested`, and none of them throws, logs or queues a message. A citation, `KB-0601 v3` (or
+  `KB-0601, v3`, `KB-0601 (v3)`), finds its article as the bare number does: the published version is
+  read whichever the citation named, and the note says so when it named another.
 - **`list_company_knowledge`** (new; its name frozen by ADR 0017's 2026-09-28 amendment): the table of
   contents, every published article's KB number, version, title, kind and department, grouped by
   department in register order, with counts by department and by kind (Policy, Process, SOP and "Not
@@ -69,8 +71,10 @@ v1.558.0 (PR 5), which it needs for search and the article's kind.
   sentinel from a Draft, In Review, Discarded or Superseded version, or an open revision, in any search,
   fetch or table-of-contents page, for a reader, an author or an approver**; the not-found cases
   byte-identical apart from `requested`; the 40,000-character cap; grouping, counts, paging, filters
-  and "Not classified"; no email address anywhere; an unexpected failure returned with only its type
-  logged.
+  and "Not classified"; a **retired** article in no table of contents and `available: false` in
+  `related`, byte for byte as a number never used; every citation a tool hands out fetching its
+  article; no email address anywhere; an unexpected failure returned with only its type logged, and
+  nothing of the request in the queued Error Log.
 
 ### Fixed
 
@@ -95,9 +99,30 @@ v1.558.0 (PR 5), which it needs for search and the article's kind.
   `json.dumps` of `{"success", "result", ...}`, so the Markdown arrives as a JSON string. So not found
   and an unknown filter are answers, and only something unexpected (the database gone) fails: the wrapper
   returns `{"success": false, "error": "The knowledge base could not be read just now. Nothing was
-  changed."}` and writes one **deferred** Error Log, "Knowledge base AI tool", naming the payload and
-  the exception's **type** only, outside the `except` block, so no message, argument, traceback or frame
-  local is logged.
+  changed."}` and queues one **deferred** Error Log, "Knowledge base AI tool", naming the payload and
+  the exception's **type** only, outside the `except` block, so no message, traceback or frame local is
+  logged. FAC's own Assistant Audit Log still records every call's arguments, as it does for every tool.
+- **That Error Log is built by hand, not by `frappe.log_error`** (found in review). v16's `log_error`
+  always stores `get_error_metadata()` in the log's `metadata` (`utils/error.py:81`), and for a web
+  request that includes `form_dict` (`:159`), through `sanitized_dict`, which masks only a top-level key
+  named like a password, secret, token or key (`utils/logger.py:115-134`). FAC's `handle_mcp` is an
+  ordinary `/api/method` POST and `make_form_dict` loads a JSON body whole (`app.py:363-376`), so there
+  the form_dict is the JSON-RPC message, `params.arguments` included, and any `log_error` during a tool
+  call stores the call's arguments whatever its message says. (Where telemetry is on, its Sentry capture
+  attaches the same JSON body, `utils/sentry.py:122`.) `assistant_tools/_knowledge_base.run` therefore
+  builds the Error Log itself, `method` and `error` only, and queues it with `deferred_insert`
+  (`model/document.py:1985`), the queue `log_error(defer_insert=True)` uses. The arguments of these three
+  tools are a query or a KB number, but PR 6b's drafting tool will carry a draft's whole text, and it can
+  reuse this path as it is. The tests' stub `log_error` now stores the form_dict as v16's does, which
+  shows the old call would have logged the arguments. Line numbers are v16.35.0.
+- **A citation is a KB number** (found in review). Every note and description tells the model to cite
+  `KB-0601 v3`, and search's note names the top result's own `cite_as`, so that string is what comes
+  back, from the model or from a person's follow-up. `fetch_knowledge_article` read only a bare number,
+  so it answered `found: false`, "No published article has that number", about an article that is
+  published. It now reads an optional version after the number (a space, comma or parenthesis, then
+  `v`, `ver` or `version` and the digits, in an input of at most 40 characters: a search anchored at
+  the end is quadratic in a long run of spaces). What comes before must still be one whole KB number, so
+  `KBV-00001 v1` is still not one.
 - **`requires_permission` is the published doctype, `Knowledge Article`**, which every staff user reads
   (finding 4). FAC 3.0.0 filters `tools/list` per user through `frappe.has_permission(tool.
   requires_permission, "read")`, and Triton caches one catalogue for everyone for an hour, taken from
@@ -131,7 +156,8 @@ v1.558.0 (PR 5), which it needs for search and the article's kind.
   on 2026-09-28, so until the first one both are 0 and the checks below wait for it.)
 - Once an article is published: a fetched article's header has the 11 keys in order, its `kind` is
   `Policy`, `Process`, `SOP` or `null`, its `approved_by` is a name, and `related` lists the KB numbers
-  its text cites. As a technician in Claude, "how do I receive a PO against a packing slip?" cites
+  its text cites. Fetching the article's own `cite_as` (`KB-06xx vN`) returns the same article as its
+  bare number. As a technician in Claude, "how do I receive a PO against a packing slip?" cites
   `KB-06xx vN` with a link, when such an article exists.
 - Once 10 or more articles are published, the real questions staff have asked (kept in the company's
   private repo) reach 80% or better in the top 3, and every acronym question passes.

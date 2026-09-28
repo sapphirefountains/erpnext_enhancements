@@ -27,7 +27,10 @@ annotated, FAC category); this suite asserts only what that one does not:
   doctype, ``VERSION_DOCTYPE`` or its table.
 * The hook registers the three right after the Training tools; the wrappers import ``ai_tools`` only
   inside ``execute``; ``execute`` hands the arguments through; and an unexpected failure is a
-  ``success: false`` return with one deferred Error Log naming the exception's type and nothing else.
+  ``success: false`` return with one deferred Error Log naming the exception's type and nothing else,
+  built by ``run`` itself and never through ``frappe.log_error``, whose v16 ``metadata`` would hold the
+  request's form_dict, which for an MCP call is the JSON-RPC body with the arguments (a stub shaped like
+  v16's shows it would).
 
 Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_tools -v
 """
@@ -244,10 +247,10 @@ class TestSchemas(unittest.TestCase):
 			(listing["include_summaries"]["type"], listing["include_summaries"]["default"]),
 			("boolean", False),
 		)
-		self.assertIn(
-			"'kb 601' also works",
-			tools["fetch_knowledge_article"].inputSchema["properties"]["kb_number"]["description"],
-		)
+		kb_number = tools["fetch_knowledge_article"].inputSchema["properties"]["kb_number"]["description"]
+		self.assertIn("'kb 601' also works", kb_number)
+		# The citation every note tells the model to write is accepted back (review fix, FAC-1).
+		self.assertIn("'KB-0601 v3'", kb_number)
 
 	def test_the_kind_and_department_enums(self):
 		for name in ("search_company_knowledge", "list_company_knowledge"):
@@ -385,6 +388,9 @@ class TestExecute(unittest.TestCase):
 		)
 
 	def test_an_unexpected_failure_is_a_return_with_only_the_type_logged(self):
+		"""The one Error Log is exactly a ``method`` and an ``error``, queued by ``deferred_insert``, and
+		the request's form_dict (for an MCP call, the JSON-RPC body with the arguments) reaches nothing:
+		``frappe.log_error``, which would store it, is never called. Review fix (spec-2, FAC-2, SEC-2)."""
 		secret = "SENTINEL-" + "ARGS-5c1e"
 		fake = types.ModuleType(AI_TOOLS)
 
@@ -392,46 +398,81 @@ class TestExecute(unittest.TestCase):
 			raise RuntimeError(f"boom {args.get('query')}")
 
 		fake.search_payload = broken
-		logged = []
+		queued, through_log_error = [], []
 		with (
 			mock.patch.dict(sys.modules, {AI_TOOLS: fake}),
 			mock.patch.object(
-				helper.frappe, "log_error", lambda **kwargs: logged.append(kwargs), create=True
+				helper.frappe,
+				"form_dict",
+				_rpc_body("search_company_knowledge", {"query": secret}),
+				create=True,
 			),
+			mock.patch.object(helper.frappe, "get_doc", _queueing_get_doc(queued), create=True),
+			mock.patch.object(helper.frappe, "log_error", _v16_log_error(through_log_error), create=True),
 		):
 			out = tools["search_company_knowledge"].execute({"query": secret})
 		self.assertEqual(out, {"success": False, "error": helper.FAILURE})
 		self.assertEqual(
-			logged,
+			queued,
 			[
 				{
-					"title": "Knowledge base AI tool",
-					"message": "search_payload raised RuntimeError",
-					"defer_insert": True,
+					"doctype": "Error Log",
+					"method": "Knowledge base AI tool",
+					"error": "search_payload raised RuntimeError",
 				}
 			],
 		)
-		self.assertNotIn(secret, json.dumps(out) + json.dumps(logged))
+		self.assertEqual(through_log_error, [])
+		self.assertNotIn(secret, json.dumps(out) + json.dumps(queued))
+
+	def test_log_error_would_have_logged_the_arguments(self):
+		"""What makes the test above mean something: v16's ``log_error``, called as this path called it
+		before the review, stores the JSON-RPC body in the log's ``metadata``, the arguments included,
+		whatever the message says. ``sanitized_dict`` masks only a top-level key named like a secret."""
+		secret = "SENTINEL-" + "ARGS-77d0"
+		recorded = []
+		with mock.patch.object(
+			helper.frappe,
+			"form_dict",
+			_rpc_body("fetch_knowledge_article", {"kb_number": secret}),
+			create=True,
+		):
+			_v16_log_error(recorded)(
+				title=helper.LOG_TITLE, message="fetch_payload raised RuntimeError", defer_insert=True
+			)
+		self.assertIn(secret, json.dumps(recorded))
 
 	def test_a_failing_log_still_returns(self):
 		fake = types.ModuleType(AI_TOOLS)
 		fake.fetch_payload = lambda args: 1 / 0
 
-		def log_error(**kwargs):
-			raise ConnectionError("redis is down")
+		def get_doc(values):
+			raise ConnectionError("the database is gone")
 
-		with (
-			mock.patch.dict(sys.modules, {AI_TOOLS: fake}),
-			mock.patch.object(helper.frappe, "log_error", log_error, create=True),
-		):
-			self.assertEqual(
-				tools["fetch_knowledge_article"].execute({"kb_number": "KB-0601"}),
-				{"success": False, "error": helper.FAILURE},
-			)
+		def unqueueable(values):
+			doc = types.SimpleNamespace(**values)
+
+			def deferred_insert():
+				raise ConnectionError("redis is down")
+
+			doc.deferred_insert = deferred_insert
+			return doc
+
+		for failing in (get_doc, unqueueable):
+			with (
+				self.subTest(failing=failing.__name__),
+				mock.patch.dict(sys.modules, {AI_TOOLS: fake}),
+				mock.patch.object(helper.frappe, "get_doc", failing, create=True),
+			):
+				self.assertEqual(
+					tools["fetch_knowledge_article"].execute({"kb_number": "KB-0601"}),
+					{"success": False, "error": helper.FAILURE},
+				)
 
 	def test_the_failure_path_never_raises_and_never_logs_a_traceback(self):
-		"""Statically: ``run`` has no ``raise``, and the log is written outside the ``except`` block, so no
-		traceback or frame is attached to it."""
+		"""Statically: ``run`` has no ``raise``; the log is written outside the ``except`` block, so no
+		traceback or frame is attached to it; and ``run`` never calls ``log_error``, whose metadata
+		holds the request's form_dict."""
 		tree = ast.parse((APP / "assistant_tools" / "_knowledge_base.py").read_text(encoding="utf-8"))
 		run = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run")
 		self.assertFalse([node for node in ast.walk(run) if isinstance(node, ast.Raise)])
@@ -442,8 +483,53 @@ class TestExecute(unittest.TestCase):
 			for node in ast.walk(first)
 			if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
 		}
-		self.assertNotIn("log_error", inside)
-		self.assertNotIn("get_traceback", {n.attr for n in ast.walk(run) if isinstance(n, ast.Attribute)})
+		self.assertFalse(inside & {"log_error", "get_doc", "deferred_insert", "insert"}, inside)
+		attributes = {n.attr for n in ast.walk(run) if isinstance(n, ast.Attribute)}
+		self.assertNotIn("get_traceback", attributes)
+		self.assertNotIn("log_error", attributes)
+		self.assertIn("deferred_insert", attributes)
+
+
+def _rpc_body(name, arguments):
+	"""What v16's ``make_form_dict`` makes ``frappe.form_dict`` for a call to FAC's ``handle_mcp``: the
+	whole JSON-RPC message, a JSON body being loaded as it is (``app.py:363-376``)."""
+	return {
+		"jsonrpc": "2.0",
+		"id": 7,
+		"method": "tools/call",
+		"params": {"name": name, "arguments": arguments},
+	}
+
+
+def _queueing_get_doc(queued):
+	"""``frappe.get_doc(values)`` whose ``deferred_insert`` queues the values as they stand."""
+
+	def get_doc(values):
+		doc = types.SimpleNamespace(**values)
+		doc.deferred_insert = lambda: queued.append(dict(values))
+		return doc
+
+	return get_doc
+
+
+def _v16_log_error(recorded):
+	"""v16's ``frappe.log_error`` as far as what its Error Log stores: ``metadata`` from
+	``get_error_metadata``, which for a web request is ``sanitized_dict(frappe.form_dict)``
+	(``utils/error.py:81``, ``:159``), masking only a top-level key that contains a secret's word
+	(``utils/logger.py:115-134``)."""
+	blocklist = ("password", "passwd", "secret", "token", "key", "pwd")
+
+	def log_error(
+		title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+	):
+		form_dict = {
+			key: "********" if any(word in key for word in blocklist) else value
+			for key, value in dict(getattr(helper.frappe, "form_dict", None) or {}).items()
+		}
+		metadata = {"type": "http_request", "form_dict": form_dict}
+		recorded.append({"method": title, "error": message, "metadata": json.dumps(metadata)})
+
+	return log_error
 
 
 if __name__ == "__main__":

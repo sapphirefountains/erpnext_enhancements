@@ -9,7 +9,9 @@ renderer the private Markdown mirror uses, so a fetched article and a mirrored
 file are the same bytes. It reads the **published** article as the caller and
 nothing else: an unknown, retired, unreadable or unpublished number, and a
 version's ``KBV-`` id, all return the same ``found: false``, which does not say
-which it was. Drafts are never returned. The name is frozen by ADR 0017.
+which it was. A citation, ``KB-0601 v3``, finds its article like the bare number
+does (the published version, whichever the citation named). Drafts are never
+returned. The name is frozen by ADR 0017.
 Read-only (``_gate.EXPLICIT_READONLY``).
 """
 
@@ -42,7 +44,10 @@ class FetchKnowledgeArticle(BaseTool):
             "properties": {
                 "kb_number": {
                     "type": "string",
-                    "description": "The article's KB number, e.g. KB-0601; 'kb 601' also works",
+                    "description": (
+                        "The article's KB number, e.g. KB-0601; 'kb 601' also works, and so does a "
+                        "citation such as 'KB-0601 v3' (the published version is the one returned)"
+                    ),
                 },
             },
             "required": ["kb_number"],
