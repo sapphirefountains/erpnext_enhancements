@@ -4,10 +4,19 @@
 
   This is the company travel POLICY, version-controlled like everything else.
   The policy substance comes from management; the "In the system" callouts map
-  each rule onto the Travel Management module (Travel Trip rows, Travel POIs,
-  Expense Claims, Time Kiosk) so the page stays the single reference for both
-  the rule and where it lives in ERPNext. Keep policy edits and system-wording
-  edits separable when updating.
+  each rule onto the Travel Management module (Travel Trip rows and their
+  receipts, Travel POIs, Time Kiosk) so the page stays the single reference for
+  both the rule and where it lives in ERPNext. Keep policy edits and
+  system-wording edits separable when updating.
+
+  A callout may only describe what production can actually do. HRMS is not
+  installed there and cannot be (accounting_intake/actions/receipt_expense.py),
+  so Expense Claim, Employee Advance and Vehicle Log do not exist and the trip
+  form hides their Create buttons (travel_management.expense_claims_available).
+  Until v1.552.1 section 6 told travelers to file an Expense Claim from the trip
+  and section 4 to create a Vehicle Log. How a traveler is reimbursed is Nik's
+  call (2026-09-28): the itemized receipts go on the trip's cost rows and
+  accounting pays from there — there is no claim to submit.
 
   Unlike /kiosk and /itinerary this page KEEPS the standard website chrome —
   it is a document, not an app shell.
@@ -111,10 +120,11 @@
 		Record rentals as <b>Ground Transport</b> rows (type <i>Rental/Third
 		Party</i>, with the rental supplier and pickup/return details), and put the
 		rental agreement on the rental in Plan a Trip (<i>Attach a file</i>). Taking a
-		company truck instead? Use a <i>Company Fleet</i> row and create its
-		<b>Vehicle Log</b> from the trip — fleet usage is tracked, never
-		reimbursed. Personal-vehicle miles go in the trip's <b>Mileage</b> table
-		and are reimbursed at the company rate.
+		company truck instead? Use a <i>Company Fleet</i> row — it records the
+		truck on the trip, and a company vehicle is never reimbursed.
+		Personal-vehicle miles go in the trip's <b>Mileage</b> table, and
+		accounting reimburses them with the rest of your trip expenses (see
+		section 6).
 	</div>
 
 	<h2>5. Meals and Per Diem</h2>
@@ -126,10 +136,9 @@
 		<b>In the system</b>
 		Per-diem rates are maintained centrally (by travel type, with a reduced
 		first/last travel day) and computed per traveler from your personal trip
-		dates. Your exact amount shows in the Travel Trip's <i>Travelers</i> table
-		and in your itinerary email — no need to wait for a separate notice.
-		Project-specific exceptions are handled with the per-traveler override
-		rate on the trip.
+		dates. Your exact amount shows in the Travel Trip's <i>Travelers</i> table —
+		no need to wait for a separate notice. Project-specific exceptions are
+		handled with the per-traveler override rate on the trip.
 	</div>
 
 	<h2>6. Expense Reimbursement and Receipts</h2>
@@ -151,11 +160,13 @@
 		confirmations, rental agreements, bills of lading — goes on its booking
 		instead: on Plan a Trip, <i>Attach a file</i> on that flight, room, rental
 		or shipment, where everyone on the trip can open it. When you're back,
-		use <b>Create&nbsp;→&nbsp;Expense Claim</b> on the trip: your employee-paid
-		costs, per diem, and mileage are gathered onto a draft claim
-		automatically — review it, attach anything missing, and submit. If money
-		is still unclaimed days after the trip ends, the system emails you a
-		reminder.
+		there is no claim to fill in: within a week, attach each itemized receipt
+		to its cost on the Travel Trip form, and accounting reimburses your
+		employee-paid costs, per diem, and mileage from the trip. If the trip
+		shows you are owed any of those, the system emails you a one-time
+		reminder about three days after the trip ends. Get your receipts on
+		before the trip is closed: a closed trip can only be changed by a Travel
+		Coordinator, so a late receipt means asking one to reopen it.
 	</div>
 
 	<h2>7. Work Hours and Timekeeping</h2>

@@ -268,7 +268,7 @@
 	white-space: pre-wrap;
 }
 
-/* A stop's place notes (Travel POI Notes: parking, the gate code, site access), v1.552.0.
+/* A stop's place notes (Travel POI Notes: parking, the gate code, site access), v1.553.0.
    Quiet like a visit's notes, under a small label that says they are the place's. Long ones
    are a <details> that starts shut on one line: the label and their first line, cut to fit.
    The summary is a plain block with its own marker, so the whole line truncates as one run of

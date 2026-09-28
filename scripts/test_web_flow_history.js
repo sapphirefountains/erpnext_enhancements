@@ -103,7 +103,7 @@
  *   - "Print / save as PDF" opens the person shown's trip sheet (`my_sheet_url`, else the whole
  *     trip's `sheet_url`) in a new tab with no history write, and only this site's path or a web
  *     address is made a link;
- *   - a stop's place notes (`poi.notes`, v1.552.0) are drawn under "Place notes" after the
+ *   - a stop's place notes (`poi.notes`, v1.553.0) are drawn under "Place notes" after the
  *     visit's own notes, as text with their line breaks (markup in them is never a tag), short
  *     ones whole and long ones in a <details> that starts shut on their first line and writes no
  *     history when tapped; blank or missing notes draw nothing; the marker's popup carries them
@@ -2685,7 +2685,7 @@ async function testItineraryContacts() {
 // ---------------------------------------------------------------------------- /itinerary place notes
 
 // Trip A's answer with one stop per place given, each as shape_itinerary sends it: the place
-// (`poi`) carries its own `notes` since v1.552.0. The first stop has notes of its own for the
+// (`poi`) carries its own `notes` since v1.553.0. The first stop has notes of its own for the
 // visit too, which are not the place's.
 function stopsAnswer(pois) {
 	const items = pois.map((poi, i) => ({

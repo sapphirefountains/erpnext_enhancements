@@ -26,7 +26,7 @@
  * gets its own small map with that day's POI stops. "Open in Maps" deep links
  * are the no-tiles fallback.
  *
- * Place notes (v1.552.0): a stop's place (Travel POI) carries its own Notes in the answer
+ * Place notes (v1.553.0): a stop's place (Travel POI) carries its own Notes in the answer
  * (`poi.notes`: parking, the gate code, site access), drawn on the stop's card under
  * "Place notes", and in its marker's popup, as text with the line breaks kept. Long notes
  * start shut, showing their first line; a tap opens them, with no history entry.
@@ -516,7 +516,7 @@
 		},
 	};
 
-	// A place's own notes (Travel POI `notes`, v1.552.0): parking, the gate code, how to get on
+	// A place's own notes (Travel POI `notes`, v1.553.0): parking, the gate code, how to get on
 	// site. They belong to the place, not to this visit (`visit_notes`, drawn above them), so they
 	// carry a label saying so. People type them, so they are text, never markup, with their line
 	// breaks kept (itinerary.css). Short notes are shown whole. Long ones start shut, as a line

@@ -94,7 +94,9 @@ def send_post_trip_expense_nudges():
 			if not pending:
 				continue
 			context = _base_context(doc)
-			subject = _("Unclaimed travel expenses: {0}").format(doc.purpose)
+			# Receipts, not a claim: HRMS (and Expense Claim) is absent on production, and
+			# accounting reimburses from the receipts on the trip (expense_nudge.html).
+			subject = _("Attach your travel receipts: {0}").format(doc.purpose)
 			for recipient in _traveler_recipients(doc, employees=pending):
 				amount = _unclaimed_total(doc, recipient.row)
 				# Stamp first (at-most-once), then send.
