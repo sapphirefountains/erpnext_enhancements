@@ -482,6 +482,12 @@ class TestThePageSide(unittest.TestCase):
 		self.assertIn("toWorker({ type: 'user', key: marker });", boot)
 		self.assertIn("pruneSaved(marker);", boot)
 		self.assertIn("saved.key !== key", _function("pruneSaved", PAGE_JS))
+		# The cap keeps the person's own trips ahead of colleagues' trips opened from the list of all
+		# trips (v1.556.0), then the newest: never the newest alone.
+		prune = _function("pruneSaved", PAGE_JS)
+		self.assertIn("own: listed[saved.trip] ? 1 : 0", prune)
+		self.assertIn("return (b.own - a.own) || (b.at - a.at);", prune)
+		self.assertNotIn("return b.at - a.at;", prune)
 		# The worker is told the marker, never an email.
 		self.assertIn(
 			"toWorker({ type: 'cache-files', key: key, urls: urls });", _function("keepFiles", PAGE_JS)

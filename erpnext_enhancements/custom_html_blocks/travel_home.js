@@ -4,8 +4,9 @@
 // information?" Someone who has never used the system lands on /desk/travel and
 // the first thing they see is their current (or next) trip with one obvious
 // button, "Open my itinerary", then the documents, the trip sheet and who to call.
-// Below that: their other trips, a receipts reminder after a trip, and — for
-// travel coordinators only — the trips that need somebody's attention.
+// Below that: their other trips, a link to everyone's trips, a receipts reminder
+// after a trip, and — for travel coordinators only — the trips that need
+// somebody's attention.
 //
 // WHY A BLOCK AND NOT A WORKSPACE WIDGET. A Number Card, a Quick List or a
 // shortcut count carries its filter on the widget, the same for every viewer, so
@@ -28,7 +29,9 @@
 // trip needs attention) and every address ready to open. There is no date
 // arithmetic here on purpose: a browser in another time zone would count the days
 // differently from the email and the itinerary, and the three would disagree.
-// The only thing decided here is presentation — which color a status is.
+// The only thing decided here is presentation — which color a status is. The one
+// address written here rather than sent is ALL_TRIPS_URL, because it is the same
+// for every viewer.
 //
 // NO MONEY. The endpoint sends none to anybody who is not a coordinator (crew see
 // everything about a trip except what it cost), and this script has nowhere to put
@@ -55,6 +58,11 @@
     // For the person who books trips and is not going on any of them, "when the office
     // books you" would be talking to the office about itself.
     const ORGANIZING_ONLY = "You're not traveling on any upcoming trips. The trips you're organizing are below.";
+
+    // Every trip, anybody's, on the web itinerary: any staff member may open any trip
+    // there, with the money left out (Nik, 2026-09-28). The desk Travel Trip list stays
+    // scoped to your own trips, so this is the only way to see a colleague's.
+    const ALL_TRIPS_URL = "/itinerary?view=trips";
 
     function getContainer() {
         return typeof root_element !== "undefined" && root_element ? root_element : document;
@@ -327,6 +335,18 @@
         );
     }
 
+    // Under the viewer's own trips, or under the empty state when there are none: the
+    // way to find a colleague's trip. Shown whatever the answer held, a coordinator and
+    // a user with no Employee record included, because the page decides who may see the
+    // list, not this block. A web page, so it opens in a new tab like every other one.
+    function allTripsLink() {
+        return (
+            '<div class="tvh-all-trips">' +
+            openButton("👥", "See everyone's trips", ALL_TRIPS_URL, "is-quiet") +
+            "</div>"
+        );
+    }
+
     // ------------------------------------------------------------ receipts
 
     function receiptsSection(data) {
@@ -457,6 +477,7 @@
         }
         parts.push(receiptsSection(data));
         parts.push(tripsSection(data));
+        parts.push(allTripsLink());
         parts.push(attentionSection(data.attention));
         parts.push(officeFooter(data.office));
 

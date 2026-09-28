@@ -1754,6 +1754,8 @@ class TestGetTripItinerary(MoneyAssertions):
 					"contacts": travel._trip_contacts(self.doc, "EMP-C"),
 					"sheet_url": views.trip_sheet_url("TRIP-1"),
 					"my_sheet_url": views.trip_sheet_url("TRIP-1", "EMP-C"),
+					# 2026-09-28: someone who can read the trip gets the full answer.
+					"limited": False,
 				},
 			),
 		)
@@ -1792,9 +1794,14 @@ class TestGetTripItinerary(MoneyAssertions):
 			self.assertEqual(self.looked_up(), [], probe)
 
 	def test_read_permission_comes_first(self):
+		# Someone who cannot read the trip and is not staff (a Website User): refused, before the
+		# person asked for is even looked at. Staff who cannot read it get the outsider view
+		# instead (TestTheOutsidersItinerary).
 		SITE.deny = True
-		with self.assertRaises(sys.modules["frappe"].PermissionError):
-			self.call("EMP-A")
+		with mock.patch.object(travel, "_is_staff", return_value=False):
+			with self.assertRaises(sys.modules["frappe"].PermissionError):
+				self.call("EMP-A")
+		self.assertIn(("Travel Trip", "read", "TRIP-1", False), SITE.permission_checks)
 
 
 class TestBootstrap(unittest.TestCase):
@@ -2249,8 +2256,11 @@ class TestEndpointShapes(unittest.TestCase):
 			"get_trip_itinerary",
 			"preview_itinerary_email",
 			"get_itinerary_bootstrap",
+			# /itinerary?view=trips (2026-09-28): every trip, for staff. It takes nothing.
+			"get_all_trips",
 		):
 			self.assertRegex(source, re.compile(r"@frappe\.whitelist\(\)\ndef " + name + r"\("), name)
+		self.assertEqual(list(inspect.signature(travel.get_all_trips).parameters), [])
 
 
 # --------------------------------------------------------------------------- PR 3: contacts
@@ -5008,3 +5018,895 @@ class TestTravelHomeEndpoint(unittest.TestCase):
 			set(answer["trips"][0]),
 			{"trip", "purpose", "status", "dates", "relation", "note", "itinerary_url", "can_plan"},
 		)
+
+
+# --------------------------------------------------------------------------- every trip, for staff
+#
+# Nik, 2026-09-28: "Change it from My Trips to just Trips so anyone can see anyone's trips —
+# should link to the non-desk form of it automatically." Asked where that applies, he chose the
+# itinerary pages only. Any member of staff lists every trip (`get_all_trips`, behind
+# /itinerary?view=trips) and opens any of them on /itinerary. The desk's Travel Trip list, form
+# and Report view stay row-scoped, because money is permlevel 0 there. A staff member who is not
+# on a trip, did not make it and is not a coordinator gets the *outsider view*: no confirmation,
+# booking or tracking number, no files, no Trip Sheet, `limited: true`. Guest and Website Users
+# are not staff.
+#
+# All three failures below would look fine on screen:
+# * a portal customer listing every trip;
+# * a staff member reading a PNR, a boarding pass or a tracking number off a trip they are not on;
+# * a key added to shape_itinerary next month that carries a number past the redaction.
+# The last is caught by pinning every key the answer sends to one side of the line or the other.
+
+#: The keys an outsider is not sent (``api.travel._OUTSIDER_REMOVED``, ``_EMPTIED`` and ``_NULLED``
+#: together): every confirmation, booking and tracking number, the files, the Trip Sheet links.
+OUTSIDER_WITHHELD = frozenset(
+	{
+		"booking_reference",
+		"booking_confirmation",
+		"tracking_number",
+		"ref",
+		"documents",
+		"sheet_url",
+		"my_sheet_url",
+	}
+)
+
+#: Every other key ``get_trip_itinerary`` sends, anywhere in its answer outside the files. Each is
+#: something a crew member sees that is not a number, a file or money, and so an outsider sees it
+#: too. **A key in neither set fails ``test_every_key_the_answer_sends_is_on_one_side``.** Before
+#: adding one here, ask whether it identifies a booking (a confirmation, a ticket, a locker code, a
+#: file). If it does, it goes in ``api.travel``'s withheld sets instead.
+OUTSIDER_SEES = frozenset(
+	{
+		# The answer
+		"trip",
+		"purpose",
+		"status",
+		"travel_type",
+		"start_date",
+		"end_date",
+		"travel_for_doctype",
+		"travel_for",
+		"days",
+		"crew",
+		"viewing",
+		"viewer_employee",
+		"viewer_on_trip",
+		"contacts",
+		"limited",
+		# A day, and what every item carries
+		"date",
+		"items",
+		"type",
+		"sort_time",
+		"group",
+		"travelers",
+		"members",
+		"whole_crew",
+		# A flight
+		"airline",
+		"flight_number",
+		"departure_airport",
+		"departure_time",
+		"arrival_airport",
+		"arrival_time",
+		# A room
+		"hotel",
+		"address",
+		"time",
+		# A ride
+		"transport_type",
+		"provider",
+		"pickup_location",
+		"dropoff_location",
+		"pickup_datetime",
+		"arrival_datetime",
+		"return_datetime",
+		"cargo",
+		# A shipment
+		"carrier",
+		"contents",
+		"ship_from",
+		"deliver_to",
+		"pickup_from",
+		"pickup_to",
+		"delivery_from",
+		"delivery_to",
+		"received_by",
+		# A stop, and its place
+		"end_time",
+		"activity",
+		"related_party_doctype",
+		"related_party",
+		"poi",
+		"visit_notes",
+		"name",
+		"poi_name",
+		"category",
+		"lat",
+		"lng",
+		"notes",
+		# A person on a booking (the whole crew's view), and on the crew
+		"employee",
+		"employee_name",
+		"guest",
+		"check_in_date",
+		"check_out_date",
+		"from_date",
+		"to_date",
+		"is_trip_lead",
+		# Whom to call (``_trip_contacts``, which has its own tests for what it may read)
+		"emergency",
+		"office",
+		"booked_by",
+		"lead",
+		"site",
+		"hotels",
+		"label",
+		"phone",
+		"email",
+		"contact_name",
+		"urgent_care_url",
+		"directions_url",
+	}
+)
+
+#: Every confirmation, booking and tracking number on the shared fixture, and every file. None may
+#: reach someone who is not on the trip, and the trip list carries none of them either.
+FIXTURE_SECRETS = (
+	"PNR-A",
+	"PNR-B",
+	"H-A",
+	"H-B",
+	"RC-1",
+	"PRO-1",
+	"site-map.png",
+	"bo-pass.pdf",
+	"hotel.pdf",
+	"ann-packet.pdf",
+	"rental.pdf",
+	"old.pdf",
+	"/files/",
+	"download_pdf",
+	"Trip%20Sheet",
+)
+
+
+def keys_outside_files(value, found=None):
+	"""Every key anywhere in ``value``, but not inside a ``documents`` list: an outsider gets those
+	empty, whatever their entries hold."""
+	found = set() if found is None else found
+	if isinstance(value, dict):
+		for key, child in value.items():
+			found.add(key)
+			if key != "documents":
+				keys_outside_files(child, found)
+	elif isinstance(value, (list, tuple)):
+		for child in value:
+			keys_outside_files(child, found)
+	return found
+
+
+def as_an_outsider_would_get_it(value):
+	"""The test's own reading of the outsider view, written apart from ``api.travel``'s: the
+	withheld numbers dropped, the files empty, the sheet links null, and nothing else touched."""
+	if isinstance(value, dict):
+		out = {}
+		for key, child in value.items():
+			if key in ("booking_reference", "booking_confirmation", "tracking_number", "ref"):
+				continue
+			if key == "documents":
+				out[key] = []
+			elif key in ("sheet_url", "my_sheet_url"):
+				out[key] = None
+			else:
+				out[key] = as_an_outsider_would_get_it(child)
+		return out
+	if isinstance(value, (list, tuple)):
+		return [as_an_outsider_would_get_it(child) for child in value]
+	return value
+
+
+def all_trip(name, start, end, status="Booked", owner="office@example.com", clean=False, **overrides):
+	"""A trip from the shared fixture for the list of every trip, from ``start`` to ``end`` days
+	after the stub's today (``None`` for a blank date)."""
+	doc = hub_trip(name, 0, 0, status=status, owner=owner, clean=clean, **overrides)
+	doc.start_date = None if start is None else hub_day(start)
+	doc.end_date = None if end is None else hub_day(end)
+	return doc
+
+
+def _clauses(filters):
+	"""frappe's filter forms (a dict, or a list of ``[field, op, value]`` or
+	``[doctype, field, op, value]``) as ``(field, op, value)`` triples."""
+	if not filters:
+		return []
+	if isinstance(filters, dict):
+		return [
+			(field, *(condition if isinstance(condition, (list, tuple)) else ("=", condition)))
+			for field, condition in filters.items()
+		]
+	return [tuple(clause[-3:]) for clause in filters]
+
+
+def _clause_holds(row, clause):
+	field, op, value = clause
+	have = _hub_norm(row.get(field))
+	blank = have in (None, "")
+	if op == "is":
+		return blank if value == "not set" else not blank
+	if op == "=":
+		return have == value
+	if op == "in":
+		return have in list(value)
+	if op == ">=":
+		# frappe v16 wraps no `>=` on a date in a coalesce: a blank never passes.
+		return not blank and str(have) >= str(value)
+	if op == "<":
+		# frappe v16 compiles `<` on a nullable date as coalesce(col, '0001-01-01') < value, so a
+		# blank passes. That is why get_all_trips says `is set` as well.
+		return str("0001-01-01" if blank else have) < str(value)
+	raise AssertionError(f"the trip list's fake site does not know the filter {op!r}")
+
+
+def _column_key(value):
+	"""One column's sort key, a blank first when ascending (as MariaDB puts NULL)."""
+	value = _hub_norm(value)
+	if value in (None, ""):
+		return (0, "")
+	if isinstance(value, (int, float)):
+		return (1, f"{value:015.3f}")
+	return (1, str(value))
+
+
+class AllTripsSite:
+	"""The fake site ``get_all_trips`` reads, built from the trips on ``SITE.trips``.
+	``get_all`` applies ``filters`` (all of them) and ``or_filters`` (any of them), as frappe
+	composes the two. It sorts by one column, and ``limit_page_length`` of 0 or None means every
+	row. A column the table does not have raises, as SQL does. Every call is recorded with what it
+	asked, so a test can say which reads ran and which columns they read. Money sits in the tables
+	(the trips' totals, each traveler's per diem and claim), so a read that took a row wholesale
+	would carry it."""
+
+	RECORDS = {
+		("Project", "PRJ-1"): {"project_name": "Harbor Fountain", "customer": "CUST-1"},
+		("Customer", "CUST-1"): {"customer_name": "Harbor Resort", "mobile_no": "(208) 555-0100"},
+	}
+
+	def __init__(self, test, *docs):
+		frappe = sys.modules["frappe"]
+		for doc in docs:
+			SITE.trips[doc.name] = doc
+		self.calls = []
+
+		class Meta:
+			def __init__(self, doctype):
+				self.fields = META_FIELDS.get(doctype, set())
+
+			def has_field(self, fieldname):
+				return fieldname in self.fields
+
+		def count(doctype, *args, **kwargs):
+			self.calls.append(("count", doctype, {}))
+			return len(self.table(doctype))
+
+		for patcher in (
+			mock.patch.object(frappe, "get_all", self.get_all),
+			mock.patch.object(frappe.db, "count", count, create=True),
+			mock.patch.object(frappe, "get_meta", Meta, create=True),
+		):
+			patcher.start()
+			test.addCleanup(patcher.stop)
+
+	def table(self, doctype):
+		if doctype == "Travel Trip":
+			return [
+				_dict(
+					name=doc.name,
+					purpose=doc.purpose,
+					status=doc.status,
+					travel_type=doc.travel_type,
+					start_date=doc.start_date,
+					end_date=doc.end_date,
+					travel_for_doctype=doc.travel_for_doctype,
+					travel_for_name=doc.travel_for_name,
+					owner=doc.owner,
+					total_estimated_cost=doc.total_estimated_cost,
+					total_per_diem=doc.total_per_diem,
+					billable=doc.billable,
+				)
+				for doc in SITE.trips.values()
+			]
+		if doctype == "Trip Traveler":
+			return [
+				_dict(
+					parent=doc.name,
+					parenttype="Travel Trip",
+					idx=idx,
+					employee=row.employee,
+					employee_name=row.employee_name,
+					is_trip_lead=row.is_trip_lead or 0,
+					per_diem_amount=row.per_diem_amount,
+					advance_amount=row.advance_amount,
+					expense_claim=row.expense_claim,
+				)
+				for doc in SITE.trips.values()
+				for idx, row in enumerate(doc.travelers or [], 1)
+			]
+		rows = [
+			_dict(name=name, **record) for (kind, name), record in self.RECORDS.items() if kind == doctype
+		]
+		if rows or doctype in META_FIELDS:
+			return rows
+		raise AssertionError(f"the trip list asked the site for {doctype}")
+
+	def get_all(
+		self,
+		doctype,
+		filters=None,
+		or_filters=None,
+		fields=None,
+		order_by=None,
+		limit_page_length=None,
+		pluck=None,
+		**kwargs,
+	):
+		self.calls.append(
+			(
+				"get_all",
+				doctype,
+				{
+					"filters": filters,
+					"or_filters": or_filters,
+					"fields": fields,
+					"order_by": order_by,
+					"limit_page_length": limit_page_length,
+				},
+			)
+		)
+		table = self.table(doctype)
+		columns = set(META_FIELDS.get(doctype, ())) | {"name"} | set(table[0] if table else ())
+		for field in fields or ():
+			if table and field not in columns:
+				raise Exception(f"(1054, \"Unknown column '{field}' in 'SELECT'\")")
+		rows = [row for row in table if all(_clause_holds(row, clause) for clause in _clauses(filters))]
+		either = _clauses(or_filters)
+		if either:
+			rows = [row for row in rows if any(_clause_holds(row, clause) for clause in either)]
+		if order_by:
+			field, _space, direction = order_by.partition(" ")
+			rows.sort(
+				key=lambda row: _column_key(row.get(field)), reverse=direction.strip().lower() == "desc"
+			)
+		if limit_page_length:
+			rows = rows[:limit_page_length]
+		if pluck:
+			return [row.get(pluck) for row in rows]
+		return [_dict({f: row.get(f) for f in fields}) if fields else _dict(row) for row in rows]
+
+	def asked(self, doctype, kind="get_all"):
+		return [asked for call, name, asked in self.calls if call == kind and name == doctype]
+
+
+def use_real_roles(test, roles):
+	"""The real gates, down to the roles. ``frappe.get_roles`` answers from ``roles``, and the
+	Travel Trip controller that ``_is_coordinator`` imports gets the two stand-ins it needs, as in
+	``TestTheCoordinatorGate``. ``frappe.has_permission`` on a trip is answered as v16 answers it
+	on the site. First, a role must have read on Travel Trip: the doctype's own DocPerms, read
+	from its JSON. Then this app's row-level hook, ``travel_management.permissions.has_permission``,
+	runs for real: coordinators, the owner, the crew."""
+	from erpnext_enhancements.travel_management import permissions
+
+	frappe = sys.modules["frappe"]
+	document = types.ModuleType("frappe.model.document")
+	document.Document = type("Document", (), {})
+	model = types.ModuleType("frappe.model")
+	model.document = document
+	path = os.path.join(APP_DIR, "travel_management", "doctype", "travel_trip", "travel_trip.json")
+	with open(path, encoding="utf-8") as fh:
+		readers = {perm["role"] for perm in json.load(fh)["permissions"] if perm.get("read")}
+
+	def get_roles(user=None):
+		return list(roles.get(user or frappe.session.user, []))
+
+	def has_permission(doctype=None, ptype="read", doc=None, throw=False, **kwargs):
+		SITE.permission_checks.append((doctype, ptype, getattr(doc, "name", doc), throw))
+		user = frappe.session.user
+		allowed = user == "Administrator" or bool(readers & set(get_roles(user)))
+		if allowed and doc is not None:
+			allowed = bool(permissions.has_permission(doc, ptype, user))
+		if throw and not allowed:
+			raise frappe.PermissionError("No permission")
+		return allowed
+
+	for patcher in (
+		mock.patch.dict(sys.modules, {"frappe.model": model, "frappe.model.document": document}),
+		mock.patch.object(frappe, "get_roles", get_roles, create=True),
+		mock.patch.object(frappe.utils, "date_diff", lambda a, b: 0, create=True),
+		mock.patch.object(frappe, "has_permission", has_permission),
+	):
+		patcher.start()
+		test.addCleanup(patcher.stop)
+	sys.modules.pop(CONTROLLER, None)
+
+
+class OutsiderAssertions(MoneyAssertions):
+	def assertNoSecrets(self, payload):
+		text = json.dumps(payload, default=str)
+		for secret in FIXTURE_SECRETS:
+			self.assertNotIn(secret, text, f"{secret} reached someone who is not on the trip")
+
+	def assertOutsiderView(self, result):
+		"""No number, file or sheet anywhere in ``result``, and no money."""
+		self.assertIs(result["limited"], True)
+		self.assertEqual(
+			keys_outside_files(result)
+			& {"booking_reference", "booking_confirmation", "tracking_number", "ref"},
+			set(),
+		)
+		self.assertEqual(result["documents"], [])
+		self.assertEqual([i["documents"] for i in items_of(result["days"]) if i.get("documents")], [])
+		self.assertIsNone(result["sheet_url"])
+		self.assertIsNone(result["my_sheet_url"])
+		self.assertNoSecrets(result)
+		self.assertNoMoney(result)
+		self.assertEqual(personal_paths(result), [])
+
+
+class TestAllTrips(OutsiderAssertions):
+	"""``get_all_trips`` for a member of staff. The gate is patched here and run for real in
+	``TestTheStaffGate``. The viewer is Bo, who travels on some of these trips and made others.
+	The stub's today is Saturday, September 26, 2026."""
+
+	def trips(self):
+		return [
+			all_trip(
+				"T-NOW-2",
+				-1,
+				3,
+				status="In Progress",
+				owner="bo@example.com",
+				# Bo made it and is not on it. Zed's row has no name yet: his id stands in.
+				travelers=[FakeRow(name="T1", employee="EMP-Z", employee_name=None)],
+				travel_for_doctype="Customer",
+				travel_for_name="CUST-1",
+			),
+			# Bo made it and travels on it: his, not one he organized for others.
+			all_trip("T-NOW-1", -3, 0, status="In Progress", owner="bo@example.com"),
+			all_trip("T-TODAY", 0, 0),
+			all_trip(
+				"T-UP-2",
+				20,
+				22,
+				status="Planning",
+				owner="bo@example.com",
+				clean=True,
+				travel_for_doctype=None,
+				travel_for_name=None,
+			),
+			all_trip("T-UP-1", 1, 2),
+			# Both dates are required. A row that got past validation without one is coming up, last.
+			all_trip("T-BLANK", -50, None, status="Planning"),
+			all_trip("T-PAST-3", -400, -398, status="Closed", travel_for_name="PRJ-GONE"),
+			all_trip(
+				"T-PAST-1",
+				-10,
+				-1,
+				status="Completed",
+				# The trip lead is the last row: they still come first.
+				travelers=[
+					FakeRow(name="T1", employee="EMP-C", employee_name="Cy"),
+					FakeRow(name="T2", employee="EMP-A", employee_name="Ann", is_trip_lead=1),
+				],
+			),
+			all_trip("T-PAST-2", -40, -30, status="Closed"),
+		]
+
+	def setUp(self):
+		docs = self.trips()
+		install_site(docs[0])
+		self.site = AllTripsSite(self, *docs[1:])
+		patcher = mock.patch.object(travel, "_is_staff", return_value=True)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def answer(self, user="bo@example.com"):
+		sys.modules["frappe"].session.user = user
+		return travel.get_all_trips()
+
+	def test_every_trip_is_listed_once_grouped_and_in_order(self):
+		answer = self.answer()
+		self.assertEqual(
+			[(t["name"], t["group"]) for t in answer["trips"]],
+			[
+				# On the road now, by first day. A trip ending today is still on the road.
+				("T-NOW-1", "now"),
+				("T-NOW-2", "now"),
+				("T-TODAY", "now"),
+				# Coming up, by first day. The one missing a date is last.
+				("T-UP-1", "upcoming"),
+				("T-UP-2", "upcoming"),
+				("T-BLANK", "upcoming"),
+				# Earlier trips, the most recently ended first. One ending yesterday is over.
+				("T-PAST-1", "past"),
+				("T-PAST-2", "past"),
+				("T-PAST-3", "past"),
+			],
+		)
+		self.assertEqual(answer["more"], 0)
+		# "Anyone's trips" is every trip, the Closed ones included.
+		self.assertEqual(
+			{t["status"] for t in answer["trips"] if t["group"] == "past"}, {"Completed", "Closed"}
+		)
+		# Nothing left off, so the table was not counted.
+		self.assertEqual(self.site.asked("Travel Trip", "count"), [])
+
+	def test_each_row_is_the_contract_and_nothing_more(self):
+		answer = self.answer()
+		self.assertEqual(set(answer), {"trips", "more"})
+		rows = {t["name"]: t for t in answer["trips"]}
+		self.assertEqual(
+			rows["T-NOW-1"],
+			{
+				"name": "T-NOW-1",
+				"purpose": "Trip T-NOW-1",
+				"status": "In Progress",
+				"travel_type": "Domestic",
+				"start_date": "2026-09-23",
+				"end_date": "2026-09-26",
+				"travel_for": "Harbor Fountain",
+				"crew": ["Ann", "Bo", "Cy"],
+				"lead": "Ann",
+				"mine": True,
+				"organizing": False,
+				"group": "now",
+			},
+		)
+		for row in answer["trips"]:
+			self.assertEqual(set(row), set(rows["T-NOW-1"]), row["name"])
+		self.assertEqual((rows["T-BLANK"]["start_date"], rows["T-BLANK"]["end_date"]), ("2026-08-07", None))
+		self.assertNoMoney(answer)
+		self.assertNoSecrets(answer)
+
+	def test_it_reads_no_money_and_no_bookings(self):
+		self.answer()
+		asked = {name for call, name, _asked in self.site.calls}
+		# The trips, their crews and what they are for. No booking table, no file, no cost row.
+		self.assertEqual(asked, {"Travel Trip", "Trip Traveler", "Project", "Customer"})
+		for doctype in ("Travel Trip", "Trip Traveler"):
+			for read in self.site.asked(doctype):
+				self.assertEqual(money_paths({field: 1 for field in read["fields"]}), [], doctype)
+		self.assertEqual(
+			self.site.asked("Travel Trip")[0]["fields"],
+			[
+				"name",
+				"purpose",
+				"status",
+				"travel_type",
+				"start_date",
+				"end_date",
+				"travel_for_doctype",
+				"travel_for_name",
+				"owner",
+			],
+		)
+
+	def test_the_trip_lead_comes_first(self):
+		rows = {t["name"]: t for t in self.answer()["trips"]}
+		self.assertEqual((rows["T-PAST-1"]["crew"], rows["T-PAST-1"]["lead"]), (["Ann", "Cy"], "Ann"))
+		# No lead: the trip's order, and a person whose name is blank shows as their id.
+		self.assertEqual((rows["T-NOW-2"]["crew"], rows["T-NOW-2"]["lead"]), (["EMP-Z"], None))
+		self.assertEqual((rows["T-UP-2"]["crew"], rows["T-UP-2"]["lead"]), ([], None))
+
+	def test_mine_and_organizing(self):
+		rows = {t["name"]: t for t in self.answer()["trips"]}
+		relation = {name: (row["mine"], row["organizing"]) for name, row in rows.items()}
+		self.assertEqual(relation["T-NOW-1"], (True, False), "he made it and travels on it: his")
+		self.assertEqual(relation["T-NOW-2"], (False, True), "he made it for someone else")
+		self.assertEqual(relation["T-UP-2"], (False, True), "he made it and nobody is on it yet")
+		self.assertEqual(relation["T-UP-1"], (True, False), "the office made it; he travels on it")
+		self.assertEqual(relation["T-PAST-1"], (False, False), "neither")
+		# Someone with no Employee record (the office) travels on nothing, and made the rest.
+		rows = {t["name"]: t for t in self.answer("office@example.com")["trips"]}
+		self.assertFalse(any(row["mine"] for row in rows.values()))
+		self.assertEqual(
+			sorted(name for name, row in rows.items() if row["organizing"]),
+			["T-BLANK", "T-PAST-1", "T-PAST-2", "T-PAST-3", "T-TODAY", "T-UP-1"],
+		)
+
+	def test_what_it_is_for_is_the_jobs_name(self):
+		rows = {t["name"]: t for t in self.answer()["trips"]}
+		self.assertEqual(rows["T-NOW-1"]["travel_for"], "Harbor Fountain")
+		self.assertEqual(rows["T-NOW-2"]["travel_for"], "Harbor Resort")
+		self.assertIsNone(rows["T-UP-2"]["travel_for"], "a trip for nothing in particular")
+		self.assertIsNone(rows["T-PAST-3"]["travel_for"], "a Project that is gone")
+		# One read per doctype for every trip on the list, and only the name field.
+		reads = self.site.asked("Project")
+		self.assertEqual(len(reads), 1)
+		self.assertEqual(reads[0]["fields"], ["name", "project_name"])
+		self.assertEqual(reads[0]["filters"], {"name": ["in", ["PRJ-1", "PRJ-GONE"]]})
+
+	def test_a_name_that_cannot_be_read_leaves_the_list_standing(self):
+		frappe = sys.modules["frappe"]
+
+		def boom(doctype):
+			raise Exception(f"DocType {doctype} not found")
+
+		with mock.patch.object(frappe, "get_meta", boom):
+			rows = self.answer()["trips"]
+		self.assertEqual(len(rows), 9)
+		self.assertEqual({row["travel_for"] for row in rows}, {None})
+
+	def test_today_is_the_sites(self):
+		# Four days on: the trips on the road and the next one are over. Nothing about a trip moved.
+		with mock.patch.object(travel, "today", return_value="2026-09-30"):
+			answer = self.answer()
+		groups = {t["name"]: t["group"] for t in answer["trips"]}
+		self.assertEqual(
+			[name for name, group in groups.items() if group == "past"][:4],
+			["T-NOW-2", "T-UP-1", "T-NOW-1", "T-TODAY"],
+		)
+		self.assertEqual(groups["T-UP-2"], "upcoming")
+		self.assertIn(["end_date", ">=", "2026-09-30"], self.site.asked("Travel Trip")[0]["or_filters"])
+		code = re.sub(r'""".*?"""', "", inspect.getsource(travel.get_all_trips), flags=re.S)
+		for forbidden in ("datetime.now", "utcnow", "date.today", "now_datetime"):
+			self.assertNotIn(forbidden, code)
+
+	def test_the_cap_drops_the_trips_furthest_from_today_and_says_how_many(self):
+		del SITE.trips["T-BLANK"]  # it has the earliest first day; this is about the rest
+		with mock.patch.object(travel, "ALL_TRIPS_LIMIT", 3):
+			answer = self.answer()
+		self.assertEqual([t["name"] for t in answer["trips"]], ["T-NOW-1", "T-NOW-2", "T-TODAY"])
+		self.assertEqual(answer["more"], 5)
+		# No room left: the earlier trips were never asked for (a limit of 0 is every row to frappe).
+		self.assertEqual(len(self.site.asked("Travel Trip")), 1)
+		self.assertEqual(self.site.asked("Travel Trip")[0]["limit_page_length"], 3)
+
+		self.site.calls.clear()
+		with mock.patch.object(travel, "ALL_TRIPS_LIMIT", 6):
+			answer = self.answer()
+		self.assertEqual(
+			[t["name"] for t in answer["trips"]],
+			["T-NOW-1", "T-NOW-2", "T-TODAY", "T-UP-1", "T-UP-2", "T-PAST-1"],
+		)
+		self.assertEqual(answer["more"], 2)
+		self.assertEqual([read["limit_page_length"] for read in self.site.asked("Travel Trip")], [6, 1])
+		self.assertEqual(len(self.site.asked("Travel Trip", "count")), 1)
+
+		self.assertEqual(travel.ALL_TRIPS_LIMIT, 300)
+
+	def test_the_gate_comes_before_any_read(self):
+		frappe = sys.modules["frappe"]
+		with mock.patch.object(travel, "_is_staff", return_value=False):
+			with self.assertRaises(frappe.PermissionError):
+				self.answer()
+		self.assertEqual(self.site.calls, [])
+		# And the table is read with get_all only below the gate.
+		source = inspect.getsource(travel.get_all_trips)
+		self.assertLess(source.index("_is_staff()"), source.index("frappe.get_all("))
+
+
+class TestTheStaffGate(OutsiderAssertions):
+	"""``_is_staff`` for real, down to the roles, and the two doors it keeps: the list of every
+	trip, and a trip someone cannot read. Staff is a coordinator or the Employee role. A portal
+	customer (a Website User) and a desk account whose profile has no Employee role are not staff,
+	and neither is Guest."""
+
+	ROLES = {
+		"bo@example.com": ["Employee"],
+		"zed@example.com": ["Employee"],
+		"office@example.com": ["Employee"],
+		"tc@example.com": ["Travel Coordinator"],
+		"hr@example.com": ["HR Manager"],
+		"sm@example.com": ["System Manager"],
+		# A customer signed in to the portal: a Website User.
+		"portal@example.com": ["Customer"],
+		# A desk account whose Role Profile has no Employee role.
+		"desk@example.com": ["Projects User"],
+		"Guest": ["Guest"],
+	}
+
+	def setUp(self):
+		self.doc = install_site()
+		self.doc.creation = "2026-09-01 09:00:00"
+		self.doc.owner = "office@example.com"
+		SITE.users["zed@example.com"] = "EMP-Z"
+		self.site = AllTripsSite(self)
+		use_real_roles(self, self.ROLES)
+
+	def as_user(self, user):
+		sys.modules["frappe"].session.user = user
+
+	def test_who_is_staff(self):
+		for user, staff in (
+			("bo@example.com", True),
+			("zed@example.com", True),
+			("tc@example.com", True),
+			("hr@example.com", True),
+			("sm@example.com", True),
+			("Administrator", True),
+			("portal@example.com", False),
+			("desk@example.com", False),
+			("Guest", False),
+			("", False),
+		):
+			self.as_user(user)
+			self.assertIs(travel._is_staff(), staff, user)
+		# Guest is never staff, whatever a misconfigured site says its roles are.
+		self.as_user("Guest")
+		with mock.patch.dict(self.ROLES, {"Guest": ["Guest", "Employee", "Travel Coordinator"]}):
+			self.assertIs(travel._is_staff(), False)
+
+	def test_only_staff_may_list_every_trip(self):
+		frappe = sys.modules["frappe"]
+		for user in ("portal@example.com", "desk@example.com", "Guest"):
+			self.site.calls.clear()
+			self.as_user(user)
+			with self.assertRaises(frappe.PermissionError):
+				travel.get_all_trips()
+			self.assertEqual(self.site.calls, [], f"{user}: the trips were read before the gate")
+		for user in ("zed@example.com", "tc@example.com", "Administrator"):
+			self.as_user(user)
+			self.assertEqual([t["name"] for t in travel.get_all_trips()["trips"]], ["TRIP-1"], user)
+
+	def test_only_staff_may_open_a_trip_they_cannot_read(self):
+		frappe = sys.modules["frappe"]
+		for user in ("portal@example.com", "desk@example.com", "Guest"):
+			self.as_user(user)
+			with self.assertRaises(frappe.PermissionError):
+				travel.get_trip_itinerary("TRIP-1")
+		# Zed is staff and not on it: the outsider view. Bo travels on it, the office made it and a
+		# coordinator sees every trip: the whole answer, as before.
+		self.as_user("zed@example.com")
+		self.assertOutsiderView(travel.get_trip_itinerary("TRIP-1"))
+		for user in ("bo@example.com", "office@example.com", "tc@example.com"):
+			self.as_user(user)
+			self.assertIs(travel.get_trip_itinerary("TRIP-1")["limited"], False, user)
+
+
+class TestTheOutsidersItinerary(OutsiderAssertions):
+	"""``get_trip_itinerary`` for a member of staff who is not on the trip (Zed). The permission
+	hook and the staff gate are the real ones (``use_real_roles``). The contacts card is filled
+	(``ContactsSite``), so the answer is compared with everything it can carry."""
+
+	ROLES = {
+		"bo@example.com": ["Employee"],
+		"zed@example.com": ["Employee"],
+		"office@example.com": ["Employee"],
+		"tc@example.com": ["Travel Coordinator"],
+	}
+
+	def setUp(self):
+		self.doc = install_site()
+		self.doc.creation = "2026-09-01 09:00:00"
+		SITE.users["zed@example.com"] = "EMP-Z"
+		ContactsSite(self, self.doc)  # the office made the trip
+		use_real_roles(self, self.ROLES)
+
+	def call(self, user="zed@example.com", as_employee=None):
+		sys.modules["frappe"].session.user = user
+		return travel.get_trip_itinerary("TRIP-1", as_employee)
+
+	def full(self, as_employee=None):
+		"""The answer Zed would get if he could read the trip."""
+		frappe = sys.modules["frappe"]
+		with mock.patch.object(frappe, "has_permission", lambda *a, **k: True):
+			return self.call(as_employee=as_employee)
+
+	def test_staff_not_on_the_trip_see_it_without_numbers_or_files(self):
+		result = self.call()
+		self.assertOutsiderView(result)
+		# The whole crew: they are not on it.
+		self.assertIsNone(result["viewing"])
+		self.assertIs(result["viewer_on_trip"], False)
+		self.assertEqual(result["viewer_employee"], "EMP-Z")
+		# Everything else a crew member sees: every day and booking, the crew and whom to call.
+		items = items_of(result["days"])
+		self.assertEqual(
+			sorted({item["type"] for item in items}),
+			["agenda", "flight", "freight", "ground", "hotel_checkin", "hotel_checkout"],
+		)
+		flight = next(item for item in items if item.get("flight_number") == "WN 1")
+		self.assertEqual([m["employee_name"] for m in flight["members"]], ["Ann", "Bo"])
+		self.assertEqual(flight["travelers"], ["Ann", "Bo"])
+		shipment = next(item for item in items if item["type"] == "freight")
+		self.assertEqual((shipment["carrier"], shipment["received_by"]), ("Old Dominion", "Cy"))
+		self.assertEqual([c["employee"] for c in result["crew"]], ["EMP-A", "EMP-B", "EMP-C"])
+		self.assertEqual(result["contacts"]["site"]["label"], "Harbor Fountain")
+		self.assertEqual(result["contacts"]["booked_by"]["name"], "Olive Office")
+		self.assertEqual(result["contacts"]["lead"]["name"], "Ann")
+		self.assertEqual([h["name"] for h in result["contacts"]["hotels"]], ["Hotel One"])
+		self.assertEqual(len(result["days"]), len(self.full()["days"]))
+
+	def test_it_is_the_whole_answer_less_exactly_the_withheld_keys(self):
+		for who in (None, "crew", "EMP-A", "EMP-B", "EMP-C"):
+			self.assertEqual(
+				self.call(as_employee=who),
+				dict(as_an_outsider_would_get_it(self.full(who)), limited=True),
+				who,
+			)
+
+	def test_every_key_the_answer_sends_is_on_one_side(self):
+		sent = set()
+		for who in (None, "crew", "EMP-A", "EMP-B", "EMP-C"):
+			sent |= keys_outside_files(self.full(who))
+		self.assertEqual(
+			sent - OUTSIDER_SEES - OUTSIDER_WITHHELD,
+			set(),
+			"get_trip_itinerary sends a key nobody decided about. If it identifies a booking (a "
+			"number, a code, a file), add it to api.travel's _OUTSIDER_REMOVED; if not, to "
+			"OUTSIDER_SEES here.",
+		)
+		self.assertEqual(OUTSIDER_SEES & OUTSIDER_WITHHELD, set())
+		self.assertEqual(
+			travel._OUTSIDER_REMOVED | travel._OUTSIDER_EMPTIED | travel._OUTSIDER_NULLED, OUTSIDER_WITHHELD
+		)
+		# The fixture sends every withheld key, or the checks above would pass on nothing.
+		self.assertLessEqual(OUTSIDER_WITHHELD, sent)
+		full = json.dumps(self.full(), default=str)
+		for secret in FIXTURE_SECRETS:
+			self.assertIn(secret, full, f"the fixture no longer carries {secret}")
+
+	def test_they_may_view_as_anyone_on_the_crew_and_it_is_withheld_there_too(self):
+		frappe = sys.modules["frappe"]
+		for who in ("EMP-A", "EMP-B", "EMP-C", "crew"):
+			result = self.call(as_employee=who)
+			self.assertOutsiderView(result)
+			self.assertEqual(result["viewing"], None if who == "crew" else who)
+		ann = items_of(self.call(as_employee="EMP-A")["days"])
+		self.assertEqual(
+			[(i["type"], i.get("flight_number")) for i in ann if i["type"] == "flight"],
+			[("flight", "DL 9"), ("flight", "WN 1")],
+		)
+		# Still only the crew: himself (he is not on it) and a filter are refused, and never named.
+		for stranger in ("EMP-Z", {"name": "EMP-A"}):
+			with self.assertRaises(frappe.ValidationError) as refused:
+				self.call(as_employee=stranger)
+			self.assertEqual(str(refused.exception), "That person is not on this trip.")
+
+	def test_who_can_read_the_trip_gets_it_all_as_before(self):
+		# An outsider's answer first: the redaction must change nothing it shares with the next.
+		self.assertOutsiderView(self.call())
+		for user, viewing, refs in (
+			("bo@example.com", "EMP-B", ("PNR-B", "H-B", "RC-1")),
+			("office@example.com", None, ("PNR-A", "PNR-B", "H-A", "H-B", "RC-1", "PRO-1")),
+			("tc@example.com", None, ("PNR-A", "PNR-B", "H-A", "H-B", "RC-1", "PRO-1")),
+		):
+			result = self.call(user)
+			self.assertIs(result["limited"], False, user)
+			self.assertEqual(result["viewing"], viewing, user)
+			self.assertTrue(result["documents"], user)
+			self.assertEqual(result["sheet_url"], views.trip_sheet_url("TRIP-1"), user)
+			text = json.dumps(result, default=str)
+			for ref in refs:
+				self.assertIn(ref, text, f"{user} lost {ref}")
+			self.assertNoMoney(result)
+
+
+class TestTheOutsiderViewItself(unittest.TestCase):
+	def test_it_drops_the_numbers_at_any_depth_and_changes_nothing_it_is_given(self):
+		given = {
+			"days": [
+				{"items": [{"members": [{"ref": "X1", "employee": "EMP-A"}], "booking_reference": "X2"}]}
+			],
+			"later": ({"booking_confirmation": "X3", "tracking_number": "X4", "keep": 1},),
+			"documents": [{"url": "/private/files/x.pdf"}],
+			"items": [{"documents": [{"url": "/private/files/y.pdf"}]}],
+			"sheet_url": "/printview?x",
+			"my_sheet_url": "/printview?y",
+			"notes": None,
+		}
+		before = json.loads(json.dumps(given))
+		self.assertEqual(
+			travel._outsider_view(given),
+			{
+				"days": [{"items": [{"members": [{"employee": "EMP-A"}]}]}],
+				"later": [{"keep": 1}],
+				"documents": [],
+				"items": [{"documents": []}],
+				"sheet_url": None,
+				"my_sheet_url": None,
+				"notes": None,
+			},
+		)
+		self.assertEqual(json.loads(json.dumps(given)), before)

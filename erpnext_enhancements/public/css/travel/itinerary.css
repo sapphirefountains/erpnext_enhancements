@@ -15,6 +15,9 @@
 	--ti-border: #e2e6ea;
 	--ti-accent: #00a0dd;
 	--ti-accent-soft: #e6f6fd;
+	/* Accent as small words ("All trips", "You're on it"): 4.9:1 on --ti-accent-soft, 5.4:1 on
+	   the surface (dark: 8:1 and 9:1). The accent itself is too light for text that size. */
+	--ti-accent-text: #00729e;
 	/* Emergency, as words on the page (the 911 button itself is the literal red below). */
 	--ti-danger-text: #c62828;
 	/* "You're offline — showing your itinerary as saved …": 6.8:1 (dark: 10:1). */
@@ -31,6 +34,7 @@
 		--ti-border: #313a44;
 		--ti-accent: #29b6f6;
 		--ti-accent-soft: #103244;
+		--ti-accent-text: #7fd3fb;
 		--ti-danger-text: #ff8a80;
 		--ti-offline-bg: #3a2a0d;
 		--ti-offline-text: #ffd58a;
@@ -44,6 +48,12 @@
 	color: var(--ti-text);
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+
+/* Frappe's website stylesheet (Bootstrap's $headings-color, #171717) colors h1-h6 outright and
+   never follows prefers-color-scheme, so a heading here does not inherit .ti-shell's color: on a
+   dark phone the list's "On the road now" / "Coming up" came out black on black. (0,1,1) beats
+   Bootstrap's bare h2 (0,0,1). Same fix as feedback.bundle.css. */
+.ti-shell :is(h1, h2, h3, h4, h5, h6) { color: var(--ti-text); }
 
 .ti-boot,
 .ti-empty,
@@ -144,6 +154,29 @@
 	font-style: italic;
 }
 
+/* "All trips": first in the bar, the way to the list of every trip (?view=trips). As tall as
+   the trip chips beside it (the bar stretches them), one line, in the accent. */
+.ti-all-chip {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 44px;
+	border: 1px solid var(--ti-border);
+	background: var(--ti-surface);
+	color: var(--ti-accent-text);
+	border-radius: 12px;
+	padding: 8px 14px;
+	font: inherit;
+	font-size: 0.92rem;
+	font-weight: 650;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.ti-all-chip:active { background: var(--ti-accent-soft); }
+.ti-all-icon { line-height: 1; }
+
 /* Person picker: "Me", "Whole crew", then each person on the trip. One row that scrolls
    sideways on a phone, like the trip switcher, so a big crew never pushes the day list down. */
 .ti-people {
@@ -185,7 +218,8 @@
 }
 
 .ti-person-chip:focus-visible,
-.ti-trip-chip:focus-visible {
+.ti-trip-chip:focus-visible,
+.ti-all-chip:focus-visible {
 	outline: 2px solid var(--ti-accent);
 	outline-offset: 2px;
 }
@@ -672,6 +706,214 @@ summary.ti-place-notes-head:focus-visible {
 .ti-doc:focus-visible {
 	outline: 2px solid var(--ti-accent);
 	outline-offset: 2px;
+}
+
+/* Someone else's trip (the server's `limited`): a quiet line saying why there are no numbers
+   and no files. */
+.ti-limited {
+	margin: 0 0 14px;
+	padding: 8px 12px;
+	border: 1px dashed var(--ti-border);
+	border-radius: 10px;
+	color: var(--ti-muted);
+	font-size: 0.86rem;
+	line-height: 1.4;
+}
+
+/* "See all trips", under "No upcoming or recent trips". */
+.ti-empty-more {
+	margin-top: -28px;
+	padding: 0 16px 32px;
+	text-align: center;
+}
+
+.ti-all-link {
+	display: inline-block;
+	padding: 10px 4px;
+	color: var(--ti-accent-text);
+	font-weight: 600;
+	text-decoration: underline;
+}
+
+/* The list of all trips (?view=trips): a group per heading ("On the road now", "Coming up",
+   "Earlier trips"), each trip a card that is one big link. */
+.ti-list-note {
+	margin: 0 0 12px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--ti-offline-bg);
+	color: var(--ti-offline-text);
+	font-size: 0.88rem;
+	font-weight: 600;
+	line-height: 1.4;
+}
+
+/* No list: plain words, like the page's other empty states, then their own trips. */
+.ti-list-offline {
+	text-align: center;
+	color: var(--ti-muted);
+	padding: 32px 16px 20px;
+}
+
+.ti-list-group { margin-bottom: 20px; }
+
+.ti-list-group-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 4px 8px;
+}
+
+.ti-list-group-title {
+	margin: 0;
+	font-size: 1rem;
+	font-weight: 700;
+}
+
+.ti-list-count {
+	min-width: 1.6em;
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--ti-surface);
+	border: 1px solid var(--ti-border);
+	color: var(--ti-muted);
+	font-size: 0.76rem;
+	font-weight: 700;
+	text-align: center;
+	box-sizing: border-box;
+}
+
+.ti-list-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* Room on the right for the chevron that says it opens. */
+.ti-list-row {
+	position: relative;
+	display: block;
+	min-height: 44px;
+	padding: 12px 34px 12px 14px;
+	border: 1px solid var(--ti-border);
+	border-radius: 12px;
+	background: var(--ti-surface);
+	color: var(--ti-text);
+	text-decoration: none;
+}
+
+.ti-list-row::after {
+	content: "›";
+	position: absolute;
+	top: 50%;
+	right: 14px;
+	transform: translateY(-50%);
+	color: var(--ti-muted);
+	font-size: 1.4rem;
+	line-height: 1;
+}
+
+/* On the road now: marked down the left, in the accent. */
+.ti-list-now .ti-list-row {
+	border-left: 4px solid var(--ti-accent);
+	padding-left: 11px;
+}
+
+.ti-list-row:active { background: var(--ti-accent-soft); }
+
+@media (hover: hover) {
+	.ti-list-row:hover { border-color: var(--ti-accent); }
+}
+
+/* Bootstrap's a:hover (0,1,1) recolors and underlines links; a trip card is one big link, and
+   its text must stay the card's. */
+.ti-list-row:hover,
+.ti-list-row:focus {
+	color: var(--ti-text);
+	text-decoration: none;
+}
+
+.ti-all-link:hover { color: var(--ti-accent-text); }
+
+.ti-list-row:focus-visible,
+.ti-list-more:focus-visible,
+.ti-all-link:focus-visible {
+	outline: 2px solid var(--ti-accent);
+	outline-offset: 2px;
+}
+
+.ti-list-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 8px;
+}
+
+.ti-list-title {
+	flex: 1 1 10rem;
+	min-width: 0;
+	font-weight: 650;
+	font-size: 0.98rem;
+	overflow-wrap: anywhere;
+}
+
+.ti-list-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.ti-tag {
+	padding: 2px 8px;
+	border: 1px solid var(--ti-border);
+	border-radius: 999px;
+	color: var(--ti-muted);
+	font-size: 0.72rem;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.ti-tag-mine {
+	border-color: transparent;
+	background: var(--ti-accent-soft);
+	color: var(--ti-accent-text);
+}
+
+.ti-list-dates { font-size: 0.88rem; margin-top: 3px; }
+.ti-list-sub { color: var(--ti-muted); font-size: 0.86rem; margin-top: 2px; overflow-wrap: anywhere; }
+
+.ti-list-crew {
+	display: flex;
+	gap: 6px;
+	margin-top: 6px;
+	color: var(--ti-muted);
+	font-size: 0.84rem;
+}
+
+.ti-list-crew-icon { flex: 0 0 auto; line-height: 1.3; }
+.ti-list-crew-names { min-width: 0; overflow-wrap: anywhere; }
+
+/* "Show N more": the rest of the earlier trips, in place. */
+.ti-list-more {
+	width: 100%;
+	min-height: 44px;
+	margin-top: 8px;
+	border: 1px solid var(--ti-border);
+	border-radius: 10px;
+	background: var(--ti-surface);
+	color: var(--ti-accent-text);
+	font: inherit;
+	font-size: 0.9rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+/* More trips than the server sends (it stops at 300). */
+.ti-list-capped {
+	padding: 0 16px 8px;
+	color: var(--ti-muted);
+	font-size: 0.84rem;
+	text-align: center;
 }
 
 /* Read out, never shown: "(opens in a new tab)". */
