@@ -823,7 +823,7 @@ jobs:
       # the Files moved under kb_action, the submit with kb_publish and the opened modified, the
       # supersede), a failure at any step writing nothing, a deadlock retried from the start, a
       # double-click publishing once, token and AI-card refusals on the approval path, and
-      # decisions (a) and (b). Own step: it installs its own frappe stub. Since v1.555.1 (PR 3's
+      # decisions (a) and (b). Own step: it installs its own frappe stub. Since v1.556.1 (PR 3's
       # review fixes) also Frappe's own Discard refused (it left an article that could never be
       # revised or retired), Retire's role check before any read, an Error Log that outlives the
       # refusal it explains (the stub's log is in the transaction now, as v16's is), and the

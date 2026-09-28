@@ -3685,12 +3685,14 @@ class TestItineraryBackForward(unittest.TestCase):
 	def test_history_calls_come_only_from_the_tap_and_the_boot(self):
 		code = _strip_js_comments(_read(self.ITINERARY_JS))
 		self.assertNotIn("beforeunload", code)
-		# One push, in writeTripEntry. It is called with push=true from exactly four taps, pinned
+		# One push, in writeTripEntry. It is called with push=true from exactly six taps, pinned
 		# as the whole set: a trip chip (the trip only, which drops ?as=, ?view= and ?file=), a
 		# person in the picker (trip and person, keeping the screen), a screen tab ("Documents",
-		# or "Day by day" when the day list is not the entry behind) and a picture (the viewer,
-		# &file=, over the screen it was opened from). Deliberately four since the Documents
-		# screen and the picture viewer (was: two, the chip and the person picker).
+		# or "Day by day" when the day list is not the entry behind), a picture (the viewer,
+		# &file=, over the screen it was opened from), "All trips" (?view=trips, the list of all
+		# trips, from the chip and from "See all trips", both through openAllTrips) and a row on
+		# that list (the trip only, like a chip). Deliberately six since the list of all trips
+		# (was: four, since the Documents screen and the picture viewer; before that two).
 		self.assertEqual(code.count("pushState("), 1)
 		self.assertEqual(
 			sorted(re.findall(r"writeTripEntry\(true[^;]*\);", code)),
@@ -3700,6 +3702,8 @@ class TestItineraryBackForward(unittest.TestCase):
 					"writeTripEntry(true, state.currentTrip, choice.as, state.currentView);",
 					"writeTripEntry(true, state.currentTrip, state.currentAs, view);",
 					"writeTripEntry(true, state.currentTrip, state.currentAs, state.currentView, doc.name);",
+					"writeTripEntry(true, '', '', 'trips');",
+					"writeTripEntry(true, row.name);",
 				]
 			),
 		)
@@ -3713,12 +3717,25 @@ class TestItineraryBackForward(unittest.TestCase):
 			r"chip\.addEventListener\('click', function \(\) \{\s*"
 			r"if \(choice\.as !== shown\) writeTripEntry\(true, state\.currentTrip, choice\.as, state\.currentView\);",
 		)
-		# The screen tab and the picture push only from their own functions, which do nothing
-		# while "Report a problem" is open: the panel owns Back and every history write then.
-		for name in ("openScreen", "openPicture", "closePicture"):
+		# The screen tab, the picture and "All trips" push only from their own functions, which
+		# do nothing while "Report a problem" is open: the panel owns Back and every history
+		# write then. So does a row on the list, whose tap checks the same before it pushes.
+		for name in ("openScreen", "openPicture", "closePicture", "openAllTrips"):
 			start = code.index(f"function {name}(")
 			fn = code[start : code.index("\n\tfunction ", start + 1)]
 			self.assertIn("captureOpen()", fn, name)
+		row = code[code.index("function tripRow(") :]
+		row = row[: row.index("\n\tfunction ")]
+		self.assertLess(row.index("if (captureOpen()) return;"), row.index("writeTripEntry(true, row.name);"))
+		# The list is never pushed from popstate's path: showAllTrips and loadAllTrips write no
+		# history, and "All trips" steps Back onto the list when it is the entry behind.
+		for name in ("showAllTrips", "loadAllTrips", "showNoTrip", "renderAllTrips"):
+			start = code.index(f"function {name}(")
+			fn = code[start : code.index("\n\tfunction ", start + 1)]
+			for forbidden in ("writeTripEntry", "State(", "history."):
+				self.assertNotIn(forbidden, fn, f"{name} calls {forbidden}")
+		start = code.index("function openAllTrips(")
+		self.assertIn("window.history.back()", code[start : code.index("\n\tfunction ", start + 1)])
 		# Close and Escape go Back onto the screen underneath rather than pushing it again.
 		start = code.index("function closePicture(")
 		close = code[start : code.index("\n\tfunction ", start + 1)]

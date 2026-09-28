@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.555.1] - 2026-09-28
+## [1.556.1] - 2026-09-28
 
 **The review fixes for WI-080 PR 3 (#1144), which merged before they landed.** Four defects, all
 confirmed against Frappe 16.35.0 (`origin/version-16`). Each one needs a KB role to reach, and
@@ -71,6 +71,163 @@ without a database edit.
   `tests/test_knowledge_base_schema.py` pins the two discard hooks refusing whatever flag is set.
   The `knowledge_base` README gains a "Fixed after PR 3's review" section and says to grant the
   roles once this release is live.
+
+## [1.556.0] - 2026-09-28
+
+**Anyone on staff can see anyone's trips, on the itinerary pages.** On the Travel hub, *My trips*
+(the desk list of your own trips) is now **Trips**. It opens `/itinerary?view=trips`, a list of
+every trip, and each trip opens on its non-desk itinerary page. Nik asked for this on
+2026-09-28: "Change it from My Trips to just Trips so anyone can see anyone's trips — should link
+to the non-desk form of it automatically". He chose **itinerary pages only**. The desk Travel
+Trip list, form, Report view and REST stay row-scoped, because money is permlevel 0 there, and
+widening them would have shown every trip's costs to all crew.
+
+### Added
+
+- **`api/travel.get_all_trips()`**, for staff only: anyone with the Employee role, or a
+  coordinator.
+  - Guests and Website Users are refused before anything is read.
+  - It returns every trip, all statuses included, grouped server-side (site-local today) as
+    now, upcoming and past.
+  - Each row carries the purpose, dates, status, travel type, the job it is for, and the crew,
+    lead first. It also says whether you're on the trip or organized it.
+  - It is capped at 300, with a count of any left off. No money, no confirmation numbers, no
+    files.
+- **`/itinerary?view=trips`**, a screen of its own and a history entry of its own.
+  - Trips are grouped under *On the road now*, *Coming up* and *Earlier trips*. Earlier trips
+    show 10 at a time behind *Show N more*, which writes no history.
+  - Each row is a link that pushes `?trip=<name>`, so Back returns to the list.
+  - An *All trips* chip leads to it, and so does *See all trips* on the empty page.
+  - A reload shows the list again.
+  - Offline, it says the list needs a connection and offers your own saved trips.
+  - A late answer for a screen already left is dropped.
+  - Every value is drawn as text.
+- **A limited view for a trip you're not on.** Any staff member can open any trip, but someone
+  who is not on its crew, doesn't own it and isn't a coordinator sees:
+  - the plan, the crew and the contacts;
+  - no confirmation, booking or tracking numbers, no files and no trip-sheet links;
+  - a quiet line saying why.
+
+  A PNR and a surname are enough to change someone's flight, so those numbers stay with the
+  people on the trip. `_outsider_view` builds a redacted copy of the answer. A test pins every
+  key the full answer sends against either the withheld set or the shown set, so a new
+  confirmation-like key cannot slip through unnoticed. Full viewers get `limited: false` and an
+  unchanged answer.
+- The My Travel block gets a quiet *See everyone's trips* link.
+
+### Changed
+
+- **The hub and the sidebar:** *My trips* is now **Trips**, a URL to `/itinerary?view=trips`.
+  Both files have a new stamp, and patch `reload_travel_hub_trips` force-syncs them. It cannot
+  raise.
+- **The sidebar keeps a *Trip list* item** (Travel Trip) under *Office*. v16 picks the sidebar
+  for a Travel Trip list, form or calendar from the sidebars with an item linking Travel Trip
+  (`sidebar.js` `resolve_sidebar`). With *My trips* turned into a URL, every trip page would
+  have swapped the Travel sidebar for frappe's auto-generated module sidebar. This came from the
+  review.
+- **The phone keeps your own trips first.** `/itinerary` keeps at most 40 saved answers per
+  person. It now ranks the person's own trips ahead of colleagues' when it trims, so browsing
+  other people's trips the night before a flight can't push your own itinerary off the phone.
+  Before this, the trim went by age alone. This came from the review.
+
+### Fixed
+
+- **Dark-mode headings.** Frappe's website stylesheet colors h1–h6 a fixed #171717 (Bootstrap's
+  `$headings-color`) and ignores `prefers-color-scheme`. So the new list's headings drew black on
+  black on a dark phone. `.ti-shell :is(h1…h6)` now takes the page's text color, the same fix as
+  `feedback.bundle.css`, and a trip card keeps its own color on hover. This came from the review.
+
+### Tests
+
+| Suite | Before | After | What the new tests cover |
+|---|---|---|---|
+| `tests/test_travel_views.py` | 201 | 220 | The endpoint and the staff gate (below) |
+| `tests/test_travel_hub.py` | 47 | 58 | The hub, sidebar and patch (below) |
+| `scripts/test_web_flow_history.js` | 528 | 604 checks | The list screen's history, rendering and failures (below) |
+
+- **`tests/test_travel_views.py`:**
+  - `get_all_trips`: grouping, order, the exact row keys, no money, lead first, the "on it" and
+    "organized it" flags, the cap, and the gate running before any read.
+  - The real staff gate: Website Users, desk users without the Employee role, and Guests are
+    refused.
+  - The outsider view: the key pin, confirmation numbers and files absent by value, days, crew
+    and contacts kept, `as_employee` still redacted, and full viewers unchanged.
+  - 25 mutations were tried and each one was caught.
+- **`tests/test_travel_hub.py`:**
+  - the Trips shortcut and sidebar item, pointing at the same URL;
+  - the *Trip list* item that keeps the sidebar on trip pages;
+  - the new patch: registered once, after `reload_travel_hub`, and it never raises;
+  - the block's link, rendered by node in three states.
+- **`scripts/test_web_flow_history.js`:**
+  - the list screen, the row-to-trip-to-Back flow, the chip, reload, the limited view, offline,
+    late answers and hostile names;
+  - a refused trip opened from the list stepping back to the list;
+  - the 403, expired-session, 500 and weak-signal cases.
+- **`tests/test_itinerary_service_worker.py`** pins the own-trips-first trim.
+- **`tests/test_travel_planner.py`**'s list of places that push history now includes the two new
+  pushes.
+
+## [1.555.1] - 2026-09-28
+
+**The mileage rate can be $0.725 a mile.** Nik reported on 2026-09-28 that 0.725 is the
+correct rate and Travel Settings would not accept it. Both mileage rate fields now keep three
+decimal places. **After this deploys, someone must open Travel Settings and enter 0.725 in
+Mileage Rate (per mile) again.** The fix does not change the 0.72 that is stored there now.
+
+### Fixed
+
+- **A mileage rate of 0.725 saved as 0.72.**
+  - **Symptom:** typing 0.725 into *Mileage Rate (per mile)* on Travel Settings left 0.72.
+    The same happened in *Rate per Mile* on a trip's Mileage row. Production's Travel
+    Settings holds 0.72 today.
+  - **Cause:** both fields (`Travel Settings.mileage_rate` and `Trip Mileage.rate`) are
+    Currency fields with no `precision` of their own, so they inherit the site's currency
+    precision, which is 2 decimals. In frappe v16, `model/meta.py`
+    `get_field_precision` returns the docfield's own `precision` when it has one. For a
+    Currency field without one, it returns the `currency_precision` default or the number
+    format's precision. On the Desk, `ControlCurrency.get_precision` does the same, and
+    `ControlFloat.parse` rounds whatever is typed to that precision before the value is sent
+    to the server. The server does not round (`_fix_numeric_types` only casts, and a Currency
+    column is `decimal(21,9)`), so the browser was the step that cut the third decimal.
+  - **Fix:** both rate fields now set `"precision": "3"`. The form keeps 0.725 when it is
+    typed. The grid formatter shows 0.725, and a rate with no third decimal still shows two
+    (0.50, not 0.500). No Property Setter or setup code overrides precision on either field.
+    A DocType JSON import is hash-gated, so the change applies on the next migrate without a
+    `modified` bump.
+  - **The amount stays in cents.** `TravelTrip._compute_mileage` used to store
+    `distance × rate` unrounded, which the new rate would make 31.175 for 43 miles. It now
+    rounds the result to the Amount field's own precision
+    (`flt(..., row.precision("amount"))`), so 43 miles at 0.725 is **31.18**. Legacy banker's
+    rounding (frappe's default), banker's rounding and commercial rounding all give 31.18.
+    The trip's mileage and cost totals are sums of these amounts, so they stay in cents too.
+    The Amount field keeps the default currency precision.
+  - **Plan a Trip showed the rate rounded.** The Personal Vehicle card's "Reimbursed at {0} a
+    mile" called `format_currency(rate, currency)`. With no decimal places given,
+    `format_currency` rounds to the currency's two places, so $0.725 would have read $0.73
+    under frappe's default rounding method (or $0.72 under banker's rounding).
+    The card now passes 3 when the rate has a third decimal. The total is still shown in
+    cents. No other reader rounds the rate. `_lookups` sends it to the page as stored. The
+    Expense Claim line text in `travel_management/api.py` prints it as a plain number.
+    Reports, reminders, emails, the trip views and the Trip Sheet read only amounts and
+    totals, never the rate.
+
+### Notes
+
+- **Re-enter the rate after deploy.** The stored 0.72 stays until someone saves Travel
+  Settings with 0.725.
+- **Existing mileage rows keep the rate they already have.** `_compute_mileage` copies the
+  settings rate only onto a row whose rate is 0, and Plan a Trip never writes a rate. So a
+  row that already holds 0.72 stays at 0.72. To move one to 0.725, edit its *Rate per Mile*,
+  or clear it to 0 so the next save copies the settings rate. A row that is already on an
+  Expense Claim is never recomputed.
+- **Tests:** `TestTheMileageRate` in `tests/test_travel_views.py` checks four things. Both
+  rate fields have precision `"3"`. The Amount field keeps the default precision. A row with
+  no rate gets 0.725 from settings and 43 miles comes to 31.18. A row with its own rate keeps
+  it, and a claimed row is left alone. The suite's `frappe` stub rounds with Python's
+  `round`, which works on the binary float. 3 × 0.725 is held as 2.17499…, so `round` gives
+  2.17 where frappe gives 2.18. The class therefore patches in a port of frappe v16's `flt`
+  and pins the 3-mile case as well. Without the rounding fix the 43-mile test fails with
+  `31.175 != 31.18`.
 
 ## [1.555.0] - 2026-09-28
 

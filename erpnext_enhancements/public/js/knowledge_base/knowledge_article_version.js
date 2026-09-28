@@ -17,7 +17,7 @@
 // because every System Manager, and every AI tool acting for one, can read Comments. Request
 // Changes carries the reviewer's note instead, and it stays on the version.
 //
-// Frappe's own Discard is taken off the menu and refused here too (v1.555.1). v16 puts it on the
+// Frappe's own Discard is taken off the menu and refused here too (v1.556.1). v16 puts it on the
 // menu of every submittable draft (form/toolbar.js:385-397), next to the KB's Actions > Discard, and
 // it would set docstatus 2 behind the state machine's back, leaving a version that reads as open
 // and can never be saved again. The server refuses it whatever the form does (the controller's

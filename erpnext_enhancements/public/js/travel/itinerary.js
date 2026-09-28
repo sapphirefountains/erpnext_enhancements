@@ -102,26 +102,55 @@
  * at all, everything. No money is in any of it: the answer has none. No IndexedDB, no service
  * worker, storage that throws or refuses: the page is exactly what it was without them.
  *
+ * All trips (Nik, 2026-09-28: "Change it from My Trips to just Trips so anyone can see anyone's
+ * trips"): ?view=trips, with no ?trip=, is a screen of its own listing every trip, from
+ * get_all_trips (staff only; every status; at most 300, with `more` saying how many were left
+ * off; no money, no confirmation numbers, no files). Rows sit under "On the road now", "Coming up"
+ * and "Earlier trips", in the server's order and groups; the earlier ones start at their first
+ * ten, and "Show N more" opens the rest in place, with no history entry. Each row says what the
+ * trip is, when, its status and job, who is on it (the trip lead first) and whether this person
+ * travels on it ("You're on it") or organized it ("You organized it"). A row is a real link, so a
+ * long press still offers a new tab; a tap pushes ?trip=<name> and opens it. "All trips", first in
+ * the trip chip bar, pushes ?view=trips, or steps Back when the list is the entry behind (as "Day
+ * by day" does); "See all trips" under "No upcoming or recent trips" pushes it too. The list is
+ * asked for each time it is shown, and drawn at once from this page load's last answer when there
+ * is one; an answer for a list since left is dropped. It is not kept on the phone: with no usable
+ * answer it says "You're offline — the list of all trips needs a connection." (or the gateway's
+ * words) and offers the person's own trips, which open from the copies saved on this phone. It
+ * offers them only when showSaved would show a saved copy, and refuses as showSaved does
+ * otherwise: the boot's trips are the person's, not the phone's.
+ *
+ * Someone else's trip: any staff member may open any trip here (Nik chose "Itinerary pages only":
+ * the desk's Travel Trip list, form and report stay row-scoped, because money is on them). A
+ * person who is not on the trip, does not own it and does not coordinate travel gets it with
+ * `limited: true`: the same itinerary, with no confirmation, booking or tracking number, no file
+ * and no trip sheet. The page says so under the trip ("You're not on this trip, so confirmation
+ * numbers and files are left out."), draws no "Documents" screen and no print link, and draws
+ * none of them even from a limited answer that carried one.
+ *
  * Back / Forward: what is on screen is in the address as
- * ?trip=<name>&as=<who>&view=docs&file=<document> (same path, so a reload, Back from
- * /travel_guidelines and the login redirect all keep it). A trip chip tap, a person pick,
- * "Documents" and a picture each push one entry, from the tap itself. A trip chip drops
+ * ?trip=<name>&as=<who>&view=docs&file=<document>, or ?view=trips for the list of all trips (same
+ * path, so a reload, Back from /travel_guidelines and the login redirect all keep it). A trip
+ * chip tap, a person pick, "Documents", a picture, "All trips" and a row on the list each push
+ * one entry, from the tap itself. A trip chip drops
  * ?as=, ?view= and ?file=, so another trip opens on its default view; a person pick keeps
  * the screen. Back and Forward arrive as popstate and load that entry's trip and person
  * without pushing, or only redraw its screen and picture when those are all that changed.
  * The viewer's Close and Escape, and "Day by day" on the Documents screen, go Back when
  * the entry behind is exactly where they lead, so no copy of it is left in between. The
- * entry the page opened on is replaced only when ?trip= is missing, or when the
+ * entry the page opened on is replaced only when ?trip= is missing (and it is not the
+ * list: ?view=trips is drawn as it is), or when the
  * server refuses it (someone else's trip, a deleted one, a person no longer on it),
  * never pushed, so Back from it leaves the page. A refused entry the page pushed
  * itself is stepped back off instead when its fallback is the entry behind it, so no
- * two entries in a row are the same (see loadFailed). Signed out since the page
+ * two entries in a row are the same (see loadFailed), and a trip refused after a tap on
+ * the list of all trips steps back onto the list, which says why. Signed out since the page
  * loaded is not a refusal: the address stays, and the page offers to sign in again.
  * "Report a problem" (capture/panel.js) owns its own entry: popstate is left to it
  * while window.ee_capture.isOpen(), and so is every history write. The viewer does
  * nothing while the panel is open, Escape included: the panel is on top of it. The
- * Contacts card's open/shut and "Print / save as PDF" are not entries: neither writes
- * history.
+ * Contacts card's open/shut, "Print / save as PDF" and the list's "Show N more" are not
+ * entries: none of them writes history.
  */
 (function () {
 	'use strict';
@@ -135,7 +164,8 @@
 		currentTrip: null,
 		// '' = the server's default view, 'crew' = the whole crew, else an employee id.
 		currentAs: '',
-		// '' = the day-by-day screen, 'docs' = the Documents screen.
+		// '' = the day-by-day screen, 'docs' = the Documents screen, 'trips' = the list of all
+		// trips (currentTrip is then null).
 		currentView: '',
 		// The Trip Document open in the picture viewer, '' for none. Only a picture opens there.
 		currentFile: '',
@@ -158,6 +188,7 @@
 
 	// -- API -----------------------------------------------------------------
 	var ITINERARY = 'erpnext_enhancements.api.travel.get_trip_itinerary';
+	var ALL_TRIPS = 'erpnext_enhancements.api.travel.get_all_trips';
 
 	// What the gateway in front of frappe answers while the site is down, not frappe refusing: a
 	// deploy restarting the bench (502), its maintenance window (503, SessionStopped), a timeout
@@ -334,9 +365,9 @@
 	}
 
 	// A PNR / confirmation / tracking number, with a Copy button — the thing a traveler
-	// reads out at a counter.
+	// reads out at a counter. None on a trip this person is not on (limitedView).
 	function appendRef(card, label, value) {
-		if (!value) return;
+		if (!value || limitedView()) return;
 		var row = el('div', 'ti-pnr');
 		row.appendChild(el('span', null, label + ': ' + value));
 		row.appendChild(copyButton(value));
@@ -576,7 +607,7 @@
 				member.employee ? (member.employee_name || member.employee) : 'Everyone'));
 			var note = memberNote(member);
 			if (note) row.appendChild(el('span', 'ti-member-note', note));
-			if (member.ref) {
+			if (member.ref && !limitedView()) {
 				row.appendChild(el('span', 'ti-member-ref', label + ': ' + member.ref));
 				row.appendChild(copyButton(member.ref));
 			}
@@ -667,6 +698,7 @@
 	}
 
 	function findDocument(name) {
+		if (limitedView()) return null;
 		var docs = tripDocuments(state.itinerary);
 		for (var i = 0; i < docs.length; i++) {
 			if (docs[i].name === name) return docs[i];
@@ -716,6 +748,7 @@
 	}
 
 	function appendDocuments(card, docs) {
+		if (limitedView()) return;
 		var list = openable(docs);
 		if (!list.length) return;
 		var box = el('div', 'ti-docs');
@@ -1312,7 +1345,7 @@
 		header.appendChild(el('div', 'ti-header-title', view.title));
 		if (view.sub) header.appendChild(el('div', 'ti-header-sub', view.sub));
 		root.appendChild(header);
-		var onDocs = state.currentView === 'docs' && state.currentTrip && !state.denied && !state.signedOut && !state.otherUser;
+		var onDocs = state.currentView === 'docs' && state.currentTrip && !state.denied && !state.signedOut && !state.otherUser && !limitedView();
 		setDocumentTitle(onDocs ? 'Documents – ' + view.page : view.page);
 
 		if (state.signedOut) {
@@ -1347,11 +1380,13 @@
 			return;
 		}
 
-		if (!state.currentTrip) {
+		if (!state.currentTrip && !onList()) {
 			root.appendChild(el('div', 'ti-empty',
 				BOOT.employee
 					? 'No upcoming or recent trips. Safe travels when the next one comes!'
 					: 'No employee record is linked to your user account.'));
+			// Someone else's trip is still theirs to open (the server decides who is staff).
+			if (BOOT.employee) root.appendChild(allTripsLink());
 			return;
 		}
 
@@ -1362,13 +1397,28 @@
 			return;
 		}
 
+		if (onList()) {
+			renderAllTrips();
+			return;
+		}
+
 		// The copy saved on this phone, shown because the server could not be reached.
 		if (state.offline && state.itinerary && !state.denied) root.appendChild(offlineBanner(state.offline));
 
-		// A trip opened from a link that is not in the list still gets the list, to go back to.
+		// "All trips" first, where a phone's sideways-scrolling bar always shows it, then their
+		// own trips. A trip opened from a link that is not in their list still gets the list, to
+		// go back to; a single trip of their own needs no chip, but "All trips" is always there.
+		var switcher = el('div', 'ti-switcher');
+		var allChip = el('button', 'ti-all-chip');
+		allChip.type = 'button';
+		var allIcon = el('span', 'ti-all-icon', '🧳');
+		allIcon.setAttribute('aria-hidden', 'true');
+		allChip.appendChild(allIcon);
+		allChip.appendChild(el('span', 'ti-all-label', 'All trips'));
+		allChip.addEventListener('click', function () { openAllTrips(); });
+		switcher.appendChild(allChip);
 		if (state.trips.length > 1 || (state.trips.length && !listedTrip(state.currentTrip))) {
 			var someMine = state.trips.some(function (t) { return t.mine !== false; });
-			var switcher = el('div', 'ti-switcher');
 			state.trips.forEach(function (trip) {
 				var chip = el('button', 'ti-trip-chip' + (trip.name === state.currentTrip ? ' active' : ''));
 				chip.appendChild(el('span', 'ti-chip-title', trip.purpose));
@@ -1384,8 +1434,8 @@
 				});
 				switcher.appendChild(chip);
 			});
-			root.appendChild(switcher);
 		}
+		root.appendChild(switcher);
 
 		if (state.denied) {
 			root.appendChild(el('div', 'ti-empty', 'You don\'t have access to this trip, or it no longer exists.'));
@@ -1413,12 +1463,19 @@
 		meta.appendChild(el('div', 'ti-trip-dates', fmtDate(trip.start_date) + ' – ' + fmtDate(trip.end_date)));
 		root.appendChild(meta);
 		appendPeople();
+		// Someone else's trip (the server's `limited`): no numbers and no files, and it says so.
+		// No "Documents" screen and no print link either: the day list is all there is, whatever
+		// screen the address names.
+		var limited = limitedView();
+		if (limited) root.appendChild(el('div', 'ti-limited', 'You\'re not on this trip, so confirmation numbers and files are left out.'));
 		appendContacts(trip.contacts);
 
-		var documents = tripDocuments(trip);
-		appendScreens(documents.length);
-		appendPrint(trip);
-		if (state.currentView === 'docs') {
+		var documents = limited ? [] : tripDocuments(trip);
+		if (!limited) {
+			appendScreens(documents.length);
+			appendPrint(trip);
+		}
+		if (state.currentView === 'docs' && !limited) {
 			renderDocuments(documents);
 			appendFooter();
 			return;
@@ -1529,6 +1586,8 @@
 		state.offline = null;
 		state.denied = false;
 		state.signedOut = false;
+		// Why the list stepped back off a trip it opened: said once, on the list it returned to.
+		allTrips.note = '';
 		render();
 		var args = { trip: name };
 		if (as) args.as_employee = as;
@@ -1603,11 +1662,23 @@
 	// screen belongs to the panel and gets no history write: the fallback is only shown. Once
 	// the panel closes, popstate asks for the address's trip again, with the panel out of the
 	// way.
+	//
+	// A trip refused after a tap on the list of all trips (the entry behind is the list: a trip
+	// deleted since the list was drawn, or a person who is not staff after all) is stepped back
+	// off onto that list, which says why, rather than fall back to a trip of their own they
+	// never asked for.
 	function loadFailed(name, as, err) {
 		var status = (err && err.status) || 0;
 		if (err && err.signedOut) {
 			state.signedOut = true;
 			render();
+			return;
+		}
+		var from = pushedFrom();
+		if ((status === 403 || status === 404) && from && !from.trip && from.view === 'trips') {
+			if (!captureOpen()) window.history.back();
+			allTrips.note = 'That trip couldn\'t be opened: it may have been deleted, or you don\'t have access to it.';
+			showAllTrips();
 			return;
 		}
 		var fallback = null;
@@ -1637,9 +1708,9 @@
 	}
 
 	// Whether a place the page remembered (history.state.itin_from) is exactly this trip,
-	// person, screen and picture.
+	// person, screen and picture. The list of all trips is no trip and the view 'trips'.
 	function samePlace(from, place) {
-		return !!from && from.trip === place.trip &&
+		return !!from && (from.trip || '') === (place.trip || '') &&
 			(from.as || '') === (place.as || '') &&
 			(from.view || '') === (place.view || '') &&
 			(from.file || '') === (place.file || '');
@@ -1711,6 +1782,7 @@
 		// The name the page was drawn for is not this session's, or not yet known to be: it is not
 		// shown either.
 		if (state.otherUser || state.unverified) return { title: 'My Itinerary', sub: '', page: 'My Itinerary' };
+		if (onList() && !state.signedOut) return { title: 'Trips', sub: 'Everyone\'s trips', page: 'Trips' };
 		if (!state.currentTrip || state.denied || state.signedOut) return mine;
 		var as = shownAs();
 		if (as === 'crew') return { title: 'Whole crew', sub: 'Everyone\'s bookings', page: 'Whole crew itinerary' };
@@ -1730,12 +1802,13 @@
 	}
 
 	// ?trip=, ?as=, ?view= and ?file= from the address. None of the others means anything
-	// without a trip, and `docs` is the only screen besides the day list.
+	// without a trip, and `docs` is a trip's only screen besides the day list. With no trip,
+	// ?view=trips is the list of all trips (and with a trip, it is nothing: the trip wins).
 	function addressed() {
 		try {
 			var params = new URLSearchParams(window.location.search);
 			var trip = params.get('trip') || '';
-			if (!trip) return { trip: '', as: '', view: '', file: '' };
+			if (!trip) return { trip: '', as: '', view: params.get('view') === 'trips' ? 'trips' : '', file: '' };
 			return {
 				trip: trip,
 				as: params.get('as') || '',
@@ -1749,10 +1822,12 @@
 
 	// This page's address for a trip, person, screen and picture, always in that order after the
 	// trip, and any other query kept. What is not given is dropped: a trip chip names the trip
-	// alone, so another trip opens on its default view, day by day.
+	// alone, so another trip opens on its default view, day by day. No trip and the view 'trips'
+	// is the list of all trips (listUrl).
 	function tripUrl(name, as, view, file) {
 		var params = new URLSearchParams(window.location.search);
-		params.set('trip', name);
+		if (name) params.set('trip', name);
+		else params.delete('trip');
 		params.delete('as');
 		params.delete('view');
 		params.delete('file');
@@ -1762,18 +1837,19 @@
 		return window.location.pathname + '?' + params.toString() + window.location.hash;
 	}
 
+	// `name` '' and `view` 'trips': the list of all trips.
 	function writeTripEntry(push, name, as, view, file) {
-		var entry = { itin_trip: name, itin_as: as || null };
+		var entry = { itin_trip: name || null, itin_as: as || null };
 		if (view) entry.itin_view = view;
 		if (file) entry.itin_file = file;
 		// A pushed entry remembers the place it was pushed from, which is the entry behind it, so
 		// a refusal that would fall back to exactly that place can step back onto it (loadFailed),
-		// and so can the viewer's Close and "Day by day". A replace keeps what the entry it
-		// rewrites remembered: the entry behind it has not changed.
+		// and so can the viewer's Close and "Day by day", and "All trips" onto the list. A replace
+		// keeps what the entry it rewrites remembered: the entry behind it has not changed.
 		var from = push ? { trip: state.currentTrip, as: state.currentAs || null } : pushedFrom();
 		if (push && state.currentView) from.view = state.currentView;
 		if (push && state.currentFile) from.file = state.currentFile;
-		if (from && from.trip) entry.itin_from = from;
+		if (from && (from.trip || from.view === 'trips')) entry.itin_from = from;
 		try {
 			if (push) window.history.pushState(entry, '', tripUrl(name, as, view, file));
 			else window.history.replaceState(entry, '', tripUrl(name, as, view, file));
@@ -1793,11 +1869,20 @@
 		}
 	}
 
-	// Another trip or person is fetched; the same one only has its screen and picture drawn.
+	// Another trip or person is fetched; the same one only has its screen and picture drawn. The
+	// list of all trips is asked for again, unless it is on screen already; no trip at all (the
+	// entry "See all trips" was pushed from) is the empty page again.
 	function showTripFromUrl() {
 		var want = addressed();
+		if (!want.trip && want.view === 'trips') {
+			showAllTrips();
+			return;
+		}
 		var name = want.trip || (state.trips.length ? defaultTrip() : null);
-		if (!name) return;
+		if (!name) {
+			showNoTrip();
+			return;
+		}
 		if (name !== state.currentTrip || want.as !== state.currentAs) loadTrip(name, want.as, want.view, want.file);
 		else showScreen(want.view, want.file);
 	}
@@ -1814,6 +1899,371 @@
 		}
 		showTripFromUrl();
 	});
+
+	// -- All trips (?view=trips) --------------------------------------------------------
+	// See "All trips" in the note at the top of this file. Everything on a row is typed in by
+	// people (a purpose, a job's name, a crew member's name), so it is drawn as text, like the
+	// rest of the page. A row is a link to the trip; the one push is the tap's (writeTripEntry).
+
+	// The groups, in the server's order. A row naming no group it knows is coming up (the
+	// server's rule for a trip with no dates).
+	var LIST_GROUPS = [
+		{ key: 'now', title: 'On the road now' },
+		{ key: 'upcoming', title: 'Coming up' },
+		{ key: 'past', title: 'Earlier trips' },
+	];
+	// Earlier trips drawn before "Show N more", and how many there must be before any are held
+	// back (a "Show 2 more" hides almost nothing).
+	var PAST_SHOWN = 10;
+	var PAST_FOLD_OVER = 12;
+	// Names on a row before "+N more": a crew of twelve would otherwise fill the row.
+	var CREW_SHOWN = 5;
+
+	// This page load's list: the last answer (`rows`, `more`), which request is the latest
+	// (`seq`: an answer to any other is dropped), why the last one failed (`failed`: {offline,
+	// reason} with no usable answer, {refused} for a 403, {message} for anything else), what the
+	// list says above its rows (`note`) and whether "Show N more" was tapped (`pastOpen`, kept
+	// for this page load, so Back to the list finds it as it was left).
+	var allTrips = { rows: null, more: 0, seq: 0, failed: null, note: '', pastOpen: false };
+
+	function onList() {
+		return state.currentView === 'trips' && !state.currentTrip;
+	}
+
+	// The trip on screen is someone else's (not on it, not its owner, not a travel coordinator):
+	// the server left out every number and file, and says so with `limited`.
+	function limitedView() {
+		return !!(state.itinerary && state.itinerary.limited === true);
+	}
+
+	function listUrl() {
+		return tripUrl('', '', 'trips');
+	}
+
+	// "All trips" (the chip, and "See all trips" under the empty page): one entry, from the tap,
+	// or a step Back when the entry behind is the list (the trip on screen was opened from it),
+	// so the list is not in history twice with a Back between them that changes nothing. Drawn
+	// at once either way. Nothing while "Report a problem" is open: history is the panel's then.
+	function openAllTrips() {
+		if (captureOpen() || onList()) return;
+		if (samePlace(pushedFrom(), { trip: '', view: 'trips' })) {
+			window.history.back();
+		} else {
+			writeTripEntry(true, '', '', 'trips');
+		}
+		showAllTrips();
+	}
+
+	// "See all trips", under "No upcoming or recent trips": a real link (a new tab on a long
+	// press), and a tap is openAllTrips.
+	function allTripsLink() {
+		var box = el('div', 'ti-empty-more');
+		var link = el('a', 'ti-all-link', 'See all trips');
+		link.href = listUrl();
+		link.addEventListener('click', function (ev) {
+			if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || (ev.button && ev.button !== 0)) return;
+			ev.preventDefault();
+			openAllTrips();
+		});
+		box.appendChild(link);
+		return box;
+	}
+
+	// The list, for an entry that names it (a tap, Back / Forward, the boot). Asked for afresh,
+	// unless it is on screen already (the popstate of "All trips" stepping Back onto it). Never
+	// writes history: popstate calls this.
+	function showAllTrips() {
+		if (onList()) return;
+		state.currentTrip = null;
+		state.currentAs = '';
+		state.currentView = 'trips';
+		state.currentFile = '';
+		state.itinerary = null;
+		state.offline = null;
+		state.denied = false;
+		state.signedOut = false;
+		loadAllTrips();
+	}
+
+	// An entry with no trip and no list (the empty page "See all trips" was tapped on): drawn
+	// again. Never writes history.
+	function showNoTrip() {
+		state.currentTrip = null;
+		state.currentAs = '';
+		state.currentView = '';
+		state.currentFile = '';
+		state.itinerary = null;
+		state.offline = null;
+		state.denied = false;
+		render();
+	}
+
+	// get_all_trips, drawn when it lands while the same list is still on screen, and dropped
+	// otherwise (another trip opened, or the list asked for again since). Until then the list
+	// from this page load's last answer is drawn, or "Loading trips…". No usable answer (see
+	// api), or none yet after ANSWER_WAIT_MS, is listUnreachable; the request carries on, and
+	// its answer replaces what that drew.
+	function loadAllTrips() {
+		allTrips.seq += 1;
+		var seq = allTrips.seq;
+		allTrips.failed = null;
+		render();
+		var here = function () {
+			return seq === allTrips.seq && onList();
+		};
+		var settled = false;
+		var timer = setTimeout(function () {
+			if (settled || allTrips.rows || !here()) return;
+			listUnreachable(noAnswer(new Error('no answer yet'), 'slow'), true);
+		}, ANSWER_WAIT_MS);
+		var done = function () {
+			settled = true;
+			clearTimeout(timer);
+		};
+		api(ALL_TRIPS, {})
+			.then(function (answer) {
+				done();
+				if (!here()) return; // left the list, or asked for it again since
+				if (answered()) return;
+				if (!answer || typeof answer !== 'object' || !Array.isArray(answer.trips)) {
+					throw noAnswer(new Error('no answer'), 'slow');
+				}
+				if (state.otherUser && !shellIsSomeoneElses()) state.otherUser = false;
+				allTrips.rows = answer.trips.filter(function (row) {
+					return row && typeof row === 'object' && typeof row.name === 'string' && row.name;
+				});
+				allTrips.more = Math.max(0, parseInt(answer.more, 10) || 0);
+				allTrips.failed = null;
+				render();
+			})
+			.catch(function (err) {
+				done();
+				if (!here()) return; // not on screen any more
+				if (err && err.unreachable) {
+					listUnreachable(err, false);
+					return;
+				}
+				if (answered(err)) return;
+				if (err && err.signedOut) {
+					state.signedOut = true;
+					render();
+					return;
+				}
+				allTrips.failed = err && err.status === 403
+					? { refused: true }
+					: { message: (err && err.message) || 'no answer' };
+				render();
+			});
+	}
+
+	// No usable answer for the list. It is never kept on the phone, so it says so, and offers
+	// the person's own trips (the boot's), which open from their saved copies: only when
+	// showSaved would show this session a saved copy. Otherwise showSaved's refusal, word for
+	// word, and its deleting what is saved when the marker has gone. `quiet` (no answer yet):
+	// only what may be shown is drawn; nothing is refused or deleted, and the answer decides.
+	function listUnreachable(err, quiet) {
+		var theirs = markerIsBoots() ? !shellIsSomeoneElses() : !bootKey() && !shellIsSomeoneElses();
+		if (!theirs) {
+			if (!quiet) refuseSaved(!markerIsBoots() && markerCookie() !== null);
+			return;
+		}
+		allTrips.failed = { offline: true, reason: (err && err.reason) || 'offline' };
+		render();
+	}
+
+	// The list screen (render's, under the header): its note, then why it is not there, or the
+	// groups of rows.
+	function renderAllTrips() {
+		var failed = allTrips.failed;
+		if (allTrips.note) {
+			var note = el('div', 'ti-list-note', allTrips.note);
+			note.setAttribute('role', 'status');
+			root.appendChild(note);
+		}
+		if (failed && failed.refused) {
+			root.appendChild(el('div', 'ti-empty', 'You don\'t have access to the list of all trips.'));
+			appendFooter();
+			return;
+		}
+		if (failed && failed.offline) {
+			if (!allTrips.rows) {
+				var gone = el('div', 'ti-list-offline', offlineWords(failed.reason) + ' — the list of all trips needs a connection.');
+				gone.setAttribute('role', 'status');
+				root.appendChild(gone);
+				appendSavedTrips();
+				appendFooter();
+				return;
+			}
+			// The list from earlier in this page load is still on screen: kept, and said to be old.
+			var stale = el('div', 'ti-offline', offlineWords(failed.reason) + ' — this list may be out of date.');
+			stale.setAttribute('role', 'status');
+			root.appendChild(stale);
+		}
+		if (failed && failed.message) {
+			root.appendChild(el('div', 'ti-error', 'Could not load the trips: ' + failed.message));
+		}
+		if (!allTrips.rows) {
+			if (!failed) root.appendChild(el('div', 'ti-boot', 'Loading trips…'));
+			return;
+		}
+
+		var groups = { now: [], upcoming: [], past: [] };
+		allTrips.rows.forEach(function (row) {
+			var key = Object.prototype.hasOwnProperty.call(groups, row.group) ? row.group : 'upcoming';
+			groups[key].push(row);
+		});
+		var drawn = 0;
+		LIST_GROUPS.forEach(function (group) {
+			var rows = groups[group.key];
+			if (!rows.length) return;
+			drawn += rows.length;
+			root.appendChild(listGroup(group, rows));
+		});
+		if (!drawn) root.appendChild(el('div', 'ti-empty', 'No trips yet.'));
+		if (allTrips.more > 0) {
+			root.appendChild(el('div', 'ti-list-capped', allTrips.more === 1
+				? '1 more trip isn\'t listed here.'
+				: allTrips.more + ' more trips aren\'t listed here.'));
+		}
+		appendFooter();
+	}
+
+	// One group: its heading and how many, then its rows. Earlier trips past PAST_FOLD_OVER show
+	// their first PAST_SHOWN, and "Show N more" adds the rest in place: no redraw, no entry.
+	function listGroup(group, rows) {
+		var section = el('section', 'ti-list-group ti-list-' + group.key);
+		var head = el('div', 'ti-list-group-head');
+		head.appendChild(el('h2', 'ti-list-group-title', group.title));
+		head.appendChild(el('span', 'ti-list-count', String(rows.length)));
+		section.appendChild(head);
+		var box = el('div', 'ti-list-rows');
+		var fold = group.key === 'past' && !allTrips.pastOpen && rows.length > PAST_FOLD_OVER;
+		var shown = fold ? PAST_SHOWN : rows.length;
+		rows.slice(0, shown).forEach(function (row) { box.appendChild(tripRow(row)); });
+		section.appendChild(box);
+		if (fold) {
+			var more = el('button', 'ti-list-more', 'Show ' + (rows.length - shown) + ' more');
+			more.type = 'button';
+			more.addEventListener('click', function () {
+				allTrips.pastOpen = true;
+				var added = rows.slice(shown).map(tripRow);
+				added.forEach(function (link) { box.appendChild(link); });
+				if (more.parentNode) more.parentNode.removeChild(more);
+				// Where the button was: the first trip it added.
+				if (added.length) focusOn(added[0]);
+			});
+			section.appendChild(more);
+		}
+		return section;
+	}
+
+	// One trip, as a link to it: what it is, whether this person is on it or organized it, when,
+	// its status, kind and job, and who is on it.
+	function tripRow(row) {
+		var link = el('a', 'ti-list-row');
+		link.href = tripUrl(row.name);
+		var head = el('div', 'ti-list-head');
+		head.appendChild(el('span', 'ti-list-title', textOf(row.purpose) || row.name));
+		if (row.mine === true || row.organizing === true) {
+			var tags = el('span', 'ti-list-tags');
+			if (row.mine === true) tags.appendChild(el('span', 'ti-tag ti-tag-mine', 'You\'re on it'));
+			if (row.organizing === true) tags.appendChild(el('span', 'ti-tag ti-tag-organizing', 'You organized it'));
+			head.appendChild(tags);
+		}
+		link.appendChild(head);
+		link.appendChild(el('div', 'ti-list-dates', listDates(row.start_date, row.end_date)));
+		var bits = [textOf(row.status), textOf(row.travel_type)];
+		if (textOf(row.travel_for)) bits.push('For: ' + textOf(row.travel_for));
+		bits = bits.filter(Boolean);
+		if (bits.length) link.appendChild(el('div', 'ti-list-sub', bits.join(' · ')));
+		if (Array.isArray(row.crew)) {
+			var crew = el('div', 'ti-list-crew');
+			var icon = el('span', 'ti-list-crew-icon', '👥');
+			icon.setAttribute('aria-hidden', 'true');
+			crew.appendChild(icon);
+			crew.appendChild(el('span', 'ti-list-crew-names', crewLine(row)));
+			link.appendChild(crew);
+		}
+		link.addEventListener('click', function (ev) {
+			// A click asking for a new tab is the browser's to answer.
+			if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || (ev.button && ev.button !== 0)) return;
+			ev.preventDefault();
+			if (captureOpen()) return;
+			writeTripEntry(true, row.name);
+			loadTrip(row.name);
+			toTop();
+		});
+		return link;
+	}
+
+	// A value the server sent as text, or '' (a number, an object, null).
+	function textOf(value) {
+		return typeof value === 'string' ? value.trim() : '';
+	}
+
+	// "Mon, Sep 28 – Thu, Oct 1", with the year on a date outside this one ("Tue, Sep 30, 2025").
+	// A trip with no dates yet says so.
+	function listDates(start, end) {
+		var real = function (iso) {
+			return typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso);
+		};
+		var year = String(new Date().getFullYear());
+		var day = function (iso) {
+			var options = { weekday: 'short', month: 'short', day: 'numeric' };
+			if (iso.slice(0, 4) !== year) options.year = 'numeric';
+			return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, options);
+		};
+		if (real(start) && real(end)) return start === end ? day(start) : day(start) + ' – ' + day(end);
+		if (real(start)) return 'From ' + day(start);
+		if (real(end)) return 'Until ' + day(end);
+		return 'Dates not set';
+	}
+
+	// "Pat Lee (lead), Sam Ortiz, Alex Kim +3 more": the trip lead first, as the server orders
+	// them, marked when the server names them as the lead.
+	function crewLine(row) {
+		var names = row.crew.map(textOf).filter(Boolean);
+		if (!names.length) return 'No one on the crew yet';
+		var lead = textOf(row.lead);
+		var shown = names.slice(0, CREW_SHOWN).map(function (name, i) {
+			return i === 0 && lead && name === lead ? name + ' (lead)' : name;
+		});
+		var rest = names.length - shown.length;
+		return shown.join(', ') + (rest > 0 ? ' +' + rest + ' more' : '');
+	}
+
+	// With no list: the person's own trips (the boot's), which open from the copies saved on this
+	// phone, or say they are not saved. listUnreachable has checked they may be offered.
+	function appendSavedTrips() {
+		if (!state.trips.length) return;
+		var section = el('section', 'ti-list-group ti-list-saved');
+		var head = el('div', 'ti-list-group-head');
+		head.appendChild(el('h2', 'ti-list-group-title', 'Your trips'));
+		section.appendChild(head);
+		var box = el('div', 'ti-list-rows');
+		state.trips.forEach(function (trip) {
+			if (!trip || typeof trip.name !== 'string' || !trip.name) return;
+			box.appendChild(tripRow({
+				name: trip.name,
+				purpose: trip.purpose,
+				start_date: trip.start_date,
+				end_date: trip.end_date,
+				mine: trip.mine !== false,
+				organizing: trip.mine === false,
+			}));
+		});
+		section.appendChild(box);
+		root.appendChild(section);
+	}
+
+	// A trip opened from far down the list starts at its top.
+	function toTop() {
+		try {
+			window.scrollTo(0, 0);
+		} catch (e) {
+			// No scrolling here (a stand-in window): nothing is lost.
+		}
+	}
 
 	// -- Offline: saved on this phone ----------------------------------------------------
 	// See "Offline" in the note at the top of this file. All of it is a courtesy that may cost
@@ -2005,10 +2455,13 @@
 						answers.delete(answerKey);
 						out.value += 1;
 					} else {
-						kept.push({ key: answerKey, at: Number(saved.saved_at) || 0 });
+						kept.push({ key: answerKey, at: Number(saved.saved_at) || 0, own: listed[saved.trip] ? 1 : 0 });
 					}
 				});
-				kept.sort(function (a, b) { return b.at - a.at; });
+				// The person's own trips (their saved trip list) are kept ahead of anything else, then
+				// the newest: browsing colleagues' trips from the list of all trips must never push
+				// their own itinerary off the phone the night before they fly.
+				kept.sort(function (a, b) { return (b.own - a.own) || (b.at - a.at); });
 				kept.slice(MAX_SAVED).forEach(function (old) {
 					answers.delete(old.key);
 					out.value += 1;
@@ -2416,6 +2869,11 @@
 	// not load" of a phone that keeps nothing), the trip is asked for again, as loadTrip does. No
 	// history write either way, and nothing if the person has moved on.
 	window.addEventListener('online', function () {
+		// The list of all trips that could not be had: asked for again, in place.
+		if (onList()) {
+			if (allTrips.failed && allTrips.failed.offline && !state.signedOut && !state.otherUser && !state.unverified) loadAllTrips();
+			return;
+		}
 		if (!state.currentTrip || state.denied || state.signedOut || state.otherUser || state.unverified) return;
 		var name = state.currentTrip;
 		var as = state.currentAs;
@@ -2441,7 +2899,8 @@
 
 	// -- Boot --------------------------------------------------------------------
 	// A ?trip= is always asked for, listed or not (the server decides; a refusal falls back
-	// in loadFailed), and a reload lands on the screen and picture it names. Without one, the
+	// in loadFailed), and a reload lands on the screen and picture it names. ?view=trips with
+	// no trip is the list of all trips. Without either, the
 	// default trip is named in place. A page drawn for somebody other than this session (the
 	// page kept on this phone, from before another person signed in, or everyone signed out)
 	// shows nothing of theirs and asks for nothing.
@@ -2456,6 +2915,9 @@
 		render();
 	} else if (first.trip) {
 		loadTrip(first.trip, first.as, first.view, first.file);
+	} else if (first.view === 'trips') {
+		// The list of all trips, as the address names it: no history call.
+		showAllTrips();
 	} else if (state.trips.length) {
 		first.trip = defaultTrip();
 		writeTripEntry(false, first.trip);

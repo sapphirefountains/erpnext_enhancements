@@ -364,13 +364,17 @@ class TravelTrip(Document):
 	# ------------------------------------------------------ computed amounts
 
 	def _compute_mileage(self):
+		# The rate is kept to a tenth of a cent (both rate fields carry precision 3, because the
+		# rate we reimburse is $0.725 a mile), so miles x rate can land between cents:
+		# 43 x 0.725 = 31.175. The amount is money, rounded to its own field's precision
+		# (cents), so the row and every total summed from it read 31.18.
 		settings = get_travel_settings()
 		for row in self.mileage:
 			if row.expense_claim:
 				continue  # claimed rows are frozen
 			if not flt(row.rate):
 				row.rate = flt(settings.mileage_rate)
-			row.amount = flt(row.distance) * flt(row.rate)
+			row.amount = flt(flt(row.distance) * flt(row.rate), row.precision("amount"))
 
 	def _compute_per_diem(self):
 		settings = get_travel_settings()

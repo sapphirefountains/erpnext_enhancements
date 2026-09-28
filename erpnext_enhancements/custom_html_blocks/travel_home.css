@@ -578,6 +578,18 @@
     gap: 6px;
 }
 
+/* ------------------------------------------------------------------ everyone's trips */
+
+/* One quiet button under the viewer's own trips (or the empty state): the way to a
+   colleague's trip. It belongs to what is above it, so it sits closer to that than the
+   body's gap would put it; the button keeps its 40px height and its own padding. */
+.tvh-all-trips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: -10px;
+}
+
 /* ------------------------------------------------------------------ needs attention */
 
 /* The coordinators' list sits below the viewer's own trips and is set apart from

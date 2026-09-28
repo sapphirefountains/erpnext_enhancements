@@ -152,7 +152,8 @@
    "description": "Reimbursement rate per mile for personal-vehicle mileage. 0 leaves mileage amounts at 0 until configured.",
    "fieldname": "mileage_rate",
    "fieldtype": "Currency",
-   "label": "Mileage Rate (per mile)"
+   "label": "Mileage Rate (per mile)",
+   "precision": "3"
   },
   {
    "fieldname": "maps_section",

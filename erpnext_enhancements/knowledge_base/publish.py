@@ -240,7 +240,7 @@ def body_markdown(version):
 	``log_error`` inserts the Error Log in the request's own transaction unless ``defer_insert``
 	(``utils/error.py:95-98``), ``application()`` rolls that transaction back on the throw
 	(``app.py:181-184``), and a 417 gets no snapshot of its own (``app.py:448``: 500 and up only).
-	Written the plain way, the row the message sends Nik to never existed (v1.555.1). Deferred, it
+	Written the plain way, the row the message sends Nik to never existed (v1.556.1). Deferred, it
 	goes to redis and the scheduler's ``deferred_insert.save_to_db`` writes it within minutes, which
 	is how prod's own request errors arrive (and, like theirs, a deploy in those minutes loses it).
 	"""
@@ -330,7 +330,7 @@ def open_version(article, *, lock=False):
 	With ``lock``, read ``FOR UPDATE`` (a locking read sees what another request committed).
 
 	Only a docstatus 0 row is open. A Draft or In Review row at docstatus 2 is what Frappe's own
-	Discard would leave (the controller refuses it since v1.555.1), or a write past the ORM: it can
+	Discard would leave (the controller refuses it since v1.556.1), or a write past the ORM: it can
 	never be saved again, so counting it as open would block every revision and every retire of its
 	article for good."""
 	query = (

@@ -56,7 +56,7 @@ obvious hook:
   an amendment is refused there as well as in ``validate``.
 * Frappe's own **Discard** (``Document.discard``, ``model/document.py:1357-1373``) is a third way to
   docstatus 2 that runs neither cancel hook: ``before_discard``, then ``db_set("docstatus", 2)``,
-  then ``on_discard``. Both are refused (``_refuse_native_discard``, v1.555.1). The KB's own
+  then ``on_discard``. Both are refused (``_refuse_native_discard``, v1.556.1). The KB's own
   Discard is a ``review_state`` move and never calls it.
 
 What may change after publishing: only ``review_state`` (``allow_on_submit``), when a newer
@@ -265,7 +265,7 @@ def _refuse_native_discard(name):
 	``db_set`` while ``review_state`` stays Draft or In Review. The Knowledge Base's own Discard
 	(``api.knowledge_base.discard``) never calls it: it moves ``review_state`` to Discarded through
 	``publish.transition`` and a save, so a Discarded version stays at docstatus 0. Before this
-	refusal (v1.555.1), one click on the menu's Discard left a version at docstatus 2 that still read
+	refusal (v1.556.1), one click on the menu's Discard left a version at docstatus 2 that still read
 	as open, so the article could never be revised or retired again, and every KB action on it failed
 	with "Cannot edit cancelled document"."""
 	frappe.throw(

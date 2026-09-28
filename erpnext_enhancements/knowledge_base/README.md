@@ -122,7 +122,7 @@ running with `ignore_permissions`; the point is that such code has to opt in by 
 `on_cancel` or `on_update_after_submit` (`:1454-1462`). `delete_doc(ignore_on_trash=True)` skips
 `on_trash` (`model/delete_doc.py:175-176`) but never `after_delete` (`:195-196`). Frappe's own
 Discard (`Document.discard`, `:1357-1373`) runs `before_discard`, then `db_set("docstatus", 2)`,
-then `on_discard`, and neither cancel hook, so the Version refuses it in both of those (v1.555.1).
+then `on_discard`, and neither cancel hook, so the Version refuses it in both of those (v1.556.1).
 The second hook runs inside the same transaction, so raising there rolls the write back. **The exception is
 `before_validate`**, which v16 runs on every save and submit *before* it looks at `ignore_validate`
 (`:1404-1405`): the content rules and the File attachment check sit there, in one hook that no flag
@@ -396,11 +396,11 @@ Draft. Every action is a dialog or a `frappe.set_route`, so Back and Forward wor
 - **Author actions accept any login** (submit, withdraw, discard, start a revision). They move a
   draft between people; none of them publishes or returns draft text.
 
-### Fixed after PR 3's review (v1.555.1)
+### Fixed after PR 3's review (v1.556.1)
 
 All four were found in the review of PR 3 (#1144), which merged before they were fixed. Each needs
 a KB role (or a draft, which needs one) to reach, and nobody held one on prod in between. Grant the
-roles once v1.555.1 is live.
+roles once v1.556.1 is live.
 
 - **Frappe's own Discard is refused.** v16 puts a Discard of its own on the form menu of every
   submittable draft (`form/toolbar.js:385-397`), next to the KB's Actions > Discard, and
@@ -487,7 +487,7 @@ Granting is a Desk step, and only a System Manager can do it:
   refuse Guest and any account that is not a System User: an approval is always a named person's.
 
 **The Desk steps after PR 3 deploys (Nik).** Nobody holds a KB role on prod yet, so until these are
-done every KB button is hidden and every action is refused. **Do them once v1.555.1, PR 3's review
+done every KB button is hidden and every action is refused. **Do them once v1.556.1, PR 3's review
 fixes, is live**, not on PR 3 alone: before it, one click on the form menu's own Discard left an
 article that could never be revised or retired again (see "Fixed after PR 3's review"). No code
 grants a role: a seeded grant

@@ -134,6 +134,25 @@
  *     phone with the kiosk's worker at "/" sends nothing to it on the first visit; a stale CSRF
  *     token is replaced once; a refusal lifts when the session answers again; a failed map is
  *     tried again.
+ *   - the list of all trips (`?view=trips`, get_all_trips): a boot or reload on it draws it with
+ *     no history call and asks for nothing else; its groups and rows are the server's, each row
+ *     a link naming its trip (encoded) that says who is on it and whether this person is on it
+ *     or organized it; "Show N more" opens the earlier trips in place with no entry; a row tap
+ *     pushes `?trip=` and Back returns to the list, drawn at once as it was left while it is
+ *     asked for again; "All trips" (first in the chip bar, there even for a single trip) pushes
+ *     `?view=trips`, or steps Back when the list is the entry behind, and does nothing while
+ *     "Report a problem" is open; the empty page's "See all trips" pushes it, and Back is the
+ *     empty page again; a trip refused after a tap on the list steps back onto the list, which
+ *     says why once; a 403 says the list is not theirs, an expired session offers to sign in
+ *     back to the list, a 500 says so; with no usable answer (no signal, the gateway, six
+ *     seconds of one bar) it says the list needs a connection and offers their own trips, only
+ *     when a saved copy could be shown (a page kept from before a sign-out is refused), keeps a
+ *     list drawn earlier under "may be out of date", and asks again online; an answer for a list
+ *     since left, or since asked for again, is dropped, and so is a trip's answer once the list
+ *     is on screen; every value on a row is text;
+ *   - someone else's trip (`limited: true`): a line saying numbers and files are left out, no
+ *     Documents screen and no print link, and none of those drawn even from a limited answer
+ *     that carried them, whatever screen or picture the address names.
  *   /contract-sign
  *   - no history entry is ever added: signing and declining swap in place (declining no
  *     longer reloads into "This link isn't available");
@@ -1417,7 +1436,31 @@ const SERVER_TRIPS = {
 		{ date: "2026-09-26", items: [] },
 	] },
 	"TRIP-P2": { purpose: "Starts tomorrow", start_date: "2026-09-26", end_date: "2026-09-28", crew: ["EMP-1"] },
+	// Someone else's trip, opened from the list of all trips: Pat is not on it and did not
+	// organize it, so the server answers it `limited`, with no number and no file on any booking
+	// (get_trip_itinerary's outsider view) and no trip sheet.
+	"TRIP-Z": { purpose: "Trip Z", start_date: iso(5), end_date: iso(7), crew: ["EMP-4"], limited: true, days: () => [
+		{ date: iso(5), items: [{ type: "flight", date: iso(5), sort_time: "", airline: "Delta", flight_number: "DL 9", departure_airport: "PHX", arrival_airport: "SEA", group: "z1", booking_reference: "", travelers: ["Dana"], members: [{ employee: "EMP-4", employee_name: "Dana", ref: "" }], whole_crew: false }] },
+	], documents: () => [] },
 };
+
+// The list of all trips (get_all_trips), to the contract: every trip, grouped and ordered by
+// the server (now, then coming up, then earlier ones, the most recent first), the crew by name
+// with the trip lead first, and whether Pat travels on it (`mine`) or only organized it.
+const ALL_TRIPS_METHOD = "erpnext_enhancements.api.travel.get_all_trips";
+function allTripRows() {
+	const past = [];
+	for (let i = 1; i <= 13; i++) {
+		past.push({ name: `TRIP-PAST-${i}`, purpose: `Past ${i}`, status: "Closed", travel_type: "Road", start_date: iso(-20 - i * 7), end_date: iso(-18 - i * 7), travel_for: null, crew: ["Alex"], lead: null, mine: false, organizing: false, group: "past" });
+	}
+	return [
+		{ name: "TRIP-A", purpose: "Trip A", status: "Booked", travel_type: "Air", start_date: iso(-1), end_date: iso(1), travel_for: "Acme Fountains", crew: ["Pat", "Sam", "Alex"], lead: "Pat", mine: true, organizing: false, group: "now" },
+		{ name: "TRIP-O", purpose: "Trip O", status: "Booked", travel_type: "Road", start_date: iso(0), end_date: iso(2), travel_for: null, crew: ["Sam", "Alex"], lead: "Sam", mine: false, organizing: true, group: "now" },
+		{ name: "TRIP-Z", purpose: "Trip Z", status: "Planning", travel_type: "Air", start_date: iso(5), end_date: iso(7), travel_for: "Lakeside Resort", crew: ["Dana"], lead: "Dana", mine: false, organizing: false, group: "upcoming" },
+		{ name: "TRIP-B", purpose: "Trip B", status: "Booked", travel_type: "Air", start_date: iso(10), end_date: iso(12), travel_for: null, crew: ["Pat", "Sam", "Alex", "Dana", "Lee", "Kim", "Ray"], lead: null, mine: true, organizing: false, group: "upcoming" },
+		...past,
+	];
+}
 
 function refusal(status, excType, message) {
 	return { status, body: { exc_type: excType, _server_messages: JSON.stringify([JSON.stringify({ message })]) } };
@@ -1445,6 +1488,9 @@ function serve(trip, as, viewer) {
 	if (t.documents) message.documents = t.documents(viewing);
 	if (t.contacts) message.contacts = t.contacts(viewing);
 	if (t.sheet) Object.assign(message, t.sheet(viewing));
+	// Someone else's trip (the contract's outsider view): `limited`, and no sheet to print.
+	message.limited = !!t.limited;
+	if (t.limited) Object.assign(message, { sheet_url: null, my_sheet_url: null });
 	return { status: 200, body: { message } };
 }
 
@@ -1539,8 +1585,9 @@ function loadItinerary(url, opts) {
 					: Promise.reject(new TypeError("Failed to fetch"));
 			}
 			const body = JSON.parse(o.body);
+			const method = String(u).slice("/api/method/".length);
 			return new Promise((resolve, reject) => {
-				fetches.push({ trip: body.trip, as: body.as_employee || null, csrf: (o.headers || {})["X-Frappe-CSRF-Token"], resolve, reject });
+				fetches.push({ method, trip: body.trip, as: body.as_employee || null, csrf: (o.headers || {})["X-Frappe-CSRF-Token"], resolve, reject });
 			});
 		},
 		open(url, target) {
@@ -1628,8 +1675,49 @@ function loadItinerary(url, opts) {
 		},
 		trip: () => new URL(browser.location.href).searchParams.get("trip"),
 		as: () => new URL(browser.location.href).searchParams.get("as"),
-		pending: () => fetches.map((f) => f.trip),
-		asked: () => fetches.map((f) => [f.trip, f.as]),
+		// A request for the list of all trips (get_all_trips) names no trip: it is "(all trips)".
+		pending: () => fetches.map((f) => (f.method === ALL_TRIPS_METHOD ? "(all trips)" : f.trip)),
+		asked: () => fetches.map((f) => (f.method === ALL_TRIPS_METHOD ? ["(all trips)", null] : [f.trip, f.as])),
+		listAsked: () => fetches.filter((f) => f.method === ALL_TRIPS_METHOD).length,
+		// Answer the oldest request for the list of all trips: `reply === false` is no answer at
+		// all (offline); a {status, body} is that answer; nothing is the fake server's list.
+		async answerList(reply) {
+			const i = fetches.findIndex((f) => f.method === ALL_TRIPS_METHOD);
+			if (i === -1) {
+				check("a request for the list of all trips is waiting to be answered", page.pending(), ["(all trips)"]);
+				return;
+			}
+			const f = fetches.splice(i, 1)[0];
+			if (reply === false) f.reject(new TypeError("Failed to fetch"));
+			else {
+				const r = reply || { status: 200, body: { message: { trips: allTripRows(), more: 0 } } };
+				f.resolve({ ok: r.status === 200, status: r.status, json: async () => r.body });
+			}
+			await flush();
+		},
+		// The list screen: its group headings, its rows' titles, one row by its title, and a tap.
+		listGroups: () => texts("ti-list-group-title"),
+		listRows: () => root.find("ti-list-row").map((a) => a.find("ti-list-title")[0].textContent),
+		listRow: (purpose) => root.find("ti-list-row").find((a) => a.find("ti-list-title")[0].textContent === purpose) || null,
+		async openRow(purpose) {
+			const row = page.listRow(purpose);
+			if (!row) {
+				check(`the list offers ${purpose}`, page.listRows(), [purpose]);
+				return;
+			}
+			row.click();
+			await flush();
+		},
+		// "All trips", first in the trip chip bar.
+		async allTrips() {
+			const chip = root.find("ti-all-chip")[0];
+			if (!chip) {
+				check("the page offers All trips", page.text("ti-all-chip"), ["🧳All trips"]);
+				return;
+			}
+			chip.click();
+			await flush();
+		},
 		errors: () => root.find("ti-error").length,
 		title: () => texts("ti-header-title")[0],
 		people: () => texts("ti-person-chip"),
@@ -2079,6 +2167,7 @@ async function testItinerary() {
 	await testItineraryPlaceNotes();
 	await testItineraryOffline();
 	await testItineraryNoUsableAnswer();
+	await testItineraryAllTrips();
 }
 
 // The trip's files: on each booking's card, on the Documents screen (&view=docs), and pictures in
@@ -3546,6 +3635,335 @@ async function testItineraryNoUsableAnswer() {
 	p.root.find("ti-map-btn")[0].click();
 	await flush();
 	check("...so the next tap, once the signal is back, asks for it again", scripts().length, 1);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+}
+
+// The list of all trips (?view=trips, 2026-09-28): a screen of its own, every row a link to its
+// trip, and "All trips" in the chip bar. Someone else's trip opens `limited`: no numbers, no
+// files, and a line saying so.
+async function testItineraryAllTrips() {
+	console.log("/itinerary all trips");
+	const PAT = "pat@example.com";
+	const PAT_KEY = "0123456789abcdef".repeat(4);
+	const COOKIE = `user_id=pat%40example.com; full_name=Pat; ee_itinerary_key=${PAT_KEY}`;
+	// A date as a row shows it: the year only on a date outside this one.
+	const listDay = (value) => {
+		const options = { weekday: "short", month: "short", day: "numeric" };
+		if (value.slice(0, 4) !== String(new Date().getFullYear())) options.year = "numeric";
+		return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, options);
+	};
+	const row = (p, purpose) => {
+		const link = p.listRow(purpose);
+		if (!link) return null;
+		const part = (cls) => link.find(cls).map((e) => e.textContent);
+		return { href: link.href, tags: part("ti-tag"), dates: part("ti-list-dates"), sub: part("ti-list-sub"), crew: part("ti-list-crew-names") };
+	};
+	const LIST_STATE = { itin_trip: null, itin_as: null, itin_view: "trips", itin_from: { trip: "TRIP-A", as: null } };
+
+	// A reload, a link from the Travel workspace, the address: the list, with no history call.
+	let p = loadItinerary("/itinerary?view=trips");
+	check(
+		"?view=trips at boot is the list of all trips: no history call, and only the list is asked for",
+		[p.browser.calls, p.pending(), p.title(), p.document.title, p.text("ti-header-sub")],
+		[[], ["(all trips)"], "Trips", "Trips", ["Everyone's trips"]]
+	);
+	check("...saying it is loading, and nothing of a trip's", [p.text("ti-boot"), p.chips().length, p.root.find("ti-all-chip").length], [["Loading trips…"], 0, 0]);
+	await p.answerList();
+	check("...then its groups, in the server's order, with how many are in each", [p.listGroups(), p.text("ti-list-count")], [["On the road now", "Coming up", "Earlier trips"], ["2", "2", "13"]]);
+	check(
+		"...each trip under its group, the earlier ones at their first ten",
+		p.listRows(),
+		["Trip A", "Trip O", "Trip Z", "Trip B", "Past 1", "Past 2", "Past 3", "Past 4", "Past 5", "Past 6", "Past 7", "Past 8", "Past 9", "Past 10"]
+	);
+	check(
+		"a row says what the trip is, when, its status, kind and job, and who is on it, the trip lead first",
+		row(p, "Trip A"),
+		{ href: "/itinerary?trip=TRIP-A", tags: ["You're on it"], dates: [`${listDay(iso(-1))} – ${listDay(iso(1))}`], sub: ["Booked · Air · For: Acme Fountains"], crew: ["Pat (lead), Sam, Alex"] }
+	);
+	check("...a trip they organized but are not on says so", row(p, "Trip O").tags, ["You organized it"]);
+	check("...someone else's trip has no tag, and a job with no name is left out", [row(p, "Trip Z").tags, row(p, "Trip O").sub], [[], ["Booked · Road"]]);
+	check("...a big crew is cut short, and a trip with no lead named marks nobody", row(p, "Trip B").crew, ["Pat, Sam, Alex, Dana, Lee +2 more"]);
+	const more = p.root.find("ti-list-more")[0];
+	check("earlier trips past the first ten wait behind 'Show N more'", more && more.textContent, "Show 3 more");
+	more.click();
+	await flush();
+	check(
+		"...which adds them in place, writing no history and asking for nothing",
+		[p.listRows().length, p.listRows().slice(-3), p.root.find("ti-list-more").length, p.browser.calls, p.pending()],
+		[17, ["Past 11", "Past 12", "Past 13"], 0, [], []]
+	);
+
+	// A row is a link, and a tap on it is one entry.
+	await p.openRow("Trip Z");
+	check("tapping a trip on the list pushes one entry, ?trip=<name>, and asks for it", [p.urls(), p.pending(), p.view()], [["push /itinerary?trip=TRIP-Z"], ["TRIP-Z"], null]);
+	check("...remembering it was opened from the list", p.browser.history.state, { itin_trip: "TRIP-Z", itin_as: null, itin_from: { trip: null, as: null, view: "trips" } });
+	await p.answer("TRIP-Z");
+	check("...and shows it, with All trips first in the chip bar", [p.shown(), p.root.find("ti-switcher")[0].children[0].className, p.text("ti-all-chip")], ["Trip Z", "ti-all-chip", ["🧳All trips"]]);
+	p.browser.back();
+	await p.browser.settle();
+	check(
+		"Back returns to the list, with no history call: drawn at once from the last answer, as it was left, while it is asked for again",
+		[p.view(), p.trip(), p.urls().length, p.listRows().length, p.pending(), p.title()],
+		["trips", null, 1, 17, ["(all trips)"], "Trips"]
+	);
+	await p.answerList();
+	check("...and its answer redraws it", [p.listRows().length, p.pending()], [17, []]);
+	p.browser.forward();
+	await p.browser.settle();
+	check("Forward opens the trip again", [p.trip(), p.pending(), p.urls().length], ["TRIP-Z", ["TRIP-Z"], 1]);
+	await p.answer("TRIP-Z");
+	check("...and shows it", p.shown(), "Trip Z");
+	p.browser.back();
+	await p.browser.settle();
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back from the list it booted on leaves the page", p.browser.left, ORIGIN + "/desk");
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+
+	// "All trips" in the chip bar.
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	check("'All trips' is first in the trip chip bar, before their own trips", [p.root.find("ti-switcher")[0].children[0].className, p.chips().length], ["ti-all-chip", 4]);
+	await p.allTrips();
+	check("...a tap pushes one entry, ?view=trips, and asks for the list", [p.urls(), p.pending(), p.title()], [["replace /itinerary?trip=TRIP-A", "push /itinerary?view=trips"], ["(all trips)"], "Trips"]);
+	check("...remembering the trip it was pushed from", p.browser.history.state, LIST_STATE);
+	check("...nothing of the trip is left on screen", [p.shown(), p.chips().length, p.root.find("ti-contacts").length], [null, 0, 0]);
+	await p.answerList();
+	await p.openRow("Trip B");
+	await p.answer("TRIP-B");
+	await p.allTrips();
+	await p.browser.settle();
+	check(
+		"'All trips' on a trip opened from the list steps Back onto it, rather than put it in history twice",
+		[p.urls().slice(1), p.browser.index, p.view(), p.listRows().length],
+		[["push /itinerary?view=trips", "push /itinerary?trip=TRIP-B"], 2, "trips", 14]
+	);
+	check("...asking for the list once", p.listAsked(), 1);
+	await p.answerList();
+	p.browser.forward();
+	await p.browser.settle();
+	check("...so Forward is that trip again", [p.trip(), p.pending()], ["TRIP-B", ["TRIP-B"]]);
+	await p.answer("TRIP-B");
+	p.browser.back();
+	await p.browser.settle();
+	await p.answerList();
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back past the list is the trip the list was opened from", [p.trip(), p.pending()], ["TRIP-A", ["TRIP-A"]]);
+	await p.answer("TRIP-A");
+	check("...shown as it was", [p.shown(), p.title()], ["Trip A", "My Itinerary"]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+
+	p = loadItinerary("/itinerary", { trips: [TRIPS[1]] });
+	await p.answer("TRIP-A");
+	check("a single trip of their own: no trip chips, but 'All trips' is there", [p.chips().length, p.text("ti-all-chip")], [0, ["🧳All trips"]]);
+
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	p.capture.open = true;
+	await p.allTrips();
+	check("with 'Report a problem' open, 'All trips' writes no history and changes nothing", [p.urls(), p.shown(), p.pending()], [["replace /itinerary?trip=TRIP-A"], "Trip A", []]);
+
+	// A reload of the list reached from a trip: the list, and Back to the trip behind it.
+	p = loadItinerary("/itinerary?view=trips", { state: LIST_STATE, behind: [{ url: "/itinerary?trip=TRIP-A", state: { itin_trip: "TRIP-A", itin_as: null } }] });
+	check("a reload of ?view=trips draws the list, with no history call", [p.browser.calls, p.pending(), p.title()], [[], ["(all trips)"], "Trips"]);
+	await p.answerList();
+	check("...all of it", p.listRows().length, 14);
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back is the trip it was reached from", [p.trip(), p.pending(), p.browser.calls], ["TRIP-A", ["TRIP-A"], []]);
+
+	// The empty page's way to the list.
+	p = loadItinerary("/itinerary", { trips: [] });
+	const link = p.root.find("ti-all-link")[0];
+	check(
+		"no trips of their own: the empty page offers the list of all trips, as a real link",
+		[p.empty(), link && link.textContent, link && link.href],
+		[["No upcoming or recent trips. Safe travels when the next one comes!"], "See all trips", "/itinerary?view=trips"]
+	);
+	link.click();
+	await flush();
+	check("...a tap pushes ?view=trips and asks for the list", [p.urls(), p.pending(), p.title()], [["push /itinerary?view=trips"], ["(all trips)"], "Trips"]);
+	await p.answerList();
+	p.browser.back();
+	await p.browser.settle();
+	check("...and Back is the empty page again, asking for nothing", [p.empty(), p.pending(), p.urls().length, p.title()], [["No upcoming or recent trips. Safe travels when the next one comes!"], [], 1, "My Itinerary"]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+	p = loadItinerary("/itinerary", { trips: [], employee: null });
+	check("no Employee record: no link (the list is for staff)", p.root.find("ti-all-link").length, 0);
+
+	// Someone else's trip: `limited`.
+	p = loadItinerary("/itinerary?trip=TRIP-Z");
+	await p.answer("TRIP-Z");
+	check(
+		"someone else's trip (limited): a quiet line saying why, and no Documents screen and no print link",
+		[p.text("ti-limited"), p.screens(), !!p.print(), p.docs()],
+		[["You're not on this trip, so confirmation numbers and files are left out."], [], false, []]
+	);
+	check("...still the whole crew's itinerary, day by day", [p.title(), p.shown(), p.days(), p.members()], ["Whole crew", "Trip Z", 1, ["Dana"]]);
+	check("...under the trip, above the day list", p.order().filter((c) => c !== "ti-header" && c !== "ti-switcher").slice(0, 3), ["ti-trip-meta", "ti-people", "ti-limited"]);
+	p = loadItinerary("/itinerary?trip=TRIP-A");
+	await p.answer("TRIP-A");
+	check("a trip they are on (limited: false) has no such line, and its Documents and print link", [p.text("ti-limited"), p.screens().length, !!p.print()], [[], 2, true]);
+	// A limited answer that still carried what the server should have taken out draws none of it.
+	p = loadItinerary("/itinerary?trip=TRIP-Z&view=docs&file=TD-PASS-PAT");
+	p.session.next = { status: 200, body: { message: {
+		trip: "TRIP-Z", purpose: "Trip Z", status: "Booked", start_date: iso(0), end_date: iso(1), limited: true,
+		crew: [{ employee: "EMP-1", employee_name: "Pat" }, { employee: "EMP-2", employee_name: "Sam" }], viewing: null, viewer_employee: "EMP-9", viewer_on_trip: false,
+		days: [{ date: iso(0), items: sharedFlight(null).concat([{ type: "freight", date: iso(0), carrier: "UPS", contents: "Pump", tracking_number: "1Z999" }]) }],
+		documents: visibleFiles(null), sheet_url: SHEET, my_sheet_url: `${SHEET}&as=EMP-1`,
+	} } };
+	await p.answer("TRIP-Z");
+	check(
+		"a limited answer that still carried numbers, files or a sheet draws none of them, whatever screen or picture the address names",
+		[p.has("PNR"), p.has("1Z999"), p.members(), p.docs(), p.screens(), !!p.print(), !!p.viewer(), p.days(), p.document.title],
+		[false, false, ["Pat", "Sam"], [], [], false, false, 1, "Whole crew itinerary"]
+	);
+	check("...and writes no history", p.browser.calls, []);
+
+	// From the list, Trip Z opens limited; a trip gone since steps back onto the list.
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList();
+	await p.openRow("Trip Z");
+	await p.answer("TRIP-Z");
+	check("a trip opened from the list that is someone else's shows limited", [p.shown(), p.text("ti-limited").length], ["Trip Z", 1]);
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList({ status: 200, body: { message: { trips: allTripRows().concat([{ name: "TRIP-GONE", purpose: "Trip Gone", status: "Booked", start_date: iso(30), end_date: iso(31), crew: [], group: "upcoming" }]), more: 0 } } });
+	await p.openRow("Trip Gone"); // deleted since the list was drawn
+	await p.answer("TRIP-GONE");
+	await p.browser.settle();
+	check(
+		"a trip refused after a tap on the list steps back onto the list, rather than fall back to one of their own",
+		[p.urls(), p.browser.index, p.view(), p.pending()],
+		[["push /itinerary?trip=TRIP-GONE"], 1, "trips", ["(all trips)"]]
+	);
+	await p.answerList();
+	check(
+		"...which says why, once",
+		[p.text("ti-list-note"), p.listRows().length],
+		[["That trip couldn't be opened: it may have been deleted, or you don't have access to it."], 14]
+	);
+	await p.openRow("Trip A");
+	await p.answer("TRIP-A");
+	p.browser.back();
+	await p.browser.settle();
+	check("...and not again after another trip", p.text("ti-list-note"), []);
+
+	// Refused, and signed out.
+	p = loadItinerary("/itinerary?view=trips", { cookie: "user_id=pat%40example.com" });
+	await p.answerList(refusal(403, "PermissionError", "Not permitted"));
+	check("someone who is not staff is told the list is not theirs, in place, with no history call", [p.empty(), p.listRows(), p.browser.calls], [["You don't have access to the list of all trips."], [], []]);
+	p = loadItinerary("/itinerary?view=trips", { cookie: "user_id=pat%40example.com" });
+	await p.answerList(sessionExpired());
+	check(
+		"a session that has expired says so, with a way to sign in that comes back to the list",
+		[p.empty(), p.root.find("ti-signin").map((a) => a.href), p.browser.calls],
+		[["Your session has expired. Sign in again"], ["/login?redirect-to=/itinerary%3Fview%3Dtrips"], []]
+	);
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList({ status: 500, body: { exc_type: "ValidationError", _server_messages: JSON.stringify([JSON.stringify({ message: "Something broke" })]) } });
+	check("frappe's own 500 is an answer, said as such", [p.text("ti-error"), p.text("ti-list-offline")], [["Could not load the trips: Something broke"], []]);
+
+	// Offline: the list is not kept on the phone, and says so; their own trips still open.
+	p = loadItinerary("/itinerary?view=trips", { user: PAT, key: PAT_KEY, cookie: COOKIE });
+	await p.answerList(false);
+	check(
+		"?view=trips with no signal says the list needs a connection, with no history call",
+		[p.text("ti-list-offline"), p.browser.calls, p.errors()],
+		[["You're offline — the list of all trips needs a connection."], [], 0]
+	);
+	check("...and offers their own trips, which open from the copies saved on the phone", [p.listGroups(), p.listRows()], [["Your trips"], ["Trip C", "Trip A", "Trip O", "Trip B"]]);
+	check("...each saying whether they are on it or organized it", [row(p, "Trip A").tags, row(p, "Trip O").tags], [["You're on it"], ["You organized it"]]);
+	await p.openRow("Trip B");
+	check("...a tap pushes that trip and asks for it", [p.urls(), p.pending()], [["push /itinerary?trip=TRIP-B"], ["TRIP-B"]]);
+	p = loadItinerary("/itinerary?view=trips", { user: PAT, key: PAT_KEY, cookie: COOKIE });
+	await p.answerList(false);
+	p.browser.fire("online", {});
+	await flush();
+	check("back online, the list is asked for again, in place", [p.pending(), p.browser.calls], [["(all trips)"], []]);
+	await p.answerList();
+	check("...and drawn", [p.listRows().length, p.text("ti-list-offline")], [14, []]);
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList({ status: 503, body: { exc_type: "SessionStopped", _server_messages: "[]" } });
+	check("the gateway while a deploy restarts the site: the same, in its words", p.text("ti-list-offline"), ["The server isn't answering right now — the list of all trips needs a connection."]);
+	// The page kept on the phone, from before a sign-out: nothing of its boot is offered.
+	p = loadItinerary("/itinerary?view=trips", { user: PAT, key: PAT_KEY, cookie: "full_name=Pat" });
+	check("a page kept from before a sign-out: nothing drawn while it waits", [p.text("ti-boot"), p.listRows()], [["Loading itinerary…"], []]);
+	await p.answerList(false);
+	check("...and offline, refused as a saved trip would be: no trips of the person it was drawn for", [p.empty(), p.listRows(), p.text("ti-list-offline")], [["Sign in to see your itinerary."], [], []]);
+	// Offline after the list was drawn once: kept, and said to be out of date.
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList();
+	await p.openRow("Trip A");
+	await p.answer("TRIP-A");
+	p.browser.back();
+	await p.browser.settle();
+	await p.answerList(false);
+	check("offline after it was drawn once: the list stays, said to be out of date", [p.listRows().length, p.offline()], [14, ["You're offline — this list may be out of date."]]);
+	// One bar of signal.
+	const timers = makeTimers();
+	p = loadItinerary("/itinerary?view=trips", { timers });
+	await timers.run(6000);
+	check("one bar of signal: after six seconds, the same words, while the request carries on", [p.text("ti-list-offline"), p.pending()], [["Can't reach the server — the list of all trips needs a connection."], ["(all trips)"]]);
+	await p.answerList();
+	check("...and its answer replaces them", [p.listRows().length, p.text("ti-list-offline")], [14, []]);
+
+	// Answers for a screen already left are dropped.
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	await p.allTrips();
+	p.browser.back();
+	await p.browser.settle();
+	await p.answerList();
+	check("a list that answers after it was left is dropped: the trip stays", [p.listRows(), p.view(), p.text("ti-boot")], [[], null, ["Loading trip…"]]);
+	await p.answer("TRIP-A");
+	check("...and the trip is shown", [p.shown(), p.listRows()], ["Trip A", []]);
+	p = loadItinerary("/itinerary");
+	await p.answer("TRIP-A");
+	await p.tap("Trip B");
+	await p.allTrips();
+	await p.answer("TRIP-B");
+	check("a trip that answers after the list was opened is dropped: the list stays", [p.shown(), p.title(), p.text("ti-boot")], [null, "Trips", ["Loading trips…"]]);
+	await p.answerList();
+	check("...and the list is drawn", p.listRows().length, 14);
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList();
+	await p.openRow("Trip A");
+	p.browser.back();
+	await p.browser.settle(); // the list, asked for again
+	p.browser.forward();
+	await p.browser.settle();
+	p.browser.back();
+	await p.browser.settle(); // and again
+	check("(the list was asked for twice)", p.listAsked(), 2);
+	await p.answerList({ status: 200, body: { message: { trips: [{ name: "TRIP-OLD", purpose: "Old answer", group: "now", crew: [] }], more: 0 } } });
+	check("an answer to a list asked for again since is dropped", [p.listRows().length, p.listRows().includes("Old answer")], [14, false]);
+	await p.answerList({ status: 200, body: { message: { trips: [{ name: "TRIP-NEW", purpose: "New answer", group: "now", crew: [] }], more: 0 } } });
+	check("...and the latest is drawn", p.listRows(), ["New answer"]);
+
+	// Everything on a row is text.
+	const HOSTILE = "<img src=x onerror=alert(1)>";
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList({ status: 200, body: { message: { trips: [{
+		name: 'TRIP-"><script>', purpose: HOSTILE, status: "<b>Booked</b>", travel_type: "Air", start_date: iso(1), end_date: iso(2), travel_for: "<i>Acme</i>",
+		crew: [`${HOSTILE} Pat`, "Sam</div>"], lead: `${HOSTILE} Pat`, mine: true, organizing: false, group: "upcoming",
+	}], more: 0 } } });
+	const hostile = row(p, HOSTILE);
+	check(
+		"a purpose, status, job or crew name with markup in it is drawn as text, never a tag",
+		[p.listRows(), hostile && hostile.sub, hostile && hostile.crew, p.tags().filter((t) => !["HEADER", "DIV", "SECTION", "H2", "SPAN", "A", "FOOTER"].includes(t))],
+		[[HOSTILE], ["<b>Booked</b> · Air · For: <i>Acme</i>"], [`${HOSTILE} Pat (lead), Sam</div>`], []]
+	);
+	check("...and its name goes into the link encoded, as a query value only", hostile && hostile.href, "/itinerary?trip=TRIP-%22%3E%3Cscript%3E");
+	await p.openRow(HOSTILE);
+	check("...and into the address the same way", p.urls(), ['push /itinerary?trip=TRIP-%22%3E%3Cscript%3E']);
+	p = loadItinerary("/itinerary?view=trips");
+	await p.answerList({ status: 200, body: { message: { trips: [{ name: "TRIP-Q", purpose: { html: "<b>x</b>" }, status: 7, start_date: "soon", end_date: null, crew: [null, 3, "Sam"], lead: {}, group: "later" }, "junk", null], more: "5" } } });
+	check(
+		"a row with values that are not text draws what it can: the name, 'Dates not set', the names that are text, under Coming up",
+		[p.listGroups(), p.listRows(), row(p, "TRIP-Q").dates, row(p, "TRIP-Q").sub, row(p, "TRIP-Q").crew, p.text("ti-list-capped")],
+		[["Coming up"], ["TRIP-Q"], ["Dates not set"], [], ["Sam"], ["5 more trips aren't listed here."]]
+	);
 	check("every push was paid for by a tap", p.browser.unactivated, 0);
 }
 

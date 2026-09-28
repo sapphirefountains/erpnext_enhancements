@@ -35,7 +35,7 @@ on top of it.** What it pins:
   Comment or a hand-made ToDo on a version is refused, and every other Comment and ToDo on the site
   is untouched.
 * **The forms' buttons** (``onload``) are the rules, for each person.
-* **The PR 3 review fixes** (v1.555.1): Retire asks for a KB role before it reads anything, so a
+* **The PR 3 review fixes** (v1.556.1): Retire asks for a KB role before it reads anything, so a
   reader never learns a draft's name; Frappe's own Discard (``Document.discard``, which the stub
   runs as v16 does: ``before_discard``, ``db_set``, ``on_discard``) is refused, and a Draft row at
   docstatus 2 does not hold an article open; the Error Log a refusal promises is a deferred insert,
@@ -1001,7 +1001,7 @@ class TestPublishTransaction(Base):
 	def test_the_stubs_error_log_is_in_the_transaction_as_v16s_is(self):
 		"""What makes the assertion above mean something: a plain log_error before a refusal is
 		rolled back with the request here, as on prod, and only a deferred one survives. Before
-		v1.555.1 the stub kept every log whatever happened, and the test above passed on a log that
+		v1.556.1 the stub kept every log whatever happened, and the test above passed on a log that
 		prod never kept."""
 
 		def refuses():
@@ -1224,7 +1224,7 @@ class TestEveryTransitionThroughTheEndpoints(Base):
 			(api.approve_and_publish, (name, None)),
 			(api.discard, (name,)),
 			(api.start_revision, ("KB-0601",)),
-			# v1.555.1: retire read the article and its open version before any role check.
+			# v1.556.1: retire read the article and its open version before any role check.
 			(api.retire, ("KB-0601", "x")),
 		):
 			with self.subTest(fn=fn.__name__):
@@ -1243,13 +1243,13 @@ class TestEveryTransitionThroughTheEndpoints(Base):
 		self.assertNotIn(STRIPE_KEY, message)
 
 
-# ------------------------------------------------------------------ Frappe's own Discard (v1.555.1)
+# ------------------------------------------------------------------ Frappe's own Discard (v1.556.1)
 
 
 class TestFrappesOwnDiscardIsRefused(Base):
 	"""v16 puts a Discard of its own on the menu of every submittable draft (``form/toolbar.js:385-397``)
 	and whitelists ``Document.discard``, which checks only ``write`` (every KB role holds it) and sets
-	docstatus 2 with ``db_set``, running neither cancel hook. Before v1.555.1 one click left a version
+	docstatus 2 with ``db_set``, running neither cancel hook. Before v1.556.1 one click left a version
 	at docstatus 2 with ``review_state`` still Draft or In Review: open by every KB rule, unsaveable by
 	every KB action ("Cannot edit cancelled document"), and its article could never be revised or
 	retired again."""
@@ -1399,7 +1399,7 @@ class TestArticleActions(Base):
 
 	def test_a_reader_learns_nothing_of_an_open_draft_from_retire(self):
 		"""Knowledge Article is readable by every Desk User, so any staff member can call retire on
-		one. Before v1.555.1 the answer named the open revision ("KBV-00002 is still open on it"),
+		one. Before v1.556.1 the answer named the open revision ("KBV-00002 is still open on it"),
 		after locking the article and its versions; a reader is told nothing about drafts."""
 		revision = request(api.start_revision, "KB-0601", user=AUTHOR)["version"]
 		STATE["locks"].clear()
@@ -1503,7 +1503,7 @@ class TestReviewToDos(Base):
 		self.assertTrue(any("raise a review to-do for lisa" in (m or "") for _t, m in logged()))
 
 	def test_a_todo_failure_stays_logged_when_a_later_step_refuses(self):
-		"""v1.555.1: the to-do log is deferred, so the rollback of a later refusal in the same action
+		"""v1.556.1: the to-do log is deferred, so the rollback of a later refusal in the same action
 		(or publish.run's deadlock retry) does not take the only record of the failure with it."""
 
 		def action():
@@ -1762,7 +1762,7 @@ class TestWiring(Base):
 		self.assertIn("{ version: frm.doc.name, modified: frm.doc.modified }", source)
 
 
-# ------------------------------------------------------------------ the version form, run (v1.555.1)
+# ------------------------------------------------------------------ the version form, run (v1.556.1)
 
 VERSION_FORM = APP / "public" / "js" / "knowledge_base" / "knowledge_article_version.js"
 
@@ -1889,7 +1889,7 @@ class TestTheVersionFormScript(unittest.TestCase):
 		cls.out = json.loads(result.stdout)
 
 	def test_a_refused_save_does_not_send_the_stored_copy_for_review(self):
-		"""v1.555.1: kb_submit ran ``frm.save().then(go)``, and v16's promise resolves on a refused
+		"""v1.556.1: kb_submit ran ``frm.save().then(go)``, and v16's promise resolves on a refused
 		save too, so the older stored copy went to review, approvers were asked, and the reload after
 		it threw the author's edits away."""
 		out = self.out["refused_save"]

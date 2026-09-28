@@ -73,7 +73,7 @@ Trip Change Alert one person's change alert on one trip (trip, employee, status 
 ## Money flow
 
 - **Per diem** — per traveler, computed in `validate` from the traveler's own date range: `rate × (days−2) + 2 × rate × first_last_day_pct` (single day = one edge day). Rate comes from Travel Settings by `travel_type`, overridable per traveler. Frozen once claimed (`per_diem_claimed`); later date changes warn instead of silently recomputing.
-- **Mileage** — `distance × rate` (settings default, row-overridable). Company fleet never goes here — it's a Ground Transport row + draft **Vehicle Log** (`api.create_vehicle_log`; HRMS validates odometer continuity on submit).
+- **Mileage** — `distance × rate` (settings default, row-overridable), rounded to cents. Both rate fields keep three decimals (`precision: 3`, v1.555.1: the rate is $0.725 a mile), which a plain Currency field would round to the site's two. Company fleet never goes here — it's a Ground Transport row + draft **Vehicle Log** (`api.create_vehicle_log`; HRMS validates odometer continuity on submit).
 - **Expense Claims** — `api.create_expense_claim(s)` gathers, per traveler: employee-paid cost rows (by `paid_by_traveler`), unclaimed mileage, unclaimed per diem → one draft claim per traveler (extends an existing draft). Header gets `company`, `project`, `custom_travel_trip`; detail rows get real dates/descriptions and `project` when billable. **Throws a configuration error if an Expense Claim Type is unset in Travel Settings** (no silent fallback).
 - **Dedupe guard (3 layers):** row-level `expense_claim` stamps + traveler `per_diem_claimed` mark claimed material; `integrations.py` doc_events clear every stamp when a claim is cancelled/deleted, making rows claimable again. Stamps are written with `frappe.db.set_value` (never a full parent save) so a colleague's concurrently open form still saves cleanly.
 - **Advances** — `api.create_employee_advance` drafts a native Employee Advance per traveler; status mirrors back onto the traveler row via doc_events.
@@ -245,7 +245,8 @@ found a calendar, a planner and three reports.
     The block reloads itself on the router's `change` to the Travel route instead: one handler per
     page load, since `frappe.router.off()` cannot unbind one.
 - **I want to…** holds six plain-language shortcuts, all visible to an Employee so none leaves a
-  gap: *See my itinerary*, *Plan a Trip*, *My trips*, *Who's away when* (the calendar),
+  gap: *See my itinerary*, *Plan a Trip*, *Trips* (every trip, on `/itinerary?view=trips`, since
+  v1.556.0), *Who's away when* (the calendar),
   *Travel rules & per diem* and *Places & job sites*.
 - **How a work trip works** walks through four steps: the office plans it, before you go, on the
   road, when you're back.
@@ -255,7 +256,10 @@ found a calendar, a planner and three reports.
 - The **Travel sidebar** now ships from the repo as `workspace_sidebar/travel.json`. It replaced
   the sidebar production had generated for itself, whose *My Itinerary* and *Travel Guidelines*
   items had no URL, which still offered *New Travel Trip*, and which had no *Plan a Trip*.
-- Patch `reload_travel_hub` forces both past the import age gate.
+- Patch `reload_travel_hub` forces both past the import age gate; `reload_travel_hub_trips` (v1.556.0)
+  does it again for *My trips* → *Trips*. The sidebar keeps a *Trip list* item for Travel Trip under
+  Office: v16 picks a Travel Trip page's sidebar by the sidebars linking Travel Trip, and without one
+  every trip page showed frappe's auto-generated module sidebar instead.
 - **Travel Trip Cost Summary is for coordinators only** (Nik, 2026-09-28). The report is all money, and
   its roles included Employee until v1.554.0. Its roles are now exactly the coordinator roles; an
   empty list would fall back to ref_doctype read, which every Employee has.
@@ -308,6 +312,8 @@ The **company travel policy** ships as a login-gated page at `/travel_guidelines
 | System Manager / **Travel Coordinator** (role seeded by patch) | every trip, full control, reopen Closed trips |
 | HR Manager | every trip (read/write/create, no delete) |
 | Employee | create trips; read/WRITE trips they own **or are travelling on** (collaborative crew editing); no delete |
+
+**Seeing every trip, on `/itinerary` only (v1.556.0).** Any staff member (the Employee role, or a coordinator) can list every trip (`api.travel.get_all_trips`) and open any of them on `/itinerary`. A trip they are not on comes back *limited*: no confirmation numbers, files or sheet links. None of the rows below changed: the desk list, form, Report view and REST stay row-scoped, because money is permlevel 0 there (Nik chose "itinerary pages only", 2026-09-28).
 
 Row scoping is hook-based (`permission_query_conditions` + `has_permission`), tracking the travelers table live — no `frappe.share` records to orphan. Employee links inside trip children carry `ignore_user_permissions` so the site's Employee user-permission cascade doesn't block crew members saving rows for colleagues.
 

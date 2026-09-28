@@ -15,7 +15,8 @@
 
   The day-by-day UI is rendered client-side by itinerary.js into #itinerary-root,
   for the trip, person, screen and picture in the address
-  (?trip=<name>&as=<employee|crew>&view=docs&file=<Trip Document>); the server
+  (?trip=<name>&as=<employee|crew>&view=docs&file=<Trip Document>, or
+  ?view=trips for the list of every trip); the server
   decides whether the viewer may see them. The picture viewer is drawn straight
   into <body>, over the root, so redrawing the page never closes it. The <title>
   below is the first paint only: itinerary.js retitles the page for whose
