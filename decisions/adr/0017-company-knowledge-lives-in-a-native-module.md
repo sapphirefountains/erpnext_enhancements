@@ -11,6 +11,20 @@
 > "KB Approvers" profile. The text below was edited where those facts appear (the roles bullet in §2,
 > the Quill consequence, the follow-ups and the revisit list) and is otherwise as proposed.
 
+> **Amendment (2026-09-28, WI-080 Slice 3 redesigned AI-first).**
+> - **Frozen tool names:** `search_company_knowledge`, `fetch_knowledge_article`, `list_company_knowledge` (new, a table of contents) and `draft_knowledge_article` (new).
+> - **The three read tools** run as the caller, over published articles only. Search first takes the caller's readable set, so permissions still apply before ranking; idf is computed over the whole published corpus.
+> - **`draft_knowledge_article`** is the dedicated drafting tool that §2 deferred. It is an app write in `APP_MUTATING`, in the Medium risk band:
+>   - every call that passes its precheck becomes an AI Pending Action card; the rest are refused with no card. The tool refuses to run outside a confirmed card, and runs only when the person confirming it is the person who asked;
+>   - it creates a **Draft**, either a new article or a revision with nothing open, with `ai_drafted = 1` and `ai_requested_by`;
+>   - with `submit_for_review`, the same card then submits that Draft for review, through the same rules and the same write as the Submit for Review button. The requester is recorded as its submitter, so `approval_problems` refuses them as its approver, as it refuses every approval made under a gate card;
+>   - it never approves, publishes, requests changes, withdraws, discards, retires or confirms, and never returns draft text.
+>
+>   The denylist is unchanged. No text a person wrote in a draft reaches an assistant. The AI's own proposal stays in the gate's records until retention purges them.
+> - **Articles gain a `kind`: Policy, Process or SOP**, the company document register's three types. It is required to submit, not by the schema. The result-type field that §3 and §6 called `kind` is renamed **`result_type`** (`"article"`). No consumer existed.
+> - **Triton** is offered the three read tools, not the drafting tool.
+> - **Published articles are also mirrored as Markdown into the company's private knowledge repo** (WI-080 Slice 6), pulled by that repo from a read-only endpoint every 6 hours. **ERPNext holds no GitHub credential.**
+
 ## Context
 
 **The goal is continuity.** Nik holds most of how Sapphire runs in his head, and he is the only engineer. Parker, the purchasing agent and inventory clerk, is to become his backup. Parker is not an engineer, and James approves. The knowledge base therefore has to be something:
@@ -96,7 +110,7 @@ A version is published only by `approve_and_publish`. The server refuses unless 
 - They are seeded by a `post_model_sync` patch, not a fixture, and so is that Role Profile.
 - Review notices are ToDos, raised inline, with the existing branded ToDo notification.
 
-**AI can only draft, and in v1 it cannot even do that through a dedicated tool.**
+**An AI can draft, and submit its own draft for review, only through `draft_knowledge_article`, in a card the person who asked confirms. Approving and publishing stay a named person's act in a browser.** (amended 2026-09-28)
 
 ### 3. Two read-only FAC tools, with frozen names
 
@@ -108,7 +122,7 @@ A version is published only by `approve_and_publish`. The server refuses unless 
 - Both are in `EXPLICIT_READONLY`, with a test that fails if they are not.
 
 **What they return:**
-- **Search results always carry `kind`**, which is `"article"` in v1. A later result type is therefore an added field, not a changed contract.
+- **Search results always carry `result_type`**, which is `"article"` in v1; `kind` is the article's kind (amended 2026-09-28). A later result type is therefore an added field, not a changed contract.
 - Results carry the version, approver and date, `ai_drafted`, `review_overdue` and a URL. They carry no "trusted" label.
 - A missing, retired, unreadable or draft id returns the same `found:false`.
 
@@ -126,7 +140,7 @@ There is no restricted tier in the module. A plain article may say where a restr
 
 ### 6. Training integrates one way, as pointers, and only when there is something to point at
 
-**The integration tier adopted is "Training-lite" (T1), and it is trigger-gated.** It is built when at least one published course cites three or more published articles. Until then (T0), search results carry `kind`, and course authors cite KB numbers in lesson text.
+**The integration tier adopted is "Training-lite" (T1), and it is trigger-gated.** It is built when at least one published course cites three or more published articles. Until then (T0), search results carry `result_type` (amended 2026-09-28), and course authors cite KB numbers in lesson text.
 
 What T1 does when a new article version is approved:
 - It scans live course payloads for the number.

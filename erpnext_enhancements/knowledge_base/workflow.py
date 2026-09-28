@@ -337,6 +337,14 @@ def submit_problems(version, user, roles, *, article=None, secrets=()):
 	belongs to (``None`` for a first version); ``secrets`` is ``content.document_secret_findings``
 	for the version, which a save already refused but a stricter scan may find since: an approver
 	is never asked to approve something that cannot be published.
+
+	**A draft needs a kind** (PR 5): one of ``constants.ARTICLE_KINDS``, exactly. Required here and
+	not by the schema, because v16 checks ``reqd`` on every save of a submitted version as well
+	(``model/document.py:596-600``, ``:827-828``), so a ``reqd`` kind would stop a version published
+	before the field existed from ever being superseded. For the same reason neither
+	:func:`approval_problems` nor :func:`publish_problems` asks for one: a version already In Review
+	when PR 5 deployed can still be approved, and its article then has no kind until a revision
+	sets one.
 	"""
 	problems = []
 	if not holds_kb_role(roles):
@@ -350,6 +358,8 @@ def submit_problems(version, user, roles, *, article=None, secrets=()):
 		problems.append("it has no title")
 	if constants.block_code(_get(version, "department_block")) is None:
 		problems.append("it has no department")
+	if _get(version, "kind") not in constants.ARTICLE_KINDS:
+		problems.append("it has no kind")
 	if not shows_anything(_get(version, "body")):
 		problems.append("it has no text")
 	problems.extend(publish_problems(version, article))

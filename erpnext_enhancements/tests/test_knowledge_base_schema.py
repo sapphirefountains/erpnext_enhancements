@@ -24,7 +24,9 @@ row is ever exercised:
 * **The Select options** are exactly ``knowledge_base/constants.py``, which the publishing code
   writes, and a required Select with no default starts blank, because v16 otherwise defaults it
   to its first option and ``reqd`` never fires. ``review_every_months`` defaults to
-  ``constants.DEFAULT_REVIEW_EVERY_MONTHS`` on both doctypes, the cadence POL-0001 sets.
+  ``constants.DEFAULT_REVIEW_EVERY_MONTHS`` on both doctypes, the cadence POL-0001 sets. ``kind``
+  (PR 5) is Policy, Process or SOP after a blank, with no default and not ``reqd`` (the submit rule
+  requires it instead), and its description is ``constants.kind_description()``.
 * **The controllers** carry the class names Frappe derives (a mismatch gets a DocType
   force-deleted on migrate), and refuse what they must refuse, in both the hook a flag can skip
   and the one it cannot (since v1.556.1 that includes Frappe's own Discard on a version).
@@ -103,6 +105,7 @@ ARTICLE_FIELDS = {
 	"kb_number",
 	"title",
 	"department_block",
+	"kind",
 	"status",
 	"summary",
 	"keywords",
@@ -131,6 +134,7 @@ ARTICLE_FIELDS = {
 VERSION_CONTENT_FIELDS = {
 	"title",
 	"department_block",
+	"kind",
 	"summary",
 	"keywords",
 	"process_owner",
@@ -652,6 +656,55 @@ class TestSelectOptionsMatchTheCode(unittest.TestCase):
 		# The blank is a way of saying "not chosen yet", never a block.
 		self.assertNotIn("", constants.DEPARTMENT_BLOCK_OPTIONS)
 		self.assertIsNone(constants.block_code(constants.DEPARTMENT_BLOCK_SELECT_OPTIONS[0]))
+
+	def test_kind(self):
+		"""WI-080 PR 5: the register's three document types, a blank first, on both doctypes."""
+		for doctype in (ARTICLE, VERSION):
+			with self.subTest(doctype=doctype):
+				self.assertEqual(self._options(doctype, "kind"), constants.KIND_SELECT_OPTIONS)
+		self.assertEqual(constants.ARTICLE_KINDS, ("Policy", "Process", "SOP"))
+		self.assertEqual(constants.KIND_SELECT_OPTIONS, ("", *constants.ARTICLE_KINDS))
+
+	def test_kind_has_no_default_and_is_not_required(self):
+		"""No ``default``: a JSON default would be written into every existing row by the ALTER that
+		adds the column (a normal doctype), and every new draft would start already classified. Not
+		``reqd``: v16 checks ``reqd`` on every save of a submitted version too
+		(``model/document.py:596-600``, ``:827-828``), so ``publish.supersede`` could never again save a
+		version published before the field existed. ``workflow.submit_problems`` requires it instead."""
+		for doctype in (ARTICLE, VERSION):
+			field = _field(_load(doctype), "kind")
+			with self.subTest(doctype=doctype):
+				self.assertEqual(field["fieldtype"], "Select")
+				self.assertNotIn("default", field)
+				self.assertFalse(field.get("reqd"))
+				self.assertEqual(field.get("in_list_view"), 1)
+				self.assertEqual(field.get("in_standard_filter"), 1)
+				self.assertFalse(field.get("permlevel"))
+				self.assertEqual(field["label"], "Kind")
+		self.assertEqual(_field(_load(ARTICLE), "kind").get("read_only"), 1)
+		self.assertFalse(_field(_load(VERSION), "kind").get("read_only"))
+
+	def test_kind_sits_after_the_department(self):
+		for doctype in (ARTICLE, VERSION):
+			order = _load(doctype)["field_order"]
+			with self.subTest(doctype=doctype):
+				self.assertEqual(order[order.index("department_block") + 1], "kind")
+
+	def test_the_kind_description_says_what_each_kind_is(self):
+		"""The form's description is where a writer learns which kind to pick, and the AI tools'
+		schemas (PR 6a) use the same ``KIND_HELP`` lines."""
+		self.assertEqual(set(constants.KIND_HELP), set(constants.ARTICLE_KINDS))
+		for doctype in (ARTICLE, VERSION):
+			description = _field(_load(doctype), "kind")["description"]
+			with self.subTest(doctype=doctype):
+				self.assertEqual(description, constants.kind_description())
+				for kind, line in constants.KIND_HELP.items():
+					self.assertIn(f"{kind}: {line}", description)
+				self.assertTrue(
+					description.endswith(
+						"Readers and AI tools use it: a Policy is binding, and an SOP's steps are followed in order."
+					)
+				)
 
 	def test_review_every_months_defaults_to_the_policy_cadence(self):
 		"""POL-0001 sets the cadence (six months on 2026-09-25). One constant, and both JSONs carry

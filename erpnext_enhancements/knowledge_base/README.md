@@ -8,16 +8,19 @@ Nik.
 Programme: [WI-080](../../work-items/WI-080-company-knowledge-base.md).
 Decision record: [ADR 0017](../../decisions/adr/0017-company-knowledge-lives-in-a-native-module.md).
 
-**Status: PRs 1 to 4 of the v1 build (v1.538.0, v1.539.0, v1.555.0 with its review fixes in
-v1.556.1, and v1.557.0).** PR 1: the module, the two doctypes, the two roles, the locked permissions
-and the AI-gate denylist. PR 2: the approval rules and the content rules, applied by the Version
-controller, and private Files. PR 3: the actions (review, approve and publish, retire), the
-one-transaction publish, review ToDos and the form buttons, so an article can be published. **PR 4:
-the ways in**: a **Knowledge Base** tile on the Desk home screen, **Help > Company Knowledge Base**,
+**Status: PRs 1 to 5 of the v1 build (v1.538.0, v1.539.0, v1.555.0 with its review fixes in
+v1.556.1, v1.557.0 and v1.558.0).** PR 1: the module, the two doctypes, the two roles, the locked
+permissions and the AI-gate denylist. PR 2: the approval rules and the content rules, applied by the
+Version controller, and private Files. PR 3: the actions (review, approve and publish, retire), the
+one-transaction publish, review ToDos and the form buttons, so an article can be published. PR 4:
+the ways in: a **Knowledge Base** tile on the Desk home screen, **Help > Company Knowledge Base**,
 the `Knowledge Base` workspace and its sidebar, and two reports (Due for Review, and the Integrity
-report). See "Entry points (PR 4)". There is still **no AI tool** (PRs 5 and 6). **The KB roles were
-granted on 2026-09-28**: Parker, Nik and James hold KB Author and KB Approver, and Lisa holds KB
-Approver through the "KB Approvers" profile (see "Roles, and how a person gets one").
+report). See "Entry points (PR 4)". **PR 5: every article has a kind** (Policy, Process or SOP, the
+company document register's three types), and **the AwesomeBar finds published articles from two
+letters**, "PO" and "KB-0612" included. See "The article's kind (PR 5)" and "Search (PR 5)". There
+is still **no AI tool** (PR 6). **The KB roles were granted on 2026-09-28**: Parker, Nik and James
+hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Approvers" profile (see
+"Roles, and how a person gets one").
 
 ## The shape of it
 
@@ -84,7 +87,8 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | Path | Closed by |
 |---|---|
 | The web, and guests | `has_web_view 0`, `allow_guest_to_view 0`, no Guest or `All` row. `GET /api/resource/Knowledge Article` with no cookie is a 403 |
-| Global search and the AwesomeBar | v16 indexes a doctype's name only with `show_name_in_global_search` (0 on both, the v16 default) and a field only with its own `in_global_search` (none) or a Global Search Settings row (none). The JSONs' `show_in_global_search 0` is not a v16 DocType field and changes nothing (found in PR 3). Search arrives in PR 5, as the caller |
+| Global search | v16 indexes a doctype's name only with `show_name_in_global_search` (0 on both, the v16 default) and a field only with its own `in_global_search` (none) or a Global Search Settings row (none). The JSONs' `show_in_global_search 0` is not a v16 DocType field and changes nothing (found in PR 3). Both stay closed: the knowledge base's search is its own (next row) |
+| Search and the AwesomeBar (PR 5) | Built from **Knowledge Article only**, status Published: `search_service.py` never names, reads or queries the Version doctype, so no draft's text is in anything it reads. **The caller's readable set filters before ranking**: `frappe.has_permission` first (no throw, so no dialog for a portal user), then the caller's own `get_list` of Published names, and `search.search` drops everything else before it scores; the rows shown are read again with the caller's `get_list`. The index lives in each worker's memory, per site: nothing in the database, redis or the queue. See "Search (PR 5)" |
 | A reader opening a draft | Drafts are in the Version doctype, which has no reader row |
 | Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead. Reviewers are assigned by the knowledge base itself (`notify.py`, PR 3), only ever to KB Approvers, who can read it |
 | Comments and ToDos about a draft (PR 3, decision (b)) | Every System Manager reads every Comment and every ToDo on the site, and so do the AI tools acting for one; `list_documents(doctype="Comment")` names no denylisted doctype. So a typed Comment on a version is refused, and so is a ToDo on one that the knowledge base did not raise, or an edit to the text of one it did (`references.py`). The review ToDos carry the title and a link, never draft text; the reviewer's note stays in `review_note` on the version |
@@ -488,14 +492,16 @@ Report or Workspace link: v16 never filters a URL or Page item. A refused shortc
 columns, so the reader's two blocks come first on the page and the KB-only ones after them: a reader
 sees no hole. A System Manager without a KB role sees what a reader sees.
 
-**Searching**, until PR 5: the Article list's filter bar, which v16 builds from the ID, the title
+**Searching.** Since PR 5 the search bar at the top of every page finds published articles from two
+letters (see "Search (PR 5)"), and the workspace's paragraph sends people there first. The Article
+list's filter bar stays as the fallback that needs no index: v16 builds it from the ID, the title
 field and every `in_standard_filter` field, a text one as a `like` (`base_list.js`). PR 4 made
 **Keywords** one of them (`in_standard_filter` on the Article's `keywords`), so typing `PO` finds an
-article whose keywords say PO, which v16's global search never would (`ft_min_word_len=4`). The
-workspace's paragraph tells people this. A KB number goes in the ID box. **On a phone the Title and
-Keywords boxes are hidden** until the up-and-down arrows button beside Filter is tapped: v16 hides the
-whole standard-filter row on a narrow screen and moves only the ID box out of it (`base_list.js`,
-`setup_mobile`, :662-698, and `make_standard_filters`, :1159-1163). The paragraph says so.
+article whose keywords say PO, which v16's global search never would (`ft_min_word_len=4`); PR 5 added
+**Kind**. A KB number goes in the ID box. **On a phone the Title, Keywords and Kind boxes are hidden**
+until the up-and-down arrows button beside Filter is tapped: v16 hides the whole standard-filter row
+on a narrow screen and moves only the ID box out of it (`base_list.js`, `setup_mobile`, :662-698, and
+`make_standard_filters`, :1159-1163). The paragraph says so.
 
 **"My drafts" is the viewer's own.** Its `stats_filter` is a JavaScript expression,
 `{"review_state":["=","Draft"],"owner":["=",frappe.session.user]}`, which v16 evaluates with
@@ -538,7 +544,7 @@ background job whose result is stored as a File, or queued on the redis the depl
   | Article status | Published or Retired |
   | KB number | `KB-{block}{01..99}` in the article's department's block (never `00`); the live version was approved in the same department |
   | Live version | exists, belongs to the article, is submitted, is Published, and is at the article's `version_number`; no other version of the article is Published |
-  | Approved text | the article's `content_hash` is `content.content_hash` of the live version (catches the approved version edited), **and** the article's own text hashes the same (catches the article edited, which is what every reader and AI tool reads). Presentation and keyword order do not count, as in the hash |
+  | Approved text | the article's `content_hash` is `content.content_hash` of the live version (catches the approved version edited), **and** the article's own text hashes the same (catches the article edited, which is what every reader and AI tool reads). Presentation and keyword order do not count, as in the hash. And (PR 5) the article's kind is its live version's: the kind is not hashed, so it is compared on its own, and no kind on either side is agreement |
   | Approver | recorded, the same on the article and the live version, never Administrator or Guest, and not the live version's owner, submitter, a contributor or its AI requester |
   | Version state | a known state at the docstatus it must have (Published and Superseded submitted; Draft, In Review and Discarded not; never 2); a Published or Superseded version belongs to an article that exists |
   | Open versions | at most one open (Draft or In Review, docstatus 0) per article, and none on a Retired article |
@@ -574,6 +580,127 @@ an Auto Email Report on either report (or on a Custom Report built on one) unles
 and the user it runs as both hold the report's role. A KB Approver may still have the Integrity report
 emailed to them daily with *Send only if there is any data* ticked, which is a fair use: it stays
 silent until something is broken.
+
+## The article's kind (PR 5)
+
+Every article is a **Policy**, a **Process** or an **SOP** (`constants.ARTICLE_KINDS`), the three
+document types of the company's document register, each with its own template. Nik decided the list
+on 2026-09-28 ("SOP, Policy, and Process"): there is no other kind and no default one.
+
+| Kind | What it is (`constants.KIND_HELP`) | How a reader or a model uses it |
+|---|---|---|
+| Policy | a rule the company requires: what must or must not be done, and why | binding |
+| Process | how work flows across roles and stages: who does what, in what order, and where it is handed off | who does what, and when |
+| SOP | step-by-step instructions for one task, followed in order | followed in order |
+
+- **The field.** `kind` is a Select, blank first then the three, after `department_block` on both
+  doctypes, in the list view and the standard filters. On the Version it is a content field
+  (permlevel 0, in `constants.VERSION_CONTENT_FIELDS`), so a revision copies it, changing it makes
+  the saver a contributor, it is frozen once the version leaves Draft, and View Changes shows it
+  (`DIFF_FIELDS`). On the Article it is read-only, like every field, and `publish.publish` copies it
+  from the version (`None`, never `""`, when the version has none).
+- **Required to submit, not by the schema.** `workflow.submit_problems` refuses a draft whose `kind`
+  is not exactly one of the three ("it has no kind"). Not `reqd`: v16 checks `reqd` on every save of
+  a submitted version too (`model/document.py:596-600`, `:827-828`), and `publish.supersede` saves the
+  previous live version, so a `reqd` kind would stop every article published before PR 5 from ever
+  taking a new version. Approval and publishing do not ask for one, so a version already In Review
+  when PR 5 deployed can still be approved; its article then has no kind.
+- **No default, and no backfill patch.** A JSON `default` on a normal doctype would be written into
+  every existing row by the `ALTER` that adds the column, and every new draft would start already
+  classified. On deploy day no version had a kind (prod had no published article), so the only
+  honest backfill predicate would match nothing and record itself as run. Existing drafts get a kind
+  before Submit for Review; published articles stay unclassified until a revision sets one (decided
+  2026-09-28).
+- **The form says why Submit is missing.** The button is offered only when `submit_problems` is empty,
+  so every draft open at the deploy lost it. `publish.version_onload` sends `submit_blockers` (the
+  same problems, for a Draft, to a KB role), and the form's intro reads "Before it can be submitted
+  for review: it has no kind."
+- **Not in the content hash.** `content.HASHED_FIELDS` stays title, summary, keywords and body: adding
+  the kind would make every stored `content_hash` mismatch its live version. The Integrity report
+  compares the kind on its own (the Approved text check), and the Drive copy (Slice 4) keys its export
+  on `(content_hash, version_number)`, not the hash alone.
+- **What people type.** `constants.kind_option` reads a filter: a kind in any case, or one of
+  `constants.KIND_ALIASES` (`pol`, `policies`, `rule(s)` for Policy; `pro`, `processes`,
+  `workflow(s)` for Process; `sops`, `procedure(s)`, `how-to`, `howto`, `how-tos`, `instructions`,
+  `standard-operating-procedure` for SOP), after NFKC, casefolding and folding spaces, `_` and `-`.
+  "Procedure" is an SOP: in the register an SOP is the procedure for one task, and a Process is the
+  flow across roles those tasks sit in, which is what "workflow" means. `constants.department_option`
+  reads a department the same way (`06`, `6`, `Operations`, `06 Operations`), and
+  `constants.department_folder` names its folder (`06-operations`) for the Markdown mirror (Slice 6).
+
+## Search (PR 5)
+
+Two files: `search.py` ranks, pure and standard library only; `search_service.py` decides what may be
+ranked, keeps the index, and shapes results. v16's own search cannot do this: prod's
+`__global_search` has `ft_min_word_len=4`, so "PO", "QBO" and "SOP" are never indexed.
+
+**Tokens** (`search.tokenize`):
+
+1. NFKC.
+2. A KB number, `kb` then an optional space, `_` or `-`, then 1 to 4 digits (`KB-0601`, `kb 601`,
+   `KB0601`), is one term, `kb-0601`.
+3. A document number, 2 to 5 letters, `-`, 2 to 6 digits (`SOP-9001`), is one term, and its two
+   parts are indexed as well.
+4. Words of **2 or more** characters are kept.
+5. An **acronym** is a word written in capitals, 2 to 6 letters or digits with a letter (PO, QBO, SOP,
+   W2), or its plural (`POs`). In a run of text with no lowercase letter (an all-caps heading; a run
+   is a line or a sentence) only 2 and 3 characters are acronyms. Acronyms are never stemmed and never
+   stopwords, so "IT" is a term and "it" is not.
+6. English function words are stopwords, except acronyms and everything in the keywords field.
+7. A small stemmer for the rest: receive, receives, received and receiving are all `receiv`.
+
+**Ranking** (`search.search`) is BM25F. Title and keywords weigh 3, the summary 2, the body 1, and a
+*meta* field 0.5 holding the kind, its aliases and the department, so "procedure for receiving"
+reaches an SOP and "workflow for returns" a Process. `b` is 0.3 on the short fields and 0.75 on the
+body, `k1` 1.2, idf over the whole published corpus. A lowercase query word also tries its unstemmed
+spelling and, ending in `s`, the same without it (so "msds" meets "MSDS"). **A KB number in the query
+pins that article first.** Filters (the caller's readable set, department, kind) remove documents
+**before** anything is scored. Ties: pinned, then score, then KB number. A snippet is the 240-character
+window of the text with the most query terms, cut at word boundaries, or the summary when the text has
+none.
+
+**The service** (`search_service.search(query, department=None, kind=None, limit=10, snippets=True)`),
+as the person asking:
+
+1. A department or kind filter is read with `constants.department_option` / `kind_option`; one that
+   names nothing returns no results and a `problems` entry ("unknown kind 'Checklist'; use one of
+   Policy, Process or SOP"), never a silently ignored filter.
+2. `frappe.has_permission("Knowledge Article", "read")`, which does not throw and queues nothing. A
+   `get_list` refusal would queue an "Insufficient Permission" dialog even when caught (v16's list call
+   goes through `database/query.py`'s `check_select_permission`, `:1378-1390`), and any signed-in user,
+   a portal user included, can call the AwesomeBar's endpoint.
+3. The caller's readable set: `frappe.get_list(ARTICLE, {"status": "Published"}, pluck="name")`, as
+   the caller, before anything is ranked.
+4. Rank against the index, then read the hits' display fields with `get_list` as the caller again.
+   A hit whose row that call does not return is dropped.
+
+A result carries `name`, `kb_number`, `version`, `title`, `kind`, `department`, `summary`, `snippet`,
+`approved_by` (a full name), `approved_on`, `review_by`, `review_overdue`, `ai_drafted`, `url`,
+`matched` (`kb_number`, `title`, `keywords`, `summary`, `body`, `meta`) and `score`. No field ever
+comes from a version.
+
+**The index.** One per site, in each web worker's memory (`search_service._STATE`). **Nothing in the
+database, redis or the queue**, so a deploy's `FLUSHDB` has nothing to kill and a restarted worker
+rebuilds on its first search. It is keyed on ``select count(*), max(modified) from `tabKnowledge
+Article` `` (read before the corpus); publish, retire and confirm write the article in their own
+request, so each worker rebuilds inline on its next search, and an index older than 600 seconds is
+rebuilt anyway. The corpus is `frappe.get_all` of the Published articles' `name, kb_number, title,
+keywords, summary, body_md, kind, department_block`; `body_md` is read to build and not kept. A rebuild
+runs outside the lock and is swapped in under it; one that fails keeps the old index and stamp, and
+that search answers with nothing. Estimates: 40 articles, ~0.5 MB per worker and ~20-50 ms to rebuild;
+500 articles, ~3-5 MB and under a second. Revisit above about 2,000 articles. The CI guard builds 500
+800-word articles in under 5 seconds and runs 100 queries in under 1.
+
+**The AwesomeBar.** `hooks.py` `awesomebar_search` names `search_service.awesomebar_hits`. v16.32
+added the hook: from two characters (`awesome_bar.js:176`, when `frappe.boot.has_awesomebar_search`
+is set, `boot.py:109`), the AwesomeBar calls `frappe.desk.search.awesomebar_search`, which calls every
+hooked method (`desk/search.py:510-538`). Up to 5 hits, `index` 160, each `KB-0601 · <title>` with the
+matched words in bold and everything else escaped (v16 renders label and description as HTML), the kind
+and department as the description, and the route `["Form", "Knowledge Article", <KB number>]`, so a hit
+opens the article through `frappe.set_route` and Back returns. It never raises and leaves no message.
+This app's own live global search (`public/js/erpnext_enhancements.js`, `api/search.py`) is unchanged,
+keeps its 3-character floor, and cannot return the same rows: neither KB doctype is in global search.
+People see the hook after their next page load, because `has_awesomebar_search` is part of boot.
 
 ## Files
 
@@ -668,7 +795,9 @@ draft needs one of the other two.
 
 | Path | What it is |
 |---|---|
-| `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00 |
+| `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00. PR 5: `ARTICLE_KINDS`, `KIND_SELECT_OPTIONS` (blank first, for the same reason), `KIND_HELP`, `KIND_ALIASES`, `kind_option`, `kind_description`, `department_option` and `department_folder` |
+| `search.py` | Search's ranking (PR 5): the tokenizer (acronyms, 2-character words, KB and document numbers), the stemmer, BM25F with the kind in a meta field, pinning, filters before scoring, snippets and the AwesomeBar's highlighting. Standard library only; keeps no document text |
+| `search_service.py` | Search as the caller (PR 5): permission first with no dialog, the caller's readable set before ranking, the per-site per-worker index keyed on the articles' count and newest `modified`, result shaping, and `awesomebar_hits`, the `awesomebar_search` hook. Never reads the Version doctype |
 | `doctype/knowledge_article/` | The published snapshot. Controller `KnowledgeArticle`: refuses every write without `flags.kb_action`, and every delete and rename |
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish` or that breaks an approval rule, and every cancel, amend, delete and rename; applies the content rules on save |
 | `workflow.py` | The approval rules, content-edit and contributor rules, KB numbers and review dates (PR 2); the state machine (`TRANSITIONS`), who may make each move (`*_problems`), what the forms offer (`version_actions`, `article_actions`) and who is asked to review (`reviewers_for`) (PR 3). Standard library only, plus `signed_in_browser` from Marketing |
@@ -685,6 +814,7 @@ draft needs one of the other two.
 | [`../workspace_sidebar/knowledge_base.json`](../workspace_sidebar/knowledge_base.json) | Its sidebar (PR 4), which is also what lets the Desk tile render. Timestamp-gated too |
 | [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), [`../public/desktop_icons/knowledge_base.svg`](../public/desktop_icons/knowledge_base.svg) | The home-screen tile and its generated artwork (PR 4); `setup/desktop_icons.py` makes the Desktop Icon on migrate, and appends it to every saved home-screen layout that lacks it (PR 4 review) |
 | [`../hooks.py`](../hooks.py) `standard_help_items` | Help > Company Knowledge Base (PR 4) |
+| [`../hooks.py`](../hooks.py) `awesomebar_search` | The AwesomeBar's knowledge base hits (PR 5), `search_service.awesomebar_hits` |
 | [`../api/knowledge_base.py`](../api/knowledge_base.py) | The nine endpoints (PR 3): the permission and rule checks, then `publish` |
 | [`../public/js/knowledge_base/`](../public/js/knowledge_base/) | The two form scripts (PR 3), registered in `doctype_js`: the buttons `__onload.kb` allows, the dialogs, View Changes |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |
@@ -695,36 +825,32 @@ draft needs one of the other two.
 | [`../tests/test_knowledge_base_rules.py`](../tests/test_knowledge_base_rules.py) | `workflow.py` and `content.py`, every branch, with no stub (and a fresh-interpreter check that they import no frappe). Its own CI step |
 | [`../tests/test_knowledge_base_hooks.py`](../tests/test_knowledge_base_hooks.py) | `files.py` (the fast path, the byte move, the delete refusal, registration) and the Version controller's content and approval gates. Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_transitions.py`](../tests/test_knowledge_base_transitions.py) | The state machine, every rule of every move, the buttons, who is asked, `shows_anything`/`referenced_files`/`text_diff`, and the example-key placeholders (PR 3). No stub; its own CI step |
-| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3). Its own CI step: it stubs `frappe` |
-| [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review). Its own CI step: it stubs `frappe` |
+| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, the cache) (PR 5). Its own CI step: it stubs `frappe` |
+| [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review); the paragraph pointing to the search bar and the Integrity report's kind check (PR 5). Its own CI step: it stubs `frappe` |
+| [`../tests/test_knowledge_base_search.py`](../tests/test_knowledge_base_search.py) | `search.py` (PR 5), **pytest**, on its own `python -m pytest` step: every tokenizer rule, the stemmer table, pinning, filters before scoring, the kind's aliases, ties, snippets, an invented golden set (`fixtures/kb_search_golden.json`), a performance guard, a fresh-interpreter import with `frappe` absent, and static checks that search never names the Version doctype or a SQL function string |
 
 ## What arrives later
 
 In order, one PR at a time, each verified on prod before the next merges (see WI-080):
 
 - **PR 4a** (only if the Google Docs Markdown export keeps pictures and tables): Markdown import.
-- **PR 5**: in-app search. What PR 4 leaves it, and what it must hold to:
-  - **It searches the published Article only**, as the caller (`frappe.get_list("Knowledge
-    Article", {"status": "Published"})`), never the Version doctype and never raw SQL on it (the
-    gate refuses that over MCP anyway), and with no SQL-function string in a field list. It adds no
-    `Global Search DocType` row and no `in_global_search` field: v16's global search stays closed
-    to the knowledge base (the leak table), and the new search is the knowledge base's own.
-  - **A hit opens the article with `frappe.set_route`**, `/desk/knowledge-article/<KB number>`, so
-    Back returns to where the search was typed, and the KB sidebar comes with it.
-  - **The list's filter bar stays** (ID, Title, Keywords, Department, Status): it is the search that
-    needs no index, and the fallback when the new one misses. Keep `in_standard_filter` on
-    `keywords`.
-  - **Update the workspace's paragraph** when the AwesomeBar finds articles: it tells people to use
-    the list's boxes today. Bump the workspace's `modified` and the fingerprint in
-    `tests/test_knowledge_base_entry_points.py` (`PINNED`) with it, or the change never reaches a
-    site.
-  - **Nothing in PR 5 writes**, like PR 4. Every state change stays in `publish.transition` and
-    every article write in `publish.py`.
-  - The test is a bench-free pytest on its own `python -m pytest` step (WI-080), not a unittest
-    module list: `python -m unittest` cannot collect pytest functions.
-- **PR 6**: the two read-only AI tools, `search_company_knowledge` and `fetch_knowledge_article`.
-  Their descriptions may point a person to Help > Company Knowledge Base (`/desk/knowledge-base`).
-- **PR 7**: the one-way Drive copy for Gemini and outages.
+- ~~**PR 5**: in-app search~~. Done in v1.558.0, holding to what PR 4 left it: the published Article
+  only, as the caller, never the Version doctype and never a SQL-function string; no `Global Search
+  DocType` row and no `in_global_search` field; a hit opens the article with `frappe.set_route`; the
+  list's filter bar stays; the workspace's paragraph points to the search bar, with its stamp and
+  `PINNED` moved; nothing written; and a bench-free pytest on its own step. See "The article's kind
+  (PR 5)" and "Search (PR 5)".
+- **PR 6a**: three read-only AI tools, `search_company_knowledge`, `fetch_knowledge_article` and
+  `list_company_knowledge`, over `search_service` and the published article. Search results carry
+  `result_type` (`"article"`) and the article's `kind`. Their descriptions may point a person to
+  Help > Company Knowledge Base (`/desk/knowledge-base`).
+- **PR 6b**: `draft_knowledge_article`, which writes a Draft (and, if asked, submits it for review)
+  only from an approval card the person who asked confirms. It never approves or publishes.
+- **PR 7**: the one-way Drive copy for Gemini and outages. It keys its export on
+  `(content_hash, version_number)`, because the kind is not in the hash.
+- **PR 8**: the Markdown mirror of the published articles in the company's private repo, pulled from
+  a read-only endpoint (WI-080 Slice 6).
 
-**Merging:** PRs 1 to 3 and PR 3's review fixes are live on prod (1.556.1, verified 2026-09-28).
-Each later PR merges when Nik decides, one at a time, after the one before it is verified on prod.
+**Merging:** PRs 1 to 3 and PR 3's review fixes are live on prod (1.556.1, verified 2026-09-28), and
+PR 4 merged on 2026-09-28 (v1.557.0). Each later PR merges when Nik decides, one at a time, after
+the one before it is verified on prod.

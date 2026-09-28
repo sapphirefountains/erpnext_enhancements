@@ -23,7 +23,7 @@ its "The two reports"):
 * the article's ``content_hash`` equals :func:`content.content_hash` of that version, **and** the
   article's own text hashes the same (the first catches the approved version edited, the second
   the article edited, which is what every reader and AI tool reads), and the two agree on the
-  department;
+  department and, since PR 5, on the kind (no kind on either side is agreement);
 * the approver is a named person (never Administrator or Guest), is recorded the same on the
   article and the version, and is not the live version's owner, submitter, AI requester or a
   contributor;
@@ -175,6 +175,7 @@ INTEGRITY_ARTICLE_FIELDS = (
 	"name",
 	"status",
 	"department_block",
+	"kind",
 	"version_number",
 	"live_version",
 	"content_hash",
@@ -202,8 +203,11 @@ INTEGRITY_VERSION_FIELDS = (
 )
 
 #: The Version columns read for the **live versions only, and only once submitted** (the
-#: controller's query says ``docstatus = 1``): the approved text, hashed and compared, never shown.
-APPROVED_TEXT_FIELDS = ("name", *content.HASHED_FIELDS, "department_block")
+#: controller's query says ``docstatus = 1``): the approved text, hashed and compared, never shown;
+#: and the department and kind it was approved with, compared with the article's. ``kind`` (PR 5) is
+#: not in ``content.HASHED_FIELDS`` (adding it would make every stored ``content_hash`` mismatch
+#: its live version), so it is checked here on its own.
+APPROVED_TEXT_FIELDS = ("name", *content.HASHED_FIELDS, "department_block", "kind")
 
 #: The File columns read: which File, and where it is attached. Not its name or URL, which an
 #: uploader chose and which may describe a draft.
@@ -366,6 +370,17 @@ def _article_problems(article, by_version, approved_texts, add):
 			f"{name} is in {_get(article, 'department_block') or 'no department'}, but its live version "
 			f"{live} was approved in {_get(text, 'department_block') or 'no department'}.",
 		)
+	# PR 5: the kind is not hashed, so it is compared here. No kind on either side is agreement: an
+	# article published before the field existed has none, and neither has its live version.
+	classified, approved_as = _get(article, "kind") or None, _get(text, "kind") or None
+	if classified != approved_as:
+		add(
+			CHECK_APPROVED_TEXT,
+			name,
+			live,
+			f"{name} is {_classified(classified)}, but its live version {live} was approved "
+			f"{_approved_as(approved_as)}.",
+		)
 
 
 def _approver_problems(name, article, live, version, add):
@@ -494,6 +509,21 @@ def _and(parts):
 	if len(parts) == 1:
 		return parts[0]
 	return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _classified(kind):
+	"""``"classified SOP"``, or ``"not classified"``. A kind is one of three fixed words (v16's Select
+	validation refuses any other through the ORM), never text someone typed; anything else written
+	past the ORM is named only as not one of them."""
+	if kind is None:
+		return "not classified"
+	return f"classified {kind}" if kind in constants.ARTICLE_KINDS else "classified as something that is not a kind"
+
+
+def _approved_as(kind):
+	if kind is None:
+		return "with no kind"
+	return f"as {kind}" if kind in constants.ARTICLE_KINDS else "as something that is not a kind"
 
 
 def _docstatus(row):

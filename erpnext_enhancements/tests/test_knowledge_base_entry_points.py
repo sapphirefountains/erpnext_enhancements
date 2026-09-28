@@ -81,8 +81,8 @@ VERSION = K.VERSION_DOCTYPE
 #: its ``modified`` past the stamp below; then put the new fingerprint and stamp here.
 PINNED = {
 	WORKSPACE_PATH: (
-		"9414c2df5542efac3b44079d1aaf0a571698de41bb51932a2fef0118dd1dfb8d",
-		"2026-09-28 22:00:00.000000",
+		"d3445804ef6df80fae245117e8b4631163da25a8c774dc9b35ea9637a9db0f54",
+		"2026-09-28 23:00:00.000000",
 	),
 	SIDEBAR_PATH: (
 		"602355a1de2f7d8bd5e5f405064d1b1497fddbd5071f601b71751fa5b957e3ca",
@@ -384,9 +384,11 @@ def corpus():
 		"process_owner": PARKER,
 		"review_by": datetime.date(2027, 3, 28),
 		"body_md": "Open the PO",
+		# PR 5: the article's kind is its live version's.
+		"kind": "SOP",
 		**LIVE_TEXT,
 	}
-	base = {"ai_requested_by": None, "department_block": "06 Operations", "reviewer": None}
+	base = {"ai_requested_by": None, "department_block": "06 Operations", "reviewer": None, "kind": "SOP"}
 	versions = [
 		{
 			**base,
@@ -602,6 +604,23 @@ class TestWorkspace(unittest.TestCase):
 		(row,) = self.ws["quick_lists"]
 		self.assertEqual(row["document_type"], ARTICLE)
 		self.assertEqual(json.loads(row["quick_list_filter"]), [[ARTICLE, "status", "=", "Published"]])
+
+	def test_the_paragraph_points_to_the_search_bar_first(self):
+		"""WI-080 PR 5: the AwesomeBar finds articles from two letters, so the paragraph sends people
+		there first and keeps the list's filter bar as the fallback, with the phone hint."""
+		(intro,) = [b for b in json.loads(self.ws["content"]) if b["id"] == "kb_intro"]
+		text = intro["data"]["text"]
+		self.assertIn("policies, processes and SOPs", text)
+		self.assertNotIn("Short how-to articles", text)
+		self.assertIn("search bar at the top of any page", text)
+		self.assertIn("two letters are enough, e.g. PO", text)
+		self.assertIn("KB-0612", text)
+		self.assertLess(text.index("search bar"), text.index("<b>Published articles</b>"))
+		# The Kind box sits with Title and Keywords, before the phone hint: v16 hides it on a phone too.
+		self.assertLess(text.index("<b>Keywords</b>"), text.index("<b>Kind</b>"))
+		self.assertLess(text.index("<b>Kind</b>"), text.index("on a phone"))
+		(kind,) = [f for f in load(ARTICLE_JSON)["fields"] if f["fieldname"] == "kind"]
+		self.assertEqual(kind.get("in_standard_filter"), 1)
 
 	def test_the_search_hint_works_on_a_phone(self):
 		"""On a phone v16 hides the whole standard-filter row, Title and Keywords included, until the
@@ -1748,9 +1767,47 @@ class TestIntegrity(unittest.TestCase):
 			self.assertEqual(set(problem), {"check", "article", "version", "detail"})
 			self.assertIn(problem["check"], R.CHECKS)
 
+	# --- the kind (PR 5)
+
+	def test_a_kind_that_differs_from_the_live_versions(self):
+		self.live["kind"] = "Policy"
+		(problem,) = self.assertOnly(R.CHECK_APPROVED_TEXT)
+		self.assertEqual(
+			problem["detail"], "KB-0612 is classified SOP, but its live version KBV-00003 was approved as Policy."
+		)
+		self.assertEqual((problem["article"], problem["version"]), ("KB-0612", "KBV-00003"))
+
+	def test_no_kind_on_either_side_is_agreement(self):
+		"""An article published before PR 5, from a version that had no kind: not a problem."""
+		self.article["kind"] = None
+		self.live["kind"] = ""
+		self.assertEqual(problems_of(self.data), [])
+
+	def test_a_kind_on_one_side_only(self):
+		self.article["kind"] = None
+		(problem,) = self.assertOnly(R.CHECK_APPROVED_TEXT)
+		self.assertIn("KB-0612 is not classified, but its live version KBV-00003 was approved as SOP", problem["detail"])
+		data = corpus()
+		version(data, "KBV-00003")["kind"] = None
+		(problem,) = problems_of(data)
+		self.assertIn("KB-0612 is classified SOP, but its live version KBV-00003 was approved with no kind", problem["detail"])
+
+	def test_a_kind_written_past_the_orm_is_not_quoted(self):
+		"""A kind is one of three words; anything else was written past v16's Select validation, and
+		a row names it only as not a kind, as it never quotes text."""
+		self.article["kind"] = "DRAFT-KIND-7Q"
+		(problem,) = self.assertOnly(R.CHECK_APPROVED_TEXT)
+		self.assertNotIn("DRAFT-KIND-7Q", problem["detail"])
+		self.assertIn("not a kind", problem["detail"])
+
+	def test_the_readme_says_the_approved_text_check_covers_the_kind(self):
+		section = README.read_text(encoding="utf-8").split("\n### The two reports\n", 1)[1]
+		(row,) = [line for line in section.splitlines() if line.strip().startswith("| Approved text |")]
+		self.assertIn("kind", row)
+
 	def test_the_version_fields_read_are_disjoint_from_its_text(self):
 		self.assertEqual(set(R.INTEGRITY_VERSION_FIELDS) & set(K.VERSION_CONTENT_FIELDS), set())
-		self.assertEqual(set(R.APPROVED_TEXT_FIELDS), {"name", "department_block", *C.HASHED_FIELDS})
+		self.assertEqual(set(R.APPROVED_TEXT_FIELDS), {"name", "department_block", "kind", *C.HASHED_FIELDS})
 
 
 if __name__ == "__main__":

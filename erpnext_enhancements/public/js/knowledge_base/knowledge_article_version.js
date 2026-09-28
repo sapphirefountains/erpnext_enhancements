@@ -237,13 +237,29 @@ function kb_show_diff(frm) {
 function kb_version_intro(frm, kb, state) {
 	const who = (user) => kb_escape(frappe.user.full_name(user) || user || "");
 	const blockers = kb.approve_blockers || [];
-	if (state === "Draft" && frm.doc.review_note) {
-		// The latest note stays on the version (it is kept, not cleared), so it is labelled as
-		// the last one rather than as a request still open.
-		frm.set_intro(
-			__("Last review note, from {0}: {1}", [who(frm.doc.reviewer), kb_escape(frm.doc.review_note)]),
-			"orange"
-		);
+	if (state === "Draft") {
+		const lines = [];
+		if (frm.doc.review_note) {
+			// The latest note stays on the version (it is kept, not cleared), so it is labelled as
+			// the last one rather than as a request still open.
+			lines.push(
+				__("Last review note, from {0}: {1}", [who(frm.doc.reviewer), kb_escape(frm.doc.review_note)])
+			);
+		}
+		// WI-080 PR 5: why Submit for Review is not offered (publish.version_onload sends the same
+		// workflow.submit_problems the button is judged by). Every draft open when the article kind
+		// arrived has none, and without this the button would just be missing.
+		const submit_blockers = kb.submit_blockers || [];
+		if (submit_blockers.length) {
+			lines.push(
+				__("Before it can be submitted for review: {0}.", [submit_blockers.map(kb_escape).join("; ")])
+			);
+		}
+		if (lines.length) {
+			frm.set_intro(lines.join("<br>"), "orange");
+		} else {
+			frm.set_intro();
+		}
 	} else if (state === "In Review") {
 		let text = __("In review, submitted by {0}. A KB Approver who did not write it approves it.", [
 			who(frm.doc.submitted_by),

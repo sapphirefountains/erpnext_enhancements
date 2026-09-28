@@ -828,7 +828,11 @@ jobs:
       # revised or retired), Retire's role check before any read, an Error Log that outlives the
       # refusal it explains (the stub's log is in the transaction now, as v16's is), and the
       # version form run in node: Submit for Review goes on only after a save the server stored.
-      # The node part fails, never skips, in CI (ubuntu-latest ships node).
+      # The node part fails, never skips, in CI (ubuntu-latest ships node). Since PR 5 (v1.558.0)
+      # also the article kind (required to submit, and the form's intro says so, run in node;
+      # copied at publish and by a revision) and SearchServiceTest: search_service over this same
+      # in-memory site, where no draft's sentinel is ever found and a caller's readable set applies
+      # before ranking.
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace
@@ -847,6 +851,21 @@ jobs:
       # Own step: it installs its own frappe stub.
       - name: Knowledge base entry points (workspace, tile, help item, the two reports)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_entry_points -v
+      # WI-080 PR 5 (v1.558.0): knowledge base search. PLAIN PYTEST FUNCTIONS, so its own
+      # `python -m pytest` step -- `python -m unittest` collects none of them (the QuickBooks
+      # lesson at the top of this job). search.py is pure: every tokenizer rule (two-letter words,
+      # acronyms and the all-caps run, IT vs it, the four KB-number spellings, a document number),
+      # the stemmer table, ranking (title/keywords over body, pinning, filters applied BEFORE
+      # scoring, the kind's aliases through the meta field, deterministic ties), snippets, a golden
+      # set of INVENTED articles and questions (tests/data/kb_search_golden.json; the real questions
+      # live in the private repo), a loose performance guard (500 x 800 words in < 5 s, 100 queries
+      # in < 1 s), and a fresh interpreter importing search.py with frappe absent. Plus
+      # search_service over the golden corpus through a fake frappe installed with monkeypatch for
+      # one test at a time: permission asked before any list call, the readable set before ranking,
+      # no draft or retired text ever returned, the Version doctype never read, and static checks
+      # that neither module names that doctype or passes a SQL function string as a field.
+      - name: Knowledge base search (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_knowledge_base_search.py -q
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the

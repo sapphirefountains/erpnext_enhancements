@@ -11,6 +11,9 @@ Standard library only, so the schema test and the pure rules modules can import 
 bench.
 """
 
+import re
+import unicodedata
+
 #: ``Knowledge Article.status``. An Article row exists only once a version has been approved, so
 #: there is no Draft here: drafts live in the other doctype.
 ARTICLE_STATUSES = ("Published", "Retired")
@@ -62,6 +65,7 @@ NEVER_APPROVERS = ("Administrator", "Guest")
 VERSION_CONTENT_FIELDS = (
 	"title",
 	"department_block",
+	"kind",
 	"summary",
 	"keywords",
 	"process_owner",
@@ -119,3 +123,123 @@ def block_code(option):
 	if isinstance(option, str) and option in DEPARTMENT_BLOCK_OPTIONS:
 		return option[:2]
 	return None
+
+
+def department_option(value):
+	"""The ``department_block`` option a person or a tool meant, or ``None``.
+
+	Accepts the option itself (``"06 Operations"``), its code (``"06"`` or ``"6"``), its label
+	(``"Operations"``) or its folder (``"06-operations"``), in any case and spacing. Unlike
+	:func:`block_code` this is for reading a *filter* someone typed; nothing is ever written from it.
+	``None`` for blank and for anything that is not one of the ten blocks.
+	"""
+	if isinstance(value, bool) or value is None:
+		return None
+	if isinstance(value, int):
+		value = str(value)
+	if not isinstance(value, str):
+		return None
+	return _DEPARTMENT_LOOKUP.get(_fold(value, " "))
+
+
+def department_folder(option):
+	"""``"06 Operations"`` -> ``"06-operations"``: the folder a mirrored article is written under
+	(WI-080 Slice 6). Strict, like :func:`block_code`: ``None`` for anything that is not an option."""
+	if not isinstance(option, str) or option not in DEPARTMENT_BLOCK_OPTIONS:
+		return None
+	return re.sub(r"[^0-9a-z]+", "-", option.casefold()).strip("-")
+
+
+# ------------------------------------------------------------------ the article's kind (PR 5)
+
+#: ``kind`` on both doctypes: the company document register's three document types, each with its
+#: own template (POL-0002 Policy, POL-0003 Process, POL-0004 SOP). An article is classified the way
+#: the controlled document it replaces or summarizes already is. There is no catch-all and no
+#: default kind (decided 2026-09-28): a guide to diagnosing a fault is an SOP (steps for one task),
+#: and a rule with its reasons is a Policy.
+ARTICLE_KINDS = ("Policy", "Process", "SOP")
+
+#: ``kind``'s Select ``options`` as both JSONs store them: a **blank first**, for the reason
+#: :data:`DEPARTMENT_BLOCK_SELECT_OPTIONS` gives. v16 gives a Select with no ``default`` its first
+#: option on every new document, so with ``Policy`` first every new draft would start classified.
+#: Neither doctype makes the field ``reqd``: ``workflow.submit_problems`` requires it instead, because
+#: v16 checks ``reqd`` on every save of a submitted version too, and a version published before the
+#: field existed could then never be superseded (WI-080, "Found while designing Slice 3", 3).
+KIND_SELECT_OPTIONS = ("", *ARTICLE_KINDS)
+
+#: One line per kind: what it is, as a reader or a model should use it. It feeds the field's
+#: description (:func:`kind_description`, which the schema test holds both JSONs to) and, from PR 6a,
+#: the AI tools' schemas.
+KIND_HELP = {
+	"Policy": "a rule the company requires: what must or must not be done, and why.",
+	"Process": (
+		"how work flows across roles and stages: who does what, in what order, and where it is "
+		"handed off."
+	),
+	"SOP": "step-by-step instructions for one task, followed in order.",
+}
+
+#: Other words people use for a kind, as :func:`kind_option` reads them (after :func:`_fold`, so
+#: "How to", "how_to" and "HOW-TO" are all ``how-to``). ``pol`` and ``pro`` are the register's own
+#: number prefixes (POL-, PRO-). "Procedure" is an SOP: SOP stands for standard operating procedure,
+#: and in the register an SOP is the procedure for one task, while a Process is the flow across
+#: roles those tasks sit inside, which is also what "workflow" means. ``sop`` needs no alias: it is
+#: the kind itself. Search also indexes these words with each article (``search.py``, the meta
+#: field), so "procedure for receiving" reaches an SOP.
+KIND_ALIASES = {
+	"pol": "Policy",
+	"policies": "Policy",
+	"rule": "Policy",
+	"rules": "Policy",
+	"pro": "Process",
+	"processes": "Process",
+	"workflow": "Process",
+	"workflows": "Process",
+	"sops": "SOP",
+	"procedure": "SOP",
+	"procedures": "SOP",
+	"how-to": "SOP",
+	"howto": "SOP",
+	"how-tos": "SOP",
+	"instructions": "SOP",
+	"standard-operating-procedure": "SOP",
+}
+
+
+def kind_option(value):
+	"""The kind ``value`` names: a kind in any case (``"sop"`` -> ``"SOP"``) or one of
+	:data:`KIND_ALIASES`. ``None`` for blank and for any other word. For reading a filter someone
+	typed; what is *stored* is only ever one of :data:`ARTICLE_KINDS`, which v16's Select validation
+	enforces (``model/base_document.py:1101-1126``)."""
+	if not isinstance(value, str):
+		return None
+	key = _fold(value, "-")
+	if not key:
+		return None
+	for kind in ARTICLE_KINDS:
+		if key == kind.casefold():
+			return kind
+	return KIND_ALIASES.get(key)
+
+
+def kind_description():
+	"""The ``kind`` field's description on both doctypes: the three kinds, one clause each, and how
+	readers and AI tools use them. The schema test compares both JSONs with this."""
+	lines = [f"{kind}: {KIND_HELP[kind]}" for kind in ARTICLE_KINDS]
+	lines.append("Readers and AI tools use it: a Policy is binding, and an SOP's steps are followed in order.")
+	return " ".join(lines)
+
+
+def _fold(value, separator):
+	"""NFKC, casefold, trim, and each run of spaces, ``_`` and ``-`` as one ``separator``."""
+	text = unicodedata.normalize("NFKC", value).casefold().strip()
+	return re.sub(r"[\s_\-]+", separator, text).strip(separator)
+
+
+#: What :func:`department_option` accepts, folded: each block's code (``06`` and ``6``), label and
+#: option. A folder name (``06-operations``) folds to its option's key.
+_DEPARTMENT_LOOKUP = {
+	_fold(key, " "): f"{code} {label}"
+	for code, label in DEPARTMENT_BLOCKS
+	for key in (code, str(int(code)), label, f"{code} {label}")
+}
