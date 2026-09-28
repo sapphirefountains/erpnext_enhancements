@@ -2749,6 +2749,7 @@ class TripPlanner {
 					const fresh = r && r.message;
 					if (!fresh) return false;
 					if (was_new && draft) this.drafts[draft] = fresh.name;
+					const relisted = this.relist_copy(fresh);
 					if (this.state !== saving_state) {
 						// Saved after Back had already put the list (or another trip) on screen.
 						// Nothing to draw, and a copy kept for being unsaved is saved now: Forward
@@ -2756,14 +2757,14 @@ class TripPlanner {
 						Object.keys(this.kept).forEach((key) => {
 							if (this.kept[key].state === saving_state) delete this.kept[key];
 						});
-						// The copy screen drawn meanwhile said this copy was "not saved yet": say
-						// what it is now, with the trip to open.
+						// The copy screen drawn meanwhile said this copy was "not saved yet", or listed it
+						// as it was: say what it is now, with the trip to open.
 						const copy = this.copy;
 						if (
 							!this.state &&
 							copy &&
 							copy.source &&
-							this.copies[draft] === copy.trip &&
+							(this.copies[draft] === copy.trip || relisted) &&
 							frappe.utils.get_url_arg("copy") === copy.trip
 						) {
 							this.draw_copy();
@@ -2808,6 +2809,29 @@ class TripPlanner {
 		// Not a copy nobody has touched (handle_route): leaving for another desk page is no more a
 		// reason to make a trip of it than Back is.
 		if (this.state && this.is_dirty() && !this.untouched_copy()) this.save({ quiet: true });
+	}
+
+	// A trip the copy screen lists (get_plan's `copies`: "This trip was copied already"), saved
+	// here, likely after its Open it: that screen draws from what it read, and Back/Forward shows
+	// it again without reading (render_copy), so the row follows the save — its days and where it
+	// stands — or goes once the trip is no longer ahead or under way (planner.copies_of). True when
+	// it was listed.
+	relist_copy(fresh) {
+		const listed = (this.copy && this.copy.existing) || [];
+		const at = listed.findIndex((row) => row && row.name === fresh.name);
+		if (at < 0) return false;
+		const t = fresh.trip || {};
+		if (["Planning", "Booked", "In Progress"].includes(fresh.status)) {
+			Object.assign(listed[at], {
+				purpose: t.purpose,
+				status: fresh.status,
+				start_date: t.start_date,
+				end_date: t.end_date,
+			});
+		} else {
+			listed.splice(at, 1);
+		}
+		return true;
 	}
 
 	// The trip on screen (or `state`, kept under `draft`) is a copy of a past trip that is not

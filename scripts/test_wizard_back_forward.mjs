@@ -4184,6 +4184,64 @@ async function planATripSuite() {
 		assert.ok(!screen.includes("This trip was copied already"), screen);
 	});
 
+	await test("a listed copy opened and re-dated here is listed with its new days when Back returns to the copy screen", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		db["TRIP-31"] = {
+			...clone(COPY_TRIP),
+			name: "TRIP-31",
+			modified: "TRIP-31@1",
+			status: "Planning",
+			copied_from: "TRIP-9",
+			trip: { ...COPY_TRIP.trip, start_date: "2026-11-02", end_date: "2026-11-05" },
+		};
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		const p = planner();
+		assert.deepEqual(p.copy.existing.map((row) => [row.name, row.start_date]), [["TRIP-31", "2026-11-02"]]);
+		drawn(() => p.draw_copy());
+		press('data-made="TRIP-31"'); // Open it
+		await settle();
+		assert.equal(last().trip, "TRIP-31");
+		p.state.trip.start_date = "2026-12-07";
+		p.state.trip.end_date = "2026-12-09";
+		const reads = server.sent("get_plan").length;
+		await back(); // saves the trip on the way out, then the copy screen, drawn from what it read
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		assert.equal(server.sent("save_plan").length, 1);
+		assert.equal(db["TRIP-31"].trip.start_date, "2026-12-07");
+		assert.equal(server.sent("get_plan").length, reads, "not read again");
+		assert.deepEqual(
+			p.copy.existing.map((row) => [row.name, row.start_date, row.end_date, row.status]),
+			[["TRIP-31", "2026-12-07", "2026-12-09", "Planning"]],
+			"the row follows the save"
+		);
+		// A save still on its way when Back drew the copy screen: the screen is drawn again when it
+		// lands, with the row as saved.
+		await forward();
+		assert.equal(last().trip, "TRIP-31");
+		p.state.trip.end_date = "2026-12-10";
+		server.hold.add("save_plan");
+		p.save();
+		await settle();
+		await back(); // the save is on its way, so Back does not wait for it
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		let redrawn = 0;
+		const draw_copy = p.draw_copy;
+		p.draw_copy = function () {
+			redrawn += 1;
+			return draw_copy.call(this);
+		};
+		server.hold.delete("save_plan");
+		server.release("save_plan");
+		await settle();
+		assert.equal(redrawn, 1, "the copy screen caught up");
+		assert.equal(p.copy.existing[0].end_date, "2026-12-10");
+		// No longer ahead or under way: it leaves the list (planner.copies_of lists none such).
+		p.relist_copy({ name: "TRIP-31", status: "Completed", trip: {} });
+		assert.deepEqual(p.copy.existing, []);
+		assert.equal(p.relist_copy({ name: "TRIP-99", status: "Planning", trip: {} }), false, "a trip it never listed");
+	});
+
 	await test("Back while a copy's first save is on its way: the screen catches up, and Carry on opens the trip it became", async () => {
 		const db = tripServer({ "TRIP-9": COPY_TRIP });
 		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");

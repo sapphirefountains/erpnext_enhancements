@@ -37,6 +37,21 @@ nothing, so a second copy of the same job could be made without a word. Nik aske
   its own "You made a copy of this trip already" and "not saved yet" notes. A copy this page
   saved after the screen was read shows once, as the page's own note. An unsaved copy is
   still the page's memory only, since a reload loses it anyway and `beforeunload` warns.
+  - Back and Forward redraw the copy screen from what it first read. So when a listed copy is
+    opened, re-dated or marked booked, then left, its row follows that save (`relist_copy`).
+    The row leaves the list once the trip is no longer ahead or under way. A save that lands
+    after Back has drawn the screen redraws it, as a copy's first save already did.
+- **`copied_from` never refuses a save** (`TravelTrip.get_invalid_links` →
+  `_settle_copied_from`). frappe v16 checks every Link in `_validate_links`, which runs before
+  both `before_insert` and `validate`, so this is the one hook early enough.
+  - On an update the stored value wins, whatever the request sends. It is the server's field.
+  - A source trip that no longer exists is dropped rather than checked. Two saves would
+    otherwise fail on a field nobody can edit:
+    - A Desk form opened before the source was deleted still posts the deleted name, because
+      `on_trash` clears the stored value without bumping `modified`. Its save would fail with
+      "Could not find Copied From".
+    - A copy restored from Deleted Document after its source was deleted too would fail to
+      restore. It now comes back copied from nothing.
 
 ### Changed
 
@@ -65,17 +80,22 @@ nothing, so a second copy of the same job could be made without a word. Nik aske
   - the copy screen's `get_plan` asks `get_list` for copies with exactly these filters,
     fields, order and limit, and no other `get_plan` asks at all;
   - the doctype field is a read-only, `no_copy`, indexed Link, placed after `closed_on`.
-- `tests/test_travel_views.py` (141 → 143) runs the real controller's `on_trash`. A deleted
-  trip's copies let go of it with their `modified` kept. A delete refused for a submitted
-  claim unlinks nothing.
-- `scripts/test_wizard_back_forward.mjs` (95 → 97) runs the page against its port of the v16
+- `tests/test_travel_views.py` (141 → 146) runs the real controller:
+  - `on_trash`: a deleted trip's copies let go of it with their `modified` kept, and a delete
+    refused for a submitted claim unlinks nothing;
+  - `get_invalid_links`: a Desk form opened before the source was deleted still saves, an
+    update keeps the stored source whatever it posts, and a first save or restore keeps a
+    source that exists and drops one that is gone.
+- `scripts/test_wizard_back_forward.mjs` (95 → 98) runs the page against its port of the v16
   router:
   - A copy's first Next sends `copied_from` and a later save does not; a blank new trip never
     sends it.
   - A reload of the copy screen names the copy made before it and opens it.
   - A colleague's Booked copy is named, soonest first, and a Completed one is left off.
   - A copy made on this page and then read back from the server is named once.
-- Nine mutations were tried, one at a time, and each made one of these suites fail:
+  - A listed copy opened and re-dated here is listed with its new days on Back, including
+    when its save lands after the screen is drawn.
+- Fifteen mutations were tried, one at a time, and each made one of these suites fail:
   - not sending `copied_from`;
   - not asking for copies;
   - not reading the answer;
@@ -84,7 +104,16 @@ nothing, so a second copy of the same job could be made without a word. Nik aske
   - skipping the read check;
   - asking for copies on every load;
   - listing finished copies;
-  - letting `on_trash` touch the copies' `modified`.
+  - letting `on_trash` touch the copies' `modified`;
+  - not settling before the link check;
+  - not pinning the stored value;
+  - not dropping a gone source;
+  - not updating a listed row;
+  - not redrawing when a late save lands;
+  - not dropping a finished row.
+- An adversarial review of the change, run in three lenses with each finding verified
+  independently, confirmed three low-severity defects. All three are fixed above: the listed
+  row going stale, the Desk form, and the restore.
 
 ## [1.549.1] - 2026-09-27
 
