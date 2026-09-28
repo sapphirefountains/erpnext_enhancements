@@ -2395,6 +2395,14 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		)
 		self.assertIn("Per diem and mileage need no receipts", policy)
 		self.assertIn("Accounting pays your per diem from the trip, and there is nothing to attach for it.", policy)
+		# "Nothing to attach" is about being paid back. Someone owed only per diem may still have put
+		# the hotel on a company card, and that receipt is needed for reconciliation.
+		self.assertNotIn("there is nothing for you to attach.", policy)
+		self.assertIn(
+			"you have nothing to attach to be paid back, though a purchase you put on a company card "
+			"still needs its receipt",
+			policy,
+		)
 		# The receipts that are still required still are.
 		self.assertIn("itemized receipts are mandatory for all out-of-pocket expenses", policy)
 		self.assertIn("itemized receipts are also required for all purchases made on a company card", policy)
@@ -4864,15 +4872,15 @@ class TestTravelHomeForTheCrew(HubAssertions):
 					"trip": "TRIP-2",
 					"purpose": "Harbor install",
 					"text": "Back from Harbor install? Within a week of getting back, attach to the trip the receipt "
-					"for each cost you paid yourself or put on a company card, and accounting will reimburse "
-					"you. Per diem and mileage need no receipts.",
+					"for each cost you paid yourself, and accounting will reimburse you. Attach the receipt "
+					"for anything you put on a company card too. Per diem and mileage need no receipts.",
 				},
 				{
 					"trip": "TRIP-3",
 					"purpose": "Boise service",
 					"text": "Back from Boise service? Within a week of getting back, attach to the trip the receipt "
-					"for each cost you paid yourself or put on a company card, and accounting will reimburse "
-					"you. Per diem and mileage need no receipts.",
+					"for each cost you paid yourself, and accounting will reimburse you. Attach the receipt "
+					"for anything you put on a company card too. Per diem and mileage need no receipts.",
 				},
 			],
 		)

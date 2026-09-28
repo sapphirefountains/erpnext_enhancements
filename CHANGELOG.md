@@ -25,7 +25,8 @@ people who cannot open it.** Three loose ends from the travel work, all asked fo
     receipts and that accounting pays the per diem from the trip; section 6 says receipts are only
     for costs you paid yourself that the per diem does not cover and for company-card purchases (a
     meal put on a company card still needs its receipt, for reconciliation), and its "In the system"
-    callout says per diem and mileage need none, so someone owed only those has nothing to attach.
+    callout says per diem and mileage need none, so someone owed only those has nothing to attach
+    to be paid back, while a company-card purchase still needs its receipt.
     The out-of-pocket and company-card receipt rules are unchanged.
   - The expense nudge asks for receipts only when the traveler paid a cost themselves
     (`reminders._unclaimed_costs`, passed to the template as `receipts_due`). Someone owed only per
@@ -36,7 +37,8 @@ people who cannot open it.** Three loose ends from the travel work, all asked fo
   - The Closed notice goes to every traveler alike, so it now says which costs take a receipt (one
     paid yourself or put on a company card; per diem and mileage need none) instead of asking each
     of them to check "each of your itemized receipts". The Travel hub's receipts reminder says the
-    same.
+    same, keeping the two apart: a cost you paid yourself is reimbursed, a company-card purchase is
+    not but still needs its receipt.
   - The Travel workspace's "How a work trip works" step 4 ("Attach each receipt to its cost on the
     trip") was already right and is untouched, so the workspace JSON and its `modified` are too.
 - **The warning on closing a trip says what matters on production.** A traveler can close their own

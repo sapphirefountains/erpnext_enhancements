@@ -423,7 +423,7 @@ def _receipts(trips, today_date):
 			"trip": row["name"],
 			"purpose": row.get("purpose") or row["name"],
 			"text": _(
-				"Back from {0}? Within a week of getting back, attach to the trip the receipt for each cost you paid yourself or put on a company card, and accounting will reimburse you. Per diem and mileage need no receipts."
+				"Back from {0}? Within a week of getting back, attach to the trip the receipt for each cost you paid yourself, and accounting will reimburse you. Attach the receipt for anything you put on a company card too. Per diem and mileage need no receipts."
 			).format(row.get("purpose") or row["name"]),
 		}
 		for _end, row in due
