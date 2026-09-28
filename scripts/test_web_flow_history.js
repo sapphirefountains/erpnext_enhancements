@@ -102,7 +102,20 @@
  *     is here by default); an answer with no `contacts` draws no card;
  *   - "Print / save as PDF" opens the person shown's trip sheet (`my_sheet_url`, else the whole
  *     trip's `sheet_url`) in a new tab with no history write, and only this site's path or a web
- *     address is made a link.
+ *     address is made a link;
+ *   - offline (a stand-in IndexedDB and service worker, `makeIndexedDB` / `makeServiceWorker`):
+ *     the page registers its worker for /itinerary only, at this deploy's address, and tells it
+ *     who is signed in; every answer is saved for that person, trip and view, with the boot's
+ *     trip list; the person's own trips in progress or starting within two weeks are saved
+ *     ahead once a page, one at a time, and their pictures and PDFs (this site's own, 20 a trip)
+ *     handed to the worker; with no answer at all (fetch rejects) the saved copy is drawn under
+ *     "You're offline — showing your itinerary as saved …" with no history call, the Documents
+ *     screen and Back / Forward work from it, a view never saved says so, a PDF opens from the
+ *     phone's copy in a tab opened at the tap, and back online the answer replaces it in place;
+ *     a page drawn for somebody else, or a session signed out ("Guest"), shows nothing saved (no
+ *     cookie at all does not count as signed out), and opening the page as somebody deletes
+ *     everybody else's saved answers; and with no IndexedDB, storage that throws, or a worker
+ *     that will not register, the page is exactly what it was.
  *   /contract-sign
  *   - no history entry is ever added: signing and declining swap in place (declining no
  *     longer reloads into "This link isn't available");
@@ -1461,30 +1474,62 @@ function loadItinerary(url, opts) {
 	// none unless a test gives it one).
 	if ("cookie" in opts) document.cookie = opts.cookie;
 	const fetches = [];
+	// Offline (testItineraryOffline): every file the page fetched itself, the tabs it opened, and
+	// the files "saved on this phone" (`opts.files`: {url: type}), which answer; anything else is
+	// no answer at all, as a file the worker never kept is in airplane mode.
+	const fileFetches = [];
+	const tabs = [];
 	const capture = { open: false };
 	// `expired`: every answer is the one an expired session gets. `next`: the next answer is
 	// this one, whatever the fake server would have said.
 	const session = { expired: false, next: null };
+	const boot = { trips: opts.trips || TRIPS, employee, employee_name: employee ? PEOPLE[employee] : null };
+	// The signed-in user the page was drawn for. Absent unless a test gives one, as in every
+	// check written before the page kept anything offline: it then keeps nothing.
+	if ("user" in opts) boot.user = opts.user;
+	// No service worker and no IndexedDB unless a test gives them: the page must manage without.
+	const navigator = {};
+	if (opts.serviceWorker) navigator.serviceWorker = opts.serviceWorker.container;
+	if ("onLine" in opts) navigator.onLine = opts.onLine;
 	const win = browser.window;
 	Object.assign(win, {
 		window: win,
 		document,
 		history: browser.history,
-		ITIN_BOOT: { trips: opts.trips || TRIPS, employee, employee_name: employee ? PEOPLE[employee] : null },
+		ITIN_BOOT: boot,
 		ITIN_CSRF: "tok",
+		ITIN_BUILD: opts.build || "",
 		ee_capture: { isOpen: () => capture.open },
 		fetch(u, o) {
+			if (!String(u).startsWith("/api/method/")) {
+				fileFetches.push(String(u));
+				const type = (opts.files || {})[u];
+				return type
+					? Promise.resolve({ ok: true, status: 200, blob: async () => ({ url: u, type }) })
+					: Promise.reject(new TypeError("Failed to fetch"));
+			}
 			const body = JSON.parse(o.body);
 			return new Promise((resolve, reject) => {
 				fetches.push({ trip: body.trip, as: body.as_employee || null, resolve, reject });
 			});
 		},
+		open(url, target) {
+			const tab = { opened: [url, target], location: { href: "" }, closed: false, close() { this.closed = true; } };
+			tabs.push(tab);
+			return opts.popupsBlocked ? null : tab;
+		},
 		URLSearchParams,
-		navigator: {},
+		navigator,
 		console,
 		setTimeout,
 		clearTimeout,
 	});
+	if (opts.blobs) win.URL = { createObjectURL: (blob) => `blob:${blob.url}`, revokeObjectURL() {} };
+	if (opts.indexedDB === "throws") {
+		Object.defineProperty(win, "indexedDB", { get() { throw new Error("SecurityError: storage is blocked"); } });
+	} else if (opts.indexedDB) {
+		win.indexedDB = opts.indexedDB;
+	}
 	if (opts.Date) win.Date = opts.Date;
 	// No localStorage unless a test gives it one (makeStorage): the page must manage without.
 	if ("storage" in opts) win.localStorage = opts.storage;
@@ -1496,8 +1541,13 @@ function loadItinerary(url, opts) {
 		browser,
 		document,
 		fetches,
+		fileFetches,
 		capture,
 		root,
+		// The tabs the page opened: where each went, and whether it was closed again.
+		tabs: () => tabs.map((t) => ({ opened: t.opened, url: t.location.href, closed: t.closed })),
+		// "You're offline — showing your itinerary as saved …", when it is on screen.
+		offline: () => root.find("ti-offline").map((e) => e.textContent),
 		// Answer the oldest request for `trip` (and, when given, that `as`): `ok === false` is no
 		// answer at all (offline); otherwise the fake server decides, refusals included.
 		async answer(trip, ok, as) {
@@ -1987,6 +2037,7 @@ async function testItinerary() {
 
 	await testItineraryDocuments();
 	await testItineraryContacts();
+	await testItineraryOffline();
 }
 
 // The trip's files: on each booking's card, on the Documents screen (&view=docs), and pictures in
@@ -2587,6 +2638,352 @@ async function testItineraryContacts() {
 	p.session.next = withContacts({ contacts: null });
 	await p.answer("TRIP-X");
 	check("...nor does `contacts: null`", [p.contacts(), p.shown()], [null, "Trip X"]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+}
+
+// ---------------------------------------------------------------------------- /itinerary offline
+
+/**
+ * A stand-in IndexedDB, enough of one for itinerary.js: open() with an upgrade the first time,
+ * object stores with out-of-line keys, get / put / delete / getAll / getAllKeys, and transactions
+ * over one store or several that complete once their requests are done. Every request answers
+ * asynchronously and in the order it was made, as the real one does, and values are copied in and
+ * out (structured clone). `opts.openThrows`: open() throws, as a storage-blocked profile's can.
+ * `keys(store)` and `get(store, key)` read what the page left; `seed` puts a record there first.
+ */
+function makeIndexedDB(opts) {
+	opts = opts || {};
+	const stores = new Map();
+	let upgraded = false;
+	const idb = {
+		open() {
+			if (opts.openThrows) throw new Error("SecurityError: storage is blocked");
+			const request = { result: null, error: null };
+			setImmediate(() => {
+				request.result = makeDb();
+				if (!upgraded) {
+					upgraded = true;
+					if (request.onupgradeneeded) request.onupgradeneeded();
+				}
+				if (request.onsuccess) request.onsuccess();
+			});
+			return request;
+		},
+		keys: (store) => [...(stores.get(store) || new Map()).keys()].sort(),
+		get: (store, key) => clone((stores.get(store) || new Map()).get(key)),
+		seed(store, key, value) {
+			if (!stores.has(store)) stores.set(store, new Map());
+			stores.get(store).set(key, clone(value));
+		},
+	};
+	function makeDb() {
+		return {
+			objectStoreNames: { contains: (name) => stores.has(name) },
+			createObjectStore(name) {
+				stores.set(name, new Map());
+				return {};
+			},
+			transaction: (names, mode) => makeTx([].concat(names), mode),
+			close() {},
+		};
+	}
+	function makeTx(names, mode) {
+		const tx = { pending: 0, done: false };
+		const settle = () =>
+			setImmediate(() => {
+				if (tx.pending === 0 && !tx.done) {
+					tx.done = true;
+					if (tx.oncomplete) tx.oncomplete();
+				}
+			});
+		tx.objectStore = (name) => {
+			if (!names.includes(name) || !stores.has(name)) throw new Error(`NotFoundError: ${name}`);
+			const data = stores.get(name);
+			const request = (run) => {
+				const r = { result: undefined };
+				tx.pending += 1;
+				queueMicrotask(() => {
+					r.result = run();
+					tx.pending -= 1;
+					if (r.onsuccess) r.onsuccess();
+					settle();
+				});
+				return r;
+			};
+			const write = (run) => {
+				if (mode !== "readwrite") throw new Error("ReadOnlyError");
+				return request(run);
+			};
+			const sorted = () => [...data.keys()].sort();
+			return {
+				get: (key) => request(() => (data.has(key) ? clone(data.get(key)) : undefined)),
+				put: (value, key) => write(() => (data.set(key, clone(value)), key)),
+				delete: (key) => write(() => void data.delete(key)),
+				clear: () => write(() => void data.clear()),
+				getAll: () => request(() => sorted().map((key) => clone(data.get(key)))),
+				getAllKeys: () => request(sorted),
+			};
+		};
+		tx.abort = () => {
+			tx.done = true;
+			if (tx.onabort) tx.onabort();
+		};
+		settle();
+		return tx;
+	}
+	return idb;
+}
+
+/** navigator.serviceWorker, recording what the page registers and every message it posts. */
+function makeServiceWorker(opts) {
+	opts = opts || {};
+	const sw = { registered: [], posted: [] };
+	const registration = { active: { postMessage: (message) => sw.posted.push(clone(message)) } };
+	sw.container = {
+		register(url, options) {
+			sw.registered.push({ url, options: clone(options) });
+			return opts.refuses ? Promise.reject(new Error("SecurityError")) : Promise.resolve(registration);
+		},
+		ready: Promise.resolve(registration),
+	};
+	return sw;
+}
+
+// Offline: every answer is kept on the phone, the person's upcoming trips are saved ahead with
+// their files, and with no signal at all the saved copy is drawn where the answer would have
+// been, with no history call. Only ever for the person it was saved for.
+async function testItineraryOffline() {
+	console.log("/itinerary offline");
+	const PAT = "pat@example.com";
+	const COOKIE = "user_id=pat%40example.com; full_name=Pat";
+	const DAY = 24 * 60 * 60 * 1000;
+	const PAT_FILES = ["/private/files/pat-pass.png", "/private/files/wn1-confirmation.pdf", "/private/files/site-map.pdf"];
+	const phone = makeIndexedDB();
+	let sw = makeServiceWorker();
+	const online = (extra) => Object.assign({ user: PAT, cookie: COOKIE, indexedDB: phone, serviceWorker: sw, build: "1727" }, extra || {});
+
+	// Online, on a phone with both.
+	let p = loadItinerary("/itinerary", online());
+	await flush();
+	check(
+		"the page registers its own worker, for /itinerary only (never the site root: that is the kiosk's), at this deploy's address",
+		sw.registered,
+		[{ url: "/itinerary-sw.js?v=1727", options: { scope: "/itinerary" } }]
+	);
+	check("...and tells it who is signed in", sw.posted, [{ type: "user", user: PAT }]);
+	await p.answer("TRIP-A");
+	check("the answer on screen is saved on the phone, for that person, trip and view", phone.keys("answers"), [`${PAT}|TRIP-A|`]);
+	const kept = phone.get("answers", `${PAT}|TRIP-A|`);
+	check("...the answer itself, with when it was saved", [kept.user, kept.answer.trip, kept.answer.viewing, typeof kept.saved_at], [PAT, "TRIP-A", "EMP-1", "number"]);
+	check("...and the boot's trip list with it", phone.get("trips", PAT).trips.map((t) => t.name), TRIPS.map((t) => t.name));
+	check(
+		"its pictures and PDFs go to the worker to keep, at this site's own file addresses",
+		sw.posted.slice(1),
+		[{ type: "cache-files", user: PAT, urls: PAT_FILES }]
+	);
+	check("their own upcoming trips are saved ahead, one at a time: Trip B starts within two weeks", p.asked(), [["TRIP-B", null]]);
+	await p.answer("TRIP-B");
+	check(
+		"...quietly: the screen and the address are as they were, and Trip B is saved",
+		[p.shown(), p.urls(), phone.keys("answers")],
+		["Trip A", ["replace /itinerary?trip=TRIP-A"], [`${PAT}|TRIP-A|`, `${PAT}|TRIP-B|`]]
+	);
+	check("...never a trip they only own (Trip O) nor one that has ended (Trip C)", p.asked(), []);
+	await p.tap("Trip B");
+	await p.answer("TRIP-B");
+	check("...and only once a page: opening another trip saves it and asks for nothing more", [p.shown(), p.asked()], ["Trip B", []]);
+	await p.pick("Sam");
+	await p.answer("TRIP-B", "EMP-2");
+	check("another person's view is saved as that view", phone.keys("answers"), [`${PAT}|TRIP-A|`, `${PAT}|TRIP-B|`, `${PAT}|TRIP-B|EMP-2`]);
+
+	// No signal: a new page load, on the same phone.
+	sw = makeServiceWorker();
+	p = loadItinerary("/itinerary?trip=TRIP-A", online({ files: { "/private/files/wn1-confirmation.pdf": "application/pdf" }, blobs: true }));
+	await p.answer("TRIP-A", false);
+	check("no signal: the copy saved on this phone is drawn, as it was", [p.shown(), p.has("PNR: PNR-PAT"), p.errors()], ["Trip A", true, 0]);
+	check(
+		"...under a line saying so, and when it was saved",
+		/^You're offline — showing your itinerary as saved \w{3}, \w{3} \d{1,2}, \d{1,2}:\d{2} [AP]M\.$/.test(p.offline()[0] || ""),
+		true
+	);
+	check("...first thing under the header", p.order().slice(0, 2), ["ti-header", "ti-offline"]);
+	check("...and no history call", p.browser.calls, []);
+	await p.screen("Documents");
+	check(
+		"the Documents screen works from the saved copy: one entry, from the tap, nothing asked for",
+		[p.urls(), p.pending(), p.docs(), p.offline().length],
+		[["push /itinerary?trip=TRIP-A&view=docs"], [], ["Site map", "Pat's boarding pass", "Southwest confirmation"], 1]
+	);
+	p.doc("Southwest confirmation").click();
+	await flush();
+	check(
+		"offline, a PDF opens from the phone's copy, in a tab the page opened at the tap",
+		[p.tabs(), p.fileFetches],
+		[[{ opened: ["", "_blank"], url: "blob:/private/files/wn1-confirmation.pdf", closed: false }], ["/private/files/wn1-confirmation.pdf"]]
+	);
+	p.doc("Site map").click();
+	await flush();
+	check(
+		"...a file this phone has no copy of says so, and its tab is closed again",
+		[p.tabs()[1].closed, p.text("ti-doc-note")],
+		[true, ["This file isn't saved on this phone. It opens once you're back online."]]
+	);
+	check("...no history call either way", p.urls(), ["push /itinerary?trip=TRIP-A&view=docs"]);
+	p.browser.back();
+	await p.browser.settle();
+	check("Back is the day list again, still the saved copy, asking for nothing", [p.view(), p.days(), p.offline().length, p.pending()], [null, 1, 1, []]);
+	await p.tap("Trip B");
+	await p.answer("TRIP-B", false);
+	check("a trip saved ahead opens with no signal too", [p.shown(), p.offline().length, p.urls().slice(-1)], ["Trip B", 1, ["push /itinerary?trip=TRIP-B"]]);
+	await p.pick("Sam");
+	await p.answer("TRIP-B", false);
+	check("another person's view that was saved opens as theirs", [p.title(), p.offline().length, p.as()], ["Sam's itinerary", 1, "EMP-2"]);
+	await p.pick("Whole crew");
+	await p.answer("TRIP-B", false);
+	check(
+		"a view never saved says so, and draws nothing stale",
+		[p.shown(), p.text("ti-error"), p.offline()],
+		[null, ["You're offline, and this itinerary isn't saved on this phone yet."], []]
+	);
+	p.browser.back();
+	await p.browser.settle();
+	await p.answer("TRIP-B", false);
+	p.browser.back();
+	await p.browser.settle();
+	await p.answer("TRIP-B", false);
+	check("Back and Back again: each saved view as it was", [p.shown(), p.title(), p.offline().length, p.as()], ["Trip B", "My Itinerary", 1, null]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+
+	// Online again, with a saved copy on screen: the server's answer replaces it where it stands.
+	p = loadItinerary("/itinerary?trip=TRIP-A", online());
+	await p.answer("TRIP-A", false);
+	p.browser.fire("online", {});
+	await flush();
+	check("back online, the trip on screen is asked for again, quietly", p.asked(), [["TRIP-A", null]]);
+	await p.answer("TRIP-A");
+	check("...and the answer replaces the saved copy, with no history call", [p.offline(), p.shown(), p.browser.calls], [[], "Trip A", []]);
+
+	// Online, a PDF is a link, as it always was.
+	p = loadItinerary("/itinerary?trip=TRIP-A&view=docs", online({ blobs: true }));
+	await p.answer("TRIP-A");
+	p.doc("Southwest confirmation").click();
+	await flush();
+	check("online, a PDF tap is the link's own (a new tab): the page opens nothing and fetches nothing", [p.tabs(), p.fileFetches], [[], []]);
+	p = loadItinerary("/itinerary?trip=TRIP-A&view=docs", online({ blobs: true, onLine: false }));
+	await p.answer("TRIP-A");
+	p.doc("Southwest confirmation").click();
+	await flush();
+	check("...but a phone that says it has no connection opens the saved copy, even over a fresh answer", p.fileFetches, ["/private/files/wn1-confirmation.pdf"]);
+
+	// While "Report a problem" is open, the saved copy is still just drawn.
+	p = loadItinerary("/itinerary?trip=TRIP-A", online());
+	p.capture.open = true;
+	await p.answer("TRIP-A", false);
+	check("with Report a problem open: the saved copy, and still no history call", [p.shown(), p.browser.calls], ["Trip A", []]);
+
+	// What the worker is asked to keep: this site's pictures and PDFs, 20 a trip at most.
+	const many = [
+		{ name: "TD-ELSEWHERE", title: "Map", kind: "Site map", url: "https://files.example.com/map.pdf", file_name: "map.pdf", is_image: false, group: null },
+		{ name: "TD-DOCX", title: "Notes", kind: "Job packet", url: "/private/files/notes.docx", file_name: "notes.docx", is_image: false, group: null },
+		{ name: "TD-PHOTO", title: "Gate", kind: "Boarding pass", url: "/files/gate.jpg", file_name: "gate.jpg", is_image: true, group: null },
+	];
+	for (let i = 1; i <= 25; i++) {
+		many.push({ name: `TD-${i}`, title: `Page ${i}`, kind: "Job packet", url: `/private/files/page-${i}.pdf`, file_name: `page-${i}.pdf`, is_image: false, group: null });
+	}
+	sw = makeServiceWorker();
+	p = loadItinerary("/itinerary?trip=TRIP-A", online({ indexedDB: makeIndexedDB() }));
+	p.session.next = { status: 200, body: { message: {
+		trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(-1), end_date: iso(1), days: [],
+		crew: [{ employee: "EMP-1", employee_name: "Pat" }], viewing: "EMP-1", viewer_employee: "EMP-1", viewer_on_trip: true, documents: many,
+	} } };
+	await p.answer("TRIP-A");
+	const asked = (sw.posted.find((m) => m.type === "cache-files") || { urls: [] }).urls;
+	check(
+		"the worker is asked to keep this site's own pictures and PDFs only (not another site's, not a .docx), 20 a trip",
+		[asked.length, asked[0], asked[1], asked[19]],
+		[20, "/files/gate.jpg", "/private/files/page-1.pdf", "/private/files/page-19.pdf"]
+	);
+
+	// A phone can be shared: the saved copy is only ever the person's it was saved for.
+	sw = makeServiceWorker();
+	p = loadItinerary("/itinerary?trip=TRIP-A", online({ cookie: "user_id=Guest" }));
+	await flush();
+	check(
+		"a page drawn for Pat on a phone now signed out: nothing of Pat's, not even the trip list, and nothing asked for",
+		[p.empty(), p.chips().length, p.pending(), p.browser.calls, p.text("ti-header-sub"), p.document.title],
+		[["Sign in to see your itinerary."], 0, [], [], [], "My Itinerary"]
+	);
+	check("...and nothing deleted: Pat's copy waits for Pat", [phone.keys("answers").length, sw.posted], [3, []]);
+
+	p = loadItinerary("/itinerary?trip=TRIP-A", online({ cookie: "full_name=Pat" }));
+	await p.answer("TRIP-A", false);
+	check(
+		"no user_id cookie at all is not a sign-out (a home-screen app started again drops it): the saved copy shows",
+		[p.shown(), p.offline().length],
+		["Trip A", 1]
+	);
+
+	p = loadItinerary("/itinerary", online());
+	await p.answer("TRIP-A");
+	await p.answer("TRIP-B");
+	await p.tap("Trip B");
+	p.document.cookie = "user_id=Guest";
+	await p.answer("TRIP-B", false);
+	check(
+		"signed out in another tab, then no signal: the saved copy is not shown",
+		[p.empty(), p.shown(), p.offline(), p.chips().length],
+		[["Sign in to see your itinerary."], null, [], 0]
+	);
+	check("...and that writes no history", p.urls(), ["replace /itinerary?trip=TRIP-A", "push /itinerary?trip=TRIP-B"]);
+
+	// Somebody else signed in: they are the one the phone keeps for.
+	const shared = makeIndexedDB();
+	const hourAgo = Date.now() - 3600e3;
+	shared.seed("answers", `${PAT}|TRIP-A|`, { user: PAT, trip: "TRIP-A", as: "", answer: { trip: "TRIP-A", days: [] }, saved_at: hourAgo });
+	shared.seed("answers", "sam@example.com|TRIP-B|", { user: "sam@example.com", trip: "TRIP-B", as: "", answer: { trip: "TRIP-B", days: [] }, saved_at: hourAgo });
+	shared.seed("trips", PAT, { user: PAT, trips: [{ name: "TRIP-A" }], saved_at: hourAgo });
+	sw = makeServiceWorker();
+	p = loadItinerary("/itinerary?trip=TRIP-A", online({ indexedDB: shared, cookie: "user_id=sam%40example.com" }));
+	await flush();
+	check("a page drawn for Pat with Sam signed in: nothing of Pat's", [p.empty(), p.pending()], [["Sign in to see your itinerary."], []]);
+	check(
+		"...and Sam is who the worker is told about, and everybody else's saved answers and lists go",
+		[sw.posted, shared.keys("answers"), shared.keys("trips")],
+		[[{ type: "user", user: "sam@example.com" }], ["sam@example.com|TRIP-B|"], []]
+	);
+
+	// Opening the page keeps the phone tidy: the person's own answers for trips no longer in their
+	// list go after a week, and everybody else's at once.
+	const tidy = makeIndexedDB();
+	tidy.seed("trips", PAT, { user: PAT, trips: [{ name: "TRIP-A" }], saved_at: hourAgo });
+	tidy.seed("trips", "sam@example.com", { user: "sam@example.com", trips: [], saved_at: hourAgo });
+	tidy.seed("answers", `${PAT}|TRIP-A|crew`, { user: PAT, trip: "TRIP-A", as: "crew", answer: { trip: "TRIP-A" }, saved_at: Date.now() - 30 * DAY });
+	tidy.seed("answers", `${PAT}|TRIP-GONE|`, { user: PAT, trip: "TRIP-GONE", as: "", answer: { trip: "TRIP-GONE" }, saved_at: Date.now() - 8 * DAY });
+	tidy.seed("answers", `${PAT}|TRIP-X|`, { user: PAT, trip: "TRIP-X", as: "", answer: { trip: "TRIP-X" }, saved_at: Date.now() - 2 * DAY });
+	tidy.seed("answers", "sam@example.com|TRIP-A|", { user: "sam@example.com", trip: "TRIP-A", as: "", answer: { trip: "TRIP-A" }, saved_at: hourAgo });
+	loadItinerary("/itinerary?trip=TRIP-A", online({ indexedDB: tidy }));
+	await flush();
+	check(
+		"at boot: a trip still theirs is kept however old, one no longer theirs for a week, and nobody else's",
+		[tidy.keys("answers"), tidy.keys("trips")],
+		[[`${PAT}|TRIP-A|crew`, `${PAT}|TRIP-X|`], [PAT]]
+	);
+
+	// Without IndexedDB or a service worker (or with ones that refuse), the page is what it was.
+	p = loadItinerary("/itinerary", { user: PAT, cookie: COOKIE });
+	await p.answer("TRIP-A");
+	check("no IndexedDB and no service worker: nothing is asked for ahead", [p.shown(), p.pending()], ["Trip A", []]);
+	await p.tap("Trip B");
+	await p.answer("TRIP-B", false);
+	check("...and no signal is the error it has always been", [p.errors(), p.offline(), p.text("ti-error")], [1, [], ["Could not load the trip: offline"]]);
+	for (const [label, storage] of [["storage that throws on sight", "throws"], ["storage that refuses to open", makeIndexedDB({ openThrows: true })]]) {
+		sw = makeServiceWorker({ refuses: true });
+		p = loadItinerary("/itinerary", { user: PAT, cookie: COOKIE, indexedDB: storage, serviceWorker: sw });
+		await p.answer("TRIP-A");
+		await p.tap("Trip B");
+		await p.answer("TRIP-B", false);
+		check(`${label}, and a worker that will not register: the same`, [p.errors(), p.offline(), p.text("ti-error"), p.urls().length], [1, [], ["Could not load the trip: offline"], 2]);
+	}
 	check("every push was paid for by a tap", p.browser.unactivated, 0);
 }
 

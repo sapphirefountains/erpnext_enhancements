@@ -55,6 +55,15 @@ on its cost row's Receipt — the per-row ``attachment`` field, relabeled from "
 (and freight's "BOL / Paperwork") when files arrived. Prod held no attachment on any travel
 row when that was done (checked 2026-09-26), so no patch moves anything.
 
+Copying a past trip
+-------------------
+"Plan another trip like this one" (:func:`copy_plan`): a repeat job at the same site brings
+over the crew, the rooms, the rental, the schedule and the freight, every date moved to the new
+first day (:func:`copy_state`). What belonged to the old trip's bookings stays behind: the
+confirmation and tracking numbers, the costs and who paid, the files, a stop's Lead. Nothing is
+saved until the page's first save, which creates the copy through :func:`save_plan` with every
+row new, so every booking gets an id of its own.
+
 A save based on a version somebody else has since replaced is refused, not merged — the
 same optimistic lock as ``api/quality_wizard.py``.
 
@@ -1013,6 +1022,264 @@ def _check_not_stale(doc, modified):
 		)
 
 
+# --------------------------------------------------------------------------- copying a trip
+
+#: Every Date and Datetime the page writes: the trip's days, each person's own days, a
+#: booking's times and dates, a shipment's windows, a stop's day. A copy moves them all by the
+#: days between the two trips' first days (:func:`shift_date`). A time of day on its own (a
+#: room's check-in time, when a stop starts and ends) is the same on the new day, so no Time
+#: field is here. ``tests/test_travel_planner.py`` checks this list against the doctypes.
+DATED_FIELDS = frozenset(
+	{
+		"start_date",
+		"end_date",
+		"from_date",
+		"to_date",
+		"departure_time",
+		"arrival_time",
+		"check_in_date",
+		"check_out_date",
+		"pickup_datetime",
+		"arrival_datetime",
+		"return_datetime",
+		"pickup_from",
+		"pickup_to",
+		"delivery_from",
+		"delivery_to",
+		"date",
+	}
+)
+
+#: How many trips "Copy a past trip" lists.
+COPYABLE_TRIPS = 50
+
+
+def shift_date(value, days):
+	"""``value``, a date or a datetime (as text or not), moved by ``days`` whole days, with its
+	time of day left exactly as it was.
+
+	Only the date part moves, and the rest of the text is kept character for character. A flight
+	at 7:05 AM is still at 7:05 AM on its new day, whatever the clocks did between the two trips:
+	frappe stores the site's local wall time, which is what the office typed and what the crew
+	reads. A datetime at midnight, which is how the page stores a flight or drive with a day and
+	no time yet, is still at midnight rather than 11 PM the day before. A value that is blank or
+	not a date comes back unchanged."""
+	if value is None or value == "":
+		return value
+	text = plain(value) if isinstance(value, date) else str(value)
+	try:
+		day = date.fromisoformat(text[:10])
+	except ValueError:
+		return value
+	return (day + timedelta(days=days)).isoformat() + text[10:]
+
+
+def _moved(values, fields, days):
+	"""``values`` for ``fields``, each date and datetime among them moved by ``days``."""
+	return {
+		field: shift_date(values.get(field), days) if field in DATED_FIELDS else values.get(field)
+		for field in fields
+	}
+
+
+def _flag(value, default=True):
+	"""A yes/no argument as the desk sends it: 1/0, "1"/"0", true/false or "true"/"false".
+	``frappe.call`` posts a JavaScript ``true`` as the text "true", which ``cint`` reads as 0."""
+	if value is None or value == "":
+		return default
+	if isinstance(value, str):
+		return value.strip().lower() not in ("0", "false", "no", "off", "null", "none")
+	return bool(cint(value))
+
+
+def _copy_card(card, table, key, days, crew):
+	"""One booking card of a copy: the booking's shared details on the new dates, and the same
+	people, those still on the crew.
+
+	Nothing the old booking was comes over: no row names (every row is new, so
+	:func:`merge_bookings` writes it in full and gives the booking an id of its own), no
+	confirmation numbers, no cost and nobody who paid. A row pinned to nobody (typed on the
+	form) was everyone's, so it seats the whole crew: the page cannot write a row for nobody.
+	Every shared field and the cost are marked changed, as the page's own ``new_card`` marks
+	them."""
+	spec = BOOKING_TABLES[table]
+	old = card.get("values") or {}
+	values = _moved(old, spec["shared"], days)
+	values.update(cost=0, billable=cint(old.get("billable")), paid_by="", paid_by_traveler="")
+	members = []
+	seated = set()
+	for member in card.get("members") or []:
+		named = member.get("traveler") or ""
+		for person in [named] if named else crew:
+			if person not in crew or person in seated:
+				continue
+			seated.add(person)
+			seat = {"name": None, "traveler": person, "ref": "", "protected": False}
+			if spec.get("guests"):
+				seat["guest"] = cint(member.get("guest")) if named else 0
+			members.append(seat)
+	copy = {
+		"group": key,
+		"values": values,
+		"members": members,
+		"protected": False,
+		"changed": [*spec["shared"], "cost"],
+	}
+	if "address" in card:
+		copy["address"] = card["address"]
+	if "mileage" in card:
+		# The same drive is the same distance. The claim was the old trip's.
+		mileage = card.get("mileage") or {}
+		copy["mileage"] = {
+			"driver": mileage.get("driver") if mileage.get("driver") in crew else "",
+			"distance": flt(mileage.get("distance")),
+			"claimed": False,
+		}
+	return copy
+
+
+def _as_rows(state):
+	"""A page state as the rows the checklist reads: one per person on each card, as
+	:func:`merge_bookings` will store them. ``completeness`` reads plain dicts, so a copy opens
+	with the gaps its first save will show. A guest's row keeps the room's dates here, which the
+	save narrows to the guest's own nights (:func:`fit_guest_stays`); that changes no gap, because
+	a bed is only asked for on the nights inside that same window."""
+	trip = dict(state["trip"])
+	trip["travelers"] = [dict(person) for person in state["travelers"]]
+	for table, spec in BOOKING_TABLES.items():
+		trip[table] = [
+			dict(
+				card["values"],
+				name=None,
+				booking_group=card["group"],
+				traveler=member.get("traveler") or None,
+				guest=cint(member.get("guest")),
+				**{spec["ref"]: member.get("ref") or None},
+			)
+			for card in state["bookings"][table]
+			for member in card["members"]
+		]
+	trip["freight"] = [dict(item) for item in state["freight"]]
+	trip["documents"] = []
+	return trip
+
+
+def copy_state(state, start_date, keep_crew=True, active=None):
+	"""A new trip, not saved yet, in :func:`get_state`'s shape: ``state`` (a saved trip's) with
+	every date moved so the trip begins on ``start_date``. What :func:`copy_plan` returns. Pure,
+	so the tests run it without a site.
+
+	What comes over is the job's pattern: the trip's purpose, type, company, what it is for, its
+	description and billable flag; the crew and each person's own days; every flight, room and
+	drive with its details, the same people on it and a guest still a guest; a personal drive's
+	driver and distance; every shipment with its carrier, contents, addresses and windows; and
+	the schedule. Every date and datetime moves by the same number of days, with its time of
+	day unchanged (:func:`shift_date`).
+
+	What stays behind is what belonged to the old trip: each person's confirmation number, a
+	shipment's tracking number, every cost, who paid, whether a drive's mileage was claimed,
+	every row's name, the booking and shipment ids (each card and shipment is keyed
+	``new:<n>`` until the first save gives it one), the Lead or Opportunity a stop produced,
+	and the trip's files. Receipts, claims and per diem are not in a page state at all.
+
+	Args:
+		state: :func:`get_state` of the trip being copied.
+		start_date: the new trip's first day, a ``date``.
+		keep_crew: bring the same people. Without them, every booking has nobody on it until the
+			office ticks someone (the page will not save a booking with nobody on it), a
+			shipment goes to the whole crew and a personal drive has no driver.
+		active: the employees who can still travel (the active ones). Anyone else on the old
+			crew is left off, and off every booking: the page's crew step lists only active
+			employees, so it could not take them off. None keeps everyone.
+	"""
+	source = state.get("trip") or {}
+	first = to_date(source.get("start_date"))
+	days = (start_date - first).days if first else 0
+
+	trip = _moved(source, TRIP_FIELDS, days)
+	trip["start_date"] = start_date.isoformat()
+	trip["billable"] = cint(source.get("billable"))
+
+	travelers = []
+	if keep_crew:
+		for person in state.get("travelers") or []:
+			employee = person.get("employee")
+			if not employee or (active is not None and employee not in active):
+				continue
+			if any(t["employee"] == employee for t in travelers):
+				continue
+			travelers.append(
+				{
+					"name": None,
+					"employee": employee,
+					"employee_name": person.get("employee_name") or employee,
+					"is_trip_lead": 1 if cint(person.get("is_trip_lead")) else 0,
+					"from_date": shift_date(person.get("from_date"), days),
+					"to_date": shift_date(person.get("to_date"), days),
+				}
+			)
+		if travelers and not any(t["is_trip_lead"] for t in travelers):
+			travelers[0]["is_trip_lead"] = 1
+	crew = [t["employee"] for t in travelers]
+
+	count = 0
+
+	def new_key():
+		nonlocal count
+		count += 1
+		return f"new:{count}"
+
+	bookings = {
+		table: [
+			_copy_card(card, table, new_key(), days, crew)
+			for card in (state.get("bookings") or {}).get(table) or []
+		]
+		for table in BOOKING_TABLES
+	}
+
+	freight = []
+	for shipment in state.get("freight") or []:
+		item = _moved(shipment, FREIGHT_FIELDS, days)
+		receiver = shipment.get("traveler") or ""
+		item.update(
+			name=None,
+			booking_group=new_key(),
+			tracking_number="",
+			cost=0,
+			billable=cint(shipment.get("billable")),
+			paid_by="",
+			paid_by_traveler="",
+			traveler=receiver if receiver in crew else "",
+			protected=False,
+		)
+		freight.append(item)
+
+	stops = []
+	for stop in state.get("stops") or []:
+		copied = _moved(stop, STOP_FIELDS, days)
+		copied.update(
+			name=None,
+			location_title=stop.get("location_title") or "",
+			outcome_name=None,
+		)
+		stops.append(copied)
+
+	copy = {
+		"name": None,
+		"modified": None,
+		"status": "Planning",
+		"can_write": True,
+		"trip": trip,
+		"travelers": travelers,
+		"bookings": bookings,
+		"freight": freight,
+		"stops": stops,
+		"documents": [],
+	}
+	copy["gaps"] = find_gaps(_as_rows(copy))
+	return copy
+
+
 # --------------------------------------------------------------------------- endpoints
 
 
@@ -1063,6 +1330,63 @@ def get_recent_plans():
 		order_by="start_date asc",
 		limit_page_length=30,
 	)
+
+
+@frappe.whitelist()
+def get_copyable_trips():
+	"""The landing's "Copy a past trip" list: the trips this user can see, newest first, whatever
+	their status (the trip worth copying has usually finished). ``get_list``, so it is scoped
+	the way every other list of trips is. No money: names, dates and what each trip was for."""
+	return frappe.get_list(
+		"Travel Trip",
+		fields=[
+			"name",
+			"purpose",
+			"status",
+			"start_date",
+			"end_date",
+			"travel_for_doctype",
+			"travel_for_name",
+		],
+		order_by="start_date desc",
+		limit_page_length=COPYABLE_TRIPS,
+	)
+
+
+@frappe.whitelist()
+def copy_plan(trip, start_date, keep_crew=1):
+	"""A new trip like ``trip`` that starts on ``start_date``: "Plan another trip like this one".
+
+	Nothing is saved here. The page opens the answer as a new trip not saved yet, the way it
+	opens a blank one, and its first save creates the trip through :func:`save_plan`, where
+	every row is new and the Travel Trip controller checks the whole trip. What comes over and
+	what stays behind is :func:`copy_state`'s.
+
+	Needs read permission on ``trip`` and create permission on Travel Trip.
+
+	Args:
+		trip: the Travel Trip to copy, in any status.
+		start_date: the new trip's first day. Every date moves by the days between the two trips'
+			first days.
+		keep_crew: bring the same people (the default). "0" or "false" leaves them behind.
+
+	Returns:
+		``{state, lookups, copied_from}``: ``state`` in :func:`get_state`'s shape, with no name.
+	"""
+	if not frappe.has_permission("Travel Trip", "create"):
+		frappe.throw(_("You are not allowed to plan trips."), frappe.PermissionError)
+	source = frappe.get_doc("Travel Trip", trip)
+	source.check_permission("read")
+	try:
+		start = to_date(start_date)
+	except (TypeError, ValueError):
+		start = None
+	if not start:
+		frappe.throw(_("Pick the new trip's first day."))
+	lookups = _lookups()
+	active = {_get(employee, "name") for employee in lookups.get("employees") or []}
+	state = copy_state(get_state(source), start, keep_crew=_flag(keep_crew), active=active)
+	return {"state": state, "lookups": lookups, "copied_from": source.name}
 
 
 @frappe.whitelist(methods=["POST"])

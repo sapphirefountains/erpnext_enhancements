@@ -25,6 +25,10 @@ These are static reads. The worker never runs in CI, and the property that
 matters is a *scope* claim in the source, which is exactly what a text assertion
 can hold.
 
+The same goes for what each worker deletes when it activates: only its own older
+caches, never another worker's (see ``TestActivateDeletesOnlyItsOwnCaches``; the
+itinerary's offline copy is the other worker it used to wipe).
+
 Run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker
 """
 
@@ -212,6 +216,55 @@ class TestWallWorkerHasTheSameContainment(unittest.TestCase):
             handler.index("ignoreSearch"),
             "ignoreSearch is reached before the precache guard",
         )
+
+
+def _activate_handler(worker):
+    code = _code(worker)
+    start = code.index("addEventListener('activate'")
+    depth, opened = 0, False
+    for end in range(start, len(code)):
+        if code[end] == "{":
+            depth += 1
+            opened = True
+        elif code[end] == "}":
+            depth -= 1
+            if opened and depth == 0:
+                return code[start : end + 1]
+    return code[start:]
+
+
+class TestActivateDeletesOnlyItsOwnCaches(unittest.TestCase):
+    """Both workers used to delete EVERY cache on the site but their own when a new version
+    activated: `keys.filter((k) => k !== CACHE)`. Harmless while they were the only workers, and
+    wrong once the traveler itinerary kept its page and files on the phone (itinerary-sw.js, the
+    Plan a Trip program's PR 4): every deploy wiped the offline itinerary on any phone that also
+    opened /kiosk, and the kiosk's own shell on any browser that also opened /wall. Each now
+    deletes only its own older caches, by the prefix every cache it ever made carries
+    (`time-kiosk-v1`..`v3`, then `time-kiosk-<deploy token>`; `wall-display-<deploy token>`).
+    capture/drafts.js moved offline reports to IndexedDB for the same reason.
+    """
+
+    WORKERS = ((KIOSK_WORKER, "time-kiosk-"), (WALL_WORKER, "wall-display-"))
+
+    def test_each_cache_name_carries_the_prefix(self):
+        for worker, prefix in self.WORKERS:
+            with self.subTest(worker=worker.name):
+                self.assertIn(f"const CACHE = '{prefix}' + VERSION;", _code(worker))
+
+    def test_activate_filters_by_its_own_prefix(self):
+        for worker, prefix in self.WORKERS:
+            with self.subTest(worker=worker.name):
+                activate = _activate_handler(worker)
+                self.assertIn(f"keys.filter((k) => k.startsWith('{prefix}') && k !== CACHE)", activate)
+                self.assertEqual(activate.count("caches.delete("), 1)
+
+    def test_nothing_deletes_every_other_cache(self):
+        for worker, _prefix in self.WORKERS:
+            with self.subTest(worker=worker.name):
+                self.assertIsNone(
+                    re.search(r"filter\(\(k\) => k !== \w+\)", _code(worker)),
+                    f"{worker.name} deletes every cache but its own again, the itinerary's included",
+                )
 
 
 class TestBothWorkersCloneBeforeConsuming(unittest.TestCase):

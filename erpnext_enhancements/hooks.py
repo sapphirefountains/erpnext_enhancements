@@ -1244,6 +1244,18 @@ scheduler_events = {
 		# publishing connections; the publish switches play no part. Enqueues on `long`.
 		# 03:50: after the 03:35 token upkeep. Dormant while Marketing Settings.enabled is 0.
 		"50 3 * * *": ["erpnext_enhancements.marketing.publish.metrics_sync.nightly_social_metrics"],
+		# travel_management (Plan a Trip PR 4): trip change alerts. A save of a Booked or In
+		# Progress trip records what changed for each person as a Pending Trip Change Alert
+		# (notifications.on_trip_update); this sends each one once its last change is 10
+		# minutes old, so a round of edits on Plan a Trip (a save per step) is one email.
+		# Stamp-first (Sent, commit, then send). The rows are the timer, not a queued job,
+		# because the deploy FLUSHDBs the queue: whatever is Pending when a deploy lands is
+		# sent by the next tick. Its own key, used nowhere else in this dict ("2-59/5" above
+		# is a different string); a repeated key would silently replace the entry it
+		# collided with. Dormant: Travel Settings' Send Change Alerts has no default and
+		# reads 0 until it is ticked (Nik, 2026-09-27), and with nothing Pending a tick is
+		# one indexed query.
+		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
 	},
 	"daily": [
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
@@ -2538,7 +2550,11 @@ notification_skip_email_types = []
 # table whose retention a settings field claims to own -- wire the field or remove it.
 default_log_clearing_doctypes = {"Notification Log": 90}
 
-ignore_links_on_delete = ["User Form Draft"]
+# Trip Change Alert (travel_management, Plan a Trip PR 4) links its trip, and frappe v16's
+# delete_doc refuses to delete a document any non-cancelled row links to (check_if_doc_is_linked,
+# after on_trash): without this, a trip that had ever sent a change alert could not be deleted.
+# An alert left behind is harmless: the sender skips one whose trip is gone.
+ignore_links_on_delete = ["User Form Draft", "Trip Change Alert"]
 
 portal_menu_items = [
 	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and

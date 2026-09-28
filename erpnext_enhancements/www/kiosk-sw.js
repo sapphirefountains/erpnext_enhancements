@@ -17,8 +17,9 @@
  * Lifecycle:
  *   - install:  open the CACHE and precache the app-shell assets (PRECACHE), then
  *               skipWaiting() so a new worker activates immediately.
- *   - activate: delete every cache whose name !== CACHE (drops stale versions), then
- *               clients.claim() so this worker controls already-open tabs.
+ *   - activate: delete this worker's own older caches ('time-kiosk-' + an earlier
+ *               token), never another worker's, then clients.claim() so this worker
+ *               controls already-open tabs.
  *   - fetch:    /kiosk navigations → network-first with a cached-shell fallback;
  *               our /assets (+ /kiosk-manifest.json) → cache-first with background
  *               refresh. Non-GET and cross-origin requests are passed through.
@@ -33,7 +34,7 @@
  * /kiosk-sw.js?v=<deploy token> (kiosk.py::get_deploy_version — the mtime of
  * sites/assets/assets.json, i.e. a new value on every bench build). A deploy is
  * therefore a new script URL: the browser installs the new worker, whose CACHE
- * name embeds the token, and activate deletes every other cache — no manual
+ * name embeds the token, and activate deletes its older ones — no manual
  * version bump needed anymore. Precaching uses `cache: 'reload'` + the same
  * ?v= suffix the page uses, so the 1-year-immutable HTTP cache for raw /assets
  * can never feed a stale copy into a fresh cache.
@@ -239,7 +240,11 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    // This worker's own caches from earlier deploys ('time-kiosk-<old token>'), and nothing
+    // else. It used to delete every cache on the site but its own, which wiped the traveler
+    // itinerary's offline copy (itinerary-sw.js) on any phone that also opened /kiosk, at
+    // every deploy. Every cache this worker ever made starts with this prefix.
+    await Promise.all(keys.filter((k) => k.startsWith('time-kiosk-') && k !== CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -311,8 +316,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       // ignoreSearch is right for THESE files and only these: the page and the
       // worker can disagree by one ?v= token mid-update, and the shell must still
-      // resolve. `activate` drops every other cache, so the entries here belong
-      // to this worker's own deploy.
+      // resolve. `activate` drops this worker's older caches, and no other
+      // worker keeps these paths, so the entries here are this deploy's.
       const cached = await caches.match(req, { ignoreSearch: true });
       const network = fetch(req).then((res) => {
         if (res && res.ok) {

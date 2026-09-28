@@ -24,6 +24,14 @@ Rendering and delivery are separate steps (:func:`_render`, :func:`_deliver`;
 :func:`_send` runs both), so Plan a Trip can show one person's itinerary email
 and calendar invite exactly as they will get them without sending anything
 (:func:`render_itinerary_preview`).
+
+**Change alerts** (``change_alerts.py``) start here too: :func:`on_trip_update`
+hands a Booked or In Progress trip's before and after to
+``change_alerts.record_trip_changes``, which keeps what changed for each person
+until the scheduler emails it. They have their own switch, **Send Change
+Alerts**, on top of this module's (Nik, 2026-09-27: travel notifications were
+already on in production with a trip under way, so riding this switch would
+have emailed its crew on the first edit).
 """
 
 import frappe
@@ -37,6 +45,10 @@ from erpnext_enhancements.travel_management.views import contact_links, contact_
 
 TEMPLATE_DIR = "erpnext_enhancements/templates/emails/travel"
 
+#: The statuses a trip's change alerts are for: booked, or under way. A trip still being
+#: planned changes all the time and nobody is holding a ticket yet.
+ACTIVE_STATUSES = ("Booked", "In Progress")
+
 
 def _notifications_enabled():
 	return bool(cint(frappe.db.get_single_value("Travel Settings", "notifications_enabled")))
@@ -48,6 +60,27 @@ def _in_maintenance_context():
 	return bool(flags.in_migrate or flags.in_install or flags.in_patch or flags.in_import)
 
 
+def _employee_recipient(employee, row=None):
+	"""``{row, employee, employee_name, email, user_id}`` for one Employee, or ``None`` when
+	there is no such record. ``row`` is their Trip Traveler row, or ``None`` for someone who
+	is no longer on the trip (a change alert still tells them so)."""
+	info = frappe.db.get_value(
+		"Employee",
+		employee,
+		["employee_name", "user_id", "prefered_email", "company_email", "personal_email"],
+		as_dict=True,
+	)
+	if not info:
+		return None
+	return frappe._dict(
+		row=row,
+		employee=employee,
+		employee_name=info.employee_name or employee,
+		email=info.prefered_email or info.user_id or info.company_email or info.personal_email,
+		user_id=info.user_id,
+	)
+
+
 def _traveler_recipients(doc, employees=None):
 	"""Resolve traveler rows to ``{row, employee, employee_name, email, user_id}``
 	dicts (rows without any email address are skipped by delivery)."""
@@ -55,24 +88,9 @@ def _traveler_recipients(doc, employees=None):
 	for row in doc.travelers:
 		if employees is not None and row.employee not in employees:
 			continue
-		info = frappe.db.get_value(
-			"Employee",
-			row.employee,
-			["employee_name", "user_id", "prefered_email", "company_email", "personal_email"],
-			as_dict=True,
-		)
-		if not info:
-			continue
-		email = info.prefered_email or info.user_id or info.company_email or info.personal_email
-		recipients.append(
-			frappe._dict(
-				row=row,
-				employee=row.employee,
-				employee_name=info.employee_name or row.employee,
-				email=email,
-				user_id=info.user_id,
-			)
-		)
+		recipient = _employee_recipient(row.employee, row)
+		if recipient:
+			recipients.append(recipient)
 	return recipients
 
 
@@ -178,6 +196,16 @@ def on_trip_update(doc, method=None):
 			queue="short",
 			enqueue_after_commit=True,
 		)
+
+	# Change alerts: on a trip that was and still is Booked or In Progress, what changed for
+	# each person is kept as their Pending Trip Change Alert (in this save's transaction, so
+	# a refused save records nothing) and emailed by the scheduler once the edits stop. Not a
+	# queued job: the before-state exists only now, and a deploy flushes the queue. Its own
+	# Travel Settings switch too, checked in there (change_alerts.py).
+	if before and before.status in ACTIVE_STATUSES and doc.status in ACTIVE_STATUSES:
+		from erpnext_enhancements.travel_management.change_alerts import record_trip_changes
+
+		record_trip_changes(doc, before)
 
 
 # -------------------------------------------------------- background jobs

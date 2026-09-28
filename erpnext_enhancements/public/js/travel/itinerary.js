@@ -61,6 +61,28 @@
  * (`my_sheet_url`, `sheet_url`) and leaves money off the sheet for anyone but a travel
  * coordinator. The link writes no history.
  *
+ * Offline (Nik, 2026-09-26): the itinerary and its files still open in airplane mode or at a
+ * job site with no signal. Every answer get_trip_itinerary sends is kept on this phone, in
+ * IndexedDB (database "sapphire-itinerary", store "answers", key "<user>|<trip>|<as>"), with the
+ * boot's trip list. After the first trip loads, the person's own upcoming trips (in progress,
+ * or starting within 14 days) are saved ahead, quietly, and their pictures and PDFs are handed
+ * to the service worker (www/itinerary-sw.js, scope /itinerary), which keeps them and the page
+ * itself. When the server cannot be reached at all (fetch itself fails, as with no signal; a
+ * refusal or a server error is an answer, handled as before), the copy saved for that same trip
+ * and person is drawn where the answer would have been, under "You're offline — showing your
+ * itinerary as saved <time>.", and it writes no history. Offline, a PDF opens from the phone's
+ * copy in a tab the page opens at the tap: a link's own new tab is outside /itinerary, where
+ * the worker cannot answer. A phone can be shared, so a saved copy is only ever shown to the
+ * person it was saved for (the boot's `user`): when this browser's session (the `user_id`
+ * cookie) names somebody else, or "Guest" (signed out: frappe sets it as soon as the login page
+ * loads), nothing saved is shown and the page says "Sign in to see your itinerary." A page
+ * drawn for somebody else (the kept page, from before another person signed in) is refused at
+ * boot. No cookie at all is not a sign-out: `user_id` is a session cookie, and a phone that has
+ * dropped it (a home-screen app started again) still holds its sign-in. Opening the page as
+ * somebody deletes everybody else's saved answers and files. No money is in any of it: the
+ * answer has none. No IndexedDB, no service worker, storage that throws or refuses: the page is
+ * exactly what it was without them.
+ *
  * Back / Forward: what is on screen is in the address as
  * ?trip=<name>&as=<who>&view=docs&file=<document> (same path, so a reload, Back from
  * /travel_guidelines and the login redirect all keep it). A trip chip tap, a person pick,
@@ -106,9 +128,15 @@
 		// The last crew the server sent: {trip, crew, viewer, onTrip}. Keeps the person picker
 		// on screen while another person's view loads.
 		people: null,
+		// The answer on screen is the copy saved on this phone ({saved_at}), not the server's.
+		offline: null,
+		// This browser's session is not the person the page was drawn for: nothing saved is shown.
+		otherUser: false,
 	};
 
 	// -- API -----------------------------------------------------------------
+	var ITINERARY = 'erpnext_enhancements.api.travel.get_trip_itinerary';
+
 	function api(method, args) {
 		var headers = {
 			'Accept': 'application/json',
@@ -120,6 +148,11 @@
 			headers: headers,
 			credentials: 'same-origin',
 			body: JSON.stringify(args || {}),
+		}).then(null, function (err) {
+			// No answer at all: fetch itself failed (no signal, airplane mode). Only this is
+			// "offline"; a refusal or a server error below is an answer.
+			if (err && typeof err === 'object') err.unreachable = true;
+			throw err;
 		}).then(function (res) {
 			return res.json().catch(function () { return null; }).then(function (data) {
 				if (!res.ok) {
@@ -143,12 +176,19 @@
 	// readable `user_id` cookie, and sets it to Guest or clears it when the session ends. A
 	// document with no cookies to read (not a browser) proves nothing, so it counts as signed in.
 	function signedOutCookie() {
+		var user = cookieUser();
+		return user === '' || user === 'Guest';
+	}
+
+	// The `user_id` cookie: the user, 'Guest', '' when there is none, or null when this document
+	// has no cookies to read (or reading them throws).
+	function cookieUser() {
 		try {
-			if (typeof document.cookie !== 'string') return false;
+			if (typeof document.cookie !== 'string') return null;
 			var match = document.cookie.match(/(?:^|;\s*)user_id=([^;]*)/);
-			return !match || !match[1] || decodeURIComponent(match[1]) === 'Guest';
+			return match && match[1] ? decodeURIComponent(match[1]) : '';
 		} catch (e) {
-			return false;
+			return null;
 		}
 	}
 
@@ -548,6 +588,7 @@
 			link.target = '_blank';
 			link.rel = 'noopener';
 			link.appendChild(el('span', 'ti-sr-only', ' (opens in a new tab)'));
+			openSavedWhenOffline(link, doc);
 		}
 		return link;
 	}
@@ -1030,6 +1071,7 @@
 		original.href = doc.url;
 		original.target = '_blank';
 		original.rel = 'noopener';
+		openSavedWhenOffline(original, doc);
 		foot.appendChild(original);
 		box.appendChild(foot);
 
@@ -1148,7 +1190,7 @@
 		header.appendChild(el('div', 'ti-header-title', view.title));
 		if (view.sub) header.appendChild(el('div', 'ti-header-sub', view.sub));
 		root.appendChild(header);
-		var onDocs = state.currentView === 'docs' && state.currentTrip && !state.denied && !state.signedOut;
+		var onDocs = state.currentView === 'docs' && state.currentTrip && !state.denied && !state.signedOut && !state.otherUser;
 		setDocumentTitle(onDocs ? 'Documents – ' + view.page : view.page);
 
 		if (state.signedOut) {
@@ -1160,6 +1202,13 @@
 			return;
 		}
 
+		// Somebody else's session, or signed out, on a page drawn for another person: nothing
+		// saved on this phone is shown, not even the trip list.
+		if (state.otherUser) {
+			root.appendChild(el('div', 'ti-empty', 'Sign in to see your itinerary.'));
+			return;
+		}
+
 		if (!state.currentTrip) {
 			root.appendChild(el('div', 'ti-empty',
 				BOOT.employee
@@ -1167,6 +1216,9 @@
 					: 'No employee record is linked to your user account.'));
 			return;
 		}
+
+		// The copy saved on this phone, shown because the server could not be reached.
+		if (state.offline && state.itinerary && !state.denied) root.appendChild(offlineBanner(state.offline));
 
 		// A trip opened from a link that is not in the list still gets the list, to go back to.
 		if (state.trips.length > 1 || (state.trips.length && !listedTrip(state.currentTrip))) {
@@ -1311,6 +1363,8 @@
 	// `as` is '' (the default view), 'crew' or an employee id; an answer is only shown
 	// while that same trip AND person are still the ones asked for. `view` and `file` are
 	// the screen and the picture to draw once it lands (none, for a different trip).
+	// No answer at all (no signal) draws the copy saved on this phone instead, if there is one
+	// (showSaved); every answer that does land is saved for next time (keepForOffline).
 	function loadTrip(name, as, view, file) {
 		as = as || '';
 		state.currentTrip = name;
@@ -1318,21 +1372,24 @@
 		state.currentView = view || '';
 		state.currentFile = file || '';
 		state.itinerary = null;
+		state.offline = null;
 		state.denied = false;
 		state.signedOut = false;
 		render();
 		var args = { trip: name };
 		if (as) args.as_employee = as;
-		api('erpnext_enhancements.api.travel.get_trip_itinerary', args)
+		api(ITINERARY, args)
 			.then(function (itinerary) {
 				if (state.currentTrip !== name || state.currentAs !== as) return; // user moved on
 				state.itinerary = itinerary || { days: [] };
 				rememberPeople(name, state.itinerary);
 				render();
+				keepForOffline(name, as, state.itinerary);
 			})
 			.catch(function (err) {
 				if (state.currentTrip !== name || state.currentAs !== as) return; // not on screen any more
-				loadFailed(name, as, err);
+				if (err && err.unreachable) showSaved(name, as, err);
+				else loadFailed(name, as, err);
 			});
 	}
 
@@ -1474,6 +1531,8 @@
 	// Header and page title: "My Itinerary" only for your own view.
 	function viewTitle() {
 		var mine = { title: 'My Itinerary', sub: BOOT.employee_name || '', page: 'My Itinerary' };
+		// The name the page was drawn for is not this session's: it is not shown either.
+		if (state.otherUser) return { title: 'My Itinerary', sub: '', page: 'My Itinerary' };
 		if (!state.currentTrip || state.denied || state.signedOut) return mine;
 		var as = shownAs();
 		if (as === 'crew') return { title: 'Whole crew', sub: 'Everyone\'s bookings', page: 'Whole crew itinerary' };
@@ -1578,12 +1637,477 @@
 		showTripFromUrl();
 	});
 
+	// -- Offline: saved on this phone ----------------------------------------------------
+	// See "Offline" in the note at the top of this file. All of it is a courtesy that may cost
+	// the page nothing: no IndexedDB, no service worker, storage that throws, refuses or never
+	// answers, and the page is exactly what it was without them (the Back/Forward harness has
+	// none of them). Nothing here writes history.
+
+	var SAVED_DB = 'sapphire-itinerary';
+	var SAVED_DB_VERSION = 1;
+	var ANSWERS = 'answers';
+	var TRIP_LISTS = 'trips';
+	var DAY_MS = 24 * 60 * 60 * 1000;
+	// Safari has shipped versions whose indexedDB.open() neither succeeds nor fails
+	// (capture/drafts.js): the page stops waiting for it after this long.
+	var SAVED_OPEN_MS = 4000;
+	// The person's own trips saved ahead: in progress, or starting within this many days.
+	var AHEAD_DAYS = 14;
+	// At most this many of one trip's files are kept on the phone.
+	var FILES_PER_TRIP = 20;
+	// A saved answer for a trip no longer in the person's trip list goes this long after it was
+	// saved; a person keeps at most this many (the newest).
+	var KEEP_DAYS = 7;
+	var MAX_SAVED = 40;
+	var savedDb = null;
+	var savedAhead = false;
+
+	function storageFactory() {
+		try {
+			return window.indexedDB || null;
+		} catch (e) {
+			// Some privacy modes throw on the mere property access.
+			return null;
+		}
+	}
+
+	function openSaved() {
+		if (savedDb) return savedDb;
+		var factory = storageFactory();
+		if (!factory) return Promise.reject(new Error('No storage on this device.'));
+		savedDb = new Promise(function (resolve, reject) {
+			var timer = setTimeout(function () {
+				reject(new Error('Storage did not answer.'));
+			}, SAVED_OPEN_MS);
+			var request;
+			try {
+				request = factory.open(SAVED_DB, SAVED_DB_VERSION);
+			} catch (e) {
+				clearTimeout(timer);
+				reject(e);
+				return;
+			}
+			request.onupgradeneeded = function () {
+				var db = request.result;
+				if (!db.objectStoreNames.contains(ANSWERS)) db.createObjectStore(ANSWERS);
+				if (!db.objectStoreNames.contains(TRIP_LISTS)) db.createObjectStore(TRIP_LISTS);
+			};
+			request.onsuccess = function () {
+				clearTimeout(timer);
+				var db = request.result;
+				// Another tab upgrading the database must not be blocked by this one.
+				db.onversionchange = function () {
+					try {
+						db.close();
+					} catch (e) {
+						// Already closed.
+					}
+					savedDb = null;
+				};
+				resolve(db);
+			};
+			request.onerror = function () {
+				clearTimeout(timer);
+				reject(request.error || new Error('Storage refused.'));
+			};
+			request.onblocked = function () {
+				clearTimeout(timer);
+				reject(new Error('Storage is busy in another tab.'));
+			};
+		});
+		// A failed open is tried again next time rather than kept.
+		savedDb.catch(function () {
+			savedDb = null;
+		});
+		return savedDb;
+	}
+
+	// `fn(tx, out)` in one transaction, resolving with `out.value` once it commits (a write is not
+	// kept until then).
+	function savedRun(stores, mode, fn) {
+		return openSaved().then(function (db) {
+			return new Promise(function (resolve, reject) {
+				var out = { value: null };
+				var tx;
+				try {
+					tx = db.transaction(stores, mode);
+					tx.oncomplete = function () { resolve(out.value); };
+					tx.onerror = function () { reject(tx.error || new Error('Storage refused.')); };
+					tx.onabort = function () { reject(tx.error || new Error('Storage was interrupted.')); };
+					fn(tx, out);
+				} catch (e) {
+					try {
+						if (tx) tx.abort();
+					} catch (e2) {
+						// Nothing to abort.
+					}
+					// A closed connection (another tab upgraded) opens again next time.
+					savedDb = null;
+					reject(e);
+				}
+			});
+		});
+	}
+
+	function savedKey(user, trip, as) {
+		return user + '|' + trip + '|' + (as || '');
+	}
+
+	function saveAnswer(user, trip, as, answer) {
+		if (!user || !trip || !answer || !storageFactory()) return Promise.resolve(false);
+		return savedRun(ANSWERS, 'readwrite', function (tx) {
+			tx.objectStore(ANSWERS).put(
+				{ user: user, trip: trip, as: as || '', answer: answer, saved_at: Date.now() },
+				savedKey(user, trip, as)
+			);
+		}).then(function () { return true; }, function () { return false; });
+	}
+
+	// {saved, readable}: the copy saved for this person, trip and view (null when there is none),
+	// and whether this phone's storage could be read at all. Never rejects.
+	function readAnswer(user, trip, as) {
+		if (!user || !storageFactory()) return Promise.resolve({ saved: null, readable: false });
+		return savedRun(ANSWERS, 'readonly', function (tx, out) {
+			var request = tx.objectStore(ANSWERS).get(savedKey(user, trip, as));
+			request.onsuccess = function () { out.value = request.result || null; };
+		}).then(function (saved) {
+			var ok = saved && saved.user === user && saved.answer && typeof saved.answer === 'object';
+			return { saved: ok ? saved : null, readable: true };
+		}, function () {
+			return { saved: null, readable: false };
+		});
+	}
+
+	function saveTripList(user, trips) {
+		if (!user || !storageFactory()) return Promise.resolve(false);
+		return savedRun(TRIP_LISTS, 'readwrite', function (tx) {
+			tx.objectStore(TRIP_LISTS).put({ user: user, trips: trips || [], saved_at: Date.now() }, user);
+		}).then(function () { return true; }, function () { return false; });
+	}
+
+	// Everybody else's saved answers and trip lists go, and so do this person's answers for a trip
+	// no longer in their list once they are a week old, and any beyond the newest MAX_SAVED.
+	// Resolves with how many answers went; never rejects.
+	function pruneSaved(user) {
+		if (!user || !storageFactory()) return Promise.resolve(0);
+		var now = Date.now();
+		return savedRun([ANSWERS, TRIP_LISTS], 'readwrite', function (tx, out) {
+			out.value = 0;
+			var lists = tx.objectStore(TRIP_LISTS);
+			var answers = tx.objectStore(ANSWERS);
+			var listKeys = lists.getAllKeys();
+			var listValues = lists.getAll();
+			var keys = answers.getAllKeys();
+			var values = answers.getAll();
+			// Requests in one transaction finish in the order they were made: this one is last.
+			values.onsuccess = function () {
+				var listed = {};
+				(listKeys.result || []).forEach(function (key, i) {
+					var list = (listValues.result || [])[i];
+					if (key !== user) {
+						lists.delete(key);
+						return;
+					}
+					((list && list.trips) || []).forEach(function (trip) {
+						if (trip && trip.name) listed[trip.name] = true;
+					});
+				});
+				var kept = [];
+				(keys.result || []).forEach(function (key, i) {
+					var saved = (values.result || [])[i] || {};
+					var recent = Number(saved.saved_at) > now - KEEP_DAYS * DAY_MS;
+					if (saved.user !== user || !(listed[saved.trip] || recent)) {
+						answers.delete(key);
+						out.value += 1;
+					} else {
+						kept.push({ key: key, at: Number(saved.saved_at) || 0 });
+					}
+				});
+				kept.sort(function (a, b) { return b.at - a.at; });
+				kept.slice(MAX_SAVED).forEach(function (old) {
+					answers.delete(old.key);
+					out.value += 1;
+				});
+			};
+		}).catch(function () {
+			return 0;
+		});
+	}
+
+	// The person the page was drawn for (the boot's `user`), or '' when it names nobody.
+	function bootUser() {
+		return typeof BOOT.user === 'string' && BOOT.user !== 'Guest' ? BOOT.user : '';
+	}
+
+	// True when this browser's session is not the person the page was drawn for: the `user_id`
+	// cookie names somebody else, or "Guest" (signed out). No cookie at all is not a sign-out
+	// (see the note at the top of this file), and a document with none to read proves nothing.
+	function shellIsSomeoneElses() {
+		var boot = bootUser();
+		var cookie = cookieUser();
+		return !!boot && !!cookie && cookie !== boot;
+	}
+
+	// Whose copy this page may save and show: the person it was drawn for, while the session is
+	// still theirs. '' for nobody.
+	function savingUser() {
+		return shellIsSomeoneElses() ? '' : bootUser();
+	}
+
+	// Who is signed in on this phone, as far as the page can tell: the session's user, else the
+	// person the page was drawn for. '' when signed out.
+	function deviceUser() {
+		var cookie = cookieUser();
+		if (cookie === null || cookie === '') return bootUser();
+		return cookie === 'Guest' ? '' : cookie;
+	}
+
+	// No answer from the server (loadTrip): the copy saved for this trip and person, if this
+	// session is the person it was saved for. Drawn where the answer would have been, with no
+	// history write. Nothing saved says so; no storage to read is the error the page has always
+	// shown.
+	function showSaved(name, as, err) {
+		if (shellIsSomeoneElses()) {
+			state.otherUser = true;
+			state.offline = null;
+			render();
+			return;
+		}
+		readAnswer(savingUser(), name, as).then(function (found) {
+			if (state.currentTrip !== name || state.currentAs !== as) return; // not on screen any more
+			if (!found.saved) {
+				if (found.readable) {
+					root.appendChild(el('div', 'ti-error', 'You\'re offline, and this itinerary isn\'t saved on this phone yet.'));
+				} else {
+					loadFailed(name, as, err);
+				}
+				return;
+			}
+			state.itinerary = found.saved.answer;
+			state.offline = { saved_at: found.saved.saved_at };
+			rememberPeople(name, state.itinerary);
+			render();
+		});
+	}
+
+	function offlineBanner(offline) {
+		var banner = el('div', 'ti-offline', 'You\'re offline — showing your itinerary as saved ' + savedWhen(offline.saved_at) + '.');
+		banner.setAttribute('role', 'status');
+		return banner;
+	}
+
+	// "Fri, Sep 25, 7:05 PM": when the copy was saved, on this phone's clock.
+	function savedWhen(ms) {
+		var d = new Date(Number(ms) || 0);
+		var minutes = d.getMinutes();
+		return fmtDate(localIso(d)) + ', ' + fmtTime(d.getHours() + ':' + (minutes < 10 ? '0' : '') + minutes);
+	}
+
+	// An answer that landed (loadTrip): saved for next time. After the first one, once per page
+	// load, the person's own upcoming trips are saved ahead, with their files. Nothing is asked
+	// for ahead on a phone that could not keep it.
+	function keepForOffline(name, as, answer) {
+		var user = savingUser();
+		if (!user || !storageFactory()) return;
+		saveAnswer(user, name, as, answer).then(function (saved) {
+			if (!saved || savedAhead) return;
+			savedAhead = true;
+			saveTripList(user, state.trips);
+			saveAhead(user, name, as, answer);
+		});
+	}
+
+	// Each trip they travel on (`mine`) that is in progress or starts within AHEAD_DAYS: their
+	// own itinerary of it (no ?as=), asked for one at a time, saved, and its files handed to the
+	// worker. The one on screen, when it is that view, is not asked for again.
+	function saveAhead(user, name, as, answer) {
+		var today = localIso();
+		var horizon = localIso(new Date(Date.now() + AHEAD_DAYS * DAY_MS));
+		var ahead = state.trips.filter(function (trip) {
+			return trip && trip.name && trip.mine !== false &&
+				String(trip.start_date || '') <= horizon && String(trip.end_date || '') >= today;
+		});
+		var chain = Promise.resolve();
+		ahead.forEach(function (trip) {
+			chain = chain.then(function () {
+				if (trip.name === name && !as) return answer;
+				return api(ITINERARY, { trip: trip.name }).then(function (got) {
+					if (got) saveAnswer(user, trip.name, '', got);
+					return got;
+				});
+			}).then(function (got) {
+				keepFiles(user, got);
+			}).catch(function () {
+				// That trip keeps whatever was saved before; the next one is still asked for.
+			});
+		});
+		return chain;
+	}
+
+	// A file the phone may keep: a picture or a PDF at one of this site's own file addresses.
+	function savableFile(doc) {
+		var url = doc && doc.url;
+		if (typeof url !== 'string' || !/^\/(private\/)?files\/[^/]/.test(url)) return '';
+		if (url.indexOf('\\') >= 0 || url.indexOf('..') >= 0) return '';
+		var named = String(doc.file_name || '') + ' ' + url;
+		return doc.is_image || /\.pdf(\s|[?#]|$)/i.test(named) ? url : '';
+	}
+
+	function keepFiles(user, answer) {
+		if (!answer) return;
+		var urls = [];
+		tripDocuments(answer).forEach(function (doc) {
+			var url = savableFile(doc);
+			if (url && urls.length < FILES_PER_TRIP && urls.indexOf(url) < 0) urls.push(url);
+		});
+		if (urls.length) toWorker({ type: 'cache-files', user: user, urls: urls });
+	}
+
+	// The service worker (www/itinerary-sw.js), scoped to this page: never the site root, where
+	// the kiosk's worker is. Without one, nothing is kept and the page works online as before.
+	function registerWorker() {
+		try {
+			if (!('serviceWorker' in navigator)) return;
+			var build = window.ITIN_BUILD || '';
+			navigator.serviceWorker.register('/itinerary-sw.js?v=' + encodeURIComponent(build), { scope: '/itinerary' })
+				.catch(function () {
+					// No worker: the page works online as it always has.
+				});
+		} catch (e) {
+			// The same.
+		}
+	}
+
+	function toWorker(message) {
+		try {
+			var workers = navigator.serviceWorker;
+			if (!workers || !workers.ready) return;
+			workers.ready.then(function (registration) {
+				var worker = registration && registration.active;
+				if (worker) worker.postMessage(message);
+			}).catch(function () {
+				// No worker to tell.
+			});
+		} catch (e) {
+			// The same.
+		}
+	}
+
+	// At boot: the worker, and who is signed in, so everybody else's saved answers and files go.
+	function startOffline() {
+		registerWorker();
+		var user = deviceUser();
+		if (!user) return;
+		toWorker({ type: 'user', user: user });
+		pruneSaved(user);
+	}
+
+	// True while the page cannot reach the server: the copy on screen is the saved one, or the
+	// phone says it has no connection.
+	function offlineNow() {
+		if (state.offline) return true;
+		try {
+			return navigator.onLine === false;
+		} catch (e) {
+			return false;
+		}
+	}
+
+	// A file that opens in a new tab (a PDF, and a picture's "Open original"): offline, that tab
+	// would be outside /itinerary, where the worker cannot answer, so the page opens the tab
+	// itself, at the tap, and puts the phone's copy in it. Online, the link is left to do what
+	// it always has.
+	function openSavedWhenOffline(link, doc) {
+		link.addEventListener('click', function (ev) {
+			if (!offlineNow() || ev.defaultPrevented) return;
+			if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || (ev.button && ev.button !== 0)) return;
+			ev.preventDefault();
+			openSavedCopy(link, doc);
+		});
+	}
+
+	function openSavedCopy(link, doc) {
+		var tab = null;
+		try {
+			tab = window.open('', '_blank');
+		} catch (e) {
+			tab = null;
+		}
+		Promise.resolve().then(function () {
+			return fetch(doc.url, { credentials: 'same-origin' });
+		}).then(function (res) {
+			if (!res || !res.ok) throw new Error('not saved');
+			return res.blob();
+		}).then(function (blob) {
+			if (!tab) {
+				var blocked = new Error('no tab');
+				blocked.noTab = true;
+				throw blocked;
+			}
+			var href = URL.createObjectURL(blob);
+			tab.location.href = href;
+			setTimeout(function () {
+				try {
+					URL.revokeObjectURL(href);
+				} catch (e) {
+					// Gone with the tab.
+				}
+			}, 60000);
+		}).catch(function (err) {
+			try {
+				if (tab) tab.close();
+			} catch (e) {
+				// Already closed.
+			}
+			fileNote(link, err && err.noTab
+				? 'This phone didn\'t open a new tab for the file. Try again, or once you\'re back online.'
+				: 'This file isn\'t saved on this phone. It opens once you\'re back online.');
+		});
+	}
+
+	// A line under the file's link saying why it did not open.
+	function fileNote(link, text) {
+		var box = link.parentNode;
+		if (!box) return;
+		if (!link.tiNote) {
+			link.tiNote = el('div', 'ti-doc-note');
+			link.tiNote.setAttribute('role', 'status');
+			box.appendChild(link.tiNote);
+		}
+		link.tiNote.textContent = text;
+	}
+
+	// Back online while a saved copy is on screen: the server's answer replaces it, quietly, where
+	// it is. No history write, and nothing if the person has moved on.
+	window.addEventListener('online', function () {
+		if (!state.offline || !state.currentTrip) return;
+		var name = state.currentTrip;
+		var as = state.currentAs;
+		var args = { trip: name };
+		if (as) args.as_employee = as;
+		api(ITINERARY, args).then(function (itinerary) {
+			if (state.currentTrip !== name || state.currentAs !== as || !state.offline) return;
+			state.itinerary = itinerary || { days: [] };
+			state.offline = null;
+			rememberPeople(name, state.itinerary);
+			render();
+			keepForOffline(name, as, state.itinerary);
+		}).catch(function () {
+			// Still no answer: the saved copy stays.
+		});
+	});
+
 	// -- Boot --------------------------------------------------------------------
 	// A ?trip= is always asked for, listed or not (the server decides; a refusal falls back
 	// in loadFailed), and a reload lands on the screen and picture it names. Without one, the
-	// default trip is named in place.
+	// default trip is named in place. A page drawn for somebody other than this session (the
+	// page kept on this phone, from before another person signed in, or everyone signed out)
+	// shows nothing of theirs and asks for nothing.
 	var first = addressed();
-	if (first.trip) {
+	if (shellIsSomeoneElses()) {
+		state.otherUser = true;
+		render();
+	} else if (first.trip) {
 		loadTrip(first.trip, first.as, first.view, first.file);
 	} else if (state.trips.length) {
 		first.trip = defaultTrip();
@@ -1592,4 +2116,5 @@
 	} else {
 		render();
 	}
+	startOffline();
 })();

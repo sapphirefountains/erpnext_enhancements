@@ -7,6 +7,383 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.549.0] - 2026-09-27
+
+**A booked trip now tells the people a change affects, a past trip can be planned again, and
+`/itinerary` opens with no signal.** Once a trip is Booked or In Progress, a change to a flight,
+room, ride, shipment or stop emails only the people it affects, with what it was and what it is
+now ("Departs: 7:05 AM → 9:40 AM") and an updated calendar invite that replaces the entry they
+already have. These **change alerts** have their own Travel Settings switch, *Send Change
+Alerts*, which is **off** until someone ticks it. Plan a Trip's list gains **Copy a past trip**
+("Plan another trip like this one"): a repeat job at the same site brings over the crew, hotel,
+rental, stops and freight on new dates, with every confirmation number and cost left behind. The
+trip form has a **Copy trip** button for the same. And `/itinerary` keeps each person's
+itinerary and files on their phone, so confirmation numbers and boarding passes still open in
+airplane mode or at a job site with no signal, and it can be added to the home screen as an app.
+Also fixed: the Time Kiosk's and the Wall Display's service workers deleted every other cache on
+the site whenever they updated. This is PR 4, the last of the four-PR program Nik set out on
+2026-09-26, on top of PR 1 (1.546.0), PR 2 (1.547.0) and PR 3 (1.548.0).
+
+### Why
+
+- **Change alerts have their own switch, and it is off (Nik, 2026-09-27).** Travel notifications
+  were already on in production, and the Kapture trip was In Progress. An alert that rode *Send
+  Travel Notifications* would have emailed that crew on the first edit after the deploy. *Send
+  Change Alerts* (`change_alerts_enabled`) is a new Check with **no default**. Travel Settings is
+  a Single, and a new field's default never reaches the row a site already has (CLAUDE.md), so
+  it reads 0 on every existing site. That is the wanted state, so there is no backfill patch. An
+  alert needs both switches, and both are checked again when it is sent.
+- **Only the people a change affects, and only on a trip someone is holding tickets for.**
+  Detection runs only when the trip was Booked or In Progress before the save **and** still is
+  after it: a trip being planned changes all the time, and the move into Booked already sends
+  "Trip booked". For every person on the crew before or after the save, what that person sees
+  (`shape_itinerary` for them) is compared item by item. So a confirmation number reaches only
+  the person it belongs to and a shipment's window only its receiver, while a schedule stop,
+  which is the whole crew's, tells everyone.
+- **"All but money" holds in an alert.** Only the fields in `change_alerts.FIELD_LABELS` are
+  compared: times, dates, airports, flight number, airline, hotel and address, check-in and
+  check-out, pick-up and drop-off, provider, the person's own confirmation number, tracking
+  number, delivery and pick-up windows, and a stop's activity, times and place. Cost, who paid,
+  receipts, per diem, claims and totals are not on the list, so a change to money alone alerts
+  nobody. Files and contacts are not compared either.
+- **Detection runs inside the save, and the rows are the timer, not a queued job.** The
+  before-state exists only while the trip is being saved, and the production deploy FLUSHDBs the
+  job queue (CLAUDE.md). So `notifications.on_trip_update` records what changed as a Pending
+  **Trip Change Alert** in the save's own transaction (a refused save records nothing), and a
+  scheduler job sends what is due every five minutes. Whatever is Pending when a deploy lands is
+  sent by the next tick.
+- **One email per round of edits.** Plan a Trip saves on every step, so each save merges into
+  the person's one Pending row. Per field, the earliest "before" and the latest "after" win; a
+  field changed back is dropped, a booking added and removed again is dropped, and the row is
+  deleted when nothing is left. A row is sent once its last change is 10 minutes old. Both
+  timestamps are `now_datetime()`, site-local, on both sides: comparing a site-local time with a
+  UTC one is the mistake that broke Turnstile.
+- **The person who made the change is not told**, but an alert already waiting for them takes
+  the change in, so it never states a value that is no longer true. **Someone just added** gets
+  the existing "You were added to a trip" email, not an alert. **Someone taken off the trip** gets
+  "You are no longer on this trip." and a calendar that cancels everything they had.
+- **The calendar has to replace the old entry, not add a second one.** The UIDs were already
+  stable (`{trip}-{row}@{site}`), but a calendar app that honors SEQUENCE keeps the copy with the
+  higher one, and the invites carried none. Every event in an alert now carries `SEQUENCE`, the
+  trip's last save in seconds since the epoch (`ics.sequence_of`): it only grows, needs nothing
+  stored, and fits a 32-bit integer until 2038. **Every trip email's invite carries it too**
+  (Trip booked, You were added, the itinerary email and its preview, all through
+  `trip_ics_attachment`), because an itinerary email sent after an alert would otherwise carry
+  SEQUENCE 0 and be ignored as older. A booking that is no longer the person's is sent again
+  under its old UID with `STATUS:CANCELLED` and a "Canceled: " summary, for a calendar that
+  ignores STATUS. `build_ics` takes both as optional per-event keys and writes exactly what it
+  always did without them: the CRM hand-off invite shares it, and a test pins the old output as
+  an exact string.
+- **Sent at most once, and never raised.** The sender stamps first, as `reminders.py` does (Sent
+  and `sent_at`, commit, then render and deliver), so a run that dies half-way cannot send twice.
+  A failure marks the row Failed with a short error and logs "Trip change alert failed". Nothing
+  is re-raised out of the job, because frappe logs an escaped job exception with its frame
+  locals. A switch that is off when an alert comes due **skips** it rather than holding it, so
+  turning alerts back on never sends a backlog of stale news.
+- **A trip that had an alert can still be deleted.** frappe v16's `delete_doc` refuses to delete
+  a document any row links to, so Trip Change Alert is in `hooks.py` `ignore_links_on_delete`. An
+  alert left behind is Skipped ("The trip no longer exists.").
+- **A copied trip keeps its times of day.** Only the date part of each Date and Datetime moves, by
+  the days between the two trips' first days. A 7:05 AM flight is 7:05 AM on its new day across
+  a daylight-saving change, because frappe stores the site's wall time, which is what the office
+  typed. A datetime at midnight, which is how Plan a Trip stores "a day and no time yet", stays at
+  midnight rather than 11 PM the day before. A time of day on its own (a room's check-in time, a
+  stop's start and end) does not move. `DATED_FIELDS` is checked against the doctypes, so a Date
+  field added later cannot keep the old trip's date on the copy.
+- **What a copy leaves behind is what belonged to the old bookings**: row names and booking ids
+  (every card and shipment is `new:<n>` until the first save gives it an id of its own), each
+  person's confirmation number, tracking numbers, every cost, who paid, protected flags, the
+  mileage claim, a stop's Lead or Opportunity, and the trip's files. Per-person visit notes,
+  estimated costs, receipts, other costs, per diem settings and traveler notes are not in a page
+  state, so they never come over either.
+- **Three calls the contract left open.** Staff no longer active are left off the copy's crew
+  and off every booking, driver and receiver, because the crew step lists only active employees
+  and a departed person could never be unticked; if the lead is dropped, the next person leads. A
+  row typed on the form for nobody in particular seats the whole new crew, one row each, because
+  the page cannot save a booking for nobody. And the copy's checklist is computed for real, so it
+  opens asking for the numbers and costs it cleared.
+- **`keep_crew` is read by `_flag`, not `cint`.** `frappe.call` posts a JavaScript `true` as the
+  text "true", and `cint("true")` is 0, so "Bring the same crew" would have left the crew behind
+  whenever a caller sent a boolean. The page sends 1 or 0, and the server takes either.
+- **A copy without its crew could never be saved** (found and fixed while putting this release
+  together). Every booking came over with nobody on it, the page refuses to save a booking with
+  nobody on it, and the booking steps, where people are ticked, come after the first save, so
+  Next past *Who's going* was refused for good. Each such card now waits for the crew: whoever is
+  ticked goes on every waiting booking, and drives a personal drive that has a distance and no
+  driver. The first save replaces those cards with the server's, which ends it.
+- **Back from a new copy saves it**, because leaving any trip on Plan a Trip saves what the
+  server will take. So the copy screen then says "You made a copy of this trip already" and
+  offers to open it, rather than let a second copy be made without a word. Whether an untouched
+  copy should be dropped on Back instead is a question for Nik.
+- **Offline, the answers live in IndexedDB and the worker keeps only what the page cannot.** The
+  page keeps every `get_trip_itinerary` answer, and saves the person's own upcoming trips ahead;
+  the service worker keeps the page itself and the files. Only a network failure (`fetch`
+  rejecting) shows the saved copy. A 4xx or 5xx is an answer and is handled as it always was, so
+  a refusal is never papered over with an old copy.
+- **The worker is scoped to `/itinerary`, never `/`.** The kiosk's and the wall's workers are
+  registered at `/`, and a registration is keyed by its scope: a second root worker would replace
+  the kiosk's, geolocation queue and all, on every technician's phone.
+- **A saved itinerary is shown only to the person it was saved for.** A phone can be shared, and
+  the kept page carries the boot of whoever opened it. The page compares the boot's `user` with
+  the session's `user_id` cookie, and shows nothing saved when it names somebody else or "Guest"
+  (frappe sets it on sign-out as soon as the login page loads). A **missing** cookie is not a
+  sign-out: `user_id` is a session cookie, and a home-screen app started again has dropped it
+  while still signed in. Files are kept per person too, and opening the page as somebody deletes
+  everybody else's saved answers and files.
+- **Only a real answer is kept**: a 200 from this site that was not redirected. A signed-out
+  request goes to `/login`, and the login page kept as "the itinerary" would be worse than
+  nothing. A private file writes an Access Log row each time it is fetched, so a file already
+  kept is not fetched again.
+- **A PDF opens from the phone's copy in a tab the page opens itself.** A link's own new tab is
+  outside `/itinerary`, where the worker cannot answer, so offline a PDF tap (and a picture's
+  "Open original") opens a tab at the tap and puts the saved copy in it as a blob URL. Pictures
+  open in the page's own viewer and need none of this.
+- **The kiosk and wall workers wiped every other cache.** Each one's `activate` deleted every
+  cache on the site but its own. That was harmless while they were the only workers. With the
+  itinerary's, it would have wiped a traveler's offline copy at every deploy on any phone that
+  also opened `/kiosk`, and the wall's already did the same to the kiosk's shell on any browser
+  that opened `/wall`.
+
+### Added
+
+- **Change alerts** (`travel_management/change_alerts.py`):
+  - `record_trip_changes(doc, before)`, called from `notifications.on_trip_update` (its existing
+    gates unchanged) on a trip Booked or In Progress on both sides, outside migrate, install,
+    patch and import, while `change_alerts_enabled()` (both switches). It never raises: a
+    failure logs "Trip change alert failed" and the trip saves.
+  - `person_records` / `diff_records`: one person's view as `{key: (kind, label, {field:
+    display string})}`, keyed `flight:<group>`, `hotel:<group>` (a room's check-in and check-out
+    as one), `ground:<group>`, `freight:<group>`, `stop:<row name>` (from the rows, since
+    `shape_itinerary`'s stops carry no row name) and `trip:<trip>` (the person's own first and
+    last day), all sharing one Travel POI / Address cache per save. Times read through
+    `itinerary_text.clock` and dates through `pretty_date`. A stop's `Time` read back from the
+    database as a `timedelta` reads the same as the page's "09:30", so an unchanged stop is never
+    a change. A CHANGE is `{key, kind, label, label_before, change, fields: [{field, label,
+    before, after}]}`, plus `cancel` (the calendar events to cancel) when there are any.
+  - `merge_changes`: the merge rules above. The Pending row is read `for_update`, so a save
+    racing a send starts a new row rather than writing over a Sent one.
+  - `send_due_change_alerts` (hooks.py `scheduler_events.cron` `"*/5 * * * *"`, annotated, a key
+    used nowhere else in the dict): every Pending row whose `last_change_at` is at least
+    `QUIET_MINUTES` (10) old, oldest first, at most 200 a run. Each row is locked and checked
+    still due. It is **Skipped**, with its reason in `error`, when a switch is off, the trip is
+    gone or no longer Booked/In Progress, the person left the trip without a removal notice, or
+    they have no email address. Otherwise it is stamped Sent, committed, rendered and delivered
+    through `notifications._render` / `_deliver` (a Notification Log row too), and marked
+    **Failed** if that raises. A coordinator can set a Failed row back to Pending to send it
+    again.
+  - `alert_email`, `alert_sections`, `alert_calendar`: subject "Trip update: <purpose> (<start> –
+    <end>)", and the sections trip first, then flights, rooms, rides, shipments and stops.
+- **`templates/emails/travel/trip_changed.html`** (the `ee` macros): the trip's dates and type,
+  "What changed" with a heading per change and lines like "Departs: 7:05 AM → 9:40 AM", "Added:
+  …" and "Removed: …", an "Open my itinerary" button to `/itinerary?trip=<name>`
+  (`views.itinerary_path`), and links to the trip and the travel guidelines. Someone taken off
+  the trip gets only the notice, and no itinerary link. Listed in
+  [`docs/email-design-system.md`](docs/email-design-system.md).
+- **DocType Trip Change Alert** (Travel Management, `autoname` hash, `track_changes` 0,
+  controller `TripChangeAlert`): `trip` (Link Travel Trip, required, indexed, in list view),
+  `employee` (Link Employee, required, `ignore_user_permissions`), `employee_name` (fetched),
+  `status` (Pending / Sent / Skipped / Failed, default Pending, indexed, in list view),
+  `first_change_at`, `last_change_at`, `sent_at`, `changes` (JSON) and `error`. System Manager
+  and Travel Coordinator have full access, HR Manager read and report, and Employee none.
+- **Travel Settings → Send Change Alerts** (`change_alerts_enabled`, Check, no default), beside
+  *Send Travel Notifications*. Its description says it needs that switch on too.
+- **`ics.event_uid(trip, row, suffix="")`**, the one place a trip event's UID is spelled, and
+  **`ics.sequence_of(trip)`**. `build_ics` events take optional `sequence` (written after
+  DTSTAMP) and `status` (written last).
+- **Copy a past trip** (`planner.py`):
+  - `get_copyable_trips()` (whitelisted): a permission-scoped `frappe.get_list` of Travel Trip,
+    any status, with `name`, `purpose`, `status`, `start_date`, `end_date`, `travel_for_doctype`
+    and `travel_for_name`, newest first, at most 50. No money.
+  - `copy_plan(trip, start_date, keep_crew=1)` (whitelisted): create permission on Travel Trip
+    first, then read on the trip. A blank or unreadable date is refused ("Pick the new trip's
+    first day."). It returns `{state, lookups, copied_from}`, where `state` is `get_state`'s
+    shape for a new trip not saved yet (no name, no `modified`, status Planning, `can_write`),
+    from `copy_state` (pure), `shift_date` and `DATED_FIELDS`. Every card's shared fields and its
+    cost are marked changed, as the page's `new_card` marks one. Mileage keeps its distance and
+    loses its claim.
+- **Plan a Trip**:
+  - A **Copy a past trip** section on the list: the latest six, and the rest behind "Show N
+    more".
+  - The **copy screen** (`?copy=<trip>`, its own history entry, read from `frappe.route_options`
+    and consumed like `trip` and `view`). It shows what the trip had (dates, status, who went, and
+    how many flights, rooms, drives, shipments and stops; no money), a **New start date** (the
+    next weekday after today, counted in UTC like the page's other day arithmetic, with "The new
+    trip: …" under it), **Bring the same crew** and **Make the copy**.
+  - *Make the copy* starts the trip the way *Start a new trip* does: a draft id of its own and a
+    pushed `?new=1&step=trip` entry. The state is adopted as unsaved (`adopt_copy`), so the first
+    Next saves it. Back returns to the copy screen, and Back again to the list. An answer that
+    lands after the page moved on is dropped, and one press makes one copy.
+- **The trip form's Copy trip button** (`travel_trip.js`, saved trips only): opens the copy
+  screen for the trip. A form with unsaved changes is asked to save first.
+- **Offline `/itinerary`**:
+  - `www/itinerary-sw.js`, registered by `itinerary.js` as `/itinerary-sw.js?v=<ITIN_BUILD>` with
+    scope `/itinerary`, only when `'serviceWorker' in navigator`.
+    - `itinerary-shell-<deploy>` keeps the page under one key whatever its query: network first,
+      and the kept page when there is no answer within 6 seconds, or a 5xx. It also keeps
+      `itinerary.css` / `itinerary.js` at their `?v=` addresses. Install precaches both and
+      fetches the page, so a first visit is enough.
+    - `itinerary-files-<user>` keeps the files the page asks for (at most 40 per message, 150 per
+      person, none over 25 MB), answering from the network within 4 seconds, else from the kept
+      copy.
+    - Messages: `user` (delete everybody else's files), `cache-files` and `purge`.
+  - In `itinerary.js`:
+    - IndexedDB `sapphire-itinerary`, with stores `answers` (keyed `<user>|<trip>|<as>`) and
+      `trips` (the boot's list per user). Every answer is saved.
+    - After the first save, the person's own trips in progress or starting within 14 days are
+      saved ahead, one request at a time, and up to 20 of each one's same-origin picture and PDF
+      addresses are handed to the worker.
+    - Pruning removes everybody else's entries, and this person's for trips no longer listed once
+      they are a week old, keeping at most 40.
+    - The banner "You're offline — showing your itinerary as saved <time>." (`role=status`),
+      "Sign in to see your itinerary." for another person's session, and an `online` event that
+      quietly swaps in a fresh answer. None of it writes history.
+  - `www/itinerary-manifest.json`: "Sapphire Itinerary", `start_url` and `scope` `/itinerary`,
+    standalone with `minimal-ui` as the kiosk's has, and the kiosk's Sapphire icons. It is linked
+    from `itinerary.html` with an apple-touch-icon.
+  - `itinerary.css`: the offline banner and the "not saved on this phone" note, light and dark.
+
+### Changed
+
+- **Every trip email's calendar invite carries `SEQUENCE`** (`ics.trip_ics_attachment`): the trip's
+  last save in seconds. The CRM hand-off invite, which calls `build_ics` directly, is unchanged.
+- **`notifications.py`**: `_employee_recipient(employee, row=None)` is the one Employee lookup.
+  `_traveler_recipients` uses it, and so does a change alert for someone no longer on the trip.
+  `ACTIVE_STATUSES` names Booked and In Progress.
+- **Plan a Trip's save sends a new trip's description as written** (`payload()`). For an unsaved
+  trip that came with notes (a copy), `trip_description` goes out on the first save even though
+  nobody edited it. Before this it was sent only once edited, and a copy's notes were lost.
+- **`hooks.py` `ignore_links_on_delete`** gains "Trip Change Alert".
+- **Docs**: `travel_management/README.md` (Change alerts, Copy a past trip, Offline /itinerary,
+  the file map, hooks touchpoints and gotchas), `www/README.md` (the offline design, the worker,
+  the manifest, and the kiosk and wall `activate` change), `public/README.md`, `tests/README.md`,
+  `docs/email-design-system.md`, `www/itinerary.py`'s docstring (it said `/itinerary` had no
+  service worker on purpose) and the header comment of `public/js/capture/drafts.js`.
+
+### Fixed
+
+- **The Time Kiosk's and the Wall Display's service workers deleted every other cache on the
+  site when they updated.** `kiosk-sw.js` and `wall-sw.js` filtered `caches.keys()` by `k !==
+  CACHE` in `activate`, so each new deploy's worker wiped every cache that was not its own. The
+  wall's took the kiosk's shell with it on any browser that opened both, and either would have
+  taken the traveler itinerary's offline copy. Each now deletes only its own older caches (names
+  starting `time-kiosk-` / `wall-display-`, other than the current one).
+
+### Tests
+
+- **`tests/test_trip_change_alerts.py`** (new, 60 tests, bench-free `unittest`, own `frappe` stub
+  in `setUpModule` and a stand-in `email_style`, **its own CI step**):
+  - Detection per kind: a flight's time, a confirmation number that goes only to its owner, a
+    booking added, one removed and canceled, someone taken off the trip, a stop that changes for
+    the whole crew, a room's check-in and check-out as one booking, a shipment's window, a
+    whole-crew ride, and a person's own dates.
+  - The person who made the change is not told, and someone just added gets the added email
+    instead. The same values in database types are not a change.
+  - No money in any CHANGE, and a change to money alone alerts nobody.
+  - Nothing with either switch off, on a trip still in Planning, on the move into Booked or back
+    to Planning, or during a migrate; a failure never stops the save.
+  - The merge rules.
+  - The sender: the quiet period, stamp-first, Sent once, Failed and never raised, both switches
+    and the trip's status checked again, a row changed since the list was read left waiting, and
+    a waiting alert surviving a lost job queue.
+  - The real template rendered: before and after, added and removed, escaping, and the notice
+    with no itinerary link.
+  - The calendar's SEQUENCE and CANCELLED events.
+  - The `hooks.py` cron entry and `ignore_links_on_delete`, the switch having no default, the
+    DocType and its controller class name.
+  - Its base class fails any test that logs an unexpected error, so a "no alert" test cannot pass
+    on code that crashed.
+- **`tests/test_itinerary_service_worker.py`** (new, 39 tests, its own CI step):
+  - 32 static checks over the comment-stripped worker: scope `/itinerary`, `itinerary-` caches,
+    `activate` deleting only its own old shells, files per person and the others purged, only a
+    200 from this site that was not redirected kept, same-origin addresses only, clones before a
+    put, and no double brace or Jinja tag in the worker or the manifest, neither with a
+    controller.
+  - The precache list against `itinerary.html`, and the manifest's name, scope and icons.
+  - What `itinerary.js` promises: one guarded way into IndexedDB, offline only when `fetch`
+    fails, another person's copy never shown, and no history written.
+  - 7 that run the worker in node over a stand-in Cache Storage and network.
+- **`tests/test_kiosk_service_worker.py`**: 16 to 19 tests (`TestActivateDeletesOnlyItsOwnCaches`
+  for both workers).
+- **`tests/test_travel_ics.py`** (pytest): 17 to 24 tests. `build_ics` without the new keys is
+  byte-identical (an exact string); SEQUENCE comes after DTSTAMP and STATUS last; sequence 0 is
+  written; `sequence_of`, the attachment's SEQUENCE and `event_uid`.
+- **`tests/test_travel_planner.py`**: 156 to 178 tests.
+  - `TestCopyATrip` (16):
+    - Dates moved across month and year ends, leap days and a daylight-saving change, midnight
+      kept, and `DATED_FIELDS` against every Date/Datetime the page writes.
+    - Everything the old bookings were left behind, and no nonzero cost anywhere in the state;
+      the job's pattern carried over.
+    - The same people on the same bookings, departed staff dropped and whole-crew rows seated per
+      person; no crew; the copy's gaps.
+    - The first save through `apply_plan` with the page's payload sent through JSON: new
+      12-character booking ids, no numbers or costs, the guest's own nights, a new mileage row.
+    - The permission checks, the endpoint's answer, `keep_crew` as the desk posts it, the list's
+      arguments, and both endpoints whitelisted.
+  - Contracts and routing: the copy screen's days counted in UTC (run in node under
+    America/Denver and Pacific/Auckland), the form's Copy trip, no money on the list or the copy
+    screen, `copy` read from the route and consumed, the copy screen's entries and their push and
+    replace literals, and the stale-answer guard.
+  - `/itinerary`: the saved copy drawn in `loadTrip`'s place, with no history write.
+  - **Pins changed on purpose**: `test_every_method_the_page_calls_is_whitelisted` now expects
+    `get_copyable_trips` and `copy_plan`, and `test_a_views_address_keeps_one_key_order` also
+    asserts `{ new: 1, step: step }`.
+- **`scripts/test_wizard_back_forward.mjs`**: Plan a Trip 62 to 68 tests (89 with the Visit
+  Wizard's), and a fake server that answers `get_copyable_trips` and `copy_plan`.
+  - List → copy screen → copy → Back → copy screen → Back → list, and Forward back again.
+  - A reload of `?copy=`, and the first Next's save with the draft's marks.
+  - The form's route option consumed, and both "Back to the list" paths.
+  - A stale `copy_plan` answer dropped, and one press making one copy.
+  - The copy without the crew kept unsaved and carried on, then **saved once people are ticked**
+    (added while putting the release together).
+  - The list section.
+- **`scripts/test_web_flow_history.js`**: 413 to 457 checks. The "/itinerary offline" section uses
+  a fake IndexedDB and service worker: every answer saved with the boot's trip list, the person's
+  upcoming trips saved ahead once a page load and their files handed to the worker, the saved
+  copy drawn on a network failure only and with no history call, back online replacing it
+  quietly, a PDF opened from the saved copy, the other-user refusal, and nothing at all happening
+  without IndexedDB or a service worker.
+- Nothing ran against a real bench, a real mail server, a real calendar app or a real phone.
+  The alert email was rendered with the real Jinja template from stub data. The copy's round
+  trip ran `copy_plan` → the page's payload → `apply_plan` under the planner test stub, with and
+  without the crew. The worker ran in node over a stand-in Cache Storage.
+
+### After deploy
+
+1. `bench migrate`, then check that **Trip Change Alert** exists (Travel Management) and that
+   **Travel Settings** shows **Send Change Alerts** unticked beside *Send Travel Notifications*.
+   Nothing is recorded or sent until it is ticked.
+2. **Tick Send Change Alerts when you are ready.** It is off on purpose (Nik's call of
+   2026-09-27): travel notifications are already on and the Kapture trip is In Progress. From the
+   moment it is ticked, an edit to that trip's flights, rooms, rides, shipments or stops emails
+   the crew members it affects, 10 minutes after the last edit. Tell the travel desk first.
+3. With it ticked, edit a **Booked** trip as someone who is not on its crew: move a flight's
+   departure time. A **Trip Change Alert** row (search the desk for "Trip Change Alert"; it is
+   not on the Travel workspace) appears for each person on that flight with status Pending.
+   After 10 to 15 minutes it reads Sent, and the email arrives: "Trip update: …",
+   the flight with "Departs: <old> → <new>", and a calendar file. Open the file on a phone that
+   already has the trip in its calendar: the event should move, not duplicate. If a row reads
+   Failed, its `error` and the Error Log ("Trip change alert failed") say why; set it back to
+   Pending to send it again.
+4. Take someone off that trip: their alert says "You are no longer on this trip." and its
+   calendar file cancels their events.
+5. On Plan a Trip's list, **Copy a past trip** → pick one → a new start date → *Make the copy*.
+   Check that the dates moved with the times of day kept, and that no confirmation number,
+   tracking number or cost came over; press Next to save it. Try the trip form's **Copy trip**
+   too, and a copy with *Bring the same crew* unticked: tick people on *Who's going*, and Next
+   saves it.
+6. **Install `/itinerary` to a phone's home screen** (iPhone: Share → Add to Home Screen;
+   Android: the browser's Install app). Open a trip with a boarding pass and a PDF while online
+   and wait a few seconds. Then turn on **airplane mode** and open the app again: the trip shows
+   under "You're offline — showing your itinerary as saved …" with its confirmation numbers, and
+   the boarding pass picture opens. Tap the PDF too: opening a PDF offline from an iPhone
+   home-screen app has **not** been tested and may not work. "Report a problem" and the maps need
+   a connection.
+7. On a phone that also runs the **Time Kiosk**, open `/kiosk` after the deploy: it should load
+   and clock in as before (its worker updates itself), and `/itinerary` should still open offline
+   afterwards.
+8. Expect **Access Log** rows for private files: each phone fetches up to 20 files per upcoming
+   trip once, as the person's own session, to keep them.
+
 ## [1.548.0] - 2026-09-27
 
 **A trip can now be printed, mapped and called.** A new **Trip Sheet** print format puts the whole

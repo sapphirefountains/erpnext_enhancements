@@ -1,11 +1,13 @@
 /**
  * Reports saved on the device while offline, waiting to be sent.
  *
- * **IndexedDB, in its own database, and never Cache Storage.** Both service workers in this
- * app (`www/kiosk-sw.js` and `www/wall-sw.js`) delete every cache but their own when a new
- * version activates, so a draft kept there would vanish on the next deploy — often exactly
- * when a kiosk that was offline comes back. A separate database (`ee-capture`) also means no
- * other feature's schema upgrade can block or drop it.
+ * **IndexedDB, in its own database, and never Cache Storage.** Until v1.549.0 both root-scope
+ * service workers in this app (`www/kiosk-sw.js` and `www/wall-sw.js`) deleted every cache but
+ * their own when a new version activated, so a draft kept there would have vanished on the
+ * next deploy — often exactly when a kiosk that was offline comes back. They now delete only
+ * their own older caches, but Cache Storage is still a cache, and a worker's to manage: a
+ * draft is data. A separate database (`ee-capture`) also means no other feature's schema
+ * upgrade can block or drop it.
  *
  * **Keyed to the user, and never sent as anybody else.** A kiosk tablet is shared. Every
  * draft records who wrote it; `listDrafts` only ever returns the caller's, `pruneForUser`

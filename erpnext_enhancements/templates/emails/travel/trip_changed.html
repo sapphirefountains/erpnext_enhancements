@@ -1,0 +1,53 @@
+{# Change alert — sent to one person when something on their Booked or In Progress trip
+   changed: a flight's time, their room, a ride, a shipment, a stop, their own dates.
+   Built by travel_management/change_alerts.py (alert_email), sent by its scheduler job once
+   the edits have stopped, so one round of edits on Plan a Trip is one email.
+
+   Context: trip (Travel Trip doc), trip_url, itinerary_url (/itinerary?trip=<name>,
+   views.itinerary_path), guidelines_url, recipient, sections ([{title, lines}]:
+   change_alerts.alert_sections — each change's heading and its lines, "Departs: 7:05 AM →
+   9:40 AM", "Added: …", "Removed: …"), removed_from_trip (they are no longer on the trip:
+   no link to an itinerary they can no longer open).
+
+   Never money: the changes compare a fixed list of fields that has none
+   (change_alerts.FIELD_LABELS), and this file reads nothing else of the trip but its
+   purpose, dates, type and what it is for.
+
+   A FRAGMENT — chrome comes from email_style.wrap() in travel_management/notifications.py.
+   NOTE: frappe's Jinja env has NO autoescape. Titles and lines carry user-typed text
+   (hotel names, confirmation numbers, stop names): the macros escape their arguments, and
+   the one rich() below escapes its value itself. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{% if removed_from_trip %}
+{{ ee.callout("You are no longer on this trip. The attached calendar file takes the trip and its bookings off your calendar.", "info") }}
+
+{{ ee.kv([
+	("Trip", trip.purpose),
+	("Dates", trip.start_date ~ " – " ~ trip.end_date)
+]) }}
+
+{{ ee.p("If this is a mistake, ask whoever booked the trip.") }}
+{% else %}
+{{ ee.p("Something on your trip has changed. Here is what it was and what it is now.") }}
+
+{{ ee.kv([
+	("Dates", trip.start_date ~ " – " ~ trip.end_date),
+	("Type", trip.travel_type)
+] + ([("For", trip.travel_for_doctype ~ " " ~ trip.travel_for_name)] if trip.travel_for_name else [])) }}
+
+{{ ee.h("What changed") }}
+{% for section in sections %}
+{{ ee.rich("<b>" ~ (section.title|e) ~ "</b>") }}
+{% if section.lines %}{{ ee.bullets(section.lines) }}{% endif %}
+{% endfor %}
+
+{{ ee.button(itinerary_url, "Open my itinerary") }}
+
+{{ ee.p("The attached calendar file updates the entries already in your calendar.") }}
+
+{{ ee.links([
+	(trip_url, "View the trip (" ~ trip.name ~ ")"),
+	(guidelines_url, "Travel guidelines")
+]) }}
+{% endif %}

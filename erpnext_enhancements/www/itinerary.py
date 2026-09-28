@@ -2,11 +2,22 @@
 
 Mobile-friendly, chrome-free page where a traveler sees their day-by-day trip
 itinerary (flights with PNRs, hotel confirmations, agenda stops with POI
-locations and maps). Follows the Time Kiosk shell pattern (``www/kiosk.py``)
-minus the PWA/service-worker layer — the itinerary has no offline queueing
-needs. Live data comes from ``erpnext_enhancements.api.travel`` (session-trust
+locations and maps). Follows the Time Kiosk shell pattern (``www/kiosk.py``).
+Live data comes from ``erpnext_enhancements.api.travel`` (session-trust
 security model: the employee is derived server-side, trips are scoped by the
 Travel Trip permission hooks).
+
+Offline (since the Plan a Trip program's PR 4): the page is a home-screen app
+(``itinerary-manifest.json``) with its own service worker, ``/itinerary-sw.js``,
+registered by ``itinerary.js`` with scope ``/itinerary`` (never the site root,
+which belongs to the kiosk's worker). The worker keeps this page, its stylesheet and
+script, and the person's pictures and PDFs; ``itinerary.js`` keeps every answer in
+IndexedDB, and shows the saved copy when the server cannot be reached at all. Nothing
+of that runs here: it is why the rendered page (boot included) may be served from the
+phone later, and why ``itinerary.js`` checks the boot's ``user`` against the session's
+``user_id`` cookie before it shows anything saved. Neither file has a controller, and
+must not have one: ``scripts/check_www_controllers.py`` fails on a ``.py`` with no page
+template beside it.
 
 Addresses: ``/itinerary?trip=<name>&as=<employee|crew>&view=docs&file=<document>``.
 ``trip`` is the trip on screen; ``as`` is whose view of it (one person's bookings and
@@ -42,7 +53,8 @@ import frappe
 from erpnext_enhancements.api.travel import get_itinerary_bootstrap
 from erpnext_enhancements.www.kiosk import get_deploy_version
 
-# Always render fresh per-user; never cache the authenticated shell.
+# Always render fresh per-user; never cache the authenticated shell on the server. (The copy
+# kept on the phone is the service worker's, one person's, and checked on use: see above.)
 no_cache = 1
 
 ROUTE = "/itinerary"

@@ -1,0 +1,155 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-27 14:00:00.000000",
+ "description": "One person's change alert on one trip: what changed on their bookings since they were last told, emailed by the scheduler once the edits stop (travel_management/change_alerts.py).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "trip",
+  "employee",
+  "employee_name",
+  "column_break_status",
+  "status",
+  "sent_at",
+  "times_section",
+  "first_change_at",
+  "column_break_times",
+  "last_change_at",
+  "changes_section",
+  "changes",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "trip",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Trip",
+   "options": "Travel Trip",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "description": "Pending until 10 minutes after the last change, then Sent. Skipped when the trip is no longer Booked or In Progress, change alerts were turned off, or the person has no email address. Set a Failed alert back to Pending to send it again.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nSent\nSkipped\nFailed",
+   "search_index": 1
+  },
+  {
+   "fieldname": "sent_at",
+   "fieldtype": "Datetime",
+   "label": "Sent At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "times_section",
+   "fieldtype": "Section Break",
+   "label": "Changes Made"
+  },
+  {
+   "fieldname": "first_change_at",
+   "fieldtype": "Datetime",
+   "label": "First Change At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_times",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_change_at",
+   "fieldtype": "Datetime",
+   "label": "Last Change At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "changes_section",
+   "fieldtype": "Section Break",
+   "label": "What Changed"
+  },
+  {
+   "description": "Each change as it will be emailed: what it is about, and each field's value before the first change and after the last. Never money.",
+   "fieldname": "changes",
+   "fieldtype": "JSON",
+   "label": "Changes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-27 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Trip Change Alert",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Travel Coordinator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
