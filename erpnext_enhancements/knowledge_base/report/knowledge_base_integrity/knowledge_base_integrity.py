@@ -17,7 +17,11 @@ query (ADR 0017), so the query lives here, where it runs as the signed-in KB App
 
 **Who.** KB Approver only (the report JSON's roles). ``ref_doctype`` is Knowledge Article Version,
 so v16's ``get_report_doc`` also requires ``report`` permission on it (``desk/query_report.py:43-53``),
-which only the two KB roles hold: a System Manager without a KB role is refused twice.
+which only the two KB roles hold: a System Manager without a KB role who runs it is refused twice.
+Both checks are against the *session* user, and an Auto Email Report's scheduled send runs as
+Administrator, who holds every role, so v16 alone would email these rows for anyone who may create
+one (Report Manager included). ``emailed_reports.guard_auto_email_report`` refuses that at save
+unless the person saving it and the user it runs as are both KB Approvers.
 
 **What it reads, and what it never reads.** Four bound queries:
 

@@ -886,6 +886,16 @@ doc_events = {
 	"ToDo": {
 		"before_validate": "erpnext_enhancements.knowledge_base.references.guard_todo",
 	},
+	# knowledge_base (WI-080 PR 4 review, v1.557.0): an Auto Email Report on a Knowledge Base report
+	# (or a Custom Report built on one) is refused unless BOTH the person saving it and the user it
+	# runs as hold one of that report's roles. v16 checks a report's roles against the session user,
+	# and a scheduled send runs as Administrator, who holds every role -- so without this, any Report
+	# Manager (four Team profiles carry it) could have the Integrity report's version names, states and
+	# user ids emailed daily to any address. Returns after one get_value for any other report; never
+	# raises for an unrelated row. See knowledge_base/emailed_reports.py.
+	"Auto Email Report": {
+		"before_validate": "erpnext_enhancements.knowledge_base.emailed_reports.guard_auto_email_report",
+	},
 	"Activity Log": {
 		# Email on every Administrator authentication, success or failure. Frappe's
 		# 2FA exempts Administrator unconditionally, so watching it is the only
@@ -1802,7 +1812,10 @@ after_migrate = [
 	# the filename-convention icon lookup fails its first guard, and the letter avatar is
 	# the only branch left. We set `logo_url`, which that upstream bug cannot reach. Also
 	# creates the tile -- and the Workspace Sidebar without which a tile never renders --
-	# for a workspace added after install, which core only ever does at install time.
+	# for a workspace added after install, which core only ever does at install time. And
+	# (WI-080 PR 4 review) appends the Knowledge Base tile to every saved home-screen layout
+	# (Desktop Layout) that lacks it: v16 draws a saved layout instead of the site's icons and
+	# never adds a later icon to it (setup/README.md).
 	# Idempotent, and contractually cannot raise: a desk tile is not worth a failed migrate.
 	"erpnext_enhancements.setup.desktop_icons.sync_desktop_icons",
 	# Mermaid.js Process Document charts — repo is the source of truth

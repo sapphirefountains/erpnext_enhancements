@@ -67,6 +67,9 @@ INTEGRITY_MODULE = (
 	"erpnext_enhancements.knowledge_base.report.knowledge_base_integrity.knowledge_base_integrity"
 )
 HOOKS = APP / "hooks.py"
+README = KB / "README.md"
+SETUP_MODULE = "erpnext_enhancements.setup.desktop_icons"
+EMAILED_MODULE = "erpnext_enhancements.knowledge_base.emailed_reports"
 
 WORKSPACE = "Knowledge Base"
 ARTICLE = K.ARTICLE_DOCTYPE
@@ -78,8 +81,8 @@ VERSION = K.VERSION_DOCTYPE
 #: its ``modified`` past the stamp below; then put the new fingerprint and stamp here.
 PINNED = {
 	WORKSPACE_PATH: (
-		"1b16581ad32785c687b4b29acd6f17f540f055c75a5c8caf18bb53432bdc4830",
-		"2026-09-28 21:00:00.000000",
+		"9414c2df5542efac3b44079d1aaf0a571698de41bb51932a2fef0118dd1dfb8d",
+		"2026-09-28 22:00:00.000000",
 	),
 	SIDEBAR_PATH: (
 		"602355a1de2f7d8bd5e5f405064d1b1497fddbd5071f601b71751fa5b957e3ca",
@@ -147,6 +150,25 @@ def hook(name):
 				if isinstance(target, ast.Name) and target.id == name:
 					return ast.literal_eval(node.value)
 	return None
+
+
+def readme_checks(text=None):
+	"""The Check column of the Integrity table in the README's "### The two reports", in order."""
+	text = README.read_text(encoding="utf-8") if text is None else text
+	section = text.split("\n### The two reports\n", 1)[1].split("\n## ", 1)[0]
+	rows, in_table = [], False
+	for line in section.splitlines():
+		line = line.strip()
+		if not line.startswith("|"):
+			if in_table:
+				break
+			continue
+		cells = [cell.strip() for cell in line.strip("|").split("|")]
+		if cells[:2] == ["Check", "What must hold"]:
+			in_table = True
+		elif in_table and not set(cells[0]) <= set("-: "):
+			rows.append(cells[0])
+	return rows
 
 
 def report_json(name):
@@ -312,15 +334,19 @@ def _install_frappe_stub():
 
 due_report = None
 integrity_report = None
+desktop_icons = None
+emailed_reports = None
 
 
 def setUpModule():
-	global due_report, integrity_report
+	global due_report, integrity_report, desktop_icons, emailed_reports
 	_install_frappe_stub()
-	for name in (DUE_MODULE, INTEGRITY_MODULE):
+	for name in (DUE_MODULE, INTEGRITY_MODULE, SETUP_MODULE, EMAILED_MODULE):
 		sys.modules.pop(name, None)
 	due_report = importlib.import_module(DUE_MODULE)
 	integrity_report = importlib.import_module(INTEGRITY_MODULE)
+	desktop_icons = importlib.import_module(SETUP_MODULE)
+	emailed_reports = importlib.import_module(EMAILED_MODULE)
 
 
 # ------------------------------------------------------------------ the corpus
@@ -577,6 +603,21 @@ class TestWorkspace(unittest.TestCase):
 		self.assertEqual(row["document_type"], ARTICLE)
 		self.assertEqual(json.loads(row["quick_list_filter"]), [[ARTICLE, "status", "=", "Published"]])
 
+	def test_the_search_hint_works_on_a_phone(self):
+		"""On a phone v16 hides the whole standard-filter row, Title and Keywords included, until the
+		chevrons-up-down button beside Filter is tapped, and moves only the ID box out of it
+		(``base_list.js`` ``setup_mobile``, :662-698; :1159-1163). Technicians read on phones, so the
+		paragraph that sends them to those boxes must say how to show them (PR 4 review)."""
+		(intro,) = [b for b in json.loads(self.ws["content"]) if b["id"] == "kb_intro"]
+		text = intro["data"]["text"]
+		for box in ("<b>Title</b>", "<b>Keywords</b>", "<b>ID</b>"):
+			self.assertIn(box, text)
+		self.assertIn("on a phone", text)
+		self.assertIn("up-and-down arrows button next to <b>Filter</b>", text)
+		# The hint belongs to the Title/Keywords clause, not to the ID box's, which v16 keeps visible.
+		self.assertLess(text.index("<b>Keywords</b>"), text.index("on a phone"))
+		self.assertLess(text.index("on a phone"), text.index("<b>ID</b>"))
+
 
 class TestFilters(unittest.TestCase):
 	"""A filter on a field that does not exist, or a value that is not an option, counts nothing and
@@ -821,6 +862,328 @@ class TestHelpItem(unittest.TestCase):
 		for path in APP.glob("*/page/*/*.json"):
 			with self.subTest(page=path.stem):
 				self.assertNotEqual(load(path).get("name"), slug(WORKSPACE))
+
+
+# ------------------------------------------------------------------ the tile in a saved home-screen layout
+
+
+class _Site:
+	"""The rows ``setup/desktop_icons._sync`` reads and writes on an after_migrate, and nothing else.
+
+	Every TILES label already has its Desktop Icon with its artwork stamped, and no Workspace exists,
+	so the tile-making and role steps have nothing to do and only the saved layouts can change."""
+
+	def __init__(self, layouts, icons=None, tables=("Desktop Layout",)):
+		self.icons = icons if icons is not None else {label: icon_row(label) for label in TILES}
+		self.layouts = dict(layouts)
+		self.tables = set(tables)
+		self.writes = []
+		self.cleared = []
+		self.layout_reads = 0
+
+	def exists(self, doctype, name=None):
+		return doctype == "Desktop Icon" and name in self.icons
+
+	def table_exists(self, doctype):
+		return doctype in self.tables
+
+	def get_value(self, doctype, name, fields, as_dict=False):
+		row = self.icons.get(name) if doctype == "Desktop Icon" else None
+		if row is None:
+			return None
+		if isinstance(fields, str):
+			return row.get(fields)
+		assert as_dict
+		return _Dict({field: row.get(field) for field in fields})
+
+	def set_value(self, doctype, name, field, value, update_modified=True):
+		self.writes.append((doctype, name, field, update_modified))
+		if doctype == "Desktop Layout":
+			self.layouts[name] = value
+		else:
+			self.icons[name][field] = value
+
+	def get_all(self, doctype, filters=None, fields=None, pluck=None, order_by=None, **kwargs):
+		if doctype != "Desktop Layout":
+			return []
+		self.layout_reads += 1
+		return [_Dict(name=name, layout=layout) for name, layout in sorted(self.layouts.items())]
+
+	def layout_writes(self):
+		return [w for w in self.writes if w[0] == "Desktop Layout"]
+
+
+def icon_row(label, **overrides):
+	"""A Desktop Icon as ``add_workspace_to_desktop`` makes it (``desktop_icon.py:346-351``), stamped."""
+	row = {field: None for field in desktop_icons.LAYOUT_FIELDS}
+	row.update(
+		label=label,
+		name=label,
+		icon_type="Link",
+		link_type="Workspace Sidebar",
+		link_to=label,
+		idx=0,
+		standard=0,
+		hidden=0,
+		restrict_removal=0,
+		bg_color="blue",
+		logo_url=logo_url(TILES[label][0]),
+	)
+	row.update(overrides)
+	return row
+
+
+def saved(*entries):
+	"""A saved layout as v16's ``save_layout`` stores it: ``json.dumps`` of the icon list."""
+	return json.dumps(
+		[
+			{"label": label, "idx": idx, "hidden": hidden, "icon_type": "Link"}
+			for label, idx, hidden in entries
+		]
+	)
+
+
+def drawn(layout):
+	"""What v16 draws from a saved layout: ``sync_layout`` uses it verbatim when it is non-empty
+	(``desktop.js:225-229``), ``prepare`` drops the hidden ones (:189-201), and the grid sorts by idx
+	then label (:686-691)."""
+	entries = json.loads(layout)
+	shown = [e for e in entries if e.get("hidden") != 1]
+	return [e["label"] for e in sorted(shown, key=lambda e: (e["idx"], e["label"]))]
+
+
+class TestSavedLayouts(unittest.TestCase):
+	"""v16 draws the home grid from a person's saved ``Desktop Layout`` whenever they have one, a copy
+	of the icon list frozen at their last Edit Layout save, so a tile made later never reaches them.
+	Prod had five such layouts when PR 4 was reviewed, a KB Approver's among them. ``_sync`` appends
+	the Knowledge Base tile to each on after_migrate (PR 4 review)."""
+
+	def setUp(self):
+		frappe = sys.modules["frappe"]
+		for name in ("db", "get_all", "cache"):
+			self.addCleanup(setattr, frappe, name, getattr(frappe, name, None))
+
+	def run_sync(self, site):
+		frappe = sys.modules["frappe"]
+		frappe.db = site
+		frappe.get_all = site.get_all
+		frappe.cache = types.SimpleNamespace(delete_key=site.cleared.append)
+		desktop_icons._sync()
+
+	def test_only_tiles_every_staff_user_may_open_are_added(self):
+		"""A saved layout is drawn verbatim, past every role and sidebar check of
+		``get_desktop_icons``, so only a tile nobody is refused belongs in the list."""
+		self.assertEqual(desktop_icons.ADD_TO_SAVED_LAYOUTS, (WORKSPACE,))
+		for label in desktop_icons.ADD_TO_SAVED_LAYOUTS:
+			with self.subTest(tile=label):
+				self.assertIn(label, TILES)
+				self.assertEqual(load(WORKSPACE_PATH)["roles"], [])
+				self.assertTrue(workspace_open(READER))
+
+	def test_a_layout_saved_before_the_tile_gets_it_after_the_persons_own(self):
+		before = saved(("Training", 3, 0), ("Travel", 5, 0), ("Finance Hub", 9, 1))
+		site = _Site({"james@example.com": before})
+		self.run_sync(site)
+
+		self.assertEqual(site.layout_writes(), [("Desktop Layout", "james@example.com", "layout", False)])
+		after = json.loads(site.layouts["james@example.com"])
+		self.assertEqual(after[:3], json.loads(before), "the person's own entries are untouched")
+		(added,) = after[3:]
+		self.assertEqual(added, {**icon_row(WORKSPACE), "idx": 10})
+		self.assertEqual(added["logo_url"], "/assets/erpnext_enhancements/desktop_icons/knowledge_base.svg")
+		self.assertEqual(drawn(site.layouts["james@example.com"]), ["Training", "Travel", WORKSPACE])
+		self.assertEqual(set(site.cleared), {"desktop_icons", "bootinfo"})
+
+	def test_every_saved_layout_is_reached(self):
+		site = _Site({"a@example.com": saved(("Training", 0, 0)), "b@example.com": saved(("HR", 2, 0))})
+		self.run_sync(site)
+		for user in ("a@example.com", "b@example.com"):
+			with self.subTest(user=user):
+				self.assertEqual(drawn(site.layouts[user])[-1], WORKSPACE)
+
+	def test_a_layout_that_holds_the_tile_is_left_alone_even_hidden(self):
+		"""Hiding a tile keeps its entry with ``hidden: 1`` (``desktop.js:1024-1035``), and v16 has no
+		other way to take one out, so an entry present is the person's choice."""
+		for hidden in (0, 1):
+			with self.subTest(hidden=hidden):
+				site = _Site({"x@example.com": saved(("Training", 0, 0), (WORKSPACE, 1, hidden))})
+				self.run_sync(site)
+				self.assertEqual(site.layout_writes(), [])
+
+	def test_an_empty_or_unreadable_layout_is_left_alone(self):
+		"""An empty layout makes v16 draw the site's own list, which has the tile already; one this
+		cannot read is not this code's to rewrite."""
+		site = _Site(
+			{"a": "[]", "b": "{}", "c": "not json", "d": None, "e": "", "f": '"text"', "g": "[1, 2]"}
+		)
+		self.run_sync(site)
+		self.assertEqual(site.layout_writes(), [])
+
+	def test_a_second_migrate_writes_nothing(self):
+		site = _Site({"x@example.com": saved(("Training", 0, 0))})
+		self.run_sync(site)
+		self.run_sync(site)
+		self.assertEqual(len(site.layout_writes()), 1)
+
+	def test_nothing_is_added_while_the_tile_does_not_exist(self):
+		icons = {label: icon_row(label) for label in TILES if label != WORKSPACE}
+		site = _Site({"x@example.com": saved(("Training", 0, 0))}, icons=icons)
+		self.run_sync(site)
+		self.assertEqual(site.layout_writes(), [])
+
+	def test_a_site_without_the_table_is_left_alone(self):
+		site = _Site({"x@example.com": saved(("Training", 0, 0))}, tables=())
+		self.run_sync(site)
+		self.assertEqual(site.layout_reads, 0)
+		self.assertEqual(site.layout_writes(), [])
+
+	def test_the_after_migrate_entry_point_runs_it(self):
+		"""``_sync`` is what ``sync_desktop_icons`` (after_migrate, after_install) calls, and it
+		cannot raise: a layout step that did would take the artwork and roles steps down with it."""
+		tree = ast.parse((APP / "setup" / "desktop_icons.py").read_text(encoding="utf-8"))
+		(sync,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_sync"]
+		self.assertIn("_sync_saved_layouts", {c.func.id for c in _calls(sync, "_sync_saved_layouts")})
+		self.assertIn("erpnext_enhancements.setup.desktop_icons.sync_desktop_icons", hook("after_migrate"))
+
+	def test_the_fields_are_what_v16_reads_for_a_tile(self):
+		"""A saved layout is a copy of ``get_desktop_icons``' rows, so an appended entry carries the same
+		columns (``desktop_icon.py:130-147``). Skipped where there is no frappe checkout (CI included)."""
+		checkout = _frappe_checkout()
+		if checkout is None:
+			self.skipTest("no frappe checkout beside this repo")
+		path = "frappe/desk/doctype/desktop_icon/desktop_icon.py"
+		result = subprocess.run(
+			["git", "-C", str(checkout), "show", f"origin/version-16:{path}"],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+		)
+		if result.returncode:
+			self.skipTest(f"{checkout} has no origin/version-16:{path}")
+		body = result.stdout.split("def get_desktop_icons(", 1)[1]
+		fields = re.search(r"fields = \[(.*?)\]", body, re.S).group(1)
+		self.assertEqual(tuple(re.findall(r'"([a-z_]+)"', fields)), desktop_icons.LAYOUT_FIELDS)
+
+
+# ------------------------------------------------------------------ an emailed Knowledge Base report
+
+
+class _Refused(Exception):
+	pass
+
+
+class TestEmailedReports(unittest.TestCase):
+	"""v16 checks a report's roles against the session user, and an Auto Email Report's scheduled
+	send runs as Administrator, who holds every role. So the guard refuses, at save, an Auto Email
+	Report on a KB report unless the person saving it and the user it runs as both hold its role
+	(PR 4 review). Report Manager may create one, and four Team profiles carry it."""
+
+	REPORTS = {
+		INTEGRITY_REPORT: {
+			"module": "Knowledge Base",
+			"report_type": "Script Report",
+			"reference_report": None,
+		},
+		DUE_REPORT: {"module": "Knowledge Base", "report_type": "Script Report", "reference_report": None},
+		"General Ledger": {"module": "Accounts", "report_type": "Script Report", "reference_report": None},
+		"My Integrity": {
+			"module": "Accounts",
+			"report_type": "Custom Report",
+			"reference_report": INTEGRITY_REPORT,
+		},
+		"Loop A": {"module": "Accounts", "report_type": "Custom Report", "reference_report": "Loop B"},
+		"Loop B": {"module": "Accounts", "report_type": "Custom Report", "reference_report": "Loop A"},
+	}
+	ROLES = {
+		NIK: {"KB Approver", "KB Author", "System Manager"},
+		PARKER: {"KB Author"},
+		"reports@example.com": {"Report Manager"},
+		"sysman@example.com": {"System Manager", "Report Manager"},
+		"Administrator": None,  # every role, as v16's get_roles gives it (permissions.py:546-547)
+	}
+
+	def setUp(self):
+		frappe = sys.modules["frappe"]
+		for name in ("db", "get_all", "get_roles", "session", "throw", "PermissionError"):
+			self.addCleanup(setattr, frappe, name, getattr(frappe, name, None))
+		self.reads = []
+		frappe.db = types.SimpleNamespace(get_value=self._report)
+		frappe.get_all = self._has_role
+		frappe.get_roles = self._roles
+		frappe.PermissionError = type("PermissionError", (Exception,), {})
+		frappe.throw = self._throw
+		self.frappe = frappe
+
+	def _report(self, doctype, name, fields, as_dict=False):
+		self.reads.append((doctype, name))
+		row = self.REPORTS.get(name)
+		return _Dict({f: row.get(f) for f in fields}) if row else None
+
+	def _has_role(self, doctype, filters=None, pluck=None, **kwargs):
+		assert doctype == "Has Role" and filters["parenttype"] == "Report" and pluck == "role"
+		return [row["role"] for row in report_json(filters["parent"])["roles"]]
+
+	def _roles(self, user):
+		roles = self.ROLES.get(user, set())
+		if roles is None:
+			roles = {"KB Approver", "KB Author", "System Manager", "Report Manager"}
+		return sorted(roles | {"All", "Guest"})
+
+	def _throw(self, message, exc=None, title=None):
+		self.assertIs(exc, self.frappe.PermissionError)
+		raise _Refused(message)
+
+	def save(self, report, user, by):
+		self.frappe.session = types.SimpleNamespace(user=by)
+		emailed_reports.guard_auto_email_report(_Dict(report=report, user=user))
+
+	def test_it_is_registered_before_validate(self):
+		"""``before_validate`` runs on every save, ``flags.ignore_validate`` or not."""
+		self.assertEqual(
+			hook("doc_events")["Auto Email Report"],
+			{"before_validate": f"{EMAILED_MODULE}.guard_auto_email_report"},
+		)
+
+	def test_a_kb_approver_may_email_the_integrity_report_to_themselves(self):
+		self.save(INTEGRITY_REPORT, NIK, by=NIK)
+		self.save(INTEGRITY_REPORT, NIK, by="Administrator")
+
+	def test_a_report_manager_without_a_kb_role_is_refused(self):
+		with self.assertRaises(_Refused) as refused:
+			self.save(INTEGRITY_REPORT, "reports@example.com", by="reports@example.com")
+		self.assertIn("reports@example.com", str(refused.exception))
+		self.assertIn("KB Approver", str(refused.exception))
+
+	def test_naming_an_approver_as_the_user_does_not_get_round_it(self):
+		with self.assertRaises(_Refused):
+			self.save(INTEGRITY_REPORT, NIK, by="sysman@example.com")
+
+	def test_an_approver_cannot_make_it_run_as_someone_without_the_role(self):
+		with self.assertRaises(_Refused):
+			self.save(INTEGRITY_REPORT, "reports@example.com", by=NIK)
+
+	def test_a_kb_author_is_refused_the_integrity_report_and_allowed_due_for_review(self):
+		with self.assertRaises(_Refused):
+			self.save(INTEGRITY_REPORT, PARKER, by=PARKER)
+		self.save(DUE_REPORT, PARKER, by=PARKER)
+		with self.assertRaises(_Refused):
+			self.save(DUE_REPORT, "reports@example.com", by="reports@example.com")
+
+	def test_a_custom_report_built_on_it_is_the_same_report(self):
+		"""v16 runs a Custom Report as the report it refers to (``query_report.get_reference_report``)."""
+		with self.assertRaises(_Refused):
+			self.save("My Integrity", "reports@example.com", by="reports@example.com")
+		self.save("My Integrity", NIK, by=NIK)
+
+	def test_any_other_report_is_left_alone_after_one_read(self):
+		self.save("General Ledger", "reports@example.com", by="reports@example.com")
+		self.assertEqual(self.reads, [("Report", "General Ledger")])
+		self.save("", "reports@example.com", by="reports@example.com")
+		self.save("No Such Report", "reports@example.com", by="reports@example.com")
+
+	def test_a_custom_report_loop_ends(self):
+		self.save("Loop A", "reports@example.com", by="reports@example.com")
+		self.assertLessEqual(len(self.reads), emailed_reports.MAX_REFERENCE_DEPTH)
 
 
 # ------------------------------------------------------------------ the reports: shape and SQL
@@ -1176,7 +1539,17 @@ class TestIntegrity(unittest.TestCase):
 		self.assertEqual(problems_of(self.data), [])
 
 	def test_the_checks_are_the_readme_contract(self):
+		"""The README's Check table is how a KB Approver reads a row: its Check column must be
+		``R.CHECKS`` exactly, in order, so renaming, adding or dropping a check fails until the table
+		says the same (PR 4 review: this used to assert only that the labels were unique)."""
 		self.assertEqual(len(R.CHECKS), len(set(R.CHECKS)))
+		self.assertEqual(readme_checks(), list(R.CHECKS))
+
+	def test_the_readme_table_parser_reads_a_changed_table(self):
+		"""The parser must see an edit, or the contract test above passes on anything."""
+		text = README.read_text(encoding="utf-8").replace("| Approver |", "| Approval |", 1)
+		self.assertIn("Approval", readme_checks(text))
+		self.assertNotEqual(readme_checks(text), list(R.CHECKS))
 
 	# --- the article
 

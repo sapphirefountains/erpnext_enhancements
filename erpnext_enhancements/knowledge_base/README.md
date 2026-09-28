@@ -99,7 +99,8 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | The generic AI tools, raw SQL included | The AI gate refuses `Knowledge Article Version` on every path: a `doctype` argument on any tool, `fetch`'s id, `run_python_code`'s `data_query`, and the text of `run_database_query` and `run_python_code` (`assistant_tools/_gate.py`, `DENYLIST_DOCTYPES`). The text is searched with SQL comments stripped **and** without, because a `#` in a string literal, `1--1` and a `/*! */` comment are not comments to MariaDB. Raw SQL never consults DocPerm, so this is the only thing between a System Manager and the drafts. `tabKnowledge Article` is deliberately **not** refused |
 | An AI write skipping its confirmation | Both doctypes are in the gate's `NEVER_EXEMPT`, so no settings row can exempt them, and a card that targets either never starts ticked in the batch dialog, with the reason "changes the company knowledge base" (`_gate.KNOWLEDGE_BASE_DOCTYPES`) |
 | The workspace, its sidebar and the tile (PR 4) | Every link is a DocType, Report or Workspace link, which v16 drops for anyone who cannot open the target (`Workspace.get_shortcuts`/`get_links`, `boot.get_sidebar_items`); no URL or Page item, which v16 shows to everyone. A reader sees two things: Published articles and Newest articles |
-| The two reports, and an AI tool running them (PR 4) | Due for Review reads the published article only. The Integrity report selects every version's metadata and the text only of submitted (approved) versions, and no row quotes any text: names, numbers, states, user ids and the rule broken. Both are role-gated, and v16 checks the roles on every run, `generate_report` included (see "The two reports") |
+| The two reports, and an AI tool running them (PR 4) | Due for Review reads the published article only. The Integrity report selects every version's metadata and the text only of submitted (approved) versions, and no row quotes any text: names, numbers, states, user ids and the rule broken. Both are role-gated, and v16 checks the roles against the session user on every run, `generate_report` included (see "The two reports"). The one run where the session user is not the person is the next row |
+| An emailed report (PR 4 review) | An Auto Email Report's scheduled send runs as Administrator, who holds every role, so v16's role check passes for anyone's Auto Email Report, and v16 never asks at save whether its author may open the report (`auto_email_report.py:75-79`); Report Manager may create one, and four Team profiles carry it. `emailed_reports.guard_auto_email_report` (`doc_events`, `before_validate`) refuses one on either KB report, or on a Custom Report built on one, unless the person saving it **and** the user it runs as both hold that report's role. Not closed, on purpose: a KB Approver emailing the Integrity rows where they choose, or making a Prepared Report by hand (whose stored result System Managers can read), is a trusted role's own export; and an Auto Email Report outlives the role of the person who made it, so revoking a KB role includes deleting theirs (see "Roles") |
 
 The one thing none of this stops is a System Manager writing past the ORM with `frappe.db.set_value`,
 raw SQL, or a batch-approved `run_python_code` card. The Knowledge Base Integrity report (PR 4)
@@ -443,7 +444,13 @@ doors, and **every staff user sees all three**:
   row for a TILES label with a Workspace behind it, through v16's own `add_workspace_to_desktop`,
   stamps the artwork and copies the workspace's roles, which are none. v16 shows a Link tile only
   when a same-named Workspace Sidebar has an item the viewer may open (`desktop_icon.py:193-196`),
-  and a reader may open two.
+  and a reader may open two. **Someone who has saved their own home-screen layout** would never see
+  it on its own: v16 then draws their saved copy of the icon list instead of the site's, and nothing
+  in v16 adds a later icon to that copy (`desktop.js:220-229`, `desktop_layout.py:28-42`). Prod had
+  five such layouts when PR 4 was reviewed, Administrator's and four staff members', one of them a
+  KB Approver's. So the same `after_migrate` step appends the tile to every saved layout that does
+  not hold it yet, after the person's own tiles (`setup/desktop_icons.ADD_TO_SAVED_LAYOUTS`); a
+  layout that already holds it, hidden or not, is left alone.
 - **Help > Company Knowledge Base** (`standard_help_items` in `hooks.py`), a Route to
   `/desk/knowledge-base`. v16 syncs it on every migrate (`migrate.py:174`,
   `navbar_settings.sync_standard_items`) and sends a `/desk` url through `frappe.set_route`
@@ -485,7 +492,10 @@ sees no hole. A System Manager without a KB role sees what a reader sees.
 field and every `in_standard_filter` field, a text one as a `like` (`base_list.js`). PR 4 made
 **Keywords** one of them (`in_standard_filter` on the Article's `keywords`), so typing `PO` finds an
 article whose keywords say PO, which v16's global search never would (`ft_min_word_len=4`). The
-workspace's paragraph tells people this. A KB number goes in the ID box.
+workspace's paragraph tells people this. A KB number goes in the ID box. **On a phone the Title and
+Keywords boxes are hidden** until the up-and-down arrows button beside Filter is tapped: v16 hides the
+whole standard-filter row on a narrow screen and moves only the ID box out of it (`base_list.js`,
+`setup_mobile`, :662-698, and `make_standard_filters`, :1159-1163). The paragraph says so.
 
 **"My drafts" is the viewer's own.** Its `stats_filter` is a JavaScript expression,
 `{"review_state":["=","Draft"],"owner":["=",frappe.session.user]}`, which v16 evaluates with
@@ -557,6 +567,14 @@ keep from a model. ADR 0017 put the integrity query in a report precisely becaus
 refuses that SQL over MCP; the report is the operators' check, and an approver asking an assistant
 whether the knowledge base is healthy is its use. So `generate_report` is not refused for either.
 
+**Emailed: only by, and as, someone who may run it.** An Auto Email Report is the exception to "on
+every run": its scheduled send runs in a scheduler job as Administrator, who holds every role, so
+v16's check above passes whoever made it. `emailed_reports.guard_auto_email_report` refuses, at save,
+an Auto Email Report on either report (or on a Custom Report built on one) unless the person saving it
+and the user it runs as both hold the report's role. A KB Approver may still have the Integrity report
+emailed to them daily with *Send only if there is any data* ticked, which is a fair use: it stays
+silent until something is broken.
+
 ## Files
 
 `files.py`, registered in `hooks.py`. Both hooks run for every File on the site, so each returns
@@ -611,6 +629,9 @@ Granting is a Desk step, and only a System Manager can do it:
   fourth approver (approved by James on 2026-09-25), holds "Finance Team", so this is her route.
 - **Revoking** is the same step in reverse. The fast rollback of the whole Knowledge Base is to
   remove KB Approver from everyone: nothing can publish, and published articles stay readable.
+  Then delete any Auto Email Report on the two KB reports that the person made or that runs as
+  them (the list, filtered on Report): one saved while they held the role keeps sending after it
+  is gone, because v16 sends it as Administrator (see "An emailed report" in the leak table).
 - **Administrator grants and revokes; it never approves.** The continuity runbook (not yet
   written; ERPNext task TASK-2026-02297) uses Administrator only to grant or revoke KB roles.
   Administrator holds every role implicitly, so the approval rules refuse it by name, as they
@@ -656,12 +677,13 @@ draft needs one of the other two.
 | `publish.py` | Every write the actions make (PR 3): `transition`, the only writer of `review_state`; `publish`, the one-transaction publish; `start_revision`, `retire`, `confirm_still_accurate`; `run`, the deadlock retry; `asker`; the forms' `onload` payloads |
 | `notify.py` | Review ToDos (PR 3): closed on every move, raised inline for the new state, title and link only |
 | `references.py` | The `Comment` and `ToDo` guards (PR 3, decision (b)): no typed text about a draft outside the draft |
+| `emailed_reports.py` | The `Auto Email Report` guard (PR 4 review): a KB report is emailed only by, and as, someone who holds its role, because v16 sends an emailed report as Administrator |
 | `reporting.py` | The rules of the two reports (PR 4), pure: `review_due`/`due_rows` and `integrity_problems`, and the exact columns each report may read. Standard library only |
 | `report/knowledge_articles_due_for_review/` | The Due for Review Script Report (PR 4): one bound query on the published Article, the filters, the State colours |
 | `report/knowledge_base_integrity/` | The Integrity Script Report (PR 4): four bound queries, no draft text selected, none quoted |
 | `workspace/knowledge_base/knowledge_base.json` | The `Knowledge Base` workspace (PR 4). Timestamp-gated on import: bump `modified` with any change |
 | [`../workspace_sidebar/knowledge_base.json`](../workspace_sidebar/knowledge_base.json) | Its sidebar (PR 4), which is also what lets the Desk tile render. Timestamp-gated too |
-| [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), [`../public/desktop_icons/knowledge_base.svg`](../public/desktop_icons/knowledge_base.svg) | The home-screen tile and its generated artwork (PR 4); `setup/desktop_icons.py` makes the Desktop Icon on migrate |
+| [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), [`../public/desktop_icons/knowledge_base.svg`](../public/desktop_icons/knowledge_base.svg) | The home-screen tile and its generated artwork (PR 4); `setup/desktop_icons.py` makes the Desktop Icon on migrate, and appends it to every saved home-screen layout that lacks it (PR 4 review) |
 | [`../hooks.py`](../hooks.py) `standard_help_items` | Help > Company Knowledge Base (PR 4) |
 | [`../api/knowledge_base.py`](../api/knowledge_base.py) | The nine endpoints (PR 3): the permission and rule checks, then `publish` |
 | [`../public/js/knowledge_base/`](../public/js/knowledge_base/) | The two form scripts (PR 3), registered in `doctype_js`: the buttons `__onload.kb` allows, the dialogs, View Changes |
@@ -674,7 +696,7 @@ draft needs one of the other two.
 | [`../tests/test_knowledge_base_hooks.py`](../tests/test_knowledge_base_hooks.py) | `files.py` (the fast path, the byte move, the delete refusal, registration) and the Version controller's content and approval gates. Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_transitions.py`](../tests/test_knowledge_base_transitions.py) | The state machine, every rule of every move, the buttons, who is asked, `shows_anything`/`referenced_files`/`text_diff`, and the example-key placeholders (PR 3). No stub; its own CI step |
 | [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3). Its own CI step: it stubs `frappe` |
-| [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule) (PR 4). Its own CI step: it stubs `frappe` |
+| [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review). Its own CI step: it stubs `frappe` |
 
 ## What arrives later
 

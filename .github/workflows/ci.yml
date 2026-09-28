@@ -841,6 +841,9 @@ jobs:
       # the two Script Reports: their roles and ref_doctype (who can run them, in the Desk or through
       # an AI tool's generate_report), bound SQL with no function strings, no draft text ever
       # selected and none ever quoted in a row, and every rule of Due for Review and Integrity.
+      # Since PR 4's review also: the tile appended to every saved home-screen layout (v16 draws a
+      # saved Desktop Layout instead of the site's icons), the Auto Email Report guard (a scheduled
+      # send runs as Administrator), and the README's Check table equal to reporting.CHECKS.
       # Own step: it installs its own frappe stub.
       - name: Knowledge base entry points (workspace, tile, help item, the two reports)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_entry_points -v

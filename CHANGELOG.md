@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 article was to type `/desk/knowledge-article`; Nik, the same day the KB roles were granted: "I can't
 access the KB or whatever right now because its not on my home screen". Now there is a **Knowledge
 Base** tile on the Desk home screen, **Help > Company Knowledge Base**, a `Knowledge Base` workspace
-with its sidebar, and two reports. **Every staff user** sees the tile, the Help item and the
-published articles; the KB roles also see their drafts, what is in review, what is due for review,
+with its sidebar, and two reports. **Every staff user** sees the tile (including anyone who had
+saved their own home-screen layout), the Help item and the published articles; the KB roles also see their drafts, what is in review, what is due for review,
 New draft, and (KB Approvers) the Integrity check. Nothing in this release writes to an article or a
 version: every state change is still PR 3's.
 
@@ -27,13 +27,41 @@ version: every state change is still PR 3's.
   `add_workspace_to_desktop`. The tile has no roles (its workspace has none), so every staff user
   sees it. v16 draws a Link tile only when a same-named Workspace Sidebar has an item the viewer may
   open (`desktop_icon.py:193-196`), and a reader may open two.
+- **The tile in every saved home-screen layout** (`setup/desktop_icons._sync_saved_layouts`, on the
+  same `after_migrate` step; found in review). v16 draws the home grid from the person's own
+  `Desktop Layout` whenever they have one (`desk/page/desktop/desktop.py:16-20`,
+  `desktop.js:220-229`), and that row is a copy of the icon list frozen at their last Edit Layout
+  save (`desktop_layout.py:28-42`). Nothing in v16 adds a later icon to it, and Edit Layout cannot
+  either: its "Removed Icons" pane is built from the same copy. A read-only check at review found
+  five such rows on prod, Administrator's and four staff members' (one a KB Approver's), each
+  missing every tile made after it was saved; Training, Time Kiosk and Quality Control have the same
+  gap. Without this, those four people would never have seen the Knowledge Base tile. The step
+  appends it after the person's own tiles, copying the Desktop Icon's row, and leaves alone a layout
+  that already holds it (hidden or not: hiding keeps the entry, and v16 has no other way to take one
+  out), an empty one (v16 then draws the site's list) and one it cannot read. Only tiles every Desk
+  User may open are added (`ADD_TO_SAVED_LAYOUTS`, just Knowledge Base), because a saved layout is
+  drawn with none of `get_desktop_icons`' role or sidebar checks. The row keeps its `modified`.
+- **An emailed Knowledge Base report needs its author and its user to hold the report's role**
+  (`knowledge_base/emailed_reports.py`, `doc_events["Auto Email Report"]["before_validate"]`; found
+  in review). v16 checks a report's roles against the session user, and an Auto Email Report's
+  scheduled send runs in a scheduler job as Administrator (`auto_email_report.py:327-359`,
+  `background_jobs.py:179`), who holds every role; v16 never asks at save whether its author may
+  open the report (`auto_email_report.py:75-79`). Report Manager may create one, and the Design,
+  Finance, Production and Sales Team profiles carry it, so without this anyone with one of those
+  profiles could have the Integrity report's version names, states and user ids emailed daily to any
+  address (never draft text: the report selects none). The guard follows a Custom Report to the
+  report it is built on, as v16 does when it runs one, and returns after one `get_value` for any
+  other report. A KB Approver can still have the Integrity report emailed to themselves with *Send
+  only if there is any data* ticked, which stays silent until something is broken.
 - **Help > Company Knowledge Base**, a Route to `/desk/knowledge-base` (`standard_help_items`). v16
   syncs it on every migrate (`migrate.py:174`) and routes a `/desk` url in-app (`ui/menu.js:169-170`),
   so Back returns. It sits above "Report a Problem": `sync_table` inserts a new item at its index in
   the hook list (`navbar_settings.py:58-64`).
 - **The `Knowledge Base` workspace** (`knowledge_base/workspace/knowledge_base/`), public, in the
   Knowledge Base module, with no roles of its own. A reader sees a short paragraph on how to find an
-  article, **Published articles** (with a count) and **Newest articles** (the four newest). A KB role
+  article (since review it also says that on a phone the Title and Keywords boxes appear only after
+  the arrows button next to Filter is tapped: v16 hides them on a narrow screen,
+  `base_list.js:662-698`), **Published articles** (with a count) and **Newest articles** (the four newest). A KB role
   also sees **My drafts** (the viewer's own drafts, with a count), **In review**, **Due for review**,
   **New draft** and a *Writing and review* card (All versions, Due for review, and for a KB Approver
   the Integrity check). Every item is a DocType, Report or Workspace link, which v16 drops for anyone
@@ -63,7 +91,10 @@ version: every state change is still PR 3's.
   real fields and options, each JSON's `modified` moving with its content (fingerprint and stamp),
   the tile, the Help item, both reports' roles and `ref_doctype`, bound SQL built only from fixed
   column lists with no ORM list call, sentinel draft text never selected or shown, and every rule of
-  both reports.
+  both reports. Since review also: the Integrity checks equal the README's Check table in order (the
+  test named for that contract used to check only that the labels were unique), the tile appended to
+  saved layouts and every case it leaves alone, the Auto Email Report guard, and the phone search
+  hint.
 
 ### Changed
 
@@ -80,7 +111,8 @@ version: every state change is still PR 3's.
   every run, so an assistant runs the Integrity report only for a KB Approver, and what it returns is
   names, numbers, states, user ids and the rule broken: no draft text, the one thing the gate's
   denylist exists for. ADR 0017 put the integrity query in a report so operators could run it; the
-  MCP denylist still refuses the same SQL typed by hand.
+  MCP denylist still refuses the same SQL typed by hand. The one run v16 checks against someone else
+  is an Auto Email Report's scheduled send, which runs as Administrator; that is the guard above.
 - **Prepared reports are off** on both (`prepared_report 0`, `disable_prepared_report_automation 1`):
   v16 turns a Script Report that takes over 15 seconds into a queued job whose result is stored as a
   File, and the deploy's FLUSHDB kills queued jobs.
@@ -89,10 +121,20 @@ version: every state change is still PR 3's.
   own drafts. The sidebar cannot say "mine" (its `route_options` are URL-encoded strings), so it
   lists every Draft.
 - **No reload patch.** Prod had no Knowledge Base Workspace, Sidebar, Desktop Icon, Page or Report
-  row (read-only check, 2026-09-28), so the first import creates them. Rolling this release back is a
-  revert: v16's `remove_orphan_entities` deletes the Workspace, the Sidebar and both Reports whose
-  files are gone, and the help item goes with the hook. The Desktop Icon row stays and renders
-  nowhere without its sidebar. WI-080's rollback line, which asked for a patch, is corrected.
+  row (read-only check, 2026-09-28), so the first import creates them.
+- **Rolling this release back needs a one-shot patch with the revert** (corrected in review: this
+  entry first said the Desktop Icon "renders nowhere without its sidebar", and PR 4 had removed the
+  Desktop Icon step from WI-080's rollback). v16's `remove_orphan_entities` deletes the Workspace, the
+  Sidebar and both Reports whose files are gone, and the help item goes with the hook. The Desktop
+  Icon stays: `add_workspace_to_desktop` inserts it with `standard = 0`, and `remove_orphan_entities`
+  only looks at Desktop Icons with `standard = 1` (`model/sync.py:211`). It also keeps rendering for
+  every staff user, with its artwork gone: once the shipped sidebar is deleted, `boot.get_sidebar_items`
+  adds v16's in-memory sidebar for every Module Def with no Workspace Sidebar (`boot.py:449-450`,
+  `workspace_sidebar.py:239-252`), so a "Knowledge Base" sidebar holding Knowledge Article comes back,
+  and `desktop_icon.py:193-196` lets the tile through. Saved layouts keep their own copy of it too. So
+  the patch calls `frappe.delete_doc("Desktop Icon", "Knowledge Base", ignore_missing=True)`, removes
+  that label's entry from every `Desktop Layout`, and clears the `desktop_icons` and `bootinfo`
+  caches. WI-080's "Rollback" says the same.
 
 ### After deploy (read-only)
 
@@ -101,6 +143,9 @@ version: every state change is still PR 3's.
 - ``SELECT 'Workspace', name FROM tabWorkspace WHERE name='Knowledge Base' UNION ALL SELECT 'Desktop Icon', name FROM `tabDesktop Icon` WHERE name='Knowledge Base' UNION ALL SELECT 'Workspace Sidebar', name FROM `tabWorkspace Sidebar` WHERE name='Knowledge Base'``
   returns three rows, and ``SELECT logo_url FROM `tabDesktop Icon` WHERE name='Knowledge Base'`` is
   `/assets/erpnext_enhancements/desktop_icons/knowledge_base.svg`.
+- ``SELECT name FROM `tabDesktop Layout` WHERE layout LIKE '[{%' AND layout NOT LIKE '%"label": "Knowledge Base"%'``
+  returns no row: every saved home-screen layout holds the tile (five rows existed at review, and
+  Nik's account has none).
 - ``SELECT name, ref_doctype, prepared_report FROM tabReport WHERE module='Knowledge Base'`` returns the
   two reports with `prepared_report = 0`; ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='Report' AND parent LIKE 'Knowledge%'``
   gives Due for Review KB Author and KB Approver, and Integrity KB Approver only.

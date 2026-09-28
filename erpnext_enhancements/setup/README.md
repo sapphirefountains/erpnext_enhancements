@@ -28,7 +28,7 @@ every time, so they both *create* what's missing and *correct* drift.
 | `supplier_groups.py` | `after_migrate` | Relabels `supplier_group` to "Primary Supplier Group" and adds the additional-groups Table MultiSelect plus the denormalized text fields `supplier_query.sync_supplier_groups` populates |
 | `workspace_tweaks.py` | `after_migrate` | Re-asserts overrides on core (erpnext-owned) workspaces and sidebars |
 | `desktop_icon_map.py` | — | Data only: the Desk home-grid tile for each module (slug, glyph, colour). Importless on purpose — the generator and the bench-free test read it without a frappe stub |
-| `desktop_icons.py` | `after_migrate`, `after_install` | Stamps that artwork onto `Desktop Icon.logo_url`, and creates the tile for a workspace core never gave one |
+| `desktop_icons.py` | `after_migrate`, `after_install` | Stamps that artwork onto `Desktop Icon.logo_url`, creates the tile for a workspace core never gave one, and appends the `ADD_TO_SAVED_LAYOUTS` tiles to every saved home-screen layout that lacks them |
 
 ## The repo is the source of truth — and here that means overwriting
 
@@ -126,6 +126,20 @@ update the map.
 The artwork itself is generated: `scripts/build_desktop_icons.py` composes each 28×28 tile
 from a lucide glyph in Frappe's own sprite, read at `origin/version-16`. Its output is
 committed, and `tests/test_desktop_icons.py` fails the build if the two drift.
+
+**A new tile never reaches someone who has saved their own home-screen layout.** v16 draws
+the grid from that person's `Desktop Layout` row whenever it is non-empty
+(`desk/page/desktop/desktop.py:16-20`, `desktop.js:220-229`), and the row is a copy of the
+icon list frozen at their last Edit Layout save (`desktop_layout.py:28-42`). Nothing in v16
+adds a later icon to it, and Edit Layout's "Removed Icons" pane is built from the same copy,
+so they cannot add it back either; only Reset Layout does, at the cost of their arrangement.
+On prod, Training, Time Kiosk and Quality Control are missing from every layout saved before
+they existed. `desktop_icons.py` appends the tiles in `ADD_TO_SAVED_LAYOUTS` (Knowledge Base,
+WI-080) to every saved layout that lacks them, after the person's own tiles. **Only a tile
+every Desk User may open may go in that list:** a saved layout is drawn verbatim, with none of
+`get_desktop_icons`' role or sidebar checks, so a role-gated tile added there would show to
+people its page refuses. Adding Time Kiosk (no roles, every signed-in user) would be safe and
+is a separate decision; a team hub never is.
 
 ## Writing a new one
 
