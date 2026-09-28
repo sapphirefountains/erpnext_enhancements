@@ -1,0 +1,45 @@
+{
+  "name": "Sapphire Itinerary",
+  "short_name": "Itinerary",
+  "description": "Your trips day by day: flights, hotels, rides and stops, with confirmation numbers and boarding passes, even with no signal.",
+  "id": "/itinerary",
+  "start_url": "/itinerary",
+  "scope": "/itinerary",
+  "display": "standalone",
+  "display_override": ["minimal-ui"],
+  "background_color": "#f6f7f9",
+  "theme_color": "#00a0dd",
+  "categories": ["travel", "business"],
+  "icons": [
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -24,6 +24,9 @@
  *    grid), a column per person (Side by side), every place on one map (Map)
  *    and one person's own itinerary (View as) — each opens Plan a Trip on that
  *    view for this trip.
+ *  - "Copy trip": plan another trip like this one — opens Plan a Trip's copy
+ *    screen for it (?copy=), which asks for the new start date and whether the
+ *    same crew goes, and leaves confirmation numbers and costs behind.
  */
 
 const TRAVEL_FOR_DOCTYPES = ['Project', 'Opportunity', 'Lead', 'Customer'];
@@ -271,6 +274,21 @@ function open_trip_view(frm, view, employee) {
 	frappe.set_route('plan-a-trip', options);
 }
 
+// Plan another trip like this one: Plan a Trip's copy screen, read from frappe.route_options
+// like `trip` and `view`. Any status: a finished job is the usual one to repeat. The copy is made
+// from the trip as it is saved, so with unsaved changes here it asks for a save first.
+function copy_trip(frm) {
+	if (frm.is_dirty()) {
+		frappe.msgprint({
+			title: __('Save the trip first'),
+			message: __('A copy is made from the trip as it is saved. Save your changes, then copy it.'),
+			indicator: 'orange',
+		});
+		return;
+	}
+	frappe.set_route('plan-a-trip', { copy: frm.doc.name });
+}
+
 function open_trip_view_as(frm) {
 	if (trip_views_need_a_save(frm)) return;
 	const crew = (frm.doc.travelers || []).filter((t) => t.employee);
@@ -390,6 +408,8 @@ frappe.ui.form.on('Travel Trip', {
 			frm.add_custom_button(label, () => open_trip_view(frm, view), __('Trip views'))
 		);
 		frm.add_custom_button(__('View as'), () => open_trip_view_as(frm), __('Trip views'));
+		// A saved trip only (refresh returns above for a new one): the copy screen reads it by name.
+		frm.add_custom_button(__('Copy trip'), () => copy_trip(frm));
 
 		// HRMS is optional: the Expense Claim / Employee Advance / Vehicle Log
 		// actions need its doctypes (api.py also guards them). Hide the buttons

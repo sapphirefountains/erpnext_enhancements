@@ -107,7 +107,7 @@ Two mechanics, both verified against this site rather than assumed:
   table. `display:block` on it drops table layout and the cell shrinks to the label;
   with the anchor at `width:100%` of that cell plus its inline 30px side padding, the
   label sat 30px right of center and ran 60px past a half-width fill in every email
-  until v1.548.1. The anchor also needs `box-sizing:border-box` so that padding stays
+  until v1.549.1. The anchor also needs `box-sizing:border-box` so that padding stays
   inside its width. `test_the_phone_button_fills_the_column_and_centers_its_label`
   pins all of it.
 
@@ -421,8 +421,10 @@ Every email the app can send. **Audience**: `customer` = leaves the company.
 | Expense claim drafted | `travel/expense_claim_generated.html` | Draft claim created | the traveler | staff |
 | Pre-travel itinerary | `travel/pre_travel_reminder.html` | Daily reminder; "Send Itinerary" button | the traveler | staff |
 | Unclaimed expenses nudge | `travel/expense_nudge.html` | Daily post-trip sweep | the traveler | staff |
+| Trip change alert | `travel/trip_changed.html` | A Booked / In Progress trip changed; cron `*/5`, 10 min after the last edit | only the people the change affects | staff |
 
-All travel emails are gated by **Travel Settings → Send Travel Notifications**.
+All travel emails are gated by **Travel Settings → Send Travel Notifications**. The change
+alert also needs **Send Change Alerts**, which is off until someone ticks it.
 
 ### Code-built (`frappe.sendmail`)
 

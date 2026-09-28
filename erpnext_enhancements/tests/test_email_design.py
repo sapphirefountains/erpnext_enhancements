@@ -605,7 +605,7 @@ def _phone_rules():
 
 
 def test_the_phone_button_fills_the_column_and_centers_its_label():
-	"""`.ee-btn` IS the button's <table>. Until v1.548.1 the phone rule gave it
+	"""`.ee-btn` IS the button's <table>. Until v1.549.1 the phone rule gave it
 	display:block, which drops table layout: the cell shrank to the label, so the
 	fill was half the column, and the anchor (width:100% of that cell plus its
 	inline 30px side padding, content-box) ran 60px past the fill with the label

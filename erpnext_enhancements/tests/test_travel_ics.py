@@ -355,3 +355,101 @@ def test_a_rooms_address_record_is_resolved_for_the_location():
 	assert stay_of(ics.trip_events_for_traveler(trip, make_traveler()))["location"] == "Grand Hotel-Billing"
 	nothing = stay_of(ics.trip_events_for_traveler(trip, make_traveler(), lambda value: None))
 	assert "LOCATION" not in ics.build_ics([nothing])
+
+
+# ------------------------------------------------ SEQUENCE and cancellations (change alerts)
+
+
+def _two_events():
+	return [
+		{"uid": "u1@test", "summary": "Trip", "start": "2026-07-01", "end": "2026-07-03", "all_day": True},
+		{
+			"uid": "u2@test",
+			"summary": "Flight",
+			"start": "2026-07-01 08:30:00",
+			"end": "2026-07-01 10:30:00",
+			"location": "PHX",
+		},
+	]
+
+
+def test_without_the_new_keys_the_output_is_byte_identical():
+	"""The CRM hand-off invite shares build_ics and sends neither key: its bytes must not move."""
+	assert ics.build_ics(_two_events()) == (
+		"BEGIN:VCALENDAR\r\n"
+		"VERSION:2.0\r\n"
+		"PRODID:-//Sapphire Fountains//erpnext_enhancements travel//EN\r\n"
+		"CALSCALE:GREGORIAN\r\n"
+		"METHOD:PUBLISH\r\n"
+		"BEGIN:VEVENT\r\n"
+		"UID:u1@test\r\n"
+		"DTSTAMP:20260611T130000Z\r\n"
+		"DTSTART;VALUE=DATE:20260701\r\n"
+		"DTEND;VALUE=DATE:20260704\r\n"
+		"SUMMARY:Trip\r\n"
+		"END:VEVENT\r\n"
+		"BEGIN:VEVENT\r\n"
+		"UID:u2@test\r\n"
+		"DTSTAMP:20260611T130000Z\r\n"
+		"DTSTART:20260701T123000Z\r\n"
+		"DTEND:20260701T143000Z\r\n"
+		"SUMMARY:Flight\r\n"
+		"LOCATION:PHX\r\n"
+		"END:VEVENT\r\n"
+		"END:VCALENDAR\r\n"
+	)
+
+
+def test_a_sequence_follows_the_dtstamp():
+	events = [dict(event, sequence=1790524860) for event in _two_events()]
+	lines = ics.build_ics(events).split("\r\n")
+	stamps = [i for i, line in enumerate(lines) if line.startswith("DTSTAMP:")]
+	assert len(stamps) == 2
+	for i in stamps:
+		assert lines[i + 1] == "SEQUENCE:1790524860"
+	assert "METHOD:PUBLISH" in lines
+
+
+def test_a_sequence_of_zero_is_still_written():
+	out = ics.build_ics([dict(_two_events()[0], sequence=0)])
+	assert "SEQUENCE:0\r\n" in out
+
+
+def test_a_canceled_event_says_so_last():
+	out = ics.build_ics([dict(_two_events()[1], sequence=5, status="CANCELLED")])
+	lines = out.split("\r\n")
+	assert lines[lines.index("END:VEVENT") - 1] == "STATUS:CANCELLED"
+	# One calendar can carry both: METHOD stays PUBLISH, and the other events are untouched.
+	both = ics.build_ics([_two_events()[0], dict(_two_events()[1], status="CANCELLED")])
+	assert both.count("STATUS:CANCELLED") == 1
+	assert "METHOD:PUBLISH" in both
+
+
+def test_sequence_of_is_the_trips_last_save():
+	trip = make_trip()
+	assert ics.sequence_of(trip) is None  # built in memory: no modified, no SEQUENCE
+	trip.modified = datetime(2026, 9, 27, 10, 0, 0)
+	first = ics.sequence_of(trip)
+	assert first == int(datetime(2026, 9, 27, 10, 0, 0).timestamp())
+	trip.modified = "2026-09-27 10:05:00"
+	assert ics.sequence_of(trip) == first + 300
+	# Fits a 32-bit integer (calendar apps store it as one) until 2038.
+	assert first < 2**31
+
+
+def test_the_trip_calendar_carries_the_sequence_once_the_trip_is_saved():
+	unsaved = ics.trip_ics_attachment(make_trip(), make_traveler())["fcontent"]
+	assert "SEQUENCE" not in unsaved
+	trip = make_trip()
+	trip.modified = datetime(2026, 9, 27, 10, 0, 0)
+	saved = ics.trip_ics_attachment(trip, make_traveler())["fcontent"]
+	sequence = f"SEQUENCE:{int(trip.modified.timestamp())}"
+	assert saved.count("BEGIN:VEVENT") == saved.count(sequence) == 3
+	assert "STATUS" not in saved
+
+
+def test_event_uid_is_the_uid_the_calendar_was_sent_under():
+	trip = make_trip()
+	events = ics.trip_events_for_traveler(trip, make_traveler())
+	assert ics.event_uid(trip.name, "fl1") == events[1]["uid"] == "TRIP-2026-00001-fl1@test.site"
+	assert ics.event_uid(trip.name, "tr1", "-span") == events[0]["uid"]

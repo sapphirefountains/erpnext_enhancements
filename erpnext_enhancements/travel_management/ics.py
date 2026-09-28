@@ -6,8 +6,8 @@
 Frappe v16 ships no ICS writer (the Event doctype and HRMS integrate with
 Google Calendar via its API), so this hand-rolls the small subset we need:
 ``METHOD:PUBLISH`` calendars attached to travel emails, which mail clients
-import on tap. Full ``METHOD:REQUEST`` organizer/attendee/SEQUENCE semantics
-(live invite updates, RSVP) are deliberately out of scope for v1.
+import on tap. Full ``METHOD:REQUEST`` organizer/attendee semantics (RSVP)
+are deliberately out of scope.
 
 Format rules implemented: CRLF line endings, 75-octet line folding, text
 escaping (backslash, comma, semicolon, newline), site-timezone → UTC
@@ -15,6 +15,16 @@ conversion for timed events, all-day events as ``VALUE=DATE`` (DTEND
 exclusive). UIDs are STABLE — ``{trip}-{row}@{site}`` — so a re-sent
 itinerary *updates* the recipient's existing calendar entries instead of
 duplicating them.
+
+**SEQUENCE and cancellations** (change alerts, ``change_alerts.py``). An event
+may carry ``sequence`` (an int) and ``status`` (``"CANCELLED"``); without them
+:func:`build_ics` writes exactly what it always has, which the CRM hand-off
+invite relies on. Every travel calendar a trip email attaches carries
+``SEQUENCE`` = the trip's last save as seconds since the epoch
+(:func:`sequence_of`): a change alert's invite must outrank the one the person
+already has, and a later itinerary email must not then look *older* than the
+alert's, which a calendar that honors SEQUENCE would ignore. A booking taken
+off someone's trip is sent under its old UID with ``STATUS:CANCELLED``.
 """
 
 from datetime import timedelta
@@ -82,7 +92,10 @@ def build_ics(events, method="PUBLISH"):
 	Each event dict: ``uid`` (required, stable), ``summary`` (required),
 	``start`` / ``end`` (datetime or date strings), ``all_day`` (bool;
 	all-day DTEND is made exclusive by adding a day), optional
-	``description``, ``location``, ``url``.
+	``description``, ``location``, ``url``, ``sequence`` (int: which version of
+	the event this is, so a calendar replaces an older copy of the same UID) and
+	``status`` (``"CANCELLED"`` takes the event off the calendar). An event
+	without the last two is written exactly as before they existed.
 	"""
 	lines = [
 		"BEGIN:VCALENDAR",
@@ -97,6 +110,8 @@ def build_ics(events, method="PUBLISH"):
 		lines.append("BEGIN:VEVENT")
 		lines.append(f"UID:{_escape(event['uid'])}")
 		lines.append(f"DTSTAMP:{dtstamp}")
+		if event.get("sequence") is not None:
+			lines.append(f"SEQUENCE:{int(event['sequence'])}")
 		if event.get("all_day"):
 			lines.append(f"DTSTART;VALUE=DATE:{_date_stamp(event['start'])}")
 			end = getdate(event.get("end") or event["start"]) + timedelta(days=1)
@@ -112,6 +127,8 @@ def build_ics(events, method="PUBLISH"):
 			lines.append(f"LOCATION:{_escape(event['location'])}")
 		if event.get("url"):
 			lines.append(f"URL:{_escape(event['url'])}")
+		if event.get("status"):
+			lines.append(f"STATUS:{_escape(event['status'])}")
 		lines.append("END:VEVENT")
 
 	lines.append("END:VCALENDAR")
@@ -152,6 +169,32 @@ def _friendly(value):
 	return f"{dt:%a %b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
 
 
+def event_uid(trip_name, row_name, suffix=""):
+	"""The UID of the calendar event a trip row makes: ``{trip}-{row}@{site}`` for a booking,
+	``{trip}-{traveler row}-span@{site}`` (``suffix="-span"``) for the person's trip. Spelled
+	once, because a change alert has to name the UID an earlier email sent to cancel it."""
+	site = getattr(frappe.local, "site", None) or "site"
+	return f"{trip_name}-{row_name}{suffix}@{site}"
+
+
+def sequence_of(trip_doc):
+	"""``SEQUENCE`` for a trip's calendar events: the trip's last save in seconds since the
+	epoch, or ``None`` when the document has no ``modified`` (one built in memory).
+
+	It only grows, so every email about a trip carries a version at least as new as the
+	last one sent: a change alert's updated invite replaces the entry the person already
+	has, and a later itinerary email is never taken for an older copy. Seconds, not a
+	counter, because nothing has to be stored to compute it; it fits a 32-bit integer until
+	2038."""
+	modified = getattr(trip_doc, "modified", None)
+	if not modified:
+		return None
+	try:
+		return int(get_datetime(modified).timestamp())
+	except (TypeError, ValueError, OverflowError, OSError):
+		return None
+
+
 def trip_events_for_traveler(trip_doc, traveler_row, address_text=None):
 	"""Calendar events for one traveler: the trip span (all-day), each visible
 	flight, each hotel check-in, each rental, ride or drive with a pickup time, and
@@ -168,11 +211,10 @@ def trip_events_for_traveler(trip_doc, traveler_row, address_text=None):
 	# suites' minimal frappe stub, and ``views`` is the one place the link is spelled.
 	from erpnext_enhancements.travel_management.views import itinerary_path
 
-	site = getattr(frappe.local, "site", None) or "site"
 	employee = traveler_row.employee
 
 	def uid(row_name, suffix=""):
-		return f"{trip_doc.name}-{row_name}{suffix}@{site}"
+		return event_uid(trip_doc.name, row_name, suffix)
 
 	def visible(row_traveler):
 		return not row_traveler or row_traveler == employee
@@ -305,8 +347,13 @@ def trip_events_for_traveler(trip_doc, traveler_row, address_text=None):
 
 def trip_ics_attachment(trip_doc, traveler_row, address_text=None):
 	"""``frappe.sendmail`` attachment dict for one traveler's trip calendar
-	(``address_text`` as :func:`trip_events_for_traveler`)."""
+	(``address_text`` as :func:`trip_events_for_traveler`). Each event carries the trip's
+	:func:`sequence_of`, so this invite is never older than a change alert's."""
+	events = trip_events_for_traveler(trip_doc, traveler_row, address_text)
+	sequence = sequence_of(trip_doc)
+	if sequence is not None:
+		events = [dict(event, sequence=sequence) for event in events]
 	return {
 		"fname": f"{frappe.scrub(trip_doc.name)}.ics",
-		"fcontent": build_ics(trip_events_for_traveler(trip_doc, traveler_row, address_text)),
+		"fcontent": build_ics(events),
 	}
