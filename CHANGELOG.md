@@ -43,7 +43,7 @@ Create button that no traveler on production has ever seen.
     Travel Coordinator's (`travel_trip._check_closed_lock`), and only a coordinator can reopen
     it (`api.reopen_trip`). A traveler with a receipt still to add therefore cannot add it
     themselves. The email now says the trip is closed, that accounting reimburses from the
-    receipts on it, and that a missing receipt or cost means asking a Travel Coordinator to
+    trip, and that a missing receipt or cost means asking a Travel Coordinator to
     reopen the trip. It never mentions a claim.
   - **The expense nudge:** its headline number was labeled "Unclaimed". Nothing is ever
     claimed on production, so that number is everything the trip says the company owes the

@@ -16,7 +16,7 @@
    notifications.py. NOTE: no autoescape in frappe's Jinja env. #}
 {% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-{{ ee.callout("Trip " ~ trip.name ~ " (" ~ trip.start_date ~ " – " ~ trip.end_date ~ ") has been closed. Accounting reimburses your employee-paid costs, per diem and mileage from the receipts on the trip, so check that each of your itemized receipts is attached to its cost.", "warning") }}
+{{ ee.callout("Trip " ~ trip.name ~ " (" ~ trip.start_date ~ " – " ~ trip.end_date ~ ") has been closed. Accounting reimburses your employee-paid costs, per diem and mileage from the trip, so check that each of your itemized receipts is attached to its cost.", "warning") }}
 
 {{ ee.p("Only a Travel Coordinator can change a closed trip. If a receipt or a cost of yours is still missing from it, ask one to reopen the trip, then attach each receipt to the Receipt field of the cost it paid for.") }}
 

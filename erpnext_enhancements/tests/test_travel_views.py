@@ -1803,7 +1803,7 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		self.assertIsNone(self.hrms_in(html))
 		self.assertNotIn("claim", html.lower())
 		self.assertIn("has been closed", html)
-		self.assertIn("from the receipts on the trip", html)
+		self.assertIn("per diem and mileage from the trip", html)
 		self.assertIn("each of your itemized receipts is attached to its cost", html)
 		self.assertIn("Only a Travel Coordinator can change a closed trip", html)
 		self.assertIn("ask one to reopen the trip, then attach each receipt to the Receipt field", html)
