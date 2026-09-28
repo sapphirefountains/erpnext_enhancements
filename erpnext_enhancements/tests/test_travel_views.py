@@ -1479,6 +1479,111 @@ class TestTheControllersFileRules(unittest.TestCase):
 		self.assertIn("self._validate_trip_files()", source)
 
 
+class TestDeletingATripThatWasCopied(unittest.TestCase):
+	"""A copy names the trip it came from (``copied_from``, v1.550.0), a Link to Travel Trip. frappe's
+	``delete_doc`` runs ``on_trash`` and then refuses to delete anything another record links to
+	(``check_if_doc_is_linked``, frappe v16 ``model/delete_doc.py``) — so without ``on_trash``
+	clearing it, a trip anyone had ever copied could never be deleted again. The real
+	controller's ``on_trash``, with the same stand-ins as ``TestTheControllersFileRules``."""
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		self.writes = []
+		frappe = sys.modules["frappe"]
+
+		def set_value(doctype, name, field, value=None, *a, **kw):
+			self.writes.append((doctype, name, field, value, kw))
+
+		for patcher in (
+			mock.patch.object(frappe.db, "set_value", set_value, create=True),
+			mock.patch.object(frappe, "get_all", lambda *a, **k: self.claims, create=True),
+			mock.patch.object(self.controller, "_has_travel_backlink", lambda doctype: True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		self.claims = []
+		self.doc = self.controller.TravelTrip()
+		self.doc.name = "TRIP-2026-00007"
+
+	def test_its_copies_let_go_of_it_and_keep_their_modified(self):
+		self.doc.on_trash()
+		self.assertIn(
+			("Travel Trip", {"copied_from": "TRIP-2026-00007"}, "copied_from", None, {"update_modified": False}),
+			self.writes,
+		)
+
+	def test_a_trip_it_refuses_to_delete_keeps_its_copies(self):
+		# A submitted claim still on the trip: the delete is refused, and nothing is unlinked on
+		# the way (frappe rolls the request back anyway; this keeps the order honest).
+		self.claims = [types.SimpleNamespace(name="HR-EXP-1", docstatus=1)]
+		with self.assertRaises(sys.modules["frappe"].ValidationError) as refused:
+			self.doc.on_trash()
+		self.assertIn("Expense Claim HR-EXP-1", str(refused.exception))
+		self.assertNotIn("Travel Trip", [write[0] for write in self.writes])
+
+
+class TestCopiedFromNeverRefusesASave(unittest.TestCase):
+	"""``copied_from`` is the server's and is provenance only (v1.550.0). frappe v16 checks every
+	Link in ``_validate_links`` — before ``before_insert`` and ``validate`` — so the controller
+	settles it in ``get_invalid_links``. Two saves that would otherwise be refused over a field
+	nobody can edit: a Desk form opened before the source trip was deleted (``on_trash`` cleared
+	the stored value without touching ``modified``, so the form still posts the deleted name), and
+	a copy restored from Deleted Document after its source was deleted too."""
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		frappe = sys.modules["frappe"]
+		self.trips = {"TRIP-A"}
+		base = self.controller.TravelTrip.__bases__[0]
+		for patcher in (
+			mock.patch.object(frappe.db, "exists", lambda doctype, name: name in self.trips, create=True),
+			mock.patch.object(
+				base, "get_doc_before_save", lambda doc: getattr(doc, "_doc_before_save", None), create=True
+			),
+			mock.patch.object(base, "get_invalid_links", lambda doc, is_submittable=False: ("frappe's", "check"),
+				create=True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def trip(self, posted, stored="new"):
+		doc = self.controller.TravelTrip()
+		doc.name = "TRIP-B"
+		doc.copied_from = posted
+		if stored != "new":
+			before = self.controller.TravelTrip()
+			before.copied_from = stored
+			doc._doc_before_save = before
+		return doc
+
+	def test_a_desk_form_opened_before_the_source_was_deleted_still_saves(self):
+		self.trips = set()  # TRIP-A deleted; on_trash cleared the stored value
+		doc = self.trip("TRIP-A", stored=None)
+		self.assertEqual(doc.get_invalid_links(), ("frappe's", "check"), "frappe's own check still runs")
+		self.assertIsNone(doc.copied_from)
+
+	def test_an_update_keeps_the_stored_source_whatever_is_posted(self):
+		doc = self.trip("TRIP-A", stored=None)
+		doc.get_invalid_links()
+		self.assertIsNone(doc.copied_from, "an update cannot make a trip a copy")
+		self.trips.add("TRIP-X")
+		doc = self.trip("TRIP-X", stored="TRIP-A")
+		doc.get_invalid_links()
+		self.assertEqual(doc.copied_from, "TRIP-A", "nor move it")
+
+	def test_a_first_save_keeps_a_source_that_is_there_and_drops_one_that_is_gone(self):
+		doc = self.trip("TRIP-A")  # save_plan's first save, or a restore while the source is there
+		doc.get_invalid_links()
+		self.assertEqual(doc.copied_from, "TRIP-A")
+		self.trips = set()  # a restore after the source was deleted too
+		doc = self.trip("TRIP-A")
+		doc.get_invalid_links()
+		self.assertIsNone(doc.copied_from)
+		doc = self.trip(None)
+		doc.get_invalid_links()
+		self.assertIsNone(doc.copied_from)
+
+
 class TestGetTripItinerary(MoneyAssertions):
 	def setUp(self):
 		self.doc = install_site()
