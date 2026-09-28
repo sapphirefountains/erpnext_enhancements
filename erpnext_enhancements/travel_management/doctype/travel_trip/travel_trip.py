@@ -108,7 +108,8 @@ class TravelTrip(Document):
 
 	def on_trash(self):
 		"""Block deletion while submitted financial documents point here;
-		unlink drafts (and Leads/Opportunities, which are provenance only).
+		unlink drafts (and Leads/Opportunities, and the trips copied from this
+		one, which are provenance only).
 
 		Every query is guarded by ``_has_travel_backlink``: the HRMS doctypes may
 		be absent entirely, and the ``custom_travel_trip`` back-link fields are
@@ -140,6 +141,36 @@ class TravelTrip(Document):
 			frappe.db.set_value(
 				doctype, {"custom_travel_trip": self.name}, "custom_travel_trip", None
 			)
+		# A copy names the trip it was copied from (``copied_from``, Plan a Trip's "Copy a
+		# past trip"). That is provenance too: frappe's link check runs after on_trash and would
+		# otherwise refuse to delete any trip that had ever been copied. The copies' `modified`
+		# is left alone, so a copy open on the Plan a Trip page still saves.
+		frappe.db.set_value(
+			"Travel Trip", {"copied_from": self.name}, "copied_from", None, update_modified=False
+		)
+
+	def get_invalid_links(self, is_submittable=False):
+		"""frappe's link check, once ``copied_from`` is settled (``_settle_copied_from``).
+		frappe v16 runs it from ``_validate_links``, before ``before_insert`` and before
+		``validate``, so this is the one hook early enough; ``check_if_latest`` has already
+		loaded the stored row by then."""
+		self._settle_copied_from()
+		return super().get_invalid_links(is_submittable)
+
+	def _settle_copied_from(self):
+		"""``copied_from`` is the server's to write, and it is provenance only, so it never
+		refuses a save. On an update the stored value wins: ``planner.save_plan`` sets it on a
+		first save and never again, and the source trip's ``on_trash`` clears it without
+		touching ``modified``. A Desk form opened before that delete still posts the deleted
+		name, and frappe's link check would refuse the save as "Could not find Copied From",
+		on a field nobody can edit. A source trip that is gone is dropped, not checked: a copy
+		restored from Deleted Document after its source was deleted too comes back copied from
+		nothing."""
+		before = self.get_doc_before_save()
+		if before is not None:
+			self.copied_from = before.get("copied_from")
+		if self.get("copied_from") and not frappe.db.exists("Travel Trip", self.copied_from):
+			self.copied_from = None
 
 	# ------------------------------------------------------------------ dates
 
