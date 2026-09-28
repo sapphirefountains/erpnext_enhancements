@@ -34,6 +34,14 @@ from frappe.model.document import Document
 
 
 class KnowledgeArticle(Document):
+	def onload(self):
+		# PR 3: Start Revision, Confirm Still Accurate and Retire, offered exactly to the people the
+		# endpoints would let through (publish.article_onload). A reader with no KB role is told
+		# nothing about drafts. Imported here so that loading this controller stays cheap.
+		from erpnext_enhancements.knowledge_base import publish
+
+		self.set_onload("kb", publish.article_onload(self))
+
 	def validate(self):
 		self._refuse_unless_kb_action()
 

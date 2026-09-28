@@ -22,10 +22,15 @@ calling ``submit()`` could have edited; and the copy being submitted must match 
 (``_refuse_unless_approvable``). The approver's ``user_type`` is read from the User row
 (``_user_type``), because ``approval_problems`` is pure and takes it as an argument.
 
-**The flag for PR 3.** ``approve_and_publish`` sets ``doc.flags.kb_opened_modified`` to the
-``modified`` value the approver's page had open. Without it every approval is refused as "changed
-after you opened it". It cannot be taken from the document itself: by ``before_submit`` the save
-has already moved ``modified`` on (``set_user_and_timestamp``, ``:586``).
+**The flag PR 3 sets.** ``approve_and_publish`` (through ``knowledge_base/publish.transition``)
+sets ``doc.flags.kb_opened_modified`` to the ``modified`` value the approver's page had open.
+Without it every approval is refused as "changed after you opened it". It cannot be taken from the
+document itself: by ``before_submit`` the save has already moved ``modified`` on
+(``set_user_and_timestamp``, ``:586``).
+
+**The form's buttons** (PR 3, ``onload``): ``publish.version_onload`` puts the actions this person
+may take now in ``__onload.kb``, decided by the same ``workflow.*_problems`` functions the
+endpoints refuse with, and the form script (``public/js/knowledge_base/``) shows exactly those.
 
 **Content rules on every save** (``before_validate``, PR 2). Presentation is stripped from the body
 (``content.strip_presentation``). Content changes only while the stored version is a Draft
@@ -51,8 +56,8 @@ obvious hook:
   an amendment is refused there as well as in ``validate``.
 
 What may change after publishing: only ``review_state`` (``allow_on_submit``), when a newer
-version supersedes this one. The publish code sets ``doc.flags.kb_action`` for that write; any
-other update-after-submit is refused.
+version supersedes this one. The publish code (``publish.supersede``) sets ``doc.flags.kb_action``
+for that write; any other update-after-submit is refused.
 
 **Every server-set field is at permlevel 1, and nobody holds write there.** ``read_only`` is a
 Desk hint that v16 never enforces on the server; only permlevel is enforced. KB Author and KB
@@ -85,6 +90,14 @@ from erpnext_enhancements.knowledge_base import content, workflow
 
 
 class KnowledgeArticleVersion(Document):
+	def onload(self):
+		# PR 3: the review buttons the form may show this person now, decided by the same
+		# workflow.*_problems functions the endpoints refuse with (publish.version_onload). Imported
+		# here, not at the top: publish imports this module.
+		from erpnext_enhancements.knowledge_base import publish
+
+		self.set_onload("kb", publish.version_onload(self))
+
 	def before_insert(self):
 		self._refuse_amend()
 

@@ -403,6 +403,12 @@ class TestFlags(unittest.TestCase):
 					self.assertEqual(meta[flag], value)
 			with self.subTest(doctype=doctype, flag="in_global_search"):
 				self.assertEqual([f["fieldname"] for f in meta["fields"] if f.get("in_global_search")], [])
+			# What v16 actually reads (found in PR 3; WI-080's acceptance query named
+			# `show_in_global_search`, which is not a v16 DocType field and so is ignored on
+			# migrate). `show_name_in_global_search` defaults to 0 (core/doctype/doctype/
+			# doctype.json), so absent is as good as 0; either way it must never be truthy.
+			with self.subTest(doctype=doctype, flag="show_name_in_global_search"):
+				self.assertFalse(meta.get("show_name_in_global_search"))
 			with self.subTest(doctype=doctype, flag="istable/issingle"):
 				self.assertFalse(meta.get("istable"))
 				self.assertFalse(meta.get("issingle"))

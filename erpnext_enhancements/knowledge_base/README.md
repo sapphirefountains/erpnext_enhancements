@@ -8,13 +8,14 @@ Nik.
 Programme: [WI-080](../../work-items/WI-080-company-knowledge-base.md).
 Decision record: [ADR 0017](../../decisions/adr/0017-company-knowledge-lives-in-a-native-module.md).
 
-**Status: PRs 1 and 2 of the v1 build (v1.538.0, v1.539.0).** PR 1: the module, the two doctypes, the
-two roles, the locked permissions and the AI-gate denylist. PR 2: the approval rules and the content
-rules, applied by the Version controller, and private Files. There is **no workspace, no action
-button and no AI tool yet**, and **nothing can publish**: a version is submitted only when the
-publish action sets `flags.kb_publish`, and that action arrives in PR 3. Until then the Article
-table stays empty on purpose; a KB Author can already save drafts in the Desk, and PR 2's content
-rules apply to them.
+**Status: PRs 1 to 3 of the v1 build (v1.538.0, v1.539.0, v1.555.0).** PR 1: the module, the two
+doctypes, the two roles, the locked permissions and the AI-gate denylist. PR 2: the approval rules
+and the content rules, applied by the Version controller, and private Files. **PR 3: the actions**
+(review, approve and publish, retire), the one-transaction publish, review ToDos and the form
+buttons, so **an article can now be published**. There is still **no workspace, no report and no AI
+tool** (PRs 4 to 6): people reach a version or an article from its list (`/desk/knowledge-article`,
+`/desk/knowledge-article-version`) or from a review ToDo. **Nobody holds a KB role on prod yet**:
+granting them is a Desk step for Nik after PR 3 deploys (see "Roles, and how a person gets one").
 
 ## The shape of it
 
@@ -50,8 +51,8 @@ No row anywhere carries share, submit, cancel, amend, delete, export, import or 
 whole matrix, so an added row fails the build as surely as a changed one.
 
 KB Author and KB Approver hold the same DocPerm. What makes an approver different is enforced in
-code (`workflow.approval_problems`, applied by the Version controller since PR 2; the button that
-asks arrives in PR 3): the approver holds KB Approver, is a named person with a System User login
+code (`workflow.approval_problems`, applied by the Version controller since PR 2 and asked first by
+`approve_and_publish` since PR 3): the approver holds KB Approver, is a named person with a System User login
 (never Administrator or Guest), is not the owner, the submitter, a contributor or the person who
 asked an AI to draft it, approves from a signed-in browser and not through an AI gate card, and
 approves the version exactly as they opened it. See "The rules" below.
@@ -81,9 +82,12 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | Path | Closed by |
 |---|---|
 | The web, and guests | `has_web_view 0`, `allow_guest_to_view 0`, no Guest or `All` row. `GET /api/resource/Knowledge Article` with no cookie is a 403 |
-| Global search and the AwesomeBar | `show_in_global_search 0`, and no field has `in_global_search`. Search arrives in PR 5, as the caller |
+| Global search and the AwesomeBar | v16 indexes a doctype's name only with `show_name_in_global_search` (0 on both, the v16 default) and a field only with its own `in_global_search` (none) or a Global Search Settings row (none). The JSONs' `show_in_global_search 0` is not a v16 DocType field and changes nothing (found in PR 3). Search arrives in PR 5, as the caller |
 | A reader opening a draft | Drafts are in the Version doctype, which has no reader row |
-| Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead |
+| Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead. Reviewers are assigned by the knowledge base itself (`notify.py`, PR 3), only ever to KB Approvers, who can read it |
+| Comments and ToDos about a draft (PR 3, decision (b)) | Every System Manager reads every Comment and every ToDo on the site, and so do the AI tools acting for one; `list_documents(doctype="Comment")` names no denylisted doctype. So a typed Comment on a version is refused, and so is a ToDo on one that the knowledge base did not raise, or an edit to the text of one it did (`references.py`). The review ToDos carry the title and a link, never draft text; the reviewer's note stays in `review_note` on the version |
+| An AI tool reading a draft's attached file (PR 3, decision (b)) | FAC's `extract_file_content` names a File, not a doctype, and then asks only whether the caller can read what it is attached to, which a KB Author can. The AI gate looks the File up and refuses one attached to a denylisted doctype (`_gate.DENYLIST_FILE_ARGUMENTS`). A published article's images are attached to the Article and stay readable |
+| A draft's text on a form someone has open | Not closed, and not closable from the server: FAC's browser tools (`browser_get_page_context`, `browser_get_form_data`, `browser_take_screenshot`) read the page the person has open in their own browser, and the server never sees which page that is. `get_form_data` and the screenshot ask the person first in FAC's own card; `get_page_context` does not. This is the person showing an assistant their own screen; see the PR 3 notes in WI-080 |
 | Core `Version` rows (the change log) | `track_changes 0` on the Version doctype, because core `Version` is readable by System Manager, which includes the `triton@` service identity. The Article keeps `track_changes 1`: its rows hold only published text, and they give a tamper trail |
 | Pasted images and attachments | `make_attachments_public 0`, so pasted images are private already. `files.force_private` (PR 2) makes every other File attached to either doctype private, **bytes included**: an upload with Private unticked, a public library pick, a REST insert, and an owner unticking Private later. It also keeps a KB File attached where it is, so its owner cannot detach it and then make it public. See "Files" below |
 | Hidden text in the body | `content.strip_presentation` (PR 2) removes colour, background, size and font (as `style`, or as `<font color size face>` and `bgcolor`), the `hidden` and `id` attributes, **every class except the few v16's Text Editor writes for structure** (`KEPT_CLASSES`), **the tags of every element except the ones it writes** (`KEPT_ELEMENTS`), and every comment and declaration, on every content save, so nothing a reviewer cannot see stays in the HTML a model reads. Classes and elements are allowlists because any stylesheet on the page can hide text by class (`hidden`, `d-none`, `sr-only`, Frappe's `icon`), and a browser paints none of the text of a `<dialog>`, an `<audio>`, a `<canvas>` or an SVG `<desc>` |
@@ -106,10 +110,11 @@ running with `ignore_permissions`; the point is that such code has to opt in by 
 
 | Flag | Set by | Lets through |
 |---|---|---|
-| `doc.flags.kb_action` | The publish, retire and still-accurate actions (PR 3) | An insert or save of a Knowledge Article; `review_state` changing on a submitted version (Superseded) |
-| `doc.flags.kb_publish` | `approve_and_publish` only (PR 3) | Submitting a Knowledge Article Version, **as far as the approval rules**, which then run in the same two hooks |
-| `doc.flags.kb_opened_modified` | `approve_and_publish` only (PR 3), from the page | Nothing by itself: it is the `modified` value of the copy the approver had open, and the approval rules refuse unless it equals the stored one. Missing means refused |
-| `file.flags.kb_action` | PR 3's publish, on each File it moves from the Version onto the Article; KB code deleting a File, via `frappe.delete_doc("File", name, flags={"kb_action": True})` | Changing where a File attached to either KB doctype is attached; deleting a File attached to a Knowledge Article. Nothing in v1 deletes one: retiring keeps them |
+| `doc.flags.kb_action` | `publish.publish`, `publish.retire` and `publish.confirm_still_accurate` (through `_write_article`) on the Article; `publish.transition` on a submitted version (Superseded) | An insert or save of a Knowledge Article; `review_state` changing on a submitted version (Superseded) |
+| `doc.flags.kb_publish` | `publish.transition`, for `approve_and_publish` only | Submitting a Knowledge Article Version, **as far as the approval rules**, which then run in the same two hooks |
+| `doc.flags.kb_opened_modified` | `publish.transition`, for `approve_and_publish` only, from the `modified` the page sent | Nothing by itself: it is the `modified` value of the copy the approver had open, and the approval rules refuse unless it equals the stored one. Missing means refused |
+| `file.flags.kb_action` | `publish.move_files`, on each File it moves from the Version onto the Article; KB code deleting a File, via `frappe.delete_doc("File", name, flags={"kb_action": True})` | Changing where a File attached to either KB doctype is attached; deleting a File attached to a Knowledge Article, or to a version that has left Draft (PR 3). Nothing in v1 deletes one: retiring keeps them |
+| `comment.flags.kb_action`, `todo.flags.kb_action` | `notify.py`, on each review ToDo it raises or closes (nothing in PR 3 writes a Comment on a version) | A ToDo on a version, or a change to its text; a typed Comment on a version (PR 3, `references.py`) |
 
 **Each refusal sits in two hooks**, because Frappe v16 lets a caller skip the obvious one.
 `flags.ignore_validate` skips `validate`, `before_submit`, `before_cancel` and
@@ -261,6 +266,134 @@ spaces in single-line fields, keyword order and case, stripped presentation). Me
 version number is not in it. PR 3 computes it, and `body_md` (v16's `frappe.utils.to_markdown`), at
 publish, from the stored body, **never in `validate`**.
 
+**Example keys: there is no override, by design** (PR 3, decision (c)). Nothing lets an author past a
+finding, in v1, and none is planned: a way past the scan is a way to publish a key to every staff
+member and every AI tool. An article that has to show *where* a key goes uses a placeholder the scan
+accepts, written with angle brackets, never a made-up key of the real shape (a fake
+`sk_live_0000000000000000` is refused like a real one, because the scan cannot tell them apart):
+
+- `STRIPE_SECRET_KEY=sk_live_<secret key from 1Password>`
+- `Authorization: Bearer <token from 1Password>`
+
+`tests/test_knowledge_base_transitions.py` holds both lines verbatim, checks that this README still
+shows them, and checks that each passes the scan as typed and as the editor stores it (`&lt;` and
+`&gt;`), while the same line with a key-shaped value is refused.
+
+## The actions (PR 3)
+
+`api/knowledge_base.py` holds the endpoints, `publish.py` the writes, `notify.py` the review ToDos.
+The rules are the `workflow.*_problems` functions above; an endpoint checks, in this order, that the
+person holds a KB role (Confirm excepted: a process owner need not), that they may read or write the
+document (`check_permission`), and that the rules allow the move, **before it writes anything**, and
+refuses in one sentence that names every broken rule.
+
+| Endpoint | Method | Move | Who | Browser only |
+|---|---|---|---|---|
+| `start_revision(article)` | POST | a published article -> a new Draft, copied from its live version; or the open one | KB Author, KB Approver | no |
+| `submit_for_review(version)` | POST | Draft -> In Review; review ToDos raised | KB Author, KB Approver | no |
+| `withdraw(version)` | POST | In Review -> Draft; review ToDos closed | its creator, submitter or a contributor | no |
+| `request_changes(version, note)` | POST | In Review -> Draft; the note kept in `review_note`; the author's ToDo raised | a KB Approver with no hand in it | **yes** |
+| `approve_and_publish(version, modified)` | POST | In Review -> Published; the article written | a KB Approver with no hand in it (`approval_problems`) | **yes** |
+| `discard(version)` | POST | Draft -> Discarded (kept, never deleted) | its creator, submitter, a contributor, or a KB Approver | no |
+| `confirm_still_accurate(article)` | POST | the review clock restarts | the process owner, or a KB Approver | **yes** |
+| `retire(article, reason)` | POST | Published -> Retired (nothing deleted) | a KB Approver, with no revision open | **yes** |
+| `review_diff(version)` | GET | none: the published text against the draft | KB Author, KB Approver | **yes** |
+
+"Browser only" means `workflow.signed_in_browser` and not an AI gate card: a request authenticated
+by an API key or an OAuth bearer (how Triton and the MCP connect), a background job, the console,
+and a confirmed AI Pending Action are all refused. That is the approval path (approving, sending
+back, retiring, confirming) plus the one endpoint that returns draft text. "A hand in it" is being
+the version's owner, submitter, a contributor or its AI requester. Administrator and Guest never
+approve, send back, retire or confirm, whatever roles they hold, and neither does any account whose
+`User.user_type` (read from the User row at that moment) is not System User.
+
+**The state machine** is `workflow.TRANSITIONS`, and `publish.transition` is the only writer of
+`review_state`; it refuses any move not in the table, whoever calls it:
+
+| From | Action | To |
+|---|---|---|
+| (new) | a KB role saves a new version, or `start_revision` | Draft |
+| Draft | `submit_for_review` | In Review |
+| Draft | `discard` | Discarded (final) |
+| In Review | `withdraw`, `request_changes` | Draft |
+| In Review | `approve_and_publish` | Published (submitted) |
+| Published | a newer version of the same article is approved (`supersede`) | Superseded (final) |
+
+An article is Published from its first approval, and Retired by `retire`; a retired article takes
+no revision (v1 has no way back from retirement). One open version (Draft or In Review) per article:
+`start_revision` answers with the open one, under the article's row lock and a locking read, so two
+people pressing it at once get the same draft. **An article keeps its department**: its KB number
+carries the block, so a revision in another department is refused at submit and at publish.
+
+**Publishing is one transaction** (`publish.publish`), in this order: (1) a first version gets its
+KB number from `SELECT name FROM tabKnowledge Article WHERE name LIKE %s FOR UPDATE`, with
+`kb_number_prefix(block) + "%"` as the bound parameter, and `next_kb_number` over what it returned;
+a revision locks its article instead; (2) the article is inserted or saved under
+`flags.kb_action`, from the version **as stored** (loaded `for_update` in the same transaction),
+with `body_md` (`to_markdown`) and `content_hash` computed from the stored body, `review_by`
+restarted from the approval, and the approved interval stored; (3) every File attached to the
+version whose `?fid=` or `/private/files/` path the body uses is moved onto the article under
+`flags.kb_action` (the link keeps working; nothing is deleted, and an unused File stays on the
+version); (4) the version is submitted with `flags.kb_publish` and the `modified` the approver's page
+sent, and the controller asks the approval rules again; (5) the previous live version is superseded
+under `flags.kb_action`, and the ToDos of both are closed. Any failure rolls all of it back.
+**Nothing changes a version's content at publish**: the controller refuses a submit whose content
+differs from the stored row.
+
+**Concurrency.** Two approvers publishing two new articles in one block at once get different
+numbers: the second `FOR UPDATE` waits for the first to commit and then reads its number. Over an
+empty block with nothing after it both reads take only a gap lock and their inserts deadlock;
+MariaDB rolls one back, and `publish.run` retries the whole action (reads, checks and writes) in a
+new transaction, up to three times, before saying "try again". A double-click on Approve is two
+requests for one version: the second waits on the version's row lock, reads it as Published, and is
+refused. The primary key on `kb_number` means a number is never given twice.
+
+**Review ToDos** (`notify.py`) are written inline, never enqueued (a deploy's `FLUSHDB` destroys
+queued jobs). A version's open ToDos describe its current state: every move closes them all and
+raises what the new state needs: In Review, one per KB Approver who may approve it (enabled System
+Users holding KB Approver, less Administrator, Guest and anyone with a hand in it; if nobody is left
+the form says so); Draft after Request Changes, one for the author (the submitter, else the
+creator). The description is **the title and a link, never draft text**; the fixture Notification
+"New ToDo Created - Notify Creator and Assignee" sends the email. A ToDo that cannot be written is
+rolled back to its own savepoint and logged, and the move goes on.
+
+**The forms** (`public/js/knowledge_base/`, registered in `doctype_js`) show exactly the buttons
+the server would let this person press now: the controllers' `onload` puts
+`workflow.version_actions` / `workflow.article_actions` in `__onload.kb`, which are the same
+`*_problems` functions the endpoints refuse with. A KB Approver who may not approve a version in
+review is told why. Approve sends `frm.doc.modified`. View Changes opens `review_diff` in a dialog:
+each changed field, and the body as a line diff of the two `to_markdown` texts, which is what the AI
+tools will read. The version form hides the comment box (see decision (b)) and is read-only outside
+Draft. Every action is a dialog or a `frappe.set_route`, so Back and Forward work as everywhere else.
+
+### Decisions made in PR 3
+
+- **(a) A version's Files are protected once it leaves Draft.** `files.file_has_permission` refuses
+  `delete` on a File attached to a version that is In Review, Published, Superseded or Discarded
+  (and on one attached to a version that cannot be found), as PR 2 does for an article's Files,
+  unless KB code sets `flags.kb_action`. Wider than "submitted versions" on purpose: a version's
+  pictures change only while its text can. Detaching one was already refused by PR 2's
+  `force_private`. That delete is the only case in which the hook reads anything.
+- **(b) No typed text about a draft outside the draft.** A Comment of type "Comment" on a version is
+  refused (insert and edit), and so is a ToDo on a version that the knowledge base did not raise, or
+  an edit to its text (`references.py`, on `before_validate`, which no flag skips). Refusing, not
+  accepting and documenting, because a Comment and a ToDo are readable by every System Manager and
+  the AI tools acting for one, and a reviewer quoting the draft is the normal case, not the rare
+  one; the review discussion has a home that stays in the draft (`review_note`). Frappe's own
+  record-keeping Comments (Assigned, Attachment and the like) pass: their text is chosen by code (a
+  file name, or the ToDo description, which is the title and a link). The AI gate also refuses
+  `extract_file_content` on a File attached to a version (see the leak table).
+- **(c) No override for the secret scan** in v1; use a placeholder (above).
+- **(d) The doctype acceptance query** in WI-080 named `tabDocType.show_in_global_search`, which v16
+  does not have. It now reads `show_name_in_global_search`, plus the per-field `in_global_search`
+  and `Global Search DocType` checks, and the schema test pins `show_name_in_global_search` falsy.
+- **Retire and Confirm are one person's decision**, not a second person's, because they take text
+  away or keep it, and stopping should never be the hard direction; both are browser-only and never
+  Administrator. Retire is refused while a revision is open, which would otherwise publish into a
+  retired article.
+- **Author actions accept any login** (submit, withdraw, discard, start a revision). They move a
+  draft between people; none of them publishes or returns draft text.
+
 ## Files
 
 `files.py`, registered in `hooks.py`. Both hooks run for every File on the site, so each returns
@@ -283,7 +416,8 @@ stored row's, which v16 has already loaded: no query).
   File as a KB File if either row says so. `api/comments.link_files_to_comment` moves a caller's
   Files with `db_set`, which runs no hook, so it skips KB Files itself.
 - **`file_has_permission`** (`has_permission["File"]`) refuses **delete** on a File attached to a
-  Knowledge Article, unless KB code sets `flags.kb_action`. v16 protects attachments only on a
+  Knowledge Article, **or to a version that has left Draft** (PR 3, decision (a)), unless KB code
+  sets `flags.kb_action`. v16 protects attachments only on a
   submitted document, and an Article is never submitted, so otherwise a File's owner could delete an
   image out of approved text. It is a permission hook and not `on_trash`, because `File.on_trash`
   deletes the bytes before any `doc_events` handler runs. Every other right returns `True` exactly: a
@@ -319,6 +453,26 @@ Granting is a Desk step, and only a System Manager can do it:
   Administrator holds every role implicitly, so the approval rules refuse it by name, as they
   refuse Guest and any account that is not a System User: an approval is always a named person's.
 
+**The Desk steps after PR 3 deploys (Nik).** Nobody holds a KB role on prod yet, so until these are
+done every KB button is hidden and every action is refused. No code grants a role: a seeded grant
+would bypass the Role Profile rule above for Lisa, and who may approve company knowledge is a
+person's decision. The people WI-080 names:
+
+1. **Parker** (drafts): open his User form, check that **Role Profiles is empty**, tick **KB
+   Author** under Roles, and save.
+2. **James and Nik** (approve): the same, with **KB Approver** (it also lets them write drafts; the
+   DocPerm is the same). If either has a Role Profile, use step 3 instead.
+3. **Lisa Symanski** (the fourth approver, approved by James on 2026-09-25): open her User form and
+   **add "KB Approvers" to Role Profiles, keeping "Finance Team"**, then save. Never tick the role
+   directly: her roles are rebuilt from her profiles on every save.
+4. **Check** (read-only): ``SELECT parent, role FROM `tabHas Role` WHERE parenttype='User' AND role
+   IN ('KB Author','KB Approver') ORDER BY parent`` lists exactly the people above, and Lisa's row
+   says KB Approver. A technician (no KB role) appears nowhere.
+
+A KB Approver may write drafts too; the rules only stop them approving one they had a hand in. With
+three approvers besides the author, any one of them can approve Parker's draft; an approver's own
+draft needs one of the other two.
+
 ## File map
 
 | Path | What it is |
@@ -326,47 +480,54 @@ Granting is a Desk step, and only a System Manager can do it:
 | `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00 |
 | `doctype/knowledge_article/` | The published snapshot. Controller `KnowledgeArticle`: refuses every write without `flags.kb_action`, and every delete and rename |
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish` or that breaks an approval rule, and every cancel, amend, delete and rename; applies the content rules on save |
-| `workflow.py` | The approval rules, content-edit and contributor rules, KB numbers and review dates (PR 2). Standard library only, plus `signed_in_browser` from Marketing |
-| `content.py` | Presentation stripping, the secret scan and the content hash (PR 2). Standard library only |
-| `files.py` | The two `File` hooks: private Files, bytes included, that stay attached where they are, and no deleting an article's image (PR 2) |
+| `workflow.py` | The approval rules, content-edit and contributor rules, KB numbers and review dates (PR 2); the state machine (`TRANSITIONS`), who may make each move (`*_problems`), what the forms offer (`version_actions`, `article_actions`) and who is asked to review (`reviewers_for`) (PR 3). Standard library only, plus `signed_in_browser` from Marketing |
+| `content.py` | Presentation stripping, the secret scan and the content hash (PR 2); `shows_anything`, `referenced_files` and `text_diff` (PR 3). Standard library only |
+| `files.py` | The two `File` hooks: private Files, bytes included, that stay attached where they are, and no deleting an article's image (PR 2) or a version's once it has left Draft (PR 3) |
+| `publish.py` | Every write the actions make (PR 3): `transition`, the only writer of `review_state`; `publish`, the one-transaction publish; `start_revision`, `retire`, `confirm_still_accurate`; `run`, the deadlock retry; `asker`; the forms' `onload` payloads |
+| `notify.py` | Review ToDos (PR 3): closed on every move, raised inline for the new state, title and link only |
+| `references.py` | The `Comment` and `ToDo` guards (PR 3, decision (b)): no typed text about a draft outside the draft |
+| [`../api/knowledge_base.py`](../api/knowledge_base.py) | The nine endpoints (PR 3): the permission and rule checks, then `publish` |
+| [`../public/js/knowledge_base/`](../public/js/knowledge_base/) | The two form scripts (PR 3), registered in `doctype_js`: the buttons `__onload.kb` allows, the dialogs, View Changes |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |
 | [`../patches/seed_knowledge_base_roles.py`](../patches/seed_knowledge_base_roles.py) | The two roles and the one-role "KB Approvers" Role Profile. Insert-only; cannot raise |
-| [`../assistant_tools/_gate.py`](../assistant_tools/_gate.py) | `DENYLIST_DOCTYPES`, `DENYLIST_REASONS` and `NEVER_EXEMPT` carry the KB entries |
+| [`../assistant_tools/_gate.py`](../assistant_tools/_gate.py) | `DENYLIST_DOCTYPES`, `DENYLIST_REASONS` and `NEVER_EXEMPT` carry the KB entries; `DENYLIST_FILE_ARGUMENTS` refuses `extract_file_content` on a draft's File (PR 3) |
 | [`../tests/test_knowledge_base_schema.py`](../tests/test_knowledge_base_schema.py) | Flags, the DocPerm matrix, fields, Select options, controller refusals, the seed patch. Its own CI step |
 | [`../tests/test_ai_gate_denylist.py`](../tests/test_ai_gate_denylist.py) | The Version doctype refused on every gate path; the published doctype not refused. On the AI-gate CI step |
 | [`../tests/test_knowledge_base_rules.py`](../tests/test_knowledge_base_rules.py) | `workflow.py` and `content.py`, every branch, with no stub (and a fresh-interpreter check that they import no frappe). Its own CI step |
 | [`../tests/test_knowledge_base_hooks.py`](../tests/test_knowledge_base_hooks.py) | `files.py` (the fast path, the byte move, the delete refusal, registration) and the Version controller's content and approval gates. Its own CI step: it stubs `frappe` |
+| [`../tests/test_knowledge_base_transitions.py`](../tests/test_knowledge_base_transitions.py) | The state machine, every rule of every move, the buttons, who is asked, `shows_anything`/`referenced_files`/`text_diff`, and the example-key placeholders (PR 3). No stub; its own CI step |
+| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3). Its own CI step: it stubs `frappe` |
 
 ## What arrives later
 
 In order, one PR at a time, each verified on prod before the next merges (see WI-080):
 
-- **PR 3**: the actions (`api/knowledge_base.py`), the one-transaction publish, image re-attach,
-  review ToDos and the form buttons. What PR 2 leaves it to do:
-  - set `flags.kb_publish` **and** `flags.kb_opened_modified` (the `modified` the approver's page
-    sent) before `submit()`, and ask `workflow.approval_problems` itself first so the button can
-    explain a refusal before anything is written;
-  - pass `approval_problems` the approver's **`user_type`**, read from the User row at the moment
-    of approval (`frappe.db.get_value("User", frappe.session.user, "user_type")`, as the
-    controller's `_user_type` does), never from the session, which recorded it at login. It is a
-    keyword argument with no default, so a call without it raises `TypeError` rather than
-    approving. Administrator and Guest are refused by name whatever it says;
-  - allocate with `next_kb_number` over the rows its `SELECT ... FOR UPDATE` returns for
-    `kb_number_prefix(block) + "%"`;
-  - compute `body_md` (`frappe.utils.to_markdown`) and `content_hash` at publish from the stored
-    body, and set `review_by` with `workflow.review_by`;
-  - set `flags.kb_action` on each File it moves from the Version onto the Article, or the move is
-    refused;
-  - enforce one open version per article in `start_revision`;
-  - never modify a version's content at publish: the controller refuses a submit whose content
-    differs from the stored row.
 - **PR 4**: the `Knowledge Base` workspace, the Desk tile, the Help menu item, and two reports
   (Due for Review; the Integrity report, which holds the integrity query the denylist refuses over
-  MCP).
+  MCP). What PR 3 leaves it, and what it must hold to:
+  - **The workspace's lists are the states**: "In review" is versions with `review_state = 'In
+    Review'`; "My drafts" is `owner = me` and Draft; "Due for review" is articles with `status =
+    'Published'` and `review_by` before today (the article's field, which `publish` and
+    `confirm_still_accurate` restart). Links to the Version doctype are for KB roles only; a reader
+    reaches the workspace through the Article's `Desk User` DocPerm (the module gate needs one
+    non-child doctype the reader can read).
+  - **The Integrity report** (KB Approver only) checks what only a write past the ORM can break:
+    every Article's `live_version` exists, is submitted, is Published, and has the Article's
+    `version_number`; the Article's `content_hash` equals `content.content_hash` of that version
+    (so a `frappe.db.set_value` on the body shows); `approved_by` is not the live version's owner,
+    submitter, AI requester or a contributor; every version with an `article` other than the live
+    one is Superseded, Discarded or open, and at most one is open; no open version sits on a
+    Retired article; no File attached to either doctype is public. It reads the Version doctype, so
+    it runs as a Script Report (the denylist refuses that SQL over MCP, on purpose).
+  - **Nothing in PR 4 writes.** Every state change stays in `publish.transition` and the article
+    writes in `publish.py`; a report or workspace button that needs a move calls the PR 3
+    endpoints, which check everything again.
+  - **The review ToDos already carry the link** people follow today. The workspace adds lists, not
+    a second notice.
 - **PR 4a** (only if the Google Docs Markdown export keeps pictures and tables): Markdown import.
 - **PR 5 and 6**: in-app search and the two read-only AI tools, `search_company_knowledge` and
   `fetch_knowledge_article`.
 - **PR 7**: the one-way Drive copy for Gemini and outages.
 
-**Hold:** none of this merges before the QuickBooks and Workforce cutover is finished
-(~2026-11-02).
+**Merging:** PRs 1 and 2 are live on prod (installed 1.549.1, verified 2026-09-28). Each later PR
+merges when Nik decides, one at a time, after the one before it is verified on prod.
