@@ -587,6 +587,47 @@ def test_media_selectors_are_namespaced():
 				assert selector.startswith(".ee-"), f"un-namespaced selector in @media: {selector}"
 
 
+def _phone_rules():
+	"""{selector: {property: value}} for every rule in the shell's phone @media block."""
+	shell = _strip_comments(_read(EMAIL_DIR, "_shell.html"))
+	block = shell[shell.index("@media") : shell.index("</style>")]
+	block = block[block.index("{") + 1 :]  # inside the @media braces
+	rules = {}
+	for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+		decls = {}
+		for decl in body.split(";"):
+			if ":" in decl:
+				prop, value = decl.split(":", 1)
+				decls[prop.strip()] = value.strip()
+		for selector in selectors.split(","):
+			rules.setdefault(selector.strip(), {}).update(decls)
+	return rules
+
+
+def test_the_phone_button_fills_the_column_and_centers_its_label():
+	"""`.ee-btn` IS the button's <table>. Until v1.548.1 the phone rule gave it
+	display:block, which drops table layout: the cell shrank to the label, so the
+	fill was half the column, and the anchor (width:100% of that cell plus its
+	inline 30px side padding, content-box) ran 60px past the fill with the label
+	30px right of center — measured at 390px on a premailer-inlined trip_closed
+	email. The table must keep table layout and stretch with its cell, and the
+	anchor must be a full-width block whose padding sits inside its width."""
+	rules = _phone_rules()
+	table, td, a = rules.get(".ee-btn", {}), rules.get(".ee-btn td", {}), rules.get(".ee-btn a", {})
+
+	assert "block" not in table.get("display", ""), "display:block on the button <table> shrinks its cell"
+	assert table.get("width") == "100% !important", "the button table no longer spans the column"
+	assert td.get("width") == "100% !important", "the fill (the td) no longer spans the column"
+	assert a.get("display") == "block !important", "the whole fill is no longer the link"
+	assert a.get("width") == "100% !important"
+	assert a.get("box-sizing") == "border-box !important", "the anchor's 30px padding pushes the label off center"
+	assert a.get("text-align") == "center !important"
+
+	# The old rule's dead selector: ee.button has no nested table, so a rule aimed at
+	# one styles nothing and only hides which element the phone rule really sizes.
+	assert ".ee-btn table" not in rules, "`.ee-btn table` matches nothing: ee.button has no nested table"
+
+
 def test_markdown_links_outrank_frappes_link_rule():
 	"""frappe's `.email-body a:not(.btn){color:#171717;font-weight:600}` survives premailer
 	as an !important head rule and recolours every link it matches in Apple Mail. The
