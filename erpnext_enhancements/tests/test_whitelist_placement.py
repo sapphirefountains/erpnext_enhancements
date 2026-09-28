@@ -88,6 +88,9 @@ MUST_STAY_WHITELISTED = {
         "confirm_actions",
         "cancel_actions",
     ),
+    # The Travel hub's "My Travel" block (v1.551.0) makes this one call and nothing else, so a
+    # lost decorator empties the hub for every traveler. home.py's helpers sit right above it.
+    "travel_management/home.py": ("get_travel_home",),
     # The customer portal's surface on /pay and /pay-card. Each portal endpoint has a private
     # ownership guard directly above it (`_own_invoice_or_throw`, `_own_submitted_invoice`) --
     # the shape of the accident above -- and a lost decorator here fails only on a customer's

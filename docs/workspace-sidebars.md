@@ -16,6 +16,7 @@ grouping and ordering that appears alongside each dashboard.
 | `product_dashboard.json` | Product |
 | `hr_dashboard.json` | HR |
 | `kpi_dashboards.json` | The KPI Dashboards module workspace |
+| `travel.json` | Travel (v1.551.0). Items: Home, My itinerary, Plan a Trip, My trips, Travel rules & per diem, and Places & job sites, then an *Office* group with the three reports and Travel Settings. It replaced a sidebar production had generated, whose two URL items had no URL. `patches/reload_travel_hub` force-imports it |
 | `time_kiosk.json` | Not a workspace at all: the one-item sidebar (a URL link to `/kiosk`) that lets the **Time Kiosk** desk tile render — see the section below, and `patches/seed_time_kiosk_desktop_icon` for the tile itself (v1.482.0) |
 
 All eleven KPI sidebars carry one identical item list, which `tests/test_kpi_departments.py`

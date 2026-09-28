@@ -1217,3 +1217,8 @@ erpnext_enhancements.patches.seed_knowledge_base_roles
 # bumped stamp and this reload_doc(force=True) is the half a forgotten bump cannot undo. Every failure goes
 # to log_error; cannot raise, safe twice.
 erpnext_enhancements.patches.reload_labor_cost_analysis_report
+# v1.551.0 Travel hub revamp: the Travel workspace (My Travel block first, "I want to..." shortcuts, the dead
+# Expense Claim Type link gone) and a curated Travel sidebar replacing prod's generated one (URL items
+# with no URL, no Plan a Trip). Both are timestamp-gated, so: reload_doc(force=True) for the workspace,
+# import_file_by_path(force=True) for the flat sidebar file. Every failure goes to log_error; cannot raise.
+erpnext_enhancements.patches.reload_travel_hub

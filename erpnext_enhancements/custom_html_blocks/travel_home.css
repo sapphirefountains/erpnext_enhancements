@@ -1,0 +1,725 @@
+/*
+ * My Travel — the viewer's own trips, on the Travel workspace.
+ *
+ * PREFIX IS `tvh-`. Every color comes from frappe's own tokens, because this lives
+ * on a workspace beside desk widgets and must follow the desk theme with no work of
+ * its own. They reach in through the shadow root because custom properties
+ * inherit from the host.
+ *
+ * TWO v16 FACTS SHAPE THE BUTTONS. `--primary` is Bootstrap's compile-time color
+ * (#171717 in both themes, never redefined by the dark theme), so a button painted
+ * with it is black on a black card in dark mode. v16's own primary button uses the
+ * pair `--btn-primary` / `--neutral` instead, which dark mode swaps; so does this.
+ * The status colors are frappe's theme-aware pairs (`--bg-green` with
+ * `--text-on-green` and so on), the same ones its indicator pills use.
+ *
+ * The layout is written for a phone first (360px up) and widened with container
+ * queries, so it follows the width of the workspace column rather than of the
+ * window: the desk's sidebar makes those two different on every laptop. Every tap
+ * target is at least 40px tall.
+ */
+
+.tvh-card {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--border-color, #ededed);
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--card-bg, #fff);
+    color: var(--text-color, #383838);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+/* ------------------------------------------------------------------ the head */
+
+.tvh-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.tvh-head-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.tvh-title {
+    display: block;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--heading-color, #171717);
+}
+
+.tvh-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-muted, #525252);
+}
+
+.tvh-refresh {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    margin: -6px -6px 0 0;
+    border: 0;
+    border-radius: var(--border-radius-md, 10px);
+    background: transparent;
+    color: var(--text-muted, #525252);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.tvh-refresh:hover {
+    background: var(--control-bg, #f3f3f3);
+}
+
+.tvh-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.tvh-muted {
+    color: var(--text-muted, #525252);
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+.tvh-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tvh-btn {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 8px 14px;
+    border: 1px solid var(--border-color, #ededed);
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--control-bg, #f3f3f3);
+    color: var(--text-color, #383838);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
+    cursor: pointer;
+}
+
+.tvh-btn:hover {
+    background: var(--btn-default-hover-bg, #e2e2e2);
+}
+
+/* On a tinted panel a button takes the card's own background, so it still reads as
+   a button: in dark mode `--control-bg` and the panel's `--subtle-accent` are the
+   same gray, and a control-colored button there is plain text with a border. */
+.tvh-feature .tvh-btn,
+.tvh-notice .tvh-btn {
+    background: var(--card-bg, #fff);
+}
+
+.tvh-feature .tvh-btn:hover,
+.tvh-notice .tvh-btn:hover {
+    background: var(--control-bg, #f3f3f3);
+}
+
+.tvh-btn.is-primary,
+.tvh-feature .tvh-btn.is-primary {
+    /* On a phone the itinerary button takes the whole first line: it is the one
+       thing most people who open this page came for. */
+    flex-basis: 100%;
+    border-color: var(--btn-primary, #171717);
+    background: var(--btn-primary, #171717);
+    color: var(--neutral, #fff);
+    font-weight: 600;
+}
+
+.tvh-btn.is-primary:hover,
+.tvh-feature .tvh-btn.is-primary:hover {
+    background: var(--btn-primary, #171717);
+    opacity: 0.88;
+}
+
+.tvh-btn.is-quiet {
+    flex: 0 0 auto;
+    border-color: transparent;
+    background: transparent;
+    text-decoration: underline;
+}
+
+.tvh-btn.is-quiet:hover {
+    background: var(--control-bg, #f3f3f3);
+}
+
+.tvh-btn-icon {
+    font-size: 15px;
+    line-height: 1;
+}
+
+.tvh-btn-label {
+    overflow-wrap: anywhere;
+}
+
+.tvh-btn:focus-visible,
+.tvh-link-btn:focus-visible,
+.tvh-refresh:focus-visible,
+.tvh-attn-row:focus-visible,
+.tvh-setup-row:focus-visible,
+.tvh-contacts-summary:focus-visible {
+    outline: 2px solid var(--text-on-blue, #0070cc);
+    outline-offset: 2px;
+}
+
+/* A phone number or an address: a real link, so a tap dials or starts an email. The
+   same chip, as a button, opens a map. */
+.tvh-link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-height: 40px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--control-bg, #f3f3f3);
+    color: var(--text-color, #383838);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.2;
+    text-align: left;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.tvh-link-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.tvh-link-btn:hover {
+    background: var(--btn-default-hover-bg, #e2e2e2);
+    text-decoration: none;
+}
+
+/* ------------------------------------------------------------------ status pills */
+
+.tvh-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.tvh-pill.tone-gray {
+    background: var(--bg-gray, #f3f3f3);
+    color: var(--text-on-gray, #525252);
+}
+
+.tvh-pill.tone-green {
+    background: var(--bg-green, #e4f5e9);
+    color: var(--text-on-green, #16794c);
+}
+
+.tvh-pill.tone-blue {
+    background: var(--bg-blue, #edf6fd);
+    color: var(--text-on-blue, #0070cc);
+}
+
+.tvh-pill.tone-orange {
+    background: var(--bg-orange, #fff1e7);
+    color: var(--text-on-orange, #bd3e0c);
+}
+
+.tvh-meta-item {
+    white-space: nowrap;
+}
+
+/* A short fact about how you relate to a trip: "You're organizing this". */
+.tvh-note {
+    display: inline-flex;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--control-bg, #f3f3f3);
+    color: var(--text-color, #383838);
+    font-size: 11px;
+    line-height: 16px;
+}
+
+/* ------------------------------------------------------------------ the featured trip */
+
+.tvh-feature {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--border-color, #ededed);
+    border-left: 4px solid var(--text-on-gray, #525252);
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--subtle-accent, #f8f8f8);
+}
+
+.tvh-feature.tone-green {
+    border-left-color: var(--text-on-green, #16794c);
+}
+
+.tvh-feature.tone-blue {
+    border-left-color: var(--text-on-blue, #0070cc);
+}
+
+.tvh-feature.tone-orange {
+    border-left-color: var(--text-on-orange, #bd3e0c);
+}
+
+.tvh-feature.tone-gray {
+    border-left-color: var(--text-on-gray, #525252);
+}
+
+.tvh-feature-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.tvh-feature-icon {
+    display: inline-flex;
+    flex: 0 0 44px;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color, #ededed);
+    font-size: 22px;
+    line-height: 1;
+}
+
+.tvh-feature-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* The server's sentence: "You're on this trip now — day 2 of 6". */
+.tvh-headline {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-on-gray, #525252);
+}
+
+.tvh-feature.tone-green .tvh-headline {
+    color: var(--text-on-green, #16794c);
+}
+
+.tvh-feature.tone-blue .tvh-headline {
+    color: var(--text-on-blue, #0070cc);
+}
+
+.tvh-feature.tone-orange .tvh-headline {
+    color: var(--text-on-orange, #bd3e0c);
+}
+
+.tvh-feature-title {
+    margin-top: 2px;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--heading-color, #171717);
+    overflow-wrap: anywhere;
+}
+
+.tvh-feature-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    margin-top: 6px;
+    color: var(--text-muted, #525252);
+}
+
+/* ------------------------------------------------------------------ who to call */
+
+.tvh-contacts {
+    border-top: 1px solid var(--border-color, #ededed);
+    padding-top: 4px;
+}
+
+.tvh-contacts-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    list-style: none;
+    font-weight: 600;
+    color: var(--heading-color, #171717);
+    cursor: pointer;
+    border-radius: var(--border-radius-md, 10px);
+}
+
+.tvh-contacts-summary::-webkit-details-marker {
+    display: none;
+}
+
+.tvh-chevron {
+    display: inline-block;
+    width: 12px;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-muted, #525252);
+}
+
+.tvh-contacts[open] .tvh-chevron {
+    transform: rotate(90deg);
+}
+
+.tvh-count {
+    padding: 0 7px;
+    border-radius: 999px;
+    background: var(--control-bg, #f3f3f3);
+    color: var(--text-muted, #525252);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.tvh-contact-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px;
+    padding: 6px 0 2px;
+}
+
+.tvh-contact {
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--card-bg, #fff);
+}
+
+.tvh-contact-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #525252);
+}
+
+.tvh-contact-name {
+    margin-top: 2px;
+    font-weight: 600;
+    color: var(--heading-color, #171717);
+    overflow-wrap: anywhere;
+}
+
+.tvh-contact-detail {
+    margin-top: 1px;
+    font-size: 12px;
+    color: var(--text-muted, #525252);
+    overflow-wrap: anywhere;
+}
+
+.tvh-contact-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------ notices */
+
+.tvh-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color, #ededed);
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--subtle-accent, #f8f8f8);
+}
+
+.tvh-notice.tone-orange {
+    border-color: transparent;
+    background: var(--bg-orange, #fff1e7);
+}
+
+.tvh-notice.tone-blue {
+    border-color: transparent;
+    background: var(--bg-blue, #edf6fd);
+}
+
+.tvh-notice-icon {
+    flex: 0 0 auto;
+    font-size: 20px;
+    line-height: 1.2;
+}
+
+.tvh-notice-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.tvh-notice-text {
+    line-height: 1.45;
+    color: var(--text-color, #383838);
+}
+
+.tvh-notice .tvh-actions {
+    margin-top: 10px;
+}
+
+/* ------------------------------------------------------------------ sections */
+
+.tvh-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tvh-section-title,
+.tvh-subtitle {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #525252);
+}
+
+.tvh-subtitle {
+    margin-top: 8px;
+}
+
+.tvh-section-note {
+    margin-top: -2px;
+    font-size: 12px;
+    color: var(--text-muted, #525252);
+}
+
+/* ------------------------------------------------------------------ other trips */
+
+.tvh-trips {
+    display: flex;
+    flex-direction: column;
+}
+
+.tvh-trip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 10px 0;
+}
+
+.tvh-trip + .tvh-trip {
+    border-top: 1px solid var(--border-color, #ededed);
+}
+
+.tvh-trip-icon {
+    display: inline-flex;
+    flex: 0 0 36px;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--control-bg, #f3f3f3);
+    font-size: 17px;
+    line-height: 1;
+}
+
+.tvh-trip-main {
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
+.tvh-trip-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--heading-color, #171717);
+    overflow-wrap: anywhere;
+}
+
+.tvh-trip-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--text-muted, #525252);
+}
+
+/* Under the trip on a phone, where each button can be a thumb's width. */
+.tvh-trip-actions {
+    display: flex;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* ------------------------------------------------------------------ needs attention */
+
+/* The coordinators' list sits below the viewer's own trips and is set apart from
+   them: it is work about other people's trips, not information about yours. */
+.tvh-attention {
+    padding-top: 14px;
+    border-top: 1px solid var(--border-color, #ededed);
+}
+
+.tvh-attn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tvh-attn-row,
+.tvh-setup-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 40px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color, #ededed);
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--card-bg, #fff);
+    color: var(--text-color, #383838);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tvh-attn-row:hover,
+.tvh-setup-row:hover {
+    background: var(--subtle-accent, #f8f8f8);
+}
+
+.tvh-attn-main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.tvh-attn-title {
+    font-weight: 600;
+    color: var(--heading-color, #171717);
+    overflow-wrap: anywhere;
+}
+
+.tvh-attn-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-muted, #525252);
+}
+
+.tvh-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.tvh-reason {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg-orange, #fff1e7);
+    color: var(--text-on-orange, #bd3e0c);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.tvh-go {
+    flex: 0 0 auto;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--text-muted, #525252);
+}
+
+.tvh-setup-icon {
+    flex: 0 0 auto;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.tvh-setup-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.tvh-more {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    color: var(--text-muted, #525252);
+}
+
+/* ------------------------------------------------------------------ footer */
+
+.tvh-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color, #ededed);
+}
+
+.tvh-footer-text {
+    flex: 1 1 100%;
+    color: var(--text-muted, #525252);
+}
+
+/* ------------------------------------------------------------------ wider columns */
+
+@container (min-width: 560px) {
+    .tvh-card {
+        padding: 16px 18px;
+    }
+
+    .tvh-feature {
+        padding: 18px;
+    }
+
+    .tvh-btn {
+        flex: 0 0 auto;
+    }
+
+    .tvh-btn.is-primary,
+    .tvh-feature .tvh-btn.is-primary {
+        flex-basis: auto;
+        padding-left: 18px;
+        padding-right: 18px;
+    }
+
+    .tvh-trip-actions {
+        flex: 0 0 auto;
+        justify-content: flex-end;
+    }
+
+    .tvh-footer-text {
+        flex: 0 1 auto;
+    }
+}

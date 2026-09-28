@@ -7,6 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.551.0] - 2026-09-28
+
+**The Travel hub now opens on your own trip.** `/desk/travel` is rebuilt for someone who has
+never used the system. Your current or next trip comes first, with one tap to your itinerary,
+your trip sheet, your documents and who to call. Below it: your other trips, a plain-language
+"I want to…" row, and four steps explaining how a work trip works. Nik asked for it on
+2026-09-28: "someone who has no idea where to go to find their information could navigate it".
+In the prod Route History, the two travelers on the one live trip (Korben and Brian) opened
+the old hub. It showed them a calendar, a planner and three reports, and nothing that said
+"your trip".
+
+### Added
+
+- **The My Travel block** (`custom_html_blocks/travel_home.*`, registered in
+  `setup/custom_html_blocks.py` `BLOCKS`) and its one endpoint,
+  **`travel_management.home.get_travel_home`**.
+  - **Your trip.** It shows the trip you are on now, or else your next one: its dates, a headline
+    such as "You're on this trip now — day 2 of 6" or "Starts in 5 days", and four buttons: *Open
+    my itinerary*, *My trip sheet* (your own PDF), *My documents (N)* and *Trip details*.
+  - **Who to call.** A list that starts closed, as on `/itinerary`: the travel desk, the trip lead,
+    who booked it, the job site, each hotel with its nearest urgent care and directions, and 911.
+  - **Your other trips.** Current and upcoming trips, plus those that ended in the last 14 days,
+    and the trips you organize but don't travel on, with *Keep planning*.
+  - **Receipts reminder.** It appears 1–7 days after a trip you traveled on ends: "Attach your
+    receipts to the trip within a week of getting back, and accounting will reimburse you." That
+    is Nik's 2026-09-28 decision. HRMS is not installed, so there is no claim to submit.
+  - **Needs attention, for coordinators only.** It lists:
+    - trips starting within 14 days that are still Planning;
+    - the checklist's missing items and missing files;
+    - Completed trips waiting to be closed;
+    - failed change alerts.
+
+    It is capped at 20, with "…and N more". Setup notes appear when there is no Travel Desk
+    contact or travel emails are off. Change alerts being off is deliberate, so it is not
+    flagged.
+  - **Empty states.** No Employee linked, no trips, and an organizer who isn't traveling each
+    get a plain sentence.
+  - **No money for anyone.** The server works out every date and every rule, and the block only
+    draws them. It reuses the existing helpers rather than defining anything again:
+    `api.travel._itinerary_trips`'s queries, `_trip_contacts`, `_trip_files`, `_office_contact`,
+    `views.trip_sheet_url`, and `completeness.find_gaps` / `counted_gaps` /
+    `files_not_attached`.
+  - **One failure stays contained.** Each trip's enrichment is guarded, so a trip whose contacts,
+    files or checklist fail drops only that part and logs "Travel home". Only the featured trip
+    is loaded in full, and a coordinator's checklist loads at most 30 active trips.
+- **`workspace_sidebar/travel.json`**, a curated Travel sidebar: Home, My itinerary, Plan a
+  Trip, My trips, Travel rules & per diem, and Places & job sites, then an *Office* group with the
+  three reports and Travel Settings. It replaced the sidebar production had generated for itself.
+  In that one, *My Itinerary* and *Travel Guidelines* had no URL and went nowhere, *New Travel
+  Trip* was still listed, and Plan a Trip was missing (checked on prod 2026-09-28).
+- **Patch `reload_travel_hub`.** A Workspace and a Workspace Sidebar are both timestamp-gated on
+  import, and the Plan a Trip reload patch has already run, so this one has its own name. It
+  uses `reload_doc(force=True)` for the workspace and `import_file_by_path(force=True)` for the
+  flat sidebar file. It cannot raise.
+
+### Changed
+
+- **The Travel workspace**, top to bottom:
+  - The My Travel block.
+  - *I want to…*, with six shortcuts that are all visible to an Employee, so no hidden one leaves
+    a gap: *See my itinerary*, *Plan a Trip*, *My trips* ("N active"), *Who's away when* (the
+    calendar, "N on the calendar"), *Travel rules & per diem* and *Places & job sites*.
+  - *How a work trip works*, in four steps.
+  - *Records, reports and setup*, with the Trips, Reports and Setup cards. Setup is last, so the
+    card an Employee cannot see leaves its gap at the end of the row.
+  - The dead *Expense Claim Type* link is gone (HRMS is absent). `hide_custom` is 1, which drops
+    frappe's automatic "Custom Documents" and "Custom Reports" cards.
+  - The name "Travel", the route, the desk tile and the module are unchanged. `modified` is
+    bumped.
+
+### Not changed, and worth a decision
+
+- **Crew can still open Travel Trip Cost Summary.** Its report roles include Employee, and it
+  shows the costs of their own trips. It is only as open as it was before, and it now sits under
+  "Records, reports and setup" rather than in the first row. Whether crew should see it at all is
+  a permission question left to Nik.
+
+### Tests
+
+| Suite | Before | After | What the new tests cover |
+|---|---|---|---|
+| `tests/test_travel_views.py` | 141 | 166 | The endpoint against the site stub (below) |
+| `tests/test_travel_hub.py` (new) | — | 42 | The block, workspace, sidebar and patch (below) |
+| `tests/test_whitelist_placement.py` | | | `get_travel_home` added to `MUST_STAY_WHITELISTED` |
+
+- **`tests/test_travel_views.py`** runs the endpoint against the site stub.
+  - A crew member's card:
+    - the "now" headline and "day N of M";
+    - their own itinerary, documents and sheet links;
+    - contacts in order;
+    - no money anywhere in the answer.
+  - "Starts in N days" and "tomorrow".
+  - Receipts appear only 1–7 days after a trip.
+  - Organizers who don't travel, and users with no Employee.
+  - For coordinators:
+    - the reasons, and the plan-versus-form targets;
+    - the setup notes;
+    - the cap of 20;
+    - the 30-trip load limit.
+  - Graceful degradation, the real coordinator gate, and the contract's keys.
+  - Five mutations were tried, one at a time, and each made the suite fail:
+    - the coordinator gate always open;
+    - `paid_by` on a contact;
+    - per diem on the card;
+    - receipts shown on the day of return;
+    - owned trips read with `get_all`.
+- **`tests/test_travel_hub.py`** (new, with its own CI step) pins the rest of the change.
+  - The block:
+    - its three files, registered in `BLOCKS` only;
+    - exactly one call to the endpoint, with `root_element` and escaping;
+    - no `frappe.xcall` and no date math;
+    - every `tvh-` class styled.
+  - The workspace:
+    - the block placed first;
+    - the six shortcuts, with their exact labels, types, URLs and filters;
+    - the paragraph and `hide_custom`;
+    - no Expense Claim Type;
+    - Setup last.
+  - The sidebar: every URL item has a URL, Plan a Trip is present, and New Travel Trip is not.
+  - The patch: registered after the old reload patch, and its `execute()` never raises when
+    both imports fail.
+- The block was rendered through a stub desk in four states (a traveler on a trip, an organizer,
+  no employee, a coordinator), at 1280px and 390px in light and dark, and checked by eye.
+
 ## [1.549.1] - 2026-09-27
 
 **On a phone, every email's button now spans the column with its label centered.** Until now
