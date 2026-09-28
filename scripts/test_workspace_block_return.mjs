@@ -469,6 +469,63 @@ for (const file of registering) {
 	});
 }
 
+// Bank Balances' Refresh spends one Plaid call per linked bank and has no lock. A return
+// that ran load() mid-refresh would switch the button back on, so a second click could
+// start a second billed refresh while the first was still out.
+await test("finance_bank_balances.js: a return while Refresh is out reads nothing and keeps Refresh off", async () => {
+	const file = "finance_bank_balances.js";
+	const source = fs.readFileSync(path.join(BLOCKS_DIR, file), "utf8");
+	const desk = makeBlockDesk();
+	const plain = desk.sandbox.frappe.call;
+	let finishRefresh = null;
+	desk.sandbox.frappe.call = (opts) => {
+		if (opts && /\.refresh_now$/.test(opts.method)) {
+			desk.calls.push(opts.method);
+			return new Promise((resolve) => {
+				finishRefresh = () => resolve({ message: { ok: true } });
+			});
+		}
+		return plain(opts);
+	};
+	const button = {
+		disabled: false,
+		listeners: {},
+		addEventListener(type, fn) {
+			this.listeners[type] = fn;
+		},
+	};
+	const HOME = ["Workspaces", "Finance"];
+	desk.navigate(HOME);
+	const root = {
+		host: { isConnected: true },
+		querySelector: (selector) => (selector === "#fbb-refresh" ? button : anything()),
+		querySelectorAll: () => [],
+	};
+	new vm.Script("(function (root_element) {\n" + source + "\n})", { filename: file }).runInContext(desk.sandbox)(root);
+	await settle(20);
+	assert.equal(button.disabled, false, "the first load left Refresh switched off");
+	assert.equal(typeof button.listeners.click, "function", "Refresh has no click handler");
+
+	button.listeners.click();
+	assert.equal(button.disabled, true, "Refresh did not switch itself off");
+	const mid = desk.calls.length;
+	desk.navigate(FORM);
+	desk.navigate(HOME);
+	await settle(20);
+	assert.equal(desk.calls.length, mid, "a return mid-refresh asked the server again");
+	assert.equal(button.disabled, true, "a return mid-refresh switched Refresh back on");
+
+	finishRefresh();
+	await settle(20);
+	assert.equal(button.disabled, false, "Refresh stayed off after the refresh finished");
+	const after = desk.calls.length;
+	desk.navigate(FORM);
+	desk.navigate(HOME);
+	await settle(20);
+	assert.ok(desk.calls.length > after, "a return after the refresh asked nothing: the stale-dashboard bug");
+	assert.ok(!desk.calls.slice(after).some((m) => /\.refresh_now$/.test(m)), "a return spent a Plaid call");
+});
+
 await settle(20);
 await test("no block left a promise rejection unhandled", () => {
 	assert.deepEqual(unhandled.map((r) => String(r && r.message ? r.message : r)), []);

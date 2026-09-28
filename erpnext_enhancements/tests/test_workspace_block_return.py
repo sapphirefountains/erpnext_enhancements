@@ -180,8 +180,16 @@ class TestEveryDataBlockReloads(unittest.TestCase):
 
 	def test_bank_balances_reloads_the_snapshot_never_plaid(self):
 		code = js_code(block_js("finance_bank_balances"))
-		self.assertIn("blocks.onWorkspaceReturn(container, load);", code)
+		self.assertIn("blocks.onWorkspaceReturn(container, () => {", code)
 		self.assertNotIn("onWorkspaceReturn(container, refreshNow)", code)
+		self.assertNotIn("onWorkspaceReturn(container, load)", code)
+
+	def test_bank_balances_skips_a_return_while_refresh_is_out(self):
+		"""refreshNow spends one Plaid call per bank and has no lock. An unguarded return ran
+		load(), whose last step re-enables Refresh, so a second click could start a second billed
+		refresh while the first was still running."""
+		code = js_code(block_js("finance_bank_balances"))
+		self.assertIn("if (!refresh.disabled) load();", code)
 
 
 class TestNoBlockClaimsTheOldLifecycle(unittest.TestCase):

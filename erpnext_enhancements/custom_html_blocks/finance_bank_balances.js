@@ -166,9 +166,15 @@
 
         refresh.addEventListener("click", refreshNow);
         load();
-        // load, never refreshNow: a return reads the cached snapshot.
+        // load, never refreshNow: a return reads the cached snapshot. And not while Refresh or a
+        // load is still out (the button is disabled then): load() would switch the button back on
+        // mid-refresh, and a second click spends another billed Plaid call per bank.
         const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
-        if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
+        if (blocks && blocks.onWorkspaceReturn) {
+            blocks.onWorkspaceReturn(container, () => {
+                if (!refresh.disabled) load();
+            });
+        }
     }
 
     waitForDOM();

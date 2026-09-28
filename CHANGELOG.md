@@ -54,8 +54,10 @@ Briefing, the KPI Cockpit and My Training) except My Travel, which had fixed it 
   registrations are not the block's plain load, on purpose: the **KPI Cockpit** and **Morning
   Briefing** register `load(false)`, and only while no answer is already on its way, because
   `load(true)` recomputes the snapshot or regenerates the briefing (minutes, with Gemini), and a
-  Refresh in flight must be the answer that draws; **Bank Balances** reloads the cached snapshot and
-  never spends a live Plaid call. The KPI Cockpit also gained a ticket: picking another department
+  Refresh in flight must be the answer that draws; **Bank Balances** reloads the cached snapshot,
+  never spends a live Plaid call, and skips a return while its Refresh is still out: `load()` ends by
+  switching Refresh back on, so a return mid-refresh would have let a second click start a second
+  billed Plaid refresh (one call per linked bank, no lock) racing the first. The KPI Cockpit also gained a ticket: picking another department
   while an answer was on its way could land the old department's numbers under the new name. The
   **Projects Dashboard** reloads through a new `fetch_data()` that re-fetches and redraws the tab on
   screen (the Portfolio Gantt included, with its filters and expanded projects kept) without
@@ -75,7 +77,9 @@ Briefing, the KPI Cockpit and My Training) except My Travel, which had fixed it 
   load stops nothing, a route that is not the workspace does nothing, no router is a no-op), then the
   real script of every one of the 39 registering blocks against a stand-in desk, counting what it asks
   the server: leaving asks nothing, coming back asks again, and after the page is rendered again only
-  the new block reloads. Checked by breaking the helper and one block on purpose: each break fails it.
+  the new block reloads. It also clicks Bank Balances' Refresh, holds the Plaid answer, and checks a
+  return in the meantime asks nothing and leaves Refresh off. Checked by breaking the helper and
+  blocks on purpose: each break fails it.
 - `tests/test_workspace_block_return.py` (own CI step): every seeded block that fetches registers or
   is in `NOT_RELOADED` with a reason (and nothing listed there registers), every registration is
   guarded and binds no router handler of its own, a registered function takes the root first (a bare
