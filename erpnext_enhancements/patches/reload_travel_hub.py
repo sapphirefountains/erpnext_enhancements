@@ -24,6 +24,10 @@ source of truth. Someone's own arrangement of a workspace lives in a *private* W
 does not touch. The "My Travel" block itself is created by ``sync_custom_html_blocks`` in
 ``after_migrate``; a workspace may name a block that does not exist yet, because the importer sets
 ``ignore_links``.
+
+It also reloads the **Travel Trip Cost Summary** report, whose roles no longer include Employee:
+crew see every part of a trip but its money, and this report is nothing but money (Nik,
+2026-09-28). Its JSON carries a new stamp for the same age gate.
 """
 
 import frappe
@@ -49,6 +53,16 @@ def execute() -> None:
 	except Exception:
 		frappe.log_error(
 			title="Workspace sidebar reload failed: Travel",
+			message=frappe.get_traceback(),
+		)
+	# Crew no longer open Travel Trip Cost Summary (Nik, 2026-09-28): the report's JSON dropped the
+	# Employee role and got a new stamp, and a Report is timestamp-gated on import like the rest.
+	# reload_doc(force=True) replaces the stored row, roles table included.
+	try:
+		frappe.reload_doc("travel_management", "report", "travel_trip_cost_summary", force=True)
+	except Exception:
+		frappe.log_error(
+			title="Report reload failed: Travel Trip Cost Summary",
 			message=frappe.get_traceback(),
 		)
 	try:

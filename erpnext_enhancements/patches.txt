@@ -1220,5 +1220,6 @@ erpnext_enhancements.patches.reload_labor_cost_analysis_report
 # v1.551.0 Travel hub revamp: the Travel workspace (My Travel block first, "I want to..." shortcuts, the dead
 # Expense Claim Type link gone) and a curated Travel sidebar replacing prod's generated one (URL items
 # with no URL, no Plan a Trip). Both are timestamp-gated, so: reload_doc(force=True) for the workspace,
-# import_file_by_path(force=True) for the flat sidebar file. Every failure goes to log_error; cannot raise.
+# import_file_by_path(force=True) for the flat sidebar file; also the Trip Cost Summary report, whose roles
+# no longer include Employee. Every failure goes to log_error; cannot raise.
 erpnext_enhancements.patches.reload_travel_hub

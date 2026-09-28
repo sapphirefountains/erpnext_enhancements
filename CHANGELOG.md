@@ -77,19 +77,28 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
   - The name "Travel", the route, the desk tile and the module are unchanged. `modified` is
     bumped.
 
-### Not changed, and worth a decision
-
-- **Crew can still open Travel Trip Cost Summary.** Its report roles include Employee, and it
-  shows the costs of their own trips. It is only as open as it was before, and it now sits under
-  "Records, reports and setup" rather than in the first row. Whether crew should see it at all is
-  a permission question left to Nik.
+- **Crew can no longer open Travel Trip Cost Summary** (Nik, 2026-09-28: "remove Trip Cost
+  Summary from crew").
+  - **Why:** the report is nothing but money: Estimated, Actual, Variance, Company Paid, Employee
+    Paid, Claimed and Unclaimed. Until now its roles included Employee, so any crew member could
+    open it from the hub's Reports card and see the costs of their own trips. That is the "all
+    but money" line the trip views, `/itinerary`, the emails and the Trip Sheet already hold.
+  - **Roles now:** exactly the coordinator roles, System Manager, Travel Coordinator and HR
+    Manager. They are not left empty on purpose: a Report with no roles falls back to read
+    permission on its ref_doctype, which every Employee has.
+  - **Deploy:** the report's JSON carries a new stamp, since a Report is timestamp-gated on
+    import. `reload_travel_hub` also force-reloads it, which replaces the stored roles table.
+  - **Checked on prod 2026-09-28:** the live report had the same four roles, no Custom Role
+    override, and was stamped 2026-06-11.
+  - For an Employee, frappe now filters the link out of the Reports card and the sidebar's
+    Office group.
 
 ### Tests
 
 | Suite | Before | After | What the new tests cover |
 |---|---|---|---|
 | `tests/test_travel_views.py` | 141 | 166 | The endpoint against the site stub (below) |
-| `tests/test_travel_hub.py` (new) | — | 42 | The block, workspace, sidebar and patch (below) |
+| `tests/test_travel_hub.py` (new) | — | 44 | The block, workspace, sidebar, patch and the cost report's roles (below) |
 | `tests/test_whitelist_placement.py` | | | `get_travel_home` added to `MUST_STAY_WHITELISTED` |
 
 - **`tests/test_travel_views.py`** runs the endpoint against the site stub.
@@ -113,7 +122,7 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
     - per diem on the card;
     - receipts shown on the day of return;
     - owned trips read with `get_all`.
-- **`tests/test_travel_hub.py`** (new, with its own CI step) pins the rest of the change.
+- **`tests/test_travel_hub.py`** (new, with its own CI step, 44 tests) pins the rest of the change.
   - The block:
     - its three files, registered in `BLOCKS` only;
     - exactly one call to the endpoint, with `root_element` and escaping;
@@ -126,8 +135,9 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
     - no Expense Claim Type;
     - Setup last.
   - The sidebar: every URL item has a URL, Plan a Trip is present, and New Travel Trip is not.
-  - The patch: registered after the old reload patch, and its `execute()` never raises when
-    both imports fail.
+  - The patch: registered after the old reload patch, it reloads the cost report as well, and
+    its `execute()` never raises when every step fails.
+  - The cost report's roles are exactly the coordinator roles, with a stamp newer than prod's.
 - The block was rendered through a stub desk in four states (a traveler on a trip, an organizer,
   no employee, a coordinator), at 1280px and 390px in light and dark, and checked by eye.
 

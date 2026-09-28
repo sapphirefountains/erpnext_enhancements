@@ -531,7 +531,11 @@ class TestTheReloadPatch(unittest.TestCase):
 		result, state = self._run()
 		self.assertIsNone(result)
 		self.assertEqual(
-			state["reload"], [(("travel_management", "workspace", "travel_management"), {"force": True})]
+			state["reload"],
+			[
+				(("travel_management", "workspace", "travel_management"), {"force": True}),
+				(("travel_management", "report", "travel_trip_cost_summary"), {"force": True}),
+			],
 		)
 		self.assertEqual(len(state["imports"]), 1)
 		path, kwargs = state["imports"][0]
@@ -545,25 +549,65 @@ class TestTheReloadPatch(unittest.TestCase):
 		result, state = self._run(fail=("reload", "import", "cache"))
 		self.assertIsNone(result)
 		# Anti-vacuity: each step was tried, and each failure was recorded rather than lost.
-		self.assertEqual(len(state["reload"]), 1)
+		self.assertEqual(len(state["reload"]), 2)
 		self.assertEqual(len(state["imports"]), 1)
 		self.assertEqual(state["cleared"], 1)
 		self.assertEqual(
-			state["errors"], ["Workspace reload failed: Travel", "Workspace sidebar reload failed: Travel"]
+			state["errors"],
+			[
+				"Workspace reload failed: Travel",
+				"Workspace sidebar reload failed: Travel",
+				"Report reload failed: Travel Trip Cost Summary",
+			],
 		)
 
 	def test_a_failed_workspace_does_not_skip_the_sidebar(self):
 		_, state = self._run(fail=("reload",))
 		self.assertEqual(len(state["imports"]), 1)
-		self.assertEqual(state["errors"], ["Workspace reload failed: Travel"])
+		self.assertEqual(
+			state["errors"], ["Workspace reload failed: Travel", "Report reload failed: Travel Trip Cost Summary"]
+		)
 
 	def test_the_sidebar_is_not_reloaded_with_reload_doc(self):
 		"""reload_doc takes a MODULE and looks for `<module>/workspace_sidebar/travel/travel.json`;
 		app-level sidebars are flat files, so it fails — inside an except, in silence."""
 		code = source(APP / "patches" / "reload_travel_hub.py")
 		body = code[code.index("def execute") :]
-		self.assertEqual(body.count("reload_doc("), 1)
+		# Two reload_doc calls, the workspace and the cost report; neither is the sidebar.
+		calls = re.findall(r"frappe\.reload_doc\(([^)]*)\)", body)
+		self.assertEqual(len(calls), 2, calls)
+		for args in calls:
+			self.assertNotIn("workspace_sidebar", args)
 		self.assertIn("import_file_by_path(", body)
+
+
+# --------------------------------------------------------------------------- the cost report
+
+
+class TestTheCostReportIsForCoordinators(unittest.TestCase):
+	"""Crew see every part of a trip but its money, and Travel Trip Cost Summary is nothing but
+	money: estimated, actual, variance, who paid, claimed, unclaimed. Its roles included Employee
+	until v1.551.0, so any crew member could open it from the hub's Reports card (scoped to their own
+	trips). Nik, 2026-09-28: "remove Trip Cost Summary from crew"."""
+
+	PATH = APP / "travel_management" / "report" / "travel_trip_cost_summary" / "travel_trip_cost_summary.json"
+
+	def test_only_the_travel_coordinators_open_it(self):
+		report = json.loads(source(self.PATH))
+		roles = {row["role"] for row in report["roles"]}
+		self.assertNotIn("Employee", roles)
+		# Exactly the roles api.travel._is_coordinator() treats as coordinators (Administrator is
+		# every role). An empty list would NOT mean "nobody": frappe then falls back to read
+		# permission on the ref_doctype, which every Employee has.
+		self.assertEqual(roles, {"System Manager", "HR Manager", "Travel Coordinator"})
+		init = source(APP / "travel_management" / "__init__.py")
+		for role in roles:
+			self.assertIn(f'"{role}"', init[init.index("TRAVEL_COORDINATOR_ROLES") :].split("}")[0])
+
+	def test_its_stamp_is_newer_than_the_row_production_holds(self):
+		"""A Report is timestamp-gated on import; production's row reads 2026-06-11 10:00:00."""
+		report = json.loads(source(self.PATH))
+		self.assertGreater(report["modified"], "2026-06-11 10:00:00.000000")
 
 
 if __name__ == "__main__":

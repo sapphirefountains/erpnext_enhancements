@@ -88,7 +88,7 @@ It is enforced by what the server sends, never by the page hiding it:
 - `api/travel.preview_itinerary_email` returns the address the email would go to only to a coordinator.
 - The person asked for (`get_trip_itinerary`'s `as_employee`, the preview's `employee`) is compared against the crew and never looked up. Anyone else gets "That person is not on this trip." and no name. Both arguments are annotated `str`, so v16's whitelist type check refuses a filter dict before it can reach `frappe.db.get_value` as a filter. That combination briefly turned the refusal into a permission-free yes/no question about any Employee field, CTC included.
 
-**What this does not protect.** Every money field on Travel Trip is permlevel 0 and the Employee role has read and write on the trips it can see, so a crew member still sees costs on the trip form, on the existing Plan a Trip steps (the cost fields and the Review step's "Booked so far") and through REST. Those are unchanged. The rule is about the new views, not a lock on money in general; moving money behind a permlevel is a separate decision.
+**What this does not protect.** Every money field on Travel Trip is permlevel 0 and the Employee role has read and write on the trips it can see, so a crew member still sees costs on the trip form, on the existing Plan a Trip steps (the cost fields and the Review step's "Booked so far") and through REST. Those are unchanged. The one money *report* a crew member could open, Travel Trip Cost Summary, has been coordinators-only since v1.551.0. The rule is about the new views, not a lock on money in general; moving money behind a permlevel is a separate decision.
 
 `tests/test_travel_views.py` walks every non-coordinator payload for money keys at any depth and checks that the fixture's sentinel amounts appear nowhere in its JSON. It also runs the real coordinator gate once, unmocked, down to `user_is_travel_coordinator`, and checks that the itinerary email template (which every preview renders) names no money field. Since v1.547.0 its fixture carries receipts, and every payload — a coordinator's included — is checked for their URLs and for an `attachment` or `receipt` key.
 
@@ -237,6 +237,9 @@ found a calendar, a planner and three reports.
   the sidebar production had generated for itself, whose *My Itinerary* and *Travel Guidelines*
   items had no URL, which still offered *New Travel Trip*, and which had no *Plan a Trip*.
 - Patch `reload_travel_hub` forces both past the import age gate.
+- **Travel Trip Cost Summary is for coordinators only** (Nik, 2026-09-28). The report is all money, and
+  its roles included Employee until v1.551.0. Its roles are now exactly the coordinator roles; an
+  empty list would fall back to ref_doctype read, which every Employee has.
 - The block is registered in `setup/custom_html_blocks.py` `BLOCKS` only. A `DEPARTMENT_DASHBOARD_BLOCKS`
   entry would fail `tests/test_dashboard_widgets.py`, because that test looks for
   `travel/travel.json` and this workspace's folder is `travel_management`. The workspace JSON
