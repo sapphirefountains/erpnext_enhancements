@@ -62,7 +62,11 @@ over the crew, the rooms, the rental, the schedule and the freight, every date m
 first day (:func:`copy_state`). What belonged to the old trip's bookings stays behind: the
 confirmation and tracking numbers, the costs and who paid, the files, a stop's Lead. Nothing is
 saved until the page's first save, which creates the copy through :func:`save_plan` with every
-row new, so every booking gets an id of its own.
+row new, so every booking gets an id of its own. That first save also stores the trip it was
+copied from (``copied_from``, set once and never changed), and the copy screen lists the copies
+still ahead or under way (:func:`copies_of`), so a reload, or a colleague's copy, does not let a
+second one be made without a word. Deleting a trip clears ``copied_from`` on its copies first
+(``TravelTrip.on_trash``): it is provenance, not something to refuse a delete over.
 
 A save based on a version somebody else has since replaced is refused, not merged — the
 same optimistic lock as ``api/quality_wizard.py``.
@@ -1022,6 +1026,17 @@ def _check_not_stale(doc, modified):
 		)
 
 
+def _copied_from(trip):
+	"""The trip a first save says it was copied from, when it is still there and this user may
+	read it; otherwise None. A trip deleted since the copy was made, or one this user may not
+	see, is simply not recorded: the copy is a trip of its own either way, and a first save is
+	never refused over where it came from."""
+	trip = trip.strip() if isinstance(trip, str) else ""
+	if not trip or not frappe.db.exists("Travel Trip", trip):
+		return None
+	return trip if frappe.has_permission("Travel Trip", "read", doc=trip) else None
+
+
 # --------------------------------------------------------------------------- copying a trip
 
 #: Every Date and Datetime the page writes: the trip's days, each person's own days, a
@@ -1052,6 +1067,10 @@ DATED_FIELDS = frozenset(
 
 #: How many trips "Copy a past trip" lists.
 COPYABLE_TRIPS = 50
+
+#: How many of a trip's copies its copy screen names (:func:`copies_of`). Copies still ahead or
+#: under way only, so more than a couple at once would be unusual.
+COPIES_SHOWN = 10
 
 
 def shift_date(value, days):
@@ -1359,8 +1378,13 @@ def _viewer():
 
 
 @frappe.whitelist()
-def get_plan(trip=None):
-	"""Bootstrap the page: the trip (if one is named) and the pick-lists it needs."""
+def get_plan(trip=None, copies=0):
+	"""Bootstrap the page: the trip (if one is named) and the pick-lists it needs.
+
+	``copies``: the copy screen also asks for the trip's copies still ahead or under way
+	(:func:`copies_of`), answered as ``copies``. Nothing else asks, so no other load pays for
+	the query.
+	"""
 	if trip:
 		doc = frappe.get_doc("Travel Trip", trip)
 		doc.check_permission("read")
@@ -1371,7 +1395,24 @@ def get_plan(trip=None):
 		if not frappe.has_permission("Travel Trip", "create"):
 			frappe.throw(_("You are not allowed to plan trips."), frappe.PermissionError)
 		state = None
-	return {"state": state, "lookups": _lookups()}
+	answer = {"state": state, "lookups": _lookups()}
+	if trip and _flag(copies, default=False):
+		answer["copies"] = copies_of(doc.name)
+	return answer
+
+
+def copies_of(trip):
+	"""The trips copied from ``trip`` (their ``copied_from``) that are still ahead or under way,
+	the soonest first: what the copy screen names before a second copy is made, so a reload or a
+	colleague's copy is not forgotten. A finished copy is history, not a duplicate in the making,
+	so it is left off. ``get_list``, so only the copies this user can see. No money."""
+	return frappe.get_list(
+		"Travel Trip",
+		filters={"copied_from": trip, "status": ["in", ["Planning", "Booked", "In Progress"]]},
+		fields=["name", "purpose", "status", "start_date", "end_date"],
+		order_by="start_date asc",
+		limit_page_length=COPIES_SHOWN,
+	)
 
 
 @frappe.whitelist()
@@ -1486,8 +1527,9 @@ def save_plan(plan, trip=None, modified=None):
 
 	Args:
 		plan: JSON — ``{trip, status, travelers, bookings: {table: [card]}, freight, stops,
-			documents}``. Every key is optional except on a first save, which needs the trip
-			and the crew; a first save can carry no files (:func:`merge_documents`).
+			documents, copied_from}``. Every key is optional except on a first save, which needs
+			the trip and the crew; a first save can carry no files (:func:`merge_documents`).
+			``copied_from`` is read on a first save only (:func:`_copied_from`).
 		trip: the Travel Trip to update; omitted on the first save.
 		modified: the ``modified`` the page loaded. A mismatch is refused.
 	"""
@@ -1498,6 +1540,9 @@ def save_plan(plan, trip=None, modified=None):
 		_check_not_stale(doc, modified)
 	else:
 		doc = frappe.new_doc("Travel Trip")
+		# A copy of a past trip (copy_plan) says which trip, on its first save and never again:
+		# what the copy screen lists (copies_of), so a reload still knows a copy was made.
+		doc.copied_from = _copied_from(plan.get("copied_from"))
 
 	try:
 		notes = apply_plan(doc, plan)
