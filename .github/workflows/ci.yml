@@ -823,7 +823,12 @@ jobs:
       # the Files moved under kb_action, the submit with kb_publish and the opened modified, the
       # supersede), a failure at any step writing nothing, a deadlock retried from the start, a
       # double-click publishing once, token and AI-card refusals on the approval path, and
-      # decisions (a) and (b). Own step: it installs its own frappe stub.
+      # decisions (a) and (b). Own step: it installs its own frappe stub. Since v1.556.1 (PR 3's
+      # review fixes) also Frappe's own Discard refused (it left an article that could never be
+      # revised or retired), Retire's role check before any read, an Error Log that outlives the
+      # refusal it explains (the stub's log is in the transaction now, as v16's is), and the
+      # version form run in node: Submit for Review goes on only after a save the server stored.
+      # The node part fails, never skips, in CI (ubuntu-latest ships node).
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc

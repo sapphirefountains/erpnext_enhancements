@@ -54,6 +54,10 @@ obvious hook:
   never ``after_delete`` (``:195-196``).
 * ``before_insert`` runs on every insert, ignore_validate or not (``model/document.py:480``), so
   an amendment is refused there as well as in ``validate``.
+* Frappe's own **Discard** (``Document.discard``, ``model/document.py:1357-1373``) is a third way to
+  docstatus 2 that runs neither cancel hook: ``before_discard``, then ``db_set("docstatus", 2)``,
+  then ``on_discard``. Both are refused (``_refuse_native_discard``, v1.556.1). The KB's own
+  Discard is a ``review_state`` move and never calls it.
 
 What may change after publishing: only ``review_state`` (``allow_on_submit``), when a newer
 version supersedes this one. The publish code (``publish.supersede``) sets ``doc.flags.kb_action``
@@ -124,6 +128,15 @@ class KnowledgeArticleVersion(Document):
 	def on_cancel(self):
 		# before_cancel is skipped under flags.ignore_validate; on_cancel never is.
 		_refuse_cancel(self.name)
+
+	def before_discard(self):
+		# Frappe's own Discard, not the KB's: see _refuse_native_discard.
+		_refuse_native_discard(self.name)
+
+	def on_discard(self):
+		# Document.discard writes docstatus 2 with db_set between the two hooks; raising here rolls
+		# that write back with the request, should anything ever skip before_discard.
+		_refuse_native_discard(self.name)
 
 	def before_update_after_submit(self):
 		self._refuse_unless_kb_action()
@@ -240,6 +253,27 @@ def _refuse_cancel(name):
 			"the article."
 		).format(name),
 		title=_("Versions are never canceled"),
+	)
+
+
+def _refuse_native_discard(name):
+	"""Frappe's own Discard (v16 ``Document.discard``, whitelisted, reached from the form menu's
+	Discard, ``frappe.desk.form.save.discard`` and ``run_doc_method``), refused whoever calls it.
+
+	It checks only ``write``, which every KB Author and KB Approver holds, runs only
+	``before_discard`` and ``on_discard`` (none of the cancel hooks) and sets ``docstatus`` to 2 with
+	``db_set`` while ``review_state`` stays Draft or In Review. The Knowledge Base's own Discard
+	(``api.knowledge_base.discard``) never calls it: it moves ``review_state`` to Discarded through
+	``publish.transition`` and a save, so a Discarded version stays at docstatus 0. Before this
+	refusal (v1.556.1), one click on the menu's Discard left a version at docstatus 2 that still read
+	as open, so the article could never be revised or retired again, and every KB action on it failed
+	with "Cannot edit cancelled document"."""
+	frappe.throw(
+		_(
+			"{0} cannot be discarded from the menu. Use Actions > Discard on a draft, or Withdraw to "
+			"take it out of review first."
+		).format(name),
+		title=_("Discard through the knowledge base"),
 	)
 
 

@@ -281,6 +281,9 @@ def retire(article, reason=None):
 
 	def attempt():
 		ask = publish.asker()
+		# First, before the article is locked or its open version read: the refusal below names the
+		# open draft, and a reader is told nothing about drafts (publish.article_onload).
+		_require_kb_role(ask)
 		doc = frappe.get_doc(ARTICLE, name, for_update=True)
 		doc.check_permission("read")
 		open_row = publish.open_version(doc.name, lock=True)

@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.556.1] - 2026-09-28
+
+**The review fixes for WI-080 PR 3 (#1144), which merged before they landed.** Four defects, all
+confirmed against Frappe 16.35.0 (`origin/version-16`). Each one needs a KB role to reach, and
+nobody holds one on prod yet, so none can have fired. **Grant the KB roles after this release is
+live, not before**: the first fix below is the one that matters, because on 1.555.0 a single click
+on a menu item any KB Author can see leaves an article that can never be revised or retired again
+without a database edit.
+
+### Fixed
+
+- **Frappe's own Discard no longer strands a knowledge-base article.** (Matters before KB roles are
+  granted.) v16 adds a Discard of its own to the form menu of every submittable draft
+  (`public/js/frappe/form/toolbar.js:385-397`), next to the KB's Actions > Discard, and
+  `Document.discard` (`model/document.py:1357-1373`) is whitelisted, checks only `write` (every KB
+  Author and KB Approver holds it), runs `before_discard`, sets `docstatus` 2 with `db_set`, and
+  runs `on_discard`. It runs neither cancel hook, so the Version's cancel refusals never saw it. The
+  version was left at docstatus 2 with `review_state` still Draft or In Review, and from then on:
+  `start_revision` answered with it forever, `retire` refused because it was "still open",
+  Withdraw, Discard, Request Changes and Approve all failed with "Cannot edit cancelled document"
+  (`document.py:1157`), the review to-dos stayed open, and the MCP denylist refuses SQL on that
+  table, so only a bench-console edit could free the article. Now the Version controller refuses it
+  in `before_discard` and in `on_discard` (which runs after the `db_set`, so raising there rolls the
+  write back if anything ever skips the first), the form removes the menu item and stops it in its
+  own `before_discard` form event, and `publish.open_version` counts only docstatus 0 rows as open,
+  so a Draft at docstatus 2 written past the ORM cannot hold an article either. The KB's own Discard
+  is a `review_state` move and a save, never `Document.discard`, so it is untouched.
+- **Retire checks for a KB role before it reads anything**, as the module docstring, the README and
+  the 1.555.0 entry already said every endpoint but Confirm does. It locked the article and read its
+  open version first, and the refusal a reader got named the open draft ("KBV-00002 is still open on
+  it"); every Desk User can read an article, and a reader is otherwise told nothing about drafts
+  (`publish.article_onload`). What leaked was a name and the fact of a draft, never its text.
+  `test_no_kb_role_is_refused_before_anything_is_read` left retire out, which is how it got past CI;
+  it now covers it and asserts that no lock is taken and no SQL runs.
+- **The Error Log a failed publish points Nik to now exists.** When `to_markdown` fails,
+  `publish.body_markdown` logs the exception's type and refuses with "Nik can find the details in the
+  Error Log". v16's `log_error` inserts the row in the request's own transaction unless
+  `defer_insert` (`utils/error.py:95-98`), the refusal makes `application()` roll that transaction
+  back (`app.py:181-184`), and a 417 gets no snapshot of its own (`app.py:448`, 500 and up only), so
+  the row never existed. It is a deferred insert now (redis, written by the scheduler's
+  `deferred_insert.save_to_db` within minutes, which is how prod's own request errors arrive), and so
+  is `notify._quietly`'s log of a to-do it could not write, which a later refusal in the same action
+  or a deadlock retry would otherwise roll back the same way. The test that pinned the log passed
+  anyway, because the stub's `log_error` appended to a list no rollback touched: the stub's Error Log
+  is a table in the transaction now, and a new test checks that a plain log before a refusal
+  vanishes there, so this cannot pass falsely again.
+- **Submit for Review no longer sends the stored copy when the save before it is refused.** With
+  unsaved edits the form ran `frm.save().then(go)`, and v16's `frm.save()` resolves whether or not
+  the server stored the doc (`form.js:850-851`: `after_save` calls `resolve()` with no `on_error`,
+  whatever `r.exc` says; a 417 reaches it through `save.js`'s `error` callback). So a save refused by
+  the secret scan, or by a co-author's newer save, still submitted the version **as stored** (the
+  previous save), asked every approver to review it, and then `reload_doc()` threw the author's edits
+  away. The form now goes on only if the save cleared `__unsaved`, which only a save the server
+  stored does (`model/sync.js:240` drops every key the server's copy lacks). The form script runs in
+  node in the test suite now, so this is pinned by execution rather than by reading the source.
+
+### Changed
+
+- `tests/test_knowledge_base_actions.py`: the stub models `Document.discard` as v16 runs it, pins
+  the new `open_version` query (docstatus included), and runs `knowledge_article_version.js` in a
+  node `vm` (skipped only where node is absent, never in CI: ubuntu-latest ships it).
+  `tests/test_knowledge_base_schema.py` pins the two discard hooks refusing whatever flag is set.
+  The `knowledge_base` README gains a "Fixed after PR 3's review" section and says to grant the
+  roles once this release is live.
+
 ## [1.556.0] - 2026-09-28
 
 **Anyone on staff can see anyone's trips, on the itinerary pages.** On the Travel hub, *My trips*

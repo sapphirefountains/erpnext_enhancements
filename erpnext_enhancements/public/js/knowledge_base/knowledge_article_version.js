@@ -17,6 +17,12 @@
 // because every System Manager, and every AI tool acting for one, can read Comments. Request
 // Changes carries the reviewer's note instead, and it stays on the version.
 //
+// Frappe's own Discard is taken off the menu and refused here too (v1.556.1). v16 puts it on the
+// menu of every submittable draft (form/toolbar.js:385-397), next to the KB's Actions > Discard, and
+// it would set docstatus 2 behind the state machine's back, leaving a version that reads as open
+// and can never be saved again. The server refuses it whatever the form does (the controller's
+// before_discard / on_discard); this only spares the person the click.
+//
 // No screen of its own: every action is a dialog over the form or a route to another form
 // (frappe.set_route, which gives it a history entry), so Back and Forward work as they do
 // everywhere else in the Desk.
@@ -26,6 +32,7 @@ const KB_METHOD = "erpnext_enhancements.api.knowledge_base.";
 frappe.ui.form.on("Knowledge Article Version", {
 	refresh(frm) {
 		kb_hide_comment_box(frm);
+		kb_hide_native_discard(frm);
 		if (frm.is_new()) return;
 
 		const kb = (frm.doc.__onload && frm.doc.__onload.kb) || {};
@@ -65,6 +72,20 @@ frappe.ui.form.on("Knowledge Article Version", {
 			);
 		}
 	},
+
+	// Frappe's own Discard, should it be reached some other way than the menu item removed above
+	// (form.js _discard runs this and stops when frappe.validated is false). Never the KB's own
+	// Discard, which is a kb_call and runs no form event.
+	before_discard() {
+		frappe.validated = false;
+		frappe.msgprint({
+			title: __("Discard through the knowledge base"),
+			indicator: "orange",
+			message: __(
+				"Use Actions > Discard on a draft, or Withdraw to take it out of review first. This menu item would leave the version stuck."
+			),
+		});
+	},
 });
 
 // ------------------------------------------------------------------ the actions
@@ -92,9 +113,16 @@ function kb_submit(frm) {
 			}
 			frm.reload_doc();
 		});
-	// Unsaved edits first: what is reviewed is what is stored.
+	// Unsaved edits first: what is reviewed is what is stored. v16's frm.save() resolves even when
+	// the server refuses the save (form.js:850-851 resolve with no on_error, whatever r.exc says), so
+	// the promise alone would send the older stored copy for review and the reload after it would
+	// throw the edits away. Only a save the server accepted syncs the stored doc back and clears
+	// __unsaved (model/sync.js:240), so a form still dirty afterwards means it was refused: stop,
+	// and leave the edits on screen with the refusal.
 	if (frm.is_dirty()) {
-		frm.save().then(go);
+		frm.save().then(() => {
+			if (!frm.is_dirty()) go();
+		});
 	} else {
 		go();
 	}
@@ -307,4 +335,16 @@ function kb_escape(value) {
 function kb_hide_comment_box(frm) {
 	const $box = frm.footer && frm.footer.wrapper && frm.footer.wrapper.find(".comment-box");
 	if ($box && $box.length) $box.toggle(false);
+}
+
+function kb_hide_native_discard(frm) {
+	// v16 rebuilds the menu before every "refresh" event (form.js:623-630: refresh_header, then the
+	// trigger), so removing it here removes it every time. Exact label only, and never a
+	// user-action row: add_custom_button copies Actions > Discard into the menu for small screens.
+	const $menu = frm.page && frm.page.menu;
+	if (!$menu || !$menu.find) return;
+	const label = __("Discard");
+	$menu.find(".menu-item-label").each(function () {
+		if ($(this).text().trim() === label) $(this).closest("li").not(".user-action").remove();
+	});
 }

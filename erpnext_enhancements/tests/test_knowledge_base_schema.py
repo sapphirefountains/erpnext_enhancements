@@ -27,7 +27,7 @@ row is ever exercised:
   ``constants.DEFAULT_REVIEW_EVERY_MONTHS`` on both doctypes, the cadence POL-0001 sets.
 * **The controllers** carry the class names Frappe derives (a mismatch gets a DocType
   force-deleted on migrate), and refuse what they must refuse, in both the hook a flag can skip
-  and the one it cannot.
+  and the one it cannot (since v1.556.1 that includes Frappe's own Discard on a version).
 * **The seed patch** is registered once under ``[post_model_sync]``, seeds every role the DocPerm
   rows name with ``desk_access = 1`` plus the one-role "KB Approvers" Role Profile, is insert-only
   and idempotent, and cannot raise.
@@ -738,6 +738,17 @@ class TestVersionController(unittest.TestCase):
 		doc.flags.kb_action = True
 		doc.flags.kb_publish = True
 		for hook in ("before_cancel", "on_cancel"):
+			with self.subTest(hook=hook), self.assertRaises(Refused):
+				getattr(doc, hook)()
+
+	def test_frappes_own_discard_is_always_refused_in_both_hooks(self):
+		"""v16 Document.discard (whitelisted, on every submittable draft's form menu) checks only write,
+		runs before_discard, db_set("docstatus", 2), then on_discard, and neither cancel hook. The KB's
+		own Discard is a review_state move and never calls it, so no flag lets it through (v1.556.1)."""
+		doc = self._doc()
+		doc.flags.kb_action = True
+		doc.flags.kb_publish = True
+		for hook in ("before_discard", "on_discard"):
 			with self.subTest(hook=hook), self.assertRaises(Refused):
 				getattr(doc, hook)()
 
