@@ -76,7 +76,7 @@ widening them would have shown every trip's costs to all crew.
 
 | Suite | Before | After | What the new tests cover |
 |---|---|---|---|
-| `tests/test_travel_views.py` | 194 | 213 | The endpoint and the staff gate (below) |
+| `tests/test_travel_views.py` | 201 | 220 | The endpoint and the staff gate (below) |
 | `tests/test_travel_hub.py` | 47 | 58 | The hub, sidebar and patch (below) |
 | `scripts/test_web_flow_history.js` | 528 | 604 checks | The list screen's history, rendering and failures (below) |
 
@@ -101,6 +101,68 @@ widening them would have shown every trip's costs to all crew.
 - **`tests/test_itinerary_service_worker.py`** pins the own-trips-first trim.
 - **`tests/test_travel_planner.py`**'s list of places that push history now includes the two new
   pushes.
+
+## [1.555.1] - 2026-09-28
+
+**The mileage rate can be $0.725 a mile.** Nik reported on 2026-09-28 that 0.725 is the
+correct rate and Travel Settings would not accept it. Both mileage rate fields now keep three
+decimal places. **After this deploys, someone must open Travel Settings and enter 0.725 in
+Mileage Rate (per mile) again.** The fix does not change the 0.72 that is stored there now.
+
+### Fixed
+
+- **A mileage rate of 0.725 saved as 0.72.**
+  - **Symptom:** typing 0.725 into *Mileage Rate (per mile)* on Travel Settings left 0.72.
+    The same happened in *Rate per Mile* on a trip's Mileage row. Production's Travel
+    Settings holds 0.72 today.
+  - **Cause:** both fields (`Travel Settings.mileage_rate` and `Trip Mileage.rate`) are
+    Currency fields with no `precision` of their own, so they inherit the site's currency
+    precision, which is 2 decimals. In frappe v16, `model/meta.py`
+    `get_field_precision` returns the docfield's own `precision` when it has one. For a
+    Currency field without one, it returns the `currency_precision` default or the number
+    format's precision. On the Desk, `ControlCurrency.get_precision` does the same, and
+    `ControlFloat.parse` rounds whatever is typed to that precision before the value is sent
+    to the server. The server does not round (`_fix_numeric_types` only casts, and a Currency
+    column is `decimal(21,9)`), so the browser was the step that cut the third decimal.
+  - **Fix:** both rate fields now set `"precision": "3"`. The form keeps 0.725 when it is
+    typed. The grid formatter shows 0.725, and a rate with no third decimal still shows two
+    (0.50, not 0.500). No Property Setter or setup code overrides precision on either field.
+    A DocType JSON import is hash-gated, so the change applies on the next migrate without a
+    `modified` bump.
+  - **The amount stays in cents.** `TravelTrip._compute_mileage` used to store
+    `distance × rate` unrounded, which the new rate would make 31.175 for 43 miles. It now
+    rounds the result to the Amount field's own precision
+    (`flt(..., row.precision("amount"))`), so 43 miles at 0.725 is **31.18**. Legacy banker's
+    rounding (frappe's default), banker's rounding and commercial rounding all give 31.18.
+    The trip's mileage and cost totals are sums of these amounts, so they stay in cents too.
+    The Amount field keeps the default currency precision.
+  - **Plan a Trip showed the rate rounded.** The Personal Vehicle card's "Reimbursed at {0} a
+    mile" called `format_currency(rate, currency)`. With no decimal places given,
+    `format_currency` rounds to the currency's two places, so $0.725 would have read $0.73
+    under frappe's default rounding method (or $0.72 under banker's rounding).
+    The card now passes 3 when the rate has a third decimal. The total is still shown in
+    cents. No other reader rounds the rate. `_lookups` sends it to the page as stored. The
+    Expense Claim line text in `travel_management/api.py` prints it as a plain number.
+    Reports, reminders, emails, the trip views and the Trip Sheet read only amounts and
+    totals, never the rate.
+
+### Notes
+
+- **Re-enter the rate after deploy.** The stored 0.72 stays until someone saves Travel
+  Settings with 0.725.
+- **Existing mileage rows keep the rate they already have.** `_compute_mileage` copies the
+  settings rate only onto a row whose rate is 0, and Plan a Trip never writes a rate. So a
+  row that already holds 0.72 stays at 0.72. To move one to 0.725, edit its *Rate per Mile*,
+  or clear it to 0 so the next save copies the settings rate. A row that is already on an
+  Expense Claim is never recomputed.
+- **Tests:** `TestTheMileageRate` in `tests/test_travel_views.py` checks four things. Both
+  rate fields have precision `"3"`. The Amount field keeps the default precision. A row with
+  no rate gets 0.725 from settings and 43 miles comes to 31.18. A row with its own rate keeps
+  it, and a claimed row is left alone. The suite's `frappe` stub rounds with Python's
+  `round`, which works on the binary float. 3 × 0.725 is held as 2.17499…, so `round` gives
+  2.17 where frappe gives 2.18. The class therefore patches in a port of frappe v16's `flt`
+  and pins the 3-mile case as well. Without the rounding fix the 43-mile test fails with
+  `31.175 != 31.18`.
 
 ## [1.555.0] - 2026-09-28
 

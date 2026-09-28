@@ -37,6 +37,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_travel_views -v
 
 import inspect
 import json
+import math
 import os
 import re
 import shutil
@@ -1584,6 +1585,124 @@ class TestCopiedFromNeverRefusesASave(unittest.TestCase):
 		self.assertIsNone(doc.copied_from)
 
 
+def _frappe_flt(value, precision=None):
+	"""frappe v16 ``utils.data.flt`` with the default rounding method, Banker's Rounding (legacy).
+
+	The module stub's ``flt`` is Python's ``round``, which rounds the binary float: 3 x 0.725 is
+	2.17499…, so ``round(3 * 0.725, 2)`` is 2.17. frappe scales and snaps to 8 places first, so
+	the half cent rounds up and ``flt(3 * 0.725, 2)`` is 2.18 — as do the other two methods
+	(Banker's Rounding breaks the tie to the even 8, Commercial Rounding away from zero)."""
+	try:
+		num = float(value or 0)
+	except (TypeError, ValueError):
+		return 0.0
+	if precision is None:
+		return num
+	precision = int(precision)
+	multiplier = 10**precision
+	num = round(num * multiplier if precision else num, 8)
+	floor_num = math.floor(num)
+	decimal_part = num - floor_num
+	if not precision and decimal_part == 0.5:
+		num = floor_num if floor_num % 2 == 0 else floor_num + 1
+	elif decimal_part == 0.5:
+		num = floor_num + 1
+	else:
+		num = round(num)
+	return num / multiplier if precision else num
+
+
+class TestTheMileageRate(unittest.TestCase):
+	"""The mileage rate is $0.725 a mile, and the form would not take it (reported 2026-09-28).
+
+	Both rate fields are Currency, and a Currency field with no ``precision`` of its own takes the
+	site's currency precision, 2 (frappe v16 ``model/meta.py`` ``get_field_precision``); the
+	Desk's ``ControlCurrency.parse`` rounds what is typed to that, so 0.725 saved as 0.72. Each
+	rate field now carries precision 3. The amount is money and stays at cents: the controller
+	rounds miles x rate to the amount field's own precision, so it never holds 31.175."""
+
+	DOCTYPES = os.path.join(APP_DIR, "travel_management", "doctype")
+	#: What ``get_field_precision`` answers for a Currency field with no precision of its own.
+	SITE_CURRENCY_PRECISION = 2
+
+	@classmethod
+	def fields(cls, doctype):
+		with open(os.path.join(cls.DOCTYPES, doctype, f"{doctype}.json"), encoding="utf-8") as fh:
+			return {f["fieldname"]: f for f in json.load(fh)["fields"]}
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		self.settings = types.SimpleNamespace(mileage_rate=0.725)
+		for patcher in (
+			mock.patch.object(self.controller, "get_travel_settings", lambda: self.settings),
+			mock.patch.object(self.controller, "flt", _frappe_flt),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def row(self, **values):
+		"""A Trip Mileage row whose ``precision()`` answers as frappe v16's ``BaseDocument.precision``
+		would, from the doctype JSON: the field's own precision, else the site's currency precision."""
+		fields = self.fields("trip_mileage")
+		row = FakeRow(**values)
+		row.precision = lambda fieldname: int(
+			fields[fieldname].get("precision") or self.SITE_CURRENCY_PRECISION
+		)
+		return row
+
+	def trip(self, *rows):
+		doc = self.controller.TravelTrip()
+		doc.mileage = list(rows)
+		return doc
+
+	def test_both_rate_fields_keep_a_tenth_of_a_cent(self):
+		for doctype, fieldname in (("travel_settings", "mileage_rate"), ("trip_mileage", "rate")):
+			with self.subTest(f"{doctype}.{fieldname}"):
+				field = self.fields(doctype)[fieldname]
+				self.assertEqual(field["fieldtype"], "Currency")
+				self.assertEqual(field.get("precision"), "3")
+
+	def test_the_amount_stays_in_cents(self):
+		amount = self.fields("trip_mileage")["amount"]
+		self.assertEqual(amount["fieldtype"], "Currency")
+		self.assertNotIn("precision", amount, "the site's currency precision: cents")
+
+	def test_a_row_takes_the_settings_rate_unrounded_and_its_amount_in_cents(self):
+		row = self.row(idx=1, distance=43, rate=0)
+		self.trip(row)._compute_mileage()
+		self.assertEqual(row.rate, 0.725)
+		self.assertEqual(row.amount, 31.18)  # 43 x 0.725 = 31.175
+
+	def test_a_half_cent_rounds_up_as_frappe_rounds_it(self):
+		# 3 x 0.725 = 2.175, held as 2.17499…: Python's round gives 2.17, frappe's flt 2.18.
+		row = self.row(idx=1, distance=3, rate=None)
+		self.trip(row)._compute_mileage()
+		self.assertEqual((row.rate, row.amount), (0.725, 2.18))
+
+	def test_a_row_with_its_own_rate_keeps_it(self):
+		row = self.row(idx=1, distance=10, rate=0.655)
+		self.trip(row)._compute_mileage()
+		self.assertEqual((row.rate, row.amount), (0.655, 6.55))
+
+	def test_a_claimed_row_is_left_as_it_was(self):
+		# On an Expense Claim already: a rate entered as 0.72 before this fix stays 0.72.
+		row = self.row(idx=1, distance=43, rate=0.72, amount=30.96, expense_claim="HR-EXP-1")
+		self.trip(row)._compute_mileage()
+		self.assertEqual((row.rate, row.amount), (0.72, 30.96))
+
+	def test_plan_a_trip_shows_the_rate_to_its_third_place(self):
+		# format_currency with no places rounds to the currency's two: $0.725 would lose its third.
+		with open(
+			os.path.join(APP_DIR, "travel_management", "page", "plan_a_trip", "plan_a_trip.js"),
+			encoding="utf-8",
+		) as fh:
+			page = fh.read()
+		self.assertIn("const rate_places = flt(rate, 2) === rate ? undefined : 3;", page)
+		self.assertIn("format_currency(rate, this.lookups.currency, rate_places)", page)
+		# The page is handed the rate as stored, not rounded on the way.
+		self.assertIn('"mileage_rate": flt(settings.mileage_rate),', inspect.getsource(planner._lookups))
+
+
 class TestGetTripItinerary(MoneyAssertions):
 	def setUp(self):
 		self.doc = install_site()
@@ -2039,7 +2158,8 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		)
 		self.assertIn("a one-time reminder about three days after the trip ends", policy)
 		self.assertIn("a closed trip can only be changed by a Travel Coordinator", policy)
-		# Section 4: no rate is promised (Travel Settings.mileage_rate is 0 on production).
+		# Section 4: no rate is promised. It lives in Travel Settings.mileage_rate (0 on production
+		# when this was written, $0.725 a mile from 2026-09-28), and a figure here would go stale.
 		self.assertNotIn("company rate", policy)
 		self.assertIn("accounting reimburses them with the rest of your trip expenses", policy)
 		# Section 5: the itinerary email carries no money (pre_travel_reminder.html).
