@@ -209,8 +209,10 @@ class TestTheWorkspaceBlock(unittest.TestCase):
         self.assertNotIn("${", code)
 
     def test_it_survives_the_shadow_root_contract(self):
-        """The workspace re-runs the whole script with a fresh root on every
-        navigation, so nothing may be cached across renders."""
+        """The workspace runs the whole script again, with a fresh root, each time it
+        renders the page, so nothing may be cached across renders. That is not every
+        return to it: coming back from a course or a form reloads through the shared
+        return helper instead (tests/test_workspace_block_return.py)."""
         code = js_code(BLOCK_JS)
         self.assertIn("root_element", code)
 

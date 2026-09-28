@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.556.3] - 2026-09-28
+
+**Dashboards now show fresh numbers when you come back to them.** Open a dashboard, click through to a
+project, a task or a lead, change something, press Back: until now every block on the dashboard
+showed exactly what it showed when you first opened it, the thing you had just changed included, and
+stayed that way until the browser tab was reloaded. That was true of every block in this app that
+loads data (the department dashboards' widgets, Home's Projects and Task dashboards, Morning
+Briefing, the KPI Cockpit and My Training) except My Travel, which had fixed it for itself.
+
+### Fixed
+
+- **Why it happened.** The desk keeps a single Workspaces page, and v16's `Workspace.show()` returns
+  early when the workspace it would show is the one already shown
+  (`frappe/public/js/frappe/views/workspace/workspace.js:91`,
+  `if (this._page?.name === page.name) return; // already shown`). Coming back to a workspace from a
+  form, a list or a desk page (the Back button, a breadcrumb, the sidebar) lands on that early return:
+  nothing is rendered, so no Custom HTML Block script runs. A block's script runs only when the
+  workspace *renders* the page, which is the first visit and coming back from a different workspace.
+  Thirty block headers said the opposite ("the workspace re-runs this whole script with a fresh root
+  on every navigation"), so a stale number read as stale data, and nobody went looking. The Travel
+  hub found it for itself in v1.554.0 and fixed only its own block.
+- **The fix is one desk-wide helper,** `public/js/global_enhancements/workspace_block_return.js`, in
+  the desk bundle. A block calls `erpnext_enhancements.workspace_blocks.onWorkspaceReturn(root, load)`
+  once its DOM is ready, and when the route comes back to the workspace it was drawn on, and it is
+  still on the page, the helper runs `load(root)` again. The order of v16's events is what makes this
+  delicate, so it is worth writing down. `router.route()` parses the route into a new array
+  (`this.current_route = await this.parse()`), calls `render()`, and only then fires `change`
+  (`router.js:147-152`). A render draws its blocks later: EditorJS renders behind
+  `editor.isReady.then` (`workspace.js:302-310`), and each `CustomBlockWidget` awaits
+  `frappe.model.with_doc` before `create_shadow_element` runs the script (`custom_block_widget.js:26-30`).
+  So a freshly drawn block registers *after* its own navigation's `change` and has loaded itself, and
+  the next `change` that finds it is a real return: no double request. In case that order ever
+  changes, a block registered under the route array that is still current is left alone. Only the
+  workspace being shown reloads (from Home to Travel, `change` fires while Home's blocks are still in
+  the document), and a block whose host has left the document is dropped. `frappe.router.off()` can
+  never remove a handler (`event_emitter.js:26-28` wraps it in a new function before unbinding), so
+  the helper binds exactly one for the whole desk rather than one per block per render. The router's
+  handlers run in turn under jQuery, where an exception stops the rest and rejects `route()`, so every
+  step is inside `try/catch` and one block's failing load never stops the others.
+- **Every data block registers.** Each guards the call
+  (`window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks`), so a device holding
+  a bundle cached from before this release still draws every block and just keeps its first answer.
+  Where the refresh button (or a timer, or a realtime update) and a return can both ask at once, each
+  ask takes a ticket on the root and only the newest answer draws, following My Travel. Three
+  registrations are not the block's plain load, on purpose: the **KPI Cockpit** and **Morning
+  Briefing** register `load(false)`, and only while no answer is already on its way, because
+  `load(true)` recomputes the snapshot or regenerates the briefing (minutes, with Gemini), and a
+  Refresh in flight must be the answer that draws; **Bank Balances** reloads the cached snapshot and
+  never spends a live Plaid call. The KPI Cockpit also gained a ticket: picking another department
+  while an answer was on its way could land the old department's numbers under the new name. The
+  **Projects Dashboard** reloads through a new `fetch_data()` that re-fetches and redraws the tab on
+  screen (the Portfolio Gantt included, with its filters and expanded projects kept) without
+  re-binding the Gantt toolbar, which `init_gantt_filters` would have stacked.
+- **My Travel uses the helper too,** so there is one mechanism: its own `watchReturn` router handler,
+  the helper's first version, is gone.
+- **Two blocks deliberately do not reload,** and say why in their headers: Desk Shortcuts asks the
+  server nothing (it paints `frappe.boot`), and Finance Astrology is one server-cached text per sign
+  per day. Every false lifecycle claim is corrected, the KPI Cockpit's inline "on every workspace
+  navigation" included.
+
+### Added
+
+- `scripts/test_workspace_block_return.mjs` (own CI step, node): the helper against a router that
+  fires `change` the way v16's does (a return reloads each block once, a fresh render loads once on
+  either side of `change`, a replaced block is dropped rather than skipped, a throwing or rejecting
+  load stops nothing, a route that is not the workspace does nothing, no router is a no-op), then the
+  real script of every one of the 39 registering blocks against a stand-in desk, counting what it asks
+  the server: leaving asks nothing, coming back asks again, and after the page is rendered again only
+  the new block reloads. Checked by breaking the helper and one block on purpose: each break fails it.
+- `tests/test_workspace_block_return.py` (own CI step): every seeded block that fetches registers or
+  is in `NOT_RELOADED` with a reason (and nothing listed there registers), every registration is
+  guarded and binds no router handler of its own, a registered function takes the root first (a bare
+  `load(force)` would recompute on every return), and no block file claims the old lifecycle,
+  comments included.
+
+### Changed
+
+- `tests/test_travel_hub.py` pins My Travel's registration with the helper instead of its own handler,
+  and its node run now loads the real helper; every expected count is unchanged.
+  `tests/test_training_dashboard.py`'s docstring stops repeating the false claim. The
+  `custom_html_blocks` README gains "When a block script runs"; the Travel, `public` and `tests`
+  READMEs point at it.
+
 ## [1.556.1] - 2026-09-28
 
 **The review fixes for WI-080 PR 3 (#1144), which merged before they landed.** Four defects, all
