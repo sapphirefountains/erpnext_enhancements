@@ -1234,10 +1234,30 @@ function tripServer(trips) {
 			},
 		};
 	};
-	server.handlers.get_plan = (args) => ({
-		lookups: { default_company: "SF", employees: [], currency: "USD" },
-		state: args && args.trip ? state(db[args.trip]) : undefined,
-	});
+	server.handlers.get_plan = (args) =>
+		Object.assign(
+			{
+				lookups: { default_company: "SF", employees: [], currency: "USD" },
+				state: args && args.trip ? state(db[args.trip]) : undefined,
+			},
+			// planner.copies_of, for the copy screen only: the trips copied from this one that are
+			// still ahead or under way, the soonest first.
+			args && args.trip && args.copies
+				? {
+						copies: Object.values(db)
+							.filter((rec) => rec.copied_from === args.trip)
+							.filter((rec) => ["Planning", "Booked", "In Progress"].includes(rec.status || "Planning"))
+							.map((rec) => ({
+								name: rec.name,
+								purpose: rec.trip.purpose,
+								status: rec.status || "Planning",
+								start_date: rec.trip.start_date,
+								end_date: rec.trip.end_date,
+							}))
+							.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))),
+				  }
+				: {}
+		);
 	// planner.save_plan, as far as keys go: a stored group id is kept and a page key
 	// ("new:<n>", "row:<name>") is given an id (normalize_group), for cards and shipments alike;
 	// then each file's booking, named by the page key, is remapped to that id (merge_documents),
@@ -1300,6 +1320,8 @@ function tripServer(trips) {
 			freight,
 			documents,
 			modified: `${name}@${++seq + 1}`,
+			// Where a copy came from: read on the first save only, and kept (planner._copied_from).
+			copied_from: trip ? db[trip].copied_from : p.copied_from && db[p.copied_from] ? p.copied_from : undefined,
 		};
 		return state(db[name]);
 	};
@@ -4053,6 +4075,113 @@ async function planATripSuite() {
 		await settle();
 		assert.equal(server.sent("get_plan").length, 3);
 		assert.equal(p.copy.source.trip.end_date, "2026-10-05");
+	});
+
+	// v1.550.0 (Nik, 2026-09-28): a copy stores the trip it came from, so the copy screen still
+	// names it after a reload, and names a copy someone else made. Before, only the page's memory
+	// knew, and a reload let a second copy be made without a word.
+	await test("a reload of the copy screen still names the copy made before it, and a colleague's; a finished one is left off", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		let p = planner();
+		assert.deepEqual(
+			server.sent("get_plan").map((c) => c.args),
+			[{ trip: "TRIP-9", copies: 1 }],
+			"the copy screen asks for the trip's copies"
+		);
+		assert.deepEqual(p.copy.existing, [], "none yet");
+		p.copy.start_date = "2026-11-02";
+		press("Make the copy");
+		await settle();
+		p.go(1); // Next: the first save
+		await settle();
+		const name = p.state.name;
+		assert.ok(name && name.startsWith("TRIP-NEW"), "the copy is a trip now");
+		const first = JSON.parse(server.sent("save_plan")[0].args.plan);
+		assert.equal(first.copied_from, "TRIP-9", "the first save says which trip it was copied from");
+		assert.equal(db[name].copied_from, "TRIP-9");
+		// Set once: a later save of the copy does not say it again.
+		p.state.trip.purpose = "Pump swap, again";
+		p.save();
+		await settle();
+		const later = server.sent("save_plan");
+		assert.equal(later.length, 2);
+		assert.equal(later[1].args.trip, name);
+		assert.ok(!("copied_from" in JSON.parse(later[1].args.plan)), later[1].args.plan);
+
+		// A trip started blank says nothing about copying.
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		press('data-action="new"'); // Start a new trip
+		await settle();
+		p = planner();
+		assert.ok(!("copied_from" in p.payload()), "a new trip is no copy");
+
+		// The reload: this page's memory is gone, and the server still knows.
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		p = planner();
+		assert.deepEqual(p.copies, {}, "nothing remembered by the page");
+		assert.deepEqual(p.copy.existing.map((row) => row.name), [name]);
+		let screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes(`This trip was copied already: ${name} (`), screen);
+		assert.ok(!screen.includes("You made a copy"), "the page made none since the reload");
+		press(`data-made="${name}"`); // Open it
+		await settle();
+		assert.equal(last().trip, name, "Open it opens the copy");
+		assert.equal(url(), `/desk/plan-a-trip?trip=${name}&step=trip`);
+
+		// A colleague's copy of the same trip, booked for December; and one from last year,
+		// finished — history, not a duplicate in the making.
+		db["TRIP-77"] = {
+			...clone(COPY_TRIP),
+			name: "TRIP-77",
+			modified: "TRIP-77@1",
+			status: "Booked",
+			copied_from: "TRIP-9",
+			trip: { ...COPY_TRIP.trip, start_date: "2026-12-07", end_date: "2026-12-09" },
+		};
+		db["TRIP-5"] = { ...clone(db["TRIP-77"]), name: "TRIP-5", modified: "TRIP-5@1", status: "Completed" };
+		boot("plan-a-trip", "/desk/plan-a-trip?copy=TRIP-9");
+		await settle();
+		p = planner();
+		assert.deepEqual(p.copy.existing.map((row) => row.name), [name, "TRIP-77"], "the soonest first, none finished");
+		screen = drawn(() => p.draw_copy()).join("\n");
+		assert.ok(screen.includes("This trip was copied already: TRIP-77 ("), screen);
+		assert.ok(screen.includes("Booked"), "with where it stands");
+		assert.ok(!screen.includes("TRIP-5"), "a finished copy is left off");
+		assert.deepEqual(ui.msgprints, []);
+	});
+
+	await test("a copy made on this page and read back from the server is named once, as this page's", async () => {
+		const db = tripServer({ "TRIP-9": COPY_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip");
+		await settle();
+		pick_past("TRIP-9");
+		await settle();
+		const p = planner();
+		p.copy.start_date = "2026-11-02";
+		press("Make the copy");
+		await settle();
+		p.go(1); // the first save
+		await settle();
+		const name = p.state.name;
+		assert.equal(db[name].copied_from, "TRIP-9");
+		// To the list, and the same trip picked again: read afresh, so the server names the copy
+		// too — the page's own note is the one shown.
+		await back();
+		await back();
+		assert.deepEqual(last(), { copy: "TRIP-9" });
+		await back();
+		assert.deepEqual(last(), { landing: true });
+		pick_past("TRIP-9");
+		await settle();
+		assert.deepEqual(p.copy.existing.map((row) => row.name), [name], "the server knows it");
+		const screen = drawn(() => p.draw_copy()).join("\n");
+		assert.equal(screen.split(name).length - 1, 2, "one note, naming it once, and its Open it button");
+		assert.ok(screen.includes(`You made a copy of this trip already: ${name}.`), screen);
+		assert.ok(!screen.includes("This trip was copied already"), screen);
 	});
 
 	await test("Back while a copy's first save is on its way: the screen catches up, and Carry on opens the trip it became", async () => {

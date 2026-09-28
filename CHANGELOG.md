@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.550.0] - 2026-09-28
+
+**A copied trip now remembers which trip it was copied from, so Plan a Trip's copy screen still
+says a copy exists after a reload, or when someone else made it.** Until now only the page's
+memory knew. Reload the page, or have a colleague copy the same trip, and the copy screen said
+nothing, so a second copy of the same job could be made without a word. Nik asked for this on
+2026-09-28, after PR 4 of the Plan a Trip program (v1.549.0) left it as an open question.
+
+### Added
+
+- **`Travel Trip.copied_from`**: a Link to Travel Trip, shown on the form as *Copied From*.
+  - It is read-only and `no_copy`, so frappe's *Duplicate* does not carry it. It is indexed,
+    because the copy screen looks copies up by it.
+  - `planner.save_plan` sets it on a copy's first save, from the `copied_from` that
+    `plan_a_trip.js` `payload()` now sends. The page takes it from its own draft → source map.
+    It is set on a create only, and only when that trip still exists and the user may read it
+    (`_copied_from`). A trip deleted meanwhile, one out of sight, or anything else a JSON body
+    could carry is stored as nothing, and the copy saves either way. An update never reads
+    it, so it is set once.
+- **`planner.get_plan(trip, copies=1)`** also answers `copies`, the trip's copies still in
+  Planning, Booked or In Progress (`copies_of`).
+  - It goes through `get_list`, so a user sees only the copies they may see. The list runs
+    soonest first, holds at most `COPIES_SHOWN` (10), and carries no money.
+  - A finished copy is left off, because it is history rather than a duplicate in the making.
+  - Only the copy screen asks, so no other trip load pays for the query.
+- **The copy screen names the copies it is told of**, for example "This trip was copied
+  already: TRIP-2026-00031 (Mon, Nov 2 – Thu, Nov 5, Planning) — Open it". This comes after
+  its own "You made a copy of this trip already" and "not saved yet" notes. A copy this page
+  saved after the screen was read shows once, as the page's own note. An unsaved copy is
+  still the page's memory only, since a reload loses it anyway and `beforeunload` warns.
+
+### Changed
+
+- **Deleting a trip now clears `copied_from` on its copies first**, in `TravelTrip.on_trash`,
+  with `update_modified=False`.
+  - Without this, one new Link field would have made every trip that had ever been copied
+    impossible to delete. frappe v16's `delete_doc` runs `on_trash` and then
+    `check_if_doc_is_linked`, which refuses to delete any record another record links to.
+    `force` gets past the check, but the Desk's delete button never sends it.
+  - The copies' `modified` is left alone. Otherwise a copy open on the Plan a Trip page would
+    be refused as "changed somewhere else" on its next save.
+  - The clearing runs after the existing refusal for submitted expense documents, so a delete
+    that is refused unlinks nothing.
+  - Restoring the deleted trip from Deleted Document does not relink its copies.
+- `travel_management/README.md` (Copy a past trip, and the data-model tree) and the planner
+  and page header comments now describe the stored link, replacing "after a reload nothing
+  says a copy was made".
+
+### Tests
+
+- `tests/test_travel_planner.py` (192 → 198 tests) covers five things:
+  - a copy's first save stores the trip it came from;
+  - a trip that is gone or out of sight is not stored, and the copy is saved anyway, including
+    when the JSON body sends the wrong type;
+  - an update never changes `copied_from`;
+  - the copy screen's `get_plan` asks `get_list` for copies with exactly these filters,
+    fields, order and limit, and no other `get_plan` asks at all;
+  - the doctype field is a read-only, `no_copy`, indexed Link, placed after `closed_on`.
+- `tests/test_travel_views.py` (141 → 143) runs the real controller's `on_trash`. A deleted
+  trip's copies let go of it with their `modified` kept. A delete refused for a submitted
+  claim unlinks nothing.
+- `scripts/test_wizard_back_forward.mjs` (95 → 97) runs the page against its port of the v16
+  router:
+  - A copy's first Next sends `copied_from` and a later save does not; a blank new trip never
+    sends it.
+  - A reload of the copy screen names the copy made before it and opens it.
+  - A colleague's Booked copy is named, soonest first, and a Completed one is left off.
+  - A copy made on this page and then read back from the server is named once.
+- Nine mutations were tried, one at a time, and each made one of these suites fail:
+  - not sending `copied_from`;
+  - not asking for copies;
+  - not reading the answer;
+  - dropping the once-only filter;
+  - storing whatever the body sent;
+  - skipping the read check;
+  - asking for copies on every load;
+  - listing finished copies;
+  - letting `on_trash` touch the copies' `modified`.
+
 ## [1.549.1] - 2026-09-27
 
 **On a phone, every email's button now spans the column with its label centered.** Until now

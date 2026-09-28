@@ -2651,6 +2651,153 @@ class TestCopyATrip(unittest.TestCase):
 		for method in ("get_copyable_trips", "copy_plan"):
 			self.assertRegex(source, rf"@frappe\.whitelist\(\)\ndef {method}\(")
 
+	# ------------------------------------------------------------------ where a copy came from
+	#
+	# v1.550.0 (Nik, 2026-09-28): the copy stores the trip it was made from, so the copy screen can
+	# still name it after a reload, or when someone else made it. Before, only the page's memory
+	# knew, and a reload let a second copy be made without a word.
+
+	def save(self, plan, trip=None, stored=None, existing=("TRIP-2026-00007",), readable=("TRIP-2026-00007",)):
+		"""``save_plan`` against a stubbed frappe, with everything but where a copy came from
+		stubbed out. ``trip`` names a saved trip (an update), stored with ``copied_from=stored``;
+		``existing`` and ``readable`` are the trips frappe says exist and this user may read.
+		Returns the doc it saved; what it asked frappe is in ``self.asked``."""
+		self.asked = asked = []
+		doc = new_trip() if trip is None else repeat_job(name=trip, copied_from=stored)
+		doc.is_new = lambda: trip is None
+		doc.insert = lambda: asked.append("insert")
+		doc.save = lambda: asked.append("save")
+		doc.check_permission = lambda ptype: None
+
+		def exists(doctype, name):
+			asked.append(("exists", doctype, name))
+			return name in existing
+
+		def has_permission(doctype, ptype="read", doc=None, **k):
+			asked.append(("has_permission", doctype, ptype, doc))
+			return doc in readable
+
+		with mock.patch.multiple(
+			planner.frappe,
+			create=True,
+			parse_json=lambda value: json.loads(value) if isinstance(value, str) else value,
+			new_doc=lambda doctype: doc,
+			get_doc=lambda doctype, name: doc,
+			has_permission=has_permission,
+			db=types.SimpleNamespace(exists=exists),
+		), mock.patch.multiple(
+			planner,
+			apply_plan=lambda doc, plan: [],
+			get_state=lambda doc: {},
+			_viewer=lambda: {},
+			_check_not_stale=lambda doc, modified: None,
+		):
+			planner.save_plan(json.dumps(plan), trip)
+		return doc
+
+	def test_a_copys_first_save_stores_the_trip_it_was_copied_from(self):
+		doc = self.save({"trip": {}, "copied_from": "TRIP-2026-00007"})
+		self.assertEqual(doc.copied_from, "TRIP-2026-00007")
+		self.assertEqual(
+			self.asked,
+			[
+				("exists", "Travel Trip", "TRIP-2026-00007"),
+				("has_permission", "Travel Trip", "read", "TRIP-2026-00007"),
+				"insert",
+			],
+		)
+		# A trip started blank says nothing, and is stored as copied from nothing.
+		self.assertIsNone(self.save({"trip": {}}).copied_from)
+		self.assertEqual(self.asked, ["insert"])
+
+	def test_a_trip_gone_or_out_of_sight_is_not_stored_and_the_copy_is_saved_anyway(self):
+		# Deleted since the copy was made: the copy is a trip of its own, so it is saved, as from
+		# nothing, and nobody is asked whether they may read a trip that is not there.
+		doc = self.save({"trip": {}, "copied_from": "TRIP-2026-00007"}, existing=())
+		self.assertIsNone(doc.copied_from)
+		self.assertEqual(self.asked, [("exists", "Travel Trip", "TRIP-2026-00007"), "insert"])
+		# One this user may not read is not stored either: the copy screen lists copies by
+		# copied_from, and a save must not be a way to plant a trip on someone else's list.
+		doc = self.save({"trip": {}, "copied_from": "TRIP-2026-00007"}, readable=())
+		self.assertIsNone(doc.copied_from)
+		self.assertEqual(self.asked[-1], "insert")
+		# Whatever else a JSON body can send.
+		for bad in ("", "   ", None, 7, ["TRIP-2026-00007"], {"name": "TRIP-2026-00007"}):
+			doc = self.save({"trip": {}, "copied_from": bad})
+			self.assertIsNone(doc.copied_from, bad)
+			self.assertEqual(self.asked, ["insert"], bad)
+		self.assertEqual(self.save({"trip": {}, "copied_from": " TRIP-2026-00007 "}).copied_from, "TRIP-2026-00007")
+
+	def test_a_saved_trip_never_changes_where_it_came_from(self):
+		# Set once, on the first save: an update that says otherwise is not read at all.
+		doc = self.save({"copied_from": "TRIP-2026-00008"}, trip="TRIP-2026-00010", stored="TRIP-2026-00007",
+			existing=("TRIP-2026-00007", "TRIP-2026-00008"), readable=("TRIP-2026-00007", "TRIP-2026-00008"))
+		self.assertEqual(doc.copied_from, "TRIP-2026-00007")
+		self.assertEqual(self.asked, ["save"])
+		doc = self.save({"copied_from": "TRIP-2026-00007"}, trip="TRIP-2026-00010", stored=None)
+		self.assertIsNone(doc.copied_from, "a trip not made as a copy does not become one")
+
+	def plan_for_copy_screen(self, *args, **kwargs):
+		"""``get_plan`` against a stubbed frappe; the copies it asked ``get_list`` for are in
+		``self.listed``."""
+		self.listed = listed = []
+		source = repeat_job()
+		source.check_permission = lambda ptype: None
+		source.has_permission = lambda ptype: True
+		rows = [{"name": "TRIP-2026-00031", "purpose": "Pump rebuild", "status": "Planning",
+			"start_date": "2026-11-02", "end_date": "2026-11-05"}]
+
+		def get_list(doctype, **kw):
+			listed.append((doctype, kw))
+			return rows
+
+		with mock.patch.multiple(
+			planner.frappe, create=True, get_doc=lambda doctype, name: source, get_list=get_list
+		), mock.patch.multiple(
+			planner, get_state=lambda doc: {"name": doc.name}, _viewer=lambda: {}, _lookups=lambda: {}
+		):
+			return planner.get_plan(*args, **kwargs)
+
+	def test_the_copy_screen_is_told_the_copies_still_ahead_or_under_way(self):
+		for flag in (1, "1", "true", True):
+			answer = self.plan_for_copy_screen("TRIP-2026-00007", copies=flag)
+			self.assertEqual([row["name"] for row in answer["copies"]], ["TRIP-2026-00031"], flag)
+		# Scoped by get_list (only copies this user can see); a finished copy is history, not a
+		# duplicate in the making; the soonest first; no money.
+		self.assertEqual(
+			self.listed,
+			[
+				(
+					"Travel Trip",
+					{
+						"filters": {
+							"copied_from": "TRIP-2026-00007",
+							"status": ["in", ["Planning", "Booked", "In Progress"]],
+						},
+						"fields": ["name", "purpose", "status", "start_date", "end_date"],
+						"order_by": "start_date asc",
+						"limit_page_length": planner.COPIES_SHOWN,
+					},
+				)
+			],
+		)
+
+	def test_nothing_else_that_loads_a_trip_pays_for_the_copies(self):
+		for kwargs in ({}, {"copies": 0}, {"copies": "0"}, {"copies": "false"}, {"copies": None}, {"copies": ""}):
+			answer = self.plan_for_copy_screen("TRIP-2026-00007", **kwargs)
+			self.assertEqual(set(answer), {"state", "lookups"}, kwargs)
+			self.assertEqual(self.listed, [], kwargs)
+
+	def test_the_trip_keeps_where_it_was_copied_from_where_nobody_can_type_it(self):
+		meta = _load_json(TRAVEL_DIR, "doctype", "travel_trip", "travel_trip.json")
+		field = next(f for f in meta["fields"] if f["fieldname"] == "copied_from")
+		self.assertEqual((field["fieldtype"], field["options"]), ("Link", "Travel Trip"))
+		self.assertEqual(field.get("read_only"), 1, "set by the first save, never typed on the form")
+		self.assertEqual(field.get("no_copy"), 1, "the form's Duplicate is not a copy of this trip")
+		self.assertEqual(field.get("search_index"), 1, "the copy screen looks trips up by it")
+		order = meta["field_order"]
+		self.assertEqual(order.index("copied_from"), order.index("closed_on") + 1)
+
 
 # --------------------------------------------------------------------------- contracts
 

@@ -108,7 +108,8 @@ class TravelTrip(Document):
 
 	def on_trash(self):
 		"""Block deletion while submitted financial documents point here;
-		unlink drafts (and Leads/Opportunities, which are provenance only).
+		unlink drafts (and Leads/Opportunities, and the trips copied from this
+		one, which are provenance only).
 
 		Every query is guarded by ``_has_travel_backlink``: the HRMS doctypes may
 		be absent entirely, and the ``custom_travel_trip`` back-link fields are
@@ -140,6 +141,13 @@ class TravelTrip(Document):
 			frappe.db.set_value(
 				doctype, {"custom_travel_trip": self.name}, "custom_travel_trip", None
 			)
+		# A copy names the trip it was copied from (``copied_from``, Plan a Trip's "Copy a
+		# past trip"). That is provenance too: frappe's link check runs after on_trash and would
+		# otherwise refuse to delete any trip that had ever been copied. The copies' `modified`
+		# is left alone, so a copy open on the Plan a Trip page still saves.
+		frappe.db.set_value(
+			"Travel Trip", {"copied_from": self.name}, "copied_from", None, update_modified=False
+		)
 
 	# ------------------------------------------------------------------ dates
 

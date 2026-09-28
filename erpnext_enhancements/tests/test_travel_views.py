@@ -1373,6 +1373,49 @@ class TestTheControllersFileRules(unittest.TestCase):
 		self.assertIn("self._validate_trip_files()", source)
 
 
+class TestDeletingATripThatWasCopied(unittest.TestCase):
+	"""A copy names the trip it came from (``copied_from``, v1.550.0), a Link to Travel Trip. frappe's
+	``delete_doc`` runs ``on_trash`` and then refuses to delete anything another record links to
+	(``check_if_doc_is_linked``, frappe v16 ``model/delete_doc.py``) — so without ``on_trash``
+	clearing it, a trip anyone had ever copied could never be deleted again. The real
+	controller's ``on_trash``, with the same stand-ins as ``TestTheControllersFileRules``."""
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		self.writes = []
+		frappe = sys.modules["frappe"]
+
+		def set_value(doctype, name, field, value=None, *a, **kw):
+			self.writes.append((doctype, name, field, value, kw))
+
+		for patcher in (
+			mock.patch.object(frappe.db, "set_value", set_value, create=True),
+			mock.patch.object(frappe, "get_all", lambda *a, **k: self.claims, create=True),
+			mock.patch.object(self.controller, "_has_travel_backlink", lambda doctype: True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		self.claims = []
+		self.doc = self.controller.TravelTrip()
+		self.doc.name = "TRIP-2026-00007"
+
+	def test_its_copies_let_go_of_it_and_keep_their_modified(self):
+		self.doc.on_trash()
+		self.assertIn(
+			("Travel Trip", {"copied_from": "TRIP-2026-00007"}, "copied_from", None, {"update_modified": False}),
+			self.writes,
+		)
+
+	def test_a_trip_it_refuses_to_delete_keeps_its_copies(self):
+		# A submitted claim still on the trip: the delete is refused, and nothing is unlinked on
+		# the way (frappe rolls the request back anyway; this keeps the order honest).
+		self.claims = [types.SimpleNamespace(name="HR-EXP-1", docstatus=1)]
+		with self.assertRaises(sys.modules["frappe"].ValidationError) as refused:
+			self.doc.on_trash()
+		self.assertIn("Expense Claim HR-EXP-1", str(refused.exception))
+		self.assertNotIn("Travel Trip", [write[0] for write in self.writes])
+
+
 class TestGetTripItinerary(MoneyAssertions):
 	def setUp(self):
 		self.doc = install_site()
