@@ -26,22 +26,41 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
   - **Your trip.** It shows the trip you are on now, or else your next one: its dates, a headline
     such as "You're on this trip now — day 2 of 6" or "Starts in 5 days", and four buttons: *Open
     my itinerary*, *My trip sheet* (your own PDF), *My documents (N)* and *Trip details*.
+  - **By your own days.** Plan a Trip gives someone who joins late or leaves early their own
+    From and To dates on the trip, and the pre-travel reminder, the `&as=` trip sheet, the
+    calendar invite and the change alerts already use them. The hub now does too: which trip is
+    yours now, "day N of M" (counted over your own days), "Starts in N days", the dates on your
+    card and your other trips, and the receipts week. Someone flying out Monday to a trip that
+    started Thursday is not told they are "on this trip now". A blank date is the trip's, as a
+    save fills it in. A trip you only organize keeps the trip's dates, and *Keep planning* still
+    follows the trip, so an organizer who came home early can still plan it.
+  - **A long job name wraps.** The card's job or customer name used to stay on one line and ran
+    off the side of the card on a phone. It wraps now; the dates still don't.
   - **Who to call.** A list that starts closed, as on `/itinerary`: the travel desk, the trip lead,
     who booked it, the job site, each hotel with its nearest urgent care and directions, and 911.
   - **Your other trips.** Current and upcoming trips, plus those that ended in the last 14 days,
     and the trips you organize but don't travel on, with *Keep planning*.
-  - **Receipts reminder.** It appears 1–7 days after a trip you traveled on ends: "Attach your
+  - **Receipts reminder.** It appears 1–7 days after your own last day on a trip: "Attach your
     receipts to the trip within a week of getting back, and accounting will reimburse you." That
     is Nik's 2026-09-28 decision. HRMS is not installed, so there is no claim to submit.
   - **Needs attention, for coordinators only.** It lists:
     - trips starting within 14 days that are still Planning;
     - the checklist's missing items and missing files;
-    - Completed trips waiting to be closed;
+    - Completed trips ready to close, once the receipts week is over;
     - failed change alerts.
 
     It is capped at 20, with "…and N more". Setup notes appear when there is no Travel Desk
     contact or travel emails are off. Change alerts being off is deliberate, so it is not
     flagged.
+
+    **Ready to close waits for the receipts.** A Closed trip is locked to everyone but a
+    coordinator, and the same block tells each traveler they have a week after getting back to
+    attach receipts to the trip. So a Completed trip is offered for closing only from the day
+    after the last reminder, when its end date is more than 7 days ago. Offered the day after
+    it ended, it invited a coordinator to lock travelers out mid-week. The trip's end date is
+    enough to go on: every save clamps each traveler's dates inside the trip, so nobody's week
+    can end later than the trip's. It is not exact: if the whole crew left early, the trip waits
+    those extra days, which is harmless.
   - **Empty states.** No Employee linked, no trips, and an organizer who isn't traveling each
     get a plain sentence.
   - **No money for anyone.** The server works out every date and every rule, and the block only
@@ -52,6 +71,16 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
   - **One failure stays contained.** Each trip's enrichment is guarded, so a trip whose contacts,
     files or checklist fail drops only that part and logs "Travel home". Only the featured trip
     is loaded in full, and a coordinator's checklist loads at most 30 active trips.
+  - **It reloads when you come back.** v16's `Workspace.show()` returns early when the workspace
+    asked for is already the one shown (`if (this._page?.name === page.name) return;`). So
+    going from the hub to a trip form or Plan a Trip and back left the block as it was, and the
+    trip you had just changed was out of date. The block now reloads on the router's `change`
+    back to the Travel route. `frappe.router.off()` wraps the handler in a new function before
+    unbinding, so it can never remove one. The handler is therefore bound once per page load,
+    behind a window flag, and reloads the newest block. A block no longer on the page is left
+    alone, because a re-rendered workspace runs the script again and the new block loads itself.
+    Each load takes a ticket, and only the newest answer draws, so an older answer arriving late
+    never paints over a newer one.
 - **`workspace_sidebar/travel.json`**, a curated Travel sidebar: Home, My itinerary, Plan a
   Trip, My trips, Travel rules & per diem, and Places & job sites, then an *Office* group with the
   three reports and Travel Settings. It replaced the sidebar production had generated for itself.
@@ -97,8 +126,8 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
 
 | Suite | Before | After | What the new tests cover |
 |---|---|---|---|
-| `tests/test_travel_views.py` | 146 | 171 | The endpoint against the site stub (below) |
-| `tests/test_travel_hub.py` (new) | — | 44 | The block, workspace, sidebar, patch and the cost report's roles (below) |
+| `tests/test_travel_views.py` | 146 | 181 | The endpoint against the site stub (below) |
+| `tests/test_travel_hub.py` (new) | — | 47 | The block, workspace, sidebar, patch and the cost report's roles (below) |
 | `tests/test_whitelist_placement.py` | | | `get_travel_home` added to `MUST_STAY_WHITELISTED` |
 
 - **`tests/test_travel_views.py`** runs the endpoint against the site stub.
@@ -110,24 +139,44 @@ the old hub. It showed them a calendar, a planner and three reports, and nothing
   - "Starts in N days" and "tomorrow".
   - Receipts appear only 1–7 days after a trip.
   - Organizers who don't travel, and users with no Employee.
+  - Your own days: joining a trip that has already started ("Starts in 2 days", and the trip
+    you are on now comes first); "day N of M" over your own days; leaving early (the trip is
+    over for you, and your receipts week starts when you get back, and ends a week after, even
+    if the trip ended yesterday); blank dates are the trip's; an organizer who came home early
+    can still keep planning; a trip you only organize keeps its own dates.
   - For coordinators:
     - the reasons, and the plan-versus-form targets;
     - the setup notes;
     - the cap of 20;
-    - the 30-trip load limit.
+    - the 30-trip load limit;
+    - ready to close: not 7 days after the end, and from 8 days after it;
+    - day by day for 10 days after a trip, the traveler is reminded or the coordinator is told
+      to close it, never both and never neither.
   - Graceful degradation, the real coordinator gate, and the contract's keys.
-  - Five mutations were tried, one at a time, and each made the suite fail:
+  - Mutations were tried one at a time, and each made the suite fail:
     - the coordinator gate always open;
     - `paid_by` on a contact;
     - per diem on the card;
     - receipts shown on the day of return;
-    - owned trips read with `get_all`.
-- **`tests/test_travel_hub.py`** (new, with its own CI step, 44 tests) pins the rest of the change.
+    - owned trips read with `get_all`;
+    - ready to close with no receipts-week filter, or with it one day off either way;
+    - eight breaks of the own-days rule: the trip's dates everywhere, or only for the
+      receipts, "started", the card, the list or "ahead"; *Keep planning* following the
+      person's days instead of the trip's; and a blank date not falling back to the trip's.
+- **`tests/test_travel_hub.py`** (new, with its own CI step, 47 tests) pins the rest of the change.
   - The block:
     - its three files, registered in `BLOCKS` only;
     - exactly one call to the endpoint, with `root_element` and escaping;
     - no `frappe.xcall` and no date math;
-    - every `tvh-` class styled.
+    - every `tvh-` class styled, and the job name wrapping where the dates do not;
+    - one router `change` handler behind a window flag, checking the Travel route, and no
+      trace of the old "re-runs on every navigation" claim;
+    - the script itself run in node against a stub desk (skipped where node is absent). It
+      loads once. Leaving for a form asks nothing. Coming back reloads, but going to another
+      workspace does not. After the page renders again there is still one handler, and it
+      reloads the new block. Answers arriving out of order never paint the older one, and a
+      block off the page is never reloaded. Removing the ticket, the `watchReturn` call, the
+      newest-root lookup, the on-page check or the route check each fails it.
   - The workspace:
     - the block placed first;
     - the six shortcuts, with their exact labels, types, URLs and filters;

@@ -217,15 +217,31 @@ found a calendar, a planner and three reports.
   - A *Who to call* list that starts closed, the same as on `/itinerary`.
   - Your other trips: current and upcoming, plus any that ended in the last 14 days. It also lists
     the trips you organize but don't travel on, with *Keep planning*.
-  - A receipts reminder 1–7 days after a trip ends. It says to attach receipts to the trip, and
-    accounting reimburses from there (Nik, 2026-09-28). HRMS is not installed, so there is no
-    claim to submit.
+  - A receipts reminder 1–7 days after your own last day on a trip. It says to attach receipts to
+    the trip, and accounting reimburses from there (Nik, 2026-09-28). HRMS is not installed, so
+    there is no claim to submit.
+  - **By your own days.** On a trip you travel on, all of the above goes by your own *Trip
+    Traveler* From and To dates, which Plan a Trip edits for someone who joins late or leaves
+    early. That covers which trip is yours now, "day N of M", "Starts in N days", the dates on
+    your card and your other trips, and the receipts week. The pre-travel reminder, the `&as=`
+    trip sheet, the calendar invite and the change alerts already work this way. A blank date is
+    the trip's. A trip you only organize shows the trip's dates, and *Keep planning* follows the
+    trip, not your part of it.
   - For coordinators, *Needs attention*: trips starting within 14 days that are still Planning,
-    the checklist's missing items and missing files, Completed trips waiting to be closed, and
-    failed change alerts. It is capped at 20, with "…and N more". Setup notes appear when there
-    is no Travel Desk contact or travel emails are off.
+    the checklist's missing items and missing files, Completed trips ready to close, and failed
+    change alerts. It is capped at 20, with "…and N more". Setup notes appear when there is no
+    Travel Desk contact or travel emails are off.
+  - **Ready to close waits out the receipts week.** Closing locks a trip to everyone but a
+    coordinator (`_check_closed_lock`), so a Completed trip is offered for closing only once its
+    end date is more than 7 days ago: the day after the last receipts reminder. The trip's end
+    bounds every traveler's own, because `_validate_dates` clamps each traveler's dates inside
+    the trip on every save. If the whole crew left early, it waits a few extra days.
   - It carries no money for anyone. The server works out every date and every rule, and the block
     only draws them.
+  - It reloads when you come back from a trip form or Plan a Trip. v16's `Workspace.show()`
+    returns early for the workspace already shown, so the block is not rebuilt on the way back.
+    The block reloads itself on the router's `change` to the Travel route instead: one handler per
+    page load, since `frappe.router.off()` cannot unbind one.
 - **I want to…** holds six plain-language shortcuts, all visible to an Employee so none leaves a
   gap: *See my itinerary*, *Plan a Trip*, *My trips*, *Who's away when* (the calendar),
   *Travel rules & per diem* and *Places & job sites*.

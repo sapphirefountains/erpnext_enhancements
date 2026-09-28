@@ -250,6 +250,13 @@
     white-space: nowrap;
 }
 
+/* The featured card's job or customer name: a long one wraps, not overflows, on a phone. */
+.tvh-meta-for {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 /* A short fact about how you relate to a trip: "You're organizing this". */
 .tvh-note {
     display: inline-flex;

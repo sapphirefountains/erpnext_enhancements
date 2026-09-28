@@ -3783,19 +3783,40 @@ def hub_day(offset):
 def hub_trip(name, start, end, status="Booked", owner="office@example.com", clean=False, **overrides):
 	"""A trip from the shared fixture (Ann, Bo and Cy on the crew, money on every row), moved to
 	the given days. ``clean`` empties it — no crew, no bookings, no files — so its checklist has
-	nothing to say and only its status and dates can put it on a coordinator's list."""
+	nothing to say and only its status and dates can put it on a coordinator's list.
+
+	Each traveler's own days are the trip's, as a save leaves them (``TravelTrip._validate_dates``
+	fills a blank one with the trip's): the fixture's own ``from_date`` for Bo belongs to its
+	October trip and would put him outside a moved one. :func:`own_days` gives one person their
+	own."""
 	doc = make_trip(
 		name,
 		purpose=overrides.pop("purpose", f"Trip {name}"),
 		status=status,
-		start_date=hub_day(start),
-		end_date=hub_day(end),
 		owner=owner,
 		**overrides,
 	)
+	move_trip(doc, start, end)
 	if clean:
 		for table in ("travelers", "flights", "accommodations", "ground_transport", "freight", "documents"):
 			setattr(doc, table, [])
+	return doc
+
+
+def move_trip(doc, start, end):
+	"""Move a trip to the given days, with every traveler's own days the trip's."""
+	doc.start_date, doc.end_date = hub_day(start), hub_day(end)
+	for traveler in doc.travelers or []:
+		traveler.from_date, traveler.to_date = doc.start_date, doc.end_date
+	return doc
+
+
+def own_days(doc, employee, first, last):
+	"""Give one traveler their own days on ``doc`` — offsets from the stub's today, or None for a
+	blank date — the way Plan a Trip saves someone who joins late or leaves early."""
+	row = next(row for row in doc.travelers if row.employee == employee)
+	row.from_date = None if first is None else hub_day(first)
+	row.to_date = None if last is None else hub_day(last)
 	return doc
 
 
@@ -3819,6 +3840,8 @@ def _hub_matches(row, filters):
 			ok = have in [_hub_norm(v) for v in value]
 		elif op == ">=":
 			ok = have is not None and str(have) >= str(_hub_norm(value))
+		elif op == "<":
+			ok = have is not None and str(have) < str(_hub_norm(value))
 		else:
 			raise AssertionError(f"the hub's fake site does not know the filter {op!r}")
 		if not ok:
@@ -3885,7 +3908,13 @@ class HomeSite:
 			]
 		if doctype == "Trip Traveler":
 			return [
-				_dict(parent=doc.name, parenttype="Travel Trip", employee=row.employee)
+				_dict(
+					parent=doc.name,
+					parenttype="Travel Trip",
+					employee=row.employee,
+					from_date=row.from_date,
+					to_date=row.to_date,
+				)
 				for doc in SITE.trips.values()
 				for row in doc.travelers or []
 			]
@@ -4027,7 +4056,7 @@ class TestTravelHomeForTheCrew(HubAssertions):
 			(0, 0, "You're on this trip today"),
 		):
 			with self.subTest(headline):
-				doc.start_date, doc.end_date = hub_day(start), hub_day(end)
+				move_trip(doc, start, end)
 				featured = self.answer()["featured"]
 				self.assertEqual(featured["trip"], "TRIP-1")
 				self.assertEqual(featured["headline"], headline)
@@ -4176,6 +4205,114 @@ class TestTravelHomeForTheCrew(HubAssertions):
 		self.assertFalse(site.ran("get_list", "Trip Change Alert"))
 
 
+class TestTravelHomeByYourOwnDays(HubAssertions):
+	"""A crew member's own ``from_date``–``to_date`` — Plan a Trip edits them for someone who joins
+	late or leaves early — decide their card, their list and their receipts, as they already
+	decide their pre-travel reminder, their ``&as=`` trip sheet and their calendar invite. By the
+	trip's dates, the hub told someone flying out on Monday that they were on the trip now, and
+	started the receipts week of someone who got back on Thursday only when everyone else did."""
+
+	def test_joining_a_trip_that_has_started_is_not_being_on_it(self):
+		install_site(own_days(hub_trip("TRIP-1", -2, 4, status="In Progress"), "EMP-B", 2, 4))
+		HomeSite(self)
+		answer = self.answer()
+		featured = answer["featured"]
+		self.assertEqual(featured["trip"], "TRIP-1")
+		self.assertEqual(featured["headline"], "Starts in 2 days")
+		# Their card, their days: the trip itself started on Thu Sep 24.
+		self.assertEqual(featured["dates"], "Mon Sep 28 – Wed Sep 30")
+		self.assertEqual(answer["receipts"], [])
+		self.assertNoMoney(answer)
+
+	def test_the_trip_you_are_on_beats_one_you_join_later(self):
+		install_site(own_days(hub_trip("TRIP-1", -2, 4, status="In Progress"), "EMP-B", 2, 4))
+		HomeSite(self, hub_trip("TRIP-2", -1, 1, status="In Progress"))
+		answer = self.answer()
+		# By the trips' own dates TRIP-1 started first, and would be the one "now".
+		self.assertEqual(answer["featured"]["trip"], "TRIP-2")
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 2 of 3")
+		self.assertEqual(
+			[(t["trip"], t["note"], t["dates"]) for t in answer["trips"]],
+			[("TRIP-1", "Starts in 2 days", "Mon Sep 28 – Wed Sep 30")],
+		)
+		self.assertNoMoney(answer)
+
+	def test_day_n_of_m_counts_your_own_days(self):
+		install_site(own_days(hub_trip("TRIP-1", -5, 5, status="In Progress"), "EMP-B", -1, 2))
+		HomeSite(self)
+		answer = self.answer()
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 2 of 4")
+		self.assertEqual(answer["featured"]["dates"], "Fri Sep 25 – Mon Sep 28")
+		self.assertNoMoney(answer)
+
+	def test_leaving_early_starts_your_receipts_week_when_you_get_back(self):
+		doc = hub_trip("TRIP-1", -5, 3, status="In Progress", purpose="Harbor install")
+		install_site(own_days(doc, "EMP-B", -5, -2))
+		HomeSite(self)
+		answer = self.answer()
+		# The trip goes on without them: it is not their trip now, and it is over for them.
+		self.assertIsNone(answer["featured"])
+		self.assertEqual(
+			[(t["trip"], t["note"], t["dates"]) for t in answer["trips"]],
+			[("TRIP-1", "Ended 2 days ago", "Mon Sep 21 – Thu Sep 24")],
+		)
+		self.assertEqual([row["trip"] for row in answer["receipts"]], ["TRIP-1"])
+		self.assertNoMoney(answer)
+
+	def test_your_receipts_week_ends_a_week_after_your_own_last_day(self):
+		install_site(own_days(hub_trip("TRIP-1", -12, -1, status="Completed"), "EMP-B", -12, -9))
+		HomeSite(self)
+		answer = self.answer()
+		# The trip ended yesterday; Bo got back nine days ago, and his week is over.
+		self.assertEqual(answer["receipts"], [])
+		self.assertEqual([(t["trip"], t["note"]) for t in answer["trips"]], [("TRIP-1", "Ended 9 days ago")])
+		self.assertNoMoney(answer)
+
+	def test_an_organizer_who_came_home_early_can_still_keep_planning(self):
+		doc = hub_trip("TRIP-1", -5, 3, status="In Progress", owner="bo@example.com")
+		install_site(own_days(doc, "EMP-B", -5, -2))
+		HomeSite(self)
+		answer = self.answer()
+		(item,) = answer["trips"]
+		self.assertEqual((item["relation"], item["note"]), ("traveling", "Ended 2 days ago"))
+		# "Keep planning" is about the trip, which has not ended.
+		self.assertIs(item["can_plan"], True)
+		self.assertNoMoney(answer)
+
+	def test_blank_days_are_the_trips(self):
+		install_site(own_days(hub_trip("TRIP-1", -1, 4, status="In Progress"), "EMP-B", None, None))
+		HomeSite(
+			self,
+			own_days(hub_trip("TRIP-2", -6, -3, status="Completed"), "EMP-B", None, None),
+			own_days(hub_trip("TRIP-3", 6, 8), "EMP-B", None, 7),  # only the last day set
+		)
+		answer = self.answer()
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 2 of 6")
+		self.assertEqual(answer["featured"]["dates"], "Fri Sep 25 – Wed Sep 30")
+		self.assertEqual(
+			[(t["trip"], t["note"], t["dates"]) for t in answer["trips"]],
+			[
+				("TRIP-3", "Starts in 6 days", "Fri Oct 2 – Sat Oct 3"),
+				("TRIP-2", "Ended 3 days ago", "Sun Sep 20 – Wed Sep 23"),
+			],
+		)
+		self.assertEqual([row["trip"] for row in answer["receipts"]], ["TRIP-2"])
+		self.assertNoMoney(answer)
+
+	def test_a_trip_you_only_organize_keeps_its_own_dates(self):
+		doc = hub_trip("TRIP-1", 5, 9, owner="bo@example.com")
+		doc.travelers = [row for row in doc.travelers if row.employee != "EMP-B"]
+		install_site(own_days(doc, "EMP-A", 6, 7))  # Ann's own days are nothing to Bo
+		HomeSite(self)
+		answer = self.answer()
+		(item,) = answer["trips"]
+		self.assertEqual(
+			(item["relation"], item["note"], item["dates"]),
+			("organizing", "You're organizing this", "Thu Oct 1 – Mon Oct 5"),
+		)
+		self.assertNoMoney(answer)
+
+
 class TestTravelHomeForACoordinator(HubAssertions):
 	USER = "tc@example.com"
 
@@ -4191,6 +4328,8 @@ class TestTravelHomeForACoordinator(HubAssertions):
 			planning,
 			hub_trip("TRIP-B", 30, 32, clean=True),  # nothing to say: not listed
 			hub_trip("TRIP-C", 40, 42, clean=True),
+			# Back two days ago: its crew are still inside their receipts week, so it is not yet
+			# ready to close — it is listed only for its failed alert.
 			hub_trip("TRIP-D", -5, -2, status="Completed", clean=True),
 			hub_trip("TRIP-E", 20, 22, status="Planning", clean=True),  # three weeks out: not yet
 			hub_trip("TRIP-F", -20, -15, status="Closed", clean=True),
@@ -4229,7 +4368,7 @@ class TestTravelHomeForACoordinator(HubAssertions):
 					"plan",
 				),
 				("TRIP-C", ["2 change alerts failed to send"], "plan"),
-				("TRIP-D", ["A change alert failed to send", "Finished — ready to close"], "form"),
+				("TRIP-D", ["A change alert failed to send"], "form"),
 			],
 		)
 		self.assertEqual(attention["trips"][0]["dates"], "Thu Oct 1 – Sun Oct 4")
@@ -4263,15 +4402,55 @@ class TestTravelHomeForACoordinator(HubAssertions):
 		self.assertEqual(answer["office"]["label"], "Travel desk")
 
 	def test_the_list_stops_at_twenty_and_says_how_many_more(self):
+		# 25 trips ready to close: every one ended 11 to 35 days ago, past the receipts week.
 		HomeSite(
 			self,
-			*[hub_trip(f"TRIP-{n:02d}", -40 + n, -30 + n, status="Completed", clean=True) for n in range(25)],
+			*[hub_trip(f"TRIP-{n:02d}", -45 + n, -35 + n, status="Completed", clean=True) for n in range(25)],
 			coordinator=True,
 		)
 		attention = self.answer(self.USER)["attention"]
 		self.assertEqual(len(attention["trips"]), 20)
 		self.assertEqual(attention["more"], 5)
 		self.assertEqual(attention["trips"][0]["trip"], "TRIP-00")
+
+	def test_a_finished_trip_is_ready_to_close_only_after_the_receipts_week(self):
+		"""Closing locks the trip to everyone but a coordinator, and the same answer gives each
+		traveler a week after getting back to attach their receipts to it. Offered the day after
+		the trip ended, "ready to close" invited a coordinator to lock them out mid-week."""
+		days = self.home.RECEIPTS_DAYS
+		HomeSite(
+			self,
+			hub_trip("TRIP-1", -9, -1, status="Completed", clean=True),  # back yesterday
+			hub_trip("TRIP-7", -12, -days, status="Completed", clean=True),  # the week's last day
+			hub_trip("TRIP-8", -12, -days - 1, status="Completed", clean=True),  # the day after it
+			coordinator=True,
+		)
+		answer = self.answer(self.USER)
+		self.assertEqual(
+			[(row["trip"], row["reasons"], row["target"]) for row in answer["attention"]["trips"]],
+			[("TRIP-8", ["Finished — ready to close"], "form")],
+		)
+		self.assertNoMoney(answer)
+
+	def test_the_receipts_week_and_ready_to_close_meet_with_no_gap_and_no_overlap(self):
+		"""Day by day after a trip, the traveler is reminded or the coordinator is told to close
+		it — never both, and never neither."""
+		doc = hub_trip("TRIP-1", -3, -1, status="Completed")
+		site = HomeSite(self, doc, coordinator=False)
+		for back in range(1, self.home.RECEIPTS_DAYS + 4):
+			with self.subTest(days_since_the_trip=back):
+				move_trip(doc, -back - 2, -back)
+				site.coordinator = False
+				crew = self.answer()
+				site.coordinator = True
+				office = self.answer(self.USER)
+				reminded = [row["trip"] for row in crew["receipts"]] == ["TRIP-1"]
+				ready = any(
+					"Finished — ready to close" in row["reasons"] for row in office["attention"]["trips"]
+				)
+				self.assertNotEqual(reminded, ready)
+				self.assertEqual(ready, back > self.home.RECEIPTS_DAYS)
+				self.assertNoMoney(crew)
 
 	def test_only_thirty_trips_are_loaded_whole(self):
 		HomeSite(

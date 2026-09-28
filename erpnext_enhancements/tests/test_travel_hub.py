@@ -16,7 +16,8 @@ Four things make the hub, and each can drift in silence:
   aborts ``bench migrate``, which on this repo is the deploy.
 
 Reads files only, except for one run of the patch against a stub ``frappe`` that is removed again
-afterwards — which is why it has a CI step of its own.
+afterwards — which is why it has a CI step of its own — and one run of the block's script in
+node, against a stub desk (skipped where node is not installed).
 
 Run: python -m unittest erpnext_enhancements.tests.test_travel_hub
 """
@@ -26,6 +27,8 @@ import importlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import types
 import unittest
@@ -127,6 +130,81 @@ def sidebar():
 	return json.loads(source(SIDEBAR))
 
 
+#: The block's script run twice in node, as the workspace runs it for two renders of the page,
+#: against a stub desk: ``frappe.router`` fires "change", ``frappe.call`` answers when told to.
+#: Prints what it saw as JSON. ``__BLOCK_JS__`` is the script's path, as a JSON string.
+_RETURN_JS = r"""
+const src = require("fs").readFileSync(__BLOCK_JS__, "utf8");
+const handlers = [];
+const pending = [];
+let route = ["Workspaces", "Travel"];
+const frappe = {
+	utils: { escape_html: (value) => String(value) },
+	router: { on: (evt, fn) => handlers.push([evt, fn]) },
+	get_route: () => route,
+	call: () => new Promise((resolve) => pending.push(resolve)),
+};
+const win = {};
+function makeRoot() {
+	const els = {
+		"#tvh-body": { innerHTML: "", querySelectorAll: () => [] },
+		"#tvh-sub": { textContent: "" },
+		"#tvh-refresh": { addEventListener: () => {} },
+	};
+	return { host: { isConnected: true }, querySelector: (sel) => els[sel] || null, sub: els["#tvh-sub"] };
+}
+function run(root) {
+	new Function("root_element", "frappe", "window", "document", src)(root, frappe, win, {});
+}
+function change(to) {
+	route = to;
+	handlers.forEach(([evt, fn]) => evt === "change" && fn());
+}
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+const answer = async (i, name) => {
+	pending[i]({ message: { viewer: { first_name: name } } });
+	await tick();
+};
+(async () => {
+	const seen = {};
+	const a = makeRoot();
+	run(a);
+	seen.first_load = pending.length;
+	await answer(0, "A0");
+	seen.a_drawn = a.sub.textContent;
+	change(["Form", "Travel Trip", "TRIP-1"]);
+	change(["plan-a-trip"]);
+	seen.away = pending.length;
+	change(["Workspaces", "Travel"]);
+	seen.back = pending.length;
+	await answer(1, "A1");
+	seen.a_reloaded = a.sub.textContent;
+	change(["Workspaces", "Home"]);
+	seen.other_workspace = pending.length;
+	change(["Workspaces", "private", "Travel"]);
+	seen.private_travel = pending.length;
+	// The workspace renders the page again: the old block leaves the page, a new one runs.
+	a.host.isConnected = false;
+	const b = makeRoot();
+	run(b);
+	seen.handlers = handlers.length;
+	seen.b_load = pending.length;
+	change(["Workspaces", "Travel"]);
+	seen.b_back = pending.length;
+	await answer(4, "B-new");
+	await answer(3, "B-old");
+	seen.b_drawn = b.sub.textContent;
+	seen.a_untouched = a.sub.textContent;
+	await answer(2, "A-late");
+	seen.b_after_a_late = b.sub.textContent;
+	b.host.isConnected = false;
+	change(["Workspaces", "Travel"]);
+	seen.gone = pending.length;
+	console.log(JSON.stringify(seen));
+})();
+"""
+
+
 # --------------------------------------------------------------------------- the block
 
 
@@ -195,10 +273,68 @@ class TestTheBlock(unittest.TestCase):
 		self.assertNotIn("`", code)
 
 	def test_it_lives_in_the_shadow_root(self):
-		"""The workspace re-runs the whole script with a fresh root on every navigation."""
+		"""The workspace runs the whole script again, with a fresh root, each time it renders the
+		page — which is not every time you come back to it (the next test)."""
 		code = js_code(BLOCK_JS)
 		self.assertIn("root_element", code)
 		self.assertIn("function waitForDOM()", code)
+
+	def test_it_reloads_when_you_come_back_to_the_hub(self):
+		"""v16's ``Workspace.show()`` returns early when the workspace asked for is the one already
+		shown (``if (this._page?.name === page.name) return;``), so from the hub to a trip form or
+		Plan a Trip and back left the block as it was, with the trip just changed out of date. The
+		block reloads on the router's "change" to the Travel route instead. ``frappe.router.off``
+		wraps the handler in a new function before unbinding, so it can never remove one: the
+		handler is bound once per page load, behind a window flag, and reloads the newest root."""
+		code = js_code(BLOCK_JS)
+		self.assertEqual(code.count('frappe.router.on("change"'), 1)
+		self.assertNotIn("frappe.router.off", code)
+		self.assertIn("if (window.__tvh_route_bound || !frappe.router || !frappe.router.on) return;", code)
+		self.assertIn("window.__tvh_route_bound = true;", code)
+		# v16's route for a workspace is ["Workspaces", name] (or [..., "private", name]); the
+		# name is the workspace JSON's.
+		self.assertIn(f'name !== "{workspace()["name"]}"', code)
+		self.assertIn('route[0] !== "Workspaces"', code)
+		self.assertIn("host.isConnected", code)
+		self.assertIn("watchReturn(container);", code)
+		# The claim that sent it stale: that every navigation re-runs the script.
+		self.assertNotIn("on every navigation", source(BLOCK_JS))
+		self.assertNotIn("re-runs this whole script", source(BLOCK_JS))
+
+	def test_coming_back_reloads_the_newest_block_and_only_the_newest_answer_draws(self):
+		"""The script itself, run in node against a stub desk: two runs (the workspace rendered
+		twice), a router that fires "change", and answers that arrive out of order."""
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		result = subprocess.run(
+			[node, "-e", _RETURN_JS.replace("__BLOCK_JS__", json.dumps(str(BLOCK_JS)))],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			check=False,
+			timeout=60,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		seen = json.loads(result.stdout)
+		# The first run loads once; leaving for a form or Plan a Trip asks nothing.
+		self.assertEqual((seen["first_load"], seen["away"]), (1, 1))
+		self.assertIn("Hi A0.", seen["a_drawn"])
+		# Back to Travel reloads it, and the answer draws.
+		self.assertEqual(seen["back"], 2)
+		self.assertIn("Hi A1.", seen["a_reloaded"])
+		# Another workspace is not this one; a private workspace named Travel is.
+		self.assertEqual((seen["other_workspace"], seen["private_travel"]), (2, 3))
+		# The page rendered again: still one handler, and it reloads the new block, not the old.
+		self.assertEqual(seen["handlers"], 1)
+		self.assertEqual((seen["b_load"], seen["b_back"]), (4, 5))
+		self.assertIn("Hi A1.", seen["a_untouched"])
+		# Answers arriving newest first: the older one never paints over it, and a late answer
+		# for the replaced block never reaches the new one.
+		self.assertIn("Hi B-new.", seen["b_drawn"])
+		self.assertIn("Hi B-new.", seen["b_after_a_late"])
+		# A block no longer on the page is never reloaded.
+		self.assertEqual(seen["gone"], 5)
 
 	def test_web_pages_open_in_a_new_tab(self):
 		"""/itinerary has no way back to the desk, so it never replaces the desk tab."""
@@ -224,6 +360,19 @@ class TestTheBlock(unittest.TestCase):
 		self.assertGreater(len(emitted), 40)
 		missing = sorted(c for c in emitted if f".{c}" not in css)
 		self.assertEqual(missing, [], f"{missing} render unstyled")
+
+	def test_a_long_job_name_wraps_and_the_dates_do_not(self):
+		"""``.tvh-meta-item`` keeps the dates on one line. The featured card's job or customer name
+		sat in one too, and a long one ran off the side of the card on a phone."""
+		css = css_code(BLOCK_CSS)
+		self.assertIn("white-space: nowrap", css_rule(css, ".tvh-meta-item"))
+		wrap = css_rule(css, ".tvh-meta-for")
+		for declaration in ("min-width: 0", "white-space: normal", "overflow-wrap: anywhere"):
+			with self.subTest(declaration):
+				self.assertIn(declaration, wrap)
+		# Same specificity as the nowrap rule, so it must come after it to win.
+		self.assertGreater(css.index(".tvh-meta-for"), css.index(".tvh-meta-item"))
+		self.assertIn('class="tvh-meta-item tvh-meta-for">\' + esc(trip.travel_for)', js_code(BLOCK_JS))
 
 	def test_every_modifier_it_renders_has_a_rule(self):
 		code = js_code(BLOCK_JS)

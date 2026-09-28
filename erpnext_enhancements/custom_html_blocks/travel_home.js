@@ -13,10 +13,15 @@
 // is still wrong: it always shows the four most recently created rows, not the
 // one you are traveling on this week.
 //
-// Shadow-DOM sandbox: `root_element` is the shadow root, and the workspace re-runs
-// this whole script with a fresh root on every navigation — so nothing is cached
-// across renders and every listener is bound to the fresh DOM each time. Same
-// model as training_my_dashboard.
+// Shadow-DOM sandbox: `root_element` is the shadow root. The workspace builds a
+// fresh block (a new root, and this whole script run again) only when it renders
+// the page: the first visit, and coming back from ANOTHER workspace. Coming back to
+// Travel from a trip form, Plan a Trip or a list does not: v16's `Workspace.show()`
+// returns early when the page it would show is the one already shown, so the old
+// block stays on screen exactly as it was, with the trip you just changed out of
+// date. watchReturn() reloads it then. Nothing is cached across renders, every DOM
+// listener is bound to the fresh DOM each time, and the one route listener is bound
+// once per page load (see watchReturn).
 //
 // IT COMPUTES NOTHING. `travel_management.home.get_travel_home` sends every
 // sentence ready to show ("Starts in 5 days", "Ended 3 days ago", the reasons a
@@ -240,7 +245,10 @@
         const tone = toneOf(trip.status);
         const meta = [];
         if (trip.dates) meta.push('<span class="tvh-meta-item">' + esc(trip.dates) + "</span>");
-        if (trip.travel_for) meta.push('<span class="tvh-meta-item">' + esc(trip.travel_for) + "</span>");
+        // A job or customer name can be wider than a phone: it may wrap, the dates may not.
+        if (trip.travel_for) {
+            meta.push('<span class="tvh-meta-item tvh-meta-for">' + esc(trip.travel_for) + "</span>");
+        }
         meta.push(pill(trip.status));
 
         const actions = [
@@ -487,20 +495,55 @@
 
     function load(container) {
         const body = container.querySelector("#tvh-body");
+        // The refresh button and a return to the hub can both ask while an answer is
+        // on its way, so each ask takes a ticket and only the newest one draws: an
+        // older answer arriving late never paints over a newer one. The ticket lives
+        // on the root itself, because the route handler that calls this may belong to
+        // an earlier run of this script. Each answer only ever draws into the root it
+        // was asked for, so one for a block that has been replaced lands nowhere seen.
+        const ticket = (container.__tvh_ticket = (container.__tvh_ticket || 0) + 1);
         frappe
             .call({ method: METHOD })
-            .then((r) => render(container, (r && r.message) || {}))
+            .then((r) => {
+                if (container.__tvh_ticket === ticket) render(container, (r && r.message) || {});
+            })
             .catch(() => {
                 // frappe has already shown the server's message. Leave a line behind
                 // so the block is not silently blank.
+                if (container.__tvh_ticket !== ticket) return;
                 body.innerHTML = '<div class="tvh-muted">Could not load your travel.</div>';
             });
+    }
+
+    // Coming back to the hub from a form or Plan a Trip does not rebuild this block
+    // (the header above: v16's Workspace.show() returns early on the workspace already
+    // shown), so reload it when the route comes back to Travel. `frappe.router` is an
+    // event emitter whose `off()` wraps the handler in a new function before it
+    // unbinds, so it can never remove one: one handler per page load, behind a
+    // window flag, and it reloads the newest root (`window.__tvh_root`). A host no
+    // longer in the page means the workspace was rendered again, and the fresh
+    // block's own run of this script has loaded itself. The route is v16's for a
+    // workspace: ["Workspaces", name], or ["Workspaces", "private", name].
+    function watchReturn(container) {
+        window.__tvh_root = container;
+        if (window.__tvh_route_bound || !frappe.router || !frappe.router.on) return;
+        window.__tvh_route_bound = true;
+        frappe.router.on("change", () => {
+            const root = window.__tvh_root;
+            const host = root && root.host;
+            if (!host || !host.isConnected) return;
+            const route = frappe.get_route() || [];
+            const name = route[1] === "private" ? route[2] : route[1];
+            if (route[0] !== "Workspaces" || name !== "Travel") return;
+            load(root);
+        });
     }
 
     function startApp(container) {
         const refresh = container.querySelector("#tvh-refresh");
         if (refresh) refresh.addEventListener("click", () => load(container));
         load(container);
+        watchReturn(container);
     }
 
     waitForDOM();
