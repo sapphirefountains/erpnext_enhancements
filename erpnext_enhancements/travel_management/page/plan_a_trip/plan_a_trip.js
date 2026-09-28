@@ -4144,10 +4144,14 @@ class TripPlanner {
 		const $note = $('<div class="tp-muted"></div>');
 		const note = () => {
 			const rate = flt(this.lookups.mileage_rate);
+			// The rate is kept to a tenth of a cent (Travel Settings, precision 3). format_currency
+			// on its own rounds to the currency's two places, so $0.725 would lose its third place:
+			// show it when the rate has one, and $0.50 as $0.50. The total is money, in cents.
+			const rate_places = flt(rate, 2) === rate ? undefined : 3;
 			$note.text(
 				rate && flt(m.distance)
 					? __("Reimbursed at {0} a mile: {1}", [
-							format_currency(rate, this.lookups.currency),
+							format_currency(rate, this.lookups.currency, rate_places),
 							format_currency(rate * flt(m.distance), this.lookups.currency),
 					  ])
 					: ""

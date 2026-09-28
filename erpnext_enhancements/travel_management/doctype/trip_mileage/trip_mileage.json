@@ -67,7 +67,8 @@
    "description": "Defaults to the Travel Settings mileage rate when left at 0.",
    "fieldname": "rate",
    "fieldtype": "Currency",
-   "label": "Rate per Mile"
+   "label": "Rate per Mile",
+   "precision": "3"
   },
   {
    "fieldname": "column_break_2",
