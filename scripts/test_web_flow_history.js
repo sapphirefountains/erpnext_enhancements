@@ -103,6 +103,11 @@
  *   - "Print / save as PDF" opens the person shown's trip sheet (`my_sheet_url`, else the whole
  *     trip's `sheet_url`) in a new tab with no history write, and only this site's path or a web
  *     address is made a link;
+ *   - a stop's place notes (`poi.notes`, v1.552.0) are drawn under "Place notes" after the
+ *     visit's own notes, as text with their line breaks (markup in them is never a tag), short
+ *     ones whole and long ones in a <details> that starts shut on their first line and writes no
+ *     history when tapped; blank or missing notes draw nothing; the marker's popup carries them
+ *     too; and the copy saved on the phone draws them offline, asking for nothing more;
  *   - offline (a stand-in IndexedDB and service worker, `makeIndexedDB` / `makeServiceWorker`):
  *     the page registers its worker for /itinerary only, at this deploy's address, and tells it
  *     who is signed in; every answer is saved for that person, trip and view, with the boot's
@@ -2071,6 +2076,7 @@ async function testItinerary() {
 
 	await testItineraryDocuments();
 	await testItineraryContacts();
+	await testItineraryPlaceNotes();
 	await testItineraryOffline();
 	await testItineraryNoUsableAnswer();
 }
@@ -2673,6 +2679,176 @@ async function testItineraryContacts() {
 	p.session.next = withContacts({ contacts: null });
 	await p.answer("TRIP-X");
 	check("...nor does `contacts: null`", [p.contacts(), p.shown()], [null, "Trip X"]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
+}
+
+// ---------------------------------------------------------------------------- /itinerary place notes
+
+// Trip A's answer with one stop per place given, each as shape_itinerary sends it: the place
+// (`poi`) carries its own `notes` since v1.552.0. The first stop has notes of its own for the
+// visit too, which are not the place's.
+function stopsAnswer(pois) {
+	const items = pois.map((poi, i) => ({
+		type: "agenda",
+		date: iso(0),
+		sort_time: "",
+		activity: `Stop ${i + 1}`,
+		related_party: null,
+		visit_notes: i === 0 ? "Bring the spare pump." : null,
+		poi,
+		group: null,
+	}));
+	return { status: 200, body: { message: {
+		trip: "TRIP-A", purpose: "Trip A", status: "Booked", start_date: iso(0), end_date: iso(0), crew: [], viewing: "EMP-1",
+		days: [{ date: iso(0), items }],
+	} } };
+}
+
+// Enough of Leaflet for renderDayMap: every marker's popup, as the page built it, lands in `popups`.
+function fakeLeaflet(popups) {
+	const chain = { addTo() { return this; }, setView() { return this; }, fitBounds() { return this; } };
+	return {
+		map: () => Object.create(chain),
+		tileLayer: () => Object.create(chain),
+		marker: () => Object.assign(Object.create(chain), {
+			bindPopup(content) {
+				popups.push(content);
+				return this;
+			},
+		}),
+	};
+}
+
+// Every tag under `node`, itself left out.
+function tagsUnder(node) {
+	const out = [];
+	const walk = (n) => n.children.forEach((c) => {
+		out.push(c.tagName);
+		walk(c);
+	});
+	walk(node);
+	return out;
+}
+
+async function testItineraryPlaceNotes() {
+	console.log("/itinerary place notes");
+	const GATE = "Park at the north gate.\nGate code 4471#";
+	const SITE = { name: "POI-1", poi_name: "The site", category: "Job Site", lat: 33.4, lng: -112, notes: GATE };
+	const at = (extra) => Object.assign({}, SITE, extra);
+
+	let p = loadItinerary("/itinerary?trip=TRIP-A");
+	p.session.next = stopsAnswer([SITE]);
+	await p.answer("TRIP-A");
+	const card = p.root.find("ti-agenda")[0];
+	check(
+		"a stop's place notes are drawn on its card under a label, line breaks and all",
+		[p.text("ti-place-notes-label"), p.text("ti-place-notes-text")],
+		[["Place notes"], [GATE]]
+	);
+	check(
+		"...after the visit's own notes and before the Open in Maps link",
+		card.children.map((c) => c.className.split(" ")[0]),
+		["ti-card-kicker", "ti-card-title", "ti-card-sub", "ti-notes", "ti-place-notes", "ti-maps-link"]
+	);
+	check(
+		"...short ones whole, not behind a tap, as text and nothing else",
+		[card.find("ti-place-notes").map((n) => n.tagName), tagsUnder(card.find("ti-place-notes-text")[0])],
+		[["DIV"], []]
+	);
+	check("...with no history call and nothing more asked for", [p.browser.calls, p.pending(), p.fileFetches], [[], [], []]);
+
+	// Markup typed into a place's notes is text: the page never parses it.
+	const HOSTILE = '<script>alert("x")</script>\n<b>Gate</b> & <img src=x onerror=alert(1)>';
+	p = loadItinerary("/itinerary?trip=TRIP-A");
+	p.session.next = stopsAnswer([at({ notes: HOSTILE })]);
+	await p.answer("TRIP-A");
+	check(
+		"a <script> or <b> in the notes is drawn as those characters, never as a tag",
+		[p.text("ti-place-notes-text"), p.tags().filter((t) => ["SCRIPT", "B", "IMG"].includes(t)), p.document.head.children.length],
+		[[HOSTILE], [], 0]
+	);
+
+	// Long notes start shut, on one line: the label and their first line.
+	const LONG = [
+		"Gate B off 5th St; the code is 4471#.",
+		"Park on the gravel pad, never the lawn.",
+		"Sign in at the trailer before you unload.",
+		"Hard hats past the fence.",
+		"The water shutoff is behind the pump house.",
+	].join("\n");
+	const WIDE = "Use the loading dock on the east side, ".repeat(6).trim();
+	p = loadItinerary("/itinerary?trip=TRIP-A");
+	p.session.next = stopsAnswer([at({ notes: LONG }), at({ notes: WIDE })]);
+	await p.answer("TRIP-A");
+	const boxes = p.root.find("ti-place-notes");
+	check(
+		"long notes (five lines, or over 200 characters on one) are a <details> that starts shut",
+		boxes.map((b) => [b.tagName, !!b.open, "open" in b.attrs]),
+		[["DETAILS", false, false], ["DETAILS", false, false]]
+	);
+	check(
+		"...its one line the label and the notes' first line, the whole notes inside",
+		[boxes.map((b) => [b.children[0].tagName, b.children[0].textContent]), p.text("ti-place-notes-text")],
+		[[["SUMMARY", "Place notesGate B off 5th St; the code is 4471#."], ["SUMMARY", `Place notes${WIDE}`]], [LONG, WIDE]]
+	);
+	const before = p.browser.calls.length;
+	boxes[0].children[0].click();
+	await flush();
+	check("...and a tap on it writes no history and asks for nothing", [p.browser.calls.length, p.pending()], [before, []]);
+
+	// Nothing to say, nothing drawn.
+	p = loadItinerary("/itinerary?trip=TRIP-A");
+	p.session.next = stopsAnswer([at({ notes: "  \n\t " }), at({ notes: null }), { name: "POI-2", poi_name: "Depot", category: "Supply Depot", lat: null, lng: null }]);
+	await p.answer("TRIP-A");
+	check(
+		"blank, null or missing notes draw nothing (an older server sends no `notes`)",
+		[p.root.find("ti-agenda").length, p.root.find("ti-place-notes").length, p.errors()],
+		[3, 0, 0]
+	);
+
+	// The marker's popup on the day's map carries them too.
+	p = loadItinerary("/itinerary?trip=TRIP-A");
+	p.session.next = stopsAnswer([SITE, at({ lat: 33.5, notes: HOSTILE }), at({ lat: 33.6, notes: null })]);
+	await p.answer("TRIP-A");
+	const popups = [];
+	p.browser.window.L = fakeLeaflet(popups);
+	p.root.find("ti-map-btn")[0].click();
+	await flush();
+	check(
+		"each marker's popup carries its place's notes, as text",
+		popups.map((box) => box.find("ti-popup-notes").map((n) => [n.textContent, tagsUnder(n)])),
+		[[[GATE, []]], [[HOSTILE, []]], []]
+	);
+	check("...and the Map tap writes no history", p.browser.calls, []);
+
+	// They come in the answer, so the copy saved on the phone has them.
+	const PAT = "pat@example.com";
+	const KEY = "0123456789abcdef".repeat(4);
+	const phone = makeIndexedDB();
+	const onPhone = () => ({ user: PAT, key: KEY, cookie: `user_id=pat%40example.com; full_name=Pat; ee_itinerary_key=${KEY}`, indexedDB: phone });
+	p = loadItinerary("/itinerary?trip=TRIP-A", onPhone());
+	p.session.next = stopsAnswer([SITE]);
+	await p.answer("TRIP-A");
+	check("the notes are saved on the phone with the answer", phone.get("answers", `${PAT}|TRIP-A|`).answer.days[0].items[0].poi.notes, GATE);
+	p = loadItinerary("/itinerary?trip=TRIP-A", onPhone());
+	await p.answer("TRIP-A", false);
+	check(
+		"offline, the saved copy draws them, and nothing more is fetched for them",
+		[p.offline().length, p.text("ti-place-notes-text"), p.pending(), p.fileFetches],
+		[1, [GATE], [], []]
+	);
+
+	// Line breaks are kept by the stylesheet, and a long popup note scrolls inside the popup.
+	const css = stripComments(fs.readFileSync(path.join(APP, "public", "css", "travel", "itinerary.css"), "utf8"));
+	const rule = (selector) => {
+		const m = css.match(new RegExp(`(?:^|})\\s*${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`));
+		return m ? m[1] : "";
+	};
+	check(
+		"the notes keep their line breaks (white-space: pre-wrap) on the card and in the popup",
+		[/white-space:\s*pre-wrap/.test(rule(".ti-place-notes-text")), /white-space:\s*pre-wrap/.test(rule(".ti-popup-notes"))],
+		[true, true]
+	);
 	check("every push was paid for by a tap", p.browser.unactivated, 0);
 }
 

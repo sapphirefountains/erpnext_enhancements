@@ -26,6 +26,11 @@
  * gets its own small map with that day's POI stops. "Open in Maps" deep links
  * are the no-tiles fallback.
  *
+ * Place notes (v1.552.0): a stop's place (Travel POI) carries its own Notes in the answer
+ * (`poi.notes`: parking, the gate code, site access), drawn on the stop's card under
+ * "Place notes", and in its marker's popup, as text with the line breaks kept. Long notes
+ * start shut, showing their first line; a tap opens them, with no history entry.
+ *
  * Documents (Trip Document rows, Plan a Trip's uploads): a booking's files — a boarding
  * pass, a hotel confirmation, a rental agreement, a bill of lading — are listed on its
  * card, and the Documents screen (?view=docs) lists every file this person can see: "For
@@ -390,12 +395,13 @@
 		return leafletPromise;
 	}
 
-	// A marker's popup, built as elements: the place name and the stop's activity are typed
-	// in by people, so they are text, never markup.
+	// A marker's popup, built as elements: the place name, the stop's activity and the place's
+	// notes are typed in by people, so they are text, never markup.
 	function stopPopup(stop) {
 		var box = el('div', 'ti-popup');
 		box.appendChild(el('b', null, stop.label || ''));
 		if (stop.sub) box.appendChild(el('div', null, stop.sub));
+		if (stop.notes) box.appendChild(el('div', 'ti-popup-notes', stop.notes));
 		var link = el('a', null, 'Google Maps');
 		link.href = mapsLink(stop.lat, stop.lng);
 		link.target = '_blank';
@@ -498,6 +504,7 @@
 			if (item.poi) sub.push(item.poi.poi_name);
 			if (sub.length) card.appendChild(el('div', 'ti-card-sub', sub.join(' · ')));
 			if (item.visit_notes) card.appendChild(el('div', 'ti-notes', item.visit_notes));
+			appendPlaceNotes(card, item.poi);
 			if (item.poi && item.poi.lat != null) {
 				var link = el('a', 'ti-maps-link', 'Open in Maps ↗');
 				link.href = mapsLink(item.poi.lat, item.poi.lng);
@@ -508,6 +515,33 @@
 			return card;
 		},
 	};
+
+	// A place's own notes (Travel POI `notes`, v1.552.0): parking, the gate code, how to get on
+	// site. They belong to the place, not to this visit (`visit_notes`, drawn above them), so they
+	// carry a label saying so. People type them, so they are text, never markup, with their line
+	// breaks kept (itinerary.css). Short notes are shown whole. Long ones start shut, as a line
+	// that shows their first line, and a tap opens them. That is a <details>, not a history entry,
+	// so Back never opens or shuts it. No notes, or blank ones, draw nothing. They come in the
+	// answer (shape_itinerary's `poi`), so the copy saved on this phone has them too.
+	var LONG_NOTES = { chars: 200, lines: 4 };
+
+	function placeNotes(poi) {
+		return poi && typeof poi.notes === 'string' ? poi.notes.trim() : '';
+	}
+
+	function appendPlaceNotes(card, poi) {
+		var text = placeNotes(poi);
+		if (!text) return;
+		var lines = text.split(/\r\n|\r|\n/);
+		var long = text.length > LONG_NOTES.chars || lines.length > LONG_NOTES.lines;
+		var box = el(long ? 'details' : 'div', 'ti-place-notes');
+		var head = el(long ? 'summary' : 'div', 'ti-place-notes-head');
+		head.appendChild(el('span', 'ti-place-notes-label', 'Place notes'));
+		if (long) head.appendChild(el('span', 'ti-place-notes-first', lines[0]));
+		box.appendChild(head);
+		box.appendChild(el('div', 'ti-place-notes-text', text));
+		card.appendChild(box);
+	}
 
 	function hotelCard(item, kind) {
 		var card = el('div', 'ti-card ti-hotel');
@@ -1408,7 +1442,7 @@
 			var mappable = day.items
 				.filter(function (i) { return i.type === 'agenda' && i.poi && i.poi.lat != null; })
 				.map(function (i) {
-					return { lat: i.poi.lat, lng: i.poi.lng, label: i.poi.poi_name, sub: i.activity };
+					return { lat: i.poi.lat, lng: i.poi.lng, label: i.poi.poi_name, sub: i.activity, notes: placeNotes(i.poi) };
 				});
 			var mapHolder = null;
 			if (mappable.length) {

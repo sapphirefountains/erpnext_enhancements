@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.552.0] - 2026-09-28
+
+**`/itinerary` now shows each stop's place notes: parking, the gate code, how to get on site.**
+A Travel POI has always had a *Notes* field. The travel guidelines' "In the system" callout
+tells people to put parking and access details there, because pinned POIs "show on everyone's
+mobile itinerary". The notes never did. `api/travel.shape_itinerary` read a POI's name,
+category, map point and Address, and never its `notes`, so the gate code someone typed in for
+the crew reached nobody. Nik's call on 2026-09-28 was to make that sentence true rather than
+take it out. A stop's place now carries its notes, and the crew sees them on the stop's card,
+in the day map's marker popup, and in the copy saved on the phone for when there is no
+signal.
+
+### Added
+
+- **`shape_itinerary`: a stop's `poi` gains `notes`** (`api/travel._poi_notes`). Travel POI
+  `notes` is a plain **Text** field, not a Text Editor, so there is no markup to strip. It is
+  sent as typed: Windows line endings become plain newlines, the ends are trimmed, and blank
+  (or only whitespace) is `None`. It is read in the same `frappe.db.get_value` as the rest of
+  the POI and kept in the same `poi_cache`, so a crew of eight still costs one lookup per
+  place. `shape_itinerary` only ever gains keys, and the emails read the old ones by name.
+- **`/itinerary` draws them** (`public/js/travel/itinerary.js`, `appendPlaceNotes`):
+  - **On the stop's card**, after the visit's own notes (`visit_notes`, which are about this
+    visit and not the place) and before *Open in Maps*, under a small "Place notes" label, in
+    the same quiet muted style as the visit notes. They are drawn with `textContent`, never
+    markup, and `white-space: pre-wrap` keeps the line breaks.
+  - **Long notes start shut.** Notes over four lines or 200 characters are a `<details>` whose
+    one line is the label and their first line, cut to fit with an ellipsis at phone width. A
+    tap opens them. That is not a history entry, so Back and Forward on `/itinerary` are
+    untouched.
+  - **In the marker's popup** on the day map, as text too. A long note scrolls inside the popup
+    rather than covering the map.
+  - **Offline:** the notes come in the answer itself, so the IndexedDB copy has them. No extra
+    request is made for them, online or off.
+  - **Dark mode:** every color is one of the page's own `--ti-*` tokens. The popup keeps
+    Leaflet's own colors, as the rest of the popup already does.
+- **Plan a Trip's View as shows them on the stop too** ("Place notes: …"). View as is meant to
+  show exactly what that person's phone shows, so it cannot leave out what the phone now draws.
+  Its sub-lines keep line breaks now (`.tp-psub` is `white-space: pre-line`). That also affects
+  a stop's multi-line visit notes, which View as used to run together on one line while the
+  phone showed them on separate lines.
+
+### Why this exposes nothing new
+
+- **Not money, by construction.** The notes are free text about a place, and no cost field is
+  read with them. `assertNoMoney` runs over `shape_itinerary`, `get_trip_itinerary` and a crew
+  member's `get_trip_views` with notes present.
+- **Not new to anyone.** Anyone who can open the trip could already read every Travel POI: the
+  Employee role has read on Travel POI and there is no row scoping. So a crew member who now
+  sees a gate code on a stop could already open it on the POI.
+
+### Left out on purpose
+
+- **The itinerary email** (`pre_travel_reminder.html`, built from `itinerary_text.item_line`)
+  prints one line per item, the place by name only. It does not print a stop's own visit notes
+  either. An email also leaves the system and gets forwarded, which a gate code should not do
+  without someone deciding it should.
+- **The Trip Sheet** (`views.build_trip_sheet`) keeps the place's name only. The sheet is built
+  to fit one or two Letter pages. Printing each hotel's address on every check-in already cost
+  it a third page once (2026-09-27), and free-text notes on every stop would do the same.
+- **Plan a Trip's Overview, Crew grid and Side by side** (`item_facts`), **the Map view's
+  places** and **the trip form's map** show a place by name, for planning. They are unchanged.
+- **`www/travel_guidelines.html`** is not edited here. Its POI sentence is now true as written.
+  The page's other stale claims (reimbursement, Vehicle Log, per diem, mileage) are a separate
+  change.
+
+### Tests
+
+- **`tests/test_travel_views.py`** (141 → 148 tests), new `TestPlaceNotes`:
+  - every stop at the place carries its notes, in the whole crew's view and each person's;
+  - line breaks are kept, CRLF and lone CR become newlines, and only the ends are trimmed;
+  - blank, whitespace-only, `None` and missing notes all give `notes: None`;
+  - `<script>` and `<b>` in the notes are sent exactly as typed, never parsed or unescaped;
+  - `notes` is asked for by name;
+  - one lookup serves every person;
+  - the notes reach `get_trip_itinerary` and a crew member's `get_trip_views` with no money.
+
+  The suite's `frappe.db.get_value` stub now answers only the fields asked for, as frappe does.
+  Before, it returned the whole POI record, so a shape that stopped asking for `notes` would
+  still have passed. Two mutations were checked: dropping the key fails six tests, and dropping
+  `notes` from the field list fails six.
+- **`scripts/test_web_flow_history.js`** (513 → 528 checks), new "/itinerary place notes" section,
+  which runs the real `itinerary.js`:
+  - the notes are drawn under the label, with their line breaks, in the right place on the card;
+  - a `<script>`, `<b>` or `<img>` in them is drawn as characters, with no element created and
+    nothing added to `<head>`;
+  - five lines, or 233 characters on one line, give a `<details>` that starts shut on the first
+    line, and tapping it writes no history;
+  - blank, `null` and missing notes draw nothing;
+  - each marker's popup carries its place's notes as text;
+  - the notes are saved in IndexedDB with the answer, and drawn offline with nothing more
+    fetched;
+  - `itinerary.css` keeps `pre-wrap` on the card's notes and the popup's.
+
+  Mutations checked: removing the card's call, drawing the notes with `innerHTML`, leaving them
+  out of the popup, and never collapsing long notes each fail the section. Browser history on
+  `/itinerary` is unchanged: the whole harness passes.
+
 ## [1.549.1] - 2026-09-27
 
 **On a phone, every email's button now spans the column with its label centered.** Until now

@@ -265,7 +265,7 @@ const TP_STYLE = `
 .tp-pcard{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:8px;max-width:640px;}
 .tp-kicker{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;}
 .tp-ptitle{font-size:16px;font-weight:600;margin:2px 0;}
-.tp-psub{font-size:13px;color:var(--text-muted);}
+.tp-psub{font-size:13px;color:var(--text-muted);white-space:pre-line;}
 .tp-pnr{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:14px;font-weight:600;}
 .tp-preview{max-width:760px;}
 .tp-preview iframe{display:block;width:100%;height:560px;border:1px solid var(--border-color);border-radius:8px;background:#fff;margin:10px 0;}
@@ -6093,7 +6093,12 @@ class TripPlanner {
 			agenda: () => ({
 				kicker: [__("Stop"), tp_span(tp_pretty_time(item.time), tp_pretty_time(item.end_time))],
 				title: item.activity,
-				sub: [[item.related_party, item.poi && item.poi.poi_name].filter(Boolean).join(" · "), item.visit_notes],
+				sub: [
+					[item.related_party, item.poi && item.poi.poi_name].filter(Boolean).join(" · "),
+					item.visit_notes,
+					// The place's own notes (parking, a gate code), as the phone shows them.
+					item.poi && item.poi.notes ? __("Place notes: {0}", [item.poi.notes]) : "",
+				],
 				ref: null,
 			}),
 		};

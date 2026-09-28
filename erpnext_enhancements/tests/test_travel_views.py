@@ -182,7 +182,13 @@ def _install_frappe_stub():
 		if doctype == "Travel POI":
 			SITE.poi_lookups += 1
 			record = SITE.pois.get(name)
-			return _dict(record) if record else None
+			if not record:
+				return None
+			# Only the fields asked for, as frappe answers: a field left out of the list reads
+			# None, so a shape that stops asking for one (a place's `notes`) is seen to lose it.
+			if isinstance(fieldname, (list, tuple)):
+				return _dict({f: record.get(f) for f in fieldname})
+			return _dict(record)
 		if doctype == "Company":
 			return "USD"
 		return None
@@ -853,6 +859,106 @@ class TestShapeItinerary(MoneyAssertions):
 		for item in items_of(travel.shape_itinerary(self.doc, "EMP-B")["days"]):
 			self.assertNotIn("members", item)
 		self.assertNoMoney(travel.shape_itinerary(self.doc))
+
+
+class TestPlaceNotes(MoneyAssertions):
+	"""A stop's place carries its own Notes (Travel POI ``notes``: parking, the gate code, site
+	access) since v1.552.0, for ``/itinerary`` to show the crew. The travel guidelines said they
+	were on everyone's mobile itinerary; ``shape_itinerary`` never read the field, so they were
+	not. Free text about a place, so no money; and Employee reads every Travel POI, so nobody
+	who can open the trip learns anything new."""
+
+	NOTES = "Park at the north gate.\r\nGate code 4471#\n\nSign in at the trailer."
+	#: Leave the fixture's POI as it is: its record has no `notes` key at all.
+	UNTOUCHED = object()
+
+	def setUp(self):
+		self.doc = install_site()
+
+	def stops(self, viewer=None, notes=NOTES):
+		if notes is not self.UNTOUCHED:
+			SITE.pois["POI-1"]["notes"] = notes
+		shaped = travel.shape_itinerary(self.doc, viewer)
+		return [item for item in items_of(shaped["days"]) if item["type"] == "agenda"]
+
+	def test_every_stop_at_the_place_carries_its_notes_in_every_view(self):
+		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
+			stops = self.stops(viewer)
+			self.assertEqual(len(stops), 2, viewer)
+			for stop in stops:
+				self.assertEqual(
+					stop["poi"]["notes"],
+					"Park at the north gate.\nGate code 4471#\n\nSign in at the trailer.",
+					viewer,
+				)
+
+	def test_line_breaks_are_kept_and_only_the_ends_trimmed(self):
+		# Windows line endings become plain newlines; a blank line inside stays.
+		notes = self.stops(notes="\n  Gate B\r\r\nCode 12  \n")[0]["poi"]["notes"]
+		self.assertEqual(notes, "Gate B\n\nCode 12")
+
+	def test_blank_notes_are_none(self):
+		for blank in ("", "   ", "\r\n\t \n", None):
+			self.doc = install_site()
+			stop = self.stops(notes=blank)[0]
+			self.assertIn("notes", stop["poi"], repr(blank))
+			self.assertIsNone(stop["poi"]["notes"], repr(blank))
+		# A POI that has no `notes` value at all (the stub's record never had the key).
+		self.doc = install_site()
+		self.assertIsNone(self.stops(notes=self.UNTOUCHED)[0]["poi"]["notes"])
+
+	def test_notes_are_sent_as_typed_and_the_page_draws_them_as_text(self):
+		# `notes` is a plain Text field, not a Text Editor: there is no markup to strip, and
+		# nothing is unescaped or parsed on the way. /itinerary draws it with textContent
+		# (scripts/test_web_flow_history.js checks that a tag in it is drawn as text).
+		typed = "<script>alert(1)</script> <b>Gate</b> &amp; code"
+		self.assertEqual(self.stops(notes=typed)[0]["poi"]["notes"], typed)
+
+	def test_the_field_is_asked_for_by_name(self):
+		# The stub answers only the fields asked for, as frappe does: a shape that stopped
+		# asking for `notes` reads None here, and the first test fails.
+		SITE.pois["POI-1"]["notes"] = "Gate B"
+		original = sys.modules["frappe"].db.get_value
+		asked = []
+
+		def get_value(doctype, name=None, fieldname=None, *args, **kwargs):
+			if doctype == "Travel POI":
+				asked.append(tuple(fieldname) if isinstance(fieldname, (list, tuple)) else fieldname)
+			return original(doctype, name, fieldname, *args, **kwargs)
+
+		with mock.patch.object(sys.modules["frappe"].db, "get_value", get_value):
+			travel.shape_itinerary(self.doc)
+		self.assertTrue(asked)
+		self.assertTrue(all("notes" in fields for fields in asked), asked)
+
+	def test_one_lookup_serves_every_person_notes_included(self):
+		SITE.pois["POI-1"]["notes"] = "Gate B"
+		cache = {}
+		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
+			stops = [
+				i
+				for i in items_of(travel.shape_itinerary(self.doc, viewer, poi_cache=cache)["days"])
+				if i["type"] == "agenda"
+			]
+			self.assertEqual({s["poi"]["notes"] for s in stops}, {"Gate B"})
+		self.assertEqual(SITE.poi_lookups, 1)
+
+	def test_the_notes_reach_itinerary_and_the_views_with_no_money(self):
+		SITE.pois["POI-1"]["notes"] = self.NOTES
+		sys.modules["frappe"].session.user = "bo@example.com"
+		result = travel.get_trip_itinerary("TRIP-1", None)
+		stops = [i for i in items_of(result["days"]) if i["type"] == "agenda"]
+		self.assertTrue(stops)
+		self.assertTrue(all(s["poi"]["notes"].startswith("Park at the north gate.") for s in stops))
+		self.assertNoMoney(result)
+
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			payload = travel.get_trip_views("TRIP-1")
+		# View as draws a person's own itinerary from `people`, as their phone does.
+		for employee, days in payload["people"].items():
+			stops = [i for i in items_of(days) if i["type"] == "agenda"]
+			self.assertTrue(all(s["poi"]["notes"] for s in stops), employee)
+		self.assertNoMoney(payload)
 
 
 class TestTripFiles(MoneyAssertions):
