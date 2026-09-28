@@ -67,9 +67,13 @@
 // the first Next. Back returns to the copy screen. A copy nobody has touched is kept unsaved
 // (untouched_copy: Back is an undo, not a trip in Planning) and the copy screen offers to carry
 // on with it; one worked on is saved like any trip left, and the copy screen offers to open it,
-// rather than let a second one be made without a word. Until it is saved, a new First day moves
-// the whole copy (set_first_day). The form's "Copy trip" opens the copy screen for its trip,
-// through frappe.route_options like its other buttons, and reads the trip afresh.
+// rather than let a second one be made without a word. The first save stores the trip a copy
+// came from (payload's copied_from; planner.save_plan keeps it as the trip's copied_from, set
+// once), and the copy screen asks get_plan for the copies still ahead or under way
+// (planner.copies_of), so a copy made before a reload, or by someone else, is named there too.
+// Until it is saved, a new First day moves the whole copy (set_first_day). The form's "Copy
+// trip" opens the copy screen for its trip, through frappe.route_options like its other
+// buttons, and reads the trip afresh.
 //
 // TIMES are native <input type="time">, which shows AM/PM on a US browser or phone. A stored
 // time of exactly midnight reads as "no time given": the Datetime column cannot hold a date
@@ -1251,10 +1255,11 @@ class TripPlanner {
 		// Who is looking, as the server says (get_plan, get_trip_views): whether they are a
 		// travel coordinator, and their own Employee. null until it has said.
 		this.viewer = { is_coordinator: null, employee: null };
-		// The copy screen (render_copy): {trip, source (get_plan's state for it), failed,
-		// start_date, keep_crew, making}, kept while the same trip's copy screen comes back (Back
-		// from the copy it made); and `copies`, each copy's draft id -> the trip it was made from,
-		// so that screen can say one was made already.
+		// The copy screen (render_copy): {trip, source (get_plan's state for it), existing (its
+		// copies the server knows of: get_plan's `copies`), failed, start_date, keep_crew,
+		// making}, kept while the same trip's copy screen comes back (Back from the copy it made);
+		// and `copies`, each copy's draft id -> the trip it was made from, so that screen can say
+		// one was made already, and the copy's first save can say where it came from (payload).
 		this.copy = null;
 		this.copies = {};
 		// Each copy's draft id -> the copy as copy_plan made it (serialize), so a copy nobody has
@@ -2034,6 +2039,7 @@ class TripPlanner {
 			this.copy = {
 				trip: trip,
 				source: null,
+				existing: [],
 				failed: false,
 				start_date: tp_next_weekday(frappe.datetime.get_today()),
 				keep_crew: true,
@@ -2049,15 +2055,18 @@ class TripPlanner {
 		const seq = this.nav_seq;
 		copy.failed = false;
 		this.body.html(`<div class="tp-empty">${__("Loading...")}</div>`);
+		// With its copies still ahead or under way (copies: 1), made before a reload or by anyone.
 		frappe
-			.call({ method: "erpnext_enhancements.travel_management.planner.get_plan", args: { trip: trip } })
+			.call({ method: "erpnext_enhancements.travel_management.planner.get_plan", args: { trip: trip, copies: 1 } })
 			.then(
 				(r) => {
 					// Moved on while it loaded: that screen wins.
 					if (seq !== this.nav_seq || this.copy !== copy) return;
 					const data = r && r.message;
-					if (data && data.state && data.state.trip) copy.source = data.state;
-					else copy.failed = true;
+					if (data && data.state && data.state.trip) {
+						copy.source = data.state;
+						copy.existing = data.copies || [];
+					} else copy.failed = true;
 					this.draw_copy();
 				},
 				() => {
@@ -2153,22 +2162,28 @@ class TripPlanner {
 		</div>`).appendTo($parent);
 	}
 
-	// Copies of this trip made on this page already: Back from one saves it once it has been worked
-	// on, as leaving any trip does, and keeps it unsaved while it is untouched (untouched_copy), so
-	// each is offered here to open or carry on with rather than let a second one be made without a
-	// word. This page's memory only: after a reload the note is gone (see the README).
+	// Copies of this trip made already, each offered here to open or carry on with rather than let
+	// a second one be made without a word. This page's own first: Back from one saves it once it
+	// has been worked on, as leaving any trip does, and keeps it unsaved while it is untouched
+	// (untouched_copy). Then the ones the server knows of (get_plan's `copies`: still ahead or
+	// under way, made before a reload or by anyone), less any this page has named already — the
+	// answer was read when the screen was, so a copy saved since is this page's to name.
 	copy_made_note($parent) {
 		const copy = this.copy;
+		const offer_open = (name, text) =>
+			$(`<div class="tp-notice">${text}
+				<button class="tp-btn-link" data-made="${tp_esc(name)}">${__("Open it")} &rarr;</button></div>`)
+				.appendTo($parent)
+				.find("button")
+				.on("click", () => this.open_from_landing({ trip: name }));
+		const named = new Set();
 		Object.keys(this.copies)
 			.filter((draft) => this.copies[draft] === copy.trip)
 			.forEach((draft) => {
 				const name = this.drafts[draft];
 				if (name) {
-					$(`<div class="tp-notice">${__("You made a copy of this trip already: {0}.", [tp_esc(name)])}
-						<button class="tp-btn-link" data-made="${tp_esc(name)}">${__("Open it")} &rarr;</button></div>`)
-						.appendTo($parent)
-						.find("button")
-						.on("click", () => this.open_from_landing({ trip: name }));
+					named.add(name);
+					offer_open(name, __("You made a copy of this trip already: {0}.", [tp_esc(name)]));
 				} else if (this.kept[`draft:${draft}`]) {
 					$(`<div class="tp-notice">${__("You made a copy of this trip that is not saved yet.")}
 						<button class="tp-btn-link" data-made="draft:${tp_esc(draft)}">${__("Carry on")} &rarr;</button></div>`)
@@ -2176,6 +2191,19 @@ class TripPlanner {
 						.find("button")
 						.on("click", () => this.carry_on(`draft:${draft}`));
 				}
+			});
+		(copy.existing || [])
+			.filter((row) => row && row.name && !named.has(row.name))
+			.forEach((row) => {
+				const dates = tp_span(tp_pretty_date(row.start_date), tp_pretty_date(row.end_date));
+				offer_open(
+					row.name,
+					__("This trip was copied already: {0} ({1}, {2}).", [
+						tp_esc(row.name),
+						tp_esc(dates),
+						tp_esc(__(row.status || "")),
+					])
+				);
 			});
 	}
 
@@ -2629,7 +2657,7 @@ class TripPlanner {
 				mileage: card.mileage || null,
 			}));
 		});
-		return {
+		const out = {
 			trip: trip,
 			status: s.status,
 			travelers: s.travelers.map((t) => ({
@@ -2673,6 +2701,12 @@ class TripPlanner {
 				location_text: stop.location ? "" : stop.location_text || "",
 			})),
 		};
+		// A copy's first save says which trip it was made from (start_copy), which planner.save_plan
+		// keeps as the trip's copied_from: what the copy screen names after a reload. The server
+		// reads it on a first save only, so a saved trip never sends it.
+		const source = !s.name && this.draft_id ? this.copies[this.draft_id] : "";
+		if (source) out.copied_from = source;
+		return out;
 	}
 
 	save(options) {
@@ -2715,6 +2749,7 @@ class TripPlanner {
 					const fresh = r && r.message;
 					if (!fresh) return false;
 					if (was_new && draft) this.drafts[draft] = fresh.name;
+					const relisted = this.relist_copy(fresh);
 					if (this.state !== saving_state) {
 						// Saved after Back had already put the list (or another trip) on screen.
 						// Nothing to draw, and a copy kept for being unsaved is saved now: Forward
@@ -2722,14 +2757,14 @@ class TripPlanner {
 						Object.keys(this.kept).forEach((key) => {
 							if (this.kept[key].state === saving_state) delete this.kept[key];
 						});
-						// The copy screen drawn meanwhile said this copy was "not saved yet": say
-						// what it is now, with the trip to open.
+						// The copy screen drawn meanwhile said this copy was "not saved yet", or listed it
+						// as it was: say what it is now, with the trip to open.
 						const copy = this.copy;
 						if (
 							!this.state &&
 							copy &&
 							copy.source &&
-							this.copies[draft] === copy.trip &&
+							(this.copies[draft] === copy.trip || relisted) &&
 							frappe.utils.get_url_arg("copy") === copy.trip
 						) {
 							this.draw_copy();
@@ -2774,6 +2809,29 @@ class TripPlanner {
 		// Not a copy nobody has touched (handle_route): leaving for another desk page is no more a
 		// reason to make a trip of it than Back is.
 		if (this.state && this.is_dirty() && !this.untouched_copy()) this.save({ quiet: true });
+	}
+
+	// A trip the copy screen lists (get_plan's `copies`: "This trip was copied already"), saved
+	// here, likely after its Open it: that screen draws from what it read, and Back/Forward shows
+	// it again without reading (render_copy), so the row follows the save — its days and where it
+	// stands — or goes once the trip is no longer ahead or under way (planner.copies_of). True when
+	// it was listed.
+	relist_copy(fresh) {
+		const listed = (this.copy && this.copy.existing) || [];
+		const at = listed.findIndex((row) => row && row.name === fresh.name);
+		if (at < 0) return false;
+		const t = fresh.trip || {};
+		if (["Planning", "Booked", "In Progress"].includes(fresh.status)) {
+			Object.assign(listed[at], {
+				purpose: t.purpose,
+				status: fresh.status,
+				start_date: t.start_date,
+				end_date: t.end_date,
+			});
+		} else {
+			listed.splice(at, 1);
+		}
+		return true;
 	}
 
 	// The trip on screen (or `state`, kept under `draft`) is a copy of a past trip that is not
