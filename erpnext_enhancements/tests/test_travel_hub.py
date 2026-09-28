@@ -736,7 +736,7 @@ class TestTheReloadPatch(unittest.TestCase):
 class TestTheCostReportIsForCoordinators(unittest.TestCase):
 	"""Crew see every part of a trip but its money, and Travel Trip Cost Summary is nothing but
 	money: estimated, actual, variance, who paid, claimed, unclaimed. Its roles included Employee
-	until v1.551.0, so any crew member could open it from the hub's Reports card (scoped to their own
+	until v1.554.0, so any crew member could open it from the hub's Reports card (scoped to their own
 	trips). Nik, 2026-09-28: "remove Trip Cost Summary from crew"."""
 
 	PATH = APP / "travel_management" / "report" / "travel_trip_cost_summary" / "travel_trip_cost_summary.json"

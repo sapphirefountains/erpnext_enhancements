@@ -119,7 +119,7 @@ The shared HTML/CSS shell (card → head → rows, plus pills, bars and stat til
 deliberately uniform across all 28 blocks; structural colours come from Frappe CSS variables
 so both themes work, and literal colours appear only where the colour *is* the meaning.
 
-## Files — My Travel (the Travel hub, v1.551.0)
+## Files — My Travel (the Travel hub, v1.554.0)
 
 | File | Role |
 |---|---|

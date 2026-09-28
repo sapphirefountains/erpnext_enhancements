@@ -88,7 +88,7 @@ MUST_STAY_WHITELISTED = {
         "confirm_actions",
         "cancel_actions",
     ),
-    # The Travel hub's "My Travel" block (v1.551.0) makes this one call and nothing else, so a
+    # The Travel hub's "My Travel" block (v1.554.0) makes this one call and nothing else, so a
     # lost decorator empties the hub for every traveler. home.py's helpers sit right above it.
     "travel_management/home.py": ("get_travel_home",),
     # The customer portal's surface on /pay and /pay-card. Each portal endpoint has a private

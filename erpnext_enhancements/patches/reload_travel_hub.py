@@ -1,6 +1,6 @@
 """Force the revamped Travel hub and its sidebar to re-sync from the repo.
 
-The v1.551.0 hub revamp rewrote ``travel_management/workspace/travel_management/travel_management.json``
+The v1.554.0 hub revamp rewrote ``travel_management/workspace/travel_management/travel_management.json``
 (the per-viewer "My Travel" block first, then "I want to…" shortcuts, "How a work trip works",
 and the records cards) and added ``workspace_sidebar/travel.json``, a curated sidebar that
 replaces the one production generated for itself: that one had two URL items with no URL, a
