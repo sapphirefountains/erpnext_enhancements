@@ -6,7 +6,10 @@
 // refresh_now. Balances are grouped by Bank, each with its own status: a bank in
 // "Reconnect Required" shows an amber banner routing to that Bank's form, where the
 // native "Refresh Plaid Link" button lives — re-linking is ERPNext's flow, not ours.
-// Shadow-DOM block model (state on window).
+// Shadow-DOM block model: the workspace runs this script again only when it renders
+// the page, so a return from a form or a list is reloaded by the shared helper,
+// public/js/global_enhancements/workspace_block_return.js. It reloads the cached
+// snapshot only: a return never spends a live Plaid call.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -123,17 +126,24 @@
         const body = container.querySelector("#fbb-body");
         const refresh = container.querySelector("#fbb-refresh");
 
+        // Refresh and a return to the workspace can both ask while an answer is on its
+        // way, so each read takes a ticket and only the newest one draws.
         function load() {
+            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
+            const current = () => container.__ee_ticket === ticket;
             body.innerHTML = `<div class="fbb-muted">${__("Loading…")}</div>`;
             refresh.disabled = true;
             frappe
                 .call({ method: READ })
-                .then((r) => render(container, r.message))
+                .then((r) => {
+                    if (current()) render(container, r.message);
+                })
                 .catch(() => {
+                    if (!current()) return;
                     body.innerHTML = `<div class="fbb-muted">${__("Could not load bank balances.")}</div>`;
                 })
                 .then(() => {
-                    refresh.disabled = false;
+                    if (current()) refresh.disabled = false;
                 });
         }
 
@@ -156,6 +166,15 @@
 
         refresh.addEventListener("click", refreshNow);
         load();
+        // load, never refreshNow: a return reads the cached snapshot. And not while Refresh or a
+        // load is still out (the button is disabled then): load() would switch the button back on
+        // mid-refresh, and a second click spends another billed Plaid call per bank.
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) {
+            blocks.onWorkspaceReturn(container, () => {
+                if (!refresh.disabled) load();
+            });
+        }
     }
 
     waitForDOM();

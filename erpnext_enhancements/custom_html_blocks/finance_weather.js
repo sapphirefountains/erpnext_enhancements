@@ -3,7 +3,10 @@
 // Reuses the keyless Open-Meteo path from the /wall display: coordinates come
 // from erpnext_enhancements.api.finance_dashboard.get_finance_config (shared with
 // the Wall weather chip), then the browser fetches Open-Meteo directly. Shadow-DOM
-// block model.
+// block model: the workspace runs this script again only when it renders the page,
+// so a return from a form or a list is reloaded by the shared helper,
+// public/js/global_enhancements/workspace_block_return.js. The conditions it shows
+// are current ones, so they are worth asking for again.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -65,32 +68,44 @@
     function startApp(container) {
         const body = container.querySelector("#fwx-body");
 
-        frappe
-            .call({ method: "erpnext_enhancements.api.finance_dashboard.get_finance_config" })
-            .then((r) => {
-                const cfg = r.message || {};
-                if (!cfg.enabled || !cfg.enabled.weather) {
-                    body.innerHTML = `<div class="fwx-muted">${__("Weather is turned off in ERPNext Enhancements Settings.")}</div>`;
-                    return;
-                }
-                const w = cfg.weather || {};
-                const url =
-                    "https://api.open-meteo.com/v1/forecast?latitude=" +
-                    encodeURIComponent(w.latitude) +
-                    "&longitude=" +
-                    encodeURIComponent(w.longitude) +
-                    "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min" +
-                    "&temperature_unit=fahrenheit&timezone=auto&forecast_days=1";
-                fetch(url)
-                    .then((resp) => resp.json())
-                    .then((data) => renderWeather(body, w.label, data))
-                    .catch(() => {
-                        body.innerHTML = `<div class="fwx-muted">${__("Weather unavailable.")}</div>`;
-                    });
-            })
-            .catch(() => {
-                body.innerHTML = `<div class="fwx-muted">${__("Weather unavailable.")}</div>`;
-            });
+        // Two returns in quick succession can overlap, so each ask takes a ticket and
+        // only the newest one draws.
+        function load() {
+            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
+            const current = () => container.__ee_ticket === ticket;
+            const unavailable = () => {
+                if (current()) body.innerHTML = `<div class="fwx-muted">${__("Weather unavailable.")}</div>`;
+            };
+            frappe
+                .call({ method: "erpnext_enhancements.api.finance_dashboard.get_finance_config" })
+                .then((r) => {
+                    if (!current()) return;
+                    const cfg = r.message || {};
+                    if (!cfg.enabled || !cfg.enabled.weather) {
+                        body.innerHTML = `<div class="fwx-muted">${__("Weather is turned off in ERPNext Enhancements Settings.")}</div>`;
+                        return;
+                    }
+                    const w = cfg.weather || {};
+                    const url =
+                        "https://api.open-meteo.com/v1/forecast?latitude=" +
+                        encodeURIComponent(w.latitude) +
+                        "&longitude=" +
+                        encodeURIComponent(w.longitude) +
+                        "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min" +
+                        "&temperature_unit=fahrenheit&timezone=auto&forecast_days=1";
+                    fetch(url)
+                        .then((resp) => resp.json())
+                        .then((data) => {
+                            if (current()) renderWeather(body, w.label, data);
+                        })
+                        .catch(unavailable);
+                })
+                .catch(unavailable);
+        }
+
+        load();
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
     }
 
     waitForDOM();

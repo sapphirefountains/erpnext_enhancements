@@ -95,6 +95,13 @@ import "./global_enhancements/global_sidebar.js";
 // (the desk trusts them blindly and never validates them)
 import "./global_enhancements/sidebar_pref_heal.js";
 import "./global_enhancements/auto_collapse_sidebar.js";
+// erpnext_enhancements.workspace_blocks.onWorkspaceReturn: reloads a workspace's data
+// blocks when you come back to it. v16's Workspace.show() returns early on the
+// workspace already shown, so a return from a form re-runs no block script, and every
+// dashboard kept its first answer until the tab was reloaded. Global because the blocks
+// are DB-stored Custom HTML Blocks that cannot import anything; each guards the call,
+// so a device holding an older bundle still draws every block.
+import "./global_enhancements/workspace_block_return.js";
 import "./global_enhancements/unlink_and_delete.js";
 // Generic document merge — global "Merge into…" form button + list bulk merge
 // (gated by frappe.boot.ee_merge_tool). Server: document_merge.py.

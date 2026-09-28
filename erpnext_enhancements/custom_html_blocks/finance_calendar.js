@@ -2,7 +2,9 @@
 //
 // Renders upcoming events from the configured "Finance" Google Calendar via
 // erpnext_enhancements.api.finance_calendar.get_finance_calendar (server-side
-// cached). Shadow-DOM block model.
+// cached). Shadow-DOM block model: the workspace runs this script again only when
+// it renders the page, so a return from a form or a list is reloaded by the shared
+// helper, public/js/global_enhancements/workspace_block_return.js.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -71,22 +73,31 @@
         const body = container.querySelector("#fcal-body");
         const refresh = container.querySelector("#fcal-refresh");
 
+        // The refresh button and a return to the workspace can both ask while an answer
+        // is on its way, so each ask takes a ticket and only the newest one draws.
         function load() {
+            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
+            const current = () => container.__ee_ticket === ticket;
             body.innerHTML = `<div class="fcal-muted">${__("Loading…")}</div>`;
             refresh.disabled = true;
             frappe
                 .call({ method: "erpnext_enhancements.api.finance_calendar.get_finance_calendar" })
-                .then((r) => render(body, r.message))
+                .then((r) => {
+                    if (current()) render(body, r.message);
+                })
                 .catch(() => {
+                    if (!current()) return;
                     body.innerHTML = `<div class="fcal-muted">${__("Could not load the calendar.")}</div>`;
                 })
                 .then(() => {
-                    refresh.disabled = false;
+                    if (current()) refresh.disabled = false;
                 });
         }
 
         refresh.addEventListener("click", load);
         load();
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
     }
 
     waitForDOM();

@@ -32,6 +32,13 @@
  *                           breakdowns (status / type / completion).
  * The toolbar also carries "New Project" / "New Master Project" quick-create buttons.
  * Table edits persist back via the same whitelisted methods.
+ *
+ * The workspace runs this script again, with a fresh root, only when it renders the
+ * page: the first visit, and coming back from a different workspace. Coming back
+ * from a project, a task or a list does not (v16's Workspace.show() returns early on
+ * the workspace already shown), so the script hands fetch_data() to the shared
+ * return helper, public/js/global_enhancements/workspace_block_return.js, which runs
+ * it again then.
  */
 (function() {
     // The ColumnSelector / ColumnResizer classes live in separate assets registered
@@ -252,14 +259,24 @@
     async function fetch_initial_data() {
         show_skeleton();
         init_gantt_filters();
+        await fetch_data();
+    }
 
+    // The fetch half on its own, so a return to the workspace can run it again
+    // without re-binding the Gantt toolbar (init_gantt_filters binds its handlers,
+    // and a second call would stack them). A return and the first load can overlap,
+    // so each fetch takes a ticket and only the newest one draws.
+    async function fetch_data() {
+        const ticket = (root_element.__ee_ticket = (root_element.__ee_ticket || 0) + 1);
+        const current = () => root_element.__ee_ticket === ticket;
         try {
             const [projectsRes, priorityRes, statusRes] = await Promise.all([
                 api_call('get_project_data'),
                 api_call('get_priority_options'),
                 api_call('get_status_options')
             ]);
-            
+            if (!current()) return;
+
             if (priorityRes.message && !priorityRes.message.error) {
                 priority_options = priorityRes.message;
             }
@@ -273,6 +290,7 @@
                 $root.find('#dashboard-content').html('<div class="alert alert-danger">Error loading projects.</div>');
             }
         } catch (err) {
+            if (!current()) return;
             $root.find('#dashboard-content').html('<div class="alert alert-danger">Network Error.</div>');
         }
     }
@@ -1578,5 +1596,13 @@
 
     // Init
     fetch_initial_data();
+
+    // Coming back to the workspace from a project or a task re-runs nothing (the
+    // header), so the shared return helper runs fetch_data() then: the rows are
+    // fetched again and the tab on screen is drawn again, the Portfolio Gantt
+    // included, with the tab, the filters and the expanded projects kept. A bundle
+    // cached from before the helper has none, and the block still draws.
+    const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+    if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(root_element, fetch_data);
     }
 })();

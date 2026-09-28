@@ -114,6 +114,165 @@ version: every state change is still PR 3's.
   an article nobody touched, that assumption is wrong for that body: tell Claude, and do not edit the
   article.
 
+## [1.556.3] - 2026-09-28
+
+**Dashboards now show fresh numbers when you come back to them.** Open a dashboard, click through to a
+project, a task or a lead, change something, press Back: until now every block on the dashboard
+showed exactly what it showed when you first opened it, the thing you had just changed included, and
+stayed that way until the browser tab was reloaded. That was true of every block in this app that
+loads data (the department dashboards' widgets, Home's Projects and Task dashboards, Morning
+Briefing, the KPI Cockpit and My Training) except My Travel, which had fixed it for itself.
+
+### Fixed
+
+- **Why it happened.** The desk keeps a single Workspaces page, and v16's `Workspace.show()` returns
+  early when the workspace it would show is the one already shown
+  (`frappe/public/js/frappe/views/workspace/workspace.js:91`,
+  `if (this._page?.name === page.name) return; // already shown`). Coming back to a workspace from a
+  form, a list or a desk page (the Back button, a breadcrumb, the sidebar) lands on that early return:
+  nothing is rendered, so no Custom HTML Block script runs. A block's script runs only when the
+  workspace *renders* the page, which is the first visit and coming back from a different workspace.
+  Thirty block headers said the opposite ("the workspace re-runs this whole script with a fresh root
+  on every navigation"), so a stale number read as stale data, and nobody went looking. The Travel
+  hub found it for itself in v1.554.0 and fixed only its own block.
+- **The fix is one desk-wide helper,** `public/js/global_enhancements/workspace_block_return.js`, in
+  the desk bundle. A block calls `erpnext_enhancements.workspace_blocks.onWorkspaceReturn(root, load)`
+  once its DOM is ready, and when the route comes back to the workspace it was drawn on, and it is
+  still on the page, the helper runs `load(root)` again. The order of v16's events is what makes this
+  delicate, so it is worth writing down. `router.route()` parses the route into a new array
+  (`this.current_route = await this.parse()`), calls `render()`, and only then fires `change`
+  (`router.js:147-152`). A render draws its blocks later: EditorJS renders behind
+  `editor.isReady.then` (`workspace.js:302-310`), and each `CustomBlockWidget` awaits
+  `frappe.model.with_doc` before `create_shadow_element` runs the script (`custom_block_widget.js:26-30`).
+  So a freshly drawn block registers *after* its own navigation's `change` and has loaded itself, and
+  the next `change` that finds it is a real return: no double request. In case that order ever
+  changes, a block registered under the route array that is still current is left alone. Only the
+  workspace being shown reloads (from Home to Travel, `change` fires while Home's blocks are still in
+  the document), and a block whose host has left the document is dropped. `frappe.router.off()` can
+  never remove a handler (`event_emitter.js:26-28` wraps it in a new function before unbinding), so
+  the helper binds exactly one for the whole desk rather than one per block per render. The router's
+  handlers run in turn under jQuery, where an exception stops the rest and rejects `route()`, so every
+  step is inside `try/catch` and one block's failing load never stops the others.
+- **Every data block registers.** Each guards the call
+  (`window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks`), so a device holding
+  a bundle cached from before this release still draws every block and just keeps its first answer.
+  Where the refresh button (or a timer, or a realtime update) and a return can both ask at once, each
+  ask takes a ticket on the root and only the newest answer draws, following My Travel. Three
+  registrations are not the block's plain load, on purpose: the **KPI Cockpit** and **Morning
+  Briefing** register `load(false)`, and only while no answer is already on its way, because
+  `load(true)` recomputes the snapshot or regenerates the briefing (minutes, with Gemini), and a
+  Refresh in flight must be the answer that draws; **Bank Balances** reloads the cached snapshot,
+  never spends a live Plaid call, and skips a return while its Refresh is still out: `load()` ends by
+  switching Refresh back on, so a return mid-refresh would have let a second click start a second
+  billed Plaid refresh (one call per linked bank, no lock) racing the first. The KPI Cockpit also gained a ticket: picking another department
+  while an answer was on its way could land the old department's numbers under the new name. The
+  **Projects Dashboard** reloads through a new `fetch_data()` that re-fetches and redraws the tab on
+  screen (the Portfolio Gantt included, with its filters and expanded projects kept) without
+  re-binding the Gantt toolbar, which `init_gantt_filters` would have stacked.
+- **My Travel uses the helper too,** so there is one mechanism: its own `watchReturn` router handler,
+  the helper's first version, is gone.
+- **Two blocks deliberately do not reload,** and say why in their headers: Desk Shortcuts asks the
+  server nothing (it paints `frappe.boot`), and Finance Astrology is one server-cached text per sign
+  per day. Every false lifecycle claim is corrected, the KPI Cockpit's inline "on every workspace
+  navigation" included.
+
+### Added
+
+- `scripts/test_workspace_block_return.mjs` (own CI step, node): the helper against a router that
+  fires `change` the way v16's does (a return reloads each block once, a fresh render loads once on
+  either side of `change`, a replaced block is dropped rather than skipped, a throwing or rejecting
+  load stops nothing, a route that is not the workspace does nothing, no router is a no-op), then the
+  real script of every one of the 39 registering blocks against a stand-in desk, counting what it asks
+  the server: leaving asks nothing, coming back asks again, and after the page is rendered again only
+  the new block reloads. It also clicks Bank Balances' Refresh, holds the Plaid answer, and checks a
+  return in the meantime asks nothing and leaves Refresh off. Checked by breaking the helper and
+  blocks on purpose: each break fails it.
+- `tests/test_workspace_block_return.py` (own CI step): every seeded block that fetches registers or
+  is in `NOT_RELOADED` with a reason (and nothing listed there registers), every registration is
+  guarded and binds no router handler of its own, a registered function takes the root first (a bare
+  `load(force)` would recompute on every return), and no block file claims the old lifecycle,
+  comments included.
+
+### Changed
+
+- `tests/test_travel_hub.py` pins My Travel's registration with the helper instead of its own handler,
+  and its node run now loads the real helper; every expected count is unchanged.
+  `tests/test_training_dashboard.py`'s docstring stops repeating the false claim. The
+  `custom_html_blocks` README gains "When a block script runs"; the Travel, `public` and `tests`
+  READMEs point at it.
+
+## [1.556.2] - 2026-09-28
+
+**No meal receipts for per diem, a closing warning that fits production, and no "All trips" for
+people who cannot open it.** Three loose ends from the travel work, all asked for by Nik on
+2026-09-28. The first is his words: "Meal receipts shouldn't be required if paid by per diem."
+
+### Changed
+
+- **Receipts are for costs someone paid, never for what the per diem covers.** The per diem is paid
+  at the daily rate, not against receipts, and neither it nor mileage has a Receipt field on the
+  trip to put one in. Yet section 6 of `/travel_guidelines` said the per diem covers meals and
+  incidentals "— still include receipts for them", and every post-trip message asked every traveler
+  for "your receipts", so someone owed nothing but per diem went hunting for lunch receipts that the
+  system could not even hold. Now:
+  - `/travel_guidelines`: section 5 says the meals and incidentals the per diem covers need no
+    receipts and that accounting pays the per diem from the trip; section 6 says receipts are only
+    for costs you paid yourself that the per diem does not cover and for company-card purchases (a
+    meal put on a company card still needs its receipt, for reconciliation), and its "In the system"
+    callout says per diem and mileage need none, so someone owed only those has nothing to attach
+    to be paid back, while a company-card purchase still needs its receipt.
+    The out-of-pocket and company-card receipt rules are unchanged.
+  - The expense nudge asks for receipts only when the traveler paid a cost themselves
+    (`reminders._unclaimed_costs`, passed to the template as `receipts_due`). Someone owed only per
+    diem or mileage gets "Your travel reimbursement: <trip>" instead of "Attach your travel
+    receipts: <trip>", is told what they are owed is per diem or mileage, that it needs no receipts,
+    and that accounting pays it from the trip, and is not told to get a closed trip reopened. The
+    nudge still goes to everyone the trip shows as owed, stamped before it is sent, as before.
+  - The Closed notice goes to every traveler alike, so it now says which costs take a receipt (one
+    paid yourself or put on a company card; per diem and mileage need none) instead of asking each
+    of them to check "each of your itemized receipts". The Travel hub's receipts reminder says the
+    same, keeping the two apart: a cost you paid yourself is reimbursed, a company-card purchase is
+    not but still needs its receipt.
+  - The Travel workspace's "How a work trip works" step 4 ("Attach each receipt to its cost on the
+    trip") was already right and is untouched, so the workspace JSON and its `modified` are too.
+- **The warning on closing a trip says what matters on production.** A traveler can close their own
+  trip (Completed to Closed is theirs too), and `TravelTrip._warn_unclaimed_on_close` told whoever did
+  it the trip was being closed with money "not yet on an Expense Claim". Production has no HRMS
+  (`expense_claims_available()` is False; it cannot be installed there,
+  `accounting_intake/actions/receipt_expense.py`), so nothing is ever on a claim and it fired on every
+  close, about a claim nobody could make. With HRMS it still says exactly that. Without it, it now
+  names who the trip shows as owed and how much, says accounting reimburses that from the trip with
+  no claim to make, counts the employee-paid costs with nothing in their Receipt field, and says only
+  a Travel Coordinator can change a closed trip, so a receipt attached later means asking one to
+  reopen it; per diem and mileage need no receipts. It is still a warning (`msgprint`), never a
+  refusal, and the close goes ahead.
+- **Nothing tells a coordinator to install hrms any more.** The Travel Settings notice ended "Install
+  hrms to enable travel finance", and `travel_management/api.py::_require_hrms` (the refusal behind
+  the Create buttons the trip form already hides) ended "Install hrms to use this." Neither can be
+  done here. Both now say travel finance is handled by accounting from the trip.
+- `tests/test_travel_views.py`: `TestTheTravelerIsToldWhatProductionCanDo` pins the new guideline,
+  nudge and Closed-notice wording, renders the nudge for someone owed only per diem or mileage, and
+  checks that neither the Travel Settings notice nor `_require_hrms` says to install hrms;
+  `TestTheExpenseNudgeAsksOnlyForReceiptsDue` runs `send_post_trip_expense_nudges` over a trip where
+  one traveler paid a cost and two did not; `TestTheClosingWarning` runs the real controller's
+  warning with and without HRMS, for a traveler closing their own trip; `TestBootstrap` checks
+  `is_staff` for the Employee role, a coordinator, Administrator, a Website User and a desk account
+  with no Employee role. `tests/test_travel_planner.py` checks the page's boot carries it, and
+  `scripts/test_web_flow_history.js` drives the page with and without it.
+
+### Fixed
+
+- **`/itinerary` offers the list of all trips only to staff.** The "All trips" chip and the empty
+  page's "See all trips" were drawn for everyone, but `get_all_trips` answers staff only (the Employee
+  role or a travel coordinator), so a portal customer (a Website User) who tapped either was told
+  "You don't have access to the list of all trips." `get_itinerary_bootstrap` now sends `is_staff`
+  (`_is_staff`, the same gate the list uses) in the boot `www/itinerary.py` prints, and `itinerary.js`
+  draws the chip and the link only on `is_staff === true`. A boot without it, from a page the service
+  worker kept on the phone before this release, offers neither, and a page with nothing to switch to
+  draws no empty chip bar. A `?view=trips` address still asks the server, and someone who is not
+  staff still gets its refusal, in place, as before. A coordinator with no Employee record (who is
+  staff) now gets "See all trips" on the empty page, which the old `BOOT.employee` test withheld.
+
 ## [1.556.1] - 2026-09-28
 
 **The review fixes for WI-080 PR 3 (#1144), which merged before they landed.** Four defects, all

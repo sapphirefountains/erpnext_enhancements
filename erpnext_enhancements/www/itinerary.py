@@ -82,8 +82,9 @@ def get_context(context):
 	string kept (``?trip=``, ``&as=``, ``&view=`` and ``&file=``: the trip, person,
 	screen and picture the page was showing — see itinerary.js). For an authenticated
 	user this exposes ``boot_json`` (employee +
-	their active trips, including ones they own but are not on, + CSRF token, + the
-	offline marker's ``offline_key``, injected as ``window.ITIN_BOOT``), ``csrf_token``
+	their active trips, including ones they own but are not on, + whether they are staff,
+	``is_staff``, which decides whether the page offers the list of all trips, + CSRF token,
+	+ the offline marker's ``offline_key``, injected as ``window.ITIN_BOOT``), ``csrf_token``
 	(``window.ITIN_CSRF``) and ``deploy_version`` (asset cache-bust token), and sets the
 	marker cookie itself (``set_marker``, above). A guest gets neither.
 	"""

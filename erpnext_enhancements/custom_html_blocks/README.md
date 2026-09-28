@@ -4,6 +4,62 @@ This folder is the **source of truth** for the Frappe **Custom HTML Blocks** —
 
 > ✅ **Repo is the source of truth (v1.69.0).** On every `bench migrate`, `erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks` (an `after_migrate` hook) **upserts** all four blocks from these files: missing blocks are created and any block whose `html`/`script`/`style` has drifted from the source is **overwritten**, then the blocks are placed on the **Home** workspace (idempotent append). So edit the files here and `bench migrate` to deploy — **UI-side edits to these blocks do not survive a migrate.** (The older insert-only seed patches — `seed_task_dashboard_block`, `seed_morning_briefing_block`, `seed_desk_shortcuts_block` — are now superseded by this seeder and left only for history; they no-op once a block exists.)
 
+## When a block script runs
+
+The workspace runs a block's whole script, with a fresh shadow root as `root_element`, **only
+when it renders the page**: the first visit, and coming back from a *different* workspace. It
+does not run it when you come back to the same workspace from a form, a list or a desk page
+(the Back button, a breadcrumb, the sidebar). The desk keeps one Workspaces page, and v16's
+`Workspace.show()` returns early for the workspace already on screen
+(`frappe/public/js/frappe/views/workspace/workspace.js:91`,
+`if (this._page?.name === page.name) return;`). Until v1.556.3, thirty of these files said the
+opposite in their header comment (that the workspace ran the script again, with a fresh root,
+each time you arrived), and every dashboard kept the numbers it first loaded until the browser
+tab was reloaded.
+
+So a block that fetches data registers with the desk-wide return helper,
+[`public/js/global_enhancements/workspace_block_return.js`](../public/js/global_enhancements/workspace_block_return.js),
+which ships in `erpnext_enhancements.bundle.js`:
+
+```js
+const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
+```
+
+When the route comes back to the workspace the block was drawn on, and the block is still on
+the page, the helper calls `load(container)` again. What it does and does not do:
+
+- **One router handler for the whole desk**, bound on the first registration. `frappe.router.off()`
+  wraps the handler in a new function before unbinding, so it can never remove one; a block that
+  bound its own would add one per page render.
+- **No double load on a fresh render.** v16's router renders and *then* fires `change`
+  (`router.js` `route()`), and a render draws its blocks asynchronously after that, so a block
+  drawn by a navigation registers after that navigation's `change` and has already loaded
+  itself. As a guard against that order changing, a block registered under the route that is
+  still current is not reloaded.
+- **Only the workspace being shown.** Going from Home to Travel fires `change` while Home's
+  blocks are still in the document; they are not reloaded. A block whose host has left the
+  document is dropped.
+- **Never throws.** The router's handlers run in turn under jQuery, and an exception in one
+  would stop the others. One block's failing load never stops the rest.
+- **Guarded in every block.** A device holding a bundle cached from before the helper has no
+  helper; the block still draws, and keeps its first answer.
+
+`load` is given the root. A block whose load reads its first argument as something else
+registers a wrapper: the KPI Cockpit and the Morning Briefing register `load(false)`, so a
+return never recomputes or regenerates, and only when no answer is already on its way. A load
+that the refresh button and a return can both start takes a **ticket** on the root, and only
+the newest answer draws, so an older answer arriving late never paints over a newer one.
+
+Two blocks deliberately do not register. **Desk Shortcuts** makes no server call (it paints
+`frappe.boot`, which does not change until the desk reloads). **Finance Astrology** is one
+server-cached text per sign per day, so asking again would redraw the same words.
+`tests/test_workspace_block_return.py` holds that list, and fails the build on a block that
+fetches data and does neither, and on any block comment that claims the old lifecycle.
+`scripts/test_workspace_block_return.mjs` runs the helper itself, then runs every registering
+block against a stand-in desk and checks that leaving asks the server nothing and coming back
+really asks it again.
+
 ## Files — Projects Dashboard
 
 | File | Role |

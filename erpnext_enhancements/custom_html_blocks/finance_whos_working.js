@@ -3,7 +3,15 @@
 // Renders employees currently clocked in (open/paused Job Intervals) from
 // erpnext_enhancements.api.finance_dashboard.get_whos_working. Auto-refreshes so
 // the elapsed times stay live; the interval is stored on `window` and cleared on
-// re-run so workspace navigations don't stack timers (shadow-DOM block model).
+// re-run, so the workspace rendering the page again never stacks timers.
+//
+// Shadow-DOM sandbox: `root_element` is the shadow root. The workspace runs this
+// whole script again, with a fresh root, only when it renders the page: the first
+// visit, and coming back from a different workspace. Coming back from a form or a
+// list does not (v16's Workspace.show() returns early on the workspace already
+// shown), so startApp also hands load() to the shared return helper,
+// public/js/global_enhancements/workspace_block_return.js, which runs it again
+// then, rather than leaving the list up to a minute old.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -61,22 +69,32 @@
         const body = container.querySelector("#fww-body");
         const refresh = container.querySelector("#fww-refresh");
 
+        // The refresh button, the timer and a return to the workspace can all ask while
+        // an answer is on its way, so each ask takes a ticket and only the newest draws.
         function load() {
+            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
+            const current = () => container.__ee_ticket === ticket;
             refresh.disabled = true;
             frappe
                 .call({ method: "erpnext_enhancements.api.finance_dashboard.get_whos_working" })
-                .then((r) => render(body, r.message))
+                .then((r) => {
+                    if (current()) render(body, r.message);
+                })
                 .catch(() => {
+                    if (!current()) return;
                     body.innerHTML = `<div class="fww-muted">${__("Could not load time-clock status.")}</div>`;
                 })
                 .then(() => {
-                    refresh.disabled = false;
+                    if (current()) refresh.disabled = false;
                 });
         }
 
         refresh.addEventListener("click", load);
         load();
         state.timer = setInterval(load, REFRESH_MS);
+        // The return helper runs the same load; the timer above is untouched by it.
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
     }
 
     waitForDOM();

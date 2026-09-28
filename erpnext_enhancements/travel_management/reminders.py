@@ -94,11 +94,18 @@ def send_post_trip_expense_nudges():
 			if not pending:
 				continue
 			context = _base_context(doc)
-			# Receipts, not a claim: HRMS (and Expense Claim) is absent on production, and
-			# accounting reimburses from the receipts on the trip (expense_nudge.html).
-			subject = _("Attach your travel receipts: {0}").format(doc.purpose)
 			for recipient in _traveler_recipients(doc, employees=pending):
 				amount = _unclaimed_total(doc, recipient.row)
+				# Receipts, not a claim: HRMS (and Expense Claim) is absent on production, and
+				# accounting reimburses from the receipts on the trip (expense_nudge.html). Only a
+				# cost they paid themselves takes a receipt: someone owed nothing but per diem or
+				# mileage has nothing to attach, and is not asked to (Nik, 2026-09-28).
+				receipts_due = bool(_unclaimed_costs(doc, recipient.row))
+				subject = (
+					_("Attach your travel receipts: {0}")
+					if receipts_due
+					else _("Your travel reimbursement: {0}")
+				).format(doc.purpose)
 				# Stamp first (at-most-once), then send.
 				frappe.db.set_value("Trip Traveler", recipient.row.name, "expense_nudge_sent", 1)
 				_send(
@@ -109,6 +116,7 @@ def send_post_trip_expense_nudges():
 						context,
 						unclaimed_amount=frappe.format_value(amount, {"fieldtype": "Currency"}),
 						days_since_end=date_diff(today(), doc.end_date),
+						receipts_due=receipts_due,
 					),
 					doc,
 				)
@@ -119,18 +127,24 @@ def send_post_trip_expense_nudges():
 			)
 
 
+def _unclaimed_costs(doc, traveler):
+	"""The employee-paid cost rows this traveler paid for, without a claim stamp: the part of
+	what they are owed that takes a receipt. Per diem and mileage take none, and have no Receipt
+	field to take one (travel guidelines, sections 5 and 6)."""
+	return [
+		row
+		for fieldname in COST_TABLES
+		for row in doc.get(fieldname)
+		if row.paid_by == "Employee"
+		and row.paid_by_traveler == traveler.employee
+		and not row.expense_claim
+	]
+
+
 def _unclaimed_total(doc, traveler):
 	"""Employee-paid cost rows without a claim stamp + unclaimed mileage +
 	unclaimed per diem, for one traveler row."""
-	total = 0
-	for fieldname in COST_TABLES:
-		for row in doc.get(fieldname):
-			if (
-				row.paid_by == "Employee"
-				and row.paid_by_traveler == traveler.employee
-				and not row.expense_claim
-			):
-				total += flt(row.cost)
+	total = sum(flt(row.cost) for row in _unclaimed_costs(doc, traveler))
 	for row in doc.mileage:
 		if row.traveler == traveler.employee and not row.expense_claim:
 			total += flt(row.amount)

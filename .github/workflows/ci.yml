@@ -1307,6 +1307,19 @@ jobs:
       # the wiring is asserted here rather than discovered on a dashboard.
       - name: Department dashboard widget wiring
         run: python -m unittest erpnext_enhancements.tests.test_dashboard_widgets -v
+      # v16's Workspace.show() returns early for the workspace already on screen, so coming
+      # back to a dashboard from a form ran no block script and every data block kept its first
+      # answer until the tab was reloaded (v1.556.3). The node step runs the shared return helper
+      # against a router that fires "change" as v16's does (fresh render loads once, a return
+      # reloads once, a replaced block is dropped, one broken load stops nothing), then runs
+      # every registering block's real script and counts what it asks the server. The unittest
+      # step holds what a run cannot see: every block that fetches registers or says why not,
+      # the guard for a bundle cached from before the helper, and no comment still claiming
+      # that every navigation re-runs a block. Reads files only; no frappe stub.
+      - name: Workspace block return (helper + every block, node)
+        run: node scripts/test_workspace_block_return.mjs
+      - name: Workspace block return (registration + lifecycle claims)
+        run: python -m unittest erpnext_enhancements.tests.test_workspace_block_return -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other stub-installing suites.
       #
