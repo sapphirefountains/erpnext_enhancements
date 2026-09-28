@@ -167,6 +167,10 @@ def publish(version, article, *, opened_modified, approver):
 		{
 			"title": version.get("title"),
 			"department_block": version.get("department_block"),
+			# PR 5. None, not "", for a version that was already In Review when the field arrived:
+			# submit requires a kind, approval does not (workflow.submit_problems), so such an article
+			# stays unclassified until a revision sets one.
+			"kind": version.get("kind") or None,
 			"status": PUBLISHED_STATUS,
 			"summary": version.get("summary"),
 			"keywords": version.get("keywords"),
@@ -377,10 +381,16 @@ def _write_article(article):
 
 def version_onload(doc):
 	"""``__onload.kb`` for a version's form: the actions this person may take now (so the form
-	shows exactly those buttons) and, for a KB Approver who may not approve it, why not."""
+	shows exactly those buttons); for a KB Approver who may not approve it, why not; and, on a
+	Draft, what stops it being submitted for review (PR 5).
+
+	``submit_blockers`` exists because the Submit for Review button is offered only when
+	``workflow.submit_problems`` is empty, and PR 5 added a rule every draft open at its deploy
+	breaks ("it has no kind"). Without the reason the button would simply vanish. They are the same
+	problems the button is judged by, so the form never names a blocker the server would not."""
 	ask = asker()
 	if not workflow.holds_kb_role(ask.roles):
-		return {"actions": [], "approve_blockers": []}
+		return {"actions": [], "approve_blockers": [], "submit_blockers": []}
 	article = article_row(doc.get("article"))
 	context = {"user_type": ask.user_type, "browser": ask.browser, "gate_flags": ask.gate_flags}
 	actions = workflow.version_actions(doc, ask.user, ask.roles, article=article, **context)
@@ -393,7 +403,10 @@ def version_onload(doc):
 		blockers = workflow.approval_problems(
 			doc, ask.user, ask.roles, opened_modified=doc.get("modified"), **context
 		) + workflow.publish_problems(doc, article)
-	return {"actions": list(actions), "approve_blockers": blockers}
+	submit_blockers = []
+	if workflow.state_of(doc) == workflow.DRAFT and workflow.SUBMIT_FOR_REVIEW not in actions:
+		submit_blockers = workflow.submit_problems(doc, ask.user, ask.roles, article=article)
+	return {"actions": list(actions), "approve_blockers": blockers, "submit_blockers": submit_blockers}
 
 
 def article_onload(doc):

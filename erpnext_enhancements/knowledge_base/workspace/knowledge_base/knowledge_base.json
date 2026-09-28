@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"kb_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Company Knowledge Base</b></span>\",\"col\":12}},{\"id\":\"kb_intro\",\"type\":\"paragraph\",\"data\":{\"text\":\"Short how-to articles for everyone at Sapphire. Every article here was written by one person and approved by another before it was published. To find one, open <b>Published articles</b> and type in the <b>Title</b> or <b>Keywords</b> box at the top of the list (on a phone, first tap the up-and-down arrows button next to <b>Filter</b> to show those boxes), or a KB number such as KB-0612 in the <b>ID</b> box. Something missing or out of date? Tell the process owner named on the article.\",\"col\":12}},{\"id\":\"kb_sc_published\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Published articles\",\"col\":4}},{\"id\":\"kb_ql_newest\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Newest articles\",\"col\":8}},{\"id\":\"kb_sc_drafts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My drafts\",\"col\":3}},{\"id\":\"kb_sc_review\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"In review\",\"col\":3}},{\"id\":\"kb_sc_due\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Due for review\",\"col\":3}},{\"id\":\"kb_sc_new\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"New draft\",\"col\":3}},{\"id\":\"kb_card_writing\",\"type\":\"card\",\"data\":{\"card_name\":\"Writing and review\",\"col\":4}}]",
+ "content": "[{\"id\":\"kb_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Company Knowledge Base</b></span>\",\"col\":12}},{\"id\":\"kb_intro\",\"type\":\"paragraph\",\"data\":{\"text\":\"The company's policies, processes and SOPs, for everyone at Sapphire. Every article here was written by one person and approved by another before it was published. To find one, type in the search bar at the top of any page: two letters are enough, e.g. PO, or a KB number such as KB-0612. Or open <b>Published articles</b> and type in the <b>Title</b> or <b>Keywords</b> box at the top of the list, or pick a <b>Kind</b> (on a phone, first tap the up-and-down arrows button next to <b>Filter</b> to show those boxes), or type a KB number in the <b>ID</b> box. Something missing or out of date? Tell the process owner named on the article.\",\"col\":12}},{\"id\":\"kb_sc_published\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Published articles\",\"col\":4}},{\"id\":\"kb_ql_newest\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Newest articles\",\"col\":8}},{\"id\":\"kb_sc_drafts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My drafts\",\"col\":3}},{\"id\":\"kb_sc_review\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"In review\",\"col\":3}},{\"id\":\"kb_sc_due\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Due for review\",\"col\":3}},{\"id\":\"kb_sc_new\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"New draft\",\"col\":3}},{\"id\":\"kb_card_writing\",\"type\":\"card\",\"data\":{\"card_name\":\"Writing and review\",\"col\":4}}]",
  "creation": "2026-09-28 21:00:00.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -51,7 +51,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-28 22:00:00.000000",
+ "modified": "2026-09-28 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Knowledge Base",
  "name": "Knowledge Base",

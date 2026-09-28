@@ -73,6 +73,7 @@ def _version(**values):
 		"review_state": W.DRAFT,
 		"title": "Receiving a PO",
 		"department_block": "06 Operations",
+		"kind": "SOP",
 		"body": BODY,
 		"owner": AUTHOR,
 		"submitted_by": None,
@@ -186,6 +187,7 @@ class TestSubmit(unittest.TestCase):
 		cases = {
 			"it has no title": {"title": "  "},
 			"it has no department": {"department_block": ""},
+			"it has no kind": {"kind": None},
 			"it has no text": {"body": '<div class="ql-editor read-mode"><p><br></p></div>'},
 		}
 		for phrase, values in cases.items():
@@ -196,6 +198,33 @@ class TestSubmit(unittest.TestCase):
 		self.assertEqual(
 			W.submit_problems(_version(department_block="06"), AUTHOR, (K.AUTHOR_ROLE,)), ["it has no department"]
 		)
+
+	def test_a_draft_needs_one_of_the_three_kinds_exactly(self):
+		"""WI-080 PR 5. Only a stored option counts: the rule reads what the Select holds, not what a
+		person might have meant, so a lowercase or unknown word is no kind (v16's Select validation
+		never stores one anyway)."""
+		for kind in K.ARTICLE_KINDS:
+			with self.subTest(kind=kind):
+				self.assertEqual(W.submit_problems(_version(kind=kind), AUTHOR, (K.AUTHOR_ROLE,)), [])
+		for kind in (None, "", "Checklist", "sop", "Procedure", " SOP"):
+			with self.subTest(kind=kind):
+				self.assertEqual(
+					W.submit_problems(_version(kind=kind), AUTHOR, (K.AUTHOR_ROLE,)), ["it has no kind"]
+				)
+		version = _version()
+		del version["kind"]
+		self.assertEqual(W.submit_problems(version, AUTHOR, (K.AUTHOR_ROLE,)), ["it has no kind"])
+
+	def test_a_version_in_review_with_no_kind_can_still_be_approved(self):
+		"""Only submitting needs a kind. A version already In Review when PR 5 deployed has none, and
+		approval and publishing do not ask, so it publishes and its article is unclassified until a
+		revision sets one (decided 2026-09-28)."""
+		version = _version(review_state="In Review", submitted_by=AUTHOR, kind=None)
+		self.assertEqual(
+			W.approval_problems(version, APPROVER, (K.APPROVER_ROLE,), opened_modified=MODIFIED, **BROWSER), []
+		)
+		self.assertEqual(W.publish_problems(version, _article()), [])
+		self.assertEqual(W.publish_problems(version, None), [])
 
 	def test_a_secret_found_since_the_save_is_named_without_its_value(self):
 		found = [("body", C.Finding(3, "a Stripe secret key"))]
@@ -437,6 +466,14 @@ class TestTheButtonsAreTheRules(unittest.TestCase):
 		self.assertEqual(
 			self._actions(_version(), AUTHOR, (K.AUTHOR_ROLE,)), ("submit_for_review", "discard", "review_diff")
 		)
+
+	def test_a_draft_with_no_kind_is_not_offered_for_review(self):
+		"""The button follows the rule, and the rule names the kind; ``publish.version_onload`` sends
+		that reason to the form, so the button is never missing without one."""
+		version = _version(kind=None)
+		self.assertEqual(self._actions(version, AUTHOR, (K.AUTHOR_ROLE,)), ("discard", "review_diff"))
+		self.assertEqual(W.submit_problems(version, AUTHOR, (K.AUTHOR_ROLE,)), ["it has no kind"])
+		self.assertIn("submit_for_review", self._actions(_version(kind="Policy"), AUTHOR, (K.AUTHOR_ROLE,)))
 
 	def test_an_independent_approver_on_a_version_in_review(self):
 		version = _version(review_state="In Review", submitted_by=AUTHOR)

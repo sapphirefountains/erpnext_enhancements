@@ -1,0 +1,396 @@
+{
+ "_about": "Invented knowledge-base articles and queries for tests/test_knowledge_base_search.py (WI-080 PR 5). Every procedure, person, number and document id here is made up for the test: nothing is derived from a real SOP, rate, vendor or person, because this repository is public. KB numbers end in 9x and document numbers are 9000 and up, outside any real register. The real questions staff ask are kept in the company's private repository, not here.",
+ "articles": [
+  {
+   "key": "KB-0691",
+   "title": "Receiving a PO against a packing slip",
+   "keywords": "PO, purchase order, packing slip, receiving",
+   "summary": "How to check a delivery against its purchase order and receive it.",
+   "body": "## Before you start\n\nFind the PO number on the packing slip. If there is none, call Alex Example in purchasing.\n\n1. Open the PO and press **Receive**.\n2. Count every carton and compare each line with the slip.\n3. Note any short or damaged line before you save.\n4. Put the slip in the tray by the dock door.",
+   "kind": "SOP",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0692",
+   "title": "Returning damaged goods to a supplier",
+   "keywords": "RMA, return, damaged, supplier",
+   "summary": "Getting a return authorization and sending damaged goods back.",
+   "body": "Ask the supplier for an RMA number before anything leaves the building. Photograph the damage, write the RMA on every box, and follow SOP-9001 for the paperwork. Returned goods wait on the red shelf until the carrier collects them.",
+   "kind": "SOP",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0693",
+   "title": "How a material request (MR) becomes a purchase order (PO)",
+   "keywords": "MR, material request, purchasing, buyer",
+   "summary": "Who raises a material request, who buys, and where it is handed off.",
+   "body": "A project lead raises an MR. The buyer checks stock, asks two suppliers for prices and turns the MR into a purchase order. The approver signs off above the limit, and the warehouse is told when to expect the delivery.",
+   "kind": "Process",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0694",
+   "title": "Warehouse safety rules",
+   "keywords": "PPE, OSHA, safety, warehouse",
+   "summary": "The safety rules everyone in the warehouse must follow, and why.",
+   "body": "Wear PPE on the floor at all times: boots, glasses and gloves. Never stand under a raised load. Report every near miss the same day. These rules follow OSHA guidance and protect you and the people around you.",
+   "kind": "Policy",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0695",
+   "title": "Cycle counting a warehouse bin",
+   "keywords": "cycle count, inventory, bin, stock",
+   "summary": "Counting one bin and correcting its stock level.",
+   "body": "1. Print the count sheet for the bin.\n2. Count every item without looking at the expected quantity.\n3. Enter the counts and post the difference.\n4. Recount any line that is off by more than two units.",
+   "kind": "SOP",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0696",
+   "title": "Forklift pre-shift inspection",
+   "keywords": "forklift, inspection, checklist, pre-shift",
+   "summary": "The checks a driver makes before the first lift of the shift.",
+   "body": "Walk around the truck. Check the forks, chains, tires and horn. Test the brakes and the lift at low height. Sign the inspection card and tag the truck out if anything fails.",
+   "kind": "SOP",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0697",
+   "title": "Shipping an order to a customer",
+   "keywords": "shipping, BOL, freight, carrier",
+   "summary": "From a picked order to a truck leaving the dock, and who does each part.",
+   "body": "The picker stages the order. The shipper prints the BOL and books the carrier. Sales tells the customer the delivery window. Once the truck leaves, the shipper marks the order shipped.",
+   "kind": "Process",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0698",
+   "title": "Scanning stock with the QR label printer",
+   "keywords": "QR, label, scanner, printer",
+   "summary": "Printing a QR label for a bin and scanning it.",
+   "body": "Load label stock in the printer. Choose the bin, print its QR label and stick it at eye level. Scan the label with the handheld to check that it reads.",
+   "kind": "SOP",
+   "department": "06 Operations"
+  },
+  {
+   "key": "KB-0391",
+   "title": "Closing the month in QBO",
+   "keywords": "QBO, QuickBooks, month end, close",
+   "summary": "The order of work that closes a month, and who signs it off.",
+   "body": "Accounts payable posts every bill by the third working day. The bookkeeper reconciles the bank and card accounts. The controller reviews the trial balance and locks the period in QBO.",
+   "kind": "Process",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0392",
+   "title": "Expense report policy",
+   "keywords": "expenses, receipts, reimbursement",
+   "summary": "What the company pays back, and the receipts it needs.",
+   "body": "Submit expenses within 30 days with an itemized receipt for each one. Alcohol and personal items are never reimbursed. Mileage is paid at the posted company rate.",
+   "kind": "Policy",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0393",
+   "title": "Billing a progress payment with an AIA pay application",
+   "keywords": "AIA, G702, pay app, progress billing",
+   "summary": "Preparing and sending a monthly pay application.",
+   "body": "1. Update percent complete on each line of the SOV from KB-0394.\n2. Fill in the G702 summary page.\n3. Attach lien waivers.\n4. Send the pay app to the general contractor by the 25th.",
+   "kind": "SOP",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0394",
+   "title": "Building a schedule of values (SOV)",
+   "keywords": "SOV, schedule of values, billing lines",
+   "summary": "Splitting a contract into the billing lines a customer approves.",
+   "body": "Start from the signed contract total. Split it into lines a customer can check: mobilization, materials, labor and closeout. The lines must add up to the contract exactly.",
+   "kind": "SOP",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0395",
+   "title": "Purchase approval limits",
+   "keywords": "approval, limits, spending, purchase orders",
+   "summary": "Who may approve a purchase order of each size.",
+   "body": "Buyers approve purchase orders up to the first limit. Above it, the operations manager approves, and above the second limit the owner approves. Splitting an order to stay under a limit is not allowed.",
+   "kind": "Policy",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0396",
+   "title": "Recording a customer payment by ACH",
+   "keywords": "ACH, payment, deposit, customer",
+   "summary": "Matching an incoming ACH deposit to the customer's invoice.",
+   "body": "Find the deposit on the bank feed. Match it to the open invoice by amount and reference. If the amounts differ, record the payment and leave a note for the controller.",
+   "kind": "SOP",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0397",
+   "title": "Reviewing A/R aging",
+   "keywords": "A/R, aging, collections, past due",
+   "summary": "Working the accounts receivable aging report each Monday.",
+   "body": "Run the A/R aging report every Monday morning. Call each customer with an invoice more than 30 days past due and note the call on the invoice. Hand anything past 90 days to Alex Example with a short summary.",
+   "kind": "SOP",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0398",
+   "title": "Billing a T&M service call",
+   "keywords": "T&M, time and materials, service call, invoice",
+   "summary": "Turning a technician's hours and parts into an invoice.",
+   "body": "A T&M call is billed from the technician's time entries and the parts used on the visit. Check the hours against the visit report, add each part at list price, and send the invoice within two business days.",
+   "kind": "Process",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0399",
+   "title": "Collecting a W-9 from a new vendor",
+   "keywords": "W-9, vendor, tax form",
+   "summary": "Getting a signed W-9 before a new vendor's first payment.",
+   "body": "No new vendor is paid until a signed W-9 is on file. Email the blank form with the first purchase order, save the returned W-9 to the vendor record, and check that the tax ID matches the name.",
+   "kind": "SOP",
+   "department": "03 Finance"
+  },
+  {
+   "key": "KB-0491",
+   "title": "Paid time off policy",
+   "keywords": "PTO, vacation, sick leave, holidays",
+   "summary": "How much paid time off people earn and the rules for using it.",
+   "body": "Full-time staff earn paid time off each pay period. Unused vacation carries over up to a cap. Sick leave may be used for your own illness or a family member's.",
+   "kind": "Policy",
+   "department": "04 HR"
+  },
+  {
+   "key": "KB-0492",
+   "title": "Requesting PTO",
+   "keywords": "PTO, request, leave, calendar",
+   "summary": "Asking for time off and getting it approved.",
+   "body": "1. Open your leave balance.\n2. Enter the dates and pick the leave type.\n3. Submit it to your manager at least two weeks ahead.\n4. Put the approved days on the team calendar.",
+   "kind": "SOP",
+   "department": "04 HR"
+  },
+  {
+   "key": "KB-0493",
+   "title": "Onboarding a new hire",
+   "keywords": "onboarding, new hire, I-9, paperwork",
+   "summary": "What HR, the manager and IT each do before and during a new hire's first week.",
+   "body": "HR sends the offer paperwork and collects the tax forms. The manager plans the first week. IT sets up the accounts and the laptop. On day one the new hire meets the team and reads the safety rules.",
+   "kind": "Process",
+   "department": "04 HR"
+  },
+  {
+   "key": "KB-0494",
+   "title": "Correcting a W2",
+   "keywords": "W2, W-2c, payroll, tax form",
+   "summary": "Fixing a wrong wage statement after it was issued.",
+   "body": "Confirm the wrong box with payroll. Issue a corrected form to the employee and to the tax agency. Keep a copy with the original in the employee's file.",
+   "kind": "SOP",
+   "department": "04 HR"
+  },
+  {
+   "key": "KB-0495",
+   "title": "Company vehicle use",
+   "keywords": "vehicle, driving, fleet, truck",
+   "summary": "Who may drive a company vehicle, and the rules on the road.",
+   "body": "Only staff with a clean license on file may drive a company vehicle. No phone calls while driving. Report any accident to your manager within one hour.",
+   "kind": "Policy",
+   "department": "04 HR"
+  },
+  {
+   "key": "KB-0891",
+   "title": "Pressure testing a pump assembly",
+   "keywords": "pump, pressure test, PSI, leak",
+   "summary": "Testing a finished pump assembly for leaks before it ships.",
+   "body": "Cap the outlets and connect the test gauge. Raise the pressure slowly to the test PSI on the traveler and hold it for ten minutes. Any drop means a leak: mark the joint and send it back to assembly.",
+   "kind": "SOP",
+   "department": "08 Production"
+  },
+  {
+   "key": "KB-0892",
+   "title": "Build handoff from design to the shop",
+   "keywords": "handoff, shop drawings, BOM, release",
+   "summary": "How a design is released to the shop, and who checks what.",
+   "body": "The designer releases shop drawings and the BOM. The shop lead checks that every part is in stock or on order. The planner schedules the build and tells the project lead the start date.",
+   "kind": "Process",
+   "department": "08 Production"
+  },
+  {
+   "key": "KB-0893",
+   "title": "Welding a stainless basin seam",
+   "keywords": "TIG, welding, stainless, seam",
+   "summary": "Preparing and TIG welding a stainless seam.",
+   "body": "Clean the joint with a dedicated stainless brush. Tack every six inches. Weld with argon backing and let the seam cool before you grind it.",
+   "kind": "SOP",
+   "department": "08 Production"
+  },
+  {
+   "key": "KB-0894",
+   "title": "Quality hold rules",
+   "keywords": "QC, hold, nonconformance, NCR",
+   "summary": "When work must stop for a quality hold, and who may release it.",
+   "body": "Any part that fails inspection goes on hold with an NCR tag. Nobody moves held work until QC releases it in writing. A hold is never released to meet a ship date.",
+   "kind": "Policy",
+   "department": "08 Production"
+  },
+  {
+   "key": "KB-0991",
+   "title": "From lead to signed contract",
+   "keywords": "lead, opportunity, contract, CRM",
+   "summary": "The stages a sale moves through and who owns each one.",
+   "body": "Marketing hands a qualified lead to sales in the CRM. The salesperson visits, the estimator prices the job, and the sales manager approves the quote. Once the customer signs, the project lead takes over.",
+   "kind": "Process",
+   "department": "09 Sales"
+  },
+  {
+   "key": "KB-0992",
+   "title": "Sending a quote for approval",
+   "keywords": "quote, estimate, approval, pricing",
+   "summary": "Getting a quote approved before it goes to the customer.",
+   "body": "1. Check the quantities against the drawings.\n2. Attach the estimate.\n3. Submit the quote for approval.\n4. Send it to the customer once it is approved.",
+   "kind": "SOP",
+   "department": "09 Sales"
+  },
+  {
+   "key": "KB-0993",
+   "title": "Discount approval policy",
+   "keywords": "discount, pricing, margin",
+   "summary": "The largest discount each role may give.",
+   "body": "A salesperson may discount up to the first tier. Anything larger needs the sales manager, and anything below the margin floor needs the owner.",
+   "kind": "Policy",
+   "department": "09 Sales"
+  },
+  {
+   "key": "KB-0091",
+   "title": "Account security",
+   "keywords": "2FA, MFA, passwords, security",
+   "summary": "How staff protect their company accounts.",
+   "body": "Turn on 2FA for every company account that offers it. Use the company password manager, never a note or a spreadsheet. Report a lost phone or a suspicious login right away.",
+   "kind": "Policy",
+   "department": "00 Company Wide"
+  },
+  {
+   "key": "KB-0092",
+   "title": "Using AI assistants with company data",
+   "keywords": "AI, assistant, privacy, data",
+   "summary": "What company information may be shared with an AI assistant.",
+   "body": "Use only the AI assistants the company has approved. Never paste customer bank details or personal records into one. Check what an assistant tells you against the knowledge base before you act on it.",
+   "kind": "Policy",
+   "department": "00 Company Wide"
+  },
+  {
+   "key": "KB-0093",
+   "title": "Reporting an IT problem",
+   "keywords": "IT, helpdesk, support, computer",
+   "summary": "Getting help with a computer, phone or account problem.",
+   "body": "Open a support request with a screenshot of the problem. Say what you were doing and when it started. For an outage that stops work, call instead.",
+   "kind": "SOP",
+   "department": "00 Company Wide"
+  },
+  {
+   "key": "KB-0094",
+   "title": "Document control for company documents",
+   "keywords": "document control, register, numbering",
+   "summary": "How a controlled document is drafted, approved, numbered and reviewed.",
+   "body": "An author drafts from the right template. A second person approves it. The register gives it a number, and the process owner reviews it every six months. Put it on a shelf only after approval.",
+   "kind": "Process",
+   "department": "00 Company Wide"
+  },
+  {
+   "key": "KB-0291",
+   "title": "Naming CAD files",
+   "keywords": "CAD, DWG, file naming, drawings",
+   "summary": "The file name every drawing uses.",
+   "body": "Name each drawing with the project number, the sheet number and the revision letter, separated by dashes. Never reuse a revision letter.",
+   "kind": "SOP",
+   "department": "02 Design"
+  },
+  {
+   "key": "KB-0591",
+   "title": "Posting a project photo to social media",
+   "keywords": "social media, photos, posting",
+   "summary": "Choosing and posting a finished-project photo.",
+   "body": "Use only photos the customer has agreed to share. Crop out addresses and faces. Write the caption from the approved style guide and schedule the post.",
+   "kind": "SOP",
+   "department": "05 Marketing"
+  }
+ ],
+ "drafts": [
+  {
+   "key": "KBV-09001",
+   "title": "Receiving a PO with the old scanner (draft)",
+   "keywords": "PO, scanner, QUOKKADRAFT",
+   "summary": "A draft nobody has approved. QUOKKADRAFT",
+   "body": "QUOKKADRAFT steps that were never approved: receive the PO without counting.",
+   "kind": "SOP",
+   "department": "06 Operations"
+  }
+ ],
+ "queries": [
+  {"query": "PO packing slip", "expect": "KB-0691", "first": true},
+  {"query": "how do I receive a PO against a packing slip?", "expect": "KB-0691", "first": true},
+  {"query": "receiving", "expect": "KB-0691"},
+  {"query": "P.O.", "expect": "KB-0691", "first": true},
+  {"query": "RMA", "expect": "KB-0692", "first": true},
+  {"query": "return damaged goods", "expect": "KB-0692"},
+  {"query": "procedure for returns", "expect": "KB-0692"},
+  {"query": "SOP-9001", "expect": "KB-0692", "first": true},
+  {"query": "MR to PO", "expect": "KB-0693", "first": true},
+  {"query": "workflow for purchasing", "expect": "KB-0693"},
+  {"query": "PPE", "expect": "KB-0694", "first": true},
+  {"query": "OSHA safety rules", "expect": "KB-0694", "first": true},
+  {"query": "policy on warehouse safety", "expect": "KB-0694"},
+  {"query": "cycle count", "expect": "KB-0695"},
+  {"query": "forklift checklist", "expect": "KB-0696"},
+  {"query": "procedure for inspecting a forklift", "expect": "KB-0696"},
+  {"query": "BOL", "expect": "KB-0697", "first": true},
+  {"query": "shipped", "expect": "KB-0697"},
+  {"query": "QR label", "expect": "KB-0698", "first": true},
+  {"query": "QBO", "expect": "KB-0391", "first": true},
+  {"query": "month end close", "expect": "KB-0391"},
+  {"query": "quickbooks", "expect": "KB-0391"},
+  {"query": "kb 391", "expect": "KB-0391", "first": true},
+  {"query": "expense receipts", "expect": "KB-0392"},
+  {"query": "reimbursement policy", "expect": "KB-0392"},
+  {"query": "AIA", "expect": "KB-0393", "first": true},
+  {"query": "G702", "expect": "KB-0393", "first": true},
+  {"query": "SOV", "expect": "KB-0394", "first": true},
+  {"query": "schedule of values", "expect": "KB-0394"},
+  {"query": "approval limits for purchase orders", "expect": "KB-0395"},
+  {"query": "ACH deposit", "expect": "KB-0396", "first": true},
+  {"query": "A/R", "expect": "KB-0397", "first": true},
+  {"query": "AR aging", "expect": "KB-0397", "first": true},
+  {"query": "T&M", "expect": "KB-0398", "first": true},
+  {"query": "t&m billing", "expect": "KB-0398", "first": true},
+  {"query": "W-9", "expect": "KB-0399", "first": true},
+  {"query": "W9 vendor", "expect": "KB-0399", "first": true},
+  {"query": "PTO policy", "expect": "KB-0491", "first": true},
+  {"query": "vacation", "expect": "KB-0491"},
+  {"query": "request PTO", "expect": "KB-0492", "first": true},
+  {"query": "onboarding a new hire", "expect": "KB-0493"},
+  {"query": "I-9", "expect": "KB-0493", "first": true},
+  {"query": "i9", "expect": "KB-0493", "first": true},
+  {"query": "W2", "expect": "KB-0494", "first": true},
+  {"query": "W-2", "expect": "KB-0494", "first": true},
+  {"query": "w-2", "expect": "KB-0494", "first": true},
+  {"query": "company vehicle", "expect": "KB-0495"},
+  {"query": "PSI pressure test", "expect": "KB-0891", "first": true},
+  {"query": "pump test", "expect": "KB-0891"},
+  {"query": "BOM handoff", "expect": "KB-0892", "first": true},
+  {"query": "TIG welding", "expect": "KB-0893", "first": true},
+  {"query": "NCR", "expect": "KB-0894", "first": true},
+  {"query": "quality hold", "expect": "KB-0894"},
+  {"query": "CRM lead to contract", "expect": "KB-0991", "first": true},
+  {"query": "quote approval", "expect": "KB-0992"},
+  {"query": "discount", "expect": "KB-0993"},
+  {"query": "2FA", "expect": "KB-0091", "first": true},
+  {"query": "MFA", "expect": "KB-0091", "first": true},
+  {"query": "AI assistants", "expect": "KB-0092", "first": true},
+  {"query": "IT problem", "expect": "KB-0093", "first": true},
+  {"query": "KB-0694", "expect": "KB-0694", "first": true},
+  {"query": "CAD file naming", "expect": "KB-0291", "first": true},
+  {"query": "social media photo", "expect": "KB-0591"}
+ ]
+}

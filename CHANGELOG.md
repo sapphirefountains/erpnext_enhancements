@@ -7,6 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.558.0] - 2026-09-28
+
+**Every knowledge base article has a kind, and the search bar finds articles from two letters.**
+WI-080 PR 5, the first slice of the AI-first redesign Nik approved on 2026-09-28. An article is now a
+**Policy**, a **Process** or an **SOP**, the three document types of the company's document register
+(Nik: "SOP, Policy, and Process"); a draft needs one before it can be submitted for review. And
+typing **PO**, **QBO**, **SOP** or a KB number such as **KB-0612** in the search bar at the top of any
+page lists the matching published articles, for every staff user, as that user. Nothing in this
+release writes at runtime: every state change is still PR 3's, and search keeps its index in each
+web worker's memory, not in the database, redis or the queue.
+
+### Added
+
+- **The article's kind** (`kind`, a Select after `department_block` on Knowledge Article and
+  Knowledge Article Version, in the list view and the standard filters). The options are a blank,
+  then Policy, Process and SOP (`knowledge_base/constants.py` `KIND_SELECT_OPTIONS`); the field's
+  description says what each kind is and that readers and AI tools treat a Policy as binding and an
+  SOP's steps as followed in order (`KIND_HELP`, `kind_description`). On the Version it is a content
+  field (`VERSION_CONTENT_FIELDS`), so a revision copies it, changing it makes the saver a
+  contributor, it is frozen once the version leaves Draft, and View Changes shows it (`DIFF_FIELDS`).
+  Publishing copies it to the article. `constants.kind_option` and `department_option` read what
+  people type (a kind in any case, `procedure`, `how-to`, `workflow`, `rules` and the other
+  `KIND_ALIASES`; `06`, `6`, `Operations`), and `department_folder` names a department's folder for
+  the Markdown mirror to come.
+- **Knowledge base results in the AwesomeBar from two characters**, through Frappe's own
+  `awesomebar_search` hook (`hooks.py`, `knowledge_base/search_service.awesomebar_hits`). v16.32.0
+  added the hook: for any input of two or more characters the AwesomeBar calls
+  `frappe.desk.search.awesomebar_search`, which calls each hooked method (`desk/search.py:510-538`;
+  `awesome_bar.js:176`, gated on `frappe.boot.has_awesomebar_search`, `boot.py:109`). Up to five hits,
+  each `KB-0612 · <title>` with the matched words in bold, the kind and department beneath, opening
+  the article with `frappe.set_route`, so Back returns. People see it after their next page load. This
+  app's own live global search (`public/js/erpnext_enhancements.js`, `api/search.py`) is unchanged and
+  keeps its 3-character floor; the two cannot return the same rows, because neither KB doctype is in
+  global search.
+- **`knowledge_base/search.py`**, a small BM25F in the standard library: words of two or more
+  characters, acronyms (PO, QBO, SOP, W2, and their plurals) never stemmed and never stopwords, an
+  all-caps heading read as words, KB numbers in any spelling (`KB-0612`, `kb 612`) and document numbers
+  (`SOP-9001`) as single terms, acronyms written with punctuation (`W-2`, `I-9`, `G-702`, `T&M`,
+  `A/R`, `P.O.`) as the same single term as their plain spelling, so `W-2`, `W2` and `w2` all meet,
+  a small stemmer; title and keywords weigh 3, the summary 2, the body 1, and a meta field 0.5 holding
+  the kind, its aliases and the department, so "procedure for receiving" reaches an SOP. A KB number in
+  the query pins that article first. Filters apply before scoring.
+- **`knowledge_base/search_service.py`**, search as the person asking: `frappe.has_permission` first,
+  which never throws and so never leaves a dialog; then the caller's own `get_list` of Published
+  articles, **before anything is ranked**; then the hits' rows read with `get_list` as the caller
+  again. It reads the published Knowledge Article only and never names or reads the Version doctype.
+  The index is one per site in each web worker, keyed on the articles' count and newest `modified`, so
+  a publish, retire or confirm is searchable on each worker's next search; it is also rebuilt after
+  ten minutes, built outside a lock and swapped in under it, and a failed rebuild keeps the old one.
+  A deploy's `FLUSHDB` has nothing to kill, and a restart rebuilds on the first search.
+- **The version form says why Submit for Review is missing.** The button is offered only when the
+  submit rules are satisfied, and every draft open at this deploy has no kind, so without a reason the
+  button would simply vanish. `publish.version_onload` now sends `submit_blockers` (the same rules the
+  button is judged by, for a Draft, to a KB role), and the form's intro reads "Before it can be
+  submitted for review: it has no kind."
+- **The Integrity report checks the kind** (under its Approved text check): an article classified
+  differently from its live version is a row ("KB-0612 is classified SOP, but its live version
+  KBV-00042 was approved as Policy."). No kind on either side is agreement. `kind` joins the article
+  columns and the live versions' approved-text columns, never the columns read for every version, and a
+  value written past the ORM is named only as "not a kind", never quoted.
+- `tests/test_knowledge_base_search.py`, **a bench-free pytest suite on its own CI step** (plain
+  pytest functions, which `python -m unittest` cannot collect): every tokenizer rule, the stemmer
+  table, ranking, pinning, filters before scoring, snippets, a golden set of **invented** articles and
+  questions (`tests/data/kb_search_golden.json`; the real questions staff ask live in the company's
+  private repository), a performance guard (500 articles of 800 words build in under 5 seconds, 100
+  queries run in under 1), a fresh interpreter importing `search.py` with `frappe` absent, and the
+  service over the golden corpus through a fake `frappe` that fails the test if the Version doctype is
+  ever read and gives the reader a partial readable set. `SearchServiceTest` in
+  `test_knowledge_base_actions` runs the service over the in-memory site: a sentinel in a Draft, In
+  Review, Discarded, Superseded or open-revision version is never found by anyone, a portal user gets
+  nothing and no message, an article the caller's `get_list` leaves out is never ranked, retiring
+  removes an article, a revision's text is found only once approved.
+- **Found in review, before merge:**
+  - **Acronyms written with punctuation were never found.** The document-number rule needs 2 to 5
+    letters and one-character tokens are dropped, so `W-2`, `I-9` and `A/P` tokenized to nothing,
+    `T&M billing` to `bill` and `G-702` to `702`: searching `W-2`, `I-9`, `T&M` or `A/R` returned
+    nothing, and the golden set's own `I-9` keyword was never indexed (it tested only `W2`). Single
+    letters or runs of up to 6 digits joined by `-`, `&`, `/` or `.`, with at least one letter, are now
+    one acronym term without the punctuation (a plural `W-2s` too), on the index and the query side
+    alike; a 2-or-more-digit part is indexed as well (`702`). A chain with no letter (`3-4`, a date)
+    is read as its words exactly as before (a fuzz of 200,000 random strings against the previous
+    tokenizer agrees, spans included, wherever no lone letter touches one of those marks). The letter
+    is checked in Python, not by a regex lookahead, which would be retried at every piece of a long
+    letterless chain (quadratic: 5,000 pieces took two seconds); a guard test pins linear time, since
+    the AwesomeBar tokenizes whatever any signed-in user types. The golden set gained 11 questions
+    (`W-2`, `w-2`, `I-9`, `i9`, `T&M`, `t&m billing`, `A/R`, `AR aging`, `W-9`, `W9 vendor`, `P.O.`)
+    and three invented articles: 35 articles, 63 questions.
+  - **"The readable set before ranking" was not actually tested.** With two articles and ten
+    slots, the display-time `get_list` hid the hidden article whether or not it had been ranked, and
+    the pytest fake's readable set was all or nothing, so handing the ranking `allowed=None` passed
+    both suites. `SearchServiceTest` now hides six articles that each rank above the one the caller
+    may read and requires that one in the AwesomeBar's five slots and in a one-result search (a
+    display-only filter leaves nothing), and both suites spy on the set the ranking is handed. Today
+    every staff user reads every published article, so this was about completeness, not a leak: the
+    second `get_list` still guarded what is shown.
+  - `knowledge_base/README.md` named the golden set `fixtures/kb_search_golden.json`; it is
+    `tests/data/kb_search_golden.json`.
+
+### Changed
+
+- **`workflow.submit_problems` refuses a draft with no kind** ("it has no kind"), and so the form does
+  not offer Submit for Review until one is chosen and saved (v16's `savedocs` runs `onload` again after
+  a save, `desk/form/save.py:46`, so the button then appears). Approving and publishing do not ask for
+  a kind.
+- **The `Knowledge Base` workspace's paragraph** now describes the content as the company's policies,
+  processes and SOPs and points first to the search bar ("two letters are enough, e.g. PO, or a KB
+  number such as KB-0612"), keeping the list's filter bar, now with **Kind**, and its phone hint as the
+  fallback. Its `modified` moved to `2026-09-28 23:00:00` (a workspace is imported only when its stamp
+  beats the stored row's), and `PINNED` in `test_knowledge_base_entry_points` moved with it.
+- Both KB DocType JSONs' `modified` moved to `2026-09-28 23:00:00`. v16 imports a DocType by its hash,
+  so this only keeps the stamp honest.
+
+### Why it is built this way
+
+- **`kind` is not `reqd`.** v16 runs `_validate_mandatory` on every save except a cancel,
+  update-after-submit included (`model/document.py:596-600`, `:827-828`), and `publish.supersede` saves
+  the previous live version when a newer one is approved. A required kind would have made every
+  article published before this release impossible to revise ("Missing Fields: Kind"). So the submit
+  rule requires it, and the schema does not.
+- **No default, and no backfill patch.** On a normal doctype a JSON `default` is written into every
+  existing row by the `ALTER` that adds the column (the v1.280.3 trap, in reverse), and it would start
+  every new draft already classified. On deploy day no version has a kind and prod has no published
+  article, so the only honest backfill predicate would match nothing and record itself as run. The
+  column arrives nullable: open drafts get a kind before they are submitted, a version already In
+  Review publishes with none, and a published article stays unclassified until a revision sets one
+  (decided 2026-09-28).
+- **The content hash is unchanged.** `content.HASHED_FIELDS` stays title, summary, keywords and body:
+  adding the kind would make every stored `content_hash` mismatch its live version. The Integrity
+  report compares the kind on its own, and the Drive copy (Slice 4) must key its export on
+  `(content_hash, version_number)`, not the hash alone.
+- **Permission is asked with `has_permission` before any list call.** v16's `frappe.get_list` goes
+  through `model/qb_query.py` to `frappe.qb.get_query`, whose `check_select_permission` refuses with
+  `frappe.throw` (`database/query.py:278`, `:1378-1390`), which queues an "Insufficient Permission"
+  dialog even when the exception is caught; and any signed-in user, a portal user included, can call
+  the AwesomeBar's endpoint. (WI-080's design cited `model/db_query.py`'s `_set_permission_map`,
+  `:623-631`, for this. That code is in v16, but v16's `frappe.get_list` no longer reaches it: it calls
+  `model/qb_query.py` (`frappe/__init__.py:1378-1380`). The effect is the same, a queued message on a
+  refusal, and `frappe.has_permission` with its default `throw=False` passes `print_logs=False` and
+  queues nothing, `frappe/__init__.py:600-646`.)
+- **The index lives in worker memory, not in a table or redis.** A table needs a schema and a write
+  inside publish, and redis would unpickle several MB on every keystroke; and nothing may depend on
+  redis or the queue surviving a deploy. Revisit above about 2,000 articles.
+- **The stamp query is a SQL function in SQL text**
+  (``select count(*), max(modified) from `tabKnowledge Article` ``), which v16 allows; its refusal is of function *strings* in a `get_all` field list, and a
+  static test pins that neither search module passes one.
+
+### After deploy (read-only)
+
+- ``SELECT parent, fieldtype, options, permlevel, reqd, `default` FROM tabDocField WHERE parent LIKE 'Knowledge Article%' AND fieldname='kind'``
+  returns 2 rows: Select, options a blank then `Policy`, `Process`, `SOP`, permlevel 0, `reqd` 0 and
+  `default` NULL.
+- ``SELECT name, kind FROM `tabKnowledge Article` `` shows NULL for any article published before this
+  release (there was none on 2026-09-28).
+- On a draft with no kind: Submit for Review is not offered, the intro reads "Before it can be
+  submitted for review: it has no kind", and after a kind is chosen and saved, Submit appears.
+- After a version with kind SOP is approved, its article shows SOP, and the Knowledge Base Integrity
+  report returns 0 rows.
+- On a technician's phone, after a reload: typing **PO** in the search bar shows knowledge base hits;
+  **KB-0601** and **kb 601** put that article first; a search of 3 or more characters still shows the
+  same global results as before.
+- A unique word typed into a draft's body is never found by the search bar.
+- Warm, `frappe.desk.search.awesomebar_search?txt=PO` returns in under 300 ms in the browser's Network
+  panel.
+- ``SELECT modified FROM tabWorkspace WHERE name='Knowledge Base'`` is `2026-09-28 23:00:00`, and the
+  workspace's paragraph points to the search bar.
+- ``SELECT COUNT(*) FROM `tabError Log` WHERE method LIKE '%Knowledge base%' AND creation > '<deploy time>'`` = 0.
+
+### Rollback
+
+Revert. The `kind` column stays (nullable and harmless) and the AwesomeBar hook goes. The workspace
+paragraph goes back with the revert only if the revert moves the workspace's `modified` past
+`2026-09-28 23:00:00`; otherwise the site keeps this release's text.
+
 ## [1.557.0] - 2026-09-28
 
 **The company knowledge base is on the home screen.** WI-080 PR 4. Until now the only way to an

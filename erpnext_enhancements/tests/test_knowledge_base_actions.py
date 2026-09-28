@@ -42,6 +42,13 @@ on top of it.** What it pins:
   and the stub's Error Log is a table in the transaction, so a plain ``log_error`` before a refusal
   vanishes here as it does on prod; and the version form, run in node, submits for review only
   after a save the server accepted.
+* **PR 5**: the article's kind (required to submit, and the form says so; copied at publish and by
+  a revision; NULL, not blank, for a version already in review), and ``search_service`` over the
+  same site: a published article is found, a retired one is not, a revision's text only once it is
+  approved, no sentinel from any draft ever, a caller who cannot read gets nothing and no message,
+  the caller's readable set applies before ranking, the index follows its stamp (and is rebuilt when
+  old, kept when a rebuild fails, and kept per site), and the AwesomeBar hook's hits are escaped
+  and never raise.
 
 Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
 """
@@ -59,6 +66,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 APP = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP.parent
@@ -98,6 +106,8 @@ MODULES = (
 	"erpnext_enhancements.knowledge_base.doctype.knowledge_article.knowledge_article",
 	"erpnext_enhancements.knowledge_base.publish",
 	API_MODULE,
+	# PR 5: search, over the same in-memory site.
+	"erpnext_enhancements.knowledge_base.search_service",
 )
 
 
@@ -195,6 +205,10 @@ def _reset():
 			"rollbacks": 0,
 			"counters": {},
 			"user_type_reads": [],
+			# PR 5: every frappe.get_list call (doctype, user, filters), and the names a user's
+			# get_list leaves out (as a User Permission or a permission query would).
+			"list_calls": [],
+			"hidden": {},
 		}
 	)
 	for user, roles in (
@@ -511,6 +525,25 @@ def _get_all(doctype, filters=None, fields=None, pluck=None, order_by=None, **kw
 	return [_Flags({f: r.get(f) for f in (fields or ["name"])}) for r in rows]
 
 
+def _get_list(doctype, filters=None, fields=None, pluck=None, order_by=None, **kwargs):
+	"""v16 ``frappe.get_list``: as the session user. A doctype they cannot read is refused the way
+	v16's ``check_select_permission`` refuses it, with ``frappe.throw``, which queues the message
+	before it raises (``database/query.py:1378-1390``)."""
+	frappe = frappe_module()
+	user = frappe.session.user
+	STATE["list_calls"].append((doctype, user, copy.deepcopy(filters)))
+	if not _allowed(doctype, "read"):
+		frappe.local.message_log.append(f"Insufficient Permission for {doctype}")
+		raise PermissionRefused(f"Insufficient Permission for {doctype}")
+	for field in fields or ():
+		assert "(" not in field, f"v16 refuses a SQL function string in fields: {field}"
+	hidden = STATE["hidden"].get(user, set())
+	rows = [r for r in _get_all(doctype, filters=filters, fields=["name", *(fields or ())]) if r.name not in hidden]
+	if pluck:
+		return [r.get(pluck) for r in rows]
+	return [_Flags({f: r.get(f) for f in (fields or ["name"])}) for r in rows]
+
+
 def _get_value(doctype, name, fieldname=None, as_dict=False, **kwargs):
 	if doctype == "User" and fieldname == "user_type":
 		STATE["user_type_reads"].append(name)
@@ -550,6 +583,12 @@ def _sql(query, values=(), as_dict=False, pluck=False, **kwargs):
 		)
 		out = [_Flags(name=r["name"], review_state=r.get("review_state")) for r in rows]
 		return out if as_dict else [(r.name, r.review_state) for r in out]
+	if lowered == "select count(*), max(modified) from `tabknowledge article`":
+		# PR 5: search_service's stamp. A function in SQL text, which v16 allows.
+		_maybe_fail("stamp")
+		rows = list(_db()[ARTICLE].values())
+		newest = max((r.get("modified") for r in rows if r.get("modified")), default=None)
+		return ((len(rows), newest),)
 	raise AssertionError(f"unexpected SQL: {flat}")
 
 
@@ -613,13 +652,16 @@ def _install_frappe_stub():
 	frappe.get_doc = _get_doc
 	frappe.new_doc = _new_doc
 	frappe.get_all = _get_all
-	frappe.has_permission = lambda doctype, ptype="read", *a, **k: _allowed(doctype, ptype)
+	frappe.get_list = _get_list
+	frappe.has_permission = _has_permission
 	frappe.log_error = _log_error
 	frappe.get_traceback = lambda *a, **k: "Traceback (most recent call last): stub"
 	frappe.clear_messages = lambda: setattr(frappe.local, "message_log", [])
 	frappe.session = _Flags(user=AUTHOR, sid="a1b2c3d4")
 	frappe.flags = _Flags()
-	frappe.local = types.SimpleNamespace(request=types.SimpleNamespace(headers={}), message_log=[])
+	frappe.local = types.SimpleNamespace(
+		request=types.SimpleNamespace(headers={}), message_log=[], site="kb.example.com"
+	)
 	frappe.db = types.SimpleNamespace(
 		get_value=_get_value,
 		exists=lambda doctype, name=None: _row(doctype, name) is not None,
@@ -637,6 +679,8 @@ def _install_frappe_stub():
 	utils.to_markdown = _to_markdown
 	utils.get_url_to_form = lambda doctype, name: f"https://erp.example.com/desk/{doctype.lower().replace(' ', '-')}/{name}"
 	utils.get_fullname = lambda user: f"Full {user}"
+	utils.get_url = lambda uri="": "https://erp.example.com" + (uri or "")
+	utils.getdate = _getdate
 	frappe.utils = utils
 
 	model = types.ModuleType("frappe.model")
@@ -671,11 +715,31 @@ def _allowed(doctype, ptype):
 	return True
 
 
-api = publish = notify = references = files = None
+def _has_permission(doctype=None, ptype="read", doc=None, user=None, throw=False, **kwargs):
+	"""v16 ``frappe.has_permission``: ``throw`` defaults to False, and only a throwing call queues a
+	message (it passes ``print_logs=throw``, ``frappe/__init__.py:632``)."""
+	allowed = _allowed(doctype, ptype)
+	if throw and not allowed:
+		frappe_module().local.message_log.append(f"No permission for {doctype}")
+		raise PermissionRefused(f"No permission for {doctype}")
+	return allowed
+
+
+def _getdate(value=None):
+	if value is None or value == "":
+		return datetime.date(2026, 9, 28)
+	if isinstance(value, datetime.datetime):
+		return value.date()
+	if isinstance(value, datetime.date):
+		return value
+	return datetime.date.fromisoformat(str(value)[:10])
+
+
+api = publish = notify = references = files = search_service = None
 
 
 def setUpModule():
-	global api, publish, notify, references, files
+	global api, publish, notify, references, files, search_service
 	_install_frappe_stub()
 	for name in MODULES:
 		sys.modules.pop(name, None)
@@ -685,6 +749,7 @@ def setUpModule():
 	notify = loaded["erpnext_enhancements.knowledge_base.notify"]
 	references = loaded["erpnext_enhancements.knowledge_base.references"]
 	files = loaded["erpnext_enhancements.knowledge_base.files"]
+	search_service = loaded["erpnext_enhancements.knowledge_base.search_service"]
 	version_module = loaded[MODULES[3]]
 	article_module = loaded[MODULES[4]]
 	CONTROLLERS[VERSION] = version_module.KnowledgeArticleVersion
@@ -730,6 +795,8 @@ def draft(user=AUTHOR, body=BODY, **values):
 				"doctype": VERSION,
 				"title": TITLE,
 				"department_block": "06 Operations",
+				# PR 5: submitting needs a kind.
+				"kind": "SOP",
 				"summary": SENTINELS["summary"],
 				"keywords": SENTINELS["keywords"],
 				"body": body,
@@ -1457,6 +1524,19 @@ class TestReviewDiff(Base):
 		self.assertIn("-Scan the slip. " + SENTINELS["body"], out["body"])
 		self.assertIn("+Scan every slip. " + SENTINELS["body"], out["body"])
 
+	def test_a_change_of_kind_is_shown(self):
+		"""PR 5: ``DIFF_FIELDS`` lists the kind, so a revision that reclassifies an article says so."""
+		name = draft()
+		submitted(name)
+		approve(name)
+		revision = request(api.start_revision, "KB-0601", user=AUTHOR)["version"]
+		edit(revision, AUTHOR, kind="Policy")
+		out = request(api.review_diff, revision, user=APPROVER)
+		self.assertEqual(
+			[(f["field"], f["label"], f["before"], f["after"]) for f in out["fields"]],
+			[("kind", "Kind", "SOP", "Policy")],
+		)
+
 	def test_readers_tokens_and_ai_cards_are_refused(self):
 		name = draft()
 		refused(self, api.review_diff, name, user=TECH)
@@ -1720,6 +1800,324 @@ class TestTheFormsOfferTheRules(Base):
 		self.assertEqual(load(NIK)["actions"], ["start_revision", "confirm_still_accurate"])
 
 
+# ------------------------------------------------------------------ the article's kind (PR 5)
+
+
+class TestTheArticleKind(Base):
+	"""WI-080 PR 5: Policy, Process or SOP, required to submit, copied at publish and by a revision."""
+
+	def _onload(self, name, user, **kwargs):
+		def load():
+			doc = frappe_module().get_doc(VERSION, name)
+			doc.run_method("onload")
+			return doc._onload["kb"]
+
+		return request(load, user=user, **kwargs)
+
+	def test_publishing_copies_the_kind(self):
+		name = draft(kind="Policy")
+		submitted(name)
+		approve(name)
+		self.assertEqual(_row(ARTICLE, "KB-0601")["kind"], "Policy")
+
+	def test_a_revision_copies_the_kind_and_publishing_it_can_change_it(self):
+		name = draft(kind="Process")
+		submitted(name)
+		approve(name)
+		revision = request(api.start_revision, "KB-0601", user=AUTHOR)["version"]
+		self.assertEqual(version(revision)["kind"], "Process")
+		edit(revision, AUTHOR, kind="SOP")
+		self.assertEqual(version(revision)["contributors"], AUTHOR)
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=APPROVER)
+		self.assertEqual(_row(ARTICLE, "KB-0601")["kind"], "SOP")
+
+	def test_a_draft_with_no_kind_is_refused_and_the_form_says_why(self):
+		name = draft(kind=None)
+		self.assertIn("it has no kind", refused(self, api.submit_for_review, name, user=AUTHOR))
+		kb = self._onload(name, AUTHOR)
+		self.assertNotIn("submit_for_review", kb["actions"])
+		self.assertEqual(kb["submit_blockers"], ["it has no kind"])
+		# After the author picks a kind and saves (v16's savedocs runs onload again), Submit appears.
+		edit(name, AUTHOR, kind="SOP")
+		kb = self._onload(name, AUTHOR)
+		self.assertIn("submit_for_review", kb["actions"])
+		self.assertEqual(kb["submit_blockers"], [])
+
+	def test_submit_blockers_are_for_a_draft_and_for_kb_roles_only(self):
+		name = draft(kind=None, title=" ")
+		self.assertEqual(self._onload(name, AUTHOR)["submit_blockers"], ["it has no title", "it has no kind"])
+		self.assertEqual(self._onload(name, TECH), {"actions": [], "approve_blockers": [], "submit_blockers": []})
+		edit(name, AUTHOR, kind="SOP", title=TITLE)
+		submitted(name)
+		self.assertEqual(self._onload(name, AUTHOR)["submit_blockers"], [])
+		self.assertEqual(self._onload(name, NIK)["submit_blockers"], [])
+
+	def test_a_version_already_in_review_with_no_kind_publishes_unclassified(self):
+		"""What a version In Review when PR 5 deployed does: approval does not ask for a kind, and
+		the article stores NULL, not an empty string (decided 2026-09-28: it stays unclassified until
+		a revision sets one)."""
+		name = draft()
+		submitted(name)
+		_db()[VERSION][name]["kind"] = None  # as the ALTER that added the column left it
+		STATE["committed"] = copy.deepcopy(_db())
+		approve(name)
+		article = _row(ARTICLE, "KB-0601")
+		self.assertEqual(article["status"], "Published")
+		self.assertIsNone(article["kind"])
+
+
+# ------------------------------------------------------------------ search, as the caller (PR 5)
+
+
+class SearchServiceTest(Base):
+	"""``knowledge_base/search_service.py`` over the same in-memory site: published articles only,
+	the caller's readable set before ranking, no draft ever, no dialog for a caller who cannot read,
+	and an index that follows every publish and retire."""
+
+	SENTINEL = "ZEBRAFINCH"
+
+	def setUp(self):
+		super().setUp()
+		search_service._STATE.clear()
+		frappe_module().local.site = "kb.example.com"
+
+	def _publish(self, title=TITLE, body=BODY, user=AUTHOR, approver=NIK, **values):
+		name = draft(user=user, title=title, body=body, **values)
+		submitted(name, user=user)
+		return approve(name, user=approver)["article"]
+
+	def _search(self, query, user=TECH, **kwargs):
+		return request(search_service.search, query, user=user, **kwargs)
+
+	def _names(self, query, user=TECH, **kwargs):
+		return [r["kb_number"] for r in self._search(query, user=user, **kwargs)["results"]]
+
+	def test_a_published_article_is_found_as_a_reader(self):
+		number = self._publish(body='<div class="ql-editor read-mode"><p>Count every carton on the slip.</p></div>')
+		out = self._search("cartons")
+		self.assertEqual([r["kb_number"] for r in out["results"]], [number])
+		result = out["results"][0]
+		self.assertEqual(result["kind"], "SOP")
+		self.assertEqual(result["department"], "06 Operations")
+		self.assertEqual(result["version"], 1)
+		self.assertEqual(result["approved_by"], f"Full {NIK}")
+		self.assertEqual(result["url"], f"https://erp.example.com/desk/knowledge-article/{number}")
+		self.assertIn("carton", result["snippet"])
+		self.assertFalse(result["review_overdue"])
+		self.assertEqual(out["problems"], [])
+
+	def test_short_acronyms_and_kb_numbers(self):
+		first = self._publish(title="Receiving a PO against a packing slip")
+		second = self._publish(title="Closing the month in QBO", department_block="03 Finance", kind="Process")
+		self.assertEqual(self._names("PO"), [first])
+		self.assertEqual(self._names("qbo"), [second])
+		self.assertEqual(self._names(f"kb {int(second[3:])}")[0], second)
+
+	def test_filters(self):
+		ops = self._publish(title="Receiving a PO")
+		finance = self._publish(title="Paying a PO", department_block="03 Finance", kind="Policy")
+		self.assertEqual(self._names("PO", department="Finance"), [finance])
+		self.assertEqual(self._names("PO", kind="how-to"), [ops])
+		out = self._search("PO", kind="Checklist")
+		self.assertEqual(out["results"], [])
+		self.assertEqual(out["problems"], ["unknown kind 'Checklist'; use one of Policy, Process or SOP"])
+		self.assertTrue(self._search("PO", department="Warehouse")["problems"][0].startswith("unknown department"))
+
+	def test_retiring_takes_it_out(self):
+		number = self._publish()
+		self.assertEqual(self._names("packing"), [number])
+		request(api.retire, number, "Replaced.", user=APPROVER)
+		self.assertEqual(self._names("packing"), [])
+
+	def test_after_a_revision_the_new_text_is_found_and_the_old_is_not(self):
+		number = self._publish(body='<div class="ql-editor read-mode"><p>Use the blue stamp.</p></div>')
+		self.assertEqual(self._names("blue"), [number])
+		revision = request(api.start_revision, number, user=AUTHOR)["version"]
+		edit(revision, AUTHOR, body='<div class="ql-editor read-mode"><p>Use the green stamp.</p></div>')
+		# Before it is approved, the revision's text is a draft: never found.
+		self.assertEqual(self._names("green"), [])
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=APPROVER)
+		self.assertEqual(self._names("green"), [number])
+		self.assertEqual(self._names("blue"), [])
+
+	def test_no_draft_text_is_ever_found(self):
+		"""A sentinel in a Draft, an In Review, a Discarded and a Superseded version, and in an open
+		revision of a published article: not one search finds it, for anyone, a KB role included."""
+		body = f'<div class="ql-editor read-mode"><p>{self.SENTINEL} steps.</p></div>'
+		draft(body=body, title=f"{self.SENTINEL} draft")
+		in_review = draft(body=body, keywords=self.SENTINEL)
+		submitted(in_review)
+		discarded = draft(body=body, summary=self.SENTINEL)
+		request(api.discard, discarded, user=AUTHOR)
+		number = self._publish(body=body)  # published with the word, then revised without it
+		revision = request(api.start_revision, number, user=AUTHOR)["version"]
+		edit(revision, AUTHOR, body='<div class="ql-editor read-mode"><p>Plain steps.</p></div>')
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=APPROVER)
+		reopened = request(api.start_revision, number, user=AUTHOR)["version"]
+		edit(reopened, AUTHOR, body=body, title=f"{self.SENTINEL} title")
+		for user in (TECH, AUTHOR, NIK):
+			for query in (self.SENTINEL, self.SENTINEL.lower(), f"{self.SENTINEL} steps"):
+				with self.subTest(user=user, query=query):
+					out = self._search(query, user=user)
+					self.assertNotIn(self.SENTINEL, json.dumps(out))
+					self.assertNotIn(self.SENTINEL, json.dumps(request(search_service.awesomebar_hits, query, user=user)))
+		# And the Version doctype was never read by search at all.
+		self.assertFalse(any(doctype == VERSION for doctype, _u, _f in STATE["list_calls"]))
+
+	def test_a_caller_who_cannot_read_gets_nothing_and_no_message(self):
+		self._publish()
+		_db()["User"]["customer@example.com"] = {
+			"name": "customer@example.com",
+			"enabled": 1,
+			"user_type": "Website User",
+			"roles": ("All",),
+		}
+		STATE["list_calls"].clear()
+		out = self._search("PO", user="customer@example.com")
+		self.assertEqual(out, {"results": [], "problems": []})
+		self.assertEqual(frappe_module().local.message_log, [])
+		self.assertEqual(STATE["list_calls"], [])  # has_permission first: no get_list, so no dialog
+		self.assertEqual(request(search_service.awesomebar_hits, "PO", user="customer@example.com"), [])
+		self.assertEqual(frappe_module().local.message_log, [])
+
+	def test_the_readable_set_is_applied_before_ranking(self):
+		"""An article the caller's own get_list leaves out is never ranked, even when it would be
+		first; the others are unaffected."""
+		best = self._publish(title="PO receiving: PO, PO and PO")
+		other = self._publish(title="Something else with a PO")
+		self.assertEqual(self._names("PO")[0], best)
+		STATE["hidden"][TECH] = {best}
+		self.assertEqual(self._names("PO"), [other])
+		# One slot: had the hidden article been ranked, it would take it, and the display read would
+		# then drop it, leaving nothing.
+		self.assertEqual(self._names("PO", limit=1), [other])
+		self.assertEqual(self._names(best), [])  # not pinned either
+		self.assertEqual(self._names("PO", user=AUTHOR)[0], best)  # someone else still sees it
+		calls = [(d, u, f) for d, u, f in STATE["list_calls"] if u == TECH]
+		self.assertTrue(calls)
+		self.assertTrue(all(d == ARTICLE for d, _u, _f in calls))
+		self.assertTrue(all(f.get("status") == "Published" for _d, _u, f in calls))
+
+	def test_articles_the_caller_cannot_read_take_no_awesomebar_slot(self):
+		"""More hidden articles than the AwesomeBar has slots, every one ranking above the one the
+		caller may read: the caller still gets that one. Had the readable set been applied only when
+		the rows are read for display, the hidden hits would fill all five slots and then be dropped,
+		and the caller would get nothing (found in review: the two-article test above could not tell
+		the difference with ten slots). And what the ranking is handed is the caller's set exactly."""
+		hidden = [
+			self._publish(title=f"PO receiving: PO, PO and PO, batch {n}")
+			for n in range(search_service.AWESOMEBAR_LIMIT + 1)
+		]
+		visible = self._publish(title="Something else with a PO")
+		# For someone who reads them all, the visible one ranks last.
+		self.assertEqual(self._names("PO", user=AUTHOR, limit=None)[-1], visible)
+		STATE["hidden"][TECH] = set(hidden)
+		hits = request(search_service.awesomebar_hits, "PO", user=TECH)
+		self.assertEqual([hit["route"][2] for hit in hits], [visible])
+		self.assertEqual(self._names("PO", limit=1), [visible])
+
+		handed = []
+		real = search_service.engine.search
+
+		def spying(index, query, **kwargs):
+			handed.append(kwargs.get("allowed"))
+			return real(index, query, **kwargs)
+
+		with mock.patch.object(search_service.engine, "search", spying):
+			self._names("PO")
+			self._names("PO", user=AUTHOR)
+		self.assertEqual(handed, [{visible}, {*hidden, visible}])
+
+	def test_a_new_stamp_rebuilds_and_the_same_stamp_does_not(self):
+		builds = []
+		real = search_service.engine.build_index
+
+		def counting(documents):
+			builds.append(1)
+			return real(documents)
+
+		self._publish()
+		with mock.patch.object(search_service.engine, "build_index", counting):
+			self._search("PO")
+			self._search("packing")
+			self.assertEqual(len(builds), 1)
+			self._publish(title="Returning a PO")
+			self._search("PO")
+			self.assertEqual(len(builds), 2)
+			# Too old rebuilds too, stamp or not.
+			search_service._STATE["kb.example.com"]["built_at"] -= search_service.MAX_AGE_SECONDS + 1
+			self._search("PO")
+			self.assertEqual(len(builds), 3)
+
+	def test_a_failed_rebuild_keeps_the_old_index_and_answers_nothing(self):
+		number = self._publish()
+		self.assertEqual(self._names("PO"), [number])
+		old = dict(search_service._STATE["kb.example.com"])
+		second = self._publish(title="Returning a PO")
+		with mock.patch.object(search_service.engine, "build_index", side_effect=RuntimeError("boom")):
+			self.assertEqual(self._search("PO"), {"results": [], "problems": []})
+		self.assertEqual(search_service._STATE["kb.example.com"], old)
+		self.assertEqual(sorted(self._names("PO")), sorted([number, second]))
+
+	def test_each_site_keeps_its_own_index(self):
+		self._publish()
+		self._search("PO")
+		frappe_module().local.site = "other.example.com"
+		self._search("PO")
+		self.assertEqual(set(search_service._STATE), {"kb.example.com", "other.example.com"})
+		self.assertIsNot(
+			search_service._STATE["kb.example.com"]["index"], search_service._STATE["other.example.com"]["index"]
+		)
+
+	def test_the_awesomebar_hits(self):
+		number = self._publish(title="Receiving a PO & a <slip>")
+		hits = request(search_service.awesomebar_hits, "PO", user=TECH)
+		self.assertEqual(len(hits), 1)
+		(hit,) = hits
+		self.assertEqual(hit["route"], ["Form", ARTICLE, number])
+		self.assertEqual(hit["index"], 160)
+		self.assertEqual(hit["label"], f"{number} · Receiving a <b>PO</b> &amp; a &lt;slip&gt;")
+		self.assertEqual(hit["value"], f"{number} · Receiving a PO & a <slip>")
+		self.assertEqual(hit["description"], "SOP · 06 Operations")
+		self.assertEqual(request(search_service.awesomebar_hits, "P", user=TECH), [])
+		self.assertEqual(request(search_service.awesomebar_hits, "  ", user=TECH), [])
+
+	def test_the_awesomebar_shows_the_department_alone_for_an_unclassified_article(self):
+		name = draft()
+		submitted(name)
+		_db()[VERSION][name]["kind"] = None
+		STATE["committed"] = copy.deepcopy(_db())
+		approve(name)
+		(hit,) = request(search_service.awesomebar_hits, "PO", user=TECH)
+		self.assertEqual(hit["description"], "06 Operations")
+
+	def test_the_awesomebar_never_raises_and_leaves_no_message(self):
+		self._publish()
+
+		def broken(*args, **kwargs):
+			frappe_module().local.message_log.append("something went wrong")
+			raise RuntimeError("boom")
+
+		with mock.patch.object(search_service, "search", broken):
+			self.assertEqual(request(search_service.awesomebar_hits, "PO", user=TECH), [])
+		self.assertEqual(frappe_module().local.message_log, [])
+		self.assertEqual(logged(), [])
+
+	def test_the_hook_names_awesomebar_hits(self):
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		value = next(
+			ast.literal_eval(n.value)
+			for n in tree.body
+			if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", None) == "awesomebar_search"
+		)
+		self.assertEqual(value, ["erpnext_enhancements.knowledge_base.search_service.awesomebar_hits"])
+		self.assertTrue(callable(search_service.awesomebar_hits))
+		self.assertNotIn("awesomebar_hits", WHITELISTED)
+
+
 # ------------------------------------------------------------------ wiring
 
 
@@ -1865,6 +2263,24 @@ async function submitCase(outcome, dirty) {
 	const r = sandbox();
 	r.state.handlers.refresh({ page: { menu }, footer: null, is_new: () => true });
 	out.menu = menu.lis.map((li) => ({ label: li.label, userAction: li.userAction, removed: li.removed }));
+
+	// WI-080 PR 5: the intro names what stops a draft being submitted.
+	const intro = (doc, kb, state) => {
+		const shown = [];
+		const t = sandbox();
+		t.context.kb_version_intro({ doc, set_intro: (text, color) => shown.push({ text, color }) }, kb, state);
+		return shown;
+	};
+	out.intro = {
+		blocked: intro({}, { submit_blockers: ["it has no kind"] }, "Draft"),
+		noted: intro(
+			{ review_note: "Fix step 2", reviewer: "james@example.com" },
+			{ submit_blockers: ["it has no kind", "it has no text"] },
+			"Draft"
+		),
+		clear: intro({}, { submit_blockers: [] }, "Draft"),
+		old_payload: intro({}, {}, "Draft"),
+	};
 	process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e && e.stack ? e.stack : e); process.exit(1); });
 """
@@ -1912,6 +2328,26 @@ class TestTheVersionFormScript(unittest.TestCase):
 	def test_the_menus_own_discard_is_removed_and_nothing_else(self):
 		removed = {(m["label"], m["userAction"]) for m in self.out["menu"] if m["removed"]}
 		self.assertEqual(removed, {("Discard", False)})
+
+	def test_a_draft_says_why_it_cannot_be_submitted(self):
+		"""WI-080 PR 5: every draft open when the kind arrived loses its Submit button, and the intro
+		says why rather than leaving the button silently missing."""
+		self.assertEqual(
+			self.out["intro"]["blocked"],
+			[{"text": "Before it can be submitted for review: it has no kind.", "color": "orange"}],
+		)
+		(noted,) = self.out["intro"]["noted"]
+		self.assertEqual(noted["color"], "orange")
+		self.assertEqual(
+			noted["text"].split("<br>"),
+			[
+				"Last review note, from james@example.com: Fix step 2",
+				"Before it can be submitted for review: it has no kind; it has no text.",
+			],
+		)
+		# Nothing to say clears the intro, and an older onload payload without the key still works.
+		self.assertEqual(self.out["intro"]["clear"], [{}])
+		self.assertEqual(self.out["intro"]["old_payload"], [{}])
 
 
 if __name__ == "__main__":

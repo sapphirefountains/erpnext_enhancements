@@ -63,6 +63,7 @@ VERSION = constants.VERSION_DOCTYPE
 DIFF_FIELDS = (
 	("title", "Title"),
 	("department_block", "Department"),
+	("kind", "Kind"),
 	("summary", "Summary"),
 	("keywords", "Keywords"),
 	("process_owner", "Process Owner"),

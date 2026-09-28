@@ -14,6 +14,7 @@
   "kb_number",
   "title",
   "department_block",
+  "kind",
   "column_break_article",
   "status",
   "version_number",
@@ -75,6 +76,16 @@
    "in_standard_filter": 1,
    "label": "Department",
    "options": "\n00 Company Wide\n01 Executive\n02 Design\n03 Finance\n04 HR\n05 Marketing\n06 Operations\n07 Product Management\n08 Production\n09 Sales",
+   "read_only": 1
+  },
+  {
+   "description": "Policy: a rule the company requires: what must or must not be done, and why. Process: how work flows across roles and stages: who does what, in what order, and where it is handed off. SOP: step-by-step instructions for one task, followed in order. Readers and AI tools use it: a Policy is binding, and an SOP's steps are followed in order.",
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Kind",
+   "options": "\nPolicy\nProcess\nSOP",
    "read_only": 1
   },
   {
@@ -265,7 +276,7 @@
  "index_web_pages_for_search": 0,
  "links": [],
  "make_attachments_public": 0,
- "modified": "2026-09-28 21:00:00.000000",
+ "modified": "2026-09-28 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Knowledge Base",
  "name": "Knowledge Article",

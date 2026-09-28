@@ -31,6 +31,9 @@ frappe, so every branch runs here, bench-free and with no stub:
   it refuses ("Basic Maintenance/Cleaning", "Password: case-sensitive.") is a save that cannot be
   made.
 * **The content hash** ignores what nobody can see and changes on what anyone can.
+* **The article's kind** (PR 5): a content field, left out of the hash, read from what people type
+  (every kind in any case, every alias, any separator) and nothing else; the department filter's
+  reader and folder names; and the Integrity report reading a kind only with approved text.
 
 **Every secret-shaped fixture is built by concatenation.** GitHub push protection refused a
 branch of this repo once for a literal Stripe-key-shaped test string; a split literal is the same
@@ -179,6 +182,106 @@ class TestConstantsAgree(unittest.TestCase):
 		self.assertEqual(
 			(W.DRAFT, W.IN_REVIEW, W.PUBLISHED, W.SUPERSEDED, W.DISCARDED), K.REVIEW_STATES
 		)
+
+
+# ------------------------------------------------------------------ the article's kind (PR 5)
+
+
+class TestKind(unittest.TestCase):
+	"""WI-080 PR 5: Policy, Process or SOP, the register's three document types (Nik, 2026-09-28)."""
+
+	def test_kind_is_a_content_field_after_the_department(self):
+		"""So a revision copies it, changing it makes the saver a contributor, and it is frozen once
+		the version leaves Draft: everything ``VERSION_CONTENT_FIELDS`` means."""
+		fields = K.VERSION_CONTENT_FIELDS
+		self.assertEqual(fields[fields.index("department_block") + 1], "kind")
+
+	def test_a_change_of_kind_is_a_content_change(self):
+		stored = {"review_state": W.DRAFT, "kind": "Policy"}
+		self.assertEqual(W.changed_content_fields(stored, {**stored, "kind": "SOP"}), ("kind",))
+		self.assertEqual(W.changed_content_fields(stored, dict(stored)), ())
+		self.assertEqual(W.changed_content_fields({"kind": None}, {"kind": ""}), ())
+		in_review = {"review_state": W.IN_REVIEW, "kind": "Policy"}
+		self.assertIn("In Review", W.content_edit_problem(in_review, ("kind",)))
+
+	def test_the_content_hash_does_not_include_the_kind(self):
+		"""Adding it would make every stored ``content_hash`` mismatch its live version; the Integrity
+		report compares the kind on its own instead. Slice 4 must key its export on (hash, version)."""
+		text = {"title": "T", "summary": "S", "keywords": "PO", "body": "<p>B</p>"}
+		self.assertEqual(C.content_hash({**text, "kind": "Policy"}), C.content_hash({**text, "kind": "SOP"}))
+		self.assertNotIn("kind", C.HASHED_FIELDS)
+
+	def test_kind_option_reads_each_kind_in_any_case(self):
+		for kind in K.ARTICLE_KINDS:
+			for spelling in (kind, kind.lower(), kind.upper(), f"  {kind}  "):
+				with self.subTest(spelling=spelling):
+					self.assertEqual(K.kind_option(spelling), kind)
+
+	def test_kind_option_reads_every_alias(self):
+		for alias, kind in K.KIND_ALIASES.items():
+			with self.subTest(alias=alias):
+				self.assertIn(kind, K.ARTICLE_KINDS)
+				self.assertEqual(K.kind_option(alias), kind)
+				self.assertEqual(K.kind_option(alias.upper()), kind)
+		# The mapping the design settled on: a procedure is an SOP, a workflow is a Process.
+		self.assertEqual(K.kind_option("Procedure"), "SOP")
+		self.assertEqual(K.kind_option("Workflows"), "Process")
+		self.assertEqual(K.kind_option("rules"), "Policy")
+		self.assertEqual(K.kind_option("POL"), "Policy")
+		self.assertEqual(K.kind_option("PRO"), "Process")
+
+	def test_kind_option_folds_separators(self):
+		for spelling in ("How to", "how_to", "HOW-TO", "how  -  to", "how__to"):
+			with self.subTest(spelling=spelling):
+				self.assertEqual(K.kind_option(spelling), "SOP")
+		self.assertEqual(K.kind_option("Standard Operating Procedure"), "SOP")
+		self.assertEqual(K.kind_option("standard_operating-procedure"), "SOP")
+
+	def test_kind_option_answers_none_for_anything_else(self):
+		for value in ("", "   ", None, "Checklist", "Guide", "SOPP", "policy!", 3, ["SOP"]):
+			with self.subTest(value=value):
+				self.assertIsNone(K.kind_option(value))
+
+	def test_kind_help_has_one_line_per_kind(self):
+		self.assertEqual(tuple(K.KIND_HELP), K.ARTICLE_KINDS)
+		for kind, line in K.KIND_HELP.items():
+			with self.subTest(kind=kind):
+				self.assertTrue(line.strip())
+				self.assertNotIn("\n", line)
+		self.assertEqual(set(K.KIND_ALIASES.values()), set(K.ARTICLE_KINDS))
+		self.assertTrue(set(K.KIND_ALIASES).isdisjoint({k.casefold() for k in K.ARTICLE_KINDS}))
+
+	def test_department_option_reads_code_label_and_option(self):
+		for value in ("06", "6", 6, "Operations", "operations", "06 Operations", " 06   operations ", "06-operations"):
+			with self.subTest(value=value):
+				self.assertEqual(K.department_option(value), "06 Operations")
+		self.assertEqual(K.department_option("0"), "00 Company Wide")
+		self.assertEqual(K.department_option("Product Management"), "07 Product Management")
+		self.assertEqual(K.department_option("hr"), "04 HR")
+		for value in ("", None, "10", "Ops", True, "06 Sales", 3.5):
+			with self.subTest(value=value):
+				self.assertIsNone(K.department_option(value))
+
+	def test_department_folder(self):
+		self.assertEqual(K.department_folder("06 Operations"), "06-operations")
+		self.assertEqual(K.department_folder("07 Product Management"), "07-product-management")
+		self.assertEqual(K.department_folder("04 HR"), "04-hr")
+		for option in K.DEPARTMENT_BLOCK_OPTIONS:
+			with self.subTest(option=option):
+				self.assertRegex(K.department_folder(option), r"^\d{2}-[a-z-]+$")
+		for value in ("06", "Operations", "", None, "06 operations"):
+			with self.subTest(value=value):
+				self.assertIsNone(K.department_folder(value))
+
+	def test_the_integrity_report_never_reads_a_versions_kind_with_its_metadata(self):
+		"""``INTEGRITY_VERSION_FIELDS`` is read for every version, drafts included, so it holds no
+		content field, the kind included; the kind is read only with the approved text."""
+		from erpnext_enhancements.knowledge_base import reporting as R
+
+		self.assertEqual(set(R.INTEGRITY_VERSION_FIELDS) & set(K.VERSION_CONTENT_FIELDS), set())
+		self.assertNotIn("kind", R.INTEGRITY_VERSION_FIELDS)
+		self.assertIn("kind", R.APPROVED_TEXT_FIELDS)
+		self.assertIn("kind", R.INTEGRITY_ARTICLE_FIELDS)
 
 
 # ------------------------------------------------------------------ approval
