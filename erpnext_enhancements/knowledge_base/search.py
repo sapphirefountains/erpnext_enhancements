@@ -20,17 +20,22 @@ the knowledge base with are exactly the short ones.
    ``kb 601``, ``KB0601``, ``kb_601``) is one term, ``kb-0601``, zero-padded to four digits.
 3. **Document numbers**: 2 to 5 letters, ``-``, 2 to 6 digits (``SOP-9001``, ``PO-1234``) is kept
    as one compound term, and its two parts are indexed as well.
-4. **Words** are runs of letters and digits. One-character tokens are dropped; **tokens of 2 or
+4. **Punctuated acronyms**: single letters or runs of digits joined by ``-``, ``&``, ``/`` or ``.``,
+   with at least one letter, are one acronym term with the punctuation dropped: ``W-2`` is ``w2``,
+   ``I-9`` ``i9``, ``G-702`` ``g702``, ``T&M`` ``tm``, ``A/R`` ``ar``, ``P.O.`` ``po``, and a plural
+   ``W-2s`` ``w2``. So ``W-2``, ``W2`` and ``w2`` all meet. A digit part of 2 or more characters is
+   indexed as well (``702``); ``3-4`` and a date, with no letter, are never joined.
+5. **Words** are runs of letters and digits. One-character tokens are dropped; **tokens of 2 or
    more characters are kept**, which is the point.
-5. **Acronyms.** A token written in capitals, 2 to 6 letters or digits with at least one letter
+6. **Acronyms.** A token written in capitals, 2 to 6 letters or digits with at least one letter
    (PO, QBO, SOP, AIA, SOV, PTO, W2), is an acronym, and so is its plural (``POs`` is ``po``).
    In a run of text with no lowercase letter at all (an all-caps heading or title; a run is a line,
    or a sentence), only 2- and 3-character tokens are acronyms and longer ones are ordinary words:
    otherwise every word of "RECEIVING PACKING SLIPS" would escape the stemmer. Acronyms are never
    stemmed and never stopwords, so "IT" is a term and "it" is not.
-6. **Stopwords** (:data:`STOPWORDS`, English function words) are dropped, except acronyms and
+7. **Stopwords** (:data:`STOPWORDS`, English function words) are dropped, except acronyms and
    everything in the keywords field: an author who typed a word as a keyword meant it.
-7. **Stemming** (:func:`stem`) for other alphabetic tokens of 4 or more characters, in order:
+8. **Stemming** (:func:`stem`) for other alphabetic tokens of 4 or more characters, in order:
    ``ies`` -> ``y`` and ``sses`` -> ``ss``; drop ``s`` (not ``ss``, ``us`` or ``is``), then
    ``ing`` or ``ed``, each only when 3 letters remain; undouble a final ``pp tt nn gg dd mm rr``;
    drop a final ``e`` when 4 letters remain. So receive, receives, received and receiving are all
@@ -123,12 +128,23 @@ STOPWORDS = frozenset(
 _SNIPPET_WIDTH = 240
 _ELLIPSIS = "\u2026"
 
-#: A KB number, a document number, or a word, tried in that order at each position.
+#: A KB number, a document number, a punctuated chain, or a word, tried in that order at each
+#: position. A punctuated chain is two or more pieces, each a single letter or 1 to 6 digits, each
+#: joined to the next by one ``-``, ``&``, ``/`` or ``.``, standing alone (no letter or digit
+#: touching either end), with an optional plural ``s``; so ``x-ray``, whose ``ray`` is no single
+#: letter, is not one. It is an acronym only when a piece is a letter, which :func:`_scan_run`
+#: checks: a chain with none (``3-4``, ``9/28/2026``, ``1.5``) is read as the words it is made of,
+#: as before. Checked there rather than by a lookahead here, because a lookahead that walks the
+#: chain to its first letter is retried at every piece of a long letterless chain (quadratic).
 _TOKEN = re.compile(
 	r"(?P<kb>(?i:\bkb[\s_\-]?0*(?P<kbn>[0-9]{1,4})\b))"
 	r"|(?P<doc>\b(?P<letters>[A-Za-z]{2,5})-(?P<digits>[0-9]{2,6})\b)"
+	r"|(?P<joined>(?<![^\W_])"
+	r"(?P<chain>(?:[A-Za-z]|[0-9]{1,6})(?:[-&/.](?:[A-Za-z]|[0-9]{1,6}))+)s?(?![^\W_]))"
 	r"|(?P<word>[^\W_]+)"
 )
+_JOINED_PIECE = re.compile(r"[A-Za-z0-9]+")
+_WORD_RUN = re.compile(r"[^\W_]+")
 _KB_QUERY = re.compile(r"\bkb[\s_\-]?0*([0-9]{1,4})\b", re.IGNORECASE)
 _KB_EXACT = re.compile(r"kb[\s_\-]?0*([0-9]{1,4})", re.IGNORECASE)
 #: Where one run of text ends and the next begins: a line break, or a sentence's end.
@@ -226,6 +242,20 @@ def _scan_run(text, start, end, keywords, out):
 			if part is not None:
 				tokens.append(part)
 			tokens.append(Token(digits, False))
+			out.append((begin, finish, tuple(tokens)))
+		elif match.group("joined") is not None:
+			pieces = _JOINED_PIECE.findall(match.group("chain"))
+			if not any(piece.isalpha() for piece in pieces):
+				# No letter, so no acronym: the words it is made of, each with its own span.
+				for word in _WORD_RUN.finditer(run, match.start(), match.end()):
+					token = _word(word.group(), shouting, keywords)
+					if token is not None:
+						out.append((start + word.start(), start + word.end(), (token,)))
+				continue
+			tokens = [Token("".join(pieces).casefold(), True)]
+			# Its digit parts are indexed as well, as a document number's are ("G-702" is found by
+			# "702" too); a lone letter never is, as a one-character word never is.
+			tokens.extend(Token(piece, False) for piece in pieces if len(piece) >= 2)
 			out.append((begin, finish, tuple(tokens)))
 		else:
 			token = _word(match.group("word"), shouting, keywords)

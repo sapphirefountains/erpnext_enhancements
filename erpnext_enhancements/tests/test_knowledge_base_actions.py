@@ -1991,12 +1991,45 @@ class SearchServiceTest(Base):
 		self.assertEqual(self._names("PO")[0], best)
 		STATE["hidden"][TECH] = {best}
 		self.assertEqual(self._names("PO"), [other])
+		# One slot: had the hidden article been ranked, it would take it, and the display read would
+		# then drop it, leaving nothing.
+		self.assertEqual(self._names("PO", limit=1), [other])
 		self.assertEqual(self._names(best), [])  # not pinned either
 		self.assertEqual(self._names("PO", user=AUTHOR)[0], best)  # someone else still sees it
 		calls = [(d, u, f) for d, u, f in STATE["list_calls"] if u == TECH]
 		self.assertTrue(calls)
 		self.assertTrue(all(d == ARTICLE for d, _u, _f in calls))
 		self.assertTrue(all(f.get("status") == "Published" for _d, _u, f in calls))
+
+	def test_articles_the_caller_cannot_read_take_no_awesomebar_slot(self):
+		"""More hidden articles than the AwesomeBar has slots, every one ranking above the one the
+		caller may read: the caller still gets that one. Had the readable set been applied only when
+		the rows are read for display, the hidden hits would fill all five slots and then be dropped,
+		and the caller would get nothing (found in review: the two-article test above could not tell
+		the difference with ten slots). And what the ranking is handed is the caller's set exactly."""
+		hidden = [
+			self._publish(title=f"PO receiving: PO, PO and PO, batch {n}")
+			for n in range(search_service.AWESOMEBAR_LIMIT + 1)
+		]
+		visible = self._publish(title="Something else with a PO")
+		# For someone who reads them all, the visible one ranks last.
+		self.assertEqual(self._names("PO", user=AUTHOR, limit=None)[-1], visible)
+		STATE["hidden"][TECH] = set(hidden)
+		hits = request(search_service.awesomebar_hits, "PO", user=TECH)
+		self.assertEqual([hit["route"][2] for hit in hits], [visible])
+		self.assertEqual(self._names("PO", limit=1), [visible])
+
+		handed = []
+		real = search_service.engine.search
+
+		def spying(index, query, **kwargs):
+			handed.append(kwargs.get("allowed"))
+			return real(index, query, **kwargs)
+
+		with mock.patch.object(search_service.engine, "search", spying):
+			self._names("PO")
+			self._names("PO", user=AUTHOR)
+		self.assertEqual(handed, [{visible}, {*hidden, visible}])
 
 	def test_a_new_stamp_rebuilds_and_the_same_stamp_does_not(self):
 		builds = []

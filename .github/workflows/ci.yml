@@ -832,7 +832,8 @@ jobs:
       # also the article kind (required to submit, and the form's intro says so, run in node;
       # copied at publish and by a revision) and SearchServiceTest: search_service over this same
       # in-memory site, where no draft's sentinel is ever found and a caller's readable set applies
-      # before ranking.
+      # before ranking (more hidden articles than the AwesomeBar has slots, each ranking first: a
+      # filter applied only when the rows are read for display would leave the caller nothing).
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace
@@ -854,14 +855,16 @@ jobs:
       # WI-080 PR 5 (v1.558.0): knowledge base search. PLAIN PYTEST FUNCTIONS, so its own
       # `python -m pytest` step -- `python -m unittest` collects none of them (the QuickBooks
       # lesson at the top of this job). search.py is pure: every tokenizer rule (two-letter words,
-      # acronyms and the all-caps run, IT vs it, the four KB-number spellings, a document number),
+      # acronyms and the all-caps run, IT vs it, the four KB-number spellings, a document number,
+      # a punctuated acronym such as W-2, T&M or A/R as one term),
       # the stemmer table, ranking (title/keywords over body, pinning, filters applied BEFORE
       # scoring, the kind's aliases through the meta field, deterministic ties), snippets, a golden
       # set of INVENTED articles and questions (tests/data/kb_search_golden.json; the real questions
       # live in the private repo), a loose performance guard (500 x 800 words in < 5 s, 100 queries
       # in < 1 s), and a fresh interpreter importing search.py with frappe absent. Plus
       # search_service over the golden corpus through a fake frappe installed with monkeypatch for
-      # one test at a time: permission asked before any list call, the readable set before ranking,
+      # one test at a time: permission asked before any list call, the ranking handed exactly the
+      # reader's own (partial) readable set, so a hidden article takes no slot,
       # no draft or retired text ever returned, the Version doctype never read, and static checks
       # that neither module names that doctype or passes a SQL function string as a field.
       - name: Knowledge base search (bench-free pytest suite)

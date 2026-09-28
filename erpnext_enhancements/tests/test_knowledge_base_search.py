@@ -13,7 +13,8 @@ once ran nowhere for weeks (CLAUDE.md). Locally, run it with plugin autoload off
 
 * **every tokenizer rule**: words of 2 or more characters, acronyms and their plurals, the all-caps
   run, IT against it, stopwords (never an acronym's, never a keyword's), NFKC, the four spellings of
-  a KB number, and a document number with its parts;
+  a KB number, a document number with its parts, and a punctuated acronym (W-2, I-9, T&M, A/R, P.O.)
+  as one term that meets its unpunctuated and lowercase spellings;
 * **the stemmer's table**;
 * **ranking**: title and keywords over the body, an acronym only in keywords, pinning by KB number,
   ``allowed``, department and kind applied *before* scoring (so they cannot change another
@@ -27,9 +28,11 @@ once ran nowhere for weeks (CLAUDE.md). Locally, run it with plugin autoload off
 
 ``search_service.py`` needs frappe, and ``test_knowledge_base_actions.SearchServiceTest`` runs it over
 a whole in-memory site. Here it runs over the golden corpus through a minimal fake (installed with
-``monkeypatch`` for one test at a time, never left in ``sys.modules``), to pin what the corpus is
-and in what order the caller's permissions are asked; plus **static checks** that neither search
-module names the Version doctype or passes a SQL function string as a field.
+``monkeypatch`` for one test at a time, never left in ``sys.modules``), to pin what the corpus is,
+in what order the caller's permissions are asked, and that the ranking is handed the caller's own
+readable set (a reader who may not read some articles, so a hidden article that would rank first
+takes no slot); plus **static checks** that neither search module names the Version doctype or
+passes a SQL function string as a field.
 """
 
 import ast
@@ -176,6 +179,82 @@ def test_a_document_number_is_one_term_and_its_parts():
 		S.Token("9001", False),
 	]
 	assert terms("po-1234") == ["po-1234", "po", "1234"]
+
+
+@pytest.mark.parametrize(
+	("text", "expected"),
+	[
+		("W-2", ["w2"]),
+		("I-9", ["i9"]),
+		("W-9 from the vendor", ["w9", "vendor"]),
+		("G-702", ["g702", "702"]),
+		("T&M billing", ["tm", "bill"]),
+		("O&M manual", ["om", "manual"]),
+		("P&L review", ["pl", "review"]),
+		("A/R aging", ["ar", "aging"]),
+		("A/P", ["ap"]),
+		("P.O. number", ["po", "number"]),
+		("W-2s to collect", ["w2", "collect"]),
+		("1099-K", ["1099k", "1099"]),
+		# Typed in lowercase, in a query, it is the same term.
+		("w-2", ["w2"]),
+		("t&m", ["tm"]),
+		("a/r", ["ar"]),
+	],
+)
+def test_a_punctuated_acronym_is_one_term(text, expected):
+	"""Found in review: single letters and digits joined by ``-``, ``&``, ``/`` or ``.`` were dropped
+	piece by piece (one-character tokens), so W-2, I-9, T&M and A/R were never indexed or searched."""
+	assert terms(text) == expected
+	joined = [t for t in S.tokenize(text) if t.term == expected[0]]
+	assert joined and joined[0].acronym, "never stemmed and never a stopword"
+
+
+def test_what_is_not_a_punctuated_acronym():
+	"""No letter, no join (``3-4``, a date, a decimal); and a word longer than one letter is not a
+	piece, so ``x-ray`` and ``e-mail`` keep their words and drop the lone letter, as before."""
+	assert terms("3-4") == []
+	assert terms("9/28/2026") == ["28", "2026"]
+	assert terms("1.5") == []
+	assert terms("x-ray") == ["ray"]
+	assert terms("e-mail") == ["mail"]
+	assert terms("Plan B-style") == ["plan", "styl"]
+	assert terms("PO/SO") == ["po", "so"]
+	# A document number is still a document number.
+	assert terms("SOP-9001") == ["sop-9001", "sop", "9001"]
+
+
+def test_a_long_letterless_chain_is_read_in_linear_time():
+	"""A chain with no letter is matched once and read as its words. A regex lookahead for its
+	letter, retried at every piece, made ``1-1-1-…`` quadratic (5,000 pieces took two seconds while
+	this was built), and the AwesomeBar tokenizes whatever any signed-in user types."""
+	started = time.perf_counter()
+	assert S.tokenize("1-" * 20000 + " PO") == [S.Token("po", True)]
+	assert time.perf_counter() - started < 1.0
+
+
+def test_every_spelling_of_a_punctuated_acronym_meets():
+	index = S.build_index(
+		[
+			doc("KB-0601", title="Billing a T&M service call"),
+			doc("KB-0602", title="Collecting a vendor W-9"),
+			doc("KB-0603", title="Reviewing A/R aging"),
+			doc("KB-0604", title="Onboarding", keywords="I-9, paperwork"),
+			doc("KB-0605", title="Correcting a W2"),
+		]
+	)
+	for queries, key in (
+		(("T&M", "t&m", "TM", "tm"), "KB-0601"),
+		(("W-9", "W9", "w9", "w-9"), "KB-0602"),
+		(("A/R", "AR", "ar"), "KB-0603"),
+		(("I-9", "I9", "i9"), "KB-0604"),
+		(("W-2", "W2", "w2", "w-2"), "KB-0605"),
+	):
+		for query in queries:
+			assert keys(S.search(index, query)) == [key], query
+	assert S.search(index, "3-4") == []
+	marked = S.mark("Billing a T&M call for a W-2", "t&m w2")
+	assert marked == "Billing a <b>T&amp;M</b> call for a <b>W-2</b>"
 
 
 # ------------------------------------------------------------------ the stemmer
@@ -616,6 +695,9 @@ def service(monkeypatch):
 	]
 	rows.append(_Row(name="KB-0699", kb_number="KB-0699", title="RETIREDWORD", status="Retired", body_md="RETIREDWORD"))
 	session = types.SimpleNamespace(user=READER)
+	#: Published names the reader's get_list leaves out, as a User Permission would: a partial
+	#: readable set, not only all or nothing.
+	hidden = set()
 
 	def readable():
 		return session.user != PORTAL
@@ -629,8 +711,8 @@ def service(monkeypatch):
 				return False
 		return True
 
-	def select(filters, fields, pluck):
-		out = [r for r in rows if match(r, filters)]
+	def select(filters, fields, pluck, leave_out=()):
+		out = [r for r in rows if match(r, filters) and r["name"] not in leave_out]
 		return [r.get(pluck) for r in out] if pluck else [_Row({f: r.get(f) for f in fields}) for r in out]
 
 	def get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
@@ -644,7 +726,7 @@ def service(monkeypatch):
 		if not readable():
 			frappe.local.message_log.append("Insufficient Permission")
 			raise PermissionError("Insufficient Permission")
-		return select(filters, fields, pluck)
+		return select(filters, fields, pluck, hidden)
 
 	def has_permission(doctype, ptype="read", throw=False, **kwargs):
 		calls.append(("has_permission", doctype))
@@ -673,7 +755,7 @@ def service(monkeypatch):
 	monkeypatch.setitem(sys.modules, "frappe.utils", utils)
 	monkeypatch.delitem(sys.modules, SERVICE, raising=False)
 	module = importlib.import_module(SERVICE)
-	yield types.SimpleNamespace(module=module, calls=calls, session=session, frappe=frappe)
+	yield types.SimpleNamespace(module=module, calls=calls, session=session, frappe=frappe, hidden=hidden)
 	sys.modules.pop(SERVICE, None)
 
 
@@ -701,6 +783,37 @@ def test_permission_is_asked_before_any_list_and_the_readable_set_before_ranking
 	assert order[1] == "get_list"  # the caller's readable set
 	assert order.index("sql") < order.index("get_all")  # the stamp before the corpus
 	assert order[-1] == "get_list"  # the rows shown, read as the caller again
+
+
+def test_the_ranking_is_handed_the_readable_set_and_a_hidden_article_takes_no_slot(
+	service, golden_index, monkeypatch
+):
+	"""A reader whose get_list leaves out the five best answers: the ranking is handed exactly the
+	published articles the reader's own list returned, and the AwesomeBar's five slots and a
+	one-result search go to what the reader may read. Were the readable set applied only when the
+	rows are read for display, the hidden five would fill every slot and then be dropped, and the
+	reader would get nothing."""
+	query = "policy"
+	everyone = keys(S.search(golden_index, query, limit=None))
+	limit = service.module.AWESOMEBAR_LIMIT
+	assert len(everyone) > limit + 1, everyone
+	service.hidden.update(everyone[:limit])
+	published = {a["key"] for a in GOLDEN["articles"]}
+	readable = published - service.hidden
+	expected = keys(S.search(golden_index, query, allowed=readable, limit=limit))
+	assert expected == everyone[limit : 2 * limit]
+
+	handed = []
+	real = service.module.engine.search
+
+	def spying(index, text, **kwargs):
+		handed.append(kwargs.get("allowed"))
+		return real(index, text, **kwargs)
+
+	monkeypatch.setattr(service.module.engine, "search", spying)
+	assert [hit["route"][2] for hit in service.module.awesomebar_hits(query)] == expected
+	assert [r["kb_number"] for r in service.module.search(query, limit=1)["results"]] == expected[:1]
+	assert handed == [readable, readable]
 
 
 def test_a_portal_user_gets_nothing_and_no_message(service):

@@ -641,13 +641,19 @@ ranked, keeps the index, and shapes results. v16's own search cannot do this: pr
    `KB0601`), is one term, `kb-0601`.
 3. A document number, 2 to 5 letters, `-`, 2 to 6 digits (`SOP-9001`), is one term, and its two
    parts are indexed as well.
-4. Words of **2 or more** characters are kept.
-5. An **acronym** is a word written in capitals, 2 to 6 letters or digits with a letter (PO, QBO, SOP,
+4. A **punctuated acronym**, single letters or runs of digits joined by `-`, `&`, `/` or `.` with at
+   least one letter, is one acronym term without its punctuation: `W-2` is `w2`, and so are `W2`,
+   `w2` and `W-2s`; `I-9` is `i9`, `G-702` `g702`, `T&M` `tm`, `A/R` `ar`, `P.O.` `po`. A digit part
+   of 2 or more characters is indexed as well (`702`). A chain with no letter (`3-4`, a date) is read
+   as its words, and `x-ray` or `e-mail` is not a chain (a piece is one letter). Found in review:
+   before this, each one-letter piece was dropped, so W-2, I-9, T&M and A/R were never found.
+5. Words of **2 or more** characters are kept.
+6. An **acronym** is a word written in capitals, 2 to 6 letters or digits with a letter (PO, QBO, SOP,
    W2), or its plural (`POs`). In a run of text with no lowercase letter (an all-caps heading; a run
    is a line or a sentence) only 2 and 3 characters are acronyms. Acronyms are never stemmed and never
    stopwords, so "IT" is a term and "it" is not.
-6. English function words are stopwords, except acronyms and everything in the keywords field.
-7. A small stemmer for the rest: receive, receives, received and receiving are all `receiv`.
+7. English function words are stopwords, except acronyms and everything in the keywords field.
+8. A small stemmer for the rest: receive, receives, received and receiving are all `receiv`.
 
 **Ranking** (`search.search`) is BM25F. Title and keywords weigh 3, the summary 2, the body 1, and a
 *meta* field 0.5 holding the kind, its aliases and the department, so "procedure for receiving"
@@ -825,9 +831,9 @@ draft needs one of the other two.
 | [`../tests/test_knowledge_base_rules.py`](../tests/test_knowledge_base_rules.py) | `workflow.py` and `content.py`, every branch, with no stub (and a fresh-interpreter check that they import no frappe). Its own CI step |
 | [`../tests/test_knowledge_base_hooks.py`](../tests/test_knowledge_base_hooks.py) | `files.py` (the fast path, the byte move, the delete refusal, registration) and the Version controller's content and approval gates. Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_transitions.py`](../tests/test_knowledge_base_transitions.py) | The state machine, every rule of every move, the buttons, who is asked, `shows_anything`/`referenced_files`/`text_diff`, and the example-key placeholders (PR 3). No stub; its own CI step |
-| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, the cache) (PR 5). Its own CI step: it stubs `frappe` |
+| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, a hidden article taking no slot, the cache) (PR 5). Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review); the paragraph pointing to the search bar and the Integrity report's kind check (PR 5). Its own CI step: it stubs `frappe` |
-| [`../tests/test_knowledge_base_search.py`](../tests/test_knowledge_base_search.py) | `search.py` (PR 5), **pytest**, on its own `python -m pytest` step: every tokenizer rule, the stemmer table, pinning, filters before scoring, the kind's aliases, ties, snippets, an invented golden set (`fixtures/kb_search_golden.json`), a performance guard, a fresh-interpreter import with `frappe` absent, and static checks that search never names the Version doctype or a SQL function string |
+| [`../tests/test_knowledge_base_search.py`](../tests/test_knowledge_base_search.py) | `search.py` (PR 5), **pytest**, on its own `python -m pytest` step: every tokenizer rule (a punctuated acronym such as W-2 or T&M included), the stemmer table, pinning, filters before scoring, the kind's aliases, ties, snippets, an invented golden set (`tests/data/kb_search_golden.json`), a performance guard, a fresh-interpreter import with `frappe` absent, and static checks that search never names the Version doctype or a SQL function string |
 
 ## What arrives later
 

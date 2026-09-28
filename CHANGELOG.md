@@ -44,9 +44,11 @@ web worker's memory, not in the database, redis or the queue.
 - **`knowledge_base/search.py`**, a small BM25F in the standard library: words of two or more
   characters, acronyms (PO, QBO, SOP, W2, and their plurals) never stemmed and never stopwords, an
   all-caps heading read as words, KB numbers in any spelling (`KB-0612`, `kb 612`) and document numbers
-  (`SOP-9001`) as single terms, a small stemmer; title and keywords weigh 3, the summary 2, the body 1,
-  and a meta field 0.5 holding the kind, its aliases and the department, so "procedure for receiving"
-  reaches an SOP. A KB number in the query pins that article first. Filters apply before scoring.
+  (`SOP-9001`) as single terms, acronyms written with punctuation (`W-2`, `I-9`, `G-702`, `T&M`,
+  `A/R`, `P.O.`) as the same single term as their plain spelling, so `W-2`, `W2` and `w2` all meet,
+  a small stemmer; title and keywords weigh 3, the summary 2, the body 1, and a meta field 0.5 holding
+  the kind, its aliases and the department, so "procedure for receiving" reaches an SOP. A KB number in
+  the query pins that article first. Filters apply before scoring.
 - **`knowledge_base/search_service.py`**, search as the person asking: `frappe.has_permission` first,
   which never throws and so never leaves a dialog; then the caller's own `get_list` of Published
   articles, **before anything is ranked**; then the hits' rows read with `get_list` as the caller
@@ -72,10 +74,36 @@ web worker's memory, not in the database, redis or the queue.
   private repository), a performance guard (500 articles of 800 words build in under 5 seconds, 100
   queries run in under 1), a fresh interpreter importing `search.py` with `frappe` absent, and the
   service over the golden corpus through a fake `frappe` that fails the test if the Version doctype is
-  ever read. `SearchServiceTest` in `test_knowledge_base_actions` runs the service over the in-memory
-  site: a sentinel in a Draft, In Review, Discarded, Superseded or open-revision version is never
-  found by anyone, a portal user gets nothing and no message, an article the caller's `get_list` leaves
-  out is never ranked, retiring removes an article, a revision's text is found only once approved.
+  ever read and gives the reader a partial readable set. `SearchServiceTest` in
+  `test_knowledge_base_actions` runs the service over the in-memory site: a sentinel in a Draft, In
+  Review, Discarded, Superseded or open-revision version is never found by anyone, a portal user gets
+  nothing and no message, an article the caller's `get_list` leaves out is never ranked, retiring
+  removes an article, a revision's text is found only once approved.
+- **Found in review, before merge:**
+  - **Acronyms written with punctuation were never found.** The document-number rule needs 2 to 5
+    letters and one-character tokens are dropped, so `W-2`, `I-9` and `A/P` tokenized to nothing,
+    `T&M billing` to `bill` and `G-702` to `702`: searching `W-2`, `I-9`, `T&M` or `A/R` returned
+    nothing, and the golden set's own `I-9` keyword was never indexed (it tested only `W2`). Single
+    letters or runs of up to 6 digits joined by `-`, `&`, `/` or `.`, with at least one letter, are now
+    one acronym term without the punctuation (a plural `W-2s` too), on the index and the query side
+    alike; a 2-or-more-digit part is indexed as well (`702`). A chain with no letter (`3-4`, a date)
+    is read as its words exactly as before (a fuzz of 200,000 random strings against the previous
+    tokenizer agrees, spans included, wherever no lone letter touches one of those marks). The letter
+    is checked in Python, not by a regex lookahead, which would be retried at every piece of a long
+    letterless chain (quadratic: 5,000 pieces took two seconds); a guard test pins linear time, since
+    the AwesomeBar tokenizes whatever any signed-in user types. The golden set gained 11 questions
+    (`W-2`, `w-2`, `I-9`, `i9`, `T&M`, `t&m billing`, `A/R`, `AR aging`, `W-9`, `W9 vendor`, `P.O.`)
+    and three invented articles: 35 articles, 63 questions.
+  - **"The readable set before ranking" was not actually tested.** With two articles and ten
+    slots, the display-time `get_list` hid the hidden article whether or not it had been ranked, and
+    the pytest fake's readable set was all or nothing, so handing the ranking `allowed=None` passed
+    both suites. `SearchServiceTest` now hides six articles that each rank above the one the caller
+    may read and requires that one in the AwesomeBar's five slots and in a one-result search (a
+    display-only filter leaves nothing), and both suites spy on the set the ranking is handed. Today
+    every staff user reads every published article, so this was about completeness, not a leak: the
+    second `get_list` still guarded what is shown.
+  - `knowledge_base/README.md` named the golden set `fixtures/kb_search_golden.json`; it is
+    `tests/data/kb_search_golden.json`.
 
 ### Changed
 
