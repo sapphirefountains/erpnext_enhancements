@@ -373,7 +373,7 @@ doctype_js = {
 	# <module>/doctype/<name>/<name>.js and doctype_js appends to the same string with no
 	# dedupe, so a top-level `const` becomes a SyntaxError and the form loses every button.
 	"Non Conformance": "public/js/quality/non_conformance.js",
-	# knowledge_base (WI-080 PR 3, v1.550.0): the review buttons -- Submit for Review, Approve and
+	# knowledge_base (WI-080 PR 3, v1.555.0): the review buttons -- Submit for Review, Approve and
 	# Publish, Request Changes, Withdraw, Discard, View Changes on a version; Start Revision,
 	# Confirm Still Accurate, Retire on an article. Each form shows exactly the buttons the server
 	# would let this person press now, from __onload.kb, which the controllers' onload fills with
@@ -855,7 +855,7 @@ doc_events = {
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
-	# knowledge_base (WI-080 PR 3, v1.550.0): no typed text about a DRAFT is kept outside the
+	# knowledge_base (WI-080 PR 3, v1.555.0): no typed text about a DRAFT is kept outside the
 	# draft. A System Manager reads every Comment and every ToDo on the site (v16 comment.json's
 	# DocPerm; todo.py's permission query exempts System Manager), and so do the AI tools acting
 	# for one, triton@ included -- list_documents(doctype="Comment") names no denylisted doctype.
@@ -2517,7 +2517,7 @@ has_permission = {
 	"Job Interval": "erpnext_enhancements.workforce.permissions.job_interval_has_permission",
 	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_has_permission",
 	# knowledge_base (WI-080 PR 2, v1.539.0): refuses DELETE, and only delete, on a File
-	# attached to a Knowledge Article -- and since PR 3 (v1.550.0) on a File attached to a
+	# attached to a Knowledge Article -- and since PR 3 (v1.555.0) on a File attached to a
 	# Knowledge Article Version that has left Draft (in review, published, superseded or
 	# discarded: its pictures change only while its text can, and a submitted version's Files
 	# are part of the record of what was approved). That case reads the version's review_state,

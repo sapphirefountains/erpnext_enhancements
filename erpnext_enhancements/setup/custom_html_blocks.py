@@ -45,6 +45,12 @@ BLOCKS = [
 	# those carry their filters on the widget, so they are the same for everyone
 	# who opens the page.
 	("My Training Dashboard", "training_my_dashboard"),
+	# The traveler's own trips, first thing on the Travel workspace: per viewer for the
+	# same reason as My Training. Seeded here but deliberately NOT keyed in
+	# DEPARTMENT_DASHBOARD_BLOCKS: that map's test looks for `*/workspace/travel/travel.json`
+	# and this workspace's folder is `travel_management`, so it is placed by the
+	# workspace JSON alone (content block + custom_blocks row).
+	("My Travel", "travel_home"),
 	("Projects Dashboard", "projects_dashboard"),
 	("Task Dashboard", "task_dashboard"),
 	("Morning Briefing", "morning_briefing"),

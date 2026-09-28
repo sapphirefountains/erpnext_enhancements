@@ -6,7 +6,7 @@
  "doctype": "Report",
  "is_standard": "Yes",
  "letterhead": null,
- "modified": "2026-06-11 10:00:00.000000",
+ "modified": "2026-09-28 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel Trip Cost Summary",
@@ -24,9 +24,6 @@
   },
   {
    "role": "HR Manager"
-  },
-  {
-   "role": "Employee"
   }
  ]
 }

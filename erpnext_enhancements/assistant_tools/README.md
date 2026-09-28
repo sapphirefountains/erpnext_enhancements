@@ -175,7 +175,7 @@ comes in four shapes, because the tools do:
   `data_query.doctype`, which FAC pre-loads with `frappe.get_all`, applying no permissions at all.
   Both were open before v1.538.0;
 - **free text**: `run_database_query`'s `query` (or `sql`) and `run_python_code`'s `code`;
-- **a File, by what it is attached to** (since v1.550.0, WI-080 PR 3): `extract_file_content`
+- **a File, by what it is attached to** (since v1.555.0, WI-080 PR 3): `extract_file_content`
   names a `file_url` or `file_name`, and FAC 3.0.0 then asks only whether the caller can read the
   document the File is attached to, which a KB Author can for a draft's screenshot. So the gate
   looks up every File with that url or name (`_gate.DENYLIST_FILE_ARGUMENTS`,

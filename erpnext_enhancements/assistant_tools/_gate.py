@@ -417,7 +417,7 @@ DENYLIST_ID_ARGUMENTS = {"fetch": ("id",)}
 DENYLIST_NESTED_DOCTYPE_ARGUMENTS = {"run_python_code": ("data_query",)}
 
 # A tool that reads a stored File's BYTES names the File, not a doctype, so the denylist has to
-# look the File up (found for WI-080 PR 3, v1.550.0). FAC 3.0.0's `extract_file_content` resolves
+# look the File up (found for WI-080 PR 3, v1.555.0). FAC 3.0.0's `extract_file_content` resolves
 # `file_url` (or, failing that, `file_name`) to a File row with `frappe.get_all(..., limit=1)` and
 # then asks only `frappe.has_permission(file.attached_to_doctype, "read", file.attached_to_name)`
 # (plugins/data_science/tools/extract_file_content.py, `_get_file_document` and

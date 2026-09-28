@@ -120,6 +120,23 @@ def _poi_latlng(geolocation_json):
 	return None
 
 
+def _poi_notes(value):
+	"""A Travel POI's ``notes``, as a stop on the itinerary carries them: parking, the gate
+	code, how to get on site (v1.553.0).
+
+	``notes`` is a plain Text field, not a Text Editor, so there is no markup to strip: it is
+	sent as typed and every page that shows it draws it as text. Windows line endings become
+	plain newlines and the ends are trimmed; blank, or nothing but whitespace, is ``None``.
+
+	Not money, by construction: it is free text about a place, and no cost field is read with
+	it. Nor is it new to anyone: the Employee role reads every Travel POI, with no row scoping,
+	so a crew member who sees it on a stop could already open it on the POI."""
+	if value is None:
+		return None
+	text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+	return text or None
+
+
 # ----------------------------------------------------------------- calendar
 
 
@@ -473,6 +490,10 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 	the hotel. It is resolved here (``_address_text``); a
 	value no Address is named is text someone typed and is sent as it is.
 
+	A stop's ``poi`` is ``{name, poi_name, category, lat, lng, notes}``. ``notes`` is the
+	place's own Notes (``_poi_notes``: parking, the gate code, site access; None when blank),
+	added in v1.553.0 for ``/itinerary``, which draws it under the place.
+
 	``poi_cache`` lets several calls on one trip (one per crew member, on Plan
 	a Trip's views; one per recipient of an itinerary send) share their Travel
 	POI and Address lookups. Addresses are kept under ``("Address", name)``
@@ -661,7 +682,7 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 			poi = frappe.db.get_value(
 				"Travel POI",
 				poi_name,
-				["poi_name", "category", "geolocation", "address"],
+				["poi_name", "category", "geolocation", "address", "notes"],
 				as_dict=True,
 			)
 			latlng = _poi_latlng(poi.geolocation) if poi else None
@@ -680,6 +701,10 @@ def shape_itinerary(doc, viewing_employee=None, poi_cache=None):
 					"category": poi.category,
 					"lat": latlng[0] if latlng else None,
 					"lng": latlng[1] if latlng else None,
+					# The place's own notes (v1.553.0): parking, the gate code, how to get on
+					# site. Travel POI ``notes`` is a plain Text field, so it goes as typed, line
+					# breaks and all, and the page draws it as text. Blank is None.
+					"notes": _poi_notes(poi.get("notes")),
 				}
 				if poi
 				else None

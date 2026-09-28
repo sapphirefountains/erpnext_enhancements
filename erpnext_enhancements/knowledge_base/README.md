@@ -8,7 +8,7 @@ Nik.
 Programme: [WI-080](../../work-items/WI-080-company-knowledge-base.md).
 Decision record: [ADR 0017](../../decisions/adr/0017-company-knowledge-lives-in-a-native-module.md).
 
-**Status: PRs 1 to 3 of the v1 build (v1.538.0, v1.539.0, v1.550.0).** PR 1: the module, the two
+**Status: PRs 1 to 3 of the v1 build (v1.538.0, v1.539.0, v1.555.0).** PR 1: the module, the two
 doctypes, the two roles, the locked permissions and the AI-gate denylist. PR 2: the approval rules
 and the content rules, applied by the Version controller, and private Files. **PR 3: the actions**
 (review, approve and publish, retire), the one-transaction publish, review ToDos and the form

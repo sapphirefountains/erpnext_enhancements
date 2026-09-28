@@ -107,7 +107,7 @@ VERSION_SQL = (
 #: Queries that must keep working: the WI-080 PR 1 acceptance checks, and ordinary reads of the
 #: published doctype. Every one names `Knowledge Article` and none reaches a draft.
 ARTICLE_SQL = (
-    # The doctype acceptance query as fixed in PR 3 (v1.550.0): v16's DocType has no
+    # The doctype acceptance query as fixed in PR 3 (v1.555.0): v16's DocType has no
     # `show_in_global_search`; the name flag is `show_name_in_global_search`, and a field is indexed
     # by its own `in_global_search` or a Global Search Settings row.
     "SELECT name, module, is_submittable, track_changes, has_web_view, show_name_in_global_search "

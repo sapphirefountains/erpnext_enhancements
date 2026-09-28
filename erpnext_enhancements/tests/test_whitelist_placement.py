@@ -88,6 +88,9 @@ MUST_STAY_WHITELISTED = {
         "confirm_actions",
         "cancel_actions",
     ),
+    # The Travel hub's "My Travel" block (v1.554.0) makes this one call and nothing else, so a
+    # lost decorator empties the hub for every traveler. home.py's helpers sit right above it.
+    "travel_management/home.py": ("get_travel_home",),
     # The customer portal's surface on /pay and /pay-card. Each portal endpoint has a private
     # ownership guard directly above it (`_own_invoice_or_throw`, `_own_submitted_invoice`) --
     # the shape of the accident above -- and a lost decorator here fails only on a customer's
@@ -98,7 +101,7 @@ MUST_STAY_WHITELISTED = {
         "portal_confirm_card_payment",
         "portal_invoice_pdf",
     ),
-    # The knowledge base's review actions (v1.550.0, WI-080 PR 3). Private helpers (`_name`,
+    # The knowledge base's review actions (v1.555.0, WI-080 PR 3). Private helpers (`_name`,
     # `_require_kb_role`, `_load_version`, `_refuse`, `_text_problems`) sit directly below the
     # endpoints, and each endpoint holds a nested `attempt()`. A lost decorator here shows every
     # button on the form and answers each press with "not whitelisted", so nothing can publish.

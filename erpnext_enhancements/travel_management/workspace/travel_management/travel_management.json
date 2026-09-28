@@ -1,11 +1,17 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"travel_shortcuts_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"travel_sc_calendar\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel Calendar\",\"col\":3}},{\"id\":\"travel_sc_plan_trip\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Plan a Trip\",\"col\":3}},{\"id\":\"travel_sc_itinerary\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My Itinerary\",\"col\":3}},{\"id\":\"travel_sc_guidelines\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel Guidelines\",\"col\":3}},{\"id\":\"travel_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"travel_masters_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Masters</b></span>\",\"col\":12}},{\"id\":\"travel_card_records\",\"type\":\"card\",\"data\":{\"card_name\":\"Travel\",\"col\":4}},{\"id\":\"travel_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"travel_my_travel\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"My Travel\",\"col\":12}},{\"id\":\"travel_want_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>I want to…</b></span>\",\"col\":12}},{\"id\":\"travel_sc_itinerary\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"See my itinerary\",\"col\":4}},{\"id\":\"travel_sc_plan_trip\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Plan a Trip\",\"col\":4}},{\"id\":\"travel_sc_my_trips\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My trips\",\"col\":4}},{\"id\":\"travel_sc_away\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Who's away when\",\"col\":4}},{\"id\":\"travel_sc_guidelines\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel rules & per diem\",\"col\":4}},{\"id\":\"travel_sc_places\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Places & job sites\",\"col\":4}},{\"id\":\"travel_how_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>How a work trip works</b></span>\",\"col\":12}},{\"id\":\"travel_how_steps\",\"type\":\"paragraph\",\"data\":{\"text\":\"<b>1. The office plans it.</b> They build the trip in Plan a Trip, and you get an email and a calendar invite.<br><b>2. Before you go.</b> <a href=\\\"/itinerary\\\" target=\\\"_blank\\\" rel=\\\"noopener\\\">Open your itinerary</a> and check your flights, hotel and documents. On a phone, add it to your home screen and it works offline.<br><b>3. On the road.</b> Your itinerary has your confirmation numbers, your documents and who to call.<br><b>4. When you're back.</b> Attach each receipt to its cost on the trip within a week, and accounting reimburses you from there. The <a href=\\\"/travel_guidelines\\\" target=\\\"_blank\\\" rel=\\\"noopener\\\">travel rules</a> have the details.\",\"col\":12}},{\"id\":\"travel_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"travel_records_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Records, reports and setup</b></span>\",\"col\":12}},{\"id\":\"travel_card_trips\",\"type\":\"card\",\"data\":{\"card_name\":\"Trips\",\"col\":4}},{\"id\":\"travel_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"travel_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
  "creation": "2026-06-11 10:00:00.000000",
+ "custom_blocks": [
+  {
+   "custom_block_name": "My Travel",
+   "label": "My Travel"
+  }
+ ],
  "doctype": "Workspace",
  "for_user": "",
- "hide_custom": 0,
+ "hide_custom": 1,
  "icon": "milestone",
  "is_hidden": 0,
  "is_standard": 1,
@@ -14,8 +20,8 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Travel",
-   "link_count": 4,
+   "label": "Trips",
+   "link_count": 3,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -23,7 +29,7 @@
    "dependencies": "",
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Travel Trip",
+   "label": "Trip list",
    "link_count": 0,
    "link_type": "DocType",
    "onboard": 1,
@@ -34,7 +40,7 @@
    "dependencies": "",
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Travel POI",
+   "label": "Places & job sites",
    "link_count": 0,
    "link_type": "DocType",
    "onboard": 0,
@@ -45,23 +51,12 @@
    "dependencies": "",
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Travel Settings",
+   "label": "Plan a Trip",
    "link_count": 0,
-   "link_type": "DocType",
+   "link_type": "Page",
    "onboard": 0,
    "type": "Link",
-   "link_to": "Travel Settings"
-  },
-  {
-   "dependencies": "",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Expense Claim Type",
-   "link_count": 0,
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link",
-   "link_to": "Expense Claim Type"
+   "link_to": "plan-a-trip"
   },
   {
    "hidden": 0,
@@ -103,12 +98,32 @@
    "onboard": 0,
    "type": "Link",
    "link_to": "Unclaimed Travel Expenses"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Travel Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Travel Settings"
   }
  ],
- "modified": "2026-09-23 12:00:00.000000",
+ "modified": "2026-09-28 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel",
+ "number_cards": [],
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
@@ -118,25 +133,47 @@
  "type": "Workspace",
  "shortcuts": [
   {
-   "doc_view": "Calendar",
-   "label": "Travel Calendar",
-   "link_to": "Travel Trip",
-   "type": "DocType"
+   "color": "Blue",
+   "label": "See my itinerary",
+   "type": "URL",
+   "url": "/itinerary"
   },
   {
+   "color": "Green",
    "label": "Plan a Trip",
    "link_to": "plan-a-trip",
    "type": "Page"
   },
   {
-   "label": "My Itinerary",
-   "type": "URL",
-   "url": "/itinerary"
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} active",
+   "label": "My trips",
+   "link_to": "Travel Trip",
+   "stats_filter": "{\"status\":[\"in\",[\"Planning\",\"Booked\",\"In Progress\"]]}",
+   "type": "DocType"
   },
   {
-   "label": "Travel Guidelines",
+   "color": "Cyan",
+   "doc_view": "Calendar",
+   "format": "{} on the calendar",
+   "label": "Who's away when",
+   "link_to": "Travel Trip",
+   "stats_filter": "{\"status\":[\"in\",[\"Planning\",\"Booked\",\"In Progress\"]]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Purple",
+   "label": "Travel rules & per diem",
    "type": "URL",
    "url": "/travel_guidelines"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Places & job sites",
+   "link_to": "Travel POI",
+   "type": "DocType"
   }
  ],
  "title": "Travel"

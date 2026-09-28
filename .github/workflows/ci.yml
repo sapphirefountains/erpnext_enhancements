@@ -211,7 +211,7 @@ jobs:
       # search until PR 1 review -- while `tabKnowledge Article`, the published text, is NOT.
       # Raw SQL never consults DocPerm, so a needle that misses one spelling hands a
       # model unapproved text, and a needle one word shorter breaks every read of the
-      # published doctype. Both fail silently; this fails the build. Since v1.550.0 (WI-080
+      # published doctype. Both fail silently; this fails the build. Since v1.555.0 (WI-080
       # PR 3) also extract_file_content, which names a File rather than a doctype: a File
       # attached to a denylisted doctype (a draft's screenshot) is refused, and a lookup that
       # fails refuses too.
@@ -802,7 +802,7 @@ jobs:
       # the stored row. Own step: it installs its own frappe stub.
       - name: Knowledge base hooks (private files, article images, the Version controller)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_hooks -v
-      # WI-080 PR 3 (v1.550.0): the state machine, as pure rules. workflow.TRANSITIONS is the whole
+      # WI-080 PR 3 (v1.555.0): the state machine, as pure rules. workflow.TRANSITIONS is the whole
       # lifecycle, and a regression here is a version that moves where it should not -- a
       # Discarded draft back in review, a Published one edited -- or a button offered to someone
       # the server then refuses (or hidden from someone it would let through: the form's buttons
@@ -2085,6 +2085,13 @@ jobs:
       # Own step: it installs its own `frappe` stub (and a stand-in for email_style).
       - name: Trip views + itinerary email preview (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_travel_views -v
+      # The Travel hub (/desk/travel): the per-viewer "My Travel" block (one call to
+      # get_travel_home, no date arithmetic, no money, every class styled, a primary button
+      # that survives dark mode), the workspace's six shortcuts and cards with Setup last, the
+      # curated sidebar (no URL item without a URL), and the reload patch, which must never
+      # raise. Own step: it runs that patch against a `frappe` stub of its own.
+      - name: Travel hub (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_travel_hub -v
       # Trip change alerts (Plan a Trip PR 4): a change to a Booked or In Progress trip
       # emails only the people it affects, what it was and what it is now, with an updated
       # calendar invite. Guards the wrong people being told (the person who made the change,

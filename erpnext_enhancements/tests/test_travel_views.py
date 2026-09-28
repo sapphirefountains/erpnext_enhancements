@@ -182,7 +182,13 @@ def _install_frappe_stub():
 		if doctype == "Travel POI":
 			SITE.poi_lookups += 1
 			record = SITE.pois.get(name)
-			return _dict(record) if record else None
+			if not record:
+				return None
+			# Only the fields asked for, as frappe answers: a field left out of the list reads
+			# None, so a shape that stops asking for one (a place's `notes`) is seen to lose it.
+			if isinstance(fieldname, (list, tuple)):
+				return _dict({f: record.get(f) for f in fieldname})
+			return _dict(record)
 		if doctype == "Company":
 			return "USD"
 		return None
@@ -855,6 +861,106 @@ class TestShapeItinerary(MoneyAssertions):
 		self.assertNoMoney(travel.shape_itinerary(self.doc))
 
 
+class TestPlaceNotes(MoneyAssertions):
+	"""A stop's place carries its own Notes (Travel POI ``notes``: parking, the gate code, site
+	access) since v1.553.0, for ``/itinerary`` to show the crew. The travel guidelines said they
+	were on everyone's mobile itinerary; ``shape_itinerary`` never read the field, so they were
+	not. Free text about a place, so no money; and Employee reads every Travel POI, so nobody
+	who can open the trip learns anything new."""
+
+	NOTES = "Park at the north gate.\r\nGate code 4471#\n\nSign in at the trailer."
+	#: Leave the fixture's POI as it is: its record has no `notes` key at all.
+	UNTOUCHED = object()
+
+	def setUp(self):
+		self.doc = install_site()
+
+	def stops(self, viewer=None, notes=NOTES):
+		if notes is not self.UNTOUCHED:
+			SITE.pois["POI-1"]["notes"] = notes
+		shaped = travel.shape_itinerary(self.doc, viewer)
+		return [item for item in items_of(shaped["days"]) if item["type"] == "agenda"]
+
+	def test_every_stop_at_the_place_carries_its_notes_in_every_view(self):
+		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
+			stops = self.stops(viewer)
+			self.assertEqual(len(stops), 2, viewer)
+			for stop in stops:
+				self.assertEqual(
+					stop["poi"]["notes"],
+					"Park at the north gate.\nGate code 4471#\n\nSign in at the trailer.",
+					viewer,
+				)
+
+	def test_line_breaks_are_kept_and_only_the_ends_trimmed(self):
+		# Windows line endings become plain newlines; a blank line inside stays.
+		notes = self.stops(notes="\n  Gate B\r\r\nCode 12  \n")[0]["poi"]["notes"]
+		self.assertEqual(notes, "Gate B\n\nCode 12")
+
+	def test_blank_notes_are_none(self):
+		for blank in ("", "   ", "\r\n\t \n", None):
+			self.doc = install_site()
+			stop = self.stops(notes=blank)[0]
+			self.assertIn("notes", stop["poi"], repr(blank))
+			self.assertIsNone(stop["poi"]["notes"], repr(blank))
+		# A POI that has no `notes` value at all (the stub's record never had the key).
+		self.doc = install_site()
+		self.assertIsNone(self.stops(notes=self.UNTOUCHED)[0]["poi"]["notes"])
+
+	def test_notes_are_sent_as_typed_and_the_page_draws_them_as_text(self):
+		# `notes` is a plain Text field, not a Text Editor: there is no markup to strip, and
+		# nothing is unescaped or parsed on the way. /itinerary draws it with textContent
+		# (scripts/test_web_flow_history.js checks that a tag in it is drawn as text).
+		typed = "<script>alert(1)</script> <b>Gate</b> &amp; code"
+		self.assertEqual(self.stops(notes=typed)[0]["poi"]["notes"], typed)
+
+	def test_the_field_is_asked_for_by_name(self):
+		# The stub answers only the fields asked for, as frappe does: a shape that stopped
+		# asking for `notes` reads None here, and the first test fails.
+		SITE.pois["POI-1"]["notes"] = "Gate B"
+		original = sys.modules["frappe"].db.get_value
+		asked = []
+
+		def get_value(doctype, name=None, fieldname=None, *args, **kwargs):
+			if doctype == "Travel POI":
+				asked.append(tuple(fieldname) if isinstance(fieldname, (list, tuple)) else fieldname)
+			return original(doctype, name, fieldname, *args, **kwargs)
+
+		with mock.patch.object(sys.modules["frappe"].db, "get_value", get_value):
+			travel.shape_itinerary(self.doc)
+		self.assertTrue(asked)
+		self.assertTrue(all("notes" in fields for fields in asked), asked)
+
+	def test_one_lookup_serves_every_person_notes_included(self):
+		SITE.pois["POI-1"]["notes"] = "Gate B"
+		cache = {}
+		for viewer in (None, "EMP-A", "EMP-B", "EMP-C"):
+			stops = [
+				i
+				for i in items_of(travel.shape_itinerary(self.doc, viewer, poi_cache=cache)["days"])
+				if i["type"] == "agenda"
+			]
+			self.assertEqual({s["poi"]["notes"] for s in stops}, {"Gate B"})
+		self.assertEqual(SITE.poi_lookups, 1)
+
+	def test_the_notes_reach_itinerary_and_the_views_with_no_money(self):
+		SITE.pois["POI-1"]["notes"] = self.NOTES
+		sys.modules["frappe"].session.user = "bo@example.com"
+		result = travel.get_trip_itinerary("TRIP-1", None)
+		stops = [i for i in items_of(result["days"]) if i["type"] == "agenda"]
+		self.assertTrue(stops)
+		self.assertTrue(all(s["poi"]["notes"].startswith("Park at the north gate.") for s in stops))
+		self.assertNoMoney(result)
+
+		with mock.patch.object(travel, "_is_coordinator", return_value=False):
+			payload = travel.get_trip_views("TRIP-1")
+		# View as draws a person's own itinerary from `people`, as their phone does.
+		for employee, days in payload["people"].items():
+			stops = [i for i in items_of(days) if i["type"] == "agenda"]
+			self.assertTrue(all(s["poi"]["notes"] for s in stops), employee)
+		self.assertNoMoney(payload)
+
+
 class TestTripFiles(MoneyAssertions):
 	"""Trip files on the views and /itinerary. All but money: everyone who can open the trip
 	sees every booking's files on the whole-crew view; one person's view shows the files that
@@ -1373,6 +1479,111 @@ class TestTheControllersFileRules(unittest.TestCase):
 		self.assertIn("self._validate_trip_files()", source)
 
 
+class TestDeletingATripThatWasCopied(unittest.TestCase):
+	"""A copy names the trip it came from (``copied_from``, v1.550.0), a Link to Travel Trip. frappe's
+	``delete_doc`` runs ``on_trash`` and then refuses to delete anything another record links to
+	(``check_if_doc_is_linked``, frappe v16 ``model/delete_doc.py``) — so without ``on_trash``
+	clearing it, a trip anyone had ever copied could never be deleted again. The real
+	controller's ``on_trash``, with the same stand-ins as ``TestTheControllersFileRules``."""
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		self.writes = []
+		frappe = sys.modules["frappe"]
+
+		def set_value(doctype, name, field, value=None, *a, **kw):
+			self.writes.append((doctype, name, field, value, kw))
+
+		for patcher in (
+			mock.patch.object(frappe.db, "set_value", set_value, create=True),
+			mock.patch.object(frappe, "get_all", lambda *a, **k: self.claims, create=True),
+			mock.patch.object(self.controller, "_has_travel_backlink", lambda doctype: True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		self.claims = []
+		self.doc = self.controller.TravelTrip()
+		self.doc.name = "TRIP-2026-00007"
+
+	def test_its_copies_let_go_of_it_and_keep_their_modified(self):
+		self.doc.on_trash()
+		self.assertIn(
+			("Travel Trip", {"copied_from": "TRIP-2026-00007"}, "copied_from", None, {"update_modified": False}),
+			self.writes,
+		)
+
+	def test_a_trip_it_refuses_to_delete_keeps_its_copies(self):
+		# A submitted claim still on the trip: the delete is refused, and nothing is unlinked on
+		# the way (frappe rolls the request back anyway; this keeps the order honest).
+		self.claims = [types.SimpleNamespace(name="HR-EXP-1", docstatus=1)]
+		with self.assertRaises(sys.modules["frappe"].ValidationError) as refused:
+			self.doc.on_trash()
+		self.assertIn("Expense Claim HR-EXP-1", str(refused.exception))
+		self.assertNotIn("Travel Trip", [write[0] for write in self.writes])
+
+
+class TestCopiedFromNeverRefusesASave(unittest.TestCase):
+	"""``copied_from`` is the server's and is provenance only (v1.550.0). frappe v16 checks every
+	Link in ``_validate_links`` — before ``before_insert`` and ``validate`` — so the controller
+	settles it in ``get_invalid_links``. Two saves that would otherwise be refused over a field
+	nobody can edit: a Desk form opened before the source trip was deleted (``on_trash`` cleared
+	the stored value without touching ``modified``, so the form still posts the deleted name), and
+	a copy restored from Deleted Document after its source was deleted too."""
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		frappe = sys.modules["frappe"]
+		self.trips = {"TRIP-A"}
+		base = self.controller.TravelTrip.__bases__[0]
+		for patcher in (
+			mock.patch.object(frappe.db, "exists", lambda doctype, name: name in self.trips, create=True),
+			mock.patch.object(
+				base, "get_doc_before_save", lambda doc: getattr(doc, "_doc_before_save", None), create=True
+			),
+			mock.patch.object(base, "get_invalid_links", lambda doc, is_submittable=False: ("frappe's", "check"),
+				create=True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def trip(self, posted, stored="new"):
+		doc = self.controller.TravelTrip()
+		doc.name = "TRIP-B"
+		doc.copied_from = posted
+		if stored != "new":
+			before = self.controller.TravelTrip()
+			before.copied_from = stored
+			doc._doc_before_save = before
+		return doc
+
+	def test_a_desk_form_opened_before_the_source_was_deleted_still_saves(self):
+		self.trips = set()  # TRIP-A deleted; on_trash cleared the stored value
+		doc = self.trip("TRIP-A", stored=None)
+		self.assertEqual(doc.get_invalid_links(), ("frappe's", "check"), "frappe's own check still runs")
+		self.assertIsNone(doc.copied_from)
+
+	def test_an_update_keeps_the_stored_source_whatever_is_posted(self):
+		doc = self.trip("TRIP-A", stored=None)
+		doc.get_invalid_links()
+		self.assertIsNone(doc.copied_from, "an update cannot make a trip a copy")
+		self.trips.add("TRIP-X")
+		doc = self.trip("TRIP-X", stored="TRIP-A")
+		doc.get_invalid_links()
+		self.assertEqual(doc.copied_from, "TRIP-A", "nor move it")
+
+	def test_a_first_save_keeps_a_source_that_is_there_and_drops_one_that_is_gone(self):
+		doc = self.trip("TRIP-A")  # save_plan's first save, or a restore while the source is there
+		doc.get_invalid_links()
+		self.assertEqual(doc.copied_from, "TRIP-A")
+		self.trips = set()  # a restore after the source was deleted too
+		doc = self.trip("TRIP-A")
+		doc.get_invalid_links()
+		self.assertIsNone(doc.copied_from)
+		doc = self.trip(None)
+		doc.get_invalid_links()
+		self.assertIsNone(doc.copied_from)
+
+
 class TestGetTripItinerary(MoneyAssertions):
 	def setUp(self):
 		self.doc = install_site()
@@ -1696,6 +1907,139 @@ class TestTheEmailTemplateCarriesNoMoney(unittest.TestCase):
 		self.assertEqual(self.money_in('{{ ee.kv([("Budget", trip.total_estimated_cost)]) }}'), "total_")
 		self.assertEqual(self.money_in("{{ recipient.row.per_diem_amount }}"), "per_diem")
 		self.assertIsNone(self.money_in("{# the cost is left out on purpose #}{{ trip.name }}"))
+
+
+class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
+	"""The travel guidelines and the two post-trip emails may only send a traveler to something
+	production has (v1.552.1). HRMS is not installed there and cannot be
+	(``accounting_intake/actions/receipt_expense.py``), so Expense Claim, Employee Advance and
+	Vehicle Log do not exist and the trip form hides their Create buttons — yet the guidelines
+	told every traveler to use Create → Expense Claim and to create a Vehicle Log, the expense
+	nudge said the same, and the Closed notice asked them to finish a claim. Nik's decision
+	(2026-09-28): each itemized receipt goes on its cost row on the trip, and accounting
+	reimburses from there. There is no claim to submit.
+
+	The emails are rendered with the real macros, from the context their senders build. The
+	guidelines extend the website's base template, so their source is read instead, with
+	comments removed first: the comments explain the absence and so name what is absent."""
+
+	GUIDELINES = os.path.join(APP_DIR, "www", "travel_guidelines.html")
+	EMAILS = "erpnext_enhancements/templates/emails/travel"
+	HRMS = re.compile(r"Expense Claim|Vehicle Log|Employee Advance|Create\s*(?:→|&rarr;|&nbsp;)", re.I)
+
+	def setUp(self):
+		try:
+			import jinja2
+		except ImportError:  # pragma: no cover
+			self.skipTest("jinja2 not installed")
+		self.doc = install_site()
+
+	@staticmethod
+	def code(source):
+		"""``source`` without Jinja or HTML comments, whitespace collapsed."""
+		source = re.sub(r"\{#.*?#\}", "", source, flags=re.S)
+		source = re.sub(r"<!--.*?-->", "", source, flags=re.S)
+		return re.sub(r"\s+", " ", source)
+
+	def hrms_in(self, source):
+		found = self.HRMS.search(self.code(source))
+		return found.group(0) if found else None
+
+	def env(self):
+		from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+		return Environment(
+			loader=FileSystemLoader(os.path.dirname(APP_DIR)), autoescape=False, undefined=StrictUndefined
+		)
+
+	def render(self, template, status="Completed", **extra):
+		self.doc.status = status
+		context = dict(notifications._base_context(self.doc), recipient=None, **extra)
+		return self.code(self.env().get_template(f"{self.EMAILS}/{template}").render(**context))
+
+	def nudge(self, status="Completed"):
+		# The two keys reminders.send_post_trip_expense_nudges adds to the base context.
+		return self.render("expense_nudge.html", status, unclaimed_amount="$ 612.50", days_since_end=3)
+
+	def test_the_check_catches_the_old_wording(self):
+		self.assertEqual(self.hrms_in("use <b>Create&nbsp;→&nbsp;Expense Claim</b>"), "Create&nbsp;")
+		self.assertEqual(self.hrms_in("use <b>Create &rarr; Expense Claim</b>"), "Create &rarr;")
+		self.assertEqual(self.hrms_in("create its <b>Vehicle Log</b>"), "Vehicle Log")
+		self.assertIsNone(self.hrms_in("{# no Expense Claim here #}<!-- nor a Vehicle Log --> receipts"))
+
+	def test_each_template_reads_only_what_its_sender_passes(self):
+		from jinja2 import meta
+
+		base = set(notifications._base_context(self.doc)) | {"recipient"}
+		for template, extra in (
+			("expense_nudge.html", {"unclaimed_amount", "days_since_end"}),
+			("trip_closed.html", set()),
+		):
+			env = self.env()
+			source = env.loader.get_source(env, f"{self.EMAILS}/{template}")[0]
+			with self.subTest(template):
+				self.assertLessEqual(meta.find_undeclared_variables(env.parse(source)), base | extra)
+		with open(os.path.join(APP_DIR, "travel_management", "reminders.py"), encoding="utf-8") as fh:
+			reminders = fh.read()
+		self.assertIn('"expense_nudge.html"', reminders)
+		self.assertIn("unclaimed_amount=", reminders)
+		self.assertIn("days_since_end=", reminders)
+		# The subject asks for the receipts too; "Unclaimed" promised a claim to make.
+		self.assertIn('_("Attach your travel receipts: {0}")', reminders)
+		self.assertNotIn("Unclaimed travel expenses", reminders)
+
+	def test_the_expense_nudge_asks_for_receipts_on_the_trip(self):
+		html = self.nudge()
+		self.assertIsNone(self.hrms_in(html))
+		self.assertIn("Attach your itemized receipts to the trip so accounting can reimburse you", html)
+		self.assertIn("<b>Receipt</b> field of the cost it paid for", html)
+		self.assertIn("There is no claim to submit", html)
+		# Nothing is ever stamped as claimed without HRMS: the amount is what the trip says the
+		# company owes this person, not something left off a claim.
+		self.assertIn(">To reimburse<", html)
+		self.assertIn("$ 612.50", html)
+		self.assertNotIn("nclaimed", html)
+		self.assertIn('href="https://example.com/travel_guidelines"', html)
+		# An open trip can take the receipts: no word about reopening it.
+		self.assertNotIn("Travel Coordinator", html)
+
+	def test_the_nudge_on_a_closed_trip_says_who_can_reopen_it(self):
+		# travel_trip._check_closed_lock: a Closed trip refuses every save but a coordinator's.
+		html = self.nudge("Closed")
+		self.assertIn("only a Travel Coordinator can change it: ask one to reopen it", html)
+		self.assertIsNone(self.hrms_in(html))
+
+	def test_the_closed_notice_asks_for_receipts_and_names_who_can_reopen(self):
+		html = self.render("trip_closed.html", "Closed")
+		self.assertIsNone(self.hrms_in(html))
+		self.assertNotIn("claim", html.lower())
+		self.assertIn("has been closed", html)
+		self.assertIn("per diem and mileage from the trip", html)
+		self.assertIn("each of your itemized receipts is attached to its cost", html)
+		self.assertIn("Only a Travel Coordinator can change a closed trip", html)
+		self.assertIn("ask one to reopen the trip, then attach each receipt to the Receipt field", html)
+
+	def test_the_guidelines_send_travelers_nowhere_production_lacks(self):
+		with open(self.GUIDELINES, encoding="utf-8") as fh:
+			source = fh.read()
+		policy = self.code(source)
+		self.assertIsNone(self.hrms_in(source))
+		# Section 6: the process that works.
+		self.assertIn("there is no claim to fill in", policy)
+		self.assertIn("attach each itemized receipt to its cost on the Travel Trip form", policy)
+		self.assertIn(
+			"accounting reimburses your employee-paid costs, per diem, and mileage from the trip", policy
+		)
+		self.assertIn("a one-time reminder about three days after the trip ends", policy)
+		self.assertIn("a closed trip can only be changed by a Travel Coordinator", policy)
+		# Section 4: no rate is promised (Travel Settings.mileage_rate is 0 on production).
+		self.assertNotIn("company rate", policy)
+		self.assertIn("accounting reimburses them with the rest of your trip expenses", policy)
+		# Section 5: the itinerary email carries no money (pre_travel_reminder.html).
+		self.assertNotIn("itinerary email", policy)
+		# The page keeps its shape: seven numbered sections, each with its callout.
+		self.assertEqual(re.findall(r"<h2>(\d)\. ", policy), ["1", "2", "3", "4", "5", "6", "7"])
+		self.assertEqual(policy.count('<div class="tg-system"> <b>In the system</b>'), 7)
 
 
 # --------------------------------------------------------------------------- links + planner
@@ -3647,3 +3991,900 @@ class TestTheTravelDeskSettings(unittest.TestCase):
 		source = inspect.getsource(travel._office_contact)
 		self.assertIn('frappe.db.get_single_value("Travel Settings", field)', source)
 		self.assertNotIn('"Singles"', source)
+
+
+# --------------------------------------------------------------------------- the Travel hub
+#
+# "My Travel", the block at the top of the Travel workspace (2026-09-28): one call,
+# ``travel_management.home.get_travel_home``, answers "where is MY information?" for whoever
+# is looking — their trip now or next, their other trips, receipts due, and for a coordinator
+# what needs attention. It is a crew member's screen, so every answer is walked for money like
+# every other payload in this file, and the coordinator's list is checked to be absent — not
+# empty — for anyone else, through the real gate as well as a patched one.
+
+HOME = "erpnext_enhancements.travel_management.home"
+
+#: The stub's today (``frappe.utils.today``): Saturday, September 26, 2026.
+HUB_TODAY = date(2026, 9, 26)
+
+
+def _home():
+	import importlib
+
+	return importlib.import_module(HOME)
+
+
+def hub_day(offset):
+	"""The ISO date ``offset`` days from the stub's today."""
+	return (HUB_TODAY + timedelta(days=offset)).isoformat()
+
+
+def hub_trip(name, start, end, status="Booked", owner="office@example.com", clean=False, **overrides):
+	"""A trip from the shared fixture (Ann, Bo and Cy on the crew, money on every row), moved to
+	the given days. ``clean`` empties it — no crew, no bookings, no files — so its checklist has
+	nothing to say and only its status and dates can put it on a coordinator's list.
+
+	Each traveler's own days are the trip's, as a save leaves them (``TravelTrip._validate_dates``
+	fills a blank one with the trip's): the fixture's own ``from_date`` for Bo belongs to its
+	October trip and would put him outside a moved one. :func:`own_days` gives one person their
+	own."""
+	doc = make_trip(
+		name,
+		purpose=overrides.pop("purpose", f"Trip {name}"),
+		status=status,
+		owner=owner,
+		**overrides,
+	)
+	move_trip(doc, start, end)
+	if clean:
+		for table in ("travelers", "flights", "accommodations", "ground_transport", "freight", "documents"):
+			setattr(doc, table, [])
+	return doc
+
+
+def move_trip(doc, start, end):
+	"""Move a trip to the given days, with every traveler's own days the trip's."""
+	doc.start_date, doc.end_date = hub_day(start), hub_day(end)
+	for traveler in doc.travelers or []:
+		traveler.from_date, traveler.to_date = doc.start_date, doc.end_date
+	return doc
+
+
+def own_days(doc, employee, first, last):
+	"""Give one traveler their own days on ``doc`` — offsets from the stub's today, or None for a
+	blank date — the way Plan a Trip saves someone who joins late or leaves early."""
+	row = next(row for row in doc.travelers if row.employee == employee)
+	row.from_date = None if first is None else hub_day(first)
+	row.to_date = None if last is None else hub_day(last)
+	return doc
+
+
+def _hub_norm(value):
+	if isinstance(value, datetime):
+		return value.date().isoformat()
+	if isinstance(value, date):
+		return value.isoformat()
+	return value
+
+
+def _hub_matches(row, filters):
+	for field, condition in (filters or {}).items():
+		op, value = condition if isinstance(condition, (list, tuple)) else ("=", condition)
+		have = _hub_norm(row.get(field))
+		if op == "=":
+			ok = have == _hub_norm(value)
+		elif op == "!=":
+			ok = have != _hub_norm(value)
+		elif op == "in":
+			ok = have in [_hub_norm(v) for v in value]
+		elif op == ">=":
+			ok = have is not None and str(have) >= str(_hub_norm(value))
+		elif op == "<":
+			ok = have is not None and str(have) < str(_hub_norm(value))
+		else:
+			raise AssertionError(f"the hub's fake site does not know the filter {op!r}")
+		if not ok:
+			return False
+	return True
+
+
+class HomeSite:
+	"""The fake site the hub reads. The module stub's ``get_all``/``get_list`` return one fixed
+	list whatever they are asked, which cannot tell "the trips Bo travels on" from "the trips he
+	owns"; here both answer from the trips on ``SITE.trips`` with their filters applied, and
+	``get_list`` is scoped the way the Travel Trip permission hooks scope it: a coordinator sees
+	every trip, anyone else the ones they own or travel on. Every call is recorded, so a test can
+	say which queries ran. ``coordinator=None`` leaves ``_is_coordinator`` real."""
+
+	def __init__(self, test, *docs, coordinator=False, settings=None, first_names=None):
+		frappe = sys.modules["frappe"]
+		for doc in docs:
+			SITE.trips[doc.name] = doc
+		self.coordinator = coordinator
+		self.alerts = []
+		self.calls = []
+		self.settings = dict(settings or {})
+		self.first_names = dict(first_names or {})
+		previous_value = frappe.db.get_value
+		previous_single = frappe.db.get_single_value
+
+		def get_value(doctype, name=None, fieldname=None, *args, **kwargs):
+			if doctype == "User" and fieldname == "first_name":
+				return self.first_names.get(name)
+			return previous_value(doctype, name, fieldname, *args, **kwargs)
+
+		def get_single_value(doctype, field, *args, **kwargs):
+			if field in self.settings:
+				return self.settings[field]
+			return previous_single(doctype, field, *args, **kwargs)
+
+		patchers = [
+			mock.patch.object(frappe, "get_all", self.get_all),
+			mock.patch.object(frappe, "get_list", self.get_list),
+			mock.patch.object(frappe.db, "get_value", get_value),
+			mock.patch.object(frappe.db, "get_single_value", get_single_value),
+		]
+		if coordinator is not None:
+			patchers.append(mock.patch.object(travel, "_is_coordinator", lambda: self.coordinator))
+		for patcher in patchers:
+			patcher.start()
+			test.addCleanup(patcher.stop)
+
+	def table(self, doctype):
+		if doctype == "Travel Trip":
+			return [
+				_dict(
+					name=doc.name,
+					purpose=doc.purpose,
+					status=doc.status,
+					start_date=doc.start_date,
+					end_date=doc.end_date,
+					owner=doc.owner,
+					travel_for_doctype=doc.travel_for_doctype,
+					travel_for_name=doc.travel_for_name,
+				)
+				for doc in SITE.trips.values()
+			]
+		if doctype == "Trip Traveler":
+			return [
+				_dict(
+					parent=doc.name,
+					parenttype="Travel Trip",
+					employee=row.employee,
+					from_date=row.from_date,
+					to_date=row.to_date,
+				)
+				for doc in SITE.trips.values()
+				for row in doc.travelers or []
+			]
+		if doctype == "Trip Change Alert":
+			return [_dict(row) for row in self.alerts]
+		raise AssertionError(f"the hub asked the site for {doctype}")
+
+	@staticmethod
+	def query(rows, filters=None, fields=None, pluck=None, order_by=None, limit_page_length=None, **kwargs):
+		rows = [row for row in rows if _hub_matches(row, filters)]
+		if order_by:
+			field, _space, direction = order_by.partition(" ")
+			rows.sort(
+				key=lambda row: str(_hub_norm(row.get(field)) or ""), reverse=direction.strip() == "desc"
+			)
+		if limit_page_length:
+			rows = rows[:limit_page_length]
+		if pluck:
+			return [row.get(pluck) for row in rows]
+		return [_dict({f: row.get(f) for f in fields}) if fields else _dict(row) for row in rows]
+
+	def get_all(self, doctype, **kwargs):
+		self.calls.append(("get_all", doctype))
+		return self.query(self.table(doctype), **kwargs)
+
+	def get_list(self, doctype, **kwargs):
+		self.calls.append(("get_list", doctype))
+		frappe = sys.modules["frappe"]
+		if SITE.deny:
+			raise frappe.PermissionError(f"No permission for {doctype}")
+		rows = self.table(doctype)
+		coordinator = travel._is_coordinator() if self.coordinator is None else self.coordinator
+		if doctype == "Travel Trip" and not coordinator:
+			user = frappe.session.user
+			employee = SITE.users.get(user)
+			rows = [
+				row
+				for row in rows
+				if row.owner == user
+				or (employee and any(t.employee == employee for t in SITE.trips[row.name].travelers or []))
+			]
+		return self.query(rows, **kwargs)
+
+	def ran(self, method, doctype):
+		return (method, doctype) in self.calls
+
+
+class HubAssertions(MoneyAssertions):
+	def setUp(self):
+		self.home = _home()
+
+	def answer(self, user="bo@example.com"):
+		sys.modules["frappe"].session.user = user
+		return self.home.get_travel_home()
+
+	def assertNothingPersonal(self, payload):
+		self.assertEqual(personal_paths(payload), [], "a crew member's own details reached the hub")
+		text = json.dumps(payload, default=str)
+		for value in PERSONAL_VALUES:
+			self.assertNotIn(value, text, f"{value} reached the hub")
+
+	def logged(self):
+		return [effect for effect in SITE.side_effects if effect == ("log_error", "Travel home")]
+
+
+class TestTravelHomeForTheCrew(HubAssertions):
+	def test_a_crew_member_on_the_road_gets_their_trip_first_and_no_money(self):
+		doc = install_site(hub_trip("TRIP-1", -1, 4, status="In Progress", purpose="Install"))
+		ContactsSite(self, doc)
+		HomeSite(self, first_names={"bo@example.com": "Bo"})
+		answer = self.answer()
+		featured = answer["featured"]
+
+		self.assertEqual(
+			answer["viewer"],
+			{"user": "bo@example.com", "employee": "EMP-B", "first_name": "Bo", "is_coordinator": False},
+		)
+		self.assertIsNone(answer["message"])
+		self.assertEqual(featured["trip"], "TRIP-1")
+		self.assertEqual(featured["purpose"], "Install")
+		self.assertEqual(featured["status"], "In Progress")
+		self.assertEqual(featured["dates"], "Fri Sep 25 – Wed Sep 30")
+		self.assertEqual(featured["headline"], "You're on this trip now — day 2 of 6")
+		self.assertEqual(featured["travel_for"], "Harbor Fountain")
+		self.assertEqual(featured["itinerary_url"], "/itinerary?trip=TRIP-1")
+		self.assertEqual(featured["docs_url"], "/itinerary?trip=TRIP-1&view=docs")
+		# Their own sheet: the one their /itinerary prints, never the whole trip's.
+		self.assertEqual(featured["sheet_url"], views.trip_sheet_url("TRIP-1", "EMP-B"))
+		self.assertTrue(featured["sheet_url"].endswith("&as=EMP-B"))
+		# The number on their /itinerary's "Documents (N)" tab: Bo's files, not Ann's packet.
+		self.assertEqual(featured["documents"], len(travel.shape_itinerary(doc, "EMP-B")["documents"]))
+		self.assertEqual(featured["documents"], 5)
+
+		contacts = {row["label"]: row for row in featured["contacts"]}
+		self.assertEqual(
+			[row["label"] for row in featured["contacts"]],
+			["Travel desk", "Trip lead", "Booked by", "Job site", "Hotel", "Emergency"],
+		)
+		self.assertEqual(contacts["Travel desk"]["phone_href"], "tel:+18015550142")
+		self.assertEqual(contacts["Travel desk"]["email_href"], "mailto:travel@sapphire.example")
+		self.assertEqual(
+			(contacts["Trip lead"]["name"], contacts["Trip lead"]["phone"]), ("Ann", "8015550101")
+		)
+		self.assertEqual(contacts["Booked by"]["email_href"], "mailto:office@example.com")
+		self.assertEqual(contacts["Job site"]["name"], "Sam Site")
+		self.assertEqual(contacts["Job site"]["detail"], "Harbor Fountain · 500 Harbor Way, Boise, ID 83702")
+		self.assertEqual(contacts["Hotel"]["name"], "Hotel One")
+		self.assertEqual(contacts["Hotel"]["phone_href"], "tel:7025550123")
+		self.assertEqual(
+			[link["label"] for link in contacts["Hotel"]["links"]], ["Nearest urgent care", "Directions"]
+		)
+		self.assertEqual(
+			(contacts["Emergency"]["name"], contacts["Emergency"]["phone_href"]), ("Call 911", "tel:911")
+		)
+
+		self.assertEqual(
+			answer["office"],
+			{
+				"label": "Sapphire travel desk",
+				"phone": "+1 801-555-0142",
+				"phone_href": "tel:+18015550142",
+				"email": "travel@sapphire.example",
+				"email_href": "mailto:travel@sapphire.example",
+			},
+		)
+		self.assertEqual(answer["guidelines_url"], "/travel_guidelines")
+		self.assertEqual((answer["trips"], answer["receipts"]), ([], []))
+		self.assertIsNone(answer["attention"])
+		self.assertNoMoney(answer)
+		self.assertNothingPersonal(featured)
+		self.assertEqual(self.logged(), [])
+
+	def test_a_trip_starting_soon_says_how_soon(self):
+		doc = install_site(hub_trip("TRIP-1", 3, 5))
+		HomeSite(self)
+		for start, end, headline in (
+			(3, 5, "Starts in 3 days"),
+			(1, 3, "Starts tomorrow"),
+			(0, 0, "You're on this trip today"),
+		):
+			with self.subTest(headline):
+				move_trip(doc, start, end)
+				featured = self.answer()["featured"]
+				self.assertEqual(featured["trip"], "TRIP-1")
+				self.assertEqual(featured["headline"], headline)
+		self.assertEqual(self.answer()["featured"]["dates"], "Sat Sep 26")
+
+	def test_the_trip_now_beats_the_trip_next_and_the_rest_are_listed(self):
+		install_site(hub_trip("TRIP-1", 3, 5))
+		HomeSite(
+			self,
+			hub_trip("TRIP-2", -2, 1, status="In Progress"),
+			hub_trip("TRIP-3", 10, 12),
+			hub_trip("TRIP-4", -6, -3, status="Completed"),
+			hub_trip("TRIP-5", -14, -10, status="Completed"),
+			hub_trip("TRIP-6", -30, -20, status="Completed"),  # past the fortnight
+			hub_trip("TRIP-7", -8, -2, status="Closed"),  # closed: settled and locked
+			hub_trip("TRIP-8", 5, 6, owner="bo@example.com", clean=True),  # Bo booked it for others
+			hub_trip("TRIP-9", 2, 4, clean=True),  # someone else's crew
+		)
+		answer = self.answer()
+		self.assertEqual(answer["featured"]["trip"], "TRIP-2")
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 3 of 4")
+		trips = answer["trips"]
+		self.assertEqual([t["trip"] for t in trips], ["TRIP-1", "TRIP-8", "TRIP-3", "TRIP-4", "TRIP-5"])
+		self.assertEqual(
+			[t["note"] for t in trips],
+			[
+				"Starts in 3 days",
+				"You're organizing this",
+				"Starts in 10 days",
+				"Ended 3 days ago",
+				"Ended 10 days ago",
+			],
+		)
+		self.assertEqual(
+			[t["relation"] for t in trips], ["traveling", "organizing", "traveling", "traveling", "traveling"]
+		)
+		# "Keep planning" is for the person who organized it, while it is still ahead.
+		self.assertEqual([t["can_plan"] for t in trips], [False, True, False, False, False])
+		self.assertEqual(trips[1]["itinerary_url"], "/itinerary?trip=TRIP-8")
+		self.assertEqual(trips[0]["dates"], "Tue Sep 29 – Thu Oct 1")
+		self.assertNoMoney(answer)
+
+	def test_receipts_are_due_one_to_seven_days_after_getting_back(self):
+		install_site(hub_trip("TRIP-1", -3, 0, status="In Progress"))  # back today: not yet
+		HomeSite(
+			self,
+			hub_trip("TRIP-2", -4, -1, status="Completed", purpose="Harbor install"),
+			hub_trip("TRIP-3", -9, -7, status="Completed", purpose="Boise service"),
+			hub_trip("TRIP-4", -10, -8, status="Completed"),  # a day too late
+			hub_trip("TRIP-5", -5, -2, status="Completed", owner="bo@example.com", clean=True),  # not on it
+			hub_trip("TRIP-6", -5, -3, status="Closed"),
+		)
+		answer = self.answer()
+		self.assertEqual(
+			answer["receipts"],
+			[
+				{
+					"trip": "TRIP-2",
+					"purpose": "Harbor install",
+					"text": "Back from Harbor install? Attach your receipts to the trip within a week of getting back, "
+					"and accounting will reimburse you.",
+				},
+				{
+					"trip": "TRIP-3",
+					"purpose": "Boise service",
+					"text": "Back from Boise service? Attach your receipts to the trip within a week of getting back, "
+					"and accounting will reimburse you.",
+				},
+			],
+		)
+		# The trip Bo only organized is listed, but asks him for no receipts.
+		self.assertIn("TRIP-5", [t["trip"] for t in answer["trips"]])
+		self.assertEqual(
+			next(t["note"] for t in answer["trips"] if t["trip"] == "TRIP-5"),
+			"Ended 2 days ago — you organized it",
+		)
+		self.assertNoMoney(answer)
+
+	def test_an_organizer_who_does_not_travel_can_keep_planning(self):
+		install_site(hub_trip("TRIP-1", 5, 8, owner="zed@example.com"))
+		SITE.users["zed@example.com"] = "EMP-Z"
+		site = HomeSite(self)
+		answer = self.answer("zed@example.com")
+		self.assertIsNone(answer["featured"])
+		self.assertIsNone(answer["message"])
+		self.assertEqual(
+			answer["trips"],
+			[
+				{
+					"trip": "TRIP-1",
+					"purpose": "Trip TRIP-1",
+					"status": "Booked",
+					"dates": "Thu Oct 1 – Sun Oct 4",
+					"relation": "organizing",
+					"note": "You're organizing this",
+					"itinerary_url": "/itinerary?trip=TRIP-1",
+					"can_plan": True,
+				}
+			],
+		)
+		self.assertEqual(answer["receipts"], [])
+		self.assertIsNone(answer["attention"])
+		self.assertTrue(site.ran("get_list", "Travel Trip"))
+		self.assertNoMoney(answer)
+
+	def test_an_organizer_with_no_employee_record_still_finds_what_they_booked(self):
+		install_site(hub_trip("TRIP-1", 5, 8))
+		HomeSite(self)
+		answer = self.answer("office@example.com")
+		self.assertIsNotNone(answer["message"])
+		self.assertIsNone(answer["featured"])
+		self.assertEqual([(t["trip"], t["relation"]) for t in answer["trips"]], [("TRIP-1", "organizing")])
+
+	def test_no_employee_record_says_so_in_plain_words(self):
+		install_site(hub_trip("TRIP-1", 5, 8))
+		site = HomeSite(self)
+		answer = self.answer("nobody@example.com")
+		self.assertEqual(
+			answer["message"],
+			"Your user account isn't linked to an employee record, so your trips can't show here. "
+			"Ask the office to link it.",
+		)
+		self.assertIsNone(answer["viewer"]["employee"])
+		self.assertIsNone(answer["featured"])
+		self.assertEqual((answer["trips"], answer["receipts"]), ([], []))
+		self.assertFalse(site.ran("get_all", "Trip Traveler"), "a crew lookup ran with no Employee")
+
+	def test_no_read_on_travel_trip_is_an_empty_hub_not_an_error(self):
+		install_site(hub_trip("TRIP-1", 5, 8))
+		site = HomeSite(self)
+		SITE.deny = True
+		answer = self.answer()
+		self.assertIsNone(answer["featured"])
+		self.assertEqual(answer["trips"], [])
+		self.assertFalse(site.ran("get_list", "Travel Trip"), "get_list was asked, and would have raised")
+		self.assertEqual(self.logged(), [])
+
+	def test_a_crew_member_runs_none_of_the_coordinators_queries(self):
+		install_site(hub_trip("TRIP-1", -1, 4, status="In Progress"))
+		site = HomeSite(self, hub_trip("TRIP-2", -9, -4, status="Completed"))
+		site.alerts = [{"trip": "TRIP-1", "status": "Failed"}]
+		answer = self.answer()
+		self.assertIsNone(answer["attention"])
+		self.assertFalse(site.ran("get_all", "Travel Trip"))
+		self.assertFalse(site.ran("get_all", "Trip Change Alert"))
+		self.assertFalse(site.ran("get_list", "Trip Change Alert"))
+
+
+class TestTravelHomeByYourOwnDays(HubAssertions):
+	"""A crew member's own ``from_date``–``to_date`` — Plan a Trip edits them for someone who joins
+	late or leaves early — decide their card, their list and their receipts, as they already
+	decide their pre-travel reminder, their ``&as=`` trip sheet and their calendar invite. By the
+	trip's dates, the hub told someone flying out on Monday that they were on the trip now, and
+	started the receipts week of someone who got back on Thursday only when everyone else did."""
+
+	def test_joining_a_trip_that_has_started_is_not_being_on_it(self):
+		install_site(own_days(hub_trip("TRIP-1", -2, 4, status="In Progress"), "EMP-B", 2, 4))
+		HomeSite(self)
+		answer = self.answer()
+		featured = answer["featured"]
+		self.assertEqual(featured["trip"], "TRIP-1")
+		self.assertEqual(featured["headline"], "Starts in 2 days")
+		# Their card, their days: the trip itself started on Thu Sep 24.
+		self.assertEqual(featured["dates"], "Mon Sep 28 – Wed Sep 30")
+		self.assertEqual(answer["receipts"], [])
+		self.assertNoMoney(answer)
+
+	def test_the_trip_you_are_on_beats_one_you_join_later(self):
+		install_site(own_days(hub_trip("TRIP-1", -2, 4, status="In Progress"), "EMP-B", 2, 4))
+		HomeSite(self, hub_trip("TRIP-2", -1, 1, status="In Progress"))
+		answer = self.answer()
+		# By the trips' own dates TRIP-1 started first, and would be the one "now".
+		self.assertEqual(answer["featured"]["trip"], "TRIP-2")
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 2 of 3")
+		self.assertEqual(
+			[(t["trip"], t["note"], t["dates"]) for t in answer["trips"]],
+			[("TRIP-1", "Starts in 2 days", "Mon Sep 28 – Wed Sep 30")],
+		)
+		self.assertNoMoney(answer)
+
+	def test_day_n_of_m_counts_your_own_days(self):
+		install_site(own_days(hub_trip("TRIP-1", -5, 5, status="In Progress"), "EMP-B", -1, 2))
+		HomeSite(self)
+		answer = self.answer()
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 2 of 4")
+		self.assertEqual(answer["featured"]["dates"], "Fri Sep 25 – Mon Sep 28")
+		self.assertNoMoney(answer)
+
+	def test_leaving_early_starts_your_receipts_week_when_you_get_back(self):
+		doc = hub_trip("TRIP-1", -5, 3, status="In Progress", purpose="Harbor install")
+		install_site(own_days(doc, "EMP-B", -5, -2))
+		HomeSite(self)
+		answer = self.answer()
+		# The trip goes on without them: it is not their trip now, and it is over for them.
+		self.assertIsNone(answer["featured"])
+		self.assertEqual(
+			[(t["trip"], t["note"], t["dates"]) for t in answer["trips"]],
+			[("TRIP-1", "Ended 2 days ago", "Mon Sep 21 – Thu Sep 24")],
+		)
+		self.assertEqual([row["trip"] for row in answer["receipts"]], ["TRIP-1"])
+		self.assertNoMoney(answer)
+
+	def test_your_receipts_week_ends_a_week_after_your_own_last_day(self):
+		install_site(own_days(hub_trip("TRIP-1", -12, -1, status="Completed"), "EMP-B", -12, -9))
+		HomeSite(self)
+		answer = self.answer()
+		# The trip ended yesterday; Bo got back nine days ago, and his week is over.
+		self.assertEqual(answer["receipts"], [])
+		self.assertEqual([(t["trip"], t["note"]) for t in answer["trips"]], [("TRIP-1", "Ended 9 days ago")])
+		self.assertNoMoney(answer)
+
+	def test_an_organizer_who_came_home_early_can_still_keep_planning(self):
+		doc = hub_trip("TRIP-1", -5, 3, status="In Progress", owner="bo@example.com")
+		install_site(own_days(doc, "EMP-B", -5, -2))
+		HomeSite(self)
+		answer = self.answer()
+		(item,) = answer["trips"]
+		self.assertEqual((item["relation"], item["note"]), ("traveling", "Ended 2 days ago"))
+		# "Keep planning" is about the trip, which has not ended.
+		self.assertIs(item["can_plan"], True)
+		self.assertNoMoney(answer)
+
+	def test_blank_days_are_the_trips(self):
+		install_site(own_days(hub_trip("TRIP-1", -1, 4, status="In Progress"), "EMP-B", None, None))
+		HomeSite(
+			self,
+			own_days(hub_trip("TRIP-2", -6, -3, status="Completed"), "EMP-B", None, None),
+			own_days(hub_trip("TRIP-3", 6, 8), "EMP-B", None, 7),  # only the last day set
+		)
+		answer = self.answer()
+		self.assertEqual(answer["featured"]["headline"], "You're on this trip now — day 2 of 6")
+		self.assertEqual(answer["featured"]["dates"], "Fri Sep 25 – Wed Sep 30")
+		self.assertEqual(
+			[(t["trip"], t["note"], t["dates"]) for t in answer["trips"]],
+			[
+				("TRIP-3", "Starts in 6 days", "Fri Oct 2 – Sat Oct 3"),
+				("TRIP-2", "Ended 3 days ago", "Sun Sep 20 – Wed Sep 23"),
+			],
+		)
+		self.assertEqual([row["trip"] for row in answer["receipts"]], ["TRIP-2"])
+		self.assertNoMoney(answer)
+
+	def test_a_trip_you_only_organize_keeps_its_own_dates(self):
+		doc = hub_trip("TRIP-1", 5, 9, owner="bo@example.com")
+		doc.travelers = [row for row in doc.travelers if row.employee != "EMP-B"]
+		install_site(own_days(doc, "EMP-A", 6, 7))  # Ann's own days are nothing to Bo
+		HomeSite(self)
+		answer = self.answer()
+		(item,) = answer["trips"]
+		self.assertEqual(
+			(item["relation"], item["note"], item["dates"]),
+			("organizing", "You're organizing this", "Thu Oct 1 – Mon Oct 5"),
+		)
+		self.assertNoMoney(answer)
+
+
+class TestTravelHomeForACoordinator(HubAssertions):
+	USER = "tc@example.com"
+
+	def setUp(self):
+		super().setUp()
+		install_site()
+		SITE.trips.clear()
+
+	def test_what_needs_attention_and_why(self):
+		planning = hub_trip("TRIP-A", 5, 8, status="Planning")
+		site = HomeSite(
+			self,
+			planning,
+			hub_trip("TRIP-B", 30, 32, clean=True),  # nothing to say: not listed
+			hub_trip("TRIP-C", 40, 42, clean=True),
+			# Back two days ago: its crew are still inside their receipts week, so it is not yet
+			# ready to close — it is listed only for its failed alert.
+			hub_trip("TRIP-D", -5, -2, status="Completed", clean=True),
+			hub_trip("TRIP-E", 20, 22, status="Planning", clean=True),  # three weeks out: not yet
+			hub_trip("TRIP-F", -20, -15, status="Closed", clean=True),
+			coordinator=True,
+			settings={"notifications_enabled": 1, "travel_desk_email": "travel@sapphire.example"},
+		)
+		site.alerts = [
+			{"trip": "TRIP-C", "status": "Failed"},
+			{"trip": "TRIP-C", "status": "Failed"},
+			{"trip": "TRIP-B", "status": "Pending"},
+			{"trip": "TRIP-F", "status": "Failed"},  # its trip is closed
+			{"trip": "TRIP-D", "status": "Failed"},
+		]
+		gaps = self.home.find_gaps(planning)
+		missing = len(self.home.counted_gaps(gaps))
+		files = self.home.files_not_attached(gaps)
+		# A coordinator's count includes the cost gaps (the fixture has two), which a crew
+		# member's never does; paperwork is the quieter tally, counted apart.
+		self.assertEqual(len([gap for gap in gaps if gap["check"] == "cost"]), 2)
+		self.assertEqual(missing, len([gap for gap in gaps if gap["check"] != "documents"]))
+		self.assertGreater(files, 1)
+
+		answer = self.answer(self.USER)
+		attention = answer["attention"]
+		self.assertIs(answer["viewer"]["is_coordinator"], True)
+		self.assertEqual(
+			[(row["trip"], row["reasons"], row["target"]) for row in attention["trips"]],
+			[
+				(
+					"TRIP-A",
+					[
+						"Starts in 5 days and is still Planning",
+						f"{missing} things missing",
+						f"{files} files not attached",
+					],
+					"plan",
+				),
+				("TRIP-C", ["2 change alerts failed to send"], "plan"),
+				("TRIP-D", ["A change alert failed to send"], "form"),
+			],
+		)
+		self.assertEqual(attention["trips"][0]["dates"], "Thu Oct 1 – Sun Oct 4")
+		self.assertEqual(
+			(attention["trips"][0]["status"], attention["trips"][0]["purpose"]), ("Planning", "Trip TRIP-A")
+		)
+		self.assertEqual(attention["more"], 0)
+		self.assertEqual(attention["setup"], [])
+		self.assertNoMoney(answer)
+
+	def test_the_setup_notes(self):
+		site = HomeSite(self, coordinator=True)
+		attention = self.answer(self.USER)["attention"]
+		self.assertEqual(
+			attention["setup"],
+			[
+				{
+					"text": "Add a Travel Desk phone or email so travelers know who to call",
+					"route": "travel-settings",
+				},
+				{"text": "Travel emails are off", "route": "travel-settings"},
+			],
+		)
+		# Change alerts off is deliberate, and not a note; a desk with a phone is enough.
+		site.settings.update(
+			notifications_enabled=1, change_alerts_enabled=0, travel_desk_phone="801-555-0142"
+		)
+		answer = self.answer(self.USER)
+		self.assertEqual(answer["attention"]["setup"], [])
+		self.assertEqual(answer["office"]["phone_href"], "tel:8015550142")
+		self.assertEqual(answer["office"]["label"], "Travel desk")
+
+	def test_the_list_stops_at_twenty_and_says_how_many_more(self):
+		# 25 trips ready to close: every one ended 11 to 35 days ago, past the receipts week.
+		HomeSite(
+			self,
+			*[hub_trip(f"TRIP-{n:02d}", -45 + n, -35 + n, status="Completed", clean=True) for n in range(25)],
+			coordinator=True,
+		)
+		attention = self.answer(self.USER)["attention"]
+		self.assertEqual(len(attention["trips"]), 20)
+		self.assertEqual(attention["more"], 5)
+		self.assertEqual(attention["trips"][0]["trip"], "TRIP-00")
+
+	def test_a_finished_trip_is_ready_to_close_only_after_the_receipts_week(self):
+		"""Closing locks the trip to everyone but a coordinator, and the same answer gives each
+		traveler a week after getting back to attach their receipts to it. Offered the day after
+		the trip ended, "ready to close" invited a coordinator to lock them out mid-week."""
+		days = self.home.RECEIPTS_DAYS
+		HomeSite(
+			self,
+			hub_trip("TRIP-1", -9, -1, status="Completed", clean=True),  # back yesterday
+			hub_trip("TRIP-7", -12, -days, status="Completed", clean=True),  # the week's last day
+			hub_trip("TRIP-8", -12, -days - 1, status="Completed", clean=True),  # the day after it
+			coordinator=True,
+		)
+		answer = self.answer(self.USER)
+		self.assertEqual(
+			[(row["trip"], row["reasons"], row["target"]) for row in answer["attention"]["trips"]],
+			[("TRIP-8", ["Finished — ready to close"], "form")],
+		)
+		self.assertNoMoney(answer)
+
+	def test_the_receipts_week_and_ready_to_close_meet_with_no_gap_and_no_overlap(self):
+		"""Day by day after a trip, the traveler is reminded or the coordinator is told to close
+		it — never both, and never neither."""
+		doc = hub_trip("TRIP-1", -3, -1, status="Completed")
+		site = HomeSite(self, doc, coordinator=False)
+		for back in range(1, self.home.RECEIPTS_DAYS + 4):
+			with self.subTest(days_since_the_trip=back):
+				move_trip(doc, -back - 2, -back)
+				site.coordinator = False
+				crew = self.answer()
+				site.coordinator = True
+				office = self.answer(self.USER)
+				reminded = [row["trip"] for row in crew["receipts"]] == ["TRIP-1"]
+				ready = any(
+					"Finished — ready to close" in row["reasons"] for row in office["attention"]["trips"]
+				)
+				self.assertNotEqual(reminded, ready)
+				self.assertEqual(ready, back > self.home.RECEIPTS_DAYS)
+				self.assertNoMoney(crew)
+
+	def test_only_thirty_trips_are_loaded_whole(self):
+		HomeSite(
+			self,
+			*[hub_trip(f"TRIP-{n:02d}", 30 + n, 31 + n, clean=True) for n in range(35)],
+			coordinator=True,
+		)
+		frappe = sys.modules["frappe"]
+		loaded = []
+		original = frappe.get_doc
+
+		def get_doc(*args, **kwargs):
+			loaded.append(args[1] if len(args) > 1 else args)
+			return original(*args, **kwargs)
+
+		with mock.patch.object(frappe, "get_doc", get_doc):
+			self.answer(self.USER)
+		self.assertEqual(len(loaded), 30)
+		self.assertEqual(loaded[0], "TRIP-00")
+
+	def test_one_trip_that_cannot_be_read_does_not_break_the_list(self):
+		other = hub_trip("TRIP-G", 6, 9)
+		HomeSite(
+			self,
+			hub_trip("TRIP-A", 5, 8, status="Planning"),
+			other,
+			coordinator=True,
+			settings={"notifications_enabled": 1},
+		)
+		real = self.home.find_gaps
+		gaps = real(other)
+		expected = [
+			f"{len(self.home.counted_gaps(gaps))} things missing",
+			f"{self.home.files_not_attached(gaps)} files not attached",
+		]
+
+		def find_gaps_or_fail(doc):
+			if doc.name == "TRIP-A":
+				raise RuntimeError("a row the checklist cannot read")
+			return real(doc)
+
+		with mock.patch.object(self.home, "find_gaps", find_gaps_or_fail):
+			answer = self.answer(self.USER)
+		rows = {row["trip"]: row["reasons"] for row in answer["attention"]["trips"]}
+		# TRIP-A keeps the reason its list row gives; TRIP-G is untouched.
+		self.assertEqual(rows["TRIP-A"], ["Starts in 5 days and is still Planning"])
+		self.assertEqual(rows["TRIP-G"], expected)
+		self.assertEqual(len(self.logged()), 1)
+		self.assertNoMoney(answer)
+
+	def test_a_coordinator_on_a_trip_also_gets_their_own_card(self):
+		install_site(hub_trip("TRIP-1", 2, 4))
+		SITE.users["tc@example.com"] = "EMP-A"  # Ann's user, for this test
+		HomeSite(self, coordinator=True)
+		answer = self.answer(self.USER)
+		self.assertEqual(answer["featured"]["trip"], "TRIP-1")
+		self.assertEqual(answer["featured"]["sheet_url"], views.trip_sheet_url("TRIP-1", "EMP-A"))
+		self.assertIsNotNone(answer["attention"])
+
+
+class TestTravelHomeDegrades(HubAssertions):
+	"""The featured card loses the part it cannot read, and keeps its links."""
+
+	def setUp(self):
+		super().setUp()
+		self.doc = install_site(hub_trip("TRIP-1", -1, 4, status="In Progress"))
+		ContactsSite(self, self.doc)
+		HomeSite(self, hub_trip("TRIP-2", 10, 12))
+
+	def test_files_that_cannot_be_read(self):
+		with mock.patch.object(travel, "_trip_files", side_effect=RuntimeError("bad file row")):
+			answer = self.answer()
+		featured = answer["featured"]
+		self.assertEqual(featured["documents"], 0)
+		self.assertEqual(featured["docs_url"], "/itinerary?trip=TRIP-1&view=docs")
+		self.assertEqual(featured["contacts"][-1]["label"], "Emergency")
+		self.assertEqual([t["trip"] for t in answer["trips"]], ["TRIP-2"])
+		self.assertEqual(len(self.logged()), 1)
+		self.assertNoMoney(answer)
+
+	def test_contacts_that_cannot_be_read(self):
+		with mock.patch.object(travel, "_hotel_details", side_effect=RuntimeError("bad address")):
+			featured = self.answer()["featured"]
+		self.assertEqual(featured["contacts"], [])
+		self.assertEqual(featured["documents"], 5)
+		self.assertEqual(len(self.logged()), 1)
+
+	def test_a_trip_that_cannot_be_loaded(self):
+		frappe = sys.modules["frappe"]
+		with mock.patch.object(frappe, "get_doc", side_effect=RuntimeError("gone")):
+			answer = self.answer()
+		featured = answer["featured"]
+		self.assertEqual(featured["itinerary_url"], "/itinerary?trip=TRIP-1")
+		self.assertEqual((featured["documents"], featured["contacts"], featured["sheet_url"]), (0, [], None))
+		self.assertEqual(featured["headline"], "You're on this trip now — day 2 of 6")
+
+	def test_no_trip_sheet_format_no_sheet_link(self):
+		# A missing Trip Sheet prints as Standard, costs included: no link to it at all.
+		SITE.print_formats = set()
+		self.assertIsNone(self.answer()["featured"]["sheet_url"])
+
+
+class TestTravelHomeThroughTheRealGate(HubAssertions):
+	"""``TestTheCoordinatorGate``'s stand-ins: the real ``_is_coordinator``, down to the Travel
+	Trip controller's role check. With the gate wired to True, a crew member would get the
+	coordinator's list — and its checklist counts, cost gaps included."""
+
+	ROLES = TestTheCoordinatorGate.ROLES
+
+	def setUp(self):
+		super().setUp()
+		install_site(hub_trip("TRIP-1", 5, 8, status="Planning"))
+		frappe = sys.modules["frappe"]
+		document = types.ModuleType("frappe.model.document")
+		document.Document = type("Document", (), {})
+		model = types.ModuleType("frappe.model")
+		model.document = document
+		for patcher in (
+			mock.patch.dict(sys.modules, {"frappe.model": model, "frappe.model.document": document}),
+			mock.patch.object(frappe, "get_roles", lambda user=None: self.ROLES.get(user, []), create=True),
+			mock.patch.object(frappe.utils, "date_diff", lambda a, b: 0, create=True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		sys.modules.pop(CONTROLLER, None)
+		HomeSite(self, coordinator=None)
+
+	def test_a_crew_member_gets_no_list(self):
+		answer = self.answer("bo@example.com")
+		self.assertIs(answer["viewer"]["is_coordinator"], False)
+		self.assertIsNone(answer["attention"])
+		self.assertEqual(answer["featured"]["trip"], "TRIP-1")
+		self.assertNoMoney(answer)
+
+	def test_a_travel_coordinator_gets_it(self):
+		answer = self.answer("tc@example.com")
+		self.assertIs(answer["viewer"]["is_coordinator"], True)
+		self.assertEqual(answer["attention"]["trips"][0]["trip"], "TRIP-1")
+		self.assertIn("Starts in 5 days and is still Planning", answer["attention"]["trips"][0]["reasons"])
+
+
+class TestTravelHomeEndpoint(unittest.TestCase):
+	def setUp(self):
+		self.home = _home()
+		with open(inspect.getsourcefile(self.home), encoding="utf-8") as fh:
+			self.source = fh.read()
+		# Comments and docstrings may name what the code must not do.
+		self.code = re.sub(r'""".*?"""', "", self.source, flags=re.S)
+		self.code = "\n".join(line for line in self.code.splitlines() if not line.strip().startswith("#"))
+
+	def test_it_is_the_one_endpoint_and_takes_nothing(self):
+		self.assertRegex(self.source, re.compile(r"@frappe\.whitelist\(\)\ndef get_travel_home\(\):"))
+		self.assertEqual(self.source.count("@frappe.whitelist"), 1)
+		self.assertEqual(list(inspect.signature(self.home.get_travel_home).parameters), [])
+
+	def test_dates_are_the_sites(self):
+		for forbidden in ("datetime.now", "utcnow", "date.today", "import datetime", "from datetime"):
+			self.assertNotIn(forbidden, self.code)
+
+	def test_the_viewers_lists_are_permission_scoped(self):
+		source = inspect.getsource(self.home._my_trips)
+		self.assertEqual(source.count("frappe.get_list("), 2)
+		# The one get_all is the viewer's own crew rows.
+		self.assertEqual(re.findall(r'frappe\.get_all\(\s*"([^"]+)"', source), ["Trip Traveler"])
+
+	def test_a_crew_members_answer_has_the_contract_keys(self):
+		install_site(hub_trip("TRIP-1", -1, 4, status="In Progress"))
+		HomeSite(self, hub_trip("TRIP-2", 10, 12, owner="bo@example.com", clean=True))
+		sys.modules["frappe"].session.user = "bo@example.com"
+		answer = self.home.get_travel_home()
+		self.assertEqual(
+			set(answer),
+			{"viewer", "message", "office", "guidelines_url", "featured", "trips", "receipts", "attention"},
+		)
+		self.assertEqual(
+			set(answer["featured"]),
+			{
+				"trip",
+				"purpose",
+				"status",
+				"dates",
+				"headline",
+				"travel_for",
+				"itinerary_url",
+				"docs_url",
+				"sheet_url",
+				"documents",
+				"contacts",
+			},
+		)
+		for row in answer["featured"]["contacts"]:
+			self.assertEqual(
+				set(row), {"label", "name", "detail", "phone", "phone_href", "email", "email_href", "links"}
+			)
+		self.assertEqual(
+			set(answer["trips"][0]),
+			{"trip", "purpose", "status", "dates", "relation", "note", "itinerary_url", "can_plan"},
+		)

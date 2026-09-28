@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.550.0] - 2026-09-28
+## [1.555.0] - 2026-09-28
 
 **The knowledge base can publish (WI-080 PR 3, ADR 0017): review, approve and publish, retire.** A
 KB Author drafts a version and submits it; every KB Approver who had no hand in it gets a to-do; one
@@ -166,7 +166,7 @@ refused. No code grants a role.
 
 ### After-deploy checks (read-only)
 
-- ``SELECT app_version FROM `tabInstalled Application` WHERE app_name='erpnext_enhancements'`` = 1.550.0.
+- ``SELECT app_version FROM `tabInstalled Application` WHERE app_name='erpnext_enhancements'`` = 1.555.0.
 - ``SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' AND deleted_name
   LIKE 'Knowledge%'`` is still 0 (the controllers imported).
 - Opening a published article as a technician shows no KB button, and as Parker shows Start
@@ -179,6 +179,470 @@ refused. No code grants a role.
   `approved_by <> author`; ``SELECT COUNT(*) FROM tabComment WHERE comment_type='Comment' AND
   reference_doctype LIKE 'Knowledge Article %'`` = 0; ``SELECT description FROM tabToDo WHERE
   reference_type LIKE 'Knowledge Article %'`` shows titles and links only.
+
+## [1.554.0] - 2026-09-28
+
+**The Travel hub now opens on your own trip.** `/desk/travel` is rebuilt for someone who has
+never used the system. Your current or next trip comes first, with one tap to your itinerary,
+your trip sheet, your documents and who to call. Below it: your other trips, a plain-language
+"I want to…" row, and four steps explaining how a work trip works. Nik asked for it on
+2026-09-28: "someone who has no idea where to go to find their information could navigate it".
+In the prod Route History, the two travelers on the one live trip (Korben and Brian) opened
+the old hub. It showed them a calendar, a planner and three reports, and nothing that said
+"your trip".
+
+### Added
+
+- **The My Travel block** (`custom_html_blocks/travel_home.*`, registered in
+  `setup/custom_html_blocks.py` `BLOCKS`) and its one endpoint,
+  **`travel_management.home.get_travel_home`**.
+  - **Your trip.** It shows the trip you are on now, or else your next one: its dates, a headline
+    such as "You're on this trip now — day 2 of 6" or "Starts in 5 days", and four buttons: *Open
+    my itinerary*, *My trip sheet* (your own PDF), *My documents (N)* and *Trip details*.
+  - **By your own days.** Plan a Trip gives someone who joins late or leaves early their own
+    From and To dates on the trip, and the pre-travel reminder, the `&as=` trip sheet, the
+    calendar invite and the change alerts already use them. The hub now does too: which trip is
+    yours now, "day N of M" (counted over your own days), "Starts in N days", the dates on your
+    card and your other trips, and the receipts week. Someone flying out Monday to a trip that
+    started Thursday is not told they are "on this trip now". A blank date is the trip's, as a
+    save fills it in. A trip you only organize keeps the trip's dates, and *Keep planning* still
+    follows the trip, so an organizer who came home early can still plan it.
+  - **A long job name wraps.** The card's job or customer name used to stay on one line and ran
+    off the side of the card on a phone. It wraps now; the dates still don't.
+  - **Who to call.** A list that starts closed, as on `/itinerary`: the travel desk, the trip lead,
+    who booked it, the job site, each hotel with its nearest urgent care and directions, and 911.
+  - **Your other trips.** Current and upcoming trips, plus those that ended in the last 14 days,
+    and the trips you organize but don't travel on, with *Keep planning*.
+  - **Receipts reminder.** It appears 1–7 days after your own last day on a trip: "Attach your
+    receipts to the trip within a week of getting back, and accounting will reimburse you." That
+    is Nik's 2026-09-28 decision. HRMS is not installed, so there is no claim to submit.
+  - **Needs attention, for coordinators only.** It lists:
+    - trips starting within 14 days that are still Planning;
+    - the checklist's missing items and missing files;
+    - Completed trips ready to close, once the receipts week is over;
+    - failed change alerts.
+
+    It is capped at 20, with "…and N more". Setup notes appear when there is no Travel Desk
+    contact or travel emails are off. Change alerts being off is deliberate, so it is not
+    flagged.
+
+    **Ready to close waits for the receipts.** A Closed trip is locked to everyone but a
+    coordinator, and the same block tells each traveler they have a week after getting back to
+    attach receipts to the trip. So a Completed trip is offered for closing only from the day
+    after the last reminder, when its end date is more than 7 days ago. Offered the day after
+    it ended, it invited a coordinator to lock travelers out mid-week. The trip's end date is
+    enough to go on: every save clamps each traveler's dates inside the trip, so nobody's week
+    can end later than the trip's. It is not exact: if the whole crew left early, the trip waits
+    those extra days, which is harmless.
+  - **Empty states.** No Employee linked, no trips, and an organizer who isn't traveling each
+    get a plain sentence.
+  - **No money for anyone.** The server works out every date and every rule, and the block only
+    draws them. It reuses the existing helpers rather than defining anything again:
+    `api.travel._itinerary_trips`'s queries, `_trip_contacts`, `_trip_files`, `_office_contact`,
+    `views.trip_sheet_url`, and `completeness.find_gaps` / `counted_gaps` /
+    `files_not_attached`.
+  - **One failure stays contained.** Each trip's enrichment is guarded, so a trip whose contacts,
+    files or checklist fail drops only that part and logs "Travel home". Only the featured trip
+    is loaded in full, and a coordinator's checklist loads at most 30 active trips.
+  - **It reloads when you come back.** v16's `Workspace.show()` returns early when the workspace
+    asked for is already the one shown (`if (this._page?.name === page.name) return;`). So
+    going from the hub to a trip form or Plan a Trip and back left the block as it was, and the
+    trip you had just changed was out of date. The block now reloads on the router's `change`
+    back to the Travel route. `frappe.router.off()` wraps the handler in a new function before
+    unbinding, so it can never remove one. The handler is therefore bound once per page load,
+    behind a window flag, and reloads the newest block. A block no longer on the page is left
+    alone, because a re-rendered workspace runs the script again and the new block loads itself.
+    Each load takes a ticket, and only the newest answer draws, so an older answer arriving late
+    never paints over a newer one.
+- **`workspace_sidebar/travel.json`**, a curated Travel sidebar: Home, My itinerary, Plan a
+  Trip, My trips, Travel rules & per diem, and Places & job sites, then an *Office* group with the
+  three reports and Travel Settings. It replaced the sidebar production had generated for itself.
+  In that one, *My Itinerary* and *Travel Guidelines* had no URL and went nowhere, *New Travel
+  Trip* was still listed, and Plan a Trip was missing (checked on prod 2026-09-28).
+- **Patch `reload_travel_hub`.** A Workspace and a Workspace Sidebar are both timestamp-gated on
+  import, and the Plan a Trip reload patch has already run, so this one has its own name. It
+  uses `reload_doc(force=True)` for the workspace and `import_file_by_path(force=True)` for the
+  flat sidebar file. It cannot raise.
+
+### Changed
+
+- **The Travel workspace**, top to bottom:
+  - The My Travel block.
+  - *I want to…*, with six shortcuts that are all visible to an Employee, so no hidden one leaves
+    a gap: *See my itinerary*, *Plan a Trip*, *My trips* ("N active"), *Who's away when* (the
+    calendar, "N on the calendar"), *Travel rules & per diem* and *Places & job sites*.
+  - *How a work trip works*, in four steps.
+  - *Records, reports and setup*, with the Trips, Reports and Setup cards. Setup is last, so the
+    card an Employee cannot see leaves its gap at the end of the row.
+  - The dead *Expense Claim Type* link is gone (HRMS is absent). `hide_custom` is 1, which drops
+    frappe's automatic "Custom Documents" and "Custom Reports" cards.
+  - The name "Travel", the route, the desk tile and the module are unchanged. `modified` is
+    bumped.
+
+- **Crew can no longer open Travel Trip Cost Summary** (Nik, 2026-09-28: "remove Trip Cost
+  Summary from crew").
+  - **Why:** the report is nothing but money: Estimated, Actual, Variance, Company Paid, Employee
+    Paid, Claimed and Unclaimed. Until now its roles included Employee, so any crew member could
+    open it from the hub's Reports card and see the costs of their own trips. That is the "all
+    but money" line the trip views, `/itinerary`, the emails and the Trip Sheet already hold.
+  - **Roles now:** exactly the coordinator roles, System Manager, Travel Coordinator and HR
+    Manager. They are not left empty on purpose: a Report with no roles falls back to read
+    permission on its ref_doctype, which every Employee has.
+  - **Deploy:** the report's JSON carries a new stamp, since a Report is timestamp-gated on
+    import. `reload_travel_hub` also force-reloads it, which replaces the stored roles table.
+  - **Checked on prod 2026-09-28:** the live report had the same four roles, no Custom Role
+    override, and was stamped 2026-06-11.
+  - For an Employee, frappe now filters the link out of the Reports card and the sidebar's
+    Office group.
+
+### Tests
+
+| Suite | Before | After | What the new tests cover |
+|---|---|---|---|
+| `tests/test_travel_views.py` | 159 | 194 | The endpoint against the site stub (below) |
+| `tests/test_travel_hub.py` (new) | — | 47 | The block, workspace, sidebar, patch and the cost report's roles (below) |
+| `tests/test_whitelist_placement.py` | | | `get_travel_home` added to `MUST_STAY_WHITELISTED` |
+
+- **`tests/test_travel_views.py`** runs the endpoint against the site stub.
+  - A crew member's card:
+    - the "now" headline and "day N of M";
+    - their own itinerary, documents and sheet links;
+    - contacts in order;
+    - no money anywhere in the answer.
+  - "Starts in N days" and "tomorrow".
+  - Receipts appear only 1–7 days after a trip.
+  - Organizers who don't travel, and users with no Employee.
+  - Your own days: joining a trip that has already started ("Starts in 2 days", and the trip
+    you are on now comes first); "day N of M" over your own days; leaving early (the trip is
+    over for you, and your receipts week starts when you get back, and ends a week after, even
+    if the trip ended yesterday); blank dates are the trip's; an organizer who came home early
+    can still keep planning; a trip you only organize keeps its own dates.
+  - For coordinators:
+    - the reasons, and the plan-versus-form targets;
+    - the setup notes;
+    - the cap of 20;
+    - the 30-trip load limit;
+    - ready to close: not 7 days after the end, and from 8 days after it;
+    - day by day for 10 days after a trip, the traveler is reminded or the coordinator is told
+      to close it, never both and never neither.
+  - Graceful degradation, the real coordinator gate, and the contract's keys.
+  - Mutations were tried one at a time, and each made the suite fail:
+    - the coordinator gate always open;
+    - `paid_by` on a contact;
+    - per diem on the card;
+    - receipts shown on the day of return;
+    - owned trips read with `get_all`;
+    - ready to close with no receipts-week filter, or with it one day off either way;
+    - eight breaks of the own-days rule: the trip's dates everywhere, or only for the
+      receipts, "started", the card, the list or "ahead"; *Keep planning* following the
+      person's days instead of the trip's; and a blank date not falling back to the trip's.
+- **`tests/test_travel_hub.py`** (new, with its own CI step, 47 tests) pins the rest of the change.
+  - The block:
+    - its three files, registered in `BLOCKS` only;
+    - exactly one call to the endpoint, with `root_element` and escaping;
+    - no `frappe.xcall` and no date math;
+    - every `tvh-` class styled, and the job name wrapping where the dates do not;
+    - one router `change` handler behind a window flag, checking the Travel route, and no
+      trace of the old "re-runs on every navigation" claim;
+    - the script itself run in node against a stub desk (skipped where node is absent). It
+      loads once. Leaving for a form asks nothing. Coming back reloads, but going to another
+      workspace does not. After the page renders again there is still one handler, and it
+      reloads the new block. Answers arriving out of order never paint the older one, and a
+      block off the page is never reloaded. Removing the ticket, the `watchReturn` call, the
+      newest-root lookup, the on-page check or the route check each fails it.
+  - The workspace:
+    - the block placed first;
+    - the six shortcuts, with their exact labels, types, URLs and filters;
+    - the paragraph and `hide_custom`;
+    - no Expense Claim Type;
+    - Setup last.
+  - The sidebar: every URL item has a URL, Plan a Trip is present, and New Travel Trip is not.
+  - The patch: registered after the old reload patch, it reloads the cost report as well, and
+    its `execute()` never raises when every step fails.
+  - The cost report's roles are exactly the coordinator roles, with a stamp newer than prod's.
+- The block was rendered through a stub desk in four states (a traveler on a trip, an organizer,
+  no employee, a coordinator), at 1280px and 390px in light and dark, and checked by eye.
+
+## [1.553.0] - 2026-09-28
+
+**`/itinerary` now shows each stop's place notes: parking, the gate code, how to get on site.**
+A Travel POI has always had a *Notes* field. The travel guidelines' "In the system" callout
+tells people to put parking and access details there, because pinned POIs "show on everyone's
+mobile itinerary". The notes never did. `api/travel.shape_itinerary` read a POI's name,
+category, map point and Address, and never its `notes`, so the gate code someone typed in for
+the crew reached nobody. Nik's call on 2026-09-28 was to make that sentence true rather than
+take it out. A stop's place now carries its notes, and the crew sees them on the stop's card,
+in the day map's marker popup, and in the copy saved on the phone for when there is no
+signal.
+
+### Added
+
+- **`shape_itinerary`: a stop's `poi` gains `notes`** (`api/travel._poi_notes`). Travel POI
+  `notes` is a plain **Text** field, not a Text Editor, so there is no markup to strip. It is
+  sent as typed: Windows line endings become plain newlines, the ends are trimmed, and blank
+  (or only whitespace) is `None`. It is read in the same `frappe.db.get_value` as the rest of
+  the POI and kept in the same `poi_cache`, so a crew of eight still costs one lookup per
+  place. `shape_itinerary` only ever gains keys, and the emails read the old ones by name.
+- **`/itinerary` draws them** (`public/js/travel/itinerary.js`, `appendPlaceNotes`):
+  - **On the stop's card**, after the visit's own notes (`visit_notes`, which are about this
+    visit and not the place) and before *Open in Maps*, under a small "Place notes" label, in
+    the same quiet muted style as the visit notes. They are drawn with `textContent`, never
+    markup, and `white-space: pre-wrap` keeps the line breaks.
+  - **Long notes start shut.** Notes over four lines or 200 characters are a `<details>` whose
+    one line is the label and their first line, cut to fit with an ellipsis at phone width. A
+    tap opens them. That is not a history entry, so Back and Forward on `/itinerary` are
+    untouched.
+  - **In the marker's popup** on the day map, as text too. A long note scrolls inside the popup
+    rather than covering the map.
+  - **Offline:** the notes come in the answer itself, so the IndexedDB copy has them. No extra
+    request is made for them, online or off.
+  - **Dark mode:** every color is one of the page's own `--ti-*` tokens. The popup keeps
+    Leaflet's own colors, as the rest of the popup already does.
+- **Plan a Trip's View as shows them on the stop too** ("Place notes: …"). View as is meant to
+  show exactly what that person's phone shows, so it cannot leave out what the phone now draws.
+  Its sub-lines keep line breaks now (`.tp-psub` is `white-space: pre-line`). That also affects
+  a stop's multi-line visit notes, which View as used to run together on one line while the
+  phone showed them on separate lines.
+
+### Why this exposes nothing new
+
+- **Not money, by construction.** The notes are free text about a place, and no cost field is
+  read with them. `assertNoMoney` runs over `shape_itinerary`, `get_trip_itinerary` and a crew
+  member's `get_trip_views` with notes present.
+- **Not new to anyone.** Anyone who can open the trip could already read every Travel POI: the
+  Employee role has read on Travel POI and there is no row scoping. So a crew member who now
+  sees a gate code on a stop could already open it on the POI.
+
+### Left out on purpose
+
+- **The itinerary email** (`pre_travel_reminder.html`, built from `itinerary_text.item_line`)
+  prints one line per item, the place by name only. It does not print a stop's own visit notes
+  either. An email also leaves the system and gets forwarded, which a gate code should not do
+  without someone deciding it should.
+- **The Trip Sheet** (`views.build_trip_sheet`) keeps the place's name only. The sheet is built
+  to fit one or two Letter pages. Printing each hotel's address on every check-in already cost
+  it a third page once (2026-09-27), and free-text notes on every stop would do the same.
+- **Plan a Trip's Overview, Crew grid and Side by side** (`item_facts`), **the Map view's
+  places** and **the trip form's map** show a place by name, for planning. They are unchanged.
+- **`www/travel_guidelines.html`** is not edited here. Its POI sentence is now true as written.
+  The page's other stale claims (reimbursement, Vehicle Log, per diem, mileage) are a separate
+  change.
+
+### Tests
+
+- **`tests/test_travel_views.py`** (141 → 148 tests), new `TestPlaceNotes`:
+  - every stop at the place carries its notes, in the whole crew's view and each person's;
+  - line breaks are kept, CRLF and lone CR become newlines, and only the ends are trimmed;
+  - blank, whitespace-only, `None` and missing notes all give `notes: None`;
+  - `<script>` and `<b>` in the notes are sent exactly as typed, never parsed or unescaped;
+  - `notes` is asked for by name;
+  - one lookup serves every person;
+  - the notes reach `get_trip_itinerary` and a crew member's `get_trip_views` with no money.
+
+  The suite's `frappe.db.get_value` stub now answers only the fields asked for, as frappe does.
+  Before, it returned the whole POI record, so a shape that stopped asking for `notes` would
+  still have passed. Two mutations were checked: dropping the key fails six tests, and dropping
+  `notes` from the field list fails six.
+- **`scripts/test_web_flow_history.js`** (513 → 528 checks), new "/itinerary place notes" section,
+  which runs the real `itinerary.js`:
+  - the notes are drawn under the label, with their line breaks, in the right place on the card;
+  - a `<script>`, `<b>` or `<img>` in them is drawn as characters, with no element created and
+    nothing added to `<head>`;
+  - five lines, or 233 characters on one line, give a `<details>` that starts shut on the first
+    line, and tapping it writes no history;
+  - blank, `null` and missing notes draw nothing;
+  - each marker's popup carries its place's notes as text;
+  - the notes are saved in IndexedDB with the answer, and drawn offline with nothing more
+    fetched;
+  - `itinerary.css` keeps `pre-wrap` on the card's notes and the popup's.
+
+  Mutations checked: removing the card's call, drawing the notes with `innerHTML`, leaving them
+  out of the popup, and never collapsing long notes each fail the section. Browser history on
+  `/itinerary` is unchanged: the whole harness passes.
+
+## [1.552.1] - 2026-09-28
+
+**The travel guidelines and the two post-trip emails now tell travelers how they actually get
+reimbursed: attach each itemized receipt to its cost on the trip, and accounting pays from
+there.** Until now all three told travelers to file an Expense Claim from the trip, using a
+Create button that no traveler on production has ever seen.
+
+### Fixed
+
+- **The travel text sent travelers to features production does not have.**
+  - **Symptom:** section 6 of `/travel_guidelines` said "use Create → Expense Claim on the
+    trip … review it, attach anything missing, and submit". The post-trip expense nudge
+    (`templates/emails/travel/expense_nudge.html`) said the same. The Closed notice
+    (`trip_closed.html`) told every recipient their "Expense Claim is missing or still a
+    draft" and asked them to "finish and submit your claim". A traveler who followed either
+    email found nothing to click.
+  - **Cause:** HRMS is not installed on production and cannot simply be installed. It
+    collides with this app's `HR` module label and six `Training *` doctype names (see the
+    header of `accounting_intake/actions/receipt_expense.py`). So Expense Claim, Employee
+    Advance, Vehicle Log and Expense Claim Type do not exist there,
+    `travel_management.expense_claims_available()` is False, and the Travel Trip form hides
+    Create → Expense Claim / Employee Advance / Vehicle Log. The text described the HRMS path,
+    which never runs there. HRMS was **not** installed to make the text true.
+  - **Fix:** Nik decided the process on 2026-09-28: travelers attach each itemized receipt to
+    its cost on the Travel Trip (the row's *Receipt* field, fieldname `attachment`), and
+    accounting reimburses employee-paid costs, per diem and mileage from there. The traveler
+    has no claim to submit. Section 6's "In the system" callout now says exactly that and
+    keeps the rest (Paid By on every cost row, the receipt on the row's Receipt, booking
+    paperwork on its booking). The reminder sentence now matches `reminders.py`: nothing is
+    ever stamped as claimed without HRMS, so the nudge goes **once**, about three days after
+    the trip ends, to anyone the trip shows as owed employee-paid costs, per diem or mileage.
+  - **The Closed notice:** on production no traveler ever has a claim, so it goes to
+    **every** traveler on a trip when it is closed. A Closed trip refuses every save except a
+    Travel Coordinator's (`travel_trip._check_closed_lock`), and only a coordinator can reopen
+    it (`api.reopen_trip`). A traveler with a receipt still to add therefore cannot add it
+    themselves. The email now says the trip is closed, that accounting reimburses from the
+    trip, and that a missing receipt or cost means asking a Travel Coordinator to
+    reopen the trip. It never mentions a claim.
+  - **The expense nudge:** its headline number was labeled "Unclaimed". Nothing is ever
+    claimed on production, so that number is everything the trip says the company owes the
+    traveler. It is now labeled "To reimburse". The ask is to attach the itemized receipts to
+    the trip so accounting can reimburse them, with "There is no claim to submit". On a trip
+    that is already Closed the email adds who can reopen it. The subject changed from
+    "Unclaimed travel expenses: …" to "Attach your travel receipts: …". Both emails now link
+    the travel guidelines. Who gets each email and when is unchanged.
+- **Three smaller false claims on `/travel_guidelines`:**
+  - **Section 4** told travelers taking a company truck to "create its Vehicle Log from the
+    trip". Vehicle Log is an HRMS doctype. The callout now says a Company Fleet row records
+    the truck on the trip and a company vehicle is never reimbursed.
+  - **Section 4 also said** personal-vehicle miles are "reimbursed at the company rate".
+    Travel Settings' mileage rate is 0 on production, so a Mileage row comes to $0 unless it
+    carries a rate of its own. The text now says accounting reimburses those miles with the rest of the trip's
+    expenses, and names no rate.
+  - **Section 5** said a traveler's per diem shows "in your itinerary email". It never has:
+    `pre_travel_reminder.html` carries no money, under the rule that crew see everything
+    about a trip except money. It now points only at the trip's Travelers table.
+  - **Left alone on purpose:** section 2's sentence about POI Notes showing on the mobile
+    itinerary. A separate change makes `/itinerary` show a place's Notes.
+
+### Tests
+
+- `tests/test_travel_views.py` gains `TestTheTravelerIsToldWhatProductionCanDo` (6 tests):
+  - Both emails are rendered with the real macros under `StrictUndefined`, from the context
+    their senders build.
+  - The guidelines' source is read with Jinja and HTML comments removed first, because those
+    comments explain the absence and so name what is absent.
+  - None of the three may mention Expense Claim, Vehicle Log, Employee Advance or a Create
+    button. All three must ask for receipts attached to the trip.
+  - Both emails must name who can reopen a closed trip. The nudge may only show that line on
+    a Closed trip.
+  - The guidelines must promise no "company rate" and no per diem in the itinerary email, and
+    must keep their seven numbered sections, each with its "In the system" callout.
+  - Each template may only read keys its sender passes.
+  - A self-check proves the matcher finds all three spellings of the old wording.
+  - Against the old text, 5 of the 6 fail.
+
+## [1.550.0] - 2026-09-28
+
+**A copied trip now remembers which trip it was copied from, so Plan a Trip's copy screen still
+says a copy exists after a reload, or when someone else made it.** Until now only the page's
+memory knew. Reload the page, or have a colleague copy the same trip, and the copy screen said
+nothing, so a second copy of the same job could be made without a word. Nik asked for this on
+2026-09-28, after PR 4 of the Plan a Trip program (v1.549.0) left it as an open question.
+
+### Added
+
+- **`Travel Trip.copied_from`**: a Link to Travel Trip, shown on the form as *Copied From*.
+  - It is read-only and `no_copy`, so frappe's *Duplicate* does not carry it. It is indexed,
+    because the copy screen looks copies up by it.
+  - `planner.save_plan` sets it on a copy's first save, from the `copied_from` that
+    `plan_a_trip.js` `payload()` now sends. The page takes it from its own draft → source map.
+    It is set on a create only, and only when that trip still exists and the user may read it
+    (`_copied_from`). A trip deleted meanwhile, one out of sight, or anything else a JSON body
+    could carry is stored as nothing, and the copy saves either way. An update never reads
+    it, so it is set once.
+- **`planner.get_plan(trip, copies=1)`** also answers `copies`, the trip's copies still in
+  Planning, Booked or In Progress (`copies_of`).
+  - It goes through `get_list`, so a user sees only the copies they may see. The list runs
+    soonest first, holds at most `COPIES_SHOWN` (10), and carries no money.
+  - A finished copy is left off, because it is history rather than a duplicate in the making.
+  - Only the copy screen asks, so no other trip load pays for the query.
+- **The copy screen names the copies it is told of**, for example "This trip was copied
+  already: TRIP-2026-00031 (Mon, Nov 2 – Thu, Nov 5, Planning) — Open it". This comes after
+  its own "You made a copy of this trip already" and "not saved yet" notes. A copy this page
+  saved after the screen was read shows once, as the page's own note. An unsaved copy is
+  still the page's memory only, since a reload loses it anyway and `beforeunload` warns.
+  - Back and Forward redraw the copy screen from what it first read. So when a listed copy is
+    opened, re-dated or marked booked, then left, its row follows that save (`relist_copy`).
+    The row leaves the list once the trip is no longer ahead or under way. A save that lands
+    after Back has drawn the screen redraws it, as a copy's first save already did.
+- **`copied_from` never refuses a save** (`TravelTrip.get_invalid_links` →
+  `_settle_copied_from`). frappe v16 checks every Link in `_validate_links`, which runs before
+  both `before_insert` and `validate`, so this is the one hook early enough.
+  - On an update the stored value wins, whatever the request sends. It is the server's field.
+  - A source trip that no longer exists is dropped rather than checked. Two saves would
+    otherwise fail on a field nobody can edit:
+    - A Desk form opened before the source was deleted still posts the deleted name, because
+      `on_trash` clears the stored value without bumping `modified`. Its save would fail with
+      "Could not find Copied From".
+    - A copy restored from Deleted Document after its source was deleted too would fail to
+      restore. It now comes back copied from nothing.
+
+### Changed
+
+- **Deleting a trip now clears `copied_from` on its copies first**, in `TravelTrip.on_trash`,
+  with `update_modified=False`.
+  - Without this, one new Link field would have made every trip that had ever been copied
+    impossible to delete. frappe v16's `delete_doc` runs `on_trash` and then
+    `check_if_doc_is_linked`, which refuses to delete any record another record links to.
+    `force` gets past the check, but the Desk's delete button never sends it.
+  - The copies' `modified` is left alone. Otherwise a copy open on the Plan a Trip page would
+    be refused as "changed somewhere else" on its next save.
+  - The clearing runs after the existing refusal for submitted expense documents, so a delete
+    that is refused unlinks nothing.
+  - Restoring the deleted trip from Deleted Document does not relink its copies.
+- `travel_management/README.md` (Copy a past trip, and the data-model tree) and the planner
+  and page header comments now describe the stored link, replacing "after a reload nothing
+  says a copy was made".
+
+### Tests
+
+- `tests/test_travel_planner.py` (192 → 198 tests) covers five things:
+  - a copy's first save stores the trip it came from;
+  - a trip that is gone or out of sight is not stored, and the copy is saved anyway, including
+    when the JSON body sends the wrong type;
+  - an update never changes `copied_from`;
+  - the copy screen's `get_plan` asks `get_list` for copies with exactly these filters,
+    fields, order and limit, and no other `get_plan` asks at all;
+  - the doctype field is a read-only, `no_copy`, indexed Link, placed after `closed_on`.
+- `tests/test_travel_views.py` (141 → 146) runs the real controller:
+  - `on_trash`: a deleted trip's copies let go of it with their `modified` kept, and a delete
+    refused for a submitted claim unlinks nothing;
+  - `get_invalid_links`: a Desk form opened before the source was deleted still saves, an
+    update keeps the stored source whatever it posts, and a first save or restore keeps a
+    source that exists and drops one that is gone.
+- `scripts/test_wizard_back_forward.mjs` (95 → 98) runs the page against its port of the v16
+  router:
+  - A copy's first Next sends `copied_from` and a later save does not; a blank new trip never
+    sends it.
+  - A reload of the copy screen names the copy made before it and opens it.
+  - A colleague's Booked copy is named, soonest first, and a Completed one is left off.
+  - A copy made on this page and then read back from the server is named once.
+  - A listed copy opened and re-dated here is listed with its new days on Back, including
+    when its save lands after the screen is drawn.
+- Fifteen mutations were tried, one at a time, and each made one of these suites fail:
+  - not sending `copied_from`;
+  - not asking for copies;
+  - not reading the answer;
+  - dropping the once-only filter;
+  - storing whatever the body sent;
+  - skipping the read check;
+  - asking for copies on every load;
+  - listing finished copies;
+  - letting `on_trash` touch the copies' `modified`;
+  - not settling before the link check;
+  - not pinning the stored value;
+  - not dropping a gone source;
+  - not updating a listed row;
+  - not redrawing when a late save lands;
+  - not dropping a finished row.
+- An adversarial review of the change, run in three lenses with each finding verified
+  independently, confirmed three low-severity defects. All three are fixed above: the listed
+  row going stale, the Desk form, and the restore.
 
 ## [1.549.1] - 2026-09-27
 

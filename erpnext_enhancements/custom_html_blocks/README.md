@@ -119,6 +119,17 @@ The shared HTML/CSS shell (card → head → rows, plus pills, bars and stat til
 deliberately uniform across all 28 blocks; structural colours come from Frappe CSS variables
 so both themes work, and literal colours appear only where the colour *is* the meaning.
 
+## Files — My Travel (the Travel hub, v1.554.0)
+
+| File | Role |
+|---|---|
+| `travel_home.html` | Shell: a `My Travel` header with a refresh button, and an empty body the script fills. |
+| `travel_home.js` | Block-sandbox script. It makes one call to `erpnext_enhancements.travel_management.home.get_travel_home` and draws the answer: the current or next trip with its buttons and a closed *Who to call*, other trips, receipts due, and a coordinator's *Needs attention*. It computes no dates or rules. Every value is escaped, and web addresses open in a new tab with `noopener`. Desk routes use `frappe.set_route`; Plan a Trip is reached through `frappe.route_options`. |
+| `travel_home.css` | Shadow-root styles from Frappe CSS variables, so both themes work. The primary button uses the theme-aware colors of frappe's own primary button, because `--primary` stays near-black in v16 dark mode. It works from 360px up, with 40px tap targets. |
+
+Registered in `setup/custom_html_blocks.py` `BLOCKS` only. The Travel workspace JSON places it, as the
+[Travel README](../travel_management/README.md#the-travel-hub) explains.
+
 ## Relationship to the desk Project Dashboard
 
 This Custom HTML Block is a lighter, embeddable cousin of the full **Project Dashboard** desk page. It reuses the same server endpoints (`erpnext_enhancements.project_enhancements.page.project_dashboard.*`) and the same shared front-end helpers (`ColumnSelector`, the embeddable Gantt widget). For the full-featured, tabbed, realtime experience, see the desk page documented in the [Project Enhancements README](../project_enhancements/README.md).
