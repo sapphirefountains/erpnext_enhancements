@@ -102,7 +102,14 @@ Two mechanics, both verified against this site rather than assumed:
   the attribute-less tag soup `md_to_html()` produces for the morning briefing, and
   Premailer inlines them onto the generated elements (verified:
   `<h2 id="heading" style="color:#00263E; font-size:18px">`). The `@media` block only
-  tightens padding and stacks the fact table.
+  tightens padding, stacks the fact table, and widens the button to the full column.
+  The button rule has a trap: `.ee-btn` *is* the button's `<table>`, so it must stay a
+  table. `display:block` on it drops table layout and the cell shrinks to the label;
+  with the anchor at `width:100%` of that cell plus its inline 30px side padding, the
+  label sat 30px right of center and ran 60px past a half-width fill in every email
+  until v1.549.1. The anchor also needs `box-sizing:border-box` so that padding stays
+  inside its width. `test_the_phone_button_fills_the_column_and_centers_its_label`
+  pins all of it.
 
   **The `.ee-md` rules reach the component macros too, and that cuts both ways.** They
   are descendant selectors on the body cell, so `.ee-md table{width:100%}` and

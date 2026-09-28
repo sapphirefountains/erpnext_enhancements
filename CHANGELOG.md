@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.549.1] - 2026-09-27
+
+**On a phone, every email's button now spans the column with its label centered.** Until now
+the button in every email built with `ee.button` (trip closed, the new trip-change alerts,
+contract signature invites, fountain-move invites, the expense emails and the rest) drew as a
+half-width fill with its
+label pushed 30px right of center and hanging off the fill's right edge. A long label went off
+the screen: "Tell us about your fountain installation" was 413px wide on a 390px phone.
+Desktop mail is unchanged.
+
+### Fixed
+
+- **The phone rule in `templates/emails/_shell.html` broke the button it was meant to widen.**
+  - **Symptom:** under 600px the button's fill covered part of the column. The anchor ran
+    60px past it, and the label sat 30px right of center, clipped at the fill's rounded edge.
+    Measured at 390px on premailer-inlined renders of `travel/trip_closed.html`,
+    `project_enhancements/contract_signature_invite.html`,
+    `crm_enhancements/fountain_intake_invite.html` and `travel/trip_changed.html` (the
+    1.549.0 change alert, where it was first seen): fill 158 / 181 / 353 / 197px, anchor 218 /
+    241 / 413 / 257px, label +30px in all four.
+  - **Cause:** the rule was
+    `.ee-btn,.ee-btn table,.ee-btn a{width:100%;display:block;text-align:center}`. But
+    `.ee-btn` *is* the button's `<table>` (`ee.button` has no nested table, so
+    `.ee-btn table` matched nothing). `display:block` on a table drops table layout, so the
+    table box stretched while its cell shrank to fit the label. The anchor then took
+    `width:100%` of that small cell *plus* its inline `padding:12px 30px`, with default
+    `content-box` sizing, which put it 60px wider than the fill and put the label, centered on
+    the anchor, 30px right of the fill's center.
+  - **Fix:** the table stays a table. `.ee-btn` and its `td` both get `width:100%`, so the
+    fill spans the column. The anchor becomes a full-width block with `box-sizing:border-box`,
+    so its padding sits inside the fill and the whole fill is the link. The dead
+    `.ee-btn table` selector is gone.
+  - **Only change the rule.** Adding `box-sizing` alone would have centered the label but left
+    the fill half-width. All four candidate fixes were measured in the browser, and only
+    keeping table layout gives a full-width fill.
+  - **Unaffected:** Outlook's inline fallback, since Word ignores `@media` and the macro's
+    `mso-padding-alt` and the MSO conditional blocks are untouched. Desktop widths too: at
+    1024px the before and after renders are identical.
+  - **Result:** at 390px and 375px the fill and anchor both span the column (354px and 339px)
+    and the label is centered, in the first three emails. The change alert, measured at 390px
+    in its own demo frame, goes from a 197px fill to the full 339px column, label centered.
+    The rule survives premailer unchanged in the sent `@media` block.
+
+### Tests
+
+- **`test_email_design.py`** (147 → 148 tests):
+  `test_the_phone_button_fills_the_column_and_centers_its_label` reads the shell's phone
+  `@media` block. It checks that:
+  - the button table is never `display:block`;
+  - the table and its `td` are `width:100%`;
+  - the anchor is a full-width `display:block` with `box-sizing:border-box` and centered text;
+  - the dead `.ee-btn table` selector does not come back.
+
+  Put back to the old rule, the test fails on the table's `display:block`.
+- `docs/email-design-system.md` now records the trap next to the rest of the responsive
+  rules.
+
 ## [1.549.0] - 2026-09-27
 
 **A booked trip now tells the people a change affects, a past trip can be planned again, and
