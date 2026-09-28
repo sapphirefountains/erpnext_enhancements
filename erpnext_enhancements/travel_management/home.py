@@ -404,7 +404,12 @@ def _receipts(trips, today_date):
 	"""A reminder per trip this person traveled on whose last day *for them* was one to seven
 	days ago, most recent first: someone who left a trip early has their week from the day they
 	got back, not from the day the others do. A Closed trip is not listed at all: it is locked,
-	and its receipts are settled."""
+	and its receipts are settled.
+
+	It says which costs take a receipt, because it shows to every traveler alike: one paid out of
+	pocket or on a company card, never the per diem or mileage (Nik, 2026-09-28: "Meal receipts
+	shouldn't be required if paid by per diem"). "Attach your receipts" alone sent someone owed
+	only per diem looking for meal receipts."""
 	due = []
 	for row in trips:
 		end = row.get("last_day")
@@ -418,7 +423,7 @@ def _receipts(trips, today_date):
 			"trip": row["name"],
 			"purpose": row.get("purpose") or row["name"],
 			"text": _(
-				"Back from {0}? Attach your receipts to the trip within a week of getting back, and accounting will reimburse you."
+				"Back from {0}? Within a week of getting back, attach to the trip the receipt for each cost you paid yourself, and accounting will reimburse you. Attach the receipt for anything you put on a company card too. Per diem and mileage need no receipts."
 			).format(row.get("purpose") or row["name"]),
 		}
 		for _end, row in due

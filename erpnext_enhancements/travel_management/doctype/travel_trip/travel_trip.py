@@ -489,24 +489,71 @@ class TravelTrip(Document):
 			self._warn_unclaimed_on_close()
 
 	def _warn_unclaimed_on_close(self):
-		unclaimed = 0
+		"""A warning for whoever closes the trip while it still shows money owed to someone —
+		never a refusal: closing stays possible, and the close goes ahead.
+
+		Whoever closes it may be a traveler (Completed -> Closed is in
+		EMPLOYEE_ALLOWED_TRANSITIONS), so it says what they need to know. With HRMS, owed means
+		"not yet on an Expense Claim", as it always has. Without it (production, where HRMS
+		cannot be installed: accounting_intake/actions/receipt_expense.py) nothing is ever on a
+		claim, so the claim wording fired on every close and asked for something nobody could
+		make. There it says who is owed, that accounting reimburses them from the trip, how many
+		employee-paid costs still have no receipt, and that a closed trip is a Travel
+		Coordinator's to change (_check_closed_lock), so a receipt added later means asking one
+		to reopen it. Per diem and mileage take no receipt (Nik, 2026-09-28)."""
+		owed = {}  # employee -> amount still owed to them from this trip
+		unreceipted = 0  # employee-paid cost rows with nothing in their Receipt field
 		for fieldname in COST_TABLES:
 			for row in self.get(fieldname):
 				if row.paid_by == "Employee" and not row.expense_claim:
-					unclaimed += flt(row.cost)
+					owed[row.paid_by_traveler] = owed.get(row.paid_by_traveler, 0) + flt(row.cost)
+					if not row.get("attachment"):
+						unreceipted += 1
 		for row in self.mileage:
 			if not row.expense_claim:
-				unclaimed += flt(row.amount)
+				owed[row.traveler] = owed.get(row.traveler, 0) + flt(row.amount)
 		for traveler in self.travelers:
 			if traveler.per_diem_eligible and not traveler.per_diem_claimed:
-				unclaimed += flt(traveler.per_diem_amount)
-		if unclaimed:
+				owed[traveler.employee] = owed.get(traveler.employee, 0) + flt(traveler.per_diem_amount)
+		unclaimed = sum(owed.values())
+		if not unclaimed:
+			return
+		amount = frappe.format_value(unclaimed, {"fieldtype": "Currency"})
+
+		if expense_claims_available():
 			frappe.msgprint(
 				_(
 					"This trip is being closed with {0} of employee-paid costs, per diem or mileage not yet on an Expense Claim."
-				).format(frappe.format_value(unclaimed, {"fieldtype": "Currency"})),
+				).format(amount),
 				indicator="orange",
 			)
+			return
+
+		# Who is owed, in the crew's order; someone owed who is no longer on it comes last.
+		crew = [t.employee for t in self.travelers]
+		names = {t.employee: t.employee_name or t.employee for t in self.travelers}
+		who = [
+			names.get(employee) or employee
+			for employee in sorted(
+				(employee for employee, value in owed.items() if employee and flt(value)),
+				key=lambda employee: crew.index(employee) if employee in crew else len(crew),
+			)
+		]
+		parts = [
+			_(
+				"This trip is being closed while it shows {0} owed to {1} for employee-paid costs, per diem or mileage. Accounting reimburses that from the trip; there is no claim to make."
+			).format(amount, ", ".join(who) if who else _("its travelers"))
+		]
+		if unreceipted == 1:
+			parts.append(_("1 employee-paid cost has no receipt attached yet."))
+		elif unreceipted:
+			parts.append(_("{0} employee-paid costs have no receipt attached yet.").format(unreceipted))
+		parts.append(
+			_(
+				"Only a Travel Coordinator can change a closed trip, so a receipt attached after this means asking one to reopen it. Per diem and mileage need no receipts."
+			)
+		)
+		frappe.msgprint(" ".join(parts), indicator="orange")
 
 	def _check_closed_lock(self):
 		if self._before and self._before.status == "Closed" and not user_is_travel_coordinator():
