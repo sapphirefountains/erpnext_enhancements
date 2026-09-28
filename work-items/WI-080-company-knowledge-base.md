@@ -3,7 +3,7 @@
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (v1 in eight PRs, S to M each; v1.1 M; the training slice S)
 **Blocked by:**
 - Slice 0: nothing.
-- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written on 2026-09-28 and opened as a draft pull request. PR 6a (the three read tools, v1.559.0) was written the same day, stacked on PR 5, and opened as a draft pull request. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
+- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written and merged on 2026-09-28 (v1.558.0). PR 6a (the three read tools, v1.559.0) was written the same day, on top of PR 5, and opened as a draft pull request. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
 - Slice 4: the Google setup.
 - Slice 5: its content trigger.
 
@@ -562,7 +562,7 @@ PR 6b also changes one existing file's shape: `api/knowledge_base.py` (tabs) mov
 
 #### PR 6a: the three read tools [S–M, 1–1.5 d]
 
-Written 2026-09-28 as v1.559.0, stacked on PR 5, and opened as a draft pull request (see "Found while building PR 6a" below).
+Written 2026-09-28 as v1.559.0, on top of PR 5 (which merged the same day), and opened as a draft pull request (see "Found while building PR 6a" below).
 
 **6a.1 `knowledge_base/markdown.py`** (pure; also used by Slice 6)
 

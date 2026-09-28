@@ -949,5 +949,5 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
   a read-only endpoint (WI-080 Slice 6).
 
 **Merging:** PRs 1 to 3 and PR 3's review fixes are live on prod (1.556.1, verified 2026-09-28), and
-PR 4 merged on 2026-09-28 (v1.557.0). Each later PR merges when Nik decides, one at a time, after
-the one before it is verified on prod.
+PR 4 merged on 2026-09-28 (v1.557.0), and so did PR 5 (v1.558.0). Each later PR merges when Nik
+decides, one at a time, after the one before it is verified on prod.
