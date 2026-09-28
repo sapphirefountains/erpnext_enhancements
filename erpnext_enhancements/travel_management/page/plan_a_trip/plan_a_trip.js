@@ -64,10 +64,12 @@
 // drives, flights, stops and freight, every date shifted by the same number of days, and every
 // confirmation number, tracking number, cost and file left behind. It starts the way "Start a
 // new trip" does — a draft of its own, ?new=1 pushed as a new entry — and is not saved until
-// the first Next. Back returns to the copy screen and, like leaving any trip, saves what the
-// server will take, so the copy screen says a copy of that trip was already made (and opens it)
-// rather than let a second one be made without a word. The form's "Copy trip" opens the copy
-// screen for its trip, through frappe.route_options like its other buttons.
+// the first Next. Back returns to the copy screen. A copy nobody has touched is kept unsaved
+// (untouched_copy: Back is an undo, not a trip in Planning) and the copy screen offers to carry
+// on with it; one worked on is saved like any trip left, and the copy screen offers to open it,
+// rather than let a second one be made without a word. Until it is saved, a new First day moves
+// the whole copy (set_first_day). The form's "Copy trip" opens the copy screen for its trip,
+// through frappe.route_options like its other buttons, and reads the trip afresh.
 //
 // TIMES are native <input type="time">, which shows AM/PM on a US browser or phone. A stored
 // time of exactly midnight reads as "no time given": the Datetime column cannot hold a date
@@ -458,6 +460,27 @@ const TP_UNBOOKED = ["Company Fleet", "Personal Vehicle"];
 // sends up to 50, the latest first).
 const TP_COPY_SHOWN = 6;
 
+// Every Date and Datetime the page writes (planner.DATED_FIELDS, the same list; a test holds the
+// two together): what moves when a copy not saved yet gets a new First day (shift_copy).
+const TP_DATED = [
+	"start_date",
+	"end_date",
+	"from_date",
+	"to_date",
+	"departure_time",
+	"arrival_time",
+	"check_in_date",
+	"check_out_date",
+	"pickup_datetime",
+	"arrival_datetime",
+	"return_datetime",
+	"pickup_from",
+	"pickup_to",
+	"delivery_from",
+	"delivery_to",
+	"date",
+];
+
 // A paperwork gap's `check` (completeness.PAPERWORK_CHECK): the quieter tally, counted apart
 // from every other gap (see PAPERWORK in the header).
 const TP_PAPERWORK = "documents";
@@ -550,6 +573,16 @@ function tp_add_days(date, days) {
 	const time = Date.parse(`${date}T00:00:00Z`);
 	if (!date || isNaN(time)) return "";
 	return new Date(time + (Number(days) || 0) * 86400000).toISOString().slice(0, 10);
+}
+
+// A date or datetime ("2026-10-05 07:05:00") moved by `days` whole days, the rest of the text —
+// its time of day — kept character for character: planner.shift_date's rule. Anything that is
+// not a date comes back as it was.
+function tp_shift_date(value, days) {
+	const text = value == null ? "" : String(value);
+	if (!/^\d{4}-\d{2}-\d{2}/.test(text)) return value;
+	const day = tp_add_days(text.slice(0, 10), days);
+	return day ? day + text.slice(10) : value;
 }
 
 // The first Monday-to-Friday day after `date`: where a copied trip starts until someone picks.
@@ -1224,6 +1257,10 @@ class TripPlanner {
 		// so that screen can say one was made already.
 		this.copy = null;
 		this.copies = {};
+		// Each copy's draft id -> the copy as copy_plan made it (serialize), so a copy nobody has
+		// touched yet is known (untouched_copy): Back from it keeps it unsaved rather than making a
+		// trip of it.
+		this.copy_baselines = {};
 		// Another desk page has been shown since this one last routed (on_hide, route()).
 		this.away = false;
 		this.bind_unload();
@@ -1264,7 +1301,17 @@ class TripPlanner {
 		const notice = this.return_notice;
 		this.return_notice = null;
 		const say = notice && mark && mark.pos === notice.pos ? notice.say : null;
-		if (this.state && this.is_dirty() && !this.saving && !this.is_on_screen(args, mark)) {
+		// A copy nobody has touched is not saved on the way out: Back from it is the natural
+		// "undo" (the wrong day, the crew it should not have brought), and saving it would make a
+		// trip in Planning that the crew see on /itinerary and that auto-advance and the reminders
+		// then act on. route() keeps it (keep_current); the copy screen offers to carry on with it.
+		if (
+			this.state &&
+			this.is_dirty() &&
+			!this.saving &&
+			!this.is_on_screen(args, mark) &&
+			!this.untouched_copy()
+		) {
 			this.save({ quiet: true }).then(() => {
 				// Back/Forward again while that saved: the newer entry has its turn instead.
 				if (seq === this.nav_seq) this.route(args, mark);
@@ -1386,8 +1433,11 @@ class TripPlanner {
 			return;
 		}
 		// The copy screen for a past trip: Back from the copy it made, Forward from the list, a
-		// reload of it, the form's "Copy trip".
+		// reload of it, the form's "Copy trip". What was picked on it is kept only for Back/Forward
+		// onto this page's own entry; from outside (the form's button, which may have just saved
+		// the trip, or Back from another page) the trip is read again and the day offered anew.
 		if (args.copy) {
+			if (!mark || away) this.copy = null;
 			this.render_copy(args.copy);
 			return;
 		}
@@ -1822,7 +1872,15 @@ class TripPlanner {
 
 	carry_on(key) {
 		const kept = this.kept[key];
-		if (!kept) return;
+		if (!kept) {
+			// Saved meanwhile: a save that was on its way when Back drew this "Carry on" landed
+			// after it, and save() drops the kept copy once it has a name. Open what it became,
+			// or the button does nothing and invites a second copy.
+			const draft = /^draft:(.+)$/.exec(String(key || ""));
+			const saved = draft && this.drafts[draft[1]];
+			if (saved) this.open_from_landing({ trip: saved });
+			return;
+		}
 		++this.nav_seq;
 		this.view = null;
 		this.view_as = "";
@@ -1951,6 +2009,9 @@ class TripPlanner {
 	open_copy(trip) {
 		if (!trip) return;
 		++this.nav_seq;
+		// A new pick reads the trip afresh: it may have been changed since this page last showed
+		// its copy screen, and the day offered is the next weekday from today, not from then.
+		this.copy = null;
 		this.set_address({ copy: trip }, true);
 		this.render_copy(trip);
 	}
@@ -1958,7 +2019,8 @@ class TripPlanner {
 	// The copy screen for `trip` (see COPY A PAST TRIP in the header). Like the list, it has no
 	// trip of its own on screen: route() has kept the one it replaces, if that needed keeping.
 	// What was picked on it, and the trip it copies, stay while it is the same trip's copy screen,
-	// so Back from the copy it made comes straight back to it as it was.
+	// so Back from the copy it made comes straight back to it as it was. A new pick (open_copy)
+	// and an entry from outside the page (route()) clear them first, so the trip is read afresh.
 	render_copy(trip) {
 		this.state = null;
 		this.draft_id = null;
@@ -2091,8 +2153,10 @@ class TripPlanner {
 		</div>`).appendTo($parent);
 	}
 
-	// Copies of this trip made on this page already: Back from one saves it, as leaving any trip
-	// does, so each is offered here to open rather than let a second one be made without a word.
+	// Copies of this trip made on this page already: Back from one saves it once it has been worked
+	// on, as leaving any trip does, and keeps it unsaved while it is untouched (untouched_copy), so
+	// each is offered here to open or carry on with rather than let a second one be made without a
+	// word. This page's memory only: after a reload the note is gone (see the README).
 	copy_made_note($parent) {
 		const copy = this.copy;
 		Object.keys(this.copies)
@@ -2203,15 +2267,23 @@ class TripPlanner {
 		frappe.utils.scroll_to(0);
 		this.set_address({ new: 1, step: "trip" }, true);
 		frappe.show_alert({
-			message: __("Copied. Check the dates and the crew: it is saved when you press Next."),
+			message: __("Copied, not saved yet. Check the dates and the crew, then press Next to save it as a new trip."),
 			indicator: "blue",
 		});
+		// What the copy left off or changed because someone on the old crew has left
+		// (planner.copy_state), said once, here: nothing else on the page would show it.
+		const notes = (data.state && data.state.notes) || [];
+		if (notes.length) {
+			frappe.msgprint({ title: __("Copied, with notes"), message: notes.map(tp_esc).join("<br>") });
+		}
 	}
 
 	// planner.copy_plan's state: get_plan's shape for a trip not saved yet. Every booking on it is
 	// new, so each card is marked changed in every shared field as new_card marks one (the first
 	// save writes all of it), and the trip is unsaved as a whole: no baseline, so the first Next
-	// saves it even when nothing on it was touched — and so does leaving it, like any new trip.
+	// saves it even when nothing on it was touched. Leaving it saves it too, like any new trip —
+	// once it has been touched: an untouched copy is kept unsaved instead (untouched_copy,
+	// handle_route), so Back is an undo rather than a trip nobody meant to make.
 	// Its notes go with that first save as they were written (payload).
 	adopt_copy(state) {
 		state.travelers = state.travelers || [];
@@ -2227,6 +2299,14 @@ class TripPlanner {
 				// A copy made without the crew: nobody is on this booking yet, and the page will
 				// not save a booking with nobody on it, so it waits for the crew (add_traveler).
 				if (!card.members.length) card.awaiting_crew = true;
+				// A personal drive with a distance and nobody driving: the first save refuses it
+				// ("Say who is driving the personal vehicle") on the first step, where the drive
+				// cannot be reached. The server already gives it to someone still on it
+				// (planner.copy_state); this is the page keeping to the same rule.
+				const mileage = card.mileage;
+				if (mileage && !mileage.driver && flt(mileage.distance) > 0 && card.members.length) {
+					mileage.driver = card.members[0].traveler || "";
+				}
 			});
 		});
 		// The copy's own "new:<n>" keys: a booking added to it here must not take one of them.
@@ -2235,6 +2315,8 @@ class TripPlanner {
 			if (match) this.card_seq = Math.max(this.card_seq, Number(match[1]));
 		});
 		this.baseline = "";
+		// The copy as made, to tell an untouched one (untouched_copy) from one worked on.
+		if (this.draft_id) this.copy_baselines[this.draft_id] = this.serialize();
 	}
 
 	// options: `silent` sets the step without moving (a load before its first draw);
@@ -2640,6 +2722,18 @@ class TripPlanner {
 						Object.keys(this.kept).forEach((key) => {
 							if (this.kept[key].state === saving_state) delete this.kept[key];
 						});
+						// The copy screen drawn meanwhile said this copy was "not saved yet": say
+						// what it is now, with the trip to open.
+						const copy = this.copy;
+						if (
+							!this.state &&
+							copy &&
+							copy.source &&
+							this.copies[draft] === copy.trip &&
+							frappe.utils.get_url_arg("copy") === copy.trip
+						) {
+							this.draw_copy();
+						}
 						return true;
 					}
 					this.adopt(fresh);
@@ -2677,7 +2771,23 @@ class TripPlanner {
 	}
 
 	save_quietly() {
-		if (this.state && this.is_dirty()) this.save({ quiet: true });
+		// Not a copy nobody has touched (handle_route): leaving for another desk page is no more a
+		// reason to make a trip of it than Back is.
+		if (this.state && this.is_dirty() && !this.untouched_copy()) this.save({ quiet: true });
+	}
+
+	// The trip on screen (or `state`, kept under `draft`) is a copy of a past trip that is not
+	// saved yet and is exactly as copy_plan made it: nothing on it was touched.
+	untouched_copy(state, draft) {
+		const s = state || this.state;
+		const id = state ? draft : this.draft_id;
+		const made = id ? this.copy_baselines[id] : undefined;
+		return !!(s && !s.name && made !== undefined && this.serialize(s) === made);
+	}
+
+	// A copy of a past trip, not saved yet (adopt_copy): its dates can still all move together.
+	unsaved_copy() {
+		return !!(this.state && !this.state.name && this.draft_id && this.copies[this.draft_id]);
 	}
 
 	say_problems(problems) {
@@ -3175,9 +3285,8 @@ class TripPlanner {
 		);
 
 		this.input(this.field($grid, __("First day"), true), "date", t.start_date, (v) => {
-			const end = !t.end_date || t.end_date < v ? v : t.end_date;
-			this.move_trip_dates(v, end);
-			$grid.find('input[data-tp="end"]').val(end);
+			this.set_first_day(v);
+			$grid.find('input[data-tp="end"]').val(this.state.trip.end_date);
 		});
 		this.input(
 			this.field($grid, __("Last day"), true),
@@ -3338,6 +3447,42 @@ class TripPlanner {
 		draw();
 	}
 
+	// The trip step's First day. On a copy of a past trip not saved yet, the whole copy moves with
+	// it — the last day, every booking, shipment window, stop and person's own days, by the same
+	// whole days, each time of day kept (planner.shift_date's rule) — because a copy is made on a
+	// day picked before anything else is looked at, and the page's own "Check the dates" invites
+	// exactly this change. Moving only the trip's dates left every booking on the old ones. On any
+	// other trip, bookings stay where they are: they are booked for their own days.
+	set_first_day(value) {
+		const t = this.state.trip;
+		if (this.unsaved_copy() && t.start_date && value) {
+			const days = tp_days_apart(t.start_date, value);
+			if (!isNaN(days)) {
+				this.shift_copy(days);
+				return;
+			}
+		}
+		const end = !t.end_date || t.end_date < value ? value : t.end_date;
+		this.move_trip_dates(value, end);
+	}
+
+	// Every date on the copy on screen moved by `days` whole days (set_first_day).
+	shift_copy(days) {
+		if (!days) return;
+		const s = this.state;
+		const move = (row, fields) =>
+			fields.forEach((field) => {
+				if (row[field]) row[field] = tp_shift_date(row[field], days);
+			});
+		move(s.trip, ["start_date", "end_date"]);
+		s.travelers.forEach((traveler) => move(traveler, ["from_date", "to_date"]));
+		Object.keys(s.bookings).forEach((table) => {
+			this.cards(table).forEach((card) => move(card.values, TP_DATED.filter((field) => field in card.values)));
+		});
+		s.freight.forEach((item) => move(item, TP_DATED.filter((field) => field in item)));
+		s.stops.forEach((stop) => move(stop, ["date"]));
+	}
+
 	move_trip_dates(start, end) {
 		// Travelers who were on the trip's dates follow them. Their stored dates are the old
 		// trip dates (the controller fills blanks), so without this a longer trip would leave
@@ -3412,7 +3557,14 @@ class TripPlanner {
 					this.set_value(card, "paid_by", "Company");
 					this.set_value(card, "paid_by_traveler", "");
 				}
-				if (card.mileage && card.mileage.driver === employee) card.mileage.driver = "";
+				if (card.mileage && card.mileage.driver === employee) {
+					// A drive still waiting for the crew had its driver picked for the office by
+					// add_traveler, never chosen: it goes to the next person on it. Blanked, every
+					// Next on Who's going would be refused ("Say who is driving the personal
+					// vehicle") for a drive on a later step, and ticking the others again does
+					// nothing (they are on the crew already).
+					card.mileage.driver = card.awaiting_crew && card.members.length ? card.members[0].traveler || "" : "";
+				}
 			});
 		});
 		// A shipment they were to receive goes to the whole crew, and one they paid for back to

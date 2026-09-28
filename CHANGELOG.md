@@ -20,6 +20,10 @@ rental, stops and freight on new dates, with every confirmation number and cost 
 trip form has a **Copy trip** button for the same. And `/itinerary` keeps each person's
 itinerary and files on their phone, so confirmation numbers and boarding passes still open in
 airplane mode or at a job site with no signal, and it can be added to the home screen as an app.
+A saved itinerary is shown only to the person it was saved for, and a sign-out on the phone
+deletes it: a cookie of the page's own marks whose it is, where frappe's session cookie could
+not. (An iPhone home-screen app keeps its own cookies apart from Safari, so a sign-out in Safari
+does not reach it: see **Security**.)
 Also fixed: the Time Kiosk's and the Wall Display's service workers deleted every other cache on
 the site whenever they updated. This is PR 4, the last of the four-PR program Nik set out on
 2026-09-26, on top of PR 1 (1.546.0), PR 2 (1.547.0) and PR 3 (1.548.0).
@@ -55,25 +59,54 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
 - **One email per round of edits.** Plan a Trip saves on every step, so each save merges into
   the person's one Pending row. Per field, the earliest "before" and the latest "after" win; a
   field changed back is dropped, a booking added and removed again is dropped, and the row is
-  deleted when nothing is left. A row is sent once its last change is 10 minutes old. Both
-  timestamps are `now_datetime()`, site-local, on both sides: comparing a site-local time with a
-  UTC one is the mistake that broke Turnstile.
+  deleted when nothing is left. A row is sent once its last change is 10 minutes old **and
+  nobody has saved the trip for 10 minutes**: the quiet period is the trip's, not the person's.
+  Timed per person, one walk through Plan a Trip that moved Ann's flight at the start and a stop
+  twelve minutes later (a stop is the whole crew's) sent her two emails, each with the whole
+  calendar. Every timestamp compared is site-local (`now_datetime()`, and the trip's `modified`):
+  comparing a site-local time with a UTC one is the mistake that broke Turnstile.
+- **The same booking under a new key is the same booking.** A row entered on the desk form has no
+  `booking_group`, so its key is its row (`flight:row:<name>`), and the first save from Plan a
+  Trip gives it an id (`normalize_group`): the row, its name and its calendar UID unchanged, its
+  key new. Everyone on it was told "Removed: Flight DL 9" and "Added: Flight DL 9" for a booking
+  nobody touched, the first time the page saved each active trip after the switch was ticked. A
+  row that kept its name and gained a group keeps its key's history, a waiting alert's changes
+  included; and a booking that left under one key and arrived under another with every compared
+  value the same (a whole-crew row replaced by one row each when someone is unticked from it) is
+  paired as well.
+- **A deadlock fails the save instead of being logged.** Detection runs inside the trip's save,
+  and it caught every exception so an alert could never stop a save. But a deadlock has already
+  rolled back the whole transaction, the trip's own UPDATE included: swallowed, the request went
+  on to commit what was left and answered "saved" for a trip the database never took, and the
+  page's next save was refused as out of date. `QueryDeadlockError` and `QueryTimeoutError` are
+  raised now. And the likeliest deadlock is gone: the waiting rows were read with `WHERE trip=…
+  AND status='Pending' FOR UPDATE`, which on the first save of a round matches nothing and under
+  REPEATABLE READ takes a gap lock; two saves of two different trips each took one and then
+  inserted into it. They are now found with a plain read and each locked by its primary key (a
+  record lock, no gap), then read again under the lock, so a row the sender has just claimed is
+  still seen as Sent.
 - **The person who made the change is not told**, but an alert already waiting for them takes
   the change in, so it never states a value that is no longer true. **Someone just added** gets
   the existing "You were added to a trip" email, not an alert. **Someone taken off the trip** gets
   "You are no longer on this trip." and a calendar that cancels everything they had.
-- **The calendar has to replace the old entry, not add a second one.** The UIDs were already
-  stable (`{trip}-{row}@{site}`), but a calendar app that honors SEQUENCE keeps the copy with the
-  higher one, and the invites carried none. Every event in an alert now carries `SEQUENCE`, the
-  trip's last save in seconds since the epoch (`ics.sequence_of`): it only grows, needs nothing
-  stored, and fits a 32-bit integer until 2038. **Every trip email's invite carries it too**
-  (Trip booked, You were added, the itinerary email and its preview, all through
-  `trip_ics_attachment`), because an itinerary email sent after an alert would otherwise carry
-  SEQUENCE 0 and be ignored as older. A booking that is no longer the person's is sent again
-  under its old UID with `STATUS:CANCELLED` and a "Canceled: " summary, for a calendar that
-  ignores STATUS. `build_ics` takes both as optional per-event keys and writes exactly what it
-  always did without them: the CRM hand-off invite shares it, and a test pins the old output as
-  an exact string.
+- **The calendar has to replace the old entry, not add a second one.** The UIDs were already stable
+  (`{trip}-{row}@{site}`), but a calendar app that honors SEQUENCE keeps the copy with the higher
+  one, and the invites carried none. Every event in an alert now carries `SEQUENCE`, the trip's
+  last save in seconds since the epoch (`ics.sequence_of`): it only grows, needs nothing stored,
+  and fits a 32-bit integer until 2038. **Every trip email's invite carries it too** (Trip booked,
+  You were added, the itinerary email and its preview, all through `trip_ics_attachment`), because
+  an itinerary email sent after an alert would otherwise carry SEQUENCE 0 and be ignored as older.
+  A booking that is no longer the person's is sent again under its old UID with `STATUS:CANCELLED`
+  and a "Canceled: " summary, for a calendar that ignores STATUS. **A calendar entry that goes
+  while nothing the person reads changed is still a change**: a whole-crew booking split into one
+  row each keeps every value and changes every row, so every UID. It was dropped, and the ride
+  showed twice once any later invite arrived. It is now a change with no fields and only the
+  cancel, and an email with nothing else to say says "Your calendar was updated." **A cancel is
+  only for an entry the person had when the round of edits began** (`known_uids`, stored with the
+  row): a booking added and then losing its time in the same round was canceled for someone who had
+  never been sent it. `build_ics` takes `sequence` and `status` as optional per-event keys and
+  writes exactly what it always did without them: the CRM hand-off invite shares it, and a test
+  pins the old output as an exact string.
 - **Sent at most once, and never raised.** The sender stamps first, as `reminders.py` does (Sent
   and `sent_at`, commit, then render and deliver), so a run that dies half-way cannot send twice.
   A failure marks the row Failed with a short error and logs "Trip change alert failed". Nothing
@@ -102,6 +135,15 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   row typed on the form for nobody in particular seats the whole new crew, one row each, because
   the page cannot save a booking for nobody. And the copy's checklist is computed for real, so it
   opens asking for the numbers and costs it cleared.
+- **A copy with its crew, where someone has left, could never get past its first step** (found in
+  review). Ann's own drive, room or seat came over with nobody on it, or her drive with a distance
+  and no driver, and the page refuses both on the first Next, where no booking can be reached to
+  fix them: "Bring the same crew" is the default, and the only way out was to copy again without
+  the crew. While anyone is left on the crew, `copy_state` now leaves off a booking that was only
+  for people who have left (seating the rest on it would give each of them a second room or seat),
+  and gives a personal drive whose driver left to the first person still on it. Both are said in
+  the answer's `notes`, which the page shows once ("Copied, with notes"). The page gives a
+  driverless drive with a distance to its first person too.
 - **`keep_crew` is read by `_flag`, not `cint`.** `frappe.call` posts a JavaScript `true` as the
   text "true", and `cint("true")` is 0, so "Bring the same crew" would have left the crew behind
   whenever a caller sent a boolean. The page sends 1 or 0, and the server takes either.
@@ -110,30 +152,67 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   nobody on it, and the booking steps, where people are ticked, come after the first save, so
   Next past *Who's going* was refused for good. Each such card now waits for the crew: whoever is
   ticked goes on every waiting booking, and drives a personal drive that has a distance and no
-  driver. The first save replaces those cards with the server's, which ends it.
-- **Back from a new copy saves it**, because leaving any trip on Plan a Trip saves what the
-  server will take. So the copy screen then says "You made a copy of this trip already" and
-  offers to open it, rather than let a second copy be made without a word. Whether an untouched
-  copy should be dropped on Back instead is a question for Nik.
+  driver. Unticking the person given the drive hands it to the next person on it (without that,
+  one mis-tick brought the same dead end back). The first save replaces those cards with the
+  server's, which ends it.
+- **Back from a copy nobody has touched keeps it unsaved** (found in review; the fixing
+  engineer's call, which Nik can reverse). Back is the natural undo for a copy made on the wrong
+  day, and it saved the copy as a trip in Planning: the crew saw it on `/itinerary` at once, the
+  daily auto-advance moved it to In Progress on its start day, and the pre-travel reminders and
+  the expense nudge then emailed them about a trip that was not happening. An untouched copy
+  (still exactly as `copy_plan` made it) is now kept unsaved on the way out, by Back or by
+  leaving for another desk page, and the copy screen offers "Carry on". A copy that has been
+  worked on is saved on the way out like any trip, and the copy screen offers to open it. Those
+  notes are the page's memory, so after a reload nothing says a copy was made: storing where a
+  copy came from, so a second copy could be asked about, needs a new Travel Trip field and is
+  left for Nik. A save still on its way when Back drew "Carry on" redraws the screen when it
+  lands, and "Carry on" opens the trip it became.
+- **A copy re-dated on the trip step moves with its new first day** (found in review). The copy
+  screen offers the next weekday and the page then says "Check the dates"; a new First day moved
+  the trip's dates and left every flight, room, shipment window and stop on the old ones. While
+  the copy is not saved, a new First day moves the whole copy by the same whole days, each time
+  of day kept, as `shift_date` does (`TP_DATED` is held to `DATED_FIELDS` by a test). Once saved,
+  a new First day moves only the trip's own dates, as it always has. The copy screen also reads
+  the trip afresh on a new pick and on the form's *Copy trip*, rather than showing the first
+  visit's crew and dates and offering a day that may now be past.
 - **Offline, the answers live in IndexedDB and the worker keeps only what the page cannot.** The
   page keeps every `get_trip_itinerary` answer, and saves the person's own upcoming trips ahead;
-  the service worker keeps the page itself and the files. Only a network failure (`fetch`
-  rejecting) shows the saved copy. A 4xx or 5xx is an answer and is handled as it always was, so
-  a refusal is never papered over with an old copy.
+  the service worker keeps the page itself and the files. **The saved copy is drawn when there
+  is no usable answer**: `fetch` rejecting (no signal); the gateway's 502, 503 or 504 while a
+  deploy restarts the site, which the worker already treated as no answer for the page itself
+  (the page showed "Could not load the trip: HTTP 502" under it, on every deploy); a 200 whose
+  body was cut off (drawn as "Invalid Date – Invalid Date" and saved over the good copy); and a
+  stale CSRF token on the page kept from an older session, once one fresh token has been tried.
+  **And after 6 seconds with no answer**, on one bar of signal, where a request can hang for
+  minutes: the request carries on, and its answer replaces the copy where it stands. A refusal
+  (403, 404, 417), frappe's own 500 and any other 4xx are answers, handled as they always were,
+  so a refusal is never papered over with an old copy.
+- **Found in review, and fixed: the first visit on a kiosk phone kept no files.** On a phone with
+  the Time Kiosk's worker at `/`, `navigator.serviceWorker.ready` on the first `/itinerary` visit
+  resolves with the kiosk's registration, the one already active that matches the page. Every
+  message went to `kiosk-sw.js`, which drops what it does not know, so no boarding pass or PDF
+  was kept until a second visit, on the phones of exactly the technicians who travel. The page
+  now keeps the registration `register()` answers with and posts to its newest worker once it
+  runs. **And a `?cmd=` link could replace the kept page**: frappe v16 answers `?cmd=` at any
+  address with JSON before it looks at the path, and the worker kept any 200 at `/itinerary` as
+  the page. It keeps only text/html that frappe marked `X-Page-Name: itinerary`, and lets a
+  `?cmd=` navigation through untouched.
 - **The worker is scoped to `/itinerary`, never `/`.** The kiosk's and the wall's workers are
   registered at `/`, and a registration is keyed by its scope: a second root worker would replace
   the kiosk's, geolocation queue and all, on every technician's phone.
-- **A saved itinerary is shown only to the person it was saved for.** A phone can be shared, and
-  the kept page carries the boot of whoever opened it. The page compares the boot's `user` with
-  the session's `user_id` cookie, and shows nothing saved when it names somebody else or "Guest"
-  (frappe sets it on sign-out as soon as the login page loads). A **missing** cookie is not a
-  sign-out: `user_id` is a session cookie, and a home-screen app started again has dropped it
-  while still signed in. Files are kept per person too, and opening the page as somebody deletes
-  everybody else's saved answers and files.
-- **Only a real answer is kept**: a 200 from this site that was not redirected. A signed-out
-  request goes to `/login`, and the login page kept as "the itinerary" would be worse than
-  nothing. A private file writes an Access Log row each time it is fetched, so a file already
-  kept is not fetched again.
+- **A saved itinerary is shown only to the person it was saved for, and only until they sign
+  out.** A phone can be shared, and the kept page carries the boot of whoever opened it. frappe's
+  `user_id` cookie cannot say who is signed in offline: it is a session cookie, so a home-screen
+  app started again has dropped it whether or not anybody signed out, and "no cookie" has to
+  count as still signed in. Read alone, it left a gap: after a sign-out, the next person to open
+  the app with no signal would have seen the last person's trip. So the page gets a marker of its
+  own that outlives the app and that every sign-out removes (see **Security** below). `user_id`
+  still counts as well: naming somebody else, or "Guest", nothing saved is shown. Files are kept
+  per person too, and opening the page deletes whatever is saved for anybody else.
+- **Only a real answer is kept**: a 200 from this site that was not redirected, and for the page,
+  the page itself (text/html marked `X-Page-Name: itinerary`). A signed-out request goes to
+  `/login`, and the login page kept as "the itinerary" would be worse than nothing. A private file
+  writes an Access Log row each time it is fetched, so a file already kept is not fetched again.
 - **A PDF opens from the phone's copy in a tab the page opens itself.** A link's own new tab is
   outside `/itinerary`, where the worker cannot answer, so offline a PDF tap (and a picture's
   "Open original") opens a tab at the tap and puts the saved copy in it as a blob URL. Pictures
@@ -150,7 +229,8 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   - `record_trip_changes(doc, before)`, called from `notifications.on_trip_update` (its existing
     gates unchanged) on a trip Booked or In Progress on both sides, outside migrate, install,
     patch and import, while `change_alerts_enabled()` (both switches). It never raises: a
-    failure logs "Trip change alert failed" and the trip saves.
+    failure logs "Trip change alert failed" and the trip saves. The one exception is a deadlock
+    or lock timeout, which has already rolled the save back and is raised.
   - `person_records` / `diff_records`: one person's view as `{key: (kind, label, {field:
     display string})}`, keyed `flight:<group>`, `hotel:<group>` (a room's check-in and check-out
     as one), `ground:<group>`, `freight:<group>`, `stop:<row name>` (from the rows, since
@@ -160,12 +240,17 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
     database as a `timedelta` reads the same as the page's "09:30", so an unchanged stop is never
     a change. A CHANGE is `{key, kind, label, label_before, change, fields: [{field, label,
     before, after}]}`, plus `cancel` (the calendar events to cancel) when there are any.
-  - `merge_changes`: the merge rules above. The Pending row is read `for_update`, so a save
-    racing a send starts a new row rather than writing over a Sent one.
+  - `merge_changes`: the merge rules above; a change with no fields is kept while it still
+    cancels a calendar entry. The Pending rows are found with a plain read and each locked by
+    its primary key and read again (`_pending`), so a save racing a send starts a new row rather
+    than writing over a Sent one, with no gap lock. `_group_aliases` and `_paired_keys` keep a
+    re-keyed booking's history, and a deadlock or lock timeout is raised out of the save
+    (`_lost_the_transaction`).
   - `send_due_change_alerts` (hooks.py `scheduler_events.cron` `"*/5 * * * *"`, annotated, a key
     used nowhere else in the dict): every Pending row whose `last_change_at` is at least
     `QUIET_MINUTES` (10) old, oldest first, at most 200 a run. Each row is locked and checked
-    still due. It is **Skipped**, with its reason in `error`, when a switch is off, the trip is
+    still due, and left Pending while the trip itself was saved less than 10 minutes ago. It is
+    **Skipped**, with its reason in `error`, when a switch is off, the trip is
     gone or no longer Booked/In Progress, the person left the trip without a removal notice, or
     they have no email address. Otherwise it is stamped Sent, committed, rendered and delivered
     through `notifications._render` / `_deliver` (a Notification Log row too), and marked
@@ -183,7 +268,8 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   controller `TripChangeAlert`): `trip` (Link Travel Trip, required, indexed, in list view),
   `employee` (Link Employee, required, `ignore_user_permissions`), `employee_name` (fetched),
   `status` (Pending / Sent / Skipped / Failed, default Pending, indexed, in list view),
-  `first_change_at`, `last_change_at`, `sent_at`, `changes` (JSON) and `error`. System Manager
+  `first_change_at`, `last_change_at`, `sent_at`, `changes` (JSON), `known_uids` (JSON, hidden:
+  the calendar UIDs the person had at the round's first change) and `error`. System Manager
   and Travel Coordinator have full access, HR Manager read and report, and Employee none.
 - **Travel Settings → Send Change Alerts** (`change_alerts_enabled`, Check, no default), beside
   *Send Travel Notifications*. Its description says it needs that switch on too.
@@ -211,36 +297,57 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
     trip: …" under it), **Bring the same crew** and **Make the copy**.
   - *Make the copy* starts the trip the way *Start a new trip* does: a draft id of its own and a
     pushed `?new=1&step=trip` entry. The state is adopted as unsaved (`adopt_copy`), so the first
-    Next saves it. Back returns to the copy screen, and Back again to the list. An answer that
-    lands after the page moved on is dropped, and one press makes one copy.
+    Next saves it. Back returns to the copy screen, keeping an untouched copy unsaved
+    (`untouched_copy`), and Back again to the list. An answer that lands after the page moved on
+    is dropped, and one press makes one copy.
+  - While a copy is not saved, a new **First day** moves the whole copy (`set_first_day`,
+    `shift_copy`, `tp_shift_date`, `TP_DATED`).
 - **The trip form's Copy trip button** (`travel_trip.js`, saved trips only): opens the copy
   screen for the trip. A form with unsaved changes is asked to save first.
 - **Offline `/itinerary`**:
   - `www/itinerary-sw.js`, registered by `itinerary.js` as `/itinerary-sw.js?v=<ITIN_BUILD>` with
     scope `/itinerary`, only when `'serviceWorker' in navigator`.
-    - `itinerary-shell-<deploy>` keeps the page under one key whatever its query: network first,
-      and the kept page when there is no answer within 6 seconds, or a 5xx. It also keeps
-      `itinerary.css` / `itinerary.js` at their `?v=` addresses. Install precaches both and
-      fetches the page, so a first visit is enough.
-    - `itinerary-files-<user>` keeps the files the page asks for (at most 40 per message, 150 per
+    - `itinerary-shell-<deploy>` keeps the page under one key whatever its query: network first
+      (the navigation preload's answer, turned on at `activate`), and the kept page when there
+      is no answer within 6 seconds, or a 5xx. Only the page itself is kept as the page
+      (`isThePage`: text/html marked `X-Page-Name: itinerary`), and a `?cmd=` navigation passes
+      through. It also keeps `itinerary.css` / `itinerary.js` at their `?v=` addresses. Install
+      precaches both and fetches the page, so a first visit is enough, for the files too (the
+      page messages the worker it registered, never `serviceWorker.ready`).
+    - `itinerary-files-<key>` keeps the files the page asks for (at most 40 per message, 150 per
       person, none over 25 MB), answering from the network within 4 seconds, else from the kept
-      copy.
-    - Messages: `user` (delete everybody else's files), `cache-files` and `purge`.
+      copy. `<key>` is the person's offline marker, never their email.
+    - Messages: `user` (with the marker: delete every other files cache), `cache-files` and
+      `purge` (every files cache and the kept page). Nothing but a marker names a files cache.
   - In `itinerary.js`:
     - IndexedDB `sapphire-itinerary`, with stores `answers` (keyed `<user>|<trip>|<as>`) and
-      `trips` (the boot's list per user). Every answer is saved.
+      `trips` (the boot's list per user), each entry carrying the offline marker it was saved
+      under. Every answer is saved while the phone holds the marker the page was drawn with.
     - After the first save, the person's own trips in progress or starting within 14 days are
-      saved ahead, one request at a time, and up to 20 of each one's same-origin picture and PDF
-      addresses are handed to the worker.
-    - Pruning removes everybody else's entries, and this person's for trips no longer listed once
-      they are a week old, keeping at most 40.
-    - The banner "You're offline — showing your itinerary as saved <time>." (`role=status`),
-      "Sign in to see your itinerary." for another person's session, and an `online` event that
-      quietly swaps in a fresh answer. None of it writes history.
+      saved ahead, one request at a time (one saved less than an hour ago is not asked for again),
+      and up to 20 of each one's same-origin picture and PDF addresses are handed to the worker.
+    - Pruning removes everything saved under any other marker (everything, when the phone holds
+      none), and this person's entries for trips no longer listed once they are a week old,
+      keeping at most 40.
+    - The banner "You're offline — showing your itinerary as saved <time>." (`role=status`; "The
+      server isn't answering right now — …" for the gateway, "Can't reach the server — …" after 6
+      seconds or for a cut-off body), "Sign in to see your itinerary." with a sign-in link, or
+      "This page was saved for someone else." with a Reload for another person's session, and an
+      `online` event that quietly swaps in a fresh answer, or asks again for a view never saved. A
+      stale CSRF token is replaced once from the page's own address. None of it writes history.
   - `www/itinerary-manifest.json`: "Sapphire Itinerary", `start_url` and `scope` `/itinerary`,
     standalone with `minimal-ui` as the kiosk's has, and the kiosk's Sapphire icons. It is linked
     from `itinerary.html` with an apple-touch-icon.
-  - `itinerary.css`: the offline banner and the "not saved on this phone" note, light and dark.
+  - `itinerary.css`: the offline banner and the "not saved on this phone" note, light and dark,
+    and the refusal's sign-in link or Reload (`.ti-refused`, `.ti-reload`).
+  - **The offline marker**, `travel_management/itinerary_offline.py`: the `ee_itinerary_key`
+    cookie. `www/itinerary.py` sets it (`set_marker`) on every render for a signed-in person and
+    puts the same value in the boot as `offline_key`. The `on_logout` hook (`forget_on_logout`)
+    deletes it on every sign-out, and the `on_login` hook (`forget_on_login`) when anybody else
+    signs in. Offline, a missing or different marker shows "Sign in to see your itinerary.",
+    deletes every saved answer and trip list, and tells the worker to `purge`. A page drawn with
+    another marker than the phone's (the kept page, from before a sign-out) draws neither its
+    trip list nor the person's name until the server answers.
 
 ### Changed
 
@@ -253,11 +360,18 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   trip that came with notes (a copy), `trip_description` goes out on the first save even though
   nobody edited it. Before this it was sent only once edited, and a copy's notes were lost.
 - **`hooks.py` `ignore_links_on_delete`** gains "Trip Change Alert".
+- **`hooks.py` gains `on_logout` and `on_login`** (`itinerary_offline.forget_on_logout` /
+  `forget_on_login`), the app's first. Both run on every sign-in and sign-out of every user, and
+  neither can raise: frappe runs them inside `LoginManager`, where an exception would fail the
+  login or the logout itself.
 - **Docs**: `travel_management/README.md` (Change alerts, Copy a past trip, Offline /itinerary,
   the file map, hooks touchpoints and gotchas), `www/README.md` (the offline design, the worker,
   the manifest, and the kiosk and wall `activate` change), `public/README.md`, `tests/README.md`,
-  `docs/email-design-system.md`, `www/itinerary.py`'s docstring (it said `/itinerary` had no
-  service worker on purpose) and the header comment of `public/js/capture/drafts.js`.
+  `docs/email-design-system.md`, Trip Change Alert's `status` description (the quiet period is
+  the trip's), `www/itinerary.py`'s docstring (it said `/itinerary` had no
+  service worker on purpose; it now describes the marker it sets), `www/itinerary.html`'s header
+  comment, the root `README.md`'s hooks table (`on_logout` / `on_login`), and the header comment
+  of `public/js/capture/drafts.js`.
 
 ### Fixed
 
@@ -268,9 +382,54 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   taken the traveler itinerary's offline copy. Each now deletes only its own older caches (names
   starting `time-kiosk-` / `wall-display-`, other than the current one).
 
+### Security
+
+- **A signed-out phone no longer shows the last person's itinerary offline.** The saved copy was
+  guarded by frappe's `user_id` cookie alone, which is a session cookie: a home-screen app started
+  again has dropped it, so a missing one had to count as still signed in. After a sign-out, the
+  next person to open the app with no signal would have seen the previous person's trip,
+  confirmation numbers and boarding passes included. Found while putting this release together,
+  before it reached a phone.
+- **What the marker is.** `ee_itinerary_key`, set by `www/itinerary.py` on every render for a
+  signed-in person: 30 days from that visit, `Path=/`, `SameSite=Lax`, `Secure` whenever the
+  site is https (the request's scheme, or the site's own address when TLS ends at a proxy), and
+  **not** HttpOnly, because `itinerary.js` must read it with no server to ask. Its value is
+  `HMAC-SHA256(site encryption key, context + user)`: 64 hex characters, the same for one person
+  every time, never their email, and not reversible without the site's key. The worker's files
+  cache is named after it too, so no cache name carries an email any more.
+- **What deletes it.** Every sign-out through frappe (`on_logout`: `/api/method/logout`, which
+  the desk's menu and the website's `/logout` both call, `web_logout` and
+  `/api/v2/method/logout`), and a sign-in as anybody else (`on_login`), because a session that
+  merely expires runs no hook at all: the marker stays with it (it is still that person's phone)
+  until someone else signs in.
+- **What it is not.** Not a credential: the server never reads it to answer anything, so a copied
+  marker opens nothing. Not a lock: anyone with the browser's developer tools can read IndexedDB
+  whatever the cookie says. It is the rule the page follows so the next person to pick up a shared
+  phone is not shown the last one's trip.
+- **What it does not cover.** An **iPhone home-screen app keeps its own cookies apart from
+  Safari**: signing out in Safari leaves the installed app signed in, marker included, online and
+  offline, until someone signs in or out inside the app, and `/itinerary` has no sign-out of its
+  own (it hides frappe's navbar). Android's Chrome-installed app shares Chrome's cookies, so a
+  sign-out in Chrome reaches it. A session ended from elsewhere (a password change's "log out of
+  all sessions", *Logout All Sessions*, a user disabled or deleted, `deny_multiple_sessions`) sends
+  nothing to the phone, which keeps its marker until someone signs in on it. A user disabled or
+  deleted from the desk runs `on_logout` inside the administrator's own request, so it is the
+  administrator's marker that goes: their own saved copy on that browser does not open offline
+  until they next open `/itinerary` with a signal. Signing out with no signal, and clearing cookies
+  by hand, are the browser's business.
+- **A tapped link can no longer replace the offline copy** (found in review). frappe v16 answers
+  `?cmd=` at any address, `/itinerary` included, with JSON before it looks at the path, and the
+  worker kept any 200 at that address as the page: one link, in an email or a chat, and the
+  home-screen app opened offline to a JSON blob instead of the itinerary. Nothing was exposed,
+  but the offline copy was gone until the next online visit. The worker now keeps only the page
+  itself (`X-Page-Name: itinerary`, text/html) and lets `?cmd=` through.
+- **`Path=/`, deliberately.** frappe v16's `CookieManager` takes no path (it sets and deletes at
+  werkzeug's `/`), so a cookie set at `/itinerary` could never be deleted through it, and the
+  logout and login requests that have to see it are not under `/itinerary`.
+
 ### Tests
 
-- **`tests/test_trip_change_alerts.py`** (new, 60 tests, bench-free `unittest`, own `frappe` stub
+- **`tests/test_trip_change_alerts.py`** (new, 76 tests, bench-free `unittest`, own `frappe` stub
   in `setUpModule` and a stand-in `email_style`, **its own CI step**):
   - Detection per kind: a flight's time, a confirmation number that goes only to its owner, a
     booking added, one removed and canceled, someone taken off the trip, a stop that changes for
@@ -292,29 +451,60 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
     DocType and its controller class name.
   - Its base class fails any test that logs an unexpected error, so a "no alert" test cannot pass
     on code that crashed.
-- **`tests/test_itinerary_service_worker.py`** (new, 39 tests, its own CI step):
-  - 32 static checks over the comment-stripped worker: scope `/itinerary`, `itinerary-` caches,
-    `activate` deleting only its own old shells, files per person and the others purged, only a
-    200 from this site that was not redirected kept, same-origin addresses only, clones before a
-    put, and no double brace or Jinja tag in the worker or the manifest, neither with a
-    controller.
+  - From the review (each mutation-checked): a booking entered on the form and given an id by the
+    page's first save tells nobody about it, and a waiting change follows it to its new key; a
+    whole-crew row split into one row each is a calendar-only change that cancels the old entry
+    ("Your calendar was updated."); taken off a booking and put back still cancels the old row;
+    an entry made and lost inside one round is not canceled, and the round remembers what the
+    person had; one walk through the steps over 12 minutes is one email, and an alert waits
+    while the trip is being saved; a deadlock or lock timeout fails the save; the waiting rows
+    are locked one by one, never by a range; and a row the sender claimed meanwhile is not
+    written over. `test_a_failure_never_stops_the_save` now breaks `get_all`, which `_pending`
+    reads, instead of `get_values`.
+- **`tests/test_itinerary_service_worker.py`** (new, 49 tests, its own CI step):
+  - Static checks over the comment-stripped worker: scope `/itinerary`, `itinerary-` caches,
+    `activate` deleting only its own old shells, files per person under their marker and the
+    others purged (only a 64-hex-character key names a files cache), only a 200 from this site
+    that was not redirected kept, same-origin addresses only, clones before a put, and no double
+    brace or Jinja tag in the worker or the manifest, neither with a controller.
   - The precache list against `itinerary.html`, and the manifest's name, scope and icons.
-  - What `itinerary.js` promises: one guarded way into IndexedDB, offline only when `fetch`
-    fails, another person's copy never shown, and no history written.
-  - 7 that run the worker in node over a stand-in Cache Storage and network.
+  - What `itinerary.js` promises: one guarded way into IndexedDB, the saved copy only when there is
+    no usable answer (and a refusal, a plain 500 or a 4xx never marked so), messages only to the
+    worker it registered (never `serviceWorker.ready`), another person's copy never shown, a copy
+    saved under the offline marker and shown only while the phone holds it (checked before anything
+    else), a missing or different marker deleting everything, a kept page's boot not drawn before
+    an answer, no cookie ever written by the page, and no history written.
+  - 10 that run the worker in node over a stand-in Cache Storage and network, one of them that an
+    email, Guest or the old `user` field touches no files cache, one that a `?cmd=` navigation
+    passes through and a 200 that is not the page is never kept, and one that a navigation
+    preload's answer is used and kept. Only the page itself is kept (`isThePage`), and the
+    navigation preload is turned on and always settled.
 - **`tests/test_kiosk_service_worker.py`**: 16 to 19 tests (`TestActivateDeletesOnlyItsOwnCaches`
   for both workers).
 - **`tests/test_travel_ics.py`** (pytest): 17 to 24 tests. `build_ics` without the new keys is
   byte-identical (an exact string); SEQUENCE comes after DTSTAMP and STATUS last; sequence 0 is
   written; `sequence_of`, the attachment's SEQUENCE and `event_uid`.
-- **`tests/test_travel_planner.py`**: 156 to 178 tests.
+- **`tests/test_travel_planner.py`**: 156 to 192 tests.
+  - `TestItineraryOfflineMarker` (8): `itinerary_offline.py` run from its source over a stand-in
+    `frappe` whose cookie manager has v16's exact signature (so a `path` keyword would fail): a
+    keyed hash, never the email and not its plain hash; the cookie the page can read (not
+    HttpOnly, Lax, 30 days) at `/`; Secure on https and behind a TLS proxy, not on plain http;
+    none for a guest, outside a request or without a key; `on_logout` always deleting it;
+    `on_login` deleting somebody else's, Guest's and one it cannot check, keeping the person's
+    own, and sending nothing when there is none; and neither hook able to raise.
+  - `itinerary.py`'s real `get_context` (3): the marker set for the signed-in person and in the
+    boot, never for a guest (who is still sent to log in with the trip kept), and `""` carried
+    through when it cannot be made.
   - `TestCopyATrip` (16):
     - Dates moved across month and year ends, leap days and a daylight-saving change, midnight
       kept, and `DATED_FIELDS` against every Date/Datetime the page writes.
     - Everything the old bookings were left behind, and no nonzero cost anywhere in the state;
       the job's pattern carried over.
     - The same people on the same bookings, departed staff dropped and whole-crew rows seated per
-      person; no crew; the copy's gaps.
+      person; no crew; the copy's gaps. For every set of people still able to travel, a copy with
+      its crew has no booking with nobody on it and no drive with a distance and no driver, and
+      says what it left off; a drive whose driver left goes to someone still on it; and the page's
+      `TP_DATED` is the same list as `DATED_FIELDS` (from the review).
     - The first save through `apply_plan` with the page's payload sent through JSON: new
       12-character booking ids, no numbers or costs, the guest's own nights, a new mileage row.
     - The permission checks, the endpoint's answer, `keep_crew` as the desk posts it, the list's
@@ -327,7 +517,7 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   - **Pins changed on purpose**: `test_every_method_the_page_calls_is_whitelisted` now expects
     `get_copyable_trips` and `copy_plan`, and `test_a_views_address_keeps_one_key_order` also
     asserts `{ new: 1, step: step }`.
-- **`scripts/test_wizard_back_forward.mjs`**: Plan a Trip 62 to 68 tests (89 with the Visit
+- **`scripts/test_wizard_back_forward.mjs`**: Plan a Trip 62 to 74 tests (95 with the Visit
   Wizard's), and a fake server that answers `get_copyable_trips` and `copy_plan`.
   - List → copy screen → copy → Back → copy screen → Back → list, and Forward back again.
   - A reload of `?copy=`, and the first Next's save with the draft's marks.
@@ -336,13 +526,42 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
   - The copy without the crew kept unsaved and carried on, then **saved once people are ticked**
     (added while putting the release together).
   - The list section.
-- **`scripts/test_web_flow_history.js`**: 413 to 457 checks. The "/itinerary offline" section uses
-  a fake IndexedDB and service worker: every answer saved with the boot's trip list, the person's
-  upcoming trips saved ahead once a page load and their files handed to the worker, the saved
-  copy drawn on a network failure only and with no history call, back online replacing it
-  quietly, a PDF opened from the saved copy, the other-user refusal, and nothing at all happening
-  without IndexedDB or a service worker.
-- Nothing ran against a real bench, a real mail server, a real calendar app or a real phone.
+  - From the review (each mutation-checked): Back from an untouched copy makes no trip, and
+    Forward, Carry on and leaving for another page keep it unsaved until Next; a copy re-dated on
+    the trip step moves its bookings, stops and shipment with it, a saved trip's do not; a copy
+    whose server answer left someone off reaches step 1, with its notes said; unticking the
+    person given a waiting drive hands it on; the copy screen reads the trip again on a new pick
+    and on the form's Copy trip; and Back during a copy's first save redraws the screen and
+    Carry on opens the trip. The first test now edits the copy before Back, since an untouched
+    one is no longer saved.
+- **`scripts/test_web_flow_history.js`**: 413 to 513 checks. The "/itinerary offline" section uses
+  a fake IndexedDB and service worker: every answer saved with the boot's trip list under the
+  offline marker, the person's upcoming trips saved ahead once a page load and their files handed
+  to the worker under the marker, the saved copy drawn on a network failure only and with no
+  history call, back online replacing it quietly, a PDF opened from the saved copy, the
+  other-user refusal, and nothing at all happening without IndexedDB or a service worker. The
+  marker: a session that ran out keeps the copy for its person; a sign-out (marker gone), the
+  home-screen app started again with neither cookie, and somebody else's marker each show nothing
+  of the kept page's boot, refuse offline and delete everything; the same in another tab; online,
+  a page without the marker draws as ever once answered but saves nothing, and an answer saying
+  nobody is signed in refuses it; pruning by marker; and a boot with no marker saving nothing.
+  From the review, "/itinerary offline: no usable answer" (each fix mutation-checked): a 200 cut
+  off, or naming no trip, draws the saved copy and never saves over it; a 502, 503 or 504 draws
+  it, frappe's own 500 does not; one bar of signal draws it after 6 seconds and the late answer
+  replaces it; "Me" offline keeps the saved default view, another person's view never falls back
+  to it; a view never saved says so in place of "Loading trip…" and is asked again online; a
+  kiosk phone's first visit sends nothing to the kiosk's worker; a stale CSRF token is replaced
+  once and asked with once; a refusal lifts when the session answers again; and a map that fails
+  offline is tried again. Four existing checks change on purpose: a page for Pat with Sam signed
+  in says "This page was saved for someone else." with a Reload, a boot with no marker offline
+  says it is offline rather than "Sign in", and two sequences no longer answer a save-ahead
+  request for a trip saved within the hour.
+- **`tests/test_hooks_integrity.py`**: 11 to 13 tests (`TestLoginAndLogoutHooks`): both hooks
+  registered with their targets, each taking `login_manager` and wrapped whole in a `try` that
+  catches `Exception`. `test_hook_targets_resolve` resolves both paths.
+- Nothing ran against a real bench, a real mail server, a real calendar app or a real phone. The
+  marker cookie was set and deleted through a stand-in with v16's `CookieManager` signature, not
+  by a real frappe response, and its hooks were not run by a real `LoginManager`.
   The alert email was rendered with the real Jinja template from stub data. The copy's round
   trip ran `copy_plan` → the page's payload → `apply_plan` under the planner test stub, with and
   without the crew. The worker ran in node over a stand-in Cache Storage.
@@ -356,32 +575,54 @@ the site whenever they updated. This is PR 4, the last of the four-PR program Ni
    2026-09-27): travel notifications are already on and the Kapture trip is In Progress. From the
    moment it is ticked, an edit to that trip's flights, rooms, rides, shipments or stops emails
    the crew members it affects, 10 minutes after the last edit. Tell the travel desk first.
-3. With it ticked, edit a **Booked** trip as someone who is not on its crew: move a flight's
-   departure time. A **Trip Change Alert** row (search the desk for "Trip Change Alert"; it is
-   not on the Travel workspace) appears for each person on that flight with status Pending.
-   After 10 to 15 minutes it reads Sent, and the email arrives: "Trip update: …",
-   the flight with "Departs: <old> → <new>", and a calendar file. Open the file on a phone that
-   already has the trip in its calendar: the event should move, not duplicate. If a row reads
-   Failed, its `error` and the Error Log ("Trip change alert failed") say why; set it back to
-   Pending to send it again.
-4. Take someone off that trip: their alert says "You are no longer on this trip." and its
-   calendar file cancels their events.
+3. **Test on a throwaway trip, never on Kapture or any other real Booked or In Progress trip.**
+   An edit to a real trip emails its real crew a change that is not true and moves the event in
+   their calendars, and step 4 takes a real traveler's confirmation numbers for good. Make a
+   test trip whose crew is only people who agreed to get test mail: your own Employee and one
+   consenting colleague, or two Active test Employees whose preferred email is yours. Move it to
+   **Booked** (that crew gets "Trip booked"). Then, **as a user who is not linked to any Employee
+   on that trip** (the person who makes a change is not told of it), move a flight's departure
+   time. A **Trip Change Alert** row (search the desk for "Trip Change Alert"; it is not on the
+   Travel workspace) appears for each person on that flight with status Pending. About 10 to 15
+   minutes after the last edit to the trip it reads Sent, and the email arrives: "Trip update:
+   …", the flight with "Departs: <old> → <new>", and a calendar file. Open the file on a phone
+   that already has the trip in its calendar: the event should move, not duplicate. If a row
+   reads Failed, its `error` and the Error Log ("Trip change alert failed") say why; set it back
+   to Pending to send it again.
+4. Take the second person off **that test trip** (never a real traveler: Plan a Trip strips
+   their confirmation numbers, and ticking them again brings none back): their alert says "You
+   are no longer on this trip." and its calendar file cancels their events. Afterwards delete the
+   test trip (`ignore_links_on_delete` lets it go, and any alert left is Skipped) and remove the
+   test events from the phone's calendar.
 5. On Plan a Trip's list, **Copy a past trip** → pick one → a new start date → *Make the copy*.
    Check that the dates moved with the times of day kept, and that no confirmation number,
-   tracking number or cost came over; press Next to save it. Try the trip form's **Copy trip**
-   too, and a copy with *Bring the same crew* unticked: tick people on *Who's going*, and Next
-   saves it.
-6. **Install `/itinerary` to a phone's home screen** (iPhone: Share → Add to Home Screen;
-   Android: the browser's Install app). Open a trip with a boarding pass and a PDF while online
-   and wait a few seconds. Then turn on **airplane mode** and open the app again: the trip shows
-   under "You're offline — showing your itinerary as saved …" with its confirmation numbers, and
-   the boarding pass picture opens. Tap the PDF too: opening a PDF offline from an iPhone
-   home-screen app has **not** been tested and may not work. "Report a problem" and the maps need
-   a connection.
-7. On a phone that also runs the **Time Kiosk**, open `/kiosk` after the deploy: it should load
+   tracking number or cost came over. Change the First day on the trip step: every booking moves
+   with it. Press Back: no trip is made, and the copy screen offers to carry on. Carry on, press
+   Next to save it, and delete it afterwards if it was only a test (it is a real trip in
+   Planning, which the crew see on `/itinerary`). Try the trip form's **Copy trip** too, and a
+   copy with *Bring the same crew* unticked: tick people on *Who's going*, and Next saves it.
+6. **Install `/itinerary` to a phone's home screen** (iPhone: Share → Add to Home Screen; Android:
+   the browser's Install app). Open a trip **you are on** (not one marked "Not traveling") that is
+   **in progress or starts within 14 days**, with a boarding pass and a PDF, while online, and keep
+   the app open a few seconds after it loads: only those trips' pictures and PDFs (up to 20 each)
+   are kept. Any other trip's text still shows offline, but its files say "This file isn't saved on
+   this phone." Then turn on **airplane mode** and open the app again: the trip shows under "You're
+   offline — showing your itinerary as saved …" with its confirmation numbers, and the boarding
+   pass picture opens. Tap the PDF too: opening a PDF offline from an iPhone home-screen app has
+   **not** been tested and may not work. "Report a problem" and the maps need a connection.
+7. **Sign out, and check the phone shows nothing. On Android**: the Chrome-installed app shares
+   Chrome's cookies. On an iPhone this cannot be done as written: the home-screen app keeps its own
+   cookies apart from Safari, a sign-out in Safari does not reach it, and the app has no sign-out
+   of its own (see **Security**). On the Android phone, with a signal, open the installed app once,
+   then sign out in Chrome (the desk's menu → *Log out*, or `/logout`). Turn on airplane mode and
+   open the app again: it should say "Sign in to see your itinerary." and show neither the trip
+   list nor your name. Sign in again with a signal and open the app once: the next airplane-mode
+   open shows the trip again. (A session that just runs out does not do this: that phone keeps
+   showing its person's trip, until somebody else signs in on it.)
+8. On a phone that also runs the **Time Kiosk**, open `/kiosk` after the deploy: it should load
    and clock in as before (its worker updates itself), and `/itinerary` should still open offline
    afterwards.
-8. Expect **Access Log** rows for private files: each phone fetches up to 20 files per upcoming
+9. Expect **Access Log** rows for private files: each phone fetches up to 20 files per upcoming
    trip once, as the person's own session, to keep them.
 
 ## [1.548.0] - 2026-09-27

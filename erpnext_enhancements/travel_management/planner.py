@@ -1190,7 +1190,12 @@ def copy_state(state, start_date, keep_crew=True, active=None):
 			shipment goes to the whole crew and a personal drive has no driver.
 		active: the employees who can still travel (the active ones). Anyone else on the old
 			crew is left off, and off every booking: the page's crew step lists only active
-			employees, so it could not take them off. None keeps everyone.
+			employees, so it could not take them off. None keeps everyone. While anyone is
+			left on the crew, a booking that was only for people left off is dropped, and a
+			personal drive whose driver was left off is driven by the first person still on
+			it: the page refuses either on its first step, where neither can be reached, so the
+			copy could never be saved. Both are said in ``notes``. With nobody left on the crew
+			the bookings wait for the people ticked, as without ``keep_crew``.
 	"""
 	source = state.get("trip") or {}
 	first = to_date(source.get("start_date"))
@@ -1229,13 +1234,46 @@ def copy_state(state, start_date, keep_crew=True, active=None):
 		count += 1
 		return f"new:{count}"
 
-	bookings = {
-		table: [
-			_copy_card(card, table, new_key(), days, crew)
-			for card in (state.get("bookings") or {}).get(table) or []
-		]
-		for table in BOOKING_TABLES
+	names = {
+		person.get("employee"): person.get("employee_name") or person.get("employee")
+		for person in state.get("travelers") or []
 	}
+	notes = []
+	bookings = {}
+	for table in BOOKING_TABLES:
+		bookings[table] = []
+		for card in (state.get("bookings") or {}).get(table) or []:
+			copied = _copy_card(card, table, None, days, crew)
+			if crew:
+				if not copied["members"]:
+					# Booked only for people who have left. The page would refuse it ("Every booking
+					# needs at least one person ticked") on its first step, where no booking can be
+					# reached to fix it — the copy could never be saved — and seating the rest of
+					# the crew on it would give each of them a second room or a second seat.
+					left = [
+						names.get(m.get("traveler")) or m.get("traveler") for m in card.get("members") or []
+					]
+					notes.append(
+						_("{0} was only for {1}, who can no longer travel, so it is not on the copy.").format(
+							_copy_label(table, copied["values"]), ", ".join(x for x in left if x)
+						)
+					)
+					continue
+				mileage = copied.get("mileage")
+				if mileage and not mileage["driver"] and mileage["distance"] > 0:
+					# A personal drive whose driver has left: the page refuses a distance with no
+					# driver ("Say who is driving the personal vehicle"), and the drive is on a step
+					# behind that refusal. The first person still on it drives, and the office is
+					# told so.
+					mileage["driver"] = copied["members"][0]["traveler"]
+					notes.append(
+						_("{0} now drives on {1}: whoever drove it before can no longer travel.").format(
+							names.get(mileage["driver"]) or mileage["driver"],
+							_copy_label(table, copied["values"], lower=True),
+						)
+					)
+			copied["group"] = new_key()
+			bookings[table].append(copied)
 
 	freight = []
 	for shipment in state.get("freight") or []:
@@ -1275,9 +1313,25 @@ def copy_state(state, start_date, keep_crew=True, active=None):
 		"freight": freight,
 		"stops": stops,
 		"documents": [],
+		# What the copy left off or changed because someone on the old crew has left, for the
+		# page's "Copied" message. Not part of the trip: it is never sent back.
+		"notes": notes,
 	}
 	copy["gaps"] = find_gaps(_as_rows(copy))
 	return copy
+
+
+def _copy_label(table, values, lower=False):
+	"""A booking of a copy in words: "The flight Delta DL 9", "The room at Hilton", "The Personal
+	Vehicle drive" (``lower``: "the …", inside a sentence)."""
+	name = booking_label(table, values)
+	if table == "flights":
+		text = _("The flight {0}").format(name) if name else _("A flight")
+	elif table == "accommodations":
+		text = _("The room at {0}").format(name) if name else _("A room")
+	else:
+		text = _("The {0} drive").format(name) if name else _("A drive")
+	return text[:1].lower() + text[1:] if lower else text
 
 
 # --------------------------------------------------------------------------- endpoints

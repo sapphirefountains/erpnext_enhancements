@@ -35,18 +35,38 @@ existing dispatcher, not this. The person who made the change is not told about 
 alert is started for them, but one already waiting for them takes the change in, so it
 never reports a value that is no longer true.
 
+**The same booking under a new key is the same booking.** A row entered on the desk form has
+no ``booking_group``, so it is keyed by its row (``flight:row:<name>``), and the first save
+from Plan a Trip gives it an id (``planner.normalize_group``): same row, new key. Without
+help the person would be told "Removed: Flight DL 9" and "Added: Flight DL 9" for a booking
+nobody touched. So a row that kept its name and gained a group keeps its key's history
+(:func:`_group_aliases`), and a booking that left under one key and came back under another
+with every compared value the same — a row replaced by an identical one, as Plan a Trip does
+when someone is unticked from a whole-crew booking — is paired too (:func:`_paired_keys`).
+
 **One email per round of edits.** Plan a Trip saves on every step, so each save *merges*
 into the person's one Pending **Trip Change Alert** (:func:`merge_changes`): per field the
 earliest "before" and the latest "after"; a field changed back drops out; a booking added
 and removed again drops out; the row is deleted when nothing is left. The scheduler
 (:func:`send_due_change_alerts`, every 5 minutes, hooks.py) sends a row once its last change
-is :data:`QUIET_MINUTES` old. Times are ``frappe.utils.now_datetime()`` (site-local) on both
-sides, so the comparison is like for like.
+is :data:`QUIET_MINUTES` old **and the trip itself has not been saved for as long**: the
+quiet period is the trip's, not the person's, so a walk through Plan a Trip that touches
+Ann's flight at the start and the schedule twelve minutes later is still one email to her.
+Times are ``frappe.utils.now_datetime()`` (site-local) on both sides, and so is the trip's
+``modified``, so the comparison is like for like.
 
 **Re-drivable.** The rows are in the database, not a queued job, because the prod deploy
 FLUSHDBs the job queue: a deploy in the middle loses nothing, and the next run sends what is
 due. The before-state exists only inside the save, which is why detection runs there, in the
 save's transaction (a refused save records nothing), and why nothing is enqueued.
+
+**Never a hidden lost save.** Detection never raises into a save — except for a deadlock or a
+lock timeout. Those have already rolled back the whole transaction, the trip's own UPDATE
+included, so swallowing one would let the request commit what is left and report the trip
+saved when it is not. They are raised, and the save fails where it can be retried. The
+waiting rows are found with a plain read and each locked by its primary key (a record lock,
+no gap lock), then read again under that lock: two saves of two different trips never lock
+the same index gap, and a row the sender has just claimed is seen as Sent.
 
 **Stamp first.** A row is marked Sent and committed before its email is built, as
 ``reminders.py`` does: at most once, even if the run dies half-way. A failure marks it
@@ -58,6 +78,17 @@ status are checked again at send time; a row that no longer applies is Skipped.
 the trip's last save, in seconds), so a calendar app replaces the entries it has under the
 same UIDs, and each booking that is no longer theirs under its old UID with
 ``STATUS:CANCELLED`` (the event as it was is kept on the change, ``cancel``).
+
+A calendar entry can go while nothing the person reads changed: a whole-crew booking split
+into one row each keeps every value and changes every row, and so every UID. That is still
+a change to their calendar (the old entry would sit next to the new one), so it is kept as a
+change with no fields and only ``cancel``, and an email with nothing else to say says "Your
+calendar was updated." A cancel is only ever for an entry the person had when the round of
+edits began (``known_uids``, stored with the row): an entry made and lost inside one round
+never reached them, and canceling it would put a "Canceled: …" event in a calendar that
+ignores STATUS. What this cannot know is an entry they never received at all — one they
+added themselves, or one added while change alerts were off — so removing one of those still
+sends its cancel (README, "Known gaps").
 """
 
 import json
@@ -96,6 +127,9 @@ QUIET_MINUTES = 10
 SEND_LIMIT = 200
 
 TEMPLATE = "trip_changed.html"
+
+#: The heading of an alert whose only change is a calendar entry replaced (:func:`alert_sections`).
+CALENDAR_ONLY = "Your calendar was updated."
 
 #: The order the email lists changes in.
 KIND_ORDER = ("trip", "flight", "hotel", "ground", "freight", "stop")
@@ -438,9 +472,11 @@ def merge_changes(existing, incoming):
 	"""One person's waiting changes with a new save's: what the email will say.
 
 	Per field, the earliest "before" and the latest "after"; a field whose two are equal again
-	(changed back) is dropped; so is a ``changed`` CHANGE with no field left, and a booking
-	added and then removed in the same round (it never reached anyone). A booking removed and
-	then added again is ``changed``, compared across the two. Canceled calendar events
+	(changed back) is dropped; so is a ``changed`` CHANGE with no field left and no calendar
+	entry to cancel, and a booking added and then removed in the same round (it never reached
+	anyone). A booking removed and then added again is ``changed``, compared across the two,
+	and kept while it still cancels the old entry even when every field is back as it was:
+	the person's calendar still holds that entry under its old UID. Canceled calendar events
 	(``cancel``) are kept, one per UID."""
 	merged = [_copy(change) for change in existing or []]
 	index = {change["key"]: i for i, change in enumerate(merged)}
@@ -489,7 +525,7 @@ def merge_changes(existing, incoming):
 		if change is None:
 			continue
 		change["fields"] = [f for f in change["fields"] if f["before"] != f["after"]]
-		if change["change"] == "changed" and not change["fields"]:
+		if change["change"] == "changed" and not change["fields"] and not change.get("cancel"):
 			continue
 		result.append(change)
 	return result
@@ -531,11 +567,22 @@ def _cancel_entry(event):
 	return entry
 
 
-def _attach_cancels(changes, before, before_row, doc, after_row, address_text):
+def _attach_cancels(
+	changes, before, before_row, doc, after_row, address_text, aliases=None, known=None, labels=None
+):
 	"""Put each calendar event this person had before the save and has no longer on the
-	CHANGE it belongs to (``cancel``), so the alert can cancel it under the same UID."""
+	CHANGE it belongs to (``cancel``), so the alert can cancel it under the same UID.
+
+	An event whose booking has no CHANGE — the booking reads the same, but its row, and so its
+	UID, was replaced — gets a CHANGE of its own with no fields, only the cancel: without it
+	the person's calendar keeps the old entry beside the new one. ``known``, when given, is
+	the set of UIDs the person had when this round of edits began; an event outside it was
+	made and lost inside the round and never reached them, so it is not canceled. ``aliases``
+	as :func:`_rekey`'s; ``labels`` ``{key: label}`` for a CHANGE made here.
+
+	Returns the UIDs the person had before the save."""
 	if before_row is None:
-		return
+		return set()
 	now = (
 		{event["uid"] for event in trip_events_for_traveler(doc, after_row, address_text)}
 		if after_row is not None
@@ -543,12 +590,88 @@ def _attach_cancels(changes, before, before_row, doc, after_row, address_text):
 	)
 	keys = _uid_keys(before, before_row)
 	by_key = {change["key"]: change for change in changes}
+	had = set()
 	for event in trip_events_for_traveler(before, before_row, address_text):
+		had.add(event["uid"])
 		if event["uid"] in now:
 			continue
-		change = by_key.get(keys.get(event["uid"]))
-		if change is not None:
-			change.setdefault("cancel", []).append(_cancel_entry(event))
+		if known is not None and event["uid"] not in known:
+			continue
+		key = keys.get(event["uid"])
+		key = _rekey(key, aliases) if key else f"calendar:{event['uid']}"
+		change = by_key.get(key)
+		if change is None:
+			label = (labels or {}).get(key) or event.get("summary") or ""
+			change = {
+				"key": key,
+				"kind": key.split(":", 1)[0],
+				"label": label,
+				"label_before": label,
+				"change": "changed",
+				"fields": [],
+			}
+			changes.append(change)
+			by_key[key] = change
+		change.setdefault("cancel", []).append(_cancel_entry(event))
+	return had
+
+
+# --------------------------------------------------------------- the same booking, a new key
+
+
+def _group_aliases(before, doc):
+	"""``{"<kind>:row:<name>": "<kind>:<group>"}`` for every booking row that was keyed by its
+	row before this save (entered on the desk form: no ``booking_group``) and has a group now.
+	Plan a Trip gives every such row an id the first time it saves the trip
+	(``planner.normalize_group``, ``merge_freight``), and the row, its name and its calendar
+	UID are unchanged: the same booking under a new key."""
+	aliases = {}
+	for table, kind in _EVENT_TABLES:
+		was = {row.get("name"): row for row in before.get(table) or [] if row.get("name")}
+		for row in doc.get(table) or []:
+			old = was.get(row.get("name"))
+			group = row.get("booking_group")
+			if old is None or old.get("booking_group") or not group:
+				continue
+			aliases[f"{kind}:row:{row.get('name')}"] = f"{kind}:{group}"
+	return aliases
+
+
+def _rekey(key, aliases):
+	"""``key`` under its new name, ``#n`` suffix kept (:func:`_put`)."""
+	if not aliases or not key:
+		return key
+	if key in aliases:
+		return aliases[key]
+	base, sep, suffix = key.partition("#")
+	return aliases.get(base, base) + sep + suffix
+
+
+def _rekeyed(records, aliases):
+	"""``records`` (:func:`person_records`) with each key under its new name."""
+	if not aliases:
+		return records
+	out = {}
+	for key, record in records.items():
+		_put(out, _rekey(key, aliases), *record)
+	return out
+
+
+def _paired_keys(before, after):
+	"""``{old key: new key}`` for a booking that left under one key and arrived under another
+	with every compared value the same: to the person it is the booking they had. Plan a Trip
+	does this when someone is unticked from a whole-crew booking entered on the form — the rest
+	get a row each, under a new group, with the same details. Paired one to one, in order."""
+	arrived = [key for key in after if key not in before]
+	pairs = {}
+	for key, (kind, _label, values) in before.items():
+		if key in after:
+			continue
+		match = next((new for new in arrived if after[new][0] == kind and after[new][2] == values), None)
+		if match is not None:
+			pairs[key] = match
+			arrived.remove(match)
+	return pairs
 
 
 # --------------------------------------------------------------- detection
@@ -557,7 +680,8 @@ def _attach_cancels(changes, before, before_row, doc, after_row, address_text):
 def record_trip_changes(doc, before):
 	"""Travel Trip ``on_update`` (via ``notifications.on_trip_update``): record what this save
 	changed for each person as their Pending Trip Change Alert. Never raises: a change alert
-	must not stop a trip from saving."""
+	must not stop a trip from saving — except a deadlock or lock timeout, which has already
+	rolled the save back (:func:`_lost_the_transaction`)."""
 	if _in_maintenance_context() or not before:
 		return
 	if before.status not in ACTIVE_STATUSES or doc.status not in ACTIVE_STATUSES:
@@ -566,11 +690,29 @@ def record_trip_changes(doc, before):
 		if not change_alerts_enabled():
 			return
 		_record(doc, before)
-	except Exception:
+	except Exception as exc:
+		if _lost_the_transaction(exc):
+			raise
 		frappe.log_error(
 			title="Trip change alert failed",
 			message=f"{doc.name}: recording changes\n{frappe.get_traceback()}",
 		)
+
+
+def _lost_the_transaction(exc):
+	"""True for a deadlock or a lock-wait timeout (frappe v16 ``Database.sql`` raises
+	``QueryDeadlockError`` for ER_LOCK_DEADLOCK and ER_CHECKREAD, ``QueryTimeoutError`` for a
+	timeout). InnoDB rolls the whole transaction back on a deadlock — the trip's own UPDATE,
+	made before ``on_update`` ran, with it. Logged and swallowed, the request would go on to
+	commit a Version row and the rest into a fresh transaction and answer "saved" for a trip
+	the database never took; the page's next save is then refused as out of date and the edit
+	is gone. Raised, the save fails where it can be seen and tried again."""
+	kinds = tuple(
+		kind
+		for kind in (getattr(frappe, "QueryDeadlockError", None), getattr(frappe, "QueryTimeoutError", None))
+		if isinstance(kind, type)
+	)
+	return bool(kinds) and isinstance(exc, kinds)
 
 
 def _actor_employee():
@@ -585,21 +727,52 @@ def _actor_employee():
 
 
 def _pending(trip):
-	"""``{employee: {name, changes}}`` of the trip's Pending alerts, read with a lock so a send
-	that has just claimed one is seen as Sent (and a new one started) rather than written
-	over."""
-	rows = frappe.db.get_values(
+	"""``{employee: {name, changes, known}}`` of the trip's Pending alerts.
+
+	Found with a plain read, then each locked by its primary key and read again under that
+	lock, so a send that has just claimed one is seen as Sent (and a new one started) rather
+	than written over. Not one ``WHERE trip=… AND status='Pending' … FOR UPDATE``: on the first
+	save of a round that matches nothing, and under REPEATABLE READ a locking read that matches
+	nothing takes a gap lock. Two saves of two different trips whose rows sort into the same gap
+	each took one and then inserted into it — a textbook deadlock, whose victim is the whole
+	save (:func:`_lost_the_transaction`). A lock by primary key is a record lock only. The
+	sender never inserts, and two saves of the one trip are already serialized by the trip's
+	own row lock (``load_doc_before_save``) and ``check_if_latest``, so nothing needs the gap."""
+	names = frappe.get_all(
 		DOCTYPE,
-		{"trip": trip, "status": "Pending"},
-		["name", "employee", "changes"],
-		as_dict=True,
+		filters={"trip": trip, "status": "Pending"},
+		pluck="name",
 		order_by="creation asc",
-		for_update=True,
 	)
 	pending = {}
-	for row in rows or []:
-		pending.setdefault(row.employee, {"name": row.name, "changes": load_changes(row.changes)})
+	for name in names or []:
+		row = frappe.db.get_value(
+			DOCTYPE,
+			name,
+			["name", "employee", "status", "changes", "known_uids"],
+			as_dict=True,
+			for_update=True,
+		)
+		if not row or row.status != "Pending":
+			continue
+		pending.setdefault(
+			row.employee,
+			{"name": row.name, "changes": load_changes(row.changes), "known": _load_known(row.known_uids)},
+		)
 	return pending
+
+
+def _load_known(value):
+	"""A stored ``known_uids`` as a set, or ``None`` when the row has none (then nothing is
+	filtered)."""
+	if value in (None, ""):
+		return None
+	if isinstance(value, str):
+		try:
+			value = json.loads(value)
+		except (TypeError, ValueError):
+			return None
+	return {str(uid) for uid in value} if isinstance(value, list) else None
 
 
 def load_changes(value):
@@ -623,6 +796,7 @@ def _record(doc, before):
 	before_rows = {t.employee: t for t in before.get("travelers") or [] if t.employee}
 	after_rows = {t.employee: t for t in doc.get("travelers") or [] if t.employee}
 	pending = _pending(doc.name)
+	group_aliases = _group_aliases(before, doc)
 
 	for employee in list(before_rows) + [e for e in after_rows if e not in before_rows]:
 		before_row, after_row = before_rows.get(employee), after_rows.get(employee)
@@ -632,18 +806,46 @@ def _record(doc, before):
 		# this change in, so it never tells them something that is no longer true.
 		if waiting is None and (employee == actor or before_row is None):
 			continue
-		changes = diff_records(
-			person_records(before, employee, poi_cache) if before_row is not None else {},
-			person_records(doc, employee, poi_cache) if after_row is not None else {},
+		was = person_records(before, employee, poi_cache) if before_row is not None else {}
+		now_records = person_records(doc, employee, poi_cache) if after_row is not None else {}
+		# The same booking under a new key keeps the key's history: its row given a group by
+		# this save, or replaced by a row that reads exactly the same.
+		was = _rekeyed(was, group_aliases)
+		aliases = dict(group_aliases)
+		paired = _paired_keys(was, now_records)
+		aliases.update(paired)
+		was = _rekeyed(was, paired)
+		changes = diff_records(was, now_records)
+		labels = {key: record[1] for key, record in was.items()}
+		labels.update({key: record[1] for key, record in now_records.items()})
+		had = _attach_cancels(
+			changes,
+			before,
+			before_row,
+			doc,
+			after_row,
+			address_text,
+			aliases=aliases,
+			known=waiting["known"] if waiting else None,
+			labels=labels,
 		)
-		if not changes:
+		earlier = (
+			[dict(change, key=_rekey(change["key"], aliases)) for change in waiting["changes"]]
+			if waiting
+			else []
+		)
+		# A waiting change whose booking has just been re-keyed is written under its new key even
+		# when nothing else changed, or the next save would find it under neither.
+		if not changes and earlier == (waiting["changes"] if waiting else []):
 			continue
-		_attach_cancels(changes, before, before_row, doc, after_row, address_text)
-		merged = merge_changes(waiting["changes"] if waiting else [], changes)
-		_save(doc.name, employee, waiting, merged, now)
+		merged = merge_changes(earlier, changes)
+		_save(doc.name, employee, waiting, merged, now, known=had)
 
 
-def _save(trip, employee, waiting, merged, now):
+def _save(trip, employee, waiting, merged, now, known=None):
+	"""Write one person's merged changes: update the row waiting for them, start one, or delete
+	the waiting row when nothing is left. ``known``: the UIDs the person had before this save,
+	stored when a row is started, for the round's later cancels (:func:`_attach_cancels`)."""
 	if not merged:
 		if waiting:
 			frappe.db.delete(DOCTYPE, {"name": waiting["name"]})
@@ -660,6 +862,7 @@ def _save(trip, employee, waiting, merged, now):
 			"status": "Pending",
 			# A JSON field refuses a list (v16 BaseDocument), so it is stored as its text.
 			"changes": payload,
+			"known_uids": json.dumps(sorted(known or ()), separators=(",", ":")),
 			"first_change_at": now,
 			"last_change_at": now,
 		}
@@ -688,6 +891,8 @@ def alert_sections(changes):
 	for change in sorted(changes, key=order):
 		fields = change.get("fields") or []
 		status = change.get("change")
+		if status == "changed" and not fields:
+			continue  # only a calendar entry replaced: nothing to read, the attachment does it
 		if change.get("kind") == "trip":
 			title = "You were added to this trip." if status == "added" else "Your dates on this trip"
 		elif status == "added":
@@ -706,6 +911,18 @@ def alert_sections(changes):
 				for f in fields
 			]
 		sections.append({"title": title, "lines": lines})
+	if not sections and any(change.get("cancel") for change in changes):
+		# Every change was a booking entered again with nothing about it different: the old
+		# calendar entry has to go, or it shows twice next to the new one.
+		sections.append(
+			{
+				"title": CALENDAR_ONLY,
+				"lines": [
+					"Nothing on your itinerary changed, but a booking was entered again. The attached "
+					"calendar file replaces its old entry, so it does not show twice."
+				],
+			}
+		)
 	return sections
 
 
@@ -750,8 +967,9 @@ def alert_email(doc, recipient, changes):
 
 def send_due_change_alerts():
 	"""Scheduler (hooks.py ``cron`` ``*/5 * * * *``): send every Pending alert whose last change
-	is at least :data:`QUIET_MINUTES` old. Re-drivable: what a flushed queue or a failed run
-	leaves Pending is sent by the next run."""
+	is at least :data:`QUIET_MINUTES` old, on a trip nobody has saved for as long (the trip's
+	``modified``, checked in :func:`_send_one`). Re-drivable: what a flushed queue, a failed
+	run or a trip still being edited leaves Pending is sent by a later run."""
 	if _in_maintenance_context():
 		return
 	cutoff = now_datetime() - timedelta(minutes=QUIET_MINUTES)
@@ -812,6 +1030,12 @@ def _send_one(name, cutoff, enabled):
 	if not frappe.db.exists("Travel Trip", row.trip):
 		return _finish(name, "Skipped", _("The trip no longer exists."))
 	doc = frappe.get_doc("Travel Trip", row.trip)
+	# The quiet period is the trip's: someone still working through Plan a Trip saved it less
+	# than QUIET_MINUTES ago, and their next step may touch this person again (a stop is the
+	# whole crew's). Timed per person, one walk through the steps sent Ann two emails.
+	if doc.get("modified") and get_datetime(doc.get("modified")) > cutoff:
+		frappe.db.rollback()
+		return
 	if doc.status not in ACTIVE_STATUSES:
 		return _finish(name, "Skipped", _("The trip is {0}, not Booked or In Progress.").format(doc.status))
 	changes = load_changes(row.changes)

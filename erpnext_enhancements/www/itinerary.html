@@ -30,8 +30,10 @@
   /itinerary (never the site root, which is the kiosk's). The worker keeps this
   page, its stylesheet and script, and the person's files; the page keeps each
   answer in IndexedDB. A page kept on the phone still carries the boot of whoever
-  opened it, so itinerary.js checks the boot's user against the session's
-  user_id cookie before it shows anything saved.
+  opened it, so before it shows anything saved itinerary.js checks the boot's
+  offline_key against the ee_itinerary_key cookie (the offline marker, which
+  itinerary.py sets and every sign-out deletes) and the boot's user against the
+  session's user_id cookie.
 
   Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
   so every mutable asset URL below carries ?v={{ deploy_version }} (see

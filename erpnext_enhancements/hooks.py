@@ -2289,6 +2289,22 @@ after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response
 # (v1.542.0).
 before_request = ["erpnext_enhancements.fieldlevel_read.seal_wrapped_originals"]
 
+# travel_management (Plan a Trip PR 4, v1.549.0): the /itinerary offline marker. www/itinerary.py
+# sets the `ee_itinerary_key` cookie (30 days, Path=/) for the person the page is drawn for, and
+# offline the page shows a copy saved on the phone only while that cookie still holds the key it
+# was saved with. frappe's own `user_id` cookie cannot tell: it is a session cookie, which a
+# home-screen app started again has lost whether or not anybody signed out. So every sign-out
+# deletes the marker (LoginManager.logout runs on_logout for /api/method/logout, web_logout and
+# /api/v2/method/logout), and so does a sign-in as anybody else, because a session that merely
+# expires runs no hook at all and would leave the last person's marker for the next one. Not
+# covered, because no response reaches the phone: sessions ended from elsewhere (a password
+# change, Logout All Sessions, a disabled user); such a phone keeps its marker until someone
+# signs in on it. Neither ever raises (frappe runs them inside the login and the logout), and
+# on_login sends a cookie only to a browser holding somebody else's marker. See
+# travel_management/itinerary_offline.py.
+on_logout = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout"]
+on_login = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_login"]
+
 override_doctype_dashboards = {
 	"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data",
 	"Employee": "erpnext_enhancements.dashboard_overrides.get_data",
@@ -2551,7 +2567,7 @@ notification_skip_email_types = []
 default_log_clearing_doctypes = {"Notification Log": 90}
 
 # Trip Change Alert (travel_management, Plan a Trip PR 4) links its trip, and frappe v16's
-# delete_doc refuses to delete a document any non-cancelled row links to (check_if_doc_is_linked,
+# delete_doc refuses to delete a document any non-canceled row links to (check_if_doc_is_linked,
 # after on_trash): without this, a trip that had ever sent a change alert could not be deleted.
 # An alert left behind is harmless: the sender skips one whose trip is gone.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert"]

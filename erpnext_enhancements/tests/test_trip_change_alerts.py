@@ -205,6 +205,12 @@ def _install_stub():
 	class PermissionError_(Exception):
 		pass
 
+	class QueryDeadlockError(Exception):
+		pass
+
+	class QueryTimeoutError(Exception):
+		pass
+
 	def throw(msg, exc=None, **kwargs):
 		raise (exc or ValidationError)(msg)
 
@@ -238,6 +244,7 @@ def _install_stub():
 
 	def get_values(doctype, filters=None, fieldname="name", as_dict=False, **kwargs):
 		assert doctype == "Trip Change Alert", doctype
+		SITE.log.append(("get_values", dict(filters or {}), bool(kwargs.get("for_update"))))
 		rows = sorted(
 			(row for row in SITE.alerts.values() if _matches(row, filters)), key=lambda r: r["creation"]
 		)
@@ -292,8 +299,11 @@ def _install_stub():
 
 	def get_all(doctype, filters=None, fields=None, pluck=None, order_by=None, limit=None, **kwargs):
 		assert doctype == "Trip Change Alert", doctype
+		SITE.log.append(("get_all", dict(filters or {}), bool(kwargs.get("for_update"))))
 		rows = [row for row in SITE.alerts.values() if _matches(row, filters)]
-		rows.sort(key=lambda r: r["last_change_at"])
+		rows.sort(
+			key=lambda r: r["creation"] if str(order_by or "").startswith("creation") else r["last_change_at"]
+		)
 		rows = rows[:limit] if limit else rows
 		return [row["name"] for row in rows] if pluck else [_dict(row) for row in rows]
 
@@ -319,6 +329,8 @@ def _install_stub():
 	stub.whitelist = whitelist
 	stub.ValidationError = ValidationError
 	stub.PermissionError = PermissionError_
+	stub.QueryDeadlockError = QueryDeadlockError
+	stub.QueryTimeoutError = QueryTimeoutError
 	stub.throw = throw
 	stub.session = types.SimpleNamespace(user="office@example.com")
 	stub.db = types.SimpleNamespace(
@@ -870,12 +882,12 @@ class TestGates(Base):
 
 	def test_a_failure_never_stops_the_save(self):
 		self.expect_error = True
-		original = frappe.db.get_values
-		frappe.db.get_values = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db gone"))
+		original = frappe.get_all
+		frappe.get_all = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db gone"))
 		try:
 			save(self.trip, move_flight("2026-10-05 09:40:00"))
 		finally:
-			frappe.db.get_values = original
+			frappe.get_all = original
 		self.assertIn(("log_error", "Trip change alert failed"), SITE.log)
 
 
@@ -1267,6 +1279,291 @@ class TestCalendar(Base):
 		)
 
 
+# --------------------------------------------------------------------------- the same booking, a new key
+
+
+def typed_on_the_form(doc):
+	"""``doc`` with every booking row as the desk form writes one: no ``booking_group``, so each
+	is keyed by its own row (``completeness.group_key``: ``row:<name>``)."""
+	for table in ("flights", "accommodations", "ground_transport", "freight"):
+		for row in getattr(doc, table):
+			row.booking_group = None
+	return doc
+
+
+def first_page_save(doc):
+	"""What Plan a Trip's first save does to those rows: each card it sends as ``row:<name>`` is
+	given an id of its own (``planner.normalize_group``, ``merge_freight``) — the rows, their
+	names and every value unchanged."""
+	for table in ("flights", "accommodations", "ground_transport", "freight"):
+		for row in getattr(doc, table):
+			if not row.booking_group:
+				row.booking_group = f"id{row.name.lower()}".ljust(12, "0")
+
+
+def split_the_rental(group):
+	"""Plan a Trip unticking Cy on the whole crew's rental: the rest get a row each, with the
+	same details and under ``group``, and the whole-crew row G1 goes."""
+
+	def change(doc):
+		rental = rows(doc, "ground_transport", "G1")
+		doc.ground_transport.remove(rental)
+		for name, employee in (("G7", "EMP-A"), ("G8", "EMP-B")):
+			seat = copy.deepcopy(rental)
+			seat.name, seat.traveler, seat.booking_group = name, employee, group
+			doc.ground_transport.append(seat)
+
+	return change
+
+
+class TestTheSameBookingUnderANewKey(Base):
+	"""A booking entered on the desk form is keyed by its row until Plan a Trip saves the trip
+	and gives it an id. Same row, same booking: nobody is told it was removed and added."""
+
+	def setUp(self):
+		super().setUp()
+		typed_on_the_form(self.trip)
+
+	def test_the_first_page_save_tells_nobody_about_bookings_nobody_touched(self):
+		def page_save(doc):
+			first_page_save(doc)
+			rows(doc, "itinerary", "A1").time = "10:15:00"  # the one real change
+
+		save(self.trip, page_save)
+		for employee in ("EMP-A", "EMP-B", "EMP-C"):
+			(change,) = changes(employee)
+			self.assertEqual((change["key"], change["change"]), ("stop:A1", "changed"), employee)
+
+	def test_a_page_save_alone_is_no_change_at_all(self):
+		save(self.trip, first_page_save)
+		self.assertEqual(SITE.alerts, {})
+
+	def test_a_waiting_change_follows_its_booking_to_the_new_key(self):
+		# The form moves the flight; then the page saves the trip, giving the flight an id.
+		first = save(self.trip, move_flight("2026-10-05 09:40:00"))
+		self.assertEqual(changes("EMP-A")[0]["key"], "flight:row:F1")
+		save(first, first_page_save)
+		(change,) = changes("EMP-A")
+		self.assertEqual((change["key"], change["change"]), ("flight:idf100000000", "changed"))
+		self.assertEqual(fields(change)["departure_time"], ("7:05 AM", "9:40 AM"))
+
+	def test_a_waiting_change_and_a_new_one_on_the_rekeyed_booking_merge(self):
+		first = save(self.trip, move_flight("2026-10-05 09:40:00"))
+
+		def page_save(doc):
+			first_page_save(doc)
+			move_flight("2026-10-05 10:15:00")(doc)
+
+		save(first, page_save)
+		(change,) = changes("EMP-A")
+		self.assertEqual((change["key"], change["change"]), ("flight:idf100000000", "changed"))
+		self.assertEqual(fields(change)["departure_time"], ("7:05 AM", "10:15 AM"))
+
+	def test_a_row_replaced_by_one_that_reads_the_same_is_only_a_calendar_change(self):
+		# The whole crew's rental, entered on the form, split when Cy is unticked from it.
+		save(self.trip, split_the_rental("n1n1n1n1n1n1"))
+		for employee in ("EMP-A", "EMP-B"):
+			(change,) = changes(employee)
+			self.assertEqual(
+				(change["key"], change["change"], change["fields"]), ("ground:n1n1n1n1n1n1", "changed", [])
+			)
+			self.assertEqual([c["uid"] for c in change["cancel"]], ["TRIP-1-G1@test.site"])
+		self.assertEqual(changes("EMP-C")[0]["change"], "removed")
+
+
+class TestACalendarEntryReplaced(Base):
+	"""A booking whose row is replaced, with nothing about it different, still changes the
+	person's calendar: the old entry has to be canceled, or the ride shows twice."""
+
+	def test_the_whole_crews_rental_split_cancels_the_old_entry(self):
+		save(self.trip, split_the_rental("g4"))
+		(change,) = changes("EMP-A")
+		self.assertEqual((change["key"], change["change"], change["fields"]), ("ground:g4", "changed", []))
+		self.assertEqual([c["uid"] for c in change["cancel"]], ["TRIP-1-G1@test.site"])
+		mail = send_for("EMP-A")
+		self.assertIn(change_alerts.CALENDAR_ONLY, mail["message"])
+		self.assertNotIn("Removed:", mail["message"])
+		self.assertNotIn("Added:", mail["message"])
+		(attachment,) = mail["attachments"]
+		events = {re.search(r"UID:(\S+)", e).group(1): e for e in vevents(attachment["fcontent"])}
+		self.assertIn("STATUS:CANCELLED", events["TRIP-1-G1@test.site"])
+		self.assertNotIn("STATUS:", events["TRIP-1-G7@test.site"], "the new entry replaces it")
+
+	def test_taken_off_a_booking_and_put_back_still_cancels_the_old_row(self):
+		first = save(self.trip, lambda doc: doc.accommodations.remove(rows(doc, "accommodations", "R2")))
+
+		def back(doc):
+			room = copy.deepcopy(rows(doc, "accommodations", "R1"))
+			room.name, room.traveler, room.booking_confirmation = "R9", "EMP-B", "H-B"
+			doc.accommodations.append(room)
+
+		save(first, back)
+		(change,) = changes("EMP-B")
+		self.assertEqual((change["change"], change["fields"]), ("changed", []))
+		self.assertEqual([c["uid"] for c in change["cancel"]], ["TRIP-1-R2@test.site"])
+
+	def test_a_calendar_only_change_merges_like_any_other(self):
+		merge = change_alerts.merge_changes
+		cancel = [{"uid": "u1", "summary": "Canceled: x", "start": "2026-10-05", "all_day": True}]
+		only = {
+			"key": "ground:g4",
+			"kind": "ground",
+			"label": "Ride",
+			"label_before": "Ride",
+			"change": "changed",
+			"fields": [],
+			"cancel": cancel,
+		}
+		self.assertEqual(merge([], [only]), [only], "kept: it still has an entry to cancel")
+		bare = {key: value for key, value in only.items() if key != "cancel"}
+		self.assertEqual(merge([], [bare]), [], "nothing to say and nothing to cancel")
+		field = {"field": "pickup_time", "label": "Pick-up time", "before": "9:00 AM", "after": "10:30 AM"}
+		(merged,) = merge([only], [dict(bare, fields=[field])])
+		self.assertEqual((merged["fields"], merged["cancel"]), ([field], cancel))
+		self.assertEqual(
+			change_alerts.alert_sections([merged])[0]["lines"], ["Pick-up time: 9:00 AM → 10:30 AM"]
+		)
+		self.assertEqual(
+			[s["title"] for s in change_alerts.alert_sections([only])], [change_alerts.CALENDAR_ONLY]
+		)
+
+	def test_an_entry_made_and_lost_inside_one_round_is_not_canceled(self):
+		def add(doc):
+			doc.flights.append(
+				FakeRow(
+					name="F3",
+					traveler="EMP-C",
+					booking_group="g5",
+					airline="Delta",
+					flight_number="DL 9",
+					departure_airport="LAS",
+					arrival_airport="PHX",
+					departure_time="2026-10-08 17:00:00",
+				)
+			)
+
+		first = save(self.trip, add)
+		# Its departure time cleared a few minutes later: it makes no calendar entry any more.
+		save(first, lambda doc: setattr(rows(doc, "flights", "F3"), "departure_time", None))
+		(change,) = changes("EMP-C")
+		self.assertEqual(change["change"], "added")
+		self.assertNotIn("cancel", change, "Cy was never sent TRIP-1-F3")
+		(attachment,) = send_for("EMP-C")["attachments"]
+		self.assertNotIn("TRIP-1-F3", attachment["fcontent"])
+		self.assertNotIn("STATUS:CANCELLED", attachment["fcontent"])
+
+	def test_the_round_remembers_what_the_person_had_when_it_began(self):
+		save(self.trip, move_flight("2026-10-05 09:40:00"))
+		known = set(json.loads(alert("EMP-A")["known_uids"]))
+		self.assertIn("TRIP-1-F1@test.site", known)
+		self.assertIn("TRIP-1-T1-span@test.site", known)
+		self.assertNotIn("TRIP-1-F2@test.site", known, "Bo's seat is not Ann's")
+
+
+class TestOneEmailPerRoundOfEdits(Base):
+	"""The quiet period is the trip's: one walk through Plan a Trip is one email, however long
+	it takes, as long as no ten minutes pass between two saves."""
+
+	def edit(self, before, minutes, change):
+		SITE.now = T0 + timedelta(minutes=minutes)
+		after = save(before, change)
+		after.modified = SITE.now  # what frappe stamps on the save
+		return after
+
+	def tick(self, minutes):
+		SITE.now = T0 + timedelta(minutes=minutes)
+		change_alerts.send_due_change_alerts()
+		return [m for m in sent() if m["recipients"] == ["ann@example.com"]]
+
+	def test_a_long_walk_through_the_steps_is_one_email(self):
+		one = self.edit(self.trip, 0, move_flight("2026-10-05 09:40:00"))  # Ann's flight
+		two = self.edit(
+			one, 4, lambda d: setattr(rows(d, "accommodations", "R2"), "booking_confirmation", "H-B2")
+		)
+		three = self.edit(two, 8, lambda d: setattr(d.freight[0], "tracking_number", "PRO-2"))
+		self.assertEqual(
+			self.tick(10), [], "Ann's own change is 10 minutes old, but the trip is still being edited"
+		)
+		self.assertEqual(alert("EMP-A")["status"], "Pending")
+		# A stop is the whole crew's, Ann included.
+		self.edit(three, 12, lambda d: setattr(rows(d, "itinerary", "A1"), "time", "10:00:00"))
+		self.assertEqual(self.tick(15), [])
+		self.assertEqual(self.tick(20), [])
+		(mail,) = self.tick(25)
+		self.assertIn("Departs: 7:05 AM → 9:40 AM", mail["message"])
+		self.assertIn("Starts: 9:30 AM → 10:00 AM", mail["message"])
+		self.assertEqual(len(self.tick(40)), 1, "and only one")
+
+	def test_an_alert_waits_while_the_trip_is_being_saved(self):
+		row = pending_alert()
+		SITE.trips["TRIP-1"].modified = T0 - timedelta(minutes=2)
+		change_alerts.send_due_change_alerts()
+		self.assertEqual(row["status"], "Pending")
+		self.assertEqual(sent(), [])
+		SITE.now = T0 + timedelta(minutes=9)
+		change_alerts.send_due_change_alerts()
+		self.assertEqual(row["status"], "Sent")
+
+
+class TestTheSaveIsNeverLostSilently(Base):
+	"""Detection runs inside the trip's save. A deadlock there rolls the whole save back, so it
+	must fail the save rather than be logged while the request commits what is left."""
+
+	def test_a_deadlock_fails_the_save(self):
+		original = frappe.get_doc
+
+		def deadlock(*args, **kwargs):
+			if args and isinstance(args[0], dict) and args[0].get("doctype") == "Trip Change Alert":
+				raise frappe.QueryDeadlockError("1213 Deadlock found when trying to get lock")
+			return original(*args, **kwargs)
+
+		frappe.get_doc = deadlock
+		try:
+			with self.assertRaises(frappe.QueryDeadlockError):
+				save(self.trip, move_flight("2026-10-05 09:40:00"))
+		finally:
+			frappe.get_doc = original
+		self.assertEqual(SITE.errors, [], "raised, not logged as if the save had gone through")
+
+	def test_a_lock_timeout_fails_the_save(self):
+		original = frappe.get_all
+		frappe.get_all = lambda *a, **k: (_ for _ in ()).throw(frappe.QueryTimeoutError("1205"))
+		try:
+			with self.assertRaises(frappe.QueryTimeoutError):
+				save(self.trip, move_flight("2026-10-05 09:40:00"))
+		finally:
+			frappe.get_all = original
+
+	def test_waiting_alerts_are_locked_one_by_one_never_by_a_range(self):
+		first = save(self.trip, move_flight("2026-10-05 09:40:00"))
+		SITE.log.clear()
+		save(first, move_flight("2026-10-05 10:15:00"))
+		self.assertFalse([e for e in SITE.log if e[0] in ("get_values", "get_all") and e[2]], "a range lock")
+		locked = sorted(e[1] for e in SITE.log if e[0] == "lock")
+		self.assertEqual(locked, sorted(r["name"] for r in SITE.alerts.values()))
+
+	def test_an_alert_claimed_by_the_sender_meanwhile_is_not_written_over(self):
+		first = save(self.trip, move_flight("2026-10-05 09:40:00"))
+		claimed = alert("EMP-A")["name"]
+		original = frappe.db.get_value
+
+		def sender_got_there_first(doctype, name=None, *args, **kwargs):
+			if doctype == "Trip Change Alert" and kwargs.get("for_update") and name == claimed:
+				SITE.alerts[name]["status"] = "Sent"  # committed while the save read the list
+			return original(doctype, name, *args, **kwargs)
+
+		frappe.db.get_value = sender_got_there_first
+		try:
+			save(first, move_flight("2026-10-05 10:15:00"))
+		finally:
+			frappe.db.get_value = original
+		sent_row = SITE.alerts[claimed]
+		self.assertEqual(sent_row["status"], "Sent")
+		self.assertEqual(fields(json.loads(sent_row["changes"])[0])["departure_time"], ("7:05 AM", "9:40 AM"))
+		(change,) = changes("EMP-A")  # a new Pending row for what the sender did not have
+		self.assertEqual(fields(change)["departure_time"], ("9:40 AM", "10:15 AM"))
+
+
 # --------------------------------------------------------------------------- wiring
 
 
@@ -1287,7 +1584,7 @@ class TestWiring(unittest.TestCase):
 		self.assertEqual(hooks.count('"*/5 * * * *"'), 1, "a repeated cron key replaces the first silently")
 
 	def test_an_alert_never_stops_a_trip_being_deleted(self):
-		# frappe v16's delete_doc refuses to delete a document any non-cancelled row links to.
+		# frappe v16's delete_doc refuses to delete a document any non-canceled row links to.
 		hooks = _read(APP_DIR, "hooks.py")
 		match = re.search(r"^ignore_links_on_delete = \[(.*?)\]", hooks, flags=re.MULTILINE | re.DOTALL)
 		self.assertIsNotNone(match)

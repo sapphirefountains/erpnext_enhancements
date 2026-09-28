@@ -14,8 +14,10 @@ in node over a stand-in Cache Storage and network (``TestTheWorkerRuns``; skippe
    phone that also opened /kiosk (fixed alongside; ``test_kiosk_service_worker`` pins that side).
    This worker must not do the same to them, nor to its own per-person files caches, which outlive
    a deploy.
-3. **A phone can be shared.** Files are kept per signed-in person (``itinerary-files-<user>``), the
-   page's 'user' message deletes everybody else's, and 'purge' deletes them all.
+3. **A phone can be shared.** Files are kept per signed-in person, in a cache named after their
+   offline marker (``itinerary-files-<key>``: 64 hex characters, never an email; see
+   ``travel_management/itinerary_offline.py``). The page's 'user' message deletes every other files
+   cache, 'purge' deletes them all and the kept page, and nothing that is not a key names one.
 4. **Only a real answer is kept**, from this site: a 200, not redirected (a signed-out request is
    sent to the login page, which kept as "the itinerary" would be worse than nothing), never another
    site's file, and a response that is both kept and returned is cloned before it is returned.
@@ -23,8 +25,9 @@ in node over a stand-in Cache Storage and network (``TestTheWorkerRuns``; skippe
 It is also a Jinja template: Frappe serves ``www/*.js`` through TemplatePage, so a double brace or a
 Jinja tag anywhere in it (comments included) is rendered, or breaks the render.
 
-The page side (IndexedDB, the offline fallback, the refusal for another person) is driven in a fake
-browser by ``scripts/test_web_flow_history.js itinerary`` (run by ``test_travel_planner``).
+The page side (IndexedDB, the offline fallback, the refusal for another person, the marker) is
+driven in a fake browser by ``scripts/test_web_flow_history.js itinerary`` (run by
+``test_travel_planner``); ``TestThePageSide`` below pins what it promises in the source.
 
 Run: python -m unittest erpnext_enhancements.tests.test_itinerary_service_worker -v
 """
@@ -39,6 +42,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# The driver's offline markers (see _DRIVER).
+SAM_KEY = "fedcba9876543210" * 4
 APP = REPO_ROOT / "erpnext_enhancements"
 WORKER = APP / "www" / "itinerary-sw.js"
 MANIFEST = APP / "www" / "itinerary-manifest.json"
@@ -162,6 +167,24 @@ class TestItsScopeIsTheItineraryOnly(unittest.TestCase):
 		self.assertIn(".catch(", fn)
 		self.assertLess(fn.index("'serviceWorker' in navigator"), fn.index(".register("))
 
+	def test_messages_go_to_the_worker_it_registered_never_through_ready(self):
+		"""On a phone that already has the kiosk's (or the wall's) worker at "/", the first
+		/itinerary visit's `navigator.serviceWorker.ready` is the kiosk's registration: it matches
+		the page and is already active, and it stays resolved to it. Every 'user', 'cache-files' and
+		'purge' went to kiosk-sw.js, which drops what it does not know, so no boarding pass was kept
+		until a second visit. Messages go to the worker register() answered with, once it runs."""
+		code = _code(PAGE_JS)
+		self.assertNotIn("serviceWorker.ready", code)
+		self.assertNotIn(".ready", _function("toWorker", PAGE_JS))
+		self.assertIn("itinWorker = navigator.serviceWorker.register(", _function("registerWorker", PAGE_JS))
+		self.assertIn(".then(newestWorker)", _function("registerWorker", PAGE_JS))
+		self.assertIn("itinWorker.then(", _function("toWorker", PAGE_JS))
+		newest = _function("newestWorker", PAGE_JS)
+		# The newest worker first (a deploy's new ?v=), once it has activated.
+		self.assertIn("registration.installing || registration.waiting", newest)
+		self.assertIn("'activated'", newest)
+		self.assertIn("'redundant'", newest)
+
 
 class TestItsCachesAreItsOwn(unittest.TestCase):
 	def test_every_cache_it_names_starts_itinerary(self):
@@ -169,7 +192,7 @@ class TestItsCachesAreItsOwn(unittest.TestCase):
 		self.assertIn("const SHELL_PREFIX = 'itinerary-shell-';", code)
 		self.assertIn("const SHELL = SHELL_PREFIX + VERSION;", code)
 		self.assertIn("const FILES_PREFIX = 'itinerary-files-';", code)
-		self.assertIn("return FILES_PREFIX + encodeURIComponent(user);", _function("filesCacheFor"))
+		self.assertIn("return FILES_PREFIX + encodeURIComponent(key);", _function("filesCacheFor"))
 		# No cache is ever opened, checked or deleted by a literal name.
 		self.assertIsNone(re.search(r"caches\.(open|delete|has)\(\s*['\"`]", code))
 
@@ -195,26 +218,31 @@ class TestItsCachesAreItsOwn(unittest.TestCase):
 
 class TestFilesAreKeptPerPerson(unittest.TestCase):
 	def test_the_user_message_deletes_everybody_elses_files(self):
-		body = _function("forUser")
-		self.assertIn("if (!isPerson(user)) return;", body)
+		body = _function("forKey")
+		self.assertIn("if (!isKey(key)) return;", body)
 		self.assertIn("k.startsWith(FILES_PREFIX) && k !== own", body)
 		self.assertIn("caches.delete(k)", body)
 
-	def test_nobody_and_guest_are_nobody(self):
-		self.assertIn("user !== '' && user !== 'Guest'", _function("isPerson"))
+	def test_only_a_marker_names_a_files_cache(self):
+		"""Not an email (the cache name would carry it), not Guest, not nothing: the offline marker
+		is 64 hex characters (itinerary_offline.key_for), and the page checks it the same way."""
+		self.assertIn("/^[0-9a-f]{64}$/.test(key)", _function("isKey"))
+		self.assertIn("/^[0-9a-f]{64}$/.test(value)", _function("isKey", PAGE_JS))
+		self.assertNotIn("isPerson", _code())
+		self.assertNotIn("currentUser", _code())
 
 	def test_files_are_kept_for_the_person_named(self):
 		body = _function("keepFiles")
-		self.assertIn("if (!isPerson(user) || !Array.isArray(urls)) return;", body)
-		self.assertIn("if (user !== currentUser) await forUser(user);", body)
-		self.assertIn("caches.open(filesCacheFor(user))", body)
+		self.assertIn("if (!isKey(key) || !Array.isArray(urls)) return;", body)
+		self.assertIn("if (key !== currentKey) await forKey(key);", body)
+		self.assertIn("caches.open(filesCacheFor(key))", body)
 		# One message cannot fill the phone, and a person's cache has a ceiling.
 		self.assertIn("urls.slice(0, MAX_PER_MESSAGE)", body)
 		self.assertIn("MAX_FILES", body)
 
 	def test_purge_forgets_everything_personal(self):
 		body = _function("purge")
-		self.assertIn("currentUser = null;", body)
+		self.assertIn("currentKey = null;", body)
 		self.assertIn("k.startsWith(FILES_PREFIX)", body)
 		self.assertIn(".delete(PAGE)", body)
 
@@ -222,6 +250,8 @@ class TestFilesAreKeptPerPerson(unittest.TestCase):
 		message = _handler("message")
 		for kind in ("'user'", "'cache-files'", "'purge'"):
 			self.assertIn(f"data.type === {kind}", message)
+		self.assertIn("forKey(data.key)", message)
+		self.assertIn("keepFiles(data.key || currentKey, data.urls)", message)
 		self.assertIn("event.waitUntil(", message)
 
 
@@ -233,21 +263,43 @@ class TestOnlyRealAnswersFromThisSiteAreKept(unittest.TestCase):
 
 	def test_every_put_is_behind_keepable(self):
 		"""Every place a response from the network is put in a cache checks it first. The one other
-		put is activate's carrying forward of the page the previous shell already vetted."""
-		for name, body in (
-			("install", _handler("install")),
-			("pageFromNetworkOrKept", _function("pageFromNetworkOrKept")),
-			("shellAsset", _function("shellAsset")),
-			("fileFromNetworkOrKept", _function("fileFromNetworkOrKept")),
-			("keepFiles", _function("keepFiles")),
+		put is activate's carrying forward of the page the previous shell already vetted. The page is
+		kept only when it is the page (isThePage, which starts from keepable)."""
+		for name, body, check in (
+			("install", _handler("install"), "isThePage("),
+			("pageFromNetworkOrKept", _function("pageFromNetworkOrKept"), "isThePage("),
+			("shellAsset", _function("shellAsset"), "keepable("),
+			("fileFromNetworkOrKept", _function("fileFromNetworkOrKept"), "keepable("),
+			("keepFiles", _function("keepFiles"), "keepable("),
 		):
 			with self.subTest(where=name):
 				self.assertIn(".put(", body)
-				self.assertIn("keepable(", body)
-				self.assertLess(body.index("keepable("), body.index(".put("))
+				self.assertIn(check, body)
+				self.assertLess(body.index(check), body.index(".put("))
 		code = _code()
 		puts = code.count(".put(")
 		self.assertEqual(puts, 6, "a new cache.put: put it behind keepable() and list it above")
+
+	def test_the_page_is_kept_only_when_it_is_the_page(self):
+		"""frappe v16 dispatches `?cmd=` before it routes by path, so /itinerary?cmd=... answers 200
+		JSON at this address; kept as the page, one tapped link replaced the offline itinerary with
+		{"message": ...}. frappe's website renderer marks every page it draws with X-Page-Name."""
+		body = _function("isThePage")
+		self.assertIn("keepable(res)", body)
+		self.assertIn("res.headers.get('x-page-name') === 'itinerary'", body)
+		self.assertIn("startsWith('text/html')", body)
+		fetch = _handler("fetch")
+		self.assertIn("if (url.searchParams.has('cmd')) return;", fetch)
+		self.assertLess(fetch.index("searchParams.has('cmd')"), fetch.index("pageFromNetworkOrKept("))
+
+	def test_navigation_preload_is_used_and_always_settled(self):
+		"""Without it every online open of the home-screen app waited for this worker to start."""
+		self.assertIn("self.registration.navigationPreload.enable()", _handler("activate"))
+		page = _function("pageFromNetworkOrKept")
+		self.assertIn("event.preloadResponse", page)
+		self.assertIn("preloaded || fetch(req)", page)
+		self.assertIn("event.waitUntil(network.then(", page)
+		self.assertIn("pageFromNetworkOrKept(event)", _handler("fetch"))
 
 	def test_it_answers_only_this_sites_get_requests(self):
 		fetch = _handler("fetch")
@@ -361,13 +413,30 @@ class TestThePageSide(unittest.TestCase):
 		self.assertIn("var ANSWERS = 'answers';", code)
 		self.assertIn("return user + '|' + trip + '|' + (as || '');", _function("savedKey", PAGE_JS))
 
-	def test_offline_is_only_fetch_failing(self):
-		"""A refusal (403, 404, 417) or a server error is an answer, handled as before; only a
-		fetch that never got one draws the saved copy."""
+	def test_the_saved_copy_is_drawn_only_when_there_is_no_usable_answer(self):
+		"""No usable answer: fetch failing; the gateway's 502, 503 or 504 while a deploy restarts the
+		site (the worker already served the kept page for it); a 200 whose body was cut off (it drew
+		an empty trip and saved it over the good copy); a stale CSRF token that one refresh could
+		not replace. A refusal (403, 404, 417), frappe's own 500 or any other 4xx is an answer."""
+		code = _code(PAGE_JS)
+		self.assertEqual(code.count("unreachable = true"), 1)
+		self.assertIn("err.unreachable = true;", _function("noAnswer", PAGE_JS))
+		self.assertIn("var GATEWAY_STATUSES = [502, 503, 504];", code)
 		api = _function("api", PAGE_JS)
-		self.assertEqual(_code(PAGE_JS).count("unreachable = true"), 1)
-		self.assertIn("}).then(null, function (err) {", api)
-		self.assertLess(api.index("unreachable = true"), api.index("if (!res.ok)"))
+		self.assertIn("}).then(null, function (err) {\n\t\t\tthrow noAnswer(err, 'offline');", api)
+		self.assertIn("if (GATEWAY_STATUSES.indexOf(res.status) >= 0) throw noAnswer(", api)
+		self.assertIn("if (!body.whole) throw noAnswer(", api)
+		# The token is replaced once, and a retry is never retried.
+		self.assertIn("data.exc_type === 'CSRFTokenError'", api)
+		self.assertIn("if (retried) throw noAnswer(", api)
+		self.assertIn("return api(method, args, true);", api)
+		self.assertLess(api.index("GATEWAY_STATUSES"), api.index("if (!res.ok)"))
+		refusal = api[api.index("if (!res.ok)") : api.index("if (!body.whole)")]
+		self.assertNotIn("noAnswer(", refusal)
+		# Drawn and saved only when it names the trip asked for.
+		self.assertIn("if (!isAnswerFor(itinerary, name)) throw noAnswer(", _function("loadTrip", PAGE_JS))
+		self.assertIn("answer.trip === name", _function("isAnswerFor", PAGE_JS))
+		self.assertNotIn("|| { days: [] }", code)
 
 	def test_another_persons_copy_is_never_shown(self):
 		code = _code(PAGE_JS)
@@ -377,6 +446,65 @@ class TestThePageSide(unittest.TestCase):
 		self.assertIn("if (shellIsSomeoneElses()) {", _function("showSaved", PAGE_JS))
 		self.assertIn("saved.user === user", _function("readAnswer", PAGE_JS))
 		self.assertIn("'Sign in to see your itinerary.'", code)
+
+	def test_a_saved_copy_needs_the_marker_it_was_saved_under(self):
+		"""The shared-phone gap: frappe's `user_id` is a session cookie, which a home-screen app
+		started again has dropped whether or not anybody signed out, so it cannot say "signed out".
+		The offline marker (the `ee_itinerary_key` cookie, deleted on every sign-out) can: a copy is
+		saved with it and shown only while the phone still holds it, checked before anything else."""
+		self.assertIn("ee_itinerary_key=", _function("markerCookie", PAGE_JS))
+		self.assertIn("return !!key && markerCookie() === key;", _function("markerIsBoots", PAGE_JS))
+		self.assertIn("BOOT.offline_key", _function("bootKey", PAGE_JS))
+		show = _function("showSaved", PAGE_JS)
+		self.assertIn("if (!markerIsBoots()) {", show)
+		self.assertLess(show.index("markerIsBoots()"), show.index("shellIsSomeoneElses()"))
+		self.assertLess(show.index("markerIsBoots()"), show.index("readAnswer("))
+		self.assertIn("readAnswer(savingUser(), bootKey(), name, as)", show)
+		self.assertIn("saved.key === key", _function("readAnswer", PAGE_JS))
+		self.assertIn("key: key,", _function("saveAnswer", PAGE_JS))
+		self.assertIn("!markerIsBoots()", _function("savingUser", PAGE_JS))
+		keep = _function("keepForOffline", PAGE_JS)
+		self.assertIn("var key = bootKey();", keep)
+		self.assertIn("if (!user || !key || !storageFactory()) return;", keep)
+
+	def test_a_missing_or_different_marker_deletes_everything_saved(self):
+		show = _function("showSaved", PAGE_JS)
+		self.assertIn("refuseSaved(markerCookie() !== null);", show)
+		self.assertIn("if (forget) forgetSaved();", _function("refuseSaved", PAGE_JS))
+		forget = _function("forgetSaved", PAGE_JS)
+		self.assertIn("toWorker({ type: 'purge' });", forget)
+		self.assertIn("tx.objectStore(ANSWERS).clear();", forget)
+		self.assertIn("tx.objectStore(TRIP_LISTS).clear();", forget)
+		# At boot: the marker's person's copies stay; with no marker, nothing does.
+		boot = _function("startOffline", PAGE_JS)
+		self.assertIn("var marker = markerCookie();", boot)
+		self.assertIn("forgetSaved();", boot)
+		self.assertIn("toWorker({ type: 'user', key: marker });", boot)
+		self.assertIn("pruneSaved(marker);", boot)
+		self.assertIn("saved.key !== key", _function("pruneSaved", PAGE_JS))
+		# The worker is told the marker, never an email.
+		self.assertIn(
+			"toWorker({ type: 'cache-files', key: key, urls: urls });", _function("keepFiles", PAGE_JS)
+		)
+		self.assertNotIn("type: 'user', user", _code(PAGE_JS))
+
+	def test_the_page_never_writes_a_cookie(self):
+		"""Only the server sets and deletes the marker: a page that could write it could restore it
+		after a sign-out."""
+		self.assertIsNone(re.search(r"document\.cookie\s*=[^=]", _code(PAGE_JS)))
+
+	def test_a_kept_pages_boot_is_not_drawn_before_an_answer(self):
+		"""A page drawn with another marker than the phone's is the page kept from before a sign-out:
+		its trip list and name wait for the server (answered), and offline showSaved refuses it."""
+		code = _code(PAGE_JS)
+		self.assertIn(
+			"state.unverified = !!bootKey() && markerCookie() !== null && markerCookie() !== bootKey();", code
+		)
+		self.assertIn("if (state.otherUser || state.unverified) return", _function("viewTitle", PAGE_JS))
+		render = _function("render", PAGE_JS)
+		self.assertLess(render.index("if (state.unverified) {"), render.index("ti-switcher"))
+		self.assertIn("if (answered()) return;", _function("loadTrip", PAGE_JS))
+		self.assertIn("else if (!answered(err)) loadFailed(name, as, err);", _function("loadTrip", PAGE_JS))
 
 	def test_the_offline_code_writes_no_history(self):
 		for name in (
@@ -390,6 +518,11 @@ class TestThePageSide(unittest.TestCase):
 			"openSavedWhenOffline",
 			"openSavedCopy",
 			"pruneSaved",
+			"forgetSaved",
+			"refuseSaved",
+			"answered",
+			"markerCookie",
+			"markerIsBoots",
 		):
 			body = _function(name, PAGE_JS)
 			for forbidden in ("writeTripEntry", "pushState", "replaceState", "history."):
@@ -404,6 +537,9 @@ _DRIVER = r"""
 const fs = require("fs");
 const vm = require("vm");
 const ORIGIN = "https://erp.example.com";
+// Offline markers (itinerary_offline.key_for): 64 hex characters.
+const PAT_KEY = "0123456789abcdef".repeat(4);
+const SAM_KEY = "fedcba9876543210".repeat(4);
 const seen = {};
 
 class FakeResponse {
@@ -414,7 +550,8 @@ class FakeResponse {
 		this.ok = this.status >= 200 && this.status < 300;
 		this.type = init.type || "basic";
 		this.redirected = !!init.redirected;
-		const headers = init.headers || {};
+		const headers = init.raw || init.headers || {};
+		this.raw = headers;
 		this.headers = { get: (k) => headers[k.toLowerCase()] || null, has: (k) => k.toLowerCase() in headers };
 	}
 	clone() { return new FakeResponse(this.body, this); }
@@ -496,7 +633,7 @@ const settle = () => new Promise((r) => setTimeout(r, 5));
 	net.pages["/private/files/conf.pdf"] = { body: "CONF" };
 	await (await caches.open("itinerary-shell-100")).put("/itinerary", new FakeResponse("OLD PAGE"));
 	await (await caches.open("time-kiosk-55")).put("/kiosk", new FakeResponse("KIOSK"));
-	await (await caches.open("itinerary-files-sam%40example.com")).put(ORIGIN + "/files/x.png", new FakeResponse("SAM"));
+	await (await caches.open("itinerary-files-" + SAM_KEY)).put(ORIGIN + "/files/x.png", new FakeResponse("SAM"));
 
 	// The deploy: install cannot fetch the page (it answers 404 here), so activate carries the old
 	// shell's copy forward before deleting that shell.
@@ -505,21 +642,48 @@ const settle = () => new Promise((r) => setTimeout(r, 5));
 	seen.after_activate = names();
 	seen.page_carried = await kept("itinerary-shell-200", "/itinerary");
 
+	// Not a marker (an email, Guest, nothing): no files cache is touched or opened.
+	await fire("message", { data: { type: "user", key: "pat@example.com" } });
 	await fire("message", { data: { type: "user", user: "pat@example.com" } });
+	await fire("message", { data: { type: "cache-files", key: "Guest", urls: ["/private/files/pass.png"] } });
+	seen.not_a_key = names();
+	await fire("message", { data: { type: "user", key: PAT_KEY } });
 	seen.after_user = names();
-	await fire("message", { data: { type: "cache-files", user: "pat@example.com", urls: [
+	await fire("message", { data: { type: "cache-files", key: PAT_KEY, urls: [
 		"/private/files/pass.png", "https://evil.example/x.pdf", "/api/method/frappe.auth.get_logged_user",
 		"/files/../api/method/x", "/private/files/conf.pdf", "/private/files/missing.pdf",
 	] } });
-	seen.files_kept = [...store.get("itinerary-files-pat%40example.com").keys()].map((k) => k.replace(ORIGIN, ""));
+	seen.files_kept = [...store.get("itinerary-files-" + PAT_KEY).keys()].map((k) => k.replace(ORIGIN, ""));
 	net.log.length = 0;
-	await fire("message", { data: { type: "cache-files", user: "pat@example.com", urls: ["/private/files/pass.png"] } });
+	await fire("message", { data: { type: "cache-files", key: PAT_KEY, urls: ["/private/files/pass.png"] } });
 	seen.refetched = net.log.slice();
 
-	net.pages["/itinerary"] = { body: "FRESH PAGE" };
+	// frappe marks the page it renders with X-Page-Name; the worker keeps nothing else as the page.
+	const PAGE_HEADERS = { "x-page-name": "itinerary", "content-type": "text/html; charset=utf-8" };
+	net.pages["/itinerary"] = { body: "FRESH PAGE", headers: PAGE_HEADERS };
 	seen.online_page = (await get("/itinerary?trip=T1", { mode: "navigate" })).body;
 	await settle();
 	seen.page_kept = await kept("itinerary-shell-200", "/itinerary");
+	// frappe's `?cmd=` API at this address (JSON, 200): passed through, never kept.
+	net.pages["/itinerary"] = { body: '{"message": "pat@example.com"}', headers: { "content-type": "application/json" } };
+	seen.cmd_navigation = (await get("/itinerary?cmd=frappe.auth.get_logged_user", { mode: "navigate" })) === undefined ? "passed through" : "answered";
+	seen.json_page = (await get("/itinerary?trip=T1", { mode: "navigate" })).body;
+	await settle();
+	seen.page_after_json = await kept("itinerary-shell-200", "/itinerary");
+	net.pages["/itinerary"] = { body: "A MESSAGE PAGE", headers: { "x-page-name": "message", "content-type": "text/html" } };
+	await get("/itinerary?trip=T1", { mode: "navigate" });
+	await settle();
+	seen.page_after_message = await kept("itinerary-shell-200", "/itinerary");
+	// A navigation preload's answer is used, not fetched again.
+	net.pages["/itinerary"] = { body: "FRESH PAGE", headers: PAGE_HEADERS };
+	net.log.length = 0;
+	seen.preloaded = (await fire("fetch", { request: new FakeRequest("/itinerary?trip=T3", { mode: "navigate" }), preloadResponse: Promise.resolve(new FakeResponse("PRELOADED", { headers: PAGE_HEADERS })) })).body;
+	await settle();
+	seen.preload_fetched = net.log.slice();
+	seen.page_after_preload = await kept("itinerary-shell-200", "/itinerary");
+	net.pages["/itinerary"] = { body: "FRESH PAGE", headers: PAGE_HEADERS };
+	await get("/itinerary?trip=T1", { mode: "navigate" });
+	await settle();
 	net.pages["/itinerary"] = { body: "", status: 0, type: "opaqueredirect" };
 	seen.signed_out_page = (await get("/itinerary", { mode: "navigate" })).type;
 	await settle();
@@ -572,9 +736,13 @@ class TestTheWorkerRuns(unittest.TestCase):
 	def test_a_deploy_deletes_only_its_own_old_shell_and_keeps_the_page(self):
 		self.assertEqual(
 			self.seen["after_activate"],
-			["itinerary-files-sam%40example.com", "itinerary-shell-200", "time-kiosk-55"],
+			["itinerary-files-" + SAM_KEY, "itinerary-shell-200", "time-kiosk-55"],
 		)
 		self.assertEqual(self.seen["page_carried"], "OLD PAGE")
+
+	def test_what_is_not_a_marker_touches_nothing(self):
+		"""An email, Guest, or the old `user` field: no files cache is deleted, opened or named."""
+		self.assertEqual(self.seen["not_a_key"], self.seen["after_activate"])
 
 	def test_the_user_message_deletes_everybody_elses_files(self):
 		self.assertEqual(self.seen["after_user"], ["itinerary-shell-200", "time-kiosk-55"])
@@ -589,6 +757,18 @@ class TestTheWorkerRuns(unittest.TestCase):
 		self.assertEqual(self.seen["signed_out_page"], "opaqueredirect")
 		self.assertEqual(self.seen["page_after_redirect"], "FRESH PAGE")
 		self.assertEqual(self.seen["page_on_502"], "FRESH PAGE")
+
+	def test_only_the_page_itself_is_kept_as_the_page(self):
+		self.assertEqual(self.seen["cmd_navigation"], "passed through")
+		# Answered (it is the network's), but not kept: a 200 that is not the page.
+		self.assertEqual(self.seen["json_page"], '{"message": "pat@example.com"}')
+		self.assertEqual(self.seen["page_after_json"], "FRESH PAGE")
+		self.assertEqual(self.seen["page_after_message"], "FRESH PAGE")
+
+	def test_the_navigation_preload_answers_and_is_kept(self):
+		self.assertEqual(self.seen["preloaded"], "PRELOADED")
+		self.assertEqual(self.seen["preload_fetched"], [])
+		self.assertEqual(self.seen["page_after_preload"], "PRELOADED")
 
 	def test_offline_the_kept_page_script_and_files_answer(self):
 		self.assertEqual(self.seen["offline_page"], "FRESH PAGE")

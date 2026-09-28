@@ -62,6 +62,25 @@
 	text-decoration: underline;
 }
 
+/* A page this session may not see (saved for someone else, or nobody signed in): what it is,
+   and the way out under it — a reload, or signing in. Never a dead end. */
+.ti-refused {
+	text-align: center;
+	padding-bottom: 24px;
+}
+
+.ti-refused .ti-empty { padding-bottom: 12px; }
+
+.ti-reload {
+	border: 1px solid var(--ti-border);
+	background: var(--ti-surface);
+	color: var(--ti-accent);
+	border-radius: 8px;
+	padding: 8px 18px;
+	font: inherit;
+	font-weight: 600;
+}
+
 /* The copy saved on this phone is on screen: the server could not be reached. */
 .ti-offline {
 	margin: 0 0 10px;

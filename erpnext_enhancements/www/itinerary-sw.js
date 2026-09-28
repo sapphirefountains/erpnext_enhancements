@@ -19,9 +19,12 @@
  *                             script at their ?v= addresses. Versioned per deploy, like the
  *                             kiosk's: the page registers /itinerary-sw.js?v=<deploy token>,
  *                             so a deploy is a new worker with a new shell cache.
- *   itinerary-files-<user>    the files the page asked to keep (boarding passes, booking
- *                             confirmations, site maps), for one signed-in person. Not
- *                             versioned: a deploy keeps them.
+ *   itinerary-files-<key>     the files the page asked to keep (boarding passes, booking
+ *                             confirmations, site maps), for one signed-in person, named after
+ *                             their offline marker (the ee_itinerary_key cookie's value: 64 hex
+ *                             characters, never their email; see
+ *                             travel_management/itinerary_offline.py). Not versioned: a deploy
+ *                             keeps them.
  *
  * Lifecycle:
  *   - install:  precache the stylesheet and script (cache: 'reload', so the year-long HTTP
@@ -30,25 +33,36 @@
  *   - activate: carry the page forward from the previous deploy's shell when this one could
  *               not fetch it, then delete ONLY this worker's own old shell caches. Every other
  *               cache on the site belongs to somebody else (the kiosk's, the wall's), and so do
- *               this worker's files caches, which outlive a deploy. Then clients.claim().
- *   - fetch:    the /itinerary page: network first, the kept page when there is no answer (none
- *               within PAGE_WAIT_MS, or a server error). The stylesheet and script: kept copy
- *               first. A file
+ *               this worker's files caches, which outlive a deploy. Turn on navigation preload,
+ *               so an online open of the page never waits for this worker to start. Then
+ *               clients.claim().
+ *   - fetch:    the /itinerary page: network first (the navigation preload's answer), the kept
+ *               page when there is no answer (none within PAGE_WAIT_MS, or a server error). A
+ *               `?cmd=` navigation is frappe's API, not the page, and passes through. The
+ *               stylesheet and script: kept copy first. A file
  *               under /private/files/ or /files/ that this person's files cache holds: the
  *               network when it answers within FILE_WAIT_MS, else the kept copy. Everything
  *               else, and every non-GET or other-site request, passes through untouched.
- *   - message:  {type: 'user', user}           this is who is signed in: every other person's
- *                                               files cache is deleted.
- *               {type: 'cache-files', user, urls} fetch and keep these files (this site's own
+ *   - message:  {type: 'user', key}            this is the marker of who is signed in: every
+ *                                               other files cache is deleted.
+ *               {type: 'cache-files', key, urls} fetch and keep these files (this site's own
  *                                               /private/files/ and /files/ addresses only,
  *                                               a 200 only).
  *               {type: 'purge'}                 forget everything personal: every files cache
- *                                               and the kept page.
+ *                                               and the kept page. The page sends it at boot
+ *                                               when the phone holds no marker, and offline
+ *                                               when it holds none or not the one the page was
+ *                                               drawn with: somebody signed out.
+ *
+ * The worker does not read cookies (not every browser gives a worker a way to), so it never
+ * decides who is signed in: the page does, and tells it.
  *
  * Only a real answer is ever kept: a 200 from this site that was not redirected (a signed-out
  * request is sent to /login, and the login page kept as "the itinerary" would be worse than
- * nothing). A private file costs an Access Log row each time it is fetched, so a file already
- * kept is not fetched again.
+ * nothing), and, for the page, the page itself: text/html that frappe marked X-Page-Name:
+ * itinerary (isThePage), never a `?cmd=` JSON answer or a message page at the same address. A
+ * private file costs an Access Log row each time it is fetched, so a file already kept is not
+ * fetched again.
  *
  * Served by Frappe as a Jinja template (www/*.js goes through TemplatePage), so this file must
  * never contain a double brace or a Jinja tag, comments included:
@@ -87,21 +101,23 @@ const MAX_FILES = 150;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_PER_MESSAGE = 40;
 
-// The person the page last said is signed in. Only a hint: a worker is stopped whenever it is
+// The marker the page last said is signed in. Only a hint: a worker is stopped whenever it is
 // idle, and this is lost with it. After a 'user' message there is one files cache on the phone
 // at most, so without the hint every files cache is looked in, which is the same one.
-let currentUser = null;
+let currentKey = null;
 
 function versioned(url) {
   return url + (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(VERSION);
 }
 
-function filesCacheFor(user) {
-  return FILES_PREFIX + encodeURIComponent(user);
+function filesCacheFor(key) {
+  return FILES_PREFIX + encodeURIComponent(key);
 }
 
-function isPerson(user) {
-  return typeof user === 'string' && user !== '' && user !== 'Guest';
+// An offline marker: 64 hex characters. Nothing else names a files cache (not an email, not
+// Guest, not nothing).
+function isKey(key) {
+  return typeof key === 'string' && /^[0-9a-f]{64}$/.test(key);
 }
 
 function isFilePath(pathname) {
@@ -112,6 +128,19 @@ function isFilePath(pathname) {
 // page), and not an opaque one.
 function keepable(res) {
   return !!res && res.ok && res.type === 'basic' && !res.redirected;
+}
+
+// The itinerary page itself, and not merely something that answered 200 at its address. frappe
+// marks every page its website renders with X-Page-Name ("itinerary" for this one: build_response
+// in frappe/website/utils.py); a message page says "message". A `?cmd=` link to this address is
+// answered with JSON before frappe looks at the path at all, and one tapped link used to replace
+// the kept page with {"message": ...}, which then opened offline instead of the itinerary.
+function isThePage(res) {
+  return (
+    keepable(res) &&
+    res.headers.get('x-page-name') === 'itinerary' &&
+    (res.headers.get('content-type') || '').startsWith('text/html')
+  );
 }
 
 function tooBig(res) {
@@ -174,7 +203,7 @@ self.addEventListener('install', (event) => {
     // visit followed by a flight would find nothing.
     try {
       const page = await fetch(new Request(PAGE, { credentials: 'same-origin', cache: 'no-store' }));
-      if (keepable(page)) await cache.put(PAGE, page);
+      if (isThePage(page)) await cache.put(PAGE, page);
     } catch (e) {
       // Offline at install: the next visit keeps it.
     }
@@ -199,26 +228,41 @@ self.addEventListener('activate', (event) => {
       }
     }
     await Promise.all(old.map((k) => caches.delete(k)));
+    // Navigation preload: the browser starts the /itinerary request while this worker is still
+    // starting up, rather than after, so an online open of the page waits for nothing extra.
+    try {
+      if (self.registration && self.registration.navigationPreload) {
+        await self.registration.navigationPreload.enable();
+      }
+    } catch (e) {
+      // Not supported: the page is fetched as before, once the worker is running.
+    }
     await self.clients.claim();
   })());
 });
 
 // --- Answers -----------------------------------------------------------------
-async function pageFromNetworkOrKept(req) {
-  const shell = await caches.open(SHELL);
-  const network = fetch(req).then((res) => {
-    if (keepable(res)) {
-      // Cloned before the response is handed back, while its body is still unread.
-      const copy = res.clone();
-      shell.put(PAGE, copy).catch(() => {});
-    }
-    return res;
-  });
+async function pageFromNetworkOrKept(event) {
+  const req = event.request;
+  const shell = caches.open(SHELL);
+  // The navigation preload's answer when there is one (activate), else the network's.
+  const network = Promise.resolve(event.preloadResponse)
+    .then((preloaded) => preloaded || fetch(req))
+    .then((res) => {
+      if (isThePage(res)) {
+        // Cloned before the response is handed back, while its body is still unread.
+        const copy = res.clone();
+        shell.then((cache) => cache.put(PAGE, copy)).catch(() => {});
+      }
+      return res;
+    });
+  // Settled either way, whatever the race below decides: the preload read, the page kept.
+  event.waitUntil(network.then(() => {}, () => {}));
   const fresh = await within(network, PAGE_WAIT_MS);
   // A server error is no answer either: a deploy restarting the site answers 502 for a minute.
   // A redirect (signed out: off to /login) and a refusal are answers, and go through.
   if (fresh && fresh.status < 500) return fresh;
-  const kept = await shell.match(PAGE);
+  const kept = await (await shell).match(PAGE);
   if (kept) return kept;
   if (fresh) return fresh;
   try {
@@ -249,8 +293,8 @@ async function shellAsset(req) {
 
 // The files cache that holds `href` for the person signed in, or null.
 async function keptFile(href) {
-  const names = currentUser
-    ? [filesCacheFor(currentUser)]
+  const names = currentKey
+    ? [filesCacheFor(currentKey)]
     : (await caches.keys()).filter((k) => k.startsWith(FILES_PREFIX));
   for (const name of names) {
     if (!(await caches.has(name))) continue;
@@ -283,7 +327,10 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (req.mode === 'navigate' && url.pathname === PAGE) {
-    event.respondWith(pageFromNetworkOrKept(req));
+    // frappe's legacy `?cmd=` API, which answers at any address: not the page. Passed through,
+    // never kept, never answered with the kept page.
+    if (url.searchParams.has('cmd')) return;
+    event.respondWith(pageFromNetworkOrKept(event));
     return;
   }
 
@@ -300,19 +347,19 @@ self.addEventListener('fetch', (event) => {
 });
 
 // --- Messages from the page ----------------------------------------------------
-async function forUser(user) {
-  if (!isPerson(user)) return;
-  currentUser = user;
-  const own = filesCacheFor(user);
+async function forKey(key) {
+  if (!isKey(key)) return;
+  currentKey = key;
+  const own = filesCacheFor(key);
   const keys = await caches.keys();
   await Promise.all(keys.filter((k) => k.startsWith(FILES_PREFIX) && k !== own).map((k) => caches.delete(k)));
 }
 
-async function keepFiles(user, urls) {
-  if (!isPerson(user) || !Array.isArray(urls)) return;
+async function keepFiles(key, urls) {
+  if (!isKey(key) || !Array.isArray(urls)) return;
   // Files for somebody other than the person last named: that person is who is signed in now.
-  if (user !== currentUser) await forUser(user);
-  const cache = await caches.open(filesCacheFor(user));
+  if (key !== currentKey) await forKey(key);
+  const cache = await caches.open(filesCacheFor(key));
   for (const raw of urls.slice(0, MAX_PER_MESSAGE)) {
     const href = fileHref(raw);
     if (!href || (await cache.match(href))) continue;
@@ -329,7 +376,7 @@ async function keepFiles(user, urls) {
 }
 
 async function purge() {
-  currentUser = null;
+  currentKey = null;
   const keys = await caches.keys();
   await Promise.all(keys.filter((k) => k.startsWith(FILES_PREFIX)).map((k) => caches.delete(k)));
   for (const name of keys.filter((k) => k.startsWith(SHELL_PREFIX))) {
@@ -340,9 +387,9 @@ async function purge() {
 self.addEventListener('message', (event) => {
   const data = event.data || {};
   if (data.type === 'user') {
-    event.waitUntil(forUser(data.user));
+    event.waitUntil(forKey(data.key));
   } else if (data.type === 'cache-files') {
-    event.waitUntil(keepFiles(data.user || currentUser, data.urls));
+    event.waitUntil(keepFiles(data.key || currentKey, data.urls));
   } else if (data.type === 'purge') {
     event.waitUntil(purge());
   }

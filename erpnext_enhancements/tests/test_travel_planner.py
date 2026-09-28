@@ -2302,6 +2302,18 @@ class TestCopyATrip(unittest.TestCase):
 		self.assertEqual(dated, set(planner.DATED_FIELDS))
 		self.assertEqual(timed, {"check_in_time", "check_out_time", "time", "end_time"})
 
+	def test_the_page_moves_a_copy_by_the_same_list(self):
+		# A copy not saved yet moves every date with a new First day on the page (shift_copy): a
+		# field on one list and not the other would be left on the old day there, or here.
+		page = _read(os.path.join(PAGE_DIR, "plan_a_trip.js"))
+		found = re.search(r"\nconst TP_DATED = \[(.*?)\];", page, re.S)
+		self.assertIsNotNone(found, "TP_DATED is gone")
+		self.assertEqual(set(re.findall(r'"([a-z_]+)"', found.group(1))), set(planner.DATED_FIELDS))
+		# ...and the same whole-day, keep-the-time rule as shift_date.
+		shift = re.search(r"\nfunction tp_shift_date\(value, days\) \{(.*?)\n\}\n", page, re.S)
+		self.assertIsNotNone(shift, "tp_shift_date is gone")
+		self.assertIn("text.slice(10)", shift.group(1))
+
 	# ------------------------------------------------------------------ what comes over
 
 	def test_nothing_the_old_bookings_were_comes_over(self):
@@ -2412,12 +2424,65 @@ class TestCopyATrip(unittest.TestCase):
 		self.assertEqual([m["traveler"] for m in everyone["bookings"]["flights"][1]["members"]],
 			["EMP-A", "EMP-B", "EMP-C"])
 
-		# The lead left behind: the next person leads, and the lead's seats and car stay empty.
+		# The lead left behind: the next person leads, and Ann's own car stays behind with her.
+		# A booking with nobody on it could never be saved: the page refuses it on its first step,
+		# where no booking can be reached ("Every booking needs at least one person ticked").
 		without_ann = self.copy(active=("EMP-B",))
 		self.assertEqual([(t["employee"], t["is_trip_lead"]) for t in without_ann["travelers"]], [("EMP-B", 1)])
 		self.assertEqual([m["traveler"] for m in without_ann["bookings"]["flights"][0]["members"]], ["EMP-B"])
-		drive = without_ann["bookings"]["ground_transport"][1]
-		self.assertEqual((drive["members"], drive["mileage"]["driver"]), ([], ""))
+		(rental,) = without_ann["bookings"]["ground_transport"]
+		self.assertEqual(rental["values"]["transport_type"], "Rental/Third Party")
+		self.assertEqual([m["traveler"] for m in rental["members"]], ["EMP-B"])
+		self.assertEqual(
+			without_ann["notes"],
+			[
+				"The Personal Vehicle drive was only for Ann, who can no longer travel, "
+				"so it is not on the copy."
+			],
+		)
+		self.assertEqual(state["notes"], [], "nobody left: nothing to say")
+
+	def test_a_copy_with_its_crew_is_always_one_the_page_can_save(self):
+		# What plan_a_trip.js problems() refuses before the first save, which runs on the first
+		# step — where no booking can be reached to fix it: a booking with nobody ticked, and a
+		# personal drive with a distance and no driver. For every set of people still able to
+		# travel, the copy with its crew has neither.
+		from itertools import combinations
+
+		people = ("EMP-A", "EMP-B", "EMP-C")
+		source = self.source()
+		for size in range(1, len(people) + 1):
+			for active in combinations(people, size):
+				state = planner.copy_state(source, date(2026, 11, 2), keep_crew=True, active=set(active))
+				crew = {t["employee"] for t in state["travelers"]}
+				self.assertTrue(crew, active)
+				for table, cards in state["bookings"].items():
+					for card in cards:
+						people_on_it = [m["traveler"] for m in card["members"]]
+						self.assertTrue(people_on_it, (active, table, card["values"]))
+						self.assertLessEqual(set(people_on_it), crew, (active, table))
+						mileage = card.get("mileage") or {}
+						if float(mileage.get("distance") or 0) > 0:
+							self.assertIn(mileage.get("driver"), people_on_it, (active, table))
+				# Everything left off is said.
+				dropped = sum(len(c) for c in source["bookings"].values()) - sum(
+					len(c) for c in state["bookings"].values()
+				)
+				self.assertEqual(dropped, sum("not on the copy" in n for n in state["notes"]), active)
+
+	def test_a_drive_whose_driver_left_is_driven_by_someone_still_on_it(self):
+		source = self.source()
+		drive = source["bookings"]["ground_transport"][1]
+		self.assertEqual(drive["mileage"]["driver"], "EMP-A")
+		drive["members"].append({"name": "G9", "traveler": "EMP-B", "ref": "", "protected": False})
+		state = planner.copy_state(source, date(2026, 11, 2), keep_crew=True, active={"EMP-B"})
+		copied = state["bookings"]["ground_transport"][1]
+		self.assertEqual([m["traveler"] for m in copied["members"]], ["EMP-B"])
+		self.assertEqual(copied["mileage"], {"driver": "EMP-B", "distance": 42.0, "claimed": False})
+		self.assertEqual(
+			state["notes"],
+			["Bo now drives on the Personal Vehicle drive: whoever drove it before can no longer travel."],
+		)
 
 	def test_without_the_crew_every_booking_waits_for_its_people(self):
 		state = self.copy(keep_crew=False)
@@ -2429,6 +2494,9 @@ class TestCopyATrip(unittest.TestCase):
 		self.assertEqual(state["freight"][0]["traveler"], "", "a shipment for nobody goes to the whole crew")
 		self.assertEqual(state["bookings"]["ground_transport"][1]["mileage"]["driver"], "")
 		self.assertEqual([g for g in state["gaps"] if g.get("employee")], [])
+		# Nobody on the crew yet: nothing is dropped, the page seats whoever is ticked.
+		self.assertEqual(state["notes"], [])
+		self.assertEqual(planner.copy_state(self.source(), date(2026, 11, 2), active=set())["notes"], [])
 
 	def test_the_copy_opens_with_the_gaps_its_first_save_will_show(self):
 		state = self.copy()
@@ -3307,7 +3375,11 @@ class TestItineraryBackForward(unittest.TestCase):
 	loadTrip's place and writes no history, and a page drawn for somebody other than this session
 	shows nothing saved and writes none. The fake browser drives it
 	(scripts/test_web_flow_history.js, "/itinerary offline"); the worker and the page's storage
-	rules are pinned in tests/test_itinerary_service_worker.py."""
+	rules are pinned in tests/test_itinerary_service_worker.py.
+
+	The controller sets the offline marker (the ``ee_itinerary_key`` cookie, and the boot's
+	``offline_key``) for a signed-in person, and never for a guest; the marker itself is
+	``TestItineraryOfflineMarker`` below."""
 
 	ITINERARY_JS = os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js")
 	CONTROLLER = os.path.join(APP_DIR, "www", "itinerary.py")
@@ -3319,7 +3391,9 @@ class TestItineraryBackForward(unittest.TestCase):
 		code = _strip_js_comments(_read(self.ITINERARY_JS))
 		body = code[code.index("function loadTrip(") : code.index("function defaultTrip(")]
 		self.assertIn("if (err && err.unreachable) showSaved(name, as, err);", body)
-		self.assertIn("else loadFailed(name, as, err);", body)
+		# A refusal settles a page drawn with another marker than the phone's first (answered),
+		# then falls back as before.
+		self.assertIn("else if (!answered(err)) loadFailed(name, as, err);", body)
 		start = code.index("function showSaved(")
 		saved = code[start : code.index("\n\tfunction ", start + 1)]
 		for forbidden in ("writeTripEntry", "State(", "history."):
@@ -3351,6 +3425,76 @@ class TestItineraryBackForward(unittest.TestCase):
 		from urllib.parse import quote
 
 		return self._controller_function("login_redirect", {"quote": quote})
+
+	def _get_context(self, user, marker="k" * 64):
+		"""The real get_context (with script_json and login_redirect), extracted with ast, over a
+		stand-in frappe, bootstrap and set_marker. Returns (get_context, marked, fake frappe)."""
+		import ast
+		from urllib.parse import quote
+
+		marked = []
+		fake = types.SimpleNamespace(
+			session=types.SimpleNamespace(user=user),
+			local=types.SimpleNamespace(flags=types.SimpleNamespace()),
+			request=types.SimpleNamespace(full_path="/itinerary?trip=TRIP-7"),
+			Redirect=type("Redirect", (Exception,), {}),
+			as_json=lambda value: json.dumps(value, sort_keys=True),
+		)
+
+		def set_marker(who):
+			marked.append(who)
+			return marker
+
+		namespace = {
+			"frappe": fake,
+			"quote": quote,
+			"get_itinerary_bootstrap": lambda: {"user": user, "csrf_token": "tok", "trips": []},
+			"get_deploy_version": lambda: "v7",
+			"set_marker": set_marker,
+		}
+		tree = ast.parse(_read(self.CONTROLLER))
+		wanted = [
+			n
+			for n in tree.body
+			if (isinstance(n, ast.FunctionDef) and n.name in ("get_context", "script_json", "login_redirect"))
+			or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "ROUTE" for t in n.targets))
+		]
+		exec(compile(ast.Module(body=wanted, type_ignores=[]), self.CONTROLLER, "exec"), namespace)
+		return namespace["get_context"], marked, fake
+
+	def test_the_page_sets_the_offline_marker_for_a_signed_in_person(self):
+		"""Shared phones: offline, the page shows a saved copy only while the browser still holds
+		the marker it was saved under, and every sign-out deletes it. The controller sets it (and
+		puts the same value in the boot) on every render for a signed-in person."""
+		get_context, marked, _fake = self._get_context("pat@example.com")
+		context = get_context(types.SimpleNamespace())
+		self.assertEqual(marked, ["pat@example.com"])
+		boot = json.loads(context.boot_json)
+		self.assertEqual(boot["offline_key"], "k" * 64)
+		self.assertEqual(boot["user"], "pat@example.com")
+		self.assertEqual(context.no_cache, 1)
+		source = _read(self.CONTROLLER)
+		self.assertIn(
+			"from erpnext_enhancements.travel_management.itinerary_offline import set_marker", source
+		)
+		self.assertIn("BOOT.offline_key", _read(self.ITINERARY_JS))
+		# The cookie only leaves on a response whose Cache-Control is not public: the page stays
+		# uncached, at module level and on the context.
+		self.assertIn("\nno_cache = 1\n", source)
+
+	def test_a_guest_is_sent_to_log_in_with_no_marker(self):
+		get_context, marked, fake = self._get_context("Guest")
+		with self.assertRaises(fake.Redirect):
+			get_context(types.SimpleNamespace())
+		self.assertEqual(marked, [])
+		self.assertEqual(fake.local.flags.redirect_location, "/login?redirect-to=/itinerary%3Ftrip%3DTRIP-7")
+
+	def test_a_marker_that_cannot_be_made_leaves_the_page_as_it_was(self):
+		"""set_marker answers "" (and sets no cookie) when it cannot make one: the boot says so and
+		the page keeps nothing offline."""
+		get_context, _marked, _fake = self._get_context("pat@example.com", marker="")
+		boot = json.loads(get_context(types.SimpleNamespace()).boot_json)
+		self.assertEqual(boot["offline_key"], "")
 
 	def test_the_boot_cannot_end_its_script_block(self):
 		"""itinerary.html prints the boot with ``| safe``; a trip purpose is typed by people and
@@ -3551,6 +3695,217 @@ class TestItineraryBackForward(unittest.TestCase):
 			timeout=120,
 		)
 		self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class _CookieJar:
+	"""frappe v16's CookieManager by its signature (frappe/auth.py, origin/version-16): what was set
+	and what deleted. A keyword it does not take (``path``, say) raises TypeError here as there."""
+
+	def __init__(self):
+		self.cookies = {}
+		self.to_delete = []
+
+	def set_cookie(
+		self,
+		key,
+		value,
+		expires=None,
+		secure=False,
+		httponly=False,
+		samesite="Lax",
+		max_age=None,
+		deduplicate=False,
+	):
+		self.cookies[key] = {
+			"value": value,
+			"expires": expires,
+			"secure": secure,
+			"httponly": httponly,
+			"samesite": samesite,
+			"max_age": max_age,
+		}
+
+	def delete_cookie(self, to_delete):
+		if not isinstance(to_delete, list | tuple):
+			to_delete = [to_delete]
+		self.to_delete.extend(to_delete)
+
+
+class TestItineraryOfflineMarker(unittest.TestCase):
+	"""``travel_management/itinerary_offline.py``: the cookie that says whose saved itinerary a
+	phone may show with no signal (Plan a Trip PR 4).
+
+	frappe's ``user_id`` cookie cannot say it: it is a session cookie, which a home-screen app
+	started again has dropped whether or not anybody signed out, so after a sign-out the next person
+	to open the app offline could see the last one's trip. The marker is set with every
+	``/itinerary`` render, deleted by every sign-out (``on_logout``) and by a sign-in as anybody else
+	(``on_login``), and read by ``itinerary.js``. Here: that it is a keyed hash and never the email,
+	that the page can read it (not HttpOnly, Path=/, Lax, Secure on https, 30 days), that a guest
+	gets none, which hook deletes it when, and that nothing in it can raise into a login or logout.
+
+	The module is run from its source over a stand-in ``frappe`` (patched into ``sys.modules`` only
+	while it is exec'd), so this suite's own stub is untouched."""
+
+	MODULE = os.path.join(APP_DIR, "travel_management", "itinerary_offline.py")
+	SECRET = "site-encryption-key"
+
+	def _module(self, scheme="https", url="https://erp.example.com", held=None, cookies=True):
+		jar = _CookieJar() if cookies else None
+		request = types.SimpleNamespace(scheme=scheme, cookies=dict(held or {}))
+		fake = types.SimpleNamespace(
+			local=types.SimpleNamespace(cookie_manager=jar, request=request),
+			utils=types.SimpleNamespace(get_url=lambda: url),
+		)
+		namespace = {"__name__": "itinerary_offline_under_test"}
+		with mock.patch.dict(sys.modules, {"frappe": fake}):
+			exec(compile(_read(self.MODULE), self.MODULE, "exec"), namespace)
+		namespace["_secret"] = lambda: self.SECRET
+		return namespace, jar
+
+	def test_the_key_is_a_keyed_hash_never_the_email(self):
+		import hashlib
+		import hmac
+
+		m, _jar = self._module()
+		key = m["key_for"]("pat@example.com")
+		self.assertRegex(key, r"^[0-9a-f]{64}$")
+		self.assertNotIn("pat", key)
+		self.assertEqual(key, m["key_for"]("pat@example.com"))
+		self.assertNotEqual(key, m["key_for"]("sam@example.com"))
+		self.assertEqual(
+			key,
+			hmac.new(self.SECRET.encode(), m["_CONTEXT"] + b"pat@example.com", hashlib.sha256).hexdigest(),
+		)
+		# Not the plain hash of the email, which anyone could compute from a list of addresses.
+		self.assertNotEqual(key, hashlib.sha256(b"pat@example.com").hexdigest())
+		m["_secret"] = lambda: "another-site"
+		self.assertNotEqual(key, m["key_for"]("pat@example.com"))
+		for nobody in ("Guest", "", None):
+			self.assertEqual(m["key_for"](nobody), "")
+
+	def test_the_cookie_is_one_the_page_can_read(self):
+		m, jar = self._module()
+		key = m["set_marker"]("pat@example.com")
+		self.assertEqual(key, m["key_for"]("pat@example.com"))
+		self.assertEqual(
+			jar.cookies,
+			{
+				"ee_itinerary_key": {
+					"value": key,
+					"expires": None,
+					"secure": True,
+					"httponly": False,
+					"samesite": "Lax",
+					"max_age": 30 * 24 * 60 * 60,
+				}
+			},
+		)
+		self.assertEqual(m["COOKIE"], "ee_itinerary_key")
+		# The page reads it by the same name, and never writes it.
+		page = _read(os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js"))
+		self.assertIn("ee_itinerary_key=([^;]*)", page)
+
+	def test_it_is_set_at_the_site_root(self):
+		"""Path=/: frappe v16's set_cookie and delete_cookie take no path and write at werkzeug's
+		"/", and the logout and login requests that must see it are not under /itinerary. Every
+		keyword the module passes is one v16's set_cookie takes."""
+		import ast
+		import inspect
+
+		allowed = set(inspect.signature(_CookieJar.set_cookie).parameters) - {"self"}
+		calls = [
+			node
+			for node in ast.walk(ast.parse(_read(self.MODULE)))
+			if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "set_cookie"
+		]
+		self.assertEqual(len(calls), 1)
+		keywords = {k.arg for k in calls[0].keywords}
+		self.assertNotIn("path", keywords)
+		self.assertLessEqual(keywords, allowed)
+		self.assertEqual(keywords, {"max_age", "secure", "httponly", "samesite"})
+
+	def test_secure_whenever_the_site_is_https(self):
+		for scheme, url, secure in (
+			("https", "http://localhost:8000", True),
+			("http", "https://erp.example.com", True),  # TLS ends at a proxy: the site's address says
+			("http", "http://localhost:8000", False),
+		):
+			with self.subTest(scheme=scheme, url=url):
+				m, jar = self._module(scheme=scheme, url=url)
+				m["set_marker"]("pat@example.com")
+				self.assertIs(jar.cookies["ee_itinerary_key"]["secure"], secure)
+
+	def test_a_guest_gets_none_and_nothing_raises(self):
+		m, jar = self._module()
+		self.assertEqual(m["set_marker"]("Guest"), "")
+		self.assertEqual(jar.cookies, {})
+
+		def broken():
+			raise RuntimeError("no encryption key")
+
+		m["_secret"] = broken
+		self.assertEqual(m["set_marker"]("pat@example.com"), "")
+		self.assertEqual(jar.cookies, {})
+		# Outside a request (no cookie manager): no key for the boot either.
+		m, _jar = self._module(cookies=False)
+		self.assertEqual(m["set_marker"]("pat@example.com"), "")
+
+	def test_every_sign_out_deletes_it(self):
+		m, jar = self._module(held={"ee_itinerary_key": "a" * 64})
+		m["forget_on_logout"](login_manager=types.SimpleNamespace(user="pat@example.com"))
+		self.assertEqual(jar.to_delete, ["ee_itinerary_key"])
+		# frappe calls it with login_manager= (LoginManager.run_trigger), and with nothing held
+		# too: deleting a cookie that is not there costs one header.
+		m, jar = self._module()
+		m["forget_on_logout"]()
+		self.assertEqual(jar.to_delete, ["ee_itinerary_key"])
+
+	def test_a_sign_in_as_anybody_else_deletes_it(self):
+		"""A session that merely expires runs no hook, so the last person's marker would still be on
+		the phone when the next person signs in."""
+		m, _jar = self._module()
+		pats = m["key_for"]("pat@example.com")
+		for user, deleted in (
+			("sam@example.com", ["ee_itinerary_key"]),
+			("Guest", ["ee_itinerary_key"]),  # login_as_guest, at the end of a sign-out
+			("pat@example.com", []),  # their own: kept
+		):
+			with self.subTest(user=user):
+				m, jar = self._module(held={"ee_itinerary_key": pats})
+				m["forget_on_login"](login_manager=types.SimpleNamespace(user=user))
+				self.assertEqual(jar.to_delete, deleted)
+		# Nothing held: no cookie is sent at all.
+		m, jar = self._module()
+		m["forget_on_login"](login_manager=types.SimpleNamespace(user="sam@example.com"))
+		self.assertEqual(jar.to_delete, [])
+		# A key that cannot be made is nobody's: the marker goes.
+		m, jar = self._module(held={"ee_itinerary_key": pats})
+
+		def broken():
+			raise RuntimeError("no encryption key")
+
+		m["_secret"] = broken
+		m["forget_on_login"](login_manager=types.SimpleNamespace(user="pat@example.com"))
+		self.assertEqual(jar.to_delete, ["ee_itinerary_key"])
+
+	def test_the_hooks_never_raise(self):
+		"""frappe runs them inside LoginManager: an exception would fail the login or the logout."""
+
+		class Exploding:
+			def delete_cookie(self, *a, **k):
+				raise RuntimeError("boom")
+
+			def set_cookie(self, *a, **k):
+				raise RuntimeError("boom")
+
+		m, _jar = self._module(held={"ee_itinerary_key": "b" * 64})
+		m["frappe"].local.cookie_manager = Exploding()
+		m["forget_on_logout"](login_manager=None)
+		m["forget_on_login"](login_manager=types.SimpleNamespace(user="sam@example.com"))
+		self.assertEqual(m["set_marker"]("pat@example.com"), "")
+		m["frappe"].local = types.SimpleNamespace()
+		m["forget_on_logout"]()
+		m["forget_on_login"]()
 
 
 if __name__ == "__main__":

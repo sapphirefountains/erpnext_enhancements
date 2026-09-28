@@ -18,6 +18,7 @@
   "last_change_at",
   "changes_section",
   "changes",
+  "known_uids",
   "error"
  ],
  "fields": [
@@ -56,7 +57,7 @@
   },
   {
    "default": "Pending",
-   "description": "Pending until 10 minutes after the last change, then Sent. Skipped when the trip is no longer Booked or In Progress, change alerts were turned off, or the person has no email address. Set a Failed alert back to Pending to send it again.",
+   "description": "Pending until nobody has changed the trip for 10 minutes, then Sent. Skipped when the trip is no longer Booked or In Progress, change alerts were turned off, or the person has no email address. Set a Failed alert back to Pending to send it again.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -105,6 +106,14 @@
    "read_only": 1
   },
   {
+   "description": "The calendar entries the person had when this round of edits began. Only these are ever canceled: an entry made and lost inside the round never reached them.",
+   "fieldname": "known_uids",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Calendar Entries Known",
+   "read_only": 1
+  },
+  {
    "fieldname": "error",
    "fieldtype": "Small Text",
    "label": "Error",
@@ -112,7 +121,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-27 14:00:00.000000",
+ "modified": "2026-09-27 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Trip Change Alert",
