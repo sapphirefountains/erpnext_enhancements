@@ -75,7 +75,21 @@ web_include_js = "login_enhancements.bundle.js"
 # label only when it is missing, so change the label, not just the action, to update it.
 # The action is a JS expression (frappe.utils.eval) and must not start with this app's
 # dotted name: test_hook_targets_resolve would read it as a Python path.
+#
+# Help menu -> "Company Knowledge Base" (WI-080 PR 4): the Knowledge Base workspace, for every staff
+# user (the Article's Desk User read opens it; knowledge_base/README.md). A Route, like core's own
+# "System Health": v16's menu sends a /desk url through frappe.set_route (ui/menu.js:169-170), so
+# it is an in-app move with a history entry and Back returns. Listed before "Report a Problem"
+# because sync_table inserts a NEW item at its index in the apps' combined list (core
+# navbar_settings.py:58-64), so it lands right after core's four, above "Report a Problem". The
+# route is /desk/<slug of the workspace name>; tests/test_knowledge_base_entry_points.py pins that.
 standard_help_items = [
+	{
+		"item_label": "Company Knowledge Base",
+		"item_type": "Route",
+		"route": "/desk/knowledge-base",
+		"is_standard": 1,
+	},
 	{
 		"item_label": "Report a Problem",
 		"item_type": "Action",
