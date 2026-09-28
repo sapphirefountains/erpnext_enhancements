@@ -9,10 +9,15 @@
 // same for every viewer. The Desk's own left sidebar has the same limitation and
 // for the same reason: it lists workspaces, which are places, not people.
 //
-// Shadow-DOM sandbox: `root_element` is the shadow root, and the workspace re-runs
-// this whole script with a fresh root on every navigation — so nothing is cached
-// across renders and every listener is bound to the fresh DOM each time. Same
-// model as the Finance widgets and hr_training_compliance.
+// Shadow-DOM sandbox: `root_element` is the shadow root. The workspace runs this
+// whole script again, with a fresh root, only when it renders the page: the first
+// visit, and coming back from a different workspace. Coming back from a course, a
+// form or a list does not (v16's Workspace.show() returns early on the workspace
+// already shown), so startApp hands load() to the shared return helper,
+// public/js/global_enhancements/workspace_block_return.js, which runs it again then:
+// the course you just finished leaves "Required" when you come back. Nothing is
+// cached across renders and every listener is bound to the fresh DOM each time.
+// Same model as the Finance widgets and hr_training_compliance.
 //
 // IT COMPUTES NOTHING. Every number comes from `training.dashboard`, which counts
 // them off the same rows it then sends. That is deliberate: this module has twice
@@ -166,12 +171,19 @@
 
     function load(container) {
         const body = container.querySelector("#tmd-body");
+        // The refresh button and a return to the workspace can both ask while an
+        // answer is on its way, so each ask takes a ticket and only the newest one
+        // draws. The ticket lives on the root, which is what the helper hands back.
+        const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
         frappe
             .call({ method: METHOD })
-            .then((r) => render(container, (r && r.message) || {}))
+            .then((r) => {
+                if (container.__ee_ticket === ticket) render(container, (r && r.message) || {});
+            })
             .catch(() => {
                 // frappe has already shown the server's message. Leave a line behind
                 // so the widget is not silently blank.
+                if (container.__ee_ticket !== ticket) return;
                 body.innerHTML = '<div class="tmd-muted">Could not load your training.</div>';
             });
     }
@@ -180,6 +192,11 @@
         const refresh = container.querySelector("#tmd-refresh");
         if (refresh) refresh.addEventListener("click", () => load(container));
         load(container);
+        // Coming back to My Training runs nothing again (the header): the shared helper
+        // calls load(container) then. A bundle cached from before the helper has none,
+        // and the block still draws; it just keeps its first answer.
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
     }
 
     waitForDOM();

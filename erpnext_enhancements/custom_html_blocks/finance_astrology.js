@@ -3,7 +3,11 @@
 // Daily horoscope with a pick-a-sign selector. The chosen sign is remembered in
 // localStorage; the text comes from
 // erpnext_enhancements.api.horoscope.get_horoscope (server-side fetched + cached).
-// Shadow-DOM block model.
+// Shadow-DOM block model: the workspace runs this script again only when it renders
+// the page. Unlike the other Finance widgets it does NOT register with the return
+// helper (public/js/global_enhancements/workspace_block_return.js): it is one text
+// per sign per day, cached on the server, so asking again on every return would
+// only redraw the same words.
 
 (function () {
     const MAX_ATTEMPTS = 50;

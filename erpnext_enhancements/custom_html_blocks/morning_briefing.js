@@ -7,8 +7,12 @@
 // regenerates synchronously (Gemini can take a while — spinner shown).
 //
 // Workspace re-renders re-run this whole script with a NEW root_element, so
-// state lives on `window` and timers are re-pointed instead of stacked (same
-// model as the Task Dashboard block).
+// state lives on `window` (same model as the Task Dashboard block). A re-render
+// is the first visit and coming back from a different workspace, not every
+// return: from a form or a list, v16's Workspace.show() returns early on the
+// workspace already shown. startApp hands a cached-read load to the shared return
+// helper, public/js/global_enhancements/workspace_block_return.js, so a Home left
+// open overnight shows today's briefing when you come back to it.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -73,6 +77,16 @@
         refresh_btn.addEventListener("click", () => load(true));
 
         load(false);
+
+        // Never force=1 on a return (that regenerates, and can take minutes), and never
+        // while a load is still out: a Regenerate in flight must be the answer that draws.
+        // The button is disabled exactly while one is.
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) {
+            blocks.onWorkspaceReturn(container, () => {
+                if (!refresh_btn.disabled) load(false);
+            });
+        }
     }
 
     waitForDOM();

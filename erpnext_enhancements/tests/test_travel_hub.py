@@ -45,6 +45,9 @@ BLOCKS_DIR = APP / "custom_html_blocks"
 BLOCK_JS = BLOCKS_DIR / "travel_home.js"
 BLOCK_CSS = BLOCKS_DIR / "travel_home.css"
 BLOCK_HTML = BLOCKS_DIR / "travel_home.html"
+#: The desk-wide helper that reloads a block when you come back to its workspace (v1.556.3).
+#: This block's own route handler was its first version.
+RETURN_HELPER_JS = APP / "public" / "js" / "global_enhancements" / "workspace_block_return.js"
 SEEDER = APP / "setup" / "custom_html_blocks.py"
 HOME_PY = APP / "travel_management" / "home.py"
 WORKSPACE = APP / "travel_management" / "workspace" / "travel_management" / "travel_management.json"
@@ -134,20 +137,27 @@ def sidebar():
 
 
 #: The block's script run twice in node, as the workspace runs it for two renders of the page,
-#: against a stub desk: ``frappe.router`` fires "change", ``frappe.call`` answers when told to.
-#: Prints what it saw as JSON. ``__BLOCK_JS__`` is the script's path, as a JSON string.
+#: against a stub desk carrying the real return helper: ``frappe.router`` fires "change" (each
+#: navigation a new route array, as v16's router makes one), ``frappe.call`` answers when told
+#: to. Prints what it saw as JSON. ``__BLOCK_JS__`` and ``__HELPER_JS__`` are the two scripts'
+#: paths, as JSON strings.
 _RETURN_JS = r"""
-const src = require("fs").readFileSync(__BLOCK_JS__, "utf8");
+const fs = require("fs");
+const src = fs.readFileSync(__BLOCK_JS__, "utf8");
+const helper = fs.readFileSync(__HELPER_JS__, "utf8");
 const handlers = [];
 const pending = [];
 let route = ["Workspaces", "Travel"];
+const win = {};
 const frappe = {
 	utils: { escape_html: (value) => String(value) },
 	router: { on: (evt, fn) => handlers.push([evt, fn]) },
 	get_route: () => route,
 	call: () => new Promise((resolve) => pending.push(resolve)),
+	provide: (ns) => ns.split(".").reduce((obj, key) => (obj[key] = obj[key] || {}), win),
 };
-const win = {};
+// The desk bundle evaluates the helper once, before any block runs.
+new Function("frappe", "window", helper)(frappe, win);
 function makeRoot() {
 	const els = {
 		"#tvh-body": { innerHTML: "", querySelectorAll: () => [] },
@@ -325,32 +335,41 @@ class TestTheBlock(unittest.TestCase):
 		"""v16's ``Workspace.show()`` returns early when the workspace asked for is the one already
 		shown (``if (this._page?.name === page.name) return;``), so from the hub to a trip form or
 		Plan a Trip and back left the block as it was, with the trip just changed out of date. The
-		block reloads on the router's "change" to the Travel route instead. ``frappe.router.off``
-		wraps the handler in a new function before unbinding, so it can never remove one: the
-		handler is bound once per page load, behind a window flag, and reloads the newest root."""
+		block reloads when the route comes back to its workspace. Since v1.556.3 it does that
+		through the desk-wide return helper, which every data block shares, rather than a router
+		handler of its own: ``frappe.router.off`` wraps the handler in a new function before
+		unbinding, so it can never remove one, and the helper binds the one for the whole desk."""
 		code = js_code(BLOCK_JS)
-		self.assertEqual(code.count('frappe.router.on("change"'), 1)
-		self.assertNotIn("frappe.router.off", code)
-		self.assertIn("if (window.__tvh_route_bound || !frappe.router || !frappe.router.on) return;", code)
-		self.assertIn("window.__tvh_route_bound = true;", code)
-		# v16's route for a workspace is ["Workspaces", name] (or [..., "private", name]); the
-		# name is the workspace JSON's.
-		self.assertIn(f'name !== "{workspace()["name"]}"', code)
-		self.assertIn('route[0] !== "Workspaces"', code)
-		self.assertIn("host.isConnected", code)
-		self.assertIn("watchReturn(container);", code)
+		self.assertNotIn("frappe.router", code)
+		self.assertNotIn("__tvh_route_bound", code)
+		self.assertIn("window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks", code)
+		# Guarded, so a device holding a bundle from before the helper still draws the block.
+		self.assertIn(
+			"if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);", code
+		)
+		# The helper reads v16's route for a workspace, ["Workspaces", name] or
+		# ["Workspaces", "private", name], and reloads only a block still on the page.
+		helper = js_code(RETURN_HELPER_JS)
+		self.assertIn('route[0] !== "Workspaces"', helper)
+		self.assertIn('route[1] === "private" ? route[2] : route[1]', helper)
+		self.assertIn("host.isConnected", helper)
+		self.assertEqual(helper.count('router.on("change"'), 1)
 		# The claim that sent it stale: that every navigation re-runs the script.
 		self.assertNotIn("on every navigation", source(BLOCK_JS))
 		self.assertNotIn("re-runs this whole script", source(BLOCK_JS))
 
 	def test_coming_back_reloads_the_newest_block_and_only_the_newest_answer_draws(self):
-		"""The script itself, run in node against a stub desk: two runs (the workspace rendered
-		twice), a router that fires "change", and answers that arrive out of order."""
+		"""The script itself, run in node against a stub desk carrying the real return helper: two
+		runs (the workspace rendered twice), a router that fires "change", and answers that arrive
+		out of order."""
 		node = shutil.which("node")
 		if not node:
 			self.skipTest("node is not installed")
+		script = _RETURN_JS.replace("__BLOCK_JS__", json.dumps(str(BLOCK_JS))).replace(
+			"__HELPER_JS__", json.dumps(str(RETURN_HELPER_JS))
+		)
 		result = subprocess.run(
-			[node, "-e", _RETURN_JS.replace("__BLOCK_JS__", json.dumps(str(BLOCK_JS)))],
+			[node, "-e", script],
 			capture_output=True,
 			text=True,
 			encoding="utf-8",

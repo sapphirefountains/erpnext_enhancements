@@ -12,7 +12,12 @@
 // debounced 5s, plus a 5-minute interval as the kiosk fallback. Workspace
 // re-renders re-run this whole script with a NEW root_element, so all timers
 // and the single realtime subscription are stored on `window` and re-pointed
-// instead of stacked.
+// instead of stacked. A re-render is the first visit and coming back from a
+// different workspace, not every return: from a form or a list, v16's
+// Workspace.show() returns early on the workspace already shown. startApp hands
+// refresh() to the shared return helper,
+// public/js/global_enhancements/workspace_block_return.js, which runs it then, so
+// a desk user does not wait up to five minutes to see a task they just closed.
 
 (function () {
     const REFRESH_MS = 5 * 60 * 1000;
@@ -53,10 +58,15 @@
             el.textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
         }
 
+        // The interval, a realtime update and a return to the workspace can all ask at
+        // once, so each ask takes a ticket and only the newest answer draws.
         function refresh() {
+            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
             frappe
                 .call("erpnext_enhancements.api.task_dashboard.get_task_dashboard_data")
-                .then((r) => render(container, r.message))
+                .then((r) => {
+                    if (container.__ee_ticket === ticket) render(container, r.message);
+                })
                 .catch((err) => console.error("Task Dashboard refresh failed:", err));
         }
 
@@ -80,6 +90,11 @@
 
         tick_clock();
         refresh();
+
+        // No timer and no subscription here: the helper binds its one route handler
+        // itself, and runs this render's refresh() only while this block is on the page.
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, refresh);
     }
 
     // ------------------------------------------------------------------ render

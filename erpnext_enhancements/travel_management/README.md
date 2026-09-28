@@ -242,8 +242,11 @@ found a calendar, a planner and three reports.
     only draws them.
   - It reloads when you come back from a trip form or Plan a Trip. v16's `Workspace.show()`
     returns early for the workspace already shown, so the block is not rebuilt on the way back.
-    The block reloads itself on the router's `change` to the Travel route instead: one handler per
-    page load, since `frappe.router.off()` cannot unbind one.
+    Since v1.556.3 the block hands its load to the desk-wide return helper
+    (`public/js/global_enhancements/workspace_block_return.js`, described in the
+    [Custom HTML Blocks README](../custom_html_blocks/README.md#when-a-block-script-runs)),
+    which every data block now shares. This block's own router handler was the first version of
+    it.
 - **I want to…** holds six plain-language shortcuts, all visible to an Employee so none leaves a
   gap: *See my itinerary*, *Plan a Trip*, *Trips* (every trip, on `/itinerary?view=trips`, since
   v1.556.0), *Who's away when* (the calendar),

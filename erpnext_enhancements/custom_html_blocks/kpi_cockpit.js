@@ -8,7 +8,12 @@
 //
 // Workspace re-renders re-run this whole script with a NEW root_element, so
 // state lives on `window` and listeners are re-bound to the fresh DOM (same
-// model as the Morning Briefing / Task Dashboard blocks).
+// model as the Morning Briefing / Task Dashboard blocks). A re-render is the
+// first visit and coming back from a different workspace, not every return: from
+// a form or a list, v16's Workspace.show() returns early on the workspace already
+// shown. Once the departments are listed, startApp hands a snapshot read to the
+// shared return helper, public/js/global_enhancements/workspace_block_return.js,
+// which runs it again then.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -141,8 +146,10 @@
         const refresh_btn = container.querySelector("#kpi-refresh");
         const title = container.querySelector(".kpi-title");
 
-        // Recomputed each render: the script re-runs with a fresh route on every
-        // workspace navigation, so this tracks which dashboard we're on now.
+        // Recomputed each render. The workspace renders the page again, and runs this
+        // script with the route of the moment, whenever you move from one workspace to
+        // another (one department dashboard to the next included), so this tracks which
+        // dashboard we're on now. A return to the same dashboard keeps its department.
         const locked = detectLockedDepartment();
 
         function showMessage(message) {
@@ -150,12 +157,17 @@
             meta.textContent = "";
         }
 
+        // Picking another department while an answer is on its way means two asks at
+        // once, so each takes a ticket and only the newest one draws: an answer for the
+        // department you just left never lands under the one you picked.
         function load(force) {
             const dept = select.value;
             if (!dept) {
                 showMessage(__("No KPI dashboards are available for your role."));
                 return;
             }
+            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
+            const current = () => container.__ee_ticket === ticket;
             body.innerHTML = `<div class="kpi-loading">${force ? __("Recomputing…") : __("Loading…")}</div>`;
             refresh_btn.disabled = true;
             const method = force
@@ -164,6 +176,7 @@
             frappe
                 .call({ method, args: { department: dept } })
                 .then((r) => {
+                    if (!current()) return;
                     const m = r.message || {};
                     if (!m.available) {
                         showMessage(m.reason || __("KPI dashboard unavailable."));
@@ -172,11 +185,12 @@
                     renderCards(body, meta, m.snapshot);
                 })
                 .catch((err) => {
+                    if (!current()) return;
                     console.error("KPI Cockpit load failed:", err);
                     showMessage(__("Could not load the KPI dashboard."));
                 })
                 .then(() => {
-                    refresh_btn.disabled = false;
+                    if (current()) refresh_btn.disabled = false;
                 });
         }
 
@@ -213,6 +227,17 @@
                     if (title) title.textContent = __("KPI Dashboard");
                 }
                 load(false);
+
+                // Registered only now: before the list arrives there is no department to
+                // read. A return reads the snapshot, never recomputes, and waits out an
+                // answer already on its way (a Refresh recompute must be the one that
+                // draws); the button is disabled exactly while one is.
+                const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+                if (blocks && blocks.onWorkspaceReturn) {
+                    blocks.onWorkspaceReturn(container, () => {
+                        if (!refresh_btn.disabled) load(false);
+                    });
+                }
             })
             .catch((err) => {
                 console.error("KPI Cockpit: could not list departments:", err);
