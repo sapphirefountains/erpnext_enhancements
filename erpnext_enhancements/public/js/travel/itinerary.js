@@ -8,7 +8,8 @@
  *
  * Boot payload (window.ITIN_BOOT, computed by www/itinerary.py) carries the
  * session employee and their trips: the ones they travel on, plus the ones they
- * own but are not on (`mine: false`). The day-by-day detail is fetched per trip
+ * own but are not on (`mine: false`), and whether they are staff (`is_staff`, which
+ * only decides whether the list of all trips is offered). The day-by-day detail is fetched per trip
  * from erpnext_enhancements.api.travel.get_trip_itinerary. The server scopes
  * everything to the session user — nothing here is trusted: a ?trip= that is not
  * in the boot list is still asked for, and the server's read permission decides
@@ -112,7 +113,10 @@
  * travels on it ("You're on it") or organized it ("You organized it"). A row is a real link, so a
  * long press still offers a new tab; a tap pushes ?trip=<name> and opens it. "All trips", first in
  * the trip chip bar, pushes ?view=trips, or steps Back when the list is the entry behind (as "Day
- * by day" does); "See all trips" under "No upcoming or recent trips" pushes it too. The list is
+ * by day" does); "See all trips" under "No upcoming or recent trips" pushes it too. Both are drawn
+ * for staff only, as the boot's `is_staff` says (a boot without it, from a page kept on the phone
+ * before v1.556.2, draws neither); ?view=trips itself is still asked for, and someone who is not
+ * staff is told "You don't have access to the list of all trips." The list is
  * asked for each time it is shown, and drawn at once from this page load's last answer when there
  * is one; an answer for a list since left is dropped. It is not kept on the phone: with no usable
  * answer it says "You're offline — the list of all trips needs a connection." (or the gateway's
@@ -1385,8 +1389,8 @@
 				BOOT.employee
 					? 'No upcoming or recent trips. Safe travels when the next one comes!'
 					: 'No employee record is linked to your user account.'));
-			// Someone else's trip is still theirs to open (the server decides who is staff).
-			if (BOOT.employee) root.appendChild(allTripsLink());
+			// Someone else's trip is still theirs to open, when they are staff (see isStaff).
+			if (isStaff()) root.appendChild(allTripsLink());
 			return;
 		}
 
@@ -1407,17 +1411,23 @@
 
 		// "All trips" first, where a phone's sideways-scrolling bar always shows it, then their
 		// own trips. A trip opened from a link that is not in their list still gets the list, to
-		// go back to; a single trip of their own needs no chip, but "All trips" is always there.
+		// go back to; a single trip of their own needs no chip, but "All trips" is always there
+		// for staff (isStaff). With neither, there is no bar.
 		var switcher = el('div', 'ti-switcher');
-		var allChip = el('button', 'ti-all-chip');
-		allChip.type = 'button';
-		var allIcon = el('span', 'ti-all-icon', '🧳');
-		allIcon.setAttribute('aria-hidden', 'true');
-		allChip.appendChild(allIcon);
-		allChip.appendChild(el('span', 'ti-all-label', 'All trips'));
-		allChip.addEventListener('click', function () { openAllTrips(); });
-		switcher.appendChild(allChip);
+		var switchable = false;
+		if (isStaff()) {
+			var allChip = el('button', 'ti-all-chip');
+			allChip.type = 'button';
+			var allIcon = el('span', 'ti-all-icon', '🧳');
+			allIcon.setAttribute('aria-hidden', 'true');
+			allChip.appendChild(allIcon);
+			allChip.appendChild(el('span', 'ti-all-label', 'All trips'));
+			allChip.addEventListener('click', function () { openAllTrips(); });
+			switcher.appendChild(allChip);
+			switchable = true;
+		}
 		if (state.trips.length > 1 || (state.trips.length && !listedTrip(state.currentTrip))) {
+			switchable = true;
 			var someMine = state.trips.some(function (t) { return t.mine !== false; });
 			state.trips.forEach(function (trip) {
 				var chip = el('button', 'ti-trip-chip' + (trip.name === state.currentTrip ? ' active' : ''));
@@ -1435,7 +1445,7 @@
 				switcher.appendChild(chip);
 			});
 		}
-		root.appendChild(switcher);
+		if (switchable) root.appendChild(switcher);
 
 		if (state.denied) {
 			root.appendChild(el('div', 'ti-empty', 'You don\'t have access to this trip, or it no longer exists.'));
@@ -1928,6 +1938,15 @@
 
 	function onList() {
 		return state.currentView === 'trips' && !state.currentTrip;
+	}
+
+	// Whether to offer the list at all: "All trips" in the chip bar and "See all trips" on the
+	// empty page. get_all_trips answers staff only (the Employee role or a travel coordinator),
+	// so a portal customer who tapped either was told the list is not theirs. The boot says who
+	// is (`is_staff`, get_itinerary_bootstrap). A boot without it (a page kept on the phone from
+	// before v1.556.2) offers neither; ?view=trips is still asked for, and the server decides.
+	function isStaff() {
+		return BOOT.is_staff === true;
 	}
 
 	// The trip on screen is someone else's (not on it, not its owner, not a travel coordinator):

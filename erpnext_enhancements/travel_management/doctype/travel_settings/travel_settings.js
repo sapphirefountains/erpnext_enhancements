@@ -7,6 +7,12 @@
 // controller clears those fields on save and flags availability via __onload;
 // here we hide the whole section and explain why, so the surviving settings
 // (per-diem and mileage rates, automation toggles) stay usable.
+//
+// The notice must not tell anyone to install hrms: on production it cannot be
+// installed (accounting_intake/actions/receipt_expense.py says why), and travel
+// finance does not need it. Accounting reimburses employee-paid costs, per diem
+// and mileage from the trip, from the receipts attached to its costs (Nik,
+// 2026-09-28). Until v1.556.2 it ended "Install hrms to enable travel finance".
 
 frappe.ui.form.on('Travel Settings', {
 	refresh(frm) {
@@ -34,7 +40,7 @@ frappe.ui.form.on('Travel Settings', {
 		if (!available) {
 			frm.dashboard.add_comment(
 				__(
-					'The HR module (Frappe HR) is not installed, so Expense Claim Type mapping and travel expense-claim generation are unavailable. The per-diem and mileage rates below still apply. Install <code>hrms</code> to enable travel finance.'
+					'The HR module (Frappe HR) is not installed, so Expense Claim Type mapping and travel expense-claim generation are unavailable. The per-diem and mileage rates below still apply. Travel finance is handled by accounting from the trip: it reimburses employee-paid costs, per diem and mileage from each trip, using the receipts attached to its costs.'
 				),
 				'yellow',
 				true

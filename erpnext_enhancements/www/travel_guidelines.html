@@ -18,6 +18,13 @@
   call (2026-09-28): the itemized receipts go on the trip's cost rows and
   accounting pays from there — there is no claim to submit.
 
+  Receipts are for costs someone paid (out of pocket, or on a company card for
+  reconciliation), never for what the per diem covers. Nik, 2026-09-28: "Meal
+  receipts shouldn't be required if paid by per diem." Until v1.556.2 section 6
+  told travelers to "still include receipts" for meals and incidentals, so a
+  traveler owed nothing but per diem went hunting for lunch receipts that no row
+  on the trip can even hold: per diem and mileage have no Receipt field.
+
   Unlike /kiosk and /itinerary this page KEEPS the standard website chrome —
   it is a document, not an app shell.
 #}
@@ -131,6 +138,7 @@
 	<p>A per-diem rate is provided to cover meals and incidental expenses:</p>
 	<ul>
 		<li><b>Project-specific rate:</b> the exact per-diem rate is determined by the trip and will be visible to you before your departure.</li>
+		<li><b>No receipts for per diem:</b> the per diem is paid at the daily rate, not against receipts, so the meals and incidentals it covers need no receipts.</li>
 	</ul>
 	<div class="tg-system">
 		<b>In the system</b>
@@ -138,7 +146,8 @@
 		first/last travel day) and computed per traveler from your personal trip
 		dates. Your exact amount shows in the Travel Trip's <i>Travelers</i> table —
 		no need to wait for a separate notice. Project-specific exceptions are
-		handled with the per-traveler override rate on the trip.
+		handled with the per-traveler override rate on the trip. Accounting pays
+		your per diem from the trip, and there is nothing to attach for it.
 	</div>
 
 	<h2>6. Expense Reimbursement and Receipts</h2>
@@ -146,7 +155,7 @@
 	<ul>
 		<li><b>Receipts for reimbursement:</b> itemized receipts are mandatory for all out-of-pocket expenses for which you are seeking reimbursement — including, but not limited to, lodging, airfare, baggage fees, and rental vehicles.</li>
 		<li><b>Receipts for company-card purchases:</b> itemized receipts are also required for all purchases made on a company card. These are not for reimbursement but are necessary for verification and reconciliation of charges.</li>
-		<li><b>Meals and incidentals:</b> the daily per-diem rate covers meals and incidentals — still include receipts for them.</li>
+		<li><b>Meals and incidentals:</b> the daily per-diem rate covers meals and incidentals, so they need no receipts. Receipts are only for costs you paid yourself that the per diem does not cover, and for company-card purchases — a meal put on a company card still needs its receipt.</li>
 		<li><b>No cash withdrawals:</b> ATM cash withdrawals are not a reimbursable expense.</li>
 		<li><b>Submitting expenses:</b> submit all required receipts within <b>one week</b> of returning from your trip. Failure to provide receipts may result in a delay or denial of reimbursement.</li>
 	</ul>
@@ -162,7 +171,9 @@
 		or shipment, where everyone on the trip can open it. When you're back,
 		there is no claim to fill in: within a week, attach each itemized receipt
 		to its cost on the Travel Trip form, and accounting reimburses your
-		employee-paid costs, per diem, and mileage from the trip. If the trip
+		employee-paid costs, per diem, and mileage from the trip. Per diem and
+		mileage need no receipts — they are not cost rows — so if they are all
+		you're owed, there is nothing for you to attach. If the trip
 		shows you are owed any of those, the system emails you a one-time
 		reminder about three days after the trip ends. Get your receipts on
 		before the trip is closed: a closed trip can only be changed by a Travel

@@ -1703,6 +1703,131 @@ class TestTheMileageRate(unittest.TestCase):
 		self.assertIn('"mileage_rate": flt(settings.mileage_rate),', inspect.getsource(planner._lookups))
 
 
+class TestTheClosingWarning(unittest.TestCase):
+	"""``TravelTrip._warn_unclaimed_on_close``: what whoever closes a trip is told while it still
+	shows money owed to someone. A traveler can close their own trip (Completed -> Closed is in
+	``EMPLOYEE_ALLOWED_TRANSITIONS``), and on production HRMS is absent
+	(``expense_claims_available()`` is False), so nothing is ever on an Expense Claim and the old
+	"…not yet on an Expense Claim" fired on every close, about a claim nobody could make. There it
+	now says who is owed, that accounting reimburses them from the trip, how many employee-paid
+	costs have no receipt, and who can change a closed trip. It stays a warning, never a refusal.
+	The real controller, with the same stand-ins as ``TestTheControllersFileRules``."""
+
+	def setUp(self):
+		TestTheControllersFileRules.setUp(self)
+		frappe = sys.modules["frappe"]
+		self.printed = []
+		self.hrms = False
+		for patcher in (
+			mock.patch.object(
+				frappe, "msgprint", lambda message, **kw: self.printed.append((message, kw)), create=True
+			),
+			mock.patch.object(frappe, "format_value", lambda value, df=None: f"$ {value:,.2f}", create=True),
+			mock.patch.object(self.controller, "expense_claims_available", lambda: self.hrms),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def trip(self, **tables):
+		"""Ann has per diem, a flight she paid for (its receipt attached) and 43 miles; Bo paid for
+		the room and has not attached its receipt; Cy gets no per diem. The rental was the
+		company's, and takes no part."""
+		doc = TestTheControllersFileRules.trip(self)
+		doc.travelers = tables.get(
+			"travelers",
+			[
+				FakeRow(employee="EMP-A", employee_name="Ann", per_diem_eligible=1, per_diem_amount=150),
+				FakeRow(employee="EMP-B", employee_name="Bo", per_diem_eligible=1, per_diem_amount=0),
+				FakeRow(employee="EMP-C", employee_name="Cy", per_diem_eligible=0, per_diem_amount=0),
+			],
+		)
+		doc.flights = tables.get(
+			"flights",
+			[FakeRow(paid_by="Employee", paid_by_traveler="EMP-A", cost=300, attachment="/private/files/wn1.pdf")],
+		)
+		doc.accommodations = tables.get(
+			"accommodations", [FakeRow(paid_by="Employee", paid_by_traveler="EMP-B", cost=240)]
+		)
+		doc.ground_transport = tables.get("ground_transport", [FakeRow(paid_by="Company", cost=500)])
+		doc.mileage = tables.get("mileage", [FakeRow(traveler="EMP-A", amount=31.18)])
+		return doc
+
+	def warning(self, doc):
+		self.printed.clear()
+		doc._warn_unclaimed_on_close()
+		self.assertLessEqual(len(self.printed), 1)
+		return self.printed[0] if self.printed else (None, None)
+
+	def test_on_production_it_says_who_is_owed_and_who_can_change_a_closed_trip(self):
+		message, kw = self.warning(self.trip())
+		self.assertEqual(
+			message,
+			"This trip is being closed while it shows $ 721.18 owed to Ann, Bo for employee-paid costs, "
+			"per diem or mileage. Accounting reimburses that from the trip; there is no claim to make. "
+			"1 employee-paid cost has no receipt attached yet. "
+			"Only a Travel Coordinator can change a closed trip, so a receipt attached after this means "
+			"asking one to reopen it. Per diem and mileage need no receipts.",
+		)
+		self.assertEqual(kw, {"indicator": "orange"})
+		self.assertNotIn("Expense Claim", message)
+
+	def test_it_counts_the_employee_paid_costs_with_no_receipt(self):
+		doc = self.trip(flights=[FakeRow(paid_by="Employee", paid_by_traveler="EMP-A", cost=300)])
+		self.assertIn(" 2 employee-paid costs have no receipt attached yet. ", self.warning(doc)[0])
+		# Every receipt on: nothing to count. A company-paid row never counted.
+		doc = self.trip(accommodations=[])
+		message = self.warning(doc)[0]
+		self.assertNotIn("receipt attached yet", message)
+		self.assertIn("owed to Ann for employee-paid costs", message)
+
+	def test_someone_owed_only_per_diem_needs_no_receipt(self):
+		doc = self.trip(flights=[], accommodations=[], mileage=[])
+		message = self.warning(doc)[0]
+		self.assertIn("shows $ 150.00 owed to Ann for", message)
+		self.assertNotIn("receipt attached yet", message)
+		self.assertTrue(message.endswith("Per diem and mileage need no receipts."))
+
+	def test_with_hrms_it_means_what_it_always_meant(self):
+		self.hrms = True
+		message, kw = self.warning(self.trip())
+		self.assertEqual(
+			message,
+			"This trip is being closed with $ 721.18 of employee-paid costs, per diem or mileage not yet "
+			"on an Expense Claim.",
+		)
+		self.assertEqual(kw, {"indicator": "orange"})
+		# What is on a claim already is not owed.
+		doc = self.trip(
+			flights=[FakeRow(paid_by="Employee", paid_by_traveler="EMP-A", cost=300, expense_claim="HR-EXP-1")],
+			mileage=[FakeRow(traveler="EMP-A", amount=31.18, expense_claim="HR-EXP-1")],
+		)
+		self.assertIn(" $ 390.00 of ", self.warning(doc)[0])
+
+	def test_nothing_owed_says_nothing(self):
+		for hrms in (False, True):
+			self.hrms = hrms
+			doc = self.trip(
+				travelers=[FakeRow(employee="EMP-C", employee_name="Cy", per_diem_eligible=0)],
+				flights=[],
+				accommodations=[],
+				mileage=[],
+			)
+			self.assertEqual(self.warning(doc), (None, None), hrms)
+
+	def test_a_traveler_closing_their_own_trip_is_warned_and_the_close_goes_ahead(self):
+		# No coordinator role (the setUp's get_roles answers []): Completed -> Closed is theirs.
+		doc = self.trip()
+		doc.status = "Closed"
+		doc.is_new = lambda: False
+		doc._before = types.SimpleNamespace(status="Completed")
+		doc._handle_status_change()
+		self.assertIsNotNone(doc.closed_on)
+		self.assertEqual(len(self.printed), 1)
+		self.assertIn("Only a Travel Coordinator can change a closed trip", self.printed[0][0])
+		# A warning, never a refusal.
+		self.assertNotIn("frappe.throw", inspect.getsource(self.controller.TravelTrip._warn_unclaimed_on_close))
+
+
 class TestGetTripItinerary(MoneyAssertions):
 	def setUp(self):
 		self.doc = install_site()
@@ -1805,8 +1930,33 @@ class TestGetTripItinerary(MoneyAssertions):
 
 
 class TestBootstrap(unittest.TestCase):
+	#: Who holds what, for ``_is_staff``, which runs for real: the Employee role or a coordinator's.
+	ROLES = {
+		"bo@example.com": ["Employee"],
+		"office@example.com": ["Employee"],
+		"tc@example.com": ["Travel Coordinator"],
+		# A customer signed in to the portal: a Website User.
+		"portal@example.com": ["Customer"],
+		# A desk account whose Role Profile has no Employee role.
+		"desk@example.com": ["Projects User"],
+	}
+
 	def setUp(self):
 		install_site()
+		frappe = sys.modules["frappe"]
+		# The controller ``_is_coordinator`` imports needs these two, as in TestTheCoordinatorGate.
+		document = types.ModuleType("frappe.model.document")
+		document.Document = type("Document", (), {})
+		model = types.ModuleType("frappe.model")
+		model.document = document
+		for patcher in (
+			mock.patch.dict(sys.modules, {"frappe.model": model, "frappe.model.document": document}),
+			mock.patch.object(frappe, "get_roles", lambda user=None: self.ROLES.get(user, []), create=True),
+			mock.patch.object(frappe.utils, "date_diff", lambda a, b: 0, create=True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		sys.modules.pop(CONTROLLER, None)
 		SITE.get_all = {
 			"Trip Traveler": ["TRIP-1", "TRIP-2"],
 			"Travel Trip": [
@@ -1871,6 +2021,37 @@ class TestBootstrap(unittest.TestCase):
 		)
 		self.assertEqual(SITE.get_list_calls, [], "get_list was asked, and would have raised")
 		self.assertIn(("Travel Trip", "read", None, False), SITE.permission_checks)
+
+	def test_the_boot_says_who_is_staff(self):
+		"""``is_staff`` decides whether /itinerary offers the list of every trip ("All trips" and
+		"See all trips"). ``get_all_trips`` refuses anyone who is not staff, so until v1.556.2 a
+		portal customer who tapped either was told "You don't have access to the list of all
+		trips." It is ``_is_staff``'s answer, a real bool for the page's ``=== true``."""
+		for user, staff in (
+			("bo@example.com", True),  # the Employee role
+			("tc@example.com", True),  # a coordinator, with no Employee role
+			("Administrator", True),
+			("portal@example.com", False),  # a Website User
+			("desk@example.com", False),  # a desk account with no Employee role
+		):
+			sys.modules["frappe"].session.user = user
+			with self.subTest(user):
+				self.assertIs(travel.get_itinerary_bootstrap()["is_staff"], staff)
+		# The same answer the list itself is gated on.
+		self.assertIn('"is_staff": bool(_is_staff()),', inspect.getsource(travel.get_itinerary_bootstrap))
+		self.assertIn("if not _is_staff():", inspect.getsource(travel.get_all_trips))
+
+	def test_the_page_draws_the_list_only_for_staff(self):
+		"""What the page does with it (driven in node by scripts/test_web_flow_history.js): the
+		chip and the empty page's link are drawn only on ``is_staff === true``, so a boot from
+		before it was sent offers neither."""
+		with open(os.path.join(APP_DIR, "public", "js", "travel", "itinerary.js"), encoding="utf-8") as fh:
+			page = fh.read()
+		self.assertIn("return BOOT.is_staff === true;", page)
+		self.assertIn("if (isStaff()) root.appendChild(allTripsLink());", page)
+		chip = page.index("var allChip = el('button', 'ti-all-chip');")
+		self.assertLess(page.rindex("if (isStaff()) {", 0, chip), chip)
+		self.assertLess(chip - page.rindex("if (isStaff()) {", 0, chip), 80)
 
 
 # --------------------------------------------------------------------------- email preview
@@ -2083,9 +2264,15 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		context = dict(notifications._base_context(self.doc), recipient=None, **extra)
 		return self.code(self.env().get_template(f"{self.EMAILS}/{template}").render(**context))
 
-	def nudge(self, status="Completed"):
-		# The two keys reminders.send_post_trip_expense_nudges adds to the base context.
-		return self.render("expense_nudge.html", status, unclaimed_amount="$ 612.50", days_since_end=3)
+	def nudge(self, status="Completed", receipts_due=True):
+		# The three keys reminders.send_post_trip_expense_nudges adds to the base context.
+		return self.render(
+			"expense_nudge.html",
+			status,
+			unclaimed_amount="$ 612.50",
+			days_since_end=3,
+			receipts_due=receipts_due,
+		)
 
 	def test_the_check_catches_the_old_wording(self):
 		self.assertEqual(self.hrms_in("use <b>Create&nbsp;→&nbsp;Expense Claim</b>"), "Create&nbsp;")
@@ -2098,7 +2285,7 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 
 		base = set(notifications._base_context(self.doc)) | {"recipient"}
 		for template, extra in (
-			("expense_nudge.html", {"unclaimed_amount", "days_since_end"}),
+			("expense_nudge.html", {"unclaimed_amount", "days_since_end", "receipts_due"}),
 			("trip_closed.html", set()),
 		):
 			env = self.env()
@@ -2110,8 +2297,11 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		self.assertIn('"expense_nudge.html"', reminders)
 		self.assertIn("unclaimed_amount=", reminders)
 		self.assertIn("days_since_end=", reminders)
-		# The subject asks for the receipts too; "Unclaimed" promised a claim to make.
+		self.assertIn("receipts_due=", reminders)
+		# The subject asks for the receipts too; "Unclaimed" promised a claim to make. Someone
+		# with no receipt to attach is not asked for one (TestTheExpenseNudgeAsksOnlyForReceiptsDue).
 		self.assertIn('_("Attach your travel receipts: {0}")', reminders)
+		self.assertIn('_("Your travel reimbursement: {0}")', reminders)
 		self.assertNotIn("Unclaimed travel expenses", reminders)
 
 	def test_the_expense_nudge_asks_for_receipts_on_the_trip(self):
@@ -2120,6 +2310,10 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		self.assertIn("Attach your itemized receipts to the trip so accounting can reimburse you", html)
 		self.assertIn("<b>Receipt</b> field of the cost it paid for", html)
 		self.assertIn("There is no claim to submit", html)
+		# Their per diem and mileage are part of what they are owed, and take no receipt.
+		self.assertIn("owed to you for employee-paid costs, per diem or mileage.", html)
+		self.assertIn("Your per diem and mileage need no receipts.", html)
+		self.assertNotIn("nothing for you to attach", html)
 		# Nothing is ever stamped as claimed without HRMS: the amount is what the trip says the
 		# company owes this person, not something left off a claim.
 		self.assertIn(">To reimburse<", html)
@@ -2135,13 +2329,43 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		self.assertIn("only a Travel Coordinator can change it: ask one to reopen it", html)
 		self.assertIsNone(self.hrms_in(html))
 
+	def test_someone_owed_only_per_diem_or_mileage_is_asked_for_nothing(self):
+		"""Nik, 2026-09-28: "Meal receipts shouldn't be required if paid by per diem." Per diem
+		and mileage have no Receipt field, so a traveler owed only those has nothing to attach,
+		and a Closed trip is nothing to reopen for."""
+		for status in ("Completed", "Closed"):
+			with self.subTest(status):
+				html = self.nudge(status, receipts_due=False)
+				self.assertIsNone(self.hrms_in(html))
+				self.assertIn("it shows $ 612.50 owed to you for per diem or mileage.", html)
+				self.assertIn(
+					"Per diem and mileage need no receipts, so there is nothing for you to attach for them.", html
+				)
+				self.assertIn("There is no claim to submit either — accounting pays them from the trip.", html)
+				self.assertNotIn("employee-paid", html)
+				self.assertNotIn("Attach your itemized receipts", html)
+				self.assertNotIn("<b>Receipt</b>", html)
+				self.assertNotIn("Travel Coordinator", html)
+				self.assertNotIn("within a week", html)
+				# Still what they are owed, and the way to the trip.
+				self.assertIn(">To reimburse<", html)
+				self.assertIn("$ 612.50", html)
+				self.assertIn("View the trip", html)
+
 	def test_the_closed_notice_asks_for_receipts_and_names_who_can_reopen(self):
 		html = self.render("trip_closed.html", "Closed")
 		self.assertIsNone(self.hrms_in(html))
 		self.assertNotIn("claim", html.lower())
 		self.assertIn("has been closed", html)
 		self.assertIn("per diem and mileage from the trip", html)
-		self.assertIn("each of your itemized receipts is attached to its cost", html)
+		# It goes to every traveler alike, so it says which costs take a receipt (v1.556.2): a
+		# traveler owed only per diem was sent looking for "each of your itemized receipts".
+		self.assertIn("Per diem and mileage need no receipts", html)
+		self.assertIn(
+			"the itemized receipt for each cost you paid yourself or put on a company card is attached to it",
+			html,
+		)
+		self.assertNotIn("each of your itemized receipts", html)
 		self.assertIn("Only a Travel Coordinator can change a closed trip", html)
 		self.assertIn("ask one to reopen the trip, then attach each receipt to the Receipt field", html)
 
@@ -2158,6 +2382,22 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		)
 		self.assertIn("a one-time reminder about three days after the trip ends", policy)
 		self.assertIn("a closed trip can only be changed by a Travel Coordinator", policy)
+		# Sections 5 and 6: what the per diem covers takes no receipt (Nik, 2026-09-28: "Meal
+		# receipts shouldn't be required if paid by per diem"). Until v1.556.2 section 6 said to
+		# "still include receipts" for meals and incidentals.
+		self.assertNotIn("still include receipts", policy)
+		self.assertIn("the meals and incidentals it covers need no receipts", policy)
+		self.assertIn("the daily per-diem rate covers meals and incidentals, so they need no receipts", policy)
+		self.assertIn(
+			"Receipts are only for costs you paid yourself that the per diem does not cover, and for "
+			"company-card purchases",
+			policy,
+		)
+		self.assertIn("Per diem and mileage need no receipts", policy)
+		self.assertIn("Accounting pays your per diem from the trip, and there is nothing to attach for it.", policy)
+		# The receipts that are still required still are.
+		self.assertIn("itemized receipts are mandatory for all out-of-pocket expenses", policy)
+		self.assertIn("itemized receipts are also required for all purchases made on a company card", policy)
 		# Section 4: no rate is promised. It lives in Travel Settings.mileage_rate (0 on production
 		# when this was written, $0.725 a mile from 2026-09-28), and a figure here would go stale.
 		self.assertNotIn("company rate", policy)
@@ -2167,6 +2407,144 @@ class TestTheTravelerIsToldWhatProductionCanDo(unittest.TestCase):
 		# The page keeps its shape: seven numbered sections, each with its callout.
 		self.assertEqual(re.findall(r"<h2>(\d)\. ", policy), ["1", "2", "3", "4", "5", "6", "7"])
 		self.assertEqual(policy.count('<div class="tg-system"> <b>In the system</b>'), 7)
+
+	def test_nothing_sends_a_coordinator_to_install_hrms(self):
+		"""hrms cannot be installed on production (``accounting_intake/actions/receipt_expense.py``),
+		and travel finance does not need it: accounting reimburses from the trip. Until v1.556.2
+		the Travel Settings notice ended "Install hrms to enable travel finance", and the refusal
+		behind the hidden Create buttons "Install hrms to use this.\""""
+		import ast
+
+		install = re.compile(r"install\s*(?:<code>)?\s*hrms", re.I)
+		path = os.path.join(APP_DIR, "travel_management", "doctype", "travel_settings", "travel_settings.js")
+		with open(path, encoding="utf-8") as fh:
+			# The comments say what it used to say.
+			settings = "\n".join(line for line in fh.read().splitlines() if not line.strip().startswith("//"))
+		self.assertIsNone(install.search(settings))
+		self.assertIn("The per-diem and mileage rates below still apply.", settings)
+		self.assertIn(
+			"Travel finance is handled by accounting from the trip: it reimburses employee-paid costs, "
+			"per diem and mileage from each trip, using the receipts attached to its costs.",
+			settings,
+		)
+		self.assertIn("frm.toggle_display('expense_types_section', available);", settings)
+
+		# The refusal's own words: every string in _require_hrms but its docstring.
+		with open(os.path.join(APP_DIR, "travel_management", "api.py"), encoding="utf-8") as fh:
+			tree = ast.parse(fh.read())
+		guard = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_require_hrms")
+		words = " ".join(
+			n.value for n in ast.walk(ast.Module(body=guard.body[1:], type_ignores=[]))
+			if isinstance(n, ast.Constant) and isinstance(n.value, str)
+		)
+		self.assertIn("which is not installed on this site. Accounting reimburses travel from the trip instead.", words)
+		self.assertIsNone(install.search(words))
+
+
+class TestTheExpenseNudgeAsksOnlyForReceiptsDue(unittest.TestCase):
+	"""``reminders.send_post_trip_expense_nudges``, run. Each traveler the trip shows as owed gets
+	the nudge, but only someone with a cost they paid themselves is asked for receipts
+	(``receipts_due``, and the subject). Per diem and mileage take none (Nik, 2026-09-28: "Meal
+	receipts shouldn't be required if paid by per diem"); until v1.556.2 every recipient was told
+	to attach receipts, and a traveler owed only per diem went looking for meal receipts."""
+
+	REMINDERS = "erpnext_enhancements.travel_management.reminders"
+
+	def setUp(self):
+		install_site()
+		frappe = sys.modules["frappe"]
+		self.sent = []
+		self.stamped = []
+
+		def date_diff(a, b):
+			return (sys.modules["frappe.utils"].getdate(a) - sys.modules["frappe.utils"].getdate(b)).days
+
+		for patcher in (
+			# patch.dict puts sys.modules back as it found it: the reminders module imported here,
+			# over this stub, is dropped again after each test.
+			mock.patch.dict(sys.modules),
+			mock.patch.object(frappe.utils, "date_diff", date_diff, create=True),
+			mock.patch.object(frappe.db, "set_value", lambda *a, **k: self.stamped.append(a), create=True),
+			mock.patch.object(frappe, "format_value", lambda value, df=None: f"$ {value:,.2f}", create=True),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		sys.modules.pop(self.REMINDERS, None)
+		import importlib
+
+		self.reminders = importlib.import_module(self.REMINDERS)
+		for name, value in (
+			("_in_maintenance_context", lambda: False),
+			("_notifications_enabled", lambda: True),
+			(
+				"_traveler_recipients",
+				lambda doc, employees=None: [
+					types.SimpleNamespace(row=t, employee=t.employee)
+					for t in doc.travelers
+					if employees is None or t.employee in employees
+				],
+			),
+			("_send", lambda recipient, subject, template, context, doc: self.sent.append(
+				(recipient.employee, subject, template, context)
+			)),
+		):
+			patcher = mock.patch.object(self.reminders, name, value)
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+		# Ann is owed per diem and her miles; Bo paid for the room, and has per diem too; Cy paid
+		# for the rental, but it is on a claim already; Dee is owed nothing.
+		self.doc = FakeDoc(
+			name="TRIP-9",
+			purpose="Harbor install",
+			status="Completed",
+			end_date="2026-09-20",
+			travelers=[
+				FakeRow(name="T1", employee="EMP-A", per_diem_eligible=1, per_diem_amount=150),
+				FakeRow(name="T2", employee="EMP-B", per_diem_eligible=1, per_diem_amount=150),
+				FakeRow(name="T3", employee="EMP-C", per_diem_eligible=1, per_diem_amount=75),
+				FakeRow(name="T4", employee="EMP-D", per_diem_eligible=0),
+			],
+			flights=[],
+			accommodations=[FakeRow(paid_by="Employee", paid_by_traveler="EMP-B", cost=240)],
+			ground_transport=[
+				FakeRow(paid_by="Employee", paid_by_traveler="EMP-C", cost=90, expense_claim="HR-EXP-1"),
+				FakeRow(paid_by="Company", cost=500),
+			],
+			freight=[],
+			other_costs=[],
+			mileage=[FakeRow(traveler="EMP-A", amount=31.18)],
+		)
+		SITE.trips["TRIP-9"] = self.doc
+		SITE.get_all = {"Travel Trip": ["TRIP-9"]}
+
+	def test_only_a_cost_they_paid_asks_for_receipts(self):
+		self.reminders.send_post_trip_expense_nudges()
+		self.assertEqual(
+			[(who, subject, template, context["receipts_due"], context["unclaimed_amount"])
+				for who, subject, template, context in self.sent],
+			[
+				("EMP-A", "Your travel reimbursement: Harbor install", "expense_nudge.html", False, "$ 181.18"),
+				("EMP-B", "Attach your travel receipts: Harbor install", "expense_nudge.html", True, "$ 390.00"),
+				("EMP-C", "Your travel reimbursement: Harbor install", "expense_nudge.html", False, "$ 75.00"),
+			],
+		)
+		self.assertEqual({context["days_since_end"] for *_, context in self.sent}, {6})
+		# Each was stamped before it was sent, and nobody owed nothing was.
+		self.assertEqual(
+			self.stamped,
+			[("Trip Traveler", name, "expense_nudge_sent", 1) for name in ("T1", "T2", "T3")],
+		)
+
+	def test_the_costs_that_take_a_receipt(self):
+		rows = self.reminders._unclaimed_costs
+		self.assertEqual([r.cost for r in rows(self.doc, self.doc.travelers[1])], [240])
+		# A row on a claim, a company-paid row, and someone else's: none of them.
+		self.assertEqual(rows(self.doc, self.doc.travelers[2]), [])
+		self.assertEqual(rows(self.doc, self.doc.travelers[0]), [])
+		# The total still counts everything they are owed.
+		self.assertAlmostEqual(self.reminders._unclaimed_total(self.doc, self.doc.travelers[0]), 181.18)
+		self.assertAlmostEqual(self.reminders._unclaimed_total(self.doc, self.doc.travelers[1]), 390)
 
 
 # --------------------------------------------------------------------------- links + planner
@@ -4485,14 +4863,16 @@ class TestTravelHomeForTheCrew(HubAssertions):
 				{
 					"trip": "TRIP-2",
 					"purpose": "Harbor install",
-					"text": "Back from Harbor install? Attach your receipts to the trip within a week of getting back, "
-					"and accounting will reimburse you.",
+					"text": "Back from Harbor install? Within a week of getting back, attach to the trip the receipt "
+					"for each cost you paid yourself or put on a company card, and accounting will reimburse "
+					"you. Per diem and mileage need no receipts.",
 				},
 				{
 					"trip": "TRIP-3",
 					"purpose": "Boise service",
-					"text": "Back from Boise service? Attach your receipts to the trip within a week of getting back, "
-					"and accounting will reimburse you.",
+					"text": "Back from Boise service? Within a week of getting back, attach to the trip the receipt "
+					"for each cost you paid yourself or put on a company card, and accounting will reimburse "
+					"you. Per diem and mileage need no receipts.",
 				},
 			],
 		)

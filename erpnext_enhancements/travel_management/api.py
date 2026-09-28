@@ -54,12 +54,17 @@ def _require_hrms(doctype, feature):
 	"""Refuse a finance action with a clear message when its HRMS doctype is
 	missing. HRMS is optional (see ``travel_management.expense_claims_available``);
 	without it ``frappe.new_doc("Expense Claim")`` etc. would raise a raw
-	``DoesNotExistError``, so we surface the real cause instead."""
+	``DoesNotExistError``, so we surface the real cause instead.
+
+	And the way that works, not "install hrms": on production it cannot be installed
+	(``accounting_intake/actions/receipt_expense.py`` says why), and accounting reimburses
+	travel from the trip instead (Nik, 2026-09-28). Until v1.556.2 it told the caller to
+	install hrms."""
 	if not frappe.db.exists("DocType", doctype):
 		frappe.throw(
 			_(
 				"Travel {0} need the HR module (Frappe HR / “hrms”), which is not installed "
-				"on this site. Install hrms to use this."
+				"on this site. Accounting reimburses travel from the trip instead."
 			).format(feature),
 			title=_("HR module not installed"),
 		)
