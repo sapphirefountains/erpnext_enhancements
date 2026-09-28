@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.555.0] - 2026-09-28
+
+**Anyone on staff can see anyone's trips, on the itinerary pages.** On the Travel hub, *My trips*
+(the desk list of your own trips) is now **Trips**. It opens `/itinerary?view=trips`, a list of
+every trip, and each trip opens on its non-desk itinerary page. Nik asked for this on
+2026-09-28: "Change it from My Trips to just Trips so anyone can see anyone's trips — should link
+to the non-desk form of it automatically". He chose **itinerary pages only**. The desk Travel
+Trip list, form, Report view and REST stay row-scoped, because money is permlevel 0 there, and
+widening them would have shown every trip's costs to all crew.
+
+### Added
+
+- **`api/travel.get_all_trips()`**, for staff only: anyone with the Employee role, or a
+  coordinator.
+  - Guests and Website Users are refused before anything is read.
+  - It returns every trip, all statuses included, grouped server-side (site-local today) as
+    now, upcoming and past.
+  - Each row carries the purpose, dates, status, travel type, the job it is for, and the crew,
+    lead first. It also says whether you're on the trip or organized it.
+  - It is capped at 300, with a count of any left off. No money, no confirmation numbers, no
+    files.
+- **`/itinerary?view=trips`**, a screen of its own and a history entry of its own.
+  - Trips are grouped under *On the road now*, *Coming up* and *Earlier trips*. Earlier trips
+    show 10 at a time behind *Show N more*, which writes no history.
+  - Each row is a link that pushes `?trip=<name>`, so Back returns to the list.
+  - An *All trips* chip leads to it, and so does *See all trips* on the empty page.
+  - A reload shows the list again.
+  - Offline, it says the list needs a connection and offers your own saved trips.
+  - A late answer for a screen already left is dropped.
+  - Every value is drawn as text.
+- **A limited view for a trip you're not on.** Any staff member can open any trip, but someone
+  who is not on its crew, doesn't own it and isn't a coordinator sees:
+  - the plan, the crew and the contacts;
+  - no confirmation, booking or tracking numbers, no files and no trip-sheet links;
+  - a quiet line saying why.
+
+  A PNR and a surname are enough to change someone's flight, so those numbers stay with the
+  people on the trip. `_outsider_view` builds a redacted copy of the answer. A test pins every
+  key the full answer sends against either the withheld set or the shown set, so a new
+  confirmation-like key cannot slip through unnoticed. Full viewers get `limited: false` and an
+  unchanged answer.
+- The My Travel block gets a quiet *See everyone's trips* link.
+
+### Changed
+
+- **The hub and the sidebar:** *My trips* is now **Trips**, a URL to `/itinerary?view=trips`.
+  Both files have a new stamp, and patch `reload_travel_hub_trips` force-syncs them. It cannot
+  raise.
+- **The sidebar keeps a *Trip list* item** (Travel Trip) under *Office*. v16 picks the sidebar
+  for a Travel Trip list, form or calendar from the sidebars with an item linking Travel Trip
+  (`sidebar.js` `resolve_sidebar`). With *My trips* turned into a URL, every trip page would
+  have swapped the Travel sidebar for frappe's auto-generated module sidebar. This came from the
+  review.
+- **The phone keeps your own trips first.** `/itinerary` keeps at most 40 saved answers per
+  person. It now ranks the person's own trips ahead of colleagues' when it trims, so browsing
+  other people's trips the night before a flight can't push your own itinerary off the phone.
+  Before this, the trim went by age alone. This came from the review.
+
+### Fixed
+
+- **Dark-mode headings.** Frappe's website stylesheet colors h1–h6 a fixed #171717 (Bootstrap's
+  `$headings-color`) and ignores `prefers-color-scheme`. So the new list's headings drew black on
+  black on a dark phone. `.ti-shell :is(h1…h6)` now takes the page's text color, the same fix as
+  `feedback.bundle.css`, and a trip card keeps its own color on hover. This came from the review.
+
+### Tests
+
+| Suite | Before | After | What the new tests cover |
+|---|---|---|---|
+| `tests/test_travel_views.py` | 194 | 213 | The endpoint and the staff gate (below) |
+| `tests/test_travel_hub.py` | 47 | 58 | The hub, sidebar and patch (below) |
+| `scripts/test_web_flow_history.js` | 528 | 604 checks | The list screen's history, rendering and failures (below) |
+
+- **`tests/test_travel_views.py`:**
+  - `get_all_trips`: grouping, order, the exact row keys, no money, lead first, the "on it" and
+    "organized it" flags, the cap, and the gate running before any read.
+  - The real staff gate: Website Users, desk users without the Employee role, and Guests are
+    refused.
+  - The outsider view: the key pin, confirmation numbers and files absent by value, days, crew
+    and contacts kept, `as_employee` still redacted, and full viewers unchanged.
+  - 25 mutations were tried and each one was caught.
+- **`tests/test_travel_hub.py`:**
+  - the Trips shortcut and sidebar item, pointing at the same URL;
+  - the *Trip list* item that keeps the sidebar on trip pages;
+  - the new patch: registered once, after `reload_travel_hub`, and it never raises;
+  - the block's link, rendered by node in three states.
+- **`scripts/test_web_flow_history.js`:**
+  - the list screen, the row-to-trip-to-Back flow, the chip, reload, the limited view, offline,
+    late answers and hostile names;
+  - a refused trip opened from the list stepping back to the list;
+  - the 403, expired-session, 500 and weak-signal cases.
+- **`tests/test_itinerary_service_worker.py`** pins the own-trips-first trim.
+- **`tests/test_travel_planner.py`**'s list of places that push history now includes the two new
+  pushes.
+
 ## [1.554.0] - 2026-09-28
 
 **The Travel hub now opens on your own trip.** `/desk/travel` is rebuilt for someone who has

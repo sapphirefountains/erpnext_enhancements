@@ -19,6 +19,17 @@ Security:
 	  any crew member's itinerary on it ("all but money", 2026-09-26): the crew
 	  already read the whole trip on the form. A person asked for is compared
 	  against the crew and never looked up (``_crew_member_or_throw``).
+	  ``get_trip_itinerary`` also answers other staff, less fully (next point).
+	- On the itinerary pages, and only there, any member of staff sees any trip
+	  (Nik, 2026-09-28: "anyone can see anyone's trips"). Staff (``_is_staff``)
+	  means a coordinator or the Employee role, never Guest or a Website User.
+	  ``get_all_trips`` lists every trip, gated before it reads anything, and
+	  ``get_trip_itinerary`` gives a staff member who cannot read the trip the
+	  *outsider view* (``_outsider_view``): no confirmation, booking or tracking
+	  number, no files, no Trip Sheet link, ``limited: true``. The desk stays
+	  row-scoped: the Travel Trip list, form and Report view still show a
+	  non-coordinator only the trips they own or travel on, because every cost
+	  on the form is permlevel 0.
 	- Money (cost, who paid, billable, per diem, claims, totals) never leaves
 	  this module for a non-coordinator. ``shape_itinerary`` carries none, and
 	  the money block of ``get_trip_views`` is only built for a coordinator
@@ -79,6 +90,28 @@ def _is_coordinator():
 	)
 
 	return bool(user_is_travel_coordinator())
+
+
+#: The role that makes a signed-in user staff (``_is_staff``), with a coordinator's.
+STAFF_ROLE = "Employee"
+
+
+def _is_staff():
+	"""True for a member of staff: a coordinator (``_is_coordinator``) or anyone holding the
+	Employee role. Staff may list every trip (``get_all_trips``) and open any of them on
+	``/itinerary`` — money-free, and without confirmation numbers or files when they are not on
+	it (``get_trip_itinerary``'s outsider view). Nik, 2026-09-28: "anyone can see anyone's
+	trips".
+
+	"Anyone" never meant Guest or a Website User: a customer or supplier signed in to the portal
+	holds no Employee role, and is not staff. It is the role that counts, not an Employee record.
+
+	The role is looked at first, because ``_is_coordinator`` imports the Travel Trip controller;
+	it runs only for someone without the role."""
+	user = frappe.session.user
+	if not user or user == "Guest":
+		return False
+	return STAFF_ROLE in (frappe.get_roles(user) or []) or _is_coordinator()
 
 
 def _crew_member_or_throw(doc, employee):
@@ -309,6 +342,267 @@ def get_my_trips():
 	)
 
 
+#: The most trips ``get_all_trips`` sends. ``more`` says how many it left off.
+ALL_TRIPS_LIMIT = 300
+
+#: What the list of every trip reads from Travel Trip: the trip, when, what it is for and who
+#: made it. ``owner`` decides ``organizing`` and is not sent. Nothing else on the trip is read:
+#: no cost, no booking, no confirmation number, no file.
+_ALL_TRIPS_FIELDS = [
+	"name",
+	"purpose",
+	"status",
+	"travel_type",
+	"start_date",
+	"end_date",
+	"travel_for_doctype",
+	"travel_for_name",
+	"owner",
+]
+
+
+@frappe.whitelist()
+def get_all_trips():
+	"""Every Travel Trip, Closed included, for ``/itinerary?view=trips``. Nik, 2026-09-28: "Change
+	it from My Trips to just Trips so anyone can see anyone's trips". Returns ``{"trips": [row],
+	"more": n}``. Each row has exactly these keys:
+
+	* ``name``, ``purpose``, ``status``, ``travel_type``;
+	* ``start_date``, ``end_date``: ISO days, or None;
+	* ``travel_for``: the job's or customer's name (``_site_titles``), or None;
+	* ``crew``: each person's name, the trip lead first, then in the trip's order;
+	* ``lead``: the trip lead's name, or None;
+	* ``mine``: the viewer travels on it;
+	* ``organizing``: the viewer made it (its owner) and is not on it;
+	* ``group``: ``"now"``, ``"upcoming"`` or ``"past"``.
+
+	``group`` is decided here, with the site's own today: ``now`` from its first day to its last,
+	``upcoming`` before it starts, ``past`` once it has ended. A trip missing a date (both are
+	required, so only one written past validation) is ``upcoming``, at the end of it. The order is
+	on the road now, then coming up (each by first day), then earlier trips (the most recently
+	ended first).
+	At most ``ALL_TRIPS_LIMIT`` rows are sent. The cap drops the trips furthest from today, and
+	``more`` counts what it dropped.
+
+	**Staff only** (``_is_staff``). Anyone else gets ``PermissionError`` before anything is read.
+	The desk's Travel Trip list stays row-scoped (``travel_management.permissions``), because
+	every cost on the form is permlevel 0. This list reads through ``frappe.get_all``, after the
+	gate, and it reads only ``_ALL_TRIPS_FIELDS`` and each crew member's name. There is no money,
+	no confirmation number and no file in it to leak."""
+	if not _is_staff():
+		frappe.throw(_("Only staff can see every trip."), frappe.PermissionError)
+
+	today_text = today()
+	today_date = getdate(today_text)
+
+	# Two reads that split the table between them, each in the order it is shown, so the cap
+	# drops the trips furthest from today. First the ones on the road now and coming up: those
+	# ending today or later, or missing a date. frappe joins `or_filters` with OR. The blank
+	# dates are named, not left to frappe's null handling: it never wraps a `>=` on a date.
+	ahead = frappe.get_all(
+		"Travel Trip",
+		or_filters=[
+			["end_date", ">=", today_text],
+			["end_date", "is", "not set"],
+			["start_date", "is", "not set"],
+		],
+		fields=_ALL_TRIPS_FIELDS,
+		order_by="start_date asc",
+		limit_page_length=ALL_TRIPS_LIMIT,
+	)
+	room = ALL_TRIPS_LIMIT - len(ahead)
+	# Then the ones that are over, the most recently ended first: exactly the rest. `is set`,
+	# twice, because frappe compiles a `<` on a nullable date to
+	# coalesce(end_date, '0001-01-01') < today, which a blank end would pass. Never asked with
+	# no room: a `limit_page_length` of 0 means no limit to frappe.
+	past = (
+		frappe.get_all(
+			"Travel Trip",
+			filters=[
+				["end_date", "<", today_text],
+				["end_date", "is", "set"],
+				["start_date", "is", "set"],
+			],
+			fields=_ALL_TRIPS_FIELDS,
+			order_by="end_date desc",
+			limit_page_length=room,
+		)
+		if room > 0
+		else []
+	)
+	rows = list(ahead) + list(past)
+	# The table is counted only when the cap was reached. Otherwise nothing was left off.
+	more = max(0, cint(frappe.db.count("Travel Trip")) - len(rows)) if len(rows) >= ALL_TRIPS_LIMIT else 0
+
+	crews = _trip_crews([row.get("name") for row in rows])
+	titles = _site_titles(rows)
+	viewer_user = frappe.session.user
+	viewer = _session_employee() or None
+
+	trips = []
+	for row in rows:
+		people = crews.get(row.get("name")) or []
+		lead = next((person for person in people if person["lead"]), None)
+		crew = ([lead] if lead else []) + [person for person in people if person is not lead]
+		mine = bool(viewer) and any(person["employee"] == viewer for person in people)
+		start, end = _iso_day(row.get("start_date")), _iso_day(row.get("end_date"))
+		trips.append(
+			{
+				"name": row.get("name"),
+				"purpose": row.get("purpose"),
+				"status": row.get("status"),
+				"travel_type": row.get("travel_type"),
+				"start_date": start,
+				"end_date": end,
+				"travel_for": titles.get((row.get("travel_for_doctype"), row.get("travel_for_name"))),
+				"crew": [person["name"] for person in crew],
+				"lead": lead["name"] if lead else None,
+				"mine": mine,
+				"organizing": not mine and bool(viewer_user) and row.get("owner") == viewer_user,
+				"group": _trip_group(start, end, today_date),
+			}
+		)
+
+	now = sorted((t for t in trips if t["group"] == "now"), key=lambda t: (t["start_date"] or "", t["name"]))
+	upcoming = sorted(
+		(t for t in trips if t["group"] == "upcoming"),
+		# A trip missing a date goes last among the ones coming up, whatever its first day.
+		key=lambda t: (not (t["start_date"] and t["end_date"]), t["start_date"] or "", t["name"]),
+	)
+	past = sorted((t for t in trips if t["group"] == "past"), key=lambda t: t["name"])
+	# sorted() is stable with reverse=True too: trips ending the same day keep their name order.
+	past = sorted(past, key=lambda t: t["end_date"] or "", reverse=True)
+	return {"trips": (now + upcoming + past)[:ALL_TRIPS_LIMIT], "more": more}
+
+
+def _trip_group(start, end, today_date):
+	"""``"now"``, ``"upcoming"`` or ``"past"`` for a trip's ISO first and last days, against the
+	site's today. A missing day is ``"upcoming"``."""
+	if not start or not end:
+		return "upcoming"
+	if getdate(end) < today_date:
+		return "past"
+	if getdate(start) > today_date:
+		return "upcoming"
+	return "now"
+
+
+def _trip_crews(trip_names):
+	"""``{trip: [{employee, name, lead}]}``, each trip's crew in the trip's order, one person
+	once: one read of Trip Traveler for every trip on the list. Only the person and whether they
+	lead: a Trip Traveler row also holds per diem, advances and claims, which are not asked for."""
+	names = [name for name in trip_names if name]
+	if not names:
+		return {}
+	rows = frappe.get_all(
+		"Trip Traveler",
+		filters={"parenttype": "Travel Trip", "parent": ["in", names]},
+		fields=["parent", "employee", "employee_name", "is_trip_lead"],
+		order_by="idx asc",
+	)
+	crews = {}
+	for row in rows:
+		employee = row.get("employee")
+		people = crews.setdefault(row.get("parent"), [])
+		if not employee or any(person["employee"] == employee for person in people):
+			continue
+		people.append(
+			{
+				"employee": employee,
+				"name": row.get("employee_name") or employee,
+				"lead": bool(cint(row.get("is_trip_lead"))),
+			}
+		)
+	return crews
+
+
+def _site_titles(rows):
+	"""``{(doctype, name): title}``: what each trip in ``rows`` is for, by name, as
+	``_site_title`` names it (the same ``_SITE_TITLE`` fields, the first one with a value), in one
+	query per doctype rather than two per trip. Only the fields this site's doctype has are asked
+	for. Never raises: a doctype that cannot be read leaves its trips' titles out, and a trip
+	whose record is gone has none (``None`` to the caller), like ``_site_title``."""
+	wanted = {}
+	for row in rows:
+		doctype, name = row.get("travel_for_doctype"), row.get("travel_for_name")
+		if doctype in _SITE_TITLE and name and isinstance(name, str):
+			wanted.setdefault(doctype, set()).add(name)
+	titles = {}
+	for doctype, names in wanted.items():
+		try:
+			meta = frappe.get_meta(doctype)
+			fields = [field for field in _SITE_TITLE[doctype] if meta.has_field(field)]
+			if not fields:
+				continue
+			records = frappe.get_all(
+				doctype, filters={"name": ["in", sorted(names)]}, fields=["name", *fields]
+			)
+		except Exception:
+			continue
+		for record in records:
+			titles[(doctype, record.get("name"))] = _first_text(record, fields)
+	return titles
+
+
+#: What a staff member who can see a trip only because they are staff (``_is_staff``: not on
+#: it, did not make it, not a coordinator) is not sent when they open it on /itinerary
+#: (``get_trip_itinerary``, Nik 2026-09-28). The crew sees these, and so does anyone who can
+#: read the trip on the desk. Every other key goes as it is. The sets are complete for what
+#: ``shape_itinerary`` and ``get_trip_itinerary`` send today, and
+#: ``tests/test_travel_views.py`` fails on any key they start to send that is in neither this
+#: list nor the test's own list of what an outsider may see. A new key has to be put on one
+#: side or the other before it ships.
+#:
+#: Removed wherever they appear, at any depth: every confirmation, booking and tracking number.
+_OUTSIDER_REMOVED = frozenset(
+	{
+		# A flight's PNR and a ride's booking number. On the whole-crew view it is every number
+		# on the booking, joined into one string.
+		"booking_reference",
+		# A room's confirmation number (the whole-crew view's joined string, likewise).
+		"booking_confirmation",
+		# A shipment's tracking or PRO number.
+		"tracking_number",
+		# Each person's own number on a whole-crew booking (``members[].ref``).
+		"ref",
+	}
+)
+#: Emptied, not removed, because the page walks them: the trip's files (the answer's
+#: ``documents``) and each booking's (an item's ``documents``). A file's ``url`` and name are
+#: in there, and so are boarding passes and booking confirmations.
+_OUTSIDER_EMPTIED = frozenset({"documents"})
+#: Nulled: the Trip Sheet links. The sheet prints every confirmation number and file title, and
+#: its print view refuses someone who cannot read the trip anyway. Null is the page's "no link",
+#: as it is while the format is missing (``_sheet_available``).
+_OUTSIDER_NULLED = frozenset({"sheet_url", "my_sheet_url"})
+
+
+def _outsider_view(value):
+	"""``value`` (a ``get_trip_itinerary`` answer) as a staff member who is not on the trip gets
+	it: every key in ``_OUTSIDER_REMOVED`` dropped, at any depth, every ``_OUTSIDER_EMPTIED`` an
+	empty list and every ``_OUTSIDER_NULLED`` None. The rest is unchanged.
+
+	It walks the whole answer, not the places the keys are sent today, so a number that starts
+	riding along somewhere new (a member of a new kind of booking, a stop) is dropped there too.
+	It builds a new answer and changes nothing it is given: the itinerary's items share their
+	``members`` lists and ``poi`` dicts (a room's check-in and check-out, and the POI cache)."""
+	if isinstance(value, dict):
+		out = {}
+		for key, child in value.items():
+			if key in _OUTSIDER_REMOVED:
+				continue
+			if key in _OUTSIDER_EMPTIED:
+				out[key] = []
+			elif key in _OUTSIDER_NULLED:
+				out[key] = None
+			else:
+				out[key] = _outsider_view(child)
+		return out
+	if isinstance(value, (list, tuple)):
+		return [_outsider_view(child) for child in value]
+	return value
+
+
 @frappe.whitelist()
 def get_trip_itinerary(trip: str, as_employee: str | None = None):
 	"""Day-by-day itinerary for one trip, shaped for the mobile page:
@@ -327,9 +621,26 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 	  refused with "That person is not on this trip." (``_crew_member_or_throw``).
 
 	No money in any of them.
+
+	Who may ask (Nik, 2026-09-28: "anyone can see anyone's trips", on the itinerary pages only):
+
+	* anyone who can read the trip (``frappe.has_permission``: its crew, its owner and
+	  coordinators, per ``travel_management.permissions``) gets the answer above, with
+	  ``limited: false``;
+	* any other member of staff (``_is_staff``) gets the **outsider view**: the same answer with
+	  every confirmation, booking and tracking number removed, no files and no Trip Sheet links
+	  (``_outsider_view``), and ``limited: true``. They are not on the crew, so by default they
+	  see the whole crew. ``as_employee`` works for them as for anyone;
+	* anyone else is refused (``PermissionError``), as before.
+
+	The desk stays row-scoped. This answer never had money in it, and the outsider view has less.
 	"""
 	doc = frappe.get_doc("Travel Trip", trip)
-	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
+	# Not `throw=True`: a staff member who cannot read the trip still gets the outsider view.
+	# Without `throw`, frappe prints no permission log (`print_logs=throw`).
+	full = frappe.has_permission("Travel Trip", "read", doc=doc)
+	if not full and not _is_staff():
+		frappe.throw(_("You do not have access to this trip."), frappe.PermissionError)
 
 	session_emp = _session_employee() or None
 	viewer_on_trip = bool(session_emp) and any(t.employee == session_emp for t in doc.travelers)
@@ -358,8 +669,11 @@ def get_trip_itinerary(trip: str, as_employee: str | None = None):
 		# (``_sheet_available``): the page then draws no link.
 		sheet_url=trip_views.trip_sheet_url(doc.name) if sheet else None,
 		my_sheet_url=trip_views.trip_sheet_url(doc.name, viewing) if sheet else None,
+		# Whether this is the outsider view, for the page to say why the numbers and files
+		# are not there.
+		limited=not full,
 	)
-	return result
+	return result if full else _outsider_view(result)
 
 
 @frappe.whitelist()

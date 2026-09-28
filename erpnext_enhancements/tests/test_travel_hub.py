@@ -12,12 +12,18 @@ Four things make the hub, and each can drift in silence:
   an empty div; a coordinator-only link in a shortcut row leaves a column-sized hole for crew;
 * **the sidebar** (``workspace_sidebar/travel.json``) — replacing the one production generated
   for itself, whose two URL items had no URL at all;
-* **the reload patch** — both records are timestamp-gated on import, and a patch that raises
-  aborts ``bench migrate``, which on this repo is the deploy.
+* **the reload patches** — both records are timestamp-gated on import, and a patch that raises
+  aborts ``bench migrate``, which on this repo is the deploy. A patch runs once per site, so each
+  release that changes the hub brings its own.
 
-Reads files only, except for one run of the patch against a stub ``frappe`` that is removed again
-afterwards — which is why it has a CI step of its own — and one run of the block's script in
-node, against a stub desk (skipped where node is not installed).
+Since v1.555.0 the hub's "Trips" (the shortcut, the sidebar item and a link in the block) opens
+everyone's trips on the web itinerary, ``/itinerary?view=trips``, where any staff member may open
+any trip with the money left out. The desk Travel Trip list stays scoped to the viewer's own
+trips, so "My trips" pointing at it could never show a colleague's (Nik, 2026-09-28).
+
+Reads files only, except for runs of the patches against a stub ``frappe`` that is removed again
+afterwards — which is why it has a CI step of its own — and runs of the block's script in node,
+against a stub desk (skipped where node is not installed).
 
 Run: python -m unittest erpnext_enhancements.tests.test_travel_hub
 """
@@ -46,27 +52,24 @@ SIDEBAR_DIR = APP / "workspace_sidebar"
 SIDEBAR = SIDEBAR_DIR / "travel.json"
 PATCHES_TXT = APP / "patches.txt"
 PATCH_MODULE = "erpnext_enhancements.patches.reload_travel_hub"
+TRIPS_PATCH_MODULE = "erpnext_enhancements.patches.reload_travel_hub_trips"
 
 METHOD = "erpnext_enhancements.travel_management.home.get_travel_home"
 BLOCK_NAME = "My Travel"
 
-#: The stamp the Plan a Trip release shipped, and the one production still holds. A workspace or
-#: sidebar JSON no newer than the stored row is skipped on import, silently.
-OLD_WORKSPACE_STAMP = "2026-09-23 12:00:00.000000"
-#: Production's generated "Travel" sidebar row.
-OLD_SIDEBAR_STAMP = "2026-07-10 23:59:59.999999"
+#: Everyone's trips on the web itinerary. The shortcut, the sidebar item and the block all open it.
+ALL_TRIPS_URL = "/itinerary?view=trips"
+
+#: The stamps v1.554.0 shipped, and the ones production holds since its reload_travel_hub ran. A
+#: workspace or sidebar JSON no newer than the stored row is skipped on import, silently.
+OLD_WORKSPACE_STAMP = "2026-09-28 18:00:00.000000"
+OLD_SIDEBAR_STAMP = "2026-09-28 18:00:00.000000"
 
 #: label -> what the shortcut must be. All six are open to an Employee, so the row has no holes.
 SHORTCUTS = {
 	"See my itinerary": {"type": "URL", "url": "/itinerary"},
 	"Plan a Trip": {"type": "Page", "link_to": "plan-a-trip"},
-	"My trips": {
-		"type": "DocType",
-		"link_to": "Travel Trip",
-		"doc_view": "List",
-		"format": "{} active",
-		"stats_filter": {"status": ["in", ["Planning", "Booked", "In Progress"]]},
-	},
+	"Trips": {"type": "URL", "url": ALL_TRIPS_URL},
 	"Who's away when": {
 		"type": "DocType",
 		"link_to": "Travel Trip",
@@ -201,6 +204,45 @@ const answer = async (i, name) => {
 	change(["Workspaces", "Travel"]);
 	seen.gone = pending.length;
 	console.log(JSON.stringify(seen));
+})();
+"""
+
+#: The block's script run once per answer, as the workspace runs it, and the body it draws for each:
+#: nothing of the viewer's, no Employee record, and a coordinator's full page. Prints the three
+#: bodies as JSON. ``__BLOCK_JS__`` is the script's path, as a JSON string.
+_DRAW_JS = r"""
+const src = require("fs").readFileSync(__BLOCK_JS__, "utf8");
+const pending = [];
+const frappe = {
+	utils: { escape_html: (value) => String(value) },
+	router: { on: () => {} },
+	get_route: () => [],
+	call: () => new Promise((resolve) => pending.push(resolve)),
+};
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+async function draw(message) {
+	const els = {
+		"#tvh-body": { innerHTML: "", querySelectorAll: () => [] },
+		"#tvh-sub": { textContent: "" },
+		"#tvh-refresh": { addEventListener: () => {} },
+	};
+	const root = { host: { isConnected: true }, querySelector: (sel) => els[sel] || null };
+	new Function("root_element", "frappe", "window", "document", src)(root, frappe, {}, {});
+	pending[pending.length - 1]({ message });
+	await tick();
+	return els["#tvh-body"].innerHTML;
+}
+(async () => {
+	const out = {};
+	out.empty = await draw({ viewer: {}, trips: [] });
+	out.unlinked = await draw({ viewer: {}, message: "Your user account isn't linked to an employee record." });
+	out.full = await draw({
+		viewer: { first_name: "Ann", is_coordinator: true },
+		featured: { trip: "TRIP-1", purpose: "Install", status: "Booked", itinerary_url: "/itinerary?trip=TRIP-1" },
+		trips: [{ trip: "TRIP-2", purpose: "Service", status: "Planning", relation: "traveling" }],
+		attention: { trips: [{ trip: "TRIP-3", purpose: "Survey", status: "Planning", reasons: ["No hotel"] }] },
+	});
+	console.log(JSON.stringify(out));
 })();
 """
 
@@ -342,6 +384,54 @@ class TestTheBlock(unittest.TestCase):
 		self.assertIn('window.open(safe, "_blank", "noopener")', code)
 		self.assertNotIn("window.location", code)
 
+	def test_it_links_to_everyones_trips(self):
+		"""The way to a colleague's trip: the desk list shows a crew member only their own, and
+		/itinerary?view=trips shows everybody's with the money left out. A web page, so it goes
+		through openButton like every other one: a new tab, and past the webUrl() guard."""
+		code = js_code(BLOCK_JS)
+		self.assertIn(f'const ALL_TRIPS_URL = "{ALL_TRIPS_URL}";', code)
+		self.assertIn('openButton("👥", "See everyone\'s trips", ALL_TRIPS_URL, "is-quiet")', code)
+		self.assertEqual(code.count("ALL_TRIPS_URL"), 2, "declared once, used once")
+		# Right after the viewer's own trips, and before the coordinators' list.
+		self.assertIn(
+			"parts.push(tripsSection(data));\n        parts.push(allTripsLink());\n"
+			"        parts.push(attentionSection(data.attention));",
+			code,
+		)
+		self.assertIsNotNone(css_rule(css_code(BLOCK_CSS), ".tvh-all-trips"))
+
+	def test_the_link_to_everyones_trips_is_drawn_for_every_viewer(self):
+		"""Run, not grepped: with no trips (under the empty state), with no Employee record (the
+		page, not the block, decides who may see the list), and on a coordinator's full page (under
+		their own trips and above "Needs attention")."""
+		node = shutil.which("node")
+		if not node:
+			self.skipTest("node is not installed")
+		result = subprocess.run(
+			[node, "-e", _DRAW_JS.replace("__BLOCK_JS__", json.dumps(str(BLOCK_JS)))],
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			check=False,
+			timeout=60,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		bodies = json.loads(result.stdout)
+		self.assertEqual(set(bodies), {"empty", "unlinked", "full"})
+		link = f'data-action="open" data-url="{ALL_TRIPS_URL}"'
+		for shape, body in bodies.items():
+			with self.subTest(shape):
+				self.assertEqual(body.count('class="tvh-all-trips"'), 1)
+				self.assertEqual(body.count(link), 1)
+				self.assertIn("See everyone's trips", body)
+				self.assertIn('class="tvh-btn is-quiet"', body)
+				# Below whatever the viewer reads first.
+				first = "tvh-feature" if shape == "full" else "tvh-notice"
+				self.assertLess(body.index(first), body.index(link))
+		full = bodies["full"]
+		self.assertLess(full.index('class="tvh-trips"'), full.index(link))
+		self.assertLess(full.index(link), full.index("tvh-attention"))
+
 	def test_keep_planning_hands_the_trip_over_the_way_plan_a_trip_reads_it(self):
 		"""v16 delivers a page's arguments in frappe.route_options, not the address bar."""
 		code = js_code(BLOCK_JS)
@@ -462,7 +552,26 @@ class TestTheWorkspace(unittest.TestCase):
 					else:
 						self.assertEqual(row.get(key), value)
 				if row["type"] == "URL":
-					self.assertNotIn("link_to", row)
+					# A count and its filter belong to a DocType shortcut; on a URL one they
+					# count nothing, and a link_to sends the importer looking for a doctype.
+					for key in ("link_to", "stats_filter", "format", "doc_view"):
+						self.assertNotIn(key, row)
+
+	def test_trips_opens_everyones_trips_not_the_desk_list(self):
+		"""v1.555.0 (Nik, 2026-09-28): "Change it from My Trips to just Trips so anyone can see
+		anyone's trips". The desk list shows a crew member only the trips they own or travel on, and
+		its form carries the money, so "Trips" is the web itinerary's list of every trip instead."""
+		rows = {row["label"]: row for row in workspace()["shortcuts"]}
+		self.assertNotIn("My trips", rows)
+		self.assertEqual((rows["Trips"]["type"], rows["Trips"]["url"]), ("URL", ALL_TRIPS_URL))
+		placed = {b["id"]: b["data"].get("shortcut_name") for b in content() if b["type"] == "shortcut"}
+		self.assertEqual(placed.get("travel_sc_trips"), "Trips")
+		self.assertNotIn("travel_sc_my_trips", placed)
+		self.assertNotIn("My trips", source(WORKSPACE))
+		# The desk list is still one click away for the office, on the Trips card.
+		links = workspace()["links"]
+		trip_list = [(row["link_type"], row["link_to"]) for row in links if row.get("label") == "Trip list"]
+		self.assertEqual(trip_list, [("DocType", "Travel Trip")])
 
 	def test_no_shortcut_is_coordinator_only(self):
 		for row in workspace()["shortcuts"]:
@@ -552,10 +661,11 @@ class TestTheSidebar(unittest.TestCase):
 				("Link", "Home"),
 				("Link", "My itinerary"),
 				("Link", "Plan a Trip"),
-				("Link", "My trips"),
+				("Link", "Trips"),
 				("Link", "Travel rules & per diem"),
 				("Link", "Places & job sites"),
 				("Section Break", "Office"),
+				("Link", "Trip list"),
 				("Link", "Trip Cost Summary"),
 				("Link", "Spend by Category"),
 				("Link", "Unclaimed Travel Expenses"),
@@ -567,11 +677,35 @@ class TestTheSidebar(unittest.TestCase):
 		"""Production's generated sidebar carried two URL items whose url was NULL: links to
 		nowhere."""
 		urls = [row for row in sidebar()["items"] if row.get("link_type") == "URL"]
-		self.assertEqual(len(urls), 2)
+		self.assertEqual([row["label"] for row in urls], ["My itinerary", "Trips", "Travel rules & per diem"])
 		for row in urls:
 			with self.subTest(row["label"]):
 				self.assertTrue((row.get("url") or "").startswith("/"), row)
 				self.assertNotIn("link_to", row)
+
+	def test_trips_opens_everyones_trips_like_the_shortcut(self):
+		"""The same destination as the workspace's "Trips" shortcut, so the two cannot disagree."""
+		items = {row["label"]: row for row in sidebar()["items"]}
+		self.assertNotIn("My trips", items)
+		trips = items["Trips"]
+		self.assertEqual((trips["type"], trips["link_type"], trips["url"]), ("Link", "URL", ALL_TRIPS_URL))
+		self.assertEqual(trips["child"], 0)
+		shortcut = next(row for row in workspace()["shortcuts"] if row["label"] == "Trips")
+		self.assertEqual(trips["url"], shortcut["url"])
+
+	def test_a_travel_trip_page_keeps_this_sidebar(self):
+		"""v16 picks the sidebar for a Travel Trip list, form or calendar by the sidebars that have an
+		item linking to Travel Trip (sidebar.js resolve_sidebar), else the module's auto-generated
+		one. When "My trips" became a URL (v1.555.0) this sidebar lost its only such item, and every
+		trip page swapped it for frappe's "Travel Management" sidebar; "Trip list" under Office is the
+		item that keeps it."""
+		links = [
+			row
+			for row in sidebar()["items"]
+			if row.get("link_type") == "DocType" and row.get("link_to") == "Travel Trip"
+		]
+		self.assertEqual([row["label"] for row in links], ["Trip list"])
+		self.assertNotIn("report_ref_doctype", links[0])
 
 	def test_plan_a_trip_is_there_and_new_travel_trip_is_not(self):
 		items = sidebar()["items"]
@@ -644,11 +778,14 @@ def _install_frappe_stub(fail=()):
 	return state
 
 
-class TestTheReloadPatch(unittest.TestCase):
-	STUBBED = ("frappe", "frappe.modules", "frappe.modules.import_file", PATCH_MODULE)
+class _PatchHarness:
+	"""Runs ``MODULE``'s execute() against the stub, and puts sys.modules back afterwards."""
+
+	MODULE = None
 
 	def setUp(self):
-		self._saved = {name: sys.modules.get(name) for name in self.STUBBED}
+		stubbed = ("frappe", "frappe.modules", "frappe.modules.import_file", self.MODULE)
+		self._saved = {name: sys.modules.get(name) for name in stubbed}
 
 	def tearDown(self):
 		for name, module in self._saved.items():
@@ -659,9 +796,13 @@ class TestTheReloadPatch(unittest.TestCase):
 
 	def _run(self, fail=()):
 		state = _install_frappe_stub(fail)
-		sys.modules.pop(PATCH_MODULE, None)
-		patch = importlib.import_module(PATCH_MODULE)
+		sys.modules.pop(self.MODULE, None)
+		patch = importlib.import_module(self.MODULE)
 		return patch.execute(), state
+
+
+class TestTheReloadPatch(_PatchHarness, unittest.TestCase):
+	MODULE = PATCH_MODULE
 
 	def test_it_is_registered_after_the_patch_that_already_ran(self):
 		"""reload_travel_workspace_for_plan_a_trip has run on production and never runs again:
@@ -727,6 +868,73 @@ class TestTheReloadPatch(unittest.TestCase):
 		self.assertEqual(len(calls), 2, calls)
 		for args in calls:
 			self.assertNotIn("workspace_sidebar", args)
+		self.assertIn("import_file_by_path(", body)
+
+
+class TestTheTripsReloadPatch(_PatchHarness, unittest.TestCase):
+	"""v1.555.0 turned "My trips" into "Trips" on both the workspace and the sidebar. Both are
+	timestamp-gated on import, and reload_travel_hub has already run on production, so the release
+	carries a patch of its own: that patch's workspace and sidebar steps, and not its report step
+	(the report did not change)."""
+
+	MODULE = TRIPS_PATCH_MODULE
+
+	def test_it_is_registered_once_after_reload_travel_hub(self):
+		text = source(PATCHES_TXT)
+		lines = [line.strip() for line in text.splitlines()]
+		self.assertEqual(lines.count(TRIPS_PATCH_MODULE), 1)
+		self.assertLess(text.index("[post_model_sync]"), text.index(TRIPS_PATCH_MODULE))
+		self.assertLess(lines.index(PATCH_MODULE), lines.index(TRIPS_PATCH_MODULE))
+		# Its comment says which release it belongs to and what it forces.
+		index = lines.index(TRIPS_PATCH_MODULE)
+		start = index
+		while start > 0 and lines[start - 1].startswith("#"):
+			start -= 1
+		comment = lines[start:index]
+		self.assertTrue(2 <= len(comment) <= 4, comment)
+		self.assertTrue(comment[0].startswith("# v1.555.0"), comment[0])
+
+	def test_both_files_it_forces_are_newer_than_the_rows_production_holds(self):
+		"""The stamp is the half that does the work on its own on a site whose rows are older."""
+		self.assertGreater(workspace()["modified"], OLD_WORKSPACE_STAMP)
+		self.assertGreater(sidebar()["modified"], OLD_SIDEBAR_STAMP)
+
+	def test_it_reloads_the_workspace_and_imports_the_sidebar(self):
+		result, state = self._run()
+		self.assertIsNone(result)
+		workspace_reload = (("travel_management", "workspace", "travel_management"), {"force": True})
+		self.assertEqual(state["reload"], [workspace_reload])
+		self.assertEqual(len(state["imports"]), 1)
+		path, kwargs = state["imports"][0]
+		self.assertEqual(kwargs, {"force": True})
+		self.assertEqual(Path(path).parts[-2:], ("workspace_sidebar", "travel.json"))
+		self.assertEqual(state["cleared"], 1)
+		self.assertEqual(state["errors"], [])
+
+	def test_nothing_it_calls_can_abort_the_migrate(self):
+		"""A patch that raises aborts `bench migrate`, which on this repo IS the deploy."""
+		result, state = self._run(fail=("reload", "import", "cache"))
+		self.assertIsNone(result)
+		# Anti-vacuity: each step was tried, and each failure was recorded rather than lost.
+		self.assertEqual(len(state["reload"]), 1)
+		self.assertEqual(len(state["imports"]), 1)
+		self.assertEqual(state["cleared"], 1)
+		self.assertEqual(
+			state["errors"], ["Workspace reload failed: Travel", "Workspace sidebar reload failed: Travel"]
+		)
+
+	def test_a_failed_workspace_does_not_skip_the_sidebar(self):
+		_, state = self._run(fail=("reload",))
+		self.assertEqual(len(state["imports"]), 1)
+		self.assertEqual(state["cleared"], 1)
+		self.assertEqual(state["errors"], ["Workspace reload failed: Travel"])
+
+	def test_the_sidebar_is_not_reloaded_with_reload_doc(self):
+		code = source(APP / "patches" / "reload_travel_hub_trips.py")
+		body = code[code.index("def execute") :]
+		calls = re.findall(r"frappe\.reload_doc\(([^)]*)\)", body)
+		self.assertEqual(len(calls), 1, calls)
+		self.assertNotIn("workspace_sidebar", calls[0])
 		self.assertIn("import_file_by_path(", body)
 
 
