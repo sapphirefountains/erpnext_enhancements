@@ -142,7 +142,9 @@
  *     asked for again; "All trips" (first in the chip bar, there even for a single trip) pushes
  *     `?view=trips`, or steps Back when the list is the entry behind, and does nothing while
  *     "Report a problem" is open; the empty page's "See all trips" pushes it, and Back is the
- *     empty page again; a trip refused after a tap on the list steps back onto the list, which
+ *     empty page again; neither is drawn unless the boot says staff (`is_staff`; a boot without
+ *     it draws neither), while ?view=trips is still asked for and refused in place for anyone
+ *     else; a trip refused after a tap on the list steps back onto the list, which
  *     says why once; a 403 says the list is not theirs, an expired session offers to sign in
  *     back to the list, a 500 says so; with no usable answer (no signal, the gateway, six
  *     seconds of one bar) it says the list needs a connection and offers their own trips, only
@@ -1548,6 +1550,10 @@ function loadItinerary(url, opts) {
 	// this one, whatever the fake server would have said.
 	const session = { expired: false, next: null };
 	const boot = { trips: opts.trips || TRIPS, employee, employee_name: employee ? PEOPLE[employee] : null };
+	// Whether they are staff (get_itinerary_bootstrap's `is_staff`): yes, unless a test says
+	// otherwise. `staff: undefined` leaves it out, as a page kept from before v1.556.2 has it.
+	if (!("staff" in opts)) boot.is_staff = true;
+	else if (opts.staff !== undefined) boot.is_staff = opts.staff;
 	// The signed-in user the page was drawn for. Absent unless a test gives one, as in every
 	// check written before the page kept anything offline: it then keeps nothing.
 	if ("user" in opts) boot.user = opts.user;
@@ -3789,8 +3795,32 @@ async function testItineraryAllTrips() {
 	await p.browser.settle();
 	check("...and Back is the empty page again, asking for nothing", [p.empty(), p.pending(), p.urls().length, p.title()], [["No upcoming or recent trips. Safe travels when the next one comes!"], [], 1, "My Itinerary"]);
 	check("every push was paid for by a tap", p.browser.unactivated, 0);
+
+	// Both ways to the list are for staff only (the boot's `is_staff`, v1.556.2): get_all_trips
+	// refuses anyone else, and a portal customer who tapped either was told the list is not theirs.
+	p = loadItinerary("/itinerary", { trips: [], staff: false });
+	check(
+		"not staff (a portal customer): the empty page offers no list",
+		[p.empty(), p.root.find("ti-all-link").length],
+		[["No upcoming or recent trips. Safe travels when the next one comes!"], 0]
+	);
+	p = loadItinerary("/itinerary", { trips: [], staff: undefined });
+	check("...nor does a boot from before is_staff was sent (a page kept on the phone)", [p.empty().length, p.root.find("ti-all-link").length], [1, 0]);
+	p = loadItinerary("/itinerary", { trips: [], employee: null, staff: false });
+	check("no Employee record and not staff: no link", [p.empty(), p.root.find("ti-all-link").length], [["No employee record is linked to your user account."], 0]);
 	p = loadItinerary("/itinerary", { trips: [], employee: null });
-	check("no Employee record: no link (the list is for staff)", p.root.find("ti-all-link").length, 0);
+	check("a coordinator with no Employee record is staff: the link is there", [p.empty(), p.text("ti-all-link")], [["No employee record is linked to your user account."], ["See all trips"]]);
+	p = loadItinerary("/itinerary", { staff: false });
+	await p.answer("TRIP-A");
+	check("not staff: their own trips in the chip bar, and no 'All trips'", [p.shown(), p.chips().length, p.root.find("ti-all-chip").length], ["Trip A", 4, 0]);
+	check("...their own trips first in it", p.root.find("ti-switcher")[0].children[0].className.split(" ")[0], "ti-trip-chip");
+	p = loadItinerary("/itinerary", { trips: [TRIPS[1]], staff: false });
+	await p.answer("TRIP-A");
+	check("...and a single trip of their own draws no chip bar at all", [p.shown(), p.root.find("ti-switcher").length], ["Trip A", 0]);
+	p = loadItinerary("/itinerary", { staff: undefined });
+	await p.answer("TRIP-A");
+	check("...nor 'All trips' from a boot with no is_staff", [p.shown(), p.chips().length, p.root.find("ti-all-chip").length], ["Trip A", 4, 0]);
+	check("every push was paid for by a tap", p.browser.unactivated, 0);
 
 	// Someone else's trip: `limited`.
 	p = loadItinerary("/itinerary?trip=TRIP-Z");
@@ -3853,6 +3883,12 @@ async function testItineraryAllTrips() {
 	p = loadItinerary("/itinerary?view=trips", { cookie: "user_id=pat%40example.com" });
 	await p.answerList(refusal(403, "PermissionError", "Not permitted"));
 	check("someone who is not staff is told the list is not theirs, in place, with no history call", [p.empty(), p.listRows(), p.browser.calls], [["You don't have access to the list of all trips."], [], []]);
+	// A boot that says they are not staff draws no way to the list, but the address still asks:
+	// the server decides, and says no politely.
+	p = loadItinerary("/itinerary?view=trips", { staff: false, cookie: "user_id=pat%40example.com" });
+	check("not staff, at ?view=trips: the list is still asked for, with no history call", [p.pending(), p.title(), p.browser.calls], [["(all trips)"], "Trips", []]);
+	await p.answerList(refusal(403, "PermissionError", "Not permitted"));
+	check("...and the server's refusal is said in place", [p.empty(), p.listRows(), p.browser.calls], [["You don't have access to the list of all trips."], [], []]);
 	p = loadItinerary("/itinerary?view=trips", { cookie: "user_id=pat%40example.com" });
 	await p.answerList(sessionExpired());
 	check(

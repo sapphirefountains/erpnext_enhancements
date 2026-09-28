@@ -256,7 +256,13 @@ _TRIP_LIST_FIELDS = [
 
 @frappe.whitelist()
 def get_itinerary_bootstrap():
-	"""Boot payload for the /itinerary page (www/itinerary.py)."""
+	"""Boot payload for the /itinerary page (www/itinerary.py).
+
+	``is_staff`` (``_is_staff``) tells the page whether to offer the list of every trip: the
+	"All trips" chip and the empty page's "See all trips". ``get_all_trips`` refuses anyone
+	else, so a portal customer (a Website User) who tapped either was told "You don't have
+	access to the list of all trips." (until v1.556.2). It only decides what is drawn: the
+	endpoint keeps its own gate, and a ``?view=trips`` visit still asks it."""
 	employee = _session_employee()
 	return {
 		"user": frappe.session.user,
@@ -264,6 +270,7 @@ def get_itinerary_bootstrap():
 		"employee_name": frappe.db.get_value("Employee", employee, "employee_name")
 		if employee
 		else None,
+		"is_staff": bool(_is_staff()),
 		"trips": _itinerary_trips(),
 		"csrf_token": frappe.sessions.get_csrf_token(),
 	}

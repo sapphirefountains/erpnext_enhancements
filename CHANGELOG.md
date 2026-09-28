@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.556.2] - 2026-09-28
+
+**No meal receipts for per diem, a closing warning that fits production, and no "All trips" for
+people who cannot open it.** Three loose ends from the travel work, all asked for by Nik on
+2026-09-28. The first is his words: "Meal receipts shouldn't be required if paid by per diem."
+
+### Changed
+
+- **Receipts are for costs someone paid, never for what the per diem covers.** The per diem is paid
+  at the daily rate, not against receipts, and neither it nor mileage has a Receipt field on the
+  trip to put one in. Yet section 6 of `/travel_guidelines` said the per diem covers meals and
+  incidentals "— still include receipts for them", and every post-trip message asked every traveler
+  for "your receipts", so someone owed nothing but per diem went hunting for lunch receipts that the
+  system could not even hold. Now:
+  - `/travel_guidelines`: section 5 says the meals and incidentals the per diem covers need no
+    receipts and that accounting pays the per diem from the trip; section 6 says receipts are only
+    for costs you paid yourself that the per diem does not cover and for company-card purchases (a
+    meal put on a company card still needs its receipt, for reconciliation), and its "In the system"
+    callout says per diem and mileage need none, so someone owed only those has nothing to attach
+    to be paid back, while a company-card purchase still needs its receipt.
+    The out-of-pocket and company-card receipt rules are unchanged.
+  - The expense nudge asks for receipts only when the traveler paid a cost themselves
+    (`reminders._unclaimed_costs`, passed to the template as `receipts_due`). Someone owed only per
+    diem or mileage gets "Your travel reimbursement: <trip>" instead of "Attach your travel
+    receipts: <trip>", is told what they are owed is per diem or mileage, that it needs no receipts,
+    and that accounting pays it from the trip, and is not told to get a closed trip reopened. The
+    nudge still goes to everyone the trip shows as owed, stamped before it is sent, as before.
+  - The Closed notice goes to every traveler alike, so it now says which costs take a receipt (one
+    paid yourself or put on a company card; per diem and mileage need none) instead of asking each
+    of them to check "each of your itemized receipts". The Travel hub's receipts reminder says the
+    same, keeping the two apart: a cost you paid yourself is reimbursed, a company-card purchase is
+    not but still needs its receipt.
+  - The Travel workspace's "How a work trip works" step 4 ("Attach each receipt to its cost on the
+    trip") was already right and is untouched, so the workspace JSON and its `modified` are too.
+- **The warning on closing a trip says what matters on production.** A traveler can close their own
+  trip (Completed to Closed is theirs too), and `TravelTrip._warn_unclaimed_on_close` told whoever did
+  it the trip was being closed with money "not yet on an Expense Claim". Production has no HRMS
+  (`expense_claims_available()` is False; it cannot be installed there,
+  `accounting_intake/actions/receipt_expense.py`), so nothing is ever on a claim and it fired on every
+  close, about a claim nobody could make. With HRMS it still says exactly that. Without it, it now
+  names who the trip shows as owed and how much, says accounting reimburses that from the trip with
+  no claim to make, counts the employee-paid costs with nothing in their Receipt field, and says only
+  a Travel Coordinator can change a closed trip, so a receipt attached later means asking one to
+  reopen it; per diem and mileage need no receipts. It is still a warning (`msgprint`), never a
+  refusal, and the close goes ahead.
+- **Nothing tells a coordinator to install hrms any more.** The Travel Settings notice ended "Install
+  hrms to enable travel finance", and `travel_management/api.py::_require_hrms` (the refusal behind
+  the Create buttons the trip form already hides) ended "Install hrms to use this." Neither can be
+  done here. Both now say travel finance is handled by accounting from the trip.
+- `tests/test_travel_views.py`: `TestTheTravelerIsToldWhatProductionCanDo` pins the new guideline,
+  nudge and Closed-notice wording, renders the nudge for someone owed only per diem or mileage, and
+  checks that neither the Travel Settings notice nor `_require_hrms` says to install hrms;
+  `TestTheExpenseNudgeAsksOnlyForReceiptsDue` runs `send_post_trip_expense_nudges` over a trip where
+  one traveler paid a cost and two did not; `TestTheClosingWarning` runs the real controller's
+  warning with and without HRMS, for a traveler closing their own trip; `TestBootstrap` checks
+  `is_staff` for the Employee role, a coordinator, Administrator, a Website User and a desk account
+  with no Employee role. `tests/test_travel_planner.py` checks the page's boot carries it, and
+  `scripts/test_web_flow_history.js` drives the page with and without it.
+
+### Fixed
+
+- **`/itinerary` offers the list of all trips only to staff.** The "All trips" chip and the empty
+  page's "See all trips" were drawn for everyone, but `get_all_trips` answers staff only (the Employee
+  role or a travel coordinator), so a portal customer (a Website User) who tapped either was told
+  "You don't have access to the list of all trips." `get_itinerary_bootstrap` now sends `is_staff`
+  (`_is_staff`, the same gate the list uses) in the boot `www/itinerary.py` prints, and `itinerary.js`
+  draws the chip and the link only on `is_staff === true`. A boot without it, from a page the service
+  worker kept on the phone before this release, offers neither, and a page with nothing to switch to
+  draws no empty chip bar. A `?view=trips` address still asks the server, and someone who is not
+  staff still gets its refusal, in place, as before. A coordinator with no Employee record (who is
+  staff) now gets "See all trips" on the empty page, which the old `BOOT.employee` test withheld.
+
 ## [1.556.1] - 2026-09-28
 
 **The review fixes for WI-080 PR 3 (#1144), which merged before they landed.** Four defects, all

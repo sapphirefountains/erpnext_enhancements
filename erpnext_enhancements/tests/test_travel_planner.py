@@ -3573,9 +3573,10 @@ class TestItineraryBackForward(unittest.TestCase):
 
 		return self._controller_function("login_redirect", {"quote": quote})
 
-	def _get_context(self, user, marker="k" * 64):
+	def _get_context(self, user, marker="k" * 64, boot=None):
 		"""The real get_context (with script_json and login_redirect), extracted with ast, over a
-		stand-in frappe, bootstrap and set_marker. Returns (get_context, marked, fake frappe)."""
+		stand-in frappe, bootstrap (answering ``boot`` when given) and set_marker. Returns
+		(get_context, marked, fake frappe)."""
 		import ast
 		from urllib.parse import quote
 
@@ -3595,7 +3596,7 @@ class TestItineraryBackForward(unittest.TestCase):
 		namespace = {
 			"frappe": fake,
 			"quote": quote,
-			"get_itinerary_bootstrap": lambda: {"user": user, "csrf_token": "tok", "trips": []},
+			"get_itinerary_bootstrap": lambda: dict(boot or {"user": user, "csrf_token": "tok", "trips": []}),
 			"get_deploy_version": lambda: "v7",
 			"set_marker": set_marker,
 		}
@@ -3628,6 +3629,18 @@ class TestItineraryBackForward(unittest.TestCase):
 		# The cookie only leaves on a response whose Cache-Control is not public: the page stays
 		# uncached, at module level and on the context.
 		self.assertIn("\nno_cache = 1\n", source)
+
+	def test_the_page_is_told_whether_they_are_staff(self):
+		"""get_itinerary_bootstrap's ``is_staff`` reaches the boot the page reads as it was
+		answered, next to the marker, so itinerary.js offers the list of all trips to staff only
+		(v1.556.2). The bootstrap's own answer is TestBootstrap's, in test_travel_views."""
+		for staff in (True, False):
+			answer = {"user": "pat@example.com", "csrf_token": "tok", "trips": [], "is_staff": staff}
+			get_context, _marked, _fake = self._get_context("pat@example.com", boot=answer)
+			boot = json.loads(get_context(types.SimpleNamespace()).boot_json)
+			self.assertIs(boot["is_staff"], staff)
+			self.assertEqual(boot["offline_key"], "k" * 64)
+		self.assertIn("BOOT.is_staff === true", _read(self.ITINERARY_JS))
 
 	def test_a_guest_is_sent_to_log_in_with_no_marker(self):
 		get_context, marked, fake = self._get_context("Guest")

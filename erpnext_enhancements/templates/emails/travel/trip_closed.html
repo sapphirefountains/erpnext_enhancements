@@ -12,11 +12,17 @@
    add it: the email says who can. Until v1.552.1 it told them to finish and submit an
    Expense Claim that did not exist.
 
+   It goes to every traveler alike, so it says which costs take a receipt: one paid
+   out of pocket or on a company card, never the per diem or mileage (Nik, 2026-09-28:
+   "Meal receipts shouldn't be required if paid by per diem"). Until v1.556.2 it asked
+   each traveler to check "each of your itemized receipts", which sent someone owed
+   only per diem looking for receipts they never needed.
+
    A FRAGMENT — chrome comes from email_style.wrap() in travel_management/
    notifications.py. NOTE: no autoescape in frappe's Jinja env. #}
 {% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-{{ ee.callout("Trip " ~ trip.name ~ " (" ~ trip.start_date ~ " – " ~ trip.end_date ~ ") has been closed. Accounting reimburses your employee-paid costs, per diem and mileage from the trip, so check that each of your itemized receipts is attached to its cost.", "warning") }}
+{{ ee.callout("Trip " ~ trip.name ~ " (" ~ trip.start_date ~ " – " ~ trip.end_date ~ ") has been closed. Accounting reimburses your employee-paid costs, per diem and mileage from the trip. Per diem and mileage need no receipts, but check that the itemized receipt for each cost you paid yourself or put on a company card is attached to it.", "warning") }}
 
 {{ ee.p("Only a Travel Coordinator can change a closed trip. If a receipt or a cost of yours is still missing from it, ask one to reopen the trip, then attach each receipt to the Receipt field of the cost it paid for.") }}
 

@@ -3,7 +3,7 @@
    each traveler the trip shows as owed employee-paid costs, per diem or mileage
    (reminders._unclaimed_total).
    Context: trip, trip_url, itinerary_url, guidelines_url, unclaimed_amount
-   (formatted), days_since_end, recipient.
+   (formatted), days_since_end, receipts_due, recipient.
 
    It asks for receipts, not a claim. HRMS is not installed on production and cannot
    be (accounting_intake/actions/receipt_expense.py), so Expense Claim does not exist,
@@ -14,8 +14,16 @@
    receipt to its cost row's Receipt, and accounting reimburses from the trip. Until
    v1.552.1 this email told travelers to use a Create button none of them could see.
 
+   Only a cost they paid themselves takes a receipt (`receipts_due`:
+   reminders._unclaimed_costs found one). Per diem and mileage take none, and have no
+   Receipt field to put one in, so someone owed only those is told so, and that they
+   need none (Nik, 2026-09-28: "Meal receipts shouldn't be required if paid by per
+   diem"). Until v1.556.2 every recipient was asked for receipts, and a traveler owed
+   only per diem went looking for meal receipts.
+
    A Closed trip is locked to everyone but a Travel Coordinator
-   (travel_trip._check_closed_lock), so on one the email says who can reopen it.
+   (travel_trip._check_closed_lock), so on one the email says who can reopen it: only
+   to someone with a receipt to attach, since nobody else needs it open.
 
    A FRAGMENT — chrome comes from email_style.wrap() in travel_management/
    reminders.py. NOTE: no autoescape in frappe's Jinja env. #}
@@ -24,12 +32,16 @@
 {{ ee.kpis([{"label": "To reimburse", "value": unclaimed_amount, "tone": "warning"},
             {"label": "Days since trip ended", "value": days_since_end, "tone": "info"}]) }}
 
-{{ ee.p("Trip " ~ trip.name ~ " ended " ~ days_since_end ~ " day(s) ago, and it shows " ~ unclaimed_amount ~ " owed to you for employee-paid costs, per diem or mileage.") }}
+{{ ee.p("Trip " ~ trip.name ~ " ended " ~ days_since_end ~ " day(s) ago, and it shows " ~ unclaimed_amount ~ (" owed to you for employee-paid costs, per diem or mileage." if receipts_due else " owed to you for per diem or mileage.")) }}
 
-{{ ee.rich("Attach your itemized receipts to the trip so accounting can reimburse you: open the trip and put each receipt in the <b>Receipt</b> field of the cost it paid for. There is no claim to submit — accounting reimburses you from the trip. The travel guidelines ask for your receipts within a week of getting back.") }}
+{% if receipts_due %}
+{{ ee.rich("Attach your itemized receipts to the trip so accounting can reimburse you: open the trip and put each receipt in the <b>Receipt</b> field of the cost it paid for. There is no claim to submit — accounting reimburses you from the trip. Your per diem and mileage need no receipts. The travel guidelines ask for your receipts within a week of getting back.") }}
 
 {% if trip.status == "Closed" %}
 {{ ee.note("This trip is already closed, so only a Travel Coordinator can change it: ask one to reopen it, then attach your receipts.") }}
+{% endif %}
+{% else %}
+{{ ee.rich("Per diem and mileage need no receipts, so there is nothing for you to attach for them. There is no claim to submit either — accounting pays them from the trip.") }}
 {% endif %}
 
 {{ ee.button(trip_url, "View the trip") }}
