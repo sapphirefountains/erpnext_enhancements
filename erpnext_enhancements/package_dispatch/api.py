@@ -14,6 +14,12 @@ and address by hand. These endpoints only power the auto-fill, so they refuse wh
 the feature is disabled (matching the Product Configurator generation guards); the
 client checks ``frappe.boot.ee_package_dispatch`` first and never calls them off.
 
+The switch is not a permission. Each endpoint also requires **read** on the record it
+reads from, the Item or the Customer (v1.561.1; before that any signed-in user could
+call them while the switch was on). That is the rule Frappe v16 applies to a form's own
+``fetch_from``: ``frappe.client.validate_link_and_fetch`` fetches values only for a user
+with Read on the linked document, and tells a user with just Select that they need it.
+
 Pricing follows the codebase convention (``api/maintenance_workflow.py`` /
 ``product_configurator``): the live **Standard Selling** Item Price, falling back
 to the Item master's static rates. There is no client-side ``fetch_from`` for
@@ -50,10 +56,15 @@ def get_item_value(item_code):
 
 @frappe.whitelist()
 def get_item_dispatch_details(item_code):
-	"""Description + unit value for a dispatch line when a catalog Item is picked."""
+	"""Description + unit value for a dispatch line when a catalog Item is picked.
+
+	Requires read on the Item. The value falls back to the Item master's
+	``valuation_rate`` when there is no selling price, which is a cost figure.
+	"""
 	throw_if_package_dispatch_disabled()
 	if not item_code:
 		return {}
+	frappe.has_permission("Item", "read", doc=item_code, throw=True)
 	item_name = frappe.db.get_value("Item", item_code, "item_name") or item_code
 	return {"description": item_name, "rate": get_item_value(item_code)}
 
@@ -64,10 +75,15 @@ def get_customer_ship_to(customer):
 
 	Everything returned is a suggestion the user can edit; blanks are simply left
 	for manual entry (a customer with no primary address still fills the name).
+
+	Requires read on the Customer, checked before anything is read. The Address and
+	Contact behind it are read without a check of their own: they are the Customer's
+	primary address and contact, which is what read on the Customer shows on its form.
 	"""
 	throw_if_package_dispatch_disabled()
 	if not customer:
 		return {}
+	frappe.has_permission("Customer", "read", doc=customer, throw=True)
 	cust = frappe.db.get_value(
 		"Customer",
 		customer,

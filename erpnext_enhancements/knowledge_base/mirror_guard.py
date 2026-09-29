@@ -7,11 +7,12 @@ The private mirror signs in with an API key, as a **Website User** holding only 
 DocPerm keeps it out of ``/api/resource``, lists and reports, but not out of whitelisted methods: in
 frappe v16 the whitelist refuses only a Guest, or a function that is not whitelisted
 (``is_whitelisted``, ``frappe/__init__.py:479-487``, v16.35.0), and a key's user is signed in. So every
-login-only endpoint whose own body checks nothing would answer to that key. There are such endpoints in
-this app: ``sync_contact.get_contacts_for_context`` returns any party's contacts with their phone
-numbers and email addresses, ``get_addresses_for_context`` their addresses, and ``link_existing_record``
-and ``unlink_record`` re-link or unlink any Contact or Address with ``ignore_permissions``. A leaked
-mirror key would have reached all of them, and whatever such endpoint is added next.
+login-only endpoint whose own body checks nothing would answer to that key. There were such endpoints in
+this app when this guard was written: ``sync_contact.get_contacts_for_context`` returned any party's
+contacts with their phone numbers and email addresses, ``get_addresses_for_context`` their addresses, and
+``link_existing_record`` and ``unlink_record`` re-linked or unlinked any Contact or Address with
+``ignore_permissions``. v1.561.1 gave each of them a permission check of its own. The guard stays: a
+leaked mirror key would reach whatever such endpoint is added next.
 
 :func:`confine_mirror_account` closes that in one place rather than endpoint by endpoint. It is an
 ``auth_hooks`` entry, and it has to be:

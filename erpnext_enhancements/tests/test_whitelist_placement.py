@@ -189,6 +189,22 @@ EXACT_SURFACE = {
     # One read-only GET for the private mirror's service account (v1.561.0). A decorator on
     # `stamp_of` or a helper would expose it to every signed-in user, without the role check.
     "api/knowledge_base_mirror.py": {"snapshot"},
+    # The contact/address directory and the Package Dispatch auto-fill (v1.561.1). Six of
+    # these had no permission check until then, so any signed-in user could read any party's
+    # contacts or re-link any Contact. Each carries its own gate now, fenced endpoint by
+    # endpoint in test_contact_endpoint_permissions; a new endpoint here has to be listed,
+    # which is the moment to give it a gate and a test there.
+    "sync_contact.py": {
+        "set_primary_contact",
+        "set_primary_address",
+        "link_existing_record",
+        "unlink_record",
+        "get_contacts_for_context",
+        "get_importable_contacts",
+        "import_contacts",
+        "get_addresses_for_context",
+    },
+    "package_dispatch/api.py": {"get_item_dispatch_details", "get_customer_ship_to"},
 }
 
 

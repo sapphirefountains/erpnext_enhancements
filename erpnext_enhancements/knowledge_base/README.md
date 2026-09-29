@@ -1024,7 +1024,9 @@ GET /api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot?since=<s
   whitelist refuses only a Guest (`is_whitelisted`, `frappe/__init__.py:479-487`), so without a guard
   every login-only endpoint with no gate of its own would answer to it: `sync_contact`'s contact and
   address lookups (phone numbers and email addresses for any party) and its link and unlink writes
-  (under `ignore_permissions`) among them. `mirror_guard.confine_mirror_account`, an **`auth_hooks`**
+  (under `ignore_permissions`) among them when this was written. v1.561.1 gave those their own
+  permission checks; the guard remains for whatever such endpoint comes next.
+  `mirror_guard.confine_mirror_account`, an **`auth_hooks`**
   entry, refuses a user who holds KB Mirror and is not a System User (v16 gives every System User, and
   nobody else, the automatic role Desk User) every request except `GET` of exactly
   `/api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot` with no `cmd` in it, since

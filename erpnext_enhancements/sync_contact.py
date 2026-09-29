@@ -30,6 +30,10 @@ The whitelisted functions below back the in-form directory widget (list, link,
 unlink, set-primary, and the bulk **import** pair :func:`get_importable_contacts`
 / :func:`import_contacts`, which offer a related party's Contacts with tick
 boxes and link exactly the ones chosen).
+
+**Permissions.** Every one of them is login-only, and Frappe v16's whitelist refuses
+nothing but a Guest, so each body carries its own gate (see "Directory permissions"
+below for the rule; until v1.561.1 the list, link and unlink endpoints had none).
 """
 import frappe
 
@@ -281,10 +285,137 @@ def sanitize_primary_address_link(doc, method=None):
         doc.primary_address = None
 
 
+# ---------------------------------------------------------------------------
+# Directory permissions
+#
+# The directory endpoints are login-only, and Frappe v16's whitelist refuses nothing
+# but a Guest (``is_whitelisted``, frappe/__init__.py:479-487 at v16.35.0), so the gate
+# has to be in each body. Until v1.561.1 four of them had none: any signed-in user,
+# portal users included, could read any party's contacts and addresses by naming the
+# party, and link or unlink any Contact or Address. The rule, stated once:
+#
+# * a party whose contacts or addresses a call RETURNS needs **read** on that party;
+# * a party whose directory a call CHANGES needs **write** on that party;
+# * a Contact or Address whose own record a call CHANGES needs **write** on it.
+#
+# "Party" is whatever document the widget names as a source: the open form itself,
+# its Customer or Supplier, an Opportunity's Lead, each stakeholder row.
+# ---------------------------------------------------------------------------
+
+#: What the directory lists, links and unlinks. The widget never sends anything else.
+DIRECTORY_DOCTYPES = ("Contact", "Address")
+
+
+def _assert_directory_doctype(doctype):
+    """Refuse anything but a Contact or an Address.
+
+    ``link_existing_record`` and ``unlink_record`` take the doctype from the request.
+    """
+    if doctype not in DIRECTORY_DOCTYPES:
+        frappe.throw(
+            frappe._("The directory links and unlinks Contacts and Addresses, not {0}.").format(doctype)
+        )
+
+
+def _permitted(doctype, name, ptype):
+    """Whether the session user holds ``ptype`` on the document ``doctype`` / ``name``, quietly.
+
+    Never raises and never queues a message: a DocType that does not exist, a child
+    table, and a document that does not exist all answer False. The last one is ordinary,
+    not hostile: an unsaved form sends its placeholder name (``new-project-…``) as its own
+    source. ``frappe.has_permission`` on a docname that does not exist raises
+    ``DoesNotExistError`` through ``frappe.throw``, whose message the Desk still shows when
+    the exception is caught, hence the existence checks before it.
+    """
+    if not (isinstance(doctype, str) and doctype and isinstance(name, (str, int)) and name):
+        return False
+    if not frappe.db.exists("DocType", doctype, cache=True) or frappe.is_table(doctype):
+        return False
+    if not frappe.db.exists(doctype, name):
+        return False
+    try:
+        return bool(frappe.has_permission(doctype, ptype, doc=name))
+    except frappe.DoesNotExistError:
+        # frappe.db.exists answers a pair whose name equals its doctype without looking.
+        return False
+
+
+def _readable_parties(sources):
+    """The parties in ``sources`` the session user may read, as ``{doctype: [names]}``.
+
+    ``sources`` is the widget's ``[{doctype, name}, ...]`` list (a JSON string over HTTP).
+
+    A party the user may not read is **dropped, not refused**. The widget sends every
+    party the open form draws its directory from (``get_all_party_sources`` in
+    ``unified_tab_controller.js``): the form itself, its Customer or Supplier, an
+    Opportunity's Lead or Prospect, each stakeholder row. Someone who may read a Project
+    can well be unable to read one of those; stock ERPNext gives Projects User only
+    *select* on Customer. Raising would replace the whole directory with an error on every
+    refresh of a form the user is entitled to open. Dropping shows the contacts of every
+    party they may read, and a caller who may read none of them gets an empty list.
+    """
+    import json
+
+    if isinstance(sources, str):
+        sources = json.loads(sources)
+
+    readable = {}
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        doctype, name = source.get("doctype"), source.get("name")
+        if not isinstance(doctype, str) or name in readable.get(doctype, ()):
+            continue
+        if _permitted(doctype, name, "read"):
+            readable.setdefault(doctype, []).append(name)
+    return readable
+
+
+def _linked_records(parenttype, parties):
+    """Names of the Contacts or Addresses (``parenttype``) Dynamic-Linked to any of ``parties``.
+
+    Keyed on the (doctype, name) **pair**. The query this replaced matched ``link_name``
+    alone, so a Customer and a Supplier that share a name shared a directory, and once
+    reading a party became the gate, reading one would have returned the other's contacts.
+    """
+    names = []
+    for doctype, party_names in parties.items():
+        names += frappe.get_all(
+            "Dynamic Link",
+            filters={
+                "parenttype": parenttype,
+                "link_doctype": doctype,
+                "link_name": ["in", party_names],
+            },
+            pluck="parent",
+        )
+    return list(dict.fromkeys(names))
+
+
 @frappe.whitelist()
 def link_existing_record(doctype, docname, link_doctype=None, link_name=None, links=None):
-    """Links an existing Contact or Address to a document(s)."""
+    """Links an existing Contact or Address to a document(s).
+
+    **Permissions** (v1.561.1; there were none before, and the save ran with
+    ``ignore_permissions``):
+
+    * **write on the Contact/Address**, because adding a link row changes that record.
+      Refused otherwise, before anything is written.
+    * **write on each party it is linked to**, because the link puts the record in that
+      party's directory. The widget sends every party the open form draws from (the form
+      itself first, then its Customer, stakeholders and so on), so a party the user may
+      not write is **skipped**: a Projects User linking a contact from a Project gets it
+      linked to the Project, not to a Customer they can only select. If they may write
+      none of the parties, the call is refused. A party that does not exist (an unsaved
+      form's placeholder name) raises, as the save did before.
+
+    The save no longer passes ``ignore_permissions``. With write on the record required
+    anyway, all it would skip is Frappe's own write check on the changed document.
+    """
     import json
+
+    _assert_directory_doctype(doctype)
+    frappe.has_permission(doctype, "write", doc=docname, throw=True)
     doc = frappe.get_doc(doctype, docname)
 
     links_to_add = []
@@ -296,12 +427,25 @@ def link_existing_record(doctype, docname, link_doctype=None, link_name=None, li
     elif link_doctype and link_name:
         links_to_add = [{"link_doctype": link_doctype, "link_name": link_name}]
 
-    changed = False
-    existing_links = set((l.link_doctype, l.link_name) for l in doc.links)
-
+    writable = []
     for l in links_to_add:
         link_dt = l.get("link_doctype")
         link_nm = l.get("link_name")
+        if not (isinstance(link_dt, str) and link_dt and link_nm) or frappe.is_table(link_dt):
+            continue
+        if frappe.has_permission(link_dt, "write", doc=link_nm):
+            writable.append((link_dt, link_nm))
+
+    if links_to_add and not writable:
+        frappe.throw(
+            frappe._("You do not have permission to change the directory of any of those records."),
+            exc=frappe.PermissionError,
+        )
+
+    changed = False
+    existing_links = set((l.link_doctype, l.link_name) for l in doc.links)
+
+    for link_dt, link_nm in dict.fromkeys(writable):
         if (link_dt, link_nm) not in existing_links:
             doc.append("links", {
                 "link_doctype": link_dt,
@@ -313,7 +457,7 @@ def link_existing_record(doctype, docname, link_doctype=None, link_name=None, li
         _remove_exclusion(link_dt, link_nm, doctype, docname)
 
     if changed:
-        doc.save(ignore_permissions=True)
+        doc.save()
     return True
 
 @frappe.whitelist()
@@ -329,7 +473,16 @@ def unlink_record(doctype, docname, link_doctype, link_name):
     * An exclusion is recorded so the record also disappears from this
       document's directory even when it is still surfaced indirectly (e.g. a
       Contact inherited from the linked Customer's aggregated list).
+
+    **Permissions** (v1.561.1; there were none before): write on the document being
+    viewed, always, since the exclusion changes its directory either way; and write on
+    the Contact/Address when a direct link row is removed from it, since that changes the
+    record. A Contact merely inherited from the Customer is hidden without being touched,
+    so it needs no write on the Contact. Both are checked before anything is written, and
+    the save no longer passes ``ignore_permissions``.
     """
+    _assert_directory_doctype(doctype)
+    frappe.has_permission(link_doctype, "write", doc=link_name, throw=True)
     doc = frappe.get_doc(doctype, docname)
 
     new_links = []
@@ -344,8 +497,9 @@ def unlink_record(doctype, docname, link_doctype, link_name):
         })
 
     if removed_direct_link:
+        frappe.has_permission(doctype, "write", doc=docname, throw=True)
         doc.set("links", new_links)
-        doc.save(ignore_permissions=True)
+        doc.save()
 
     # Hide it from this document's directory regardless of how it was surfaced,
     # while preserving every remaining link (Customer, Supplier, etc.).
@@ -362,18 +516,24 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
     ``context_doctype`` / ``context_name`` identify the document being viewed so
     its per-document exclusions can be applied. Each returned Contact is
     annotated with its full set of Dynamic Links.
-    """
-    import json
-    if isinstance(sources, str):
-        sources = json.loads(sources)
 
-    source_names = [s.get("name") for s in sources]
-    if not source_names:
+    **Permissions** (v1.561.1; there were none before): only the contacts of sources the
+    user may **read** are returned, and the rest are dropped without a word (see
+    :func:`_readable_parties` for why dropping, not refusing). Read on the party is the
+    whole gate, as it was for the Desk: the directory is a view of a party's people for
+    whoever may open that party, not a Contact list.
+    """
+    parties = _readable_parties(sources)
+    if not parties:
+        return []
+
+    linked = _linked_records("Contact", parties)
+    if not linked:
         return []
 
     contacts = frappe.get_all(
         "Contact",
-        filters=[["Dynamic Link", "link_name", "in", source_names]],
+        filters={"name": ["in", linked]},
         fields=["name", "first_name", "last_name", "custom_title", "custom_phone_number", "custom_mobile_number", "custom_email", "is_primary_contact"]
     )
 
@@ -429,6 +589,9 @@ def get_importable_contacts(target_doctype, target_name, sources=None):
     already applies it — so a bulk import can never quietly undo a deliberate
     unlink. Link Existing remains the way back for one that was hidden on
     purpose, exactly as it is today.
+
+    Read on the target is refused loudly; a related party the user may not read
+    contributes nothing, because :func:`get_contacts_for_context` drops it (v1.561.1).
     """
     frappe.has_permission(target_doctype, "read", doc=target_name, throw=True)
 
@@ -467,12 +630,14 @@ def import_contacts(target_doctype, target_name, contacts):
     in another tab in the meantime is not an error worth throwing an import
     away over.
 
-    **The permission gate is write on the target document**, not on Contact.
-    Linking is a statement about this Project/Opportunity directory, which is
-    what the user has open and is editing; the Contact rows are saved with
-    ``ignore_permissions`` the same way :func:`link_existing_record` saves
-    them. That is deliberately one more check than ``link_existing_record``
-    performs today, not one fewer.
+    **The permission gates are write on the target document and write on each
+    Contact that gains the link** — the same two :func:`link_existing_record`
+    applies (v1.561.1). Until then this checked the target only and saved the
+    Contacts with ``ignore_permissions``, and ``contacts`` is whatever names the
+    request carries, not only the ones the dialog offered, so write on the target
+    stood in for permission on every Contact named. Every Contact is checked
+    before any is saved, so a refusal links nothing. A Contact that is already
+    linked here is not changed, so it needs no write.
     """
     import json
 
@@ -489,6 +654,8 @@ def import_contacts(target_doctype, target_name, contacts):
 
     linked = []
     skipped = []
+    present = []
+    to_link = []
 
     # dict.fromkeys de-duplicates while preserving the order the user sees.
     for name in dict.fromkeys(names):
@@ -496,6 +663,7 @@ def import_contacts(target_doctype, target_name, contacts):
             skipped.append(name)
             continue
 
+        present.append(name)
         contact = frappe.get_doc("Contact", name)
         if any(
             l.link_doctype == target_doctype and l.link_name == target_name
@@ -503,14 +671,21 @@ def import_contacts(target_doctype, target_name, contacts):
         ):
             skipped.append(name)
         else:
-            contact.append(
-                "links", {"link_doctype": target_doctype, "link_name": target_name}
-            )
-            contact.save(ignore_permissions=True)
-            linked.append(name)
+            to_link.append(contact)
 
-        # Picking a Contact here is deliberate, so it also clears any prior
-        # "hidden from this directory" row — same as link_existing_record.
+    for contact in to_link:
+        frappe.has_permission("Contact", "write", doc=contact.name, throw=True)
+
+    for contact in to_link:
+        contact.append(
+            "links", {"link_doctype": target_doctype, "link_name": target_name}
+        )
+        contact.save()
+        linked.append(contact.name)
+
+    # Picking a Contact here is deliberate, so it also clears any prior
+    # "hidden from this directory" row — same as link_existing_record.
+    for name in present:
         _remove_exclusion(target_doctype, target_name, "Contact", name)
 
     return {"linked": len(linked), "skipped": len(skipped), "contacts": linked}
@@ -520,19 +695,20 @@ def import_contacts(target_doctype, target_name, contacts):
 def get_addresses_for_context(sources, context_doctype=None, context_name=None):
     """Aggregate the de-duplicated Address list for a document's directory.
 
-    Address counterpart of :func:`get_contacts_for_context`.
+    Address counterpart of :func:`get_contacts_for_context`, with the same gate: only
+    the addresses of sources the user may read (v1.561.1).
     """
-    import json
-    if isinstance(sources, str):
-        sources = json.loads(sources)
+    parties = _readable_parties(sources)
+    if not parties:
+        return []
 
-    source_names = [s.get("name") for s in sources]
-    if not source_names:
+    linked = _linked_records("Address", parties)
+    if not linked:
         return []
 
     addresses = frappe.get_all(
         "Address",
-        filters=[["Dynamic Link", "link_name", "in", source_names]],
+        filters={"name": ["in", linked]},
         fields=["name", "address_title", "address_type", "address_line1", "address_line2", "city", "state", "pincode", "country", "is_primary_address", "custom_full_address"]
     )
 

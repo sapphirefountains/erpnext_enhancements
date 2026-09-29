@@ -4000,14 +4000,15 @@ class MirrorConfinementTest(Base):
 	``validate_auth`` runs the hook: the user the key signed in, the request's method and path, and its
 	form. ``tests/test_hooks_integrity.py`` pins the hook to ``auth_hooks``."""
 
-	#: Endpoints the key reached before the hook: real, whitelisted, and not the snapshot.
+	#: Endpoints the key reached before the hook: real, whitelisted, and not the snapshot. v1.561.1
+	#: gave the first five permission checks of their own and deleted script_migrations.debug's
+	#: helper, which is why it is no longer listed (the realness check below would refuse it).
 	APP_METHODS = (
 		"erpnext_enhancements.sync_contact.get_contacts_for_context",
 		"erpnext_enhancements.sync_contact.get_addresses_for_context",
 		"erpnext_enhancements.sync_contact.link_existing_record",
 		"erpnext_enhancements.sync_contact.unlink_record",
 		"erpnext_enhancements.package_dispatch.api.get_customer_ship_to",
-		"erpnext_enhancements.script_migrations.debug.run_debug_query",
 		"erpnext_enhancements.api.knowledge_base.review_diff",
 	)
 	FRAPPE_METHODS = (
