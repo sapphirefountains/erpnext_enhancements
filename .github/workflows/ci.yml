@@ -1359,8 +1359,20 @@ jobs:
       # the permission, allowed with it, and on the Desk's own path, including the quiet ones
       # (a related party the user cannot read, an unsaved form's placeholder name) that must
       # keep the directory rendering instead of raising. Own step: installs its own frappe stub.
+      # Since the PR's review also: Set Primary needs write on the Contact/Address it flags and
+      # refuses anything but one name there (db.set_value reads a dict or list as filters and
+      # updates every row they match); every name the request carries is the same string in the
+      # permission check and in the query (an integer passed has_permission on one party and then
+      # matched every party starting with that number); and a row's "Linked To" names only parties
+      # the caller may select.
       - name: Contact, address and ship-to endpoint permissions (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_contact_endpoint_permissions -v
+      # The same directory's client half, executed: get_all_party_sources in
+      # unified_tab_controller.js de-duplicated its parties on the name alone, so a Supplier (or
+      # Customer) sharing its name with another source never reached the server, whose match is on
+      # the (doctype, name) pair since v1.561.1, and its contacts silently left the directory.
+      - name: Directory party sources keep same-named parties (bench-free, node)
+        run: node scripts/test_party_sources.mjs
       # The URL-field rule, in the one place both callers share it: the CRM
       # before_validate hook and the QuickBooks sync's _heal_invalid_urls. Most of the
       # suite is the rule table, including the two clauses that look like oversights

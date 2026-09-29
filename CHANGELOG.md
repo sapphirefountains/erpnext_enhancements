@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 only a Guest (`is_whitelisted`, `frappe/__init__.py:479-487` at v16.35.0), so an `@frappe.whitelist()`
 function answers to every signed-in user, portal users included, unless its own body checks
 something. Six endpoints behind the contact/address directory and the Package Dispatch form checked
-no permission (the two Package Dispatch ones only a feature switch), a seventh checked half of what it
-changed, and a leftover debug helper checked nothing. Found in the review of WI-080 PR 8 (v1.561.0),
+no permission (the two Package Dispatch ones only a feature switch), three more checked half of what
+they changed, and a leftover debug helper checked nothing. Found in the review of WI-080 PR 8 (v1.561.0),
 which confined the knowledge-base mirror's own account with an `auth_hooks` guard and left these open
 for every other login.
 
@@ -37,6 +37,20 @@ for every other login.
     Supplier with the same name shared a directory, and with read on the party as the gate, read on
     one would have returned the other's contacts. The lookup now reads `Dynamic Link` rows by
     (`link_doctype`, `link_name`) and then the records by name.
+  - **And the widget sends both parties now** (found in review). `get_all_party_sources` in
+    `unified_tab_controller.js` de-duplicated its list on the name alone, so of two sources sharing a
+    name only the first reached the server: a Customer whose stakeholder Supplier has the same name,
+    or a Contact named after the Customer it belongs to. With the old name-only query that cost
+    nothing; with the pair it would have dropped the second party's contacts and addresses from the
+    directory without a word. It now de-duplicates on the (doctype, name) pair.
+  - **"Linked To" names only parties the user may select** (found in review). Each returned row still
+    listed every party its Contact or Address is linked to, so read on one Customer also showed the
+    names of the other customers, Leads and Projects those people belong to. A link is now kept when
+    the user holds **select** on its party (read implies it), checked once per party per call, quietly;
+    a link to a party that no longer exists is dropped too. Select rather than read, because stock
+    ERPNext's Projects User holds only select on Customer and the Project's own Customer field already
+    shows them that name: read would take the Customer off every row of their directory and hide
+    nothing.
   - **Read on the party is the whole gate**, as it was on the Desk: the directory is a view of a
     party's people for whoever may open that party, so a user without Contact read still sees the
     contacts of a Customer they can read. Stock ERPNext's own "Contacts & Addresses" section is
@@ -60,6 +74,22 @@ for every other login.
   - Both take only `Contact` or `Address` as the doctype, which is all the widget sends.
   - The saves no longer pass `ignore_permissions`. With write on the record required, all it would
     skip is Frappe's own write check on the changed document.
+- **Set Primary could flag every Contact or Address** (found in review; older than this release).
+  `set_primary_contact` / `set_primary_address` checked write on the Customer or Supplier, then handed
+  the Contact or Address named in the request to `frappe.db.set_value`, which in v16 takes a dict or a
+  list in that place as filters and updates every row they match, with no permission check on those
+  records and no document hooks. They now take **one name**, refuse anything else before writing, and need
+  **write on the Contact/Address being flagged** as well as on the account. Whether that record must
+  also be linked to the account is left as it was.
+- **Every name is the one that was checked** (found in review). The permission check and the query
+  that follows it now receive the same string for every document name these endpoints take from the
+  request: the directory's sources, Link Existing's rows, the record, the account, the import target.
+  Frappe does not type-check an unannotated argument and a JSON body keeps a number a number, so an
+  integer passed `frappe.has_permission` on one document and then reached a filter that MariaDB
+  compares numerically against a text column, where it matches every party whose name starts with that
+  number. A whole number is now turned into its string, which matches exactly; anything else that is
+  not a non-empty string is dropped (a directory source, a link row) or refused (the record, the
+  account, the target).
 - **Bulk import checked the target only.** `import_contacts` required write on the target document
   and then linked whatever Contact names the request carried, saving each with `ignore_permissions`,
   so write on the target stood in for permission on every Contact named, including ones the dialog
@@ -87,17 +117,25 @@ for every other login.
 
 - **Tests.** `tests/test_contact_endpoint_permissions.py`, a new bench-free suite in its own CI step:
   each endpoint refused without the permission, allowed with it, and on the path the Desk callers
-  (`unified_tab_controller.js`, `package_dispatch.js`) take, the quiet ones included. Each gate was
-  mutated in turn (17 mutations) and every mutation made a test fail. `test_sync_contact_primary`'s
+  (`unified_tab_controller.js`, `package_dispatch.js`) take, the quiet ones included. The review added
+  `SetPrimaryTest` (a filter, list, bool or blank in place of the name refused before any write; write
+  on the Contact/Address required), `RequestNamesTest` (an integer name reaches every query as the
+  string that was checked, in the directory, Link Existing, Unlink and Import) and `DirectoryLinksTest`
+  (an unselectable or missing party left off "Linked To", each checked once per call, quietly). Each
+  gate was mutated in turn (17 mutations, then 17 more for the review's changes) and every mutation
+  made a test fail. `scripts/test_party_sources.mjs`, in its own CI step, runs the real
+  `get_all_party_sources` in node on the same-name forms above. `test_sync_contact_primary`'s
   stub learned the calls the directory now makes. `test_whitelist_placement`'s `EXACT_SURFACE` now
   lists `sync_contact.py` and `package_dispatch/api.py`, so a new endpoint in either has to be named
   there, which is the moment to give it a gate. `test_knowledge_base_actions`' mirror-guard list drops
   the deleted helper, since it checks that every method it names still exists.
-- **Docs.** `knowledge_base/mirror_guard.py`, `knowledge_base/README.md` and WI-080's PR 8 findings no
-  longer describe these endpoints as open (the guard stays, for whatever such endpoint comes next).
+- **Docs.** `knowledge_base/mirror_guard.py`, `knowledge_base/README.md`, `api/README.md` and WI-080's
+  PR 8 findings no longer describe these endpoints as open (the guard stays, for whatever such endpoint comes next).
   `package_dispatch/README.md`, `script_migrations/README.md`, `tests/README.md` and
-  `sync_contact.py`'s docstrings describe the rule: read on a party to see its people, write on a
-  party to change its directory, write on a Contact or Address to change it.
+  `sync_contact.py`'s docstrings describe the rule: read on a party to see its people, select on a
+  party to see its name on a row, write on a party to change its directory, write on a Contact or
+  Address to change it, and every name as text. `public/README.md` notes the pair de-duplication and
+  its node test.
 
 ### After deploy
 
@@ -105,6 +143,9 @@ for every other login.
   the Customer's records as before, and Link Existing, Unlink, Import Contacts and Set Primary work.
 - Open a new, unsaved Project with a Customer set. The directory lists the Customer's contacts with no
   error message.
+- On a Customer, Set Primary on a contact and on an address: the badge moves and the toast shows. A
+  user with write on the Customer but not on that Contact or Address now gets "No permission"; grant
+  write on Contact or Address rather than widening the endpoint.
 - As a user who may read a Project but not its Customer, open the Project: the directory renders with
   the Project's own contacts and no error.
 - With Package Dispatch auto-fill on, pick a Customer and an Item on a Package Dispatch as a user who

@@ -15,6 +15,20 @@ signed-in user, portal users included. Until v1.561.1 that was true of:
 ``import_contacts`` checked write on the target only and took any Contact names, so write on the
 target stood in for permission on every Contact named.
 
+The PR's review added three more, each with its own class here:
+
+* ``set_primary_contact`` / ``set_primary_address`` checked write on the account only and passed the
+  Contact or Address name straight to ``frappe.db.set_value``, which reads a dict or a list in that
+  place as filters and updates every row they match (``SetPrimaryTest``);
+* an integer name passed ``has_permission`` on one document and then went into an ``IN`` filter that
+  MariaDB compares numerically, matching every party whose name starts with that number
+  (``RequestNamesTest``);
+* each returned row's "Linked To" listed every party the record is linked to, readable or not
+  (``DirectoryLinksTest``).
+
+The client half of the directory, ``get_all_party_sources``, runs in node:
+``scripts/test_party_sources.mjs``.
+
 Each endpoint gets three kinds of test: refused without the permission, allowed with it, and the path
 the Desk callers (``unified_tab_controller.js``, ``package_dispatch.js``) take still working, including
 the quiet ones (a related party the user cannot read, an unsaved form's placeholder name).
@@ -91,6 +105,7 @@ def _reset():
 			"queries": [],
 			"reads": [],
 			"saves": [],
+			"set_values": [],
 			"flag": 1,
 			"exclusion_seq": 0,
 			"tables": {
@@ -257,6 +272,9 @@ def _install_stub():
 			STATE["messages"].append(f"{doctype} {doc} not found")
 			raise StubDoesNotExistError(f"{doctype} {doc}")
 		allowed = (doctype, doc, ptype) in STATE["grants"]
+		if ptype == "select":
+			# v16 has_permission: "select permission is implied by read permission".
+			allowed = allowed or (doctype, doc, "read") in STATE["grants"]
 		if not allowed and throw:
 			STATE["messages"].append(f"No permission for {doctype} {doc}")
 			raise StubPermissionError(f"no {ptype} on {doctype} {doc}")
@@ -308,6 +326,11 @@ def _install_stub():
 				values = _Dict({f: row.get(f) for f in fieldname})
 				return values if as_dict else tuple(values[f] for f in fieldname)
 			return row.get(fieldname)
+
+		def set_value(self, doctype, name, field, value, *args, **kwargs):
+			# v16 frappe.db.set_value hands a dict or list here to get_query as FILTERS and
+			# updates every row they match, so the stub records exactly what it was given.
+			STATE["set_values"].append((doctype, name, field, value))
 
 		def get_single_value(self, doctype, field):
 			assert (doctype, field) == ("ERPNext Enhancements Settings", "package_dispatch_enabled")
@@ -493,7 +516,8 @@ class DirectoryReadTest(Base):
 	def test_a_repeated_source_is_checked_once(self):
 		grant("Customer", "Northwind Fountains", "read")
 		sync_contact.get_contacts_for_context([NORTHWIND, NORTHWIND, NORTHWIND])
-		self.assertEqual(len(STATE["perm_calls"]), 1)
+		checks = [c for c in STATE["perm_calls"] if c[:2] == ("Customer", "read")]
+		self.assertEqual(checks, [("Customer", "read", "Northwind Fountains", False)])
 
 	def test_this_documents_exclusions_still_apply(self):
 		grant("Customer", "Northwind Fountains", "read")
@@ -518,6 +542,191 @@ class DirectoryReadTest(Base):
 		self.assertEqual(_names(addresses), {"A-NW"})
 		self.assertEqual(addresses[0]["links"], [{"name": "Northwind Fountains", "doctype": "Customer"}])
 		self.assertQuiet()
+
+
+class DirectoryLinksTest(Base):
+	"""A returned row's "Linked To" names only parties the caller may select (v1.561.1 review).
+
+	C-NW-2 belongs to Customer "Northwind Fountains" and to Project PROJ-0001, so read on the
+	Customer alone used to show the Project's name too.
+	"""
+
+	def _links(self, rows, name):
+		return {(l["doctype"], l["name"]) for l in next(r for r in rows if r["name"] == name)["links"]}
+
+	def test_a_party_the_caller_may_not_select_is_left_off_the_row(self):
+		grant("Customer", "Northwind Fountains", "read")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		self.assertEqual(self._links(contacts, "C-NW-2"), {("Customer", "Northwind Fountains")})
+		self.assertIn(("Project", "select", "PROJ-0001", False), STATE["perm_calls"])
+		self.assertQuiet()
+
+	def test_select_on_the_other_party_keeps_it(self):
+		"""The Projects User case in reverse: select, not read, is what naming a party needs."""
+		grant("Customer", "Northwind Fountains", "read")
+		grant("Project", "PROJ-0001", "select")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		self.assertEqual(
+			self._links(contacts, "C-NW-2"),
+			{("Customer", "Northwind Fountains"), ("Project", "PROJ-0001")},
+		)
+
+	def test_a_source_party_is_not_checked_again(self):
+		grant("Project", "PROJ-0001", "read")
+		grant("Customer", "Northwind Fountains", "read")
+		sync_contact.get_contacts_for_context([PROJECT, NORTHWIND])
+
+		self.assertEqual([c for c in STATE["perm_calls"] if c[1] == "select"], [])
+
+	def test_each_other_party_is_checked_once_per_call(self):
+		for contact in ("C-NW-1", "C-NW-2"):
+			STATE["Dynamic Link"].append(_link(contact, "Contact", "Lead", "LEAD-0001"))
+		grant("Customer", "Northwind Fountains", "read")
+		sync_contact.get_contacts_for_context([NORTHWIND])
+
+		lead_checks = [c for c in STATE["perm_calls"] if c[0] == "Lead"]
+		self.assertEqual(lead_checks, [("Lead", "select", "LEAD-0001", False)])
+
+	def test_a_link_to_a_missing_party_is_dropped_quietly(self):
+		STATE["Dynamic Link"].append(_link("C-NW-1", "Contact", "Customer", "Gone Fountains"))
+		STATE["Dynamic Link"].append(_link("C-NW-1", "Contact", "No Such DocType", "X"))
+		grant("Customer", "Northwind Fountains", "read")
+		contacts = sync_contact.get_contacts_for_context([NORTHWIND])
+
+		self.assertEqual(self._links(contacts, "C-NW-1"), {("Customer", "Northwind Fountains")})
+		self.assertQuiet()
+
+	def test_addresses_follow_the_same_rule(self):
+		STATE["Dynamic Link"].append(_link("A-NW", "Address", "Supplier", "Harbor Plaza"))
+		grant("Customer", "Northwind Fountains", "read")
+		addresses = sync_contact.get_addresses_for_context([NORTHWIND])
+		self.assertEqual(self._links(addresses, "A-NW"), {("Customer", "Northwind Fountains")})
+
+		_reset()
+		STATE["Dynamic Link"].append(_link("A-NW", "Address", "Supplier", "Harbor Plaza"))
+		grant("Customer", "Northwind Fountains", "read")
+		grant("Supplier", "Harbor Plaza", "read")
+		addresses = sync_contact.get_addresses_for_context([NORTHWIND])
+		self.assertEqual(
+			self._links(addresses, "A-NW"),
+			{("Customer", "Northwind Fountains"), ("Supplier", "Harbor Plaza")},
+		)
+
+
+def _add_numbered_customer():
+	"""A Customer whose name is a number, with one contact and one exclusion.
+
+	MariaDB compares a VARCHAR with an integer numerically, so ``link_name IN (5)`` would
+	match "5", "5 Star Fountains" and every other name starting with a 5, while
+	``has_permission`` on 5 checks one document. The stub compares in Python, so what these
+	tests pin is the value each query is handed: always the string that was checked.
+	"""
+	STATE["tables"]["Customer"]["5"] = {"name": "5"}
+	STATE["tables"]["Contact"]["C-5"] = {
+		"name": "C-5",
+		"first_name": "Fay",
+		"custom_email": "fay@example.com",
+	}
+	STATE["Dynamic Link"].append(_link("C-5", "Contact", "Customer", "5"))
+
+
+def _filter_values(doctype, key):
+	"""Every value a ``get_all`` on ``doctype`` filtered ``key`` by, with ``in`` lists flattened."""
+	values = []
+	for queried, filters in STATE["queries"]:
+		if queried != doctype or key not in (filters or {}):
+			continue
+		want = filters[key]
+		if isinstance(want, (list, tuple)) and len(want) == 2 and want[0] == "in":
+			values += list(want[1])
+		else:
+			values.append(want)
+	return values
+
+
+class RequestNamesTest(Base):
+	"""One value governs both the permission check and the query (v1.561.1 review)."""
+
+	def test_an_integer_party_is_queried_as_the_string_it_was_checked_as(self):
+		_add_numbered_customer()
+		grant("Customer", "5", "read")
+		contacts = sync_contact.get_contacts_for_context(json.dumps([{"doctype": "Customer", "name": 5}]))
+
+		self.assertEqual(_names(contacts), {"C-5"})
+		self.assertIn(("Customer", "read", "5", False), STATE["perm_calls"])
+		self.assertEqual(_filter_values("Dynamic Link", "link_name"), ["5"])
+
+	def test_a_name_that_is_not_text_or_a_whole_number_is_dropped(self):
+		grant("Customer", "Northwind Fountains", "read")
+		sources = [{"doctype": "Customer", "name": bad} for bad in (True, False, 1.5, {"like": "%"}, [5], "")]
+		self.assertEqual(sync_contact.get_contacts_for_context(sources), [])
+		self.assertEqual(STATE["perm_calls"], [])
+		self.assertEqual(_filter_values("Dynamic Link", "link_name"), [])
+
+	def test_link_existing_writes_and_clears_by_the_checked_string(self):
+		_add_numbered_customer()
+		grant("Contact", "C-HP", "write")
+		grant("Customer", "5", "write")
+		sync_contact.link_existing_record(
+			"Contact", "C-HP", links=[{"link_doctype": "Customer", "link_name": 5}]
+		)
+
+		self.assertIn(("Customer", "write", "5", False), STATE["perm_calls"])
+		self.assertIn(("Customer", "5"), _links_of("C-HP"))
+		self.assertEqual(_filter_values(EXCLUSION, "source_name"), ["5"])
+
+	def test_link_existing_refuses_a_record_that_is_not_one_name(self):
+		grant("Contact", "C-HP", "write")
+		grant("Project", "PROJ-0001", "write")
+		for bad in ({"name": ["like", "%"]}, ["C-HP"], True, None, ""):
+			with self.subTest(docname=bad), self.assertRaises(StubValidationError):
+				sync_contact.link_existing_record("Contact", bad, "Project", "PROJ-0001")
+		self.assertEqual([c for c in STATE["perm_calls"] if c[0] == "Contact"], [])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_link_existing_skips_a_link_row_that_is_not_an_object(self):
+		grant("Contact", "C-HP", "write")
+		with self.assertRaises(StubPermissionError):
+			sync_contact.link_existing_record("Contact", "C-HP", links=json.dumps(["PROJ-0001"]))
+		self.assertEqual(STATE["saves"], [])
+
+	def test_unlink_refuses_names_that_are_not_text(self):
+		grant("Project", "PROJ-0001", "write")
+		grant("Contact", "C-NW-2", "write")
+		for docname, link_name in (({"name": "C-NW-2"}, "PROJ-0001"), ("C-NW-2", {"name": "PROJ-0001"})):
+			with self.subTest(docname=docname, link_name=link_name), self.assertRaises(StubValidationError):
+				sync_contact.unlink_record("Contact", docname, "Project", link_name)
+		self.assertEqual(STATE["perm_calls"], [])
+		self.assertEqual(STATE[EXCLUSION], [])
+
+	def test_unlink_checks_and_hides_by_the_same_string(self):
+		_add_numbered_customer()
+		grant("Customer", "5", "write")
+		sync_contact.unlink_record("Contact", "C-NW-1", "Customer", 5)
+
+		self.assertIn(("Customer", "write", "5", True), STATE["perm_calls"])
+		self.assertEqual(_exclusions(), {("Customer", "5", "Contact", "C-NW-1")})
+
+	def test_import_links_and_clears_by_the_checked_string(self):
+		_add_numbered_customer()
+		grant("Customer", "5", "write")
+		grant("Contact", "C-NW-1", "write")
+		sync_contact.import_contacts("Customer", 5, ["C-NW-1"])
+
+		self.assertIn(("Customer", "write", "5", True), STATE["perm_calls"])
+		self.assertIn(("Customer", "5"), _links_of("C-NW-1"))
+		self.assertEqual(_filter_values(EXCLUSION, "source_name"), ["5"])
+
+	def test_import_refuses_a_target_that_is_not_one_name(self):
+		grant("Project", "PROJ-0001", "write")
+		with self.assertRaises(StubValidationError):
+			sync_contact.import_contacts("Project", {"name": ["like", "%"]}, ["C-NW-1"])
+		with self.assertRaises(StubValidationError):
+			sync_contact.get_importable_contacts("Project", ["PROJ-0001"], [PROJECT])
+		self.assertEqual(STATE["perm_calls"], [])
+		self.assertEqual(STATE["saves"], [])
 
 
 class ImportableContactsTest(Base):
@@ -749,6 +958,92 @@ class ImportContactsTest(Base):
 		self.assertEqual(result, {"linked": 1, "skipped": 1, "contacts": ["C-NW-1"]})
 		self.assertIn(("Project", "PROJ-0001"), _links_of("C-NW-1"))
 		self.assertEqual(STATE["saves"], [("Contact", "C-NW-1", {})], "saved with ignore_permissions")
+
+
+# ---------------------------------------------------------------------------------------------------
+# set_primary_contact / set_primary_address
+# ---------------------------------------------------------------------------------------------------
+
+#: Values that are not one document name. ``frappe.db.set_value`` reads a dict or a list as filters
+#: and updates every row they match; ``True`` is a 1 to MariaDB.
+NOT_ONE_NAME = ({"name": ["like", "%"]}, {"first_name": "Ada"}, ["C-NW-1", "C-NW-2"], True, 1.5, None, "")
+
+
+class SetPrimaryTest(Base):
+	"""Write on the account (as before) and now on the Contact or Address being flagged, which must
+	be one name (v1.561.1 review)."""
+
+	def test_a_filter_in_place_of_the_contact_is_refused_before_any_write(self):
+		"""The exposure: write on one account flagged every Contact the filter matched."""
+		grant("Customer", "Northwind Fountains", "write")
+		for bad in NOT_ONE_NAME:
+			with self.subTest(contact_name=bad), self.assertRaises(StubValidationError):
+				sync_contact.set_primary_contact("Customer", "Northwind Fountains", bad)
+		self.assertEqual(STATE["set_values"], [])
+
+	def test_write_on_the_contact_is_required(self):
+		grant("Customer", "Northwind Fountains", "write")
+		grant("Contact", "C-NW-2", "read")
+		with self.assertRaises(StubPermissionError):
+			sync_contact.set_primary_contact("Customer", "Northwind Fountains", "C-NW-2")
+		self.assertEqual(STATE["set_values"], [], "a refused call still cleared the others")
+
+	def test_write_on_the_account_is_still_required(self):
+		grant("Contact", "C-NW-2", "write")
+		with self.assertRaises(StubPermissionError):
+			sync_contact.set_primary_contact("Customer", "Northwind Fountains", "C-NW-2")
+		self.assertEqual(STATE["set_values"], [])
+
+	def test_the_desk_path_flags_the_contact(self):
+		grant("Customer", "Northwind Fountains", "write")
+		grant("Contact", "C-NW-2", "write")
+		sync_contact.set_primary_contact("Customer", "Northwind Fountains", "C-NW-2")
+
+		self.assertEqual(
+			STATE["set_values"],
+			[
+				("Contact", {"name": ["in", ["C-NW-1", "C-NW-2"]]}, "is_primary_contact", 0),
+				("Contact", "C-NW-2", "is_primary_contact", 1),
+			],
+		)
+		self.assertIn(("Contact", "write", "C-NW-2", True), STATE["perm_calls"])
+
+	def test_an_integer_account_is_matched_as_the_string_it_was_checked_as(self):
+		_add_numbered_customer()
+		grant("Customer", "5", "write")
+		grant("Contact", "C-5", "write")
+		sync_contact.set_primary_contact("Customer", 5, "C-5")
+
+		self.assertIn(("Customer", "write", "5", True), STATE["perm_calls"])
+		self.assertEqual(_filter_values("Dynamic Link", "link_name"), ["5"])
+		self.assertEqual(STATE["set_values"][-1], ("Contact", "C-5", "is_primary_contact", 1))
+
+	def test_an_account_that_is_not_one_name_is_refused(self):
+		grant("Contact", "C-NW-2", "write")
+		with self.assertRaises(StubValidationError):
+			sync_contact.set_primary_contact("Customer", {"name": ["like", "%"]}, "C-NW-2")
+		self.assertEqual(STATE["perm_calls"], [])
+		self.assertEqual(STATE["set_values"], [])
+
+	def test_the_address_counterpart_gates_the_same_way(self):
+		grant("Customer", "Northwind Fountains", "write")
+		for bad in NOT_ONE_NAME:
+			with self.subTest(address_name=bad), self.assertRaises(StubValidationError):
+				sync_contact.set_primary_address("Customer", "Northwind Fountains", bad)
+		with self.assertRaises(StubPermissionError):
+			sync_contact.set_primary_address("Customer", "Northwind Fountains", "A-NW")
+		self.assertEqual(STATE["set_values"], [])
+
+		grant("Address", "A-NW", "write")
+		sync_contact.set_primary_address("Customer", "Northwind Fountains", "A-NW")
+		self.assertEqual(
+			STATE["set_values"],
+			[
+				("Address", {"name": ["in", ["A-NW"]]}, "is_primary_address", 0),
+				("Address", "A-NW", "is_primary_address", 1),
+			],
+		)
+		self.assertIn(("Address", "write", "A-NW", True), STATE["perm_calls"])
 
 
 # ---------------------------------------------------------------------------------------------------
