@@ -1238,3 +1238,8 @@ erpnext_enhancements.patches.seed_knowledge_base_mirror_role
 # Asset in the Rental Fountain Fleet category, so the fleet is bookable on day one. Creates the three Asset
 # Custom Fields first (patches run before fixture sync). Runs once; a later untick survives. Cannot raise.
 erpnext_enhancements.patches.seed_rental_fleet_flags
+# v1.564.0 event rentals (PR 3a): the rental twin of add_esign_signature_block, which is maintenance-only
+# and has already run everywhere. Replaces the exact paper SIGNATURES block of the live Rental Agreement
+# template with the sig() one so Send for Signature accepts rental agreements; refuses (logging) if the
+# site's wording diverged. Safe twice.
+erpnext_enhancements.patches.add_rental_esign_signature_block

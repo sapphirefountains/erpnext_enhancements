@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.564.0] - 2026-09-29
+
+**Event rentals, part 3a: holds that expire, an e-signed Rental Agreement, and deposit and balance
+invoices.** Nik's calls, 2026-09-29:
+- invoices are drafted, and nothing posts to the books until a person presses Submit & Send;
+- the security deposit is its own line on the balance invoice, booked to a liability account;
+- tax comes from a Rental Settings template, or there is none while Utah's rental tax (OD-2) is
+  undecided.
+
+Stacked on v1.563.0. The public request page and the customer portal follow in 3b.
+
+### Added
+
+- **Rental Settings** (a new Single; every default applies on existing sites): hold length (7 days),
+  reminder lead (2), automatic release (on), customer hold notice (off), company, rental and fee
+  Items, cost center, tax template, deposit % (50), deposit due (7 days), balance lead (14 days),
+  security-deposit Item and Account (Liability only).
+- **Hold expiry** (`asset_management/rental_holds.py`, daily).
+  - Whoever placed a hold gets an assigned ToDo two days before it lapses.
+  - A lapsed hold becomes Expired, which frees its fountains, with a comment explaining why.
+  - Renewing a hold resets its reminder.
+  - The filters carry `is set`: Frappe coalesces a comparison on a nullable date, and a hold with no
+    date must never be expired.
+- **Rental Agreement from a booking.** Create > Rental Agreement builds the existing Project Contract
+  (`template_key = "rental"`) from the booking: dates, one equipment row per fountain and accessory,
+  fees and the security deposit.
+  - New patch `add_rental_esign_signature_block` gives the live Rental Agreement template its
+    `sig()` block, and the shipped `rental_agreement.html` now matches.
+    - `add_esign_signature_block` is maintenance-only and has already run everywhere, so adding
+      `"rental"` to it would never have executed.
+    - Without a `sig()` block, Send for Signature refuses rental agreements.
+- **Signing confirms the booking.** A new Project Contract hook runs on both signing paths
+  (`on_submit` and `on_update_after_submit`, now lists beside the maintenance hook).
+  - It runs inside the signer's transaction, usually a Guest on `/contract-sign`, so it never raises.
+    Suppose the booking can't be confirmed because someone booked its fountains while the agreement
+    was out. The hook rolls back to a savepoint, logs the failure, comments on the booking and sends
+    the booking's owner a Notification.
+  - The signature stands in every case.
+- **Deposit and balance invoices**, drafted and never posted by the system:
+  - the deposit when a booking becomes Confirmed;
+  - the balance by a daily sweep, due on the delivery date;
+  - Draft Deposit / Draft Balance buttons on the booking to retry.
+  - `Sales Invoice.custom_rental_booking` and `custom_rental_invoice_kind` (fixtures) link each
+    invoice back and make drafting idempotent.
+- **Submit & Send** (booking > Invoices) posts a draft under the caller's own submit permission,
+  refreshes its amount from the booking first, and emails a hosted Stripe Checkout pay link in the
+  email design system (`pillar="rent"`).
+  - Customers on autopay get no link: submitting charges their saved card, and an open link would
+    make that charge refuse itself.
+- `tests/test_rental_sales.py` (21 bench-free tests), with its own CI step.
+
+### Notes
+
+- **Checkout links expire** (Stripe caps a hosted session at 24 hours). A customer who misses one
+  can be sent a fresh link from the invoice's existing Stripe buttons. 3b's customer portal gives
+  them a durable way to pay.
+- **Rental signers are also offered card-on-file** at signing. The existing autopay offer is not
+  specific to a template. With it, Submit & Send charges the saved card instead of emailing a link.
+- If a Sales Taxes Template is set, give the Security Deposit Item a 0% Item Tax Template.
+  Otherwise the refundable deposit is taxed.
+
 ## [1.563.0] - 2026-09-29
 
 **Event rentals, part 2: the Rental Planner.** This adds a desk page with a fleet timeline and a

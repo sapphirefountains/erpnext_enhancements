@@ -41,6 +41,12 @@
   "column_break_pricing",
   "security_deposit",
   "total_amount",
+  "section_sales",
+  "rental_agreement",
+  "hold_reminder_sent_on",
+  "column_break_invoices",
+  "deposit_invoice",
+  "balance_invoice",
   "section_notes",
   "notes"
  ],
@@ -275,6 +281,48 @@
    "description": "Fountain rates, accessories and fees. The security deposit is not included."
   },
   {
+   "fieldname": "section_sales",
+   "fieldtype": "Section Break",
+   "label": "Agreement & Invoices"
+  },
+  {
+   "fieldname": "rental_agreement",
+   "fieldtype": "Link",
+   "label": "Rental Agreement",
+   "options": "Project Contract",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Signing it confirms this booking."
+  },
+  {
+   "fieldname": "hold_reminder_sent_on",
+   "fieldtype": "Date",
+   "label": "Hold Reminder Sent On",
+   "read_only": 1,
+   "no_copy": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "column_break_invoices",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "deposit_invoice",
+   "fieldtype": "Link",
+   "label": "Deposit Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "balance_invoice",
+   "fieldtype": "Link",
+   "label": "Balance Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
    "fieldname": "section_notes",
    "fieldtype": "Section Break",
    "label": "Notes",
@@ -292,9 +340,14 @@
    "group": "Calendar",
    "link_doctype": "Asset Booking",
    "link_fieldname": "rental_booking"
+  },
+  {
+   "group": "Billing",
+   "link_doctype": "Sales Invoice",
+   "link_fieldname": "custom_rental_booking"
   }
  ],
- "modified": "2026-09-29 12:00:00.000000",
+ "modified": "2026-09-29 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Rental Booking",

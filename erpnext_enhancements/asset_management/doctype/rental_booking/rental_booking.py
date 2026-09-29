@@ -28,6 +28,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, get_datetime, getdate, now_datetime
 
 from erpnext_enhancements.asset_management import rental_availability as availability
+from erpnext_enhancements.asset_management import rental_holds
 from erpnext_enhancements.asset_management import rental_rules as rules
 
 #: Fields whose change can move what the booking holds, so a save re-checks availability.
@@ -66,6 +67,18 @@ class RentalBooking(Document):
 		availability.sync_calendar(self)
 		if self.status not in rules.RELEASED_STATUSES:
 			availability.push_schedule_to_project(self)
+		before = self.get_doc_before_save()
+		if (
+			self.status == "Tentative"
+			and (before is None or before.status == "Expired")
+			and not self.flags.skip_hold_notice
+		):
+			rental_holds.send_hold_notice(self)
+		if self.status == "Confirmed" and (before is None or before.status != "Confirmed"):
+			# Draft the deposit invoice (v1.564.0). Its own savepoint: it never stops a confirm.
+			from erpnext_enhancements.asset_management import rental_sales
+
+			rental_sales.after_confirmed(self)
 
 	def on_trash(self):
 		if self.status not in ("Tentative", "Expired", "Canceled"):
@@ -101,7 +114,10 @@ class RentalBooking(Document):
 			today = getdate()
 			renewing = old_status == "Expired"
 			if not self.hold_expires_on or (renewing and getdate(self.hold_expires_on) <= today):
-				self.hold_expires_on = rules.default_hold_expiry(today)
+				self.hold_expires_on = rules.default_hold_expiry(today, rental_holds.hold_days())
+			if renewing:
+				# A renewed hold gets its own reminder.
+				self.hold_reminder_sent_on = None
 		if self.status == "Confirmed" and old_status != "Confirmed" and not self.confirmed_on:
 			self.confirmed_on = now_datetime()
 

@@ -16,6 +16,7 @@ what went out with each one and what came back.
 | `rental_rules.py` | Every rental judgement, **no Frappe**; tested bench-free (`tests/test_rental_rules.py`) |
 | `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
 | `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
+| `rental_holds.py`, `rental_sales.py`, `doctype/rental_settings/` | Hold expiry, the Rental Agreement, deposit/balance invoices, Submit & Send (v1.564.0) |
 | `rental_planner.py`, `page/rental_planner/` | The Rental Planner page: fleet timeline + the four-step new-rental flow (v1.563.0) |
 | `workspace/asset_management/` | Desk workspace (with an **Event Rentals** card) |
 
@@ -218,6 +219,54 @@ Open it from the workspace, the Rental Booking list, or a booking's View menu.
     twice.
   - `scripts/test_rental_planner_history.js` runs the real script against a model of the v16 router,
     from `tests/test_rental_planner.py`.
+
+### Holds, the agreement and the invoices (v1.564.0)
+
+Settings live in **Rental Settings** (`doctype/rental_settings/`, a new Single, so every default
+applies on existing sites; read it with `get_cached_doc`).
+
+- **Holds** (`rental_holds.py`, run daily):
+  - A new hold lasts `hold_days` (7).
+  - `hold_reminder_days` (2) before it lapses, whoever placed it gets an assigned ToDo, once
+    (`hold_reminder_sent_on`, cleared when the hold is renewed).
+  - A hold past its date is set to Expired, which frees its fountains, and a comment says so.
+  - The date filters carry `is set`, so a hold with no date is never expired.
+  - It is a sweep rather than a job per hold, because the deploy's Redis flush kills queued jobs.
+  - Optional customer notice, `email_customer_on_hold`, off by default: it lists what is held and
+    until when.
+- **The Rental Agreement** is the existing Project Contract, `template_key = "rental"`.
+  - **Create > Rental Agreement** on a booking (`rental_sales.make_rental_agreement`) fills it from
+    the booking: dates, one equipment row per fountain and accessory, the rental fee, fees and the
+    security deposit.
+  - It is sent through the existing e-sign flow.
+  - `patches/add_rental_esign_signature_block` gives the live template its `sig()` block; without
+    one, Send for Signature refuses.
+- **Signing confirms the booking** (`on_rental_agreement_signed`, on both signing paths).
+  - The hook runs inside the signer's transaction, usually a Guest's, so it **never raises**.
+  - If the booking can't be confirmed, because its fountains were taken while the agreement was
+    out, the hook rolls back to a savepoint and logs the failure. It also comments on the booking
+    and sends its owner a Notification.
+  - The signature stands.
+  - An Expired hold is renewed on the way to Confirmed.
+- **Invoices are drafts** (Nik, 2026-09-29). Nothing posts until someone presses **Submit & Send**.
+  - The **deposit** invoice, `deposit_percent` (50) of the rental total, is drafted when the booking
+    becomes Confirmed.
+  - The **balance** invoice is drafted by the daily sweep `balance_days_before_delivery` (14) days
+    before delivery, due on the delivery date.
+  - The **security deposit** is its own line on the balance invoice, posted to
+    `security_deposit_account`. Settings refuses anything but a Liability account, because the
+    deposit is owed back.
+  - Tax is `taxes_and_charges` from Rental Settings **or nothing**. Any party or company default
+    that `set_missing_values` picked up is cleared, because Utah's rental tax (OD-2) is still open.
+  - Each invoice carries `custom_rental_booking` and `custom_rental_invoice_kind`, so drafting is
+    idempotent and the booking's Billing links find them.
+- **Submit & Send** (`submit_and_send`, POST) posts the invoice with the caller's own submit
+  permission.
+  - It first refreshes the draft's amount from the booking.
+  - It then opens a hosted Stripe Checkout (`create_payment`, which expires any older open link)
+    and emails the pay link in the design system (`pillar="rent"`).
+  - Customers on autopay get no link. Submitting already charges their saved card, and an open
+    link would make that charge refuse itself.
 
 ### Out of service
 
