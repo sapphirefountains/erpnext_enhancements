@@ -9,7 +9,13 @@ same 403 as a missing grant. These pin:
   next time, and anything other than a refusal still raises;
 * that a total refusal names every form tried and the service account to add;
 * the backfill: one query across the gap, each snapshot's rolling 30-day sum computed
-  locally, only ``gsc_ok = 0`` rows touched, and ``dry_run`` writing nothing.
+  locally, only ``gsc_ok = 0`` rows touched, and ``dry_run`` writing nothing;
+* the network retry (v1.561.2): the three queries run one after another on the calling
+  thread, each attempt on a transport of its own with an explicit timeout; a TLS error or a
+  timeout is retried with backoff, a 4xx and a certificate failure never are, and a failure
+  that outlasts the retries writes exactly one short Error Log row;
+* that a one-line message (that one, and the refusal) is stored as the row's body under the
+  title ``GSC API Error``, not as the title itself (see ``stored_row``).
 
 ``api/analytics.py`` imports Google's client libraries at module level and CI installs none
 of them, so they are stubbed here along with frappe, and removed again afterwards.
@@ -18,10 +24,13 @@ Run: python -m unittest erpnext_enhancements.tests.test_search_console -v
 """
 
 import datetime
+import ssl
 import sys
+import threading
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -42,11 +51,19 @@ STUBBED = (
 	"googleapiclient",
 	"googleapiclient.discovery",
 	"googleapiclient.errors",
+	"google_auth_httplib2",
+	"httplib2",
 )
 OURS = ("erpnext_enhancements.api.analytics", "erpnext_enhancements.utils.error_throttle")
 _saved = {}
 STATE = {}
 analytics = None
+DOMAIN = "sc-domain:sapphirefountains.com"
+#: What _gsc_service hands back. The token is a plain placeholder, deliberately not shaped like
+#: a real Google one: it is here to prove it never reaches a log row.
+CREDS = types.SimpleNamespace(
+	service_account_email="ga4-reader@proj.iam.gserviceaccount.com", token="fixture-token-value"
+)
 
 
 class _dict(dict):
@@ -59,14 +76,45 @@ class HttpError(Exception):
 		self.resp = types.SimpleNamespace(status=status)
 
 
-class FakeService:
-	"""Search Console that accepts only ``accepts`` and answers ``rows``."""
+class FakeHttp:
+	"""httplib2.Http: remembers its timeout and whether it was closed."""
 
-	def __init__(self, accepts, rows=(), fail_with=None):
+	def __init__(self, timeout=None):
+		self.timeout = timeout
+		self.closed = False
+
+	def close(self):
+		self.closed = True
+
+
+class FakeAuthorizedHttp:
+	"""google_auth_httplib2.AuthorizedHttp over a FakeHttp."""
+
+	def __init__(self, credentials, http=None):
+		self.credentials = credentials
+		self.http = http
+		self.closed = False
+
+	def close(self):
+		self.closed = True
+		self.http.close()
+
+
+class FakeService:
+	"""Search Console that accepts only ``accepts`` and answers ``rows``.
+
+	``script`` maps a dimension (``date``, ``query``, ``page``) to the exceptions its attempts
+	raise, in order, before it answers. Every execution is recorded in ``executions`` as
+	``(dimension, http, thread id)``.
+	"""
+
+	def __init__(self, accepts, rows=(), fail_with=None, script=None):
 		self.accepts = accepts
 		self.rows = list(rows)
 		self.fail_with = fail_with
+		self.script = {k: list(v) for k, v in (script or {}).items()}
 		self.calls = []
+		self.executions = []
 
 	def searchanalytics(self):
 		return self
@@ -74,13 +122,18 @@ class FakeService:
 	def query(self, siteUrl, body):
 		self.calls.append((siteUrl, body))
 		service = self
+		dimension = ",".join(body.get("dimensions") or [])
 
 		class Request:
-			def execute(self_inner):
+			def execute(self_inner, http=None):
+				service.executions.append((dimension, http, threading.get_ident()))
 				if service.fail_with:
 					raise HttpError(service.fail_with)
 				if siteUrl != service.accepts:
 					raise HttpError(403)
+				pending = service.script.get(dimension)
+				if pending:
+					raise pending.pop(0)
 				return {"rows": service.rows}
 
 		return Request()
@@ -124,6 +177,8 @@ def _install():
 	mods["google.oauth2"].service_account = mods["google.oauth2.service_account"]
 	mods["googleapiclient.discovery"].build = lambda *a, **k: None
 	mods["googleapiclient.errors"].HttpError = HttpError
+	mods["google_auth_httplib2"].AuthorizedHttp = FakeAuthorizedHttp
+	mods["httplib2"].Http = FakeHttp
 	for name, module in mods.items():
 		sys.modules[name] = module
 
@@ -158,7 +213,7 @@ def reset(service=None, snapshots=()):
 	STATE["settings"] = types.SimpleNamespace(
 		gsc_property_url="sapphirefountains.com", credentials_json="/private/files/sa.json"
 	)
-	analytics._gsc_service = lambda settings: (service, "ga4-reader@proj.iam.gserviceaccount.com", None)
+	analytics._gsc_service = lambda settings: (service, CREDS, None)
 
 
 # ---------------------------------------------------------------- pure
@@ -204,11 +259,13 @@ class FallbackTests(unittest.TestCase):
 	def test_a_refused_form_falls_through_and_the_winner_is_cached(self):
 		service = FakeService(accepts="https://www.sapphirefountains.com/")
 		reset(service)
-		site, _response, refusals = analytics._gsc_query_first_site(service, "sapphirefountains.com", {})
+		site, _response, refusals = analytics._gsc_query_first_site(
+			service, CREDS, "sapphirefountains.com", {}
+		)
 		self.assertEqual(site, "https://www.sapphirefountains.com/")
 		self.assertEqual(refusals, [("sc-domain:sapphirefountains.com", 403)])
 		service.calls.clear()
-		analytics._gsc_query_first_site(service, "sapphirefountains.com", {})
+		analytics._gsc_query_first_site(service, CREDS, "sapphirefountains.com", {})
 		self.assertEqual(
 			[c[0] for c in service.calls], ["https://www.sapphirefountains.com/"], "cached form first"
 		)
@@ -217,7 +274,7 @@ class FallbackTests(unittest.TestCase):
 		service = FakeService(accepts="x", fail_with=500)
 		reset(service)
 		with self.assertRaises(HttpError):
-			analytics._gsc_query_first_site(service, "sapphirefountains.com", {})
+			analytics._gsc_query_first_site(service, CREDS, "sapphirefountains.com", {})
 
 	def test_total_refusal_names_every_form_and_the_account(self):
 		service = FakeService(accepts="nothing-matches")
@@ -314,6 +371,148 @@ class BackfillTests(unittest.TestCase):
 		result = analytics.backfill_gsc_snapshots()
 		self.assertEqual((result["updated"], STATE["writes"]), (0, []))
 		self.assertIn("refused every form", result["error"])
+
+
+# ---------------------------------------------------------------- the network retry
+
+
+def _record_layer_failure():
+	return ssl.SSLError(1, "[SSL: RECORD_LAYER_FAILURE] record layer failure (_ssl.c:2713)")
+
+
+def _read_timeout():
+	return TimeoutError("The read operation timed out")
+
+
+class TransientRetryTests(unittest.TestCase):
+	"""Every nightly pull from 2026-09-23 to 2026-09-29 failed inside the query or page fetch,
+	which ran in parallel through one shared httplib2 transport (TASK-2026-01474)."""
+
+	ROWS = [{"keys": ["2026-09-20"], "clicks": 3, "impressions": 40, "ctr": 0.075, "position": 4.2}]
+
+	def setUp(self):
+		self.sleeps = []
+		patcher = mock.patch.object(analytics, "time", types.SimpleNamespace(sleep=self.sleeps.append))
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def _run(self, script=None, accepts=DOMAIN):
+		service = FakeService(accepts=accepts, rows=self.ROWS, script=script)
+		reset(service)
+		return service, analytics.get_gsc_data()
+
+	@staticmethod
+	def _attempts(service, dimension):
+		return [e for e in service.executions if e[0] == dimension]
+
+	def test_the_queries_run_one_at_a_time_on_the_calling_thread(self):
+		service, result = self._run()
+		self.assertEqual([e[0] for e in service.executions], ["date", "query", "page"])
+		self.assertEqual({e[2] for e in service.executions}, {threading.get_ident()}, "no worker thread")
+		# The snapshot's contract is unchanged.
+		self.assertEqual(set(result), {"search_timeline", "top_queries", "top_pages", "property"})
+		self.assertEqual(result["top_pages"][0]["ctr"], 7.5)
+		self.assertEqual((STATE["errors"], self.sleeps), ([], []))
+
+	def test_every_attempt_has_a_transport_of_its_own_with_a_timeout(self):
+		service, _result = self._run()
+		transports = [e[1] for e in service.executions]
+		self.assertEqual(len({id(t) for t in transports}), len(transports), "never shared")
+		for transport in transports:
+			self.assertIsInstance(transport, FakeAuthorizedHttp)
+			self.assertIs(transport.credentials, CREDS)
+			self.assertEqual(transport.http.timeout, analytics.GSC_HTTP_TIMEOUT)
+			self.assertTrue(transport.closed, "closed after use")
+
+	def test_a_tls_failure_is_retried_on_a_new_connection(self):
+		service, result = self._run({"page": [_record_layer_failure()]})
+		self.assertEqual(result["property"], DOMAIN)
+		attempts = self._attempts(service, "page")
+		self.assertEqual(len(attempts), 2)
+		self.assertIsNot(attempts[0][1], attempts[1][1])
+		self.assertEqual(self.sleeps, [analytics.GSC_BACKOFF_SECONDS])
+		self.assertEqual(STATE["errors"], [], "a failure that recovered logs nothing")
+
+	def test_a_timeout_is_retried_with_backoff(self):
+		service, result = self._run({"query": [_read_timeout(), _read_timeout()]})
+		self.assertEqual(result["property"], DOMAIN)
+		self.assertEqual(len(self._attempts(service, "query")), 3)
+		self.assertEqual(self.sleeps, [analytics.GSC_BACKOFF_SECONDS, analytics.GSC_BACKOFF_SECONDS * 2])
+		self.assertEqual(STATE["errors"], [])
+
+	def test_a_4xx_is_never_retried(self):
+		for status in (400, 429):
+			with self.subTest(status=status):
+				self.sleeps.clear()
+				service, result = self._run({"query": [HttpError(status)]})
+				self.assertEqual(len(self._attempts(service, "query")), 1)
+				self.assertEqual(self._attempts(service, "page"), [], "stopped at the failure")
+				self.assertEqual(self.sleeps, [])
+				self.assertEqual(result["error"], f"Failed to fetch GSC data: HTTP {status}")
+				self.assertEqual(len(STATE["errors"]), 1)
+
+	def test_a_refused_form_is_not_retried_either(self):
+		service, result = self._run(accepts="nothing-matches")
+		forms = sc.site_candidates("sapphirefountains.com")
+		self.assertEqual([e[0] for e in service.executions], ["date"] * len(forms), "each form once")
+		self.assertEqual(self.sleeps, [])
+		self.assertIn("refused every form", result["error"])
+
+	def test_a_certificate_failure_is_not_retried(self):
+		failure = ssl.SSLCertVerificationError(1, "certificate verify failed")
+		service, result = self._run({"query": [failure]})
+		self.assertEqual(len(self._attempts(service, "query")), 1)
+		self.assertEqual(self.sleeps, [])
+		self.assertIn("certificate verify failed", result["error"])
+
+	def test_a_failure_that_outlasts_the_retries_logs_one_short_row(self):
+		failures = [_record_layer_failure() for _ in range(analytics.GSC_ATTEMPTS)]
+		service, result = self._run({"page": failures})
+		self.assertEqual(len(self._attempts(service, "page")), analytics.GSC_ATTEMPTS)
+		self.assertEqual(self.sleeps, [2, 4])
+		self.assertEqual(len(STATE["errors"]), 1, "one row, not one per attempt")
+		title, body = stored_row(STATE["errors"][0])
+		self.assertEqual(title, "GSC API Error", "the row's title, not the message")
+		self.assertIn("'page' query after 3 attempts", body)
+		self.assertIn("SSLError: [SSL: RECORD_LAYER_FAILURE]", body)
+		self.assertNotEqual(body, frappe_traceback(), "the message, not a traceback")
+		self.assertNotIn(CREDS.token, body)
+		self.assertEqual(result, {"error": f"Failed to fetch GSC data: {body.strip()}"})
+
+	def test_a_refusal_row_is_titled_the_right_way_round_too(self):
+		# The v1.505.0 refusal message is one line, so it would have been stored backwards.
+		_service, result = self._run(accepts="nothing-matches")
+		self.assertEqual(len(STATE["errors"]), 1)
+		title, body = stored_row(STATE["errors"][0])
+		self.assertEqual(title, "GSC API Error")
+		self.assertEqual(body.strip(), result["error"])
+
+	def test_the_final_error_carries_no_chained_exception(self):
+		class AlwaysTimesOut:
+			def execute(self, http=None):
+				raise _read_timeout()
+
+		with self.assertRaises(analytics.GscUnavailable) as caught:
+			analytics._gsc_execute(AlwaysTimesOut(), CREDS, "page")
+		self.assertIsNone(caught.exception.__cause__)
+		self.assertTrue(caught.exception.__suppress_context__, "raised from None")
+		self.assertIn("TimeoutError: The read operation timed out", str(caught.exception))
+
+
+def frappe_traceback():
+	return sys.modules["frappe"].get_traceback()
+
+
+def stored_row(args):
+	"""``(title, body)`` of the Error Log row Frappe v16 writes for ``frappe.log_error(*args)``.
+
+	``log_error(title=None, message=None, ...)`` keeps a single-line first argument as the title
+	and swaps the two only when it holds a newline (``frappe/utils/error.py`` at v16.35.0), and
+	``log_error_throttled`` passes its message first. The stub records the raw arguments; this
+	reads them the way the real function does.
+	"""
+	first, second = args
+	return (second, first) if "\n" in first else (first, second)
 
 
 if __name__ == "__main__":
