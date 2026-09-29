@@ -1234,7 +1234,7 @@ erpnext_enhancements.patches.reload_travel_hub_trips
 # never makes it, because no DocPerm names it. Grants it to nobody. Insert-only: an existing role is never
 # touched. Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_knowledge_base_mirror_role
-# v1.561.2: seed the "Error Log Recipient" role (desk_access 0, no DocPerm anywhere) the Error Log alert now
+# v1.561.3: seed the "Error Log Recipient" role (desk_access 0, no DocPerm anywhere) the Error Log alert now
 # emails instead of every System Manager, so admin rights and error emails are separate. Grants it to nobody;
 # who reads the errors is set in the Desk. Must run before fixture sync, which imports the alert's recipient
 # row naming it. Insert-only, cannot raise, safe twice.

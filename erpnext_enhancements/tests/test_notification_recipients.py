@@ -353,7 +353,7 @@ class TestTheDeliberateExceptions(unittest.TestCase):
 
 
 class TestErrorLogRecipientRole(unittest.TestCase):
-    """v1.561.2. The Error Log alert emailed every System Manager, so the only way to
+    """v1.561.3. The Error Log alert emailed every System Manager, so the only way to
     stop someone's error emails was to take their admin rights away. It now emails a
     dedicated role that grants nothing (Nik, 2026-09-29)."""
 

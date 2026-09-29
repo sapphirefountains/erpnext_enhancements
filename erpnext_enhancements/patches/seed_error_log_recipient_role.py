@@ -1,4 +1,4 @@
-"""Seed the "Error Log Recipient" role (v1.561.2).
+"""Seed the "Error Log Recipient" role (v1.561.3).
 
 The ``Error Log`` alert (``fixtures/notification.json``) used to email **every System Manager**, so
 anyone who needed admin rights also got every error email, and the only way to stop the emails was

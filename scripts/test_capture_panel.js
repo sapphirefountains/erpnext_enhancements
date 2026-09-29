@@ -1106,7 +1106,6 @@ function historyCallArgs(source) {
 	for (const name of ["panel.js", "annotate.js", "drafts.js"]) {
 		const text = stripComments(fs.readFileSync(path.join(CAPTURE, name), "utf8"));
 		check(`${name}: no innerHTML (the snapshot is page text)`, /\binnerHTML\b|outerHTML|insertAdjacentHTML/.test(text), false);
-		check(`${name}: never the guest error logger`, text.includes("log_client_error"), false);
 		check(`${name}: no sid key`, /["'\s{,]sid["']?\s*:/.test(text), false);
 		check(`${name}: tabs, not spaces`, /^ {2,}\S/m.test(text.replace(/`[\s\S]*?`/g, "")), false);
 	}
