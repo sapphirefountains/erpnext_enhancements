@@ -2356,6 +2356,16 @@ after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response
 # (v1.542.0).
 before_request = ["erpnext_enhancements.fieldlevel_read.seal_wrapped_originals"]
 
+# knowledge_base (WI-080 PR 8 review, v1.561.0): the private mirror's account, a Website User holding
+# only "KB Mirror" and signed in by an API key, may call api/knowledge_base_mirror.snapshot and nothing
+# else. frappe v16's whitelist refuses only a Guest, so without this every login-only endpoint with no
+# gate of its own would answer to that key (sync_contact's contact lookups and link writes among them).
+# An auth_hook, NOT before_request: v16 runs before_request inside init_request and reads the API key
+# only afterwards, in validate_auth, whose last step is these hooks (app.py:139-141, auth.py:640), so a
+# before_request guard would see every keyed request as Guest. Any other request by the account is a
+# 403 before it is dispatched; every other user passes untouched. See knowledge_base/mirror_guard.py.
+auth_hooks = ["erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_account"]
+
 # travel_management (Plan a Trip PR 4, v1.549.0): the /itinerary offline marker. www/itinerary.py
 # sets the `ee_itinerary_key` cookie (30 days, Path=/) for the person the page is drawn for, and
 # offline the page shows a copy saved on the phone only while that cookie still holds the key it

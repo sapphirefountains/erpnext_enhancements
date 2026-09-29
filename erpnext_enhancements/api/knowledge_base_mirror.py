@@ -16,7 +16,10 @@ What it holds to:
   the caller must hold :data:`MIRROR_ROLE` ("KB Mirror", seeded by
   ``patches/seed_knowledge_base_mirror_role.py`` with ``desk_access = 0`` and no DocPerm anywhere) or
   be Administrator. A staff user's session is refused, System Manager included, and the refusal comes
-  before anything is read.
+  before anything is read. The other way round holds too: the account that holds the role can call
+  nothing but this. It is a signed-in Website User, and v16's whitelist refuses only a Guest, so
+  ``knowledge_base/mirror_guard.py``, an ``auth_hooks`` entry, refuses its every other request before
+  Frappe dispatches it (the PR 8 review).
 * **Published articles only, and never the Version doctype.** One ``frappe.get_all`` of Knowledge
   Article with status Published. ``get_all`` because the role holds no DocPerm: the role check above is
   the whole gate. What it returns is what every staff user already reads in the Desk.

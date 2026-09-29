@@ -120,6 +120,8 @@ MODULES = (
 	"erpnext_enhancements.assistant_tools.draft_knowledge_article",
 	# PR 8: the private mirror's snapshot endpoint, over the same site.
 	"erpnext_enhancements.api.knowledge_base_mirror",
+	# PR 8 review: the auth_hook that keeps the mirror's account to that endpoint.
+	"erpnext_enhancements.knowledge_base.mirror_guard",
 )
 #: Imported again with the modules above, so the gate is applied to this suite's FAC stub and reads this
 #: suite's frappe (PR 6b).
@@ -932,12 +934,12 @@ def _install_fac_stub():
 
 
 api = publish = notify = references = files = search_service = ai_tools = kb_tool_helper = None
-ai_draft = gate = gating_api = draft_tool_module = mirror = None
+ai_draft = gate = gating_api = draft_tool_module = mirror = mirror_guard = None
 
 
 def setUpModule():
 	global api, publish, notify, references, files, search_service, ai_tools, kb_tool_helper
-	global ai_draft, gate, gating_api, draft_tool_module, mirror
+	global ai_draft, gate, gating_api, draft_tool_module, mirror, mirror_guard
 	_install_frappe_stub()
 	_install_fac_stub()
 	for name in (*GATE_PACKAGE, *MODULES):
@@ -955,6 +957,7 @@ def setUpModule():
 	gating_api = loaded["erpnext_enhancements.assistant_tools.gating_api"]
 	draft_tool_module = loaded["erpnext_enhancements.assistant_tools.draft_knowledge_article"]
 	mirror = loaded["erpnext_enhancements.api.knowledge_base_mirror"]
+	mirror_guard = loaded["erpnext_enhancements.knowledge_base.mirror_guard"]
 	gate = sys.modules["erpnext_enhancements.assistant_tools._gate"]
 	FAC_TOOLS.clear()
 	FAC_TOOLS["draft_knowledge_article"] = draft_tool_module.DraftKnowledgeArticle
@@ -3973,6 +3976,297 @@ class MirrorSnapshotTest(Base):
 			and n.func.value.id == "frappe"
 		]
 		self.assertEqual(sorted(calls), ["get_all", "get_roles", "throw", "whitelist"])
+
+
+#: A Website User holding KB Mirror and a website role besides (PR 8 review): still the mirror's account.
+MIRROR_WITH_CUSTOMER = "mirror-customer@example.com"
+#: A staff login given KB Mirror by mistake (PR 8 review): never confined, so never locked out.
+STAFF_WITH_MIRROR = "staff-mirror@example.com"
+#: A portal user with no KB role (PR 8 review): not the mirror's account.
+CUSTOMER = "customer@example.com"
+MIRROR_GUARD_SOURCE = APP / "knowledge_base" / "mirror_guard.py"
+
+
+class MirrorConfinementTest(Base):
+	"""The review of PR 8 (finding PR8-1): ``knowledge_base/mirror_guard.confine_mirror_account``, the
+	``auth_hooks`` entry that keeps the mirror's account to its snapshot.
+
+	That account is a signed-in Website User, and v16's whitelist refuses only a Guest
+	(``is_whitelisted``, ``frappe/__init__.py:479-487``), so without the hook every login-only endpoint
+	with no gate of its own answered to its key: ``sync_contact.get_contacts_for_context`` (any party's
+	contacts with phone numbers and email addresses), ``link_existing_record`` and ``unlink_record``
+	(Contact and Address writes under ``ignore_permissions``), ``package_dispatch.api.get_customer_ship_to``
+	and ``script_migrations.debug.run_debug_query`` among them. Each request here is what v16 holds when
+	``validate_auth`` runs the hook: the user the key signed in, the request's method and path, and its
+	form. ``tests/test_hooks_integrity.py`` pins the hook to ``auth_hooks``."""
+
+	#: Endpoints the key reached before the hook: real, whitelisted, and not the snapshot.
+	APP_METHODS = (
+		"erpnext_enhancements.sync_contact.get_contacts_for_context",
+		"erpnext_enhancements.sync_contact.get_addresses_for_context",
+		"erpnext_enhancements.sync_contact.link_existing_record",
+		"erpnext_enhancements.sync_contact.unlink_record",
+		"erpnext_enhancements.package_dispatch.api.get_customer_ship_to",
+		"erpnext_enhancements.script_migrations.debug.run_debug_query",
+		"erpnext_enhancements.api.knowledge_base.review_diff",
+	)
+	FRAPPE_METHODS = (
+		"frappe.auth.get_logged_user",
+		"frappe.realtime.get_user_info",
+		"frappe.client.get_list",
+		"logout",
+		"upload_file",
+	)
+	MESSAGE = "The knowledge base mirror's account may only read its snapshot."
+
+	def setUp(self):
+		super().setUp()
+		for user, user_type, roles in (
+			(MIRROR, "Website User", ("KB Mirror",)),
+			(MIRROR_WITH_CUSTOMER, "Website User", ("KB Mirror", "Customer")),
+			(STAFF_WITH_MIRROR, "System User", ("Desk User", "Stock User", "KB Mirror")),
+			(CUSTOMER, "Website User", ("Customer",)),
+		):
+			_db()["User"][user] = {
+				"name": user,
+				"enabled": 1,
+				"user_type": user_type,
+				"roles": roles,
+				"first_name": user.split("@")[0].capitalize(),
+				"last_name": "Example",
+			}
+		STATE["committed"] = copy.deepcopy(_db())
+
+	def _ask(self, path, form=None, user=MIRROR, method="GET", then=None):
+		"""One request as v16 holds it when ``validate_auth`` runs the auth_hooks: the hook, then (when it
+		passes) Frappe's dispatch, here ``then`` or a marker. Its headers fail the test if read."""
+
+		def serve():
+			frappe = frappe_module()
+			frappe.local.request = types.SimpleNamespace(path=path, method=method, headers=_Tripwire())
+			mirror_guard.confine_mirror_account()
+			return then() if then else "dispatched"
+
+		with mock.patch.object(frappe_module().local, "form_dict", _Flags(form or {}), create=True):
+			return request(serve, user=user, browser=False, token=MIRROR_TOKEN)
+
+	def _refused(self, path, **kwargs):
+		with self.assertRaises(PermissionRefused) as caught:
+			self._ask(path, **kwargs)
+		self.assertEqual(str(caught.exception), self.MESSAGE)
+
+	def _other_paths(self):
+		snapshot = mirror_guard.SNAPSHOT_METHOD
+		for method in (*self.APP_METHODS, *self.FRAPPE_METHODS):
+			yield f"/api/method/{method}"
+			yield f"/api/v2/method/{method}"
+		# The snapshot itself under any address but the script's: fail closed on every variant.
+		yield f"/api/v1/method/{snapshot}"
+		yield f"/api/v2/method/{snapshot}"
+		yield f"/api/method/{snapshot}/"
+		yield f"/api/method/{snapshot}x"
+		yield f"/API/method/{snapshot}"
+		yield f"//api/method/{snapshot}"
+		yield f"/api/method/ {snapshot}"
+		yield "/api/method/erpnext_enhancements.api.knowledge_base_mirror.stamp_of"
+		yield "/api/resource/Contact"
+		yield "/api/resource/Contact/CONT-00001"
+		yield "/api/v2/document/Address"
+		yield "/api/v2/method/Contact/get_list"
+		yield "/private/files/slip.png"
+		yield from ("/", "/me", "/login", "/app", "/desk", "/itinerary", "/pay-card")
+
+	# ---- the mirror's account
+
+	def test_the_mirror_is_refused_everything_but_its_snapshot(self):
+		paths = list(self._other_paths())
+		self.assertGreater(len(paths), 30)
+		for path in paths:
+			for method in ("GET", "POST"):
+				with self.subTest(path=path, method=method):
+					self._refused(path, method=method)
+
+	def test_a_request_carrying_cmd_is_refused_on_the_snapshot_s_own_path(self):
+		"""v16 dispatches ``cmd`` before it looks at the path (``app.py:146-155``)."""
+		for cmd in (self.APP_METHODS[0], mirror_guard.SNAPSHOT_METHOD, "", None):
+			with self.subTest(cmd=cmd):
+				self._refused(mirror_guard.SNAPSHOT_PATH, form={"cmd": cmd, "since": "0" * 64})
+
+	def test_only_a_get_of_the_exact_path_passes(self):
+		path = mirror_guard.SNAPSHOT_PATH
+		self.assertEqual(path, "/api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot")
+		for form in ({}, {"since": "0" * 64}):
+			with self.subTest(form=form):
+				self.assertEqual(self._ask(path, form=form), "dispatched")
+		for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "get"):
+			with self.subTest(method=method):
+				self._refused(path, method=method)
+
+	def test_the_snapshot_answers_through_its_confinement(self):
+		name = draft(title=TITLE)
+		submitted(name)
+		number = approve(name)["article"]
+		for user in (MIRROR, MIRROR_WITH_CUSTOMER):
+			with self.subTest(user=user):
+				out = self._ask(mirror_guard.SNAPSHOT_PATH, user=user, then=mirror.snapshot)
+				self.assertEqual([a["kb_number"] for a in out["articles"]], [number])
+
+	def test_a_website_role_added_to_the_account_does_not_free_it(self):
+		self.assertEqual(_roles(MIRROR_WITH_CUSTOMER), ["KB Mirror", "Customer"])
+		for path in ("/api/method/" + self.APP_METHODS[0], "/me", "/api/resource/Contact"):
+			with self.subTest(path=path):
+				self._refused(path, user=MIRROR_WITH_CUSTOMER)
+
+	# ---- everyone else
+
+	def test_every_other_user_passes_untouched(self):
+		"""Staff (a System Manager, and a staff login given KB Mirror by mistake, which is therefore never
+		locked out of the Desk), Administrator, a portal user, a guest and a request with no user."""
+		self.assertIn("KB Mirror", _roles(STAFF_WITH_MIRROR))
+		users = (TECH, AUTHOR, APPROVER, NIK, STAFF_WITH_MIRROR, "Administrator", CUSTOMER, "Guest", "", None)
+		paths = [
+			"/api/method/" + self.APP_METHODS[0],
+			"/api/resource/Contact",
+			"/me",
+			mirror_guard.SNAPSHOT_PATH,
+		]
+		for user in users:
+			for path in paths:
+				with self.subTest(user=user, path=path):
+					self.assertEqual(
+						self._ask(path, user=user, method="POST", form={"cmd": "x"}), "dispatched"
+					)
+
+	def test_a_guest_s_request_costs_no_lookup(self):
+		with mock.patch.object(frappe_module(), "get_roles", side_effect=AssertionError("looked up roles")):
+			for user in ("Guest", "", None, "Administrator"):
+				with self.subTest(user=user):
+					self.assertEqual(self._ask("/me", user=user), "dispatched")
+
+	def test_a_role_lookup_that_fails_fails_the_request(self):
+		"""Never a pass: the lookup is frappe's own, and a request whose roles cannot be read fails, as it
+		would at its first permission check."""
+		with mock.patch.object(frappe_module(), "get_roles", side_effect=RuntimeError("redis gone")):
+			for user in (MIRROR, NIK):
+				with self.subTest(user=user), self.assertRaises(RuntimeError):
+					self._ask("/api/method/" + self.APP_METHODS[0], user=user)
+
+	def test_a_confined_request_it_cannot_read_is_refused(self):
+		def call(request_obj, form):
+			frappe = frappe_module()
+			frappe.local.request = request_obj
+			with mock.patch.object(frappe.local, "form_dict", form, create=True):
+				mirror_guard.confine_mirror_account()
+
+		path = mirror_guard.SNAPSHOT_PATH
+		cases = {
+			"no request": (None, _Flags()),
+			"no path": (types.SimpleNamespace(method="GET"), _Flags()),
+			"no method": (types.SimpleNamespace(path=path), _Flags()),
+			"no form": (types.SimpleNamespace(path=path, method="GET"), None),
+			"a form that is not a dict": (types.SimpleNamespace(path=path, method="GET"), ["cmd"]),
+		}
+		for label, (request_obj, form) in cases.items():
+			with self.subTest(case=label):
+				with self.assertRaises(PermissionRefused):
+					request(call, request_obj, form, user=MIRROR, browser=False, token=MIRROR_TOKEN)
+		# Control: the same request, readable, passes.
+		request(call, types.SimpleNamespace(path=path, method="GET"), _Flags(), user=MIRROR, browser=False)
+
+	def test_the_hook_needs_the_key_s_user_which_before_request_does_not_have(self):
+		"""At ``before_request`` a keyed request is still Guest: v16 reads the API key afterwards, in
+		``validate_auth`` (``app.py:139-141``, ``:244-245``). The same function there would let the mirror's
+		key through to everything, which is why it is an ``auth_hooks`` entry."""
+		self.assertEqual(self._ask("/api/method/" + self.APP_METHODS[0], user="Guest"), "dispatched")
+		self._refused("/api/method/" + self.APP_METHODS[0], user=MIRROR)
+
+	# ---- what it is
+
+	def test_it_reads_no_header_writes_nothing_and_logs_nothing(self):
+		before = copy.deepcopy(_db())
+		writes, sql = len(STATE["writes"]), len(STATE["sql"])
+		with mock.patch.object(
+			frappe_module(), "get_request_header", side_effect=AssertionError("read a header")
+		):
+			self.assertEqual(self._ask(mirror_guard.SNAPSHOT_PATH), "dispatched")
+			self._refused("/api/method/" + self.APP_METHODS[0])
+			self.assertEqual(self._ask("/me", user=NIK), "dispatched")
+		self.assertEqual(_db(), before)
+		self.assertEqual((len(STATE["writes"]), len(STATE["sql"])), (writes, sql))
+		self.assertEqual(logged(), [])
+		self.assertEqual(STATE["deferred_docs"], [])
+
+	def test_the_path_it_admits_is_the_endpoint_s_own(self):
+		self.assertEqual(mirror_guard.SNAPSHOT_METHOD, f"{mirror.__name__}.{mirror.snapshot.__name__}")
+		self.assertEqual(mirror_guard.SNAPSHOT_PATH, "/api/method/" + mirror_guard.SNAPSHOT_METHOD)
+		self.assertEqual(WHITELISTED["snapshot"], {"methods": ["GET"]})
+		self.assertEqual(mirror_guard.SYSTEM_USER_ROLE, "Desk User")
+		self.assertEqual(mirror_guard.constants.MIRROR_ROLE, "KB Mirror")
+
+	def test_the_endpoints_it_names_are_real_and_whitelisted(self):
+		"""Not vacuous: each app method refused above is a whitelisted function in this repo today."""
+		for dotted in self.APP_METHODS:
+			with self.subTest(method=dotted):
+				module, name = dotted.rsplit(".", 1)
+				path = REPO_ROOT.joinpath(*module.split(".")).with_suffix(".py")
+				fn = next(
+					node
+					for node in ast.parse(path.read_text(encoding="utf-8")).body
+					if isinstance(node, ast.FunctionDef) and node.name == name
+				)
+				self.assertTrue(any("whitelist" in ast.unparse(d) for d in fn.decorator_list))
+
+	def test_the_module_reads_no_header_and_writes_and_logs_nothing(self):
+		"""Static, with comments and docstrings stripped (the docstring explaining an absence names it)."""
+		tree = ast.parse(MIRROR_GUARD_SOURCE.read_text(encoding="utf-8"))
+		docstrings = {
+			id(node.body[0].value)
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Module | ast.FunctionDef)
+			and node.body
+			and isinstance(node.body[0], ast.Expr)
+			and isinstance(node.body[0].value, ast.Constant)
+		}
+		strings = [
+			n.value
+			for n in ast.walk(tree)
+			if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstrings
+		]
+		for text in strings:
+			self.assertNotIn("Authorization", text)
+		names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+		names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+		forbidden = {
+			"log_error",
+			"logger",
+			"print",
+			"get_request_header",
+			"headers",
+			"cookies",
+			"insert",
+			"save",
+			"db_set",
+			"set_value",
+			"sql",
+			"commit",
+			"delete_doc",
+			"enqueue",
+			"set_user",
+		}
+		self.assertEqual(names & forbidden, set())
+		calls = sorted(
+			n.func.attr
+			for n in ast.walk(tree)
+			if isinstance(n, ast.Call)
+			and isinstance(n.func, ast.Attribute)
+			and isinstance(n.func.value, ast.Name)
+			and n.func.value.id == "frappe"
+		)
+		self.assertEqual(calls, ["get_roles", "throw"])
+		# No endpoint here: a decorated function would be a second way in.
+		self.assertEqual(
+			[n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.decorator_list], []
+		)
 
 
 def constants_module():

@@ -367,28 +367,80 @@ class TestTheKnowledgeMirrorIsPullOnly(unittest.TestCase):
     `override_whitelisted_methods` entry would swap in a function without its role check (or put
     its answer behind another name), a `scheduler_events` entry would be a push, and a `doc_events`
     one would render the knowledge base on every save.
+
+    The one hook that does name the mirror is its account's confinement (PR 8 review, finding
+    PR8-1): `knowledge_base.mirror_guard.confine_mirror_account`, which refuses that account every
+    request but the snapshot. It must be an `auth_hooks` entry. frappe v16 runs `before_request`
+    inside `init_request` and reads the API key only afterwards, in `validate_auth`, whose last step
+    runs `auth_hooks` (`app.py:139-141`, `:244-245`; `auth.py:640`, v16.35.0): in `before_request`
+    it would see every keyed request as Guest and confine nothing, while this test and every other
+    one still passed.
     """
 
-    def test_no_hook_names_the_mirror(self):
+    GUARD = "erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_account"
+
+    def _names_the_mirror(self, text):
+        return any(
+            part in text for part in ("knowledge_base_mirror", "kb_mirror", "knowledge_base.mirror")
+        )
+
+    def test_the_only_hook_naming_the_mirror_is_its_confinement(self):
         strings = [
             node.value
             for node in ast.walk(hooks_tree())
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         ]
         self.assertEqual(
-            [s for s in strings if "knowledge_base_mirror" in s or "kb_mirror" in s],
-            [],
-            "hooks.py names the knowledge mirror; it must stay a pulled endpoint and nothing else",
+            [s for s in strings if self._names_the_mirror(s)],
+            [self.GUARD],
+            "hooks.py names the knowledge mirror; it must stay a pulled endpoint, and the only hook "
+            "naming it is the auth_hook that confines its account",
         )
 
+    def test_the_confinement_is_an_auth_hook_and_not_a_before_request(self):
+        hooks = top_level_assignments()
+        self.assertIn("auth_hooks", hooks, "hooks.py has no auth_hooks")
+        self.assertEqual(ast.literal_eval(hooks["auth_hooks"]), [self.GUARD])
+        before = ast.literal_eval(hooks["before_request"])
+        self.assertNotIn(self.GUARD, before if isinstance(before, list) else [before])
+        for name, value in hooks.items():
+            if name != "auth_hooks":
+                with self.subTest(hook=name):
+                    self.assertNotIn(self.GUARD, ast.dump(value))
+
+    def test_the_confinement_is_a_function_frappe_can_call_with_no_arguments(self):
+        """v16's `validate_auth_via_hooks` calls each one as `frappe.get_attr(path)()`."""
+        module, name = self.GUARD.rsplit(".", 1)
+        path = REPO_ROOT.joinpath(*module.split(".")).with_suffix(".py")
+        fn = next(
+            node
+            for node in ast.parse(path.read_text(encoding="utf-8")).body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        args = fn.args
+        self.assertEqual(
+            (args.posonlyargs, args.args, args.kwonlyargs, args.vararg, args.kwarg),
+            ([], [], [], None, None),
+        )
+        self.assertEqual(fn.decorator_list, [], "a hook, never an endpoint")
+
     def test_the_check_reads_the_hooks_it_means(self):
-        """Not vacuous: the three hooks it is about exist and hold dotted paths of this app."""
+        """Not vacuous: the three hooks it is about exist and hold dotted paths of this app, and the
+        match finds the endpoint's own dotted path."""
         hooks = top_level_assignments()
         for name in ("override_whitelisted_methods", "scheduler_events", "doc_events"):
             with self.subTest(hook=name):
                 self.assertIn(name, hooks)
                 rendered = ast.dump(hooks[name])
                 self.assertIn("erpnext_enhancements.", rendered)
+        self.assertTrue(
+            self._names_the_mirror("erpnext_enhancements.api.knowledge_base_mirror.snapshot")
+        )
+        self.assertFalse(
+            self._names_the_mirror(
+                "erpnext_enhancements.crm_enhancements.fountain_move.photos.sweep_unmirrored_photos"
+            )
+        )
 
     def test_the_endpoint_module_exists_where_the_mirror_calls_it(self):
         path = APP_ROOT / "api" / "knowledge_base_mirror.py"

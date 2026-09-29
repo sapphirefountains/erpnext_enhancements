@@ -627,7 +627,9 @@ jobs:
       # hooks just never fire. Two duplicated doc_events keys cost six live handlers
       # (recurring task generation, project date sync, next-visit dates) and nobody
       # noticed, because the symptom is absence. ruff flags it as F601 but that job is
-      # advisory here, so it does not fail a PR. This does.
+      # advisory here, so it does not fail a PR. This does. Since v1.561.0 it also pins the
+      # knowledge mirror's confinement to auth_hooks: v16 reads an API key AFTER before_request, so
+      # the same hook there would see every keyed request as Guest and confine nothing.
       - name: hooks.py integrity (no duplicate keys or handlers)
         run: python -m unittest erpnext_enhancements.tests.test_hooks_integrity -v
       # A literal '%' in a query string that also binds a named parameter. MySQLdb
@@ -901,6 +903,11 @@ jobs:
       # file shows, and `since` answering unchanged; no header read, nothing written, nothing
       # logged; a GET whose whitelist is the OUTER decorator (inside a rate_limit it would be "not
       # whitelisted"). The stub gains frappe.rate_limiter.
+      # And MirrorConfinementTest (PR 8 review): knowledge_base/mirror_guard, the auth_hook that
+      # keeps the mirror's account (a signed-in Website User, which v16's whitelist does not refuse)
+      # to GET of the snapshot's exact path with no `cmd`. Every other method, address, HTTP method
+      # and page is a 403 for it; every other user passes untouched; it fails closed and reads no
+      # header.
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace
