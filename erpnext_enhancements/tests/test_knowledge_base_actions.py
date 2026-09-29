@@ -3159,7 +3159,10 @@ class AiDraftTest(Base):
 				self.assertIn(REFUSED_ONLY, message)
 				row = card_row(name)
 				self.assertEqual((row["status"], row["decided_by"], row.get("target_name")), ("Failed", NIK, None))
-				self.assertIn(REFUSED_ONLY, row["error"])
+				# What WI-080's acceptance reads: the card stores FAC's report as it is; only the message the
+				# confirming person sees carries "Execution failed: " (corrected in PR 6b's review).
+				self.assertEqual(row["error"], f"[ToolReportedError] {REFUSED_ONLY} (execution_time: 0.0s)")
+				self.assertEqual(message, "Execution failed: " + row["error"])
 				self.assertEqual(_db()[VERSION], {})
 				self.assertEqual(open_todos(), [])
 		# A KB Author who is not a System Manager may not decide it at all; a System Manager may cancel it.
@@ -3187,6 +3190,109 @@ class AiDraftTest(Base):
 		refused(self, gating_api.confirm_action, name, user=APPROVER)
 		self.assertEqual(card_row(name)["status"], "Failed")
 		self.assertEqual(_db()[VERSION], {})
+
+	def test_a_submit_the_confirmer_cannot_write_leaves_no_draft(self):
+		"""6b.4 Submit step 1: before it submits, the tool checks ``write`` on the version its card has just
+		written, as the confirmer, the check the Submit for Review endpoint's ``_load_version`` makes.
+		Refused there, the savepoint takes the insert back. A Draft-only card never asks it."""
+		original = _check_perm
+
+		def no_write(doctype, ptype):
+			if doctype == VERSION and ptype == "write":
+				raise PermissionRefused(f"No permission for {doctype} ({ptype})")
+			return original(doctype, ptype)
+
+		name = queued(queue(ai_args(submit_for_review=True)))
+		STATE["writes"].clear()
+		with mock.patch(f"{__name__}._check_perm", no_write):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"No permission for {VERSION} (write)", message)
+		self.assertIn("Nothing was written.", message)
+		self.assertEqual([w["action"] for w in writes(VERSION)], ["insert"])  # written, then rolled back
+		self.assertEqual(_db()[VERSION], {})
+		self.assertEqual(open_todos(), [])
+		self.assertEqual(card_row(name)["status"], "Failed")
+		# The same person's Draft-only card is written: nothing checks write before a submit.
+		name = queued(queue(ai_args(article_title="Cleaning a skimmer basket")))
+		with mock.patch(f"{__name__}._check_perm", no_write):
+			self.assertEqual(confirm(name)["status"], "Executed")
+		self.assertEqual(version(card_result(name)["name"])["review_state"], "Draft")
+
+	def test_a_new_article_needs_a_department_and_its_process_owner_must_be_staff(self):
+		"""6b.3 Shape: both refused at the precheck, before any card (a card without a department would
+		otherwise fail after the requester confirmed it)."""
+		args = ai_args()
+		del args["department"]
+		for blank in (args, ai_args(department="")):
+			with self.subTest(department=blank.get("department")):
+				out = queue(blank)
+				self.assertEqual(out["error_type"], "AIGateValidationError")
+				self.assertIn("department is required for a new article", out["error"])
+		for owner in ("disabled@example.com", "portal@example.com", "nobody@example.com"):
+			with self.subTest(process_owner=owner):
+				out = queue(ai_args(process_owner=owner))
+				self.assertEqual(out["error_type"], "AIGateValidationError")
+				self.assertIn("process_owner must be the user id of an enabled staff login", out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		# An enabled staff login is written as the process owner.
+		name = queued(queue(ai_args(process_owner=f" {SECOND} ")))
+		confirm(name)
+		self.assertEqual(version(card_result(name)["name"])["process_owner"], SECOND)
+
+	def test_a_null_or_wrongly_typed_argument_gets_no_card(self):
+		"""PR 6b review: FAC 3.0.0's own type check (``validate_arguments``) runs only when the confirmed card
+		executes, so a null or an integer department queued a card that ended Failed with "Invalid type
+		for field" after the requester confirmed it."""
+		for change in (
+			{"submit_for_review": None},
+			{"kb_number": None},
+			{"keywords": None},
+			{"process_owner": None},
+			{"department": None},
+			{"department": 6},
+			{"submit_for_review": "true"},
+		):
+			with self.subTest(change=change):
+				out = queue(ai_args(**change))
+				self.assertEqual((out["success"], out["error_type"]), (False, "AIGateValidationError"))
+				(key,) = change
+				self.assertIn(key, out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		# The FAC stub refuses each of them at execution, which is the card the precheck now prevents.
+		for change in ({"submit_for_review": None}, {"department": 6}):
+			with self.subTest(written_past_the_gate=change):
+				name = card(ai_args(**change))
+				message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+				self.assertIn(f"Invalid type for field {next(iter(change))}", message)
+		self.assertEqual(_db()[VERSION], {})
+
+	def test_a_retire_or_revision_that_commits_after_the_check_is_seen_under_the_lock(self):
+		"""The check reads the article and its open version without a lock; the write reads both again under
+		the article's row lock, as Start Revision does, so one that committed in between is refused and
+		nothing is written, for a Draft-only card too, which never asks Submit for Review's rules. The
+		stale unlocked reads are simulated: in production the window is between the two reads."""
+		number = self._publish()
+		stale = copy.deepcopy(publish.article_row(number))
+		name = queued(queue(ai_args(kb_number=number)))
+		request(api.retire, number, "No longer done this way", user=NIK)
+		versions = set(_db()[VERSION])
+		STATE["locks"].clear()
+		with mock.patch.object(publish, "article_row", lambda n: copy.deepcopy(stale) if n == number else None):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"{number} is not a published article, so it cannot be revised", message)
+		self.assertIn((ARTICLE, number), STATE["locks"])
+		self.assertEqual((card_row(name)["status"], set(_db()[VERSION])), ("Failed", versions))
+
+		# A person's revision opened after the unlocked check.
+		number = self._publish(title="Cleaning a skimmer basket")
+		name = queued(queue(ai_args(kb_number=number)))
+		opened_version = request(api.start_revision, number, user=AUTHOR)["version"]
+		original = publish.open_version
+		with mock.patch.object(publish, "open_version", lambda n, lock=False: original(n, lock=True) if lock else None):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"{number} already has an open version ({opened_version}, Draft)", message)
+		self.assertEqual(card_row(name)["status"], "Failed")
+		self.assertEqual([r["name"] for r in _db()[VERSION].values() if r.get("ai_drafted")], [])
 
 	def test_nobody_but_a_named_kb_role_can_ask(self):
 		"""FAC lists the tool only to users who can read the drafts' doctype; a client that calls it by
@@ -3396,6 +3502,17 @@ class AiDraftTest(Base):
 		# so it is not the article's own picture.
 		out = queue(ai_args(kb_number=number, body_markdown="![spare](/private/files/spare.pdf?fid=file-unused)"))
 		self.assertIn("picture 1, a file on this site", out["error"])
+		# PR 6b review: the article's own fid carries no other path, and an address a browser reads
+		# differently from Python is refused whatever it seems to name.
+		for src, place in (
+			("/files/../api/method/frappe.auth.get_logged_user?fid=file-used", "a file on this site"),
+			("/private/files/%2e%2e/%2e%2e/desk/user?fid=file-used", "a file on this site"),
+			("/private/files/spare.pdf?fid=file-used", "a file on this site"),
+			("https://evil.example\\@erp.example.com/private/files/slip.png", ai_draft.UNREADABLE_ADDRESS),
+		):
+			with self.subTest(src=src):
+				out = queue(ai_args(kb_number=number, body_markdown=f"Text.\n\n![slip]({src})"))
+				self.assertIn(f"a revision can embed only {number}'s own pictures (picture 1, {place})", out["error"])
 		self.assertEqual(_db()["AI Pending Action"], {})
 
 	def test_a_secret_is_refused_at_the_precheck_and_again_at_execution(self):
@@ -3422,6 +3539,18 @@ class AiDraftTest(Base):
 		logs = json.dumps([_db()["Error Log"], STATE["deferred_docs"], logged()], default=str)
 		self.assertNotIn(STRIPE_KEY, logs)
 		self.assertNoText(logs, AI_TITLE)
+
+	def test_a_secret_behind_markup_gets_no_card(self):
+		"""PR 6b review: ``**Password:** ...`` hides the value from the scan of the Markdown; the controller's
+		scan of the stored body found it, but only after the requester had confirmed a card holding it,
+		whose Failed log row then kept it. The precheck runs the controller's scan too."""
+		password = "Otter#" + "29310"
+		out = queue(ai_args(body_markdown="Log in to the pump controller.\n\n**Pass" + "word:** " + password))
+		self.assertEqual(out["error_type"], "AIGateValidationError")
+		self.assertIn("body_markdown line 2, as it would be shown, looks like a written-out password", out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		(log,) = _db()["AI Action Log"].values()
+		self.assertNotIn(password, json.dumps(log, default=str))
 
 	def test_nothing_goes_to_the_error_log(self):
 		"""Every outcome above is a return: a refusal, a Failed card and a success leave no Error Log."""

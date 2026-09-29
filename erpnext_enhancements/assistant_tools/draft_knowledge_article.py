@@ -12,9 +12,12 @@ WRITES, and is always a card
 ----------------------------
 In ``_gate.APP_MUTATING`` (Medium risk). Before the gate queues a card it asks
 this tool's ``precheck`` (``ai_draft.precheck`` for the session user): a call
-that could never run, one carrying a secret, or one for someone without a KB
-role is refused with no card, and the refused call's AI Action Log row keeps the
-lengths of its text, not the text (``_gate.WITHHELD_WHEN_UNQUEUED``).
+that could never run (a null or wrongly typed argument included, which FAC's own
+check would refuse only once the card was confirmed), one carrying a secret or
+text nobody sees, or one for someone without a KB role is refused with no card,
+and the refused call's AI Action Log row keeps the lengths of its text, not the
+text (``_gate.WITHHELD_WHEN_UNQUEUED``; only ``KEPT_WHEN_UNQUEUED`` values are
+kept, so a misnamed argument is withheld too).
 ``execute`` (``ai_draft.from_card``) runs only inside ``gating_api._confirm_one``
 for this tool's own confirmed card, and only when the person confirming it is the
 person who asked, so with AI write gating off the tool does nothing at all.
@@ -107,8 +110,8 @@ class DraftKnowledgeArticle(BaseTool):
                     "type": "string",
                     "description": (
                         "The article's text in Markdown, at most 60,000 characters. Raw HTML shows as "
-                        "text. No pictures in a new article (add them in ERPNext); a revision may keep "
-                        "the article's own pictures"
+                        "text, and links and pictures take no title. No pictures in a new article (add "
+                        "them in ERPNext); a revision may keep the article's own pictures, as they are"
                     ),
                 },
                 "change_note": {

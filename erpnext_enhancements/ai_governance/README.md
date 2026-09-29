@@ -79,10 +79,14 @@ WI-080 PR 6b added the first app tool that writes into a doctype its arguments d
 - **`APP_PRECHECKED_TOOLS`.** `_precheck_refusal` asks such a tool's own `precheck(arguments)`
   before a card is queued. Problems come back as short clauses that never quote the proposal, and
   refuse the call "Not queued: ..." with `AIGateValidationError` and no card. For the drafting tool
-  that covers the shape, a requester without a KB role (or Administrator), a secret in the text, a
-  picture it may not embed, and an article that is retired, unknown or already has an open version.
-  A precheck that raises queues the card as before (the tool checks again when it runs), logged by
-  type only, never through `frappe.log_error`, whose v16 `metadata` holds the MCP request.
+  that covers the shape (a `null` or wrongly typed argument included: the gate wraps FAC's
+  `_safe_execute`, so FAC's own type check runs only once the card is confirmed), a requester
+  without a KB role (or Administrator), a secret in the text (in the Markdown and as it would be
+  shown), text nobody sees (invisible Unicode, link titles), a picture it may not embed, and an
+  article that is retired, unknown or already has an open version. A precheck that raises queues
+  the card as before (the tool checks again when it runs), logged by type only, never through
+  `frappe.log_error`, whose v16 `metadata` holds the MCP request; the drafting tool's own precheck
+  still refuses whatever its shape rules or its secret scan found before the lookup failed.
 - **`TOOL_TARGET_DOCTYPES`.** A card's `target_doctype` came only from `arguments["doctype"]`, so a
   drafting card had none, and the batch dialog would have ticked it like any Medium write.
   `_call_target` now names `Knowledge Article Version` for it (no name until it runs), and the
@@ -90,7 +94,12 @@ WI-080 PR 6b added the first app tool that writes into a doctype its arguments d
 - **`WITHHELD_WHEN_UNQUEUED`.** The gate redacts arguments only by key name, so a refused drafting
   call's AI Action Log row would have held its whole text, including the secret it was refused for.
   Every row with no `pending_action` from a listed tool keeps `"<withheld: N characters>"` for its
-  text arguments and the summary "Draft knowledge article (text withheld)". A queued card keeps the
+  text arguments and the summary "Draft knowledge article (text withheld)". **`KEPT_WHEN_UNQUEUED`**
+  is the allowlist beside it: only those arguments (an id, an option, a flag) are kept, and only
+  while they are true/false, null or short text, so an argument the tool does not take (a misnamed
+  `body` or `title`, which the tool refuses as "not an argument") is withheld too, nested values
+  included, and scrubbed from the row's error. A failed insert of such a row is logged by type
+  only. A queued card keeps the
   whole proposal: it is the AI's own text, and how the person who asked reads what they confirm
   (decided 2026-09-28). It stays in AI Pending Action, AI Action Log and FAC's Assistant Audit Log
   until retention purges them.

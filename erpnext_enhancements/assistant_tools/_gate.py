@@ -366,6 +366,17 @@ WITHHELD_WHEN_UNQUEUED = {
 }
 WITHHELD_SUMMARY = "Draft knowledge article (text withheld)"
 
+#: And the ONLY arguments such a row keeps (PR 6b review): the listed tool's arguments that name no text
+#: (an id, an option, a flag), each only while it is true/false, null or short text (KEPT_LIMIT
+#: characters, a Data field's length). Every other value is withheld too, an argument the tool does not
+#: take included: withholding the listed names alone kept a misnamed `body` or `title`, which the
+#: tool's precheck refuses as "not an argument", whole in the row, and nothing secret-scans a name the
+#: tool does not know. WITHHELD_WHEN_UNQUEUED and this split the tool's arguments between them.
+KEPT_WHEN_UNQUEUED = {
+    "draft_knowledge_article": ("kb_number", "department", "kind", "process_owner", "submit_for_review"),
+}
+KEPT_LIMIT = 140
+
 
 def _call_target(tool_name, arguments):
     """``(target_doctype, target_name)`` for a card or a log row: TOOL_TARGET_DOCTYPES for the tools
@@ -386,28 +397,48 @@ def _withheld(value):
     return f"<withheld: {size} characters>"
 
 
+def _kept_when_unqueued(tool_name, key, value):
+    """Whether a row with no card keeps ``key``'s ``value`` as it is: a KEPT_WHEN_UNQUEUED argument of
+    ``tool_name`` holding true/false, null or at most KEPT_LIMIT characters of text."""
+    if key in WITHHELD_WHEN_UNQUEUED.get(tool_name, ()) or key not in KEPT_WHEN_UNQUEUED.get(tool_name, ()):
+        return False
+    return value is None or isinstance(value, bool) or (isinstance(value, str) and len(value) <= KEPT_LIMIT)
+
+
 def withhold_arguments(tool_name, arguments):
-    """``arguments`` with every WITHHELD_WHEN_UNQUEUED value of ``tool_name`` replaced by its length.
-    Other tools, and anything not a dict, come back as they are."""
-    keys = WITHHELD_WHEN_UNQUEUED.get(tool_name)
-    if not keys or not isinstance(arguments, dict):
+    """``arguments`` with every value of a WITHHELD_WHEN_UNQUEUED tool replaced by its length, except
+    the KEPT_WHEN_UNQUEUED ones. Other tools, and anything not a dict, come back as they are."""
+    if tool_name not in WITHHELD_WHEN_UNQUEUED or not isinstance(arguments, dict):
         return arguments
-    return {key: (_withheld(value) if key in keys else value) for key, value in arguments.items()}
+    return {
+        key: (value if _kept_when_unqueued(tool_name, key, value) else _withheld(value))
+        for key, value in arguments.items()
+    }
+
+
+def _text_pieces(value):
+    """Every string in ``value``, at any depth (a list's items, a dict's keys and values)."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list | tuple):
+        return [piece for item in value for piece in _text_pieces(item)]
+    if isinstance(value, dict):
+        return [piece for key, item in value.items() for piece in (*_text_pieces(key), *_text_pieces(item))]
+    return []
 
 
 def _withhold_text(text, tool_name, arguments):
     """``text`` with any piece (six characters or more) of a withheld argument replaced, so an error
-    message that quoted the proposal cannot carry it into a row that withholds it."""
-    keys = WITHHELD_WHEN_UNQUEUED.get(tool_name)
-    if not text or not keys or not isinstance(arguments, dict):
+    message that quoted the proposal cannot carry it into a row that withholds it. Every value
+    withhold_arguments withholds counts, at any depth, an argument the tool does not take included."""
+    if not text or tool_name not in WITHHELD_WHEN_UNQUEUED or not isinstance(arguments, dict):
         return text
     pieces = set()
-    for key in keys:
-        value = arguments.get(key)
-        values = value if isinstance(value, list) else [value]
-        for item in values:
-            if isinstance(item, str):
-                pieces.update(part.strip() for part in item.split("\n") if len(part.strip()) >= 6)
+    for key, value in arguments.items():
+        if _kept_when_unqueued(tool_name, key, value):
+            continue
+        for item in _text_pieces(value):
+            pieces.update(part.strip() for part in item.split("\n") if len(part.strip()) >= 6)
     for piece in sorted(pieces, key=len, reverse=True):
         text = text.replace(piece, "<withheld>")
     return text
@@ -1237,13 +1268,15 @@ def insert_action_log(
     caller — a logging failure must not break the execution it records).
 
     A row with no ``pending_action`` from a WITHHELD_WHEN_UNQUEUED tool keeps the lengths of its
-    listed arguments, not their text, and the fixed WITHHELD_SUMMARY (v1.560.0), and its failure to
-    insert is logged by type only (`_log_failure_type`)."""
+    arguments, not their text, except the KEPT_WHEN_UNQUEUED ones, and the fixed WITHHELD_SUMMARY
+    (v1.560.0), and its failure to insert is logged by type only (`_log_failure_type`)."""
     withheld = not pending_action and tool_name in WITHHELD_WHEN_UNQUEUED
     try:
         args = sanitize_arguments(arguments)
         if withheld:
-            error = _withhold_text(str(error), tool_name, args) if error else error
+            # Scrubbed of the arguments as sent, not as redacted: a value redacted by its key's name is
+            # still text that must not come back through the error.
+            error = _withhold_text(str(error), tool_name, arguments) if error else error
             args = withhold_arguments(tool_name, args)
             summary = WITHHELD_SUMMARY
         target_doctype, target_name = _call_target(tool_name, arguments)

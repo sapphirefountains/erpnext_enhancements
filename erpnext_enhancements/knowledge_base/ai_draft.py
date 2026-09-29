@@ -39,17 +39,33 @@ changed for this.
 ``before_validate`` then strips presentation, scans the stored HTML for secrets and records the
 confirmer as a contributor, as for any save.
 
-**The secret scan reads the Markdown, not the HTML** (found while building PR 6b). markdown2 reads
-underscores inside a word as emphasis, so ``sk_live_...`` becomes ``sk<em>live</em>...`` and no longer
-looks like a key once converted; the stored-HTML scan would miss it. :func:`secret_problems` scans every
-text argument as the model sent it, names the argument, the line and the kind and never the value, and
-**fails closed**: if the scan itself raises, the answer is that the text could not be checked.
+**The secret scan reads the Markdown and the HTML** (found while building PR 6b, and in its review).
+markdown2 reads underscores inside a word as emphasis, so ``sk_live_...`` becomes ``sk<em>live</em>...``
+and no longer looks like a key once converted, which only a scan of the Markdown sees. And markup
+between a label and its value (``**Password:** ...``) hides the value from that scan, which only the
+controller's own scan of the converted body sees. :func:`secret_problems` runs both before any card,
+names the argument, the line and the kind and never the value, and **fails closed**: if either scan
+raises, the answer is that the text could not be checked.
+
+**Every argument has the schema's JSON type, or is left out** (PR 6b review). FAC 3.0.0's
+``validate_arguments`` refuses a present ``null``, or an integer where the schema says string, but it
+runs only when the confirmed card executes, because the gate wraps ``_safe_execute`` ahead of it. So
+:func:`precheck` refuses them first: otherwise the person who asked would confirm a card that can only
+fail.
+
+**No text a person cannot see** (PR 6b review). A text argument holding an invisible character (a
+Unicode format, control or unassigned code point: the Tags block, which spells out words no screen
+shows, zero-width spaces, bidirectional controls) is refused by position, as is a link or picture
+title and an over-long picture description: a reviewer never sees them, and an AI reading the article
+would read them as part of it.
 
 **Pictures** are read from markdown2's HTML (every ``<img src>``, so a reference-style image is covered
 too). A new article embeds none: pictures are added in the Desk, where they become private Files. A
-revision may embed only this site's Files attached to that article, matched by ``?fid=`` or by path
-once the site's origin is removed. Any other picture is refused by its position and host, never by its
-URL.
+revision may embed only this site's Files attached to that article: the picture's path must be one of
+those Files' URLs exactly, once the site's origin is removed, and a ``?fid=`` in it must name the File
+at that path. An address a browser could read differently from Python (a backslash, a space or control
+character, a sign-in part) is refused outright. Any other picture is refused by its position and host,
+never by its URL.
 
 **Every outcome is a return** (finding 5): FAC turns an exception into an Error Log carrying the call's
 arguments and its traceback, which here would be a draft's whole text. A refusal is ``{"success":
@@ -69,6 +85,7 @@ inside the functions that write, so the pure checks (:func:`markdown_html`, :fun
 :func:`picture_problems`) import on the bench-free contract tests' stubs.
 """
 
+import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -115,9 +132,57 @@ TEXT_LIMITS = {
 	"body_markdown": MAX_BODY,
 	"change_note": MAX_CHANGE_NOTE,
 }
-#: The arguments scanned for secrets, in this order. They are also the ones the AI gate withholds from
-#: a log row that has no card (``_gate.WITHHELD_WHEN_UNQUEUED``).
+#: The arguments scanned for secrets and for invisible characters, in this order. They are also the ones
+#: the AI gate withholds from a log row that has no card (``_gate.WITHHELD_WHEN_UNQUEUED``).
 SCANNED = ("article_title", "summary", "keywords", "body_markdown", "change_note")
+
+#: Each argument's JSON type, as the tool's schema declares it. FAC 3.0.0's ``validate_arguments``
+#: (``core/base_tool.py:112-139``) refuses a present value of any other type, ``None`` included, but only
+#: when the confirmed card runs, so :func:`_read` refuses it before a card (PR 6b review).
+#: ``tests/test_knowledge_base_tools.py`` holds this to the schema.
+TYPES = {
+	"kb_number": str,
+	"article_title": str,
+	"department": str,
+	"kind": str,
+	"summary": str,
+	"keywords": list,
+	"body_markdown": str,
+	"change_note": str,
+	"process_owner": str,
+	"submit_for_review": bool,
+}
+
+#: The Version field each scanned argument is stored in, for the controller's own secret scan
+#: (``content.document_secret_findings``), which :func:`secret_problems` runs on the fields as they would
+#: be stored.
+STORED_AS = {
+	"title": "article_title",
+	"summary": "summary",
+	"keywords": "keywords",
+	"change_note": "change_note",
+	"body": "body_markdown",
+}
+
+#: A picture's description (its alt text) may be at most this long: longer, it is text no reviewer sees
+#: and every AI reader gets (v16's ``to_markdown`` keeps it in the article's ``body_md``).
+MAX_ALT = 125
+
+#: Unicode categories no reader sees (PR 6b review): format (the Tags block, U+E0000-E007F, which spells
+#: out ASCII no screen shows; zero-width spaces; bidirectional controls), control, surrogate and
+#: unassigned code points, and the line and paragraph separators.
+INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc", "Cs", "Cn", "Zl", "Zp"})
+#: The Hangul fillers, letters that render as nothing.
+BLANK_LETTERS = frozenset("ᅟᅠㅤﾠ")
+#: The zero-width non-joiner and joiner and the soft hyphen: format characters that real text uses inside
+#: a word (Persian, an emoji sequence, a long word's break), so one is allowed between two visible
+#: characters, never in a run or at an edge.
+JOINERS = frozenset("‌‍­")
+#: The variation selectors (U+FE00-FE0F): one after a visible character picks its style (the emoji form of
+#: a symbol); a run of them is how text is hidden in them. The supplementary ones (U+E0100-E01EF) are
+#: refused outright.
+VARIATION_SELECTORS = range(0xFE00, 0xFE10)
+SUPPLEMENTARY_SELECTORS = range(0xE0100, 0xE01F0)
 
 #: The extras of v16's ``md_to_html`` (frappe ``origin/version-16`` ``utils/data.py:2485-2492``), which
 #: :func:`markdown_html` uses with ``safe_mode="escape"``. The header ids and the ``screenshot`` and
@@ -140,6 +205,11 @@ FILE_PREFIXES = ("/private/files/", "/files/")
 MAX_PICTURES_NAMED = 5
 
 SAVEPOINT = "kb_ai_draft"
+
+#: A refused picture whose address a browser and Python could read differently.
+UNREADABLE_ADDRESS = "an address that cannot be read safely"
+KB_NUMBER_WANTED = "kb_number must be a KB number such as KB-0601, or left out for a new article"
+DEPARTMENT_WANTED = "department must be one of the ten department blocks, such as 06 Operations"
 
 NOT_FROM_A_CARD = (
 	"draft_knowledge_article runs only from its own approval card, once the person who asked for the "
@@ -181,22 +251,34 @@ def precheck(arguments, requester, confirmer=None):
 	``requester``) before it queues a card, and :func:`draft` asks it again at execution with the
 	``confirmer``. Its reads are made as the server; it returns reasons only, never any text.
 
-	The secret scan runs first and fails closed on its own. If a lookup after it raises, the gate
-	queues the card (the tool checks again when it runs), but not a card the scan has refused: a
-	secret it found is still the answer.
+	The shape rules (:func:`_read`, no lookups) and the secret scan run first; the secret scan fails
+	closed on its own. If a lookup after them raises, the gate queues the card (the tool checks again
+	when it runs), but not a card either of them has refused: a shape problem or a secret it found is
+	still the answer.
 	"""
-	secrets = secret_problems(arguments)
+	args = arguments if isinstance(arguments, dict) else {}
 	try:
-		problems, _values = _check(arguments, requester, confirmer, secrets=secrets)
+		read = _read(args)
 	except Exception:
-		if secrets:
-			return secrets
+		# secret_problems then converts for itself, and fails closed if that raises too.
+		read = None
+	secrets = secret_problems(args, read[1] if read else None)
+	try:
+		problems, _values = _check(args, requester, confirmer, secrets=secrets, read=read)
+	except Exception:
+		early = list(dict.fromkeys([*(read[0] if read else []), *secrets]))
+		if early:
+			return early
 		raise
 	return problems
 
 
 def markdown_html(text):
-	"""``text`` (Markdown) as HTML, with every piece of raw HTML in it escaped into visible text."""
+	"""``text`` (Markdown) as HTML, with every piece of raw HTML in it escaped into visible text.
+
+	Any failure of the conversion is :class:`MarkdownUnreadable`, which the checks refuse as such:
+	markdown2 2.5.4 raises ``RecursionError`` on about 200 nested ``>`` or list levels, and a precheck
+	that raised would have let the gate queue a card that can never run (PR 6b review)."""
 	import markdown2
 
 	# A fresh copy each call: the nested dict is the caller's, and markdown2 is not promised not to touch it.
@@ -205,15 +287,25 @@ def markdown_html(text):
 	}
 	try:
 		return str(markdown2.markdown(text or "", extras=extras, safe_mode="escape"))
-	except markdown2.MarkdownError:
+	except Exception:
 		raise MarkdownUnreadable("the Markdown could not be converted") from None
 
 
-def secret_problems(arguments):
+def secret_problems(arguments, values=None):
 	"""A clause naming every secret-shaped string in the text arguments, by argument, line and kind,
-	never the value; ``[]`` when there is none. Fails closed: a scan that raises is a refusal."""
+	never the value; ``[]`` when there is none. Fails closed: a scan that raises is a refusal.
+
+	The text is read twice. **As the model sent it**, the Markdown, because markdown2 reads an
+	underscore inside a word as emphasis (``sk_live_...`` becomes ``sk<em>live</em>...``). **And as it
+	would be stored**, with the controller's own scan (``content.document_secret_findings``, the body
+	converted and stripped as ``before_validate`` strips it), because markup between a label and its
+	value (``**Password:** ...``, ``sk\\_live\\_...``) hides the value from the first; the controller
+	would then refuse the save only after the person had confirmed a card holding it (PR 6b review).
+	A kind already named for an argument is not named again. ``values`` is :func:`_read`'s, when the
+	caller has it, so the body is converted once.
+	"""
 	args = arguments if isinstance(arguments, dict) else {}
-	places = []
+	places, named = [], set()
 	try:
 		for key in SCANNED:
 			value = args.get(key)
@@ -223,10 +315,15 @@ def secret_problems(arguments):
 				# One keyword per line, so a finding's line is the keyword's position.
 				for finding in content.secret_findings("\n".join(str(word) for word in value)):
 					places.append(f"keyword {finding.line} looks like {finding.kind}")
+					named.add((key, finding.kind))
 				continue
 			if isinstance(value, str) and value:
 				for finding in content.secret_findings(value):
 					places.append(f"{key} line {finding.line} looks like {finding.kind}")
+					named.add((key, finding.kind))
+		for key, finding in _stored_findings(args, _read(args)[1] if values is None else values):
+			if (key, finding.kind) not in named:
+				places.append(f"{key} line {finding.line}, as it would be shown, looks like {finding.kind}")
 	except Exception:
 		return [SECRETS_UNCHECKED]
 	if not places:
@@ -238,27 +335,39 @@ def secret_problems(arguments):
 	]
 
 
-def picture_problems(
-	body_html, *, kb_number=None, allowed_fids=frozenset(), allowed_paths=frozenset(), site_url=""
-):
+def picture_problems(body_html, *, kb_number=None, files=None, site_url=""):
 	"""A clause naming every picture in ``body_html`` that may not be written; ``[]`` when none.
 
 	``kb_number`` is ``None`` for a new article, which embeds no picture at all. A revision of
-	``kb_number`` may embed only this site's Files attached to that article, matched by ``?fid=``
-	against ``allowed_fids`` or by path against ``allowed_paths`` once ``site_url``'s origin is removed.
-	A refused picture is named by its position and its host, never by its URL.
+	``kb_number`` may embed only this site's Files attached to that article: ``files`` maps each one's
+	name to its ``file_url``. A picture is one of them only when its address is relative or on
+	``site_url``'s own origin, its path is one of those URLs **exactly**, and every ``?fid=`` in it names
+	the File at that path (PR 6b review: matching the fid *or* the path let an article's fid carry any
+	path, ``/files/../api/method/...`` included, into a picture every reader's browser would request).
+	An address a browser could read differently from Python is refused outright: a backslash (a path
+	separator to a browser, so ``https://evil.example\\@site/...`` loads from ``evil.example``), a
+	space or control character, or a sign-in part. A refused picture is named by its position and its
+	host, never by its URL.
 	"""
+	own = {str(name): unquote(str(url)) for name, url in (files or {}).items() if name and url}
 	sources = _picture_sources(body_html)
-	site_host = (urlsplit(site_url or "").hostname or "").casefold()
+	site = urlsplit(site_url or "")
+	site_host = (site.hostname or "").casefold()
+	site_origin = site.netloc.casefold()
 	refused = []
 	for position, src in enumerate(sources, 1):
-		parts = urlsplit(src.strip())
-		host = (parts.hostname or "").casefold()
-		local = (not parts.scheme and not parts.netloc) or (
-			parts.scheme in ("http", "https") and bool(host) and host == site_host
-		)
-		if kb_number is not None and local and _own_file(parts, allowed_fids, allowed_paths):
+		parts = _address(src)
+		if parts is None:
+			refused.append(f"picture {position}, {UNREADABLE_ADDRESS}")
 			continue
+		relative = not parts.scheme and not parts.netloc
+		same_origin = relative or (
+			parts.scheme in ("http", "https") and bool(site_origin) and parts.netloc.casefold() == site_origin
+		)
+		if kb_number is not None and same_origin and _own_file(parts, own):
+			continue
+		host = (parts.hostname or "").casefold()
+		local = relative or (parts.scheme in ("http", "https") and bool(host) and host == site_host)
 		refused.append(_picture_place(position, parts, local))
 	if not refused:
 		return []
@@ -395,15 +504,17 @@ def _write(values, requester):
 # ------------------------------------------------------------------ the checks
 
 
-def _check(arguments, requester, confirmer=None, *, secrets=None):
+def _check(arguments, requester, confirmer=None, *, secrets=None, read=None):
 	"""``(problems, values)``: every reason this cannot be written, and the arguments as they would be.
-	``secrets`` is :func:`secret_problems` when the caller already ran it."""
+	``secrets`` is :func:`secret_problems` and ``read`` is :func:`_read`, when the caller already ran
+	them."""
 	args = arguments if isinstance(arguments, dict) else {}
 	if confirmer is not None and _person(confirmer) != _person(requester):
 		return [f"only {_full_name(requester)}, who asked for this draft, can confirm it"], {}
-	problems, values = _read(args)
+	shape, values = read if read is not None else _read(args)
+	problems = list(shape)
 	problems += _who(requester, confirmer)
-	problems += secret_problems(args) if secrets is None else list(secrets)
+	problems += secret_problems(args, values) if secrets is None else list(secrets)
 	owner = values.get("process_owner")
 	if owner and not _enabled_staff(owner):
 		problems.append("process_owner must be the user id of an enabled staff login")
@@ -424,12 +535,10 @@ def _check(arguments, requester, confirmer=None, *, secrets=None):
 		if number is None:
 			problems += picture_problems(values["body"])
 		elif article is not None and article.get("status") == PUBLISHED:
-			fids, paths = _article_files(number)
 			problems += picture_problems(
 				values["body"],
 				kb_number=number,
-				allowed_fids=fids,
-				allowed_paths=paths,
+				files=_article_files(number),
 				site_url=frappe.utils.get_url(),
 			)
 	return list(dict.fromkeys(problems)), values
@@ -461,28 +570,39 @@ def _read(args):
 	if isinstance(kind, str) and kind.strip() and values["kind"] is None:
 		problems.append("kind must be Policy, Process or SOP")
 
+	# An optional argument is left out or has its schema type: FAC refuses a null, or an integer where
+	# the schema says string, when the confirmed card runs, so it is refused here, before any card.
 	raw_number = args.get("kb_number")
 	values["kb_number"] = None
-	if raw_number is not None and not (isinstance(raw_number, str) and not raw_number.strip()):
-		values["kb_number"] = normalize_kb_number(raw_number) if isinstance(raw_number, str) else None
+	if isinstance(raw_number, str) and raw_number.strip():
+		values["kb_number"] = normalize_kb_number(raw_number)
 		if values["kb_number"] is None:
-			problems.append("kb_number must be a KB number such as KB-0601, or left out for a new article")
+			problems.append(KB_NUMBER_WANTED)
+	elif "kb_number" in args and not isinstance(raw_number, str):
+		problems.append(_sent_null("kb_number") if raw_number is None else KB_NUMBER_WANTED)
 	new_article = raw_number is None or (isinstance(raw_number, str) and not raw_number.strip())
 
 	department = args.get("department")
 	values["department_block"] = None
-	if department is not None and not (isinstance(department, str) and not department.strip()):
+	if isinstance(department, str) and department.strip():
 		values["department_block"] = constants.department_option(department)
 		if values["department_block"] is None:
-			problems.append("department must be one of the ten department blocks, such as 06 Operations")
+			problems.append(DEPARTMENT_WANTED)
+	elif "department" in args and not isinstance(department, str):
+		# Not an integer either: department_option would read 6 as "06 Operations", and FAC refuses it.
+		problems.append(_sent_null("department") if department is None else DEPARTMENT_WANTED)
 	elif new_article:
 		problems.append("department is required for a new article")
 
 	values["keywords"] = ""
 	keywords = args.get("keywords")
-	if keywords is not None:
+	if "keywords" in args:
 		if not isinstance(keywords, list):
-			problems.append("keywords must be a list of words or short phrases")
+			problems.append(
+				_sent_null("keywords")
+				if keywords is None
+				else "keywords must be a list of words or short phrases"
+			)
 		else:
 			if len(keywords) > MAX_KEYWORDS:
 				problems.append(f"keywords has {len(keywords)} entries, more than {MAX_KEYWORDS}")
@@ -500,19 +620,27 @@ def _read(args):
 			values["keywords"] = ", ".join(kept)
 
 	submit = args.get("submit_for_review", False)
-	if submit is not None and not isinstance(submit, bool):
-		problems.append("submit_for_review must be true or false")
+	if not isinstance(submit, bool):
+		problems.append(
+			_sent_null("submit_for_review") if submit is None else "submit_for_review must be true or false"
+		)
 	values["submit"] = submit is True
 
 	owner = args.get("process_owner")
 	values["process_owner"] = None
-	if owner is not None and not (isinstance(owner, str) and not owner.strip()):
-		if isinstance(owner, str):
-			values["process_owner"] = owner.strip()
-		else:
-			problems.append("process_owner must be a user id (an email address)")
+	if isinstance(owner, str):
+		values["process_owner"] = owner.strip() or None
+	elif "process_owner" in args:
+		problems.append(
+			_sent_null("process_owner")
+			if owner is None
+			else "process_owner must be a user id (an email address)"
+		)
 
-	values["body"] = None
+	problems += invisible_problems(args)
+
+	# ``html`` is the conversion whenever one ran (the secret scan reads it); ``body`` only when it shows.
+	values["body"] = values["html"] = None
 	body = args.get("body_markdown")
 	if isinstance(body, str) and body.strip() and len(body) <= MAX_BODY:
 		try:
@@ -520,11 +648,70 @@ def _read(args):
 		except MarkdownUnreadable:
 			problems.append("body_markdown could not be read as Markdown")
 		else:
+			values["html"] = html
 			if content.shows_anything(html):
 				values["body"] = html
 			else:
 				problems.append("body_markdown shows nothing once converted; give the article's text")
+			problems += hidden_attribute_problems(html)
 	return problems, values
+
+
+def invisible_problems(arguments):
+	"""A clause for every text argument holding a character nobody sees, by argument (a keyword by its
+	position) and the first such character's position, never the text; ``[]`` when there is none.
+
+	A person confirming the card and the approver reading the draft see nothing there; an AI reading the
+	article reads it (the Tags block spells out ASCII instructions no screen shows), so nothing like it
+	is written (PR 6b review)."""
+	args = arguments if isinstance(arguments, dict) else {}
+	problems = []
+	for key in SCANNED:
+		value = args.get(key)
+		texts = (
+			[(f"keyword {n}", word) for n, word in enumerate(value, 1) if isinstance(word, str)]
+			if key == "keywords" and isinstance(value, list)
+			else [(key, value)]
+			if isinstance(value, str)
+			else []
+		)
+		for where, text in texts:
+			found = _invisible_positions(text)
+			if found:
+				problems.append(_invisible_problem(where, text, found))
+	return problems
+
+
+def hidden_attribute_problems(body_html):
+	"""A clause for the parts of markdown2's HTML a reader never sees and an AI reader gets: a link's
+	or a picture's title (``[a](url "title")``: ``content.strip_presentation`` keeps it, and v16's
+	``to_markdown`` writes it back into the article's ``body_md``, the Markdown every AI tool returns)
+	and a picture description longer than :data:`MAX_ALT`; ``[]`` when there is none."""
+	titled, long_alt = [], []
+	links = pictures = 0
+	for tag, attrs in _tags(body_html):
+		if tag == "a":
+			links += 1
+			label = f"link {links}"
+		else:
+			pictures += 1
+			label = f"picture {pictures}"
+		if (attrs.get("title") or "").strip():
+			titled.append(label)
+		if tag == "img" and len(attrs.get("alt") or "") > MAX_ALT:
+			long_alt.append(label)
+	problems = []
+	if titled:
+		problems.append(
+			f"body_markdown gives {_and(titled)} a title (the quoted text after the address), which a reader "
+			"never sees; leave the title out, or put it in the text"
+		)
+	if long_alt:
+		problems.append(
+			f"the description of {_and(long_alt)} in body_markdown is longer than {MAX_ALT} characters; "
+			"describe the picture in a few words and put the rest in the text"
+		)
+	return problems
 
 
 def _who(requester, confirmer):
@@ -578,30 +765,51 @@ def _open_version_problem(number, open_row):
 
 
 def _article_files(number):
-	"""The names and paths of the Files attached to article ``number``: the only pictures a revision may
-	embed. Publishing moved every picture a version used onto its article (``publish.move_files``), and a
-	File left on a published version is one its text did not use; a revision that embedded one would
-	show readers a picture they cannot open, since it would stay attached to that version."""
-	fids, paths = set(), set()
+	"""``{File name: file_url}`` for the Files attached to article ``number``: the only pictures a
+	revision may embed. Publishing moved every picture a version used onto its article
+	(``publish.move_files``), and a File left on a published version is one its text did not use; a
+	revision that embedded one would show readers a picture they cannot open, since it would stay
+	attached to that version."""
 	rows = frappe.get_all(
 		"File",
 		filters={"attached_to_doctype": ARTICLE, "attached_to_name": number},
 		fields=["name", "file_url"],
 	)
-	for row in rows:
-		if row.get("name"):
-			fids.add(row.get("name"))
-		if row.get("file_url"):
-			paths.add(unquote(row.get("file_url")))
-	return frozenset(fids), frozenset(paths)
+	return {
+		row.get("name"): unquote(row.get("file_url"))
+		for row in rows
+		if row.get("name") and row.get("file_url")
+	}
 
 
-def _own_file(parts, allowed_fids, allowed_paths):
+def _address(src):
+	"""``src`` split as Python reads it, or ``None`` when a browser could read it differently: a
+	backslash (a path separator to a browser in an http(s) address, and part of the host to Python), a
+	space or control character anywhere (a browser drops tabs and newlines inside an address), a
+	sign-in part (``user@host``), or an address Python cannot split at all."""
+	text = (src or "").strip()
+	if any(char == "\\" or ord(char) <= 0x20 or ord(char) == 0x7F for char in text):
+		return None
+	try:
+		parts = urlsplit(text)
+	except ValueError:
+		return None
+	if "@" in parts.netloc:
+		return None
+	return parts
+
+
+def _own_file(parts, files):
+	"""Whether the (same-origin) picture at ``parts`` is one of ``files``: its path is one of their URLs
+	exactly, with no dot segment, and every ``?fid=`` in it names the File at that path."""
 	path = unquote(parts.path or "")
-	if not path.startswith(FILE_PREFIXES):
+	if not path.startswith(FILE_PREFIXES) or any(segment in (".", "..") for segment in path.split("/")):
 		return False
-	fids = {fid.strip() for fid in parse_qs(parts.query).get("fid", ()) if fid.strip()}
-	return bool(fids & set(allowed_fids)) or path in allowed_paths
+	if path not in files.values():
+		return False
+	return all(
+		files.get(fid.strip()) == path for fid in parse_qs(parts.query, keep_blank_values=True).get("fid", ())
+	)
 
 
 def _picture_place(position, parts, local):
@@ -614,24 +822,111 @@ def _picture_place(position, parts, local):
 
 
 def _picture_sources(body_html):
+	return [attrs.get("src") or "" for tag, attrs in _tags(body_html) if tag == "img"]
+
+
+def _tags(body_html):
+	"""Every ``<a>`` and ``<img>`` in ``body_html``, in order, as ``(tag, {attribute: value})``, each
+	attribute's first value (as a browser reads a repeated one)."""
 	if not isinstance(body_html, str) or "<" not in body_html:
 		return []
-	reader = _Pictures()
+	reader = _Tags()
 	reader.feed(body_html)
 	reader.close()
-	return reader.sources
+	return reader.tags
 
 
-class _Pictures(HTMLParser):
+class _Tags(HTMLParser):
 	def __init__(self):
 		super().__init__(convert_charrefs=True)
-		self.sources = []
+		self.tags = []
 
 	def handle_starttag(self, tag, attrs):
-		if tag == "img":
-			self.sources.append(next((value or "" for name, value in attrs if name == "src"), ""))
+		if tag in ("a", "img"):
+			values = {}
+			for name, value in attrs:
+				values.setdefault(name, value or "")
+			self.tags.append((tag, values))
 
 	handle_startendtag = handle_starttag
+
+
+def _stored_findings(args, values):
+	"""``[(argument, Finding)]``: the controller's own secret scan (``content.document_secret_findings``)
+	over the fields as this proposal would store them, the body converted and stripped as
+	``before_validate`` strips it. A body that should have converted and did not raises, so the scan
+	fails closed rather than skip it."""
+	body = args.get("body_markdown")
+	html = values.get("html")
+	if isinstance(body, str) and body.strip() and len(body) <= MAX_BODY and html is None:
+		raise MarkdownUnreadable(
+			"the body was not converted, so it could not be scanned as it would be shown"
+		)
+	stored = {
+		"title": values.get("title"),
+		"summary": values.get("summary"),
+		"keywords": values.get("keywords"),
+		"change_note": values.get("change_note"),
+		"body": content.strip_presentation(html) if html else None,
+	}
+	return [(STORED_AS[field], finding) for field, finding in content.document_secret_findings(stored)]
+
+
+def _invisible_positions(text):
+	"""The positions in ``text`` of characters nobody sees (see :data:`INVISIBLE_CATEGORIES`): a joiner
+	is allowed between two visible characters, and a variation selector straight after one."""
+	found = []
+	for index, char in enumerate(text):
+		if char in "\t\n\r":
+			continue
+		if _invisible(char):
+			if char in JOINERS and _shown_at(text, index - 1) and _shown_at(text, index + 1):
+				continue
+			found.append(index)
+		elif ord(char) in VARIATION_SELECTORS and not (
+			_shown_at(text, index - 1) and ord(text[index - 1]) not in VARIATION_SELECTORS
+		):
+			found.append(index)
+	return found
+
+
+def _invisible(char):
+	return (
+		unicodedata.category(char) in INVISIBLE_CATEGORIES
+		or ord(char) in SUPPLEMENTARY_SELECTORS
+		or char in BLANK_LETTERS
+	)
+
+
+def _shown_at(text, index):
+	"""Whether ``text[index]`` exists and is a visible character (not a space, not invisible)."""
+	if index < 0 or index >= len(text):
+		return False
+	char = text[index]
+	return not char.isspace() and not _invisible(char)
+
+
+def _invisible_problem(where, text, found):
+	first = found[0]
+	if "\n" in text:
+		line = text.count("\n", 0, first) + 1
+		column = first - text.rfind("\n", 0, first)
+		at = f"line {line}, character {column}"
+	else:
+		at = f"character {first + 1}"
+	count = len(found)
+	noun = "an invisible character" if count == 1 else f"{count:,} invisible characters"
+	pronoun = "it" if count == 1 else "them"
+	return (
+		f"{where} has {noun} (the first at {at}): take {pronoun} out, because a person never sees "
+		f"{pronoun} and an AI reading the article does"
+	)
+
+
+def _sent_null(key):
+	"""A present ``null``, which FAC refuses when the card runs: leaving the argument out is the way to
+	say "none"."""
+	return f"{key} was sent as null; leave it out instead"
 
 
 # ------------------------------------------------------------------ helpers

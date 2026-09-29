@@ -44,10 +44,14 @@ from Triton hour by hour. Merging deploys production.
   and `next_step`. No content field of any version is ever in a result or an error.
 - **Before a card is queued**, the gate asks the tool's own precheck (`_gate.APP_PRECHECKED_TOOLS`), and
   refuses with no card, as "Not queued: ...": a missing or oversized field, an argument the tool does
-  not take, a requester who is Administrator, not an enabled staff login or without a KB role, **a
-  secret in the text** (named by argument, line and kind, never by value), a picture it may not embed,
-  and for a revision an article that is not published (unknown and retired read the same), is of
-  another department, or has an open version (named by id, state and who started it, with a link).
+  not take, **an argument sent as `null` or with another JSON type than the schema's** (which FAC's
+  own check would refuse only once the card was confirmed), a requester who is Administrator, not an
+  enabled staff login or without a KB role, **a secret in the text** (named by argument, line and
+  kind, never by value; looked for in the Markdown and in the body as it would be shown), **text
+  nobody sees** (invisible Unicode, a link or picture title, a picture description over 125
+  characters; named by position), a picture it may not embed, Markdown that cannot be converted, and
+  for a revision an article that is not published (unknown and retired read the same), is of another
+  department, or has an open version (named by id, state and who started it, with a link).
 - **The card targets `Knowledge Article Version`** (`_gate.TOOL_TARGET_DOCTYPES`, `_call_target`), so
   the batch dialog starts it unticked with "changes the company knowledge base"; `_confirm_one` fills
   in its `target_name` from the result.
@@ -57,7 +61,11 @@ from Triton hour by hour. Merging deploys production.
 - **A refused call's AI Action Log row withholds its text** (`_gate.WITHHELD_WHEN_UNQUEUED`): every row
   with no `pending_action` (the denylist refusal of a smuggled `doctype`, and the precheck refusal)
   stores the title, summary, keywords, body and change note as `"<withheld: N characters>"`, and its
-  summary as "Draft knowledge article (text withheld)". A queued card keeps the whole proposal.
+  summary as "Draft knowledge article (text withheld)". It keeps whole only the
+  `_gate.KEPT_WHEN_UNQUEUED` arguments (`kb_number`, `department`, `kind`, `process_owner`,
+  `submit_for_review`, each while true/false, null or at most 140 characters), so an argument the
+  tool does not take is withheld too, and its error is scrubbed of every withheld value. A queued
+  card keeps the whole proposal.
 - `assistant_tools/_knowledge_base.run_draft`, the drafting tool's failure path: `{"success": false,
   "error": "The draft could not be written just now. Nothing was written."}` and one deferred Error Log,
   "Knowledge base AI draft", naming the exception's type only.
@@ -86,7 +94,10 @@ from Triton hour by hour. Merging deploys production.
   (the article `ai_drafted` 1); a submitted revision leaving the live article untouched; **a submit
   refused at execution leaving no Draft**, the savepoint included; **the only move being Submit for
   Review**; external pictures refused; a secret refused at the precheck and again at execution, never
-  in an Error Log.
+  in an Error Log. From the review: every fix in "Found in review" below has a test, and so do four
+  rules that had none (the `write` check before a submit, a new article's department, an
+  enabled-staff `process_owner`, and the under-lock rechecks of a retire or a revision that commits
+  after the check); each was checked by deleting it, one mutation at a time, and seeing a test fail.
 
 ### Changed
 
@@ -117,9 +128,11 @@ from Triton hour by hour. Merging deploys production.
   `safe_mode`, `utils/data.py:2480-2495`), so the tool calls markdown2 itself with the same extras and
   `safe_mode="escape"`: a `<script>` or a `<div class="hidden">` in the proposal is text a reader sees.
   The controller still strips presentation on save.
-- **The secret scan reads the Markdown the model sent, and fails closed** (found while building).
-  markdown2 reads an underscore inside a word as emphasis, so `sk_live_…` becomes `sk<em>live</em>…`
-  once converted, and a scan of the HTML would miss it. And the scan runs before any lookup, so a
+- **The secret scan reads the Markdown the model sent, and the body as it would be shown, and fails
+  closed** (found while building, and in review). markdown2 reads an underscore inside a word as
+  emphasis, so `sk_live_…` becomes `sk<em>live</em>…` once converted, and only the Markdown scan sees
+  it; markup between a label and its value (`**Password:** …`) hides the value from that scan, and
+  only the controller's own scan of the converted body sees it. Both run before any lookup, so a
   lookup that fails cannot let a secret through to a card.
 - **The gate stores arguments almost verbatim** (finding 8): it redacts by key name only, in the card,
   the AI Action Log and the summary, and FAC's Assistant Audit Log stores them again on a confirmed run.
@@ -150,6 +163,36 @@ from Triton hour by hour. Merging deploys production.
 - ADR 0017's 2026-09-28 amendment (already recorded with v1.558.0) describes this tool; this release
   implements it. Nothing in the denylist, `NEVER_EXEMPT` or the exemptable tools changed.
 
+### Found in review (before merge; details in WI-080, "Found in review of PR 6b")
+
+- **FAC's type check runs only after the card is confirmed.** The gate wraps `BaseTool._safe_execute`,
+  and FAC 3.0.0's `validate_arguments` (every present key against the schema's JSON type) runs inside
+  it, so a `null` (`submit_for_review: null`, which strict function-calling clients send for an unset
+  field) or an integer `department` queued a card that could only end Failed, "Invalid type for field
+  …", after the requester confirmed it. `ai_draft.TYPES`, held to the schema by a test, refuses them
+  first: "<x> was sent as null; leave it out instead".
+- **Markup hid a secret from the precheck.** `**Password:** …`, `**API key:** …`, `sk\_live\_…` and
+  `sk&#95;live&#95;…` passed the Markdown scan and were caught only by the controller, once the card
+  had been confirmed, leaving the value in that card's Failed AI Action Log row. The precheck now runs
+  the controller's own scan over the fields as they would be stored.
+- **A revision's picture could point anywhere on the site.** The article's `?fid=` was accepted with
+  *any* path, so `/files/../api/method/…?fid=<its own File>` became a same-origin GET fired by every
+  reader, the reviewers first (v16's CSRF check skips GET). And `https://evil.example\@site/…` is this
+  site to Python and `evil.example` to a browser. Now the path must be one of the article's Files'
+  URLs exactly, any fid must name that File, and a backslash, space, control character or sign-in part
+  refuses the address.
+- **Invisible text** (Unicode Tag characters, zero-width spaces, bidirectional controls) and link or
+  picture titles reached the draft and every AI reader while the person confirming and the approver
+  saw nothing; they are refused by position.
+- **markdown2 2.5.4 raises `RecursionError` at about 200 nested levels**, which the precheck let
+  escape, so the gate queued the card; any conversion failure is now "could not be read as Markdown",
+  and a failed lookup no longer hides a shape problem.
+- **A refused call's log row kept any argument the tool does not take** (`body` for `body_markdown`),
+  whole: the withheld list is now paired with an allowlist, `_gate.KEPT_WHEN_UNQUEUED`.
+- WI-080 said a Failed card's `error` begins "Execution failed: "; it does not. The card stores FAC's
+  `[ToolReportedError] <reason> (execution_time: …s)`, and only the message the confirming person sees
+  adds the prefix. A test pins both.
+
 ### After deploy (read-only)
 
 - ``SELECT tool_name, tool_category, enabled FROM `tabFAC Tool Configuration` WHERE tool_name='draft_knowledge_article'``
@@ -171,7 +214,8 @@ from Triton hour by hour. Merging deploys production.
 - A draft whose text holds an invented written-out password (for example "Password: Otter#2931") is
   refused before any card: no new AI Pending Action, and the AI Action Log row shows
   `<withheld: N characters>` for the text fields and "Draft knowledge article (text withheld)" as its
-  summary.
+  summary. So is one with the password in bold ("**Password:** Otter#2931"), named "as it would be
+  shown", and one that sends `submit_for_review` as `null` ("was sent as null; leave it out instead").
 - ``SELECT COUNT(*) FROM `tabError Log` WHERE method LIKE '%Knowledge base%' AND creation > '<deploy time>'`` = 0,
   and no Error Log titled "AI gate pre-check failed for draft_knowledge_article" or "AI gate failure for
   draft_knowledge_article".
