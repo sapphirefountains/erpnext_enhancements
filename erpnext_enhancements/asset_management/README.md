@@ -16,6 +16,7 @@ what went out with each one and what came back.
 | `rental_rules.py` | Every rental judgement, **no Frappe**; tested bench-free (`tests/test_rental_rules.py`) |
 | `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
 | `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
+| `rental_planner.py`, `page/rental_planner/` | The Rental Planner page: fleet timeline + the four-step new-rental flow (v1.563.0) |
 | `workspace/asset_management/` | Desk workspace (with an **Event Rentals** card) |
 
 ## `Asset Booking`
@@ -177,6 +178,46 @@ seven days, but **nothing expires holds yet**; that job comes with the sales PR.
   Fountain Fleet category. The fountain link on a booking searches through `rentable_asset_query`,
   because the people who book rentals are not necessarily allowed to search the Asset register,
   and v16 validates a link through that same search.
+
+### The Rental Planner (v1.563.0)
+
+A desk page at `/desk/rental-planner` (`page/rental_planner/`, server side in `rental_planner.py`).
+Open it from the workspace, the Rental Booking list, or a booking's View menu.
+
+- **The board is the fleet timeline.** It has one row per rentable fountain and one per accessory
+  pool, across two weeks, a month or a quarter.
+  - Confirmed rentals are solid blue. Tentative holds are hatched and dashed. Prep and cleaning are
+    thin grey bars. Anything booked by hand on Asset Booking is amber, and out-of-service is red.
+  - Clicking a bar opens its record. Clicking an empty day on a fountain starts a new rental with
+    that fountain and date filled in.
+  - Pool rows show units out per day against what can be booked, shaded as they fill.
+  - The feed is `rental_planner.get_timeline`, capped at 100 days.
+- **It is drawn here, not on the Gantt widget.** DHTMLX Gantt Standard draws one bar per row. A
+  fleet timeline needs several bookings on each fountain's row, and split tasks and the resource
+  view are PRO-only.
+- **New Rental is four steps:**
+  1. When and where.
+  2. Fountains and accessories. Live availability comes from `get_availability`, and a package can
+     be applied with `plan_package`.
+  3. Customer and project. There is an in-place New Customer quick entry, and an Events Project can
+     be created.
+  4. Review and fees, then **Place Hold** (Tentative) or **Book as Confirmed**.
+- **`create_rental` creates the Project and the booking in one transaction.** If the booking is
+  refused, for example because someone took the fountain in the meantime, the Project rolls back
+  with it. It accepts only the fields in `BOOKING_FIELDS`, so a request cannot set status, stamps
+  or totals. A new Project is typed as Events by both `project_type` and the `custom_value_stream`
+  row.
+- **Every screen is a route** (`new/dates`, `new/fountains`, `new/customer`, `new/review`), so Back
+  and Forward step through the flow.
+  - The flow's own Back button steps back through history when the previous step is what is behind
+    it, so Next, Back, Next leaves no stack of entries to replay.
+  - An address for a step whose earlier steps are unfinished is corrected in place, not pushed.
+  - The draft is kept in memory and in `sessionStorage`, so a reload or leaving the page loses
+    nothing.
+  - Once booked, the draft is cleared, so Back from the confirmation cannot book the same fountains
+    twice.
+  - `scripts/test_rental_planner_history.js` runs the real script against a model of the v16 router,
+    from `tests/test_rental_planner.py`.
 
 ### Out of service
 

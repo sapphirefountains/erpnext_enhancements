@@ -1,0 +1,33 @@
+{
+ "content": "",
+ "creation": "2026-09-29 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "calendar",
+ "modified": "2026-09-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "rental-planner",
+ "owner": "Administrator",
+ "page_name": "rental-planner",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Operations Team"
+  },
+  {
+   "role": "Sales Team"
+  },
+  {
+   "role": "Production Team"
+  },
+  {
+   "role": "Executive Team"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Rental Planner"
+}

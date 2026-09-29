@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.563.0] - 2026-09-29
+
+**Event rentals, part 2: the Rental Planner.** This adds a desk page with a fleet timeline and a
+guided four-step flow for booking a rental. It is the "simple to operate, with a flow" half of
+Nik's brief; PR 1 (v1.562.0) built the booking model it drives.
+
+### Added
+
+- **Rental Planner** page at `/desk/rental-planner`, for the Operations, Sales, Production and
+  Executive Teams and System Manager (the same roles that can read a Rental Booking).
+  - **The board.** One row per rentable fountain, with every calendar entry on it, and one row per
+    accessory pool, with units out per day. It spans two weeks, a month or a quarter, with paging
+    and a Today button.
+    - Holds are drawn hatched, confirmed rentals solid, prep and cleaning as thin bars, other
+      bookings amber and out-of-service red.
+    - Clicking a bar opens the record. Clicking an empty day on a fountain starts a rental there.
+  - **New Rental** is four steps:
+    1. when and where;
+    2. fountains and accessories, with live availability and optional packages;
+    3. customer, contact and project, including a New Customer quick entry and an optional new
+       Events Project;
+    4. fees and review, then **Place Hold** or **Book as Confirmed**.
+  - Links to it from the Asset Management workspace, the Rental Booking list, and the View menu on
+    a Rental Booking.
+- `asset_management/rental_planner.py`:
+  - `get_timeline`: needs read permission on Rental Booking, and covers at most 100 days.
+  - `create_rental`: POST only, needs create permission on Rental Booking, and accepts only the
+    fields in `BOOKING_FIELDS`. When asked, it creates the Events Project in the same transaction,
+    so a booking refused at the last moment leaves no orphan Project. The Project is typed by both
+    `project_type` and `custom_value_stream`, because "what kind of job is this" is read from
+    either.
+- `scripts/test_rental_planner_history.js` and `tests/test_rental_planner.py`, with their own CI
+  step.
+  - The harness runs the real page script against a model of the v16 router. It checks that Next is
+    an entry, that the flow's Back steps back through history rather than stacking entries, that a
+    deep link to an unfinished step is corrected in place, and that a reload keeps the draft.
+  - It also checks that Back from the booked screen cannot resubmit the old draft.
+  - Each of these was confirmed to fail when the behaviour it guards was broken deliberately.
+
+### Notes
+
+- **The timeline is not built on the Gantt widget.** DHTMLX Gantt Standard draws one bar per row,
+  and a fleet timeline is several bookings on each fountain's row. Split tasks and the resource
+  view are PRO-only features, so the board is a light HTML grid instead.
+
 ## [1.562.0] - 2026-09-29
 
 **Event rentals, part 1: every rental fountain gets its own booking calendar.** A new **Rental

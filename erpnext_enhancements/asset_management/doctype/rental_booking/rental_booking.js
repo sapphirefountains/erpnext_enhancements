@@ -72,6 +72,7 @@ frappe.ui.form.on("Rental Booking", {
 		if (!frozen) {
 			add_availability_button(frm);
 		}
+		frm.add_custom_button(__("Rental Planner"), () => frappe.set_route("rental-planner"), __("View"));
 		frm.add_custom_button(__("Fountain Calendar"), () => {
 			frappe.route_options = { rental_booking: frm.doc.name };
 			frappe.set_route("List", "Asset Booking", "Calendar");
