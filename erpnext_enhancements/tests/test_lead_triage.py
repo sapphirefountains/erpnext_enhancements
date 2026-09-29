@@ -527,7 +527,7 @@ class SweepTests(unittest.TestCase):
 		lead_triage.sweep_first_response_sla()
 		self.assertEqual([e["recipients"] for e in STATE["emails"]], [["cat@example.com"]])
 		self.assertTrue(STATE["errors"], "a missing escalation recipient must be said out loud")
-		# Titled by its title: the one-line warning used to become the row's title (v1.561.3).
+		# Titled by its title: the one-line warning used to become the row's title (v1.566.1).
 		title, body = STATE["errors"][0]
 		self.assertEqual(title, "Lead triage: no escalation recipient")
 		self.assertTrue(body.startswith("The speed-to-lead SLA is on"), body)

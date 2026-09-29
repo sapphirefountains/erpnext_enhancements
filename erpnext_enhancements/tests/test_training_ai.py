@@ -1283,7 +1283,7 @@ class TestJudgeIsGatedAndQuiet(unittest.TestCase):
 		self.assertIsNone(
 			training_ai.judge_short_answer("Q?", ["isolation valve"], "the isolation valve")
 		)
-		# Logged under its title: the one-line sentence used to become the title (v1.561.3).
+		# Logged under its title: the one-line sentence used to become the title (v1.566.1).
 		self.assertEqual(
 			STATE["errors"],
 			[("Training AI", "Short Answer AI grading did not reach the model; the exact-match verdict stands.")],

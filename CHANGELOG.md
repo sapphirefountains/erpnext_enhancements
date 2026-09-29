@@ -15,7 +15,7 @@ Console rows alone.
 
 ### Fixed
 
-- **86 direct calls, and 4 through `log_error_throttled`, stored a one-line message as the Error
+- **87 direct calls, and 4 through `log_error_throttled`, stored a one-line message as the Error
   Log row's title and the title as its body.** Frappe v16's `log_error(title=None, message=None, ...)` (`frappe/utils/error.py`,
   unchanged from 16.31.0 through 16.36.0; prod runs 16.35.0) does not decide which argument is
   the title by position. Given both, it swaps them when, and only when, the first one contains a
@@ -41,13 +41,16 @@ Console rows alone.
     by keyword, the `(throttled)` notice included. The trailing-newline workaround that 1.561.2
     added for the two Search Console messages (`_log_gsc_error` in `api/analytics.py`) is gone;
     both call `log_error_throttled` directly.
-  - **86 direct calls now pass `title=` and `message=` by keyword.** They are in telephony, the
+  - **87 direct calls now pass `title=` and `message=` by keyword.** They are in telephony, the
     time kiosk, call intelligence, the morning briefing, maintenance billing and renewal, the
     training API, AI grading and authoring, the CRM hand-off, Fountain Move conversion, pay-period
     reports, Google Drive folders, Stripe dunning, payouts, reconciliation and saved cards,
     training disputes, media, grading, progress, sign-off and escalation, project merge, the
     Opportunity and Task script migrations, `triton_chat.py`, the AI write gate's attach check,
-    and 20 patches.
+    and 21 patches. One of the patches, `add_rental_esign_signature_block` (event rentals,
+    1.564.0), reached `main` after this change was first written. It is registered in
+    `patches.txt` and runs on the next migrate, so its refusal row would have been the first
+    new backwards row.
   - **Keywords do not get around the heuristic.** `log_error(title=t, message=m)` still swaps
     when `t` has a newline. Five project dashboard calls passed `(f"... {e}",
     frappe.get_traceback())`: the right order, but an exception message with a newline in it
@@ -86,7 +89,8 @@ New rows from these call sites are titled as below instead of with their message
   unknown funding type`, `Stripe: auto-charge failure (no Accounts Manager)`.
 - **Everything else:** `Google Drive`, `Project Drive Folder`, `Project Merge Error`, `Final Task
   Completion Script`, `AI Governance`, `MDM webhook: secret too short`, `GSC API Error` (the
-  refusal), and the patches' `Contract e-sign: signature block not patched`, `Hand-off SLA
+  refusal), and the patches' `Contract e-sign: signature block not patched`, `Contract e-sign:
+  rental signature block not patched`, `Hand-off SLA
   backfill`, `Won-date backfill skipped`, `Order stage backfill skipped`, `Training feed`,
   `Maintenance template: fields left unbound`, `Project Note cleanup`, `Workspace sync`,
   `Purchase Order print format purge`, `Opportunity status cleanup`, `Gallon UOM rename`,
@@ -107,13 +111,14 @@ rows under one title each, where it used to count one entry per distinct message
   that interpolates a caught exception, by keyword or not. It refuses the two shapes that raise
   `TypeError` on v16: `message=` without a title, and a positional first argument plus
   `title=`. It also checks that `log_error_throttled` forwards every call by keyword. Its own
-  tests pin each rule against the shapes found on prod. Run against the tree before this change,
-  it reports 94 calls: the 86 direct ones, the two forwards in `log_error_throttled`, the 5
-  project dashboard calls and the client-IP alert.
+  tests pin each rule against the shapes found on prod. Run against the tree before this change
+  (`main` at 1.566.0), it reports 95 calls: the 87 direct ones, the two forwards in
+  `log_error_throttled`, the 5 project dashboard calls and the client-IP alert.
 - **The bench-free stubs now behave like v16.** Several suites stubbed `log_error` in the legacy
   order (`message=None, title=None`, or `lambda message, title`) or recorded `a[0]`. Each now
   takes v16's signature, applies the swap when the title holds a newline, and records the row
-  as it would be stored. Their fake tracebacks are multi-line, as real ones are. The suites are
+  as it would be stored. Where a suite fakes a traceback, the fake is multi-line, as a real one
+  is: a one-line fake would record a positional `(traceback, title)` call backwards. The suites are
   `test_error_log_fixes`, `test_error_log_followup`, `test_drive_sync_recovery`,
   `test_drive_link_reconcile`, `test_lead_triage`, `test_web_lead_ingress`, `test_webhook_auth`,
   `test_search_console` (whose `stored_row` now reads keyword calls too), `test_training_ai`,
@@ -123,11 +128,17 @@ rows under one title each, where it used to count one entry per distinct message
   `test_opportunity_won_date_backfill`. The old `test_error_log_fixes` stub recorded the title
   the caller meant, so it passed the throttle while prod stored its rows backwards. Under the
   v16 stub, three of its existing tests fail against the old throttle.
-- Where a suite reaches a fixed call, it now asserts the row's title: the throttled MDM, web-lead
-  and lead-triage warnings, both Search Console rows, AI grading, `Training media`, `Training
-  progress`, the pay-period report and the won-date backfill. Each of those assertions fails
-  when the module is swapped back to its version before this change. Search Console's asserts the
-  body exactly, so the removed trailing newline cannot come back unnoticed.
+- These fixed calls now have a test that asserts the row's title: the throttled MDM, web-lead
+  and lead-triage warnings, both Search Console rows, the Short Answer judge in `training_ai`,
+  grading's `Training AI` fallback and its two `Training analytics` rows, `Training media`,
+  `Training progress`, the pay-period report, the won-date backfill and the rental
+  signature-block patch. Each of those assertions fails when the module is swapped back to its
+  version before this change. Search Console's asserts the body exactly, so the removed trailing
+  newline cannot come back unnoticed.
+- **`test_feedback_release_sync` now fails a release numbered below an earlier one.** This change
+  was first cut at 1.561.3 while `main` moved on to 1.566.0. Both version files agreed and the
+  section was on top, so neither the version-sync job nor the existing newest-section check
+  would have caught a merge that kept 1.561.3.
 
 ### Not changed
 
@@ -135,7 +146,7 @@ rows under one title each, where it used to count one entry per distinct message
   are. To find them, look for a body under 80 characters with no newline (`LOCATE(CHAR(10),
   error) = 0 AND LENGTH(error) < 80`). For a message over 140 characters, look for a title
   exactly 140 characters long that the body begins with, where the body's last line is short.
-- **Left positional, because the heuristic already gets them right:** 294 `(traceback, title)`
+- **Left positional, because the heuristic already gets them right:** 295 `(traceback, title)`
   calls in files this change does not otherwise touch, and 19 that span several lines in files
   it does. The 5 calls with a single argument are also left alone: that argument is the title.
 

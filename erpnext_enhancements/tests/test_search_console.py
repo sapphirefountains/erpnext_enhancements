@@ -15,7 +15,7 @@ same 403 as a missing grant. These pin:
   timeout is retried with backoff, a 4xx and a certificate failure never are, and a failure
   that outlasts the retries writes exactly one short Error Log row;
 * that a one-line message (that one, and the refusal) is stored as the row's body under the
-  title ``GSC API Error``, not as the title itself (see ``stored_row``). Since v1.561.3 that is
+  title ``GSC API Error``, not as the title itself (see ``stored_row``). Since v1.566.1 that is
   ``log_error_throttled`` passing ``title=`` and ``message=`` by keyword, not a trailing newline
   added here, so the body is the message exactly;
 * that the key is loaded with a Search Console scope, and that the scoped object is the one
@@ -160,7 +160,9 @@ def _install():
 	STATE["cache"] = cache
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
 	frappe.log_error = lambda *a, **k: STATE["errors"].append((a, k))
-	frappe.get_traceback = lambda: "tb"
+	# Multi-line, as a real one is: v16 picks the Error Log title by whether the first argument
+	# holds a newline, so a one-line fake would model a (traceback, title) call backwards.
+	frappe.get_traceback = lambda: 'Traceback (most recent call last):\n  File "analytics.py"\nHttpError: 400'
 	frappe.local = types.SimpleNamespace(conf=types.SimpleNamespace(get=lambda k: "test"))
 	frappe.get_doc = lambda doctype: STATE["settings"]
 	frappe._dict = _dict
@@ -495,6 +497,16 @@ class TransientRetryTests(unittest.TestCase):
 		title, body = stored_row(STATE["errors"][0])
 		self.assertEqual(title, "GSC API Error")
 		self.assertEqual(body, result["error"])
+
+	def test_a_4xx_row_is_the_traceback_under_the_title(self):
+		# A positional (traceback, title) call is right on v16 only because a traceback holds a
+		# newline, so the fake one must too: a one-line fake would store it backwards.
+		traceback = frappe_traceback()
+		self.assertIn("\n", traceback)
+		self.assertEqual(stored_row(((traceback, "GSC API Error"), {})), ("GSC API Error", traceback))
+		self._run({"query": [HttpError(400)]})
+		self.assertEqual(len(STATE["errors"]), 1)
+		self.assertEqual(stored_row(STATE["errors"][0]), ("GSC API Error", traceback))
 
 	def test_the_final_error_carries_no_chained_exception(self):
 		class AlwaysTimesOut:

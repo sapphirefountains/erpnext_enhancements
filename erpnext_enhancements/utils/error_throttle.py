@@ -113,7 +113,7 @@ def log_error_throttled(
 	``(message, title)`` positionally therefore worked for a traceback and stored a
 	one-line message backwards -- the message as the row's title, cut at 140
 	characters, and the title as its body -- which is what happened to the MDM,
-	web-lead, lead-triage and Search Console callers until v1.561.3. Keywords make
+	web-lead, lead-triage and Search Console callers until v1.566.1. Keywords make
 	the title the title whatever the message holds. They do not help a ``title``
 	with a newline in it, which v16 still swaps, so keep titles to one line.
 	"""

@@ -345,7 +345,7 @@ class TestDegradesRatherThanThrows(unittest.TestCase):
 		STATE["key_json"] = "{not json"
 		self.assertIsNone(gcs_media.generate_signed_url("o.mp4", now=FIXED_NOW))
 		self.assertTrue(STATE["errors"])
-		# Titled by its title: the one-line sentence used to become the title (v1.561.3).
+		# Titled by its title: the one-line sentence used to become the title (v1.566.1).
 		self.assertEqual({title for title, _ in STATE["errors"]}, {"Training media"})
 		self.assertIn("is not valid JSON", STATE["errors"][0][1])
 

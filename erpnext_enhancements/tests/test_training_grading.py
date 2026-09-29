@@ -40,6 +40,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -50,6 +51,8 @@ training_author = None
 
 #: Tables the stub serves, reset by each test.
 STATE = {}
+
+FAKE_TRACEBACK = 'Traceback (most recent call last):\n  File "grading.py", line 1\nRuntimeError: boom'
 
 # The strings that must never reach a browser. Deliberately includes the field
 # names as well as the sentinel values, so a payload that leaked a whole child row
@@ -170,7 +173,9 @@ def _install_frappe_stub():
 	frappe.enqueue = lambda *a, **k: None
 	frappe.msgprint = lambda *a, **k: None
 	frappe.log_error = _v16_log_error
-	frappe.get_traceback = lambda: ""
+	# Multi-line, as a real one is: v16 decides which argument is the title by whether it
+	# holds a newline, so a one-line fake would record a (traceback, title) call backwards.
+	frappe.get_traceback = lambda: FAKE_TRACEBACK
 
 	class _PermissionError(Exception):
 		pass
@@ -1082,6 +1087,77 @@ class TestGradeCheckpoint(unittest.TestCase):
 		self.assertEqual(stored["answered"], 1)
 		self.assertEqual(stored["correct"], 1)
 		self.assertTrue(stored["at"])
+
+
+# ------------------------------------------------------------- Error Log rows
+
+
+class TestErrorLogRowsAreTitledWithTheirTitle(unittest.TestCase):
+	"""Grading's three best-effort failures file an Error Log row under their title.
+
+	Frappe v16's ``log_error`` makes the first argument the title unless it holds a newline.
+	Until v1.566.1 these calls passed ``(message, title)``, so each one-line sentence became
+	the row's title and "Training AI" or "Training analytics" its body. ``_v16_log_error``
+	stores what v16 stores, so either call put back in that order fails here.
+	"""
+
+	def setUp(self):
+		_reset_state()
+		_course()
+		_video_asset()
+		self.attempt = _attempt()
+
+	def _only_row(self):
+		self.assertEqual(len(STATE["errors"]), 1, STATE["errors"])
+		return STATE["errors"][0]
+
+	def test_an_unreachable_ai_judge_is_titled_training_ai(self):
+		_publish_lesson(questions=_six_questions())
+		_set_progress(quiz={"runs": 0, "best": 0.0})
+		unreachable = types.ModuleType("erpnext_enhancements.api.training_ai")
+
+		def judge_short_answer(*args, **kwargs):
+			raise ConnectionError("the model endpoint is down")
+
+		unreachable.judge_short_answer = judge_short_answer
+		with (
+			mock.patch.dict(sys.modules, {"erpnext_enhancements.api.training_ai": unreachable}),
+			mock.patch.object(grading, "_file_quiz_answers"),
+		):
+			result = grading.grade_quiz(self.attempt, LESSON_KEY, {"TRN-Q-000006": "a hard hat"})
+		row = next(r for r in result["per_question"] if r["question"] == "TRN-Q-000006")
+		self.assertFalse(row["correct"], "the exact-match verdict stands")
+		self.assertEqual(
+			self._only_row(),
+			("Training AI", "Short Answer AI grading could not be reached; the exact-match verdict stands."),
+		)
+
+	def test_quiz_answers_that_cannot_be_filed_are_titled_training_analytics(self):
+		_publish_lesson(questions=_six_questions())
+		_set_progress(quiz={"runs": 0, "best": 0.0})
+		with mock.patch.object(grading, "_file_answer", side_effect=RuntimeError("lock wait timeout")):
+			grading.grade_quiz(self.attempt, LESSON_KEY, {"TRN-Q-000001": ["optA"]})
+		title, body = self._only_row()
+		self.assertEqual(title, "Training analytics")
+		self.assertTrue(body.startswith(f"Could not file quiz answers for attempt {ATTEMPT} "), body)
+
+	def test_a_checkpoint_that_cannot_be_filed_is_titled_training_analytics(self):
+		_checkpoint(key="cpkey1", at=252, max_attempts=2, rewind=15)
+		_publish_lesson(questions=[], has_quiz=0)
+		_set_progress(blocks={"blk1": {"dur": 600, "iv": [[0, 300]], "cov": 0.5}})
+		with mock.patch.object(grading, "_file_answer", side_effect=RuntimeError("lock wait timeout")):
+			grading.grade_checkpoint(self.attempt, "cpkey1", ["cpA"])
+		title, body = self._only_row()
+		self.assertEqual(title, "Training analytics")
+		self.assertTrue(body.startswith("Could not file checkpoint cpkey1 for attempt "), body)
+
+	def test_the_stub_stores_a_positional_traceback_call_the_right_way_round(self):
+		"""The legacy ``(traceback, title)`` call is right on v16 only because a traceback has a
+		newline. A one-line fake traceback would record it backwards."""
+		import frappe
+
+		frappe.log_error(frappe.get_traceback(), "Training analytics")
+		self.assertEqual(self._only_row(), ("Training analytics", FAKE_TRACEBACK))
 
 
 # -------------------------------------------------------------- evaluate_gates

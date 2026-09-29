@@ -249,7 +249,7 @@ class AuthTests(unittest.TestCase):
 		self.assertEqual(result["status"], "unauthorized")
 		self.assertTrue(STATE["errors"], "a too-short secret must say so in the Error Log")
 		self.assertNotIn(short, repr(STATE["errors"]), "the secret must never reach the Error Log")
-		# Titled by its title: the one-line warning used to become the row's title (v1.561.3).
+		# Titled by its title: the one-line warning used to become the row's title (v1.566.1).
 		title, body = STATE["errors"][0]
 		self.assertEqual(title, "Web Lead ingress: secret too short")
 		self.assertTrue(body.startswith("web_lead_shared_secret is shorter than"), body)

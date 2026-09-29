@@ -24,6 +24,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 APP = Path(__file__).resolve().parents[1]
 SALES = APP / "asset_management" / "rental_sales.py"
@@ -84,6 +85,40 @@ class TestSignatureBlockPatch(unittest.TestCase):
 	def test_patch_handles_an_empty_body(self):
 		self.assertEqual(self.patch.rewrite_signature_block(""), ("", False))
 		self.assertEqual(self.patch.rewrite_signature_block(None), (None, False))
+
+	def test_a_diverged_body_is_logged_under_its_title(self):
+		"""Frappe v16's ``log_error`` makes its first argument the title unless that holds a newline.
+
+		This call shipped in v1.564.0 as ``log_error(sentence, title)``: prod would have filed the
+		one-line sentence as the row's title and the title as its body (fixed in v1.566.1). The stub
+		stores the row the way v16 does, so that order fails here.
+		"""
+		unpatched = self.shipped.replace(self.patch.NEW_BLOCK, self.patch.OLD_BLOCK)
+		diverged = unpatched.replace("Print Name: {{ blank(30) }}", "Printed Name: {{ blank(30) }}")
+		rows, writes = [], []
+
+		def log_error(
+			title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+		):
+			if message and "\n" in title:
+				title, message = message, title
+			rows.append((title, message))
+
+		fake = types.SimpleNamespace(
+			db=types.SimpleNamespace(
+				get_value=lambda *a, **k: diverged,
+				set_value=lambda *a, **k: writes.append(a),
+				commit=lambda: None,
+			),
+			log_error=log_error,
+		)
+		with mock.patch.object(self.patch, "frappe", fake):
+			self.patch.execute()
+		self.assertEqual(writes, [], "a diverged template is left alone")
+		self.assertEqual(len(rows), 1, rows)
+		title, body = rows[0]
+		self.assertEqual(title, "Contract e-sign: rental signature block not patched")
+		self.assertIn("{{ sig('client') }}", body)
 
 	def test_exhibit_a_condition_lines_stay_paper(self):
 		"""Filled in by hand at delivery and return, not at signing."""

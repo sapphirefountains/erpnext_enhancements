@@ -417,7 +417,7 @@ class TestLoad(unittest.TestCase):
 		until somebody hand-edits JSON in the database is worse."""
 		STATE["rows"]["ATT-0001"] = {"progress_json": "{not json"}
 		self.assertEqual(progress.load("ATT-0001"), {"lessons": {}})
-		# Titled by its title: the one-line sentence used to become the title (v1.561.3).
+		# Titled by its title: the one-line sentence used to become the title (v1.566.1).
 		self.assertEqual(
 			STATE["errors"],
 			[("Training progress", "Training Attempt ATT-0001 has unparseable progress_json; starting a fresh blob.")],

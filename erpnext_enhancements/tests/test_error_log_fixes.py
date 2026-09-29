@@ -214,7 +214,7 @@ class TestErrorThrottle(unittest.TestCase):
 class TestThrottledRowsAreTitledByTheirTitle(unittest.TestCase):
 	"""``log_error_throttled(message, title)`` must store ``title`` as the row's title.
 
-	Until v1.561.3 it forwarded ``frappe.log_error(message, title)`` positionally, and v16 keeps
+	Until v1.566.1 it forwarded ``frappe.log_error(message, title)`` positionally, and v16 keeps
 	a first argument without a newline as the title. So a one-line message -- the MDM and
 	web-lead short-secret warnings, the lead-triage escalation warning, the Search Console
 	refusal -- became the row's title and its real title became the body.

@@ -350,7 +350,7 @@ class MDMWebhookAuthTests(unittest.TestCase):
 		self.assertEqual(_status(), 401)
 		self.assertTrue(STATE["errors"], "a too-short secret must say so in the Error Log")
 		self.assertNotIn(short, repr(STATE["errors"]), "the secret must never reach the Error Log")
-		# Titled by its title: the one-line warning used to become the row's title (v1.561.3).
+		# Titled by its title: the one-line warning used to become the row's title (v1.566.1).
 		title, body = STATE["errors"][0]
 		self.assertEqual(title, "MDM webhook: secret too short")
 		self.assertTrue(body.startswith("MDM Settings.webhook_secret is shorter than"), body)
