@@ -129,8 +129,8 @@ EXPLICIT_READONLY = {
     # published Knowledge Article as the caller through knowledge_base/ai_tools.py and writes
     # nothing. Listed here for the v1.239.1 reason above: unclassified, a read falls to the
     # fail-closed default and answers with a card. tests/test_knowledge_base_tools.py fails the
-    # build if any of the three leaves this set. The drafting tool (PR 6b) is a write and will
-    # go in APP_MUTATING, never here.
+    # build if any of the three leaves this set. The drafting tool (PR 6b, v1.560.0) is a write and
+    # is in APP_MUTATING, never here.
     "search_company_knowledge",
     "fetch_knowledge_article",
     "list_company_knowledge",
@@ -177,6 +177,15 @@ APP_MUTATING = {
     # it failed at execution after a human had approved the card (MAT-MR-2026-00014,
     # 2026-09-25). HIGH_RISK below, like submit_document: a cancel is permanent.
     "cancel_document",
+    # v1.560.0 (WI-080 PR 6b, ADR 0017's 2026-09-28 amendment) -- write a knowledge-base Draft, a new
+    # article or a revision, and with submit_for_review also submit it for review, all in one card
+    # that only the person who asked may confirm (knowledge_base/ai_draft.py refuses anyone else).
+    # Medium, by being in neither risk set, which is create_training_draft_version's band for the
+    # same reasons: not Low, because one of its two modes puts a version in front of the KB
+    # Approvers and emails them; not High, because nothing is destroyed and the author's side can
+    # withdraw and discard in the Desk. It never approves or publishes: approval_problems refuses
+    # every approval made while a gate card runs, and the requester as the approver.
+    "draft_knowledge_article",
 }
 
 HIGH_RISK = {
@@ -328,6 +337,92 @@ KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Ver
 #: shows names the kind (`gating_api._never_exempt_reason`). A new entry joins one of the three
 #: kinds or gets its own phrase in that function; `test_ai_gate_batch` fails on one with neither.
 NEVER_EXEMPT = frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES
+
+#: App tools whose card writes a doctype its arguments do not name (v1.560.0, WI-080 PR 6b). A card's
+#: target was only ever `arguments["doctype"]`, which is what a generic create/update carries, so a
+#: drafting card had none, and the batch dialog could not see that it changes the knowledge base
+#: (WI-080, "Found while designing Slice 3", 9). `_call_target` answers for these from the tool's name,
+#: with no name until the confirmed run returns one (`gating_api._confirm_one` fills `target_name` from
+#: the result's `name`). A `doctype` smuggled into their arguments is ignored here, and still refused by
+#: the denylist in step 0 when it names a denylisted doctype. Each value is one of NEVER_EXEMPT's kinds,
+#: so `gating_api._review_reasons` gives the card its reason and starts it unticked.
+TOOL_TARGET_DOCTYPES = {"draft_knowledge_article": "Knowledge Article Version"}
+
+#: App tools the gate asks, before it queues a card, whether the call could ever run (v1.560.0). Each
+#: has a `precheck(arguments)` method returning its problems as short clauses; any problem refuses the
+#: call with no card (`_precheck_refusal`). A precheck that raises queues the card as before, logged by
+#: type only (`_log_failure_type`), because execution runs the same check again.
+APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article"})
+
+#: What a log row with no card keeps of a listed tool's arguments (v1.560.0, WI-080 finding 8). The gate
+#: redacts only by key name, so a refused drafting call's AI Action Log row would otherwise hold the
+#: proposal's whole text, a secret the precheck refused included. `insert_action_log` replaces each
+#: listed value in every row that has no `pending_action` (the step-0 denylist refusal and the step-5
+#: precheck refusal) with `"<withheld: N characters>"`, and its summary with WITHHELD_SUMMARY. A QUEUED
+#: card keeps the full proposal, on the card and in its log rows: it is how the person who asked reads
+#: what they confirm, and it is the AI's own proposal (decided 2026-09-28).
+WITHHELD_WHEN_UNQUEUED = {
+    "draft_knowledge_article": ("article_title", "summary", "keywords", "body_markdown", "change_note"),
+}
+WITHHELD_SUMMARY = "Draft knowledge article (text withheld)"
+
+
+def _call_target(tool_name, arguments):
+    """``(target_doctype, target_name)`` for a card or a log row: TOOL_TARGET_DOCTYPES for the tools
+    listed there (with no name yet), otherwise the call's own ``doctype`` and ``name``."""
+    args = arguments if isinstance(arguments, dict) else {}
+    doctype = TOOL_TARGET_DOCTYPES.get(tool_name)
+    if doctype:
+        return doctype, None
+    return args.get("doctype"), args.get("name")
+
+
+def _withheld(value):
+    """``"<withheld: N characters>"`` for one argument's value (a list is counted as its JSON)."""
+    if isinstance(value, str):
+        size = len(value)
+    else:
+        size = len(json.dumps(value, default=str, ensure_ascii=False))
+    return f"<withheld: {size} characters>"
+
+
+def withhold_arguments(tool_name, arguments):
+    """``arguments`` with every WITHHELD_WHEN_UNQUEUED value of ``tool_name`` replaced by its length.
+    Other tools, and anything not a dict, come back as they are."""
+    keys = WITHHELD_WHEN_UNQUEUED.get(tool_name)
+    if not keys or not isinstance(arguments, dict):
+        return arguments
+    return {key: (_withheld(value) if key in keys else value) for key, value in arguments.items()}
+
+
+def _withhold_text(text, tool_name, arguments):
+    """``text`` with any piece (six characters or more) of a withheld argument replaced, so an error
+    message that quoted the proposal cannot carry it into a row that withholds it."""
+    keys = WITHHELD_WHEN_UNQUEUED.get(tool_name)
+    if not text or not keys or not isinstance(arguments, dict):
+        return text
+    pieces = set()
+    for key in keys:
+        value = arguments.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, str):
+                pieces.update(part.strip() for part in item.split("\n") if len(part.strip()) >= 6)
+    for piece in sorted(pieces, key=len, reverse=True):
+        text = text.replace(piece, "<withheld>")
+    return text
+
+
+def _log_failure_type(title, detail):
+    """One Error Log, ``title`` and ``detail`` (which names an exception's type, never its message),
+    built by hand and queued with ``deferred_insert``, never through ``frappe.log_error``: during an MCP
+    call v16's ``log_error`` stores the request's form_dict in the row's ``metadata``, and that is the
+    JSON-RPC body with the tool's arguments (WI-080, "Found while building PR 6a"), which for the
+    drafting tool is a draft's whole text. Never raises."""
+    try:
+        frappe.get_doc({"doctype": "Error Log", "method": title, "error": detail}).deferred_insert()
+    except Exception:
+        pass
 
 # ------------------------------------------------- private-context denylist
 #
@@ -746,6 +841,18 @@ def summarize_tool_call(tool_name, arguments):
     if tool_name == "author_training_course":
         # The spec/token is opaque here; the card says what will happen, not its title.
         return "Author a training course from an AI draft (creates an unpublished Draft)"
+    if tool_name == "draft_knowledge_article":
+        # v1.560.0 (WI-080 PR 6b). Whether it also SUBMITS is the decision on the card, so the line
+        # says so in capitals, and "as you" because the person who confirms it is recorded as its
+        # submitter (and so can never approve it). Only a real `true` submits (ai_draft reads it so).
+        title = " ".join(str(args.get("article_title") or "").split())
+        tail = " and SUBMIT it for review as you" if args.get("submit_for_review") is True else ", a Draft only"
+        number = str(args.get("kb_number") or "").strip()
+        if number:
+            return f"Draft a revision of {number}: “{title}”{tail}"
+        department = args.get("department") or "no department"
+        kind = args.get("kind") or "no kind"
+        return f"Draft a new knowledge article “{title}” ({department}, {kind}){tail}"
     return tool_name.replace("_", " ").capitalize()
 
 
@@ -1127,9 +1234,19 @@ def insert_action_log(
     execution_time=None,
 ):
     """Append one AI Action Log row (ignore_permissions; never raises to the
-    caller — a logging failure must not break the execution it records)."""
+    caller — a logging failure must not break the execution it records).
+
+    A row with no ``pending_action`` from a WITHHELD_WHEN_UNQUEUED tool keeps the lengths of its
+    listed arguments, not their text, and the fixed WITHHELD_SUMMARY (v1.560.0), and its failure to
+    insert is logged by type only (`_log_failure_type`)."""
+    withheld = not pending_action and tool_name in WITHHELD_WHEN_UNQUEUED
     try:
         args = sanitize_arguments(arguments)
+        if withheld:
+            error = _withhold_text(str(error), tool_name, args) if error else error
+            args = withhold_arguments(tool_name, args)
+            summary = WITHHELD_SUMMARY
+        target_doctype, target_name = _call_target(tool_name, arguments)
         log = frappe.get_doc(
             {
                 "doctype": "AI Action Log",
@@ -1145,8 +1262,8 @@ def insert_action_log(
                 "success": 1 if success else 0,
                 "error": str(error)[:2000] if error else None,
                 "error_type": error_type,
-                "target_doctype": (arguments or {}).get("doctype"),
-                "target_name": (arguments or {}).get("name"),
+                "target_doctype": target_doctype,
+                "target_name": target_name,
                 "timestamp": frappe.utils.now_datetime(),
                 "execution_time": execution_time,
             }
@@ -1158,7 +1275,11 @@ def insert_action_log(
                 update_modified=False,
             )
         return log.name
-    except Exception:
+    except Exception as exc:
+        if withheld:
+            # Not frappe.log_error: its metadata would hold the MCP request, the text withheld above.
+            _log_failure_type(f"AI Action Log insert failed for {tool_name}", type(exc).__name__)
+            return None
         try:
             frappe.log_error(
                 f"AI Action Log insert failed for {tool_name}\n{frappe.get_traceback()}",
@@ -1240,6 +1361,8 @@ def _propose(tool, arguments):
         frappe.db.get_single_value("ERPNext Enhancements Settings", "ai_pending_action_ttl_hours")
     ) or 1
     expires_at = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=ttl_hours)
+    # The call's own doctype and name, or, for a tool in TOOL_TARGET_DOCTYPES, the doctype it writes.
+    target_doctype, target_name = _call_target(name, arguments)
 
     action = frappe.get_doc(
         {
@@ -1257,8 +1380,8 @@ def _propose(tool, arguments):
             # asterisks in the column. The controller deletes it once the action is decided.
             "sealed_arguments": sealed_payload,
             "args_hash": fingerprint,
-            "target_doctype": (arguments or {}).get("doctype"),
-            "target_name": (arguments or {}).get("name"),
+            "target_doctype": target_doctype,
+            "target_name": target_name,
             "expires_at": expires_at,
         }
     )
@@ -1495,9 +1618,45 @@ def _cancel_refusal(tool_name, arguments):
     )
 
 
+def _app_precheck_refusal(tool, name, arguments):
+    """The refusal for an APP_PRECHECKED_TOOLS call whose tool says it cannot run, or None.
+
+    The tool's own ``precheck(arguments)`` returns its problems as short clauses (for the drafting
+    tool, ``knowledge_base/ai_draft.precheck`` for the session user). None of them quotes the
+    proposal's text. If the precheck raises, the card is queued as before and the failure is logged by
+    type only, because the tool runs the same check again when the card is confirmed.
+    """
+    precheck = getattr(tool, "precheck", None)
+    if not callable(precheck):
+        return None
+    failed = None
+    try:
+        problems = precheck(arguments)
+    except Exception as exc:
+        failed = type(exc).__name__
+        problems = None
+    if failed:
+        _log_failure_type(
+            f"AI gate pre-check failed for {name}",
+            f"precheck raised {failed}; the card was queued anyway, and the tool checks again when it runs",
+        )
+        return None
+    problems = [str(problem).strip().rstrip(".") for problem in (problems or ()) if str(problem).strip()]
+    if not problems:
+        return None
+    return (
+        "Not queued: "
+        + "; ".join(problems)
+        + f". Nothing was queued for confirmation: correct it and call {name} again."
+    )
+
+
 def _precheck_refusal(tool, arguments):
     """The refusal to return instead of a card, or None to queue the write as before."""
     name = getattr(tool, "name", "")
+    # Before PRECHECKED_TOOLS' early return: an app tool's own precheck (v1.560.0).
+    if name in APP_PRECHECKED_TOOLS:
+        return _app_precheck_refusal(tool, name, arguments)
     if name not in PRECHECKED_TOOLS:
         return None
     # Pure and total, so it needs no guard: the Select check below is the part that can raise.
@@ -1660,14 +1819,18 @@ def _gated_execute(tool, original, arguments):
         #    validation" above). Recorded in AI Action Log, like the denylist refusal, because a
         #    model proposing values that do not exist is worth seeing. _precheck_refusal never
         #    raises: a failing check queues the card.
+        #    Since v1.560.0 also an app tool's own precheck (APP_PRECHECKED_TOOLS), worded "Not
+        #    queued" rather than "invalid value"; for the drafting tool insert_action_log then keeps the
+        #    lengths of the text, not the text, and the fixed WITHHELD_SUMMARY.
         refusal = _precheck_refusal(tool, arguments)
         if refusal:
+            label = "Not queued" if name in APP_PRECHECKED_TOOLS else "Not queued, invalid value"
             insert_action_log(
                 user=frappe.session.user,
                 tool_name=name,
                 arguments=arguments,
                 success=False,
-                summary=f"Not queued, invalid value: {summarize_tool_call(name, arguments)}",
+                summary=f"{label}: {summarize_tool_call(name, arguments)}",
                 error=refusal,
                 error_type="AIGateValidationError",
             )
@@ -1675,8 +1838,16 @@ def _gated_execute(tool, original, arguments):
 
         # 6/7) Propose + envelope.
         return _propose(tool, arguments)
-    except Exception:
+    except Exception as exc:
         # Fail closed: any gate failure on a mutating tool blocks execution.
+        if getattr(tool, "name", "") in WITHHELD_WHEN_UNQUEUED:
+            # Type only, never frappe.log_error: its metadata would hold the MCP request, and so the
+            # text WITHHELD_WHEN_UNQUEUED keeps out of every other log (v1.560.0).
+            _log_failure_type(f"AI gate failure for {getattr(tool, 'name', '?')}", type(exc).__name__)
+            return _error_response(
+                "The AI write gate hit an internal error; the mutation was blocked. "
+                "An administrator can find details in the Error Log."
+            )
         try:
             frappe.log_error(
                 f"AI gate failure for {getattr(tool, 'name', '?')}\n{frappe.get_traceback()}",

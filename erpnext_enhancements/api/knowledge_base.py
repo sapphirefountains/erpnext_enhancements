@@ -20,7 +20,10 @@ reads, with a second person's approval enforced rather than requested?*
 
 The rules are ``knowledge_base/workflow.py`` (pure, every branch tested bench-free); the writes are
 ``knowledge_base/publish.py``, which is the only code that changes a version's ``review_state`` or
-writes an article. These endpoints are the doors between them.
+writes an article. These endpoints are the doors between them. One plain function is shared with a
+second door (PR 6b): :func:`submit_version`, the body of Submit for Review, which the AI drafting tool
+(``knowledge_base/ai_draft.py``) also calls when the person who asked confirms a card that submits.
+It is not whitelisted.
 
 Things this module is careful about:
 
@@ -108,18 +111,7 @@ def submit_for_review(version):
 		ask = publish.asker()
 		_require_kb_role(ask)
 		doc = _load_version(name)
-		problems = workflow.submit_problems(
-			doc,
-			ask.user,
-			ask.roles,
-			article=publish.article_row(doc.get("article")),
-			secrets=content.document_secret_findings(doc),
-		)
-		_refuse(doc.name, workflow.SUBMIT_FOR_REVIEW, problems)
-		asked = publish.transition(
-			doc, workflow.SUBMIT_FOR_REVIEW, {"submitted_by": ask.user, "submitted_on": now_datetime()}
-		)
-		return _moved(doc, asked)
+		return submit_version(doc, ask)
 
 	return publish.run(attempt)
 
@@ -302,6 +294,37 @@ def retire(article, reason=None):
 		return publish.retire(doc, ask.user, cstr(reason).strip())
 
 	return publish.run(attempt)
+
+
+# ------------------------------------------------------------------ shared with the drafting tool
+
+
+def submit_version(doc, ask):
+	"""Draft -> In Review for ``doc``, as ``ask`` (``publish.asker()``): the body of
+	:func:`submit_for_review`, moved out unchanged (WI-080 PR 6b) so that the endpoint and the AI
+	drafting tool (``knowledge_base/ai_draft.py``) submit through one set of rules and one write.
+
+	**Not an endpoint, and it must never become one**: it takes a loaded document and trusts its caller
+	to have checked the person first. ``submit_for_review`` checks the KB role and loads the version
+	``for_update`` with ``write`` checked; the drafting tool checks ``write`` on the version its own
+	card has just written, as the confirming user, who it has required to be the person who asked. It
+	asks ``workflow.submit_problems`` (the role, the state, the title, department, kind and text, the
+	article, and secrets) and refuses in words, then moves the version with ``publish.transition``,
+	which raises the review ToDos inline for every KB Approver who had no hand in it. Returns the
+	version, its state, and who was asked.
+	"""
+	problems = workflow.submit_problems(
+		doc,
+		ask.user,
+		ask.roles,
+		article=publish.article_row(doc.get("article")),
+		secrets=content.document_secret_findings(doc),
+	)
+	_refuse(doc.name, workflow.SUBMIT_FOR_REVIEW, problems)
+	asked = publish.transition(
+		doc, workflow.SUBMIT_FOR_REVIEW, {"submitted_by": ask.user, "submitted_on": now_datetime()}
+	)
+	return _moved(doc, asked)
 
 
 # ------------------------------------------------------------------ helpers

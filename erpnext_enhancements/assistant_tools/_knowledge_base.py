@@ -1,4 +1,4 @@
-"""Shared by the three knowledge-base read tools (WI-080 PR 6a).
+"""Shared by the three knowledge-base read tools (WI-080 PR 6a) and the drafting tool (PR 6b).
 
 ``search_company_knowledge``, ``fetch_knowledge_article`` and ``list_company_knowledge`` are thin: all
 the work is in ``knowledge_base/ai_tools.py``, which each tool imports inside ``execute`` through
@@ -26,7 +26,8 @@ JSON body (``utils/sentry.py:122``). So :func:`run` builds the Error Log itself,
 ``error`` and nothing else, and queues it with ``deferred_insert`` (``model/document.py:1985``), the
 same redis queue ``log_error(defer_insert=True)`` uses. (FAC's own Assistant Audit Log still records
 every call's arguments; that is FAC's record of the call, not this failure path's.) PR 6b's drafting
-tool, whose arguments are a draft's whole text, can reuse this path as it is. Line numbers are v16.35.0.
+tool, whose arguments are a draft's whole text, has the same path in :func:`run_draft`, over
+``knowledge_base.ai_draft``. Line numbers are v16.35.0.
 
 Imports frappe and ``knowledge_base.constants`` only, never ``frappe_assistant_core``, so it stays
 importable in the bench-free contract tests.
@@ -57,6 +58,37 @@ DEPARTMENT_PROPERTY = {
     "enum": list(constants.DEPARTMENT_BLOCK_OPTIONS),
     "description": "Only articles in this department (the document register's department blocks)",
 }
+
+
+#: What the drafting tool (PR 6b) answers when something unexpected failed. Its writes run under a
+#: savepoint that the failure rolled back, and a failed card is rolled back whole by ``_confirm_one``.
+DRAFT_FAILURE = "The draft could not be written just now. Nothing was written."
+
+#: The Error Log's title (its ``method``) for such a failure.
+DRAFT_LOG_TITLE = "Knowledge base AI draft"
+
+
+def run_draft(method, arguments):
+    """``ai_draft.<method>(arguments)``, or :data:`DRAFT_FAILURE` if it raises: :func:`run`'s failure
+    path for the drafting tool (PR 6b), whose arguments are a draft's whole text. So the one Error Log
+    is built by hand, a ``method`` and an ``error`` naming the exception's type, and queued with
+    ``deferred_insert``, never through ``frappe.log_error``, which would store the request's form_dict
+    (during an MCP call, the JSON-RPC body with that text). Every outcome ``ai_draft`` expects is already
+    a return; this is only for something unexpected."""
+    failed = None
+    try:
+        from erpnext_enhancements.knowledge_base import ai_draft
+
+        return getattr(ai_draft, method)(arguments if isinstance(arguments, dict) else {})
+    except Exception as exc:
+        failed = type(exc).__name__
+    try:
+        frappe.get_doc(
+            {"doctype": "Error Log", "method": DRAFT_LOG_TITLE, "error": f"{method} raised {failed}"}
+        ).deferred_insert()
+    except Exception:
+        pass
+    return {"success": False, "error": DRAFT_FAILURE}
 
 
 def run(payload, arguments):

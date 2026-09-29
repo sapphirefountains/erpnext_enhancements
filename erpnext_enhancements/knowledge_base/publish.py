@@ -306,24 +306,43 @@ def supersede(name):
 # ------------------------------------------------------------------ revisions and articles
 
 
-def start_revision(article):
+#: What ``start_revision``'s ``provenance`` may set: the AI drafting tool's two fields (PR 6b).
+PROVENANCE_FIELDS = ("ai_drafted", "ai_requested_by")
+
+
+def start_revision(article, *, content=None, provenance=None):
 	"""A new Draft of ``article``, copied from the version that is live (the approved record), or
 	from the article itself if that version cannot be found. The endpoint has already checked
-	that none is open (under the article's row lock) and that the person may create a version."""
+	that none is open (under the article's row lock) and that the person may create a version.
+
+	PR 6b: ``content`` replaces copied content fields (``constants.VERSION_CONTENT_FIELDS`` only) and
+	``provenance`` sets ``ai_drafted`` and ``ai_requested_by``, for ``ai_draft.draft``, which writes an
+	AI's revision in one step rather than copying and then editing. Without them this is exactly the
+	Start Revision button's copy. Any other key is a programming error and raises ``ValueError``."""
+	content = dict(content or {})
+	provenance = dict(provenance or {})
+	stray = sorted(set(content) - set(constants.VERSION_CONTENT_FIELDS)) + sorted(
+		set(provenance) - set(PROVENANCE_FIELDS)
+	)
+	if stray:
+		raise ValueError(f"start_revision cannot set {', '.join(stray)}")
 	live = article.get("live_version")
 	source = frappe.get_doc(VERSION, live) if live and frappe.db.exists(VERSION, live) else article
 	doc = frappe.get_doc(
 		{
 			"doctype": VERSION,
 			**{field: source.get(field) for field in REVISION_FIELDS},
+			**content,
+			**provenance,
 			"article": article.name,
 			"base_version": live,
 			"version_number": cint(article.get("version_number")) + 1,
 			"review_state": workflow.DRAFT,
 		}
 	)
-	# `article`, `base_version` and `version_number` are at permlevel 1, which v16 resets to the
-	# default on insert for anyone who cannot write it (model/document.py:1021-1044).
+	# `article`, `base_version` and `version_number` (and the provenance fields) are at permlevel 1,
+	# which v16 resets to the default on insert for anyone who cannot write it
+	# (model/document.py:1021-1044).
 	doc.flags.ignore_permissions = True
 	doc.insert()
 	return doc

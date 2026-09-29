@@ -194,6 +194,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install --upgrade pip httpx pytest jinja2
+      # markdown2 at the version Frappe v16 pins (pyproject.toml: "markdown2~=2.5.4"), for WI-080 PR
+      # 6b's drafting tool (v1.560.0): knowledge_base/ai_draft.py converts an AI's Markdown with it,
+      # safe_mode="escape", and test_knowledge_base_tools and test_knowledge_base_actions check that raw
+      # HTML in the proposal comes out as text. A stub could not show that, so the real library is used.
+      - run: python -m pip install "markdown2~=2.5.4"
       - run: python -m unittest test_sync_time_kiosk.py -v
       # The A1 read tools each wrap a function that returns more than a reader
       # should see: a live billable Google Maps browser key, the e-signature
@@ -233,6 +238,16 @@ jobs:
       # arguments and its whole traceback. That row is built by hand, never by frappe.log_error:
       # v16's log_error stores the request's form_dict in its metadata, which during an MCP call
       # is the JSON-RPC body with the arguments (a stub shaped like v16's shows it would).
+      #
+      # Since v1.560.0 (WI-080 PR 6b) test_knowledge_base_tools also holds the drafting tool,
+      # draft_knowledge_article, to its contract: a write in APP_MUTATING and no other set, so
+      # MEDIUM; requires_permission the drafts' doctype; submit_for_review a boolean defaulting to
+      # false; the four card lines; the card's target; and the gate's two refusals with no card
+      # (its own precheck, and a smuggled doctype) leaving an AI Action Log row with the text
+      # withheld, never a sentinel in arguments, summary or error. And a static allowlist on
+      # knowledge_base/ai_draft.py: no .submit(, no transition(, no other move named, and only
+      # run, asker, open_version, start_revision, article_row and submit_version read from publish
+      # and api.knowledge_base. A regression there is an AI that approves, publishes or reads a draft.
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
           python -m unittest
@@ -864,6 +879,14 @@ jobs:
       # and available:false in related, byte for byte as a never-used number; a citation
       # (KB-0601 v3) fetching its article; nothing of the request (the arguments) in the failure
       # path's queued Error Log, the stub's log_error storing the form_dict as v16's does.
+      # Since PR 6b (v1.560.0) also AiDraftTest: draft_knowledge_article queued through the real AI
+      # gate over a FAC 3.0.0 stub and confirmed through the real gating_api._confirm_one. It writes
+      # only from its own confirmed card and only for the person who asked (a System Manager
+      # confirming someone else's card ends Failed with no version); it submits for review in the
+      # same card, after which the requester's approval is refused, every approval under a gate flag
+      # is refused, and a different KB Approver in a browser publishes; a submit refused after the
+      # draft was written leaves no draft (the savepoint); the only move it makes is Submit for
+      # Review; and no result or refusal carries text.
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace

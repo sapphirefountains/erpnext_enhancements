@@ -7,6 +7,182 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.560.0] - 2026-09-28
+
+**An AI can draft a knowledge base article, and submit it for review, through an approval card that
+only the person who asked may confirm.** WI-080 PR 6b, the drafting half of the AI-first redesign.
+Nik approved it on 2026-09-28: "Yes, but they can submit as well". A KB Author or KB Approver asks
+Claude for a draft (a new article, or a revision of a published one); nothing is written until they
+confirm the card in ERPNext themselves; then a **Draft** exists, marked AI Drafted, and with
+`submit_for_review` it is also **In Review**, with the usual review ToDos for the other KB Approvers.
+Approving and publishing stay a named person's act in a browser, by a KB Approver who neither asked
+for it, wrote it nor submitted it. Nothing an AI does approves, publishes, sends back, withdraws,
+discards, retires or confirms anything, and no tool returns a draft's text. Stacked on v1.559.0 (PR
+6a, pull request #1152), which it needs.
+
+**Merge order.** This merges after PR 6a, and **only after the Triton PR that never offers this tool
+(`_NOT_OFFERED_PREFIXES` gains `draft_knowledge_article`) is deployed**: FAC lists the tool only to KB
+roles, and Triton caches one tool list for everyone, so without that PR the tool would come and go
+from Triton hour by hour. Merging deploys production.
+
+### Added
+
+- **`draft_knowledge_article`** (`assistant_tools/draft_knowledge_article.py`, the name frozen by ADR
+  0017's 2026-09-28 amendment). Arguments: `kb_number` (a revision; leave out for a new article),
+  `article_title` (≤ 140), `department` (required for a new article; a revision keeps its article's),
+  `kind` (Policy, Process or SOP), `summary` (≤ 500), `keywords` (≤ 30, each ≤ 60), `body_markdown`
+  (≤ 60,000), `change_note` (≤ 1,000; what changed and why, and where it came from), `process_owner`,
+  and **`submit_for_review`** (default false). No property is named `title`, `doctype` or `id`, and
+  there are no `maxLength`/`maxItems` keywords: the limits are in the descriptions and enforced by the
+  server. `requires_permission` is the drafts' doctype, so FAC lists it to KB Authors and KB Approvers
+  only. In `_gate.APP_MUTATING`, and in neither risk set, so **Medium**, the band
+  `create_training_draft_version` is in, and its FAC category is `write`.
+- **`knowledge_base/ai_draft.py`**: `precheck(arguments, requester, confirmer=None)`, `from_card`
+  (the tool's `execute`) and `draft(arguments, requester)`. The result, through
+  `check_ai_pending_action`: `success`, `action` (`created` or `revision_started`), `name`,
+  `kb_number`, `review_state`, `submitted`, `reviewers_asked` (a count, naming nobody), `desk_url`
+  and `next_step`. No content field of any version is ever in a result or an error.
+- **Before a card is queued**, the gate asks the tool's own precheck (`_gate.APP_PRECHECKED_TOOLS`), and
+  refuses with no card, as "Not queued: ...": a missing or oversized field, an argument the tool does
+  not take, a requester who is Administrator, not an enabled staff login or without a KB role, **a
+  secret in the text** (named by argument, line and kind, never by value), a picture it may not embed,
+  and for a revision an article that is not published (unknown and retired read the same), is of
+  another department, or has an open version (named by id, state and who started it, with a link).
+- **The card targets `Knowledge Article Version`** (`_gate.TOOL_TARGET_DOCTYPES`, `_call_target`), so
+  the batch dialog starts it unticked with "changes the company knowledge base"; `_confirm_one` fills
+  in its `target_name` from the result.
+- **Four card lines** (`summarize_tool_call`): "Draft a new knowledge article “…” (06 Operations,
+  SOP), a Draft only", "… and SUBMIT it for review as you", "Draft a revision of KB-0601: “…”, a Draft
+  only", and "… and SUBMIT it for review as you".
+- **A refused call's AI Action Log row withholds its text** (`_gate.WITHHELD_WHEN_UNQUEUED`): every row
+  with no `pending_action` (the denylist refusal of a smuggled `doctype`, and the precheck refusal)
+  stores the title, summary, keywords, body and change note as `"<withheld: N characters>"`, and its
+  summary as "Draft knowledge article (text withheld)". A queued card keeps the whole proposal.
+- `assistant_tools/_knowledge_base.run_draft`, the drafting tool's failure path: `{"success": false,
+  "error": "The draft could not be written just now. Nothing was written."}` and one deferred Error Log,
+  "Knowledge base AI draft", naming the exception's type only.
+- **Tests.** `test_knowledge_base_tools` (the AI-gate CI step, on `test_assistant_tools_schema`'s stubs):
+  the classification (Medium, `x-ee-risk: "medium"`, `destructiveHint: false`, category `write`), the
+  contract and schema, the four card lines, the card's target through the real `_propose`, both
+  refusals with no card through `_gated_execute` and the real `insert_action_log` (no sentinel in the
+  row's `arguments`, `summary` or `error`), a precheck or gate failure logged by type only and never
+  through `frappe.log_error`, `ai_draft`'s pure checks (secrets, pictures by position and host never by
+  URL, HTML escaped), and **a static allowlist on `ai_draft.py`**, comments and docstrings stripped: no
+  `.submit(`, no `transition(`, none of `approve_and_publish`, `request_changes`, `withdraw`, `discard`,
+  `retire`, `confirm_still_accurate` or `supersede` named, only `run`, `asker`, `open_version`,
+  `start_revision`, `article_row` and `submit_version` read from `publish` and `api.knowledge_base`, and
+  nothing read of a version but an open one's `owner`. `test_ai_gate_batch`: the drafting card starts
+  unticked with the knowledge-base reason. **`AiDraftTest`** in `test_knowledge_base_actions`, end to end
+  over a FAC 3.0.0 stub (the real gate queues, the real `_confirm_one` confirms): refused without its
+  own confirmed card and with gating off; a new article's Draft with `ai_drafted` and
+  `ai_requested_by`, owned and contributed by the requester, raw HTML escaped, no ToDo, no text in the
+  result; **a card confirmed by a System Manager who did not ask ends Failed with no version and no
+  ToDo**, with or without `submit_for_review`; a confirmer without `create` refused; a revision started
+  from the published article, keeping its own picture; the department, unknown, retired, open Draft and
+  open In Review refusals, by id, state and owner, never text; **submitting**: In Review with
+  `submitted_by` = `owner` = `ai_requested_by` = the requester, ToDos to the other approvers only;
+  **the requester's approval refused** (they created it, submitted it, changed its content and asked
+  an AI to draft it), **every approval under a gate flag refused**, **another approver publishing**
+  (the article `ai_drafted` 1); a submitted revision leaving the live article untouched; **a submit
+  refused at execution leaving no Draft**, the savepoint included; **the only move being Submit for
+  Review**; external pictures refused; a secret refused at the precheck and again at execution, never
+  in an Error Log.
+
+### Changed
+
+- **The Submit for Review endpoint's body moved into `api.knowledge_base.submit_version(doc, ask)`**,
+  unchanged, so the endpoint and the drafting tool submit through one set of rules and one write. The
+  endpoint calls it after its own role and permission checks and behaves exactly as before (every
+  existing Submit for Review test passes untouched). It is **not** whitelisted, and a test says so.
+- `knowledge_base/publish.start_revision(article)` takes two optional keyword arguments, `content`
+  (content fields only) and `provenance` (`ai_drafted`, `ai_requested_by` only), so the drafting tool
+  writes an AI's revision in one step; any other key raises. Without them it is the Start Revision
+  button's copy, as before.
+- For a tool in `WITHHELD_WHEN_UNQUEUED`, the gate's catch-all and a failed AI Action Log insert log by
+  type only, in a hand-built deferred Error Log, not through `frappe.log_error` (found while building).
+- CI installs `markdown2~=2.5.4` (the version Frappe v16 pins) in the unit-tests job, because the escape
+  of an AI's HTML is what the new tests check.
+
+### Why it is built this way
+
+- **A flag on one tool, not a second "submit" tool** (6b.2). What is submitted is exactly what the
+  person read on the card, written and submitted in one transaction; the AI never names an existing
+  version, so it cannot submit a person's draft, which it has never read; and there is one tool, one
+  card type, one FAC row and one Triton exclusion. The cost: an AI cannot submit a draft that already
+  exists; a person presses Submit for Review, one button. Continuing a draft by tool stays deferred.
+- **Every outcome is a return** (WI-080 finding 5). FAC turns an exception into an Error Log with the
+  call's arguments and traceback, which here would be a draft's whole text; a returned `success: false`
+  becomes a `ToolReportedError`, which `_confirm_one` rolls back and marks Failed with the reason.
+- **Raw HTML is escaped** (finding 7). v16's `md_to_html` passes raw HTML through (markdown2 without
+  `safe_mode`, `utils/data.py:2480-2495`), so the tool calls markdown2 itself with the same extras and
+  `safe_mode="escape"`: a `<script>` or a `<div class="hidden">` in the proposal is text a reader sees.
+  The controller still strips presentation on save.
+- **The secret scan reads the Markdown the model sent, and fails closed** (found while building).
+  markdown2 reads an underscore inside a word as emphasis, so `sk_live_…` becomes `sk<em>live</em>…`
+  once converted, and a scan of the HTML would miss it. And the scan runs before any lookup, so a
+  lookup that fails cannot let a secret through to a card.
+- **The gate stores arguments almost verbatim** (finding 8): it redacts by key name only, in the card,
+  the AI Action Log and the summary, and FAC's Assistant Audit Log stores them again on a confirmed run.
+  So a refused call's row withholds the text; a queued card keeps it, because it is the AI's own
+  proposal and how the person who asked reads what they confirm (decided 2026-09-28). FAC also writes
+  the first 200 characters of every call's arguments to the web log (`mcp/server.py:217`), which
+  nothing here can prevent.
+- **The batch dialog could not recognize a drafting card** (finding 9): a card's target came only from
+  `arguments["doctype"]`. `_call_target` names the doctype the tool writes.
+- **A card can submit, and cannot approve** (finding 12). `workflow.submit_problems` checks the role,
+  the state, the title, department, kind and text, the article and secrets, and not the browser or the
+  gate's flags; approving, sending back, retiring, confirming and the draft diff all refuse
+  `ai_gate_pending` and `ai_gate_bypass`, which `_confirm_one` sets for the whole run of the tool. So the
+  rules needed no change: no card can approve anything, whoever confirms it, and the requester, now
+  also the submitter, can never approve their own.
+- **Only the person who asked confirms** (finding 13). `_check_identity` lets any System Manager decide
+  a card, and a confirmed card runs as the confirmer, who would become the draft's owner, a contributor
+  and its submitter, and use up a second of the few approvers. The rule lives in the tool, not the gate:
+  the card ends Failed ("Only <name>, who asked for this draft, can confirm it. Nothing was written."),
+  and a System Manager can still cancel it.
+- **All or nothing.** The writes run under a savepoint, inside `publish.run` (the deadlock retry), with
+  messages muted: a refusal at any step rolls back to it, so a card that asked to submit and could not
+  leaves no Draft. A retire that commits after the precheck is seen under the article's row lock.
+- **A revision keeps only the article's own pictures** (a change from the design, which also allowed the
+  live version's Files). Publishing moved every picture a version's text used onto the article, so a
+  File still on the live version is one its text did not use, and a revision embedding it would show
+  readers a picture they cannot open once approved.
+- ADR 0017's 2026-09-28 amendment (already recorded with v1.558.0) describes this tool; this release
+  implements it. Nothing in the denylist, `NEVER_EXEMPT` or the exemptable tools changed.
+
+### After deploy (read-only)
+
+- ``SELECT tool_name, tool_category, enabled FROM `tabFAC Tool Configuration` WHERE tool_name='draft_knowledge_article'``
+  returns `write`, 1.
+- **A draft only.** A KB Author asks Claude for a draft of an invented test article. ``SELECT name, status, risk, target_doctype FROM `tabAI Pending Action` WHERE tool_name='draft_knowledge_article' ORDER BY creation DESC LIMIT 1``
+  shows Pending, Medium and the Version doctype; the batch dialog shows it unticked with "changes the
+  company knowledge base". After they confirm it themselves, the Draft has AI Drafted ticked and AI
+  Requested By set, nothing moved it to In Review, its Approve is refused for them, and
+  `check_ai_pending_action` returns the link and no text. Discard it in the Desk afterwards.
+- **Draft and submit.** A KB Approver asks for a draft and its submission, and confirms the card. The
+  version opens In Review with them as Submitted By; ``SELECT allocated_to, status FROM tabToDo WHERE reference_type LIKE 'Knowledge Article %' AND status='Open'``
+  lists other KB Approvers and never them; signed in as them, Approve is not offered and the form says
+  why; another KB Approver in a browser can approve it (or withdraw and discard it, for a test article).
+- **Only the requester confirms.** A drafting card decided from its form by a System Manager who did not
+  request it ends Failed: ``SELECT status, error, target_name FROM `tabAI Pending Action` WHERE name='<card>'``
+  shows Failed, the "Only <name>, who asked for this draft" reason and no `target_name`.
+- A technician's Claude does not list `draft_knowledge_article`; Triton never lists it, live or in its
+  snapshot.
+- A draft whose text holds an invented written-out password (for example "Password: Otter#2931") is
+  refused before any card: no new AI Pending Action, and the AI Action Log row shows
+  `<withheld: N characters>` for the text fields and "Draft knowledge article (text withheld)" as its
+  summary.
+- ``SELECT COUNT(*) FROM `tabError Log` WHERE method LIKE '%Knowledge base%' AND creation > '<deploy time>'`` = 0,
+  and no Error Log titled "AI gate pre-check failed for draft_knowledge_article" or "AI gate failure for
+  draft_knowledge_article".
+
+### Rollback
+
+Set `enabled = 0` on its `FAC Tool Configuration` row, or revert. The drafts it made stay ordinary
+drafts; a version it submitted stays In Review, and its author's side can withdraw it in the Desk as
+usual. Reverting also puts the Submit for Review body back inside its endpoint, which behaves the same
+either way, and `start_revision` loses the two keyword arguments nothing else passes.
+
 ## [1.559.0] - 2026-09-28
 
 **AI assistants can search, read and list the company knowledge base.** WI-080 PR 6a, the second

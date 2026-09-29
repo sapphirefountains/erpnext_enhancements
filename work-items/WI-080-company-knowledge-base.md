@@ -3,7 +3,7 @@
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (v1 in eight PRs, S to M each; v1.1 M; the training slice S)
 **Blocked by:**
 - Slice 0: nothing.
-- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written and merged on 2026-09-28 (v1.558.0). PR 6a (the three read tools, v1.559.0) was written the same day, on top of PR 5, and opened as a draft pull request. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
+- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written and merged on 2026-09-28 (v1.558.0). PR 6a (the three read tools, v1.559.0) was written the same day, on top of PR 5, and opened as a draft pull request. PR 6b (the drafting tool, v1.560.0) was written the same day, stacked on PR 6a, and opened as a draft pull request; it merges after PR 6a and only once the Triton PR that never offers the tool is deployed. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
 - Slice 4: the Google setup.
 - Slice 5: its content trigger.
 
@@ -50,6 +50,7 @@ Nik wants a company knowledge base that people *and* every AI tool Sapphire uses
   - **The mirror runs every 6 hours, plus on demand.**
   - **The private repository's setup precondition, recorded in its runbook, is met.**
 - **PR 5 is written (2026-09-28)**, as the first PR of the redesign: the article kind and in-app search (v1.558.0). It is opened as a draft pull request; merging it is Nik's call.
+- **PR 6b is written (2026-09-28)**: `draft_knowledge_article`, which writes a Draft and, with `submit_for_review`, submits it for review, from a card only the person who asked may confirm (v1.560.0). It is stacked on PR 6a and opened as a draft pull request; see "Found while building PR 6b".
 
 Why now, in numbers (verified 2026-09-24 against prod, read-only):
 
@@ -778,7 +779,7 @@ The gate calls it through the tool's `precheck` method before it queues a card, 
   - **The check fails closed:** if the scan itself raises, the answer is "could not be checked for secrets; nothing was queued".
 - **Pictures**, checked on the **HTML** that markdown2 produces from `body_markdown` (every `<img src>`), so reference-style images and any other syntax are covered:
   - A new article may not embed any picture: "add pictures in the Desk".
-  - A revision may embed only this site's `/private/files/` (or `/files/`) Files attached to that article or to its live version, matched by `?fid=` or by path once the site origin is removed.
+  - A revision may embed only this site's `/private/files/` (or `/files/`) Files attached to that article, matched by `?fid=` or by path once the site origin is removed. (Changed while building: this said "or to its live version"; a File left on a published version is one its text did not use, and readers cannot open it. See "Found while building PR 6b".)
   - Any other image is refused **by position and host** ("picture 2, from example.com"), never by its full URL.
 - **Revision:**
   - The article exists and is Published. Unknown and Retired get the same wording.
@@ -901,6 +902,21 @@ It runs from `execute`, inside `publish.run` (the deadlock retry), as the **conf
   - `hooks.py`;
   - `api/README.md` and `knowledge_base/README.md` (the leak table, the actions table and the file map);
   - ADR 0017.
+
+**Found while building PR 6b (v1.560.0):**
+  - **markdown2 reads an underscore inside a word as emphasis, so a key stops looking like one once it is converted.** `sk_live_abc` becomes `sk<em>live</em>abc`, and the controller's scan of the stored HTML (`content.document_secret_findings`, which `before_validate` runs on every content save) would not see it. So `ai_draft.secret_problems` scans every text argument **as the model sent it**, the Markdown, naming the argument, the line and the kind (a keyword by its position), never the value; the stored-HTML scan still runs as well.
+  - **The secret half fails closed even when a lookup fails.** 6b.5 says a precheck that raises queues the card, because execution checks again. If a lookup raised before the secret scan ran, a proposal carrying a secret would have been queued, and a queued card keeps the whole proposal. `ai_draft.precheck` scans first, and returns the secret refusal even when a later lookup raises.
+  - **A revision may embed only the article's own Files, not its live version's** (a deviation from 6b.3, which named both). `publish.move_files` moves every File a version's text uses onto the article when it is published, so a File still attached to the live version is one its text did not use (a spare added in the sidebar). A revision that embedded one would, once approved, show readers a picture attached to a Superseded version, which they cannot open (`Desk User` has no read on the Version doctype), because publishing moves only the Files attached to the version being published. So such a picture is refused like any other, by position and "a file on this site".
+  - **A retire that commits between the precheck and the write is caught under the lock.** The precheck reads the article without one. `draft()` then loads it `for_update`, as the Start Revision button does, and refuses a revision of an article that is no longer Published there, for a Draft-only card too, which never asks Submit for Review's `publish_problems`.
+  - **An argument the tool does not take is refused** (additive): a card should hold only what it will run, and a `doctype` that is not denylisted would otherwise ride along on it. A blank `kb_number` is read as left out, and a `null` `submit_for_review` as false.
+  - **The gate's catch-all and a failed AI Action Log insert log by type only for this tool** (additive; 6b.5 said nothing else in the gate changes). Both went through `frappe.log_error`, whose v16 metadata during an MCP call is the JSON-RPC body, the draft's text included (see "Found while building PR 6a"). A tool in `WITHHELD_WHEN_UNQUEUED` now gets a hand-built, deferred Error Log naming the exception's type, as the precheck failure does (`_gate._log_failure_type`).
+  - **At confirm time the request is the confirmer's Desk POST**, checked as PR 6a's review asked: `gating_api.confirm_action` (or `confirm_actions`) carries `name` (or `names`), and FAC's `execute_tool` runs in the same process, so the form_dict there holds no argument. The drafting tool still raises nothing and logs nothing through `log_error` (its failure path is `_knowledge_base.run_draft`), so the question does not arise.
+  - **FAC reports a refusal at execution as `[ToolReportedError] <reason> (execution_time: …s)`**, and `_confirm_one` stores "Execution failed: " before it, so a Failed card's `error` reads, for example, "Execution failed: [ToolReportedError] Only James Example, who asked for this draft, can confirm it. Nothing was written. (execution_time: 0.01s)". The acceptance check reads the reason inside it.
+  - **With AI write gating off, FAC's Assistant Audit Log records a refused drafting call's arguments.** The gate hands the call straight to FAC then (step 2), FAC's `_safe_execute` logs every call's arguments, and the tool's refusal ("runs only from its own approval card") comes after. Prod has gating on (v1.525.0), and closing this would change step 2 of the gate, which 6b.5 ruled out; it is listed as an open question.
+  - **A card holding a secret can exist only if the scan missed it** (or was written past the gate). The tool refuses it again when it runs and writes nothing, but that Failed card's AI Action Log row keeps the proposal, like every row of a queued card (decided 2026-09-28).
+  - **`next_step` adds one sentence when nobody could be asked to review** ("No other KB Approver could be asked to review it, so tell one yourself."), since a count of 0 alone reads like success.
+  - **The card line shows `kb_number` as the model sent it** (`kb 601` stays `kb 601`): the gate may not import the knowledge base's constants, and the arguments on the card show the same value.
+  - **Tests.** CI installs markdown2 at the version v16 pins (`~=2.5.4`), because the escape is what is being tested. The actions suite gained a FAC 3.0.0 stub (`BaseTool._safe_execute` and `ToolRegistry.execute_tool`), so a card is queued through the real gate and confirmed through the real `_confirm_one`; its `frappe.get_roles()` now answers for the session user, as v16's does. Twelve mutations (the confirmer check, the savepoint, the escape, the card's status, the live version's Files, the withheld log, the card's target, the app precheck, the scan failing open, the gate flags on approval, `submit_version` whitelisted, the risk band) each fail the new tests.
 
 #### Triton (after PR 6a deploys; **deployed** before PR 6b merges)
 
