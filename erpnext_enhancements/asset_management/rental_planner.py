@@ -260,3 +260,105 @@ def create_event_project(values):
 	project.insert()
 	return project.name
 
+
+
+def board_summary(days=7):
+	"""What the rental operation looks like now and for the next ``days`` days (v1.567.0).
+
+	For the read-only ``rental_board`` assistant tool. Checks read permission on Rental Booking, then
+	returns rentals delivering, out, or coming back in the window, holds that lapse soon, and
+	fountains out of service — each rental with its fountains, crew and money state.
+	"""
+	frappe.has_permission("Rental Booking", "read", throw=True)
+	days = min(max(cint(days) or 7, 1), 31)
+	today = getdate()
+	now = get_datetime(today)
+	horizon = now + datetime.timedelta(days=days + 1)
+	names = frappe.db.sql_list(
+		"""
+		select name from `tabRental Booking`
+		where status in ('Tentative', 'Confirmed', 'Out', 'Returned')
+			and delivery_datetime < %(horizon)s
+			and takedown_datetime >= %(now)s
+		order by delivery_datetime
+		limit 100
+		""",
+		{"now": now, "horizon": horizon},
+	)
+	rentals = []
+	for name in names:
+		doc = frappe.get_doc("Rental Booking", name)
+		invoices = {
+			row.custom_rental_invoice_kind: row
+			for row in frappe.get_all(
+				"Sales Invoice",
+				filters={"custom_rental_booking": name, "docstatus": ["<", 2]},
+				fields=["name", "custom_rental_invoice_kind", "docstatus", "outstanding_amount", "grand_total"],
+			)
+		}
+
+		def money(kind):
+			row = invoices.get(kind)
+			if not row:
+				return None
+			return {
+				"invoice": row.name,
+				"state": "draft" if row.docstatus == 0 else ("paid" if flt(row.outstanding_amount) <= 0 else "unpaid"),
+				"total": flt(row.grand_total),
+				"outstanding": flt(row.outstanding_amount),
+			}
+
+		rentals.append(
+			{
+				"name": doc.name,
+				"status": doc.status,
+				"customer": doc.customer_name or doc.customer,
+				"event": doc.event_name,
+				"project": doc.project,
+				"delivery": str(doc.delivery_datetime),
+				"takedown": str(doc.takedown_datetime),
+				"hold_expires_on": str(doc.hold_expires_on) if doc.status == "Tentative" and doc.hold_expires_on else None,
+				"fountains": [r.asset_name or r.asset for r in doc.fountains or []],
+				"accessories": [f"{cint(r.qty)} x {r.pool}" for r in doc.accessories or []],
+				"crew": [r.full_name or r.user for r in doc.get("crew") or []],
+				"total": flt(doc.total_amount),
+				"deposit_invoice": money("Deposit"),
+				"balance_invoice": money("Balance"),
+				"agreement": doc.rental_agreement,
+				"site_details_given": bool(doc.get("site_prep_updated_on")),
+			}
+		)
+	lapsing = frappe.get_all(
+		"Rental Booking",
+		filters=[
+			["status", "=", "Tentative"],
+			["hold_expires_on", "is", "set"],
+			["hold_expires_on", "<=", frappe.utils.add_days(today, 3)],
+		],
+		fields=["name", "customer_name", "event_name", "hold_expires_on"],
+		order_by="hold_expires_on",
+	)
+	out_of_service = frappe.get_all(
+		"Asset Out of Service",
+		filters={"status": "Out of Service"},
+		fields=["name", "asset_name", "asset", "reason", "out_from", "expected_back"],
+	)
+	return {
+		"as_of": str(frappe.utils.now_datetime()),
+		"window_days": days,
+		"rentals": rentals,
+		"holds_lapsing_within_3_days": [
+			{"name": r.name, "customer": r.customer_name, "event": r.event_name, "hold_expires_on": str(r.hold_expires_on)}
+			for r in lapsing
+		],
+		"fountains_out_of_service": [
+			{
+				"record": r.name,
+				"fountain": r.asset_name or r.asset,
+				"reason": r.reason,
+				"since": str(r.out_from),
+				"expected_back": str(r.expected_back) if r.expected_back else None,
+			}
+			for r in out_of_service
+		],
+	}

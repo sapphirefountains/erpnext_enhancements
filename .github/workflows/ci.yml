@@ -2503,6 +2503,13 @@ jobs:
       # first -- cleaning always falls after take-down. Every customer reminder ships OFF.
       - name: Rental operations (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_ops -v
+      # Rental fleet KPIs, calendar feeds and assistant tools (v1.567.0). The feed is guest-readable
+      # by design (a calendar app cannot log in) and names customers, so the secret in its URL is
+      # the only guard: compared in constant time, required, 256 bits, stored as a Password, and
+      # handed out only to the roles that manage it. The KPI block cannot break the rest of the
+      # Product snapshot, and utilization counts firm rentals only.
+      - name: Rental KPIs, calendar feeds, assistant tools (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_insights -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand

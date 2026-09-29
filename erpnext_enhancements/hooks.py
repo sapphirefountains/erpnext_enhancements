@@ -2820,6 +2820,10 @@ assistant_tools = [
 	# merges). See knowledge_base/ai_draft.py and the CHANGELOG for v1.560.0.
 	"erpnext_enhancements.assistant_tools.draft_knowledge_article.DraftKnowledgeArticle",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
+	# event rentals (v1.567.0): read-only. The board (what is going out, holds lapsing, money
+	# state) and the availability check (which fountains are free for given dates).
+	"erpnext_enhancements.assistant_tools.rental_board.RentalBoard",
+	"erpnext_enhancements.assistant_tools.rental_availability.RentalAvailability",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",
 	"erpnext_enhancements.assistant_tools.maintenance_site_briefing.MaintenanceSiteBriefing",
