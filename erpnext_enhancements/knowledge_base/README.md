@@ -22,7 +22,9 @@ three read-only AI tools**, `search_company_knowledge`, `fetch_knowledge_article
 `list_company_knowledge`, over the published articles as the person asking; see "AI tools (PR 6a)".
 **PR 6b: one AI tool that writes**, `draft_knowledge_article`: it writes a Draft, and if asked
 submits it for review, only from an approval card that the person who asked confirms themselves; it
-never approves or publishes. See "The drafting tool (PR 6b)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
+never approves or publishes. See "The drafting tool (PR 6b)". **PR 8 (v1.561.0): a read-only snapshot
+endpoint for the private Markdown mirror**, which the company's private knowledge repo pulls every six
+hours; ERPNext pushes nothing and holds no GitHub credential. See "The private mirror (PR 8)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
 hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Approvers" profile (see
 "Roles, and how a person gets one").
 
@@ -95,6 +97,7 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | Search and the AwesomeBar (PR 5) | Built from **Knowledge Article only**, status Published: `search_service.py` never names, reads or queries the Version doctype, so no draft's text is in anything it reads. **The caller's readable set filters before ranking**: `frappe.has_permission` first (no throw, so no dialog for a portal user), then the caller's own `get_list` of Published names, and `search.search` drops everything else before it scores; the rows shown are read again with the caller's `get_list`. The index lives in each worker's memory, per site: nothing in the database, redis or the queue. See "Search (PR 5)" |
 | The AI tools (PR 6a) | `search_company_knowledge`, `fetch_knowledge_article` and `list_company_knowledge` read **Knowledge Article only**, status Published, as the caller: `frappe.has_permission` first (no throw, no message), then the caller's own `get_list`; search goes through the row above. Nothing in `ai_tools.py`, `search_service.py`, `markdown.py` or the three wrappers names, reads or queries the Version doctype, and `tests/test_knowledge_base_tools.py` checks that statically, comments and docstrings stripped. Everything that is not a published article the caller may read (unknown, Retired, unreadable, a `KBV-` id, a blank) is the **same** `found: false`, so the answer does not say which. The approver is shown by name, never by email address. See "AI tools (PR 6a)" |
 | The drafting tool (PR 6b) | `draft_knowledge_article` **writes** a Version and **reads none back**: it returns a name, a state, a count and a link, and its refusals name arguments, lines, kinds, positions, hosts, ids, states and people, never text (`ai_draft.py`, whose only read of the Version doctype is an open version's `owner`, checked statically by `tests/test_knowledge_base_tools.py`). It runs only from its own card, confirmed by the person who asked, so it is not a way into anyone else's draft. The AI's **own** proposal stays on its card (AI Pending Action, AI Action Log, FAC's Assistant Audit Log) until retention purges it, decided 2026-09-28; a refused call's log row keeps only the lengths of its text (`_gate.WITHHELD_WHEN_UNQUEUED`), and keeps whole only the `_gate.KEPT_WHEN_UNQUEUED` arguments (an id, an option, a flag), so a misnamed `body` or `title` is withheld too. FAC writes the first 200 characters of every call's arguments to the web log (`mcp/server.py:217`), which nothing here can prevent |
+| The private mirror (PR 8) | `api/knowledge_base_mirror.snapshot` reads **Knowledge Article only**, status Published, with `get_all`, and never names or reads the Version doctype (checked statically, comments and docstrings stripped, by `tests/test_knowledge_base_tools.py` and `tests/test_knowledge_base_actions.py`). It is a GET for the **KB Mirror** role (or Administrator), refused to every staff session, System Manager included, before anything is read; the role has `desk_access = 0` and no DocPerm anywhere, so it lets its account read nothing else. What it returns is what every staff user already reads, as the fetch tool renders it. It writes and logs nothing, and its own code reads no request header. See "The private mirror (PR 8)" |
 | A reader opening a draft | Drafts are in the Version doctype, which has no reader row |
 | Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead. Reviewers are assigned by the knowledge base itself (`notify.py`, PR 3), only ever to KB Approvers, who can read it |
 | Comments and ToDos about a draft (PR 3, decision (b)) | Every System Manager reads every Comment and every ToDo on the site, and so do the AI tools acting for one; `list_documents(doctype="Comment")` names no denylisted doctype. So a typed Comment on a version is refused, and so is a ToDo on one that the knowledge base did not raise, or an edit to the text of one it did (`references.py`). The review ToDos carry the title and a link, never draft text; the reviewer's note stays in `review_note` on the version |
@@ -762,7 +765,8 @@ in `assistant_tools/` over `ai_tools.py`, imported inside `execute`; all three a
   the user id for a User with no first or last name, which becomes "Unnamed approver".
 
 **The Markdown** (`markdown.article_markdown(row, base_url=...)`, pure and standard library only) is
-what fetch returns and what the private mirror (Slice 6) will write, byte for byte:
+what fetch returns and what the private mirror (PR 8) writes, byte for byte. Both build the renderer's
+input with `ai_tools.article_text(row, base_url)`, so the row shape cannot drift between them:
 
 ```
 ---
@@ -799,7 +803,8 @@ The body (body_md), with links and images to site paths made absolute.
   the site URL in front; it still needs an ERPNext login. A URL with a scheme, or starting `//`, is left
   alone. The text ends with exactly one newline.
 - `related_numbers`, `truncate` and `mirror_path` (`kb/06-operations/KB-0601.md`, or `None` for a
-  department that is not an option) are there for fetch and the mirror.
+  department that is not an option) are there for fetch and the mirror. Fetch cuts at 40,000 characters;
+  the mirror writes the whole text.
 
 **Triton** gets the tools only through its own PR and a redeployed snapshot: see the CHANGELOG for
 v1.559.0 and WI-080's Triton section. The deployed agents keep their frozen snapshot until
@@ -894,6 +899,14 @@ A KB Approver may write drafts too; the rules only stop them approving one they 
 three approvers besides the author, any one of them can approve Parker's draft; an approver's own
 draft needs one of the other two.
 
+**KB Mirror** (PR 8) is a third role, and not a person's. `patches/seed_knowledge_base_mirror_role.py`
+(`[post_model_sync]`) creates it with `desk_access = 0` and grants it to nobody; no DocPerm anywhere
+names it, and `tests/test_knowledge_base_schema.py` fails the build if a JSON in the app ever does. It
+opens one thing, the snapshot endpoint below. It is meant for a single service account, a Website User
+that holds only this role, made by hand; which account, and its key, are in the company's private
+runbook, never in this repo. Model sync does not make this role (no DocPerm names it), so until the
+patch has run the endpoint admits Administrator only.
+
 ## The drafting tool (PR 6b)
 
 `draft_knowledge_article` (v1.560.0) is the one dedicated path by which an AI writes to the knowledge
@@ -973,6 +986,66 @@ Continuing an existing draft by tool, and submitting one by tool, stay deferred 
 NOT"): a person finishes it and presses Submit for Review in the Desk. Triton is never offered the
 tool.
 
+## The private mirror (PR 8)
+
+Every published article is also a Markdown file, `kb/<NN-department>/<KB number>.md`, in the company's
+private knowledge repo, where Claude Code and Antigravity read it alongside the shared agent rules
+(WI-080 Slice 6, decided 2026-09-28). The files are generated and never edited by hand; an article is
+changed in ERPNext.
+
+**Pull, not push.** A scheduled GitHub Action in that repo, every six hours and on demand, calls one
+read-only endpoint here and commits only when something changed. ERPNext holds **no GitHub credential**
+and queues nothing: an ERPNext compromise cannot rewrite the repo (and with it the agent rules every
+session loads), the deploy's FLUSHDB has no job to kill, and a failed run is recovered by running it
+again. What a leaked mirror key exposes is the published knowledge base, which the repo already holds.
+The account, its key, the workflow and its safety guards (it refuses an empty snapshot over a non-empty
+`kb/`, and a run that would delete more than max(3, 25%) of the files) live in that repo.
+
+**`api/knowledge_base_mirror.snapshot(since=None)`**, `@frappe.whitelist(methods=["GET"])`, rate limited
+to 60 calls an hour per client address (counted before the role check, so a refused call counts too):
+
+```
+GET /api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot?since=<stamp>
+```
+
+```json
+{"schema": 1, "stamp": "<64 hex>", "app_version": "1.561.0", "count": 1, "skipped": [],
+ "articles": [{"kb_number": "KB-0601", "version": 3, "path": "kb/06-operations/KB-0601.md",
+               "sha256": "<64 hex>", "markdown": "---\nkb_number: \"KB-0601\"\n..."}]}
+```
+
+- **Who.** The session user must hold **KB Mirror** or be Administrator; anyone else gets
+  `PermissionError` (403), the same sentence for all, before anything is read. A guest never reaches it
+  (not `allow_guest`), and a staff session is refused, System Manager included.
+- **What.** Every Knowledge Article with status Published, read with one `frappe.get_all` (the role holds
+  no DocPerm, so the role check is the gate), in KB-number order. Never a Retired article, never the
+  Version doctype, never a draft's text.
+- **Each file** is `ai_tools.article_text(row, get_url())`: the fetch tool's Markdown byte for byte,
+  **untruncated** (fetch cuts at 40,000 characters). `sha256` is over its UTF-8 bytes. The links in it
+  start with `get_url()`, which is the site's configured `host_name`, or the host the request came to
+  when none is set, so the mirror's files match fetch's when both reach the site at one address.
+- **Skipped.** An article whose `department_block` is not one of the ten options, or whose name is not a
+  KB number, has no folder (`markdown.mirror_path`): it is listed in `skipped` as
+  `{"kb_number", "department"}` and not rendered.
+- **The stamp** is sha256 over `"<path>\t<sha256>\n"` for each file, sorted by path. It changes exactly
+  when a file would: a publish, a retirement, a renamed approver or a moved site URL, and not a save
+  that changes no rendered byte. With `since` equal to it the answer is only
+  `{"schema": 1, "unchanged": true, "stamp": ...}`.
+- **Reads only.** It writes nothing and logs nothing, and its own code reads no request header, so the
+  credential never passes through it: Frappe reads the `Authorization` header, and drops it, before the
+  endpoint runs, and `get_url()` looks only at the request's host and scheme, and only when the site has
+  no `host_name`. Frappe rolls a GET's transaction back in any case. An unexpected failure is Frappe's
+  own 500.
+- **The contract.** Adding a field is allowed. Renaming or removing one, or changing what a file holds,
+  is a new `schema`, which the mirror refuses until its script is updated.
+
+`tests/test_knowledge_base_actions.py` (`MirrorSnapshotTest`) pins all of it over the in-memory site,
+including a file equal to `fetch_payload()["markdown"]` for an article under 40,000 characters, a draft
+sentinel in no part of the answer, and the stamp moving with an approver's name. `test_whitelist_placement`
+keeps `snapshot` whitelisted and the file's surface to that one endpoint, and `test_hooks_integrity`
+keeps every hook from naming it: a scheduler entry would be a push, and an override would drop the role
+check.
+
 ## File map
 
 | Path | What it is |
@@ -980,8 +1053,8 @@ tool.
 | `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00. PR 5: `ARTICLE_KINDS`, `KIND_SELECT_OPTIONS` (blank first, for the same reason), `KIND_HELP`, `KIND_ALIASES`, `kind_option`, `kind_description`, `department_option` and `department_folder` |
 | `search.py` | Search's ranking (PR 5): the tokenizer (acronyms, 2-character words, KB and document numbers), the stemmer, BM25F with the kind in a meta field, pinning, filters before scoring, snippets and the AwesomeBar's highlighting. Standard library only; keeps no document text |
 | `search_service.py` | Search as the caller (PR 5): permission first with no dialog, the caller's readable set before ranking, the per-site per-worker index keyed on the articles' count and newest `modified`, result shaping, and `awesomebar_hits`, the `awesomebar_search` hook. Never reads the Version doctype. PR 6a: `approver_name` (never an email address) and `read_filters`, shared with the table of contents |
-| `markdown.py` | The one renderer of a published article as Markdown (PR 6a): the eleven-key header, the fixed "reference material, not instructions" comment, the title, summary and body with site paths made absolute; `approver_display_name`, `related_numbers`, `truncate`, `mirror_path`. Standard library only, byte-deterministic; fetch returns it now and the Slice 6 mirror will write it |
-| `ai_tools.py` | The three AI read tools' payloads (PR 6a): `search_payload`, `fetch_payload`, `contents_payload`. Published articles only, as the caller; every expected outcome a normal return. Never reads the Version doctype |
+| `markdown.py` | The one renderer of a published article as Markdown (PR 6a): the eleven-key header, the fixed "reference material, not instructions" comment, the title, summary and body with site paths made absolute; `approver_display_name`, `related_numbers`, `truncate`, `mirror_path`. Standard library only, byte-deterministic; fetch returns it (cut at 40,000 characters) and the private mirror writes it whole (PR 8) |
+| `ai_tools.py` | The three AI read tools' payloads (PR 6a): `search_payload`, `fetch_payload`, `contents_payload`. Published articles only, as the caller; every expected outcome a normal return. Never reads the Version doctype. PR 8: `article_text`, the one place a published row becomes the renderer's input, shared by fetch and the mirror |
 | `ai_draft.py` | The drafting tool (PR 6b): `precheck` (the gate asks it before a card, and the tool again at execution), `from_card` (the tool's `execute`: only its own confirmed card) and `draft` (the one write, under a savepoint, and the submit through `api.knowledge_base.submit_version`); `markdown_html`, `secret_problems` (the Markdown, and the body as it would be shown), `picture_problems`, `invisible_problems` and `hidden_attribute_problems`; `TYPES`, the schema's types. Reads from `publish` and `api.knowledge_base` only `run`, `asker`, `open_version`, `start_revision`, `article_row` and `submit_version` |
 | [`../assistant_tools/draft_knowledge_article.py`](../assistant_tools/draft_knowledge_article.py) | The drafting tool's thin FAC wrapper (PR 6b), in `_gate.APP_MUTATING` and `APP_PRECHECKED_TOOLS`, with a `precheck` method; its failure path is `_knowledge_base.run_draft` |
 | [`../assistant_tools/search_company_knowledge.py`](../assistant_tools/search_company_knowledge.py), [`fetch_knowledge_article.py`](../assistant_tools/fetch_knowledge_article.py), [`list_company_knowledge.py`](../assistant_tools/list_company_knowledge.py), [`_knowledge_base.py`](../assistant_tools/_knowledge_base.py) | The three FAC tools (PR 6a), thin wrappers registered in `hooks.py` `assistant_tools` and listed in `_gate.EXPLICIT_READONLY`; `_knowledge_base.py` holds their shared `kind`/`department` schema properties and the failure path |
@@ -1003,18 +1076,20 @@ tool.
 | [`../hooks.py`](../hooks.py) `standard_help_items` | Help > Company Knowledge Base (PR 4) |
 | [`../hooks.py`](../hooks.py) `awesomebar_search` | The AwesomeBar's knowledge base hits (PR 5), `search_service.awesomebar_hits` |
 | [`../api/knowledge_base.py`](../api/knowledge_base.py) | The nine endpoints (PR 3): the permission and rule checks, then `publish`; `submit_version`, Submit for Review's body, shared with the drafting tool and not whitelisted (PR 6b) |
+| [`../api/knowledge_base_mirror.py`](../api/knowledge_base_mirror.py) | The private mirror's one endpoint (PR 8): `snapshot`, a rate-limited GET for KB Mirror or Administrator; every Published article through `ai_tools.article_text`, untruncated, with its path, sha256 and the set's stamp; `stamp_of`. Reads only |
 | [`../public/js/knowledge_base/`](../public/js/knowledge_base/) | The two form scripts (PR 3), registered in `doctype_js`: the buttons `__onload.kb` allows, the dialogs, View Changes |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |
 | [`../patches/seed_knowledge_base_roles.py`](../patches/seed_knowledge_base_roles.py) | The two roles and the one-role "KB Approvers" Role Profile. Insert-only; cannot raise |
+| [`../patches/seed_knowledge_base_mirror_role.py`](../patches/seed_knowledge_base_mirror_role.py) | "KB Mirror" (PR 8): `desk_access = 0`, no DocPerm, granted to nobody. Insert-only; cannot raise |
 | [`../assistant_tools/_gate.py`](../assistant_tools/_gate.py) | `DENYLIST_DOCTYPES`, `DENYLIST_REASONS` and `NEVER_EXEMPT` carry the KB entries; `DENYLIST_FILE_ARGUMENTS` refuses `extract_file_content` on a draft's File (PR 3); `APP_MUTATING`, `APP_PRECHECKED_TOOLS`, `TOOL_TARGET_DOCTYPES`, `WITHHELD_WHEN_UNQUEUED` and `KEPT_WHEN_UNQUEUED` carry the drafting tool (PR 6b) |
-| [`../tests/test_knowledge_base_schema.py`](../tests/test_knowledge_base_schema.py) | Flags, the DocPerm matrix, fields, Select options, controller refusals, the seed patch. Its own CI step |
+| [`../tests/test_knowledge_base_schema.py`](../tests/test_knowledge_base_schema.py) | Flags, the DocPerm matrix, fields, Select options, controller refusals, the seed patch; the mirror's role patch and no JSON naming KB Mirror (PR 8). Its own CI step |
 | [`../tests/test_ai_gate_denylist.py`](../tests/test_ai_gate_denylist.py) | The Version doctype refused on every gate path; the published doctype not refused. On the AI-gate CI step |
 | [`../tests/test_knowledge_base_rules.py`](../tests/test_knowledge_base_rules.py) | `workflow.py` and `content.py`, every branch, with no stub (and a fresh-interpreter check that they import no frappe); `markdown.py` too since PR 6a (`TestArticleMarkdown`: the header read back as YAML, quoting, truncation, links, byte-determinism, no email address). Its own CI step |
 | [`../tests/test_knowledge_base_hooks.py`](../tests/test_knowledge_base_hooks.py) | `files.py` (the fast path, the byte move, the delete refusal, registration) and the Version controller's content and approval gates. Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_transitions.py`](../tests/test_knowledge_base_transitions.py) | The state machine, every rule of every move, the buttons, who is asked, `shows_anything`/`referenced_files`/`text_diff`, and the example-key placeholders (PR 3). No stub; its own CI step |
-| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, a hidden article taking no slot, the cache) (PR 5); the AI tools' payloads (`AiToolPayloadsTest`: no draft sentinel on any page of any tool, the one `found: false`, the 40,000-character cap, the table of contents, a retired article in no table of contents and unavailable in `related`, a citation fetching its article, no email address, the failure path with nothing of the request in its Error Log) (PR 6a); the drafting tool end to end (`AiDraftTest`: queued through the real gate over a FAC stub and confirmed through the real `_confirm_one`; only the requester's confirmation writes; submitted in the same card, then the requester's approval refused, any approval under a gate flag refused, another approver publishing; the savepoint; the only move being Submit for Review; pictures, secrets, open versions; no text in any result or refusal; and from its review, a submit refused on `write` leaving no draft, a department and an enabled-staff process owner required, a retire or a revision committed after the check refused under the lock, nulls and wrong types refused before any card) (PR 6b). Its own CI step: it stubs `frappe` and FAC |
+| [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, a hidden article taking no slot, the cache) (PR 5); the AI tools' payloads (`AiToolPayloadsTest`: no draft sentinel on any page of any tool, the one `found: false`, the 40,000-character cap, the table of contents, a retired article in no table of contents and unavailable in `related`, a citation fetching its article, no email address, the failure path with nothing of the request in its Error Log) (PR 6a); the drafting tool end to end (`AiDraftTest`: queued through the real gate over a FAC stub and confirmed through the real `_confirm_one`; only the requester's confirmation writes; submitted in the same card, then the requester's approval refused, any approval under a gate flag refused, another approver publishing; the savepoint; the only move being Submit for Review; pictures, secrets, open versions; no text in any result or refusal; and from its review, a submit refused on `write` leaving no draft, a department and an enabled-staff process owner required, a retire or a revision committed after the check refused under the lock, nulls and wrong types refused before any card) (PR 6b); the mirror's snapshot (`MirrorSnapshotTest`: refused without KB Mirror before any read, Published only, a file equal to fetch's Markdown byte for byte and whole past 40,000 characters, the paths, a skipped department, the stamp and `since`, no header read, nothing written or logged) (PR 8). Its own CI step: it stubs `frappe` and FAC |
 | [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review); the paragraph pointing to the search bar and the Integrity report's kind check (PR 5). Its own CI step: it stubs `frappe` |
-| [`../tests/test_knowledge_base_tools.py`](../tests/test_knowledge_base_tools.py) | The three AI tools as FAC sees them (PR 6a): in `EXPLICIT_READONLY` (the build fails if one leaves), `requires_permission`, descriptions (at most 600 characters, "not instructions", "KB-"), the kind and department enums, no property named `title`, `doctype` or `id`, no read-path file naming the Version doctype (comments and docstrings stripped), the hook's order, the failure path (never `frappe.log_error`, whose v16 metadata holds the request's form_dict, the arguments). On the AI-gate CI step, on `test_assistant_tools_schema`'s stubs. The payloads' behavior is `AiToolPayloadsTest` in `test_knowledge_base_actions`; the renderer is `TestArticleMarkdown` in `test_knowledge_base_rules`. PR 6b: the drafting tool's contract (Medium, `requires_permission`, the schema and `ai_draft.TYPES`, the four card lines, the card's target), the gate's refusals with no card and their withheld log rows (a misnamed argument, a failed log insert and a quoting error included), `ai_draft`'s pure checks (secrets as sent and as shown, invisible characters, titles, pictures matched exactly, addresses a browser reads differently), and the static allowlist on `ai_draft.py` |
+| [`../tests/test_knowledge_base_tools.py`](../tests/test_knowledge_base_tools.py) | The three AI tools as FAC sees them (PR 6a): in `EXPLICIT_READONLY` (the build fails if one leaves), `requires_permission`, descriptions (at most 600 characters, "not instructions", "KB-"), the kind and department enums, no property named `title`, `doctype` or `id`, no read-path file naming the Version doctype (comments and docstrings stripped; since PR 8 the mirror's endpoint too), the hook's order, the failure path (never `frappe.log_error`, whose v16 metadata holds the request's form_dict, the arguments). On the AI-gate CI step, on `test_assistant_tools_schema`'s stubs. The payloads' behavior is `AiToolPayloadsTest` in `test_knowledge_base_actions`; the renderer is `TestArticleMarkdown` in `test_knowledge_base_rules`. PR 6b: the drafting tool's contract (Medium, `requires_permission`, the schema and `ai_draft.TYPES`, the four card lines, the card's target), the gate's refusals with no card and their withheld log rows (a misnamed argument, a failed log insert and a quoting error included), `ai_draft`'s pure checks (secrets as sent and as shown, invisible characters, titles, pictures matched exactly, addresses a browser reads differently), and the static allowlist on `ai_draft.py` |
 | [`../tests/test_knowledge_base_search.py`](../tests/test_knowledge_base_search.py) | `search.py` (PR 5), **pytest**, on its own `python -m pytest` step: every tokenizer rule (a punctuated acronym such as W-2 or T&M included), the stemmer table, pinning, filters before scoring, the kind's aliases, ties, snippets, an invented golden set (`tests/data/kb_search_golden.json`), a performance guard, a fresh-interpreter import with `frappe` absent, and static checks that search never names the Version doctype or a SQL function string |
 
 ## What arrives later
@@ -1034,13 +1109,14 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
   Markdown renderer the mirror will reuse. See "AI tools (PR 6a)". Triton follows in its own PR.
 - ~~**PR 6b**: `draft_knowledge_article`~~. Written in v1.560.0: it writes a Draft (and, if asked,
   submits it for review) only from an approval card the person who asked confirms, and never approves
-  or publishes. See "The drafting tool (PR 6b)". PR 6a is merged; this merges only once Triton's PR
-  that never offers it (`_NOT_OFFERED_PREFIXES`) is deployed.
+  or publishes. See "The drafting tool (PR 6b)". Merged on 2026-09-28 (#1153) and live.
 - **PR 7**: the one-way Drive copy for Gemini and outages. It keys its export on
   `(content_hash, version_number)`, because the kind is not in the hash.
-- **PR 8**: the Markdown mirror of the published articles in the company's private repo, pulled from
-  a read-only endpoint (WI-080 Slice 6).
+- ~~**PR 8**: the ERPNext side of the Markdown mirror~~. Written in v1.561.0: the read-only `snapshot`
+  endpoint and the KB Mirror role (WI-080 Slice 6). See "The private mirror (PR 8)". The workflow that
+  pulls it lives in the company's private repo.
 
 **Merging:** PRs 1 to 3 and PR 3's review fixes are live on prod (1.556.1, verified 2026-09-28), and
-PR 4 merged on 2026-09-28 (v1.557.0), and so did PR 5 (v1.558.0). Each later PR merges when Nik
-decides, one at a time, after the one before it is verified on prod.
+PRs 4, 5, 6a and 6b merged on 2026-09-28 and are live (v1.560.0, verified that day). PR 8 (v1.561.0)
+needs only PR 6a's renderer. Each later PR merges when Nik decides, one at a time, after the one before
+it is verified on prod.

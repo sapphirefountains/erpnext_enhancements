@@ -357,5 +357,46 @@ class TestLoginAndLogoutHooks(unittest.TestCase):
                 self.assertIn("Exception", caught)
 
 
+class TestTheKnowledgeMirrorIsPullOnly(unittest.TestCase):
+    """WI-080 PR 8 (v1.561.0): the company's private knowledge repo PULLS
+    `api/knowledge_base_mirror.snapshot` on its own schedule. ERPNext holds no GitHub credential and
+    queues nothing for it, so an ERPNext compromise cannot rewrite that repo, and the deploy's
+    FLUSHDB has no job to kill.
+
+    The endpoint is reached only by its own dotted path, so no hook may name it: an
+    `override_whitelisted_methods` entry would swap in a function without its role check (or put
+    its answer behind another name), a `scheduler_events` entry would be a push, and a `doc_events`
+    one would render the knowledge base on every save.
+    """
+
+    def test_no_hook_names_the_mirror(self):
+        strings = [
+            node.value
+            for node in ast.walk(hooks_tree())
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        self.assertEqual(
+            [s for s in strings if "knowledge_base_mirror" in s or "kb_mirror" in s],
+            [],
+            "hooks.py names the knowledge mirror; it must stay a pulled endpoint and nothing else",
+        )
+
+    def test_the_check_reads_the_hooks_it_means(self):
+        """Not vacuous: the three hooks it is about exist and hold dotted paths of this app."""
+        hooks = top_level_assignments()
+        for name in ("override_whitelisted_methods", "scheduler_events", "doc_events"):
+            with self.subTest(hook=name):
+                self.assertIn(name, hooks)
+                rendered = ast.dump(hooks[name])
+                self.assertIn("erpnext_enhancements.", rendered)
+
+    def test_the_endpoint_module_exists_where_the_mirror_calls_it(self):
+        path = APP_ROOT / "api" / "knowledge_base_mirror.py"
+        self.assertTrue(path.is_file())
+        body = ast.parse(path.read_text(encoding="utf-8")).body
+        names = [n.name for n in body if isinstance(n, ast.FunctionDef)]
+        self.assertIn("snapshot", names)
+
+
 if __name__ == "__main__":
     unittest.main()

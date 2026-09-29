@@ -33,6 +33,9 @@ Two rules, both cheap and both keyed on what actually went wrong:
 2. **Endpoints that must stay reachable, stay reachable.** A named inventory, because rule
    1 alone cannot notice a decorator that has gone missing entirely.
 
+And, for a file whose whole surface is known (``EXACT_SURFACE``, since v1.561.0), exactly those
+endpoints: rule 1 cannot see a decorator that slid onto a helper with a public name.
+
 Bench-free: filesystem and `ast` only.
 
 Run: python -m unittest erpnext_enhancements.tests.test_whitelist_placement
@@ -116,6 +119,11 @@ MUST_STAY_WHITELISTED = {
         "confirm_still_accurate",
         "retire",
     ),
+    # The private knowledge mirror's one call (v1.561.0, WI-080 PR 8). A scheduled job in another
+    # repo is its only caller, so a lost decorator shows nowhere in the Desk: the job simply fails
+    # every six hours while the mirror goes stale. `stamp_of` and the `_require_mirror` /
+    # `_rendered` helpers sit directly below it and must never carry the decorator.
+    "api/knowledge_base_mirror.py": ("snapshot",),
 }
 
 
@@ -173,6 +181,22 @@ class TestTheEndpointsThatMustSurviveDo(unittest.TestCase):
             for name in names:
                 with self.subTest(endpoint=f"{relative}:{name}"):
                     self.assertIn(name, found, f"{name} lost its @frappe.whitelist()")
+
+
+#: Files whose whole whitelisted surface is known: nothing may be added to it by accident. Rule 1
+#: cannot see a decorator that slid onto a helper with a public name, such as `stamp_of`.
+EXACT_SURFACE = {
+    # One read-only GET for the private mirror's service account (v1.561.0). A decorator on
+    # `stamp_of` or a helper would expose it to every signed-in user, without the role check.
+    "api/knowledge_base_mirror.py": {"snapshot"},
+}
+
+
+class TestExactSurfaces(unittest.TestCase):
+    def test_each_listed_file_exposes_exactly_its_endpoints(self):
+        for relative, names in EXACT_SURFACE.items():
+            with self.subTest(file=relative):
+                self.assertEqual(_whitelisted_functions(APP / relative), names)
 
 
 class TestTheGuardCannotPassVacuously(unittest.TestCase):

@@ -56,6 +56,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -
 import ast
 import copy
 import datetime
+import hashlib
 import importlib
 import json
 import os
@@ -117,6 +118,8 @@ MODULES = (
 	"erpnext_enhancements.knowledge_base.ai_draft",
 	"erpnext_enhancements.assistant_tools.gating_api",
 	"erpnext_enhancements.assistant_tools.draft_knowledge_article",
+	# PR 8: the private mirror's snapshot endpoint, over the same site.
+	"erpnext_enhancements.api.knowledge_base_mirror",
 )
 #: Imported again with the modules above, so the gate is applied to this suite's FAC stub and reads this
 #: suite's frappe (PR 6b).
@@ -711,6 +714,19 @@ def _whitelist(*args, **kwargs):
 	return register
 
 
+#: ``frappe.rate_limiter.rate_limit``'s arguments, by function name (PR 8). The limit itself is
+#: Frappe's (redis, per IP); the suite pins what the endpoint asks for.
+RATE_LIMITED = {}
+
+
+def _rate_limit(*args, **kwargs):
+	def register(fn):
+		RATE_LIMITED[fn.__name__] = kwargs
+		return fn
+
+	return register
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe._ = lambda message, *a, **k: message
@@ -776,6 +792,11 @@ def _install_frappe_stub():
 	assign_to = types.ModuleType("frappe.desk.form.assign_to")
 	assign_to.notify_assignment = lambda *a, **k: STATE["bells"].append((a, k))
 
+	# PR 8: the mirror's endpoint is rate limited.
+	rate_limiter = types.ModuleType("frappe.rate_limiter")
+	rate_limiter.rate_limit = _rate_limit
+	frappe.rate_limiter = rate_limiter
+
 	sys.modules.update(
 		{
 			"frappe": frappe,
@@ -785,6 +806,7 @@ def _install_frappe_stub():
 			"frappe.desk": desk,
 			"frappe.desk.form": form,
 			"frappe.desk.form.assign_to": assign_to,
+			"frappe.rate_limiter": rate_limiter,
 		}
 	)
 
@@ -910,12 +932,12 @@ def _install_fac_stub():
 
 
 api = publish = notify = references = files = search_service = ai_tools = kb_tool_helper = None
-ai_draft = gate = gating_api = draft_tool_module = None
+ai_draft = gate = gating_api = draft_tool_module = mirror = None
 
 
 def setUpModule():
 	global api, publish, notify, references, files, search_service, ai_tools, kb_tool_helper
-	global ai_draft, gate, gating_api, draft_tool_module
+	global ai_draft, gate, gating_api, draft_tool_module, mirror
 	_install_frappe_stub()
 	_install_fac_stub()
 	for name in (*GATE_PACKAGE, *MODULES):
@@ -932,6 +954,7 @@ def setUpModule():
 	ai_draft = loaded["erpnext_enhancements.knowledge_base.ai_draft"]
 	gating_api = loaded["erpnext_enhancements.assistant_tools.gating_api"]
 	draft_tool_module = loaded["erpnext_enhancements.assistant_tools.draft_knowledge_article"]
+	mirror = loaded["erpnext_enhancements.api.knowledge_base_mirror"]
 	gate = sys.modules["erpnext_enhancements.assistant_tools._gate"]
 	FAC_TOOLS.clear()
 	FAC_TOOLS["draft_knowledge_article"] = draft_tool_module.DraftKnowledgeArticle
@@ -3559,6 +3582,401 @@ class AiDraftTest(Base):
 		queue(ai_args(kind="Guide"))
 		self.assertEqual(logged(), [])
 		self.assertEqual(STATE["deferred_docs"], [])
+
+
+# ------------------------------------------------------------------ the private mirror's snapshot (PR 8)
+
+#: The mirror's service account: a Website User holding only KB Mirror (fictitious; the real account is
+#: described in the private repo's runbook, never here).
+MIRROR = "mirror@example.com"
+MIRROR_TOKEN = "token " + "k1e2y3" + ":" + "s4e5c6"
+MIRROR_PATH = re.compile(r"^kb/\d{2}-[a-z-]+/KB-\d{4}\.md$")
+MIRROR_SOURCE = APP / "api" / "knowledge_base_mirror.py"
+
+
+class _Tripwire(dict):
+	"""Request headers that fail the test if anything reads them."""
+
+	def _touched(self, *args, **kwargs):
+		raise AssertionError("the snapshot read a request header")
+
+	get = __getitem__ = __contains__ = keys = items = values = __iter__ = _touched
+
+
+class MirrorSnapshotTest(Base):
+	"""``api/knowledge_base_mirror.snapshot`` (WI-080 PR 8, Slice 6) over the same in-memory site: only
+	KB Mirror (or Administrator) may call it, and the refusal comes before any read; it returns every
+	Published article and nothing else (never Retired, never a version's text); each file is exactly
+	fetch's Markdown, untruncated; paths are ``kb/<NN-department>/KB-NNNN.md``, and an article with no
+	folder is skipped; the stamp changes exactly when a file would, and ``since`` equal to it answers
+	``unchanged``; and it reads no header, writes nothing and logs nothing."""
+
+	SENTINEL = "OCELOTDRAFT"
+	PLAIN = '<div class="ql-editor read-mode"><p>Count every carton on the slip.</p></div>'
+
+	def setUp(self):
+		super().setUp()
+		search_service._STATE.clear()
+		_db()["User"][MIRROR] = {
+			"name": MIRROR,
+			"enabled": 1,
+			"user_type": "Website User",
+			"roles": ("KB Mirror",),
+			"first_name": "Mirror",
+			"last_name": "Example",
+		}
+		STATE["committed"] = copy.deepcopy(_db())
+		self.reads = []
+
+	def _publish(self, title=TITLE, body=None, **values):
+		values.setdefault("summary", "Scan the slip, count, then receive.")
+		values.setdefault("keywords", "PO, packing slip, receiving")
+		name = draft(title=title, body=body or self.PLAIN, **values)
+		submitted(name)
+		return approve(name)["article"]
+
+	def _get_all(self, doctype, *args, **kwargs):
+		self.reads.append(doctype)
+		return _get_all(doctype, *args, **kwargs)
+
+	def _snapshot(self, user=MIRROR, **kwargs):
+		with mock.patch.object(frappe_module(), "get_all", side_effect=self._get_all):
+			return request(mirror.snapshot, user=user, browser=False, token=MIRROR_TOKEN, **kwargs)
+
+	def _fetched(self, number):
+		return request(ai_tools.fetch_payload, {"kb_number": number}, user=NIK)
+
+	# ---- who may call it
+
+	def test_it_is_a_rate_limited_get_and_never_a_guests(self):
+		self.assertEqual(WHITELISTED["snapshot"], {"methods": ["GET"]})
+		self.assertEqual(RATE_LIMITED["snapshot"], {"limit": 60, "seconds": 3600})
+		# The whitelist must be the OUTER decorator: v16 looks the dotted path up and checks that object
+		# against frappe.whitelisted, so a rate_limit wrapped around it would make it "not whitelisted".
+		tree = ast.parse(MIRROR_SOURCE.read_text(encoding="utf-8"))
+		fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "snapshot")
+		self.assertEqual(
+			[ast.unparse(d) for d in fn.decorator_list],
+			["frappe.whitelist(methods=['GET'])", "rate_limit(limit=60, seconds=3600)"],
+		)
+		self.assertEqual([a.arg for a in fn.args.args], ["since"])
+		# Nothing else in the module is an endpoint.
+		self.assertEqual(
+			[n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.decorator_list], ["snapshot"]
+		)
+
+	def test_refused_without_the_role_before_anything_is_read(self):
+		self._publish()
+		portal = "portal@example.com"
+		for user in (TECH, AUTHOR, APPROVER, NIK, portal, "Guest"):
+			for browser in (True, False):
+				with self.subTest(user=user, browser=browser):
+					self.reads.clear()
+					# Not in a browser: that user's own API key, as the mirror calls it.
+					token = None if browser else MIRROR_TOKEN
+					with mock.patch.object(frappe_module(), "get_all", side_effect=self._get_all):
+						message = refused(
+							self,
+							mirror.snapshot,
+							user=user,
+							browser=browser,
+							token=token,
+							exc=PermissionRefused,
+						)
+					self.assertEqual(message, "Only the knowledge base mirror may read this snapshot.")
+					self.assertEqual(self.reads, [])
+		# NIK holds System Manager: no role but KB Mirror opens it.
+		self.assertIn("System Manager", _roles(NIK))
+
+	def test_the_mirror_and_administrator_may_call_it(self):
+		number = self._publish()
+		for user in (MIRROR, "Administrator"):
+			with self.subTest(user=user):
+				out = self._snapshot(user=user)
+				self.assertEqual([a["kb_number"] for a in out["articles"]], [number])
+
+	# ---- what it returns
+
+	def test_the_answer_s_shape(self):
+		import erpnext_enhancements
+
+		number = self._publish()
+		out = self._snapshot()
+		self.assertEqual(list(out), ["schema", "stamp", "app_version", "count", "skipped", "articles"])
+		self.assertEqual((out["schema"], out["count"], out["skipped"]), (1, 1, []))
+		self.assertEqual(out["app_version"], erpnext_enhancements.__version__)
+		self.assertRegex(out["stamp"], r"^[0-9a-f]{64}$")
+		(article,) = out["articles"]
+		self.assertEqual(list(article), ["kb_number", "version", "path", "sha256", "markdown"])
+		self.assertEqual(
+			(article["kb_number"], article["version"], article["path"]),
+			(number, 1, f"kb/06-operations/{number}.md"),
+		)
+		text = article["markdown"]
+		self.assertEqual(article["sha256"], hashlib.sha256(text.encode("utf-8")).hexdigest())
+		self.assertTrue(text.startswith(f'---\nkb_number: "{number}"\n'))
+		self.assertTrue(text.endswith("\n") and not text.endswith("\n\n"))
+		self.assertNotIn("\r", text)
+		self.assertEqual(json.loads(json.dumps(out)), out)
+
+	def test_a_file_is_fetch_s_markdown_byte_for_byte(self):
+		"""The acceptance check, run here: one renderer, one row shape (``ai_tools.article_text``)."""
+		numbers = [
+			self._publish(),
+			self._publish(title="Paying a PO: the 3-way match", department_block="03 Finance", kind="Policy"),
+			self._publish(
+				title='Quoting "rush" jobs',
+				body='<div class="ql-editor read-mode"><p>See KB-0601 and <a href="/desk/item">items</a>.</p>'
+				'<p><img src="/private/files/slip.png?fid=file-used"></p></div>',
+				department_block="09 Sales",
+				kind="Process",
+			),
+		]
+		articles = self._snapshot()["articles"]
+		# In KB-number order, which here is not the titles' order (Paying, Quoting, Receiving).
+		self.assertEqual([a["kb_number"] for a in articles], sorted(numbers))
+		self.assertNotEqual(
+			sorted(numbers), [n for _t, n in sorted((_row(ARTICLE, n)["title"], n) for n in numbers)]
+		)
+		files = {a["kb_number"]: a for a in articles}
+		for number in numbers:
+			with self.subTest(number=number):
+				fetched = self._fetched(number)
+				self.assertIs(fetched["truncated"], False)
+				self.assertEqual(files[number]["markdown"], fetched["markdown"])
+				self.assertEqual(
+					files[number]["markdown"].encode("utf-8"), fetched["markdown"].encode("utf-8")
+				)
+				self.assertEqual(files[number]["version"], fetched["version"])
+
+	def test_a_long_article_is_whole(self):
+		"""Fetch cuts at 40,000 characters; the mirror writes the whole text."""
+		steps = "".join(
+			f"<p>Step {n}: turn the fictitious valve a quarter turn and check the gauge again.</p>"
+			for n in range(700)
+		)
+		number = self._publish(body=f'<div class="ql-editor read-mode">{steps}</div>')
+		fetched = self._fetched(number)
+		self.assertIs(fetched["truncated"], True)
+		(article,) = self._snapshot()["articles"]
+		self.assertEqual(len(article["markdown"]), fetched["characters"])
+		self.assertGreater(len(article["markdown"]), 40_000)
+		self.assertNotIn("[Truncated at", article["markdown"])
+		self.assertIn("Step 699: turn", article["markdown"])
+		head = fetched["markdown"][: -len(ai_tools.markdown.TRUNCATION_NOTE)]
+		self.assertTrue(article["markdown"].startswith(head))
+
+	def test_published_only_never_retired_never_a_version(self):
+		"""A sentinel in a Draft, an In Review, a Discarded and a Superseded version, and in an open
+		revision of a published article, is in no part of the answer; a retired article is not either.
+		Only the Article doctype is read."""
+		word = self.SENTINEL
+		body = f'<div class="ql-editor read-mode"><p>{word} steps.</p></div>'
+		draft(body=body, title=f"{word} draft")
+		in_review = draft(body=body, keywords=word)
+		submitted(in_review)
+		discarded = draft(body=body, summary=word)
+		request(api.discard, discarded, user=AUTHOR)
+		number = self._publish(body=body, title=f"{word} first", summary=word)
+		revision = request(api.start_revision, number, user=AUTHOR)["version"]
+		edit(
+			revision, AUTHOR, body=self.PLAIN, title="Plain title", summary="Plain summary.", keywords="plain"
+		)
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=APPROVER)
+		reopened = request(api.start_revision, number, user=AUTHOR)["version"]
+		edit(reopened, AUTHOR, body=body, title=f"{word} title", summary=word, keywords=word)
+		retired = self._publish(title="The old way", department_block="01 Executive", kind="Policy")
+		request(api.retire, retired, "Replaced.", user=APPROVER)
+		kept = self._publish(title="Paying a PO", department_block="03 Finance", kind="Policy")
+		self.assertTrue(any(row.get("review_state") == "Superseded" for row in _db()[VERSION].values()))
+		self.assertEqual(_row(ARTICLE, retired)["status"], "Retired")
+
+		out = self._snapshot()
+		self.assertEqual([a["kb_number"] for a in out["articles"]], sorted([number, kept]))
+		self.assertEqual(out["count"], 2)
+		self.assertNotIn(word, json.dumps(out))
+		self.assertNotIn(retired, json.dumps(out))
+		self.assertEqual(set(self.reads), {ARTICLE})
+		# The published revision's text is there: the sentinel's absence is not an empty answer.
+		revised = next(a for a in out["articles"] if a["kb_number"] == number)
+		self.assertEqual(revised["version"], 2)
+		self.assertIn("Count every carton on the slip.", revised["markdown"])
+		self.assertIn('title: "Plain title"', revised["markdown"])
+
+	def test_every_path_is_a_folder_and_a_kb_number(self):
+		numbers = {
+			self._publish(department_block=block, kind="SOP", title=f"Receiving in {block}"): block
+			for block in ("00 Company Wide", "03 Finance", "06 Operations", "07 Product Management")
+		}
+		out = self._snapshot()
+		self.assertEqual(out["count"], 4)
+		for article in out["articles"]:
+			with self.subTest(number=article["kb_number"]):
+				self.assertRegex(article["path"], MIRROR_PATH)
+				folder = constants_module().department_folder(numbers[article["kb_number"]])
+				self.assertEqual(article["path"], f"kb/{folder}/{article['kb_number']}.md")
+		self.assertIn("kb/07-product-management/", "".join(a["path"] for a in out["articles"]))
+		self.assertEqual([a["kb_number"] for a in out["articles"]], sorted(numbers))
+
+	def test_an_article_with_no_folder_is_skipped_not_rendered(self):
+		good = self._publish()
+		odd = self._publish(title="Signing for a PO", department_block="03 Finance", kind="Policy")
+		_db()[ARTICLE][odd]["department_block"] = "3 Finance"  # not one of the ten options
+		STATE["committed"] = copy.deepcopy(_db())
+		out = self._snapshot()
+		self.assertEqual([a["kb_number"] for a in out["articles"]], [good])
+		self.assertEqual(out["count"], 1)
+		self.assertEqual(out["skipped"], [{"kb_number": odd, "department": "3 Finance"}])
+		self.assertNotIn("Signing for a PO", json.dumps(out))
+		# And a skipped article is not in the stamp: fixing nothing else, the stamp is the good one's.
+		self.assertEqual(out["stamp"], mirror.stamp_of(out["articles"]))
+
+	# ---- the stamp and `since`
+
+	def test_since_equal_to_the_stamp_is_unchanged(self):
+		self._publish()
+		first = self._snapshot()
+		stamp = first["stamp"]
+		for since in (stamp, f"  {stamp}\n"):
+			with self.subTest(since=since):
+				self.assertEqual(
+					self._snapshot(since=since), {"schema": 1, "unchanged": True, "stamp": stamp}
+				)
+		for since in (None, "", "0" * 64, stamp.upper(), ["x"], 7):
+			with self.subTest(since=since):
+				self.assertEqual(self._snapshot(since=since), first)
+
+	def test_the_stamp_is_the_sorted_path_and_sha256_pairs(self):
+		self._publish()
+		self._publish(title="Paying a PO", department_block="03 Finance", kind="Policy")
+		out = self._snapshot()
+		lines = "".join(
+			f"{a['path']}\t{a['sha256']}\n" for a in sorted(out["articles"], key=lambda a: a["path"])
+		)
+		self.assertEqual(out["stamp"], hashlib.sha256(lines.encode("utf-8")).hexdigest())
+		self.assertEqual(mirror.stamp_of(list(reversed(out["articles"]))), out["stamp"])
+		self.assertEqual(mirror.stamp_of([]), hashlib.sha256(b"").hexdigest())
+
+	def test_the_stamp_changes_when_an_approver_s_name_changes(self):
+		number = self._publish()
+		before = self._snapshot()
+		self.assertIn('approved_by: "Nik Example"', before["articles"][0]["markdown"])
+		_db()["User"][NIK]["first_name"] = "Nicola"
+		STATE["committed"] = copy.deepcopy(_db())
+		after = self._snapshot()
+		self.assertNotEqual(after["stamp"], before["stamp"])
+		self.assertIn('approved_by: "Nicola Example"', after["articles"][0]["markdown"])
+		self.assertEqual(after["articles"][0]["kb_number"], number)
+		self.assertEqual(self._snapshot(since=before["stamp"])["stamp"], after["stamp"])
+		self.assertNotIn("unchanged", self._snapshot(since=before["stamp"]))
+
+	def test_the_stamp_moves_only_when_a_file_would(self):
+		number = self._publish()
+		other = self._publish(title="Paying a PO", department_block="03 Finance", kind="Policy")
+		stamp = self._snapshot()["stamp"]
+		# A change to fields no file shows: the same stamp.
+		saved = copy.deepcopy(_db()[ARTICLE][number])
+		_db()[ARTICLE][number].update(content_hash="0" * 64, modified=_tick(), review_every_months=12)
+		STATE["committed"] = copy.deepcopy(_db())
+		self.assertEqual(self._snapshot()["stamp"], stamp)
+		_db()[ARTICLE][number] = saved
+		STATE["committed"] = copy.deepcopy(_db())
+		# Retiring one: a file would go, so the stamp moves.
+		request(api.retire, other, "Replaced.", user=APPROVER)
+		retired = self._snapshot()
+		self.assertNotEqual(retired["stamp"], stamp)
+		self.assertEqual([a["kb_number"] for a in retired["articles"]], [number])
+		# A new version of the other: its file would change.
+		revision = request(api.start_revision, number, user=AUTHOR)["version"]
+		edit(revision, AUTHOR, body='<div class="ql-editor read-mode"><p>Count twice.</p></div>')
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=APPROVER)
+		revised = self._snapshot()
+		self.assertNotEqual(revised["stamp"], retired["stamp"])
+		self.assertEqual(revised["articles"][0]["version"], 2)
+
+	# ---- it only reads
+
+	def test_it_reads_no_header_writes_nothing_and_logs_nothing(self):
+		number = self._publish()
+		before = copy.deepcopy(_db())
+		writes, sql = len(STATE["writes"]), len(STATE["sql"])
+
+		def call():
+			frappe_module().local.request = types.SimpleNamespace(headers=_Tripwire())
+			with mock.patch.object(
+				frappe_module(), "get_request_header", side_effect=AssertionError("read a header")
+			):
+				return mirror.snapshot()
+
+		with mock.patch.object(frappe_module(), "get_all", side_effect=self._get_all):
+			out = request(call, user=MIRROR, browser=False, token=MIRROR_TOKEN)
+		self.assertEqual([a["kb_number"] for a in out["articles"]], [number])
+		self.assertEqual(_db(), before)
+		self.assertEqual((len(STATE["writes"]), len(STATE["sql"])), (writes, sql))
+		self.assertEqual(logged(), [])
+		self.assertEqual(STATE["deferred_docs"], [])
+		self.assertNotIn("k1e2y3", json.dumps(out))
+		self.assertEqual(self.reads, [ARTICLE])
+
+	def test_the_module_names_no_draft_no_header_no_write_and_no_github(self):
+		"""Static, with comments and docstrings stripped (the docstring explaining an absence names it)."""
+		tree = ast.parse(MIRROR_SOURCE.read_text(encoding="utf-8"))
+		docstrings = {
+			id(node.body[0].value)
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Module | ast.FunctionDef)
+			and node.body
+			and isinstance(node.body[0], ast.Expr)
+			and isinstance(node.body[0].value, ast.Constant)
+		}
+		strings = [
+			n.value
+			for n in ast.walk(tree)
+			if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstrings
+		]
+		names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+		names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+		for text in strings:
+			self.assertNotIn(VERSION, text)
+			self.assertNotIn("Authorization", text)
+			self.assertNotIn("github", text.casefold())
+		self.assertNotIn("VERSION_DOCTYPE", names)
+		forbidden = {
+			"log_error",
+			"logger",
+			"print",
+			"get_request_header",
+			"headers",
+			"request",
+			"insert",
+			"save",
+			"db_set",
+			"set_value",
+			"sql",
+			"commit",
+			"delete_doc",
+			"enqueue",
+			"get_list",
+			"get_doc",
+			"get_password",
+			"get_decrypted_password",
+		}
+		self.assertEqual(names & forbidden, set())
+		calls = [
+			n.func.attr
+			for n in ast.walk(tree)
+			if isinstance(n, ast.Call)
+			and isinstance(n.func, ast.Attribute)
+			and isinstance(n.func.value, ast.Name)
+			and n.func.value.id == "frappe"
+		]
+		self.assertEqual(sorted(calls), ["get_all", "get_roles", "throw", "whitelist"])
+
+
+def constants_module():
+	return importlib.import_module("erpnext_enhancements.knowledge_base.constants")
 
 
 # ------------------------------------------------------------------ wiring

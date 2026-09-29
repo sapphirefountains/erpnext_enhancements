@@ -7,6 +7,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.561.0] - 2026-09-28
+
+**The published knowledge base can be mirrored as Markdown files into the company's private knowledge
+repo, which pulls them from one read-only endpoint.** WI-080 PR 8, the ERPNext side of Slice 6 (step 5
+of the AI-first order Nik approved on 2026-09-28, run every 6 hours plus on demand). Every Published
+article becomes `kb/<NN-department>/<KB number>.md` there, with exactly the header and text
+`fetch_knowledge_article` returns, so Claude Code and Antigravity read the same approved text the tools
+serve. **Pull, not push**: a scheduled job in the private repo calls the endpoint; ERPNext holds no
+GitHub credential and queues nothing. Built on v1.559.0 (PR 6a), whose renderer it reuses; it does not
+depend on PR 6b.
+
+### Added
+
+- **`api/knowledge_base_mirror.snapshot(since=None)`**, `@frappe.whitelist(methods=["GET"])` and
+  `@rate_limit(limit=60, seconds=3600)`. It answers
+  `{"schema": 1, "stamp", "app_version", "count", "skipped", "articles"}`, each article
+  `{"kb_number", "version", "path", "sha256", "markdown"}`, in KB-number order.
+  - **Who:** the **KB Mirror** role or Administrator. Everyone else, a System Manager included, gets
+    `PermissionError` (403) with one sentence, before anything is read. Not `allow_guest`.
+  - **What:** every Knowledge Article with status Published, through one `frappe.get_all` (the role
+    holds no DocPerm, so the role check is the gate). Never a Retired article, never the Version
+    doctype, never a draft's text.
+  - **Each file** is the fetch tool's Markdown byte for byte, **untruncated** (fetch cuts at 40,000
+    characters), and `sha256` is over its UTF-8 bytes. An article whose department is not one of the
+    ten blocks, or whose name is not a KB number, has no folder: it is listed in `skipped` and not
+    rendered.
+  - **The stamp** is sha256 over `"<path>\t<sha256>\n"` for each file, sorted by path, so it changes
+    exactly when a file would. `since` equal to it answers only `{"schema": 1, "unchanged": true,
+    "stamp": ...}`.
+  - It writes nothing and logs nothing, and its own code reads no request header (Frappe has read and
+    dropped the `Authorization` header before it runs; `get_url()` looks at the request's host only
+    when the site has no `host_name`).
+  - The rate limit is counted before the role check, keyed by the method and the client's IP, so a
+    refused call counts too.
+- **`patches/seed_knowledge_base_mirror_role.py`** (`[post_model_sync]`): the role **"KB Mirror"**,
+  `desk_access = 0`, granted to nobody, with no DocPerm anywhere. Insert-only, and it cannot raise
+  (not even when the rollback and the log fail). `knowledge_base/constants.MIRROR_ROLE` names it.
+- `knowledge_base/ai_tools.article_text(row, base_url)`: the one place a published row becomes the
+  renderer's input (its fields, its name as the KB number, its approver by name), shared by fetch and
+  the snapshot.
+- **Tests.** `MirrorSnapshotTest` in `test_knowledge_base_actions` (the stub gains
+  `frappe.rate_limiter`): refused without the role for a reader, an author, an approver, a System
+  Manager, a portal user and a guest, in a browser or with a token, before any read; the mirror and
+  Administrator admitted; Published only, with a sentinel in a Draft, an In Review, a Discarded and a
+  Superseded version and an open revision found nowhere, and a retired article absent; a file equal to
+  `fetch_payload()["markdown"]` byte for byte; an article over 40,000 characters whole; paths matching
+  `^kb/\d{2}-[a-z-]+/KB-\d{4}\.md$` in KB-number order; an unmapped department skipped; `since` giving
+  unchanged (and a wrong, blank or non-string `since` the full answer); the stamp's formula, moving
+  with an approver's full name, a retirement and a new version, and not with a field no file shows; no
+  header read, nothing written, nothing logged; the decorators and their order; and a static check,
+  comments and docstrings stripped, that the module names no draft doctype, no header, no write, no
+  logger and no GitHub. Every rule was checked by a mutation that a test then caught (14 of 14).
+  `TestMirrorRoleSeed` in `test_knowledge_base_schema`: registered once under `[post_model_sync]`, the
+  role and `desk_access` 0, insert-only, idempotent, cannot raise, not a fixture, and **no JSON in the
+  app names the role**. `test_whitelist_placement`: `snapshot` in the must-stay inventory, and a new
+  `EXACT_SURFACE` check that the file exposes nothing else. `test_hooks_integrity`: no hook names the
+  mirror (no scheduler entry, which would be a push; no override, which would drop the role check).
+  `test_knowledge_base_tools`: the module joins the read-path files that may never name the drafts.
+
+### Changed
+
+- `ai_tools.fetch_payload` builds its Markdown with `article_text`; what it returns is unchanged (every
+  PR 6a test passes untouched).
+- `hooks.py`: the Role fixture's annotation says "KB Mirror" is owned by its seed patch, like the other
+  two KB roles.
+- Docs: `knowledge_base/README.md` ("The private mirror (PR 8)", the leak table, the roles, the file
+  map), `api/README.md` (the file map, the tab-indented list, the security model) and WI-080 (status,
+  "Found while building PR 8").
+
+### Why it is built this way
+
+- **Pull, not push.** If ERPNext pushed, it would hold a credential that can rewrite the private repo,
+  including the agent rules every session loads; an ERPNext compromise would become a repo compromise.
+  Pulled, a leaked mirror key exposes only the published knowledge base, which the repo already holds;
+  nothing queues in ERPNext for the deploy's FLUSHDB to kill; and recovery is running the job again.
+- **`get_all` behind a role check, not `get_list` as the caller.** The role holds no DocPerm, so it adds
+  nothing the account can read through `/api/resource`, a list or a report. Giving it a read DocPerm
+  instead would open every one of those paths to it; the role check opens exactly one.
+- **The whitelist is the outer decorator.** Frappe checks the object the dotted path resolves to
+  against `frappe.whitelisted`, so a `rate_limit` wrapped around the whitelisted function would make the
+  endpoint "not whitelisted" for everyone. A test pins the order.
+- **The links follow the address the site is reached at.** `get_url()` is the configured `host_name`,
+  or with none the request's host, so a mirror file equals a fetched article byte for byte when both
+  reach the site at the same address, and every file (and the stamp) changes if that address does.
+
+### After deploy (read-only)
+
+- ``SELECT name, desk_access FROM tabRole WHERE name='KB Mirror'`` returns 1 row with `desk_access` 0,
+  and ``SELECT patch FROM `tabPatch Log` WHERE patch LIKE '%seed_knowledge_base_mirror_role%'`` 1 row.
+- ``SELECT COUNT(*) FROM tabDocPerm WHERE role='KB Mirror'`` and ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE role='KB Mirror'``
+  are both 0, and ``SELECT COUNT(*) FROM `tabHas Role` WHERE role='KB Mirror'`` is 0 until the mirror's
+  account is made (the patch grants the role to nobody).
+- In a browser signed in as staff, opening
+  `/api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot` answers 403, "Only the knowledge
+  base mirror may read this snapshot."; in a private window with no session it answers 403 too (Frappe's
+  own "not whitelisted" refusal for a guest).
+- ``SELECT COUNT(*) FROM `tabError Log` WHERE creation > '<deploy time>' AND (method = 'Knowledge Base role seed' OR error LIKE '%knowledge_base_mirror%')`` = 0.
+  An Error Log's `method` is its title, which for an unexpected 500 is the exception's text, so the
+  endpoint's path is looked for in the traceback (`error`).
+- **Then the manual setup in the private runbook** (the account, its key, where the key is kept, and the
+  first run). After the first run: the run is green; the number of `kb/*/KB-*.md` files equals
+  ``SELECT COUNT(*) FROM `tabKnowledge Article` WHERE status='Published'`` less any `skipped`; a mirror
+  file equals `fetch_knowledge_article`'s `markdown` for the same article byte for byte; a second run
+  with nothing changed makes no commit; and retiring a test article deletes its file on the next run.
+
+### Rollback
+
+Disable the private repo's workflow and the account holding KB Mirror (see the private runbook);
+`kb/` stays as the last copy. Reverting this release removes the endpoint and returns `fetch_payload`
+to building its row inline, with the same output. The role stays until a `delete_doc` patch removes it;
+with the endpoint gone it opens nothing, whoever holds it.
+
 ## [1.560.0] - 2026-09-28
 
 **An AI can draft a knowledge base article, and submit it for review, through an approval card that

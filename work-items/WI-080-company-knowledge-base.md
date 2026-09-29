@@ -3,7 +3,7 @@
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (v1 in eight PRs, S to M each; v1.1 M; the training slice S)
 **Blocked by:**
 - Slice 0: nothing.
-- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written and merged on 2026-09-28 (v1.558.0). PR 6a (the three read tools, v1.559.0) was written the same day, on top of PR 5, and merged on 2026-09-28 (#1152). PR 6b (the drafting tool, v1.560.0) was written the same day, stacked on PR 6a, and opened as a draft pull request; PR 6a is now merged into it, and it merges only once the Triton PR that never offers the tool is deployed. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
+- Slices 1–3: the QBO + Workforce cutover (~2026-10-21) was the planned gate. PRs 1 and 2 were written on 2026-09-25 and have since been merged and are live on prod (installed 1.549.1, verified 2026-09-28). PR 3 and its review fixes were written and merged on 2026-09-28 and are live (1.556.1, verified that day); PR 4 was written and merged the same day (v1.557.0). PR 5 was written and merged on 2026-09-28 (v1.558.0). PR 6a (the three read tools, v1.559.0) was written the same day, on top of PR 5, and merged on 2026-09-28 (#1152). PR 6b (the drafting tool, v1.560.0) was written the same day, stacked on PR 6a, and merged on 2026-09-28 (#1153); PRs 4, 5, 6a and 6b are live (v1.560.0, verified that day). PR 8 (Slice 6's ERPNext side, the mirror's snapshot endpoint, v1.561.0) was written the same day and opened as a pull request. Merging each PR is Nik's call. The 4th KB Approver is named (below). Parker's Phase 0 test no longer blocks slice 1; it decides only whether slice 2 is built.
 - Slice 4: the Google setup.
 - Slice 5: its content trigger.
 
@@ -50,7 +50,8 @@ Nik wants a company knowledge base that people *and* every AI tool Sapphire uses
   - **The mirror runs every 6 hours, plus on demand.**
   - **The private repository's setup precondition, recorded in its runbook, is met.**
 - **PR 5 is written (2026-09-28)**, as the first PR of the redesign: the article kind and in-app search (v1.558.0). It merged the same day (#1151), and PR 6a after it (#1152).
-- **PR 6b is written (2026-09-28)**: `draft_knowledge_article`, which writes a Draft and, with `submit_for_review`, submits it for review, from a card only the person who asked may confirm (v1.560.0). It was stacked on PR 6a, which has since merged (#1152), and is a draft pull request; see "Found while building PR 6b" and "Found in review of PR 6b".
+- **PR 6b is written (2026-09-28)**: `draft_knowledge_article`, which writes a Draft and, with `submit_for_review`, submits it for review, from a card only the person who asked may confirm (v1.560.0). It was stacked on PR 6a, which merged first (#1152), and it merged on 2026-09-28 (#1153); see "Found while building PR 6b" and "Found in review of PR 6b".
+- **PR 8 is written (2026-09-28)**: Slice 6's ERPNext side, the private mirror's read-only `snapshot` endpoint and the KB Mirror role (v1.561.0). Nik approved step 5, the mirror, and decided it runs every 6 hours plus on demand. It is a pull request, not a draft; merging is Nik's call, and the manual setup after it deploys is in the private runbook. See "Found while building PR 8" under Slice 6.
 
 Why now, in numbers (verified 2026-09-24 against prod, read-only):
 
@@ -996,7 +997,7 @@ This slice is one-way, KB → Training, and read-only. **It changes no Training 
 - **Nothing queues in ERPNext:** there is nothing for `FLUSHDB` to kill, and recovery is "run it again".
 - **Freshness:** up to the schedule, every 6 hours (decided 2026-09-28). The live tools are always current.
 
-**6.1 ERPNext side (PR 8, this repo)**
+**6.1 ERPNext side (PR 8, this repo)**: written 2026-09-28 (v1.561.0); see "Found while building PR 8" below.
 
 - **`patches/seed_knowledge_base_mirror_role.py`** (`[post_model_sync]`, insert-only, cannot raise): Role **"KB Mirror"**, `desk_access = 0`, with no DocPerm anywhere.
 - **`api/knowledge_base_mirror.py`** (tabs):
@@ -1032,7 +1033,17 @@ def snapshot(since=None):
 - `test_whitelist_placement` and `test_hooks_integrity` cover the endpoint's placement.
 - **Version:** the next MINOR. Update the CHANGELOG, `knowledge_base/README.md` and `api/README.md`.
 
-**6.2 The private repo's side** (hand-written, kept in that repo)
+**Found while building PR 8** (each checked against frappe `origin/version-16`, 16.35.0, on 2026-09-28)
+
+1. **`ai_tools.article_text(row, base_url)` is the one place a published row becomes the renderer's input.** Fetch and the snapshot both call it, so "a mirror file equals fetch's Markdown" holds by construction, not by two copies kept in step; the test still compares the bytes.
+2. **The links depend on the address the site is reached at.** `frappe.utils.get_url()` (`utils/data.py:1844-1904`) returns the configured `host_name`, and with none, the host of the request, with its scheme from `X-Forwarded-Proto` (`get_host_name_from_request`, `:1907-1911`). A mirror file and a fetched article are therefore byte-identical when the scheduled job and the MCP reach the site at the same address; a different address changes every file, and the stamp with it.
+3. **A GET never commits.** `app.sync_database` (`app.py:458-472`) commits only for POST, PUT, DELETE and PATCH, or when `flags.commit` is set (nothing here sets it), and rolls back everything else, so "never writes" is enforced by the framework as well as by the code.
+4. **A refusal is not an Error Log.** `handle_exception` (`app.py:386-455`) logs only a status of 500 or more (or in developer mode), so the 403 every non-mirror caller gets is silent. An unexpected failure is Frappe's own 500 (`log_error_snapshot`), whose Error Log holds the traceback with its frames' variables and the request's form_dict (here only `since`): published text at most, and no header, because the endpoint's own code holds none. Its title is the exception's text, so a check for it after a deploy searches the traceback (`error`) for the module's name, not `method`.
+5. **The whitelist must be the outer decorator.** `handler.execute_cmd` (`handler.py:65-86`) looks the dotted path up and checks that object against `frappe.whitelisted`; a `rate_limit` wrapped around the whitelisted function would make the endpoint "not whitelisted" for everyone. `frappe.call` still passes only `since`, because `inspect.signature` follows the wrapper's `__wrapped__` (`__init__.py:1140-1191`). `rate_limit` keys on the method and the client IP (`rate_limiter.py:104-174`), and it runs before the endpoint's body, so a refused call counts toward the 60.
+6. **`desk_access = 0` is what keeps the mirror's account a Website User.** `User.set_system_user` (`core/doctype/user/user.py:404-415`) makes a user a System User when any role they hold has desk access. And model sync never creates this role, unlike KB Author and KB Approver, because no DocPerm names it; the seed patch is the only thing that does.
+7. **An API key authenticates a Website User** (`auth.py:695-747`, `Authorization: token <key>:<secret>`), with the user's IP restriction still enforced (`:647-652`).
+
+**6.2 The private repo's side** (hand-written, kept in that repo): written and merged there on 2026-09-28. It mirrors nothing until PR 8 is deployed and the setup in the private runbook is done.
 
 - A workflow `kb-mirror.yml`:
   - runs on `schedule: cron "17 */6 * * *"` and `workflow_dispatch`, with a boolean input `allow_mass_delete` (default false);

@@ -24,7 +24,8 @@ annotated, FAC category); this suite asserts only what that one does not:
   ``maxLength``/``maxItems``: limits are in the descriptions and enforced by the server.
 * **A static check, with comments and docstrings stripped**: none of ``knowledge_base/ai_tools.py``,
   ``search_service.py`` or ``markdown.py``, the three wrappers or their shared helper names the drafts'
-  doctype, ``VERSION_DOCTYPE`` or its table.
+  doctype, ``VERSION_DOCTYPE`` or its table; nor, since PR 8 (v1.561.0), ``api/knowledge_base_mirror.py``,
+  the private mirror's snapshot.
 * The hook registers the three right after the Training tools; the wrappers import ``ai_tools`` only
   inside ``execute``; ``execute`` hands the arguments through; and an unexpected failure is a
   ``success: false`` return with one deferred Error Log naming the exception's type and nothing else,
@@ -109,6 +110,8 @@ READ_PATH_SOURCES = (
 	APP / "knowledge_base" / "markdown.py",
 	APP / "assistant_tools" / "_knowledge_base.py",
 	*(APP / "assistant_tools" / f"{name}.py" for name in TOOLS),
+	# PR 8 (v1.561.0): the private mirror's snapshot, whose files every agent session reads.
+	APP / "api" / "knowledge_base_mirror.py",
 )
 #: Built by concatenation, so this file does not trip a search for them either.
 DRAFT_DOCTYPE = "Knowledge Article " + "Version"
