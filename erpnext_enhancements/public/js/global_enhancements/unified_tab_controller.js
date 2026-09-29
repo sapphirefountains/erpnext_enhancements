@@ -214,11 +214,18 @@ erpnext_enhancements.unified_controller = {
 			}
 		});
 
+		// De-duplicate on the (doctype, name) PAIR. Keying on the name alone dropped the
+		// second of two parties that share a name (a Customer and a Supplier both called
+		// "Harbor Plaza", a Contact named after the Customer it belongs to). That did no
+		// harm while the server matched `link_name` alone, but since v1.561.1 it matches
+		// the pair, so the dropped party's contacts and addresses vanished from the
+		// directory. scripts/test_party_sources.mjs runs this function.
 		const unique_sources = [];
-		const map = new Map();
+		const seen = new Set();
 		for (const item of sources) {
-			if (item.name && !map.has(item.name)) {
-				map.set(item.name, true);
+			const key = `${item.doctype}\u0000${item.name}`;
+			if (item.name && !seen.has(key)) {
+				seen.add(key);
 				unique_sources.push(item);
 			}
 		}

@@ -7,6 +7,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.561.1] - 2026-09-28
+
+**Permission checks on the contact, address and ship-to endpoints.** Frappe v16's whitelist refuses
+only a Guest (`is_whitelisted`, `frappe/__init__.py:479-487` at v16.35.0), so an `@frappe.whitelist()`
+function answers to every signed-in user, portal users included, unless its own body checks
+something. Six endpoints behind the contact/address directory and the Package Dispatch form checked
+no permission (the two Package Dispatch ones only a feature switch), three more checked half of what
+they changed, and a leftover debug helper checked nothing. Found in the review of WI-080 PR 8 (v1.561.0),
+which confined the knowledge-base mirror's own account with an `auth_hooks` guard and left these open
+for every other login.
+
+### Security
+
+- **The directory lookups returned any party's people.** `sync_contact.get_contacts_for_context` and
+  `get_addresses_for_context` took a list of parties from the request and returned every Contact
+  (name, title, phone, mobile, email) or Address linked to them, through `frappe.get_all`, which
+  ignores permissions. They now return only the contacts or addresses of parties the user may
+  **read**.
+  - **An unreadable party is dropped, not refused.** The directory widget sends every party the open
+    form draws from (`get_all_party_sources`: the form itself, its Customer or Supplier, an
+    Opportunity's Lead, each stakeholder row), and someone who may read a Project can be unable to
+    read its Customer; stock ERPNext gives Projects User only *select* on Customer. Raising would
+    have replaced the directory with an error on a form they are entitled to open. An unsaved form's
+    placeholder name (`new-project-…`) is dropped the same way, before `frappe.has_permission` is
+    asked, because on a docname that does not exist it raises through `frappe.throw` and the Desk
+    shows that message even when the exception is caught.
+  - **Matched on the pair now.** The old query matched `link_name` alone, so a Customer and a
+    Supplier with the same name shared a directory, and with read on the party as the gate, read on
+    one would have returned the other's contacts. The lookup now reads `Dynamic Link` rows by
+    (`link_doctype`, `link_name`) and then the records by name.
+  - **And the widget sends both parties now** (found in review). `get_all_party_sources` in
+    `unified_tab_controller.js` de-duplicated its list on the name alone, so of two sources sharing a
+    name only the first reached the server: a Customer whose stakeholder Supplier has the same name,
+    or a Contact named after the Customer it belongs to. With the old name-only query that cost
+    nothing; with the pair it would have dropped the second party's contacts and addresses from the
+    directory without a word. It now de-duplicates on the (doctype, name) pair.
+  - **"Linked To" names only parties the user may select** (found in review). Each returned row still
+    listed every party its Contact or Address is linked to, so read on one Customer also showed the
+    names of the other customers, Leads and Projects those people belong to. A link is now kept when
+    the user holds **select** on its party (read implies it), checked once per party per call, quietly;
+    a link to a party that no longer exists is dropped too. Select rather than read, because stock
+    ERPNext's Projects User holds only select on Customer and the Project's own Customer field already
+    shows them that name: read would take the Customer off every row of their directory and hide
+    nothing.
+  - **Read on the party is the whole gate**, as it was on the Desk: the directory is a view of a
+    party's people for whoever may open that party, so a user without Contact read still sees the
+    contacts of a Customer they can read. Stock ERPNext's own "Contacts & Addresses" section is
+    stricter (it also needs Contact read, through `frappe.get_list`). Adopting that is a small change,
+    but it would empty the directory for Project users who hold no Contact permission, so it was not
+    made here.
+- **Link and unlink could rewrite any Contact or Address.** `link_existing_record` and
+  `unlink_record` loaded the record named in the request and saved it with `ignore_permissions`,
+  checking nothing. Now:
+  - `link_existing_record` needs **write on the Contact/Address**, since the new link row changes it,
+    and **write on each party** it links to, since the link puts the record in that party's
+    directory. A party the user may not write is skipped, because the widget sends all of the open
+    form's parties: a contact linked from a Project by someone who may only select its Customer is
+    linked to the Project and not to the Customer. With no writable party it is refused. An unsaved
+    form's placeholder still fails, as the save's link validation did before, rather than quietly
+    linking the contact to the Customer alone.
+  - `unlink_record` needs **write on the document being viewed**, always, because the exclusion it
+    records changes that document's directory; and **write on the Contact/Address** when a direct
+    link row is removed from it. A contact that reaches the directory only through the Customer is
+    hidden without being touched, so it needs no write on the Contact.
+  - Both take only `Contact` or `Address` as the doctype, which is all the widget sends.
+  - The saves no longer pass `ignore_permissions`. With write on the record required, all it would
+    skip is Frappe's own write check on the changed document.
+- **Set Primary could flag every Contact or Address** (found in review; older than this release).
+  `set_primary_contact` / `set_primary_address` checked write on the Customer or Supplier, then handed
+  the Contact or Address named in the request to `frappe.db.set_value`, which in v16 takes a dict or a
+  list in that place as filters and updates every row they match, with no permission check on those
+  records and no document hooks. They now take **one name**, refuse anything else before writing, and need
+  **write on the Contact/Address being flagged** as well as on the account. Whether that record must
+  also be linked to the account is left as it was.
+- **Every name is the one that was checked** (found in review). The permission check and the query
+  that follows it now receive the same string for every document name these endpoints take from the
+  request: the directory's sources, Link Existing's rows, the record, the account, the import target.
+  Frappe does not type-check an unannotated argument and a JSON body keeps a number a number, so an
+  integer passed `frappe.has_permission` on one document and then reached a filter that MariaDB
+  compares numerically against a text column, where it matches every party whose name starts with that
+  number. A whole number is now turned into its string, which matches exactly; anything else that is
+  not a non-empty string is dropped (a directory source, a link row) or refused (the record, the
+  account, the target).
+- **Bulk import checked the target only.** `import_contacts` required write on the target document
+  and then linked whatever Contact names the request carried, saving each with `ignore_permissions`,
+  so write on the target stood in for permission on every Contact named, including ones the dialog
+  never offered. It now also needs **write on each Contact that gains the link**, checked
+  for all of them before any is saved, so a refusal links nothing. A Contact that is already linked
+  is not changed and needs no write. `get_importable_contacts` inherits the directory's read rule, so
+  the dialog no longer offers the contacts of a party the user may not read.
+- **The Package Dispatch auto-fill had only its feature switch.** While the switch was on,
+  `package_dispatch.api.get_customer_ship_to` returned a customer's primary address and phone, and
+  `get_item_dispatch_details` an item's name and value (falling back to its `valuation_rate`, a
+  cost), to any signed-in user. They now need **read** on the Customer or the Item, checked after the
+  switch and before anything is read. That is the rule Frappe applies to a form's own `fetch_from`
+  (`frappe.client.validate_link_and_fetch`): a user who may only *select* the Customer gets a "No
+  permission" message and types the address by hand.
+
+### Removed
+
+- **`script_migrations.debug.run_debug_query`.** The port of a developer Server Script ("Debug
+  Customer Link Query"), whitelisted with no check, and called by nothing: no JS, hook, Python caller
+  or `override_whitelisted_methods` entry names it. It could not have returned rows on v16 either,
+  since it queried a `DocLink` doctype that Frappe, ERPNext and this app do not define. Deleted
+  rather than gated.
+
+### Changed
+
+- **Tests.** `tests/test_contact_endpoint_permissions.py`, a new bench-free suite in its own CI step:
+  each endpoint refused without the permission, allowed with it, and on the path the Desk callers
+  (`unified_tab_controller.js`, `package_dispatch.js`) take, the quiet ones included. The review added
+  `SetPrimaryTest` (a filter, list, bool or blank in place of the name refused before any write; write
+  on the Contact/Address required), `RequestNamesTest` (an integer name reaches every query as the
+  string that was checked, in the directory, Link Existing, Unlink and Import) and `DirectoryLinksTest`
+  (an unselectable or missing party left off "Linked To", each checked once per call, quietly). Each
+  gate was mutated in turn (17 mutations, then 17 more for the review's changes) and every mutation
+  made a test fail. `scripts/test_party_sources.mjs`, in its own CI step, runs the real
+  `get_all_party_sources` in node on the same-name forms above. `test_sync_contact_primary`'s
+  stub learned the calls the directory now makes. `test_whitelist_placement`'s `EXACT_SURFACE` now
+  lists `sync_contact.py` and `package_dispatch/api.py`, so a new endpoint in either has to be named
+  there, which is the moment to give it a gate. `test_knowledge_base_actions`' mirror-guard list drops
+  the deleted helper, since it checks that every method it names still exists.
+- **Docs.** `knowledge_base/mirror_guard.py`, `knowledge_base/README.md`, `api/README.md` and WI-080's
+  PR 8 findings no longer describe these endpoints as open (the guard stays, for whatever such endpoint comes next).
+  `package_dispatch/README.md`, `script_migrations/README.md`, `tests/README.md` and
+  `sync_contact.py`'s docstrings describe the rule: read on a party to see its people, select on a
+  party to see its name on a row, write on a party to change its directory, write on a Contact or
+  Address to change it, and every name as text. `public/README.md` notes the pair de-duplication and
+  its node test.
+
+### After deploy
+
+- Open a Project whose Customer you can read. The Contacts and Addresses tabs list the Project's and
+  the Customer's records as before, and Link Existing, Unlink, Import Contacts and Set Primary work.
+- Open a new, unsaved Project with a Customer set. The directory lists the Customer's contacts with no
+  error message.
+- On a Customer, Set Primary on a contact and on an address: the badge moves and the toast shows. A
+  user with write on the Customer but not on that Contact or Address now gets "No permission"; grant
+  write on Contact or Address rather than widening the endpoint.
+- As a user who may read a Project but not its Customer, open the Project: the directory renders with
+  the Project's own contacts and no error.
+- With Package Dispatch auto-fill on, pick a Customer and an Item on a Package Dispatch as a user who
+  can read both: the recipient block and the line fill in.
+- Someone who used Link Existing, Unlink or Import Contacts without write on the Contact now sees "No
+  permission for Contact …". If a team should be able to do that, grant its role write on Contact
+  rather than widening the endpoint.
+
 ## [1.561.0] - 2026-09-28
 
 **The published knowledge base can be mirrored as Markdown files into the company's private knowledge

@@ -71,6 +71,12 @@ def _reset():
 		{"parent": "ADDR-1", "parenttype": "Address", "link_doctype": "Supplier", "link_name": "SUP-1"},
 		{"parent": "ADDR-2", "parenttype": "Address", "link_doctype": "Supplier", "link_name": "SUP-1"},
 	]
+	# The directory reads check that each source party exists before asking for read on
+	# it (v1.561.1), so the parties the tests name have to exist too.
+	STATE["DocType"] = {dt: {} for dt in ("Contact", "Address", "Customer", "Supplier", "Project")}
+	STATE["Customer"] = {"ACME": {"name": "ACME"}, "OTHERCO": {"name": "OTHERCO"}}
+	STATE["Supplier"] = {"SUP-1": {"name": "SUP-1"}}
+	STATE["Project"] = {"PROJ-0001": {"name": "PROJ-0001"}}
 	STATE["permissions"] = True
 	STATE["perm_calls"] = []
 	STATE["fields"] = {
@@ -146,7 +152,7 @@ def _install_stub():
 		def has_column(self, doctype, column):
 			return True
 
-		def exists(self, doctype, name):
+		def exists(self, doctype, name, cache=False):
 			return name in STATE.get(doctype, {})
 
 	def get_meta(doctype):
@@ -157,6 +163,8 @@ def _install_stub():
 	frappe.has_permission = has_permission
 	frappe.get_all = get_all
 	frappe.get_meta = get_meta
+	frappe.is_table = lambda doctype: False
+	frappe.PermissionError = StubPermissionError
 	frappe.db = _DB()
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
 	frappe._ = lambda s: s
@@ -558,17 +566,12 @@ class TestImportContacts(unittest.TestCase):
 
 	def _get_all(self, doctype, filters=None, pluck=None, fields=None, **kwargs):
 		if doctype == "Contact":
-			# get_contacts_for_context passes the child-table filter form:
-			# [["Dynamic Link", "link_name", "in", [...]]].
-			wanted = set()
-			for f in filters or []:
-				if len(f) == 4 and f[0] == "Dynamic Link" and f[2] == "in":
-					wanted |= set(f[3])
-			names = {
-				row["parent"]
-				for row in STATE["Dynamic Link"]
-				if row["parenttype"] == "Contact" and row["link_name"] in wanted
-			}
+			# get_contacts_for_context reads the Dynamic Link rows first, keyed on the
+			# (link_doctype, link_name) pair (the generic branch below serves those), then
+			# the Contacts by name: {"name": ["in", [...]]}. Before v1.561.1 it passed the
+			# child-table filter form on link_name alone.
+			wanted = (filters or {}).get("name")
+			names = wanted[1] if isinstance(wanted, (list, tuple)) else []
 			return [_Dict(STATE["Contact"][n]) for n in sorted(names) if n in STATE["Contact"]]
 
 		table = STATE.get(doctype)

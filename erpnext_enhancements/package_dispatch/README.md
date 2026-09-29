@@ -28,7 +28,8 @@ the **Package Dispatch Sheet** to hand over at the counter or keep on file.
 - `doctype/package_dispatch/` — the main submittable form (`Package Dispatch`).
 - `doctype/package_dispatch_item/` — the item child table (`Package Dispatch Item`).
 - `api.py` — the catalog-item value + customer address auto-fill endpoints
-  (gated by the switch).
+  (gated by the switch, and by read permission on the Item or Customer they
+  read from; see Access).
 - `setup_print_formats.py` — the Package Dispatch Sheet print format
   (`after_migrate`, idempotent).
 - `workspace/shipping/` — the desk workspace (**Shipping**; shortcuts by status).
@@ -51,3 +52,12 @@ Permissions are granted to **System Manager** and a dedicated **Dispatch User**
 role (seeded insert-only by `patches/seed_dispatch_user_role.py`). Assign the
 **Dispatch User** role — directly or via a Role Profile — to everyone who should
 be able to file a dispatch.
+
+The auto-fill also needs **read** on what it reads from (v1.561.1): the Customer
+for the recipient block, the Item for a line's description and value. Dispatch
+User grants neither, so those come from the person's other roles. Someone who can
+only *select* a Customer or Item (pick it in the field) gets a "No permission"
+message instead of the auto-fill and types the details by hand, the same outcome
+Frappe's own `fetch_from` gives them. Before v1.561.1 the switch was the only gate,
+so while it was on any signed-in user could ask for any customer's primary address
+and phone.
