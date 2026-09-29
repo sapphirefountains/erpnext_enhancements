@@ -17,10 +17,10 @@ confirm the card in ERPNext themselves; then a **Draft** exists, marked AI Draft
 `submit_for_review` it is also **In Review**, with the usual review ToDos for the other KB Approvers.
 Approving and publishing stay a named person's act in a browser, by a KB Approver who neither asked
 for it, wrote it nor submitted it. Nothing an AI does approves, publishes, sends back, withdraws,
-discards, retires or confirms anything, and no tool returns a draft's text. Stacked on v1.559.0 (PR
-6a, pull request #1152), which it needs.
+discards, retires or confirms anything, and no tool returns a draft's text. Built on v1.559.0 (PR
+6a, pull request #1152, merged 2026-09-28), which it needs.
 
-**Merge order.** This merges after PR 6a, and **only after the Triton PR that never offers this tool
+**Merge order.** PR 6a is merged; this merges **only after the Triton PR that never offers this tool
 (`_NOT_OFFERED_PREFIXES` gains `draft_knowledge_article`) is deployed**: FAC lists the tool only to KB
 roles, and Triton caches one tool list for everyone, so without that PR the tool would come and go
 from Triton hour by hour. Merging deploys production.

@@ -1034,7 +1034,7 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
   Markdown renderer the mirror will reuse. See "AI tools (PR 6a)". Triton follows in its own PR.
 - ~~**PR 6b**: `draft_knowledge_article`~~. Written in v1.560.0: it writes a Draft (and, if asked,
   submits it for review) only from an approval card the person who asked confirms, and never approves
-  or publishes. See "The drafting tool (PR 6b)". It merges after PR 6a, and only once Triton's PR
+  or publishes. See "The drafting tool (PR 6b)". PR 6a is merged; this merges only once Triton's PR
   that never offers it (`_NOT_OFFERED_PREFIXES`) is deployed.
 - **PR 7**: the one-way Drive copy for Gemini and outages. It keys its export on
   `(content_hash, version_number)`, because the kind is not in the hash.
