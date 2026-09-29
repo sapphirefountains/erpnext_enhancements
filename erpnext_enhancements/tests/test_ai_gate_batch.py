@@ -27,7 +27,8 @@ parts of it that are about safety rather than convenience:
 - ``batch_default`` is also false, with a ``review_reason``, for a submit or cancel, a write to
   one of ``NEVER_EXEMPT`` and unreadable arguments, and the arguments are never returned. The
   reason names the kind of never-exempt target: a Task, the gate's own records, or (v1.538.0)
-  the company knowledge base.
+  the company knowledge base. Since v1.560.0 that includes a ``draft_knowledge_article`` card,
+  whose arguments name no doctype: the gate takes its target from the tool's name.
 
 Plain ``unittest`` under the stub set ``test_assistant_tools_schema.install_stubs`` provides,
 like the sibling gate suites. ``frappe.whitelist`` is installed once for the module, because
@@ -698,6 +699,39 @@ class TestReviewReasons(BatchHarness):
             with self.subTest(action=name):
                 self.assertFalse(rows[name]["batch_default"])
                 self.assertEqual(rows[name]["review_reason"], "changes the company knowledge base")
+
+    def test_a_drafting_card_starts_unticked_as_the_knowledge_base(self):
+        """v1.560.0 (WI-080 PR 6b): a draft_knowledge_article call names no `doctype`, so its card had
+        no target and the dialog would have ticked it like any Medium write. `_propose` now takes the
+        target from `_gate._call_target`, which names the drafts' doctype for this tool whatever the
+        arguments say, and the dialog reads the knowledge-base reason from it."""
+        arguments = {
+            "article_title": "Winterizing a fountain pump",
+            "department": "06 Operations",
+            "kind": "SOP",
+            "summary": "s",
+            "body_markdown": "b",
+            "change_note": "c",
+            "submit_for_review": True,
+        }
+        target, name = _gate._call_target("draft_knowledge_article", arguments)
+        self.assertEqual((target, name), ("Knowledge Article Version", None))
+        self.assertEqual(_gate._call_target("draft_knowledge_article", {**arguments, "doctype": "ToDo"})[0], target)
+        rows = self.rows(
+            FakeAction(
+                "AI-PA-1",
+                tool_name="draft_knowledge_article",
+                risk=_gate.classify_risk("draft_knowledge_article"),
+                arguments=json.dumps(arguments),
+                target_doctype=target,
+                summary=_gate.summarize_tool_call("draft_knowledge_article", arguments),
+            )
+        )
+        self.assertEqual(rows["AI-PA-1"]["risk"], "Medium")
+        self.assertFalse(rows["AI-PA-1"]["batch_default"])
+        self.assertEqual(rows["AI-PA-1"]["review_reason"], "changes the company knowledge base")
+        self.assertEqual(rows["AI-PA-1"]["target_doctype"], "Knowledge Article Version")
+        self.assertNotIn("arguments", rows["AI-PA-1"])
 
     def test_the_three_kinds_make_up_never_exempt_and_do_not_overlap(self):
         kinds = ({"Task"}, _gate.GATE_OWN_DOCTYPES, _gate.KNOWLEDGE_BASE_DOCTYPES)

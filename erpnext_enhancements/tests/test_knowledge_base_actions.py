@@ -109,10 +109,18 @@ MODULES = (
 	# PR 5: search, over the same in-memory site.
 	"erpnext_enhancements.knowledge_base.search_service",
 	# PR 6a: the AI tools' payloads, and the wrappers' shared failure path (it imports only frappe and
-	# constants; the assistant_tools package's gate is inert without FAC).
+	# constants). Importing it runs the assistant_tools package, which applies the AI gate to the FAC
+	# BaseTool stub below (PR 6b).
 	"erpnext_enhancements.knowledge_base.ai_tools",
 	"erpnext_enhancements.assistant_tools._knowledge_base",
+	# PR 6b: the drafting tool's rules, the gate's confirm path, and the tool itself.
+	"erpnext_enhancements.knowledge_base.ai_draft",
+	"erpnext_enhancements.assistant_tools.gating_api",
+	"erpnext_enhancements.assistant_tools.draft_knowledge_article",
 )
+#: Imported again with the modules above, so the gate is applied to this suite's FAC stub and reads this
+#: suite's frappe (PR 6b).
+GATE_PACKAGE = ("erpnext_enhancements.assistant_tools", "erpnext_enhancements.assistant_tools._gate")
 
 
 # ------------------------------------------------------------------ exceptions the stub raises
@@ -195,6 +203,10 @@ def _reset():
 				"ToDo": {},
 				"Comment": {},
 				"Error Log": {},
+				# PR 6b: the AI gate's records.
+				"AI Pending Action": {},
+				"AI Action Log": {},
+				"Notification Log": {},
 			},
 			"committed": None,
 			"savepoints": {},
@@ -328,6 +340,9 @@ class _Document:
 	def update(self, values):
 		for key, value in values.items():
 			setattr(self, key, value)
+
+	def set(self, key, value):
+		setattr(self, key, value)
 
 	def set_onload(self, key, value):
 		self._onload[key] = value
@@ -612,6 +627,30 @@ def _sql(query, values=(), as_dict=False, pluck=False, **kwargs):
 	raise AssertionError(f"unexpected SQL: {flat}")
 
 
+def _commit():
+	"""``frappe.db.commit``: what a later rollback returns to. The AI gate's confirm path commits for
+	itself (``gating_api._confirm_one``), before and after it runs the tool."""
+	STATE["committed"] = copy.deepcopy(_db())
+
+
+def _set_value(doctype, name, fieldname, value=None, update_modified=True, **kwargs):
+	row = _row(doctype, name)
+	if row is not None:
+		row[fieldname] = value
+
+
+def _get_datetime(value=None):
+	if value is None or value == "":
+		return _tick()
+	if isinstance(value, datetime.datetime):
+		return value
+	return datetime.datetime.fromisoformat(str(value))
+
+
+def _add_to_date(date, days=0, hours=0, minutes=0, seconds=0, **kwargs):
+	return _get_datetime(date) + datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
+
+
 def _savepoint(name):
 	STATE["savepoints"][name] = copy.deepcopy(_db())
 
@@ -682,7 +721,10 @@ def _install_frappe_stub():
 	frappe.DoesNotExistError = DoesNotExist
 	frappe.QueryDeadlockError = Deadlock
 	frappe.DuplicateEntryError = DuplicateEntry
-	frappe.get_roles = lambda user=None: _roles(user)
+	# v16: no user means the session user (gating_api._check_identity asks that way, PR 6b).
+	frappe.get_roles = lambda user=None: _roles(user or frappe_module().session.user)
+	frappe.get_request_header = lambda key, default=None: frappe_module().local.request.headers.get(key, default)
+	frappe.publish_realtime = lambda *args, **kwargs: None
 	frappe.get_doc = _get_doc
 	frappe.new_doc = _new_doc
 	frappe.get_all = _get_all
@@ -703,6 +745,10 @@ def _install_frappe_stub():
 		savepoint=_savepoint,
 		release_savepoint=lambda name: STATE["savepoints"].pop(name, None),
 		rollback=_rollback,
+		# PR 6b: what the AI gate's queue and confirm paths use.
+		commit=_commit,
+		set_value=_set_value,
+		get_single_value=lambda doctype, fieldname, **kwargs: None,
 	)
 
 	utils = types.ModuleType("frappe.utils")
@@ -715,6 +761,8 @@ def _install_frappe_stub():
 	utils.get_fullname = _get_fullname
 	utils.get_url = lambda uri="": "https://erp.example.com" + (uri or "")
 	utils.getdate = _getdate
+	utils.get_datetime = _get_datetime
+	utils.add_to_date = _add_to_date
 	frappe.utils = utils
 
 	model = types.ModuleType("frappe.model")
@@ -769,13 +817,108 @@ def _getdate(value=None):
 	return datetime.date.fromisoformat(str(value)[:10])
 
 
+#: The FAC tools this suite's tool registry runs, by name (PR 6b).
+FAC_TOOLS = {}
+
+
+def _install_fac_stub():
+	"""Frappe Assistant Core 3.0.0 as far as an AI gate card runs a tool (PR 6b): ``BaseTool`` with its
+	``_safe_execute`` (``core/base_tool.py:173-226``: the permission check on ``requires_permission``, the
+	required and typed arguments, ``execute``, and a returned ``success: false`` reported as a
+	``ToolReportedError``) and ``ToolRegistry.execute_tool`` (``core/tool_registry.py:264-303``: the
+	permission check again, ``_safe_execute``, and a raise for any reported failure, which is how
+	``gating_api._confirm_one`` learns a card failed). A fresh class each time, so the AI gate, applied
+	when the assistant_tools package is imported, wraps this suite's ``_safe_execute``."""
+
+	class BaseTool:
+		def __init__(self):
+			self.name = ""
+			self.description = ""
+			self.inputSchema = {}
+			self.requires_permission = None
+			self.category = "Custom"
+			self.source_app = "frappe_assistant_core"
+
+		def execute(self, arguments):
+			raise NotImplementedError
+
+		def _safe_execute(self, arguments):
+			frappe = frappe_module()
+			types_by_name = {"string": str, "integer": int, "boolean": bool, "array": list, "object": dict}
+			try:
+				if self.requires_permission and not frappe.has_permission(self.requires_permission, "read"):
+					frappe.throw(f"Insufficient permissions to execute {self.name}", frappe.PermissionError)
+				properties = self.inputSchema.get("properties", {})
+				for field in self.inputSchema.get("required", []):
+					if field not in arguments:
+						frappe.throw(f"Missing required field: {field}")
+				for field, value in arguments.items():
+					expected = types_by_name.get((properties.get(field) or {}).get("type"))
+					if expected and not isinstance(value, expected):
+						frappe.throw(f"Invalid type for field {field}")
+				result = self.execute(arguments)
+			except PermissionRefused as exc:
+				return {"success": False, "error": str(exc), "error_type": "PermissionError", "execution_time": 0.0}
+			except Refused as exc:
+				return {"success": False, "error": str(exc), "error_type": "ValidationError", "execution_time": 0.0}
+			except Exception as exc:
+				return {"success": False, "error": str(exc), "error_type": "ExecutionError", "execution_time": 0.0}
+			if isinstance(result, dict) and result.get("success") is False:
+				return {
+					"success": False,
+					"result": result,
+					"error": result.get("error") or "Tool reported failure",
+					"error_type": "ToolReportedError",
+					"execution_time": 0.0,
+				}
+			return {"success": True, "result": result, "execution_time": 0.0}
+
+	class ToolRegistry:
+		def execute_tool(self, tool_name, arguments):
+			frappe = frappe_module()
+			tool = FAC_TOOLS[tool_name]()
+			if not frappe.has_permission(tool.requires_permission, "read"):
+				raise PermissionError(f"Permission denied for tool '{tool_name}'")
+			result = tool._safe_execute(arguments)
+			if isinstance(result, dict) and "success" in result:
+				if result.get("success"):
+					return result.get("result", result)
+				error_type = result.get("error_type", "ExecutionError")
+				message = result.get("error", "Tool execution failed")
+				if error_type == "PermissionError":
+					raise PermissionError(message)
+				if error_type == "ValidationError":
+					raise frappe.ValidationError(message)
+				raise Exception(f"[{error_type}] {message} (execution_time: {result.get('execution_time', 'unknown')}s)")
+			return result
+
+	fac = types.ModuleType("frappe_assistant_core")
+	core = types.ModuleType("frappe_assistant_core.core")
+	base_tool = types.ModuleType("frappe_assistant_core.core.base_tool")
+	registry = types.ModuleType("frappe_assistant_core.core.tool_registry")
+	base_tool.BaseTool = BaseTool
+	registry.get_tool_registry = ToolRegistry
+	fac.core, core.base_tool, core.tool_registry = core, base_tool, registry
+	sys.modules.update(
+		{
+			"frappe_assistant_core": fac,
+			"frappe_assistant_core.core": core,
+			"frappe_assistant_core.core.base_tool": base_tool,
+			"frappe_assistant_core.core.tool_registry": registry,
+		}
+	)
+
+
 api = publish = notify = references = files = search_service = ai_tools = kb_tool_helper = None
+ai_draft = gate = gating_api = draft_tool_module = None
 
 
 def setUpModule():
 	global api, publish, notify, references, files, search_service, ai_tools, kb_tool_helper
+	global ai_draft, gate, gating_api, draft_tool_module
 	_install_frappe_stub()
-	for name in MODULES:
+	_install_fac_stub()
+	for name in (*GATE_PACKAGE, *MODULES):
 		sys.modules.pop(name, None)
 	loaded = {name: importlib.import_module(name) for name in MODULES}
 	api = loaded[API_MODULE]
@@ -786,6 +929,12 @@ def setUpModule():
 	search_service = loaded["erpnext_enhancements.knowledge_base.search_service"]
 	ai_tools = loaded["erpnext_enhancements.knowledge_base.ai_tools"]
 	kb_tool_helper = loaded["erpnext_enhancements.assistant_tools._knowledge_base"]
+	ai_draft = loaded["erpnext_enhancements.knowledge_base.ai_draft"]
+	gating_api = loaded["erpnext_enhancements.assistant_tools.gating_api"]
+	draft_tool_module = loaded["erpnext_enhancements.assistant_tools.draft_knowledge_article"]
+	gate = sys.modules["erpnext_enhancements.assistant_tools._gate"]
+	FAC_TOOLS.clear()
+	FAC_TOOLS["draft_knowledge_article"] = draft_tool_module.DraftKnowledgeArticle
 	version_module = loaded[MODULES[3]]
 	article_module = loaded[MODULES[4]]
 	CONTROLLERS[VERSION] = version_module.KnowledgeArticleVersion
@@ -931,6 +1080,13 @@ class TestEndpointsAreWhitelistedByMethod(Base):
 		for name, kw in ours.items():
 			with self.subTest(name=name):
 				self.assertFalse(kw.get("allow_guest"))
+
+	def test_submit_version_is_shared_and_never_an_endpoint(self):
+		"""PR 6b moved Submit for Review's body into ``submit_version`` for the drafting tool. It takes a
+		loaded document and trusts its caller, so it must never be whitelisted."""
+		self.assertTrue(callable(api.submit_version))
+		self.assertNotIn("submit_version", WHITELISTED)
+		self.assertEqual(WHITELISTED["submit_for_review"].get("methods"), ["POST"])
 
 	def test_the_endpoint_names_are_the_work_items(self):
 		wi = (REPO_ROOT / "work-items" / "WI-080-company-knowledge-base.md").read_text(encoding="utf-8")
@@ -2823,6 +2979,586 @@ class AiToolPayloadsTest(Base):
 				user=TECH,
 			)
 		self.assertIn(secret, json.dumps(STATE["deferred_docs"], default=str))
+
+
+# ------------------------------------------------------------------ the drafting tool (PR 6b)
+
+DRAFT_TOOL = "draft_knowledge_article"
+AI_TITLE = "Winterizing a fountain pump"
+#: The AI's proposal, one sentinel per text field: none may come back in a result or a refusal, and
+#: none may reach a log row that has no card. Built by concatenation.
+AI_SENTINELS = {
+	"summary": "SENTINEL-" + "AI-SUMMARY-4b1d",
+	"keywords": "SENTINEL-" + "AI-KEYWORD-4b1d",
+	"body": "SENTINEL-" + "AI-BODY-4b1d",
+	"change_note": "SENTINEL-" + "AI-NOTE-4b1d",
+}
+REFUSED_ONLY = "Only James Example, who asked for this draft, can confirm it. Nothing was written."
+
+
+def ai_args(**changes):
+	"""A new article as an assistant proposes it: an invented SOP, from an invented SOP-9001."""
+	args = {
+		"article_title": AI_TITLE,
+		"department": "06 Operations",
+		"kind": "SOP",
+		"summary": "How to drain and store a pump before the first frost. " + AI_SENTINELS["summary"],
+		"keywords": ["pump", "winter", AI_SENTINELS["keywords"]],
+		"body_markdown": (
+			"Drain the basin before the first frost.\n\n1. Shut off power.\n2. Drain the pump. "
+			+ AI_SENTINELS["body"]
+		),
+		"change_note": "First draft, from SOP-9001. " + AI_SENTINELS["change_note"],
+	}
+	args.update(changes)
+	return args
+
+
+def queue(args, user=APPROVER, gating=True):
+	"""An assistant's call, as FAC makes it over the MCP: the tool's ``_safe_execute``, which the AI gate
+	wraps, as ``user``, authenticated by a token."""
+	tool = draft_tool_module.DraftKnowledgeArticle()
+	with mock.patch.object(gate, "_gating_enabled", lambda: gating):
+		return request(tool._safe_execute, args, user=user, browser=False, token="Bearer mcp-token")
+
+
+def queued(response):
+	"""The AI Pending Action a queued call's envelope names."""
+	assert response.get("success"), response
+	return json.loads(response["result"])["action_id"]
+
+
+def confirm(card, user=APPROVER):
+	"""The card's Confirm & Execute button: ``gating_api.confirm_action``, from a browser."""
+	return request(gating_api.confirm_action, card, user=user)
+
+
+def card(args, requester=APPROVER, tool=DRAFT_TOOL, status="Pending"):
+	"""A card written straight into the table, for what the queue path would never produce."""
+	name = f"AI-PA-TEST-{len(_db()['AI Pending Action']) + 1:03d}"
+	now = _tick()
+	_db()["AI Pending Action"][name] = {
+		"doctype": "AI Pending Action",
+		"name": name,
+		"tool_name": tool,
+		"requested_by": requester,
+		"status": status,
+		"risk": "Medium",
+		"summary": "a card",
+		"arguments": json.dumps(args),
+		"target_doctype": VERSION,
+		"expires_at": now + datetime.timedelta(hours=1),
+		"creation": now,
+		"modified": now,
+		"owner": requester,
+		"docstatus": 0,
+	}
+	STATE["committed"] = copy.deepcopy(_db())
+	return name
+
+
+def card_row(name):
+	return _row("AI Pending Action", name)
+
+
+def card_result(name):
+	return json.loads(card_row(name)["result"])
+
+
+class AiDraftTest(Base):
+	"""``draft_knowledge_article`` end to end (WI-080 PR 6b): queued through the real AI gate over the
+	FAC stub, confirmed through the real ``gating_api._confirm_one``, writing through the real controllers
+	and ``api.knowledge_base.submit_version``. A draft is written only from its own confirmed card, and
+	only when the person confirming it asked for it; it can be submitted for review in the same card,
+	and then its requester cannot approve it and a different KB Approver in a browser can; the only
+	move it ever makes is Submit for Review; a refusal at any step leaves no Draft; no result or refusal
+	carries text; and pictures, secrets and open versions are refused as the rules say."""
+
+	def _publish(self, **values):
+		name = draft(**values)
+		submitted(name)
+		return approve(name)["article"]
+
+	def assertNoText(self, text, *extra):
+		for sentinel in (*AI_SENTINELS.values(), *SENTINELS.values(), *extra):
+			self.assertNotIn(sentinel, text)
+
+	# ---- only from its own confirmed card
+
+	def test_it_runs_only_from_its_own_confirmed_card(self):
+		args = ai_args()
+		out = request(ai_draft.from_card, args, user=APPROVER)
+		self.assertEqual(out, {"success": False, "error": ai_draft.NOT_FROM_A_CARD})
+		# With AI write gating off, FAC runs the tool straight away, and it refuses.
+		response = queue(args, gating=False)
+		self.assertEqual((response["success"], response["error_type"]), (False, "ToolReportedError"))
+		self.assertEqual(response["error"], ai_draft.NOT_FROM_A_CARD)
+		self.assertEqual(_db()["AI Pending Action"], {})
+		# Another tool's card, this tool's card that is not being confirmed, and no card at all.
+		for pending in (card(args, tool="create_document", status="Confirmed"), card(args), "AI-PA-NONE"):
+			with self.subTest(pending=pending):
+				out = request(ai_draft.from_card, args, user=APPROVER, flags={"ai_gate_pending": pending})
+				self.assertEqual(out, {"success": False, "error": ai_draft.NOT_FROM_A_CARD})
+		self.assertEqual(_db()[VERSION], {})
+
+	# ---- a new article
+
+	def test_a_new_article_draft_only(self):
+		args = ai_args(
+			body_markdown="Press <b>Save</b>, never <script>alert(1)</script>. " + AI_SENTINELS["body"]
+		)
+		name = queued(queue(args))
+		row = card_row(name)
+		self.assertEqual((row["status"], row["risk"], row["target_doctype"], row["target_name"]), ("Pending", "Medium", VERSION, None))
+		self.assertEqual(
+			row["summary"], f"Draft a new knowledge article “{AI_TITLE}” (06 Operations, SOP), a Draft only"
+		)
+		self.assertEqual(json.loads(row["arguments"]), args)  # the card keeps the proposal
+		self.assertEqual(_db()[VERSION], {})  # nothing is written until the requester confirms
+
+		self.assertEqual(confirm(name)["status"], "Executed")
+		(version_name,) = _db()[VERSION]
+		result = card_result(name)
+		self.assertEqual(
+			result,
+			{
+				"success": True,
+				"action": "created",
+				"name": version_name,
+				"kb_number": None,
+				"review_state": "Draft",
+				"submitted": False,
+				"reviewers_asked": 0,
+				"desk_url": f"https://erp.example.com/desk/knowledge-article-version/{version_name}",
+				"next_step": ai_draft.NEXT_STEP_DRAFT,
+			},
+		)
+		self.assertEqual(card_row(name)["target_name"], version_name)
+		row = version(version_name)
+		self.assertEqual(
+			(row["review_state"], row["ai_drafted"], row["ai_requested_by"], row["owner"], row["contributors"]),
+			("Draft", 1, APPROVER, APPROVER, APPROVER),
+		)
+		self.assertEqual((row["title"], row["department_block"], row["kind"]), (AI_TITLE, "06 Operations", "SOP"))
+		self.assertEqual(row["keywords"], "pump, winter, " + AI_SENTINELS["keywords"])
+		# Raw HTML in the AI's Markdown is text a reader sees, not markup.
+		self.assertIn("&lt;b&gt;Save&lt;/b&gt;", row["body"])
+		self.assertIn("&lt;script&gt;", row["body"])
+		self.assertNotIn("<b>", row["body"])
+		self.assertNotIn("<script", row["body"])
+		self.assertEqual(open_todos(), [])
+		self.assertNoText(json.dumps(result), AI_TITLE)
+
+	def test_a_card_confirmed_by_anyone_but_the_requester_fails_and_writes_nothing(self):
+		for submit in (False, True):
+			with self.subTest(submit_for_review=submit):
+				name = queued(queue(ai_args(submit_for_review=submit)))
+				# Nik is a System Manager with KB Approver: gating_api lets him decide the card; the tool
+				# refuses to run for him.
+				message = refused(self, gating_api.confirm_action, name, user=NIK)
+				self.assertIn(REFUSED_ONLY, message)
+				row = card_row(name)
+				self.assertEqual((row["status"], row["decided_by"], row.get("target_name")), ("Failed", NIK, None))
+				# What WI-080's acceptance reads: the card stores FAC's report as it is; only the message the
+				# confirming person sees carries "Execution failed: " (corrected in PR 6b's review).
+				self.assertEqual(row["error"], f"[ToolReportedError] {REFUSED_ONLY} (execution_time: 0.0s)")
+				self.assertEqual(message, "Execution failed: " + row["error"])
+				self.assertEqual(_db()[VERSION], {})
+				self.assertEqual(open_todos(), [])
+		# A KB Author who is not a System Manager may not decide it at all; a System Manager may cancel it.
+		name = queued(queue(ai_args(article_title="Cleaning a skimmer basket")))
+		refused(self, gating_api.confirm_action, name, user=AUTHOR, exc=PermissionRefused)
+		self.assertEqual(card_row(name)["status"], "Pending")
+		request(gating_api.cancel_action, name, user=NIK)
+		self.assertEqual(card_row(name)["status"], "Cancelled")
+		self.assertEqual(_db()[VERSION], {})
+
+	def test_a_confirmer_without_version_create_is_refused(self):
+		def no_create(doctype=None, ptype="read", doc=None, user=None, throw=False, **kwargs):
+			return ptype != "create"
+
+		with mock.patch.object(frappe_module(), "has_permission", no_create):
+			out = request(ai_draft.draft, ai_args(), APPROVER, user=APPROVER)
+		self.assertFalse(out["success"])
+		self.assertIn("You cannot create a knowledge-base version (that needs KB Author or KB Approver)", out["error"])
+		self.assertTrue(out["error"].endswith("Nothing was written."))
+		self.assertEqual(_db()[VERSION], {})
+		# End to end: a requester who lost their KB role before confirming gets a Failed card, no draft.
+		name = queued(queue(ai_args()))
+		_db()["User"][APPROVER]["roles"] = ("Desk User",)
+		STATE["committed"] = copy.deepcopy(_db())
+		refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertEqual(card_row(name)["status"], "Failed")
+		self.assertEqual(_db()[VERSION], {})
+
+	def test_a_submit_the_confirmer_cannot_write_leaves_no_draft(self):
+		"""6b.4 Submit step 1: before it submits, the tool checks ``write`` on the version its card has just
+		written, as the confirmer, the check the Submit for Review endpoint's ``_load_version`` makes.
+		Refused there, the savepoint takes the insert back. A Draft-only card never asks it."""
+		original = _check_perm
+
+		def no_write(doctype, ptype):
+			if doctype == VERSION and ptype == "write":
+				raise PermissionRefused(f"No permission for {doctype} ({ptype})")
+			return original(doctype, ptype)
+
+		name = queued(queue(ai_args(submit_for_review=True)))
+		STATE["writes"].clear()
+		with mock.patch(f"{__name__}._check_perm", no_write):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"No permission for {VERSION} (write)", message)
+		self.assertIn("Nothing was written.", message)
+		self.assertEqual([w["action"] for w in writes(VERSION)], ["insert"])  # written, then rolled back
+		self.assertEqual(_db()[VERSION], {})
+		self.assertEqual(open_todos(), [])
+		self.assertEqual(card_row(name)["status"], "Failed")
+		# The same person's Draft-only card is written: nothing checks write before a submit.
+		name = queued(queue(ai_args(article_title="Cleaning a skimmer basket")))
+		with mock.patch(f"{__name__}._check_perm", no_write):
+			self.assertEqual(confirm(name)["status"], "Executed")
+		self.assertEqual(version(card_result(name)["name"])["review_state"], "Draft")
+
+	def test_a_new_article_needs_a_department_and_its_process_owner_must_be_staff(self):
+		"""6b.3 Shape: both refused at the precheck, before any card (a card without a department would
+		otherwise fail after the requester confirmed it)."""
+		args = ai_args()
+		del args["department"]
+		for blank in (args, ai_args(department="")):
+			with self.subTest(department=blank.get("department")):
+				out = queue(blank)
+				self.assertEqual(out["error_type"], "AIGateValidationError")
+				self.assertIn("department is required for a new article", out["error"])
+		for owner in ("disabled@example.com", "portal@example.com", "nobody@example.com"):
+			with self.subTest(process_owner=owner):
+				out = queue(ai_args(process_owner=owner))
+				self.assertEqual(out["error_type"], "AIGateValidationError")
+				self.assertIn("process_owner must be the user id of an enabled staff login", out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		# An enabled staff login is written as the process owner.
+		name = queued(queue(ai_args(process_owner=f" {SECOND} ")))
+		confirm(name)
+		self.assertEqual(version(card_result(name)["name"])["process_owner"], SECOND)
+
+	def test_a_null_or_wrongly_typed_argument_gets_no_card(self):
+		"""PR 6b review: FAC 3.0.0's own type check (``validate_arguments``) runs only when the confirmed card
+		executes, so a null or an integer department queued a card that ended Failed with "Invalid type
+		for field" after the requester confirmed it."""
+		for change in (
+			{"submit_for_review": None},
+			{"kb_number": None},
+			{"keywords": None},
+			{"process_owner": None},
+			{"department": None},
+			{"department": 6},
+			{"submit_for_review": "true"},
+		):
+			with self.subTest(change=change):
+				out = queue(ai_args(**change))
+				self.assertEqual((out["success"], out["error_type"]), (False, "AIGateValidationError"))
+				(key,) = change
+				self.assertIn(key, out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		# The FAC stub refuses each of them at execution, which is the card the precheck now prevents.
+		for change in ({"submit_for_review": None}, {"department": 6}):
+			with self.subTest(written_past_the_gate=change):
+				name = card(ai_args(**change))
+				message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+				self.assertIn(f"Invalid type for field {next(iter(change))}", message)
+		self.assertEqual(_db()[VERSION], {})
+
+	def test_a_retire_or_revision_that_commits_after_the_check_is_seen_under_the_lock(self):
+		"""The check reads the article and its open version without a lock; the write reads both again under
+		the article's row lock, as Start Revision does, so one that committed in between is refused and
+		nothing is written, for a Draft-only card too, which never asks Submit for Review's rules. The
+		stale unlocked reads are simulated: in production the window is between the two reads."""
+		number = self._publish()
+		stale = copy.deepcopy(publish.article_row(number))
+		name = queued(queue(ai_args(kb_number=number)))
+		request(api.retire, number, "No longer done this way", user=NIK)
+		versions = set(_db()[VERSION])
+		STATE["locks"].clear()
+		with mock.patch.object(publish, "article_row", lambda n: copy.deepcopy(stale) if n == number else None):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"{number} is not a published article, so it cannot be revised", message)
+		self.assertIn((ARTICLE, number), STATE["locks"])
+		self.assertEqual((card_row(name)["status"], set(_db()[VERSION])), ("Failed", versions))
+
+		# A person's revision opened after the unlocked check.
+		number = self._publish(title="Cleaning a skimmer basket")
+		name = queued(queue(ai_args(kb_number=number)))
+		opened_version = request(api.start_revision, number, user=AUTHOR)["version"]
+		original = publish.open_version
+		with mock.patch.object(publish, "open_version", lambda n, lock=False: original(n, lock=True) if lock else None):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"{number} already has an open version ({opened_version}, Draft)", message)
+		self.assertEqual(card_row(name)["status"], "Failed")
+		self.assertEqual([r["name"] for r in _db()[VERSION].values() if r.get("ai_drafted")], [])
+
+	def test_nobody_but_a_named_kb_role_can_ask(self):
+		"""FAC lists the tool only to users who can read the drafts' doctype; a client that calls it by
+		name anyway is refused before any card, and so is Administrator."""
+		tool = draft_tool_module.DraftKnowledgeArticle()
+		listed = {
+			user: request(lambda: frappe_module().has_permission(tool.requires_permission, "read"), user=user)
+			for user in (TECH, AUTHOR, APPROVER)
+		}
+		self.assertEqual(listed, {TECH: False, AUTHOR: True, APPROVER: True})
+		out = queue(ai_args(), user=TECH)
+		self.assertIn("only a KB Author or KB Approver can have an AI draft a knowledge-base article", out["error"])
+		out = queue(ai_args(), user="Administrator")
+		self.assertIn("Administrator is a shared account", out["error"])
+		out = queue(ai_args(), user="portal@example.com")
+		self.assertIn("only for an enabled staff login", out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+
+	# ---- submitting
+
+	def test_submitting_a_new_article_and_who_may_then_approve_it(self):
+		name = queued(queue(ai_args(submit_for_review=True)))
+		self.assertTrue(card_row(name)["summary"].endswith("and SUBMIT it for review as you"))
+		confirm(name)
+		result = card_result(name)
+		version_name = result["name"]
+		row = version(version_name)
+		self.assertEqual(row["review_state"], "In Review")
+		self.assertEqual((row["submitted_by"], row["owner"], row["ai_requested_by"]), (APPROVER, APPROVER, APPROVER))
+		# The review ToDos go to the other KB Approvers, never to the requester.
+		self.assertEqual(open_todos(version_name), sorted([SECOND, NIK]))
+		self.assertEqual(
+			(result["submitted"], result["review_state"], result["reviewers_asked"]), (True, "In Review", 2)
+		)
+		self.assertEqual(result["next_step"], ai_draft.NEXT_STEP_IN_REVIEW)
+		self.assertNoText(json.dumps(result), AI_TITLE, SECOND, NIK, "Lisa", "Example")
+
+		# The requester cannot approve it, and the refusal says why.
+		message = refused(self, api.approve_and_publish, version_name, opened(version_name), user=APPROVER)
+		self.assertIn(
+			"you created it, submitted it for review, changed its content and asked an AI to draft it, so a "
+			"different KB Approver must approve it",
+			message,
+		)
+		# Nobody approves while a gate card runs, whoever confirmed it.
+		for user, flag in ((NIK, "ai_gate_pending"), (SECOND, "ai_gate_bypass")):
+			with self.subTest(user=user, flag=flag):
+				message = refused(
+					self, api.approve_and_publish, version_name, opened(version_name), user=user, flags={flag: "AI-PA-1"}
+				)
+				self.assertIn("an AI assistant's action cannot approve a version, even once it is confirmed", message)
+		# A different KB Approver, a System User in a browser with no gate flag, publishes it.
+		out = approve(version_name, user=NIK)
+		article = _row(ARTICLE, out["article"])
+		self.assertEqual((article["approved_by"], article["author"], article["ai_drafted"]), (NIK, APPROVER, 1))
+		self.assertEqual(open_todos(), [])
+
+	def test_submitting_a_revision_leaves_the_live_text_until_someone_approves(self):
+		number = self._publish()
+		before = copy.deepcopy(_row(ARTICLE, number))
+		name = queued(queue(ai_args(kb_number=number, submit_for_review=True)))
+		self.assertEqual(
+			card_row(name)["summary"], f"Draft a revision of {number}: “{AI_TITLE}” and SUBMIT it for review as you"
+		)
+		confirm(name)
+		result = card_result(name)
+		self.assertEqual((result["action"], result["kb_number"], result["review_state"]), ("revision_started", number, "In Review"))
+		row = version(result["name"])
+		self.assertEqual((row["article"], row["base_version"], row["version_number"]), (number, before["live_version"], 2))
+		self.assertEqual((row["ai_drafted"], row["ai_requested_by"], row["submitted_by"]), (1, APPROVER, APPROVER))
+		self.assertEqual(_row(ARTICLE, number), before)
+		self.assertEqual(open_todos(result["name"]), sorted([SECOND, NIK]))
+
+	def test_a_revision_keeps_the_article_and_its_own_pictures(self):
+		number = self._publish()
+		live = _row(ARTICLE, number)["live_version"]
+		body = (
+			"Updated steps. " + AI_SENTINELS["body"] + "\n\n"
+			"![slip](https://erp.example.com/private/files/slip.png?fid=file-used)"
+		)
+		args = ai_args(kb_number=number, body_markdown=body)
+		del args["department"]
+		confirm(name := queued(queue(args)))
+		row = version(card_result(name)["name"])
+		self.assertEqual((row["department_block"], row["kind"], row["base_version"]), ("06 Operations", "SOP", live))
+		self.assertEqual(row["review_every_months"], version(live)["review_every_months"])
+		self.assertIn('src="https://erp.example.com/private/files/slip.png?fid=file-used"', row["body"])
+
+	# ---- refusals
+
+	def test_revisions_that_cannot_be_written_are_refused_by_id_state_and_owner(self):
+		number = self._publish()
+		cases = {"department": (ai_args(kb_number=number, department="03 Finance"), "an article keeps its department: KB-0601 is numbered in 06 Operations")}
+		unknown = queue(ai_args(kb_number="KB-0699"))
+		self.assertIn("KB-0699 is not a published article, so it cannot be revised", unknown["error"])
+		out = queue(cases["department"][0])
+		self.assertIn(cases["department"][1], out["error"])
+		# An open human draft, then the same version In Review: named by id, state and who started it.
+		opened_version = request(api.start_revision, number, user=AUTHOR)["version"]
+		url = f"https://erp.example.com/desk/knowledge-article-version/{opened_version}"
+		for state in ("Draft", "In Review"):
+			with self.subTest(state=state):
+				if state == "In Review":
+					submitted(opened_version)
+				out = queue(ai_args(kb_number=number))
+				self.assertIn(
+					f"{number} already has an open version ({opened_version}, {state}), started by Parker Example; "
+					f"finish or discard it in the Desk, then ask again: {url}",
+					out["error"],
+				)
+				self.assertEqual(out["error_type"], "AIGateValidationError")
+				self.assertNoText(out["error"], TITLE)
+		# A retired article gets the same words as a number that was never used.
+		request(api.withdraw, opened_version, user=AUTHOR)
+		request(api.discard, opened_version, user=AUTHOR)
+		second = self._publish(title="Cleaning a skimmer basket")
+		request(api.retire, second, "Replaced by KB-0601", user=NIK)
+		retired = queue(ai_args(kb_number=second))
+		self.assertEqual(retired["error"], unknown["error"].replace("KB-0699", second))
+		self.assertEqual(_db()["AI Pending Action"], {})
+		self.assertEqual({r.get("ai_drafted") for r in _db()[VERSION].values()}, {0})
+
+	def test_an_open_version_that_appears_after_queueing_fails_the_card(self):
+		number = self._publish()
+		name = queued(queue(ai_args(kb_number=number)))
+		opened_version = request(api.start_revision, number, user=AUTHOR)["version"]
+		message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"{number} already has an open version ({opened_version}, Draft)", message)
+		self.assertEqual(card_row(name)["status"], "Failed")
+		self.assertEqual([r["name"] for r in _db()[VERSION].values() if r.get("ai_drafted")], [])
+
+	def test_a_submit_refused_at_execution_leaves_no_draft(self):
+		# The article is retired after the card was queued.
+		number = self._publish()
+		name = queued(queue(ai_args(kb_number=number, submit_for_review=True)))
+		request(api.retire, number, "No longer done this way", user=NIK)
+		versions = set(_db()[VERSION])
+		message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn(f"{number} is not a published article", message)
+		self.assertEqual(card_row(name)["status"], "Failed")
+		self.assertEqual(set(_db()[VERSION]), versions)
+		self.assertEqual(open_todos(), [])
+
+	def test_a_submit_refused_after_the_draft_is_written_rolls_the_draft_back(self):
+		"""All or nothing: the draft is inserted, Submit for Review refuses, and the savepoint takes the
+		insert back, so the card fails with no Draft left behind."""
+		name = queued(queue(ai_args(submit_for_review=True)))
+		STATE["writes"].clear()
+		with mock.patch.object(api.workflow, "submit_problems", lambda *args, **kwargs: ["a stricter rule says no"]):
+			message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn("cannot be submitted for review: a stricter rule says no", message)
+		self.assertIn("Nothing was written.", message)
+		self.assertEqual([w["action"] for w in writes(VERSION)], ["insert"])  # written, then rolled back
+		self.assertEqual(_db()[VERSION], {})
+		self.assertEqual(open_todos(), [])
+		self.assertEqual(card_row(name)["status"], "Failed")
+		self.assertNoText(card_row(name)["error"], AI_TITLE)
+		# The tool itself is all or nothing, whatever its caller does next: a refusal is a normal return,
+		# which a request commits, and the Draft it inserted is already gone by then.
+		STATE["writes"].clear()
+		with mock.patch.object(api.workflow, "submit_problems", lambda *args, **kwargs: ["a stricter rule says no"]):
+			out = request(ai_draft.draft, ai_args(submit_for_review=True), APPROVER, user=APPROVER)
+		self.assertFalse(out["success"])
+		self.assertEqual([w["action"] for w in writes(VERSION)], ["insert"])
+		self.assertEqual(_db()[VERSION], {})
+		self.assertEqual(STATE["committed"][VERSION], {})
+
+	def test_the_only_move_it_makes_is_submit_for_review(self):
+		number = self._publish()
+		moves = []
+		original = publish.transition
+
+		def recording(doc, action, values=None, **kwargs):
+			moves.append(action)
+			return original(doc, action, values, **kwargs)
+
+		with mock.patch.object(publish, "transition", recording):
+			for args in (
+				ai_args(),
+				ai_args(article_title="Cleaning a skimmer basket", submit_for_review=True),
+				ai_args(kb_number=number, submit_for_review=True),
+				ai_args(kb_number="KB-0699", submit_for_review=True),
+			):
+				name = card(args)
+				try:
+					confirm(name)
+				except Refused:
+					pass
+		self.assertEqual(moves, ["submit_for_review", "submit_for_review"])
+
+	def test_pictures(self):
+		out = queue(ai_args(body_markdown="See below.\n\n![pump](https://example.org/pump.png)"))
+		self.assertIn(
+			"a new article cannot embed pictures from here (picture 1, from example.org); add pictures in the Desk",
+			out["error"],
+		)
+		number = self._publish()
+		body = (
+			"![own](https://erp.example.com/private/files/slip.png?fid=file-used)\n\nText.\n\n![ext][1]\n\n"
+			"[1]: https://cdn.example.org/a/b.png?sig=xyz"
+		)
+		out = queue(ai_args(kb_number=number, body_markdown=body))
+		self.assertIn(f"a revision can embed only {number}'s own pictures (picture 2, from cdn.example.org)", out["error"])
+		for piece in ("sig=xyz", "/a/b.png", "https://cdn"):
+			self.assertNotIn(piece, out["error"])
+		# A File the published version did not use stays on that version, where readers cannot open it,
+		# so it is not the article's own picture.
+		out = queue(ai_args(kb_number=number, body_markdown="![spare](/private/files/spare.pdf?fid=file-unused)"))
+		self.assertIn("picture 1, a file on this site", out["error"])
+		# PR 6b review: the article's own fid carries no other path, and an address a browser reads
+		# differently from Python is refused whatever it seems to name.
+		for src, place in (
+			("/files/../api/method/frappe.auth.get_logged_user?fid=file-used", "a file on this site"),
+			("/private/files/%2e%2e/%2e%2e/desk/user?fid=file-used", "a file on this site"),
+			("/private/files/spare.pdf?fid=file-used", "a file on this site"),
+			("https://evil.example\\@erp.example.com/private/files/slip.png", ai_draft.UNREADABLE_ADDRESS),
+		):
+			with self.subTest(src=src):
+				out = queue(ai_args(kb_number=number, body_markdown=f"Text.\n\n![slip]({src})"))
+				self.assertIn(f"a revision can embed only {number}'s own pictures (picture 1, {place})", out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+
+	def test_a_secret_is_refused_at_the_precheck_and_again_at_execution(self):
+		secret_body = "Step one.\n\nKey: " + STRIPE_KEY
+		out = queue(ai_args(body_markdown=secret_body))
+		self.assertEqual(out["error_type"], "AIGateValidationError")
+		self.assertIn("body_markdown line 3 looks like a Stripe secret key", out["error"])
+		self.assertNotIn(STRIPE_KEY, out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		(log,) = _db()["AI Action Log"].values()
+		self.assertEqual(log["summary"], "Draft knowledge article (text withheld)")
+		self.assertEqual(json.loads(log["arguments"])["body_markdown"], f"<withheld: {len(secret_body)} characters>")
+		for field in ("arguments", "summary", "error"):
+			self.assertNotIn(STRIPE_KEY, log[field] or "")
+			self.assertNoText(log[field] or "", AI_TITLE)
+		# A card that got past the queue anyway is refused when it runs, and writes nothing.
+		name = card(ai_args(body_markdown=secret_body))
+		message = refused(self, gating_api.confirm_action, name, user=APPROVER)
+		self.assertIn("body_markdown line 3 looks like a Stripe secret key", message)
+		self.assertNotIn(STRIPE_KEY, message)
+		self.assertNotIn(STRIPE_KEY, card_row(name)["error"])
+		self.assertEqual(_db()[VERSION], {})
+		# No Error Log, now or deferred, holds the key or the text.
+		logs = json.dumps([_db()["Error Log"], STATE["deferred_docs"], logged()], default=str)
+		self.assertNotIn(STRIPE_KEY, logs)
+		self.assertNoText(logs, AI_TITLE)
+
+	def test_a_secret_behind_markup_gets_no_card(self):
+		"""PR 6b review: ``**Password:** ...`` hides the value from the scan of the Markdown; the controller's
+		scan of the stored body found it, but only after the requester had confirmed a card holding it,
+		whose Failed log row then kept it. The precheck runs the controller's scan too."""
+		password = "Otter#" + "29310"
+		out = queue(ai_args(body_markdown="Log in to the pump controller.\n\n**Pass" + "word:** " + password))
+		self.assertEqual(out["error_type"], "AIGateValidationError")
+		self.assertIn("body_markdown line 2, as it would be shown, looks like a written-out password", out["error"])
+		self.assertEqual(_db()["AI Pending Action"], {})
+		(log,) = _db()["AI Action Log"].values()
+		self.assertNotIn(password, json.dumps(log, default=str))
+
+	def test_nothing_goes_to_the_error_log(self):
+		"""Every outcome above is a return: a refusal, a Failed card and a success leave no Error Log."""
+		confirm(queued(queue(ai_args(submit_for_review=True))))
+		refused(self, gating_api.confirm_action, queued(queue(ai_args(article_title="Other"))), user=NIK)
+		queue(ai_args(kind="Guide"))
+		self.assertEqual(logged(), [])
+		self.assertEqual(STATE["deferred_docs"], [])
 
 
 # ------------------------------------------------------------------ wiring

@@ -2725,6 +2725,18 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.search_company_knowledge.SearchCompanyKnowledge",
 	"erpnext_enhancements.assistant_tools.fetch_knowledge_article.FetchKnowledgeArticle",
 	"erpnext_enhancements.assistant_tools.list_company_knowledge.ListCompanyKnowledge",
+	# WI-080 PR 6b (v1.560.0): the knowledge base's one WRITE tool, in APP_MUTATING (Medium). It writes a
+	# Draft (a new article, or a revision of a published one with nothing open) and, with
+	# submit_for_review, submits that Draft for review in the same card, through the Submit for Review
+	# button's own function. The gate asks its precheck before queueing (no card for a call that could
+	# never run, carries a secret, or comes from someone without a KB role, and that refused call's AI
+	# Action Log row keeps the lengths of the text, not the text); it runs only from its own confirmed
+	# card, and only when the person confirming is the person who asked. It never approves, publishes,
+	# sends back, withdraws, discards, retires or confirms, and returns no version's text. Its
+	# requires_permission is the drafts' doctype, so FAC lists it only to KB Authors and KB Approvers,
+	# and Triton is never offered it (Triton's own PR, _NOT_OFFERED_PREFIXES, deployed before this
+	# merges). See knowledge_base/ai_draft.py and the CHANGELOG for v1.560.0.
+	"erpnext_enhancements.assistant_tools.draft_knowledge_article.DraftKnowledgeArticle",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",

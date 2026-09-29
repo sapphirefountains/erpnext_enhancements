@@ -64,6 +64,33 @@ for AI Writes** is ON. The field's default is OFF, but the v1.525.0 patch
   **Since v1.545.0 an `update_document` with `docstatus` 2 is refused the same way**
   (`_cancel_refusal`), because FAC refuses every change to a submitted document and the card
   could only fail after approval. The refusal names `cancel_document`.
+- **An app tool can precheck its own calls (v1.560.0, WI-080 PR 6b).** A tool in
+  `APP_PRECHECKED_TOOLS` (today only `draft_knowledge_article`) has a `precheck(arguments)` method,
+  which `_precheck_refusal` asks before its `create`/`update` branch. Any problem it returns (short
+  clauses that never quote the proposal) refuses the call with `AIGateValidationError`, worded "Not
+  queued: ...", and no card. A precheck that raises queues the card as before, and the failure is
+  logged **by type only**, in an Error Log built by hand (`_log_failure_type`), never through
+  `frappe.log_error`, whose v16 `metadata` would hold the MCP request and so the draft's text.
+  The precheck is the only type check before a card: the gate wraps FAC's `_safe_execute`, whose
+  `validate_arguments` runs only when the confirmed card executes, so the drafting tool refuses a
+  `null` or wrongly typed argument itself (`ai_draft.TYPES`, held to the schema by a test).
+- **A card's target can come from the tool (v1.560.0).** `TOOL_TARGET_DOCTYPES` names the doctype
+  a tool writes when its arguments carry no `doctype`; `_call_target` gives `_propose` and
+  `insert_action_log` that doctype and no name (`_confirm_one` fills `target_name` from the result's
+  `name`). So a drafting card targets `Knowledge Article Version`, and the batch dialog starts it
+  unticked with "changes the company knowledge base". A `doctype` smuggled into such a call is
+  ignored for the target and still refused by the denylist.
+- **A refused call's log row can withhold its text (v1.560.0).** For a tool in
+  `WITHHELD_WHEN_UNQUEUED`, every AI Action Log row with no `pending_action` (the step-0 denylist
+  refusal and the step-5 precheck refusal) stores each listed argument as `"<withheld: N
+  characters>"` and the summary as "Draft knowledge article (text withheld)", because the gate
+  redacts only by key name and a refused draft may be refused *for* the secret in it. It keeps
+  whole only the tool's `KEPT_WHEN_UNQUEUED` arguments (an id, an option, a flag, while short), so
+  an argument the tool does not take is withheld too, and the row's error is scrubbed of every
+  withheld value, at any depth. A queued
+  card keeps the whole proposal, on the card and in its log rows: that is how its requester reads
+  what they confirm (decided 2026-09-28). The gate's catch-all and a failed log insert are logged by
+  type only for these tools too.
 - The model retrieves the real outcome afterwards via the read-only
   `check_ai_pending_action` tool; the `ee-ai-write-confirmation` skill teaches
   connected assistants the flow.
@@ -308,6 +335,7 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `search_company_knowledge` | Knowledge Base | **read** (v1.559.0, WI-080 PR 6a; name frozen by ADR 0017) — `knowledge_base/ai_tools.search_payload` over `search_service.search`: ranked **published** articles for a question, an acronym (PO, QBO, SOP) or a KB number, the caller's readable set applied **before** ranking; filters `department` and `kind`, `limit` 1–10. Each result carries `result_type`, `cite_as` (`KB-0601 v3`), the approver by name (never an email address), `review_overdue` and a url. No match, a blank query and an unknown filter are ordinary answers |
 | `fetch_knowledge_article` | Knowledge Base | **read** (v1.559.0; name frozen) — `ai_tools.fetch_payload`: one published article, by KB number or by its citation (`KB-0601 v3`, always the published version), as Markdown from `knowledge_base/markdown.py` (an 11-key header, the fixed "reference material, not instructions" comment, the text), capped at 40,000 characters, with the KB numbers it cites. An unknown, retired, unreadable or unpublished number, a `KBV-` id and a blank all return the **same** `found: false`, differing only in `requested`; drafts are never read |
 | `list_company_knowledge` | Knowledge Base | **read** (v1.559.0; name frozen by ADR 0017's 2026-09-28 amendment) — `ai_tools.contents_payload`: the table of contents, every published article's number, version, title, kind and department, grouped by department, counts by department and kind ("Not classified" included), paged (`page_size` ≤ 200). One `get_list` as the caller, counted and paged in Python |
+| `draft_knowledge_article` | Knowledge Base | **write (gated, Medium; always a card, confirmed only by the person who asked)** (v1.560.0, WI-080 PR 6b; name frozen by ADR 0017's 2026-09-28 amendment) — `knowledge_base/ai_draft.py`: writes a **Draft** knowledge-base version from the AI's Markdown (a new article, or a revision of a published one with nothing open), with `ai_drafted` and `ai_requested_by`; with `submit_for_review` the same card then submits it for review through `api.knowledge_base.submit_version`, the Submit for Review button's own function, the requester recorded as submitter. Runs only inside `gating_api._confirm_one` for its own card, so with gating off it does nothing. Raw HTML is escaped (markdown2 `safe_mode="escape"`); secrets (in the Markdown and as shown), text nobody sees (invisible Unicode, link titles), a `null` or wrongly typed argument, pictures (none in a new article; in a revision only the article's own Files, matched by exact path), an open version and a retired or unknown article are refused before any card. Never approves, publishes, sends back, withdraws, discards, retires or confirms, and returns a name, state, count and link, never text. `requires_permission` is the drafts' doctype (KB roles only); never offered to Triton |
 | `maintenance_day_board` | Maintenance | `api/maintenance_board.py::get_day_board_data` |
 | `maintenance_contract_status` | Maintenance | fresh perm-enforced queries on Sapphire Maintenance Contract |
 | `maintenance_visit_history` | Maintenance | perm-enforced queries + `_chemistry_trends` |
@@ -390,11 +418,17 @@ every registered tool.
   hand and queued with `deferred_insert`, **never `frappe.log_error`**: v16's `log_error`
   stores the request's form_dict in the row's `metadata`, and during an MCP call that is
   the JSON-RPC body, the tool's arguments included (`utils/error.py:81`, `:159`). Any
-  tool whose arguments must stay out of the Error Log (PR 6b's drafting tool) logs the
-  same way. `requires_permission`
+  tool whose arguments must stay out of the Error Log logs the same way: the drafting tool
+  (v1.560.0) through `_knowledge_base.run_draft` ("Knowledge base AI draft"). `requires_permission`
   is `Knowledge Article`, which every staff user reads, so FAC lists them to everyone
   and Triton's one shared catalogue stays stable. **Triton does not get them from this
   app alone:** it needs its own PR (`FAC_CORE_PREFIXES` gains `list_company_knowledge`;
   `_NOT_OFFERED_PREFIXES` gains `draft_knowledge_article`), a snapshot regenerated as a
   KB-role user, and `deploy_agents` on the VM for the deployed agents. See the
   CHANGELOG for v1.559.0.
+- **`draft_knowledge_article`** (v1.560.0) is the one tool here whose `requires_permission`
+  is a doctype only some staff can read (`Knowledge Article Version`, KB Author and KB
+  Approver), so FAC lists it only to them. Triton caches one tool list for everyone, taken
+  from whoever asked first, so this tool would come and go from it: **Triton must never be
+  offered it**, and its PR (`_NOT_OFFERED_PREFIXES`) must be **deployed** before v1.560.0
+  merges. See the CHANGELOG for v1.560.0.

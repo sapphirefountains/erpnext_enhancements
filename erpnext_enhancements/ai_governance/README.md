@@ -69,6 +69,50 @@ Frappe runs the controller's `validate` before `_validate()`, so a controller th
 off-options value into a valid one would get past Frappe but be refused here. The refusal lists
 the valid options, so the model can send one of them.
 
+### An app tool's own precheck, and what a refused call's log keeps (v1.560.0)
+
+WI-080 PR 6b added the first app tool that writes into a doctype its arguments do not name:
+`draft_knowledge_article`, which writes a knowledge-base Draft and can submit it for review (ADR
+0017's 2026-09-28 amendment). Three gate changes came with it, each keyed on a named set in
+`_gate.py`, and nothing else in the gate changed:
+
+- **`APP_PRECHECKED_TOOLS`.** `_precheck_refusal` asks such a tool's own `precheck(arguments)`
+  before a card is queued. Problems come back as short clauses that never quote the proposal, and
+  refuse the call "Not queued: ..." with `AIGateValidationError` and no card. For the drafting tool
+  that covers the shape (a `null` or wrongly typed argument included: the gate wraps FAC's
+  `_safe_execute`, so FAC's own type check runs only once the card is confirmed), a requester
+  without a KB role (or Administrator), a secret in the text (in the Markdown and as it would be
+  shown), text nobody sees (invisible Unicode, link titles), a picture it may not embed, and an
+  article that is retired, unknown or already has an open version. A precheck that raises queues
+  the card as before (the tool checks again when it runs), logged by type only, never through
+  `frappe.log_error`, whose v16 `metadata` holds the MCP request; the drafting tool's own precheck
+  still refuses whatever its shape rules or its secret scan found before the lookup failed.
+- **`TOOL_TARGET_DOCTYPES`.** A card's `target_doctype` came only from `arguments["doctype"]`, so a
+  drafting card had none, and the batch dialog would have ticked it like any Medium write.
+  `_call_target` now names `Knowledge Article Version` for it (no name until it runs), and the
+  dialog starts it unticked with "changes the company knowledge base".
+- **`WITHHELD_WHEN_UNQUEUED`.** The gate redacts arguments only by key name, so a refused drafting
+  call's AI Action Log row would have held its whole text, including the secret it was refused for.
+  Every row with no `pending_action` from a listed tool keeps `"<withheld: N characters>"` for its
+  text arguments and the summary "Draft knowledge article (text withheld)". **`KEPT_WHEN_UNQUEUED`**
+  is the allowlist beside it: only those arguments (an id, an option, a flag) are kept, and only
+  while they are true/false, null or short text, so an argument the tool does not take (a misnamed
+  `body` or `title`, which the tool refuses as "not an argument") is withheld too, nested values
+  included, and scrubbed from the row's error. A failed insert of such a row is logged by type
+  only. A queued card keeps the
+  whole proposal: it is the AI's own text, and how the person who asked reads what they confirm
+  (decided 2026-09-28). It stays in AI Pending Action, AI Action Log and FAC's Assistant Audit Log
+  until retention purges them.
+
+**Only the person who asked confirms a drafting card**, and that rule is the tool's, not the gate's:
+`_check_identity` still lets a System Manager decide (and cancel) anyone's card, but
+`knowledge_base/ai_draft.py` refuses to run for anyone but the requester, and the card ends Failed
+("Only <name>, who asked for this draft, can confirm it. Nothing was written."). A confirmed card runs
+as the confirmer, so a System Manager confirming someone else's drafting card would have become the
+draft's owner and submitter and used up a second approver. And the knowledge base's approval rules
+refuse every approval made while a card runs (`ai_gate_pending` or `ai_gate_bypass`), so no card
+approves, publishes, sends back, retires or confirms anything.
+
 ## Exemptions: permanent, or a window that closes itself
 
 A row in **Confirmation-Exempt Doctypes** lets an assistant's `create_document` and
@@ -123,7 +167,8 @@ count. They call three endpoints in `gating_api`:
   (`_gate._changes_docstatus`, or since v1.545.0 a `submit_document` / `cancel_document` card,
   `_gate.DOCSTATUS_TOOLS`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
   For a never-exempt target the reason names its kind (`gating_api._never_exempt_reason`): a Task,
-  the gate's own records, or since v1.538.0 the company knowledge base.
+  the gate's own records, or since v1.538.0 the company knowledge base (since v1.560.0 including a
+  `draft_knowledge_article` card, whose target the gate takes from the tool's name).
   It reads the redacted `arguments` for that and never returns them.
 - `confirm_actions` / `cancel_actions` take up to 50 names. The actions run oldest first, through
   the same `_confirm_one` / `_cancel_one` the form's buttons use. An action that is not yours, not
