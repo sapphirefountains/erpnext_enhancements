@@ -73,6 +73,7 @@ frappe.ui.form.on("Rental Booking", {
 			add_availability_button(frm);
 		}
 		add_sales_buttons(frm);
+		add_deposit_buttons(frm);
 		frm.add_custom_button(__("Rental Planner"), () => frappe.set_route("rental-planner"), __("View"));
 		frm.add_custom_button(__("Fountain Calendar"), () => {
 			frappe.route_options = { rental_booking: frm.doc.name };
@@ -383,4 +384,76 @@ function add_sales_buttons(frm) {
 				), __("Invoices"));
 		});
 	});
+}
+
+const DEPOSIT = "erpnext_enhancements.asset_management.rental_deposit";
+
+// Releasing the security deposit (v1.566.0): drafts first (a credit note, and a damage-charge
+// invoice for any deduction), each posted by a person; then one click refunds the rest on Stripe.
+function add_deposit_buttons(frm) {
+	if (!frm.doc.security_deposit || !["Out", "Returned", "Closed"].includes(frm.doc.status)) {
+		return;
+	}
+	const status = frm.doc.deposit_status || "";
+	if (!status || status === "Held" || status === "Release Drafted") {
+		frm.add_custom_button(__("Release Deposit…"), () => {
+			const dialog = new frappe.ui.Dialog({
+				title: __("Release the security deposit"),
+				fields: [
+					{
+						fieldname: "deduction",
+						fieldtype: "Currency",
+						label: __("Deduction for damage"),
+						default: frm.doc.deposit_deduction || 0,
+						description: __("Deposit: {0}. Leave 0 to return all of it.", [
+							format_currency(frm.doc.security_deposit),
+						]),
+					},
+					{
+						fieldname: "reason",
+						fieldtype: "Small Text",
+						label: __("What the deduction is for"),
+						default: frm.doc.deposit_deduction_reason,
+						depends_on: "eval:doc.deduction > 0",
+						description: __("The customer sees this on the damage-charge invoice."),
+					},
+				],
+				primary_action_label: __("Draft"),
+				primary_action(values) {
+					frappe
+						.call({
+							method: `${DEPOSIT}.prepare_release`,
+							args: { booking: frm.doc.name, deduction: values.deduction || 0, reason: values.reason },
+							freeze: true,
+						})
+						.then(() => {
+							dialog.hide();
+							frappe.show_alert({ message: __("Drafted. Submit the credit note (and any damage charge), then refund."), indicator: "blue" });
+							frm.reload_doc();
+						});
+				},
+			});
+			dialog.show();
+		}, __("Deposit"));
+	}
+	if (status === "Release Drafted" && frappe.user.has_role(["System Manager", "Accounts Manager"])) {
+		frm.add_custom_button(__("Refund Deposit"), () =>
+			frappe.confirm(__("Refund the deposit, less any deduction, to the customer's card?"), () =>
+				frappe
+					.call({ method: `${DEPOSIT}.refund_deposit`, args: { booking: frm.doc.name }, freeze: true })
+					.then(({ message }) => {
+						if (message) frappe.msgprint(__("Refunded {0}.", [format_currency(message.refunded)]));
+						frm.reload_doc();
+					})
+			), __("Deposit"));
+		frm.add_custom_button(__("Mark Refunded by Hand"), () =>
+			frappe.prompt(
+				{ fieldname: "reference", fieldtype: "Data", label: __("Check number or reference") },
+				({ reference }) =>
+					frappe
+						.call({ method: `${DEPOSIT}.mark_refunded`, args: { booking: frm.doc.name, reference }, freeze: true })
+						.then(() => frm.reload_doc()),
+				__("Refunded outside Stripe")
+			), __("Deposit"));
+	}
 }

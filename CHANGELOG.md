@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.566.0] - 2026-09-30
+
+**Event rentals, part 4: the crew, their checklists, releasing the deposit, and customer reminders.**
+Nik's calls, 2026-09-29:
+- the crew is picked per booking;
+- the deposit is released through drafts and then a one-click Stripe refund;
+- every customer reminder ships switched off.
+
+### Added
+
+- **Crew on each Rental Booking** (a new Rental Booking Crew table), pre-filled with Rental Settings'
+  new Default Crew Lead.
+- **Logistics tasks.** A confirmed booking creates Delivery, Setup (when set), Take-down and Cleaning
+  Tasks, dated from its schedule and assigned to the crew.
+  - They follow the schedule on every save. A crew member taken off loses their ToDos, and a canceled
+    booking cancels its open tasks. A Completed task is never changed.
+  - New Task fields (fixtures): `custom_rental_booking`, `custom_rental_task_kind`,
+    `custom_rental_digest_sent_on`.
+- **The 6am crew digest.** Each crew member gets their rental jobs for today by email and text, at
+  most once a day, like the maintenance route digest (Rental Settings: 6am Crew Digest, on).
+- **Automatic checklists** (Rental Settings: Generate Inspections Automatically, on):
+  - pre-shipping checklists at 6am for every fountain delivering today or tomorrow;
+  - return checklists when a booking is marked Returned.
+  - Both are assigned to the crew.
+- **Security deposit release.** Once every fountain is back and checked:
+  - a clean return drafts a credit note for the deposit;
+  - findings instead send the booking's owner a to-do to set a deduction (**Release Deposit…**),
+    which also drafts a damage-charge invoice.
+  - **Refund Deposit** refunds the rest on the Stripe payment that paid the balance invoice. Only
+    System Manager or Accounts Manager can press it; it is capped at what that payment took; and it
+    only runs once the credit note and damage charge are posted.
+  - **Mark Refunded by Hand** covers a refund made by check.
+  - New booking fields: deposit status, deduction and reason, credit note, damage invoice, refund
+    reference.
+  - `Sales Invoice.custom_rental_invoice_kind` gains Damage and Deposit Return.
+- **Customer reminders** (daily), each **off until turned on** in Rental Settings:
+  - a week before delivery;
+  - site details, 10 days out, if still blank;
+  - the delivery time, the day before;
+  - a thank-you after the event, with an optional review link.
+  - Each is sent once per booking.
+- Patch `backfill_rental_settings_defaults` ticks the two new on-by-default switches, but only on a
+  Rental Settings that was already saved (a default never reaches an existing Single's rows).
+- `tests/test_rental_ops.py` (23 bench-free tests), with its own CI step.
+
+### Changed
+
+- **`api.booking.generate_inspection`** now delegates to a new in-process `make_inspection`, which is
+  not whitelisted. That lets the automatic checklists insert as the system: whoever marked a rental
+  Returned need not be allowed to create inspections. The endpoint still checks read permission on
+  the booking first, as before.
+- **Logistics tasks widen their Project's expected dates, never narrowing them.** ERPNext refuses a
+  Task outside its Project's expected dates (`Task.validate_parent_project_dates`), and cleaning
+  always falls after take-down, which is the end date the Rental Planner gives a new project.
+
+### Notes
+
+- **Found while writing it:** a whitelisted function with a `check_permission=True` argument is a
+  hole, because a JSON body can send a real `false`. `prepare_release` is the HTTP door and always
+  checks; `draft_release` is in-process only. `tests/test_rental_ops.py` pins the argument list.
+
 ## [1.565.0] - 2026-09-29
 
 **Event rentals, part 3b: the customer portal, email-link sign-in, and a public rental request

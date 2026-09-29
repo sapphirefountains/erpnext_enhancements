@@ -1253,3 +1253,7 @@ erpnext_enhancements.patches.add_rental_esign_signature_block
 # mints no link for staff, and the on_login refusal): frappe's login_via_key signs in ANY account with no
 # password or 2FA. Runs once; a later switch-off in System Settings stays off.
 erpnext_enhancements.patches.enable_login_with_email_link
+# v1.566.0 event rentals (PR 4): Rental Settings (a Single since v1.564.0) gained crew_digest and
+# generate_inspections, both ticked by default. A default never reaches a Single that already has rows, so
+# fill each only where no tabSingles row exists; a never-saved Single is left alone. Safe twice.
+erpnext_enhancements.patches.backfill_rental_settings_defaults
