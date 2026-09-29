@@ -47,6 +47,16 @@
   "column_break_invoices",
   "deposit_invoice",
   "balance_invoice",
+  "section_site_prep",
+  "site_contact_name",
+  "site_contact_phone",
+  "surface",
+  "column_break_site_prep",
+  "site_access",
+  "power_source",
+  "water_source",
+  "site_prep_notes",
+  "site_prep_updated_on",
   "section_notes",
   "notes"
  ],
@@ -323,6 +333,61 @@
    "no_copy": 1
   },
   {
+   "fieldname": "section_site_prep",
+   "fieldtype": "Section Break",
+   "label": "Site Prep (from the customer)",
+   "collapsible": 1,
+   "description": "Filled in by the customer on the portal (/rentals), or by staff here. The delivery crew reads it."
+  },
+  {
+   "fieldname": "site_contact_name",
+   "fieldtype": "Data",
+   "label": "On-site Contact"
+  },
+  {
+   "fieldname": "site_contact_phone",
+   "fieldtype": "Data",
+   "label": "On-site Phone",
+   "options": "Phone"
+  },
+  {
+   "fieldname": "surface",
+   "fieldtype": "Select",
+   "label": "Surface",
+   "options": "\nGrass\nConcrete\nPavers\nDeck\nIndoor Floor\nOther"
+  },
+  {
+   "fieldname": "column_break_site_prep",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "site_access",
+   "fieldtype": "Small Text",
+   "label": "Access (gate codes, parking, stairs)"
+  },
+  {
+   "fieldname": "power_source",
+   "fieldtype": "Small Text",
+   "label": "Power (outlet location, distance)"
+  },
+  {
+   "fieldname": "water_source",
+   "fieldtype": "Small Text",
+   "label": "Water (spigot location, distance)"
+  },
+  {
+   "fieldname": "site_prep_notes",
+   "fieldtype": "Small Text",
+   "label": "Other Notes"
+  },
+  {
+   "fieldname": "site_prep_updated_on",
+   "fieldtype": "Datetime",
+   "label": "Site Prep Updated On",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
    "fieldname": "section_notes",
    "fieldtype": "Section Break",
    "label": "Notes",
@@ -347,7 +412,7 @@
    "link_fieldname": "custom_rental_booking"
   }
  ],
- "modified": "2026-09-29 20:00:00.000000",
+ "modified": "2026-09-29 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Rental Booking",

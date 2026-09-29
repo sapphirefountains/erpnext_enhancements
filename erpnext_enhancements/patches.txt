@@ -1243,3 +1243,8 @@ erpnext_enhancements.patches.seed_rental_fleet_flags
 # template with the sig() one so Send for Signature accepts rental agreements; refuses (logging) if the
 # site's wording diverged. Safe twice.
 erpnext_enhancements.patches.add_rental_esign_signature_block
+# v1.565.0 customer portal: turn on Login with Email Link (Nik, 2026-09-29) so customers can sign in to
+# /rentals and /pay without Google. Ships WITH portal_login's guards (the send_login_link override that
+# mints no link for staff, and the on_login refusal): frappe's login_via_key signs in ANY account with no
+# password or 2FA. Runs once; a later switch-off in System Settings stays off.
+erpnext_enhancements.patches.enable_login_with_email_link

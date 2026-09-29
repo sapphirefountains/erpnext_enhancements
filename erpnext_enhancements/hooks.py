@@ -2375,6 +2375,12 @@ override_whitelisted_methods = {
 	"frappe.client.submit": "erpnext_enhancements.fieldlevel_read.client_submit",
 	"frappe.client.cancel": "erpnext_enhancements.fieldlevel_read.client_cancel",
 	"frappe.model.workflow.apply_workflow": "erpnext_enhancements.fieldlevel_read.apply_workflow",
+	# portal login (v1.565.0): customers sign in with an emailed link; staff never can. frappe's
+	# login_via_key signs in ANY account with no password, 2FA or Google, and the setting is
+	# site-wide, so this mints no link for anything but a Website User -- answering exactly as
+	# frappe does for an unknown email. Sealed in before_request (portal_login.seal_original),
+	# and backed by the on_login guard below. See erpnext_enhancements/portal_login.py.
+	"frappe.www.login.send_login_link": "erpnext_enhancements.portal_login.send_login_link",
 }
 
 # POST/PUT /api/resource and /api/v2/document return the saved document unstripped, and they
@@ -2392,7 +2398,13 @@ after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response
 # present or future, fails the whitelist check; the canonical names still reach the wrappers,
 # and in-process calls are unaffected. It never raises. See fieldlevel_read.seal_wrapped_originals
 # (v1.542.0).
-before_request = ["erpnext_enhancements.fieldlevel_read.seal_wrapped_originals"]
+before_request = [
+	"erpnext_enhancements.fieldlevel_read.seal_wrapped_originals",
+	# portal login (v1.565.0): frappe's own send_login_link is reachable under a second dotted
+	# name (frappe.www.login.frappe.www.login.send_login_link) that the override above does not
+	# match; taking the function object off the whitelist closes every alias. Never raises.
+	"erpnext_enhancements.portal_login.seal_original",
+]
 
 # knowledge_base (WI-080 PR 8 review, v1.561.0): the private mirror's account, a Website User holding
 # only "KB Mirror" and signed in by an API key, may call api/knowledge_base_mirror.snapshot and nothing
@@ -2418,7 +2430,13 @@ auth_hooks = ["erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_a
 # on_login sends a cookie only to a browser holding somebody else's marker. See
 # travel_management/itinerary_offline.py.
 on_logout = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout"]
-on_login = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_login"]
+on_login = [
+	"erpnext_enhancements.travel_management.itinerary_offline.forget_on_login",
+	# portal login (v1.565.0): the second layer. A sign-in through login_via_key (an emailed
+	# link) is refused for any account that is not a Website User, whatever minted the key.
+	# Raising here happens before frappe makes the session, so no session is created.
+	"erpnext_enhancements.portal_login.refuse_staff_email_link_login",
+]
 
 override_doctype_dashboards = {
 	"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data",
@@ -2699,6 +2717,9 @@ portal_menu_items = [
 	# the page existed in the first place.
 	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"},
 	{"title": "Pay Invoices", "route": "/pay", "role": "Customer"},
+	# event rentals (v1.565.0): a customer's rentals -- schedule, what is booked, invoices, and
+	# the site-prep and change-request forms. Ownership-checked in asset_management/rental_portal.
+	{"title": "My Rentals", "route": "/rentals", "role": "Customer"},
 ]
 
 # ---------------------------------------------------------------------------

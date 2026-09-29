@@ -127,6 +127,20 @@ def on_rental_agreement_signed(doc, method=None):
 	finally:
 		frappe.flags.mute_messages = muted
 
+	# The signer's portal account (v1.565.0), separately: a failure here must not undo a confirm.
+	savepoint = "rental_portal_account"
+	frappe.db.savepoint(savepoint)
+	try:
+		frappe.flags.mute_messages = True
+		from erpnext_enhancements.asset_management.rental_portal import open_portal_for_signer
+
+		open_portal_for_signer(doc.name, booking_name)
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		frappe.log_error(title=f"Rental Agreement {doc.name}: portal account not created", message=frappe.get_traceback())
+	finally:
+		frappe.flags.mute_messages = muted
+
 
 def confirm_booking(booking, reason=None):
 	"""Tentative → Confirmed (renewing an Expired hold first). Raises if the dates are gone."""

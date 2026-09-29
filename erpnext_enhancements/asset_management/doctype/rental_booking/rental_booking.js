@@ -309,6 +309,42 @@ function add_sales_buttons(frm) {
 				.then(({ message }) => message && frappe.set_route("Form", "Project Contract", message));
 		}, __("Create"));
 	}
+	if (live) {
+		// v1.565.0: a portal account for one of the customer's contacts, and an email saying
+		// where their rental lives. The signer gets one automatically when the agreement is signed.
+		frm.add_custom_button(__("Invite to Portal"), () => {
+			const dialog = new frappe.ui.Dialog({
+				title: __("Invite to the customer portal"),
+				fields: [{
+					fieldname: "contact",
+					fieldtype: "Link",
+					options: "Contact",
+					label: __("Contact"),
+					reqd: 1,
+					default: frm.doc.contact_person,
+					get_query: () => ({
+						query: "frappe.contacts.doctype.contact.contact.contact_query",
+						filters: { link_doctype: "Customer", link_name: frm.doc.customer },
+					}),
+					description: __("They sign in with an emailed link. Staff accounts cannot be invited."),
+				}],
+				primary_action_label: __("Send Invitation"),
+				primary_action({ contact }) {
+					frappe
+						.call({
+							method: "erpnext_enhancements.asset_management.rental_portal.invite_to_portal",
+							args: { booking: frm.doc.name, contact },
+							freeze: true,
+						})
+						.then(({ message }) => {
+							dialog.hide();
+							if (message) frappe.show_alert({ message: __("Invitation sent to {0}", [message]), indicator: "green" });
+						});
+				},
+			});
+			dialog.show();
+		}, __("Create"));
+	}
 	if (!live || frm.doc.status === "Tentative") {
 		return;
 	}

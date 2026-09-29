@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.565.0] - 2026-09-29
+
+**Event rentals, part 3b: the customer portal, email-link sign-in, and a public rental request
+form.** This follows Nik's design from 2026-09-29:
+- Customers sign in with an emailed link.
+- Sign-up stays off. An account is created only when a customer signs a Rental Agreement or staff
+  invite a contact.
+- Staff stay Google-only.
+- The public form shows no availability.
+
+It is stacked on v1.564.0.
+
+### Added
+
+- **`/rentals`, "My Rentals" in the portal menu.** A customer sees their rentals.
+  - Each one shows its schedule, what is booked, whether the agreement is signed, and its invoices,
+    with a Pay online link to the existing `/pay`.
+  - Each one has a site-details form for the delivery crew (on-site contact and phone, surface,
+    access, power, water) and an ask-for-a-change box. The box leaves a comment and a ToDo for the
+    booking's owner.
+  - Writes are POST-only, rate-limited and ownership-checked. They set only the site-prep fields.
+- **Rental Booking gets a "Site Prep (from the customer)" section.** Staff can fill it in too.
+- **Portal accounts.** Signing a Rental Agreement creates a Website User (Customer role only, no
+  welcome email) for the signer's confirmed email, links a Contact to the Customer, and emails them
+  the way in.
+  - This runs in its own savepoint, so it can never undo a signature or a confirm.
+  - **Create > Invite to Portal** on a booking does the same for any of the customer's contacts.
+  - A staff account is never touched.
+- **Login with Email Link** is turned on by the patch `enable_login_with_email_link`. It runs once,
+  and a later switch-off stays off.
+- **The guard ships with the patch.** frappe's `login_via_key` signs in ANY account, with no
+  password, 2FA or Google, and the setting is site-wide. It has two layers:
+  - `portal_login.send_login_link` (an override) mints no link for anything but an enabled Website
+    User. It answers exactly as frappe does for an unknown email. It is sealed in `before_request`,
+    because frappe's original is also reachable as
+    `frappe.www.login.frappe.www.login.send_login_link`.
+  - `portal_login.refuse_staff_email_link_login` (`on_login`) refuses any other account signing in
+    through an email link. This includes aliased paths and the legacy `?cmd=` route, and applies
+    whatever minted the key.
+- **`/rent-a-fountain`**, off until `Rental Settings.public_request_form` is ticked. A public form
+  that becomes an Events Lead (rental dates and ZIP on the Lead, the details as a comment), sent
+  through the website-enquiry triage.
+  - It is protected by Turnstile (the site's keys, action `rental-request`), a honeypot, a per-IP
+    rate limit and a field allowlist.
+  - It shows no availability.
+- `tests/test_rental_portal.py` (18 tests, own CI step). It **executes** the sign-in guard against a
+  frappe stub: staff, Administrator, unknown and disabled addresses get nothing; staff email-link
+  sign-ins are refused on the canonical path, an aliased path and `?cmd=`; and the seal toggles.
+  Both of these were confirmed to fail when the guard was deliberately broken.
+
+### Notes
+
+- **The sign-in email is frappe's own** ("Login To …"), not the email design system. Styling it
+  means overriding frappe's `login_with_email_link` template, which is a separate change.
+- The public form lives on the ERP domain. Link to it from the WordPress site.
+
 ## [1.564.0] - 2026-09-29
 
 **Event rentals, part 3a: holds that expire, an e-signed Rental Agreement, and deposit and balance
