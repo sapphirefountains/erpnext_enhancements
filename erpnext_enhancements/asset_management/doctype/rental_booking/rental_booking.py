@@ -28,7 +28,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, get_datetime, getdate, now_datetime
 
 from erpnext_enhancements.asset_management import rental_availability as availability
-from erpnext_enhancements.asset_management import rental_holds
+from erpnext_enhancements.asset_management import rental_holds, rental_logistics
 from erpnext_enhancements.asset_management import rental_rules as rules
 
 #: Fields whose change can move what the booking holds, so a save re-checks availability.
@@ -51,6 +51,8 @@ class RentalBooking(Document):
 				title=_("Booking closed"),
 			)
 
+		if self.is_new():
+			rental_logistics.default_crew(self)
 		self.fill_from_project()
 		self.validate_schedule()
 		self.set_line_details()
@@ -79,6 +81,9 @@ class RentalBooking(Document):
 			from erpnext_enhancements.asset_management import rental_sales
 
 			rental_sales.after_confirmed(self)
+		# Crew tasks, and return checklists on the save that makes it Returned (v1.566.0). Its own
+		# savepoint: the paperwork never refuses a booking save.
+		rental_logistics.after_booking_save(self)
 
 	def on_trash(self):
 		if self.status not in ("Tentative", "Expired", "Canceled"):

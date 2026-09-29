@@ -167,7 +167,8 @@ class TestInvoices(unittest.TestCase):
 		fixtures = {f["name"]: f for f in json.loads((APP / "fixtures" / "custom_field.json").read_text(encoding="utf-8"))}
 		self.assertEqual(fixtures["Sales Invoice-custom_rental_booking"]["options"], "Rental Booking")
 		self.assertEqual(
-			fixtures["Sales Invoice-custom_rental_invoice_kind"]["options"].split("\n"), ["", "Deposit", "Balance"]
+			# v1.566.0 appends Damage and Deposit Return; the first three are what drafting keys on.
+			fixtures["Sales Invoice-custom_rental_invoice_kind"]["options"].split("\n")[:3], ["", "Deposit", "Balance"]
 		)
 
 

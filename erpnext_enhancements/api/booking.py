@@ -209,11 +209,23 @@ def generate_inspection(booking, direction):
     source exists: a sheet with no rows submits clean and reads as "everything accounted
     for", which is the worst output this feature could produce.
     """
+    booking_doc = frappe.get_doc("Asset Booking", booking)
+    booking_doc.check_permission("read")
+    return make_inspection(booking, direction)
+
+
+def make_inspection(booking, direction, inspected_by=None, ignore_permissions=False):
+    """The work behind :func:`generate_inspection`, callable in-process.
+
+    Not whitelisted, so ``ignore_permissions`` never reaches HTTP. Event rentals (v1.566.0) use it
+    to generate checklists automatically — before delivery, and when a rental is marked Returned —
+    where the person whose save triggered it (often a salesperson) need not be allowed to create
+    inspections, and the sheet is filled in by the crew it is assigned to.
+    """
     if direction not in (PRE_SHIPPING, RETURN):
         frappe.throw(_("Unknown inspection direction: {0}").format(direction))
 
     booking_doc = frappe.get_doc("Asset Booking", booking)
-    booking_doc.check_permission("read")
 
     existing = frappe.db.get_value(
         "Rental Inspection",
@@ -231,13 +243,13 @@ def generate_inspection(booking, direction):
             "asset_booking": booking,
             "direction": direction,
             "asset": booking_doc.asset,
-            "inspected_by": frappe.session.user,
+            "inspected_by": inspected_by or frappe.session.user,
             "inspection_datetime": frappe.utils.now_datetime(),
             "row_source": source,
             "items": rows,
         }
     )
-    inspection.insert()
+    inspection.insert(ignore_permissions=ignore_permissions)
 
     return {"inspection": inspection.name, "created": True, "source": source}
 

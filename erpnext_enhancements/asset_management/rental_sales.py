@@ -396,6 +396,11 @@ def submit_and_send(sales_invoice):
 		si.submit()
 	elif si.docstatus != 1:
 		frappe.throw(_("{0} is canceled.").format(sales_invoice))
+	if si.custom_rental_invoice_kind == BALANCE and flt(booking.security_deposit) > 0 and not booking.deposit_status:
+		# The deposit line is posted: it is now held for the customer (v1.566.0).
+		from erpnext_enhancements.asset_management.rental_deposit import mark_held
+
+		mark_held(booking.name)
 
 	if frappe.db.get_value("Customer", si.customer, "custom_stripe_autopay_enabled"):
 		booking.add_comment(

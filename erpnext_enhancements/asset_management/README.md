@@ -17,6 +17,7 @@ what went out with each one and what came back.
 | `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
 | `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
 | `rental_holds.py`, `rental_sales.py`, `doctype/rental_settings/` | Hold expiry, the Rental Agreement, deposit/balance invoices, Submit & Send (v1.564.0) |
+| `rental_logistics.py`, `rental_deposit.py`, `rental_reminders.py`, `doctype/rental_booking_crew/` | Crew tasks + 6am digest + checklists, deposit release, customer reminders (v1.566.0) |
 | `rental_portal.py`, `rental_requests.py`, `../www/rentals.*`, `../www/rent*a*fountain.*`, `../portal_login.py` | Customer portal, public request form, email-link sign-in and its staff guard (v1.565.0) |
 | `rental_planner.py`, `page/rental_planner/` | The Rental Planner page: fleet timeline + the four-step new-rental flow (v1.563.0) |
 | `workspace/asset_management/` | Desk workspace (with an **Event Rentals** card) |
@@ -309,6 +310,49 @@ applies on existing sites; read it with `get_cached_doc`).
   - It is protected by Turnstile (the site's existing keys, with its own `rental-request` action), a
     honeypot, a per-IP rate limit and a field allowlist.
   - The marketing site is WordPress on another host, so it links here.
+
+### Operations: crew, checklists, the deposit, reminders (v1.566.0)
+
+- **Crew, per booking** (`crew` table, pre-filled with Rental Settings' `default_crew_lead`).
+  - A firm booking gets **Delivery**, **Setup** (only when a setup time is set), **Take-down** and
+    **Cleaning** Tasks, created by `rental_logistics.sync_tasks`.
+  - They are keyed by `Task.custom_rental_booking` and `custom_rental_task_kind`, dated from the
+    schedule and assigned to every crew member with a ToDo. The ToDo is inserted directly, because
+    `assign_to.add` checks the *caller's* rights.
+  - They are kept in step on every save: dates follow the schedule, a crew member taken off loses
+    their ToDos, and a canceled booking cancels its open tasks. A Completed task is never touched.
+  - **The Project's expected dates are widened (never narrowed) first.** ERPNext refuses a Task
+    outside them (`Task.validate_parent_project_dates`), and cleaning always falls after take-down.
+  - This runs in a savepoint from `on_update`, so it can never refuse a booking save.
+- **6am** (`cron`, after the maintenance digest):
+  - `generate_due_inspections` creates pre-shipping checklists for every fountain delivering today or
+    tomorrow;
+  - then `send_crew_digests` sends each crew member their rental jobs by email and text, at most once
+    a day (`Task.custom_rental_digest_sent_on`).
+- **Return checklists** are created on the save that marks a booking Returned. Checklists go through
+  `api.booking.make_inspection`, the in-process half of `generate_inspection` with no whitelist, so
+  it can insert as the system. It is assigned to the crew.
+- **The security deposit** (`rental_deposit.py`). Once every fountain has a submitted Return
+  checklist:
+  - a clean return drafts the release;
+  - findings instead go to the booking's owner, who judges them and uses **Release Deposit…**.
+  - The release is a **credit note** for the deposit line, plus a **damage-charge invoice** for any
+    deduction. Submitting the damage charge is the approval.
+  - Then **Refund Deposit** refunds the remainder on the Stripe payment that paid the balance
+    invoice. Only System Manager or Accounts Manager can press it, and it is capped at what that
+    payment took. The existing refund webhook drafts the reversing Payment Entry.
+  - **Mark Refunded by Hand** records a refund made by check.
+  - `prepare_release` is the HTTP door and always checks write permission. `draft_release` is
+    in-process only: a whitelisted function must never take a `check_permission` argument, because
+    JSON `false` would switch it off.
+- **Customer reminders** (`rental_reminders.py`, daily) are **each off until turned on** (Nik):
+  - a week before delivery;
+  - site details, 10 days out, only if blank;
+  - the delivery time, the day before;
+  - a thank-you with `review_url`, the day after.
+  - Each is sent once per booking (a date stamp).
+- `patches/backfill_rental_settings_defaults` fills the two ticked-by-default switches on an
+  already-saved Rental Settings.
 
 ### Out of service
 

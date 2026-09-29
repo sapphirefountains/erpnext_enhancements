@@ -41,6 +41,8 @@
   "column_break_pricing",
   "security_deposit",
   "total_amount",
+  "section_crew",
+  "crew",
   "section_sales",
   "rental_agreement",
   "hold_reminder_sent_on",
@@ -57,6 +59,19 @@
   "water_source",
   "site_prep_notes",
   "site_prep_updated_on",
+  "section_deposit",
+  "deposit_status",
+  "deposit_deduction",
+  "deposit_deduction_reason",
+  "column_break_deposit",
+  "deposit_credit_note",
+  "damage_invoice",
+  "deposit_refund",
+  "deposit_released_on",
+  "reminder_week_sent_on",
+  "reminder_prep_sent_on",
+  "reminder_day_before_sent_on",
+  "thank_you_sent_on",
   "section_notes",
   "notes"
  ],
@@ -291,6 +306,18 @@
    "description": "Fountain rates, accessories and fees. The security deposit is not included."
   },
   {
+   "fieldname": "section_crew",
+   "fieldtype": "Section Break",
+   "label": "Crew",
+   "description": "Once the booking is confirmed, they get the delivery, setup, take-down and cleaning tasks and the 6am crew digest."
+  },
+  {
+   "fieldname": "crew",
+   "fieldtype": "Table",
+   "label": "Crew",
+   "options": "Rental Booking Crew"
+  },
+  {
    "fieldname": "section_sales",
    "fieldtype": "Section Break",
    "label": "Agreement & Invoices"
@@ -388,6 +415,101 @@
    "no_copy": 1
   },
   {
+   "fieldname": "section_deposit",
+   "fieldtype": "Section Break",
+   "label": "Security Deposit",
+   "collapsible": 1,
+   "depends_on": "eval:doc.security_deposit"
+  },
+  {
+   "fieldname": "deposit_status",
+   "fieldtype": "Select",
+   "label": "Deposit Status",
+   "options": "\nHeld\nRelease Drafted\nReleased\nPartly Retained\nRetained",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "deposit_deduction",
+   "fieldtype": "Currency",
+   "label": "Deduction for Damage",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "deposit_deduction_reason",
+   "fieldtype": "Small Text",
+   "label": "Deduction Reason",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_deposit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "deposit_credit_note",
+   "fieldtype": "Link",
+   "label": "Deposit Credit Note",
+   "options": "Sales Invoice",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "damage_invoice",
+   "fieldtype": "Link",
+   "label": "Damage Charge Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "deposit_refund",
+   "fieldtype": "Data",
+   "label": "Refund Reference",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "deposit_released_on",
+   "fieldtype": "Datetime",
+   "label": "Released On",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "reminder_week_sent_on",
+   "fieldtype": "Date",
+   "label": "Week-out Reminder Sent",
+   "read_only": 1,
+   "no_copy": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "reminder_prep_sent_on",
+   "fieldtype": "Date",
+   "label": "Site-prep Reminder Sent",
+   "read_only": 1,
+   "no_copy": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "reminder_day_before_sent_on",
+   "fieldtype": "Date",
+   "label": "Day-before Notice Sent",
+   "read_only": 1,
+   "no_copy": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "thank_you_sent_on",
+   "fieldtype": "Date",
+   "label": "Thank-you Sent",
+   "read_only": 1,
+   "no_copy": 1,
+   "hidden": 1
+  },
+  {
    "fieldname": "section_notes",
    "fieldtype": "Section Break",
    "label": "Notes",
@@ -410,9 +532,14 @@
    "group": "Billing",
    "link_doctype": "Sales Invoice",
    "link_fieldname": "custom_rental_booking"
+  },
+  {
+   "group": "Operations",
+   "link_doctype": "Task",
+   "link_fieldname": "custom_rental_booking"
   }
  ],
- "modified": "2026-09-29 22:00:00.000000",
+ "modified": "2026-09-30 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Rental Booking",

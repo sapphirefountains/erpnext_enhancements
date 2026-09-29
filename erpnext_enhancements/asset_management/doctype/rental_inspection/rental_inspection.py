@@ -77,6 +77,25 @@ class RentalInspection(Document):
         """Lifecycle hook: put any finding where someone will actually meet it."""
         self.report_findings_to_booking()
         self.take_damaged_fountain_out_of_service()
+        self.start_deposit_release()
+
+    def start_deposit_release(self):
+        """Once every fountain on the rental is back and checked, start releasing its deposit.
+
+        A clean return drafts the release; findings go to the booking's owner to judge. In a
+        savepoint, so the deposit paperwork can never stop a checklist being signed off. See
+        ``asset_management/rental_deposit.py``.
+        """
+        if self.direction != RETURN:
+            return
+        from erpnext_enhancements.asset_management.rental_deposit import after_return_inspection
+
+        frappe.db.savepoint("rental_deposit_release")
+        try:
+            after_return_inspection(self)
+        except Exception:
+            frappe.db.rollback(save_point="rental_deposit_release")
+            frappe.log_error(title=f"Rental deposit release failed after {self.name}", message=frappe.get_traceback())
 
     def take_damaged_fountain_out_of_service(self):
         """A Return sheet that found damage blocks the fountain's calendar until it is fixed.

@@ -2495,6 +2495,14 @@ jobs:
       # availability.
       - name: Rental customer portal + email-link guard (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_portal -v
+      # Event rental operations (v1.566.0): crew tasks, checklists, deposit release, reminders.
+      # Refunding money is limited to the roles that already refund on Stripe, never exceeds what
+      # the payment took, and happens only once the credit note and damage charge are posted; a
+      # whitelisted function must not take a check_permission argument (JSON false switches it
+      # off). ERPNext refuses a Task outside its Project's expected dates, so the project is widened
+      # first -- cleaning always falls after take-down. Every customer reminder ships OFF.
+      - name: Rental operations (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_ops -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand

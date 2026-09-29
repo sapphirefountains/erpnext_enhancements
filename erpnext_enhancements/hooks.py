@@ -1133,7 +1133,15 @@ scheduler_events = {
 		# data, silently). generate_all_snapshots upserts, so a re-run is idempotent.
 		"0 9 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.verify_daily_snapshots"],
 		# Morning technician dispatch digest — 06:00 site TZ (gated in Settings).
-		"0 6 * * *": ["erpnext_enhancements.api.maintenance_dispatch.send_morning_digests"],
+		"0 6 * * *": [
+			"erpnext_enhancements.api.maintenance_dispatch.send_morning_digests",
+			# event rentals (v1.566.0): pre-shipping checklists for every fountain delivering today
+			# or tomorrow, assigned to the booking's crew -- then each crew member's rental tasks
+			# for today by email and text, at most once a day. Order matters: the checklists exist
+			# before the crew is told what their day holds. Both gated in Rental Settings.
+			"erpnext_enhancements.asset_management.rental_logistics.generate_due_inspections",
+			"erpnext_enhancements.asset_management.rental_logistics.send_crew_digests",
+		],
 		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
 		# The three jobs each write the single QuickBooks Online Settings doc (token
 		# refresh must save() through the doc for Password-field encryption, so it
@@ -1358,6 +1366,9 @@ scheduler_events = {
 		# daily sweep, not a job per booking, because the deploy's Redis flush kills queued jobs.
 		"erpnext_enhancements.asset_management.rental_holds.run_daily",
 		"erpnext_enhancements.asset_management.rental_sales.draft_due_balance_invoices",
+		# event rentals (v1.566.0): the four customer reminder emails (week out, site details,
+		# day before, thank you), each OFF until turned on in Rental Settings, each once per booking.
+		"erpnext_enhancements.asset_management.rental_reminders.run_daily",
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
 		# have come round on their jobs. Sub-phase C seeded seventeen milestones carrying a
 		# trigger_basis and NOTHING read it, so a Build project could reach QA and the pre-final
