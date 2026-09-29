@@ -1238,3 +1238,8 @@ erpnext_enhancements.patches.seed_knowledge_base_mirror_role
 # Asset in the Rental Fountain Fleet category, so the fleet is bookable on day one. Creates the three Asset
 # Custom Fields first (patches run before fixture sync). Runs once; a later untick survives. Cannot raise.
 erpnext_enhancements.patches.seed_rental_fleet_flags
+# v1.562.1: seed the "Error Log Recipient" role (desk_access 0, no DocPerm anywhere) the Error Log alert now
+# emails instead of every System Manager, so admin rights and error emails are separate. Grants it to nobody;
+# who reads the errors is set in the Desk. Must run before fixture sync, which imports the alert's recipient
+# row naming it. Insert-only, cannot raise, safe twice.
+erpnext_enhancements.patches.seed_error_log_recipient_role
