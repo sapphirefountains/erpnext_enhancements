@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.562.1] - 2026-09-29
+
+**The Error Log alert emails a dedicated role, not every System Manager.** Every new Error Log row
+emailed everyone holding System Manager. So the only way to stop someone getting the error emails
+was to take away their admin rights. Nik asked for James Harris and the `triton@` service account
+to stop getting them, and chose to keep both on System Manager: James needs the admin rights, and
+removing the role from `triton@` would break its background syncs until the purpose-built role
+planned in WI-011 exists (`docs/migration/wi011-triton-role-scope.md`).
+
+### Changed
+
+- The `Error Log` Notification (`fixtures/notification.json`) now goes to the new **Error Log
+  Recipient** role instead of System Manager. The self-reference condition from v1.360.0 is
+  unchanged.
+
+### Added
+
+- Patch `seed_error_log_recipient_role` creates the role. It has `desk_access = 0` and no DocPerm
+  anywhere: it is a mailing list, not a permission, so holding it never makes anyone a System User.
+  It is **granted to nobody**. Who reads the errors is set in the Desk (User → Roles). Until someone
+  holds the role the alert has no recipients, but the Error Log list itself is unchanged.
+- `tests/test_notification_recipients.py` checks that the alert names the role, that the patch
+  seeds it without desk access, and that no doctype or fixture gives it a permission.
+
+### Notes
+
+- The `Integration Request` alert still emails System Manager. It was not part of this request.
+
 ## [1.562.0] - 2026-09-29
 
 **Event rentals, part 1: every rental fountain gets its own booking calendar.** A new **Rental
