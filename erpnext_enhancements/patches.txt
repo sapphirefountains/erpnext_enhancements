@@ -1243,3 +1243,8 @@ erpnext_enhancements.patches.seed_rental_fleet_flags
 # who reads the errors is set in the Desk. Must run before fixture sync, which imports the alert's recipient
 # row naming it. Insert-only, cannot raise, safe twice.
 erpnext_enhancements.patches.seed_error_log_recipient_role
+# v1.564.0 event rentals (PR 3a): the rental twin of add_esign_signature_block, which is maintenance-only
+# and has already run everywhere. Replaces the exact paper SIGNATURES block of the live Rental Agreement
+# template with the sig() one so Send for Signature accepts rental agreements; refuses (logging) if the
+# site's wording diverged. Safe twice.
+erpnext_enhancements.patches.add_rental_esign_signature_block

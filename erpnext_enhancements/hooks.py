@@ -688,8 +688,21 @@ doc_events = {
 		# Maintenance Contract (left as a draft; activation stays the human gate).
 		# Both signing paths: submitting an already-Signed draft (on_submit) and
 		# the post-submit "Mark as Signed" button (on_update_after_submit).
-		"on_submit": "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
-		"on_update_after_submit": "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+		#
+		# event rentals (v1.564.0): a Rental Agreement that becomes Signed confirms its Rental
+		# Booking (firming the fountains' calendars) and drafts the deposit invoice. Same two
+		# signing paths. Runs in the signer's transaction -- usually a Guest on /contract-sign --
+		# so it never raises: a booking that cannot be confirmed (its fountains were taken while
+		# the agreement was out) is logged, commented and sent to the booking's owner, and the
+		# signature stands. See asset_management/rental_sales.py.
+		"on_submit": [
+			"erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+			"erpnext_enhancements.asset_management.rental_sales.on_rental_agreement_signed",
+		],
+		"on_update_after_submit": [
+			"erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+			"erpnext_enhancements.asset_management.rental_sales.on_rental_agreement_signed",
+		],
 	},
 	# travel_management: trip emails + mirroring claim/advance status onto
 	# traveler rows and clearing claim stamps on cancel/trash (dedupe guard)
@@ -1339,6 +1352,12 @@ scheduler_events = {
 		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
 	},
 	"daily": [
+		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release
+		# lapsed holds (status Expired frees the fountains); and draft each confirmed rental's
+		# balance invoice when delivery is Rental Settings.balance_days_before_delivery away. A
+		# daily sweep, not a job per booking, because the deploy's Redis flush kills queued jobs.
+		"erpnext_enhancements.asset_management.rental_holds.run_daily",
+		"erpnext_enhancements.asset_management.rental_sales.draft_due_balance_invoices",
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
 		# have come round on their jobs. Sub-phase C seeded seventeen milestones carrying a
 		# trigger_basis and NOTHING read it, so a Build project could reach QA and the pre-final

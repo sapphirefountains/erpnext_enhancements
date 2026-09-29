@@ -2476,6 +2476,15 @@ jobs:
       # payload cannot set status or totals. node is on PATH in this job, so the harness runs.
       - name: Rental Planner Back/Forward + surface (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_planner -v
+      # Event rentals sales flow (v1.564.0). Signing a Rental Agreement confirms its booking from
+      # INSIDE the signer's transaction (a Guest on /contract-sign): a raise there would roll back
+      # the customer's signature because the fountains were taken meanwhile. Invoices are drafts
+      # until a person presses Submit & Send; a draft that posted itself, a party's default tax
+      # landing on a rental while Utah's rental tax is undecided, or a refundable deposit booked
+      # as income would each look fine until the books were reconciled. Also the rental
+      # agreement's signature-block patch (refuses a diverged body, idempotent, matches the file).
+      - name: Rental sales flow (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_sales -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand

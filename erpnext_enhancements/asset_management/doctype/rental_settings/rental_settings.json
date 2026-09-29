@@ -1,0 +1,185 @@
+{
+ "actions": [],
+ "creation": "2026-09-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "issingle": 1,
+ "field_order": [
+  "section_holds",
+  "hold_days",
+  "hold_reminder_days",
+  "column_break_holds",
+  "expire_holds",
+  "email_customer_on_hold",
+  "section_billing",
+  "company",
+  "rental_item",
+  "fee_item",
+  "cost_center",
+  "taxes_and_charges",
+  "column_break_billing",
+  "deposit_percent",
+  "deposit_due_days",
+  "balance_days_before_delivery",
+  "section_security",
+  "security_deposit_item",
+  "security_deposit_account"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_holds",
+   "fieldtype": "Section Break",
+   "label": "Holds"
+  },
+  {
+   "fieldname": "hold_days",
+   "fieldtype": "Int",
+   "label": "Hold Length (days)",
+   "default": "7",
+   "non_negative": 1,
+   "description": "How long a tentative hold keeps the fountains before it lapses."
+  },
+  {
+   "fieldname": "hold_reminder_days",
+   "fieldtype": "Int",
+   "label": "Remind Before (days)",
+   "default": "2",
+   "non_negative": 1,
+   "description": "The person who placed the hold gets a to-do this many days before it lapses. 0 turns the reminder off."
+  },
+  {
+   "fieldname": "column_break_holds",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "expire_holds",
+   "fieldtype": "Check",
+   "label": "Release Lapsed Holds Automatically",
+   "default": "1",
+   "description": "Every morning, holds past their date are marked Expired and their fountains freed."
+  },
+  {
+   "fieldname": "email_customer_on_hold",
+   "fieldtype": "Check",
+   "label": "Email the Customer When a Hold Is Placed",
+   "default": "0",
+   "description": "Tells the booking's contact which fountains are held and until when."
+  },
+  {
+   "fieldname": "section_billing",
+   "fieldtype": "Section Break",
+   "label": "Invoicing",
+   "description": "Invoices are created as drafts. Nothing posts to the books until someone presses Submit & Send."
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "rental_item",
+   "fieldtype": "Link",
+   "label": "Rental Item",
+   "options": "Item",
+   "description": "The invoice line for fountain and accessory rental charges."
+  },
+  {
+   "fieldname": "fee_item",
+   "fieldtype": "Link",
+   "label": "Delivery & Fees Item",
+   "options": "Item",
+   "description": "The invoice line for delivery, pickup and other fees. Blank uses the Rental Item."
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "taxes_and_charges",
+   "fieldtype": "Link",
+   "label": "Sales Taxes Template",
+   "options": "Sales Taxes and Charges Template",
+   "description": "Blank means rental invoices carry no tax until the Utah rental tax decision (OD-2) is made."
+  },
+  {
+   "fieldname": "column_break_billing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "deposit_percent",
+   "fieldtype": "Percent",
+   "label": "Deposit (% of rental total)",
+   "default": "50",
+   "description": "Drafted when the agreement is signed (or the booking is confirmed)."
+  },
+  {
+   "fieldname": "deposit_due_days",
+   "fieldtype": "Int",
+   "label": "Deposit Due After (days)",
+   "default": "7",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "balance_days_before_delivery",
+   "fieldtype": "Int",
+   "label": "Balance Invoice Before Delivery (days)",
+   "default": "14",
+   "non_negative": 1,
+   "description": "The balance invoice is drafted this many days before delivery, due on the delivery date."
+  },
+  {
+   "fieldname": "section_security",
+   "fieldtype": "Section Break",
+   "label": "Security Deposit"
+  },
+  {
+   "fieldname": "security_deposit_item",
+   "fieldtype": "Link",
+   "label": "Security Deposit Item",
+   "options": "Item",
+   "description": "A non-stock item for the refundable deposit line on the balance invoice. If you set a Sales Taxes Template, give this item a 0% Item Tax Template, or the deposit is taxed."
+  },
+  {
+   "fieldname": "security_deposit_account",
+   "fieldtype": "Link",
+   "label": "Security Deposit Account",
+   "options": "Account",
+   "description": "A liability account. The deposit line posts here instead of to income, because it is owed back."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Rental Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "write": 1,
+   "print": 1,
+   "email": 1,
+   "role": "System Manager"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "write": 1,
+   "print": 1,
+   "email": 1,
+   "role": "Operations Team"
+  },
+  {
+   "read": 1,
+   "role": "Finance Team"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

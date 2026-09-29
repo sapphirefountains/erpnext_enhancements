@@ -72,6 +72,7 @@ frappe.ui.form.on("Rental Booking", {
 		if (!frozen) {
 			add_availability_button(frm);
 		}
+		add_sales_buttons(frm);
 		frm.add_custom_button(__("Rental Planner"), () => frappe.set_route("rental-planner"), __("View"));
 		frm.add_custom_button(__("Fountain Calendar"), () => {
 			frappe.route_options = { rental_booking: frm.doc.name };
@@ -286,4 +287,64 @@ function apply_package(frm) {
 				frappe.show_alert({ message: __("Package applied. Save to hold it."), indicator: "green" });
 			}
 		});
+}
+
+const SALES = "erpnext_enhancements.asset_management.rental_sales";
+
+// The agreement and the two invoices (v1.564.0). Invoices are drafts until someone presses
+// Submit & Send, which posts the invoice and emails the customer its pay link (Nik, 2026-09-29).
+function add_sales_buttons(frm) {
+	const live = ["Tentative", "Confirmed", "Out", "Returned"].includes(frm.doc.status);
+	if (frm.doc.rental_agreement) {
+		frm.add_custom_button(__("Rental Agreement"), () =>
+			frappe.set_route("Form", "Project Contract", frm.doc.rental_agreement), __("View"));
+	} else if (["Tentative", "Confirmed"].includes(frm.doc.status)) {
+		frm.add_custom_button(__("Rental Agreement"), () => {
+			if (frm.is_dirty()) {
+				frappe.msgprint(__("Save your changes first."));
+				return;
+			}
+			frappe
+				.call({ method: `${SALES}.make_rental_agreement`, args: { booking: frm.doc.name }, freeze: true })
+				.then(({ message }) => message && frappe.set_route("Form", "Project Contract", message));
+		}, __("Create"));
+	}
+	if (!live || frm.doc.status === "Tentative") {
+		return;
+	}
+	[
+		["Deposit", "deposit_invoice", __("Deposit Invoice")],
+		["Balance", "balance_invoice", __("Balance Invoice")],
+	].forEach(([kind, field, label]) => {
+		const name = frm.doc[field];
+		if (!name) {
+			frm.add_custom_button(__("Draft {0}", [label]), () =>
+				frappe
+					.call({ method: `${SALES}.draft_rental_invoice`, args: { booking: frm.doc.name, kind }, freeze: true })
+					.then(() => frm.reload_doc()), __("Invoices"));
+			return;
+		}
+		frm.add_custom_button(label, () => frappe.set_route("Form", "Sales Invoice", name), __("Invoices"));
+		frappe.db.get_value("Sales Invoice", name, "docstatus").then(({ message }) => {
+			if (!message || message.docstatus !== 0) return;
+			frm.add_custom_button(__("Submit & Send {0}", [label]), () =>
+				frappe.confirm(
+					__("Post {0} to the books and email the customer its pay link?", [name]),
+					() =>
+						frappe
+							.call({ method: `${SALES}.submit_and_send`, args: { sales_invoice: name }, freeze: true })
+							.then(({ message: r }) => {
+								if (!r) return;
+								frappe.msgprint(
+									r.emailed
+										? __("{0} posted and the pay link emailed to {1}.", [r.submitted, r.emailed])
+										: r.autopay
+											? __("{0} posted; the saved card will be charged.", [r.submitted])
+											: __("{0} posted. {1}", [r.submitted, r.reason || ""])
+								);
+								frm.reload_doc();
+							})
+				), __("Invoices"));
+		});
+	});
 }
