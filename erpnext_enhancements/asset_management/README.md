@@ -17,6 +17,7 @@ what went out with each one and what came back.
 | `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
 | `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
 | `rental_holds.py`, `rental_sales.py`, `doctype/rental_settings/` | Hold expiry, the Rental Agreement, deposit/balance invoices, Submit & Send (v1.564.0) |
+| `rental_portal.py`, `rental_requests.py`, `../www/rentals.*`, `../www/rent*a*fountain.*`, `../portal_login.py` | Customer portal, public request form, email-link sign-in and its staff guard (v1.565.0) |
 | `rental_planner.py`, `page/rental_planner/` | The Rental Planner page: fleet timeline + the four-step new-rental flow (v1.563.0) |
 | `workspace/asset_management/` | Desk workspace (with an **Event Rentals** card) |
 
@@ -267,6 +268,47 @@ applies on existing sites; read it with `get_cached_doc`).
     and emails the pay link in the design system (`pillar="rent"`).
   - Customers on autopay get no link. Submitting already charges their saved card, and an open
     link would make that charge refuse itself.
+
+### The customer portal and the public request form (v1.565.0)
+
+- **`/rentals`** (`www/rentals.py`, `rental_portal.py`, in the portal menu as **My Rentals**).
+  - A signed-in customer sees every rental of the customers their Contact is linked to. The lookup is
+    the same as `/pay`'s `get_portal_customers`.
+  - Each rental shows its schedule, what is booked, whether the agreement is signed, and its invoices.
+    Paying goes to the existing `/pay`, which holds every Stripe safety rule.
+  - Each rental has a **site details** form (on-site contact and phone, surface, access, power, water,
+    notes) that the delivery crew reads on the booking.
+  - Each rental has an **ask for a change** box, which leaves a comment and a ToDo for the booking's
+    owner.
+  - Writes set only `SITE_PREP_FIELDS` with `db.set_value`, so a customer can never move dates,
+    lines, status or money.
+  - "Not yours" and "does not exist" give the same answer.
+- **Accounts.** Sign-up stays off.
+  - Signing a Rental Agreement creates a portal account for the signer's confirmed email, in its own
+    savepoint inside the signing hook. The account is a Website User with only the Customer role,
+    no welcome email, and a Contact linked to the Customer. The signer then gets an email saying
+    where the rental lives.
+  - **Create > Invite to Portal** on a booking does the same for any of the customer's contacts.
+  - A staff account is never touched or linked (`portal_login.ensure_portal_user`).
+- **Sign-in is an emailed link** (`portal_login.py`). `patches/enable_login_with_email_link` turns on
+  frappe's setting, which is site-wide. frappe's `login_via_key` signs in *any* account with no
+  password, 2FA or Google, so the setting ships with two guards:
+  1. an override of `send_login_link` that mints no link for anything but an enabled Website User.
+     It answers as frappe does for an unknown email, so staff addresses are not revealed. It is
+     **sealed** in `before_request`, because `frappe.www.login.frappe.www.login.send_login_link` is
+     a second dotted name for frappe's original;
+  2. an `on_login` guard that refuses a sign-in through `login_via_key` for any other account.
+     That covers aliased paths and the legacy `?cmd=` route.
+
+  Staff stay Google-only.
+- **`/rent-a-fountain`** (`www/rent_a_fountain.py`, `rental_requests.py`) is off until
+  `Rental Settings.public_request_form` is ticked.
+  - The public form becomes an Events **Lead**, with rental dates and ZIP, through the same triage as
+    a website enquiry.
+  - It shows no availability (Nik's call).
+  - It is protected by Turnstile (the site's existing keys, with its own `rental-request` action), a
+    honeypot, a per-IP rate limit and a field allowlist.
+  - The marketing site is WordPress on another host, so it links here.
 
 ### Out of service
 

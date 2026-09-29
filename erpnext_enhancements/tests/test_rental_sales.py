@@ -106,13 +106,19 @@ class TestSigning(unittest.TestCase):
 
 	def test_confirming_can_never_undo_a_signature(self):
 		fn = functions(SALES)["on_rental_agreement_signed"]
-		tries = [n for n in ast.walk(fn) if isinstance(n, ast.Try)]
-		self.assertEqual(len(tries), 1)
-		guarded = source(tries[0])
-		self.assertIn("confirm_booking(", guarded)
-		self.assertTrue(any(source(h.type) == "Exception" for h in tries[0].handlers))
-		self.assertIn("frappe.db.rollback(save_point=savepoint)", guarded)
-		self.assertNotIn("raise", "\n".join(source(h) for h in tries[0].handlers))
+		tries = [n for n in fn.body if isinstance(n, ast.Try)]
+		# Everything that can fail runs inside a try that catches Exception, rolls back to its
+		# savepoint and never re-raises: confirming the booking, and (v1.565.0) the portal account.
+		guarded = "\n".join(source(t) for t in tries)
+		for call in ("confirm_booking(", "open_portal_for_signer("):
+			self.assertIn(call, guarded)
+		outside = "\n".join(source(n) for n in fn.body if not isinstance(n, ast.Try))
+		self.assertNotIn("confirm_booking(", outside)
+		self.assertNotIn("open_portal_for_signer(", outside)
+		for block in tries:
+			self.assertTrue(any(source(h.type) == "Exception" for h in block.handlers))
+			self.assertIn("frappe.db.rollback(save_point=savepoint)", source(block))
+			self.assertNotIn("raise", "\n".join(source(h) for h in block.handlers))
 
 	def test_only_a_rental_agreement_becoming_signed_counts(self):
 		fn = source(functions(SALES)["on_rental_agreement_signed"])

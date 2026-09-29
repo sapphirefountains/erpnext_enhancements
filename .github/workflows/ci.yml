@@ -2485,6 +2485,16 @@ jobs:
       # agreement's signature-block patch (refuses a diverged body, idempotent, matches the file).
       - name: Rental sales flow (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_sales -v
+      # Customer portal + email-link sign-in (v1.565.0). frappe's login_via_key signs in ANY
+      # account with no password, 2FA or Google, and the setting is site-wide: a staff address
+      # sent a link, or a staff sign-in through one accepted, would make anyone who can read that
+      # inbox staff. The guard is EXECUTED here against a frappe stub (own step: it installs and
+      # removes the stub), including an aliased path and the legacy ?cmd= route, and the patch
+      # that turns the setting on is pinned to ship with the guard's hooks. Also: a portal user
+      # can write site-prep fields and nothing else, and the public request form exposes no
+      # availability.
+      - name: Rental customer portal + email-link guard (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_portal -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand

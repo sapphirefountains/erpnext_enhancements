@@ -11,6 +11,8 @@
   "column_break_holds",
   "expire_holds",
   "email_customer_on_hold",
+  "section_public",
+  "public_request_form",
   "section_billing",
   "company",
   "rental_item",
@@ -64,6 +66,18 @@
    "label": "Email the Customer When a Hold Is Placed",
    "default": "0",
    "description": "Tells the booking's contact which fountains are held and until when."
+  },
+  {
+   "fieldname": "section_public",
+   "fieldtype": "Section Break",
+   "label": "Public Request Form"
+  },
+  {
+   "fieldname": "public_request_form",
+   "fieldtype": "Check",
+   "label": "Enable /rent-a-fountain",
+   "default": "0",
+   "description": "A public form that turns a rental enquiry into an Events Lead. It never shows availability. Uses the site's Turnstile keys from ERPNext Enhancements Settings (the same ones as /fountain-move)."
   },
   {
    "fieldname": "section_billing",
@@ -151,7 +165,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-29 20:00:00.000000",
+ "modified": "2026-09-29 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Rental Settings",
