@@ -249,7 +249,7 @@
   "attach_print": 0,
   "recipients": [
    {
-    "receiver_by_role": "System Manager"
+    "receiver_by_role": "Error Log Recipient"
    }
   ],
   "notification_type": "Alert",
