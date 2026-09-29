@@ -14,6 +14,10 @@
   "booking_type",
   "from_datetime",
   "to_datetime",
+  "customer",
+  "project",
+  "rental_booking",
+  "rental_leg",
   "amended_from"
  ],
  "fields": [
@@ -32,7 +36,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Location",
-   "options": "Address"
+   "options": "Address",
+   "allow_on_submit": 1
   },
   {
    "fieldname": "custom_map_placeholder",
@@ -55,7 +60,8 @@
    "in_standard_filter": 1,
    "label": "From Datetime",
    "reqd": 1,
-   "search_index": 1
+   "search_index": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "to_datetime",
@@ -64,7 +70,44 @@
    "in_standard_filter": 1,
    "label": "To Datetime",
    "reqd": 1,
-   "search_index": 1
+   "search_index": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "in_standard_filter": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "in_standard_filter": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "rental_booking",
+   "fieldtype": "Link",
+   "label": "Rental Booking",
+   "options": "Rental Booking",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "search_index": 1,
+   "no_copy": 1,
+   "description": "Set when this is one leg of a Rental Booking. Change the dates there, not here."
+  },
+  {
+   "fieldname": "rental_leg",
+   "fieldtype": "Select",
+   "label": "Rental Leg",
+   "options": "\nPrep\nRental\nTurnaround",
+   "read_only": 1,
+   "no_copy": 1,
+   "depends_on": "rental_booking"
   },
   {
    "fieldname": "amended_from",
@@ -85,7 +128,7 @@
    "link_fieldname": "asset_booking"
   }
  ],
- "modified": "2024-05-23 10:00:00.000000",
+ "modified": "2026-09-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Asset Booking",
@@ -103,6 +146,42 @@
    "share": 1,
    "submit": 1,
    "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "role": "Operations Team",
+   "create": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "delete": 1,
+   "export": 1,
+   "share": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "role": "Sales Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "role": "Production Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "role": "Executive Team"
   }
  ],
  "sort_field": "modified",

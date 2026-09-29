@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.561.3] - 2026-09-29
+## [1.562.1] - 2026-09-29
 
 **The Error Log alert emails a dedicated role, not every System Manager.** Every new Error Log row
 emailed everyone holding System Manager. So the only way to stop someone getting the error emails
@@ -34,6 +34,111 @@ planned in WI-011 exists (`docs/migration/wi011-triton-role-scope.md`).
 ### Notes
 
 - The `Integration Request` alert still emails System Manager. It was not part of this request.
+
+## [1.562.0] - 2026-09-29
+
+**Event rentals, part 1: every rental fountain gets its own booking calendar.** A new **Rental
+Booking** ties one event to a Customer and a Project and holds its fountains and accessories for
+the dates, without double booking. Before this there was an Asset Booking with an overlap check
+but no customer, project or status. The rental's commercial details sat on the Project and on the
+Rental Agreement, whose equipment list is free text, so nothing connected the ten fleet fountains
+to the events they were going to. Design calls from Nik, 2026-09-29:
+- fountains are booked individually, and accessories come from counted pools;
+- a quote places a tentative hold, which becomes firm when the agreement is signed;
+- the blocked window is the event schedule plus each fountain's own buffers.
+
+This is the first of five PRs. Still to come: the guided Rental page and fleet timeline; the sales
+side (e-signed agreement, Stripe deposit and balance, hold expiry, public request form, customer
+portal); crew logistics and inspections; and KPIs, AI tools and calendar feeds.
+
+### Added
+
+- **Rental Booking** (`asset_management/doctype/rental_booking/`), named `RNT-YYYY-#####`. It is
+  not submittable; its status is changed with buttons on the form.
+  - Statuses: `Tentative → Confirmed → Out → Returned → Closed`, plus `Expired` (a lapsed hold,
+    which can be renewed) and `Canceled`.
+  - It records the customer, contact, Project, Opportunity, Quotation, venue, the delivery, setup,
+    event and take-down times, fountain and accessory lines with rates, and fees. The security
+    deposit is kept outside the rental total.
+  - **Check Availability** lists every fleet fountain and accessory pool for the dates, and the
+    free fountains can be ticked and added in one go.
+  - **Apply Package** picks free fountains of the package's models.
+  - Choosing a Project fills in the customer and schedule.
+- **Each fountain's calendar is Asset Booking**; there is no second calendar. Each fountain line
+  becomes up to three Asset Booking legs:
+  - **Prep**, before delivery;
+  - **Rental**, from delivery to take-down;
+  - **Turnaround**, after take-down for cleaning (24 hours by default).
+
+  Asset Booking already refuses an overlap for every booking type, so a rental cannot land on a
+  Travel or Maintenance booking made by hand. The hourly rental-status job and the inspection
+  buttons keep working as before. A tentative hold is a **draft** leg, which already blocks the
+  dates; confirming **submits** the legs. The calendar shows held legs in a lighter colour and
+  labels them "held".
+- **Rental Accessory Pool.** Each pool records how many units the company owns and how many are
+  out of service, plus a turnaround time.
+  - A booking takes a quantity from a pool, and the check uses the **peak** number out at any one
+    moment, not the sum of every overlapping booking.
+  - Why: Friday's and Sunday's bookings both overlap a Friday–Sunday request but are never out at
+    the same time. Adding them together would refuse a booking that fits, and nobody would notice
+    the equipment sitting idle.
+- **Rental Package.** A preset of fountain models, accessories and fees, copied onto a booking
+  when applied, like a maintenance Service Plan.
+- **Asset Out of Service.** Records that a fountain cannot go out: until it is returned to
+  service; or, while still out, through the Expected Back date if one is given; or, with no date,
+  every future date.
+  - It is a separate record, not an Asset Booking. Being broken is a fact, not a reservation, so
+    it has to be recordable over rentals already on the calendar. An overlap-checked booking could
+    not be.
+  - Creating one comments on every live rental it lands on.
+  - One is opened automatically when a **Return** inspection finds damage, and when an **ERPNext
+    Asset Repair** on a fleet fountain is Pending. Completed or Cancelled returns the fountain to
+    service.
+  - Asset `custom_rental_status` gains a new value, **Out of Service**.
+- **New Asset fields:** `custom_rentable` ("Available for Event Rental"),
+  `custom_rental_prep_hours` and `custom_rental_turnaround_hours`. All three are `allow_on_submit`,
+  because the fleet Assets are submitted and a field without it could never be ticked.
+- **Patch `seed_rental_fleet_flags`.** It ticks `custom_rentable` and sets a 24-hour turnaround on
+  every Asset in the Rental Fountain Fleet category, so the fleet is bookable on day one rather
+  than invisible.
+- **Project form.** While a live Rental Booking holds a Project, its four Events schedule fields
+  are read-only and a banner names the booking. The booking owns the schedule and copies it back
+  onto the Project on every save, so an edit made on the Project would be overwritten.
+  **Create > Rental Booking** appears on Events projects.
+- An **Event Rentals** card on the Asset Management workspace.
+- `tests/test_rental_rules.py` (48 bench-free tests) has its own CI step.
+
+### Changed
+
+- **Asset Booking**
+  - New fields: `customer`, `project`, `rental_booking` and `rental_leg`.
+  - `from_datetime`, `to_datetime` and `location` are now `allow_on_submit`, so a booking moves its
+    legs in place. A submitted leg keeps its name and every inspection filed against it.
+    `before_update_after_submit` runs the overlap check again.
+  - `check_overlap` now row-locks the Asset first. Before, two bookings saved at the same moment
+    could both read "free".
+  - `check_overlap` now refuses a window whose end is not after its start.
+  - `check_overlap` now ignores a leg's own rental. While the legs are moved one at a time, a
+    lengthened Rental leg briefly overlaps the Turnaround leg that is about to move.
+  - A rental's leg cannot be moved, canceled or deleted by hand; that has to go through its
+    booking.
+  - Canceled bookings no longer appear on the calendar.
+  - Permissions: Operations Team can book; Sales, Production and Executive Teams can read. It was
+    System Manager only.
+- **Rental Booking saves are protected against races.** Before checking availability, a save
+  row-locks every Asset and pool it touches, in sorted order so two bookings cannot deadlock. Two
+  people saving the last fountain at the same moment are therefore checked one after the other.
+- **Not every save re-checks availability.** Only these do: a new booking, a changed schedule or
+  lines, a renewed hold, and Confirm. A fountain can go out of service after a booking took it,
+  and checking on every save would then refuse "Mark Returned" on that booking.
+
+### Notes
+
+- **Nothing expires tentative holds yet.** A hold date is set (seven days), but the job that
+  enforces it ships with the sales PR.
+- The fountain link on a booking searches through `rental_availability.rentable_asset_query`.
+  People who book rentals may not be allowed to search the whole Asset register, and v16 validates
+  a link through that same search.
 
 ## [1.561.2] - 2026-09-29
 

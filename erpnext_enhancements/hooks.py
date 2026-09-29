@@ -221,6 +221,12 @@ doctype_js = {
 		# public/js/gantt_widget/). Replaces the legacy frappe-gantt renderer
 		# that lived in project_enhancements/doctype/project/project.js.
 		"public/js/project_enhancements/project_gantt_widget.js",
+		# event rentals (v1.562.0): while a live Rental Booking holds this Project, its
+		# delivery/setup/event/take-down fields are read-only with a banner naming the
+		# booking -- the booking owns the schedule and mirrors it here, so an edit made on
+		# the Project would be overwritten by the booking's next save. Also offers
+		# Create > Rental Booking on an Events project.
+		"public/js/asset_management/project_rental.js",
 		# Budget tab "Pick Routing Map" button (custom_btn_pick_routing_map):
 		# every supplier with material still to collect, in drive-time order out
 		# of the shop. Backed by api/pickup_routing.py.
@@ -476,6 +482,19 @@ override_doctype_class = {
 }
 
 doc_events = {
+	# asset_management (v1.562.0): a pending ERPNext Asset Repair on a rental-fleet fountain
+	# opens an Asset Out of Service record, which blocks the fountain's rental calendar;
+	# Completed returns it to service on the completion date, Cancelled returns it now.
+	# on_update rather than after_insert as well, because it fires on insert too and again
+	# on every status edit while the repair is still a draft. Fleet fountains only
+	# (custom_rentable). Never raises -- a repair must always be saveable -- so it runs in a
+	# savepoint and logs. See asset_management/out_of_service.py.
+	"Asset Repair": {
+		"on_update": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+		"on_submit": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+		"on_update_after_submit": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+		"on_cancel": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+	},
 	# quality (WI-075 sub-phase E): a failed check becomes a Non-Conformance and a corrective
 	# action. on_submit and not validate -- an inspection in progress has failures in it that
 	# are about to be corrected on the spot, and raising an NCR per keystroke would make the

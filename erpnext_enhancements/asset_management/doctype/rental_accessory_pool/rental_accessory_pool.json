@@ -1,0 +1,141 @@
+{
+ "actions": [],
+ "creation": "2026-09-29 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "pool_name",
+  "item",
+  "disabled",
+  "column_break_qty",
+  "total_qty",
+  "out_of_service_qty",
+  "turnaround_hours",
+  "section_desc",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "pool_name",
+   "fieldtype": "Data",
+   "label": "Accessory",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "What the crew calls it, e.g. \"LED Uplight\"."
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "description": "The Item it is quoted and invoiced as."
+  },
+  {
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled",
+   "default": "0"
+  },
+  {
+   "fieldname": "column_break_qty",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_qty",
+   "fieldtype": "Int",
+   "label": "Total Owned",
+   "reqd": 1,
+   "non_negative": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "out_of_service_qty",
+   "fieldtype": "Int",
+   "label": "Out of Service",
+   "non_negative": 1,
+   "in_list_view": 1,
+   "description": "Units broken or missing. They are taken out of what can be booked."
+  },
+  {
+   "fieldname": "turnaround_hours",
+   "fieldtype": "Int",
+   "label": "Turnaround Hours",
+   "default": "24",
+   "non_negative": 1,
+   "description": "Hours after take-down before a unit can go out again."
+  },
+  {
+   "fieldname": "section_desc",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Rental Accessory Pool",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "role": "System Manager",
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "share": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "role": "Operations Team",
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "share": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 0,
+   "role": "Sales Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 0,
+   "role": "Production Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 0,
+   "role": "Executive Team"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "field:pool_name",
+ "title_field": "pool_name"
+}

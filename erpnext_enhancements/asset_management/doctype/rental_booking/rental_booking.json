@@ -1,0 +1,363 @@
+{
+ "actions": [],
+ "creation": "2026-09-29 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_customer",
+  "status",
+  "customer",
+  "customer_name",
+  "contact_person",
+  "column_break_links",
+  "project",
+  "opportunity",
+  "quotation",
+  "rental_package",
+  "section_event",
+  "event_name",
+  "venue_address",
+  "venue_notes",
+  "column_break_hold",
+  "hold_expires_on",
+  "confirmed_on",
+  "title",
+  "section_schedule",
+  "delivery_datetime",
+  "setup_datetime",
+  "column_break_sched",
+  "event_start_datetime",
+  "event_end_datetime",
+  "takedown_datetime",
+  "schedule_notes",
+  "section_fountains",
+  "fountains",
+  "section_accessories",
+  "accessories",
+  "section_pricing",
+  "delivery_setup_fee",
+  "pickup_removal_fee",
+  "other_fee",
+  "column_break_pricing",
+  "security_deposit",
+  "total_amount",
+  "section_notes",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_customer",
+   "fieldtype": "Section Break",
+   "label": "Customer"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Tentative\nConfirmed\nOut\nReturned\nClosed\nExpired\nCanceled",
+   "default": "Tentative",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "search_index": 1,
+   "description": "Changed with the buttons at the top of the form."
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "Customer Name",
+   "fetch_from": "customer.customer_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "contact_person",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact"
+  },
+  {
+   "fieldname": "column_break_links",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "in_standard_filter": 1,
+   "search_index": 1,
+   "description": "The event's Project. Its delivery, setup, event and take-down times are kept in step with this booking."
+  },
+  {
+   "fieldname": "opportunity",
+   "fieldtype": "Link",
+   "label": "Opportunity",
+   "options": "Opportunity"
+  },
+  {
+   "fieldname": "quotation",
+   "fieldtype": "Link",
+   "label": "Quotation",
+   "options": "Quotation"
+  },
+  {
+   "fieldname": "rental_package",
+   "fieldtype": "Link",
+   "label": "Rental Package",
+   "options": "Rental Package",
+   "description": "Pick one and press Apply Package to fill the lines and fees."
+  },
+  {
+   "fieldname": "section_event",
+   "fieldtype": "Section Break",
+   "label": "Event"
+  },
+  {
+   "fieldname": "event_name",
+   "fieldtype": "Data",
+   "label": "Event Name",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "venue_address",
+   "fieldtype": "Link",
+   "label": "Venue Address",
+   "options": "Address"
+  },
+  {
+   "fieldname": "venue_notes",
+   "fieldtype": "Small Text",
+   "label": "Venue Notes"
+  },
+  {
+   "fieldname": "column_break_hold",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "hold_expires_on",
+   "fieldtype": "Date",
+   "label": "Hold Expires On",
+   "no_copy": 1,
+   "depends_on": "eval:doc.status==\"Tentative\" || doc.status==\"Expired\"",
+   "description": "A tentative hold is released after this date unless the booking is confirmed."
+  },
+  {
+   "fieldname": "confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "Confirmed On",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "section_schedule",
+   "fieldtype": "Section Break",
+   "label": "Schedule",
+   "description": "Each fountain is blocked from delivery to take-down, plus its own prep and turnaround hours."
+  },
+  {
+   "fieldname": "delivery_datetime",
+   "fieldtype": "Datetime",
+   "label": "Delivery",
+   "reqd": 1,
+   "in_list_view": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "setup_datetime",
+   "fieldtype": "Datetime",
+   "label": "Setup"
+  },
+  {
+   "fieldname": "column_break_sched",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "event_start_datetime",
+   "fieldtype": "Datetime",
+   "label": "Event Start"
+  },
+  {
+   "fieldname": "event_end_datetime",
+   "fieldtype": "Datetime",
+   "label": "Event End"
+  },
+  {
+   "fieldname": "takedown_datetime",
+   "fieldtype": "Datetime",
+   "label": "Take-down",
+   "reqd": 1,
+   "in_list_view": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "schedule_notes",
+   "fieldtype": "Small Text",
+   "label": "Schedule Notes"
+  },
+  {
+   "fieldname": "section_fountains",
+   "fieldtype": "Section Break",
+   "label": "Fountains"
+  },
+  {
+   "fieldname": "fountains",
+   "fieldtype": "Table",
+   "label": "Fountains",
+   "options": "Rental Booking Fountain"
+  },
+  {
+   "fieldname": "section_accessories",
+   "fieldtype": "Section Break",
+   "label": "Accessories"
+  },
+  {
+   "fieldname": "accessories",
+   "fieldtype": "Table",
+   "label": "Accessories",
+   "options": "Rental Booking Accessory"
+  },
+  {
+   "fieldname": "section_pricing",
+   "fieldtype": "Section Break",
+   "label": "Pricing",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "delivery_setup_fee",
+   "fieldtype": "Currency",
+   "label": "Delivery & Setup Fee"
+  },
+  {
+   "fieldname": "pickup_removal_fee",
+   "fieldtype": "Currency",
+   "label": "Pickup & Removal Fee"
+  },
+  {
+   "fieldname": "other_fee",
+   "fieldtype": "Currency",
+   "label": "Other Fees"
+  },
+  {
+   "fieldname": "column_break_pricing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "security_deposit",
+   "fieldtype": "Currency",
+   "label": "Security Deposit",
+   "description": "Held separately from the rental charge and returned after a clean return inspection."
+  },
+  {
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "label": "Rental Total",
+   "read_only": 1,
+   "bold": 1,
+   "description": "Fountain rates, accessories and fees. The security deposit is not included."
+  },
+  {
+   "fieldname": "section_notes",
+   "fieldtype": "Section Break",
+   "label": "Notes",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Internal Notes"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [
+  {
+   "group": "Calendar",
+   "link_doctype": "Asset Booking",
+   "link_fieldname": "rental_booking"
+  }
+ ],
+ "modified": "2026-09-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Rental Booking",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "role": "System Manager",
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "share": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "role": "Operations Team",
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "share": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "role": "Sales Team",
+   "write": 1,
+   "create": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 0,
+   "role": "Production Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "export": 0,
+   "role": "Executive Team"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:RNT-{YYYY}-{#####}",
+ "title_field": "title",
+ "show_title_field_in_link": 1,
+ "search_fields": "customer_name,event_name,project",
+ "default_view": "List"
+}

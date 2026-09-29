@@ -1,14 +1,22 @@
-# `asset_management/` — asset bookings and rental inspections
+# `asset_management/` — asset bookings, event rentals and rental inspections
 
-Reserves an ERPNext Asset for a time window, and records what went out with it and what
-came back. Three submittable doctypes, one template doctype, and a workspace.
+Reserves an ERPNext Asset for a time window, books fountains out for events, and records
+what went out with each one and what came back.
 
 | Path | Purpose |
 |---|---|
-| `doctype/asset_booking/` | The submittable booking record |
+| `doctype/asset_booking/` | The submittable booking record, and **every fountain's calendar** |
+| `doctype/rental_booking/` | One event rental: customer, project, schedule, fountains, accessories, status (v1.562.0) |
+| `doctype/rental_booking_fountain/`, `rental_booking_accessory/` | Its lines |
+| `doctype/rental_accessory_pool/` | A counted stock of one accessory (uplights, pumps, skirting) |
+| `doctype/rental_package/` (+ `_fountain`, `_accessory`) | A preset of fountain models, accessories and fees |
+| `doctype/asset_out_of_service/` | A fountain that cannot go out, and until when |
 | `doctype/rental_checklist_template/` | What a given fountain ships with |
 | `doctype/rental_inspection/` | A pre-shipping or return checklist, submittable |
-| `workspace/asset_management/` | Desk workspace |
+| `rental_rules.py` | Every rental judgement, **no Frappe**; tested bench-free (`tests/test_rental_rules.py`) |
+| `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
+| `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
+| `workspace/asset_management/` | Desk workspace (with an **Event Rentals** card) |
 
 ## `Asset Booking`
 
@@ -87,6 +95,98 @@ queue is noise in someone else's process.
 event to gate. It is submitted when the booking is *made*, days before anything ships, and
 the Asset's `custom_rental_status` is derived from the clock by `update_asset_status` rather
 than set by anyone.
+
+## Event rentals (v1.562.0)
+
+The first of five planned PRs. The guided Rental page and fleet timeline follow; then the sales
+side (e-signed agreement, Stripe deposit and balance, hold expiry, public request form, customer
+portal); then crew logistics and inspections; then KPIs, AI tools and calendar feeds. Nik's design
+calls, 2026-09-29: fountains are booked individually and accessories from pools; a quote places a
+**tentative hold** that becomes **firm** when the agreement is signed; the blocked window comes from
+the event schedule plus each fountain's own buffers.
+
+### Every fountain's calendar is Asset Booking
+
+A Rental Booking keeps no second calendar. Each fountain on it becomes up to three **Asset
+Booking legs** (`rental_rules.leg_windows`):
+
+| Leg | Asset Booking type | Window |
+|---|---|---|
+| Prep | Maintenance | `custom_rental_prep_hours` before delivery (only if non-zero) |
+| Rental | Rental | delivery → take-down |
+| Turnaround | Maintenance | take-down → `custom_rental_turnaround_hours` later (default 24) |
+
+That keeps the one-place rule above: Asset Booking already refuses an overlap for *any* booking
+type, so a rental cannot land on a Travel or Maintenance booking made by hand; the hourly status
+job reads Rented/Maintenance correctly; and the inspection buttons, which sit on a submitted Rental
+booking, work on the Rental leg unchanged.
+
+- **A tentative hold is a draft leg; firm is submitted.** Drafts block (`docstatus < 2`), so a hold
+  is a real hold; submitting is what the inspection buttons look for. The calendar draws held legs
+  lighter and labels them "held".
+- **Legs are moved, not re-created** (`rental_rules.plan_leg_changes`), so a submitted leg keeps its
+  name and every inspection filed against it. That needed `allow_on_submit` on Asset Booking's
+  dates, location, customer and project, and a `before_update_after_submit` that re-runs the
+  overlap check.
+- **A leg is changed through its booking only.** `AssetBooking.guard_rental_leg` refuses a hand
+  move, cancel or delete unless `frappe.flags.rental_booking_sync` names the owning booking —
+  otherwise the booking would still believe it holds a fountain its calendar has let go.
+- **One rental never collides with itself.** Legs touch end to start and the overlap test is
+  strict; and while the booking moves them one at a time (a lengthened Rental leg briefly overlaps
+  the Turnaround leg it is about to move), `check_overlap` ignores the leg's own rental.
+
+### Availability, and the last-fountain race
+
+`RentalBooking.check_availability` refuses a save with **every** problem listed: a fountain taken
+by another booking (any type) or out of service, or an accessory pool without enough units at the
+busiest moment of the window. Before reading anything it row-locks the Assets and pools
+(`rental_availability.lock_rows`, sorted names, so two bookings cannot deadlock), and
+`check_overlap` locks the Asset too, so two people saving the last fountain at once are checked one
+after the other.
+
+**A pool is checked on its peak, not a sum** (`rental_rules.peak_usage`). Friday's and Sunday's
+bookings both touch a Friday–Sunday request but never coexist; adding them up would refuse a
+booking that fits, and nobody would notice the kit sitting idle.
+
+**Not every save re-checks** (`availability_needs_checking`): only a new booking, a changed
+schedule or lines, a renewed hold, and Confirm. A fountain can go out of service *after* a booking
+took it, and re-checking every save would then refuse "Mark Returned" on that booking. The outage
+flags the booking instead.
+
+### Status
+
+`Tentative → Confirmed → Out → Returned → Closed`, plus `Expired` (a lapsed hold, renewable back
+to Tentative) and `Canceled`. Transitions are `rental_rules.TRANSITIONS`; the form draws its
+buttons from them through `__onload.next_statuses`, so there is one list. Expired and Canceled
+release the legs (drafts deleted, submitted ones canceled); Closed keeps them as history. A
+Closed, Expired or Canceled booking's schedule and lines are frozen. The hold date defaults to
+seven days, but **nothing expires holds yet**; that job comes with the sales PR.
+
+### Project, packages, pools
+
+- **The booking owns the event schedule.** It is filled from the Project's Events fields when the
+  booking is new, then mirrored back onto them on every save (`push_schedule_to_project`, without
+  touching `modified`). While a live booking exists the Project shows those four fields read-only
+  with a banner naming it (`public/js/asset_management/project_rental.js`). One live booking per
+  Project.
+- **A package names fountain models, not fountains.** Applying it (`plan_package`) picks free
+  fountains of each model for the dates and reports a shortfall rather than failing.
+- **Fleet membership is `Asset.custom_rentable`** ("Available for Event Rental"), with
+  `custom_rental_prep_hours` and `custom_rental_turnaround_hours`. All three are `allow_on_submit`
+  because the fleet Assets are submitted. `patches/seed_rental_fleet_flags` ticks it for the Rental
+  Fountain Fleet category. The fountain link on a booking searches through `rentable_asset_query`,
+  because the people who book rentals are not necessarily allowed to search the Asset register,
+  and v16 validates a link through that same search.
+
+### Out of service
+
+A separate record rather than an Asset Booking, because being broken is a fact, not a
+reservation: it has to be recordable *over* rentals already booked, which an overlap-checked
+booking cannot be. It blocks until returned; while still out, through Expected Back if given; with
+no date, every future date. Creating one comments on every live rental it lands on.
+`out_of_service.py` opens one automatically from a **Return** inspection that found damage and from
+a **Pending ERPNext Asset Repair** (Completed or Cancelled puts it back; the repair hook runs in a
+savepoint and never stops a repair saving). `custom_rental_status` gains **Out of Service**.
 
 ## Related
 
