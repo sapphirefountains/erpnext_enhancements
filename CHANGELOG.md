@@ -43,6 +43,23 @@ network errors.** TASK-2026-01577 and TASK-2026-01474.
     30-second timeout, closed afterwards. The service's shared transport is never used. A
     connection that timed out can still hold the reply it was waiting for, and reusing it would
     hand that reply to the next request.
+  - **The key is now loaded with its scope, `webmasters.readonly` (`GSC_SCOPES`).** Before this,
+    it was loaded with none, and that worked only because `build()` scopes the credentials it is
+    given. It scopes a *copy*, though, and keeps the copy for the service's own transport. A
+    transport built per attempt authorizes with the original, so an unscoped key would ask
+    Google for a token with an empty `scope` claim. The token endpoint refuses that with 400
+    `invalid_scope` before any query is sent. google-auth raises it as `RefreshError`, which is
+    not a network error and is not retried. So the date query, both breakdowns, the dashboard
+    panel and `backfill_gsc_snapshots` would all have failed on it. Read-only is enough for
+    `searchanalytics.query`, the only call made. This was checked with the real libraries
+    (google-api-python-client 2.194.0, google-auth 2.49.2, google-auth-httplib2 0.3.1, httplib2
+    0.31.2) and the network intercepted at `httplib2.Http.request`. Unscoped, the only request
+    sent is the token request, with `scope` empty. Scoped, it carries `webmasters.readonly` and
+    the three queries follow. Every other test replaces `_gsc_service` whole, which is why the
+    suite could not see this. Three new tests run the real one, stubbing only the key loader and
+    `build()`. They check that the key is loaded with a webmasters scope, and that every
+    transport, the nightly pull's and the backfill's, authorizes with that scoped object. All
+    three fail on an unscoped load.
   - `_gsc_execute` retries a TLS error or a timeout: three attempts in all, 2s then 4s apart. It
     does not use the library's `execute(num_retries=…)`, which resends down the same connection
     and also retries 429 and rate-limit 403 responses. Here an `HttpError` is never retried, a

@@ -15,7 +15,10 @@ same 403 as a missing grant. These pin:
   timeout is retried with backoff, a 4xx and a certificate failure never are, and a failure
   that outlasts the retries writes exactly one short Error Log row;
 * that a one-line message (that one, and the refusal) is stored as the row's body under the
-  title ``GSC API Error``, not as the title itself (see ``stored_row``).
+  title ``GSC API Error``, not as the title itself (see ``stored_row``);
+* that the key is loaded with a Search Console scope, and that the scoped object is the one
+  every per-attempt transport authorizes with. Every other test replaces ``_gsc_service``
+  whole, so ``CredentialScopeTests`` runs the real one.
 
 ``api/analytics.py`` imports Google's client libraries at module level and CI installs none
 of them, so they are stubbed here along with frappe, and removed again afterwards.
@@ -26,6 +29,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_search_console -v
 import datetime
 import ssl
 import sys
+import tempfile
 import threading
 import types
 import unittest
@@ -58,6 +62,8 @@ OURS = ("erpnext_enhancements.api.analytics", "erpnext_enhancements.utils.error_
 _saved = {}
 STATE = {}
 analytics = None
+#: analytics._gsc_service as imported, before ``reset()`` replaces it.
+REAL_GSC_SERVICE = None
 DOMAIN = "sc-domain:sapphirefountains.com"
 #: What _gsc_service hands back. The token is a plain placeholder, deliberately not shaped like
 #: a real Google one: it is here to prove it never reaches a log row.
@@ -184,13 +190,14 @@ def _install():
 
 
 def setUpModule():
-	global analytics
+	global analytics, REAL_GSC_SERVICE
 	for name in STUBBED + OURS:
 		_saved[name] = sys.modules.pop(name, None)
 	_install()
 	from erpnext_enhancements.api import analytics as module
 
 	analytics = module
+	REAL_GSC_SERVICE = module._gsc_service
 
 
 def tearDownModule():
@@ -497,6 +504,94 @@ class TransientRetryTests(unittest.TestCase):
 		self.assertIsNone(caught.exception.__cause__)
 		self.assertTrue(caught.exception.__suppress_context__, "raised from None")
 		self.assertIn("TimeoutError: The read operation timed out", str(caught.exception))
+
+
+# ---------------------------------------------------------------- the credentials
+
+
+class FakeCredentials:
+	"""``service_account.Credentials`` as loaded from a key file: keeps the scopes it was given.
+
+	The real class does the same, and a copy of it is what ``build()`` scopes when these are
+	empty. The copy stays with the service's own transport, which ``_gsc_execute`` never uses.
+	"""
+
+	service_account_email = "ga4-reader@proj.iam.gserviceaccount.com"
+	token = "fixture-token-value"
+
+	def __init__(self, path, scopes=None, **kwargs):
+		self.path = path
+		self.scopes = scopes
+		self.kwargs = kwargs
+
+
+class CredentialScopeTests(unittest.TestCase):
+	"""The v1.561.2 draft loaded the key with no scope. ``build()`` scoped only a copy, for the
+	service's own transport, so every transport ``_gsc_execute`` built asked Google for a token
+	with an empty ``scope`` claim: 400 ``invalid_scope`` before a single query, for the nightly
+	pull, the dashboard and the backfill alike. Every other test here replaces ``_gsc_service``
+	whole, so these run the real one, with only the key loader and ``build`` stubbed."""
+
+	def setUp(self):
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		files = Path(tmp.name, "private", "files")
+		files.mkdir(parents=True)
+		(files / "sa.json").write_text("{}")
+		self.loaded = []
+		self.built = []
+		self.service = FakeService(accepts=DOMAIN, rows=TransientRetryTests.ROWS)
+
+		def load(path, **kwargs):
+			self.loaded.append(FakeCredentials(path, **kwargs))
+			return self.loaded[-1]
+
+		def build(name, version, credentials=None, **kwargs):
+			self.built.append((name, version, credentials))
+			return self.service
+
+		reset(self.service)
+		analytics._gsc_service = REAL_GSC_SERVICE
+		for target, attr, value in (
+			(analytics.frappe, "get_site_path", lambda *parts: str(Path(tmp.name, *parts))),
+			(analytics.service_account.Credentials, "from_service_account_file", load),
+			(analytics, "build", build),
+		):
+			patcher = mock.patch.object(target, attr, value, create=True)
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def _assert_scoped(self, credentials):
+		self.assertTrue(credentials.scopes, "a key loaded with no scope is refused a token")
+		for scope in credentials.scopes:
+			self.assertTrue(scope.startswith("https://www.googleapis.com/auth/webmasters"), scope)
+
+	def test_the_key_is_loaded_with_a_search_console_scope(self):
+		service, credentials, error = analytics._gsc_service(STATE["settings"])
+		self.assertIsNone(error)
+		self.assertIs(service, self.service)
+		self.assertEqual(len(self.loaded), 1)
+		self.assertIs(credentials, self.loaded[0], "the object that was loaded, not a copy")
+		self.assertTrue(credentials.path.endswith("sa.json"))
+		self._assert_scoped(credentials)
+		self.assertEqual(list(credentials.scopes), list(analytics.GSC_SCOPES))
+		self.assertIs(self.built[0][2], credentials, "build() gets the same scoped object")
+
+	def test_every_transport_the_pull_builds_carries_the_scope(self):
+		result = analytics.get_gsc_data()
+		self.assertEqual(result["property"], DOMAIN)
+		transports = [e[1] for e in self.service.executions]
+		self.assertEqual(len(transports), 3, "date, query, page")
+		for transport in transports:
+			self.assertIs(transport.credentials, self.loaded[0])
+			self._assert_scoped(transport.credentials)
+
+	def test_the_backfill_transport_carries_it_too(self):
+		STATE["snapshots"] = [{"name": "MWS-2026-09-20", "snapshot_date": D(2026, 9, 20), "pull_error": ""}]
+		result = analytics.backfill_gsc_snapshots(dry_run=1)
+		self.assertEqual(result["rows"][0]["organic_clicks_30"], 3)
+		self.assertEqual(len(self.service.executions), 1, "one query for the gap")
+		self._assert_scoped(self.service.executions[0][1].credentials)
 
 
 def frappe_traceback():

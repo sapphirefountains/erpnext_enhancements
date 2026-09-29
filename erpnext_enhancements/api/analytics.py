@@ -268,6 +268,13 @@ GSC_HTTP_TIMEOUT = 30
 GSC_ATTEMPTS = 3
 #: Seconds before the first retry, doubled before each retry after it.
 GSC_BACKOFF_SECONDS = 2
+#: The OAuth scope the Search Console credentials are loaded with. ``searchanalytics.query``
+#: is the only call made, and read-only is enough for it. The scope has to be set on the
+#: credentials themselves: ``_gsc_http`` authorizes with the object ``_gsc_service`` returns,
+#: and ``build()`` scopes only a copy of it for its own transport, never the original.
+#: A key loaded with no scope asks Google for a token with an empty ``scope`` claim, and the
+#: token endpoint refuses that with 400 ``invalid_scope`` before any query is sent.
+GSC_SCOPES = ("https://www.googleapis.com/auth/webmasters.readonly",)
 
 
 class GscUnavailable(Exception):
@@ -288,7 +295,10 @@ def _gsc_service(ga4_settings):
 	credentials_path = frappe.get_site_path('private', 'files', credentials_url.split('/')[-1])
 	if not os.path.exists(credentials_path):
 		return None, None, f"Credentials file not found at: {credentials_path}"
-	credentials = service_account.Credentials.from_service_account_file(credentials_path)
+	# Scoped here, not left to build(): see GSC_SCOPES.
+	credentials = service_account.Credentials.from_service_account_file(
+		credentials_path, scopes=list(GSC_SCOPES)
+	)
 	return build("searchconsole", "v1", credentials=credentials), credentials, None
 
 
