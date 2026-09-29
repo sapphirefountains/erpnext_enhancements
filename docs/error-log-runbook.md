@@ -25,7 +25,7 @@ because that is how a Windows workstation gets there.
 | # | Signature | Cause | Still firing? |
 |---|---|---|---|
 | [1](#1-mdm-retry-failed-for-miradore--mdm-action1-token-refresh-failed) | `MDM retry failed for Miradore`, `MDM Action1 token refresh failed` | Both MDM credentials dead | Paused, not fixed |
-| [2](#2-gsc-api-error) | `GSC API Error` | Service account not a user on the Search Console property | Yes |
+| [2](#2-gsc-api-error) | `GSC API Error` | A 403 on the property form until v1.505.0 (none logged after 2026-09-22); then network errors from two queries sharing one connection, fixed v1.561.2 | Until v1.561.2 deploys |
 | [3](#3-finance-calendar-fetch-failed) | `Finance Calendar fetch failed` | Calendar id wrong or not shared | Yes |
 | [4](#4-training-media) | `Training media` | Missing GCS IAM binding | Yes |
 | [5](#5-smtp-relay--email-account) | SMTP `550 5.7.1`, "no default Email Account" | Sending IP not registered in Workspace | Intermittent |
@@ -188,6 +188,17 @@ account to add. Granting the account on **any** form of the property is enough.
 Afterwards, repair the history — every refused night stored organic figures of
 zero — with `backfill_gsc_snapshots`
 ([Fixing the GSC 403](marketing-spend-runbook.md#fixing-the-gsc-403)).
+
+**A different `GSC API Error`: "Search Console did not answer the '…' query after 3
+attempts".** Not a permission problem. From 2026-09-23 to 2026-09-29 the date query
+succeeded every night and then the query and page breakdowns failed with
+`[SSL: RECORD_LAYER_FAILURE]` or `The read operation timed out`. They ran in parallel
+through the one httplib2 connection the Google client shares, and httplib2 is not
+thread-safe. Since v1.561.2 they run one at a time, each on its own connection with a
+30-second timeout, and a TLS error or timeout is retried twice with backoff. That
+message now means three attempts in a row failed at the network level. The next
+nightly run tries again, and `backfill_gsc_snapshots` repairs any night that stored
+`gsc_ok = 0`. A 4xx is never retried and still logs with its traceback.
 
 ---
 
