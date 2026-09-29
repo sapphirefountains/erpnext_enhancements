@@ -11,9 +11,11 @@ External services:
 Configuration & credentials: read from the ``GA4 Settings`` Single DocType
 (property id / property url plus a service-account JSON file). The credentials
 JSON MUST be uploaded as a Private file (``/private/files/...``); a public path
-is rejected to avoid leaking the service account key. Each endpoint fans out
-its independent report queries across a thread pool to reduce latency, and
-returns Frappe-Charts-shaped dicts (or an ``{"error": ...}`` dict on failure).
+is rejected to avoid leaking the service account key. GA4 fans its independent
+report queries out across a thread pool (its gRPC client is thread-safe); Search
+Console runs its queries one at a time, each on a connection of its own, and
+retries a network failure (see ``_gsc_execute``). Both return
+Frappe-Charts-shaped dicts (or an ``{"error": ...}`` dict on failure).
 
 Security: requires an authenticated session (default whitelist). Errors are
 logged to the Error Log and returned as a plain ``{"error": ...}`` message.
@@ -22,9 +24,13 @@ logged to the Error Log and returned as a plain ``{"error": ...}`` message.
 import concurrent.futures
 import datetime as dt
 import os
+import ssl
+import time
 from datetime import datetime
 
 import frappe
+import google_auth_httplib2
+import httplib2
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
 	DateRange,
@@ -254,9 +260,33 @@ GSC_SITE_CACHE_SECONDS = 86400
 #: candidate form rather than treated as the answer.
 GSC_REFUSED = (401, 403, 404)
 
+#: Seconds one Search Console request may wait on the network before it counts as failed.
+#: Set here rather than inherited: ``build()`` otherwise takes the process-wide socket
+#: default, or 60s when there is none.
+GSC_HTTP_TIMEOUT = 30
+#: Tries per request, the first one included, when the failure is a network one.
+GSC_ATTEMPTS = 3
+#: Seconds before the first retry, doubled before each retry after it.
+GSC_BACKOFF_SECONDS = 2
+#: The OAuth scope the Search Console credentials are loaded with. ``searchanalytics.query``
+#: is the only call made, and read-only is enough for it. The scope has to be set on the
+#: credentials themselves: ``_gsc_http`` authorizes with the object ``_gsc_service`` returns,
+#: and ``build()`` scopes only a copy of it for its own transport, never the original.
+#: A key loaded with no scope asks Google for a token with an empty ``scope`` claim, and the
+#: token endpoint refuses that with 400 ``invalid_scope`` before any query is sent.
+GSC_SCOPES = ("https://www.googleapis.com/auth/webmasters.readonly",)
+
+
+class GscUnavailable(Exception):
+	"""Search Console could not be reached after every attempt.
+
+	The message is short, names the query and the last network error, and is written to be
+	logged as it stands: no traceback, no request, no credentials.
+	"""
+
 
 def _gsc_service(ga4_settings):
-	"""``(service, service_account_email, error)`` for the configured Search Console access."""
+	"""``(service, credentials, error)`` for the configured Search Console access."""
 	if not ga4_settings.credentials_json:
 		return None, None, "Credentials JSON file is missing in GA4 Settings."
 	credentials_url = ga4_settings.credentials_json
@@ -265,8 +295,30 @@ def _gsc_service(ga4_settings):
 	credentials_path = frappe.get_site_path('private', 'files', credentials_url.split('/')[-1])
 	if not os.path.exists(credentials_path):
 		return None, None, f"Credentials file not found at: {credentials_path}"
-	credentials = service_account.Credentials.from_service_account_file(credentials_path)
-	return build("searchconsole", "v1", credentials=credentials), credentials.service_account_email, None
+	# Scoped here, not left to build(): see GSC_SCOPES.
+	credentials = service_account.Credentials.from_service_account_file(
+		credentials_path, scopes=list(GSC_SCOPES)
+	)
+	return build("searchconsole", "v1", credentials=credentials), credentials, None
+
+
+def _gsc_account(credentials):
+	"""The service account's address, for a message telling someone whom to grant."""
+	return getattr(credentials, "service_account_email", None)
+
+
+def _log_gsc_error(message, key):
+	"""One throttled Error Log row titled ``GSC API Error`` whose body is ``message``.
+
+	For a message that is a sentence rather than a traceback. ``log_error_throttled`` passes
+	``frappe.log_error`` its message first, and v16's ``log_error(title, message)`` decides
+	which of the two is the title by looking for a newline (``frappe/utils/error.py``): a
+	single-line first argument stays the title. A traceback always has a newline; a sentence
+	does not, so it would become the row's title, cut at 140 characters, with "GSC API Error"
+	as the body. Prod has rows logged backwards that way. The trailing newline keeps this one
+	the right way round.
+	"""
+	log_error_throttled(message if "\n" in message else f"{message}\n", "GSC API Error", key=key)
 
 
 def _http_status(error):
@@ -277,21 +329,73 @@ def _http_status(error):
 		return None
 
 
-def _gsc_query_first_site(service, stored, body):
+def _gsc_http(credentials):
+	"""A new authorized transport: one connection of its own, and an explicit timeout."""
+	return google_auth_httplib2.AuthorizedHttp(credentials, http=httplib2.Http(timeout=GSC_HTTP_TIMEOUT))
+
+
+def _gsc_transient(error):
+	"""Whether ``error`` is a network failure that another attempt could get past.
+
+	A timeout, or a TLS failure other than a certificate that does not verify (that one fails
+	the same way every time). Never an ``HttpError``: that is Google answering, and a 4xx in
+	particular is the same answer the next time.
+	"""
+	if isinstance(error, ssl.SSLCertVerificationError):
+		return False
+	return isinstance(error, (ssl.SSLError, TimeoutError))
+
+
+def _gsc_execute(request, credentials, label):
+	"""Execute one Search Console ``request`` on a transport of its own, retrying a transient failure.
+
+	Each attempt gets a fresh connection (``_gsc_http``), never the one the service was built
+	with. A connection that timed out can still hold the unread reply it was waiting for, and
+	the next request sent down it would read that reply as its own.
+
+	A timeout or TLS error (``_gsc_transient``) is tried ``GSC_ATTEMPTS`` times, sleeping
+	``GSC_BACKOFF_SECONDS`` and then twice that between tries. After the last one this raises
+	``GscUnavailable`` with a one-line message and no chained exception: the chain would be
+	about 4 KB of httplib2 and ssl frames that say only "the network failed". Anything else,
+	an ``HttpError`` included, raises at once and is never retried.
+	"""
+	for attempt in range(1, GSC_ATTEMPTS + 1):
+		http = _gsc_http(credentials)
+		try:
+			return request.execute(http=http)
+		except Exception as e:
+			if not _gsc_transient(e):
+				raise
+			last = f"{type(e).__name__}: {e}"
+		finally:
+			http.close()
+		if attempt < GSC_ATTEMPTS:
+			time.sleep(GSC_BACKOFF_SECONDS * 2 ** (attempt - 1))
+	raise GscUnavailable(
+		f"Search Console did not answer the '{label}' query after {GSC_ATTEMPTS} attempts "
+		f"(last: {last}). A network failure, not a permission one; the next run tries again."
+	) from None
+
+
+def _gsc_query_first_site(service, credentials, stored, body):
 	"""Run ``body`` against the first property form Search Console accepts.
 
 	Returns ``(site, response, refusals)``; ``site`` is None when every form was refused,
 	and ``refusals`` lists ``(site, status)`` for each form that was. Any other error
-	raises. The accepted form is cached for a day and tried first next time.
+	raises (a network failure only after ``_gsc_execute``'s retries). The accepted form is
+	cached for a day and tried first next time.
 	"""
 	candidates = site_candidates(stored)
 	cached = frappe.cache().get_value(GSC_SITE_CACHE_KEY)
 	if cached in candidates:
 		candidates = [cached] + [c for c in candidates if c != cached]
+	label = ", ".join(body.get("dimensions") or []) or "search analytics"
 	refusals = []
 	for site in candidates:
 		try:
-			response = service.searchanalytics().query(siteUrl=site, body=body).execute()
+			response = _gsc_execute(
+				service.searchanalytics().query(siteUrl=site, body=body), credentials, label
+			)
 		except HttpError as e:
 			status = _http_status(e)
 			if status in GSC_REFUSED:
@@ -325,6 +429,10 @@ def get_gsc_data():
 	property that does not exist is refused with the same 403 as a missing grant
 	(TASK-2026-01474).
 
+	The three queries (by date, query and page) run one at a time, each on a connection of its
+	own, and a timeout or TLS error is retried (``_gsc_execute``). A failure that outlasts the
+	retries logs one Error Log row and returns ``{"error": ...}``, as any other failure does.
+
 	Returns:
 		dict: A dictionary containing 'search_timeline' (formatted for Frappe Charts), 'top_queries'
 		(formatted for a DataTable), 'top_pages', and 'property' (the form Search Console accepted).
@@ -334,7 +442,7 @@ def get_gsc_data():
 	if not ga4_settings.gsc_property_url:
 		return {"error": "GSC Property URL is missing in GA4 Settings."}
 
-	service, account, error = _gsc_service(ga4_settings)
+	service, credentials, error = _gsc_service(ga4_settings)
 	if error:
 		return {"error": error}
 
@@ -345,6 +453,7 @@ def get_gsc_data():
 
 		site, response_timeline, refusals = _gsc_query_first_site(
 			service,
+			credentials,
 			ga4_settings.gsc_property_url,
 			{"startDate": start_date, "endDate": end_date, "dimensions": ["date"], "rowLimit": 31},
 		)
@@ -352,23 +461,33 @@ def get_gsc_data():
 			# Permanent, and the traceback says nothing the operator needs. Throttled because
 			# the nightly pull would otherwise re-log it every run: it once buried 34 rows in
 			# the log for one unchanging fact.
-			message = _gsc_refused_message(ga4_settings.gsc_property_url, refusals, account)
-			log_error_throttled(message, "GSC API Error", key="refused")
+			message = _gsc_refused_message(ga4_settings.gsc_property_url, refusals, _gsc_account(credentials))
+			_log_gsc_error(message, key="refused")
 			return {"error": message}
 
 		def fetch_dimension(dimension):
-			return service.searchanalytics().query(
+			request = service.searchanalytics().query(
 				siteUrl=site,
-				body={"startDate": start_date, "endDate": end_date, "dimensions": [dimension], "rowLimit": 15},
-			).execute()
+				body={
+					"startDate": start_date,
+					"endDate": end_date,
+					"dimensions": [dimension],
+					"rowLimit": 15,
+				},
+			)
+			return _gsc_execute(request, credentials, dimension)
 
 		# GSC API has no orderBy for searchanalytics.query: rows come back grouped by the
 		# dimension and ordered by clicks descending, which is the order wanted here.
-		with concurrent.futures.ThreadPoolExecutor() as executor:
-			future_keywords = executor.submit(fetch_dimension, "query")
-			future_pages = executor.submit(fetch_dimension, "page")
-			response_keywords = future_keywords.result()
-			response_pages = future_pages.result()
+		#
+		# One after the other, never in a thread pool. Until v1.561.2 these two ran in parallel
+		# through the one httplib2 transport build() gives the service, and httplib2 is not
+		# thread-safe: both threads wrote to and read from one TLS socket, so one of them read
+		# the other's reply. Every nightly pull from 2026-09-23 to 2026-09-29 failed that way,
+		# inside one of these two queries and after the date query had already succeeded, as
+		# "[SSL: RECORD_LAYER_FAILURE]" or "The read operation timed out" (TASK-2026-01474).
+		response_keywords = fetch_dimension("query")
+		response_pages = fetch_dimension("page")
 
 		# 1. Timeline Data (Clicks and Impressions by Date)
 		timeline_labels = []
@@ -438,6 +557,12 @@ def get_gsc_data():
 		log_error_throttled(frappe.get_traceback(), "GSC API Error", key=str(status))
 		return {"error": f"Failed to fetch GSC data: {e!s}"}
 
+	except GscUnavailable as e:
+		# One row, the message as it stands. The retries already happened and logged nothing,
+		# and the traceback would add only frames of the network stack.
+		_log_gsc_error(str(e), key="transient")
+		return {"error": f"Failed to fetch GSC data: {e!s}"}
+
 	except Exception as e:
 		log_error_throttled(frappe.get_traceback(), "GSC API Error")
 		return {"error": f"Failed to fetch GSC data: {e!s}"}
@@ -478,7 +603,7 @@ def backfill_gsc_snapshots(since=None, dry_run=False):
 	ga4_settings = frappe.get_doc("GA4 Settings")
 	if not ga4_settings.gsc_property_url:
 		return {"updated": 0, "error": "GSC Property URL is missing in GA4 Settings."}
-	service, account, error = _gsc_service(ga4_settings)
+	service, credentials, error = _gsc_service(ga4_settings)
 	if error:
 		return {"updated": 0, "error": error}
 
@@ -486,6 +611,7 @@ def backfill_gsc_snapshots(since=None, dry_run=False):
 	start, _ = window_for(min(days))
 	site, response, refusals = _gsc_query_first_site(
 		service,
+		credentials,
 		ga4_settings.gsc_property_url,
 		{
 			"startDate": start.strftime("%Y-%m-%d"),
@@ -495,7 +621,10 @@ def backfill_gsc_snapshots(since=None, dry_run=False):
 		},
 	)
 	if not site:
-		return {"updated": 0, "error": _gsc_refused_message(ga4_settings.gsc_property_url, refusals, account)}
+		return {
+			"updated": 0,
+			"error": _gsc_refused_message(ga4_settings.gsc_property_url, refusals, _gsc_account(credentials)),
+		}
 
 	daily = {row["keys"][0]: (row.get("clicks", 0), row.get("impressions", 0)) for row in response.get("rows", [])}
 	sums = rolling_sums(daily, days)
