@@ -104,7 +104,7 @@ standard_help_items = [
 # or more characters, the AwesomeBar calls frappe.desk.search.awesomebar_search, which calls each
 # method listed here with the text and keeps up to 20 of its results (desk/search.py:510-538;
 # awesome_bar.js:176, only when frappe.boot.has_awesomebar_search, which boot.py:109 sets from this
-# hook, so people see it after their next page load). So "PO", "SOP" and "KB-0612" find published
+# hook, so people see it after their next page load). So "PO", "SOP" and "SOP-06-0001" find published
 # articles from two letters, where v16's global search never would (ft_min_word_len=4). It searches
 # the published Knowledge Article only, as the person typing, and never raises (a hook's exception
 # goes to the "awesomebar" logger, not the Error Log). Nothing in public/js or api/search.py changes:

@@ -23,7 +23,8 @@ its "The two reports"):
 * the article's ``content_hash`` equals :func:`content.content_hash` of that version, **and** the
   article's own text hashes the same (the first catches the approved version edited, the second
   the article edited, which is what every reader and AI tool reads), and the two agree on the
-  department and, since PR 5, on the kind (no kind on either side is agreement);
+  department and on the kind (since 2026-09-29 a missing kind is a problem on either side: the
+  number is made from it);
 * the approver is a named person (never Administrator or Guest), is recorded the same on the
   article and the version, and is not the live version's owner, submitter, AI requester or a
   contributor;
@@ -31,10 +32,12 @@ its "The two reports"):
   and no open version sits on a Retired article;
 * every ``review_state`` is one of the five, with the docstatus it must have (a Published or
   Superseded version is submitted; nothing is ever canceled);
-* a KB number is ``KB-{block}{01..99}`` in its department's block, and a status is one of two;
+* an article's name is a canonical article number (``SOP-06-0001``: never ``0000``, a real block)
+  whose prefix is its kind and whose block is its department (``workflow.number_problems``), and a
+  status is one of two;
 * no File attached to either doctype is public.
 
-**What a row says is never draft text.** A problem names the rule broken, KB numbers, version names
+**What a row says is never draft text.** A problem names the rule broken, article numbers, version names
 (``KBV-00012``), states, numbers and user ids. It never quotes a title, summary, keyword, body,
 change note or review note, of a version or an article: the report is readable by every KB
 Approver and by an AI tool acting for one (``generate_report``, see the README), and the rule of
@@ -44,7 +47,6 @@ live versions at docstatus 1 only, read for hashing and nothing else.
 """
 
 import datetime
-import re
 
 from erpnext_enhancements.knowledge_base import constants, content, workflow
 
@@ -151,7 +153,7 @@ def due_rows(articles, today, days=DEFAULT_DUE_WITHIN_DAYS, *, process_owner=Non
 
 #: The ``check`` column: which rule a row breaks. Short, so the column sorts and filters well.
 CHECK_STATUS = "Article status"
-CHECK_NUMBER = "KB number"
+CHECK_NUMBER = "Number"
 CHECK_LIVE_VERSION = "Live version"
 CHECK_APPROVED_TEXT = "Approved text"
 CHECK_APPROVER = "Approver"
@@ -217,7 +219,6 @@ PUBLIC_FILE_FIELDS = ("name", "attached_to_doctype", "attached_to_name")
 #: refuses Frappe's own Discard, so docstatus 2 is never right.
 EXPECTED_DOCSTATUS = {DRAFT: 0, IN_REVIEW: 0, DISCARDED: 0, PUBLISHED: 1, SUPERSEDED: 1}
 
-_KB_NUMBER = re.compile(r"^KB-(\d{2})(\d{2})$")
 _NEVER_APPROVERS = frozenset(name.casefold() for name in constants.NEVER_APPROVERS)
 
 
@@ -279,20 +280,10 @@ def _article_problems(article, by_version, approved_texts, add):
 			CHECK_STATUS, name, None, f"{name} has status {status!r}, which is neither Published nor Retired."
 		)
 
-	block = constants.block_code(_get(article, "department_block"))
-	match = _KB_NUMBER.match(str(name or ""))
-	if not match:
-		add(CHECK_NUMBER, name, None, f"{name} is not a KB number of the form KB-0612.")
-	elif match.group(2) == "00":
-		add(CHECK_NUMBER, name, None, f"{name} ends in 00, which is its block's index and never an article.")
-	elif match.group(1) != block:
-		department = _get(article, "department_block") or "blank"
-		add(
-			CHECK_NUMBER,
-			name,
-			None,
-			f"{name} is numbered in block {match.group(1)}, but its department is {department}.",
-		)
+	# 2026-09-29: canonical (case-sensitive, so a lowercase name written past the ORM is caught), never
+	# 0000, in a real block, in its own department, and with its kind's prefix.
+	for problem in workflow.number_problems(name, _get(article, "kind"), _get(article, "department_block")):
+		add(CHECK_NUMBER, name, None, problem + ".")
 
 	live = _get(article, "live_version")
 	if not live:
@@ -370,8 +361,8 @@ def _article_problems(article, by_version, approved_texts, add):
 			f"{name} is in {_get(article, 'department_block') or 'no department'}, but its live version "
 			f"{live} was approved in {_get(text, 'department_block') or 'no department'}.",
 		)
-	# PR 5: the kind is not hashed, so it is compared here. No kind on either side is agreement: an
-	# article published before the field existed has none, and neither has its live version.
+	# PR 5: the kind is not hashed, so it is compared here. Since 2026-09-29 no kind on either side is
+	# a problem too, not agreement: the number is made from the kind, and every article has one.
 	classified, approved_as = _get(article, "kind") or None, _get(text, "kind") or None
 	if classified != approved_as:
 		add(
@@ -381,6 +372,8 @@ def _article_problems(article, by_version, approved_texts, add):
 			f"{name} is {_classified(classified)}, but its live version {live} was approved "
 			f"{_approved_as(approved_as)}.",
 		)
+	elif classified is None:
+		add(CHECK_APPROVED_TEXT, name, live, f"{name} and its live version {live} have no kind.")
 
 
 def _approver_problems(name, article, live, version, add):

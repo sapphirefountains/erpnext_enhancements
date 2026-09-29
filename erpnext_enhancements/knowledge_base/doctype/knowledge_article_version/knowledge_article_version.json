@@ -69,6 +69,7 @@
    "in_standard_filter": 1,
    "label": "Department",
    "options": "\n00 Company Wide\n01 Executive\n02 Design\n03 Finance\n04 HR\n05 Marketing\n06 Operations\n07 Product Management\n08 Production\n09 Sales",
+   "read_only_depends_on": "eval:doc.article",
    "reqd": 1
   },
   {
@@ -78,10 +79,11 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Kind",
-   "options": "\nPolicy\nProcess\nSOP"
+   "options": "\nPolicy\nProcess\nSOP",
+   "read_only_depends_on": "eval:doc.article"
   },
   {
-   "description": "Empty until the first version of a new article is published; the KB number is allocated then.",
+   "description": "Empty until the first version of a new article is published; its number (e.g. SOP-06-0001, from the kind and department) is allocated then.",
    "fieldname": "article",
    "fieldtype": "Link",
    "in_standard_filter": 1,
@@ -323,7 +325,7 @@
  "is_submittable": 1,
  "links": [],
  "make_attachments_public": 0,
- "modified": "2026-09-28 23:00:00.000000",
+ "modified": "2026-09-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Knowledge Base",
  "name": "Knowledge Article Version",

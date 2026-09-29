@@ -16,10 +16,16 @@ the knowledge base with are exactly the short ones.
 **Tokens** (:func:`tokenize`), in this order:
 
 1. NFKC, so a full-width or ligature spelling reads as the plain one.
-2. **KB numbers**: ``kb`` then an optional space, ``_`` or ``-``, then 1 to 4 digits (``KB-0601``,
-   ``kb 601``, ``KB0601``, ``kb_601``) is one term, ``kb-0601``, zero-padded to four digits.
-3. **Document numbers**: 2 to 5 letters, ``-``, 2 to 6 digits (``SOP-9001``, ``PO-1234``) is kept
-   as one compound term, and its two parts are indexed as well.
+2. **Article numbers** (``constants.ARTICLE_NUMBER_WRITTEN``, 2026-09-29): ``POL``, ``PRO`` or
+   ``SOP``, the department block and the sequence, however they are written (``SOP-06-0001``,
+   ``sop 06 0001``, ``SOP-06-1``, ``sop_6_1``, en dashes too), are **one** term, the canonical number
+   casefolded (``sop-06-0001``): a citation in a body is one term, not three words. A match that is
+   not a number (sequence ``0000``) is read as the words it is made of. The department and the
+   sequence must be separated, so the Drive register's own ``SOP-0601`` and ``POL-0600`` are
+   document numbers (3), never article numbers.
+3. **Document numbers**: 2 to 5 letters, ``-``, 2 to 6 digits (``SOP-9001``, ``PO-1234``, and a
+   number in the retired ``KB`` format) is kept as one compound term, and its two parts are indexed
+   as well.
 4. **Punctuated acronyms**: single letters or runs of digits joined by ``-``, ``&``, ``/`` or ``.``,
    with at least one letter, are one acronym term with the punctuation dropped: ``W-2`` is ``w2``,
    ``I-9`` ``i9``, ``G-702`` ``g702``, ``T&M`` ``tm``, ``A/R`` ``ar``, ``P.O.`` ``po``, and a plural
@@ -50,10 +56,11 @@ weight is computed once, at build.
 
 **A query** is tokenized the same way. A lowercase word also tries its unstemmed spelling and,
 when it ends in ``s``, the same without it, and scores its best: an acronym written in lowercase
-("msds", "pos") then still meets the capitals. A KB number in the query **pins** that article first,
-in the order the query names them. Filters (``allowed``, ``department``, ``kind``) remove documents
-**before** scoring, so nothing outside them is ever ranked. Ties go pinned first, then score, then
-KB number.
+("msds", "pos") then still meets the capitals. An article number in the query, in any of the ways
+it can be written, **pins** that article first, in the order the query names them; ``SOP-06`` alone
+(a kind and a department) pins nothing, and ranks by the ``sop`` and ``06`` terms the meta field
+carries. Filters (``allowed``, ``department``, ``kind``) remove documents **before** scoring, so
+nothing outside them is ever ranked. Ties go pinned first, then score, then article number.
 
 **Snippets** (:func:`snippet`) are the 240-character window of the article's text holding the
 most query terms, cut at word boundaries, with no highlight marks; the summary when the text holds
@@ -83,7 +90,7 @@ __all__ = [
 	"Token",
 	"build_index",
 	"mark",
-	"normalize_kb_number",
+	"normalize_article_number",
 	"plain_text",
 	"query_terms",
 	"search",
@@ -92,17 +99,17 @@ __all__ = [
 	"tokenize",
 ]
 
-#: One article, as the index reads it. ``key`` is its name (the KB number), ``body`` its Markdown
+#: One article, as the index reads it. ``key`` is its name (the article number), ``body`` its Markdown
 #: (``body_md``), ``kind`` one of ``constants.ARTICLE_KINDS`` or ``None``, ``department`` a
 #: ``department_block`` option.
 Document = namedtuple("Document", "key kb_number title keywords summary body kind department")
 
-#: A term, and whether it came from an acronym (or a KB or document number), which is never
+#: A term, and whether it came from an acronym (or an article or document number), which is never
 #: stemmed and never a stopword.
 Token = namedtuple("Token", "term acronym")
 
 #: A result: the document's key, its score, the fields that matched (``"kb_number"`` first when it
-#: was pinned), and whether a KB number in the query pinned it.
+#: was pinned), and whether an article number in the query pinned it.
 Hit = namedtuple("Hit", "key score matched pinned")
 
 #: The indexed fields, in the order ``Hit.matched`` lists them.
@@ -128,7 +135,7 @@ STOPWORDS = frozenset(
 _SNIPPET_WIDTH = 240
 _ELLIPSIS = "\u2026"
 
-#: A KB number, a document number, a punctuated chain, or a word, tried in that order at each
+#: An article number, a document number, a punctuated chain, or a word, tried in that order at each
 #: position. A punctuated chain is two or more pieces, each a single letter or 1 to 6 digits, each
 #: joined to the next by one ``-``, ``&``, ``/`` or ``.``, standing alone (no letter or digit
 #: touching either end), with an optional plural ``s``; so ``x-ray``, whose ``ray`` is no single
@@ -137,7 +144,7 @@ _ELLIPSIS = "\u2026"
 #: as before. Checked there rather than by a lookahead here, because a lookahead that walks the
 #: chain to its first letter is retried at every piece of a long letterless chain (quadratic).
 _TOKEN = re.compile(
-	r"(?P<kb>(?i:\bkb[\s_\-]?0*(?P<kbn>[0-9]{1,4})\b))"
+	r"(?P<art>(?i:" + constants.ARTICLE_NUMBER_WRITTEN + r"))"
 	r"|(?P<doc>\b(?P<letters>[A-Za-z]{2,5})-(?P<digits>[0-9]{2,6})\b)"
 	r"|(?P<joined>(?<![^\W_])"
 	r"(?P<chain>(?:[A-Za-z]|[0-9]{1,6})(?:[-&/.](?:[A-Za-z]|[0-9]{1,6}))+)s?(?![^\W_]))"
@@ -145,8 +152,6 @@ _TOKEN = re.compile(
 )
 _JOINED_PIECE = re.compile(r"[A-Za-z0-9]+")
 _WORD_RUN = re.compile(r"[^\W_]+")
-_KB_QUERY = re.compile(r"\bkb[\s_\-]?0*([0-9]{1,4})\b", re.IGNORECASE)
-_KB_EXACT = re.compile(r"kb[\s_\-]?0*([0-9]{1,4})", re.IGNORECASE)
 #: Where one run of text ends and the next begins: a line break, or a sentence's end.
 _RUN_BREAK = re.compile(r"[\r\n]+|[.!?;:](?=\s|$)")
 _ACRONYM_PLURAL = re.compile(r"[A-Z]{2,6}s")
@@ -178,13 +183,9 @@ def tokenize(text, *, keywords=False):
 	return [token for _start, _end, tokens in _scan(text, keywords) for token in tokens]
 
 
-def normalize_kb_number(text):
-	"""``"kb 601"`` -> ``"KB-0601"``; ``None`` unless the whole of ``text`` is one KB number (so
-	``"KBV-00001"``, a version's id, is ``None``)."""
-	if not isinstance(text, str):
-		return None
-	match = _KB_EXACT.fullmatch(unicodedata.normalize("NFKC", text).strip())
-	return f"KB-{int(match.group(1)):04d}" if match else None
+#: ``"sop 06 1"`` -> ``"SOP-06-0001"``; ``None`` unless the whole of the text is one article number
+#: (so ``"KBV-00001"``, a version's id, is ``None``). The one definition is in ``constants``.
+normalize_article_number = constants.normalize_article_number
 
 
 @lru_cache(maxsize=65536)
@@ -233,8 +234,16 @@ def _scan_run(text, start, end, keywords, out):
 	shouting = not any(ch.islower() for ch in run)
 	for match in _TOKEN.finditer(run):
 		begin, finish = start + match.start(), start + match.end()
-		if match.group("kb") is not None:
-			out.append((begin, finish, (Token(f"kb-{int(match.group('kbn')):04d}", True),)))
+		if match.group("art") is not None:
+			number = constants.normalize_article_number(match.group("art"))
+			if number is not None:
+				out.append((begin, finish, (Token(number.casefold(), True),)))
+				continue
+			# Shaped like one but not a number (sequence 0000): the words it is made of.
+			for word in _WORD_RUN.finditer(run, match.start(), match.end()):
+				token = _word(word.group(), shouting, keywords)
+				if token is not None:
+					out.append((start + word.start(), start + word.end(), (token,)))
 		elif match.group("doc") is not None:
 			letters, digits = match.group("letters"), match.group("digits")
 			tokens = [Token(f"{letters.casefold()}-{digits}", True)]
@@ -318,14 +327,9 @@ def _slots(query):
 	return slots
 
 
-def _kb_numbers(query):
-	"""The KB numbers ``query`` names, normalized, in order, each once."""
-	numbers = []
-	for match in _KB_QUERY.finditer(unicodedata.normalize("NFKC", query or "")):
-		number = f"KB-{int(match.group(1)):04d}"
-		if number not in numbers:
-			numbers.append(number)
-	return numbers
+def _article_numbers(query):
+	"""The article numbers ``query`` names, canonical, in order, each once."""
+	return constants.written_article_numbers(query or "")
 
 
 # ------------------------------------------------------------------ Markdown to text
@@ -385,7 +389,7 @@ def build_index(documents):
 	counts = []  # per document: {field: Counter}
 	lengths = {field: [] for field in FIELDS}
 	for doc in documents:
-		number = normalize_kb_number(doc.kb_number or doc.key or "")
+		number = normalize_article_number(doc.kb_number or doc.key or "")
 		position = len(index.keys)
 		index.keys.append(doc.key)
 		index.kb_numbers.append(number or str(doc.key or ""))
@@ -477,7 +481,7 @@ def search(index, query, *, allowed=None, department=None, kind=None, limit=10):
 		return []
 
 	pinned = []
-	for number in _kb_numbers(query):
+	for number in _article_numbers(query):
 		position = index.by_kb.get(number)
 		if position is not None and candidate[position] and position not in pinned:
 			pinned.append(position)

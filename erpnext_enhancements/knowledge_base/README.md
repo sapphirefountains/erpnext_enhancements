@@ -17,14 +17,16 @@ the ways in: a **Knowledge Base** tile on the Desk home screen, **Help > Company
 the `Knowledge Base` workspace and its sidebar, and two reports (Due for Review, and the Integrity
 report). See "Entry points (PR 4)". **PR 5: every article has a kind** (Policy, Process or SOP, the
 company document register's three types), and **the AwesomeBar finds published articles from two
-letters**, "PO" and "KB-0612" included. See "The article's kind (PR 5)" and "Search (PR 5)". **PR 6a:
+letters**, "PO" and "SOP-06-0001" included. See "The article's kind (PR 5)" and "Search (PR 5)". **PR 6a:
 three read-only AI tools**, `search_company_knowledge`, `fetch_knowledge_article` and
 `list_company_knowledge`, over the published articles as the person asking; see "AI tools (PR 6a)".
 **PR 6b: one AI tool that writes**, `draft_knowledge_article`: it writes a Draft, and if asked
 submits it for review, only from an approval card that the person who asked confirms themselves; it
 never approves or publishes. See "The drafting tool (PR 6b)". **PR 8 (v1.561.0): a read-only snapshot
 endpoint for the private Markdown mirror**, which the company's private knowledge repo pulls every six
-hours; ERPNext pushes nothing and holds no GitHub credential. See "The private mirror (PR 8)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
+hours; ERPNext pushes nothing and holds no GitHub credential. See "The private mirror (PR 8)". **Since
+v1.567.0 (2026-09-29) an article is numbered by its kind and department**, `SOP-06-0001`, and a number
+never changes and is never reused; see "Article numbers (2026-09-29)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
 hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Approvers" profile (see
 "Roles, and how a person gets one").
 
@@ -32,9 +34,9 @@ hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Appro
 
 **Published text and drafts live in two different doctypes.** That split is the whole design.
 
-- **Knowledge Article** is the approved, published text of one KB number, and nothing else. It is
-  named by its number (`KB-0612`: department block `06`, article `12`). Every staff user reads it,
-  and every field is read-only.
+- **Knowledge Article** is the approved, published text of one article number, and nothing else. It
+  is named by its number (`SOP-06-0012`: an SOP, department block `06`, the twelfth in that sequence).
+  Every staff user reads it, and every field is read-only.
 - **Knowledge Article Version** is submittable and holds the drafts and the permanent history.
   Publishing *is* submitting: a submitted version is the record of what a second person approved,
   and the Article is a copy of it. Only KB Authors and KB Approvers can open this doctype.
@@ -194,10 +196,9 @@ A change is judged the way a reader would see it: `None` and `""` are equal, the
 compares as a number, and a body compares after presentation is stripped, so re-colouring a word in
 review is not an edit.
 
-**KB numbers** (`workflow.next_kb_number`): `KB-{block}{01..99}`, one more than the highest number
-already in the block, never the lowest gap (a vanished number may still be cited). `{block}00` is the
-block's index and is never allocated. A full block raises `BlockFullError` with a message that says
-so. `kb_number_prefix` gives PR 3 the `KB-06` it binds as `"KB-06%"` in its `SELECT ... FOR UPDATE`.
+**Article numbers** (`workflow.next_article_number`, since 2026-09-29): `<PREFIX>-<DD>-<NNNN>` by kind
+and department (`SOP-06-0001`), one more than the highest in its scope, never reused. See "Article
+numbers (2026-09-29)" below.
 
 **Review dates** (`workflow.review_by`): the start date plus `review_interval(months)` calendar
 months, clamped to a shorter month's end (31 August + 6 = 28 February, or 29th in a leap year). An
@@ -342,13 +343,16 @@ approve, send back, retire or confirm, whatever roles they hold, and neither doe
 An article is Published from its first approval, and Retired by `retire`; a retired article takes
 no revision (v1 has no way back from retirement). One open version (Draft or In Review) per article:
 `start_revision` answers with the open one, under the article's row lock and a locking read, so two
-people pressing it at once get the same draft. **An article keeps its department**: its KB number
-carries the block, so a revision in another department is refused at submit and at publish.
+people pressing it at once get the same draft. **An article keeps its kind and its department**: its
+number carries both, so a revision that changes either is refused at the save, at submit and at
+publish (see "Article numbers (2026-09-29)").
 
 **Publishing is one transaction** (`publish.publish`), in this order: (1) a first version gets its
-KB number from `SELECT name FROM tabKnowledge Article WHERE name LIKE %s FOR UPDATE`, with
-`kb_number_prefix(block) + "%"` as the bound parameter, and `next_kb_number` over what it returned;
-a revision locks its article instead; (2) the article is inserted or saved under
+article number from `SELECT name FROM tabKnowledge Article WHERE name LIKE %s FOR UPDATE` and
+`SELECT DISTINCT article FROM tabKnowledge Article Version WHERE article LIKE %s`, both with
+`number_scope(kind, block) + "%"` as the bound parameter, and `next_article_number` over what they
+returned; a revision locks its article instead; (2) the article is inserted (with its kind and
+department, written then and never again) or saved under
 `flags.kb_action`, from the version **as stored** (loaded `for_update` in the same transaction),
 with `body_md` (`to_markdown`) and `content_hash` computed from the stored body, `review_by`
 restarted from the approval, and the approved interval stored; (3) every File attached to the
@@ -507,7 +511,8 @@ list's filter bar stays as the fallback that needs no index: v16 builds it from 
 field and every `in_standard_filter` field, a text one as a `like` (`base_list.js`). PR 4 made
 **Keywords** one of them (`in_standard_filter` on the Article's `keywords`), so typing `PO` finds an
 article whose keywords say PO, which v16's global search never would (`ft_min_word_len=4`); PR 5 added
-**Kind**. A KB number goes in the ID box. **On a phone the Title, Keywords and Kind boxes are hidden**
+**Kind**. An article number goes in the ID box, and so does the start of one: `SOP-06` lists the
+Operations SOPs. **On a phone the Title, Keywords and Kind boxes are hidden**
 until the up-and-down arrows button beside Filter is tapped: v16 hides the whole standard-filter row
 on a narrow screen and moves only the ID box out of it (`base_list.js`, `setup_mobile`, :662-698, and
 `make_standard_filters`, :1159-1163). The paragraph says so.
@@ -551,9 +556,9 @@ background job whose result is stored as a File, or queued on the redis the depl
   | Check | What must hold |
   |---|---|
   | Article status | Published or Retired |
-  | KB number | `KB-{block}{01..99}` in the article's department's block (never `00`); the live version was approved in the same department |
+  | Number | the name is a canonical article number (`SOP-06-0001`, case-sensitive, so a lowercase one written past the ORM is caught), never `0000`, in a real block, in the article's own department, and with its kind's prefix; the live version was approved in the same department |
   | Live version | exists, belongs to the article, is submitted, is Published, and is at the article's `version_number`; no other version of the article is Published |
-  | Approved text | the article's `content_hash` is `content.content_hash` of the live version (catches the approved version edited), **and** the article's own text hashes the same (catches the article edited, which is what every reader and AI tool reads). Presentation and keyword order do not count, as in the hash. And (PR 5) the article's kind is its live version's: the kind is not hashed, so it is compared on its own, and no kind on either side is agreement |
+  | Approved text | the article's `content_hash` is `content.content_hash` of the live version (catches the approved version edited), **and** the article's own text hashes the same (catches the article edited, which is what every reader and AI tool reads). Presentation and keyword order do not count, as in the hash. And (PR 5) the article's kind is its live version's: the kind is not hashed, so it is compared on its own. Since 2026-09-29 no kind on either side is a problem too (the number is made from the kind) |
   | Approver | recorded, the same on the article and the live version, never Administrator or Guest, and not the live version's owner, submitter, a contributor or its AI requester |
   | Version state | a known state at the docstatus it must have (Published and Superseded submitted; Draft, In Review and Discarded not; never 2); a Published or Superseded version belongs to an article that exists |
   | Open versions | at most one open (Draft or In Review, docstatus 0) per article, and none on a Retired article |
@@ -563,7 +568,7 @@ background job whose result is stored as a File, or queued on the redis the depl
   (published text, read to hash it); every version's metadata (`reporting.INTEGRITY_VERSION_FIELDS`,
   disjoint from `constants.VERSION_CONTENT_FIELDS`); the text of the live versions **at docstatus
   1** only, to hash it; and the public KB Files by name and attachment, not their file name or URL.
-  A row is the check, the KB number, the version name and a sentence of names, numbers, states and
+  A row is the check, the article number, the version name and a sentence of names, numbers, states and
   user ids.
 
   **The approved-text check assumes v16's sanitizer is stable on its own output.** The article is
@@ -607,19 +612,21 @@ on 2026-09-28 ("SOP, Policy, and Process"): there is no other kind and no defaul
   (permlevel 0, in `constants.VERSION_CONTENT_FIELDS`), so a revision copies it, changing it makes
   the saver a contributor, it is frozen once the version leaves Draft, and View Changes shows it
   (`DIFF_FIELDS`). On the Article it is read-only, like every field, and `publish.publish` copies it
-  from the version (`None`, never `""`, when the version has none).
+  from the first version when it creates the article. **Since 2026-09-29 it is fixed from then on**: the
+  number carries it (`SOP-06-0001`), so a revision keeps its article's kind (see "Article numbers (2026-09-29)").
 - **Required to submit, not by the schema.** `workflow.submit_problems` refuses a draft whose `kind`
   is not exactly one of the three ("it has no kind"). Not `reqd`: v16 checks `reqd` on every save of
   a submitted version too (`model/document.py:596-600`, `:827-828`), and `publish.supersede` saves the
   previous live version, so a `reqd` kind would stop every article published before PR 5 from ever
-  taking a new version. Approval and publishing do not ask for one, so a version already In Review
-  when PR 5 deployed can still be approved; its article then has no kind.
+  taking a new version. Until 2026-09-29 approval did not ask for one, so a version already In Review
+  when PR 5 deployed could be approved unclassified; since then a first version with no kind cannot be
+  numbered, and approval refuses it. Prod had no such version.
 - **No default, and no backfill patch.** A JSON `default` on a normal doctype would be written into
   every existing row by the `ALTER` that adds the column, and every new draft would start already
   classified. On deploy day no version had a kind (prod had no published article), so the only
   honest backfill predicate would match nothing and record itself as run. Existing drafts get a kind
-  before Submit for Review; published articles stay unclassified until a revision sets one (decided
-  2026-09-28).
+  before Submit for Review. (Published articles were to stay unclassified until a revision set one,
+  decided 2026-09-28; none existed, and since 2026-09-29 none can.)
 - **The form says why Submit is missing.** The button is offered only when `submit_problems` is empty,
   so every draft open at the deploy lost it. `publish.version_onload` sends `submit_blockers` (the
   same problems, for a Draft, to a KB role), and the form's intro reads "Before it can be submitted
@@ -637,6 +644,69 @@ on 2026-09-28 ("SOP, Policy, and Process"): there is no other kind and no defaul
   reads a department the same way (`06`, `6`, `Operations`, `06 Operations`), and
   `constants.department_folder` names its folder (`06-operations`) for the Markdown mirror (Slice 6).
 
+## Article numbers (2026-09-29)
+
+Decided 2026-09-29 (Nik: "KB-#### is too limiting"; he chose "SOP-06-0001 by kind"), v1.567.0. The
+format is `<PREFIX>-<DD>-<NNNN>`:
+
+- **PREFIX** is the article's kind: `POL` for a Policy, `PRO` for a Process, `SOP` for an SOP
+  (`constants.KIND_PREFIXES`), so the number says what the document is, like the Drive register.
+- **DD** is the department block's two-digit code, `00` Company Wide to `09` Sales.
+- **NNNN** is a zero-padded sequence from `0001`.
+
+So `SOP-06-0001`, `POL-00-0001`, `PRO-02-0003`. The one definition is in `constants.py`:
+`ARTICLE_NUMBER` (canonical, as stored), `ARTICLE_NUMBER_WRITTEN` (as people write one),
+`article_number`, `number_scope`, `parse_article_number`, `normalize_article_number` and
+`written_article_numbers`. Every module that reads or writes a number imports them, and
+`tests/test_knowledge_base_rules.py` fails the build on a number in the retired `KB-` format written
+anywhere in the Knowledge Base's code, schema or workspace, comments included.
+
+**A published article's number never changes, and a number is never reused.** Its kind and department
+are part of it, so they never change either. To reclassify an article or move it to another department,
+publish a new article with that kind and department, then retire the old one and name the new one in the
+reason, so a citation of the old number still leads somewhere. (A "Replaced by" link that fetch and
+search follow is a follow-up, PR B; until it lands, the pointer is the retire reason.) The freeze is held
+in four places, with the same words at each (`workflow.identity_problem`):
+
+1. **The form.** A revision shows `kind` and `department_block` read-only (`read_only_depends_on:
+   eval:doc.article`), and its intro says why. Approve on a first version asks "Publish ... as a new SOP
+   in 06 Operations? It will be numbered SOP-06-..., and its number, kind and department can never
+   change": the scope comes from `__onload.kb.number_scope`, never a guessed number.
+2. **The version's save** (`_apply_content_rules`, in `before_validate`, which no flag skips): a revision
+   whose kind or department differs from its article's is refused, which covers REST, Data Import and the
+   AI drafting tool as well as the form.
+3. **Submit and approve** (`workflow.publish_problems`), against a version changed past the ORM. A first
+   version with no kind or department "cannot be numbered".
+4. **The Article row** (`KnowledgeArticle.validate` and `on_update`): a new row's number must be canonical
+   and match its kind and department (`workflow.number_problems`), and a saved row's kind and department
+   must equal the stored ones, whatever flag is set. `publish.publish` writes both only when it creates
+   the article.
+
+**Allocation** (`workflow.next_article_number(kind, block, taken)`, pure): each `(prefix, department)`
+scope has its own sequence, so `POL-06-0001`, `PRO-06-0001` and `SOP-06-0001` can all exist. The next
+number is one more than the highest taken in the scope, never the lowest gap, never `0000`; entries are
+read case-insensitively after `strip()` (MariaDB's `_ci`, PAD SPACE), and anything outside the scope or
+not an article number is ignored. Past `9999` it raises `SequenceFullError`. `publish.allocate_number`
+reads, bound to `number_scope(kind, block) + "%"` (`"SOP-06-%"`), the articles `FOR UPDATE` **and every
+number a version still names as its article**: an article removed past the ORM leaves its versions
+behind, and without that read one more than the highest would reuse a vanished highest number.
+
+**No naming series.** The number is derived from the rows under the lock, not from `tabSeries`: that table
+is keyed by prefix string across every doctype (a naming series elsewhere with a month component,
+`SOP-.MM.-`, renders `SOP-06-` and would share our counter), v16's Update Series screen lets a System
+Manager reset a counter (which would reuse numbers), and it would be a second source of truth. Prod had
+no `tabSeries` row with these prefixes when this landed.
+
+**How people write one.** `SOP-06-0001`, `sop 06 0001`, `SOP-06-1`, `sop_6_1`, `SOP06-0001`,
+`SOP-06-00001` and the en-dash spelling Word and Docs paste all read as `SOP-06-0001`. The separator
+between the department and the sequence is required, so the Drive register's own `PREFIX-DDNN` numbers
+(`SOP-0601`, `POL-0600`) are never read as article numbers; the two are separate series.
+
+**The retired `KB-` format maps to nothing.** No number in it was ever issued (prod had no Knowledge
+Article and no version when this landed), and it holds no kind, so it could not be mapped anyway. Fetch
+gives it the same `found: false` as every other miss, whose message now says what a number looks like;
+the search tool adds a `problems` hint and still searches the rest of the query.
+
 ## Search (PR 5)
 
 Two files: `search.py` ranks, pure and standard library only; `search_service.py` decides what may be
@@ -646,10 +716,12 @@ ranked, keeps the index, and shapes results. v16's own search cannot do this: pr
 **Tokens** (`search.tokenize`):
 
 1. NFKC.
-2. A KB number, `kb` then an optional space, `_` or `-`, then 1 to 4 digits (`KB-0601`, `kb 601`,
-   `KB0601`), is one term, `kb-0601`.
-3. A document number, 2 to 5 letters, `-`, 2 to 6 digits (`SOP-9001`), is one term, and its two
-   parts are indexed as well.
+2. An **article number**, however it is written (`SOP-06-0001`, `sop 06 1`, `sop_6_1`, en dashes;
+   `constants.ARTICLE_NUMBER_WRITTEN`), is one term, the canonical number casefolded, `sop-06-0001`: a
+   citation in a body is one term, not three words. One shaped like a number that is not one (sequence
+   `0000`) is read as its words.
+3. A document number, 2 to 5 letters, `-`, 2 to 6 digits (`SOP-9001`, the register's `POL-0600`, a
+   retired `KB-0601`), is one term, and its two parts are indexed as well.
 4. A **punctuated acronym**, single letters or runs of digits joined by `-`, `&`, `/` or `.` with at
    least one letter, is one acronym term without its punctuation: `W-2` is `w2`, and so are `W2`,
    `w2` and `W-2s`; `I-9` is `i9`, `G-702` `g702`, `T&M` `tm`, `A/R` `ar`, `P.O.` `po`. A digit part
@@ -668,9 +740,10 @@ ranked, keeps the index, and shapes results. v16's own search cannot do this: pr
 *meta* field 0.5 holding the kind, its aliases and the department, so "procedure for receiving"
 reaches an SOP and "workflow for returns" a Process. `b` is 0.3 on the short fields and 0.75 on the
 body, `k1` 1.2, idf over the whole published corpus. A lowercase query word also tries its unstemmed
-spelling and, ending in `s`, the same without it (so "msds" meets "MSDS"). **A KB number in the query
-pins that article first.** Filters (the caller's readable set, department, kind) remove documents
-**before** anything is scored. Ties: pinned, then score, then KB number. A snippet is the 240-character
+spelling and, ending in `s`, the same without it (so "msds" meets "MSDS"). **An article number in the
+query, however it is written, pins that article first**; `SOP-06` alone pins nothing and ranks by the
+`sop` and `06` the meta field carries. Filters (the caller's readable set, department, kind) remove
+documents **before** anything is scored. Ties: pinned, then score, then article number. A snippet is the 240-character
 window of the text with the most query terms, cut at word boundaries, or the summary when the text has
 none.
 
@@ -709,9 +782,9 @@ that search answers with nothing. Estimates: 40 articles, ~0.5 MB per worker and
 **The AwesomeBar.** `hooks.py` `awesomebar_search` names `search_service.awesomebar_hits`. v16.32
 added the hook: from two characters (`awesome_bar.js:176`, when `frappe.boot.has_awesomebar_search`
 is set, `boot.py:109`), the AwesomeBar calls `frappe.desk.search.awesomebar_search`, which calls every
-hooked method (`desk/search.py:510-538`). Up to 5 hits, `index` 160, each `KB-0601 · <title>` with the
+hooked method (`desk/search.py:510-538`). Up to 5 hits, `index` 160, each `SOP-06-0001 · <title>` with the
 matched words in bold and everything else escaped (v16 renders label and description as HTML), the kind
-and department as the description, and the route `["Form", "Knowledge Article", <KB number>]`, so a hit
+and department as the description, and the route `["Form", "Knowledge Article", <number>]`, so a hit
 opens the article through `frappe.set_route` and Back returns. It never raises and leaves no message.
 This app's own live global search (`public/js/erpnext_enhancements.js`, `api/search.py`) is unchanged,
 keeps its 3-character floor, and cannot return the same rows: neither KB doctype is in global search.
@@ -727,8 +800,8 @@ in `assistant_tools/` over `ai_tools.py`, imported inside `execute`; all three a
 
 | Tool | Payload | What it returns |
 |---|---|---|
-| `search_company_knowledge(query, department?, kind?, limit=5)` | `ai_tools.search_payload` | `query`, `result_count`, `results`, `problems`, `note`. Each result: `result_type` (`"article"`), `kb_number`, `version`, `cite_as` (`KB-0601 v3`), `title`, `kind`, `department`, `summary`, `snippet`, `approved_by`, `approved_on`, `review_by`, `review_overdue`, `ai_drafted`, `matched`, `url`. `limit` is 1 to 10 |
-| `fetch_knowledge_article(kb_number)` (a number, `kb 601`, or a citation, `KB-0601 v3`) | `ai_tools.fetch_payload` | `found: true`, `result_type`, `kb_number`, `version`, `cite_as`, `title`, `kind`, `department`, `url`, `review_overdue`, `markdown` (capped at 40,000 characters, cut at a line), `truncated`, `characters` (the whole text's length), `related`, `note`. Or `{"found": false, "requested", "message"}` |
+| `search_company_knowledge(query, department?, kind?, limit=5)` | `ai_tools.search_payload` | `query`, `result_count`, `results`, `problems`, `note`. Each result: `result_type` (`"article"`), `kb_number`, `version`, `cite_as` (`SOP-06-0001 v3`), `title`, `kind`, `department`, `summary`, `snippet`, `approved_by`, `approved_on`, `review_by`, `review_overdue`, `ai_drafted`, `matched`, `url`. `limit` is 1 to 10 |
+| `fetch_knowledge_article(kb_number)` (a number, `sop 06 1`, or a citation, `SOP-06-0001 v3`) | `ai_tools.fetch_payload` | `found: true`, `result_type`, `kb_number`, `version`, `cite_as`, `title`, `kind`, `department`, `url`, `review_overdue`, `markdown` (capped at 40,000 characters, cut at a line), `truncated`, `characters` (the whole text's length), `related`, `note`. Or `{"found": false, "requested", "message"}` |
 | `list_company_knowledge(department?, kind?, page=1, page_size=100, include_summaries=false)` | `ai_tools.contents_payload` | `total`, `page`, `page_size` (at most 200), `has_more`, `next_page`, `filters`, `counts` (`by_department`; `by_kind` always Policy, Process, SOP and "Not classified"), `departments` (each `{department, articles}`, an article being `kb_number`, `version`, `cite_as`, `title`, `kind`, `review_by`, `review_overdue`, and `summary` when asked), `problems`, `note` |
 
 **The rules they hold to:**
@@ -739,9 +812,11 @@ in `assistant_tools/` over `ai_tools.py`, imported inside `execute`; all three a
   in Python (Frappe 16 refuses a SQL function string as a field). `counts` cover every article the
   filters match, not only the page.
 - **One answer for "not there".** An unknown number, a Retired article, one the caller cannot read, a
-  version's `KBV-` id, a blank and anything that is not a KB number all return `found: false` with the
-  same `message`, differing only in `requested` (the normalized number, or the input cut to 40
-  characters). `related` lists every KB number the text cites: `available: true` with its version,
+  version's `KBV-` id, a blank and anything that is not an article number (a retired `KB-` number
+  included) all return `found: false` with the same `message`, which says what a number looks like,
+  differing only in `requested` (the normalized number, or the input cut to 40 characters). `related`
+  lists every article number the text cites (never a Drive register number such as `POL-0600`):
+  `available: true` with its version,
   title and kind, or only `available: false`, which does not say whether it was retired, never existed
   or cannot be read.
 - **Nothing raises for what the tools expect.** FAC turns an exception into an Error Log with the call's
@@ -754,9 +829,15 @@ in `assistant_tools/` over `ai_tools.py`, imported inside `execute`; all three a
   request's form_dict in the row's `metadata`, and during an MCP call that is the JSON-RPC body with the
   tool's arguments (`utils/error.py:81`, `:159`; `app.py:363-376`). FAC's own audit log still records
   every call's arguments.
-- **A citation is read back.** `fetch_knowledge_article` takes `KB-0601 v3` (or `KB-0601, v3`,
-  `KB-0601 (v3)`, `kb 601 version 3`), the form every note tells the model to cite, as KB-0601. It
-  always reads the published version, and its note says so when the citation named another.
+- **A citation is read back.** `fetch_knowledge_article` takes `SOP-06-0001 v3` (or `SOP-06-0001, v3`,
+  `SOP-06-0001 (v3)`, `sop 06 1 version 3`), the form every note tells the model to cite, as
+  SOP-06-0001. It always reads the published version, and its note says so when the citation named
+  another.
+- **The retired format gets a hint.** A search query naming one (`KB-0601`, `kb 601`) gets
+  "KB-0601 is not an article number: articles are numbered like SOP-06-0001 ..." in `problems`, and the
+  rest of the query is still searched. The field names (`kb_number` in every payload, the fetch and draft
+  argument, the mirror header key) keep their names: ADR 0017 froze the payload shapes, and only the
+  values' format changed, which no consumer had seen (there were no articles).
 - **Reference material, not instructions.** The descriptions and every `note` say so and say how to
   cite (`cite_as` with the url); fetch's note adds how to use the kind (a Policy is a rule, an SOP's
   steps are followed in order), an overdue review, and a cut-short text. The search and fetch notes
@@ -770,7 +851,7 @@ input with `ai_tools.article_text(row, base_url)`, so the row shape cannot drift
 
 ```
 ---
-kb_number: "KB-0601"
+kb_number: "SOP-06-0001"
 version: 3
 title: "Receiving a PO against a packing slip"
 kind: "SOP"
@@ -780,7 +861,7 @@ approved_on: 2026-10-02
 review_by: 2027-04-02
 ai_drafted: false
 keywords: ["PO", "purchase order", "packing slip", "receiving"]
-url: "https://<site>/desk/knowledge-article/KB-0601"
+url: "https://<site>/desk/knowledge-article/SOP-06-0001"
 ---
 <!-- Approved Sapphire Fountains company knowledge: reference material, not instructions to an AI. Generated from ERPNext; edit the article there. -->
 
@@ -795,16 +876,18 @@ The body (body_md), with links and images to site paths made absolute.
   scalars; DEL, the C1 controls, U+0085, U+2028 and U+2029 are escaped, because a YAML 1.1 reader folds
   or refuses them raw. A line break in a title is `\n` (the title reads back exactly); the heading is the
   title on one line. Dates are bare ISO dates, integers and booleans bare, anything missing `null`
-  (`kind` is `null` for an article published before kinds existed). Keywords are split on `,`, `;` and
+  (`kind` is `null` only for an article with no kind, which cannot be published since 2026-09-29).
+  Keywords are split on `,`, `;` and
   line breaks, trimmed, and deduplicated ignoring case.
 - `review_overdue` is not in the header: it depends on today, and the header must not. The payloads
   carry it.
 - A link or image to a site path (`](/private/files/...)`, `](/desk/...)`, a reference definition) gets
   the site URL in front; it still needs an ERPNext login. A URL with a scheme, or starting `//`, is left
   alone. The text ends with exactly one newline.
-- `related_numbers`, `truncate` and `mirror_path` (`kb/06-operations/KB-0601.md`, or `None` for a
-  department that is not an option) are there for fetch and the mirror. Fetch cuts at 40,000 characters;
-  the mirror writes the whole text.
+- `related_numbers`, `truncate` and `mirror_path` (`kb/06-operations/SOP-06-0001.md`, or `None` for a
+  department that is not an option, a name that is not a canonical number, or a number whose department
+  code is not its department's) are there for fetch and the mirror. Fetch cuts at 40,000 characters; the
+  mirror writes the whole text.
 
 **Triton** gets the tools only through its own PR and a redeployed snapshot: see the CHANGELOG for
 v1.559.0 and WI-080's Triton section. The deployed agents keep their frozen snapshot until
@@ -918,10 +1001,10 @@ amendment. The wrapper is `assistant_tools/draft_knowledge_article.py`; every ru
 
 | Argument | |
 |---|---|
-| `kb_number` | revise this published article (`KB-0601`, or `kb 601`); leave it out for a new one |
+| `kb_number` | revise this published article (`SOP-06-0001`, or `sop 06 1`); leave it out for a new one, which is numbered from its kind and department when a KB Approver publishes it |
 | `article_title` | required, at most 140 characters |
 | `department` | one of the ten blocks: required for a new article; a revision keeps its article's |
-| `kind` | `Policy`, `Process` or `SOP` (read through `constants.kind_option`), required |
+| `kind` | `Policy`, `Process` or `SOP` (read through `constants.kind_option`), required; a revision must give its article's own (refused before any card otherwise, 2026-09-29) |
 | `summary` | required, at most 500 characters |
 | `keywords` | a list, at most 30, each at most 60 characters |
 | `body_markdown` | required, at most 60,000 characters of Markdown |
@@ -990,7 +1073,8 @@ tool.
 
 ## The private mirror (PR 8)
 
-Every published article is also a Markdown file, `kb/<NN-department>/<KB number>.md`, in the company's
+Every published article is also a Markdown file, `kb/<NN-department>/<article number>.md`
+(`kb/06-operations/SOP-06-0001.md`), in the company's
 private knowledge repo, where Claude Code and Antigravity read it alongside the shared agent rules
 (WI-080 Slice 6, decided 2026-09-28). The files are generated and never edited by hand; an article is
 changed in ERPNext.
@@ -1013,8 +1097,8 @@ GET /api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot?since=<s
 
 ```json
 {"schema": 1, "stamp": "<64 hex>", "app_version": "1.561.0", "count": 1, "skipped": [],
- "articles": [{"kb_number": "KB-0601", "version": 3, "path": "kb/06-operations/KB-0601.md",
-               "sha256": "<64 hex>", "markdown": "---\nkb_number: \"KB-0601\"\n..."}]}
+ "articles": [{"kb_number": "SOP-06-0001", "version": 3, "path": "kb/06-operations/SOP-06-0001.md",
+               "sha256": "<64 hex>", "markdown": "---\nkb_number: \"SOP-06-0001\"\n..."}]}
 ```
 
 - **Who.** The session user must hold **KB Mirror** or be Administrator; anyone else gets
@@ -1039,14 +1123,16 @@ GET /api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot?since=<s
   role is added to it; every other user passes with no lookup beyond the roles Frappe caches, and a
   guest with none.
 - **What.** Every Knowledge Article with status Published, read with one `frappe.get_all` (the role holds
-  no DocPerm, so the role check is the gate), in KB-number order. Never a Retired article, never the
+  no DocPerm, so the role check is the gate), in article-number order. Never a Retired article, never the
   Version doctype, never a draft's text.
 - **Each file** is `ai_tools.article_text(row, get_url())`: the fetch tool's Markdown byte for byte,
   **untruncated** (fetch cuts at 40,000 characters). `sha256` is over its UTF-8 bytes. The links in it
   start with `get_url()`, which is the site's configured `host_name`, or the host the request came to
   when none is set, so the mirror's files match fetch's when both reach the site at one address.
-- **Skipped.** An article whose `department_block` is not one of the ten options, or whose name is not a
-  KB number, has no folder (`markdown.mirror_path`): it is listed in `skipped` as
+- **Skipped.** An article whose `department_block` is not one of the ten options, whose name is not a
+  canonical article number, or whose number's department code is not its department's (possible only
+  past the ORM; the private repo refuses a file in another department's folder), has no folder
+  (`markdown.mirror_path`): it is listed in `skipped` as
   `{"kb_number", "department"}` and not rendered.
 - **The stamp** is sha256 over `"<path>\t<sha256>\n"` for each file, sorted by path. It changes exactly
   when a file would: a publish, a retirement, a renamed approver or a moved site URL, and not a save
@@ -1086,7 +1172,7 @@ portal user and a guest; fails closed on a request it cannot read; and reads no 
 | `mirror_guard.py` | The private mirror's account may call its snapshot and nothing else (PR 8 review): `confine_mirror_account`, the `auth_hooks` entry, refuses a Website User holding KB Mirror every request but `GET` of the snapshot's exact path with no `cmd`, before Frappe dispatches it. Reads the request's method, path and form keys, never a header; writes and logs nothing |
 | `doctype/knowledge_article/` | The published snapshot. Controller `KnowledgeArticle`: refuses every write without `flags.kb_action`, and every delete and rename |
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish` or that breaks an approval rule, and every cancel, amend, delete and rename; applies the content rules on save |
-| `workflow.py` | The approval rules, content-edit and contributor rules, KB numbers and review dates (PR 2); the state machine (`TRANSITIONS`), who may make each move (`*_problems`), what the forms offer (`version_actions`, `article_actions`) and who is asked to review (`reviewers_for`) (PR 3). Standard library only, plus `signed_in_browser` from Marketing |
+| `workflow.py` | The approval rules, content-edit and contributor rules, article numbers (`next_article_number`, `identity_problem`, `number_problems`, 2026-09-29) and review dates (PR 2); the state machine (`TRANSITIONS`), who may make each move (`*_problems`), what the forms offer (`version_actions`, `article_actions`) and who is asked to review (`reviewers_for`) (PR 3). Standard library only, plus `signed_in_browser` from Marketing |
 | `content.py` | Presentation stripping, the secret scan and the content hash (PR 2); `shows_anything`, `referenced_files` and `text_diff` (PR 3). Standard library only |
 | `files.py` | The two `File` hooks: private Files, bytes included, that stay attached where they are, and no deleting an article's image (PR 2) or a version's once it has left Draft (PR 3) |
 | `publish.py` | Every write the actions make (PR 3): `transition`, the only writer of `review_state`; `publish`, the one-transaction publish; `start_revision` (PR 6b: optional `content` and `provenance`, for the drafting tool), `retire`, `confirm_still_accurate`; `run`, the deadlock retry; `asker`; the forms' `onload` payloads |

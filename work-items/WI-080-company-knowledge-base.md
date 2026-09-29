@@ -10,6 +10,40 @@
 **Blocks:** nothing
 **Decision record:** [ADR 0017](../decisions/adr/0017-company-knowledge-lives-in-a-native-module.md)
 
+## Decided 2026-09-29: numbering by kind
+
+Nik: "Also I feel like KB-#### is too limiting." Offered the choices, he chose **"SOP-06-0001 by kind"**:
+"The prefix follows the kind (POL-, PRO-, SOP-), so the number says what the document is, like the Drive
+register. Changing an article's kind or department changes its number." He was told the rule that goes
+with it, and did not object: **a published article's number never changes, and a number is never
+reused. To change an article's kind or department, publish a new article and retire the old one with a
+pointer to the new one, so old citations still resolve.**
+
+- **The format** is `<PREFIX>-<DD>-<NNNN>`: `POL` for a Policy, `PRO` for a Process, `SOP` for an SOP; the
+  two-digit department block (`00` Company Wide to `09` Sales); a zero-padded sequence from `0001`. So
+  `SOP-06-0001`, `POL-00-0001`, `PRO-02-0003`. Each `(prefix, department)` scope counts on its own, one
+  more than the highest taken (the articles, and every number a version still names), never a gap and
+  never `0000`. No naming series: the number is derived from the rows under `FOR UPDATE`.
+- **The first article**, "Receiving a PO against a packing slip" (an SOP in 06 Operations, drafted as
+  "KB-0601" before this), publishes as **SOP-06-0001**.
+- **Nothing was migrated.** Prod had no Knowledge Article, no version (no `KBV` naming-series row), no
+  change-log, File or Deleted Document row for either doctype, and no `tabSeries` row with these prefixes
+  (read-only checks, 2026-09-29). The retired `KB-` format maps to nothing: fetch answers it with the
+  ordinary `found: false`, whose message now says what a number looks like, and the search tool adds a
+  `problems` hint.
+- **The kind and the department are fixed at first publish**, in four places with the same message: the
+  form (read-only on a revision), the version's save, submit and approve, and the Article row itself.
+- **The field and payload names stay** (`kb_number`, the mirror header key, the tools' argument): ADR 0017
+  §3 froze the shapes, and only the values' format changed, which no consumer had seen. The mirror's
+  `schema` stays 1 for the same reason; the private repo's script changes in a paired PR.
+- **A "Replaced by" pointer** on a retired article, which fetch and search follow, is a follow-up (PR B),
+  needed before the first retirement for a kind or department change. Until then the pointer is the
+  retire reason, and the Retire dialog says so.
+- **Hold every Approve and Publish on prod until this is deployed and verified**: approval is the only
+  thing that allocates a number, and one approved first would keep a `KB-` number for good.
+- v1.567.0. The PR-design narration below keeps the examples it was written with, in the retired
+  `KB-DDNN` format (`KB-0601`, `kb 601`); the normative lines and the acceptance criteria are updated.
+
 ## Why
 
 Nik wants a company knowledge base that people *and* every AI tool Sapphire uses read from the same place, so that Parker, James and the crews can keep the company running without him. On 2026-09-24 he chose ERPNext as its home. After comparing Frappe Wiki v3, the recommendation is to build a narrow native module (ADR 0017).
@@ -107,7 +141,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 - `modules.txt` += `Knowledge Base`, plus `knowledge_base/` with a README.
 - **`Knowledge Article`**, class `KnowledgeArticle`:
   - `autoname: field:kb_number`, `allow_rename 0`, `track_changes 1`.
-  - Every field is read-only: kb_number, title, department_block, status (Published/Retired), summary, keywords, `body` (Text Editor), `body_md` (hidden), content_hash, version_number, live_version (Data), change_note, author, approved_by/on, first_published_on, process_owner, review_every_months, review_by, last_reviewed_on/by, ai_drafted, retired_on/by/reason.
+  - Every field is read-only: kb_number (the article number, `SOP-06-0001` since 2026-09-29), title, department_block, status (Published/Retired), summary, keywords, `body` (Text Editor), `body_md` (hidden), content_hash, version_number, live_version (Data), change_note, author, approved_by/on, first_published_on, process_owner, review_every_months, review_by, last_reviewed_on/by, ai_drafted, retired_on/by/reason.
   - `validate` refuses any change without `flags.kb_action`. `on_trash` refuses.
 - **`Knowledge Article Version`**, class `KnowledgeArticleVersion`:
   - Submittable, `KBV-.#####`, `track_changes 0`.
@@ -150,7 +184,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - the version is not In Review;
   - the approver is the owner, the submitter, a contributor or the AI requester;
   - `modified` is not the value the approver opened.
-- It also holds `next_kb_number(block, taken)` (`KB-{block}{01..99}`, with `00` reserved as the block index) and `review_by`.
+- It also holds `next_kb_number(block, taken)` (`KB-{block}{01..99}`, with `00` reserved as the block index) and `review_by`. *(Since 2026-09-29: `next_article_number(kind, block, taken)`, `<PREFIX>-<DD>-<NNNN>` per kind and department scope, from `0001`; see "Decided 2026-09-29: numbering by kind".)*
 - `knowledge_base/content.py` (standard library only):
   - `strip_presentation` removes `style` (except `text-align`), the presentation attributes, `id`, every class outside `KEPT_CLASSES` (the structural classes v16's Text Editor writes), the tags of every element outside `KEPT_ELEMENTS` (the ones it writes; the element is unwrapped and its text stays), `script` and `style` with their contents, and every comment and declaration; it keeps tables, lists, code blocks, alignment, direction and indent.
   - `secret_findings` runs on the text **after** `data:` images are removed, because v16 extracts images only after `validate` (`document.py:594` → `:835`). It returns line and kind, never the value.
@@ -191,7 +225,7 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
   - **A ToDo's description, and so the "Assigned" Comment v16 writes from it (`todo.py:40-52`), are readable by every System Manager** (`todo.py:149-172` exempts any role on the ToDo DocPerm). The title is the one piece of a draft either carries; the reviewer's note stays in `review_note`.
   - **v16's `to_markdown` cannot catch its own error.** It catches `HTMLParser.HTMLParseError`, which Python 3 does not have (`utils/data.py:2468-2477`), so a converter failure raises `AttributeError` from the `except` line. Publishing refuses in words and logs only the exception's type.
   - **Moving a File runs `File.validate`**, which refuses a File whose bytes are missing on disk (`validate_file_on_disk`). A draft whose picture lost its bytes cannot be published until the picture is removed from the body, which is the right answer for approved text.
-  - **An article keeps its department.** A revision whose `department_block` differs from its article's is refused at submit and at publish: the KB number carries the block and never changes.
+  - **An article keeps its department.** A revision whose `department_block` differs from its article's is refused at submit and at publish: the KB number carries the block and never changes. *(Since 2026-09-29 the number carries the kind too, and a revision that changes either is refused at the save as well, and by the Article row.)*
   - **Decision (a):** `files.file_has_permission` refuses `delete` on a File attached to a version that has left Draft (In Review, Published, Superseded or Discarded), not only a submitted one: a version's pictures change only while its text can. Detaching was already refused by PR 2.
   - **Decision (b):** a Comment of type "Comment" on a version, and a ToDo on one that KB code did not raise (or an edit to its text), are refused on `before_validate` (`knowledge_base/references.py`). Refused rather than accepted, because a reviewer quoting the draft is the normal case and every System Manager reads both doctypes. And FAC's `extract_file_content` names a File, not a doctype, then checks only read on what it is attached to, which a KB Author passes for a draft's screenshot; the AI gate now looks the File up and refuses one attached to a denylisted doctype (`_gate.DENYLIST_FILE_ARGUMENTS`), failing closed if the lookup fails.
   - **Not closed, and cannot be from the server:** FAC 3.0.0's browser tools read the page the person has open in their own browser. `browser_get_form_data` and `browser_take_screenshot` ask first in FAC's own card; `browser_get_page_context` sends the page's text with no card (`public/chat/widget/widget_browser_tools.js`, `TOOLS_REQUIRING_CONFIRMATION`). A KB Author with a draft open who asks Claude about "this page" hands it the draft. The server never sees which page is open. Options for Nik: accept it as the person showing their own screen, or refuse `browser_navigate_to` to a `/desk/knowledge-article-version/` URL in the gate (the model could then not open a draft for itself), or ask upstream for a per-doctype exclusion.
@@ -236,6 +270,9 @@ Every PR bumps `__init__.py` and `package.json` together and adds a CHANGELOG en
 - The test is a bench-free **pytest** on its **own** `python -m pytest` step, using a SOP-0030-shaped fixture.
 
 ### Slice 3: AI reach, AI-first (v1b: PR 5, PR 6a, PR 6b, Triton) [M–L, 4.25–5.75 d]
+
+*This slice's design examples use the retired `KB-DDNN` format (`KB-0601`, `kb 601`); since 2026-09-29 an
+article is `SOP-06-0001` (see the decision at the top).*
 
 #### Found while designing Slice 3 (each checked 2026-09-28)
 
@@ -982,7 +1019,7 @@ This slice is one-way, KB → Training, and read-only. **It changes no Training 
 ### Slice 6: private Markdown mirror (PR 8) [S–M, 1–1.5 d + a manual setup]
 
 - The Drive copy keeps "PR 7" (Slice 4). The mirror is PR 8 and may merge first.
-- Every Published article becomes `kb/<NN-department>/<KB-number>.md` in the company's private knowledge repo.
+- Every Published article becomes `kb/<NN-department>/<article number>.md` (`kb/06-operations/SOP-06-0001.md` since 2026-09-29; the folder's code and the number's department code agree) in the company's private knowledge repo.
 - Each file has the same header and text as `fetch_knowledge_article`, produced by the same renderer.
 - `kb/` is generated and never hand-edited.
 
@@ -1018,8 +1055,8 @@ def snapshot(since=None):
 
 ```json
 {"schema": 1, "stamp": "3f9c…", "app_version": "1.56x.0", "count": 41, "skipped": [],
- "articles": [{"kb_number": "KB-0601", "version": 3, "path": "kb/06-operations/KB-0601.md",
-               "sha256": "…", "markdown": "---\nkb_number: \"KB-0601\"\n…"}]}
+ "articles": [{"kb_number": "SOP-06-0001", "version": 3, "path": "kb/06-operations/SOP-06-0001.md",
+               "sha256": "…", "markdown": "---\nkb_number: \"SOP-06-0001\"\n…"}]}
 ```
 
 - **Tests** (a new class in `test_knowledge_base_actions`):
@@ -1028,7 +1065,7 @@ def snapshot(since=None):
   - a file equals `fetch_payload()["markdown"]` byte for byte for an article under 40,000 characters;
   - `since` gives "unchanged";
   - the stamp changes when an approver's full name changes;
-  - paths match `^kb/\d{2}-[a-z-]+/KB-\d{4}\.md$`;
+  - paths match `^kb/([0-9]{2})-[a-z-]+/(?:POL|PRO|SOP)-([0-9]{2})-[0-9]{4}\.md$`, the two codes equal (since 2026-09-29);
   - an unmapped department is skipped.
 - `test_whitelist_placement` and `test_hooks_integrity` cover the endpoint's placement.
 - **Version:** the next MINOR. Update the CHANGELOG, `knowledge_base/README.md` and `api/README.md`.
@@ -1062,7 +1099,7 @@ def snapshot(since=None):
   1. GET the snapshot, passing `since` from `kb/_manifest.json`. Exit 0 on "unchanged".
   2. Validate: `schema == 1`; every path matches the pattern; every file starts with `---\n`; every `sha256` matches its text.
   3. Write each file (UTF-8, LF, one trailing newline).
-  4. Delete every **`kb/*/KB-*.md`** that is not in the snapshot. `kb/index.md` and `kb/_manifest.json` are never deleted.
+  4. Delete every article file (**`kb/*/<POL|PRO|SOP>-DD-NNNN.md`** since 2026-09-29) that is not in the snapshot. `kb/index.md` and `kb/_manifest.json` are never deleted.
   5. Write `kb/index.md` (grouped as `list_company_knowledge` groups) and `kb/_manifest.json` (`{schema, stamp, count, articles}`, with no timestamps).
 - **Safety.** The run fails and changes nothing if:
   - the snapshot fails;
@@ -1127,15 +1164,23 @@ All checks are read-only, against prod after each deploy. No MCP query names the
 
 **Slice 3, PR 5**
 - ``SELECT parent, fieldtype, options, permlevel, reqd, `default` FROM tabDocField WHERE parent LIKE 'Knowledge Article%' AND fieldname='kind'`` returns 2 rows: Select, options blank then `Policy`, `Process`, `SOP`, permlevel 0, `reqd` 0 and `default` NULL.
-- ``SELECT name, kind FROM `tabKnowledge Article` `` shows NULL for any article published before PR 5 (there was none on 2026-09-28).
+- ``SELECT name, kind FROM `tabKnowledge Article` `` shows NULL for any article published before PR 5 (there was none on 2026-09-28; since 2026-09-29 none can be, the number being made from the kind).
 - On a draft with no kind:
   - Submit for Review is not offered;
   - the intro reads "Before it can be submitted for review: it has no kind";
   - after a kind is chosen and saved, Submit appears.
 - After a version with kind SOP is approved, its article shows SOP, and the Knowledge Base Integrity report returns 0 rows.
+
+**Numbering by kind (2026-09-29, v1.567.0)**
+- Before merging, ``SELECT COUNT(*) FROM `tabKnowledge Article` `` is still 0. If it is not, stop and design a migration.
+- The first approval gives ``SELECT name, kind, department_block FROM `tabKnowledge Article` `` = `SOP-06-0001` | SOP | 06 Operations, and the Integrity report (run as a KB Approver) is empty.
+- A second SOP in 06 Operations is `SOP-06-0002`; the first Policy there is `POL-06-0001`.
+- A revision that changes kind or department is refused at save with the new-article-and-retire message.
+- The AwesomeBar finds `sop 06 1`; `fetch_knowledge_article("SOP-06-0001 v1")` returns `found: true`, and `fetch_knowledge_article("KB-0601")` returns `found: false` with the format message.
+- The next kb-mirror run writes `kb/06-operations/SOP-06-0001.md`.
 - On a technician's phone:
   - typing **PO** in the AwesomeBar shows KB hits;
-  - **KB-0601** and **kb 601** put that article first;
+  - **SOP-06-0001** and **sop 06 1** put that article first (the article number since 2026-09-29);
   - searches of 3 or more characters still show the same global results as before.
 - A unique word typed into a draft body is never found by the AwesomeBar (nor, after 6a, by the tool).
 - Warm `frappe.desk.search.awesomebar_search?txt=PO` returns in under 300 ms in the browser's Network panel.
@@ -1145,10 +1190,10 @@ All checks are read-only, against prod after each deploy. No MCP query names the
 
 **Slice 3, PR 6a**
 - ``SELECT tool_name, tool_category, enabled, source_app FROM `tabFAC Tool Configuration` WHERE tool_name IN ('search_company_knowledge','fetch_knowledge_article','list_company_knowledge')`` returns 3 rows: `read_only`, 1, `erpnext_enhancements`.
-- As a technician in Claude, "how do I receive a PO against a packing slip?" cites `KB-06xx vN` with a link.
+- As a technician in Claude, "how do I receive a PO against a packing slip?" cites `SOP-06-000N vN` with a link.
 - ``SELECT COUNT(*) FROM `tabAI Pending Action` WHERE tool_name IN (…the three…)`` = 0.
-- `fetch_knowledge_article` on `"KB-9999"`, on `"KBV-00001"` and on a retired number returns the same `found:false` apart from `requested`, with no new Error Log.
-- A fetched article's header has the 11 keys in order, its `kind` is `Policy`, `Process`, `SOP` or `null`, and `related` lists the KB numbers its text cites.
+- `fetch_knowledge_article` on `"SOP-09-9999"`, on `"KBV-00001"`, on a retired number and on the retired format `"KB-0601"` returns the same `found:false` apart from `requested`, with no new Error Log, and its message says what an article number looks like.
+- A fetched article's header has the 11 keys in order, its `kind` is `Policy`, `Process` or `SOP`, and `related` lists the article numbers its text cites (never a Drive register number such as `POL-0600`).
 - `list_company_knowledge` gives `total` = ``SELECT COUNT(*) FROM `tabKnowledge Article` WHERE status='Published'``, and `counts.by_kind` has only Policy, Process, SOP and "Not classified".
 - Once 10 or more articles are published, the real questions staff have asked (kept in the private repo) reach ≥ 80% in the top 3, and every acronym question passes.
 - Triton chat lists the three tools within an hour. After `deploy_agents`, the snapshot header names the PR 6a version.
@@ -1184,7 +1229,7 @@ All checks are read-only, against prod after each deploy. No MCP query names the
 - `grep -rn "knowledge_base" erpnext_enhancements/api/training*.py erpnext_enhancements/training/` returns nothing: Training never imports the KB. No Training doctype JSON and no file under `public/js/training/` changes in the slice's diff.
 
 **Slice 6**
-- The kb-mirror run is green, and the number of `kb/*/KB-*.md` files equals the Published count.
+- The kb-mirror run is green, and the number of article files in the department folders (`kb/*/SOP-06-0001.md` and the like) equals the Published count.
 - A mirror file equals the `markdown` from `fetch_knowledge_article` for the same article byte for byte.
 - Retiring a test article deletes its file on the next run.
 - A second run with nothing changed makes no commit.

@@ -76,7 +76,7 @@ DOCTYPE_TOOLS = (
 #: Raw SQL that reaches the Version table. Each must be refused under both argument names.
 VERSION_SQL = (
     "select name from `tabKnowledge Article Version`",
-    "SELECT body FROM `tabKnowledge Article Version` WHERE article = 'KB-0612'",
+    "SELECT body FROM `tabKnowledge Article Version` WHERE article = 'SOP-06-0012'",
     "select name from tabKnowledge Article Version",
     'select name from "tabKnowledge Article Version"',
     "select name from `tabKNOWLEDGE article VERSION`",
@@ -137,7 +137,7 @@ ARTICLE_SQL = (
     # Comment markers on the published doctype alone: searching the unstripped text too must not
     # turn these into refusals.
     "select name, '#' as x from `tabKnowledge Article` -- the published text",
-    "select name from `tabKnowledge Article` /* KB-0612 */ where status = 'Published'",
+    "select name from `tabKnowledge Article` /* SOP-06-0012 */ where status = 'Published'",
     "select name from /*! `tabKnowledge Article` */",
 )
 
@@ -319,8 +319,8 @@ class TestThePublishedDoctypeIsNotRefused(unittest.TestCase):
     def test_generic_tools_on_the_published_doctype(self):
         for tool in DOCTYPE_TOOLS:
             with self.subTest(tool=tool):
-                self.assertIsNone(_gate.denylist_hit(tool, {"doctype": ARTICLE, "name": "KB-0612"}))
-        self.assertIsNone(_gate.denylist_hit("fetch", {"id": f"{ARTICLE}/KB-0612"}))
+                self.assertIsNone(_gate.denylist_hit(tool, {"doctype": ARTICLE, "name": "SOP-06-0012"}))
+        self.assertIsNone(_gate.denylist_hit("fetch", {"id": f"{ARTICLE}/SOP-06-0012"}))
         self.assertIsNone(_gate.denylist_hit("run_python_code", {"data_query": {"doctype": ARTICLE}}))
 
     def test_other_shapes_are_left_alone(self):
@@ -419,7 +419,7 @@ class TestTheRefusalComesFirst(unittest.TestCase):
                     self.assertIn(VERSION, logged["summary"])
 
     def test_the_published_doctype_passes_through_with_gating_off(self):
-        response, calls = self._run("get_document", {"doctype": ARTICLE, "name": "KB-0612"})
+        response, calls = self._run("get_document", {"doctype": ARTICLE, "name": "SOP-06-0012"})
         self.assertEqual(calls["executed"], 1)
         self.assertEqual(calls["logged"], [])
         self.assertTrue(response["success"])

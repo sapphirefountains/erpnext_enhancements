@@ -92,7 +92,6 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import frappe
 
 from erpnext_enhancements.knowledge_base import constants, content, workflow
-from erpnext_enhancements.knowledge_base.search import normalize_kb_number
 
 TOOL_NAME = "draft_knowledge_article"
 ARTICLE = constants.ARTICLE_DOCTYPE
@@ -208,7 +207,7 @@ SAVEPOINT = "kb_ai_draft"
 
 #: A refused picture whose address a browser and Python could read differently.
 UNREADABLE_ADDRESS = "an address that cannot be read safely"
-KB_NUMBER_WANTED = "kb_number must be a KB number such as KB-0601, or left out for a new article"
+KB_NUMBER_WANTED = "kb_number must be an article number such as SOP-06-0001, or left out for a new article"
 DEPARTMENT_WANTED = "department must be one of the ten department blocks, such as 06 Operations"
 
 NOT_FROM_A_CARD = (
@@ -468,7 +467,7 @@ def _write(values, requester):
 		# Under the article's row lock, as the Start Revision button does: a retire or another revision
 		# that committed since the precheck read is seen here.
 		article = frappe.get_doc(ARTICLE, number, for_update=True)
-		problems = _article_problems(number, article, fields["department_block"])
+		problems = _article_problems(number, article, fields["department_block"], fields["kind"])
 		if not problems:
 			open_row = publish.open_version(number, lock=True)
 			if open_row:
@@ -524,7 +523,7 @@ def _check(arguments, requester, confirmer=None, *, secrets=None, read=None):
 		from erpnext_enhancements.knowledge_base import publish
 
 		article = publish.article_row(number)
-		problems += _article_problems(number, article, values.get("department_block"))
+		problems += _article_problems(number, article, values.get("department_block"), values.get("kind"))
 		if article is not None and article.get("status") == PUBLISHED:
 			if not values.get("department_block"):
 				values["department_block"] = article.get("department_block")
@@ -575,7 +574,7 @@ def _read(args):
 	raw_number = args.get("kb_number")
 	values["kb_number"] = None
 	if isinstance(raw_number, str) and raw_number.strip():
-		values["kb_number"] = normalize_kb_number(raw_number)
+		values["kb_number"] = constants.normalize_article_number(raw_number)
 		if values["kb_number"] is None:
 			problems.append(KB_NUMBER_WANTED)
 	elif "kb_number" in args and not isinstance(raw_number, str):
@@ -740,16 +739,19 @@ def _who(requester, confirmer):
 	return problems
 
 
-def _article_problems(number, article, department):
+def _article_problems(number, article, department, kind):
 	"""Why ``number`` cannot take a new version: it is not a published article (an unknown and a
-	retired one get the same words), or it keeps another department (``workflow.publish_problems``)."""
+	retired one get the same words), or the revision would change the kind or the department its
+	number carries (``workflow.publish_problems``, through ``workflow.identity_problem``). ``kind`` is
+	required, so a revision must give its article's own; ``department`` may be left out, and is then
+	the article's."""
 	if article is None or article.get("status") != PUBLISHED:
 		return [
 			f"{number} is not a published article, so it cannot be revised; find it with "
 			"search_company_knowledge, or leave kb_number out to draft a new article"
 		]
 	block = department or article.get("department_block")
-	return workflow.publish_problems({"department_block": block}, article)
+	return workflow.publish_problems({"department_block": block, "kind": kind}, article)
 
 
 def _open_version_problem(number, open_row):

@@ -10,8 +10,8 @@ checks that in a fresh interpreter), so this suite needs no stub. What it pins:
   in the table and allowed, or refused with a sentence naming the state. Superseded and Discarded
   are final; Published only ever becomes Superseded.
 * **Who may make each move**, rule by rule, each alone refusing and named: submit (a KB role, a
-  Draft with a title, a department and some text, no secret, an article that is not retired and
-  keeps its department), withdraw (the author's side), request changes (a KB Approver with no hand
+  Draft with a title, a department, a kind and some text, no secret, an article that is not retired
+  and keeps its kind and department, which its number carries), withdraw (the author's side), request changes (a KB Approver with no hand
   in it, a named person, from a browser, not an AI gate card), discard (the author's side or a KB
   Approver, Draft only), start a revision (a KB role, a published article), retire (a KB Approver,
   named, from a browser, not an AI card, nothing open), confirm (the process owner or a KB
@@ -87,8 +87,9 @@ def _version(**values):
 
 def _article(**values):
 	article = {
-		"name": "KB-0612",
+		"name": "SOP-06-9012",
 		"status": "Published",
+		"kind": "SOP",
 		"department_block": "06 Operations",
 		"process_owner": OTHER,
 		"live_version": "KBV-00007",
@@ -215,16 +216,28 @@ class TestSubmit(unittest.TestCase):
 		del version["kind"]
 		self.assertEqual(W.submit_problems(version, AUTHOR, (K.AUTHOR_ROLE,)), ["it has no kind"])
 
-	def test_a_version_in_review_with_no_kind_can_still_be_approved(self):
-		"""Only submitting needs a kind. A version already In Review when PR 5 deployed has none, and
-		approval and publishing do not ask, so it publishes and its article is unclassified until a
-		revision sets one (decided 2026-09-28)."""
+	def test_a_version_in_review_with_no_kind_cannot_be_numbered(self):
+		"""Until 2026-09-29 only submitting needed a kind, so a version already In Review when PR 5
+		deployed could be approved and its article left unclassified. Now the number is made from the
+		kind (``SOP-06-0001``), so publishing asks too: a first version is refused because it cannot be
+		numbered, and a revision because it would change its article's kind. The approval rules
+		themselves are unchanged; prod had no such version when this landed."""
 		version = _version(review_state="In Review", submitted_by=AUTHOR, kind=None)
 		self.assertEqual(
 			W.approval_problems(version, APPROVER, (K.APPROVER_ROLE,), opened_modified=MODIFIED, **BROWSER), []
 		)
-		self.assertEqual(W.publish_problems(version, _article()), [])
-		self.assertEqual(W.publish_problems(version, None), [])
+		self.assertEqual(W.publish_problems(version, None), ["it has no kind, so it cannot be numbered"])
+		(problem,) = W.publish_problems(version, _article())
+		self.assertIn("SOP-06-9012 keeps its kind and department", problem)
+		self.assertIn("Each of its versions is an SOP in 06 Operations.", problem)
+
+	def test_a_missing_kind_or_department_is_named_once_in_the_submit_blockers(self):
+		"""``submit_problems`` includes ``publish_problems``, which since 2026-09-29 also says a first
+		version with no kind or department "cannot be numbered"; the form's blocker names each once."""
+		self.assertEqual(
+			W.submit_problems(_version(kind=None, department_block=""), AUTHOR, (K.AUTHOR_ROLE,)),
+			["it has no department", "it has no kind"],
+		)
 
 	def test_a_secret_found_since_the_save_is_named_without_its_value(self):
 		found = [("body", C.Finding(3, "a Stripe secret key"))]
@@ -241,9 +254,16 @@ class TestSubmit(unittest.TestCase):
 			article=_article(status="Retired"),
 		)
 		self.assertEqual(len(problems), 2)
-		self.assertIn("KB-0612 is Retired", problems[0])
-		self.assertIn("an article keeps its department", problems[1])
-		self.assertIn("06 Operations", problems[1])
+		self.assertIn("SOP-06-9012 is Retired", problems[0])
+		self.assertIn("SOP-06-9012 keeps its kind and department", problems[1])
+		self.assertIn("To move it to 03 Finance, start a new article", problems[1])
+
+	def test_a_revision_of_another_kind(self):
+		"""2026-09-29: the number carries the kind too, so a revision keeps it as it keeps the
+		department."""
+		(problem,) = W.submit_problems(_version(kind="Policy"), AUTHOR, (K.AUTHOR_ROLE,), article=_article())
+		self.assertIn("SOP-06-9012 keeps its kind and department", problem)
+		self.assertIn("To make it a Policy, start a new article", problem)
 
 
 # ------------------------------------------------------------------ withdraw
@@ -348,11 +368,19 @@ class TestPublishProblems(unittest.TestCase):
 		self.assertEqual(W.publish_problems(_version(), _article()), [])
 
 	def test_a_retired_article_takes_no_new_version(self):
-		self.assertIn("KB-0612 is Retired", W.publish_problems(_version(), _article(status="Retired"))[0])
+		self.assertIn("SOP-06-9012 is Retired", W.publish_problems(_version(), _article(status="Retired"))[0])
 
 	def test_an_article_keeps_its_department(self):
 		problem = W.publish_problems(_version(department_block="03 Finance"), _article())[0]
-		self.assertIn("an article keeps its department: KB-0612 is numbered in 06 Operations", problem)
+		self.assertIn(
+			"SOP-06-9012 keeps its kind and department: they are part of its number, which never changes.",
+			problem,
+		)
+		self.assertIn("retire SOP-06-9012 and name the new article in the reason", problem)
+
+	def test_an_article_keeps_its_kind(self):
+		(problem,) = W.publish_problems(_version(kind="Process"), _article())
+		self.assertIn("To make it a Process, start a new article with that kind and department", problem)
 
 
 # ------------------------------------------------------------------ articles
@@ -452,7 +480,7 @@ class TestRequiredText(unittest.TestCase):
 		for value in (None, "", "   \n"):
 			with self.subTest(value=value):
 				self.assertEqual(W.required_text_problem(value, "say why"), "say why")
-		self.assertIsNone(W.required_text_problem("Replaced by KB-0613.", "say why"))
+		self.assertIsNone(W.required_text_problem("Replaced by SOP-06-9013.", "say why"))
 
 
 # ------------------------------------------------------------------ the buttons are the rules

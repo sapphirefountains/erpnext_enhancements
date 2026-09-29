@@ -51,10 +51,10 @@ def get_columns():
 	return [
 		{
 			"fieldname": "kb_number",
-			"label": _("KB Number"),
+			"label": _("Article Number"),
 			"fieldtype": "Link",
 			"options": constants.ARTICLE_DOCTYPE,
-			"width": 110,
+			"width": 120,
 		},
 		{"fieldname": "title", "label": _("Title"), "fieldtype": "Data", "width": 260},
 		{"fieldname": "state", "label": _("State"), "fieldtype": "Data", "width": 130},
