@@ -141,6 +141,18 @@ def _get_doc(doctype, name=None):
 	return STATE["docs"][name if name else doctype]
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``). Reading ``a[0]``, as this stub used to, recorded ``""`` for
+	every keyword call."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
@@ -157,7 +169,7 @@ def _install_frappe_stub():
 	frappe.new_doc = lambda doctype: _Dict(doctype=doctype)
 	frappe.enqueue = lambda *a, **k: None
 	frappe.msgprint = lambda *a, **k: None
-	frappe.log_error = lambda *a, **k: STATE["errors"].append(a[0] if a else "")
+	frappe.log_error = _v16_log_error
 	frappe.get_traceback = lambda: ""
 
 	class _PermissionError(Exception):

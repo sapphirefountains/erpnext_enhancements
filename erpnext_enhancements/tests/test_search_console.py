@@ -15,7 +15,9 @@ same 403 as a missing grant. These pin:
   timeout is retried with backoff, a 4xx and a certificate failure never are, and a failure
   that outlasts the retries writes exactly one short Error Log row;
 * that a one-line message (that one, and the refusal) is stored as the row's body under the
-  title ``GSC API Error``, not as the title itself (see ``stored_row``);
+  title ``GSC API Error``, not as the title itself (see ``stored_row``). Since v1.561.3 that is
+  ``log_error_throttled`` passing ``title=`` and ``message=`` by keyword, not a trailing newline
+  added here, so the body is the message exactly;
 * that the key is loaded with a Search Console scope, and that the scoped object is the one
   every per-attempt transport authorizes with. Every other test replaces ``_gsc_service``
   whole, so ``CredentialScopeTests`` runs the real one.
@@ -157,7 +159,7 @@ def _install():
 	)
 	STATE["cache"] = cache
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
-	frappe.log_error = lambda *a, **k: STATE["errors"].append(a)
+	frappe.log_error = lambda *a, **k: STATE["errors"].append((a, k))
 	frappe.get_traceback = lambda: "tb"
 	frappe.local = types.SimpleNamespace(conf=types.SimpleNamespace(get=lambda k: "test"))
 	frappe.get_doc = lambda doctype: STATE["settings"]
@@ -484,7 +486,7 @@ class TransientRetryTests(unittest.TestCase):
 		self.assertIn("SSLError: [SSL: RECORD_LAYER_FAILURE]", body)
 		self.assertNotEqual(body, frappe_traceback(), "the message, not a traceback")
 		self.assertNotIn(CREDS.token, body)
-		self.assertEqual(result, {"error": f"Failed to fetch GSC data: {body.strip()}"})
+		self.assertEqual(result, {"error": f"Failed to fetch GSC data: {body}"})
 
 	def test_a_refusal_row_is_titled_the_right_way_round_too(self):
 		# The v1.505.0 refusal message is one line, so it would have been stored backwards.
@@ -492,7 +494,7 @@ class TransientRetryTests(unittest.TestCase):
 		self.assertEqual(len(STATE["errors"]), 1)
 		title, body = stored_row(STATE["errors"][0])
 		self.assertEqual(title, "GSC API Error")
-		self.assertEqual(body.strip(), result["error"])
+		self.assertEqual(body, result["error"])
 
 	def test_the_final_error_carries_no_chained_exception(self):
 		class AlwaysTimesOut:
@@ -598,16 +600,21 @@ def frappe_traceback():
 	return sys.modules["frappe"].get_traceback()
 
 
-def stored_row(args):
-	"""``(title, body)`` of the Error Log row Frappe v16 writes for ``frappe.log_error(*args)``.
+def stored_row(call):
+	"""``(title, body)`` of the Error Log row Frappe v16 writes for one ``frappe.log_error`` call.
 
-	``log_error(title=None, message=None, ...)`` keeps a single-line first argument as the title
-	and swaps the two only when it holds a newline (``frappe/utils/error.py`` at v16.35.0), and
-	``log_error_throttled`` passes its message first. The stub records the raw arguments; this
-	reads them the way the real function does.
+	``log_error(title=None, message=None, ...)`` binds its arguments by position or keyword, then,
+	given a message, swaps the two when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py`` at v16.35.0). So the order the caller meant decides nothing; the
+	content does. The stub records the raw ``(args, kwargs)``; this reads them the way the real
+	function does, keywords included.
 	"""
-	first, second = args
-	return (second, first) if "\n" in first else (first, second)
+	args, kwargs = call
+	bound = {**dict(zip(("title", "message"), args, strict=False)), **kwargs}
+	title, message = bound.get("title"), bound.get("message")
+	if message and "\n" in title:
+		return message, title
+	return title, message
 
 
 if __name__ == "__main__":

@@ -57,10 +57,10 @@ def execute():
 		# deploy: setup/module_map.py exists to prevent exactly this, and if it has
 		# not worked the useful signal is a line in the log, not an abort.
 		frappe.log_error(
-			"Position DocType is not on this site, so the ladder was not seeded. "
+			title="HR Enhancements",
+			message="Position DocType is not on this site, so the ladder was not seeded. "
 			"Check that 'HR Enhancements' reached frappe.local.app_modules "
 			"(setup/module_map.py) before model sync.",
-			"HR Enhancements",
 		)
 		return
 

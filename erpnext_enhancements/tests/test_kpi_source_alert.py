@@ -63,14 +63,18 @@ def _install_frappe_stub():
 	frappe._ = lambda s: s
 	frappe._dict = _Dict
 	frappe.cache = lambda: _Cache()
-	frappe.get_traceback = lambda: "traceback"
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nRuntimeError: smtp"
 	frappe.session = types.SimpleNamespace(user="admin@example.com")
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
 
 	# The assertion that matters: did the alert reach a person? Recorded rather
 	# than mocked away, so a regression that stops notifying is visible here.
-	def log_error(message=None, title=None, *args, **kwargs):
-		STATE["errors_logged"].append(title or message)
+	# Records the row's title as v16 stores it: given a message, the two are swapped
+	# when -- and only when -- `title` holds a newline (frappe/utils/error.py).
+	def log_error(title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False):
+		if message and "\n" in title:
+			title, message = message, title
+		STATE["errors_logged"].append(title)
 
 	frappe.log_error = log_error
 
@@ -219,7 +223,7 @@ class TestSourceAlertNeverRaises(unittest.TestCase):
 			snapshots._notify_managers = original
 
 		self.assertEqual(STATE["notified"], [])
-		self.assertEqual(len(STATE["errors_logged"]), 1)
+		self.assertEqual(STATE["errors_logged"], ["KPI marketing web — source alert"])
 
 
 if __name__ == "__main__":

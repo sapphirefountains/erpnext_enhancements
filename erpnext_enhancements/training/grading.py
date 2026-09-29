@@ -607,8 +607,8 @@ def _judge_text_answer(entry, submitted, question_text=""):
 		)
 	except Exception:
 		frappe.log_error(
-			"Short Answer AI grading could not be reached; the exact-match verdict stands.",
-			"Training AI",
+			title="Training AI",
+			message="Short Answer AI grading could not be reached; the exact-match verdict stands.",
 		)
 		judgement = None
 
@@ -937,10 +937,10 @@ def _file_quiz_answers(attempt, lesson_name, run, drawn, submitted, per_question
 			)
 	except Exception:
 		frappe.log_error(
-			f"Could not file quiz answers for attempt {getattr(attempt, 'name', attempt)} "
+			title="Training analytics",
+			message=f"Could not file quiz answers for attempt {getattr(attempt, 'name', attempt)} "
 			f"lesson {lesson_name} run {run}. The learner's submission was graded and saved; "
 			"only the per-question analytics rows are missing.",
-			"Training analytics",
 		)
 
 
@@ -968,8 +968,8 @@ def _file_checkpoint_answer(attempt, lesson_name, checkpoint_key, entry, option_
 		)
 	except Exception:
 		frappe.log_error(
-			f"Could not file checkpoint {checkpoint_key} for attempt "
+			title="Training analytics",
+			message=f"Could not file checkpoint {checkpoint_key} for attempt "
 			f"{getattr(attempt, 'name', attempt)}. The answer was graded and the learner's "
 			"progress saved; only the analytics row is missing.",
-			"Training analytics",
 		)

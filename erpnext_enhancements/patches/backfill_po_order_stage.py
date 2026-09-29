@@ -34,9 +34,9 @@ def execute():
 		# creating the column, a silent return here is indistinguishable from a backfill
 		# that had nothing to do -- which is the failure this patch's docstring is about.
 		frappe.log_error(
-			f"Purchase Order.{FIELD} does not exist; the Order Stage backfill did nothing. "
+			title="Order stage backfill skipped",
+			message=f"Purchase Order.{FIELD} does not exist; the Order Stage backfill did nothing. "
 			"Check that patches.txt runs add_po_order_stage_field first.",
-			"Order stage backfill skipped",
 		)
 		return
 

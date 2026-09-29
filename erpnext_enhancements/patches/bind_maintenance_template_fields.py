@@ -82,12 +82,12 @@ def execute():
 
 	if refused:
 		frappe.log_error(
-			"Contract Template '{0}': these sections do not match the expected wording, so their "
+			title="Maintenance template: fields left unbound",
+			message="Contract Template '{0}': these sections do not match the expected wording, so their "
 			"fields are still printing blank — {1}. Copy the matching lines from "
 			"templates/contracts/maintenance_services_agreement.html into the template by hand "
 			"(the change is only the {{{{ cb(...) }}}} / {{{{ money(...) }}}} binding; the visible "
 			"wording is identical).".format(TEMPLATE_KEY, ", ".join(refused)),
-			"Maintenance template: fields left unbound",
 		)
 
 	if applied:

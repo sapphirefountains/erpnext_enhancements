@@ -95,9 +95,9 @@ def escalate_overdue_assignments():
 			# Nothing to escalate to. Skipping silently would look like the feature
 			# is off rather than misconfigured, so say so once per run.
 			frappe.log_error(
-				f"{row.course} is overdue for {row.user} but neither the course nor Training Settings "
+				title="Training escalation",
+				message=f"{row.course} is overdue for {row.user} but neither the course nor Training Settings "
 				f"names an escalation role.",
-				"Training escalation",
 			)
 			continue
 

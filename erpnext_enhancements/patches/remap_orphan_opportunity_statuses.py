@@ -147,8 +147,8 @@ def _retire_statuses():
 		print(f"  Opportunity status {old!r} -> {new!r}: {before - left} rows")
 		if left:
 			frappe.log_error(
-				f"{left} Opportunity rows still carry status {old!r} after the remap",
-				"Opportunity status cleanup",
+				title="Opportunity status cleanup",
+				message=f"{left} Opportunity rows still carry status {old!r} after the remap",
 			)
 
 

@@ -133,7 +133,7 @@ def _get_or_create_call_type(label):
         return doc.name
     except Exception:
         frappe.log_error(
-            f"Failed to create Telephony Call Type '{label}'", "Call Intelligence"
+            title="Call Intelligence", message=f"Failed to create Telephony Call Type '{label}'"
         )
         return None
 
@@ -365,6 +365,6 @@ def process_call_intelligence(**kwargs):
         return {"status": "success", "call_log": name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Call intelligence ingest failed: {e}", "Call Intelligence")
+        frappe.log_error(title="Call Intelligence", message=f"Call intelligence ingest failed: {e}")
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}

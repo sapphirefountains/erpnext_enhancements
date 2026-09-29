@@ -84,14 +84,14 @@ def run_dunning_cycle(today=None):
             _enroll(inv, today, schedule)
         except Exception:
             frappe.db.rollback()
-            frappe.log_error(frappe.get_traceback(), f"Dunning enroll failed: {inv}")
+            frappe.log_error(title=f"Dunning enroll failed: {inv}", message=frappe.get_traceback())
 
     for inv in _discover_due_retries(today):
         try:
             _process_case(inv, today, schedule)
         except Exception:
             frappe.db.rollback()
-            frappe.log_error(frappe.get_traceback(), f"Dunning retry failed: {inv}")
+            frappe.log_error(title=f"Dunning retry failed: {inv}", message=frappe.get_traceback())
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +366,10 @@ def _email_customer(inv, invoice, attempt, final):
     try:
         email = _customer_email(invoice.customer)
         if not email:
-            frappe.log_error(f"Dunning: no email for {invoice.customer} (invoice {inv})", "Dunning customer email")
+            frappe.log_error(
+                title="Dunning customer email",
+                message=f"Dunning: no email for {invoice.customer} (invoice {inv})",
+            )
             return
         amount = frappe.utils.fmt_money(flt(invoice.outstanding_amount), currency=invoice.currency)
         company = invoice.company or "our team"
@@ -393,7 +396,7 @@ def _email_customer(inv, invoice, attempt, final):
             message=email_style.wrap(body, title=subject, eyebrow="Billing", tagline=True),
         )
     except Exception:
-        frappe.log_error(frappe.get_traceback(), "Dunning: customer email failed")
+        frappe.log_error(title="Dunning: customer email failed", message=frappe.get_traceback())
 
 
 def _alert_accounts_exhausted(inv, invoice, reason):
@@ -425,6 +428,8 @@ def _alert_accounts_exhausted(inv, invoice, reason):
                 "type": "Alert",
             }).insert(ignore_permissions=True)
         except Exception:
-            frappe.log_error(frappe.get_traceback(), "Dunning: exhaustion alert failed")
+            frappe.log_error(title="Dunning: exhaustion alert failed", message=frappe.get_traceback())
     if not recipients:
-        frappe.log_error(f"{subject}: {content}", "Dunning: exhausted (no Accounts Manager to notify)")
+        frappe.log_error(
+            title="Dunning: exhausted (no Accounts Manager to notify)", message=f"{subject}: {content}"
+        )

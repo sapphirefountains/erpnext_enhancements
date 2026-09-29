@@ -65,11 +65,11 @@ def execute():
 		new_body, changed = rewrite_signature_block(body)
 		if not changed:
 			frappe.log_error(
-				f"Contract Template '{key}' does not contain the expected SIGNATURES block, so the "
+				title="Contract e-sign: signature block not patched",
+				message=f"Contract Template '{key}' does not contain the expected SIGNATURES block, so the "
 				"e-signature markers were not added. Paste the signature block from "
 				"templates/contracts/ into the template by hand — until then, Send for Signature "
 				"will refuse this template rather than produce an unsigned-looking PDF.",
-				"Contract e-sign: signature block not patched",
 			)
 			continue
 

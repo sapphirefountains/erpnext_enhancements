@@ -56,7 +56,8 @@ def _reset_state():
 	STATE.clear()
 	STATE.update(
 		{
-			"errors": [],  # frappe.log_error calls
+			"errors": [],  # the body of each Error Log row frappe.log_error writes
+			"error_titles": [],  # ... and its title, both as v16 stores them
 			"logs": [],  # Drive Sync Log rows written
 			"commits": 0,
 			"reconnects": 0,
@@ -74,6 +75,18 @@ def _reset_state():
 	)
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it: given a message, the two are swapped when -- and
+	only when -- ``title`` holds a newline (``frappe/utils/error.py``). Reading ``a[0]``, as this
+	stub used to, recorded the body only while the caller passed it first."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append(message or "")
+	STATE["error_titles"].append(title)
+
+
 def _install_stubs():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
@@ -81,8 +94,8 @@ def _install_stubs():
 	frappe.session = _Dict(user="tester@example.com")
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
 	frappe.only_for = lambda *a, **k: None
-	frappe.get_traceback = lambda: "traceback"
-	frappe.log_error = lambda *a, **k: STATE["errors"].append(a[0] if a else "")
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
+	frappe.log_error = _v16_log_error
 	frappe.enqueue = lambda *a, **k: STATE.setdefault("enqueued", []).append((a, k))
 	frappe.get_single = lambda *a, **k: _Dict()
 
@@ -365,6 +378,7 @@ class TestRunDriveLinkReconcile(unittest.TestCase):
 		self.assertEqual(STATE["flags"][("Project", "P3")], 1)
 		self.assertEqual(len(STATE["errors"]), 1)
 		self.assertIn("P2", STATE["errors"][0])
+		self.assertEqual(STATE["error_titles"], ["Drive Link Reconcile"])
 
 	def test_lost_connection_reconnects_and_continues(self):
 		# Same failure mode the shadow sync hits: this walk also holds a connection

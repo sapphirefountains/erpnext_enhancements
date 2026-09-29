@@ -653,6 +653,15 @@ jobs:
       # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
       - name: Singles table is not queried through the ORM
         run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
+      # Frappe v16's log_error picks the Error Log title by CONTENT, not position:
+      # given (a, b) it swaps them only when `a` contains a newline. So the legacy
+      # log_error(message, title) stores a one-line message as the row's TITLE and
+      # the title as its body -- 77 prod rows in 90 days, e.g. titled "Bridge token
+      # failed: 503 ..." with the body "Triton Chat". A static scan: a positional
+      # pair must lead with a traceback or other multi-line text, anything else
+      # passes title= and message= by keyword. No frappe stub, so its own step.
+      - name: Error Log titles are titles (log_error keyword order)
+        run: python -m unittest erpnext_enhancements.tests.test_log_error_argument_order -v
       # A cost code that points at the wrong MasterFormat section does not raise -- it
       # prints on a Schedule of Values and an AIA G702/G703 that a general contractor
       # reads, and comes back as a rejected submittal weeks later. The catalog this

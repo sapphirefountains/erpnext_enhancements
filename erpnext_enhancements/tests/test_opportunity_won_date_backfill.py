@@ -52,7 +52,14 @@ def _install_frappe_stub():
 
 	frappe._dict = _Dict
 	frappe.get_all = get_all
-	frappe.log_error = lambda *a, **k: frappe._logs.append(a)
+	def log_error(title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False):
+		# v16 (frappe/utils/error.py): given a message, the two are swapped when -- and only
+		# when -- `title` holds a newline. Records (row title, row body).
+		if message and "\n" in title:
+			title, message = message, title
+		frappe._logs.append((title, message))
+
+	frappe.log_error = log_error
 	frappe.db = types.SimpleNamespace(
 		has_column=lambda *a, **k: True,
 		set_value=lambda dt, name, field, value, **k: frappe._written.__setitem__(name, value),
@@ -181,3 +188,5 @@ def test_missing_column_logs_loudly_instead_of_returning_silently():
 		frappe.db.has_column = original
 	assert frappe._written == {}
 	assert frappe._logs, "a missing column must be reported, not silently skipped"
+	# ... under its own title: the one-line sentence used to become the title (v1.561.3).
+	assert [entry[0] for entry in frappe._logs if isinstance(entry, tuple)] == ["Won-date backfill skipped"]

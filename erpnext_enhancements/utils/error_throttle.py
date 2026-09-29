@@ -105,6 +105,17 @@ def log_error_throttled(
 	context without one — this falls back to logging unconditionally: losing an
 	error is worse than writing a duplicate, and a broken cache must not also
 	break the record of *why* something broke.
+
+	**This takes (message, title) and hands them on by keyword, and both halves
+	matter.** v16's ``frappe.log_error(title, message)`` decides which argument is
+	the title by content, not position: when both are given it swaps them only if
+	the *first* contains a newline (``frappe/utils/error.py``). Forwarding
+	``(message, title)`` positionally therefore worked for a traceback and stored a
+	one-line message backwards -- the message as the row's title, cut at 140
+	characters, and the title as its body -- which is what happened to the MDM,
+	web-lead, lead-triage and Search Console callers until v1.561.3. Keywords make
+	the title the title whatever the message holds. They do not help a ``title``
+	with a newline in it, which v16 still swaps, so keep titles to one line.
 	"""
 	cache_key = _signature(title, key)
 	try:
@@ -114,20 +125,20 @@ def log_error_throttled(
 			# the budget actually expires instead of throttling forever.
 			frappe.cache().expire(cache_key, window)
 	except Exception:
-		frappe.log_error(message, title)
+		frappe.log_error(title=title, message=message)
 		return True
 
 	if count <= limit:
-		frappe.log_error(message, title)
+		frappe.log_error(title=title, message=message)
 		return True
 
 	if count == limit + 1:
 		frappe.log_error(
-			f"{message}\n\n"
+			title=f"{title} (throttled)",
+			message=f"{message}\n\n"
 			f"--- Further identical '{title}' errors are suppressed for up to {window}s "
 			f"to keep the Error Log readable (see utils/error_throttle.py). "
 			f"The underlying failure is still happening; fix the cause, not the log. ---",
-			f"{title} (throttled)",
 		)
 		return True
 

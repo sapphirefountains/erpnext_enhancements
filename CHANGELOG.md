@@ -7,6 +7,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.561.3] - 2026-09-29
+
+**Error Log rows are titled with their title: `frappe.log_error` calls pass `title=` and
+`message=` by keyword.** Builds on 1.561.2, which worked around the same problem for the Search
+Console rows alone.
+
+### Fixed
+
+- **86 direct calls, and 4 through `log_error_throttled`, stored a one-line message as the Error
+  Log row's title and the title as its body.** Frappe v16's `log_error(title=None, message=None, ...)` (`frappe/utils/error.py`,
+  unchanged from 16.31.0 through 16.36.0; prod runs 16.35.0) does not decide which argument is
+  the title by position. Given both, it swaps them when, and only when, the first one contains a
+  newline; Frappe's own comment calls this a hack that "tries to be smart". So the legacy call
+  `frappe.log_error(message, title)` works for a traceback, which always has a newline, and
+  stores anything else backwards. The message becomes `Error Log.method`, the field labeled
+  Title, cut at 140 characters by `ErrorLog.validate`, which then puts the full text at the top
+  of the body. The intended title becomes the body. The `Error Log` notification email, subject
+  `[Error] {{ doc.method }}`, carried the message as its subject too.
+  - **On prod** (read-only queries, 2026-09-29), 77 rows from the last 90 days are stored
+    backwards. 58 came from the chat module retired in v1.426.0. The other 19 came from code
+    still on `main`: 12 `Triton Chat` rows from `triton_chat.py`, titled `Bridge token failed:
+    503 …` or `POST /api/v1/integrations/actions/<id>/confirm -> 500: …`; one `Triton Email
+    Error` (`api/telephony.py`); two each from the `Hand-off payment step rename` and `Hand-off
+    role rename` patches; one `Fountain Move: stray Contact`; one `Payroll Employee Number
+    Seed`. The other call sites had not fired in that window. Most are configuration or skip
+    warnings, patches that already ran, or API paths that rarely fail.
+  - **The throttled four went through `utils/error_throttle.log_error_throttled(message,
+    title)`**, which forwarded `frappe.log_error(message, title)` positionally: the MDM and
+    web-lead short-secret warnings, the lead-triage "no escalation recipient" warning and the
+    Search Console refusal. All four are one-line sentences. The function keeps its `(message,
+    title)` signature, so its 12 callers are unchanged, and now forwards `title=` and `message=`
+    by keyword, the `(throttled)` notice included. The trailing-newline workaround that 1.561.2
+    added for the two Search Console messages (`_log_gsc_error` in `api/analytics.py`) is gone;
+    both call `log_error_throttled` directly.
+  - **86 direct calls now pass `title=` and `message=` by keyword.** They are in telephony, the
+    time kiosk, call intelligence, the morning briefing, maintenance billing and renewal, the
+    training API, AI grading and authoring, the CRM hand-off, Fountain Move conversion, pay-period
+    reports, Google Drive folders, Stripe dunning, payouts, reconciliation and saved cards,
+    training disputes, media, grading, progress, sign-off and escalation, project merge, the
+    Opportunity and Task script migrations, `triton_chat.py`, the AI write gate's attach check,
+    and 20 patches.
+  - **Keywords do not get around the heuristic.** `log_error(title=t, message=m)` still swaps
+    when `t` has a newline. Five project dashboard calls passed `(f"... {e}",
+    frappe.get_traceback())`: the right order, but an exception message with a newline in it
+    would have swapped them. The exception now stays out of the title. It is still in the body,
+    as the traceback's last line. Those titles lose their `: <exception>` suffix: `Error
+    checking project dashboard permissions`, `Error fetching assignee names for …`, `Initial
+    task fetch failed for project …`, `Child task fetch failed for parents …` and `Project fetch
+    failed for master project …`.
+  - Nothing else changes. No message text was edited. The positional `(traceback, title)` calls
+    already came out right, and converting them changes no row. Where such a call fits on one
+    line in a file this change already edits, it was converted anyway, for consistency: 57
+    calls, 26 of them on the project dashboard. So was `utils/client_ip.py`'s daily alert,
+    whose multi-line message is held in a variable the new check cannot see through.
+
+### Error Log titles that change
+
+New rows from these call sites are titled as below instead of with their message:
+
+- **Telephony and Triton:** `Gateway Config Error`, `Triton Transcript Error`, `Triton File
+  Error`, `Triton Email Error`, `Triton Sync Error`, `Triton Outbound Call Error`, `Triton
+  Routing Error`, `Triton Log Call Error`, `Triton Outbound SMS Error`, `Call Intelligence`,
+  `Triton Chat`.
+- **Time kiosk:** `Time Kiosk Sync Error`, `Time Kiosk Attachment Error`, `Time Kiosk Location
+  Error`.
+- **Training:** `Training payload`, `Training sign-off resume`, `Training attempt summary`,
+  `Training completion`, `Training AI`, `Training checkpoint reap`, `Training disputes`,
+  `Training media`, `Training analytics`, `Training progress`, `Training sign-off`, `Training
+  escalation`.
+- **CRM and sales:** `Morning Briefing`, `Hand-Off Gate: project creation blocked`, `CRM
+  Enhancements: Misconfigured Task DocType`, `Fountain Move: stray Contact`, `Pay-period report
+  window`, `Pay-period commission report`, `Update Lead Status Script`, `Lead triage: no
+  escalation recipient`, `Web Lead ingress: secret too short`.
+- **Billing and payments:** `Recurring billing misconfigured`, `Maintenance notice (no <role> to
+  notify)`, `Dunning customer email`, `Dunning: exhausted (no Accounts Manager to notify)`,
+  `Stripe: payout review (no Accounts Manager to notify)`, `Stripe: surcharge booked with
+  unknown funding type`, `Stripe: auto-charge failure (no Accounts Manager)`.
+- **Everything else:** `Google Drive`, `Project Drive Folder`, `Project Merge Error`, `Final Task
+  Completion Script`, `AI Governance`, `MDM webhook: secret too short`, `GSC API Error` (the
+  refusal), and the patches' `Contract e-sign: signature block not patched`, `Hand-off SLA
+  backfill`, `Won-date backfill skipped`, `Order stage backfill skipped`, `Training feed`,
+  `Maintenance template: fields left unbound`, `Project Note cleanup`, `Workspace sync`,
+  `Purchase Order print format purge`, `Opportunity status cleanup`, `Gallon UOM rename`,
+  `Hand-off role rename`, `Maintenance Template rename skipped`, `Hand-off payment step rename`,
+  `HR Enhancements`, `Fountain Move: defaults not seeded`, `Payroll Employee Number Seed` and
+  `Default stock UOM`.
+
+The Integrations Health page's list of the most frequent titles in the last 24 hours counts these
+rows under one title each, where it used to count one entry per distinct message.
+
+### Tests
+
+- **`tests/test_log_error_argument_order.py`, in its own CI step, fails the build on a call that
+  can come out backwards.** It scans the app (not `tests/`) for `frappe.log_error`, a
+  `log_error` imported from Frappe, and `log_error_throttled`. It refuses a positional pair
+  whose first argument is not provably multi-line: a traceback call, a literal with `\n`, or a
+  name assigned one of those just before the call. It refuses a title passed with a message
+  that interpolates a caught exception, by keyword or not. It refuses the two shapes that raise
+  `TypeError` on v16: `message=` without a title, and a positional first argument plus
+  `title=`. It also checks that `log_error_throttled` forwards every call by keyword. Its own
+  tests pin each rule against the shapes found on prod. Run against the tree before this change,
+  it reports 94 calls: the 86 direct ones, the two forwards in `log_error_throttled`, the 5
+  project dashboard calls and the client-IP alert.
+- **The bench-free stubs now behave like v16.** Several suites stubbed `log_error` in the legacy
+  order (`message=None, title=None`, or `lambda message, title`) or recorded `a[0]`. Each now
+  takes v16's signature, applies the swap when the title holds a newline, and records the row
+  as it would be stored. Their fake tracebacks are multi-line, as real ones are. The suites are
+  `test_error_log_fixes`, `test_error_log_followup`, `test_drive_sync_recovery`,
+  `test_drive_link_reconcile`, `test_lead_triage`, `test_web_lead_ingress`, `test_webhook_auth`,
+  `test_search_console` (whose `stored_row` now reads keyword calls too), `test_training_ai`,
+  `test_training_gcs_media`, `test_training_grading`, `test_training_progress`,
+  `test_pay_period_reports`, `test_po_order_stage`, `test_po_pdf_filename`,
+  `test_kpi_source_alert`, `test_workforce_costing`, `test_client_ip` and
+  `test_opportunity_won_date_backfill`. The old `test_error_log_fixes` stub recorded the title
+  the caller meant, so it passed the throttle while prod stored its rows backwards. Under the
+  v16 stub, three of its existing tests fail against the old throttle.
+- Where a suite reaches a fixed call, it now asserts the row's title: the throttled MDM, web-lead
+  and lead-triage warnings, both Search Console rows, AI grading, `Training media`, `Training
+  progress`, the pay-period report and the won-date backfill. Each of those assertions fails
+  when the module is swapped back to its version before this change. Search Console's asserts the
+  body exactly, so the removed trailing newline cannot come back unnoticed.
+
+### Not changed
+
+- **No prod Error Log row was edited or deleted.** The 77 rows stored backwards stay as they
+  are. To find them, look for a body under 80 characters with no newline (`LOCATE(CHAR(10),
+  error) = 0 AND LENGTH(error) < 80`). For a message over 140 characters, look for a title
+  exactly 140 characters long that the body begins with, where the body's last line is short.
+- **Left positional, because the heuristic already gets them right:** 294 `(traceback, title)`
+  calls in files this change does not otherwise touch, and 19 that span several lines in files
+  it does. The 5 calls with a single argument are also left alone: that argument is the title.
+
 ## [1.561.2] - 2026-09-29
 
 **Remove the guest-callable client error logger; retry the Search Console snapshot on transient

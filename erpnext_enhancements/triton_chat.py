@@ -208,7 +208,9 @@ def mint_user_token(force_refresh: bool = False) -> str:
 
     if resp.status_code != 200:
         if settings["debug"]:
-            frappe.log_error(f"Bridge token failed: {resp.status_code} {resp.text[:500]}", "Triton Chat")
+            frappe.log_error(
+                title="Triton Chat", message=f"Bridge token failed: {resp.status_code} {resp.text[:500]}"
+            )
         frappe.throw(_("Triton authentication failed ({0}).").format(resp.status_code))
 
     data = resp.json()
@@ -243,7 +245,9 @@ def _request(method: str, path: str, payload: dict | None = None):
 
         if resp.status_code >= 400:
             if settings["debug"]:
-                frappe.log_error(f"{method} {path} -> {resp.status_code}: {resp.text[:500]}", "Triton Chat")
+                frappe.log_error(
+                    title="Triton Chat", message=f"{method} {path} -> {resp.status_code}: {resp.text[:500]}"
+                )
             frappe.throw(_("Triton error ({0}).").format(resp.status_code))
 
         if not resp.content:
@@ -756,7 +760,7 @@ def stream_query(session_id: str, prompt: str | None = None, context: str | None
                     yield _sse_error(_("Triton returned {0}.").format(r.status_code))
                     if debug:
                         try:
-                            frappe.log_error(f"stream {r.status_code}: {body}", "Triton Chat")
+                            frappe.log_error(title="Triton Chat", message=f"stream {r.status_code}: {body}")
                         except Exception:
                             pass
                     return

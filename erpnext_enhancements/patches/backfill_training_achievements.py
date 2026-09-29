@@ -28,8 +28,8 @@ from frappe.utils import getdate, today
 def execute():
 	if not frappe.db.exists("DocType", "Training Achievement"):
 		frappe.log_error(
-			"Training Achievement is not on this site, so the feed was not backfilled.",
-			"Training feed",
+			title="Training feed",
+			message="Training Achievement is not on this site, so the feed was not backfilled.",
 		)
 		return
 

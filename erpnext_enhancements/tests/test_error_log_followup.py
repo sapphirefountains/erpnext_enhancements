@@ -103,14 +103,26 @@ def _reset_state():
 	CACHE.store.clear()
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it: given a message, the two are swapped when --
+	and only when -- ``title`` holds a newline (``frappe/utils/error.py``). Records
+	``(row title, row body)``."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def setUpModule():
 	global finance_calendar, training_setup, drive_sync, device_perms, travel_perms
 
 	_reset_state()
 
 	frappe = types.ModuleType("frappe")
-	frappe.log_error = lambda message=None, title=None, **kw: STATE["errors"].append((title, message))
-	frappe.get_traceback = lambda: "traceback"
+	frappe.log_error = _v16_log_error
+	# Multi-line, like a real one: v16's swap keys on the newline.
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
 	frappe.cache = lambda: CACHE
 	frappe.flags = types.SimpleNamespace(in_test=False)
 	frappe.local = types.SimpleNamespace(conf={"db_name": "test_site_db"})

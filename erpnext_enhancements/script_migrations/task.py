@@ -68,8 +68,8 @@ def calculate_project_elapsed_time(doc, method=None):
 		)
 	except frappe.DoesNotExistError:
 		frappe.log_error(
-			f"Project '{doc.project}' not found when closing task '{doc.name}'.",
-			"Final Task Completion Script",
+			title="Final Task Completion Script",
+			message=f"Project '{doc.project}' not found when closing task '{doc.name}'.",
 		)
 
 

@@ -93,6 +93,17 @@ class FakeSettings(dict):
 		return STATE["secret"]
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_stub():
 	frappe = types.ModuleType("frappe")
 
@@ -115,8 +126,8 @@ def _install_stub():
 	frappe.get_cached_doc = lambda doctype: STATE["settings"]
 	frappe.get_request_header = lambda name, default=None: STATE["headers"].get(name, default)
 	frappe.get_doc = lambda fields: FakeLead({k: v for k, v in fields.items() if k != "doctype"})
-	frappe.get_traceback = lambda: "traceback"
-	frappe.log_error = lambda *args, **kwargs: STATE["errors"].append((args, kwargs))
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
+	frappe.log_error = _v16_log_error
 
 	def cache():
 		raise RuntimeError("no redis in a unit test")  # error_throttle falls back to log_error
@@ -238,6 +249,10 @@ class AuthTests(unittest.TestCase):
 		self.assertEqual(result["status"], "unauthorized")
 		self.assertTrue(STATE["errors"], "a too-short secret must say so in the Error Log")
 		self.assertNotIn(short, repr(STATE["errors"]), "the secret must never reach the Error Log")
+		# Titled by its title: the one-line warning used to become the row's title (v1.561.3).
+		title, body = STATE["errors"][0]
+		self.assertEqual(title, "Web Lead ingress: secret too short")
+		self.assertTrue(body.startswith("web_lead_shared_secret is shorter than"), body)
 
 	def test_disabled_ingress_is_inert(self):
 		result = _submit(dict(GOOD), enabled=False)

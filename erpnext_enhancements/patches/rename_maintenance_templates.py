@@ -28,8 +28,8 @@ def execute():
 			# A collision (two templates share a name) — leave the hash name so
 			# the rename can't merge two distinct templates. Resolve by hand.
 			frappe.log_error(
-				f"Cannot rename template {name} to {template_name!r}: name already taken.",
-				"Maintenance Template rename skipped",
+				title="Maintenance Template rename skipped",
+				message=f"Cannot rename template {name} to {template_name!r}: name already taken.",
 			)
 			continue
 		frappe.rename_doc(
