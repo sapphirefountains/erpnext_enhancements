@@ -44,6 +44,13 @@ KB_DOCTYPES = frozenset({ARTICLE_DOCTYPE, VERSION_DOCTYPE})
 AUTHOR_ROLE = "KB Author"
 APPROVER_ROLE = "KB Approver"
 
+#: The one role that may read the private mirror's snapshot (WI-080 Slice 6, PR 8:
+#: ``api/knowledge_base_mirror.snapshot``), seeded by ``patches/seed_knowledge_base_mirror_role.py``
+#: with ``desk_access = 0`` and no DocPerm anywhere. It is a service account's, never a person's, and
+#: it confers nothing but that endpoint's role check. A Website User holding it can call nothing else:
+#: ``knowledge_base/mirror_guard.py`` (an ``auth_hooks`` entry) refuses every other request it makes.
+MIRROR_ROLE = "KB Mirror"
+
 #: An approver is a named person with a staff login: ``User.user_type`` exactly this. Not a
 #: "Website User" (a portal contact) and not a custom User Type. ``workflow.approval_problems``
 #: takes the value as an argument, so its callers read it from the User row.

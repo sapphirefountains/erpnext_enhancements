@@ -1228,3 +1228,9 @@ erpnext_enhancements.patches.reload_travel_hub
 # gated and reload_travel_hub has already run: reload_doc(force=True) for the workspace, import_file_by_path
 # (force=True) for the flat sidebar file. Every failure goes to log_error; cannot raise, safe twice.
 erpnext_enhancements.patches.reload_travel_hub_trips
+# v1.561.0 knowledge base mirror (WI-080 PR 8, Slice 6): seed "KB Mirror" (desk_access 0, no DocPerm anywhere),
+# the one role api/knowledge_base_mirror.snapshot admits besides Administrator. desk_access 0 keeps an account
+# holding only it a Website User. NOT a fixture (role.json imports after custom_docperm.json), and model sync
+# never makes it, because no DocPerm names it. Grants it to nobody. Insert-only: an existing role is never
+# touched. Cannot raise, safe twice.
+erpnext_enhancements.patches.seed_knowledge_base_mirror_role

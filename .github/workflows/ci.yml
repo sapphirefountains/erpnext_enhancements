@@ -627,7 +627,9 @@ jobs:
       # hooks just never fire. Two duplicated doc_events keys cost six live handlers
       # (recurring task generation, project date sync, next-visit dates) and nobody
       # noticed, because the symptom is absence. ruff flags it as F601 but that job is
-      # advisory here, so it does not fail a PR. This does.
+      # advisory here, so it does not fail a PR. This does. Since v1.561.0 it also pins the
+      # knowledge mirror's confinement to auth_hooks: v16 reads an API key AFTER before_request, so
+      # the same hook there would see every keyed request as Guest and confine nothing.
       - name: hooks.py integrity (no duplicate keys or handlers)
         run: python -m unittest erpnext_enhancements.tests.test_hooks_integrity -v
       # A literal '%' in a query string that also binds a named parameter. MySQLdb
@@ -795,7 +797,11 @@ jobs:
       # read_only), the Select options against knowledge_base/constants.py (a required Select
       # starts blank, or v16 defaults it and reqd never fires), the controller refusals in both
       # the hook a flag can skip and the one it cannot, and the seed patch's registration,
-      # idempotence and cannot-raise. Own step: it installs its own frappe stub.
+      # idempotence and cannot-raise. Since PR 8 (v1.561.0) also the private mirror's role: "KB
+      # Mirror" seeded once under post_model_sync with desk_access 0 (so its account stays a Website
+      # User), insert-only, unable to raise even when the rollback and the log fail, and named by no
+      # JSON anywhere in the app, so no DocPerm or fixture ever lets it read more than the snapshot.
+      # Own step: it installs its own frappe stub.
       - name: Knowledge base schema (drafts are never readable by a reader role)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_schema -v
       # WI-080 PR 2 (v1.539.0): the rules a KB approval turns on, as plain functions. A
@@ -887,6 +893,21 @@ jobs:
       # is refused, and a different KB Approver in a browser publishes; a submit refused after the
       # draft was written leaves no draft (the savepoint); the only move it makes is Submit for
       # Review; and no result or refusal carries text.
+      # Since PR 8 (v1.561.0) also MirrorSnapshotTest: api/knowledge_base_mirror.snapshot, the
+      # private Markdown mirror's one endpoint, over the same site. Refused to everyone but KB Mirror
+      # and Administrator (a System Manager included) before anything is read; Published only, no
+      # draft sentinel and no retired article anywhere in the answer; each file equal to
+      # fetch_payload's markdown byte for byte, and whole past 40,000 characters; paths
+      # kb/NN-department/KB-NNNN.md in KB-number order, an article with no folder skipped; the stamp
+      # over the sorted (path, sha256) pairs, moving with an approver's name and not with a field no
+      # file shows, and `since` answering unchanged; no header read, nothing written, nothing
+      # logged; a GET whose whitelist is the OUTER decorator (inside a rate_limit it would be "not
+      # whitelisted"). The stub gains frappe.rate_limiter.
+      # And MirrorConfinementTest (PR 8 review): knowledge_base/mirror_guard, the auth_hook that
+      # keeps the mirror's account (a signed-in Website User, which v16's whitelist does not refuse)
+      # to GET of the snapshot's exact path with no `cmd`. Every other method, address, HTTP method
+      # and page is a 403 for it; every other user passes untouched; it fails closed and reads no
+      # header.
       - name: Knowledge base actions (review, approve and publish, retire, end to end)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_actions -v
       # WI-080 PR 4 (v1.557.0): the ways in. Every one of them fails SILENTLY in v16: a workspace

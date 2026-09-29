@@ -33,6 +33,10 @@ row is ever exercised:
 * **The seed patch** is registered once under ``[post_model_sync]``, seeds every role the DocPerm
   rows name with ``desk_access = 1`` plus the one-role "KB Approvers" Role Profile, is insert-only
   and idempotent, and cannot raise.
+* **The mirror's role** (PR 8, v1.561.0): ``seed_knowledge_base_mirror_role`` is registered once under
+  ``[post_model_sync]``, seeds "KB Mirror" (``constants.MIRROR_ROLE``) with ``desk_access = 0``, is
+  insert-only and cannot raise, and no JSON in the app (a doctype's permissions or a fixture) names the
+  role, so it reads nothing but the snapshot endpoint.
 
 Installs its own ``frappe`` stub in ``setUpModule``, which is why it has its own CI step.
 
@@ -61,6 +65,8 @@ DOCTYPE_DIRS = {
 	VERSION: MODULE_DIR / "doctype" / "knowledge_article_version",
 }
 PATCH = "erpnext_enhancements.patches.seed_knowledge_base_roles"
+#: WI-080 PR 8 (v1.561.0): the private mirror's role.
+MIRROR_PATCH = "erpnext_enhancements.patches.seed_knowledge_base_mirror_role"
 
 #: Every right a DocPerm row can carry in v16 (frappe ``permissions.py`` ``std_rights`` plus the
 #: level/owner qualifiers). A right missing from a row is 0.
@@ -323,18 +329,21 @@ def _install_frappe_stub():
 knowledge_article = None
 knowledge_article_version = None
 seed = None
+mirror_seed = None
 constants = None
 
 
 def setUpModule():
-	global knowledge_article, knowledge_article_version, seed, constants
+	global knowledge_article, knowledge_article_version, seed, mirror_seed, constants
 	_install_frappe_stub()
 	for name in (
 		"erpnext_enhancements.knowledge_base.doctype.knowledge_article.knowledge_article",
 		"erpnext_enhancements.knowledge_base.doctype.knowledge_article_version.knowledge_article_version",
 		PATCH,
+		MIRROR_PATCH,
 	):
 		sys.modules.pop(name, None)
+	mirror_seed = importlib.import_module(MIRROR_PATCH)
 	knowledge_article = importlib.import_module(
 		"erpnext_enhancements.knowledge_base.doctype.knowledge_article.knowledge_article"
 	)
@@ -963,6 +972,91 @@ class TestSeedPatchBehaviour(unittest.TestCase):
 	def test_every_step_commits_alone(self):
 		seed.execute()
 		self.assertEqual(STATE["commits"], 3)
+
+
+# ------------------------------------------------------------------ the mirror's role (PR 8)
+
+
+class TestMirrorRoleSeed(unittest.TestCase):
+	"""``patches/seed_knowledge_base_mirror_role.py`` (WI-080 PR 8, v1.561.0): "KB Mirror", the one role
+	``api/knowledge_base_mirror.snapshot`` admits besides Administrator. ``desk_access`` 0, so an account
+	holding only it stays a Website User (v16 ``User.set_system_user``); no DocPerm anywhere, so it reads
+	nothing but that endpoint; registered once under ``[post_model_sync]``; insert-only; cannot raise."""
+
+	def setUp(self):
+		_reset_patch_state()
+
+	def test_registered_once_under_post_model_sync(self):
+		sections = _post_model_sync_lines()
+		self.assertEqual(sections.get("post_model_sync", []).count(MIRROR_PATCH), 1)
+		for name, lines in sections.items():
+			if name != "post_model_sync":
+				with self.subTest(section=name):
+					self.assertNotIn(MIRROR_PATCH, lines)
+
+	def test_the_role_is_the_endpoint_s_with_no_desk_access(self):
+		self.assertEqual(mirror_seed.ROLE, "KB Mirror")
+		self.assertEqual(mirror_seed.ROLE, constants.MIRROR_ROLE)
+		self.assertEqual(mirror_seed.DESK_ACCESS, 0)
+		self.assertNotIn(mirror_seed.ROLE, {name for name, _desk in seed.ROLES})
+
+	def test_a_fresh_site_gets_the_role_and_nothing_else(self):
+		mirror_seed.execute()
+		self.assertEqual(STATE["inserted_roles"], [("KB Mirror", 0, True)])
+		self.assertEqual(STATE["inserted_profiles"], [])
+		self.assertEqual((STATE["commits"], STATE["errors"]), (1, []))
+
+	def test_it_is_idempotent_and_insert_only(self):
+		mirror_seed.execute()
+		mirror_seed.execute()
+		self.assertEqual(STATE["inserted_roles"], [("KB Mirror", 0, True)])
+		# A role that exists is never touched, whatever it holds (a Desk edit survives).
+		_reset_patch_state(roles=("KB Mirror",))
+		STATE["roles"]["KB Mirror"] = 1
+		mirror_seed.execute()
+		self.assertEqual(STATE["inserted_roles"], [])
+		self.assertEqual(STATE["roles"], {"KB Mirror": 1})
+		self.assertEqual(STATE["commits"], 0)
+
+	def test_a_failed_insert_is_logged_and_cannot_raise(self):
+		STATE["fail_role_insert"] = {"KB Mirror"}
+		mirror_seed.execute()  # must not raise
+		self.assertEqual(STATE["inserted_roles"], [])
+		self.assertEqual(len(STATE["errors"]), 1)
+		self.assertIn("KB Mirror", STATE["errors"][0][0])
+		self.assertEqual((STATE["rollbacks"], STATE["commits"]), (1, 0))
+
+	def test_it_cannot_raise_even_when_the_rollback_and_the_log_fail(self):
+		frappe = sys.modules["frappe"]
+		STATE["fail_role_insert"] = {"KB Mirror"}
+
+		def broken(*args, **kwargs):
+			raise RuntimeError("the database went away")
+
+		original = (frappe.db.rollback, frappe.log_error)
+		frappe.db.rollback, frappe.log_error = broken, broken
+		try:
+			mirror_seed.execute()  # must not raise
+		finally:
+			frappe.db.rollback, frappe.log_error = original
+		self.assertEqual(STATE["inserted_roles"], [])
+
+	def test_no_docperm_names_the_role_anywhere(self):
+		"""The endpoint's role check is the whole grant. A permission row anywhere (a doctype JSON of this
+		app, or a fixture) would let the mirror's account read that doctype through /api/resource."""
+		offenders = []
+		for path in sorted(APP.rglob("*.json")):
+			if "node_modules" in path.parts:
+				continue
+			text = path.read_text(encoding="utf-8", errors="replace")
+			if "KB Mirror" in text:
+				offenders.append(str(path.relative_to(APP)))
+		self.assertEqual(offenders, [])
+
+	def test_it_is_not_also_a_fixture(self):
+		path = APP / "fixtures" / "role.json"
+		present = {row.get("name") for row in json.loads(path.read_text(encoding="utf-8"))}
+		self.assertNotIn("KB Mirror", present)
 
 
 if __name__ == "__main__":

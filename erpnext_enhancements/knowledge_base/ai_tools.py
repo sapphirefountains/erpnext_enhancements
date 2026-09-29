@@ -209,14 +209,7 @@ def fetch_payload(args):
 	number = row.get("name") or number
 	version = row.get("version_number")
 	base = get_url()
-	rendered = markdown.article_markdown(
-		{
-			**{field: row.get(field) for field in FETCH_FIELDS},
-			"kb_number": number,
-			"approved_by_name": search_service.approver_name(row.get("approved_by")),
-		},
-		base_url=base,
-	)
+	rendered = article_text({**row, "name": number}, base)
 	text, truncated = markdown.truncate(rendered)
 	overdue = _overdue(row.get("review_by"))
 	cited = markdown.related_numbers(
@@ -249,6 +242,24 @@ def fetch_payload(args):
 		"related": _related(cited),
 		"note": " ".join(note),
 	}
+
+
+def article_text(row, base_url):
+	"""The whole Markdown of one published article: ``markdown.article_markdown`` of a row read with
+	:data:`FETCH_FIELDS`, its ``name`` as the KB number and its approver by name
+	(``search_service.approver_name``), untruncated.
+
+	The one place that turns a row into the renderer's input, so that what fetch returns (cut at 40,000
+	characters) and what the private mirror writes (``api/knowledge_base_mirror.snapshot``, WI-080
+	Slice 6) are the same bytes. It reads nothing but the approver's name."""
+	return markdown.article_markdown(
+		{
+			**{field: row.get(field) for field in FETCH_FIELDS},
+			"kb_number": row.get("name"),
+			"approved_by_name": search_service.approver_name(row.get("approved_by")),
+		},
+		base_url=base_url,
+	)
 
 
 def _not_found(requested):

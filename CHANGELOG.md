@@ -7,6 +7,175 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.561.0] - 2026-09-28
+
+**The published knowledge base can be mirrored as Markdown files into the company's private knowledge
+repo, which pulls them from one read-only endpoint.** WI-080 PR 8, the ERPNext side of Slice 6 (step 5
+of the AI-first order Nik approved on 2026-09-28, run every 6 hours plus on demand). Every Published
+article becomes `kb/<NN-department>/<KB number>.md` there, with exactly the header and text
+`fetch_knowledge_article` returns, so Claude Code and Antigravity read the same approved text the tools
+serve. **Pull, not push**: a scheduled job in the private repo calls the endpoint; ERPNext holds no
+GitHub credential and queues nothing. The account that job signs in as can call that endpoint and
+nothing else, which an `auth_hooks` entry enforces (found in review). Built on v1.559.0 (PR 6a), whose renderer it reuses; it does not
+depend on PR 6b.
+
+### Added
+
+- **`api/knowledge_base_mirror.snapshot(since=None)`**, `@frappe.whitelist(methods=["GET"])` and
+  `@rate_limit(limit=60, seconds=3600)`. It answers
+  `{"schema": 1, "stamp", "app_version", "count", "skipped", "articles"}`, each article
+  `{"kb_number", "version", "path", "sha256", "markdown"}`, in KB-number order.
+  - **Who:** the **KB Mirror** role or Administrator. Everyone else, a System Manager included, gets
+    `PermissionError` (403) with one sentence, before anything is read. Not `allow_guest`.
+  - **What:** every Knowledge Article with status Published, through one `frappe.get_all` (the role
+    holds no DocPerm, so the role check is the gate). Never a Retired article, never the Version
+    doctype, never a draft's text.
+  - **Each file** is the fetch tool's Markdown byte for byte, **untruncated** (fetch cuts at 40,000
+    characters), and `sha256` is over its UTF-8 bytes. An article whose department is not one of the
+    ten blocks, or whose name is not a KB number, has no folder: it is listed in `skipped` and not
+    rendered.
+  - **The stamp** is sha256 over `"<path>\t<sha256>\n"` for each file, sorted by path, so it changes
+    exactly when a file would. `since` equal to it answers only `{"schema": 1, "unchanged": true,
+    "stamp": ...}`.
+  - It writes nothing and logs nothing, and its own code reads no request header (Frappe has read and
+    dropped the `Authorization` header before it runs; `get_url()` looks at the request's host only
+    when the site has no `host_name`).
+  - The rate limit is counted before the role check, keyed by the method and the client's IP, so a
+    refused call counts too.
+- **`knowledge_base/mirror_guard.confine_mirror_account`, the app's first `auth_hooks` entry: the
+  mirror's account can call the snapshot and nothing else.** A Website User who holds KB Mirror (and
+  is not a System User) is refused, `PermissionError` (403) before Frappe dispatches anything, every
+  request except `GET` of exactly
+  `/api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot` with no `cmd` in its form:
+  another method, the snapshot under `/api/v1` or `/api/v2` or with a trailing slash, `/api/resource`,
+  `/api/v2/document`, a private file, a web page, the realtime server's sign-in. Every other user
+  passes untouched: a guest with no lookup, anyone else with two membership tests on the roles Frappe
+  caches. It reads the request's method, path and form keys, never a header, and writes and logs
+  nothing. Found in review; see "Why it is built this way".
+- **`patches/seed_knowledge_base_mirror_role.py`** (`[post_model_sync]`): the role **"KB Mirror"**,
+  `desk_access = 0`, granted to nobody, with no DocPerm anywhere. Insert-only, and it cannot raise
+  (not even when the rollback and the log fail). `knowledge_base/constants.MIRROR_ROLE` names it.
+- `knowledge_base/ai_tools.article_text(row, base_url)`: the one place a published row becomes the
+  renderer's input (its fields, its name as the KB number, its approver by name), shared by fetch and
+  the snapshot.
+- **Tests.** `MirrorSnapshotTest` in `test_knowledge_base_actions` (the stub gains
+  `frappe.rate_limiter`): refused without the role for a reader, an author, an approver, a System
+  Manager, a portal user and a guest, in a browser or with a token, before any read; the mirror and
+  Administrator admitted; Published only, with a sentinel in a Draft, an In Review, a Discarded and a
+  Superseded version and an open revision found nowhere, and a retired article absent; a file equal to
+  `fetch_payload()["markdown"]` byte for byte; an article over 40,000 characters whole; paths matching
+  `^kb/\d{2}-[a-z-]+/KB-\d{4}\.md$` in KB-number order; an unmapped department skipped; `since` giving
+  unchanged (and a wrong, blank or non-string `since` the full answer); the stamp's formula, moving
+  with an approver's full name, a retirement and a new version, and not with a field no file shows; no
+  header read, nothing written, nothing logged; the decorators and their order; and a static check,
+  comments and docstrings stripped, that the module names no draft doctype, no header, no write, no
+  logger and no GitHub. Every rule was checked by a mutation that a test then caught (14 of 14).
+  `TestMirrorRoleSeed` in `test_knowledge_base_schema`: registered once under `[post_model_sync]`, the
+  role and `desk_access` 0, insert-only, idempotent, cannot raise, not a fixture, and **no JSON in the
+  app names the role**. `test_whitelist_placement`: `snapshot` in the must-stay inventory, and a new
+  `EXACT_SURFACE` check that the file exposes nothing else. `test_hooks_integrity`: the only hook naming
+  the mirror is its account's confinement (no scheduler entry, which would be a push; no override,
+  which would drop the role check), and that one is in `auth_hooks`, never `before_request`, and takes
+  no arguments. `MirrorConfinementTest` in `test_knowledge_base_actions`: the mirror's account refused
+  on the endpoints the review named (`sync_contact`'s lookups and writes, `get_customer_ship_to`,
+  `run_debug_query`), on the KB's own `review_diff`, on frappe's `get_logged_user`, `get_user_info`,
+  `get_list`, logout and upload, each by `/api/method` and `/api/v2/method` and GET and POST, on the
+  snapshot at any other address or by any other HTTP method, on `/api/resource`, pages and private
+  files, and on any request carrying `cmd`; its snapshot answered through the hook, and still confined
+  with a website role added; staff (a System Manager, and a staff login holding KB Mirror),
+  Administrator, a portal user and a guest untouched; no role lookup for a guest; a failed lookup
+  failing the request, and an unreadable request refused; no header read, nothing written or logged;
+  the refused endpoints checked to be real and whitelisted; and a static check of the module. Each
+  rule was checked by a mutation that a test then caught (12 of 12, the hook moved to `before_request`
+  included).
+  `test_knowledge_base_tools`: the module joins the read-path files that may never name the drafts.
+
+### Changed
+
+- `ai_tools.fetch_payload` builds its Markdown with `article_text`; what it returns is unchanged (every
+  PR 6a test passes untouched).
+- `hooks.py`: the Role fixture's annotation says "KB Mirror" is owned by its seed patch, like the other
+  two KB roles; and `auth_hooks` is added, annotated, with the confinement.
+- `README.md`: the hook table gains `auth_hooks`.
+- Docs: `knowledge_base/README.md` ("The private mirror (PR 8)", the leak table, the roles, the file
+  map), `api/README.md` (the file map, the tab-indented list, the security model) and WI-080 (status,
+  "Found while building PR 8", "Found in review of PR 8").
+
+### Why it is built this way
+
+- **Pull, not push.** If ERPNext pushed, it would hold a credential that can rewrite the private repo,
+  including the agent rules every session loads; an ERPNext compromise would become a repo compromise.
+  Pulled, a leaked mirror key exposes only the published knowledge base, which the repo already holds,
+  because its account is confined to the snapshot (next); nothing queues in ERPNext for the deploy's
+  FLUSHDB to kill; and recovery is running the job again.
+- **The account is confined in code, because a role with no DocPerm is not enough** (found in review).
+  The first version of this entry said a leaked key exposed only the published knowledge base. It did
+  not: the key signs in a Website User, and v16's whitelist refuses only a Guest or a function that is
+  not whitelisted (`is_whitelisted`, `frappe/__init__.py:479-487`), so the account could call every
+  login-only endpoint whose body checks nothing. `sync_contact.get_contacts_for_context` returns any
+  party's contacts with their phone numbers and email addresses, `get_addresses_for_context` its
+  addresses, and `link_existing_record` / `unlink_record` save a Contact or Address with
+  `ignore_permissions` (a token caller skips CSRF). Confining the one account closes all of them, and
+  whatever such endpoint is written next, in one place. Those endpoints still answer to every other
+  signed-in user; gating them is a separate change.
+- **An `auth_hooks` entry, not `before_request`.** v16's `application` runs `init_request`, which ends
+  with the `before_request` hooks (`app.py:139`, `:244-245`), and only then `validate_auth`
+  (`app.py:141`), which reads the API key (`auth.py:636-638`) and then runs `auth_hooks` (`:640`). At
+  `before_request` a keyed request is still Guest, so a guard there would pass the mirror's key
+  through to everything, and every test calling the function directly would still pass; the hooks
+  test pins the placement.
+- **KB Mirror and not a System User, not "only KB Mirror".** v16 gives every System User, and nobody
+  else, the automatic role Desk User (`permissions.py:35`, `:560-562`). So the account stays confined
+  if a website role is ever added to it, and a staff login given KB Mirror by mistake is not locked out
+  of the Desk (it gains only the snapshot, and it reads the published articles anyway). "Only KB
+  Mirror" would fail both ways.
+- **Exactly one address and no `cmd`.** Frappe dispatches a `cmd` in the form before it looks at the
+  path (`app.py:146-155`), so a request carrying one is refused whatever its path, and every variant
+  address of the snapshot is refused too: failing closed costs nothing, since the private repo's script
+  calls the one address.
+- **`get_all` behind a role check, not `get_list` as the caller.** The role holds no DocPerm, so it adds
+  nothing the account can read through `/api/resource`, a list or a report. Giving it a read DocPerm
+  instead would open every one of those paths to it; the role check opens exactly one.
+- **The whitelist is the outer decorator.** Frappe checks the object the dotted path resolves to
+  against `frappe.whitelisted`, so a `rate_limit` wrapped around the whitelisted function would make the
+  endpoint "not whitelisted" for everyone. A test pins the order.
+- **The links follow the address the site is reached at.** `get_url()` is the configured `host_name`,
+  or with none the request's host, so a mirror file equals a fetched article byte for byte when both
+  reach the site at the same address, and every file (and the stamp) changes if that address does.
+
+### After deploy (read-only)
+
+- ``SELECT name, desk_access FROM tabRole WHERE name='KB Mirror'`` returns 1 row with `desk_access` 0,
+  and ``SELECT patch FROM `tabPatch Log` WHERE patch LIKE '%seed_knowledge_base_mirror_role%'`` 1 row.
+- ``SELECT COUNT(*) FROM tabDocPerm WHERE role='KB Mirror'`` and ``SELECT COUNT(*) FROM `tabCustom DocPerm` WHERE role='KB Mirror'``
+  are both 0, and ``SELECT COUNT(*) FROM `tabHas Role` WHERE role='KB Mirror'`` is 0 until the mirror's
+  account is made (the patch grants the role to nobody).
+- In a browser signed in as staff, opening
+  `/api/method/erpnext_enhancements.api.knowledge_base_mirror.snapshot` answers 403, "Only the knowledge
+  base mirror may read this snapshot."; in a private window with no session it answers 403 too (Frappe's
+  own "not whitelisted" refusal for a guest).
+- ``SELECT COUNT(*) FROM `tabError Log` WHERE creation > '<deploy time>' AND (method = 'Knowledge Base role seed' OR error LIKE '%knowledge_base_mirror%')`` = 0.
+  An Error Log's `method` is its title, which for an unexpected 500 is the exception's text, so the
+  endpoint's path is looked for in the traceback (`error`).
+- Signed in as staff, the Desk loads and saves as before: the `auth_hooks` entry passes every user who
+  does not hold KB Mirror.
+- **Then the manual setup in the private runbook** (the account, its key, where the key is kept, and the
+  first run). Optionally, with the new key before it is stored:
+  `GET /api/method/frappe.auth.get_logged_user` answers 403, "The knowledge base mirror's account may
+  only read its snapshot.", and the snapshot answers 200. After the first run: the run is green; the number of `kb/*/KB-*.md` files equals
+  ``SELECT COUNT(*) FROM `tabKnowledge Article` WHERE status='Published'`` less any `skipped`; a mirror
+  file equals `fetch_knowledge_article`'s `markdown` for the same article byte for byte; a second run
+  with nothing changed makes no commit; and retiring a test article deletes its file on the next run.
+
+### Rollback
+
+Disable the private repo's workflow and the account holding KB Mirror (see the private runbook);
+`kb/` stays as the last copy. Reverting this release removes the endpoint and returns `fetch_payload`
+to building its row inline, with the same output. The role stays until a `delete_doc` patch removes it;
+with the endpoint gone it opens nothing, whoever holds it. Never remove the `auth_hooks` entry on its
+own while the account exists: that re-opens every login-only endpoint to the mirror's key. To stop the
+mirror, disable the account.
+
 ## [1.560.0] - 2026-09-28
 
 **An AI can draft a knowledge base article, and submit it for review, through an approval card that
