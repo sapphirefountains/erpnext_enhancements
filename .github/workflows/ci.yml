@@ -2467,6 +2467,15 @@ jobs:
       # allow_on_submit (the fleet Assets are submitted). Stub-free, own step.
       - name: Event rental rules (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_rules -v
+      # The Rental Planner (v1.563.0): the fleet timeline and the four-step new-rental flow. Every
+      # screen is a route, and the harness runs the REAL page script against a model of the v16
+      # router: Next is an entry, the flow's Back steps back through history rather than stacking,
+      # a deep link to an unfinished step is corrected in place, a reload keeps the draft, and Back
+      # from the booked screen can never resubmit the old draft (a second booking for the same
+      # fountains). Also pins the server surface: permission first, create is POST-only, and the
+      # payload cannot set status or totals. node is on PATH in this job, so the harness runs.
+      - name: Rental Planner Back/Forward + surface (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_planner -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand
