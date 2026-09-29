@@ -217,11 +217,6 @@ class TestWhereTheWidgetLoads(unittest.TestCase):
 		for name in ("capture.bundle.js", "capture_panel.bundle.js"):
 			self.assertTrue((JS / name).exists(), name)
 
-	def test_the_recorder_never_uses_the_guest_error_logger(self):
-		# api/logger.log_client_error is guest-callable and writes unscrubbed text to Error Log.
-		for path in (JS / "capture").rglob("*.js"):
-			self.assertNotIn("log_client_error", path.read_text(encoding="utf-8"), path.name)
-
 
 class TestWiring(unittest.TestCase):
 	def test_the_help_menu_item(self):

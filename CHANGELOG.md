@@ -112,6 +112,95 @@ portal); crew logistics and inspections; and KPIs, AI tools and calendar feeds.
   People who book rentals may not be allowed to search the whole Asset register, and v16 validates
   a link through that same search.
 
+## [1.561.2] - 2026-09-29
+
+**Remove the guest-callable client error logger; retry the Search Console snapshot on transient
+network errors.** TASK-2026-01577 and TASK-2026-01474.
+
+### Security
+
+- **Removed an unused endpoint that let any caller, signed in or not, write to the Error Log.**
+  `api/logger.py` held one whitelisted function, `log_client_error`, marked `allow_guest=True`. It
+  was added for the Time Kiosk's visual debugger, and its last caller went when that debugger was
+  removed on 2026-06-08. Nothing calls it now: not this app's JavaScript, Python, hooks or `www/`
+  pages, not Triton, and not any Client Script, Server Script, Web Page, Web Form, Custom HTML
+  Block, Report or Single stored on prod. Prod's Error Log holds no `Client-Side Error` row, the
+  title it wrote. The module is deleted and `api/README.md` no longer lists it. The two checks that
+  the capture widget never called it (`tests/test_feedback_capture_surface.py`,
+  `scripts/test_capture_panel.js`) are removed with it: there is nothing left to call.
+
+### Fixed
+
+- **The nightly Search Console pull failed every night after v1.505.0 fixed its 403.** From
+  2026-09-23 to 2026-09-29 every Marketing Web Snapshot recorded `gsc_ok = 0`. `GSC API Error`
+  logged `[SSL: RECORD_LAYER_FAILURE] record layer failure` or `The read operation timed out`,
+  eight rows from 2026-09-22 17:18 to 2026-09-29 05:00. The date query succeeded every time. The
+  failure was always inside `fetch_dimension`, the query and page breakdowns that `get_gsc_data`
+  ran in a two-thread pool, and it hit one breakdown on some nights and the other on the rest.
+  - **Why.** Both threads went through the one transport `googleapiclient.discovery.build()` gives
+    the service: an `httplib2.Http`, which keeps one connection per host and is not thread-safe.
+    The client library's own documentation says each thread needs its own. So two threads wrote
+    to and read from one TLS socket. One read part of the other's reply, which TLS rejects as a
+    bad record, or waited for a reply the other had already taken until it timed out.
+  - The three queries now run one after another on the calling thread. The dashboard page makes
+    its last two requests in turn instead of together.
+  - Each attempt gets a new `AuthorizedHttp` over a new `httplib2.Http` with an explicit
+    30-second timeout, closed afterwards. The service's shared transport is never used. A
+    connection that timed out can still hold the reply it was waiting for, and reusing it would
+    hand that reply to the next request.
+  - **The key is now loaded with its scope, `webmasters.readonly` (`GSC_SCOPES`).** Before this,
+    it was loaded with none, and that worked only because `build()` scopes the credentials it is
+    given. It scopes a *copy*, though, and keeps the copy for the service's own transport. A
+    transport built per attempt authorizes with the original, so an unscoped key would ask
+    Google for a token with an empty `scope` claim. The token endpoint refuses that with 400
+    `invalid_scope` before any query is sent. google-auth raises it as `RefreshError`, which is
+    not a network error and is not retried. So the date query, both breakdowns, the dashboard
+    panel and `backfill_gsc_snapshots` would all have failed on it. Read-only is enough for
+    `searchanalytics.query`, the only call made. This was checked with the real libraries
+    (google-api-python-client 2.194.0, google-auth 2.49.2, google-auth-httplib2 0.3.1, httplib2
+    0.31.2) and the network intercepted at `httplib2.Http.request`. Unscoped, the only request
+    sent is the token request, with `scope` empty. Scoped, it carries `webmasters.readonly` and
+    the three queries follow. Every other test replaces `_gsc_service` whole, which is why the
+    suite could not see this. Three new tests run the real one, stubbing only the key loader and
+    `build()`. They check that the key is loaded with a webmasters scope, and that every
+    transport, the nightly pull's and the backfill's, authorizes with that scoped object. All
+    three fail on an unscoped load.
+  - `_gsc_execute` retries a TLS error or a timeout: three attempts in all, 2s then 4s apart. It
+    does not use the library's `execute(num_retries=…)`, which resends down the same connection
+    and also retries 429 and rate-limit 403 responses. Here an `HttpError` is never retried, a
+    4xx included, and neither is a certificate that does not verify. The property-form fallback
+    still tries each form once and moves on at a 401, 403 or 404.
+  - A failure that outlasts the retries writes **one** Error Log row, `GSC API Error`, with a
+    short message naming the query, the attempts and the last error. It carries no traceback,
+    which would have been about 4 KB of httplib2 and ssl frames. `GscUnavailable` is raised
+    `from None`, so nothing further up can publish the chain either. The row is throttled on its
+    own key. Every other failure logs as before.
+  - **And the row is titled `GSC API Error`, not with its own message.** `log_error_throttled`
+    hands `frappe.log_error` the message first, and v16's `log_error(title, message)` swaps the
+    two only when that first argument contains a newline (`frappe/utils/error.py`). A traceback
+    always does; a one-line sentence does not, so it becomes the row's title, cut at 140
+    characters, with "GSC API Error" as the body. That would have happened to this message and to
+    v1.505.0's one-line refusal message too. Prod already has rows stored backwards this way from
+    other callers. The new `_log_gsc_error` gives both GSC messages a trailing newline. The
+    app-wide fix, in `utils/error_throttle.py` and the 11 calls through it, is a separate change,
+    because several test suites stub `frappe.log_error` on the old argument order.
+  - The public behavior is unchanged. `get_gsc_data` returns the same keys (`search_timeline`,
+    `top_queries`, `top_pages`, `property`) or `{"error": "Failed to fetch GSC data: …"}`, and
+    `snapshot_marketing_web` reads it the same way.
+  - `tests/test_search_console.py` pins it, in its existing CI step: the queries run on the
+    calling thread; every attempt has its own transport, with the timeout, closed after use; a
+    TLS error and a timeout are retried with backoff; 400, 429, a refused form and a certificate
+    failure are not; and a failure that outlasts the retries logs exactly one row, titled
+    `GSC API Error`, without the credentials' token and with no chained exception. The refusal
+    row is titled correctly as well. Against the old code 8 of the 10 new tests fail. The two that
+    pass pin what was already true: a refused form and a certificate failure were never retried.
+  - [`docs/error-log-runbook.md`](docs/error-log-runbook.md) §2 describes the new message.
+
+**After deploy.** No Marketing Web Snapshot on prod has `gsc_ok = 1` yet: all 93 of them, from
+2026-06-26 to 2026-09-29, stored zero or blank organic figures. `backfill_gsc_snapshots` runs one
+query and never used the thread pool, so it can repair all of them in one run. Dry run first, as
+[Fixing the GSC 403](docs/marketing-spend-runbook.md#fixing-the-gsc-403) describes.
+
 ## [1.561.1] - 2026-09-28
 
 **Permission checks on the contact, address and ship-to endpoints.** Frappe v16's whitelist refuses
