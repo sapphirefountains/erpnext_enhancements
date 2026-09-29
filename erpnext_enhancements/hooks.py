@@ -2711,6 +2711,20 @@ assistant_tools = [
 	# values, which strands every resume position, checkpoint and video chapter,
 	# because all of them join on the key rather than on an index.
 	"erpnext_enhancements.assistant_tools.create_training_draft_version.CreateTrainingDraftVersion",
+	# WI-080 PR 6a (v1.559.0): the company knowledge base's three READ tools, EXPLICIT_READONLY in
+	# _gate.py. Each is a thin wrapper over knowledge_base/ai_tools.py, which reads the PUBLISHED
+	# Knowledge Article as the caller and never the drafts' doctype (the gate's denylist refuses
+	# that doctype to every generic tool as well). requires_permission is "Knowledge Article",
+	# which every staff user reads, so FAC lists all three to the same people and Triton's one
+	# shared tool catalogue does not change with whoever asked first. Every expected outcome (not
+	# found, an unknown filter) is a normal return, because FAC logs an exception with the call's
+	# arguments and its traceback. search_company_knowledge and fetch_knowledge_article are the
+	# names ADR 0017 froze; list_company_knowledge is the table of contents its 2026-09-28
+	# amendment added. Triton picks them up only after its own PR (FAC_CORE_PREFIXES) and a
+	# snapshot + deploy_agents; see the CHANGELOG for v1.559.0.
+	"erpnext_enhancements.assistant_tools.search_company_knowledge.SearchCompanyKnowledge",
+	"erpnext_enhancements.assistant_tools.fetch_knowledge_article.FetchKnowledgeArticle",
+	"erpnext_enhancements.assistant_tools.list_company_knowledge.ListCompanyKnowledge",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",

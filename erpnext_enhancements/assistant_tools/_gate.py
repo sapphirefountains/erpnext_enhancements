@@ -125,6 +125,15 @@ EXPLICIT_READONLY = {
     # Vertex call (logged to AI Model Usage) and caches the proposal; a confirmation
     # card in front of "draft me a proposal" would be friction with nothing to undo.
     "draft_course_spec",
+    # v1.559.0 (WI-080 PR 6a) -- the company knowledge base's three read tools. Each reads the
+    # published Knowledge Article as the caller through knowledge_base/ai_tools.py and writes
+    # nothing. Listed here for the v1.239.1 reason above: unclassified, a read falls to the
+    # fail-closed default and answers with a card. tests/test_knowledge_base_tools.py fails the
+    # build if any of the three leaves this set. The drafting tool (PR 6b) is a write and will
+    # go in APP_MUTATING, never here.
+    "search_company_knowledge",
+    "fetch_knowledge_article",
+    "list_company_knowledge",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
