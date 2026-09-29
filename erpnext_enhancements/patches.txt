@@ -1234,3 +1234,7 @@ erpnext_enhancements.patches.reload_travel_hub_trips
 # never makes it, because no DocPerm names it. Grants it to nobody. Insert-only: an existing role is never
 # touched. Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_knowledge_base_mirror_role
+# v1.562.0 event rentals (PR 1): tick "Available for Event Rental" and set a 24-hour turnaround on every
+# Asset in the Rental Fountain Fleet category, so the fleet is bookable on day one. Creates the three Asset
+# Custom Fields first (patches run before fixture sync). Runs once; a later untick survives. Cannot raise.
+erpnext_enhancements.patches.seed_rental_fleet_flags
