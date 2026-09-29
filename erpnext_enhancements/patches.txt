@@ -1234,3 +1234,26 @@ erpnext_enhancements.patches.reload_travel_hub_trips
 # never makes it, because no DocPerm names it. Grants it to nobody. Insert-only: an existing role is never
 # touched. Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_knowledge_base_mirror_role
+# v1.562.0 event rentals (PR 1): tick "Available for Event Rental" and set a 24-hour turnaround on every
+# Asset in the Rental Fountain Fleet category, so the fleet is bookable on day one. Creates the three Asset
+# Custom Fields first (patches run before fixture sync). Runs once; a later untick survives. Cannot raise.
+erpnext_enhancements.patches.seed_rental_fleet_flags
+# v1.562.1: seed the "Error Log Recipient" role (desk_access 0, no DocPerm anywhere) the Error Log alert now
+# emails instead of every System Manager, so admin rights and error emails are separate. Grants it to nobody;
+# who reads the errors is set in the Desk. Must run before fixture sync, which imports the alert's recipient
+# row naming it. Insert-only, cannot raise, safe twice.
+erpnext_enhancements.patches.seed_error_log_recipient_role
+# v1.564.0 event rentals (PR 3a): the rental twin of add_esign_signature_block, which is maintenance-only
+# and has already run everywhere. Replaces the exact paper SIGNATURES block of the live Rental Agreement
+# template with the sig() one so Send for Signature accepts rental agreements; refuses (logging) if the
+# site's wording diverged. Safe twice.
+erpnext_enhancements.patches.add_rental_esign_signature_block
+# v1.565.0 customer portal: turn on Login with Email Link (Nik, 2026-09-29) so customers can sign in to
+# /rentals and /pay without Google. Ships WITH portal_login's guards (the send_login_link override that
+# mints no link for staff, and the on_login refusal): frappe's login_via_key signs in ANY account with no
+# password or 2FA. Runs once; a later switch-off in System Settings stays off.
+erpnext_enhancements.patches.enable_login_with_email_link
+# v1.566.0 event rentals (PR 4): Rental Settings (a Single since v1.564.0) gained crew_digest and
+# generate_inspections, both ticked by default. A default never reaches a Single that already has rows, so
+# fill each only where no tabSingles row exists; a never-saved Single is left alone. Safe twice.
+erpnext_enhancements.patches.backfill_rental_settings_defaults

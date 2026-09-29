@@ -352,5 +352,42 @@ class TestTheDeliberateExceptions(unittest.TestCase):
             self.assertNotIn(name, repoint)
 
 
+class TestErrorLogRecipientRole(unittest.TestCase):
+    """v1.562.1. The Error Log alert emailed every System Manager, so the only way to
+    stop someone's error emails was to take their admin rights away. It now emails a
+    dedicated role that grants nothing (Nik, 2026-09-29)."""
+
+    ROLE = "Error Log Recipient"
+    SEED = APP / "patches/seed_error_log_recipient_role.py"
+
+    def seed_literal(self, name):
+        for node in ast.walk(ast.parse(self.SEED.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in node.targets
+            ):
+                return ast.literal_eval(node.value)
+        raise AssertionError(f"{name} not found in the seed patch")
+
+    def test_the_alert_emails_the_dedicated_role_not_system_manager(self):
+        doc = next(d for d in fixture_docs() if d["name"] == "Error Log")
+        self.assertEqual([r.get("receiver_by_role") for r in doc["recipients"]], [self.ROLE])
+
+    def test_the_patch_seeds_that_role_without_desk_access(self):
+        self.assertEqual(self.seed_literal("ROLE"), self.ROLE)
+        self.assertEqual(self.seed_literal("DESK_ACCESS"), 0)
+        self.assertIn(
+            "erpnext_enhancements.patches.seed_error_log_recipient_role",
+            (APP / "patches.txt").read_text(encoding="utf-8"),
+        )
+
+    def test_the_role_grants_nothing(self):
+        """A mailing list, not a permission: no doctype or fixture may give it a DocPerm."""
+        offenders = [
+            str(path.relative_to(APP))
+            for path in APP.rglob("*.json")
+            if f'"role": "{self.ROLE}"' in path.read_text(encoding="utf-8", errors="ignore")
+        ]
+        self.assertEqual(offenders, [])
+
 if __name__ == "__main__":
     unittest.main()

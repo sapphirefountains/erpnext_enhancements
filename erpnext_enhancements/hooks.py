@@ -221,6 +221,12 @@ doctype_js = {
 		# public/js/gantt_widget/). Replaces the legacy frappe-gantt renderer
 		# that lived in project_enhancements/doctype/project/project.js.
 		"public/js/project_enhancements/project_gantt_widget.js",
+		# event rentals (v1.562.0): while a live Rental Booking holds this Project, its
+		# delivery/setup/event/take-down fields are read-only with a banner naming the
+		# booking -- the booking owns the schedule and mirrors it here, so an edit made on
+		# the Project would be overwritten by the booking's next save. Also offers
+		# Create > Rental Booking on an Events project.
+		"public/js/asset_management/project_rental.js",
 		# Budget tab "Pick Routing Map" button (custom_btn_pick_routing_map):
 		# every supplier with material still to collect, in drive-time order out
 		# of the shop. Backed by api/pickup_routing.py.
@@ -476,6 +482,19 @@ override_doctype_class = {
 }
 
 doc_events = {
+	# asset_management (v1.562.0): a pending ERPNext Asset Repair on a rental-fleet fountain
+	# opens an Asset Out of Service record, which blocks the fountain's rental calendar;
+	# Completed returns it to service on the completion date, Cancelled returns it now.
+	# on_update rather than after_insert as well, because it fires on insert too and again
+	# on every status edit while the repair is still a draft. Fleet fountains only
+	# (custom_rentable). Never raises -- a repair must always be saveable -- so it runs in a
+	# savepoint and logs. See asset_management/out_of_service.py.
+	"Asset Repair": {
+		"on_update": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+		"on_submit": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+		"on_update_after_submit": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+		"on_cancel": "erpnext_enhancements.asset_management.out_of_service.on_asset_repair_change",
+	},
 	# quality (WI-075 sub-phase E): a failed check becomes a Non-Conformance and a corrective
 	# action. on_submit and not validate -- an inspection in progress has failures in it that
 	# are about to be corrected on the spot, and raising an NCR per keystroke would make the
@@ -669,8 +688,21 @@ doc_events = {
 		# Maintenance Contract (left as a draft; activation stays the human gate).
 		# Both signing paths: submitting an already-Signed draft (on_submit) and
 		# the post-submit "Mark as Signed" button (on_update_after_submit).
-		"on_submit": "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
-		"on_update_after_submit": "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+		#
+		# event rentals (v1.564.0): a Rental Agreement that becomes Signed confirms its Rental
+		# Booking (firming the fountains' calendars) and drafts the deposit invoice. Same two
+		# signing paths. Runs in the signer's transaction -- usually a Guest on /contract-sign --
+		# so it never raises: a booking that cannot be confirmed (its fountains were taken while
+		# the agreement was out) is logged, commented and sent to the booking's owner, and the
+		# signature stands. See asset_management/rental_sales.py.
+		"on_submit": [
+			"erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+			"erpnext_enhancements.asset_management.rental_sales.on_rental_agreement_signed",
+		],
+		"on_update_after_submit": [
+			"erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+			"erpnext_enhancements.asset_management.rental_sales.on_rental_agreement_signed",
+		],
 	},
 	# travel_management: trip emails + mirroring claim/advance status onto
 	# traveler rows and clearing claim stamps on cancel/trash (dedupe guard)
@@ -1101,7 +1133,15 @@ scheduler_events = {
 		# data, silently). generate_all_snapshots upserts, so a re-run is idempotent.
 		"0 9 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.verify_daily_snapshots"],
 		# Morning technician dispatch digest — 06:00 site TZ (gated in Settings).
-		"0 6 * * *": ["erpnext_enhancements.api.maintenance_dispatch.send_morning_digests"],
+		"0 6 * * *": [
+			"erpnext_enhancements.api.maintenance_dispatch.send_morning_digests",
+			# event rentals (v1.566.0): pre-shipping checklists for every fountain delivering today
+			# or tomorrow, assigned to the booking's crew -- then each crew member's rental tasks
+			# for today by email and text, at most once a day. Order matters: the checklists exist
+			# before the crew is told what their day holds. Both gated in Rental Settings.
+			"erpnext_enhancements.asset_management.rental_logistics.generate_due_inspections",
+			"erpnext_enhancements.asset_management.rental_logistics.send_crew_digests",
+		],
 		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
 		# The three jobs each write the single QuickBooks Online Settings doc (token
 		# refresh must save() through the doc for Password-field encryption, so it
@@ -1320,6 +1360,15 @@ scheduler_events = {
 		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
 	},
 	"daily": [
+		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release
+		# lapsed holds (status Expired frees the fountains); and draft each confirmed rental's
+		# balance invoice when delivery is Rental Settings.balance_days_before_delivery away. A
+		# daily sweep, not a job per booking, because the deploy's Redis flush kills queued jobs.
+		"erpnext_enhancements.asset_management.rental_holds.run_daily",
+		"erpnext_enhancements.asset_management.rental_sales.draft_due_balance_invoices",
+		# event rentals (v1.566.0): the four customer reminder emails (week out, site details,
+		# day before, thank you), each OFF until turned on in Rental Settings, each once per booking.
+		"erpnext_enhancements.asset_management.rental_reminders.run_daily",
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
 		# have come round on their jobs. Sub-phase C seeded seventeen milestones carrying a
 		# trigger_basis and NOTHING read it, so a Build project could reach QA and the pre-final
@@ -2337,6 +2386,12 @@ override_whitelisted_methods = {
 	"frappe.client.submit": "erpnext_enhancements.fieldlevel_read.client_submit",
 	"frappe.client.cancel": "erpnext_enhancements.fieldlevel_read.client_cancel",
 	"frappe.model.workflow.apply_workflow": "erpnext_enhancements.fieldlevel_read.apply_workflow",
+	# portal login (v1.565.0): customers sign in with an emailed link; staff never can. frappe's
+	# login_via_key signs in ANY account with no password, 2FA or Google, and the setting is
+	# site-wide, so this mints no link for anything but a Website User -- answering exactly as
+	# frappe does for an unknown email. Sealed in before_request (portal_login.seal_original),
+	# and backed by the on_login guard below. See erpnext_enhancements/portal_login.py.
+	"frappe.www.login.send_login_link": "erpnext_enhancements.portal_login.send_login_link",
 }
 
 # POST/PUT /api/resource and /api/v2/document return the saved document unstripped, and they
@@ -2354,7 +2409,13 @@ after_request = ["erpnext_enhancements.fieldlevel_read.scrub_rest_write_response
 # present or future, fails the whitelist check; the canonical names still reach the wrappers,
 # and in-process calls are unaffected. It never raises. See fieldlevel_read.seal_wrapped_originals
 # (v1.542.0).
-before_request = ["erpnext_enhancements.fieldlevel_read.seal_wrapped_originals"]
+before_request = [
+	"erpnext_enhancements.fieldlevel_read.seal_wrapped_originals",
+	# portal login (v1.565.0): frappe's own send_login_link is reachable under a second dotted
+	# name (frappe.www.login.frappe.www.login.send_login_link) that the override above does not
+	# match; taking the function object off the whitelist closes every alias. Never raises.
+	"erpnext_enhancements.portal_login.seal_original",
+]
 
 # knowledge_base (WI-080 PR 8 review, v1.561.0): the private mirror's account, a Website User holding
 # only "KB Mirror" and signed in by an API key, may call api/knowledge_base_mirror.snapshot and nothing
@@ -2380,7 +2441,13 @@ auth_hooks = ["erpnext_enhancements.knowledge_base.mirror_guard.confine_mirror_a
 # on_login sends a cookie only to a browser holding somebody else's marker. See
 # travel_management/itinerary_offline.py.
 on_logout = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_logout"]
-on_login = ["erpnext_enhancements.travel_management.itinerary_offline.forget_on_login"]
+on_login = [
+	"erpnext_enhancements.travel_management.itinerary_offline.forget_on_login",
+	# portal login (v1.565.0): the second layer. A sign-in through login_via_key (an emailed
+	# link) is refused for any account that is not a Website User, whatever minted the key.
+	# Raising here happens before frappe makes the session, so no session is created.
+	"erpnext_enhancements.portal_login.refuse_staff_email_link_login",
+]
 
 override_doctype_dashboards = {
 	"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data",
@@ -2661,6 +2728,9 @@ portal_menu_items = [
 	# the page existed in the first place.
 	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"},
 	{"title": "Pay Invoices", "route": "/pay", "role": "Customer"},
+	# event rentals (v1.565.0): a customer's rentals -- schedule, what is booked, invoices, and
+	# the site-prep and change-request forms. Ownership-checked in asset_management/rental_portal.
+	{"title": "My Rentals", "route": "/rentals", "role": "Customer"},
 ]
 
 # ---------------------------------------------------------------------------

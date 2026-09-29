@@ -1,0 +1,70 @@
+{
+ "actions": [],
+ "creation": "2026-09-29 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "pool",
+  "qty",
+  "rate",
+  "block_from",
+  "block_to"
+ ],
+ "fields": [
+  {
+   "fieldname": "pool",
+   "fieldtype": "Link",
+   "label": "Accessory",
+   "options": "Rental Accessory Pool",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Int",
+   "label": "Qty",
+   "reqd": 1,
+   "default": "1",
+   "non_negative": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "label": "Rate (each)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "block_from",
+   "fieldtype": "Datetime",
+   "label": "Blocked From",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "block_to",
+   "fieldtype": "Datetime",
+   "label": "Blocked To",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-29 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Rental Booking Accessory",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

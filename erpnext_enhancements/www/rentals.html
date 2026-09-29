@@ -1,0 +1,152 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ _("My Rentals") }}{% endblock %}
+
+{% block page_content %}
+<div class="rentals-portal">
+	{% if detail %}
+		<p><a href="/rentals">&larr; {{ _("All rentals") }}</a></p>
+		<h1 class="mb-1">{{ detail.event_name or detail.name }}</h1>
+		<p class="text-muted">{{ detail.name }} &middot; <b>{{ detail.status_label }}</b>
+			{% if detail.hold_expires_on %}&middot; {{ _("held until {0}").format(frappe.format(detail.hold_expires_on, {"fieldtype": "Date"})) }}{% endif %}</p>
+
+		<div class="card mb-3"><div class="card-body">
+			<h5>{{ _("Schedule") }}</h5>
+			<dl class="row mb-0">
+				<dt class="col-sm-4">{{ _("Delivery") }}</dt><dd class="col-sm-8">{{ frappe.format(detail.delivery_datetime, {"fieldtype": "Datetime"}) }}</dd>
+				{% if detail.event_start_datetime %}<dt class="col-sm-4">{{ _("Event") }}</dt><dd class="col-sm-8">{{ frappe.format(detail.event_start_datetime, {"fieldtype": "Datetime"}) }}</dd>{% endif %}
+				<dt class="col-sm-4">{{ _("Pickup") }}</dt><dd class="col-sm-8">{{ frappe.format(detail.takedown_datetime, {"fieldtype": "Datetime"}) }}</dd>
+				{% if detail.venue %}<dt class="col-sm-4">{{ _("Venue") }}</dt><dd class="col-sm-8">{{ detail.venue }}</dd>{% endif %}
+			</dl>
+		</div></div>
+
+		<div class="card mb-3"><div class="card-body">
+			<h5>{{ _("What's booked") }}</h5>
+			<ul class="mb-0">
+				{% for f in detail.fountains %}<li>{{ f }}</li>{% endfor %}
+				{% for a in detail.accessories %}<li>{{ a }}</li>{% endfor %}
+			</ul>
+			{% if detail.agreement %}
+				<p class="mt-2 mb-0 text-muted">
+					{% if detail.agreement.status == "Signed" %}{{ _("Rental agreement signed on {0}.").format(frappe.format(detail.agreement.signed_on, {"fieldtype": "Date"})) }}
+					{% else %}{{ _("Your rental agreement is waiting for your signature. Check your email for the signing link.") }}{% endif %}
+				</p>
+			{% endif %}
+		</div></div>
+
+		<div class="card mb-3"><div class="card-body">
+			<h5>{{ _("Invoices") }}</h5>
+			{% if detail.invoices %}
+				<div class="table-responsive"><table class="table table-sm mb-2">
+					<thead><tr><th>{{ _("Invoice") }}</th><th>{{ _("Due") }}</th><th class="text-right">{{ _("Balance") }}</th></tr></thead>
+					<tbody>
+					{% for inv in detail.invoices %}
+						<tr>
+							<td>{{ inv.custom_rental_invoice_kind or "" }} {{ inv.name }}</td>
+							<td>{{ frappe.format(inv.due_date, {"fieldtype": "Date"}) }}</td>
+							<td class="text-right">{{ frappe.format(inv.outstanding_amount, {"fieldtype": "Currency", "options": "currency"}, inv) }}</td>
+						</tr>
+					{% endfor %}
+					</tbody>
+				</table></div>
+				<a class="btn btn-primary btn-sm" href="/pay">{{ _("Pay online") }}</a>
+			{% else %}
+				<p class="text-muted mb-0">{{ _("No invoices yet.") }}</p>
+			{% endif %}
+		</div></div>
+
+		<div class="card mb-3"><div class="card-body">
+			<h5>{{ _("Site details for our crew") }}</h5>
+			{% if detail.editable %}
+			<form id="rental-site-prep" data-booking="{{ detail.name }}">
+				<div class="form-row">
+					<div class="form-group col-sm-6"><label>{{ _("On-site contact") }}</label>
+						<input class="form-control" name="site_contact_name" maxlength="140" value="{{ detail.site_prep.site_contact_name }}"></div>
+					<div class="form-group col-sm-6"><label>{{ _("On-site phone") }}</label>
+						<input class="form-control" name="site_contact_phone" type="tel" maxlength="40" value="{{ detail.site_prep.site_contact_phone }}"></div>
+				</div>
+				<div class="form-group"><label>{{ _("Surface where the fountain will stand") }}</label>
+					<select class="form-control" name="surface">
+						{% for s in surfaces %}<option value="{{ s }}" {% if s == detail.site_prep.surface %}selected{% endif %}>{{ _(s) if s else _("Choose...") }}</option>{% endfor %}
+					</select></div>
+				<div class="form-group"><label>{{ _("Access: gate codes, parking, stairs") }}</label>
+					<textarea class="form-control" name="site_access" rows="2" maxlength="1000">{{ detail.site_prep.site_access }}</textarea></div>
+				<div class="form-group"><label>{{ _("Power: where is the nearest outlet?") }}</label>
+					<textarea class="form-control" name="power_source" rows="2" maxlength="1000">{{ detail.site_prep.power_source }}</textarea></div>
+				<div class="form-group"><label>{{ _("Water: where is the nearest spigot?") }}</label>
+					<textarea class="form-control" name="water_source" rows="2" maxlength="1000">{{ detail.site_prep.water_source }}</textarea></div>
+				<div class="form-group"><label>{{ _("Anything else we should know") }}</label>
+					<textarea class="form-control" name="site_prep_notes" rows="2" maxlength="1000">{{ detail.site_prep.site_prep_notes }}</textarea></div>
+				<button class="btn btn-primary btn-sm" type="submit">{{ _("Save site details") }}</button>
+				<span class="rental-status small ml-2 text-muted" role="status"></span>
+			</form>
+			{% else %}
+				<p class="text-muted mb-0">{{ _("This rental is finished.") }}</p>
+			{% endif %}
+		</div></div>
+
+		{% if detail.editable %}
+		<div class="card mb-3"><div class="card-body">
+			<h5>{{ _("Need to change something?") }}</h5>
+			<form id="rental-change" data-booking="{{ detail.name }}">
+				<div class="form-group"><textarea class="form-control" name="message" rows="3" maxlength="1000" required
+					placeholder="{{ _('Dates, times, the venue, or what you would like booked') }}"></textarea></div>
+				<button class="btn btn-default btn-sm" type="submit">{{ _("Send to our team") }}</button>
+				<span class="rental-status small ml-2 text-muted" role="status"></span>
+			</form>
+		</div></div>
+		{% endif %}
+
+	{% else %}
+		<h1 class="mb-4">{{ _("My Rentals") }}</h1>
+		{% if not_found %}<div class="alert alert-warning">{{ _("That rental could not be found.") }}</div>{% endif %}
+		{% if bookings %}
+			<div class="list-group">
+			{% for b in bookings %}
+				<a class="list-group-item list-group-item-action" href="/rentals?booking={{ b.name | urlencode }}">
+					<b>{{ b.event_name or b.name }}</b>
+					<span class="float-right text-muted">{{ b.status_label }}</span>
+					<div class="small text-muted">{{ frappe.format(b.delivery_datetime, {"fieldtype": "Datetime"}) }} &ndash; {{ frappe.format(b.takedown_datetime, {"fieldtype": "Datetime"}) }}</div>
+				</a>
+			{% endfor %}
+			</div>
+		{% else %}
+			<div class="alert alert-info">{{ _("You have no rentals yet. If you expected one here, reply to any email from us and we will link it to this address.") }}</div>
+		{% endif %}
+	{% endif %}
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+(function () {
+	const csrf = {{ csrf_token | tojson }};
+	const api = "/api/method/erpnext_enhancements.asset_management.rental_portal.";
+	function wire(id, method) {
+		const form = document.getElementById(id);
+		if (!form) return;
+		const status = form.querySelector(".rental-status");
+		form.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			const body = new URLSearchParams(new FormData(form));
+			body.set("booking", form.dataset.booking);
+			status.textContent = {{ _("Saving...") | tojson }};
+			try {
+				const response = await fetch(api + method, {
+					method: "POST",
+					headers: { "X-Frappe-CSRF-Token": csrf, Accept: "application/json" },
+					body,
+				});
+				if (!response.ok) throw new Error(String(response.status));
+				status.textContent = method === "request_change" ? {{ _("Sent. We will be in touch.") | tojson }} : {{ _("Saved.") | tojson }};
+				if (method === "request_change") form.reset();
+			} catch (error) {
+				status.textContent = {{ _("That did not go through. Please try again, or reply to any email from us.") | tojson }};
+			}
+		});
+	}
+	wire("rental-site-prep", "save_site_prep");
+	wire("rental-change", "request_change");
+})();
+</script>
+{% endblock %}

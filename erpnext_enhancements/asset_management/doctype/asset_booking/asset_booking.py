@@ -19,12 +19,66 @@ are prevented from overlapping the same Asset (``check_overlap`` /
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import get_datetime
+
+#: ``frappe.flags`` key naming the Rental Booking currently rewriting its own legs
+#: (``asset_management.rental_availability.SYNC_FLAG``; duplicated to keep this controller
+#: free of that import at module load).
+RENTAL_SYNC_FLAG = "rental_booking_sync"
+
+_STATUS_JOB = 'erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.update_asset_status'
 
 
 class AssetBooking(Document):
     def validate(self):
         """Lifecycle hook: block overlapping bookings for the same Asset."""
+        self.guard_rental_leg()
         self.check_overlap()
+
+    def before_update_after_submit(self):
+        """Dates and location may change after submit (a rental moved in place keeps its
+        inspections), so the overlap check has to run here too."""
+        self.guard_rental_leg()
+        self.check_overlap()
+
+    def on_update_after_submit(self):
+        frappe.enqueue(_STATUS_JOB, asset_name=self.asset)
+
+    def before_cancel(self):
+        self.guard_rental_leg(action=_("canceled"))
+
+    def on_trash(self):
+        self.guard_rental_leg(action=_("deleted"))
+
+    def is_synced_by_owner(self):
+        return bool(self.rental_booking) and frappe.flags.get(RENTAL_SYNC_FLAG) == self.rental_booking
+
+    def guard_rental_leg(self, action=None):
+        """A leg of a Rental Booking is changed through the booking, never by hand.
+
+        Otherwise the booking would still believe it holds a fountain whose calendar says
+        otherwise — the double booking this whole arrangement exists to prevent. Edits
+        that do not move the leg (a note, the location) are left alone.
+        """
+        if not getattr(self, "rental_booking", None) or self.is_synced_by_owner():
+            return
+        if action is None:
+            before = self.get_doc_before_save()
+            if before is None:
+                action = _("created")
+            elif any(
+                str(before.get(f) or "") != str(self.get(f) or "")
+                for f in ("asset", "from_datetime", "to_datetime", "booking_type")
+            ):
+                action = _("moved")
+            else:
+                return
+        frappe.throw(
+            _("This is part of Rental Booking {0} and cannot be {1} here. Change the booking instead.").format(
+                self.rental_booking, action
+            ),
+            title=_("Managed by a rental"),
+        )
 
     def on_update(self):
         """Lifecycle hook: refresh the Asset's status in the background after save."""
@@ -51,17 +105,39 @@ class AssetBooking(Document):
         """
         if not self.asset or not self.from_datetime or not self.to_datetime:
             return
+        if get_datetime(self.to_datetime) <= get_datetime(self.from_datetime):
+            frappe.throw(_("To Datetime has to be after From Datetime."))
 
-        overlap = frappe.db.exists(
-            "Asset Booking",
+        # Row-lock the Asset first, so two bookings saved at the same moment are checked one
+        # after the other rather than both reading "free" (v1.562.0).
+        frappe.db.sql("select name from `tabAsset` where name = %s for update", (self.asset,))
+
+        # One rental's own legs never collide with each other by construction
+        # (rental_rules.leg_windows), but while the booking moves them one at a time, a
+        # lengthened Rental leg briefly overlaps the old Turnaround leg it is about to move.
+        # So a leg is checked against everything except its own rental. Raw SQL for the
+        # coalesce: rental_booking is NULL on every hand-made booking, and NULL != x is not true.
+        rows = frappe.db.sql(
+            """
+            select name from `tabAsset Booking`
+            where asset = %(asset)s
+                and name != %(name)s
+                and docstatus < 2
+                and from_datetime < %(to)s
+                and to_datetime > %(from)s
+                and (%(rental)s = '' or coalesce(rental_booking, '') != %(rental)s)
+            order by from_datetime
+            limit 1
+            """,
             {
                 "asset": self.asset,
-                "name": ["!=", self.name],
-                "docstatus": ["<", 2],
-                "from_datetime": ["<", self.to_datetime],
-                "to_datetime": [">", self.from_datetime]
-            }
+                "name": self.name or "",
+                "from": self.from_datetime,
+                "to": self.to_datetime,
+                "rental": getattr(self, "rental_booking", None) or "",
+            },
         )
+        overlap = rows[0][0] if rows else None
 
         if overlap:
             frappe.throw(_("Asset is already booked during this period by {0}").format(overlap), frappe.ValidationError)
@@ -106,6 +182,14 @@ def update_asset_status(asset_name):
             status = "In Transit"
         elif booking_type == "Maintenance":
             status = "Maintenance"
+
+    # A fountain out of service reads so, unless it is still out at an event — it came
+    # back damaged, or broke on site; it becomes Out of Service when that rental ends.
+    if status != "Rented" and frappe.db.exists(
+        "Asset Out of Service",
+        {"asset": asset_name, "status": "Out of Service", "out_from": ["<=", now]},
+    ):
+        status = "Out of Service"
 
     # Update Asset
     # Use ignore_permissions to ensure the update succeeds even if the user lacks write access to Asset
@@ -213,11 +297,13 @@ def get_events(start, end, filters=None):
 
     query = f"""
         SELECT
-            name, from_datetime, to_datetime, booking_type, asset
+            name, from_datetime, to_datetime, booking_type, asset, docstatus,
+            customer, rental_booking, rental_leg
         FROM
             `tabAsset Booking`
         WHERE
-            ((from_datetime BETWEEN %(start)s AND %(end)s)
+            docstatus < 2
+            AND ((from_datetime BETWEEN %(start)s AND %(end)s)
             OR (to_datetime BETWEEN %(start)s AND %(end)s)
             OR (from_datetime < %(start)s AND to_datetime > %(end)s))
             {conditions}
@@ -232,12 +318,21 @@ def get_events(start, end, filters=None):
             color = "#f1c40f" # Yellow
         elif d.booking_type == "Maintenance":
             color = "#e74c3c" # Red
+        # A tentative rental hold is a draft leg: it blocks the dates, but reads lighter so
+        # nobody mistakes a quote for a confirmed event.
+        if d.rental_booking and d.docstatus == 0:
+            color = "#aed6f1" if d.booking_type == "Rental" else "#f5b7b1"
+
+        label = d.rental_leg if d.rental_booking else d.booking_type
+        title = f"{d.asset} ({label})"
+        if d.customer:
+            title = f"{d.asset}: {d.customer} ({label}{', held' if d.docstatus == 0 else ''})"
 
         events.append({
             "name": d.name,
             "from_datetime": d.from_datetime,
             "to_datetime": d.to_datetime,
-            "title": f"{d.asset} ({d.booking_type})",
+            "title": title,
             "color": color,
             "allDay": 0
         })

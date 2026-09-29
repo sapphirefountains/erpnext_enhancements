@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.561.3] - 2026-09-29
+## [1.566.1] - 2026-09-30
 
 **Error Log rows are titled with their title: `frappe.log_error` calls pass `title=` and
 `message=` by keyword.** Builds on 1.561.2, which worked around the same problem for the Search
@@ -138,6 +138,362 @@ rows under one title each, where it used to count one entry per distinct message
 - **Left positional, because the heuristic already gets them right:** 294 `(traceback, title)`
   calls in files this change does not otherwise touch, and 19 that span several lines in files
   it does. The 5 calls with a single argument are also left alone: that argument is the title.
+
+## [1.566.0] - 2026-09-30
+
+**Event rentals, part 4: the crew, their checklists, releasing the deposit, and customer reminders.**
+Nik's calls, 2026-09-29:
+- the crew is picked per booking;
+- the deposit is released through drafts and then a one-click Stripe refund;
+- every customer reminder ships switched off.
+
+### Added
+
+- **Crew on each Rental Booking** (a new Rental Booking Crew table), pre-filled with Rental Settings'
+  new Default Crew Lead.
+- **Logistics tasks.** A confirmed booking creates Delivery, Setup (when set), Take-down and Cleaning
+  Tasks, dated from its schedule and assigned to the crew.
+  - They follow the schedule on every save. A crew member taken off loses their ToDos, and a canceled
+    booking cancels its open tasks. A Completed task is never changed.
+  - New Task fields (fixtures): `custom_rental_booking`, `custom_rental_task_kind`,
+    `custom_rental_digest_sent_on`.
+- **The 6am crew digest.** Each crew member gets their rental jobs for today by email and text, at
+  most once a day, like the maintenance route digest (Rental Settings: 6am Crew Digest, on).
+- **Automatic checklists** (Rental Settings: Generate Inspections Automatically, on):
+  - pre-shipping checklists at 6am for every fountain delivering today or tomorrow;
+  - return checklists when a booking is marked Returned.
+  - Both are assigned to the crew.
+- **Security deposit release.** Once every fountain is back and checked:
+  - a clean return drafts a credit note for the deposit;
+  - findings instead send the booking's owner a to-do to set a deduction (**Release Deposit…**),
+    which also drafts a damage-charge invoice.
+  - **Refund Deposit** refunds the rest on the Stripe payment that paid the balance invoice. Only
+    System Manager or Accounts Manager can press it; it is capped at what that payment took; and it
+    only runs once the credit note and damage charge are posted.
+  - **Mark Refunded by Hand** covers a refund made by check.
+  - New booking fields: deposit status, deduction and reason, credit note, damage invoice, refund
+    reference.
+  - `Sales Invoice.custom_rental_invoice_kind` gains Damage and Deposit Return.
+- **Customer reminders** (daily), each **off until turned on** in Rental Settings:
+  - a week before delivery;
+  - site details, 10 days out, if still blank;
+  - the delivery time, the day before;
+  - a thank-you after the event, with an optional review link.
+  - Each is sent once per booking.
+- Patch `backfill_rental_settings_defaults` ticks the two new on-by-default switches, but only on a
+  Rental Settings that was already saved (a default never reaches an existing Single's rows).
+- `tests/test_rental_ops.py` (23 bench-free tests), with its own CI step.
+
+### Changed
+
+- **`api.booking.generate_inspection`** now delegates to a new in-process `make_inspection`, which is
+  not whitelisted. That lets the automatic checklists insert as the system: whoever marked a rental
+  Returned need not be allowed to create inspections. The endpoint still checks read permission on
+  the booking first, as before.
+- **Logistics tasks widen their Project's expected dates, never narrowing them.** ERPNext refuses a
+  Task outside its Project's expected dates (`Task.validate_parent_project_dates`), and cleaning
+  always falls after take-down, which is the end date the Rental Planner gives a new project.
+
+### Notes
+
+- **Found while writing it:** a whitelisted function with a `check_permission=True` argument is a
+  hole, because a JSON body can send a real `false`. `prepare_release` is the HTTP door and always
+  checks; `draft_release` is in-process only. `tests/test_rental_ops.py` pins the argument list.
+
+## [1.565.0] - 2026-09-29
+
+**Event rentals, part 3b: the customer portal, email-link sign-in, and a public rental request
+form.** This follows Nik's design from 2026-09-29:
+- Customers sign in with an emailed link.
+- Sign-up stays off. An account is created only when a customer signs a Rental Agreement or staff
+  invite a contact.
+- Staff stay Google-only.
+- The public form shows no availability.
+
+It is stacked on v1.564.0.
+
+### Added
+
+- **`/rentals`, "My Rentals" in the portal menu.** A customer sees their rentals.
+  - Each one shows its schedule, what is booked, whether the agreement is signed, and its invoices,
+    with a Pay online link to the existing `/pay`.
+  - Each one has a site-details form for the delivery crew (on-site contact and phone, surface,
+    access, power, water) and an ask-for-a-change box. The box leaves a comment and a ToDo for the
+    booking's owner.
+  - Writes are POST-only, rate-limited and ownership-checked. They set only the site-prep fields.
+- **Rental Booking gets a "Site Prep (from the customer)" section.** Staff can fill it in too.
+- **Portal accounts.** Signing a Rental Agreement creates a Website User (Customer role only, no
+  welcome email) for the signer's confirmed email, links a Contact to the Customer, and emails them
+  the way in.
+  - This runs in its own savepoint, so it can never undo a signature or a confirm.
+  - **Create > Invite to Portal** on a booking does the same for any of the customer's contacts.
+  - A staff account is never touched.
+- **Login with Email Link** is turned on by the patch `enable_login_with_email_link`. It runs once,
+  and a later switch-off stays off.
+- **The guard ships with the patch.** frappe's `login_via_key` signs in ANY account, with no
+  password, 2FA or Google, and the setting is site-wide. It has two layers:
+  - `portal_login.send_login_link` (an override) mints no link for anything but an enabled Website
+    User. It answers exactly as frappe does for an unknown email. It is sealed in `before_request`,
+    because frappe's original is also reachable as
+    `frappe.www.login.frappe.www.login.send_login_link`.
+  - `portal_login.refuse_staff_email_link_login` (`on_login`) refuses any other account signing in
+    through an email link. This includes aliased paths and the legacy `?cmd=` route, and applies
+    whatever minted the key.
+- **`/rent-a-fountain`**, off until `Rental Settings.public_request_form` is ticked. A public form
+  that becomes an Events Lead (rental dates and ZIP on the Lead, the details as a comment), sent
+  through the website-enquiry triage.
+  - It is protected by Turnstile (the site's keys, action `rental-request`), a honeypot, a per-IP
+    rate limit and a field allowlist.
+  - It shows no availability.
+- `tests/test_rental_portal.py` (18 tests, own CI step). It **executes** the sign-in guard against a
+  frappe stub: staff, Administrator, unknown and disabled addresses get nothing; staff email-link
+  sign-ins are refused on the canonical path, an aliased path and `?cmd=`; and the seal toggles.
+  Both of these were confirmed to fail when the guard was deliberately broken.
+
+### Notes
+
+- **The sign-in email is frappe's own** ("Login To …"), not the email design system. Styling it
+  means overriding frappe's `login_with_email_link` template, which is a separate change.
+- The public form lives on the ERP domain. Link to it from the WordPress site.
+
+## [1.564.0] - 2026-09-29
+
+**Event rentals, part 3a: holds that expire, an e-signed Rental Agreement, and deposit and balance
+invoices.** Nik's calls, 2026-09-29:
+- invoices are drafted, and nothing posts to the books until a person presses Submit & Send;
+- the security deposit is its own line on the balance invoice, booked to a liability account;
+- tax comes from a Rental Settings template, or there is none while Utah's rental tax (OD-2) is
+  undecided.
+
+Stacked on v1.563.0. The public request page and the customer portal follow in 3b.
+
+### Added
+
+- **Rental Settings** (a new Single; every default applies on existing sites): hold length (7 days),
+  reminder lead (2), automatic release (on), customer hold notice (off), company, rental and fee
+  Items, cost center, tax template, deposit % (50), deposit due (7 days), balance lead (14 days),
+  security-deposit Item and Account (Liability only).
+- **Hold expiry** (`asset_management/rental_holds.py`, daily).
+  - Whoever placed a hold gets an assigned ToDo two days before it lapses.
+  - A lapsed hold becomes Expired, which frees its fountains, with a comment explaining why.
+  - Renewing a hold resets its reminder.
+  - The filters carry `is set`: Frappe coalesces a comparison on a nullable date, and a hold with no
+    date must never be expired.
+- **Rental Agreement from a booking.** Create > Rental Agreement builds the existing Project Contract
+  (`template_key = "rental"`) from the booking: dates, one equipment row per fountain and accessory,
+  fees and the security deposit.
+  - New patch `add_rental_esign_signature_block` gives the live Rental Agreement template its
+    `sig()` block, and the shipped `rental_agreement.html` now matches.
+    - `add_esign_signature_block` is maintenance-only and has already run everywhere, so adding
+      `"rental"` to it would never have executed.
+    - Without a `sig()` block, Send for Signature refuses rental agreements.
+- **Signing confirms the booking.** A new Project Contract hook runs on both signing paths
+  (`on_submit` and `on_update_after_submit`, now lists beside the maintenance hook).
+  - It runs inside the signer's transaction, usually a Guest on `/contract-sign`, so it never raises.
+    Suppose the booking can't be confirmed because someone booked its fountains while the agreement
+    was out. The hook rolls back to a savepoint, logs the failure, comments on the booking and sends
+    the booking's owner a Notification.
+  - The signature stands in every case.
+- **Deposit and balance invoices**, drafted and never posted by the system:
+  - the deposit when a booking becomes Confirmed;
+  - the balance by a daily sweep, due on the delivery date;
+  - Draft Deposit / Draft Balance buttons on the booking to retry.
+  - `Sales Invoice.custom_rental_booking` and `custom_rental_invoice_kind` (fixtures) link each
+    invoice back and make drafting idempotent.
+- **Submit & Send** (booking > Invoices) posts a draft under the caller's own submit permission,
+  refreshes its amount from the booking first, and emails a hosted Stripe Checkout pay link in the
+  email design system (`pillar="rent"`).
+  - Customers on autopay get no link: submitting charges their saved card, and an open link would
+    make that charge refuse itself.
+- `tests/test_rental_sales.py` (21 bench-free tests), with its own CI step.
+
+### Notes
+
+- **Checkout links expire** (Stripe caps a hosted session at 24 hours). A customer who misses one
+  can be sent a fresh link from the invoice's existing Stripe buttons. 3b's customer portal gives
+  them a durable way to pay.
+- **Rental signers are also offered card-on-file** at signing. The existing autopay offer is not
+  specific to a template. With it, Submit & Send charges the saved card instead of emailing a link.
+- If a Sales Taxes Template is set, give the Security Deposit Item a 0% Item Tax Template.
+  Otherwise the refundable deposit is taxed.
+
+## [1.563.0] - 2026-09-29
+
+**Event rentals, part 2: the Rental Planner.** This adds a desk page with a fleet timeline and a
+guided four-step flow for booking a rental. It is the "simple to operate, with a flow" half of
+Nik's brief; PR 1 (v1.562.0) built the booking model it drives.
+
+### Added
+
+- **Rental Planner** page at `/desk/rental-planner`, for the Operations, Sales, Production and
+  Executive Teams and System Manager (the same roles that can read a Rental Booking).
+  - **The board.** One row per rentable fountain, with every calendar entry on it, and one row per
+    accessory pool, with units out per day. It spans two weeks, a month or a quarter, with paging
+    and a Today button.
+    - Holds are drawn hatched, confirmed rentals solid, prep and cleaning as thin bars, other
+      bookings amber and out-of-service red.
+    - Clicking a bar opens the record. Clicking an empty day on a fountain starts a rental there.
+  - **New Rental** is four steps:
+    1. when and where;
+    2. fountains and accessories, with live availability and optional packages;
+    3. customer, contact and project, including a New Customer quick entry and an optional new
+       Events Project;
+    4. fees and review, then **Place Hold** or **Book as Confirmed**.
+  - Links to it from the Asset Management workspace, the Rental Booking list, and the View menu on
+    a Rental Booking.
+- `asset_management/rental_planner.py`:
+  - `get_timeline`: needs read permission on Rental Booking, and covers at most 100 days.
+  - `create_rental`: POST only, needs create permission on Rental Booking, and accepts only the
+    fields in `BOOKING_FIELDS`. When asked, it creates the Events Project in the same transaction,
+    so a booking refused at the last moment leaves no orphan Project. The Project is typed by both
+    `project_type` and `custom_value_stream`, because "what kind of job is this" is read from
+    either.
+- `scripts/test_rental_planner_history.js` and `tests/test_rental_planner.py`, with their own CI
+  step.
+  - The harness runs the real page script against a model of the v16 router. It checks that Next is
+    an entry, that the flow's Back steps back through history rather than stacking entries, that a
+    deep link to an unfinished step is corrected in place, and that a reload keeps the draft.
+  - It also checks that Back from the booked screen cannot resubmit the old draft.
+  - Each of these was confirmed to fail when the behaviour it guards was broken deliberately.
+
+### Notes
+
+- **The timeline is not built on the Gantt widget.** DHTMLX Gantt Standard draws one bar per row,
+  and a fleet timeline is several bookings on each fountain's row. Split tasks and the resource
+  view are PRO-only features, so the board is a light HTML grid instead.
+
+## [1.562.1] - 2026-09-29
+
+**The Error Log alert emails a dedicated role, not every System Manager.** Every new Error Log row
+emailed everyone holding System Manager. So the only way to stop someone getting the error emails
+was to take away their admin rights. Nik asked for James Harris and the `triton@` service account
+to stop getting them, and chose to keep both on System Manager: James needs the admin rights, and
+removing the role from `triton@` would break its background syncs until the purpose-built role
+planned in WI-011 exists (`docs/migration/wi011-triton-role-scope.md`).
+
+### Changed
+
+- The `Error Log` Notification (`fixtures/notification.json`) now goes to the new **Error Log
+  Recipient** role instead of System Manager. The self-reference condition from v1.360.0 is
+  unchanged.
+
+### Added
+
+- Patch `seed_error_log_recipient_role` creates the role. It has `desk_access = 0` and no DocPerm
+  anywhere: it is a mailing list, not a permission, so holding it never makes anyone a System User.
+  It is **granted to nobody**. Who reads the errors is set in the Desk (User → Roles). Until someone
+  holds the role the alert has no recipients, but the Error Log list itself is unchanged.
+- `tests/test_notification_recipients.py` checks that the alert names the role, that the patch
+  seeds it without desk access, and that no doctype or fixture gives it a permission.
+
+### Notes
+
+- The `Integration Request` alert still emails System Manager. It was not part of this request.
+
+## [1.562.0] - 2026-09-29
+
+**Event rentals, part 1: every rental fountain gets its own booking calendar.** A new **Rental
+Booking** ties one event to a Customer and a Project and holds its fountains and accessories for
+the dates, without double booking. Before this there was an Asset Booking with an overlap check
+but no customer, project or status. The rental's commercial details sat on the Project and on the
+Rental Agreement, whose equipment list is free text, so nothing connected the ten fleet fountains
+to the events they were going to. Design calls from Nik, 2026-09-29:
+- fountains are booked individually, and accessories come from counted pools;
+- a quote places a tentative hold, which becomes firm when the agreement is signed;
+- the blocked window is the event schedule plus each fountain's own buffers.
+
+This is the first of five PRs. Still to come: the guided Rental page and fleet timeline; the sales
+side (e-signed agreement, Stripe deposit and balance, hold expiry, public request form, customer
+portal); crew logistics and inspections; and KPIs, AI tools and calendar feeds.
+
+### Added
+
+- **Rental Booking** (`asset_management/doctype/rental_booking/`), named `RNT-YYYY-#####`. It is
+  not submittable; its status is changed with buttons on the form.
+  - Statuses: `Tentative → Confirmed → Out → Returned → Closed`, plus `Expired` (a lapsed hold,
+    which can be renewed) and `Canceled`.
+  - It records the customer, contact, Project, Opportunity, Quotation, venue, the delivery, setup,
+    event and take-down times, fountain and accessory lines with rates, and fees. The security
+    deposit is kept outside the rental total.
+  - **Check Availability** lists every fleet fountain and accessory pool for the dates, and the
+    free fountains can be ticked and added in one go.
+  - **Apply Package** picks free fountains of the package's models.
+  - Choosing a Project fills in the customer and schedule.
+- **Each fountain's calendar is Asset Booking**; there is no second calendar. Each fountain line
+  becomes up to three Asset Booking legs:
+  - **Prep**, before delivery;
+  - **Rental**, from delivery to take-down;
+  - **Turnaround**, after take-down for cleaning (24 hours by default).
+
+  Asset Booking already refuses an overlap for every booking type, so a rental cannot land on a
+  Travel or Maintenance booking made by hand. The hourly rental-status job and the inspection
+  buttons keep working as before. A tentative hold is a **draft** leg, which already blocks the
+  dates; confirming **submits** the legs. The calendar shows held legs in a lighter colour and
+  labels them "held".
+- **Rental Accessory Pool.** Each pool records how many units the company owns and how many are
+  out of service, plus a turnaround time.
+  - A booking takes a quantity from a pool, and the check uses the **peak** number out at any one
+    moment, not the sum of every overlapping booking.
+  - Why: Friday's and Sunday's bookings both overlap a Friday–Sunday request but are never out at
+    the same time. Adding them together would refuse a booking that fits, and nobody would notice
+    the equipment sitting idle.
+- **Rental Package.** A preset of fountain models, accessories and fees, copied onto a booking
+  when applied, like a maintenance Service Plan.
+- **Asset Out of Service.** Records that a fountain cannot go out: until it is returned to
+  service; or, while still out, through the Expected Back date if one is given; or, with no date,
+  every future date.
+  - It is a separate record, not an Asset Booking. Being broken is a fact, not a reservation, so
+    it has to be recordable over rentals already on the calendar. An overlap-checked booking could
+    not be.
+  - Creating one comments on every live rental it lands on.
+  - One is opened automatically when a **Return** inspection finds damage, and when an **ERPNext
+    Asset Repair** on a fleet fountain is Pending. Completed or Cancelled returns the fountain to
+    service.
+  - Asset `custom_rental_status` gains a new value, **Out of Service**.
+- **New Asset fields:** `custom_rentable` ("Available for Event Rental"),
+  `custom_rental_prep_hours` and `custom_rental_turnaround_hours`. All three are `allow_on_submit`,
+  because the fleet Assets are submitted and a field without it could never be ticked.
+- **Patch `seed_rental_fleet_flags`.** It ticks `custom_rentable` and sets a 24-hour turnaround on
+  every Asset in the Rental Fountain Fleet category, so the fleet is bookable on day one rather
+  than invisible.
+- **Project form.** While a live Rental Booking holds a Project, its four Events schedule fields
+  are read-only and a banner names the booking. The booking owns the schedule and copies it back
+  onto the Project on every save, so an edit made on the Project would be overwritten.
+  **Create > Rental Booking** appears on Events projects.
+- An **Event Rentals** card on the Asset Management workspace.
+- `tests/test_rental_rules.py` (48 bench-free tests) has its own CI step.
+
+### Changed
+
+- **Asset Booking**
+  - New fields: `customer`, `project`, `rental_booking` and `rental_leg`.
+  - `from_datetime`, `to_datetime` and `location` are now `allow_on_submit`, so a booking moves its
+    legs in place. A submitted leg keeps its name and every inspection filed against it.
+    `before_update_after_submit` runs the overlap check again.
+  - `check_overlap` now row-locks the Asset first. Before, two bookings saved at the same moment
+    could both read "free".
+  - `check_overlap` now refuses a window whose end is not after its start.
+  - `check_overlap` now ignores a leg's own rental. While the legs are moved one at a time, a
+    lengthened Rental leg briefly overlaps the Turnaround leg that is about to move.
+  - A rental's leg cannot be moved, canceled or deleted by hand; that has to go through its
+    booking.
+  - Canceled bookings no longer appear on the calendar.
+  - Permissions: Operations Team can book; Sales, Production and Executive Teams can read. It was
+    System Manager only.
+- **Rental Booking saves are protected against races.** Before checking availability, a save
+  row-locks every Asset and pool it touches, in sorted order so two bookings cannot deadlock. Two
+  people saving the last fountain at the same moment are therefore checked one after the other.
+- **Not every save re-checks availability.** Only these do: a new booking, a changed schedule or
+  lines, a renewed hold, and Confirm. A fountain can go out of service after a booking took it,
+  and checking on every save would then refuse "Mark Returned" on that booking.
+
+### Notes
+
+- **Nothing expires tentative holds yet.** A hold date is set (seven days), but the job that
+  enforces it ships with the sales PR.
+- The fountain link on a booking searches through `rental_availability.rentable_asset_query`.
+  People who book rentals may not be allowed to search the whole Asset register, and v16 validates
+  a link through that same search.
 
 ## [1.561.2] - 2026-09-29
 

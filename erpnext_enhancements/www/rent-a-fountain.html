@@ -1,0 +1,124 @@
+{% extends "templates/web.html" %}
+{#
+  Public rental request form. Controller: www/rent_a_fountain.py (underscore). Posts to
+  asset_management/rental_requests.submit_request, which makes an Events Lead. Shows nothing about
+  the fleet's availability, on purpose (Nik, 2026-09-29).
+#}
+
+{% block title %}{{ _("Rent a Fountain") }}{% endblock %}
+
+{% block head_include %}
+<meta name="robots" content="noindex, nofollow">
+{% endblock %}
+
+{% block page_content %}
+<div class="rental-request" style="max-width:640px">
+	<h1 class="mb-2">{{ _("Rent a fountain for your event") }}</h1>
+	<p class="text-muted">{{ _("Tell us about the event and we will get back to you with options and a quote.") }}</p>
+
+	<form id="rr-form" novalidate>
+		<div class="form-row">
+			<div class="form-group col-sm-6"><label for="rr-first">{{ _("First name") }}</label>
+				<input id="rr-first" class="form-control" name="first_name" maxlength="140" required autocomplete="given-name"></div>
+			<div class="form-group col-sm-6"><label for="rr-last">{{ _("Last name") }}</label>
+				<input id="rr-last" class="form-control" name="last_name" maxlength="140" autocomplete="family-name"></div>
+		</div>
+		<div class="form-row">
+			<div class="form-group col-sm-6"><label for="rr-email">{{ _("Email") }}</label>
+				<input id="rr-email" class="form-control" name="email" type="email" maxlength="140" autocomplete="email"></div>
+			<div class="form-group col-sm-6"><label for="rr-phone">{{ _("Phone") }}</label>
+				<input id="rr-phone" class="form-control" name="phone" type="tel" maxlength="40" autocomplete="tel"></div>
+		</div>
+		<div class="form-group"><label for="rr-org">{{ _("Company or organization (optional)") }}</label>
+			<input id="rr-org" class="form-control" name="organization" maxlength="140" autocomplete="organization"></div>
+		<div class="form-group"><label for="rr-event">{{ _("Event") }}</label>
+			<input id="rr-event" class="form-control" name="event_name" maxlength="140" placeholder="{{ _('Wedding, gala, grand opening...') }}"></div>
+		<div class="form-row">
+			<div class="form-group col-sm-6"><label for="rr-date">{{ _("Event date") }}</label>
+				<input id="rr-date" class="form-control" name="event_date" type="date" required></div>
+			<div class="form-group col-sm-6"><label for="rr-end">{{ _("Last day (if more than one)") }}</label>
+				<input id="rr-end" class="form-control" name="end_date" type="date"></div>
+		</div>
+		<div class="form-row">
+			<div class="form-group col-sm-8"><label for="rr-venue">{{ _("Venue") }}</label>
+				<input id="rr-venue" class="form-control" name="venue" maxlength="140"></div>
+			<div class="form-group col-sm-4"><label for="rr-zip">{{ _("ZIP code") }}</label>
+				<input id="rr-zip" class="form-control" name="zip" maxlength="20" inputmode="numeric" autocomplete="postal-code"></div>
+		</div>
+		<div class="form-row">
+			<div class="form-group col-sm-4"><label for="rr-guests">{{ _("Guests (about)") }}</label>
+				<input id="rr-guests" class="form-control" name="guests" maxlength="20" inputmode="numeric"></div>
+			<div class="form-group col-sm-8"><label for="rr-interest">{{ _("Fountain(s) you have in mind") }}</label>
+				<input id="rr-interest" class="form-control" name="interest" maxlength="140"></div>
+		</div>
+		<div class="form-group"><label for="rr-notes">{{ _("Anything else") }}</label>
+			<textarea id="rr-notes" class="form-control" name="notes" rows="3" maxlength="2000"></textarea></div>
+		{# The honeypot: hidden from people, filled in by bots. #}
+		<div style="position:absolute;left:-10000px" aria-hidden="true">
+			<label>{{ _("Website") }} <input name="{{ boot.honeypot }}" tabindex="-1" autocomplete="off"></label>
+		</div>
+		<div id="rr-turnstile" class="mb-3"></div>
+		<button class="btn btn-primary" type="submit">{{ _("Send request") }}</button>
+		<p id="rr-status" class="mt-2" role="status" aria-live="polite"></p>
+	</form>
+	<div id="rr-done" class="alert alert-success" hidden>{{ _("Thank you! We have your request and will be in touch shortly.") }}</div>
+</div>
+
+<script>
+(function () {
+	const BOOT = {{ boot | tojson }};
+	const CSRF = {{ csrf_token | tojson }};
+	const form = document.getElementById("rr-form");
+	const status = document.getElementById("rr-status");
+	let token = "";
+
+	if (BOOT.turnstile_sitekey) {
+		const script = document.createElement("script");
+		script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+		script.onload = function () {
+			window.turnstile.render("#rr-turnstile", {
+				sitekey: BOOT.turnstile_sitekey,
+				action: BOOT.turnstile_action,
+				callback: function (t) { token = t; },
+				"expired-callback": function () { token = ""; window.turnstile.reset(); },
+			});
+		};
+		document.head.appendChild(script);
+	}
+
+	form.addEventListener("submit", async function (event) {
+		event.preventDefault();
+		const data = new FormData(form);
+		if (!data.get("email") && !data.get("phone")) {
+			status.textContent = {{ _("Please give us an email or a phone number.") | tojson }};
+			return;
+		}
+		if (!data.get("event_date")) {
+			status.textContent = {{ _("Please pick the event date.") | tojson }};
+			return;
+		}
+		data.set("turnstile_token", token);
+		status.textContent = {{ _("Sending...") | tojson }};
+		const headers = { Accept: "application/json" };
+		// Staff who are signed in carry a session token; a guest has none and sends none.
+		if (CSRF) headers["X-Frappe-CSRF-Token"] = CSRF;
+		try {
+			const response = await fetch(
+				"/api/method/erpnext_enhancements.asset_management.rental_requests.submit_request",
+				{ method: "POST", headers, body: new URLSearchParams(data) }
+			);
+			const body = await response.json().catch(function () { return {}; });
+			if (body.message && body.message.status === "accepted") {
+				form.hidden = true;
+				document.getElementById("rr-done").hidden = false;
+				return;
+			}
+			status.textContent = {{ _("That did not go through. Please check the form, or call us.") | tojson }};
+			if (window.turnstile) window.turnstile.reset();
+		} catch (error) {
+			status.textContent = {{ _("That did not go through. Please try again, or call us.") | tojson }};
+		}
+	});
+})();
+</script>
+{% endblock %}
