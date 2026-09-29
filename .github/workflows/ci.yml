@@ -2452,6 +2452,17 @@ jobs:
       # is loaded in hooks.py and dials a method that exists. Plain pytest, own step.
       - name: Purchase Order Receive Items wiring (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_po_receive_items.py -q
+      # Event rentals (v1.562.0): each rental fountain has its own calendar, and these rules
+      # decide what it is blocked for. Every one fails in the direction that looks fine: legs
+      # that overlap each other make a rental collide with itself; an accessory pool that SUMS
+      # every overlapping line instead of finding the true peak refuses bookings that fit and
+      # nobody notices the kit sitting idle; a changed window re-created instead of moved
+      # orphans the inspections filed against a submitted leg; an out-of-service fountain
+      # with no promised date reading as free gets a broken fountain delivered to a wedding.
+      # Also pins the status list against the doctype's Select options and the Asset fields'
+      # allow_on_submit (the fleet Assets are submitted). Stub-free, own step.
+      - name: Event rental rules (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_rules -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand

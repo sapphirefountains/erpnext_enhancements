@@ -44,6 +44,9 @@ from frappe.utils import flt
 #: Conditions that mean something is wrong with the component itself.
 ADVERSE_CONDITIONS = ("Damaged", "Missing")
 
+#: ``direction`` of a sheet filled in when the fountain comes back.
+RETURN = "Return"
+
 #: "This fountain does not have that component." A category-level checklist template
 #: covers every fountain of a type, so it necessarily lists parts a given unit does not
 #: carry — and without this the crew's only options were to delete the row or to mark a
@@ -73,6 +76,32 @@ class RentalInspection(Document):
     def on_submit(self):
         """Lifecycle hook: put any finding where someone will actually meet it."""
         self.report_findings_to_booking()
+        self.take_damaged_fountain_out_of_service()
+
+    def take_damaged_fountain_out_of_service(self):
+        """A Return sheet that found damage blocks the fountain's calendar until it is fixed.
+
+        Return only: damage found while packing is dealt with before the fountain leaves. The
+        record is opened even if the damage looks cosmetic — returning it to service is one
+        button, and a fountain rebooked on the strength of a sheet nobody read is the failure
+        this exists to prevent. See ``asset_management/out_of_service.py``.
+        """
+        if self.direction != RETURN or not self.has_damage or not self.asset:
+            return
+        from erpnext_enhancements.asset_management.out_of_service import ensure_out_of_service
+
+        damaged = [
+            f"{row.component}: {(row.notes or '').strip()}"
+            for row in self.items or []
+            if row.condition == "Damaged"
+        ]
+        ensure_out_of_service(
+            self.asset,
+            "Damage",
+            _("Return inspection {0} found damage.").format(self.name) + "\n" + "\n".join(damaged),
+            "Rental Inspection",
+            self.name,
+        )
 
     # ------------------------------------------------------------------ roll-ups
 

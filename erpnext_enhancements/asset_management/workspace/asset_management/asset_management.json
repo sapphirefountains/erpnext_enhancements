@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"am_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"am_sc_booking\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset Booking\",\"col\":4}},{\"id\":\"am_sc_asset\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset\",\"col\":4}},{\"id\":\"am_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"am_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Bookings</b></span>\",\"col\":12}},{\"id\":\"am_card_bookings\",\"type\":\"card\",\"data\":{\"card_name\":\"Bookings\",\"col\":4}}]",
+ "content": "[{\"id\":\"am_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"am_sc_rental\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Rental Booking\",\"col\":4}},{\"id\":\"am_sc_booking\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset Booking\",\"col\":4}},{\"id\":\"am_sc_asset\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset\",\"col\":4}},{\"id\":\"am_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"am_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Bookings</b></span>\",\"col\":12}},{\"id\":\"am_card_bookings\",\"type\":\"card\",\"data\":{\"card_name\":\"Bookings\",\"col\":4}},{\"id\":\"am_card_rentals\",\"type\":\"card\",\"data\":{\"card_name\":\"Event Rentals\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -40,9 +40,72 @@
    "onboard": 0,
    "type": "Link",
    "link_to": "Asset"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Event Rentals",
+   "link_count": 5,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Rental Booking",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Rental Booking"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Rental Package",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Rental Package"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Rental Accessory Pool",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Rental Accessory Pool"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Asset Out of Service",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Asset Out of Service"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Rental Inspection",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Rental Inspection"
   }
  ],
- "modified": "2026-06-15 00:00:00.000000",
+ "modified": "2026-09-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Asset Management",
@@ -53,6 +116,12 @@
  "roles": [],
  "sequence_id": 31,
  "shortcuts": [
+  {
+   "doc_view": "List",
+   "label": "Rental Booking",
+   "link_to": "Rental Booking",
+   "type": "DocType"
+  },
   {
    "doc_view": "List",
    "label": "Asset Booking",
