@@ -73,7 +73,9 @@ class DraftKnowledgeArticle(BaseTool):
                 "kb_number": {
                     "type": "string",
                     "description": (
-                        "Revise this published article, e.g. KB-0601. Leave it out for a new article"
+                        "Revise this published article, e.g. SOP-06-0001. Leave it out for a new "
+                        "article: it is numbered from its kind and department when a KB Approver "
+                        "publishes it"
                     ),
                 },
                 "article_title": {
@@ -85,14 +87,16 @@ class DraftKnowledgeArticle(BaseTool):
                     "enum": list(constants.DEPARTMENT_BLOCK_OPTIONS),
                     "description": (
                         "The department block: required for a new article; a revision keeps its "
-                        "article's department, so leave it out or give the same one"
+                        "article's department (it is part of the article's number), so leave it out "
+                        "or give the same one"
                     ),
                 },
                 "kind": {
                     "type": "string",
                     "enum": list(constants.ARTICLE_KINDS),
                     "description": "The article's kind. "
-                    + " ".join(f"{kind}: {constants.KIND_HELP[kind]}" for kind in constants.ARTICLE_KINDS),
+                    + " ".join(f"{kind}: {constants.KIND_HELP[kind]}" for kind in constants.ARTICLE_KINDS)
+                    + " A revision keeps its article's kind: give the same one.",
                 },
                 "summary": {
                     "type": "string",

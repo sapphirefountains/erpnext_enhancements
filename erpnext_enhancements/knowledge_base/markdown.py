@@ -4,7 +4,7 @@
 """A published article as Markdown, with a small header: the one renderer (WI-080 PR 6a).
 
 ``fetch_knowledge_article`` returns this text, and the private Markdown mirror (WI-080 Slice 6) will
-write the same bytes to ``kb/<NN-department>/<KB number>.md``. One function makes both, so a file in
+write the same bytes to ``kb/<NN-department>/<article number>.md``. One function makes both, so a file in
 the mirror and a fetched article can be compared byte for byte.
 
 **Pure.** Standard library only (plus ``constants``, which is too): no clock, no lookups, no frappe.
@@ -16,7 +16,7 @@ no stub, and imports it in a fresh interpreter to pin that it imports no frappe.
 in that order::
 
     ---
-    kb_number: "KB-0601"
+    kb_number: "SOP-06-0001"
     version: 3
     title: "Receiving a PO against a packing slip"
     kind: "SOP"
@@ -26,7 +26,7 @@ in that order::
     review_by: 2027-04-02
     ai_drafted: false
     keywords: ["PO", "purchase order", "packing slip", "receiving"]
-    url: "https://<site>/desk/knowledge-article/KB-0601"
+    url: "https://<site>/desk/knowledge-article/SOP-06-0001"
     ---
 
 * Strings are JSON string literals, which are also YAML 1.2 double-quoted scalars. A character YAML
@@ -36,8 +36,9 @@ in that order::
   mirror. A line break in a title is ``\\n``, so the title reads back exactly; the heading below the
   header is the title on one line.
 * Dates are bare ISO dates; integers and booleans are bare; anything missing is ``null``. ``kind`` is
-  ``null`` for an article published before kinds existed (it stays unclassified until a revision sets
-  one, decided 2026-09-28).
+  ``null`` only for an article with no kind, which since 2026-09-29 cannot be published: the number
+  is made from the kind (``SOP-06-0001``). The key ``kb_number`` keeps its name (the header's eleven
+  keys are the mirror's byte contract); its value is the article number.
 * ``approved_by`` is a person's name and **never an email address**. v16's ``get_fullname`` answers
   the user id, which is an email address, for a user with no first or last name
   (``utils/__init__.py:59-76``), so :func:`approver_display_name` replaces anything that looks like one
@@ -58,7 +59,6 @@ output ends with exactly one newline.
 import datetime
 import json
 import re
-import unicodedata
 
 from erpnext_enhancements.knowledge_base import constants
 
@@ -111,10 +111,6 @@ TRUNCATION_NOTE = "\n\n[Truncated at 40,000 characters: open the url for the res
 #: :func:`related_numbers` returns at most this many.
 RELATED_LIMIT = 20
 
-#: A KB number as people write it, the rule ``search.py`` tokenizes with (``KB-0601``, ``kb 601``,
-#: ``KB0601``, ``kb_601``). ``KBV-00001``, a version's id, is not one: ``V`` follows ``KB``.
-_KB_NUMBER = re.compile(r"\bkb[\s_\-]?0*([0-9]{1,4})\b", re.IGNORECASE)
-_CANONICAL_KB = re.compile(r"KB-[0-9]{4}")
 #: The start of an inline link's or image's target, when that target is a path on this site: ``](/``
 #: or ``](</``, and not ``](//`` (a scheme-relative URL to another host).
 _SITE_PATH_TARGET = re.compile(r"(\]\(<?)/(?!/)")
@@ -170,7 +166,7 @@ def article_markdown(row, *, base_url):
 
 
 def article_url(base_url, kb_number):
-	"""The article's Desk URL: ``<base_url>/desk/knowledge-article/<KB number>``."""
+	"""The article's Desk URL: ``<base_url>/desk/knowledge-article/<article number>``."""
 	return f"{_text(base_url).rstrip('/')}/desk/knowledge-article/{kb_number}"
 
 
@@ -203,17 +199,14 @@ def keyword_list(keywords):
 
 
 def related_numbers(markdown_text, self_number):
-	"""The KB numbers ``markdown_text`` mentions, normalized (``kb 612`` is ``KB-0612``), in order of
-	first mention, each once, without ``self_number``, and at most :data:`RELATED_LIMIT`."""
-	own = _normalized(self_number)
-	out = []
-	for match in _KB_NUMBER.finditer(unicodedata.normalize("NFKC", _text(markdown_text))):
-		number = f"KB-{int(match.group(1)):04d}"
-		if number != own and number not in out:
-			out.append(number)
-			if len(out) == RELATED_LIMIT:
-				break
-	return out
+	"""The article numbers ``markdown_text`` cites, canonical (``SOP-6-12`` is ``SOP-06-0012``), in
+	order of first mention, each once, without ``self_number``, and at most :data:`RELATED_LIMIT`. Read
+	as running text (``constants.cited_article_numbers``): a product called ``Pro 2 1000`` is not a
+	citation of ``PRO-02-1000``, and fetch never shows the AI a cited article the text never cited. A
+	Drive register number (``POL-0600``, ``PRO-0210``) is not an article number and is never listed."""
+	own = constants.normalize_article_number(_text(self_number))
+	numbers = [n for n in constants.cited_article_numbers(_text(markdown_text)) if n != own]
+	return numbers[:RELATED_LIMIT]
 
 
 def truncate(markdown_text, limit=TRUNCATE_AT):
@@ -228,11 +221,16 @@ def truncate(markdown_text, limit=TRUNCATE_AT):
 
 
 def mirror_path(row):
-	"""``kb/06-operations/KB-0601.md``: where the mirror (Slice 6) writes this article. ``None`` when
-	its department is not one of the ten options, or its number is not a KB number."""
-	folder = constants.department_folder(_get(row, "department_block"))
+	"""``kb/06-operations/SOP-06-0001.md``: where the mirror (Slice 6) writes this article. ``None``
+	when its department is not one of the ten options, its number is not a canonical article number,
+	or the number's department code is not its department's (``SOP-06-0001`` in 07 Product
+	Management): possible only past the ORM, which the Integrity report names. The private mirror
+	refuses a file in another department's folder, so no such path is ever sent."""
+	department = _get(row, "department_block")
+	folder = constants.department_folder(department)
 	number = _text(_get(row, "kb_number") or _get(row, "name"))
-	if not folder or not _CANONICAL_KB.fullmatch(number):
+	parsed = constants.parse_article_number(number)
+	if not folder or parsed is None or parsed[1] != constants.block_code(department):
 		return None
 	return f"kb/{folder}/{number}.md"
 
@@ -279,11 +277,6 @@ def _date(value):
 		return datetime.date.fromisoformat(match.group(1))
 	except ValueError:
 		return None
-
-
-def _normalized(number):
-	match = _KB_NUMBER.fullmatch(unicodedata.normalize("NFKC", _text(number)).strip())
-	return f"KB-{int(match.group(1)):04d}" if match else None
 
 
 def _scalar(value):

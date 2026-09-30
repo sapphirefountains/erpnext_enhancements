@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Knowledge Base's pure rules: who may approve, KB numbers, review dates, content hygiene.
+"""The Knowledge Base's pure rules: who may approve, article numbers, review dates, content hygiene.
 
 WI-080 PR 2, ADR 0017. ``knowledge_base/workflow.py`` and ``knowledge_base/content.py`` import no
 frappe, so every branch runs here, bench-free and with no stub:
@@ -12,8 +12,14 @@ frappe, so every branch runs here, bench-free and with no stub:
   AI gate card, on a version that is In Review and still the copy they opened. Each rule alone
   refuses, and the refusal names it.
 * **Content changes only in Draft**, and every saver of a change is a contributor.
-* **KB numbers** are ``KB-{block}{01..99}``: ``00`` is never allocated, a number is never reused,
-  and a full block fails loudly.
+* **Article numbers** (2026-09-29) are ``<PREFIX>-<DD>-<NNNN>`` by kind and department
+  (``SOP-06-0001``), one definition in ``constants``: every written form reads as the canonical one,
+  the Drive register's ``SOP-0601`` and the retired ``KB`` format never do, and the department part
+  accepts exactly the ten blocks. Each ``(prefix, department)`` scope counts from ``0001``, one more
+  than the highest taken (never a gap, never reused), and a full scope fails loudly. A revision keeps
+  its article's kind and department (``identity_problem``), and a number must fit its row
+  (``number_problems``). **No retired-format number is written in the Knowledge Base's code**,
+  comments included (``TestNoRetiredNumbersInTheCode``).
 * **Review dates** default to ``constants.DEFAULT_REVIEW_EVERY_MONTHS`` (POL-0001's six months)
   and handle month ends and leap years.
 * **Presentation stripping** removes colour, background, size and font (as ``style``, or as
@@ -36,7 +42,7 @@ frappe, so every branch runs here, bench-free and with no stub:
   reader and folder names; and the Integrity report reading a kind only with approved text.
 * **The Markdown renderer** (PR 6a, ``markdown.py``): the eleven header keys in order; a title with
   ``:``, ``#``, ``"`` and a line break quoted so it reads back exactly; bare dates, integers and
-  booleans, ``null`` for what is missing; keyword splitting; related KB numbers; truncation at a line
+  booleans, ``null`` for what is missing; keyword splitting; related article numbers; truncation at a line
   boundary; site paths made absolute and nothing else; identical input, identical bytes; an approver
   never shown as an email address; and the header read back as YAML front matter by a parser this
   file carries (and by PyYAML too, where it is installed).
@@ -490,44 +496,354 @@ class TestContentEdits(unittest.TestCase):
 		self.assertEqual(W.with_contributor("a@x", ""), "a@x")
 
 
-# ------------------------------------------------------------------ KB numbers
+# ------------------------------------------------------------------ article numbers (2026-09-29)
 
 
-class TestKbNumbers(unittest.TestCase):
-	def test_the_first_number_in_a_block_is_01_never_00(self):
-		self.assertEqual(W.next_kb_number("06 Operations", []), "KB-0601")
-		self.assertEqual(W.next_kb_number("06 Operations", ["KB-0600"]), "KB-0601")
+class TestArticleNumberFormat(unittest.TestCase):
+	"""``constants``: the one definition every module imports."""
+
+	def test_a_number_is_made_from_the_kind_the_department_and_a_sequence(self):
+		self.assertEqual(K.article_number("SOP", "06 Operations", 1), "SOP-06-0001")
+		self.assertEqual(K.article_number("Policy", "00", 1), "POL-00-0001")
+		self.assertEqual(K.article_number("Process", "02 Design", 3), "PRO-02-0003")
+		self.assertEqual(K.article_number("SOP", "09 Sales", K.MAX_SEQUENCE), "SOP-09-9999")
+		self.assertEqual(K.number_scope("SOP", "06 Operations"), "SOP-06-")
+		self.assertEqual(K.number_scope("Process", "09"), "PRO-09-")
+		for kind, block, sequence in (
+			("Checklist", "06", 1),
+			(None, "06", 1),
+			("sop", "06", 1),  # the stored kind exactly, never a spelling
+			("SOP", "10 Anything", 1),
+			("SOP", "6", 1),
+			("SOP", "", 1),
+			("SOP", "06", 0),
+			("SOP", "06", 10000),
+			("SOP", "06", True),
+			("SOP", "06", "1"),
+		):
+			with self.subTest(kind=kind, block=block, sequence=sequence), self.assertRaises(ValueError):
+				K.article_number(kind, block, sequence)
+
+	def test_every_kind_has_a_prefix_and_every_prefix_a_kind(self):
+		self.assertEqual(set(K.KIND_PREFIXES), set(K.ARTICLE_KINDS))
+		self.assertEqual(K.KIND_PREFIXES, {"Policy": "POL", "Process": "PRO", "SOP": "SOP"})
+		self.assertEqual({K.PREFIX_KINDS[prefix] for prefix in K.KIND_PREFIXES.values()}, set(K.ARTICLE_KINDS))
+
+	def test_parsing_reads_only_the_canonical_number(self):
+		self.assertEqual(K.parse_article_number("SOP-06-0001"), ("SOP", "06", 1))
+		self.assertEqual(K.parse_article_number("POL-00-9999"), ("Policy", "00", 9999))
+		self.assertEqual(K.parse_article_number("PRO-02-0003"), ("Process", "02", 3))
+		for text in (
+			"sop-06-0001",
+			" SOP-06-0001",
+			"SOP-06-0001 ",
+			"SOP-06-1",
+			"SOP-06-0000",
+			"SOP-10-0001",
+			"SOP-6-0001",
+			"KB-0601",
+			"SOP-0601",
+			"",
+			None,
+			601,
+		):
+			with self.subTest(text=text):
+				self.assertIsNone(K.parse_article_number(text))
+
+	def test_every_written_form_reads_as_the_canonical_number(self):
+		for text in (
+			"SOP-06-0001",
+			"sop 06 0001",
+			"SOP-06-1",
+			"sop_6_1",
+			"SOP06-0001",
+			"SOP\u201306\u20130001",  # en dashes, as Word and Docs paste a typed hyphen
+			"SOP\u201006\u20110001",  # a hyphen and a non-breaking hyphen
+			"SOP-06-00001",
+			"  sop-06-0001  ",
+			"\uff33\uff2f\uff30-06-0001",  # full-width letters, NFKC
+		):
+			with self.subTest(text=text):
+				self.assertEqual(K.normalize_article_number(text), "SOP-06-0001")
+		self.assertEqual(K.normalize_article_number("pol 0 1"), "POL-00-0001")
+		self.assertEqual(K.normalize_article_number("PRO-2-3"), "PRO-02-0003")
+
+	def test_what_is_not_an_article_number(self):
+		for text in (
+			"KB-0601",
+			"KBV-00001",
+			"SOP-0601",  # the Drive register's own numbers: no separator between department and sequence
+			"POL-0600",
+			"PRO-0210",
+			"SOP-10-0001",
+			"SOP-06-0000",
+			"SOP-06-12345",
+			"SOP060001",
+			"SOP-06-0001 and more",
+			"see SOP-06-0001",
+			"SOP-06",
+			"",
+			None,
+			"601",
+			601,
+		):
+			with self.subTest(text=text):
+				self.assertIsNone(K.normalize_article_number(text))
+
+	def test_the_department_part_accepts_exactly_the_ten_blocks(self):
+		"""A block ``10`` added to ``DEPARTMENT_BLOCKS`` fails here until the written pattern is widened
+		to read it."""
+		pattern = re.compile(K.ARTICLE_NUMBER_WRITTEN, re.IGNORECASE)
+		accepted = set()
+		for width in (1, 2, 3):
+			for value in range(10**width):
+				match = pattern.fullmatch(f"SOP-{value:0{width}d}-0001")
+				if match:
+					accepted.add(f"{int(match.group(2)):02d}")
+		self.assertEqual(accepted, {code for code, _label in K.DEPARTMENT_BLOCKS})
+
+	def test_written_numbers_in_a_text(self):
+		text = (
+			"See POL-0600 and SOP-06-0001, then sop 6 2, SOP-06-1 again, PRO-0210, KB-0601, "
+			"SOP-12-0001, SOP-06-0000 and pol_0_7."
+		)
+		self.assertEqual(K.written_article_numbers(text), ["SOP-06-0001", "SOP-06-0002", "POL-00-0007"])
+		self.assertEqual(K.written_article_numbers(None), [])
+		self.assertEqual(K.written_article_numbers(""), [])
+
+	def test_what_running_text_cites(self):
+		"""Review of v1.568.0: running text holds ordinary words shaped like a number, such as a product
+		called "Pro 2 1000". What it *cites* allows a space between the parts only when the department
+		is written with two digits, so fetch's ``related`` never lists an article the text never cited.
+		The loose reading, for a query, still finds them all."""
+		text = (
+			"Use the Pro 2 1000 pump kit, pro 5 10 times, SOP 1 2 3, SOP 6-9; then sop 06 0003, SOP-6-4, "
+			"sop_6_5, SOP06-0006, SOP 06-7, SOP–6–8 and POL-0600."
+		)
+		self.assertEqual(
+			K.cited_article_numbers(text),
+			["SOP-06-0003", "SOP-06-0004", "SOP-06-0005", "SOP-06-0006", "SOP-06-0007", "SOP-06-0008"],
+		)
+		self.assertEqual(
+			K.written_article_numbers(text)[:4], ["PRO-02-1000", "PRO-05-0010", "SOP-01-0002", "SOP-06-0009"]
+		)
+		self.assertEqual(K.cited_article_numbers(None), [])
+		self.assertEqual(K.cited_article_numbers(""), [])
+		# Whole-string readings (fetch, the drafting tool, a query) stay loose.
+		self.assertEqual(K.normalize_article_number("sop 6 1"), "SOP-06-0001")
+
+
+class TestNextArticleNumber(unittest.TestCase):
+	def test_the_first_number_in_a_scope_is_0001(self):
+		self.assertEqual(W.next_article_number("SOP", "06 Operations", []), "SOP-06-0001")
+		self.assertEqual(W.next_article_number("SOP", "06 Operations", ["SOP-06-0000"]), "SOP-06-0001")
+
+	def test_each_kind_and_department_counts_on_its_own(self):
+		taken = ["SOP-06-0001", "SOP-06-0002", "POL-03-0004"]
+		self.assertEqual(W.next_article_number("SOP", "06 Operations", taken), "SOP-06-0003")
+		self.assertEqual(W.next_article_number("Policy", "06 Operations", taken), "POL-06-0001")
+		self.assertEqual(W.next_article_number("SOP", "03 Finance", taken), "SOP-03-0001")
+		self.assertEqual(W.next_article_number("Policy", "03 Finance", taken), "POL-03-0005")
+		self.assertEqual(W.next_article_number("Process", "06 Operations", taken), "PRO-06-0001")
 
 	def test_it_is_one_more_than_the_highest_and_never_fills_a_gap(self):
-		self.assertEqual(W.next_kb_number("06 Operations", ["KB-0601", "KB-0605"]), "KB-0606")
+		self.assertEqual(W.next_article_number("SOP", "06 Operations", ["SOP-06-0001", "SOP-06-0005"]), "SOP-06-0006")
 
-	def test_other_blocks_and_non_numbers_are_ignored(self):
-		taken = ["KB-0199", "KB-0712", "KBV-00006", "PRJ-00580", "KB-06", "KB-06123", None, ""]
-		self.assertEqual(W.next_kb_number("06 Operations", taken), "KB-0601")
+	def test_other_scopes_the_retired_format_and_garbage_are_ignored(self):
+		taken = [
+			"SOP-01-0099",
+			"POL-06-0042",
+			"KB-0601",
+			"KB-0699",
+			"KBV-00006",
+			"PRJ-00580",
+			"SOP-06",
+			"SOP-06-12345",
+			"SOP-0601",
+			None,
+			"",
+			42,
+		]
+		self.assertEqual(W.next_article_number("SOP", "06 Operations", taken), "SOP-06-0001")
 
 	def test_a_number_is_matched_the_way_mariadb_compares_names(self):
-		self.assertEqual(W.next_kb_number("06 Operations", ["kb-0607 ", " KB-0603"]), "KB-0608")
+		self.assertEqual(W.next_article_number("SOP", "06", ["sop-06-0007 ", " SOP-06-0003"]), "SOP-06-0008")
 
-	def test_every_block_and_both_spellings(self):
+	def test_every_block_every_kind_and_both_spellings(self):
 		for code, label in K.DEPARTMENT_BLOCKS:
-			with self.subTest(code=code):
-				self.assertEqual(W.next_kb_number(f"{code} {label}", []), f"KB-{code}01")
-				self.assertEqual(W.next_kb_number(code, []), f"KB-{code}01")
-				self.assertEqual(W.kb_number_prefix(f"{code} {label}"), f"KB-{code}")
+			for kind, prefix in K.KIND_PREFIXES.items():
+				with self.subTest(code=code, kind=kind):
+					self.assertEqual(W.next_article_number(kind, f"{code} {label}", []), f"{prefix}-{code}-0001")
+					self.assertEqual(W.next_article_number(kind, code, []), f"{prefix}-{code}-0001")
+					self.assertEqual(W.number_scope(kind, f"{code} {label}"), f"{prefix}-{code}-")
 
-	def test_99_is_the_last_and_a_full_block_fails_loudly(self):
-		self.assertEqual(W.next_kb_number("06 Operations", ["KB-0698"]), "KB-0699")
-		with self.assertRaises(W.BlockFullError) as caught:
-			W.next_kb_number("06 Operations", ["KB-0699"])
+	def test_9999_is_the_last_and_a_full_scope_fails_loudly(self):
+		self.assertEqual(W.next_article_number("SOP", "06 Operations", ["SOP-06-9998"]), "SOP-06-9999")
+		with self.assertRaises(W.SequenceFullError) as caught:
+			W.next_article_number("SOP", "06 Operations", ["SOP-06-9999"])
 		self.assertIsInstance(caught.exception, ValueError)
 		message = str(caught.exception)
-		for part in ("06 Operations", "KB-0601", "KB-0699", "KB-0600"):
+		for part in ("06 Operations", "SOP-06-0001", "SOP-06-9999", "SOP"):
 			self.assertIn(part, message)
 
-	def test_an_unplaced_or_unknown_block_is_refused(self):
+	def test_an_unplaced_or_unknown_block_or_kind_is_refused(self):
 		for block in ("", None, "6", "10", "06 operations", "Operations", "06 Operations "):
 			with self.subTest(block=block), self.assertRaises(ValueError):
-				W.next_kb_number(block, [])
+				W.next_article_number("SOP", block, [])
+		for kind in ("", None, "sop", "Checklist", "Procedure"):
+			with self.subTest(kind=kind), self.assertRaises(ValueError):
+				W.next_article_number(kind, "06 Operations", [])
+
+
+class TestKindAndDepartmentAreFixed(unittest.TestCase):
+	"""A published article's number never changes and is never reused, and it carries the kind and
+	the department, so a revision keeps both (Nik, 2026-09-29)."""
+
+	ARTICLE = {"name": "SOP-06-9001", "status": "Published", "kind": "SOP", "department_block": "06 Operations"}
+
+	def test_a_revision_that_keeps_both_is_fine(self):
+		self.assertIsNone(W.identity_problem({"kind": "SOP", "department_block": "06 Operations"}, self.ARTICLE))
+		self.assertIsNone(W.identity_problem({"kind": "Policy"}, None))  # a first version has no article
+		self.assertEqual(W.publish_problems({"kind": "SOP", "department_block": "06 Operations"}, self.ARTICLE), [])
+
+	def test_a_changed_kind_or_department_names_the_new_article_route(self):
+		for version, change in (
+			({"kind": "Policy", "department_block": "06 Operations"}, "To make it a Policy, start a new article"),
+			({"kind": "SOP", "department_block": "03 Finance"}, "To move it to 03 Finance, start a new article"),
+			(
+				{"kind": "Process", "department_block": "03 Finance"},
+				"To make it a Process in 03 Finance, start a new article",
+			),
+		):
+			with self.subTest(version=version):
+				problem = W.identity_problem(version, self.ARTICLE)
+				self.assertTrue(
+					problem.startswith(
+						"SOP-06-9001 keeps its kind and department: they are part of its number, which never changes."
+					),
+					problem,
+				)
+				self.assertIn(change, problem)
+				self.assertIn("Once the new one is published, retire SOP-06-9001 and name the new article", problem)
+				self.assertEqual(W.publish_problems(version, self.ARTICLE), [problem])
+
+	def test_a_blank_kind_or_department_says_what_it_stays(self):
+		for version in ({"kind": None, "department_block": "06 Operations"}, {"kind": "SOP", "department_block": ""}):
+			with self.subTest(version=version):
+				problem = W.identity_problem(version, self.ARTICLE)
+				self.assertIn("keeps its kind and department", problem)
+				self.assertIn("Each of its versions is an SOP in 06 Operations.", problem)
+
+	def test_the_number_decides_when_the_row_has_none(self):
+		"""An article row with no kind or department (none exists; written past the ORM) is held to
+		what its number says."""
+		article = {"name": "POL-03-9002", "status": "Published", "kind": None, "department_block": None}
+		self.assertIsNone(W.identity_problem({"kind": "Policy", "department_block": "03 Finance"}, article))
+		self.assertIn("To make it an SOP", W.identity_problem({"kind": "SOP", "department_block": "03 Finance"}, article))
+
+	def test_a_first_version_without_a_kind_or_department_cannot_be_numbered(self):
+		self.assertEqual(
+			W.publish_problems({"kind": None, "department_block": ""}, None),
+			["it has no department, so it cannot be numbered", "it has no kind, so it cannot be numbered"],
+		)
+		self.assertEqual(W.publish_problems({"kind": "SOP", "department_block": "06 Operations"}, None), [])
+
+
+class TestNumberProblems(unittest.TestCase):
+	"""What the Article controller refuses on insert and the Integrity report lists."""
+
+	def test_a_number_that_fits_its_row(self):
+		self.assertEqual(W.number_problems("SOP-06-0001", "SOP", "06 Operations"), [])
+		self.assertEqual(W.number_problems("POL-00-0001", "Policy", "00 Company Wide"), [])
+
+	def test_each_way_a_number_can_be_wrong(self):
+		cases = {
+			("KB-0612", "SOP", "06 Operations"): ["KB-0612 is not an article number of the form SOP-06-0001"],
+			("sop-06-0001", "SOP", "06 Operations"): ["sop-06-0001 is not an article number of the form SOP-06-0001"],
+			("SOP-06-0000", "SOP", "06 Operations"): ["SOP-06-0000 ends in 0000, which is never allocated"],
+			("SOP-42-0001", "SOP", "06 Operations"): [
+				"SOP-42-0001 is numbered in block 42, which is not a department block"
+			],
+			("SOP-06-0001", "SOP", "07 Product Management"): [
+				"SOP-06-0001 is numbered in block 06, but its department is 07 Product Management"
+			],
+			("SOP-06-0001", "SOP", None): ["SOP-06-0001 is numbered in block 06, but its department is blank"],
+			("SOP-06-0001", "Policy", "06 Operations"): [
+				"SOP-06-0001 is numbered as an SOP, but its kind is Policy"
+			],
+			("POL-06-0001", None, "06 Operations"): ["POL-06-0001 is numbered as a Policy, but its kind is blank"],
+			("PRO-06-0001", "Checklist", "Warehouse"): [
+				"PRO-06-0001 is numbered in block 06, but its department is not a department block",
+				"PRO-06-0001 is numbered as a Process, but its kind is not one of the kinds",
+			],
+			(None, "SOP", "06 Operations"): ["The name is not an article number of the form SOP-06-0001"],
+		}
+		for (number, kind, department), expected in cases.items():
+			with self.subTest(number=number, kind=kind, department=department):
+				self.assertEqual(W.number_problems(number, kind, department), expected)
+
+
+#: Where the retired format may not be written: the code and schema of everything that reads or writes
+#: an article number. Markdown docs (READMEs, the ADR, WI-080) may name it as history.
+_CODE_ROOTS = (
+	(APP / "knowledge_base", ("*.py", "*.js", "*.json")),
+	(APP / "assistant_tools", ("*knowledge*.py",)),
+	(APP / "api", ("knowledge_base*.py",)),
+	(APP / "public" / "js" / "knowledge_base", ("*.js",)),
+)
+_RETIRED_LITERAL = re.compile(r"\bKB-?[0-9]", re.IGNORECASE)
+
+
+class TestNoRetiredNumbersInTheCode(unittest.TestCase):
+	"""2026-09-29: no ``KB-0601``-shaped literal anywhere in the Knowledge Base's code, schema or
+	workspace, comments and docstrings included, so a stale example cannot survive in a description an
+	AI reads or a message a person does. The one pattern of that format kept on purpose is
+	``ai_tools._RETIRED_FORMAT`` (search's hint for an agent that learned it), found by its name."""
+
+	def test_no_file_writes_the_retired_format(self):
+		found, scanned = [], 0
+		for root, patterns in _CODE_ROOTS:
+			for pattern in patterns:
+				for path in sorted(root.rglob(pattern)):
+					if "__pycache__" in path.parts:
+						continue
+					scanned += 1
+					for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+						if path.name == "ai_tools.py" and line.startswith("_RETIRED_FORMAT = "):
+							continue
+						if _RETIRED_LITERAL.search(line):
+							found.append(f"{path.relative_to(APP)}:{number}: {line.strip()}")
+		self.assertGreater(scanned, 20)
+		self.assertEqual(found, [])
+
+	def test_the_one_kept_pattern_is_where_the_scan_expects_it(self):
+		text = (APP / "knowledge_base" / "ai_tools.py").read_text(encoding="utf-8")
+		self.assertEqual(sum(line.startswith("_RETIRED_FORMAT = ") for line in text.splitlines()), 1)
+
+	def test_what_the_docs_say_to_do_now_uses_the_new_format(self):
+		"""Review of v1.568.0: the docs may name the retired format as history, but not in an
+		instruction someone acts on today. WI-080's T0 companion ("now") told course authors to cite
+		``see KB-0612`` in lesson text while ADR 0017 said article numbers, and Slice 5's scanner
+		looked for "the KB number". Each line must name the new format, and the scan must read what
+		running text cites."""
+		wi = (REPO_ROOT / "work-items" / "WI-080-company-knowledge-base.md").read_text(encoding="utf-8")
+		adr = (
+			REPO_ROOT / "decisions" / "adr" / "0017-company-knowledge-lives-in-a-native-module.md"
+		).read_text(encoding="utf-8")
+		lines = {
+			"WI-080's T0 companion": [line for line in wi.splitlines() if "Zero-code companions (T0" in line],
+			"ADR 0017's T0 rule": [line for line in adr.splitlines() if "Until then (T0)" in line],
+		}
+		for where, found in lines.items():
+			with self.subTest(where=where):
+				self.assertEqual(len(found), 1, found)
+				self.assertIn("lesson text", found[0])
+				self.assertNotRegex(found[0], _RETIRED_LITERAL)
+				self.assertRegex(found[0], K.ARTICLE_NUMBER)
+		scan = [line for line in wi.splitlines() if "Scan the live `published_content_json`" in line]
+		self.assertEqual(len(scan), 1, scan)
+		self.assertIn("constants.cited_article_numbers", scan[0])
+		self.assertNotIn("KB number", scan[0])
 
 
 # ------------------------------------------------------------------ review dates
@@ -1626,7 +1942,7 @@ def _front_matter(text):
 
 def _article(**changes):
 	row = {
-		"kb_number": "KB-0698",
+		"kb_number": "SOP-06-9098",
 		"version_number": 3,
 		"title": "Logging a fictitious widget return",
 		"kind": "SOP",
@@ -1637,7 +1953,7 @@ def _article(**changes):
 		"ai_drafted": 0,
 		"keywords": "RMA, widget return; return slip\nSOP-9001",
 		"summary": "How a fictitious widget comes back.",
-		"body_md": "1. Open SOP-9001.\n2. See KB-0697 and kb 612.\n",
+		"body_md": "1. Open SOP-9001.\n2. See SOP-06-9097 and sop 6 9012.\n",
 	}
 	row.update(changes)
 	return row
@@ -1657,7 +1973,7 @@ class TestArticleMarkdown(unittest.TestCase):
 		self.assertEqual(
 			header,
 			{
-				"kb_number": "KB-0698",
+				"kb_number": "SOP-06-9098",
 				"version": 3,
 				"title": "Logging a fictitious widget return",
 				"kind": "SOP",
@@ -1667,7 +1983,7 @@ class TestArticleMarkdown(unittest.TestCase):
 				"review_by": datetime.date(2027, 4, 2),
 				"ai_drafted": False,
 				"keywords": ["RMA", "widget return", "return slip", "SOP-9001"],
-				"url": "https://erp.example.com/desk/knowledge-article/KB-0698",
+				"url": "https://erp.example.com/desk/knowledge-article/SOP-06-9098",
 			},
 		)
 		self.assertNotIn("review_overdue", self._render())  # depends on today, so never in the header
@@ -1677,7 +1993,7 @@ class TestArticleMarkdown(unittest.TestCase):
 			self._render().split("\n")[:19],
 			[
 				"---",
-				'kb_number: "KB-0698"',
+				'kb_number: "SOP-06-9098"',
 				"version: 3",
 				'title: "Logging a fictitious widget return"',
 				'kind: "SOP"',
@@ -1687,7 +2003,7 @@ class TestArticleMarkdown(unittest.TestCase):
 				"review_by: 2027-04-02",
 				"ai_drafted: false",
 				'keywords: ["RMA", "widget return", "return slip", "SOP-9001"]',
-				'url: "https://erp.example.com/desk/knowledge-article/KB-0698"',
+				'url: "https://erp.example.com/desk/knowledge-article/SOP-06-9098"',
 				"---",
 				M.TRUST_COMMENT,
 				"",
@@ -1733,7 +2049,7 @@ class TestArticleMarkdown(unittest.TestCase):
 		self.assertIsNone(header["review_by"])
 		self.assertIs(header["ai_drafted"], True)
 		self.assertEqual(header["version"], 4)
-		self.assertIsNone(header["kind"])  # an article published before kinds existed
+		self.assertIsNone(header["kind"])  # an article with no kind, which since 2026-09-29 cannot be published
 		self.assertIsNone(header["department"])
 		self.assertIsNone(header["approved_by"])
 		self.assertEqual(header["keywords"], [])
@@ -1749,13 +2065,28 @@ class TestArticleMarkdown(unittest.TestCase):
 		self.assertEqual(M.keyword_list(" ; , \n"), [])
 
 	def test_related_numbers(self):
-		text = "See KB-0612, then kb 601 and KB0601 (itself), KBV-00001 (a version), kb_7, KB-0612 again, KB-12345."
-		self.assertEqual(M.related_numbers(text, "KB-0601"), ["KB-0612", "KB-0007"])
-		self.assertEqual(M.related_numbers(text, "kb 612"), ["KB-0601", "KB-0007"])
-		many = " ".join(f"KB-{n:04d}" for n in range(1, 30))
-		self.assertEqual(M.related_numbers(many, "KB-0002"), [f"KB-{n:04d}" for n in range(1, 22) if n != 2])
+		text = (
+			"See SOP-06-9012, then sop 6 9001 and SOP06-9001 (itself), KBV-00001 (a version), pro_2_7, "
+			"SOP-06-9012 again, SOP-06-12345, the register's POL-0600 and PRO-0210, a retired KB-0601, "
+			"and SOP\u201306\u20139013."
+		)
+		self.assertEqual(M.related_numbers(text, "SOP-06-9001"), ["SOP-06-9012", "PRO-02-0007", "SOP-06-9013"])
+		self.assertEqual(M.related_numbers(text, "sop 6 9012"), ["SOP-06-9001", "PRO-02-0007", "SOP-06-9013"])
+		many = " ".join(f"SOP-06-{n:04d}" for n in range(1, 30))
+		self.assertEqual(
+			M.related_numbers(many, "SOP-06-0002"), [f"SOP-06-{n:04d}" for n in range(1, 22) if n != 2]
+		)
 		self.assertEqual(len(M.related_numbers(many, None)), M.RELATED_LIMIT)
-		self.assertEqual(M.related_numbers(None, "KB-0601"), [])
+		self.assertEqual(M.related_numbers(None, "SOP-06-0001"), [])
+		# The Drive register's numbers are what the first article actually cites; neither is an article.
+		self.assertEqual(M.related_numbers("See POL-0600 and PRO-0210.", "SOP-06-0001"), [])
+		# Review of v1.568.0: a product's name shaped like a number is no citation.
+		self.assertEqual(
+			M.related_numbers(
+				"Use the Pro 2 1000 pump kit, pro 5 10 times, then SOP-06-0002.", "SOP-06-0001"
+			),
+			["SOP-06-0002"],
+		)
 
 	def test_truncation_at_a_line_boundary(self):
 		lines = [f"Step {n}: turn the fictitious valve a quarter turn." for n in range(2000)]
@@ -1779,7 +2110,7 @@ class TestArticleMarkdown(unittest.TestCase):
 	def test_site_paths_become_absolute_and_nothing_else_changes(self):
 		body = (
 			"![slip](/private/files/slip.png?fid=abc)\n"
-			'[the form](/desk/knowledge-article/KB-0612 "KB-0612")\n'
+			'[the form](/desk/knowledge-article/SOP-06-9012 "SOP-06-9012")\n'
 			"![spaced](</files/a b.png>)\n"
 			"[vendor](https://vendor.example.com/a)\n"
 			"[cdn](//cdn.example.com/x.png)\n"
@@ -1790,7 +2121,7 @@ class TestArticleMarkdown(unittest.TestCase):
 		)
 		text = M.article_markdown(_article(body_md=body), base_url=BASE + "/")
 		self.assertIn("![slip](https://erp.example.com/private/files/slip.png?fid=abc)", text)
-		self.assertIn('[the form](https://erp.example.com/desk/knowledge-article/KB-0612 "KB-0612")', text)
+		self.assertIn('[the form](https://erp.example.com/desk/knowledge-article/SOP-06-9012 "SOP-06-9012")', text)
 		self.assertIn("![spaced](<https://erp.example.com/files/a b.png>)", text)
 		self.assertIn("[1]: https://erp.example.com/files/ref.pdf", text)
 		for unchanged in (
@@ -1858,12 +2189,20 @@ class TestArticleMarkdown(unittest.TestCase):
 		self.assertIsNone(yaml.safe_load(self._render(kind=None).split("---\n")[1])["kind"])
 
 	def test_mirror_path(self):
-		self.assertEqual(M.mirror_path(_article()), "kb/06-operations/KB-0698.md")
-		self.assertEqual(M.mirror_path(_article(department_block="07 Product Management")), "kb/07-product-management/KB-0698.md")
+		self.assertEqual(M.mirror_path(_article()), "kb/06-operations/SOP-06-9098.md")
+		self.assertEqual(
+			M.mirror_path(_article(kb_number="PRO-07-9001", department_block="07 Product Management")),
+			"kb/07-product-management/PRO-07-9001.md",
+		)
+		# 2026-09-29: a number whose department code is not its department's (possible only past the
+		# ORM) is never sent to a folder; the private mirror would refuse it.
+		self.assertIsNone(M.mirror_path(_article(department_block="07 Product Management")))
 		self.assertIsNone(M.mirror_path(_article(department_block="Warehouse")))
 		self.assertIsNone(M.mirror_path(_article(department_block=None)))
-		self.assertIsNone(M.mirror_path(_article(kb_number="KBV-00001")))
-		self.assertRegex(M.mirror_path(_article()), r"^kb/\d{2}-[a-z-]+/KB-\d{4}\.md$")
+		for number in ("KBV-00001", "KB-0698", "sop-06-9098", "SOP-06-0000", "SOP-6-9098", "SOP-06-9098 "):
+			with self.subTest(number=number):
+				self.assertIsNone(M.mirror_path(_article(kb_number=number)))
+		self.assertRegex(M.mirror_path(_article()), r"^kb/[0-9]{2}-[a-z-]+/(POL|PRO|SOP)-[0-9]{2}-[0-9]{4}\.md$")
 
 	def test_a_missing_field_never_raises(self):
 		text = M.article_markdown({}, base_url="")

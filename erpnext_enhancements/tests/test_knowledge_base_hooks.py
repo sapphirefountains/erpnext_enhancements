@@ -409,7 +409,7 @@ def _stored_file(doctype, name):
 	return {"attached_to_doctype": doctype, "attached_to_name": name, "is_private": 1}
 
 
-def _update(stored_doctype, stored_name="KB-0612", **values):
+def _update(stored_doctype, stored_name="SOP-06-0012", **values):
 	"""A File on its update path: the stored row, and the row as the request left it."""
 	current = {
 		"attached_to_doctype": stored_doctype,
@@ -433,7 +433,7 @@ class TestKbFilesStayAttached(unittest.TestCase):
 			{"attached_to_doctype": "", "attached_to_name": ""},
 			{"attached_to_doctype": None, "attached_to_name": None},
 			{"attached_to_doctype": "ToDo", "attached_to_name": "a1b2c3"},
-			{"attached_to_name": "KB-0613"},
+			{"attached_to_name": "SOP-06-0013"},
 			{"attached_to_doctype": VERSION, "attached_to_name": "KBV-00012"},
 		):
 			with self.subTest(changes=changes):
@@ -441,7 +441,7 @@ class TestKbFilesStayAttached(unittest.TestCase):
 				with self.assertRaises(Refused) as caught:
 					files.force_private(doc, "before_validate")
 				message = str(caught.exception)
-				self.assertIn("slip.png is attached to Knowledge Article KB-0612", message)
+				self.assertIn("slip.png is attached to Knowledge Article SOP-06-0012", message)
 				self.assertIn("cannot be detached or moved", message)
 
 	def test_a_drafts_file_cannot_be_moved_off_it_either(self):
@@ -464,7 +464,7 @@ class TestKbFilesStayAttached(unittest.TestCase):
 
 	def test_kb_code_may_move_a_file_by_saying_so_and_it_stays_private(self):
 		"""Publishing moves a draft's Files onto the Article (PR 3), with flags.kb_action."""
-		doc = _update(VERSION, "KBV-00012", attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		doc = _update(VERSION, "KBV-00012", attached_to_doctype=ARTICLE, attached_to_name="SOP-06-0012")
 		doc.flags.kb_action = True
 		files.force_private(doc, "before_validate")
 		doc = _update(ARTICLE, attached_to_doctype="", attached_to_name="", is_private=0)
@@ -473,7 +473,7 @@ class TestKbFilesStayAttached(unittest.TestCase):
 		self.assertEqual(doc.is_private, 1)
 
 	def test_the_publish_flag_does_not_move_a_file(self):
-		doc = _update(VERSION, "KBV-00012", attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		doc = _update(VERSION, "KBV-00012", attached_to_doctype=ARTICLE, attached_to_name="SOP-06-0012")
 		doc.flags.kb_publish = True
 		with self.assertRaises(Refused):
 			files.force_private(doc, "before_validate")
@@ -492,7 +492,7 @@ class TestKbFilesStayAttached(unittest.TestCase):
 	def test_an_insert_has_no_stored_row_to_compare(self):
 		doc = FakeFile(
 			attached_to_doctype=ARTICLE,
-			attached_to_name="KB-0612",
+			attached_to_name="SOP-06-0012",
 			is_private=1,
 			file_url="/private/files/a.png",
 		)
@@ -512,14 +512,14 @@ class TestCommentsNeverMoveKbFiles(unittest.TestCase):
 		STATE["file_docs"].update({doc.name: doc for doc in docs})
 
 	def test_an_articles_image_is_not_moved_to_the_callers_todo(self):
-		kb = FakeFile(name="f-kb", owner=AUTHOR, attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		kb = FakeFile(name="f-kb", owner=AUTHOR, attached_to_doctype=ARTICLE, attached_to_name="SOP-06-0012")
 		draft = FakeFile(
 			name="f-draft", owner=AUTHOR, attached_to_doctype=VERSION, attached_to_name="KBV-00012"
 		)
 		mine = FakeFile(name="f-mine", owner=AUTHOR, attached_to_doctype=None, attached_to_name=None)
 		self._files(kb, draft, mine)
 		comments.link_files_to_comment(["f-kb", "f-draft", "f-mine"], "c-1", "ToDo", "todo-1")
-		for doc, doctype, name in ((kb, ARTICLE, "KB-0612"), (draft, VERSION, "KBV-00012")):
+		for doc, doctype, name in ((kb, ARTICLE, "SOP-06-0012"), (draft, VERSION, "KBV-00012")):
 			with self.subTest(file=doc.name):
 				self.assertEqual((doc.attached_to_doctype, doc.attached_to_name), (doctype, name))
 				self.assertEqual(doc.calls, [])
@@ -528,16 +528,16 @@ class TestCommentsNeverMoveKbFiles(unittest.TestCase):
 
 	def test_not_even_for_a_system_manager(self):
 		STATE["roles"][None] = ["System Manager"]
-		kb = FakeFile(name="f-kb", owner=APPROVER, attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		kb = FakeFile(name="f-kb", owner=APPROVER, attached_to_doctype=ARTICLE, attached_to_name="SOP-06-0012")
 		self._files(kb)
 		comments.link_files_to_comment(["f-kb"], "c-1", "ToDo", "todo-1")
 		self.assertEqual(kb.attached_to_doctype, ARTICLE)
 
 	def test_a_kb_file_already_on_that_document_is_left_where_it_is(self):
-		kb = FakeFile(name="f-kb", owner=AUTHOR, attached_to_doctype=ARTICLE, attached_to_name="KB-0612")
+		kb = FakeFile(name="f-kb", owner=AUTHOR, attached_to_doctype=ARTICLE, attached_to_name="SOP-06-0012")
 		self._files(kb)
-		comments.link_files_to_comment(["f-kb"], "c-1", ARTICLE, "KB-0612")
-		self.assertEqual((kb.attached_to_doctype, kb.attached_to_name), (ARTICLE, "KB-0612"))
+		comments.link_files_to_comment(["f-kb"], "c-1", ARTICLE, "SOP-06-0012")
+		self.assertEqual((kb.attached_to_doctype, kb.attached_to_name), (ARTICLE, "SOP-06-0012"))
 
 
 # ------------------------------------------------------------------ registration

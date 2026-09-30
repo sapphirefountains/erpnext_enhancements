@@ -822,8 +822,12 @@ jobs:
       # normal publish: the author approving their own draft, a contributor or the person who
       # asked an AI to draft it approving, Administrator (which holds every role) or any
       # non-System-User account approving, a token or a confirmed AI gate card approving, or a
-      # copy that changed after the approver opened it. Also the KB number (00 never allocated,
-      # a number never reused, a full block failing loudly), the review date (POL-0001's six
+      # copy that changed after the approver opened it. Also the article number (since v1.568.0
+      # <PREFIX>-<DD>-<NNNN> by kind and department, one definition in constants.py: every written
+      # form read as the canonical one and never the Drive register's SOP-0601; each scope from
+      # 0001, one past the highest, never reused; a revision keeping its article's kind and
+      # department; and no retired-format number written anywhere in the Knowledge Base's code,
+      # comments included), the review date (POL-0001's six
       # months from one constant; month ends; leap years), presentation stripping (the colour,
       # size and font that hide text from a reviewer and not from a model, and every class but
       # the structural ones v16's editor writes -- `hidden`, `d-none`, Frappe's own `icon` --
@@ -841,7 +845,7 @@ jobs:
       # back exactly by a YAML parser the suite carries, dates and booleans bare, an approver
       # never shown as an email address, truncation at a line boundary, identical bytes for
       # identical input. The PyYAML cross-check skips here: CI does not install PyYAML.
-      - name: Knowledge base rules (who may approve, KB numbers, review dates, content hygiene)
+      - name: Knowledge base rules (who may approve, article numbers, review dates, content hygiene)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_rules -v
       # The hooks that apply them. force_private runs on EVERY File insert and save on the site:
       # an unrelated File must come back untouched with no query, or every upload breaks. For a
@@ -896,7 +900,7 @@ jobs:
       # no email address even for an approver with no name (the stub's get_fullname falls back to
       # the user id, as v16's does). And, since review: a retired article in no table of contents
       # and available:false in related, byte for byte as a never-used number; a citation
-      # (KB-0601 v3) fetching its article; nothing of the request (the arguments) in the failure
+      # (SOP-06-0001 v3) fetching its article; nothing of the request (the arguments) in the failure
       # path's queued Error Log, the stub's log_error storing the form_dict as v16's does.
       # Since PR 6b (v1.560.0) also AiDraftTest: draft_knowledge_article queued through the real AI
       # gate over a FAC 3.0.0 stub and confirmed through the real gating_api._confirm_one. It writes
@@ -911,11 +915,16 @@ jobs:
       # and Administrator (a System Manager included) before anything is read; Published only, no
       # draft sentinel and no retired article anywhere in the answer; each file equal to
       # fetch_payload's markdown byte for byte, and whole past 40,000 characters; paths
-      # kb/NN-department/KB-NNNN.md in KB-number order, an article with no folder skipped; the stamp
+      # kb/NN-department/SOP-NN-NNNN.md in number order, an article with no folder (or in another
+      # department's) skipped; the stamp
       # over the sorted (path, sha256) pairs, moving with an approver's name and not with a field no
       # file shows, and `since` answering unchanged; no header read, nothing written, nothing
       # logged; a GET whose whitelist is the OUTER decorator (inside a rate_limit it would be "not
       # whitelisted"). The stub gains frappe.rate_limiter.
+      # Since v1.568.0 also the article number end to end: each kind and department its own
+      # sequence, a vanished article's number never reused (the allocation reads the versions too),
+      # a revision's change of kind or department refused at the save, and the article row refusing
+      # it whatever the flags; and the version form's Approve question (the scope, never a number).
       # And MirrorConfinementTest (PR 8 review): knowledge_base/mirror_guard, the auth_hook that
       # keeps the mirror's account (a signed-in Website User, which v16's whitelist does not refuse)
       # to GET of the snapshot's exact path with no `cmd`. Every other method, address, HTTP method
@@ -936,13 +945,15 @@ jobs:
       # Since PR 4's review also: the tile appended to every saved home-screen layout (v16 draws a
       # saved Desktop Layout instead of the site's icons), the Auto Email Report guard (a scheduled
       # send runs as Administrator), and the README's Check table equal to reporting.CHECKS.
+      # Since v1.568.0 also the Integrity report's Number check (canonical, never 0000, a real
+      # block, the article's own department and its kind's prefix).
       # Own step: it installs its own frappe stub.
       - name: Knowledge base entry points (workspace, tile, help item, the two reports)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_entry_points -v
       # WI-080 PR 5 (v1.558.0): knowledge base search. PLAIN PYTEST FUNCTIONS, so its own
       # `python -m pytest` step -- `python -m unittest` collects none of them (the QuickBooks
       # lesson at the top of this job). search.py is pure: every tokenizer rule (two-letter words,
-      # acronyms and the all-caps run, IT vs it, the four KB-number spellings, a document number,
+      # acronyms and the all-caps run, IT vs it, the spellings of an article number, a document number,
       # a punctuated acronym such as W-2, T&M or A/R as one term),
       # the stemmer table, ranking (title/keywords over body, pinning, filters applied BEFORE
       # scoring, the kind's aliases through the meta field, deterministic ties), snippets, a golden

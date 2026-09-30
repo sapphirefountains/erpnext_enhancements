@@ -4,7 +4,7 @@
 """The published knowledge base as Markdown files, for the company's private mirror (WI-080 Slice 6).
 
 One read-only endpoint, :func:`snapshot`. A scheduled job in the company's private knowledge repo calls
-it and writes each article to its ``path``, ``kb/<NN-department>/<KB number>.md``. **Pull, not push**:
+it and writes each article to its ``path``, ``kb/<NN-department>/<article number>.md``. **Pull, not push**:
 ERPNext holds no GitHub credential and queues nothing, so an ERPNext compromise cannot rewrite that
 repo, and there is no job for the deploy's FLUSHDB to kill; a failed run is recovered by running it
 again. The account that calls it, its key and the workflow are described in that repo's runbook, not
@@ -28,8 +28,9 @@ What it holds to:
   in it start with ``frappe.utils.get_url()``: the site's configured ``host_name``, or, with none, the
   host the request came to. So a mirror file and a fetched article match byte for byte when both reach
   the site at the same address.
-* **Skipped, not guessed.** An article whose department is not one of the ten blocks, or whose name is
-  not a KB number, has no folder (``markdown.mirror_path``). It is listed in ``skipped`` and not
+* **Skipped, not guessed.** An article whose department is not one of the ten blocks, whose name is
+  not a canonical article number (``SOP-06-0001``), or whose number's department code is not its
+  department's, has no folder (``markdown.mirror_path``). It is listed in ``skipped`` and not
   rendered.
 * **A stamp that changes exactly when a file would.** :func:`stamp_of`: sha256 over the rendered files'
   ``(path, sha256)`` pairs, sorted by path. Retiring an article, publishing a version, renaming its
@@ -46,11 +47,16 @@ What it holds to:
   schedule is four runs a day, plus a run on demand.
 
 The answer, ``schema`` 1, is ``{"schema", "stamp", "app_version", "count", "skipped", "articles"}``.
-Each of ``articles``, in KB-number order, is ``{"kb_number", "version", "path", "sha256", "markdown"}``
-(``path`` e.g. ``kb/06-operations/KB-0601.md``; ``sha256`` the hex digest of ``markdown``'s UTF-8
-bytes), and each of ``skipped`` is ``{"kb_number", "department"}``. ``knowledge_base/README.md`` ("The
-private mirror (PR 8)") shows one. Adding a field is allowed; renaming or removing one, or changing
-what a file holds, is a new ``schema``.
+Each of ``articles``, in article-number order, is ``{"kb_number", "version", "path", "sha256",
+"markdown"}`` (``path`` e.g. ``kb/06-operations/SOP-06-0001.md``; ``sha256`` the hex digest of
+``markdown``'s UTF-8 bytes), and each of ``skipped`` is ``{"kb_number", "department"}``.
+``knowledge_base/README.md`` ("The private mirror (PR 8)") shows one. Adding a field is allowed;
+renaming or removing one, or changing what a file holds, is a new ``schema``.
+
+The article-number format changed in v1.568.0 (numbered by kind, ``SOP-06-0001``, where it had been
+a ``KB`` number), and ``schema`` stayed 1: no schema-1 snapshot had carried an article before it
+(there were none), so no consumer had seen the old path, and the keys did not change. The private
+repository's script changed with it.
 
 Indentation is tabs, the ``.editorconfig`` default for a new file.
 """
@@ -112,7 +118,7 @@ def _require_mirror():
 
 def _rendered():
 	"""``(articles, skipped)``: each published article with a folder, rendered whole, and each without
-	one, in KB-number order."""
+	one, in article-number order."""
 	base = get_url()
 	rows = frappe.get_all(
 		ARTICLE,

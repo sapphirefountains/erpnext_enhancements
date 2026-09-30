@@ -1,4 +1,5 @@
-"""The Knowledge Base's fixed vocabulary, defined once (WI-080 PR 1).
+"""The Knowledge Base's fixed vocabulary, defined once (WI-080 PR 1), and since 2026-09-29 the one
+definition of an article's number (:data:`ARTICLE_NUMBER` and the functions after it).
 
 Every value a Select field on the two KB doctypes can hold lives here, and
 ``tests/test_knowledge_base_schema.py`` asserts that each doctype JSON's ``options`` equal these
@@ -90,9 +91,8 @@ VERSION_CONTENT_FIELDS = (
 #: interval it was written with.
 DEFAULT_REVIEW_EVERY_MONTHS = 6
 
-#: The POL-0000 register's department blocks, as ``(two-digit code, label)``. A KB number is
-#: ``KB-{code}{01..99}``, and ``{code}00`` is reserved as that block's index, following the
-#: register's own convention (xx00 is the group's Roles & Responsibilities).
+#: The POL-0000 register's department blocks, as ``(two-digit code, label)``. The code is the middle
+#: part of an article's number (``SOP-06-0001`` is in 06 Operations; see :func:`article_number`).
 DEPARTMENT_BLOCKS = (
 	("00", "Company Wide"),
 	("01", "Executive"),
@@ -115,7 +115,7 @@ DEPARTMENT_BLOCK_OPTIONS = tuple(f"{code} {label}" for code, label in DEPARTMENT
 #: on the server (``model/create_new.py:117-118``, applied by ``Document._set_defaults``,
 #: ``model/document.py:1071-1077``) and in the Desk (``model/create_new.js:107-114``). With
 #: ``"00 Company Wide"`` first, ``reqd`` could never fire, and a draft nobody placed would be
-#: published into block 00 under a KB number that can never be renamed. A blank first option
+#: published into block 00 under an article number that can never be renamed. A blank first option
 #: defaults to ``""``, which ``reqd`` refuses, so an author has to choose. Never a valid value:
 #: :func:`block_code` answers ``None`` for it.
 DEPARTMENT_BLOCK_SELECT_OPTIONS = ("", *DEPARTMENT_BLOCK_OPTIONS)
@@ -235,6 +235,153 @@ def kind_description():
 	lines = [f"{kind}: {KIND_HELP[kind]}" for kind in ARTICLE_KINDS]
 	lines.append("Readers and AI tools use it: a Policy is binding, and an SOP's steps are followed in order.")
 	return " ".join(lines)
+
+
+# ------------------------------------------------------------------ the article number (2026-09-29)
+
+#: Each kind's number prefix: the company register's own (POL-, PRO-, SOP-), so an article's number
+#: says what it is. Nik, 2026-09-29: "KB-#### is too limiting"; he chose ``SOP-06-0001`` by kind.
+KIND_PREFIXES = {"Policy": "POL", "Process": "PRO", "SOP": "SOP"}
+PREFIX_KINDS = {prefix: kind for kind, prefix in KIND_PREFIXES.items()}
+
+#: The highest sequence a ``(prefix, department)`` scope can reach: four digits.
+MAX_SEQUENCE = 9999
+
+#: An article number **as stored**: ``<PREFIX>-<DD>-<NNNN>``, e.g. ``SOP-06-0001`` (the kind's prefix,
+#: the department block's code, a four-digit sequence). Canonical and case-sensitive; use it with
+#: ``fullmatch``. ``[0-9]``, never ``\d``, which also matches other scripts' digits. The pattern alone
+#: also matches ``SOP-06-0000`` and ``SOP-42-0001``: :func:`parse_article_number` is the whole rule.
+#:
+#: **A published article's number never changes, and a number is never reused.** Its kind and
+#: department are part of it, so they never change either: to reclassify an article or move it to
+#: another department, a new article is published and the old one retired, naming the new one, so
+#: every citation of the old number still leads somewhere (Nik, 2026-09-29).
+ARTICLE_NUMBER = re.compile(r"(POL|PRO|SOP)-([0-9]{2})-([0-9]{4})")
+
+#: An article number **as people write one**, as pattern text: compiled with ``re.IGNORECASE`` over
+#: NFKC-normalized text (so full-width letters and digits read as plain ones). The separators are a
+#: space, ``_``, ``-`` or U+2010 to U+2013 (hyphen, non-breaking hyphen, figure dash, en dash: Word and
+#: Docs turn a typed ``-`` into these in pasted text). The one between the prefix and the department is
+#: optional; the one between the department and the sequence is **required**, so the Drive register's
+#: own ``PREFIX-DDNN`` numbers (``SOP-0601``, ``POL-0600``) are never read as article numbers. The
+#: department part, ``0?[0-9]``, accepts exactly the codes 00 to 09 (a test holds it to
+#: :data:`DEPARTMENT_BLOCKS`, so a block ``10`` fails the build until this is widened). So
+#: ``sop 06 0001``, ``SOP-06-1``, ``sop_6_1``, ``SOP06-0001`` and ``SOP-06-00001`` all read as
+#: ``SOP-06-0001``; :func:`normalize_article_number` refuses a match whose sequence is 0 or past 9999.
+#:
+#: This loose form is for text meant **as** a number, or a query naming one. Running text (an article's
+#: body, a lesson) holds ordinary words shaped like it, such as a product's ``Pro 2 1000``, so what it
+#: *cites* is read more strictly: :func:`cited_article_numbers`.
+ARTICLE_NUMBER_WRITTEN = r"\b(pol|pro|sop)[ _\-‐-–]?(0?[0-9])[ _\-‐-–](0*[0-9]{1,4})\b"
+_WRITTEN_NUMBER = re.compile(ARTICLE_NUMBER_WRITTEN, re.IGNORECASE)
+
+_BLOCK_CODES = frozenset(code for code, _label in DEPARTMENT_BLOCKS)
+
+
+def article_number(kind, block, sequence):
+	"""``("SOP", "06 Operations", 1)`` -> ``"SOP-06-0001"``.
+
+	``kind`` is one of :data:`ARTICLE_KINDS`; ``block`` a ``department_block`` option or its two-digit
+	code; ``sequence`` a whole number from 1 to :data:`MAX_SEQUENCE`. Raises ``ValueError``, in words,
+	for anything else: a number is never made from a guess."""
+	if isinstance(sequence, bool) or not isinstance(sequence, int) or not 1 <= sequence <= MAX_SEQUENCE:
+		raise ValueError(f"{sequence!r} is not an article sequence: it runs from 1 to {MAX_SEQUENCE}.")
+	return f"{number_scope(kind, block)}{sequence:04d}"
+
+
+def number_scope(kind, block):
+	"""``("SOP", "06 Operations")`` -> ``"SOP-06-"``: the part of the number the kind and department
+	fix. Each scope has its own sequence, as the register numbers each document type separately, so
+	``POL-06-0001``, ``PRO-06-0001`` and ``SOP-06-0001`` can all exist. Publishing binds
+	``scope + "%"`` in its ``LIKE``, which is safe because a scope holds no ``%`` or ``_``. Raises
+	``ValueError`` for a kind or block that is not one of the options."""
+	prefix = KIND_PREFIXES.get(kind) if isinstance(kind, str) else None
+	if prefix is None:
+		raise ValueError(
+			f"{kind!r} is not a kind, so no article number can be made from it: it needs Policy, "
+			"Process or SOP."
+		)
+	return f"{prefix}-{_code_of(block)}-"
+
+
+def parse_article_number(text):
+	"""``"SOP-06-0001"`` -> ``("SOP", "06", 1)``: the kind, the department code and the sequence.
+	``None`` for anything that is not a canonical article number, exactly as stored: a lowercase
+	spelling, surrounding space, a department that is not a block, and a sequence of 0 are all
+	``None``. For reading what people write, :func:`normalize_article_number`."""
+	if not isinstance(text, str):
+		return None
+	match = ARTICLE_NUMBER.fullmatch(text)
+	if match is None:
+		return None
+	prefix, code, digits = match.groups()
+	sequence = int(digits)
+	if code not in _BLOCK_CODES or not 1 <= sequence <= MAX_SEQUENCE:
+		return None
+	return PREFIX_KINDS[prefix], code, sequence
+
+
+def normalize_article_number(text):
+	"""The article number the **whole** of ``text`` spells, canonical (``"sop 06 1"`` ->
+	``"SOP-06-0001"``); ``None`` when it spells none. So a version's id (``KBV-00001``), a register
+	number (``SOP-0601``), one in the retired ``KB`` format and ``"SOP-06-0001 and more"`` are all
+	``None``."""
+	if not isinstance(text, str):
+		return None
+	match = _WRITTEN_NUMBER.fullmatch(unicodedata.normalize("NFKC", text).strip())
+	return _canonical(match) if match else None
+
+
+def written_article_numbers(text):
+	"""Every article number written in ``text``, canonical, in order of first mention, each once, read
+	as loosely as :func:`normalize_article_number` reads one. For a query, where a number is meant: in
+	running text use :func:`cited_article_numbers`. A register number (``POL-0600``) and one in the
+	retired ``KB`` format are not article numbers, and are not listed."""
+	return _numbers_in(text, cited=False)
+
+
+def cited_article_numbers(text):
+	"""Every article number ``text`` **cites**, as :func:`written_article_numbers` lists them, except
+	that a space may separate the parts only when the department is written with two digits. So
+	``SOP-06-0001``, ``sop 06 0001``, ``SOP-6-1`` and ``sop_6_1`` are citations, and ``Pro 2 1000`` (a
+	product's name), ``pro 5 10 times`` and ``SOP 1 2 3`` are words. For running text: an article's
+	body, what fetch lists as ``related``, a lesson."""
+	return _numbers_in(text, cited=True)
+
+
+def _numbers_in(text, cited):
+	if not isinstance(text, str) or not text:
+		return []
+	numbers = []
+	for match in _WRITTEN_NUMBER.finditer(unicodedata.normalize("NFKC", text)):
+		# The only whitespace a match can hold is a separator's space. Nothing is lost by skipping a
+		# match here rather than in the pattern: no other number can start inside one.
+		if cited and len(match.group(2)) == 1 and " " in match.group(0):
+			continue
+		number = _canonical(match)
+		if number is not None and number not in numbers:
+			numbers.append(number)
+	return numbers
+
+
+def _canonical(match):
+	"""A match of :data:`ARTICLE_NUMBER_WRITTEN`, canonical; ``None`` when its sequence is 0 or past
+	:data:`MAX_SEQUENCE`."""
+	prefix, code, digits = match.group(1).upper(), f"{int(match.group(2)):02d}", int(match.group(3))
+	if code not in _BLOCK_CODES or not 1 <= digits <= MAX_SEQUENCE:
+		return None
+	return f"{prefix}-{code}-{digits:04d}"
+
+
+def _code_of(block):
+	"""A department block's two-digit code, from its option (``"06 Operations"``) or the code itself
+	(``"06"``). Strict, like :func:`block_code`: raises ``ValueError`` for anything else."""
+	code = block_code(block)
+	if code is None and isinstance(block, str) and block in _BLOCK_CODES:
+		code = block
+	if code is None:
+		raise ValueError(f"{block!r} is not a department block.")
+	return code
 
 
 def _fold(value, separator):

@@ -129,13 +129,10 @@ function kb_submit(frm) {
 }
 
 function kb_approve(frm) {
-	const into = frm.doc.article
-		? __("the new version of {0}", [kb_escape(frm.doc.article)])
-		: __("a new article in {0}", [kb_escape(frm.doc.department_block || "")]);
 	frappe.confirm(
 		__(
-			"Publish {0} as {1}? Every staff member and every AI tool Sapphire uses will read it. If you have not read what changed, press No and use View Changes first.",
-			[kb_escape(frm.doc.title || frm.doc.name), into]
+			"{0} Every staff member and every AI tool Sapphire uses will read it. If you have not read what changed, press No and use View Changes first.",
+			[kb_publish_question(frm)]
 		),
 		() =>
 			kb_call(
@@ -234,11 +231,46 @@ function kb_show_diff(frm) {
 
 // ------------------------------------------------------------------ what the form says
 
+// What Approve asks. A first version is numbered from its kind and department (2026-09-29:
+// SOP-06-0001 is an SOP in 06 Operations), and a published article's number never changes, so the
+// question says both and that they become permanent. It shows only the start of the number
+// (__onload.kb.number_scope, from the server's own workflow.number_scope), never a guessed number,
+// which another approval could take first.
+function kb_publish_question(frm) {
+	const title = kb_escape(frm.doc.title || frm.doc.name);
+	if (frm.doc.article) {
+		return __("Publish {0} as the new version of {1}?", [title, kb_escape(frm.doc.article)]);
+	}
+	const kb = (frm.doc.__onload && frm.doc.__onload.kb) || {};
+	const kind = kb_escape(frm.doc.kind || "");
+	const department = kb_escape(frm.doc.department_block || "");
+	if (kb.number_scope) {
+		return __(
+			"Publish {0} as a new {1} in {2}? It will be numbered {3}, and its number, kind and department can never change.",
+			[title, kind, department, kb_escape(kb.number_scope) + "…"]
+		);
+	}
+	return __(
+		"Publish {0} as a new {1} in {2}? It is numbered from its kind and department, and its number, kind and department can never change.",
+		[title, kind, department]
+	);
+}
+
 function kb_version_intro(frm, kb, state) {
 	const who = (user) => kb_escape(frappe.user.full_name(user) || user || "");
 	const blockers = kb.approve_blockers || [];
 	if (state === "Draft") {
 		const lines = [];
+		if (frm.doc.article) {
+			// A revision's kind and department are read-only on the form (read_only_depends_on), and
+			// the server refuses a change to either at the save; this says why.
+			lines.push(
+				__(
+					"A revision of {0}: its kind and department are part of its number and stay as they are. To change either, start a new article, and once it is published retire {0}.",
+					[kb_escape(frm.doc.article)]
+				)
+			);
+		}
 		if (frm.doc.review_note) {
 			// The latest note stays on the version (it is kept, not cleared), so it is labelled as
 			// the last one rather than as a request still open.
@@ -256,7 +288,10 @@ function kb_version_intro(frm, kb, state) {
 			);
 		}
 		if (lines.length) {
-			frm.set_intro(lines.join("<br>"), "orange");
+			// Orange when there is something to act on (a note, a blocker); the revision line alone
+			// is information, and blue.
+			const only_revision = frm.doc.article && lines.length === 1;
+			frm.set_intro(lines.join("<br>"), only_revision ? "blue" : "orange");
 		} else {
 			frm.set_intro();
 		}

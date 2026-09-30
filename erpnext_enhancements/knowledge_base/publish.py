@@ -15,16 +15,21 @@ permission check is the endpoint's, done first and explicitly).
 
 **Publishing is one transaction** (:func:`publish`), in this order:
 
-1. **The KB number** (a first version only): ``SELECT name ... WHERE name LIKE %s FOR UPDATE`` with
-   ``workflow.kb_number_prefix(block) + "%"`` as the bound parameter, then
-   ``workflow.next_kb_number`` over what it returned (:func:`allocate_number`). A revision instead
-   locks its article's row (the endpoint loads it ``for_update``).
+1. **The article number** (a first version only; since 2026-09-29 ``<PREFIX>-<DD>-<NNNN>``, e.g.
+   ``SOP-06-0001``, from the version's kind and department): ``SELECT name ... WHERE name LIKE %s
+   FOR UPDATE`` with ``workflow.number_scope(kind, block) + "%"`` as the bound parameter, plus every
+   number a version still names as its article, then ``workflow.next_article_number`` over both
+   (:func:`allocate_number`). A revision instead locks its article's row (the endpoint loads it
+   ``for_update``).
 2. **The article**, inserted or saved under ``flags.kb_action``, from the version **as stored**:
    the endpoint loaded it ``for_update`` in this transaction and nothing here changes its content.
    ``body_md`` (v16's ``frappe.utils.to_markdown``, ``utils/data.py:2468-2477``) and
    ``content_hash`` (``content.content_hash``) are computed here, from that stored body, and never
    in ``validate``. ``review_by`` restarts from the approval (``workflow.review_by``), and the
-   interval the version was approved with (``workflow.review_interval``) is stored with it.
+   interval the version was approved with (``workflow.review_interval``) is stored with it. The
+   kind and department are written **when the article is created, and never again**: they are
+   part of its number, which never changes (``workflow.identity_problem`` refuses a revision that
+   changes either, and the Article controller refuses any write that would).
 3. **The Files** the version's body uses (``content.referenced_files``: every ``?fid=`` and every
    ``/private/files/`` path in an ``src`` or ``href``) that are attached to the version are moved
    onto the article, each under ``flags.kb_action`` (``files.force_private`` refuses any other
@@ -40,10 +45,11 @@ permission check is the endpoint's, done first and explicitly).
 Any failure at any step raises, and Frappe rolls the whole request back: the number, the article,
 the File moves and the submit happen together or not at all.
 
-**Concurrency.** Two approvers publishing two new articles in one block at once get different
-numbers: the second one's ``FOR UPDATE`` waits for the first to commit, then reads its number too.
-When the block is empty and no article sorts after it, both ``FOR UPDATE`` reads take only a gap
-lock, which InnoDB grants to both, and their inserts deadlock; MariaDB rolls one transaction back
+**Concurrency.** Two approvers publishing two new articles in one scope (``SOP-06-``) at once get
+different numbers: the second one's ``FOR UPDATE`` waits for the first to commit, then reads its
+number too. When the scope is empty and no article sorts after it, both ``FOR UPDATE`` reads take
+only a gap lock, which InnoDB grants to both, and their inserts deadlock (two first publishes in
+different scopes can share a gap in a sparse table the same way); MariaDB rolls one transaction back
 (``frappe.QueryDeadlockError``), and :func:`run` retries that action from the start, in a new
 transaction that sees the first one's number. MariaDB 11.8's ``innodb_snapshot_isolation`` reports
 a locking read of a row changed since the transaction's snapshot the same way (``ER_CHECKREAD``,
@@ -52,6 +58,12 @@ A double-click on Approve is two requests for one version: the second waits on t
 lock, then reads it as Published (or is retried and does), and ``approval_problems`` refuses it
 ("it is Published, not In Review"; "it changed after you opened it"). The primary key on
 ``kb_number`` means a number can never be given twice, whatever happens.
+
+**No naming series.** The number is derived from the rows, not from ``tabSeries``: that table is
+keyed by prefix string across every doctype, so a naming series elsewhere with a month component
+(``SOP-.MM.-``) would render ``SOP-06-`` and share, or advance, the counter; v16's Update Series
+screen lets a System Manager reset a counter, which would reuse numbers; and it would be a second
+source of truth beside the rows.
 """
 
 from collections import namedtuple
@@ -153,10 +165,13 @@ def publish(version, article, *, opened_modified, approver):
 	now = now_datetime()
 	previous = None
 	if article is None:
-		number = allocate_number(version.get("department_block"))
+		number = allocate_number(version.get("kind"), version.get("department_block"))
 		article = frappe.new_doc(ARTICLE)
 		article.kb_number = number
 		article.first_published_on = now
+		# Written here and never again: the number says both (workflow.identity_problem).
+		article.kind = version.get("kind")
+		article.department_block = version.get("department_block")
 	else:
 		number = article.name
 		previous = article.get("live_version")
@@ -166,11 +181,6 @@ def publish(version, article, *, opened_modified, approver):
 	article.update(
 		{
 			"title": version.get("title"),
-			"department_block": version.get("department_block"),
-			# PR 5. None, not "", for a version that was already In Review when the field arrived:
-			# submit requires a kind, approval does not (workflow.submit_problems), so such an article
-			# stays unclassified until a revision sets one.
-			"kind": version.get("kind") or None,
 			"status": PUBLISHED_STATUS,
 			"summary": version.get("summary"),
 			"keywords": version.get("keywords"),
@@ -216,20 +226,37 @@ def publish(version, article, *, opened_modified, approver):
 	}
 
 
-def allocate_number(block):
-	"""The next KB number in ``block``, read under ``FOR UPDATE``. The ``%`` is inside the bound
-	parameter, never in the SQL text."""
-	taken = frappe.db.sql(
-		"select name from `tabKnowledge Article` where name like %s for update",
-		(workflow.kb_number_prefix(block) + "%",),
-		pluck=True,
-	)
+def allocate_number(kind, block):
+	"""The next article number for a ``kind`` article in ``block`` (``SOP-06-0001``), read under
+	``FOR UPDATE``. The ``%`` is inside the bound parameter, never in the SQL text.
+
+	Two reads, both bound to the scope (``"SOP-06-%"``): the articles, locked, and every number a
+	version still names as its article, not locked. Articles are never deleted through the ORM, but
+	one removed past it (raw SQL, a batch-approved ``run_python_code``) leaves its versions behind,
+	still naming it; without the second read, one more than the highest would reuse the number of a
+	vanished **highest** article, and a number is never reused. The Integrity report names such a
+	version ("belongs to ..., which does not exist")."""
 	message = None
 	try:
-		return workflow.next_kb_number(block, taken)
-	except ValueError as exc:  # BlockFullError, or a block that is not one
+		pattern = workflow.number_scope(kind, block) + "%"
+	except ValueError as exc:  # no kind or no department: it cannot be numbered
 		message = str(exc)
-	frappe.throw(message, title=_("No KB number"))
+	if message is None:
+		taken = frappe.db.sql(
+			"select name from `tabKnowledge Article` where name like %s for update",
+			(pattern,),
+			pluck=True,
+		)
+		cited = frappe.db.sql(
+			"select distinct article from `tabKnowledge Article Version` where article like %s",
+			(pattern,),
+			pluck=True,
+		)
+		try:
+			return workflow.next_article_number(kind, block, [*taken, *cited])
+		except ValueError as exc:  # SequenceFullError
+			message = str(exc)
+	frappe.throw(message, title=_("No article number"))
 
 
 def body_markdown(version):
@@ -406,7 +433,10 @@ def version_onload(doc):
 	``submit_blockers`` exists because the Submit for Review button is offered only when
 	``workflow.submit_problems`` is empty, and PR 5 added a rule every draft open at its deploy
 	breaks ("it has no kind"). Without the reason the button would simply vanish. They are the same
-	problems the button is judged by, so the form never names a blocker the server would not."""
+	problems the button is judged by, so the form never names a blocker the server would not.
+
+	``number_scope`` (2026-09-29) is the start of the number a first version will get
+	(:func:`_number_scope`), for Approve's confirmation."""
 	ask = asker()
 	if not workflow.holds_kb_role(ask.roles):
 		return {"actions": [], "approve_blockers": [], "submit_blockers": []}
@@ -425,7 +455,24 @@ def version_onload(doc):
 	submit_blockers = []
 	if workflow.state_of(doc) == workflow.DRAFT and workflow.SUBMIT_FOR_REVIEW not in actions:
 		submit_blockers = workflow.submit_problems(doc, ask.user, ask.roles, article=article)
-	return {"actions": list(actions), "approve_blockers": blockers, "submit_blockers": submit_blockers}
+	return {
+		"actions": list(actions),
+		"approve_blockers": blockers,
+		"submit_blockers": submit_blockers,
+		"number_scope": _number_scope(doc),
+	}
+
+
+def _number_scope(doc):
+	"""``"SOP-06-"`` for a first version with a kind and a department: what Approve's confirmation
+	says it will be numbered (never a guessed number, which another approval could take first).
+	``None`` for a revision, and for a version that cannot be numbered yet."""
+	if doc.get("article"):
+		return None
+	try:
+		return workflow.number_scope(doc.get("kind"), doc.get("department_block"))
+	except ValueError:
+		return None
 
 
 def article_onload(doc):
@@ -454,5 +501,8 @@ def article_row(name):
 	if not name:
 		return None
 	return frappe.db.get_value(
-		ARTICLE, name, ["name", "status", "department_block", "version_number", "live_version"], as_dict=True
+		ARTICLE,
+		name,
+		["name", "status", "kind", "department_block", "version_number", "live_version"],
+		as_dict=True,
 	)

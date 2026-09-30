@@ -85,8 +85,11 @@ function kb_retire(frm) {
 				fieldtype: "Small Text",
 				label: __("Why is it being retired?"),
 				reqd: 1,
+				// 2026-09-29: an article's number carries its kind and department, and never changes.
+				// Reclassifying or moving one is a new article, published first, and this one retired
+				// naming it, so a citation of the old number still leads somewhere.
 				description: __(
-					"Every reader sees this reason on the article. It keeps its number and its history, and nothing is deleted."
+					"Every reader sees this reason on the article. It keeps its number and its history, and nothing is deleted. If a new article replaces this one (to change its kind or department, for instance), publish the new one first and name it here."
 				),
 			},
 		],

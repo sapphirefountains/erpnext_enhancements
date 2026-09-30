@@ -12,17 +12,20 @@ once ran nowhere for weeks (CLAUDE.md). Locally, run it with plugin autoload off
 ``knowledge_base/search.py`` is pure, so most of this needs no stub at all:
 
 * **every tokenizer rule**: words of 2 or more characters, acronyms and their plurals, the all-caps
-  run, IT against it, stopwords (never an acronym's, never a keyword's), NFKC, the four spellings of
-  a KB number, a document number with its parts, and a punctuated acronym (W-2, I-9, T&M, A/R, P.O.)
-  as one term that meets its unpunctuated and lowercase spellings;
+  run, IT against it, stopwords (never an acronym's, never a keyword's), NFKC, the spellings of an
+  article number (2026-09-29: ``SOP-06-0001`` by kind and department, one term however written, and
+  never the Drive register's ``SOP-0601`` or the retired ``KB`` format), running text shaped like
+  one (a product's ``Pro 2 1000``) still found by its words, a document number with its
+  parts, and a punctuated acronym (W-2, I-9, T&M, A/R, P.O.) as one term that meets its unpunctuated
+  and lowercase spellings;
 * **the stemmer's table**;
-* **ranking**: title and keywords over the body, an acronym only in keywords, pinning by KB number,
+* **ranking**: title and keywords over the body, an acronym only in keywords, pinning by article number,
   ``allowed``, department and kind applied *before* scoring (so they cannot change another
   document's score or take a slot), the kind's aliases through the meta field, a lowercase acronym,
   deterministic ties;
 * **snippets** and the AwesomeBar's highlighting;
 * **a golden set** of invented articles and questions (``tests/data/kb_search_golden.json``): each
-  expected article in the top 3, and every acronym or KB-number question's article first;
+  expected article in the top 3, and every acronym or article-number question's article first;
 * **a performance guard**: 500 articles of 800 words build in under 5 seconds, 100 queries in under 1;
 * **a fresh interpreter** importing ``search`` with ``frappe`` absent.
 
@@ -41,6 +44,7 @@ import importlib
 import importlib.util
 import json
 import random
+import re
 import subprocess
 import sys
 import time
@@ -155,20 +159,89 @@ def test_nfkc_reads_a_full_width_or_ligature_spelling_as_the_plain_one():
 	assert terms("ﬁnance") == terms("finance")
 
 
-@pytest.mark.parametrize("spelling", ["KB-0601", "kb 601", "KB0601", "kb_601", "KB-601", "kb-00601"])
-def test_the_spellings_of_a_kb_number(spelling):
-	assert S.tokenize(f"See {spelling} first") == [
+@pytest.mark.parametrize(
+	("spelling", "parts"),
+	[
+		("SOP-06-0001", ["sop", "06", "0001"]),
+		("sop 06 0001", ["sop", "06", "0001"]),
+		("SOP-06-1", ["sop", "06"]),
+		("sop_6_1", ["sop"]),
+		("SOP06-0001", ["sop", "06", "0001"]),
+		("SOP\u201306\u20130001", ["sop", "06", "0001"]),
+		("SOP-06-00001", ["sop", "06", "00001"]),
+		("\uff33\uff2f\uff30-06-0001", ["sop", "06", "0001"]),
+	],
+)
+def test_the_spellings_of_an_article_number(spelling, parts):
+	"""2026-09-29: one term, the canonical number casefolded, however it is written. In an article's
+	text its prefix and its digit runs of 2 or more characters, as written, follow it (review of
+	v1.568.0); a query holds the one term alone."""
+	tokens = S.tokenize(f"See {spelling} first")
+	assert tokens[:2] == [S.Token("see", False), S.Token("sop-06-0001", True)]
+	assert [t.term for t in tokens[2:]] == [*parts, "first"]
+	assert S.query_terms(f"See {spelling} first") == {"see", "sop-06-0001", "first"}
+	assert S.normalize_article_number(spelling) == "SOP-06-0001"
+	assert S.normalize_article_number is K.normalize_article_number
+
+
+def test_running_text_shaped_like_a_number_keeps_its_words():
+	"""Review of v1.568.0: a product called "Pro 2 1000" has an article number's shape (``PRO-02-1000``
+	in the loose form a query may use). Before numbers were read, its words were found by ``1000``,
+	``pro 1000`` and ``Pro 2``; they still are, because an article's text indexes a number's prefix
+	and digit runs beside its term. And fetch's ``related`` never lists it
+	(``constants.cited_article_numbers``, pinned in ``test_knowledge_base_rules``)."""
+	assert terms("Use the Pro 2 1000 pump kit") == ["use", "pro-02-1000", "pro", "1000", "pump", "kit"]
+	assert terms("pro 5 10 times") == ["pro-05-0010", "pro", "10", "time"]
+	body = "Before startup, use the Pro 2 1000 pump kit."
+	index = S.build_index(
+		[
+			doc("SOP-06-0001", title="Starting the fountain", body=body, kind="SOP"),
+			doc("SOP-06-0002", title="Draining the basin", kind="SOP"),
+		]
+	)
+	for query in ("1000", "pro 1000", "Pro 2", "Pro 2 1000 pump", "pump 1000"):
+		hits = S.search(index, query)
+		assert keys(hits) == ["SOP-06-0001"], query
+		assert hits[0].matched == ("body",) and not hits[0].pinned, query
+	assert "Pro 2 1000 pump" in S.snippet(body, "1000")
+	# A query naming a number means that article, so its parts are no query terms: an unknown number
+	# finds nothing, although both articles here are SOPs in 06 (the meta field's "sop" and "06").
+	assert S.query_terms("SOP-06-0099") == {"sop-06-0099"}
+	assert S.search(index, "SOP-06-0099") == []
+
+
+def test_what_is_not_an_article_number():
+	for text in (
+		"KBV-00001",
+		"SOP-06-12345",
+		"SOP",
+		"SOP-06",
+		"0601",
+		"",
+		None,
+		"SOP-06-0001 and more",
+		"KB-0601",
+		"SOP-0601",
+	):
+		assert S.normalize_article_number(text) is None, text
+	assert "sop-00-0001" not in terms("KBV-00001")
+	# The Drive register's own numbers are document numbers (their parts indexed too), never articles;
+	# the retired KB format likewise.
+	assert S.tokenize("See POL-0600 and SOP-06-0001") == [
 		S.Token("see", False),
-		S.Token("kb-0601", True),
-		S.Token("first", False),
+		S.Token("pol-0600", True),
+		S.Token("pol", True),
+		S.Token("0600", False),
+		S.Token("sop-06-0001", True),
+		S.Token("sop", True),
+		S.Token("06", False),
+		S.Token("0001", False),
 	]
-	assert S.normalize_kb_number(spelling) == "KB-0601"
-
-
-def test_what_is_not_a_kb_number():
-	for text in ("KBV-00001", "KB-12345", "KB", "0601", "", None, "KB-0601 and more"):
-		assert S.normalize_kb_number(text) is None, text
-	assert "kb-0001" not in terms("KBV-00001")
+	assert terms("KB-0601") == ["kb-0601", "kb", "0601"]
+	# Shaped like one but not a number: the words it is made of.
+	assert terms("SOP-06-0000") == ["sop", "06", "0000"]
+	# A department that is not a block is no article number either; SOP-12 is a document number.
+	assert "sop-12-0001" not in terms("SOP-12-0001")
 
 
 def test_a_document_number_is_one_term_and_its_parts():
@@ -236,19 +309,19 @@ def test_a_long_letterless_chain_is_read_in_linear_time():
 def test_every_spelling_of_a_punctuated_acronym_meets():
 	index = S.build_index(
 		[
-			doc("KB-0601", title="Billing a T&M service call"),
-			doc("KB-0602", title="Collecting a vendor W-9"),
-			doc("KB-0603", title="Reviewing A/R aging"),
-			doc("KB-0604", title="Onboarding", keywords="I-9, paperwork"),
-			doc("KB-0605", title="Correcting a W2"),
+			doc("SOP-06-0001", title="Billing a T&M service call"),
+			doc("SOP-06-0002", title="Collecting a vendor W-9"),
+			doc("SOP-06-0003", title="Reviewing A/R aging"),
+			doc("SOP-06-0004", title="Onboarding", keywords="I-9, paperwork"),
+			doc("SOP-06-0005", title="Correcting a W2"),
 		]
 	)
 	for queries, key in (
-		(("T&M", "t&m", "TM", "tm"), "KB-0601"),
-		(("W-9", "W9", "w9", "w-9"), "KB-0602"),
-		(("A/R", "AR", "ar"), "KB-0603"),
-		(("I-9", "I9", "i9"), "KB-0604"),
-		(("W-2", "W2", "w2", "w-2"), "KB-0605"),
+		(("T&M", "t&m", "TM", "tm"), "SOP-06-0001"),
+		(("W-9", "W9", "w9", "w-9"), "SOP-06-0002"),
+		(("A/R", "AR", "ar"), "SOP-06-0003"),
+		(("I-9", "I9", "i9"), "SOP-06-0004"),
+		(("W-2", "W2", "w2", "w-2"), "SOP-06-0005"),
 	):
 		for query in queries:
 			assert keys(S.search(index, query)) == [key], query
@@ -287,61 +360,66 @@ def test_the_stemmer_leaves_short_and_non_alphabetic_words_alone():
 
 
 def test_title_and_keywords_outrank_the_body():
-	body_only = doc("KB-0601", title="Monthly checks", body="Count the cartons on the dock before noon.")
-	in_title = doc("KB-0602", title="Counting cartons", body="Do it before noon.")
-	in_keywords = doc("KB-0603", title="Monthly checks", keywords="cartons", body="Before noon.")
+	body_only = doc("SOP-06-0001", title="Monthly checks", body="Count the cartons on the dock before noon.")
+	in_title = doc("SOP-06-0002", title="Counting cartons", body="Do it before noon.")
+	in_keywords = doc("SOP-06-0003", title="Monthly checks", keywords="cartons", body="Before noon.")
 	index = S.build_index([body_only, in_title, in_keywords])
 	hits = S.search(index, "cartons")
-	assert keys(hits)[-1] == "KB-0601"
-	assert set(keys(hits)[:2]) == {"KB-0602", "KB-0603"}
+	assert keys(hits)[-1] == "SOP-06-0001"
+	assert set(keys(hits)[:2]) == {"SOP-06-0002", "SOP-06-0003"}
 	assert dict((h.key, h.matched) for h in hits) == {
-		"KB-0601": ("body",),
-		"KB-0602": ("title",),
-		"KB-0603": ("keywords",),
+		"SOP-06-0001": ("body",),
+		"SOP-06-0002": ("title",),
+		"SOP-06-0003": ("keywords",),
 	}
 
 
 def test_an_acronym_found_only_in_keywords():
 	index = S.build_index(
-		[doc("KB-0601", title="Closing the books", keywords="QBO, month end"), doc("KB-0602", title="Other")]
+		[doc("SOP-06-0001", title="Closing the books", keywords="QBO, month end"), doc("SOP-06-0002", title="Other")]
 	)
 	(hit,) = S.search(index, "QBO")
-	assert (hit.key, hit.matched, hit.pinned) == ("KB-0601", ("keywords",), False)
-	assert keys(S.search(index, "qbo")) == ["KB-0601"]
+	assert (hit.key, hit.matched, hit.pinned) == ("SOP-06-0001", ("keywords",), False)
+	assert keys(S.search(index, "qbo")) == ["SOP-06-0001"]
 
 
 def test_it_versus_it():
 	index = S.build_index(
 		[
-			doc("KB-0601", title="Printer problems", body="Call IT when the printer fails."),
-			doc("KB-0602", title="Shelving", body="Put it on the shelf and leave it there."),
+			doc("SOP-06-0001", title="Printer problems", body="Call IT when the printer fails."),
+			doc("SOP-06-0002", title="Shelving", body="Put it on the shelf and leave it there."),
 		]
 	)
-	assert keys(S.search(index, "IT")) == ["KB-0601"]
+	assert keys(S.search(index, "IT")) == ["SOP-06-0001"]
 	assert S.search(index, "it") == []
 
 
 def test_a_lowercase_acronym_meets_the_capitals():
-	index = S.build_index([doc("KB-0601", body="Read the MSDS first."), doc("KB-0602", body="Pay at the POS.")])
-	assert keys(S.search(index, "msds")) == ["KB-0601"]
-	assert keys(S.search(index, "pos")) == ["KB-0602"]
+	index = S.build_index([doc("SOP-06-0001", body="Read the MSDS first."), doc("SOP-06-0002", body="Pay at the POS.")])
+	assert keys(S.search(index, "msds")) == ["SOP-06-0001"]
+	assert keys(S.search(index, "pos")) == ["SOP-06-0002"]
 
 
-def test_a_kb_number_pins_its_article_first_in_query_order():
+def test_an_article_number_pins_its_article_first_in_query_order():
 	index = S.build_index(
 		[
-			doc("KB-0601", title="Receiving receiving receiving", keywords="receiving"),
-			doc("KB-0602", title="Something else"),
-			doc("KB-0603", title="A third", body="See KB-0602 for receiving."),
+			doc("SOP-06-0001", title="Receiving receiving receiving", keywords="receiving"),
+			doc("SOP-06-0002", title="Something else"),
+			doc("SOP-06-0003", title="A third", body="See SOP-06-0002 for receiving."),
 		]
 	)
-	hits = S.search(index, "receiving KB-0602 kb 603")
-	assert keys(hits)[:2] == ["KB-0602", "KB-0603"]
+	hits = S.search(index, "receiving SOP-06-0002 sop 6 3")
+	assert keys(hits)[:2] == ["SOP-06-0002", "SOP-06-0003"]
 	assert hits[0].pinned and hits[1].pinned and not hits[2].pinned
 	assert hits[0].matched[0] == "kb_number"
-	assert keys(hits)[2] == "KB-0601"
+	assert keys(hits)[2] == "SOP-06-0001"
+	# Every written form pins the same article.
+	for query in ("SOP-06-0002", "sop 06 0002", "sop_6_2", "SOP06-0002", "SOP\u201306\u20130002"):
+		assert keys(S.search(index, query))[0] == "SOP-06-0002", query
 	# Only a number that is in the index pins; an unknown one is just a term.
-	assert S.search(index, "KB-0699") == []
+	assert S.search(index, "SOP-06-0099") == []
+	# A kind and a department alone pin nothing.
+	assert not any(hit.pinned for hit in S.search(index, "SOP-06"))
 
 
 def test_filters_apply_before_scoring():
@@ -349,20 +427,20 @@ def test_filters_apply_before_scoring():
 	it takes no slot, and every other document scores exactly as it would without the filter (idf
 	is the whole corpus's)."""
 	docs = [
-		doc("KB-0601", title="PO PO PO", kind="SOP"),
-		doc("KB-0602", title="Receiving a PO", kind="Policy"),
-		doc("KB-0301", title="Paying a PO", kind="SOP", department="03 Finance"),
+		doc("SOP-06-0001", title="PO PO PO", kind="SOP"),
+		doc("SOP-06-0002", title="Receiving a PO", kind="Policy"),
+		doc("SOP-03-0001", title="Paying a PO", kind="SOP", department="03 Finance"),
 	]
 	index = S.build_index(docs)
 	unfiltered = {h.key: h.score for h in S.search(index, "PO")}
-	assert keys(S.search(index, "PO", limit=1)) == ["KB-0601"]
-	assert keys(S.search(index, "PO", allowed={"KB-0602", "KB-0301"}, limit=1)) in (["KB-0602"], ["KB-0301"])
-	filtered = S.search(index, "PO", allowed={"KB-0602", "KB-0301"})
-	assert "KB-0601" not in keys(filtered)
-	assert {h.key: h.score for h in filtered} == {k: v for k, v in unfiltered.items() if k != "KB-0601"}
-	assert keys(S.search(index, "PO KB-0601", allowed={"KB-0602"})) == ["KB-0602"]
-	assert keys(S.search(index, "PO", department="03 Finance")) == ["KB-0301"]
-	assert keys(S.search(index, "PO", kind="Policy")) == ["KB-0602"]
+	assert keys(S.search(index, "PO", limit=1)) == ["SOP-06-0001"]
+	assert keys(S.search(index, "PO", allowed={"SOP-06-0002", "SOP-03-0001"}, limit=1)) in (["SOP-06-0002"], ["SOP-03-0001"])
+	filtered = S.search(index, "PO", allowed={"SOP-06-0002", "SOP-03-0001"})
+	assert "SOP-06-0001" not in keys(filtered)
+	assert {h.key: h.score for h in filtered} == {k: v for k, v in unfiltered.items() if k != "SOP-06-0001"}
+	assert keys(S.search(index, "PO SOP-06-0001", allowed={"SOP-06-0002"})) == ["SOP-06-0002"]
+	assert keys(S.search(index, "PO", department="03 Finance")) == ["SOP-03-0001"]
+	assert keys(S.search(index, "PO", kind="Policy")) == ["SOP-06-0002"]
 	assert S.search(index, "PO", kind="Process") == []
 	assert S.search(index, "PO", allowed=set()) == []
 
@@ -373,10 +451,10 @@ def test_filters_apply_before_scoring():
 def test_a_kinds_aliases_reach_its_articles_through_the_meta_field(query, kind):
 	index = S.build_index(
 		[
-			doc("KB-0601", title="Counting a bin", kind="SOP"),
-			doc("KB-0602", title="From order to delivery", kind="Process"),
-			doc("KB-0603", title="Safety on the floor", kind="Policy"),
-			doc("KB-0604", title="Unclassified", kind=None),
+			doc("SOP-06-0001", title="Counting a bin", kind="SOP"),
+			doc("SOP-06-0002", title="From order to delivery", kind="Process"),
+			doc("SOP-06-0003", title="Safety on the floor", kind="Policy"),
+			doc("SOP-06-0004", title="Unclassified", kind=None),
 		]
 	)
 	if query == "how-to":
@@ -389,32 +467,32 @@ def test_a_kinds_aliases_reach_its_articles_through_the_meta_field(query, kind):
 
 def test_the_meta_field_weighs_less_than_the_text():
 	index = S.build_index(
-		[doc("KB-0601", title="Counting a bin", kind="SOP"), doc("KB-0602", title="The procedure for payroll", kind=None)]
+		[doc("SOP-06-0001", title="Counting a bin", kind="SOP"), doc("SOP-06-0002", title="The procedure for payroll", kind=None)]
 	)
-	assert keys(S.search(index, "procedure")) == ["KB-0602", "KB-0601"]
+	assert keys(S.search(index, "procedure")) == ["SOP-06-0002", "SOP-06-0001"]
 
 
 def test_the_department_is_searchable_too():
-	index = S.build_index([doc("KB-0601", title="A", department="04 HR"), doc("KB-0602", title="B")])
-	assert keys(S.search(index, "HR")) == ["KB-0601"]
+	index = S.build_index([doc("SOP-06-0001", title="A", department="04 HR"), doc("SOP-06-0002", title="B")])
+	assert keys(S.search(index, "HR")) == ["SOP-06-0001"]
 
 
 def test_ties_are_deterministic():
-	docs = [doc(f"KB-06{n:02d}", title="Receiving a PO") for n in (7, 3, 5, 1)]
+	docs = [doc(f"SOP-06-{n:04d}", title="Receiving a PO") for n in (7, 3, 5, 1)]
 	first = keys(S.search(S.build_index(docs), "PO"))
 	second = keys(S.search(S.build_index(list(reversed(docs))), "PO"))
-	assert first == second == ["KB-0601", "KB-0603", "KB-0605", "KB-0607"]
+	assert first == second == ["SOP-06-0001", "SOP-06-0003", "SOP-06-0005", "SOP-06-0007"]
 
 
 def test_nothing_to_search_for():
-	index = S.build_index([doc("KB-0601", title="Receiving")])
+	index = S.build_index([doc("SOP-06-0001", title="Receiving")])
 	for query in ("", "   ", "the and of", "a", None):
 		assert S.search(index, query) == []
 	assert S.search(S.build_index([]), "PO") == []
 
 
 def test_limit():
-	index = S.build_index([doc(f"KB-06{n:02d}", title="PO") for n in range(1, 13)])
+	index = S.build_index([doc(f"SOP-06-{n:04d}", title="PO") for n in range(1, 13)])
 	assert len(S.search(index, "PO")) == 10
 	assert len(S.search(index, "PO", limit=3)) == 3
 	assert len(S.search(index, "PO", limit=None)) == 12
@@ -424,7 +502,7 @@ def test_the_index_keeps_no_text():
 	"""Terms and numbers only: a worker holding the index holds no article's text (search_service
 	reads ``body_md`` to build it and lets it go)."""
 	body = "Count the cartons, then sign the sheet."
-	index = S.build_index([doc("KB-0601", title="Receiving goods", summary="A summary line.", body=body)])
+	index = S.build_index([doc("SOP-06-0001", title="Receiving goods", summary="A summary line.", body=body)])
 	assert not hasattr(index, "__dict__")
 	assert set(S.Index.__slots__) == {"by_kb", "departments", "idf", "kb_numbers", "keys", "kinds", "postings"}
 	held = repr({slot: getattr(index, slot) for slot in S.Index.__slots__})
@@ -485,8 +563,8 @@ def test_a_short_text_is_shown_whole():
 
 
 def test_mark_escapes_everything_and_bolds_only_matches():
-	assert S.mark("KB-0601 · Receiving a PO <script>", "po kb 601") == (
-		"<b>KB-0601</b> · Receiving a <b>PO</b> &lt;script&gt;"
+	assert S.mark("SOP-06-0001 · Receiving a PO <script>", "po sop 6 1") == (
+		"<b>SOP-06-0001</b> · Receiving a <b>PO</b> &lt;script&gt;"
 	)
 	assert S.mark("a & b", "") == "a &amp; b"
 
@@ -504,8 +582,16 @@ def test_the_golden_set_is_invented_and_complete():
 	assert 25 <= len(articles) <= 40
 	assert {a["kind"] for a in articles} == set(K.ARTICLE_KINDS)
 	assert all(a["department"] in K.DEPARTMENT_BLOCK_OPTIONS for a in articles)
-	# Invented numbers, outside any real register: KB numbers end in 9x.
-	assert all(S.normalize_kb_number(a["key"]) == a["key"] and a["key"][-2] == "9" for a in articles)
+	# Invented numbers, outside any real register: canonical, numbered by the article's own kind and
+	# department, with sequences from 9001; and none is a document number any body cites.
+	for a in articles:
+		parsed = K.parse_article_number(a["key"])
+		assert parsed == (a["kind"], a["department"][:2], parsed[2]) and parsed[2] >= 9001, a["key"]
+	bodies = " ".join(a["body"] for a in articles)
+	documents = set(re.findall(r"\b[A-Za-z]{2,5}-[0-9]{2,6}\b", bodies))
+	assert documents and not documents & {a["key"] for a in articles}
+	# An article number a body cites is one of the corpus's (the AIA article cites the SOV one).
+	assert set(K.written_article_numbers(bodies)) <= {a["key"] for a in articles}
 	assert len({a["key"] for a in articles}) == len(articles)
 	assert len(GOLDEN["queries"]) >= 40
 	assert {q["expect"] for q in GOLDEN["queries"]} <= {a["key"] for a in articles}
@@ -549,7 +635,7 @@ def test_the_performance_guard():
 
 	docs = [
 		doc(
-			f"KB-{(n % 10):02d}{(n // 10) + 1:02d}",
+			f"SOP-{(n % 10):02d}-{(n // 10) + 1:04d}",
 			title=words(8),
 			keywords=", ".join(rng.sample(acronyms, 2)),
 			summary=words(30),
@@ -580,7 +666,7 @@ def test_search_imports_with_frappe_absent():
 		"import sys\n"
 		"sys.modules['frappe'] = None\n"
 		"import erpnext_enhancements.knowledge_base.search as s\n"
-		"assert s.search(s.build_index([s.Document('KB-0601', 'KB-0601', 'PO', '', '', '', 'SOP', '06 Operations')]), 'PO')\n"
+		"assert s.search(s.build_index([s.Document('SOP-06-0001', 'SOP-06-0001', 'PO', '', '', '', 'SOP', '06 Operations')]), 'PO')\n"
 		"print('ok')\n"
 	)
 	result = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True)
@@ -693,7 +779,7 @@ def service(monkeypatch):
 		)
 		for a in GOLDEN["articles"]
 	]
-	rows.append(_Row(name="KB-0699", kb_number="KB-0699", title="RETIREDWORD", status="Retired", body_md="RETIREDWORD"))
+	rows.append(_Row(name="SOP-06-9099", kb_number="SOP-06-9099", title="RETIREDWORD", status="Retired", body_md="RETIREDWORD"))
 	session = types.SimpleNamespace(user=READER)
 	#: Published names the reader's get_list leaves out, as a User Permission would: a partial
 	#: readable set, not only all or nothing.
@@ -768,10 +854,10 @@ def test_the_service_answers_the_golden_set_like_the_engine(service, golden_inde
 
 def test_no_draft_or_retired_text_is_ever_found(service):
 	draft_words = {"QUOKKADRAFT", *(d["key"] for d in GOLDEN["drafts"])}
-	queries = [q["query"] for q in GOLDEN["queries"]] + ["QUOKKADRAFT", "quokkadraft", "RETIREDWORD", "KB-0699"]
+	queries = [q["query"] for q in GOLDEN["queries"]] + ["QUOKKADRAFT", "quokkadraft", "RETIREDWORD", "SOP-06-9099"]
 	for query in queries:
 		dumped = json.dumps(service.module.search(query)) + json.dumps(service.module.awesomebar_hits(query))
-		for word in (*draft_words, "RETIREDWORD", "KB-0699"):
+		for word in (*draft_words, "RETIREDWORD", "SOP-06-9099"):
 			assert word not in dumped, (query, word)
 	assert {doctype for kind, doctype in service.calls if kind != "sql"} == {ARTICLE}
 
@@ -828,8 +914,8 @@ def test_a_portal_user_gets_nothing_and_no_message(service):
 def test_the_awesomebar_hits_over_the_golden_corpus(service):
 	hits = service.module.awesomebar_hits("PO")
 	assert 1 <= len(hits) <= 5
-	assert hits[0]["route"] == ["Form", ARTICLE, "KB-0691"]
-	assert hits[0]["label"] == "KB-0691 · Receiving a <b>PO</b> against a packing slip"
+	assert hits[0]["route"] == ["Form", ARTICLE, "SOP-06-9001"]
+	assert hits[0]["label"] == "SOP-06-9001 · Receiving a <b>PO</b> against a packing slip"
 	assert hits[0]["description"] == "SOP · 06 Operations"
 	assert all(hit["index"] == 160 for hit in hits)
 	assert service.module.awesomebar_hits("P") == []
@@ -838,8 +924,8 @@ def test_the_awesomebar_hits_over_the_golden_corpus(service):
 def test_a_result_carries_its_fields(service):
 	(result,) = service.module.search("RMA")["results"]
 	assert result == {
-		"name": "KB-0692",
-		"kb_number": "KB-0692",
+		"name": "SOP-06-9002",
+		"kb_number": "SOP-06-9002",
 		"version": 1,
 		"title": "Returning damaged goods to a supplier",
 		"kind": "SOP",
@@ -851,7 +937,7 @@ def test_a_result_carries_its_fields(service):
 		"review_by": "2027-03-01",
 		"review_overdue": False,
 		"ai_drafted": False,
-		"url": "https://kb.example.com/desk/knowledge-article/KB-0692",
+		"url": "https://kb.example.com/desk/knowledge-article/SOP-06-9002",
 		"matched": ["keywords", "body"],
 		"score": result["score"],
 	}

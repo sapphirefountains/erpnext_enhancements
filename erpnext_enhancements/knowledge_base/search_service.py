@@ -218,9 +218,9 @@ def awesomebar_hits(txt):
 	clears what was queued and returns ``[]``.
 
 	Each hit's ``label`` and ``description`` are HTML, because v16 renders both as HTML
-	(``awesome_bar.js:143-148``): the label is ``KB-0601 · <title>`` with the matched words in
+	(``awesome_bar.js:143-148``): the label is ``SOP-06-0001 · <title>`` with the matched words in
 	``<b>``, everything else escaped; the description is the kind and the department, escaped. The
-	route is the article's form, so ``frappe.set_route`` opens ``/desk/knowledge-article/<KB number>``
+	route is the article's form, so ``frappe.set_route`` opens ``/desk/knowledge-article/<number>``
 	and Back returns to where the search was typed. ``value`` is the label as plain text, unique per
 	article, because the AwesomeBar finds the chosen item by it.
 	"""

@@ -580,7 +580,7 @@ class TestFields(unittest.TestCase):
 		"""v16 gives a Select with no ``default`` its FIRST option on every new document, on the
 		server (``model/create_new.py:117-118``, via ``Document._set_defaults``) and in the Desk
 		(``model/create_new.js:107-114``). So ``reqd`` on such a field never fires unless the first
-		option is blank. On ``department_block`` that decides a KB number nobody can rename."""
+		option is blank. On ``department_block`` that decides an article number nobody can rename."""
 		for doctype in (ARTICLE, VERSION):
 			for field in _load(doctype)["fields"]:
 				if field["fieldtype"] != "Select" or not field.get("reqd") or "default" in field:
@@ -635,6 +635,22 @@ class TestFields(unittest.TestCase):
 		self.assertEqual(field["fieldtype"], "Data")
 		self.assertEqual(field.get("reqd"), 1)
 		self.assertEqual(field.get("unique"), 1)
+		# 2026-09-29: the fieldname stays (payloads and the mirror header key it); the value and the
+		# words are the article number, numbered by kind.
+		self.assertEqual(field["label"], "Article Number")
+		self.assertIn("SOP-06-0001", field["description"])
+		self.assertIn("never changes", field["description"])
+
+	def test_a_revision_shows_its_kind_and_department_read_only(self):
+		"""2026-09-29: a revision keeps its article's kind and department (the number carries both), so
+		the form shows them read-only once the version belongs to an article. The server refuses a
+		change at the save whatever the form shows (``workflow.identity_problem``)."""
+		for fieldname in ("department_block", "kind"):
+			field = _field(_load(VERSION), fieldname)
+			with self.subTest(field=fieldname):
+				self.assertEqual(field.get("read_only_depends_on"), "eval:doc.article")
+				self.assertFalse(field.get("read_only"))
+		self.assertIn("SOP-06-0001", _field(_load(VERSION), "article")["description"])
 
 
 class TestSelectOptionsMatchTheCode(unittest.TestCase):
@@ -738,8 +754,9 @@ class TestSelectOptionsMatchTheCode(unittest.TestCase):
 
 
 class TestArticleController(unittest.TestCase):
-	def _doc(self, **values):
-		return knowledge_article.KnowledgeArticle(name="KB-0612", **values)
+	def _doc(self, name="SOP-06-0012", **values):
+		values = {"kind": "SOP", "department_block": "06 Operations", **values}
+		return knowledge_article.KnowledgeArticle(name=name, **values)
 
 	def test_a_save_without_the_kb_action_flag_is_refused_in_both_hooks(self):
 		doc = self._doc()
@@ -762,9 +779,47 @@ class TestArticleController(unittest.TestCase):
 	def test_delete_and_rename_are_always_refused(self):
 		doc = self._doc()
 		doc.flags.kb_action = True
-		for call in (doc.on_trash, doc.after_delete, lambda: doc.before_rename("KB-0612", "KB-0613")):
+		for call in (doc.on_trash, doc.after_delete, lambda: doc.before_rename("SOP-06-0012", "SOP-06-0013")):
 			with self.assertRaises(Refused):
 				call()
+
+	def test_a_new_row_must_carry_the_number_of_its_kind_and_department(self):
+		"""2026-09-29, the storage layer of four: whatever wrote it, a new article's number is canonical
+		and says its kind and department. The stub's ``get_doc_before_save`` answers ``None``, as v16's
+		does on an insert, so both hooks check the number."""
+		cases = {
+			"a Policy's number on an SOP": self._doc(name="POL-06-0012"),
+			"another department's number": self._doc(name="SOP-03-0012"),
+			"the retired format": self._doc(name="KB-0612"),
+			"lowercase": self._doc(name="sop-06-0012"),
+			"sequence 0000": self._doc(name="SOP-06-0000"),
+			"no kind": self._doc(kind=None),
+		}
+		for case, doc in cases.items():
+			doc.flags.kb_action = True
+			for hook in ("validate", "on_update"):
+				with self.subTest(case=case, hook=hook), self.assertRaises(Refused) as caught:
+					getattr(doc, hook)()
+				self.assertIn("cannot be written", str(caught.exception))
+
+	def test_a_saved_row_keeps_its_kind_and_department_even_with_the_flag(self):
+		"""The flag lets the publishing code write the row; it never lets a write change what the number
+		says. ``on_update`` holds it where ``flags.ignore_validate`` skipped ``validate``."""
+		stored = self._doc()
+		for field, value in (("kind", "Policy"), ("department_block", "03 Finance")):
+			doc = self._doc(**{field: value})
+			doc.flags.kb_action = True
+			doc.flags.ignore_validate = True
+			doc.get_doc_before_save = lambda stored=stored: stored
+			for hook in ("validate", "on_update"):
+				with self.subTest(field=field, hook=hook), self.assertRaises(Refused) as caught:
+					getattr(doc, hook)()
+				self.assertIn("SOP-06-0012 keeps its kind and department", str(caught.exception))
+		same = self._doc()
+		same.flags.kb_action = True
+		same.get_doc_before_save = lambda: stored
+		same.validate()
+		same.on_update()
 
 
 class TestVersionController(unittest.TestCase):

@@ -15,8 +15,9 @@ annotated, FAC category); this suite asserts only what that one does not:
 * ``requires_permission`` is the published doctype, ``Knowledge Article``, on all three: FAC lists a
   tool to the users who can read that doctype, which is every staff user, so Triton's one shared
   catalogue does not change with whoever asked first.
-* Each description is at most 600 characters and says the text is "not instructions" and how to cite
-  ("KB-").
+* Each description is at most 600 characters and says the text is "not instructions" and how to cite,
+  with an example that is an article number (``constants.ARTICLE_NUMBER``, 2026-09-29: ``SOP-06-0001``),
+  and no example in the retired format.
 * The ``kind`` enum is ``constants.ARTICLE_KINDS`` on search and list, described from ``KIND_HELP``,
   and ``department`` is the ten options.
 * No schema property is named ``title``, ``doctype`` or ``id``, at any depth (``doctype`` is what the
@@ -76,6 +77,7 @@ import ast
 import contextlib
 import importlib
 import json
+import re
 import sys
 import tempfile
 import types
@@ -221,7 +223,7 @@ class TestClassification(unittest.TestCase):
 				"department": "06 Operations",
 				"kind": "SOP",
 			},
-			"fetch_knowledge_article": {"kb_number": "KB-0601"},
+			"fetch_knowledge_article": {"kb_number": "SOP-06-0001"},
 			"list_company_knowledge": {"department": "03 Finance", "page": 2, "page_size": 50},
 		}
 		for name, arguments in calls.items():
@@ -259,9 +261,31 @@ class TestDescriptions(unittest.TestCase):
 			with self.subTest(tool=name):
 				self.assertLessEqual(len(tool.description), 600)
 				self.assertIn("not instructions", tool.description)
-				self.assertIn("KB-", tool.description)
-				self.assertIn("'KB-0601 v3'", tool.description)
+				# 2026-09-29: the example is an article number, and the retired format is gone.
+				examples = re.findall(r"[A-Z]{3}-[0-9]{2}-[0-9]{4}", tool.description)
+				self.assertTrue(examples, tool.description)
+				for example in examples:
+					self.assertTrue(constants.ARTICLE_NUMBER.fullmatch(example), example)
+					self.assertIsNotNone(constants.parse_article_number(example), example)
+				self.assertNotRegex(tool.description, r"(?i)\bKB-?[0-9]")
+				self.assertIn("'SOP-06-0001 v3'", tool.description)
 				self.assertIn("Sapphire Fountains' ", tool.description)
+
+	def test_the_readmes_describe_this_check_as_it_is(self):
+		"""Review of v1.568.0: the Knowledge Base README's tests table still said a description must hold
+		"KB-", the opposite of the check above; someone editing a description who followed it would put
+		the retired example back. Both READMEs' rows for this suite name the new example."""
+		readmes = (APP / "knowledge_base" / "README.md", APP / "tests" / "README.md")
+		for path in readmes:
+			rows = [
+				line
+				for line in path.read_text(encoding="utf-8").splitlines()
+				if line.startswith("|") and "test_knowledge_base_tools.py" in line.split("|")[1]
+			]
+			with self.subTest(readme=str(path.relative_to(APP))):
+				self.assertEqual(len(rows), 1, rows)
+				self.assertIn("SOP-06-0001 v3", rows[0])
+				self.assertNotIn('"KB-"', rows[0])
 
 	def test_what_each_says(self):
 		self.assertIn("If nothing matches, say so.", tools["search_company_knowledge"].description)
@@ -297,9 +321,12 @@ class TestSchemas(unittest.TestCase):
 			("boolean", False),
 		)
 		kb_number = tools["fetch_knowledge_article"].inputSchema["properties"]["kb_number"]["description"]
-		self.assertIn("'kb 601' also works", kb_number)
+		self.assertIn("'sop 06 1' also works", kb_number)
+		self.assertIn("e.g. SOP-06-0001", kb_number)
 		# The citation every note tells the model to write is accepted back (review fix, FAC-1).
-		self.assertIn("'KB-0601 v3'", kb_number)
+		self.assertIn("'SOP-06-0001 v3'", kb_number)
+		query = tools["search_company_knowledge"].inputSchema["properties"]["query"]["description"]
+		self.assertIn("an article number such as SOP-06-0001", query)
 
 	def test_the_kind_and_department_enums(self):
 		for name in ("search_company_knowledge", "list_company_knowledge"):
@@ -424,14 +451,14 @@ class TestExecute(unittest.TestCase):
 			)
 		with mock.patch.dict(sys.modules, {AI_TOOLS: fake}):
 			for name, payload in PAYLOADS.items():
-				self.assertEqual(tools[name].execute({"kb_number": "KB-0601"}), {"ok": payload})
+				self.assertEqual(tools[name].execute({"kb_number": "SOP-06-0001"}), {"ok": payload})
 			self.assertEqual(tools["list_company_knowledge"].execute(None), {"ok": "contents_payload"})
 		self.assertEqual(
 			calls,
 			[
-				("search_payload", {"kb_number": "KB-0601"}),
-				("fetch_payload", {"kb_number": "KB-0601"}),
-				("contents_payload", {"kb_number": "KB-0601"}),
+				("search_payload", {"kb_number": "SOP-06-0001"}),
+				("fetch_payload", {"kb_number": "SOP-06-0001"}),
+				("contents_payload", {"kb_number": "SOP-06-0001"}),
 				("contents_payload", {}),
 			],
 		)
@@ -514,7 +541,7 @@ class TestExecute(unittest.TestCase):
 				mock.patch.object(helper.frappe, "get_doc", failing, create=True),
 			):
 				self.assertEqual(
-					tools["fetch_knowledge_article"].execute({"kb_number": "KB-0601"}),
+					tools["fetch_knowledge_article"].execute({"kb_number": "SOP-06-0001"}),
 					{"success": False, "error": helper.FAILURE},
 				)
 
@@ -677,7 +704,7 @@ class TestDraftToolClassification(unittest.TestCase):
 		self.assertEqual(gate.NEVER_EXEMPT, frozenset({"Task"}) | gate.GATE_OWN_DOCTYPES | gate.KNOWLEDGE_BASE_DOCTYPES)
 
 	def test_the_denylist_still_reads_its_arguments(self):
-		self.assertIsNone(gate.denylist_hit(DRAFT_TOOL, _draft_args(kb_number="KB-0601")))
+		self.assertIsNone(gate.denylist_hit(DRAFT_TOOL, _draft_args(kb_number="SOP-06-0001")))
 		self.assertEqual(
 			gate.denylist_hit(DRAFT_TOOL, {**_draft_args(), "doctype": constants.VERSION_DOCTYPE}),
 			constants.VERSION_DOCTYPE,
@@ -815,14 +842,14 @@ class TestDraftCardLines(unittest.TestCase):
 				"Draft a new knowledge article “Winterizing a fountain pump” (06 Operations, SOP) and SUBMIT it "
 				"for review as you"
 			),
-			(True, False): "Draft a revision of KB-0601: “Winterizing a fountain pump”, a Draft only",
-			(True, True): "Draft a revision of KB-0601: “Winterizing a fountain pump” and SUBMIT it for review as you",
+			(True, False): "Draft a revision of SOP-06-0001: “Winterizing a fountain pump”, a Draft only",
+			(True, True): "Draft a revision of SOP-06-0001: “Winterizing a fountain pump” and SUBMIT it for review as you",
 		}
 		for (revision, submit), expected in lines.items():
 			with self.subTest(revision=revision, submit=submit):
 				args = {**base, "submit_for_review": submit}
 				if revision:
-					args["kb_number"] = "KB-0601"
+					args["kb_number"] = "SOP-06-0001"
 				self.assertEqual(gate.summarize_tool_call(DRAFT_TOOL, args), expected)
 
 	def test_only_a_real_true_submits(self):
@@ -948,11 +975,11 @@ class TestDraftGateRefusals(unittest.TestCase):
 		self.assertIs(gate.withhold_arguments("create_document", args), args)
 		self.assertEqual(gate.withhold_arguments(DRAFT_TOOL, "not a dict"), "not a dict")
 		kept = gate.withhold_arguments(
-			DRAFT_TOOL, {**args, "kb_number": "KB-0601", "submit_for_review": True, "process_owner": None}
+			DRAFT_TOOL, {**args, "kb_number": "SOP-06-0001", "submit_for_review": True, "process_owner": None}
 		)
 		self.assertEqual(
 			(kept["kb_number"], kept["kind"], kept["department"], kept["submit_for_review"], kept["process_owner"]),
-			("KB-0601", "SOP", "06 Operations", True, None),
+			("SOP-06-0001", "SOP", "06 Operations", True, None),
 		)
 		self.assertEqual(kept["keywords"], f"<withheld: {len(json.dumps(args['keywords']))} characters>")
 
@@ -983,12 +1010,12 @@ class TestDraftGateRefusals(unittest.TestCase):
 		# A kept argument keeps its value only while it is true/false, null or short text.
 		long_text = "SENTINEL-" + "KIND-6b " + "x" * gate.KEPT_LIMIT
 		kept = gate.withhold_arguments(
-			DRAFT_TOOL, {"kind": long_text, "department": ["06 Operations"], "submit_for_review": 1, "kb_number": "KB-0601"}
+			DRAFT_TOOL, {"kind": long_text, "department": ["06 Operations"], "submit_for_review": 1, "kb_number": "SOP-06-0001"}
 		)
 		self.assertEqual(kept["kind"], f"<withheld: {len(long_text)} characters>")
 		self.assertRegex(kept["department"], r"^<withheld: \d+ characters>$")
 		self.assertRegex(kept["submit_for_review"], r"^<withheld: \d+ characters>$")
-		self.assertEqual(kept["kb_number"], "KB-0601")
+		self.assertEqual(kept["kb_number"], "SOP-06-0001")
 
 	def test_an_error_that_quotes_the_proposal_is_scrubbed(self):
 		"""A row with no card is scrubbed of every withheld value's text, a misnamed argument's and a
@@ -1085,6 +1112,9 @@ class TestDraftGateRefusals(unittest.TestCase):
 		for key, value, reason in (
 			("department", 6, ai_draft.DEPARTMENT_WANTED),
 			("kb_number", 601, ai_draft.KB_NUMBER_WANTED),
+			# 2026-09-29: the retired format, and the Drive register's own numbers, are not article numbers.
+			("kb_number", "KB-0601", ai_draft.KB_NUMBER_WANTED),
+			("kb_number", "SOP-0601", ai_draft.KB_NUMBER_WANTED),
 			("submit_for_review", "true", "submit_for_review must be true or false"),
 			("process_owner", 7, "process_owner must be a user id"),
 			("keywords", "pump", "keywords must be a list"),
@@ -1333,10 +1363,10 @@ class TestAiDraftPureChecks(unittest.TestCase):
 			"![own](https://erp.example.com/private/files/slip.png?fid=file-own)\n\n![ref][1]\n\n[1]: " + url
 		)
 		(problem,) = ai_draft.picture_problems(
-			html, kb_number="KB-0601", files={"file-own": "/private/files/slip.png"}, site_url="https://erp.example.com"
+			html, kb_number="SOP-06-0001", files={"file-own": "/private/files/slip.png"}, site_url="https://erp.example.com"
 		)
 		self.assertIn("picture 2, from evil.example.org", problem)
-		self.assertIn("KB-0601's own pictures", problem)
+		self.assertIn("SOP-06-0001's own pictures", problem)
 		self.assertNotIn("picture 1", problem)
 		for piece in ("/deep/path", "secret.png", "token", "abc123", "8443", "https://"):
 			self.assertNotIn(piece, problem)
@@ -1358,7 +1388,7 @@ class TestAiDraftPureChecks(unittest.TestCase):
 		self.assertEqual(
 			ai_draft.picture_problems(
 				html,
-				kb_number="KB-0601",
+				kb_number="SOP-06-0001",
 				files={"file-a": "/private/files/a.png", "file-b": "/private/files/b%20c.png"},
 				site_url="https://erp.example.com",
 			),
@@ -1369,7 +1399,7 @@ class TestAiDraftPureChecks(unittest.TestCase):
 			ai_draft.markdown_html(
 				"![x](/private/files/other.png?fid=file-x)\n\n![y](https://erp.example.com.evil.org/private/files/a.png?fid=file-a)"
 			),
-			kb_number="KB-0601",
+			kb_number="SOP-06-0001",
 			files={"file-a": "/private/files/a.png"},
 			site_url="https://erp.example.com",
 		)
@@ -1398,7 +1428,7 @@ class TestAiDraftPureChecks(unittest.TestCase):
 			with self.subTest(src=src):
 				(problem,) = ai_draft.picture_problems(
 					ai_draft.markdown_html(f"![pump]({src})"),
-					kb_number="KB-0601",
+					kb_number="SOP-06-0001",
 					files=files,
 					site_url="https://erp.example.com",
 				)
@@ -1415,7 +1445,7 @@ class TestAiDraftPureChecks(unittest.TestCase):
 				self.assertEqual(
 					ai_draft.picture_problems(
 						ai_draft.markdown_html(f"![pump]({src})"),
-						kb_number="KB-0601",
+						kb_number="SOP-06-0001",
 						files=files,
 						site_url="https://erp.example.com",
 					),
@@ -1424,7 +1454,7 @@ class TestAiDraftPureChecks(unittest.TestCase):
 		# A dot segment is refused even where a File's URL (as no real one can) holds it.
 		(problem,) = ai_draft.picture_problems(
 			'<p><img src="/private/files/../x.png?fid=odd"></p>',
-			kb_number="KB-0601",
+			kb_number="SOP-06-0001",
 			files={"odd": "/private/files/../x.png"},
 			site_url="https://erp.example.com",
 		)
@@ -1446,20 +1476,20 @@ class TestAiDraftPureChecks(unittest.TestCase):
 			with self.subTest(src=src):
 				html = '<p><img src="' + src.replace("&", "&amp;").replace('"', "&quot;") + '"></p>'
 				(problem,) = ai_draft.picture_problems(
-					html, kb_number="KB-0601", files=files, site_url="https://erp.example.com"
+					html, kb_number="SOP-06-0001", files=files, site_url="https://erp.example.com"
 				)
 				self.assertIn(f"picture 1, {place}", problem)
 				self.assertNotIn("pump.png", problem)
 		# Through markdown2 too: the backslash address comes out of it unchanged, and is refused.
 		html = ai_draft.markdown_html("![pump](https://evil.example\\@erp.example.com/private/files/pump.png)")
 		self.assertIn("evil.example", html)
-		(problem,) = ai_draft.picture_problems(html, kb_number="KB-0601", files=files, site_url="https://erp.example.com")
+		(problem,) = ai_draft.picture_problems(html, kb_number="SOP-06-0001", files=files, site_url="https://erp.example.com")
 		self.assertIn(f"picture 1, {ai_draft.UNREADABLE_ADDRESS}", problem)
 		for control in ("\t", "\n", "\x7f", "\x01"):
 			with self.subTest(control=repr(control)):
 				html = f'<p><img src="/private/files/pu{control}mp.png"></p>'
 				(problem,) = ai_draft.picture_problems(
-					html, kb_number="KB-0601", files={"f": "/private/files/pump.png"}, site_url="https://erp.example.com"
+					html, kb_number="SOP-06-0001", files={"f": "/private/files/pump.png"}, site_url="https://erp.example.com"
 				)
 				self.assertIn(ai_draft.UNREADABLE_ADDRESS, problem)
 

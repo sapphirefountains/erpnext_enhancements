@@ -25,6 +25,33 @@
 > - **Triton** is offered the three read tools, not the drafting tool.
 > - **Published articles are also mirrored as Markdown into the company's private knowledge repo** (WI-080 Slice 6), pulled by that repo from a read-only endpoint every 6 hours. **ERPNext holds no GitHub credential.**
 
+> **Amendment (2026-09-29, numbering by kind).** Nik: "Also I feel like KB-#### is too limiting"; he chose
+> "SOP-06-0001 by kind".
+> - **The format** is `<PREFIX>-<DD>-<NNNN>`: the kind's prefix (`POL` Policy, `PRO` Process, `SOP` SOP), the
+>   two-digit department block (`00` to `09`), and a zero-padded sequence from `0001`. The number says what
+>   the document is, as the Drive register's numbers do; the two are separate series (the register's
+>   `SOP-0601` is never read as an article number).
+> - **The scope** is `(prefix, department)`: each counts on its own, one more than the highest number taken,
+>   never the lowest gap, never `0000`. "Taken" is every article's name **and every number a version still
+>   names as its article**, so an article removed past the ORM does not give its number away again. The
+>   articles are read `FOR UPDATE`, as before; no naming series (`tabSeries` is shared across doctypes and
+>   resettable from the Desk).
+> - **A published article's number never changes, and a number is never reused.** The number carries the
+>   kind and the department, so neither changes after the first publish. To reclassify or move an article,
+>   a new article is published and the old one retired with a pointer to it, so old citations still
+>   resolve (until a "Replaced by" field lands, the pointer is the retire reason). The freeze holds in four
+>   places with one message: the form (read-only on a revision), the version's save, submit and approve,
+>   and the Article row itself, whatever flag is set.
+> - **The retired `KB-` format maps to nothing.** No number in it was issued (prod had no article and no
+>   version), and it holds no kind. Fetch answers it with the same `found: false` as every other miss; that
+>   message now says what a number looks like, for every miss, so it leaks nothing. Search adds a
+>   `problems` hint for it.
+> - **The frozen names and payload keys are unchanged** (`kb_number` included): only the values' format
+>   changed, which no consumer had seen. The tools' descriptions and examples changed, so Triton's frozen
+>   snapshot is regenerated after the deploy. The mirror's `schema` stays 1.
+>
+> §1 and §3 are edited in place for the format; §6's "cite KB numbers" now means article numbers.
+
 ## Context
 
 **The goal is continuity.** Nik holds most of how Sapphire runs in his head, and he is the only engineer. Parker, the purchasing agent and inventory clerk, is to become his backup. Parker is not an engineer, and James approves. The knowledge base therefore has to be something:
@@ -69,7 +96,7 @@ Training is the nearest thing Sapphire has to structured knowledge today: 7 publ
 
 A new `Knowledge Base` module holds two doctypes.
 
-**Knowledge Article** is the approved, published text and nothing else. It is named by KB number (`KB-{block}{01..99}`, following the POL-0000 department blocks, with `00` reserved for each block's index). Every field is read-only and changes only under a publish-action flag. All staff read it through `Desk User`, which v16 grants to System Users only. It has no web view, no Guest access, and is not in global search.
+**Knowledge Article** is the approved, published text and nothing else. It is named by its article number, `<PREFIX>-<DD>-<NNNN>` (`SOP-06-0001`: the kind's prefix, the POL-0000 department block, a sequence per kind and department; amended 2026-09-29, where it had been `KB-{block}{01..99}`). The number never changes, so neither do the article's kind and department. Every field is read-only and changes only under a publish-action flag. All staff read it through `Desk User`, which v16 grants to System Users only. It has no web view, no Guest access, and is not in global search.
 
 **Knowledge Article Version** is submittable and holds drafts and the immutable history.
 - Only **KB Author** and **KB Approver** can open it.
@@ -118,7 +145,7 @@ A version is published only by `approve_and_publish`. The server refuses unless 
 
 **How they run:**
 - Both run as the caller over `frappe.get_list`, so permissions apply before ranking.
-- Search is an in-app BM25 that keeps two-letter tokens and jumps to an exact KB number.
+- Search is an in-app BM25 that keeps two-letter tokens and jumps to an exact article number, however it is written (amended 2026-09-29).
 - Both are in `EXPLICIT_READONLY`, with a test that fails if they are not.
 
 **What they return:**
@@ -140,7 +167,7 @@ There is no restricted tier in the module. A plain article may say where a restr
 
 ### 6. Training integrates one way, as pointers, and only when there is something to point at
 
-**The integration tier adopted is "Training-lite" (T1), and it is trigger-gated.** It is built when at least one published course cites three or more published articles. Until then (T0), search results carry `result_type` (amended 2026-09-28), and course authors cite KB numbers in lesson text.
+**The integration tier adopted is "Training-lite" (T1), and it is trigger-gated.** It is built when at least one published course cites three or more published articles. Until then (T0), search results carry `result_type` (amended 2026-09-28), and course authors cite article numbers (`SOP-06-0001`) in lesson text.
 
 What T1 does when a new article version is approved:
 - It scans live course payloads for the number.

@@ -3,7 +3,7 @@
 
 // Published articles whose review date has passed or is close (WI-080 PR 4). The rows come from
 // knowledge_base/reporting.py; this file only declares the filters and colours the State column.
-// A KB number opens the article, where Confirm Still Accurate and Start Revision are.
+// An article number opens the article, where Confirm Still Accurate and Start Revision are.
 const KB_DUE_STATE_COLOURS = {
 	"No review date": "red",
 	Overdue: "red",

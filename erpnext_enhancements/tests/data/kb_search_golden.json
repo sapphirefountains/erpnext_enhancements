@@ -1,8 +1,8 @@
 {
- "_about": "Invented knowledge-base articles and queries for tests/test_knowledge_base_search.py (WI-080 PR 5). Every procedure, person, number and document id here is made up for the test: nothing is derived from a real SOP, rate, vendor or person, because this repository is public. KB numbers end in 9x and document numbers are 9000 and up, outside any real register. The real questions staff ask are kept in the company's private repository, not here.",
+ "_about": "Invented knowledge-base articles and queries for tests/test_knowledge_base_search.py (WI-080 PR 5). Every procedure, person, number and document id here is made up for the test: nothing is derived from a real SOP, rate, vendor or person, because this repository is public. Article numbers (POL-, PRO- or SOP-, the department block, then a sequence) run from 9001, and document numbers are 9000 and up, outside any real register; no article number is a body's document number. The real questions staff ask are kept in the company's private repository, not here.",
  "articles": [
   {
-   "key": "KB-0691",
+   "key": "SOP-06-9001",
    "title": "Receiving a PO against a packing slip",
    "keywords": "PO, purchase order, packing slip, receiving",
    "summary": "How to check a delivery against its purchase order and receive it.",
@@ -11,7 +11,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0692",
+   "key": "SOP-06-9002",
    "title": "Returning damaged goods to a supplier",
    "keywords": "RMA, return, damaged, supplier",
    "summary": "Getting a return authorization and sending damaged goods back.",
@@ -20,7 +20,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0693",
+   "key": "PRO-06-9001",
    "title": "How a material request (MR) becomes a purchase order (PO)",
    "keywords": "MR, material request, purchasing, buyer",
    "summary": "Who raises a material request, who buys, and where it is handed off.",
@@ -29,7 +29,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0694",
+   "key": "POL-06-9001",
    "title": "Warehouse safety rules",
    "keywords": "PPE, OSHA, safety, warehouse",
    "summary": "The safety rules everyone in the warehouse must follow, and why.",
@@ -38,7 +38,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0695",
+   "key": "SOP-06-9003",
    "title": "Cycle counting a warehouse bin",
    "keywords": "cycle count, inventory, bin, stock",
    "summary": "Counting one bin and correcting its stock level.",
@@ -47,7 +47,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0696",
+   "key": "SOP-06-9004",
    "title": "Forklift pre-shift inspection",
    "keywords": "forklift, inspection, checklist, pre-shift",
    "summary": "The checks a driver makes before the first lift of the shift.",
@@ -56,7 +56,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0697",
+   "key": "PRO-06-9002",
    "title": "Shipping an order to a customer",
    "keywords": "shipping, BOL, freight, carrier",
    "summary": "From a picked order to a truck leaving the dock, and who does each part.",
@@ -65,7 +65,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0698",
+   "key": "SOP-06-9005",
    "title": "Scanning stock with the QR label printer",
    "keywords": "QR, label, scanner, printer",
    "summary": "Printing a QR label for a bin and scanning it.",
@@ -74,7 +74,7 @@
    "department": "06 Operations"
   },
   {
-   "key": "KB-0391",
+   "key": "PRO-03-9001",
    "title": "Closing the month in QBO",
    "keywords": "QBO, QuickBooks, month end, close",
    "summary": "The order of work that closes a month, and who signs it off.",
@@ -83,7 +83,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0392",
+   "key": "POL-03-9001",
    "title": "Expense report policy",
    "keywords": "expenses, receipts, reimbursement",
    "summary": "What the company pays back, and the receipts it needs.",
@@ -92,16 +92,16 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0393",
+   "key": "SOP-03-9001",
    "title": "Billing a progress payment with an AIA pay application",
    "keywords": "AIA, G702, pay app, progress billing",
    "summary": "Preparing and sending a monthly pay application.",
-   "body": "1. Update percent complete on each line of the SOV from KB-0394.\n2. Fill in the G702 summary page.\n3. Attach lien waivers.\n4. Send the pay app to the general contractor by the 25th.",
+   "body": "1. Update percent complete on each line of the SOV from SOP-03-9002.\n2. Fill in the G702 summary page.\n3. Attach lien waivers.\n4. Send the pay app to the general contractor by the 25th.",
    "kind": "SOP",
    "department": "03 Finance"
   },
   {
-   "key": "KB-0394",
+   "key": "SOP-03-9002",
    "title": "Building a schedule of values (SOV)",
    "keywords": "SOV, schedule of values, billing lines",
    "summary": "Splitting a contract into the billing lines a customer approves.",
@@ -110,7 +110,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0395",
+   "key": "POL-03-9002",
    "title": "Purchase approval limits",
    "keywords": "approval, limits, spending, purchase orders",
    "summary": "Who may approve a purchase order of each size.",
@@ -119,7 +119,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0396",
+   "key": "SOP-03-9003",
    "title": "Recording a customer payment by ACH",
    "keywords": "ACH, payment, deposit, customer",
    "summary": "Matching an incoming ACH deposit to the customer's invoice.",
@@ -128,7 +128,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0397",
+   "key": "SOP-03-9004",
    "title": "Reviewing A/R aging",
    "keywords": "A/R, aging, collections, past due",
    "summary": "Working the accounts receivable aging report each Monday.",
@@ -137,7 +137,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0398",
+   "key": "PRO-03-9002",
    "title": "Billing a T&M service call",
    "keywords": "T&M, time and materials, service call, invoice",
    "summary": "Turning a technician's hours and parts into an invoice.",
@@ -146,7 +146,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0399",
+   "key": "SOP-03-9005",
    "title": "Collecting a W-9 from a new vendor",
    "keywords": "W-9, vendor, tax form",
    "summary": "Getting a signed W-9 before a new vendor's first payment.",
@@ -155,7 +155,7 @@
    "department": "03 Finance"
   },
   {
-   "key": "KB-0491",
+   "key": "POL-04-9001",
    "title": "Paid time off policy",
    "keywords": "PTO, vacation, sick leave, holidays",
    "summary": "How much paid time off people earn and the rules for using it.",
@@ -164,7 +164,7 @@
    "department": "04 HR"
   },
   {
-   "key": "KB-0492",
+   "key": "SOP-04-9001",
    "title": "Requesting PTO",
    "keywords": "PTO, request, leave, calendar",
    "summary": "Asking for time off and getting it approved.",
@@ -173,7 +173,7 @@
    "department": "04 HR"
   },
   {
-   "key": "KB-0493",
+   "key": "PRO-04-9001",
    "title": "Onboarding a new hire",
    "keywords": "onboarding, new hire, I-9, paperwork",
    "summary": "What HR, the manager and IT each do before and during a new hire's first week.",
@@ -182,7 +182,7 @@
    "department": "04 HR"
   },
   {
-   "key": "KB-0494",
+   "key": "SOP-04-9002",
    "title": "Correcting a W2",
    "keywords": "W2, W-2c, payroll, tax form",
    "summary": "Fixing a wrong wage statement after it was issued.",
@@ -191,7 +191,7 @@
    "department": "04 HR"
   },
   {
-   "key": "KB-0495",
+   "key": "POL-04-9002",
    "title": "Company vehicle use",
    "keywords": "vehicle, driving, fleet, truck",
    "summary": "Who may drive a company vehicle, and the rules on the road.",
@@ -200,7 +200,7 @@
    "department": "04 HR"
   },
   {
-   "key": "KB-0891",
+   "key": "SOP-08-9001",
    "title": "Pressure testing a pump assembly",
    "keywords": "pump, pressure test, PSI, leak",
    "summary": "Testing a finished pump assembly for leaks before it ships.",
@@ -209,7 +209,7 @@
    "department": "08 Production"
   },
   {
-   "key": "KB-0892",
+   "key": "PRO-08-9001",
    "title": "Build handoff from design to the shop",
    "keywords": "handoff, shop drawings, BOM, release",
    "summary": "How a design is released to the shop, and who checks what.",
@@ -218,7 +218,7 @@
    "department": "08 Production"
   },
   {
-   "key": "KB-0893",
+   "key": "SOP-08-9002",
    "title": "Welding a stainless basin seam",
    "keywords": "TIG, welding, stainless, seam",
    "summary": "Preparing and TIG welding a stainless seam.",
@@ -227,7 +227,7 @@
    "department": "08 Production"
   },
   {
-   "key": "KB-0894",
+   "key": "POL-08-9001",
    "title": "Quality hold rules",
    "keywords": "QC, hold, nonconformance, NCR",
    "summary": "When work must stop for a quality hold, and who may release it.",
@@ -236,7 +236,7 @@
    "department": "08 Production"
   },
   {
-   "key": "KB-0991",
+   "key": "PRO-09-9001",
    "title": "From lead to signed contract",
    "keywords": "lead, opportunity, contract, CRM",
    "summary": "The stages a sale moves through and who owns each one.",
@@ -245,7 +245,7 @@
    "department": "09 Sales"
   },
   {
-   "key": "KB-0992",
+   "key": "SOP-09-9001",
    "title": "Sending a quote for approval",
    "keywords": "quote, estimate, approval, pricing",
    "summary": "Getting a quote approved before it goes to the customer.",
@@ -254,7 +254,7 @@
    "department": "09 Sales"
   },
   {
-   "key": "KB-0993",
+   "key": "POL-09-9001",
    "title": "Discount approval policy",
    "keywords": "discount, pricing, margin",
    "summary": "The largest discount each role may give.",
@@ -263,7 +263,7 @@
    "department": "09 Sales"
   },
   {
-   "key": "KB-0091",
+   "key": "POL-00-9001",
    "title": "Account security",
    "keywords": "2FA, MFA, passwords, security",
    "summary": "How staff protect their company accounts.",
@@ -272,7 +272,7 @@
    "department": "00 Company Wide"
   },
   {
-   "key": "KB-0092",
+   "key": "POL-00-9002",
    "title": "Using AI assistants with company data",
    "keywords": "AI, assistant, privacy, data",
    "summary": "What company information may be shared with an AI assistant.",
@@ -281,7 +281,7 @@
    "department": "00 Company Wide"
   },
   {
-   "key": "KB-0093",
+   "key": "SOP-00-9001",
    "title": "Reporting an IT problem",
    "keywords": "IT, helpdesk, support, computer",
    "summary": "Getting help with a computer, phone or account problem.",
@@ -290,7 +290,7 @@
    "department": "00 Company Wide"
   },
   {
-   "key": "KB-0094",
+   "key": "PRO-00-9001",
    "title": "Document control for company documents",
    "keywords": "document control, register, numbering",
    "summary": "How a controlled document is drafted, approved, numbered and reviewed.",
@@ -299,7 +299,7 @@
    "department": "00 Company Wide"
   },
   {
-   "key": "KB-0291",
+   "key": "SOP-02-9001",
    "title": "Naming CAD files",
    "keywords": "CAD, DWG, file naming, drawings",
    "summary": "The file name every drawing uses.",
@@ -308,7 +308,7 @@
    "department": "02 Design"
   },
   {
-   "key": "KB-0591",
+   "key": "SOP-05-9001",
    "title": "Posting a project photo to social media",
    "keywords": "social media, photos, posting",
    "summary": "Choosing and posting a finished-project photo.",
@@ -329,68 +329,71 @@
   }
  ],
  "queries": [
-  {"query": "PO packing slip", "expect": "KB-0691", "first": true},
-  {"query": "how do I receive a PO against a packing slip?", "expect": "KB-0691", "first": true},
-  {"query": "receiving", "expect": "KB-0691"},
-  {"query": "P.O.", "expect": "KB-0691", "first": true},
-  {"query": "RMA", "expect": "KB-0692", "first": true},
-  {"query": "return damaged goods", "expect": "KB-0692"},
-  {"query": "procedure for returns", "expect": "KB-0692"},
-  {"query": "SOP-9001", "expect": "KB-0692", "first": true},
-  {"query": "MR to PO", "expect": "KB-0693", "first": true},
-  {"query": "workflow for purchasing", "expect": "KB-0693"},
-  {"query": "PPE", "expect": "KB-0694", "first": true},
-  {"query": "OSHA safety rules", "expect": "KB-0694", "first": true},
-  {"query": "policy on warehouse safety", "expect": "KB-0694"},
-  {"query": "cycle count", "expect": "KB-0695"},
-  {"query": "forklift checklist", "expect": "KB-0696"},
-  {"query": "procedure for inspecting a forklift", "expect": "KB-0696"},
-  {"query": "BOL", "expect": "KB-0697", "first": true},
-  {"query": "shipped", "expect": "KB-0697"},
-  {"query": "QR label", "expect": "KB-0698", "first": true},
-  {"query": "QBO", "expect": "KB-0391", "first": true},
-  {"query": "month end close", "expect": "KB-0391"},
-  {"query": "quickbooks", "expect": "KB-0391"},
-  {"query": "kb 391", "expect": "KB-0391", "first": true},
-  {"query": "expense receipts", "expect": "KB-0392"},
-  {"query": "reimbursement policy", "expect": "KB-0392"},
-  {"query": "AIA", "expect": "KB-0393", "first": true},
-  {"query": "G702", "expect": "KB-0393", "first": true},
-  {"query": "SOV", "expect": "KB-0394", "first": true},
-  {"query": "schedule of values", "expect": "KB-0394"},
-  {"query": "approval limits for purchase orders", "expect": "KB-0395"},
-  {"query": "ACH deposit", "expect": "KB-0396", "first": true},
-  {"query": "A/R", "expect": "KB-0397", "first": true},
-  {"query": "AR aging", "expect": "KB-0397", "first": true},
-  {"query": "T&M", "expect": "KB-0398", "first": true},
-  {"query": "t&m billing", "expect": "KB-0398", "first": true},
-  {"query": "W-9", "expect": "KB-0399", "first": true},
-  {"query": "W9 vendor", "expect": "KB-0399", "first": true},
-  {"query": "PTO policy", "expect": "KB-0491", "first": true},
-  {"query": "vacation", "expect": "KB-0491"},
-  {"query": "request PTO", "expect": "KB-0492", "first": true},
-  {"query": "onboarding a new hire", "expect": "KB-0493"},
-  {"query": "I-9", "expect": "KB-0493", "first": true},
-  {"query": "i9", "expect": "KB-0493", "first": true},
-  {"query": "W2", "expect": "KB-0494", "first": true},
-  {"query": "W-2", "expect": "KB-0494", "first": true},
-  {"query": "w-2", "expect": "KB-0494", "first": true},
-  {"query": "company vehicle", "expect": "KB-0495"},
-  {"query": "PSI pressure test", "expect": "KB-0891", "first": true},
-  {"query": "pump test", "expect": "KB-0891"},
-  {"query": "BOM handoff", "expect": "KB-0892", "first": true},
-  {"query": "TIG welding", "expect": "KB-0893", "first": true},
-  {"query": "NCR", "expect": "KB-0894", "first": true},
-  {"query": "quality hold", "expect": "KB-0894"},
-  {"query": "CRM lead to contract", "expect": "KB-0991", "first": true},
-  {"query": "quote approval", "expect": "KB-0992"},
-  {"query": "discount", "expect": "KB-0993"},
-  {"query": "2FA", "expect": "KB-0091", "first": true},
-  {"query": "MFA", "expect": "KB-0091", "first": true},
-  {"query": "AI assistants", "expect": "KB-0092", "first": true},
-  {"query": "IT problem", "expect": "KB-0093", "first": true},
-  {"query": "KB-0694", "expect": "KB-0694", "first": true},
-  {"query": "CAD file naming", "expect": "KB-0291", "first": true},
-  {"query": "social media photo", "expect": "KB-0591"}
+  {"query": "PO packing slip", "expect": "SOP-06-9001", "first": true},
+  {"query": "how do I receive a PO against a packing slip?", "expect": "SOP-06-9001", "first": true},
+  {"query": "receiving", "expect": "SOP-06-9001"},
+  {"query": "P.O.", "expect": "SOP-06-9001", "first": true},
+  {"query": "RMA", "expect": "SOP-06-9002", "first": true},
+  {"query": "return damaged goods", "expect": "SOP-06-9002"},
+  {"query": "procedure for returns", "expect": "SOP-06-9002"},
+  {"query": "SOP-9001", "expect": "SOP-06-9002", "first": true},
+  {"query": "MR to PO", "expect": "PRO-06-9001", "first": true},
+  {"query": "workflow for purchasing", "expect": "PRO-06-9001"},
+  {"query": "PPE", "expect": "POL-06-9001", "first": true},
+  {"query": "OSHA safety rules", "expect": "POL-06-9001", "first": true},
+  {"query": "policy on warehouse safety", "expect": "POL-06-9001"},
+  {"query": "cycle count", "expect": "SOP-06-9003"},
+  {"query": "forklift checklist", "expect": "SOP-06-9004"},
+  {"query": "procedure for inspecting a forklift", "expect": "SOP-06-9004"},
+  {"query": "BOL", "expect": "PRO-06-9002", "first": true},
+  {"query": "shipped", "expect": "PRO-06-9002"},
+  {"query": "QR label", "expect": "SOP-06-9005", "first": true},
+  {"query": "QBO", "expect": "PRO-03-9001", "first": true},
+  {"query": "month end close", "expect": "PRO-03-9001"},
+  {"query": "quickbooks", "expect": "PRO-03-9001"},
+  {"query": "pro 3 9001", "expect": "PRO-03-9001", "first": true},
+  {"query": "expense receipts", "expect": "POL-03-9001"},
+  {"query": "reimbursement policy", "expect": "POL-03-9001"},
+  {"query": "AIA", "expect": "SOP-03-9001", "first": true},
+  {"query": "G702", "expect": "SOP-03-9001", "first": true},
+  {"query": "SOV", "expect": "SOP-03-9002", "first": true},
+  {"query": "schedule of values", "expect": "SOP-03-9002"},
+  {"query": "approval limits for purchase orders", "expect": "POL-03-9002"},
+  {"query": "ACH deposit", "expect": "SOP-03-9003", "first": true},
+  {"query": "A/R", "expect": "SOP-03-9004", "first": true},
+  {"query": "AR aging", "expect": "SOP-03-9004", "first": true},
+  {"query": "T&M", "expect": "PRO-03-9002", "first": true},
+  {"query": "t&m billing", "expect": "PRO-03-9002", "first": true},
+  {"query": "W-9", "expect": "SOP-03-9005", "first": true},
+  {"query": "W9 vendor", "expect": "SOP-03-9005", "first": true},
+  {"query": "PTO policy", "expect": "POL-04-9001", "first": true},
+  {"query": "vacation", "expect": "POL-04-9001"},
+  {"query": "request PTO", "expect": "SOP-04-9001", "first": true},
+  {"query": "onboarding a new hire", "expect": "PRO-04-9001"},
+  {"query": "I-9", "expect": "PRO-04-9001", "first": true},
+  {"query": "i9", "expect": "PRO-04-9001", "first": true},
+  {"query": "W2", "expect": "SOP-04-9002", "first": true},
+  {"query": "W-2", "expect": "SOP-04-9002", "first": true},
+  {"query": "w-2", "expect": "SOP-04-9002", "first": true},
+  {"query": "company vehicle", "expect": "POL-04-9002"},
+  {"query": "PSI pressure test", "expect": "SOP-08-9001", "first": true},
+  {"query": "pump test", "expect": "SOP-08-9001"},
+  {"query": "BOM handoff", "expect": "PRO-08-9001", "first": true},
+  {"query": "TIG welding", "expect": "SOP-08-9002", "first": true},
+  {"query": "NCR", "expect": "POL-08-9001", "first": true},
+  {"query": "quality hold", "expect": "POL-08-9001"},
+  {"query": "CRM lead to contract", "expect": "PRO-09-9001", "first": true},
+  {"query": "quote approval", "expect": "SOP-09-9001"},
+  {"query": "discount", "expect": "POL-09-9001"},
+  {"query": "2FA", "expect": "POL-00-9001", "first": true},
+  {"query": "MFA", "expect": "POL-00-9001", "first": true},
+  {"query": "AI assistants", "expect": "POL-00-9002", "first": true},
+  {"query": "IT problem", "expect": "SOP-00-9001", "first": true},
+  {"query": "POL-06-9001", "expect": "POL-06-9001", "first": true},
+  {"query": "CAD file naming", "expect": "SOP-02-9001", "first": true},
+  {"query": "social media photo", "expect": "SOP-05-9001"},
+  {"query": "sop 06 9001", "expect": "SOP-06-9001", "first": true},
+  {"query": "SOP-06-9001", "expect": "SOP-06-9001", "first": true},
+  {"query": "sop_6_9001", "expect": "SOP-06-9001", "first": true}
  ]
 }

@@ -59,7 +59,7 @@ __all__ = [
 	"VERBS",
 	"VERSION_ACTIONS",
 	"WITHDRAW",
-	"BlockFullError",
+	"SequenceFullError",
 	"approval_problems",
 	"article_actions",
 	"changed_content_fields",
@@ -68,9 +68,11 @@ __all__ = [
 	"contributors",
 	"discard_problems",
 	"holds_kb_role",
-	"kb_number_prefix",
-	"next_kb_number",
+	"identity_problem",
+	"next_article_number",
 	"next_state",
+	"number_problems",
+	"number_scope",
 	"publish_problems",
 	"refusal",
 	"request_changes_problems",
@@ -95,11 +97,6 @@ __all__ = [
 # loses a state this line raises at import, which is the point: every rule below names states.
 DRAFT, IN_REVIEW, PUBLISHED, SUPERSEDED, DISCARDED = constants.REVIEW_STATES
 
-#: ``KB-0612``: block ``06``, article ``12``. Matched case-insensitively and with surrounding
-#: space ignored, because MariaDB's default collation compares names that way too (``_ci``, PAD
-#: SPACE): a ``kb-0612`` row would collide with a new ``KB-0612`` on the primary key.
-_KB_NUMBER = re.compile(r"^KB-(\d{2})(\d{2})$", re.IGNORECASE)
-
 #: A contributors field may have been typed with commas or spaces by an earlier tool; every one of
 #: those separates user ids, none of which can contain them.
 _CONTRIBUTOR_SEPARATORS = re.compile(r"[\s,;]+")
@@ -109,8 +106,9 @@ _CONTRIBUTOR_SEPARATORS = re.compile(r"[\s,;]+")
 _ADMINISTRATOR, _GUEST = (name.casefold() for name in constants.NEVER_APPROVERS)
 
 
-class BlockFullError(ValueError):
-	"""A department block has used ``01`` to ``99``. PR 3 shows the message as it stands."""
+class SequenceFullError(ValueError):
+	"""A ``(prefix, department)`` scope has used ``0001`` to ``9999``. Publishing shows the message as
+	it stands."""
 
 
 # ------------------------------------------------------------------ approval
@@ -341,10 +339,10 @@ def submit_problems(version, user, roles, *, article=None, secrets=()):
 	**A draft needs a kind** (PR 5): one of ``constants.ARTICLE_KINDS``, exactly. Required here and
 	not by the schema, because v16 checks ``reqd`` on every save of a submitted version as well
 	(``model/document.py:596-600``, ``:827-828``), so a ``reqd`` kind would stop a version published
-	before the field existed from ever being superseded. For the same reason neither
-	:func:`approval_problems` nor :func:`publish_problems` asks for one: a version already In Review
-	when PR 5 deployed can still be approved, and its article then has no kind until a revision
-	sets one.
+	before the field existed from ever being superseded. Since 2026-09-29 a first version also needs
+	one to be **approved** (:func:`publish_problems`): its number is made from it. That rule's own
+	words ("..., so it cannot be numbered") are left out here when this list already says the same
+	thing, so the form's Submit blocker names each missing field once.
 	"""
 	problems = []
 	if not holds_kb_role(roles):
@@ -357,12 +355,16 @@ def submit_problems(version, user, roles, *, article=None, secrets=()):
 	if not str(_get(version, "title") or "").strip():
 		problems.append("it has no title")
 	if constants.block_code(_get(version, "department_block")) is None:
-		problems.append("it has no department")
+		problems.append(_NO_DEPARTMENT)
 	if _get(version, "kind") not in constants.ARTICLE_KINDS:
-		problems.append("it has no kind")
+		problems.append(_NO_KIND)
 	if not shows_anything(_get(version, "body")):
 		problems.append("it has no text")
-	problems.extend(publish_problems(version, article))
+	problems.extend(
+		problem
+		for problem in publish_problems(version, article)
+		if problem.removesuffix(_UNNUMBERABLE) not in problems
+	)
 	if secrets:
 		problems.append(secret_problem(secrets))
 	return problems
@@ -432,24 +434,113 @@ def discard_problems(version, user, roles):
 
 
 def publish_problems(version, article):
-	"""What about the article stops ``version`` being published into it; empty if nothing does.
+	"""What stops ``version`` being published; empty if nothing does.
 
 	``article`` is the Knowledge Article a revision belongs to (anything with ``.get``), or
-	``None`` for a first version. A retired article takes no new version (v1 has no way back from
-	retirement, WI-080 "Explicitly NOT"), and **an article keeps its department**: its KB number
-	carries the block (``KB-0612`` is in 06), and a number never changes.
+	``None`` for a first version.
+
+	* **A first version must have a kind and a department**, because its number is made from them
+	  (``SOP-06-0001``, :func:`next_article_number`). Submit already asks for both; this also holds
+	  a version submitted before the kind existed.
+	* A retired article takes no new version (v1 has no way back from retirement, WI-080
+	  "Explicitly NOT").
+	* **An article keeps its kind and its department**: both are part of its number, and a number
+	  never changes (:func:`identity_problem`).
 	"""
 	if article is None:
-		return []
+		problems = []
+		if constants.block_code(_get(version, "department_block")) is None:
+			problems.append(_NO_DEPARTMENT + _UNNUMBERABLE)
+		if _get(version, "kind") not in constants.ARTICLE_KINDS:
+			problems.append(_NO_KIND + _UNNUMBERABLE)
+		return problems
 	problems = []
-	name = _get(article, "name") or _get(article, "kb_number") or "its article"
+	name = _article_name(article)
 	if (_get(article, "status") or _ARTICLE_PUBLISHED) != _ARTICLE_PUBLISHED:
 		problems.append(f"{name} is {_get(article, 'status')}, so it takes no new version")
-	block = _get(article, "department_block")
-	if block and _get(version, "department_block") != block:
+	problem = identity_problem(version, article)
+	if problem:
+		problems.append(problem)
+	return problems
+
+
+#: Why a first version cannot be numbered; :func:`submit_problems` leaves the suffix off when it
+#: already says the rest.
+_NO_DEPARTMENT = "it has no department"
+_NO_KIND = "it has no kind"
+_UNNUMBERABLE = ", so it cannot be numbered"
+
+#: How a kind reads after "make it": "a Policy", "an SOP" (said "ess-oh-pee").
+_A_KIND = {"Policy": "a Policy", "Process": "a Process", "SOP": "an SOP"}
+
+
+def identity_problem(version, article):
+	"""Why ``version`` cannot belong to ``article``: it changes the kind or the department that the
+	article's number carries. ``None`` when it keeps both, and when there is no article (a first
+	version is numbered from its own).
+
+	**A published article's number never changes, and a number is never reused** (Nik, 2026-09-29),
+	and the number says the kind and the department (``SOP-06-0001`` is an SOP in 06 Operations), so
+	neither ever changes. To reclassify or move an article, a new article is published and the old
+	one retired, naming its replacement, so an old citation still leads somewhere.
+
+	The article's kind and department are its stored ones, or failing those, the ones its number
+	carries. The same words at every layer that refuses the change: the version's save, submit and
+	approve, and the AI drafting tool."""
+	if article is None:
+		return None
+	kind, block = _identity(article)
+	new_kind, new_block = _get(version, "kind") or None, _get(version, "department_block") or None
+	kind_changes = bool(kind) and new_kind != kind
+	block_changes = bool(block) and new_block != block
+	if not kind_changes and not block_changes:
+		return None
+	name = _article_name(article)
+	fixed = f"{name} keeps its kind and department: they are part of its number, which never changes."
+	valid_kind = new_kind in constants.ARTICLE_KINDS
+	valid_block = constants.block_code(new_block) is not None
+	if (kind_changes and not valid_kind) or (block_changes and not valid_block):
+		# A blank or unknown value is not somewhere to move it to: say what the revision stays.
+		stays = " ".join(part for part in (_A_KIND.get(kind) or "", f"in {block}" if block else "") if part)
+		return f"{fixed} Each of its versions is {stays}." if stays else fixed
+	if kind_changes and block_changes:
+		change = f"make it {_A_KIND[new_kind]} in {new_block}"
+	elif kind_changes:
+		change = f"make it {_A_KIND[new_kind]}"
+	else:
+		change = f"move it to {new_block}"
+	return (
+		f"{fixed} To {change}, start a new article with that kind and department. Once the new one is "
+		f"published, retire {name} and name the new article in the reason."
+	)
+
+
+def number_problems(number, kind, department):
+	"""Why ``number`` is not the right number for an article of ``kind`` in ``department``, as
+	clauses (no full stop); empty when it is. Asked when an article row is first written (the
+	controller) and of every article by the Integrity report.
+
+	Names only numbers, codes and the fixed option values, never text: a kind or department that is
+	not one of the options (possible only past the ORM) is described, not quoted."""
+	number = "" if number is None else str(number)
+	match = constants.ARTICLE_NUMBER.fullmatch(number)
+	if match is None:
+		return [f"{number or 'The name'} is not an article number of the form SOP-06-0001"]
+	prefix, code, digits = match.groups()
+	problems = []
+	if int(digits) == 0:
+		problems.append(f"{number} ends in 0000, which is never allocated")
+	option = constants.department_option(code) if code in _BLOCK_CODES else None
+	if option is None:
+		problems.append(f"{number} is numbered in block {code}, which is not a department block")
+	elif constants.block_code(department) != code:
 		problems.append(
-			f"an article keeps its department: {name} is numbered in {block}; start a new article "
-			"for another department"
+			f"{number} is numbered in block {code}, but its department is {_described(department)}"
+		)
+	number_kind = constants.PREFIX_KINDS[prefix]
+	if kind != number_kind:
+		problems.append(
+			f"{number} is numbered as {_A_KIND[number_kind]}, but its kind is {_kind_described(kind)}"
 		)
 	return problems
 
@@ -677,41 +768,47 @@ def with_contributor(text, user):
 	return "\n".join(names)
 
 
-# ------------------------------------------------------------------ KB numbers
+# ------------------------------------------------------------------ article numbers (2026-09-29)
+
+#: ``("SOP", "06 Operations")`` -> ``"SOP-06-"``: ``constants.number_scope``, the part of a number
+#: the kind and department fix. Publishing binds ``scope + "%"`` in its ``SELECT ... FOR UPDATE``, so
+#: the ``%`` sits inside the parameter, never in the SQL text.
+number_scope = constants.number_scope
 
 
-def kb_number_prefix(block):
-	"""``"06 Operations"`` (or ``"06"``) -> ``"KB-06"``. PR 3 binds ``prefix + "%"`` in its
-	``SELECT ... FOR UPDATE``, so the ``%`` sits inside the parameter, never in the SQL text."""
-	return f"KB-{_block(block)}"
+def next_article_number(kind, block, taken):
+	"""The next article number for a ``kind`` article in ``block``: ``SOP-06-0001``, then
+	``SOP-06-0002``, and so on. Never ``0000``, and never one reused.
 
+	``kind`` is one of ``constants.ARTICLE_KINDS``; ``block`` a ``department_block`` option
+	(``"06 Operations"``) or its two-digit code. Each ``(prefix, department)`` scope has its own
+	sequence (:func:`number_scope`). ``taken`` is every number already used: the articles' names and
+	every number a version still names as its article. Entries in another scope, and anything that is
+	not an article number (the retired ``KB`` format, garbage), are ignored; an entry is read after
+	``strip()`` and without regard to case, because MariaDB compares names that way (``_ci``, PAD
+	SPACE), so a ``sop-06-0001`` row would collide with a new ``SOP-06-0001`` on the primary key.
 
-def next_kb_number(block, taken):
-	"""The next KB number in ``block``: ``KB-{block}{01..99}``, never ``00``, never one reused.
+	The answer is one more than the highest taken, not the lowest gap: articles are never deleted, so
+	a gap exists only if one vanished past the ORM, and its number may still be cited somewhere.
 
-	``block`` is a ``department_block`` option (``"06 Operations"``) or its two-digit code.
-	``taken`` is every KB number already allocated (any block; others are ignored, and so is
-	anything that is not a KB number). The answer is one more than the highest taken, not the
-	lowest gap: articles are never deleted, so a gap exists only if one vanished past the ORM, and
-	its number may still be cited somewhere. ``{block}00`` is reserved for the block's index
-	article, as in the POL-0000 register, and is never allocated here.
-
-	Raises ``ValueError`` for a block that is not one of ``constants.DEPARTMENT_BLOCKS``, and
-	:class:`BlockFullError` once ``{block}99`` is taken.
+	Raises ``ValueError`` for a kind or block that is not one of the options, and
+	:class:`SequenceFullError` once ``9999`` is taken.
 	"""
-	code = _block(block)
+	scope = number_scope(kind, block)
 	highest = 0
 	for number in taken or ():
-		match = _KB_NUMBER.match(str(number or "").strip())
-		if match and match.group(1) == code:
-			highest = max(highest, int(match.group(2)))
-	if highest >= 99:
-		raise BlockFullError(
-			f"Department block {_block_option(code)} has no KB numbers left: KB-{code}01 to "
-			f"KB-{code}99 are all used, and KB-{code}00 is reserved for the block's index. "
-			"Publish the article under another block, or ask Nik to extend the numbering."
+		text = str(number or "").strip().upper()
+		if not text.startswith(scope):
+			continue
+		parsed = constants.parse_article_number(text)
+		if parsed is not None:
+			highest = max(highest, parsed[2])
+	if highest >= constants.MAX_SEQUENCE:
+		raise SequenceFullError(
+			f"No {kind} in {_block_option(scope[4:6])} can be numbered: {scope}0001 to "
+			f"{scope}{constants.MAX_SEQUENCE} are all used. Ask Nik to extend the numbering."
 		)
-	return f"KB-{code}{highest + 1:02d}"
+	return constants.article_number(kind, block, highest + 1)
 
 
 # ------------------------------------------------------------------ review dates
@@ -802,18 +899,38 @@ def _same_moment(stored, opened):
 	return a is not None and b is not None and a == b
 
 
-def _block(block):
-	codes = {code for code, _label in constants.DEPARTMENT_BLOCKS}
-	code = constants.block_code(block)
-	if code is None and isinstance(block, str) and block in codes:
-		code = block
-	if code is None:
-		raise ValueError(f"{block!r} is not a department block.")
-	return code
+_BLOCK_CODES = frozenset(code for code, _label in constants.DEPARTMENT_BLOCKS)
 
 
 def _block_option(code):
 	return next(option for option in constants.DEPARTMENT_BLOCK_OPTIONS if option.startswith(code + " "))
+
+
+def _article_name(article):
+	return _get(article, "name") or _get(article, "kb_number") or "its article"
+
+
+def _identity(article):
+	"""``(kind, department option)`` an article's number fixes: the ones stored on it, or failing
+	those, the ones its number carries."""
+	parsed = constants.parse_article_number(_get(article, "name") or _get(article, "kb_number"))
+	kind = _get(article, "kind") or (parsed[0] if parsed else None)
+	block = _get(article, "department_block") or (_block_option(parsed[1]) if parsed else None)
+	return kind, block
+
+
+def _described(department):
+	"""A ``department_block`` value as a problem names it: the option, "blank", or a description of
+	something that is not one (written past the ORM), never the value itself."""
+	if not department:
+		return "blank"
+	return department if constants.block_code(department) else "not a department block"
+
+
+def _kind_described(kind):
+	if not kind:
+		return "blank"
+	return kind if kind in constants.ARTICLE_KINDS else "not one of the kinds"
 
 
 def _differs(fieldname, before, after):

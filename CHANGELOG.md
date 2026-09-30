@@ -7,6 +7,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.568.0] - 2026-09-30
+
+**Knowledge articles are numbered by kind and department: `SOP-06-0001`, not `KB-0601`.** Nik, on
+2026-09-29: "Also I feel like KB-#### is too limiting." Offered the choices, he chose "SOP-06-0001 by
+kind": the prefix follows the kind, so the number says what the document is, as the Drive register's
+numbers do. The format is `<PREFIX>-<DD>-<NNNN>`: `POL` for a Policy, `PRO` for a Process, `SOP` for an
+SOP; the two-digit department block (`00` Company Wide to `09` Sales); a zero-padded sequence from
+`0001`. WI-080, amending ADR 0017.
+
+Why:
+- `KB-{block}{01..99}` capped each department at 99 articles, and said nothing about what an article
+  is. The new number carries the kind, and each `(prefix, department)` has its own four-digit sequence.
+- **A published article's number never changes, and a number is never reused.** Its kind and department
+  are part of it, so they are fixed at first publish. To reclassify or move an article, publish a new one
+  and retire the old one, naming the new one, so old citations still resolve. Nik was told this rule when
+  he chose, and did not object.
+
+**Nothing is migrated, and no retired number maps to anything.** Checked read-only on prod before this
+was written: no Knowledge Article, no Knowledge Article Version (no `KBV` naming-series row, which the
+first insert creates), no change-log, File or Deleted Document row for either doctype, and no `tabSeries`
+row with a `POL`, `PRO`, `SOP` or `KB` prefix. No `KB-` number was ever issued. The first article,
+"Receiving a PO against a packing slip" (an SOP in 06 Operations, drafted as "KB-0601"), publishes as
+`SOP-06-0001`.
+
+### Changed
+
+- **One definition of the number**, in `knowledge_base/constants.py` (standard library only):
+  `KIND_PREFIXES`, `ARTICLE_NUMBER` (canonical, as stored), `ARTICLE_NUMBER_WRITTEN` (as people write
+  one), `article_number`, `number_scope`, `parse_article_number`, `normalize_article_number`,
+  `written_article_numbers` and `cited_article_numbers`. Search, the Markdown renderer, the rules, the
+  Integrity report and both AI modules import them; the private copies of the old pattern (in search,
+  markdown, workflow and reporting) are gone.
+  - `SOP-06-0001`, `sop 06 0001`, `SOP-06-1`, `sop_6_1`, `SOP06-0001`, `SOP-06-00001`, the en-dash
+    spelling Word and Docs paste, and full-width letters all read as `SOP-06-0001`.
+  - The separator between the department and the sequence is required, so the Drive register's own
+    `PREFIX-DDNN` numbers (`SOP-0601`, `POL-0600`, which the first article cites) are never read as
+    article numbers. The two stay separate series.
+  - The department part accepts exactly the ten blocks, and a test holds it to `DEPARTMENT_BLOCKS`: a
+    block `10` fails the build until the pattern is widened.
+- **Allocation** (`workflow.next_article_number`, `publish.allocate_number`): one more than the highest
+  number in the `(prefix, department)` scope, never the lowest gap, never `0000`, and `SequenceFullError`
+  past `9999`. It reads, bound to `"SOP-06-%"`, the articles `FOR UPDATE` as before, **and every number a
+  version still names as its article**. An article deleted past the ORM (raw SQL, a batch-approved
+  `run_python_code`) leaves its versions behind; without that read, one more than the highest would
+  hand a vanished highest number out again.
+- **No naming series.** The number is still derived from the rows under the lock, not from
+  `tabSeries`:
+  - that table is keyed by prefix string across every doctype, so a naming series elsewhere with a month
+    component (`SOP-.MM.-`) renders `SOP-06-` and would share or advance the counter;
+  - v16's Update Series screen lets a System Manager reset a counter, which would reuse numbers;
+  - it would be a second source of truth beside the rows.
+- **The kind and the department are frozen at first publish, in four places, with one message**
+  (`workflow.identity_problem`): "SOP-06-0001 keeps its kind and department: they are part of its number,
+  which never changes. To make it a Policy, start a new article with that kind and department. Once the
+  new one is published, retire SOP-06-0001 and name the new article in the reason."
+  1. The form. A revision shows `kind` and `department_block` read-only (`read_only_depends_on:
+     eval:doc.article`), and its intro says why. Approve on a first version asks "Publish ... as a new
+     SOP in 06 Operations? It will be numbered SOP-06-..., and its number, kind and department can never
+     change". The scope comes from `__onload.kb.number_scope`, never a guessed number another approval
+     could take first.
+  2. The version's save (`before_validate`, which no flag skips). This covers REST, Data Import and the
+     drafting tool, not only the form.
+  3. Submit and approve (`workflow.publish_problems`), against a version changed past the ORM. A first
+     version with no kind or department "cannot be numbered"; the Submit blocker still names each
+     missing field once.
+  4. The Article row (`validate` and `on_update`): a new row's number must be canonical and match its kind
+     and department (`workflow.number_problems`), and a saved row's kind and department must equal the
+     stored ones, even under `flags.kb_action` and `flags.ignore_validate`. `publish.publish` now writes
+     both only when it creates the article.
+- **A version with no kind can no longer be approved.** Until now one submitted before PR 5 could be,
+  and its article stayed unclassified. Its number is made from the kind now. Prod has none.
+- **The drafting tool** refuses a revision whose `kind` is not its article's, before any card and again
+  under the row lock ("a revision keeps its article's kind: give the same one", in its schema).
+- **The Integrity report's "KB number" check is now "Number"**, and names each way a number can be wrong:
+  - not canonical (case-sensitive, so a lowercase name written past the ORM is caught);
+  - ending in `0000`;
+  - in a block that is not a department block;
+  - in another department than the article's;
+  - a prefix that is not the article's kind.
+
+  No kind on either the article or its live version is now a problem, not agreement. A row still quotes
+  no text: a kind or department that is not an option is described, not quoted.
+- **The mirror** (`markdown.mirror_path`) writes `kb/06-operations/SOP-06-0001.md`, and skips an article
+  whose number's department code is not its department's (possible only past the ORM), which the private
+  repo would refuse. **`schema` stays 1**: no schema-1 snapshot had carried an article (there were none),
+  so no consumer had seen the old path, and the keys are unchanged. The private repo's script changes in
+  a paired PR.
+- **Search.** An article number, however it is written, is one term (`sop-06-0001`) and pins its
+  article. `SOP-06` alone pins nothing, and ranks by the kind and department the meta field carries.
+  The AwesomeBar's label bolds `SOP-06-0001` as one span.
+  - Found in review: the loose reading also matched ordinary running text with a number's shape. A
+    product called "Pro 2 1000" became one term, `pro-02-1000`, so `1000`, `pro 1000` and `Pro 2`
+    stopped finding the article whose body held it, which they did before numbers were read. Now an
+    article's text also indexes a number's prefix and its digit runs of 2 or more characters, as
+    written, beside its term, as a document number's parts always were. A query leaves them out:
+    naming a number means that article, not every SOP in 06, whose `sop` and `06` the meta field
+    carries. So `SOP-06-0099` still finds nothing.
+- **What running text cites is read more strictly** (`constants.cited_article_numbers`, found in
+  review). A space may separate the parts only when the department has two digits: `sop 06 0001`,
+  `SOP-6-1` and `sop_6_1` are citations; `Pro 2 1000`, `pro 5 10 times` and `SOP 1 2 3` are words.
+  Fetch's `related` uses it, so a body holding "Pro 2 1000" no longer shows the AI a cited
+  `PRO-02-1000` (`available: false`) that the text never cited. The loose reading stays where a whole
+  string is meant as a number (fetch's and the drafting tool's argument) and for a query's pinning.
+- **The AI tools' descriptions and examples** say `SOP-06-0001` (`cite as 'SOP-06-0001 v3'`), and the
+  descriptions stay under 600 characters. Fetch's not-found message now says what a number looks like.
+  It is the same text for every miss, so it leaks nothing. A search query naming the retired format
+  (`KB-0601`, `kb 601`) gets a `problems` hint, and the rest of the query is still searched.
+- **Unchanged on purpose:** the fieldname `kb_number`, every payload key, the fetch and draft argument
+  `kb_number`, the mirror header's eleven keys, the `KBV-` version ids, the roles and the module. ADR 0017
+  §3 freezes the payload shapes, and only the values' format changed. The Article's label is now
+  "Article Number"; the workspace paragraph and the Due for Review column say "article number".
+- A test fails the build on a number in the retired format (`KB-0601`, `KB0601`) written anywhere in
+  the Knowledge Base's code, schema or workspace, comments and docstrings included. The one pattern kept
+  on purpose is `ai_tools._RETIRED_FORMAT`, the search hint, found by its name.
+- **Docs that still gave retired-format instructions** (found in review), each now pinned by a test:
+  - WI-080's T0 companion ("now") told course authors to cite "see KB-0612" in lesson text, while ADR
+    0017 said article numbers. It now says `see SOP-06-0001`.
+  - Slice 5's scanner looked for "the KB number"; it reads what running text cites
+    (`constants.cited_article_numbers`). Slice 4's export header says "article number".
+  - The Knowledge Base README's tests table said a tool description must hold "KB-", the opposite of
+    what the test checks. It now names the `'SOP-06-0001 v3'` example, as `tests/README.md` did.
+
+### Notes
+
+- **Triton's frozen snapshot needs regenerating after this deploys** (TASK-2026-02328), then
+  `deploy_agents` on the VM. The tools' descriptions and examples changed; their names and schemas did
+  not, so nothing breaks meanwhile, but the deployed agents read the old `KB-0601` examples until then.
+- **Hold every Approve and Publish on prod until this is deployed and verified.** Approval is the only
+  thing that allocates a number, and an article approved first would keep a `KB-` number for good.
+  Creating or submitting the draft is harmless: a version carries no number.
+- A "Replaced by" link on a retired article, which fetch and search would follow, is a follow-up (PR B).
+  It is needed before the first retirement for a kind or department change. Until then the pointer is
+  the retire reason, and the Retire dialog says to publish the replacement first and name it there.
+- The private repo `sapphire-knowledge` changes in a paired PR (`kb/<NN-department>/SOP-06-0001.md` paths,
+  the folder's two digits equal to the number's department, `AGENTS.md`'s citation examples). The two PRs
+  are order-independent while there are no articles; both must land before the first approval.
+- Tests: the rules, the transitions, the schema (the Article controller's freeze and number check), the
+  entry points (the Integrity report), search (the tokenizer, pinning, and the golden set rekeyed to
+  invented `SOP-06-9001`-style numbers, with a query per written form), the actions end to end (the scope
+  allocation, a vanished number not reused, the four layers, the version form's Approve question run in
+  node), the tools' descriptions, and the gate's cosmetic numbers. No new CI step: every changed suite
+  already runs.
+
+### After deploy (read-only)
+
+1. ``SELECT COUNT(*) FROM `tabKnowledge Article` `` is still 0.
+2. The Desk form of the draft shows the new Approve question ("It will be numbered SOP-06-…").
+3. After the first approval:
+   - ``SELECT name, kind, department_block FROM `tabKnowledge Article` `` is `SOP-06-0001` | SOP |
+     06 Operations;
+   - the Knowledge Base Integrity report (run as a KB Approver) is empty;
+   - the AwesomeBar finds `sop 06 1`;
+   - `fetch_knowledge_article("SOP-06-0001 v1")` returns `found: true`, and
+     `fetch_knowledge_article("KB-0601")` returns `found: false` with the format message;
+   - the next kb-mirror run writes `kb/06-operations/SOP-06-0001.md`.
+4. ``SELECT modified FROM tabWorkspace WHERE name='Knowledge Base'`` is `2026-09-29 12:00:00`, and the
+   workspace paragraph says "an article number such as SOP-06-0001".
+
 ## [1.567.1] - 2026-09-30
 
 **Error Log rows are titled with their title: `frappe.log_error` calls pass `title=` and

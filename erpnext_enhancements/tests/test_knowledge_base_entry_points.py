@@ -81,8 +81,8 @@ VERSION = K.VERSION_DOCTYPE
 #: its ``modified`` past the stamp below; then put the new fingerprint and stamp here.
 PINNED = {
 	WORKSPACE_PATH: (
-		"d3445804ef6df80fae245117e8b4631163da25a8c774dc9b35ea9637a9db0f54",
-		"2026-09-28 23:00:00.000000",
+		"3949fb600c08e269e2065bbfe0440914cbb7d4e1b886f33a85d5401b8e3bcc57",
+		"2026-09-29 12:00:00.000000",
 	),
 	SIDEBAR_PATH: (
 		"602355a1de2f7d8bd5e5f405064d1b1497fddbd5071f601b71751fa5b957e3ca",
@@ -373,7 +373,7 @@ def corpus():
 		"review_note": SENTINELS[4],
 	}
 	article = {
-		"name": "KB-0612",
+		"name": "SOP-06-9012",
 		"status": "Published",
 		"department_block": "06 Operations",
 		"version_number": 2,
@@ -394,7 +394,7 @@ def corpus():
 			**base,
 			**LIVE_TEXT,
 			"name": "KBV-00001",
-			"article": "KB-0612",
+			"article": "SOP-06-9012",
 			"review_state": "Superseded",
 			"docstatus": 1,
 			"version_number": 1,
@@ -420,7 +420,7 @@ def corpus():
 			**base,
 			**LIVE_TEXT,
 			"name": "KBV-00003",
-			"article": "KB-0612",
+			"article": "SOP-06-9012",
 			"review_state": "Published",
 			"docstatus": 1,
 			"version_number": 2,
@@ -433,7 +433,7 @@ def corpus():
 			**base,
 			**draft_text,
 			"name": "KBV-00004",
-			"article": "KB-0612",
+			"article": "SOP-06-9012",
 			"review_state": "Draft",
 			"docstatus": 0,
 			"version_number": 3,
@@ -458,7 +458,7 @@ def corpus():
 		},
 	]
 	files = [
-		{"name": "f-private", "attached_to_doctype": ARTICLE, "attached_to_name": "KB-0612", "is_private": 1},
+		{"name": "f-private", "attached_to_doctype": ARTICLE, "attached_to_name": "SOP-06-9012", "is_private": 1},
 		{"name": "f-other", "attached_to_doctype": "Task", "attached_to_name": "TASK-1", "is_private": 0},
 	]
 	return {"articles": [article], "versions": versions, "files": files}
@@ -614,7 +614,10 @@ class TestWorkspace(unittest.TestCase):
 		self.assertNotIn("Short how-to articles", text)
 		self.assertIn("search bar at the top of any page", text)
 		self.assertIn("two letters are enough, e.g. PO", text)
-		self.assertIn("KB-0612", text)
+		# 2026-09-29: articles are numbered by kind and department.
+		self.assertIn("an article number such as SOP-06-0001", text)
+		self.assertIn("SOP-06 lists the Operations SOPs", text)
+		self.assertNotRegex(text, r"KB-?[0-9]")
 		self.assertLess(text.index("search bar"), text.index("<b>Published articles</b>"))
 		# The Kind box sits with Title and Keywords, before the phone hint: v16 hides it on a phone too.
 		self.assertLess(text.index("<b>Keywords</b>"), text.index("<b>Kind</b>"))
@@ -1394,7 +1397,7 @@ class TestDueReportRuns(_ReportRun):
 	def _articles(self, *review_dates):
 		DB[ARTICLE] = [
 			{
-				"name": f"KB-06{index + 1:02d}",
+				"name": f"SOP-06-{9001 + index}",
 				"title": f"Article {index + 1}",
 				"status": "Published",
 				"department_block": "06 Operations",
@@ -1406,7 +1409,7 @@ class TestDueReportRuns(_ReportRun):
 			for index, review_by in enumerate(review_dates)
 		] + [
 			{
-				"name": "KB-0699",
+				"name": "SOP-06-9099",
 				"title": "Retired",
 				"status": "Retired",
 				"review_by": datetime.date(2020, 1, 1),
@@ -1418,22 +1421,22 @@ class TestDueReportRuns(_ReportRun):
 			datetime.date(2026, 9, 1), None, datetime.date(2026, 10, 20), datetime.date(2027, 3, 1)
 		)
 		columns, rows, message = due_report.execute({})
-		self.assertEqual([r["kb_number"] for r in rows], ["KB-0602", "KB-0601", "KB-0603"])
+		self.assertEqual([r["kb_number"] for r in rows], ["SOP-06-9002", "SOP-06-9001", "SOP-06-9003"])
 		self.assertEqual([r["state"] for r in rows], [R.NO_REVIEW_DATE, R.OVERDUE, R.DUE_SOON])
 		self.assertEqual(rows[1]["days_left"], -27)
 		self.assertEqual(rows[1]["process_owner"], JAMES)
 		self.assertIsNone(message)
 		((query, values),) = SQL_CALLS
 		self.assertEqual(values, {"status": "Published"})
-		self.assertNotIn("KB-0699", [r["kb_number"] for r in rows])
+		self.assertNotIn("SOP-06-9099", [r["kb_number"] for r in rows])
 		self.assertNotIn(SENTINELS[1], json.dumps(rows, default=str))
 
 	def test_the_window_and_the_owner_filter(self):
 		self._articles(datetime.date(2026, 10, 5), datetime.date(2026, 10, 20))
 		_c, rows, _m = due_report.execute({"within_days": 10})
-		self.assertEqual([r["kb_number"] for r in rows], ["KB-0601"])
+		self.assertEqual([r["kb_number"] for r in rows], ["SOP-06-9001"])
 		_c, rows, _m = due_report.execute({"process_owner": PARKER.upper()})
-		self.assertEqual([r["kb_number"] for r in rows], ["KB-0602"])
+		self.assertEqual([r["kb_number"] for r in rows], ["SOP-06-9002"])
 
 	def test_nothing_due_says_so(self):
 		self._articles(datetime.date(2027, 3, 1))
@@ -1486,11 +1489,11 @@ class TestIntegrityReportRuns(_ReportRun):
 
 	def test_a_public_file_is_a_row(self):
 		DB["File"].append(
-			{"name": "f-pub", "attached_to_doctype": ARTICLE, "attached_to_name": "KB-0612", "is_private": 0}
+			{"name": "f-pub", "attached_to_doctype": ARTICLE, "attached_to_name": "SOP-06-9012", "is_private": 0}
 		)
 		_c, rows, message = integrity_report.execute({})
 		self.assertEqual(
-			[(r["check"], r["article"], r["version"]) for r in rows], [(R.CHECK_PUBLIC_FILE, "KB-0612", None)]
+			[(r["check"], r["article"], r["version"]) for r in rows], [(R.CHECK_PUBLIC_FILE, "SOP-06-9012", None)]
 		)
 		self.assertIn("1 problem(s)", message)
 
@@ -1528,15 +1531,15 @@ class TestReviewDue(unittest.TestCase):
 	def test_the_order(self):
 		rows = R.due_rows(
 			[
-				{"name": "KB-0603", "review_by": datetime.date(2026, 10, 1)},
-				{"name": "KB-0602", "review_by": datetime.date(2026, 9, 1)},
-				{"name": "KB-0604", "review_by": None},
-				{"name": "KB-0601", "review_by": datetime.date(2026, 9, 20)},
-				{"name": "KB-0605", "review_by": datetime.date(2027, 1, 1)},
+				{"name": "SOP-06-9003", "review_by": datetime.date(2026, 10, 1)},
+				{"name": "SOP-06-9002", "review_by": datetime.date(2026, 9, 1)},
+				{"name": "SOP-06-9004", "review_by": None},
+				{"name": "SOP-06-9001", "review_by": datetime.date(2026, 9, 20)},
+				{"name": "SOP-06-9005", "review_by": datetime.date(2027, 1, 1)},
 			],
 			TODAY,
 		)
-		self.assertEqual([r["kb_number"] for r in rows], ["KB-0604", "KB-0602", "KB-0601", "KB-0603"])
+		self.assertEqual([r["kb_number"] for r in rows], ["SOP-06-9004", "SOP-06-9002", "SOP-06-9001", "SOP-06-9003"])
 
 
 # ------------------------------------------------------------------ reporting.integrity_problems
@@ -1581,15 +1584,26 @@ class TestIntegrity(unittest.TestCase):
 		problems = self.assertOnly(R.CHECK_NUMBER)
 		self.assertEqual(len(problems), 2)  # the number's block, and the approved department
 
-	def test_a_block_index_or_a_malformed_number(self):
-		for name in ("KB-0600", "KB-612", "kb-0612"):
+	def test_a_malformed_or_mismatched_number(self):
+		"""2026-09-29: the name must be a canonical article number (case-sensitive, so a lowercase one
+		written past the ORM is caught), never ``0000``, in a real block, and with its kind's prefix."""
+		for name, detail in (
+			("SOP-06-0000", "ends in 0000, which is never allocated"),
+			("SOP-6-9012", "is not an article number of the form SOP-06-0001"),
+			("sop-06-9012", "is not an article number of the form SOP-06-0001"),
+			("KB-0612", "is not an article number of the form SOP-06-0001"),  # the retired format
+			("SOP-42-9012", "is numbered in block 42, which is not a department block"),
+			("POL-06-9012", "is numbered as a Policy, but its kind is SOP"),
+		):
 			with self.subTest(name=name):
 				data = corpus()
 				data["articles"][0]["name"] = name
 				for v in data["versions"]:
-					if v["article"] == "KB-0612":
+					if v["article"] == "SOP-06-9012":
 						v["article"] = name
-				self.assertEqual(checks(problems_of(data)), {R.CHECK_NUMBER})
+				problems = problems_of(data)
+				self.assertEqual(checks(problems), {R.CHECK_NUMBER})
+				self.assertIn(f"{name} {detail}.", [p["detail"] for p in problems])
 
 	# --- the live version
 
@@ -1597,7 +1611,7 @@ class TestIntegrity(unittest.TestCase):
 		self.article["live_version"] = ""
 		problems = self.assertOnly(R.CHECK_LIVE_VERSION)
 		details = " ".join(p["detail"] for p in problems)
-		self.assertIn("KB-0612 has no live version", details)
+		self.assertIn("SOP-06-9012 has no live version", details)
 		self.assertIn("KBV-00003 is Published", details)
 
 	def test_a_live_version_that_does_not_exist(self):
@@ -1617,7 +1631,7 @@ class TestIntegrity(unittest.TestCase):
 		self.assertOnly(R.CHECK_LIVE_VERSION)
 
 	def test_a_live_version_of_another_article(self):
-		self.live["article"] = "KB-0699"
+		self.live["article"] = "SOP-06-9099"
 		self.assertOnly(R.CHECK_LIVE_VERSION, R.CHECK_VERSION_STATE)
 
 	# --- the approved text
@@ -1689,7 +1703,7 @@ class TestIntegrity(unittest.TestCase):
 		self.assertEqual(problem["version"], "KBV-00001")
 
 	def test_two_open_versions(self):
-		version(self.data, "KBV-00002")["article"] = "KB-0612"
+		version(self.data, "KBV-00002")["article"] = "SOP-06-9012"
 		version(self.data, "KBV-00002")["review_state"] = "In Review"
 		(problem,) = self.assertOnly(R.CHECK_OPEN_VERSIONS)
 		self.assertIn("KBV-00002, KBV-00004", problem["detail"])
@@ -1726,9 +1740,9 @@ class TestIntegrity(unittest.TestCase):
 		self.assertOnly(R.CHECK_VERSION_STATE)
 
 	def test_a_version_of_an_article_that_does_not_exist(self):
-		version(self.data, "KBV-00005")["article"] = "KB-0299"
+		version(self.data, "KBV-00005")["article"] = "SOP-02-9099"
 		(problem,) = self.assertOnly(R.CHECK_VERSION_STATE)
-		self.assertEqual(problem["article"], "KB-0299")
+		self.assertEqual(problem["article"], "SOP-02-9099")
 
 	def test_first_drafts_may_be_many(self):
 		version(self.data, "KBV-00002")["review_state"] = "Draft"
@@ -1738,12 +1752,12 @@ class TestIntegrity(unittest.TestCase):
 
 	def test_a_public_file_names_where_it_is_attached(self):
 		self.data["files"] += [
-			{"name": "f1", "attached_to_doctype": ARTICLE, "attached_to_name": "KB-0612", "is_private": 0},
+			{"name": "f1", "attached_to_doctype": ARTICLE, "attached_to_name": "SOP-06-9012", "is_private": 0},
 			{"name": "f2", "attached_to_doctype": VERSION, "attached_to_name": "KBV-00004", "is_private": 0},
 		]
 		problems = self.assertOnly(R.CHECK_PUBLIC_FILE)
 		self.assertEqual(
-			{(p["article"], p["version"]) for p in problems}, {(None, "KBV-00004"), ("KB-0612", None)}
+			{(p["article"], p["version"]) for p in problems}, {(None, "KBV-00004"), ("SOP-06-9012", None)}
 		)
 
 	# --- never text
@@ -1755,8 +1769,8 @@ class TestIntegrity(unittest.TestCase):
 		self.article["body"] = f"<p>{SENTINELS[1]}</p>"
 		self.live.update(docstatus=1, ai_requested_by=PARKER)
 		version(self.data, "KBV-00001")["review_state"] = "Published"
-		version(self.data, "KBV-00002").update(article="KB-0612", review_state="In Review")
-		version(self.data, "KBV-00005")["article"] = "KB-0299"
+		version(self.data, "KBV-00002").update(article="SOP-06-9012", review_state="In Review")
+		version(self.data, "KBV-00005")["article"] = "SOP-02-9099"
 		problems = problems_of(self.data)
 		self.assertGreater(len(checks(problems)), 4)
 		dumped = json.dumps(problems)
@@ -1773,32 +1787,41 @@ class TestIntegrity(unittest.TestCase):
 		self.live["kind"] = "Policy"
 		(problem,) = self.assertOnly(R.CHECK_APPROVED_TEXT)
 		self.assertEqual(
-			problem["detail"], "KB-0612 is classified SOP, but its live version KBV-00003 was approved as Policy."
+			problem["detail"], "SOP-06-9012 is classified SOP, but its live version KBV-00003 was approved as Policy."
 		)
-		self.assertEqual((problem["article"], problem["version"]), ("KB-0612", "KBV-00003"))
+		self.assertEqual((problem["article"], problem["version"]), ("SOP-06-9012", "KBV-00003"))
 
-	def test_no_kind_on_either_side_is_agreement(self):
-		"""An article published before PR 5, from a version that had no kind: not a problem."""
+	def test_no_kind_on_either_side_is_a_problem(self):
+		"""Until 2026-09-29 no kind on either side was agreement, for an article published before PR 5.
+		Now the number is made from the kind, so none exists, and a missing one is named twice: the
+		number's prefix is not the article's kind, and neither side has one."""
 		self.article["kind"] = None
 		self.live["kind"] = ""
-		self.assertEqual(problems_of(self.data), [])
+		problems = self.assertOnly(R.CHECK_NUMBER, R.CHECK_APPROVED_TEXT)
+		details = [p["detail"] for p in problems]
+		self.assertIn("SOP-06-9012 is numbered as an SOP, but its kind is blank.", details)
+		self.assertIn("SOP-06-9012 and its live version KBV-00003 have no kind.", details)
 
 	def test_a_kind_on_one_side_only(self):
 		self.article["kind"] = None
-		(problem,) = self.assertOnly(R.CHECK_APPROVED_TEXT)
-		self.assertIn("KB-0612 is not classified, but its live version KBV-00003 was approved as SOP", problem["detail"])
+		problems = self.assertOnly(R.CHECK_NUMBER, R.CHECK_APPROVED_TEXT)
+		(problem,) = [p for p in problems if p["check"] == R.CHECK_APPROVED_TEXT]
+		self.assertIn("SOP-06-9012 is not classified, but its live version KBV-00003 was approved as SOP", problem["detail"])
 		data = corpus()
 		version(data, "KBV-00003")["kind"] = None
 		(problem,) = problems_of(data)
-		self.assertIn("KB-0612 is classified SOP, but its live version KBV-00003 was approved with no kind", problem["detail"])
+		self.assertIn("SOP-06-9012 is classified SOP, but its live version KBV-00003 was approved with no kind", problem["detail"])
 
 	def test_a_kind_written_past_the_orm_is_not_quoted(self):
 		"""A kind is one of three words; anything else was written past v16's Select validation, and
 		a row names it only as not a kind, as it never quotes text."""
 		self.article["kind"] = "DRAFT-KIND-7Q"
-		(problem,) = self.assertOnly(R.CHECK_APPROVED_TEXT)
-		self.assertNotIn("DRAFT-KIND-7Q", problem["detail"])
-		self.assertIn("not a kind", problem["detail"])
+		problems = self.assertOnly(R.CHECK_NUMBER, R.CHECK_APPROVED_TEXT)
+		for problem in problems:
+			self.assertNotIn("DRAFT-KIND-7Q", problem["detail"])
+		details = " ".join(p["detail"] for p in problems)
+		self.assertIn("not a kind", details)
+		self.assertIn("its kind is not one of the kinds", details)
 
 	def test_the_readme_says_the_approved_text_check_covers_the_kind(self):
 		section = README.read_text(encoding="utf-8").split("\n### The two reports\n", 1)[1]

@@ -34,7 +34,9 @@ endpoints refuse with, and the form script (``public/js/knowledge_base/``) shows
 
 **Content rules on every save** (``before_validate``, PR 2). Presentation is stripped from the body
 (``content.strip_presentation``). Content changes only while the stored version is a Draft
-(``workflow.content_edit_problem``). A save that changes content is scanned for secrets and
+(``workflow.content_edit_problem``). A revision keeps its article's kind and department, which are
+part of the article's number (``workflow.identity_problem``, 2026-09-29). A save that changes
+content is scanned for secrets and
 refused on a finding (``content.document_secret_findings``), and records the saver in
 ``contributors`` (``workflow.with_contributor``). A save that does not change content (a state
 change by the KB's own actions) is neither scanned nor recorded, so a version whose text predates a
@@ -90,7 +92,7 @@ from frappe.model.document import Document
 # workflow imports marketing/publish/workflow.py (signed_in_browser). A controller that fails to
 # import is force-deleted by the next migrate, silently (CLAUDE.md), so the chain is pinned:
 # tests/test_knowledge_base_hooks.py imports this module, and a broken import fails the build.
-from erpnext_enhancements.knowledge_base import content, workflow
+from erpnext_enhancements.knowledge_base import constants, content, workflow
 
 
 class KnowledgeArticleVersion(Document):
@@ -191,9 +193,10 @@ class KnowledgeArticleVersion(Document):
 		)
 
 	def _apply_content_rules(self):
-		"""Strip presentation; refuse a content edit outside Draft, or one carrying a secret; record
-		the contributor. ``contributors`` sits at permlevel 1, and a value set in ``before_validate``
-		survives the user's save because v16 resets higher permlevels before it runs."""
+		"""Strip presentation; refuse a content edit outside Draft, a revision that changes its
+		article's kind or department, or one carrying a secret; record the contributor.
+		``contributors`` sits at permlevel 1, and a value set in ``before_validate`` survives the
+		user's save because v16 resets higher permlevels before it runs."""
 		if self.get("body"):
 			self.body = content.strip_presentation(self.body)
 		stored = self.get_doc_before_save()
@@ -203,10 +206,28 @@ class KnowledgeArticleVersion(Document):
 		problem = workflow.content_edit_problem(stored, changed)
 		if problem:
 			frappe.throw(problem, title=_("Content cannot change now"))
+		self._refuse_identity_change(changed)
 		found = content.document_secret_findings(self)
 		if found:
 			frappe.throw(content.secret_refusal(found), title=_("This looks like a secret"))
 		self.contributors = workflow.with_contributor(self.get("contributors"), frappe.session.user)
+
+	def _refuse_identity_change(self, changed):
+		"""A revision keeps its article's kind and department: both are part of the article's number,
+		which never changes (2026-09-29). Refused at the save, the earliest and clearest place, so a
+		form, REST, Data Import and the AI drafting tool all meet it; submit and approve ask again
+		(``workflow.publish_problems``). The same words as there (``workflow.identity_problem``)."""
+		if not self.get("article") or not {"kind", "department_block"} & set(changed):
+			return
+		article = frappe.db.get_value(
+			constants.ARTICLE_DOCTYPE,
+			self.article,
+			["name", "kind", "department_block"],
+			as_dict=True,
+		)
+		problem = workflow.identity_problem(self, article)
+		if problem:
+			frappe.throw(problem, title=_("Kind and department are fixed"))
 
 	def _refuse_unless_approvable(self):
 		stored = self.get_doc_before_save()
