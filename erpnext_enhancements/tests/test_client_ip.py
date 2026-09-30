@@ -201,7 +201,14 @@ class _StubbedFrappe:
 			return [dict(r) for r in self.rows]
 
 		frappe.get_all = get_all
-		frappe.log_error = lambda message, title: self.logged.append((title, message))
+		def log_error(title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False):
+			# v16 (frappe/utils/error.py): given a message, the two are swapped when -- and
+			# only when -- `title` holds a newline. Records (row title, row body).
+			if message and "\n" in title:
+				title, message = message, title
+			self.logged.append((title, message))
+
+		frappe.log_error = log_error
 		utils.now_datetime = lambda: "NOW"
 		utils.add_days = lambda value, days: f"{value}{days:+d}d"
 		frappe.utils = utils

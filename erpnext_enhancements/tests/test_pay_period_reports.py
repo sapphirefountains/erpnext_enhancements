@@ -161,6 +161,17 @@ class _StubDB:
 		STATE["defaults"][key] = value
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, str(message)[:200]))
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe.db = _StubDB()
@@ -175,8 +186,8 @@ def _install_frappe_stub():
 
 	frappe.get_doc = get_doc
 	frappe.sendmail = sendmail
-	frappe.log_error = lambda message, title=None: STATE["errors"].append((title, str(message)[:200]))
-	frappe.get_traceback = lambda: "traceback"
+	frappe.log_error = _v16_log_error
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
 	frappe.clear_document_cache = lambda doctype, name: None
 
 	utils = types.ModuleType("frappe.utils")
@@ -324,7 +335,8 @@ class TestApplyWindow(unittest.TestCase):
 	def test_unparseable_json_is_logged_not_raised(self):
 		STATE["reports"][REPORT]["json"] = "{not json"
 		self.assertFalse(pay_period_reports._apply_window("2026-08-01", "2026-08-15"))
-		self.assertTrue(STATE["errors"])
+		# Titled by its title: the one-line sentence used to become the title (v1.567.1).
+		self.assertEqual([title for title, _ in STATE["errors"]], ["Pay-period report window"])
 
 
 class TestRunPayPeriodCycle(unittest.TestCase):
@@ -385,7 +397,7 @@ class TestRunPayPeriodCycle(unittest.TestCase):
 		pay_period_reports.run_pay_period_cycle()
 
 		self.assertEqual(STATE["sent"], [])
-		self.assertTrue(STATE["errors"])
+		self.assertEqual([title for title, _ in STATE["errors"]], ["Pay-period commission report failed"])
 		self.assertEqual(self._window(), ["2026-08-16", "2026-08-31"])
 
 	def test_a_failed_send_is_retried_on_the_next_tick(self):
@@ -445,7 +457,7 @@ class TestRunPayPeriodCycle(unittest.TestCase):
 		pay_period_reports.run_pay_period_cycle()
 
 		self.assertEqual(STATE["sent"], [])
-		self.assertTrue(STATE["errors"])
+		self.assertEqual([title for title, _ in STATE["errors"]], ["Pay-period commission report"])
 		self.assertEqual(self._window(), ["2026-08-16", "2026-08-31"])
 
 	def test_missing_records_are_a_silent_no_op(self):

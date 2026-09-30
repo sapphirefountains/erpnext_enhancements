@@ -43,7 +43,7 @@ def enqueue_customer_folder(doc, method=None):
 			enqueue_after_commit=True,
 		)
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Customer Drive Folder enqueue")
+		frappe.log_error(title="Customer Drive Folder enqueue", message=frappe.get_traceback())
 
 
 def provision_customer_folder(customer):
@@ -138,8 +138,8 @@ def get_service_account_info():
 		return json.loads(raw)
 	except ValueError:
 		frappe.log_error(
-			"Project Folder Google Drive Settings > Service Account JSON is not valid JSON.",
-			"Google Drive",
+			title="Google Drive",
+			message="Project Folder Google Drive Settings > Service Account JSON is not valid JSON.",
 		)
 		return None
 
@@ -566,9 +566,9 @@ def provision_project_folder_for_opportunity(
 			if error.resp.status != 404:
 				raise
 			frappe.log_error(
-				f"Opportunity Drive folder {opp_folder_id} not found (404); "
+				title="Project Drive Folder",
+				message=f"Opportunity Drive folder {opp_folder_id} not found (404); "
 				"creating a new project folder instead.",
-				"Project Drive Folder",
 			)
 
 	return provision_project_folders(project_folder_name, party_name, project_type=project_type)
@@ -594,7 +594,7 @@ def enqueue_opportunity_folder(doc, method=None):
 			enqueue_after_commit=True,
 		)
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Opportunity Drive Folder enqueue")
+		frappe.log_error(title="Opportunity Drive Folder enqueue", message=frappe.get_traceback())
 
 
 def provision_opportunity_folder(opportunity):

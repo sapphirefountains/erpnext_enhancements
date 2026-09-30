@@ -303,9 +303,9 @@ def _rescore_run(row):
 		return score
 	except Exception:
 		frappe.log_error(
-			f"Could not re-score run for disputed answer {row.name}. The answer was corrected; "
+			title="Training disputes",
+			message=f"Could not re-score run for disputed answer {row.name}. The answer was corrected; "
 			"the lesson's best score was not updated, so the attempt may still show as short.",
-			"Training disputes",
 		)
 		return None
 
@@ -329,9 +329,9 @@ def _redrive(attempt):
 		return bool(result.get("passed"))
 	except Exception:
 		frappe.log_error(
-			f"Could not re-drive attempt {attempt} after upholding a dispute. The answer was "
+			title="Training disputes",
+			message=f"Could not re-drive attempt {attempt} after upholding a dispute. The answer was "
 			"corrected and the run re-scored; the learner may need to press Finish again.",
-			"Training disputes",
 		)
 		return False
 

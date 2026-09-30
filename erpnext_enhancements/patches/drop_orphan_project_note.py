@@ -21,9 +21,9 @@ def execute():
         return
     if frappe.db.table_exists(ORPHAN) and frappe.db.count(ORPHAN):
         frappe.log_error(
-            f"Skipped dropping orphan DocType '{ORPHAN}': tab{ORPHAN} has rows; "
+            title="Project Note cleanup",
+            message=f"Skipped dropping orphan DocType '{ORPHAN}': tab{ORPHAN} has rows; "
             "investigate before removing.",
-            "Project Note cleanup",
         )
         return
     frappe.delete_doc("DocType", ORPHAN, force=True, ignore_permissions=True)

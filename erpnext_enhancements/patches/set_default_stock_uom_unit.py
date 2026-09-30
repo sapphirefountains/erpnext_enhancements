@@ -33,8 +33,8 @@ def execute():
 		# Nothing to point at. Better a log line than a Link validation error that
 		# fails the whole migrate.
 		frappe.log_error(
-			f"Cannot set the default stock UOM: no UOM named '{DEFAULT_UOM}' exists.",
-			"Default stock UOM",
+			title="Default stock UOM",
+			message=f"Cannot set the default stock UOM: no UOM named '{DEFAULT_UOM}' exists.",
 		)
 		return
 

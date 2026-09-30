@@ -185,5 +185,5 @@ def check_client_ip_derivation():
 	summary = summarize(r.get("ip_address") for r in rows)
 	message = regression_message(summary)
 	if message:
-		frappe.log_error(message, ALERT_TITLE)
+		frappe.log_error(title=ALERT_TITLE, message=message)
 	return summary

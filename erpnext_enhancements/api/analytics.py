@@ -307,20 +307,6 @@ def _gsc_account(credentials):
 	return getattr(credentials, "service_account_email", None)
 
 
-def _log_gsc_error(message, key):
-	"""One throttled Error Log row titled ``GSC API Error`` whose body is ``message``.
-
-	For a message that is a sentence rather than a traceback. ``log_error_throttled`` passes
-	``frappe.log_error`` its message first, and v16's ``log_error(title, message)`` decides
-	which of the two is the title by looking for a newline (``frappe/utils/error.py``): a
-	single-line first argument stays the title. A traceback always has a newline; a sentence
-	does not, so it would become the row's title, cut at 140 characters, with "GSC API Error"
-	as the body. Prod has rows logged backwards that way. The trailing newline keeps this one
-	the right way round.
-	"""
-	log_error_throttled(message if "\n" in message else f"{message}\n", "GSC API Error", key=key)
-
-
 def _http_status(error):
 	status = getattr(getattr(error, "resp", None), "status", None)
 	try:
@@ -462,7 +448,7 @@ def get_gsc_data():
 			# the nightly pull would otherwise re-log it every run: it once buried 34 rows in
 			# the log for one unchanging fact.
 			message = _gsc_refused_message(ga4_settings.gsc_property_url, refusals, _gsc_account(credentials))
-			_log_gsc_error(message, key="refused")
+			log_error_throttled(message, "GSC API Error", key="refused")
 			return {"error": message}
 
 		def fetch_dimension(dimension):
@@ -560,7 +546,7 @@ def get_gsc_data():
 	except GscUnavailable as e:
 		# One row, the message as it stands. The retries already happened and logged nothing,
 		# and the traceback would add only frames of the network stack.
-		_log_gsc_error(str(e), key="transient")
+		log_error_throttled(str(e), "GSC API Error", key="transient")
 		return {"error": f"Failed to fetch GSC data: {e!s}"}
 
 	except Exception as e:

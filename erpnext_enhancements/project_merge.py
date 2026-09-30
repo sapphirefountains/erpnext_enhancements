@@ -147,7 +147,7 @@ def merge_projects(source_project, target_project):
 						updated_count += 1
 				except Exception as e:
 					frappe.log_error(
-						f"Failed to update Single DocType {doctype}: {e!s}", "Project Merge Error"
+						title="Project Merge Error", message=f"Failed to update Single DocType {doctype}: {e!s}"
 					)
 				continue
 
@@ -173,7 +173,7 @@ def merge_projects(source_project, target_project):
 						updated_count += 1
 					except Exception as e:
 						frappe.log_error(
-							f"Failed to update {doctype} {doc_name}: {e!s}", "Project Merge Error"
+							title="Project Merge Error", message=f"Failed to update {doctype} {doc_name}: {e!s}"
 						)
 
 	# Cancel the source project

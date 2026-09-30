@@ -569,8 +569,8 @@ def _read_stored(attempt_name):
 		data = frappe.parse_json(raw)
 	except Exception:
 		frappe.log_error(
-			f"Training Attempt {attempt_name} has unparseable progress_json; starting a fresh blob.",
-			"Training progress",
+			title="Training progress",
+			message=f"Training Attempt {attempt_name} has unparseable progress_json; starting a fresh blob.",
 		)
 		return _empty()
 
@@ -757,9 +757,9 @@ def _mark_pending(attempt_name, when):
 	pending = _pending()
 	if attempt_name not in pending and len(pending) >= MAX_PENDING_TRACKED:
 		frappe.log_error(
-			f"More than {MAX_PENDING_TRACKED} training attempts are awaiting a progress flush; "
+			title="Training progress",
+			message=f"More than {MAX_PENDING_TRACKED} training attempts are awaiting a progress flush; "
 			f"writing {attempt_name} through immediately.",
-			"Training progress",
 		)
 		return False
 	pending[attempt_name] = when

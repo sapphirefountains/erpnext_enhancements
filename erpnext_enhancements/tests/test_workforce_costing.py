@@ -117,8 +117,12 @@ def _install_frappe_stub():
     frappe.ValidationError = StubThrow
     frappe.PermissionError = StubThrow
 
-    def log_error(message=None, title=None):
-        STATE["errors"].append(title or message)
+    def log_error(title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False):
+        # v16's signature and heuristic (frappe/utils/error.py): given a message, the two are
+        # swapped when -- and only when -- `title` holds a newline. Records the row's title.
+        if message and "\n" in title:
+            title, message = message, title
+        STATE["errors"].append(title)
 
     frappe.log_error = log_error
 
@@ -447,6 +451,8 @@ class TestSyncActivityCosts(unittest.TestCase):
         finally:
             sys.modules["frappe"].get_doc = original
         self.assertTrue(STATE["errors"])
+        for title in STATE["errors"]:
+            self.assertTrue(title.startswith("Time Kiosk costing: Activity Cost EMP-1 / "), title)
 
     def test_missing_tables_are_a_no_op(self):
         _reset(tables=set(), active_employees=["EMP-1"], pay_rates={"EMP-1": [rate("2020-01-01", hourly_rate=40)]})

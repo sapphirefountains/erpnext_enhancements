@@ -110,14 +110,31 @@ class _FakeCache:
 
 CACHE = _FakeCache()
 
+TRACEBACK = 'Traceback (most recent call last):\n  File "x.py", line 1, in f\nValueError: boom'
+
+
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``.
+
+	v16 picks the title by content, not position (``frappe/utils/error.py``): given a
+	message, it swaps the two when -- and only when -- ``title`` holds a newline. The stub
+	this replaced took ``(message, title)`` and recorded the title the caller *meant*, so it
+	passed while every one-line message through the throttle was stored backwards on prod.
+	"""
+	if message and "\n" in title:
+		title, message = message, title
+	LOGGED.append((title, message))
+
 
 def setUpModule():
 	global error_throttle
 
 	frappe = types.ModuleType("frappe")
-	frappe.log_error = lambda message=None, title=None, **kw: LOGGED.append((title, message))
+	frappe.log_error = _v16_log_error
 	frappe.cache = lambda: CACHE
-	frappe.get_traceback = lambda: "traceback"
+	frappe.get_traceback = lambda: TRACEBACK
 	frappe.flags = types.SimpleNamespace(in_test=False)
 	# `error_throttle._site()` reads this to namespace its key, the same source
 	# RedisWrapper.make_key uses.
@@ -192,6 +209,51 @@ class TestErrorThrottle(unittest.TestCase):
 		error_throttle.reset("T")
 		error_throttle.log_error_throttled("boom", "T", window=60, limit=1)
 		self.assertEqual(len(LOGGED), before + 1)
+
+
+class TestThrottledRowsAreTitledByTheirTitle(unittest.TestCase):
+	"""``log_error_throttled(message, title)`` must store ``title`` as the row's title.
+
+	Until v1.567.1 it forwarded ``frappe.log_error(message, title)`` positionally, and v16 keeps
+	a first argument without a newline as the title. So a one-line message -- the MDM and
+	web-lead short-secret warnings, the lead-triage escalation warning, the Search Console
+	refusal -- became the row's title and its real title became the body.
+	"""
+
+	ONE_LINE = "MDM Settings.webhook_secret is shorter than 32 characters, so the MDM webhook refuses every request."
+
+	def setUp(self):
+		LOGGED.clear()
+		CACHE.store.clear()
+		CACHE.raise_on_incr = False
+
+	def test_the_stub_reproduces_v16s_heuristic(self):
+		"""What makes the tests below mean something: the old positional forward, through this
+		stub, stores the row backwards exactly as prod did."""
+		sys.modules["frappe"].log_error(self.ONE_LINE, "MDM webhook: secret too short")
+		self.assertEqual(LOGGED, [(self.ONE_LINE, "MDM webhook: secret too short")])
+
+	def test_a_one_line_message_keeps_its_title(self):
+		error_throttle.log_error_throttled(self.ONE_LINE, "MDM webhook: secret too short", window=60, limit=3)
+		self.assertEqual(LOGGED, [("MDM webhook: secret too short", self.ONE_LINE)])
+
+	def test_so_does_the_broken_cache_fallback(self):
+		CACHE.raise_on_incr = True
+		error_throttle.log_error_throttled(self.ONE_LINE, "MDM webhook: secret too short")
+		self.assertEqual(LOGGED, [("MDM webhook: secret too short", self.ONE_LINE)])
+
+	def test_and_the_suppression_notice(self):
+		for _ in range(3):
+			error_throttle.log_error_throttled(self.ONE_LINE, "MDM webhook: secret too short", window=60, limit=1)
+		self.assertEqual(
+			[title for title, _ in LOGGED],
+			["MDM webhook: secret too short", "MDM webhook: secret too short (throttled)"],
+		)
+		self.assertTrue(LOGGED[1][1].startswith(self.ONE_LINE + "\n\n--- Further identical"))
+
+	def test_a_traceback_keeps_its_title_as_before(self):
+		error_throttle.log_error_throttled(TRACEBACK, "Drive sync", window=60, limit=3)
+		self.assertEqual(LOGGED, [("Drive sync", TRACEBACK)])
 
 
 class TestThrottleKeyAgreement(unittest.TestCase):

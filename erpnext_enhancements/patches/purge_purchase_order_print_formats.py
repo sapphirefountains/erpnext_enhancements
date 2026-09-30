@@ -74,9 +74,9 @@ def execute():
 		referenced = _references(name)
 		if referenced:
 			frappe.log_error(
-				f"Skipped deleting print format '{name}': still referenced by "
+				title="Purchase Order print format purge",
+				message=f"Skipped deleting print format '{name}': still referenced by "
 				f"{', '.join(referenced)}. Repoint or clear those first.",
-				"Purchase Order print format purge",
 			)
 			continue
 

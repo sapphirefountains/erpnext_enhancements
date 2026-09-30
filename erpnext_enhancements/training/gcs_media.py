@@ -79,8 +79,8 @@ def _credentials():
 		info = json.loads(raw)
 	except ValueError:
 		frappe.log_error(
-			"Training Settings > GCS Service Account JSON is not valid JSON. Paste the whole key file.",
-			"Training media",
+			title="Training media",
+			message="Training Settings > GCS Service Account JSON is not valid JSON. Paste the whole key file.",
 		)
 		return None
 
@@ -321,7 +321,9 @@ def copy_from_drive(video_asset):
 
 	except Exception:
 		message = frappe.get_traceback()
-		frappe.log_error(f"Drive -> GCS copy failed for {video_asset}\n{message}", "Training media")
+		frappe.log_error(
+			title="Training media", message=f"Drive -> GCS copy failed for {video_asset}\n{message}"
+		)
 		frappe.db.set_value(
 			"Training Video Asset",
 			video_asset,

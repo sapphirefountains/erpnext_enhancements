@@ -117,13 +117,24 @@ def _flt(value=0, *args, **kwargs):
 		return 0.0
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
 	frappe.flags = _Dict()
 	frappe.session = _Dict(user="learner@example.com")
-	frappe.log_error = lambda *a, **k: STATE["errors"].append(a[0] if a else "")
-	frappe.get_traceback = lambda: "traceback"
+	frappe.log_error = _v16_log_error
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
 	frappe.cache = lambda: STATE["cache"]
 
@@ -406,7 +417,11 @@ class TestLoad(unittest.TestCase):
 		until somebody hand-edits JSON in the database is worse."""
 		STATE["rows"]["ATT-0001"] = {"progress_json": "{not json"}
 		self.assertEqual(progress.load("ATT-0001"), {"lessons": {}})
-		self.assertTrue(STATE["errors"])
+		# Titled by its title: the one-line sentence used to become the title (v1.567.1).
+		self.assertEqual(
+			STATE["errors"],
+			[("Training progress", "Training Attempt ATT-0001 has unparseable progress_json; starting a fresh blob.")],
+		)
 
 	def test_a_blob_of_the_wrong_shape_starts_fresh(self):
 		STATE["rows"]["ATT-0001"] = {"progress_json": "[1, 2, 3]"}

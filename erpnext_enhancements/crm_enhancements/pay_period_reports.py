@@ -137,7 +137,9 @@ def _apply_window(start, end):
 	try:
 		spec = json.loads(saved)
 	except ValueError:
-		frappe.log_error(f"Unparseable json on Report {REPORT_NAME}", "Pay-period report window")
+		frappe.log_error(
+			title="Pay-period report window", message=f"Unparseable json on Report {REPORT_NAME}"
+		)
 		return False
 
 	kept = [row for row in (spec.get("filters") or []) if not (len(row) > 1 and row[1] == DATE_FIELD)]
@@ -177,8 +179,8 @@ def _send_period(start, end):
 	recipients = [address for address in (auto_email_report.email_to or "").split() if address]
 	if not recipients:
 		frappe.log_error(
-			f"{AUTO_EMAIL_REPORT_NAME} has no recipients; nothing sent",
-			"Pay-period commission report",
+			title="Pay-period commission report",
+			message=f"{AUTO_EMAIL_REPORT_NAME} has no recipients; nothing sent",
 		)
 		return False
 
@@ -230,6 +232,6 @@ def run_pay_period_cycle():
 				# Never let a failed send abort the run — the window restore
 				# below is what keeps the desk report truthful, and it matters
 				# more than this one email.
-				frappe.log_error(frappe.get_traceback(), "Pay-period commission report failed")
+				frappe.log_error(title="Pay-period commission report failed", message=frappe.get_traceback())
 
 	_apply_window(*pay_period_bounds(current))

@@ -107,7 +107,9 @@ def expire_or_renew_contracts(today=None):
             else:
                 frappe.db.set_value("Sapphire Maintenance Contract", row.name, "status", "Expired")
         except Exception:
-            frappe.log_error(frappe.get_traceback(), f"Maintenance expire/renew failed: {row.name}")
+            frappe.log_error(
+                title=f"Maintenance expire/renew failed: {row.name}", message=frappe.get_traceback()
+            )
 
 
 def send_rate_change_notices(today=None):
@@ -163,7 +165,9 @@ def send_rate_change_notices(today=None):
             if delivered:
                 frappe.db.set_value("Sapphire Maintenance Contract", row.name, "rate_notice_sent", today)
         except Exception:
-            frappe.log_error(frappe.get_traceback(), f"Maintenance rate notice failed: {row.name}")
+            frappe.log_error(
+                title=f"Maintenance rate notice failed: {row.name}", message=frappe.get_traceback()
+            )
 
 
 def _role_users(role):
@@ -196,9 +200,9 @@ def _notify(role, subject, content, docname):
             ).insert(ignore_permissions=True)
             delivered += 1
         except Exception:
-            frappe.log_error(frappe.get_traceback(), "Maintenance renewal/rate notify failed")
+            frappe.log_error(title="Maintenance renewal/rate notify failed", message=frappe.get_traceback())
     if not delivered:
-        frappe.log_error(f"{subject}: {content}", f"Maintenance notice (no {role} to notify)")
+        frappe.log_error(title=f"Maintenance notice (no {role} to notify)", message=f"{subject}: {content}")
     return delivered
 
 
@@ -206,4 +210,4 @@ def _add_comment(contract, text):
     try:
         frappe.get_doc("Sapphire Maintenance Contract", contract).add_comment("Comment", text)
     except Exception:
-        frappe.log_error(frappe.get_traceback(), "Maintenance renewal comment failed")
+        frappe.log_error(title="Maintenance renewal comment failed", message=frappe.get_traceback())

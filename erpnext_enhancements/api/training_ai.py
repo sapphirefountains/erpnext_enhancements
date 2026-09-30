@@ -325,7 +325,9 @@ def _ask_model(prompt, system_instruction, feature):
             prompt, system_instruction, settings, feature=feature
         )
     except Exception:
-        frappe.log_error(f"Training AI drafting failed\n{frappe.get_traceback()}", "Training AI")
+        frappe.log_error(
+            title="Training AI", message=f"Training AI drafting failed\n{frappe.get_traceback()}"
+        )
         frappe.throw(
             _("The AI service did not respond. Nothing has been changed — try again, or write the "
               "question by hand.")
@@ -1104,8 +1106,8 @@ def _ask_model_quietly(prompt, system_instruction, feature):
         # job publishes frame locals, and this frame holds the Triton Settings
         # document. The message says what failed without carrying it.
         frappe.log_error(
-            "Short Answer AI grading did not reach the model; the exact-match verdict stands.",
-            "Training AI",
+            title="Training AI",
+            message="Short Answer AI grading did not reach the model; the exact-match verdict stands.",
         )
         return None
 

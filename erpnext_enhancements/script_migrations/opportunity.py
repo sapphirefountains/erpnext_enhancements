@@ -123,6 +123,6 @@ def update_lead_status(doc, method=None):
 			lead_doc.save(ignore_permissions=True)
 		except frappe.DoesNotExistError:
 			frappe.log_error(
-				f"Lead {doc.party_name} not found for Opportunity {doc.name}",
-				"Update Lead Status Script",
+				title="Update Lead Status Script",
+				message=f"Lead {doc.party_name} not found for Opportunity {doc.name}",
 			)

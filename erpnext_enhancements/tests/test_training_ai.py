@@ -185,6 +185,17 @@ def _db_get_value(doctype, name, fieldname, **kwargs):
 	return None
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
@@ -214,8 +225,8 @@ def _install_frappe_stub():
 
 	frappe.throw = _throw
 	frappe.msgprint = lambda *a, **k: None
-	frappe.log_error = lambda *a, **k: STATE["errors"].append(a[0] if a else "")
-	frappe.get_traceback = lambda: "traceback"
+	frappe.log_error = _v16_log_error
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
 
 	frappe.db = types.SimpleNamespace(
 		get_value=_db_get_value,
@@ -542,7 +553,7 @@ class TestStrictParsing(_Base):
 		with self.assertRaises(Exception) as caught:
 			training_ai.draft_quiz_questions(LESSON, count=1)
 		self.assertNotIn("502", str(caught.exception))
-		self.assertTrue(STATE["errors"])
+		self.assertEqual([title for title, _ in STATE["errors"]], ["Training AI"])
 
 
 # ----------------------------------------------------------------- grounding
@@ -1271,6 +1282,11 @@ class TestJudgeIsGatedAndQuiet(unittest.TestCase):
 		STATE["model_text"] = RuntimeError("vertex is down")
 		self.assertIsNone(
 			training_ai.judge_short_answer("Q?", ["isolation valve"], "the isolation valve")
+		)
+		# Logged under its title: the one-line sentence used to become the title (v1.567.1).
+		self.assertEqual(
+			STATE["errors"],
+			[("Training AI", "Short Answer AI grading did not reach the model; the exact-match verdict stands.")],
 		)
 
 	def test_it_never_raises_whatever_the_reply(self):

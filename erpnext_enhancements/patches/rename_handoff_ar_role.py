@@ -59,7 +59,7 @@ def execute():
 			{"new": NEW_ROLE, "old": OLD_ROLE},
 		)
 		frappe.log_error(
-			f"Renamed responsible_role on {affected} {doctype} row(s): "
+			title="Hand-off role rename",
+			message=f"Renamed responsible_role on {affected} {doctype} row(s): "
 			f"{OLD_ROLE!r} -> {NEW_ROLE!r}",
-			"Hand-off role rename",
 		)

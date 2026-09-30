@@ -44,9 +44,9 @@ def execute():
 		# Both present. Merging is a data decision with a conversion factor
 		# attached, not something a migrate should take unilaterally.
 		frappe.log_error(
-			f"Cannot rename '{OLD}' to '{NEW}': a UOM named '{NEW}' already exists. "
+			title="Gallon UOM rename",
+			message=f"Cannot rename '{OLD}' to '{NEW}': a UOM named '{NEW}' already exists. "
 			"Merge them by hand and decide which conversion factors survive.",
-			"Gallon UOM rename",
 		)
 		return
 
