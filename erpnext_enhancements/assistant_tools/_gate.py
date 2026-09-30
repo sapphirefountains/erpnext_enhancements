@@ -1914,10 +1914,10 @@ def apply_gate():
         # real frappe is around to log to.
         try:
             frappe.log_error(
-                "BaseTool._safe_execute is missing — the AI write gate could not "
+                title="AI Governance",
+                message="BaseTool._safe_execute is missing — the AI write gate could not "
                 "attach. If frappe_assistant_core was upgraded, re-point the gate "
                 "(erpnext_enhancements/assistant_tools/_gate.py).",
-                "AI Governance",
             )
         except Exception:
             pass

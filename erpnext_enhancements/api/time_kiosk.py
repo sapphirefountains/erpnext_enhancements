@@ -621,7 +621,10 @@ def sync_interval_to_timesheet(interval_doc):
         interval_doc.db_set("sync_status", "Synced")
 
     except Exception as e:
-        frappe.log_error(f"Failed to sync Job Interval {interval_doc.name} to Timesheet: {e!s}", "Time Kiosk Sync Error")
+        frappe.log_error(
+            title="Time Kiosk Sync Error",
+            message=f"Failed to sync Job Interval {interval_doc.name} to Timesheet: {e!s}",
+        )
         # Update Job Interval sync status to Failed
         interval_doc.db_set("sync_status", "Failed")
 
@@ -690,7 +693,10 @@ def resync_interval_timesheet(interval_doc):
             else:
                 frappe.delete_doc("Timesheet", ts_doc.name, ignore_permissions=True)
         except Exception as e:
-            frappe.log_error(f"Failed to remove Timesheet line for {interval_doc.name}: {e!s}", "Time Kiosk Sync Error")
+            frappe.log_error(
+                title="Time Kiosk Sync Error",
+                message=f"Failed to remove Timesheet line for {interval_doc.name}: {e!s}",
+            )
             interval_doc.db_set("sync_status", "Failed")
             return False
     if interval_doc.status == "Completed" and interval_doc.end_time:
@@ -739,7 +745,7 @@ def update_timesheet_note(timesheet_name, employee, date_obj):
             frappe.db.set_value("Timesheet", timesheet_name, "note", final_note)
 
     except Exception as e:
-        frappe.log_error(f"Failed to update Timesheet note: {e!s}", "Time Kiosk Sync Error")
+        frappe.log_error(title="Time Kiosk Sync Error", message=f"Failed to update Timesheet note: {e!s}")
 
 
 # ---------------------------------------------------------------------------
@@ -1179,7 +1185,9 @@ def link_attachment(file_name, project, task=None):
             "file_url": original.file_url
         }
     except Exception as e:
-        frappe.log_error(f"Failed to link attachment {file_name}: {e!s}", "Time Kiosk Attachment Error")
+        frappe.log_error(
+            title="Time Kiosk Attachment Error", message=f"Failed to link attachment {file_name}: {e!s}"
+        )
         return {"status": "error", "message": str(e)}
 
 
@@ -1786,7 +1794,7 @@ def log_geolocation(employee=None, latitude=None, longitude=None, device_agent=N
         doc.insert(ignore_permissions=True)
         return {"status": "success", "message": "Location logged."}
     except Exception as e:
-        frappe.log_error(f"Failed to log location: {e!s}", "Time Kiosk Location Error")
+        frappe.log_error(title="Time Kiosk Location Error", message=f"Failed to log location: {e!s}")
         return {"status": "error", "message": str(e)}
 
 
@@ -1920,14 +1928,16 @@ def log_geolocation_batch(points):
                 count, latest = touched.get(interval, (0, None))
                 touched[interval] = (count + 1, timestamp if latest is None or timestamp > latest else latest)
         except Exception as e:
-            frappe.log_error(f"Failed to ingest geo point: {e!s}", "Time Kiosk Location Error")
+            frappe.log_error(title="Time Kiosk Location Error", message=f"Failed to ingest geo point: {e!s}")
             rejected.append({"client_id": cid, "reason": "server_error"})
 
     for interval, (count, latest) in touched.items():
         try:
             _touch_interval_fixes(interval, count, latest)
         except Exception as e:
-            frappe.log_error(f"Failed to update fix count on {interval}: {e!s}", "Time Kiosk Location Error")
+            frappe.log_error(
+                title="Time Kiosk Location Error", message=f"Failed to update fix count on {interval}: {e!s}"
+            )
 
     return {"status": "success", "accepted": accepted, "rejected": rejected}
 

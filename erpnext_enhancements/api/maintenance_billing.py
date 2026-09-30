@@ -83,7 +83,7 @@ def generate_recurring_invoices(today=None):
             _bill_period(name)
         except Exception:
             frappe.db.rollback(save_point="recurring_billing")
-            frappe.log_error(frappe.get_traceback(), f"Recurring billing failed: {name}")
+            frappe.log_error(title=f"Recurring billing failed: {name}", message=frappe.get_traceback())
 
 
 def _bill_period(contract_name):
@@ -97,9 +97,9 @@ def _bill_period(contract_name):
         # must never draft an invoice missing the flat base fee, and must NOT
         # advance the period — it retries once a fee item is configured.
         frappe.log_error(
-            f"Recurring billing skipped for {contract_name}: no maintenance fee item "
+            title="Recurring billing misconfigured",
+            message=f"Recurring billing skipped for {contract_name}: no maintenance fee item "
             f"(Sales Order services line or ERPNext Enhancements Settings default).",
-            "Recurring billing misconfigured",
         )
         return
 

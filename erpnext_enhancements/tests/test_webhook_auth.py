@@ -136,6 +136,17 @@ def _throw(message, exc=Exception):
 	raise exc(message)
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_stubs():
 	frappe = types.ModuleType("frappe")
 	frappe.whitelist = lambda **_kw: (lambda fn: fn)
@@ -153,8 +164,8 @@ def _install_stubs():
 	frappe.new_doc = lambda doctype: FakeRawPayload(doctype=doctype)
 	frappe.parse_json = json.loads
 	frappe.set_user = lambda user: STATE["set_user"].append(user)
-	frappe.get_traceback = lambda: "traceback"
-	frappe.log_error = lambda *args, **kwargs: STATE["errors"].append((args, kwargs))
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
+	frappe.log_error = _v16_log_error
 	frappe.enqueue = lambda method, **kwargs: STATE["enqueued"].append((method, kwargs))
 	frappe.db = types.SimpleNamespace(
 		exists=lambda doctype, name=None: doctype == "User",
@@ -339,6 +350,10 @@ class MDMWebhookAuthTests(unittest.TestCase):
 		self.assertEqual(_status(), 401)
 		self.assertTrue(STATE["errors"], "a too-short secret must say so in the Error Log")
 		self.assertNotIn(short, repr(STATE["errors"]), "the secret must never reach the Error Log")
+		# Titled by its title: the one-line warning used to become the row's title (v1.567.1).
+		title, body = STATE["errors"][0]
+		self.assertEqual(title, "MDM webhook: secret too short")
+		self.assertTrue(body.startswith("MDM Settings.webhook_secret is shorter than"), body)
 
 	def test_source_never_reads_authorization(self):
 		# Belt and braces for the behavioral test above: no string literal outside a

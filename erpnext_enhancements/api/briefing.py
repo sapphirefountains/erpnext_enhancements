@@ -352,7 +352,7 @@ def _generate_narrative(data, user, settings):
 			return text.strip(), "Gemini", None
 		return compose_fallback(data, user), "Fallback", "Gemini returned empty text"
 	except Exception as e:
-		frappe.log_error(f"Briefing narrative failed for {user}: {e}", "Morning Briefing")
+		frappe.log_error(title="Morning Briefing", message=f"Briefing narrative failed for {user}: {e}")
 		return compose_fallback(data, user), "Fallback", str(e)[:500]
 
 

@@ -405,8 +405,8 @@ def after_signoff_submitted(doc):
 		_set_assignment_status(doc, "In Progress")
 	except Exception:
 		frappe.log_error(
-			f"Sign-off {doc.name} was recorded but the assignment behind it could not be advanced.",
-			"Training sign-off",
+			title="Training sign-off",
+			message=f"Sign-off {doc.name} was recorded but the assignment behind it could not be advanced.",
 		)
 
 
@@ -424,8 +424,8 @@ def after_signoff_cancelled(doc):
 		_set_assignment_status(doc, AWAITING)
 	except Exception:
 		frappe.log_error(
-			f"Sign-off {doc.name} was cancelled but its assignment could not be re-opened.",
-			"Training sign-off",
+			title="Training sign-off",
+			message=f"Sign-off {doc.name} was cancelled but its assignment could not be re-opened.",
 		)
 
 
@@ -564,9 +564,9 @@ def signoff_outstanding(course, learner_user):
 		return False
 	if not frappe.db.exists("DocType", SIGNOFF_DOCTYPE):
 		frappe.log_error(
-			f"{course} requires a supervisor sign-off but {SIGNOFF_DOCTYPE} is not migrated "
+			title="Training sign-off",
+			message=f"{course} requires a supervisor sign-off but {SIGNOFF_DOCTYPE} is not migrated "
 			"on this site; the requirement cannot be enforced.",
-			"Training sign-off",
 		)
 		return False
 	return not has_competent_signoff(course, learner_user)

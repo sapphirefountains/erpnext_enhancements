@@ -117,6 +117,17 @@ class FakeSettings(dict):
 		return dict.get(self, key, default)
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_stub():
 	frappe = types.ModuleType("frappe")
 	frappe._ = lambda text: text
@@ -140,8 +151,8 @@ def _install_stub():
 
 	frappe.get_all = get_all
 	frappe.get_doc = lambda fields: FakeDoc(fields)
-	frappe.log_error = lambda *args, **kwargs: STATE["errors"].append(args)
-	frappe.get_traceback = lambda: "traceback"
+	frappe.log_error = _v16_log_error
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
 	frappe.sendmail = lambda **kwargs: STATE["emails"].append(kwargs)
 	frappe.defaults = types.SimpleNamespace(get_global_default=lambda key: None)
 	frappe.get_cached_value = lambda *args: None
@@ -516,6 +527,10 @@ class SweepTests(unittest.TestCase):
 		lead_triage.sweep_first_response_sla()
 		self.assertEqual([e["recipients"] for e in STATE["emails"]], [["cat@example.com"]])
 		self.assertTrue(STATE["errors"], "a missing escalation recipient must be said out loud")
+		# Titled by its title: the one-line warning used to become the row's title (v1.567.1).
+		title, body = STATE["errors"][0]
+		self.assertEqual(title, "Lead triage: no escalation recipient")
+		self.assertTrue(body.startswith("The speed-to-lead SLA is on"), body)
 
 	def test_not_yet_due_is_left_alone(self):
 		_reset(lead_sla_enabled=1)

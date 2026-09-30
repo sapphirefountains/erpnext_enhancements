@@ -295,9 +295,13 @@ def _notify_review(je_name: str | None, payout_id: str, notes: list[str]):
 				}
 			).insert(ignore_permissions=True)
 		except Exception:
-			frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: payout review notify failed")
+			frappe.log_error(
+				title="Stripe: payout review notify failed", message=error_snippet(frappe.get_traceback())
+			)
 	if not recipients:
-		frappe.log_error(f"{subject}: {content}", "Stripe: payout review (no Accounts Manager to notify)")
+		frappe.log_error(
+			title="Stripe: payout review (no Accounts Manager to notify)", message=f"{subject}: {content}"
+		)
 
 
 def _accounts_managers() -> list[str]:

@@ -79,8 +79,8 @@ def _backfill_step_due_by(holiday_list):
 
 	if rows:
 		frappe.log_error(
-			f"Backfilled due_by on {len(rows)} pending hand-off step rows.",
-			"Hand-off SLA backfill",
+			title="Hand-off SLA backfill",
+			message=f"Backfilled due_by on {len(rows)} pending hand-off step rows.",
 		)
 
 

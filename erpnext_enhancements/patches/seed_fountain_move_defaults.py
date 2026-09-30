@@ -52,9 +52,9 @@ def execute():
 		# Doctype JSON has not synced yet on this site; the next migrate re-runs
 		# nothing, so log loudly rather than failing silently.
 		frappe.log_error(
-			"Fountain Move settings fields absent at patch time — "
+			title="Fountain Move: defaults not seeded",
+			message="Fountain Move settings fields absent at patch time — "
 			"seed_fountain_move_defaults did nothing. Re-run it manually after migrate.",
-			"Fountain Move: defaults not seeded",
 		)
 		return
 

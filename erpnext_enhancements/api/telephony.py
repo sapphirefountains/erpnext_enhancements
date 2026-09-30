@@ -70,7 +70,7 @@ def get_gateway_config():
             "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio"),
         }
     except Exception as e:
-        frappe.log_error(f"Failed to fetch Triton settings: {e!s}", "Gateway Config Error")
+        frappe.log_error(title="Gateway Config Error", message=f"Failed to fetch Triton settings: {e!s}")
         return {
             "master_system_prompt": "You are Triton.",
             "forwarding_phone_number": "+18018200044",
@@ -367,7 +367,7 @@ def notify_incoming_call(event=None, call_sid=None, from_number=None, caller_nam
             payload["contact"] = info.get("contact")
             payload["context"] = (info.get("context") or [])[:5]
         except Exception:
-            frappe.log_error(frappe.get_traceback(), "notify_incoming_call enrich failed")
+            frappe.log_error(title="notify_incoming_call enrich failed", message=frappe.get_traceback())
 
     frappe.publish_realtime("triton_incoming_call", payload)
     return {"status": "ok"}
@@ -523,7 +523,9 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
-        frappe.log_error(f"Failed to log transcript for {call_sid}: {e!s}", "Triton Transcript Error")
+        frappe.log_error(
+            title="Triton Transcript Error", message=f"Failed to log transcript for {call_sid}: {e!s}"
+        )
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist(allow_guest=True)
@@ -685,7 +687,7 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach audio file: {fe!s}", "Triton File Error")
+                frappe.log_error(title="Triton File Error", message=f"Failed to attach audio file: {fe!s}")
         elif 'file' in frappe.request.files:
             try:
                 uploaded_file = frappe.request.files.get('file')
@@ -707,7 +709,9 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach multipart audio file: {fe!s}", "Triton File Error")
+                frappe.log_error(
+                    title="Triton File Error", message=f"Failed to attach multipart audio file: {fe!s}"
+                )
 
         # Mirror the recording into the Operations Shared Drive (monthly
         # YYYY_MM folders). Queued in the background and gated on
@@ -762,7 +766,9 @@ def process_unified_recording(**kwargs):
                 communication=comm.name,
             )
         except Exception as ce:
-            frappe.log_error(f"Call Log upsert failed for {call_sid}: {ce!s}", "Call Intelligence")
+            frappe.log_error(
+                title="Call Intelligence", message=f"Call Log upsert failed for {call_sid}: {ce!s}"
+            )
 
         try:
             settings = frappe.get_cached_doc("Triton Settings")
@@ -814,14 +820,14 @@ def process_unified_recording(**kwargs):
                 now=True
             )
         except Exception as ee:
-            frappe.log_error(f"Failed to send email: {ee!s}", "Triton Email Error")
+            frappe.log_error(title="Triton Email Error", message=f"Failed to send email: {ee!s}")
 
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
 
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure: {e!s}", "Triton Sync Error")
+        frappe.log_error(title="Triton Sync Error", message=f"Critical sync failure: {e!s}")
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
@@ -1013,7 +1019,7 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
         )
         return {"status": "success"}
     except Exception as e:
-        frappe.log_error(f"Failed to send email: {e!s}", "Triton Email Error")
+        frappe.log_error(title="Triton Email Error", message=f"Failed to send email: {e!s}")
         return {"status": "error", "message": str(e)}
 
 def analyze_transfer_transcript(transcript, customer_name):
@@ -1089,10 +1095,14 @@ def trigger_outbound_call(doctype, docname, target_number):
         return {"status": "success", "message": _("Call initiated via Triton")}
 
     except requests.exceptions.RequestException as e:
-        frappe.log_error(f"Failed to trigger outbound call via Triton: {e!s}", "Triton Outbound Call Error")
+        frappe.log_error(
+            title="Triton Outbound Call Error", message=f"Failed to trigger outbound call via Triton: {e!s}"
+        )
         frappe.throw(_("Failed to initiate call via Triton. Please check error logs."))
     except Exception as e:
-        frappe.log_error(f"Unexpected error in trigger_outbound_call: {e!s}", "Triton Outbound Call Error")
+        frappe.log_error(
+            title="Triton Outbound Call Error", message=f"Unexpected error in trigger_outbound_call: {e!s}"
+        )
         frappe.throw(str(e))
 
 
@@ -1123,7 +1133,10 @@ def get_employee_number(employee_name):
 
         return None
     except Exception as e:
-        frappe.log_error(f"Failed to get employee number for '{employee_name}': {e!s}", "Triton Routing Error")
+        frappe.log_error(
+            title="Triton Routing Error",
+            message=f"Failed to get employee number for '{employee_name}': {e!s}",
+        )
         return None
 
 
@@ -1192,7 +1205,9 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Failed to log call details for {call_sid}: {e!s}", "Triton Log Call Error")
+        frappe.log_error(
+            title="Triton Log Call Error", message=f"Failed to log call details for {call_sid}: {e!s}"
+        )
         return {"status": "error", "message": str(e)}
 
 
@@ -1392,7 +1407,9 @@ def process_unified_sms(**kwargs):
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure in process_unified_sms: {e!s}", "Triton Sync Error")
+        frappe.log_error(
+            title="Triton Sync Error", message=f"Critical sync failure in process_unified_sms: {e!s}"
+        )
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
@@ -1566,8 +1583,8 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         return {"status": "success", "message": _("SMS sent successfully via Triton."), "communication_id": comm.name}
 
     except requests.exceptions.RequestException as e:
-        frappe.log_error(f"Failed to send SMS via Triton: {e!s}", "Triton Outbound SMS Error")
+        frappe.log_error(title="Triton Outbound SMS Error", message=f"Failed to send SMS via Triton: {e!s}")
         frappe.throw(_("Failed to send SMS via Triton. Please check error logs."))
     except Exception as e:
-        frappe.log_error(f"Unexpected error in send_sms: {e!s}", "Triton Outbound SMS Error")
+        frappe.log_error(title="Triton Outbound SMS Error", message=f"Unexpected error in send_sms: {e!s}")
         frappe.throw(str(e))

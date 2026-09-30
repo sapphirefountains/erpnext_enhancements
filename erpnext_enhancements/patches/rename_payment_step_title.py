@@ -62,7 +62,7 @@ def execute():
 			{"new": NEW_TITLE, "old": OLD_TITLE},
 		)
 		frappe.log_error(
-			f"Renamed step_title on {affected} {doctype} row(s): "
+			title="Hand-off payment step rename",
+			message=f"Renamed step_title on {affected} {doctype} row(s): "
 			f"{OLD_TITLE!r} -> {NEW_TITLE!r}",
-			"Hand-off payment step rename",
 		)

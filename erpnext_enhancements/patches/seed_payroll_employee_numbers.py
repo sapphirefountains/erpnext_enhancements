@@ -83,11 +83,11 @@ def execute():
 			# Refuse rather than pick. A payroll number on the wrong person is
 			# invisible; a missing one is flagged in the export report.
 			frappe.log_error(
-				"Payroll seed: {0} Employee records match {1} {2} — refusing to set number #{3}. "
+				title="Payroll Employee Number Seed",
+				message="Payroll seed: {0} Employee records match {1} {2} — refusing to set number #{3}. "
 				"Set it by hand on the correct record.".format(
 					len(candidates), key[1].title(), key[0].title(), record["number"]
 				),
-				"Payroll Employee Number Seed",
 			)
 			continue
 
@@ -95,10 +95,10 @@ def execute():
 
 	if unmatched:
 		frappe.log_error(
-			"Payroll seed: no Employee record matched these names from the provider's file: "
+			title="Payroll Employee Number Seed",
+			message="Payroll seed: no Employee record matched these names from the provider's file: "
 			+ ", ".join(unmatched)
 			+ ". They will export with a blank Emp Num until somebody sets it.",
-			"Payroll Employee Number Seed",
 		)
 
 

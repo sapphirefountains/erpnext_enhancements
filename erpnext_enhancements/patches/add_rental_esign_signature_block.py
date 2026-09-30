@@ -57,10 +57,10 @@ def execute():
 	new_body, changed = rewrite_signature_block(body)
 	if not changed:
 		frappe.log_error(
-			"The live Rental Agreement template's SIGNATURES block does not match the shipped wording, "
+			title="Contract e-sign: rental signature block not patched",
+			message="The live Rental Agreement template's SIGNATURES block does not match the shipped wording, "
 			"so it was left alone. Add {{ sig('client') }} and {{ sig('provider') }} to it by hand; until "
 			"then Send for Signature refuses rental agreements.",
-			"Contract e-sign: rental signature block not patched",
 		)
 		return
 	frappe.db.set_value("Contract Template", TEMPLATE_KEY, "body", new_body, update_modified=False)

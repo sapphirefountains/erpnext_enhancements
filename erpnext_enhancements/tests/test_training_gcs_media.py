@@ -98,13 +98,24 @@ def _reset_state():
 	)
 
 
+def _v16_log_error(
+	title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False
+):
+	"""``frappe.log_error`` as v16 stores it, recording ``(row title, row body)``: given a message,
+	the two are swapped when -- and only when -- ``title`` holds a newline
+	(``frappe/utils/error.py``)."""
+	if message and "\n" in title:
+		title, message = message, title
+	STATE["errors"].append((title, message))
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
 	frappe.session = _Dict(user="tester@example.com")
 	frappe.flags = _Dict()
-	frappe.log_error = lambda *a, **k: STATE["errors"].append(a[0] if a else "")
-	frappe.get_traceback = lambda: "traceback"
+	frappe.log_error = _v16_log_error
+	frappe.get_traceback = lambda: "Traceback (most recent call last):\nValueError: boom"
 	frappe.generate_hash = lambda length=10: "h" * length
 	frappe.only_for = lambda *a, **k: None
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
@@ -334,11 +345,15 @@ class TestDegradesRatherThanThrows(unittest.TestCase):
 		STATE["key_json"] = "{not json"
 		self.assertIsNone(gcs_media.generate_signed_url("o.mp4", now=FIXED_NOW))
 		self.assertTrue(STATE["errors"])
+		# Titled by its title: the one-line sentence used to become the title (v1.567.1).
+		self.assertEqual({title for title, _ in STATE["errors"]}, {"Training media"})
+		self.assertIn("is not valid JSON", STATE["errors"][0][1])
 
 	def test_unusable_key_is_logged_not_raised(self):
 		STATE["credentials_ok"] = False
 		self.assertIsNone(gcs_media.generate_signed_url("o.mp4", now=FIXED_NOW))
 		self.assertTrue(STATE["errors"])
+		self.assertEqual({title for title, _ in STATE["errors"]}, {"Training media"})
 
 	def test_empty_object_name_returns_none(self):
 		self.assertIsNone(gcs_media.generate_signed_url("", now=FIXED_NOW))
@@ -464,7 +479,7 @@ class TestErrorDescriptionIsNeverEmpty(unittest.TestCase):
 		"""The dialog stays short; the detail has to survive somewhere."""
 		STATE["errors"].clear()
 		gcs_media._describe(TimeoutError())
-		self.assertTrue(STATE["errors"])
+		self.assertEqual([title for title, _ in STATE["errors"]], ["Training media"])
 
 
 class TestConnectionTestNeedsOnlyWhatTheAppNeeds(unittest.TestCase):

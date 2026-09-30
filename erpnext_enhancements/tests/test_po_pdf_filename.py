@@ -68,8 +68,16 @@ def _install_frappe_stub():
 
     frappe.get_doc = get_doc
     frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
-    frappe.get_traceback = lambda: "traceback"
-    frappe.log_error = lambda message, title=None: STATE["errors"].append(title)
+    frappe.get_traceback = lambda: "Traceback (most recent call last):\nRuntimeError: document gone"
+
+    def log_error(title=None, message=None, reference_doctype=None, reference_name=None, *, defer_insert=False):
+        # v16 (frappe/utils/error.py): given a message, the two are swapped when -- and only
+        # when -- `title` holds a newline. Records the row's title as it is stored.
+        if message and "\n" in title:
+            title, message = message, title
+        STATE["errors"].append(title)
+
+    frappe.log_error = log_error
     frappe.local = types.SimpleNamespace(response=types.SimpleNamespace(filename=None))
 
     utils = types.ModuleType("frappe.utils")

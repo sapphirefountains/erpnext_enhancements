@@ -415,9 +415,9 @@ def _doc_payload(doctype, values):
             dropped.append(key)
     if dropped:
         frappe.log_error(
-            f"{doctype} has no field(s) {sorted(dropped)} — those values were discarded. "
+            title="Training payload",
+            message=f"{doctype} has no field(s) {sorted(dropped)} — those values were discarded. "
             "This is almost always a typo in the caller, not a schema that has moved.",
-            "Training payload",
         )
     return payload
 
@@ -1649,8 +1649,8 @@ def resume_after_signoff(attempt=None, course=None, user=None):
         return result.get("completion")
     except Exception:
         frappe.log_error(
-            f"Could not finish attempt {name} after its sign-off was recorded.",
-            "Training sign-off resume",
+            title="Training sign-off resume",
+            message=f"Could not finish attempt {name} after its sign-off was recorded.",
         )
         return None
 
@@ -2228,9 +2228,9 @@ def _refresh_attempt_summary(doc, coverage=None):
             frappe.db.set_value("Training Attempt", doc.name, field, value, update_modified=False)
     except Exception:
         frappe.log_error(
-            f"Could not refresh the summary counters on Training Attempt {doc.name}. "
+            title="Training attempt summary",
+            message=f"Could not refresh the summary counters on Training Attempt {doc.name}. "
             "The completion itself was written; only the denormalised columns are stale.",
-            "Training attempt summary",
         )
 
 
@@ -2245,8 +2245,8 @@ def _issue_completion(doc, score, coverage=None):
         # Guarded rather than assumed: the runtime must still let somebody finish a
         # course on a site where the completion doctype has not migrated yet.
         frappe.log_error(
-            f"Attempt {doc.name} passed but Training Completion does not exist on this site.",
-            "Training completion",
+            title="Training completion",
+            message=f"Attempt {doc.name} passed but Training Completion does not exist on this site.",
         )
         return None
 

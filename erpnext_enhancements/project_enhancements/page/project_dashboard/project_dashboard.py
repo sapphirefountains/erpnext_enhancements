@@ -58,8 +58,8 @@ def check_permission():
 			return False
 		return True
 
-	except Exception as e:
-		frappe.log_error(f"Error checking project dashboard permissions: {e}", frappe.get_traceback())
+	except Exception:
+		frappe.log_error(title="Error checking project dashboard permissions", message=frappe.get_traceback())
 		return False
 
 
@@ -80,8 +80,10 @@ def _get_assignee_names(doctype, docname):
 			"User", filters={"email": ("in", list(assignee_emails))}, fields=["email", "full_name"]
 		)
 		return users
-	except Exception as e:
-		frappe.log_error(f"Error fetching assignee names for {doctype} {docname}: {e}", frappe.get_traceback())
+	except Exception:
+		frappe.log_error(
+			title=f"Error fetching assignee names for {doctype} {docname}", message=frappe.get_traceback()
+		)
 		return []
 
 
@@ -203,7 +205,7 @@ def get_project_data(is_active=None):
 		return projects
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Error fetching project data")
+		frappe.log_error(title="Error fetching project data", message=frappe.get_traceback())
 		return {"error": "Could not fetch project data. Please check the logs."}
 
 
@@ -227,7 +229,7 @@ def create_inline_task(project, subject, parent_task=None):
 		task.insert()
 		return {"status": "success", "task": task.name}
 	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), "Error creating inline task")
+		frappe.log_error(title="Error creating inline task", message=frappe.get_traceback())
 		return {"status": "error", "message": str(e)}
 
 
@@ -260,7 +262,9 @@ def add_project_assignee(project_name, user_id):
 		return {"status": "success", "assignees": updated_assignees}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error assigning user {user_id} to project {project_name}")
+		frappe.log_error(
+			title=f"Error assigning user {user_id} to project {project_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
@@ -293,7 +297,9 @@ def remove_project_assignee(project_name, user_id):
 		return {"status": "success", "assignees": updated_assignees}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error removing user {user_id} from project {project_name}")
+		frappe.log_error(
+			title=f"Error removing user {user_id} from project {project_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
@@ -329,7 +335,7 @@ def update_project_details(project_name, field, value):
 		frappe.db.set_value("Project", project_name, field, value)
 		return {"status": "success"}
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error updating project {project_name}")
+		frappe.log_error(title=f"Error updating project {project_name}", message=frappe.get_traceback())
 		return {"status": "error", "message": "Could not update project. Please check the logs."}
 
 
@@ -345,7 +351,7 @@ def update_task_status(task_name, status):
 		frappe.db.set_value("Task", task_name, "status", status)
 		return {"status": "success"}
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error updating task status for {task_name}")
+		frappe.log_error(title=f"Error updating task status for {task_name}", message=frappe.get_traceback())
 		return {"status": "error", "message": "Could not update task status."}
 
 
@@ -361,7 +367,9 @@ def update_task_priority(task_name, priority):
 		frappe.db.set_value("Task", task_name, "priority", priority)
 		return {"status": "success"}
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error updating task priority for {task_name}")
+		frappe.log_error(
+			title=f"Error updating task priority for {task_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": "Could not update task priority."}
 
 
@@ -396,7 +404,7 @@ def get_priority_options():
 		return options
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Error fetching priority options")
+		frappe.log_error(title="Error fetching priority options", message=frappe.get_traceback())
 		return {"error": "Could not fetch priority options."}
 
 
@@ -420,7 +428,7 @@ def get_status_options():
 			return []
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Error fetching status options")
+		frappe.log_error(title="Error fetching status options", message=frappe.get_traceback())
 		return {"error": "Could not fetch status options."}
 
 
@@ -443,7 +451,7 @@ def get_task_status_options():
 			return []
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Error fetching task status options")
+		frappe.log_error(title="Error fetching task status options", message=frappe.get_traceback())
 		return {"error": "Could not fetch task status options."}
 
 
@@ -479,8 +487,10 @@ def _fetch_all_project_tasks(project_name):
 		# We fetch all tasks related to the project without initial sorting,
 		# as sorting will be handled comprehensively later.
 		direct_tasks = frappe.get_list("Task", fields=task_fields, filters={"project": project_name})
-	except Exception as e:
-		frappe.log_error(f"Initial task fetch failed for project {project_name}: {e}", frappe.get_traceback())
+	except Exception:
+		frappe.log_error(
+			title=f"Initial task fetch failed for project {project_name}", message=frappe.get_traceback()
+		)
 		return []
 
 	all_tasks = {task["name"]: task for task in direct_tasks}
@@ -502,8 +512,10 @@ def _fetch_all_project_tasks(project_name):
 					all_tasks[child["name"]] = child
 					tasks_to_process.append(child["name"])
 
-		except Exception as e:
-			frappe.log_error(f"Child task fetch failed for parents {parent_ids}: {e}", frappe.get_traceback())
+		except Exception:
+			frappe.log_error(
+				title=f"Child task fetch failed for parents {parent_ids}", message=frappe.get_traceback()
+			)
 			break
 
 	return list(all_tasks.values())
@@ -693,7 +705,7 @@ def get_project_tasks(project, parent=None):
 		return tasks
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error fetching tasks for project {project}")
+		frappe.log_error(title=f"Error fetching tasks for project {project}", message=frappe.get_traceback())
 		return {"error": "Could not fetch tasks."}
 
 
@@ -873,8 +885,10 @@ def _fetch_all_master_project_projects(master_project):
 	]
 	try:
 		return frappe.get_list("Project", fields=project_fields, filters={"custom_master_project": master_project})
-	except Exception as e:
-		frappe.log_error(f"Project fetch failed for master project {master_project}: {e}", frappe.get_traceback())
+	except Exception:
+		frappe.log_error(
+			title=f"Project fetch failed for master project {master_project}", message=frappe.get_traceback()
+		)
 		return []
 
 
@@ -894,7 +908,10 @@ def get_master_project_projects(master_project):
 		projects.sort(key=lambda p: (float(p.get("custom_subproject_order") or float("inf")), getdate(p.get("creation"))))
 		return projects
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error fetching projects for master project {master_project}")
+		frappe.log_error(
+			title=f"Error fetching projects for master project {master_project}",
+			message=frappe.get_traceback(),
+		)
 		return {"error": "Could not fetch projects for master project."}
 
 
@@ -917,7 +934,10 @@ def update_master_project_structure(master_project, projects):
 				frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
 		return {"status": "success"}
 	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), f"Error updating master project structure for {master_project}")
+		frappe.log_error(
+			title=f"Error updating master project structure for {master_project}",
+			message=frappe.get_traceback(),
+		)
 		return {"status": "error", "message": str(e)}
 
 
@@ -971,7 +991,7 @@ def update_task_date(task_name, field, value):
 		return {"status": "success"}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error updating task {task_name}")
+		frappe.log_error(title=f"Error updating task {task_name}", message=frappe.get_traceback())
 		return {"status": "error", "message": "Could not update task date. Please check the logs."}
 
 
@@ -1014,7 +1034,9 @@ def update_task_expected_time(task_name, expected_time):
 		return {"status": "success"}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error updating expected time for task {task_name}")
+		frappe.log_error(
+			title=f"Error updating expected time for task {task_name}", message=frappe.get_traceback()
+		)
 		return {
 			"status": "error",
 			"message": "Could not update task's expected time. See logs for details.",
@@ -1051,7 +1073,9 @@ def add_task_assignee(task_name, user_id):
 		return {"status": "success", "assignees": updated_assignees}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error assigning user {user_id} to task {task_name}")
+		frappe.log_error(
+			title=f"Error assigning user {user_id} to task {task_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
@@ -1085,7 +1109,9 @@ def remove_task_assignee(task_name, user_id):
 		return {"status": "success", "assignees": updated_assignees}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error removing user {user_id} from task {task_name}")
+		frappe.log_error(
+			title=f"Error removing user {user_id} from task {task_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
@@ -1165,7 +1191,9 @@ def update_task_structure(project_name, tasks):
 	except Exception as e:
 		# The whitelisted method runs in a transaction, which will be rolled
 		# back automatically by the Frappe framework on an exception.
-		frappe.log_error(frappe.get_traceback(), f"Error updating task structure for {project_name}")
+		frappe.log_error(
+			title=f"Error updating task structure for {project_name}", message=frappe.get_traceback()
+		)
 		return {
 			"status": "error",
 			# We return the specific exception to the client to aid debugging,
@@ -1204,7 +1232,9 @@ def update_task_dates_from_gantt(task_name, start_date, end_date):
 		return {"status": "success"}
 
 	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), f"Error updating task dates and shifting for {task_name}")
+		frappe.log_error(
+			title=f"Error updating task dates and shifting for {task_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": str(e)}
 
 
@@ -1270,7 +1300,9 @@ def update_project_dates_from_gantt(project_name, start_date, end_date):
 		)
 		return {"status": "success"}
 	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), f"Error updating project dates for {project_name}")
+		frappe.log_error(
+			title=f"Error updating project dates for {project_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": str(e)}
 
 
@@ -1349,7 +1381,7 @@ def add_task_dependency(task_name, depends_on_task):
 		return {"status": "success"}
 
 	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), f"Error adding dependency to {task_name}")
+		frappe.log_error(title=f"Error adding dependency to {task_name}", message=frappe.get_traceback())
 		return {"status": "error", "message": str(e)}
 
 
@@ -1462,7 +1494,9 @@ def get_gantt_tasks_for_project(project_name):
 		return gantt_tasks
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error fetching Gantt tasks for project {project_name}")
+		frappe.log_error(
+			title=f"Error fetching Gantt tasks for project {project_name}", message=frappe.get_traceback()
+		)
 		return {"error": "Could not fetch tasks for Gantt board."}
 
 
@@ -1503,7 +1537,9 @@ def update_task_progress_from_gantt(task_name, progress):
 		return {"status": "success"}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error updating task progress from Gantt for {task_name}")
+		frappe.log_error(
+			title=f"Error updating task progress from Gantt for {task_name}", message=frappe.get_traceback()
+		)
 		return {"status": "error", "message": "Could not update task progress. Please check the logs."}
 
 
@@ -1545,7 +1581,7 @@ def update_multiple_docs(project_updates, task_updates):
 
 		return {"status": "success"}
 	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), "Error in batch update")
+		frappe.log_error(title="Error in batch update", message=frappe.get_traceback())
 		return {"status": "error", "message": str(e)}
 
 @frappe.whitelist()
@@ -1577,7 +1613,7 @@ def delete_task(task_name):
 		# incident, and a traceback per click is what buried the real ones.
 		return {"status": "error", "message": str(e)}
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), f"Error deleting task {task_name}")
+		frappe.log_error(title=f"Error deleting task {task_name}", message=frappe.get_traceback())
 		return {"status": "error", "message": "Could not delete task. Please check the logs."}
 
 
@@ -1654,5 +1690,5 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 		}
 
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Error fetching all projects for Gantt view")
+		frappe.log_error(title="Error fetching all projects for Gantt view", message=frappe.get_traceback())
 		return {"error": "Could not fetch project data for the Gantt chart. Please check logs."}

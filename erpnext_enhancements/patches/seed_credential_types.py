@@ -42,10 +42,10 @@ TYPES = (
 def execute():
 	if not frappe.db.exists("DocType", "Credential Type"):
 		frappe.log_error(
-			"Credential Type is not on this site, so the catalogue was not seeded. "
+			title="HR Enhancements",
+			message="Credential Type is not on this site, so the catalogue was not seeded. "
 			"Check that 'HR Enhancements' reached frappe.local.app_modules "
 			"(setup/module_map.py) before model sync.",
-			"HR Enhancements",
 		)
 		return
 

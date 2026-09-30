@@ -316,6 +316,22 @@ class TestChangelogVersions(unittest.TestCase):
 		current = re.search(r'__version__ = "([^"]+)"', init).group(1)
 		self.assertEqual(sections[0][0], current, "the newest section is the version being released")
 
+	def test_the_version_being_released_outranks_every_earlier_one(self):
+		"""A branch cut before main moved can agree with itself and still be behind main.
+
+		PR #1162 was cut at 1.561.2 and shipped 1.561.3 in both version files with its section
+		on top. Main reached 1.566.0 meanwhile, so a merge that kept the branch's number would
+		still pass the version-sync job and the test above, and release 1.561.3 after 1.566.0.
+		"""
+		text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+		(newest, _body), *earlier = rs.changelog_versions(text)
+		top = max(earlier, key=lambda section: rs.version_key(section[0]))[0]
+		self.assertGreater(
+			rs.version_key(newest),
+			rs.version_key(top),
+			f"the newest section, {newest}, must be above every earlier release ({top})",
+		)
+
 	def test_this_releases_refs_line_names_nothing_to_move(self):
 		"""v1.531.0 is the convention's first example. Its Tasks are tracked outside Enhancement
 		Requests, so the line must name none: the first run on production replays everything."""

@@ -67,7 +67,7 @@ def execute():
 			"erpnext_enhancements", MODULE_DIR, "workspace", slug, f"{slug}.json"
 		)
 		if not os.path.exists(path):
-			frappe.log_error(f"Hub workspace file missing: {path}", "Workspace sync")
+			frappe.log_error(title="Workspace sync", message=f"Hub workspace file missing: {path}")
 			continue
 		try:
 			# NOT reload_doc. Its first argument is a MODULE, and these workspaces

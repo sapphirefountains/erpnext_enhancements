@@ -204,9 +204,9 @@ def _reap_orphan_checkpoints(lesson):
             frappe.delete_doc("Training Checkpoint", row.name, ignore_permissions=True)
         except frappe.LinkExistsError:
             frappe.log_error(
-                f"Checkpoint {row.name} is orphaned on lesson {lesson.name} but is still"
+                title="Training checkpoint reap",
+                message=f"Checkpoint {row.name} is orphaned on lesson {lesson.name} but is still"
                 " referenced, so it was kept. Its block was removed from the lesson.",
-                "Training checkpoint reap",
             )
 
 def _clone_lessons(from_version, to_version):

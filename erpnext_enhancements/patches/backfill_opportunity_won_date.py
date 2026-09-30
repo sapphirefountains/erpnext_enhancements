@@ -87,9 +87,9 @@ def execute():
 		# Loudly, not quietly. A silent return here is indistinguishable from a
 		# backfill that had nothing to do.
 		frappe.log_error(
-			f"Opportunity.{FIELD} does not exist; the won-date backfill did nothing. "
+			title="Won-date backfill skipped",
+			message=f"Opportunity.{FIELD} does not exist; the won-date backfill did nothing. "
 			"Check that the custom field fixture has been applied.",
-			"Won-date backfill skipped",
 		)
 		return
 

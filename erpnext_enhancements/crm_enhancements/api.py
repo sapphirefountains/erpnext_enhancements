@@ -252,8 +252,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			blocked_reason = handoff_block_reason(opportunity_name)
 			if blocked_reason:
 				frappe.log_error(
-					f"Project creation from Opportunity '{opportunity_name}' refused: {blocked_reason}",
-					"Hand-Off Gate: project creation blocked",
+					title="Hand-Off Gate: project creation blocked",
+					message=f"Project creation from Opportunity '{opportunity_name}' refused: {blocked_reason}",
 				)
 				# Raised rather than returned: a bare `return` here would exit the
 				# whole function and skip the realtime broadcast below, leaving the
@@ -278,10 +278,10 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				except ModuleNotFoundError as e:
 					if "erpnext_enhancements.task" in str(e):
 						frappe.log_error(
-							f"Project creation from Opportunity '{opportunity_name}' failed because Project Template "
+							title="CRM Enhancements: Misconfigured Task DocType",
+							message=f"Project creation from Opportunity '{opportunity_name}' failed because Project Template "
 							f"'{project_template}' references a misconfigured Task doctype. The project will be created "
 							"without the template.",
-							"CRM Enhancements: Misconfigured Task DocType",
 						)
 					else:
 						# Re-raise exceptions that are not the one we're handling
@@ -492,7 +492,9 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 					drive_success = True
 				except Exception:
 					drive_error_details = frappe.get_traceback()
-					frappe.log_error(drive_error_details, "[Google Drive Integration] Folder Creation Failed")
+					frappe.log_error(
+						title="[Google Drive Integration] Folder Creation Failed", message=drive_error_details
+					)
 
 		finally:
 			frappe.set_user(original_user)
@@ -502,7 +504,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		# re-logged as a traceback: this is the process working, not a fault.
 		pass
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "CRM Enhancements App Background Job Failed")
+		frappe.log_error(title="CRM Enhancements App Background Job Failed", message=frappe.get_traceback())
 
 	# The real-time broadcast logic remains the same. Normalized again rather than
 	# trusting the caller: this is the last point before frappe.sendmail, and a

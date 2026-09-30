@@ -147,7 +147,7 @@ def _dispatch_event(event_name: str):
 		tb = error_snippet(frappe.get_traceback())
 		event.db_set({"processed": 0, "process_status": "Error", "error": tb})
 		frappe.db.commit()
-		frappe.log_error(tb, f"Stripe: failed to process {event_type} ({event_name})")
+		frappe.log_error(title=f"Stripe: failed to process {event_type} ({event_name})", message=tb)
 		raise
 
 
@@ -390,7 +390,7 @@ def _accounts_notify(subject, content, doctype=None, docname=None):
 				log["document_name"] = docname
 			frappe.get_doc(log).insert(ignore_permissions=True)
 	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: accounts alert failed")
+		frappe.log_error(title="Stripe: accounts alert failed", message=error_snippet(frappe.get_traceback()))
 
 
 def _alert_refunded_unposted(sp):
@@ -467,7 +467,9 @@ def _draft_refund_reversal(sp, refunded_total):
 			pe.name,
 		)
 	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: refund reversal draft failed")
+		frappe.log_error(
+			title="Stripe: refund reversal draft failed", message=error_snippet(frappe.get_traceback())
+		)
 
 
 def _on_charge_dispute(dispute):
@@ -503,7 +505,7 @@ def _on_charge_dispute(dispute):
 		if sp:
 			sp.add_comment("Comment", f"Stripe dispute {status}: {amount}, reason {reason}.")
 	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: dispute alert failed")
+		frappe.log_error(title="Stripe: dispute alert failed", message=error_snippet(frappe.get_traceback()))
 	frappe.db.commit()
 	return sp
 
@@ -675,10 +677,10 @@ def _void_surcharge_if_not_credit(sp, funding):
 		return
 	if funding is None:
 		frappe.log_error(
-			f"Stripe Payment {sp.name} collected a {surcharge} surcharge but the card's funding "
+			title="Stripe: surcharge booked with unknown funding type",
+			message=f"Stripe Payment {sp.name} collected a {surcharge} surcharge but the card's funding "
 			"type could not be determined. Verify in the Stripe dashboard that it was a credit "
 			"card; if it was debit or prepaid, refund the surcharge manually.",
-			"Stripe: surcharge booked with unknown funding type",
 		)
 		return
 	if funding not in NON_SURCHARGEABLE_FUNDING:
@@ -753,7 +755,9 @@ def _alert_surcharge_voided(sp, surcharge):
 			).insert(ignore_permissions=True)
 		frappe.db.commit()
 	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: surcharge-void alert failed")
+		frappe.log_error(
+			title="Stripe: surcharge-void alert failed", message=error_snippet(frappe.get_traceback())
+		)
 
 
 def _book_surcharge(sp, pe, charge_id, pi_id):
@@ -1003,7 +1007,9 @@ def _close_esign_autopay(setup_session):
 				"Contract Signature Request", name, "autopay_outcome", "Enrolled", update_modified=False
 			)
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Contract e-sign: autopay completion stamp failed")
+		frappe.log_error(
+			title="Contract e-sign: autopay completion stamp failed", message=frappe.get_traceback()
+		)
 
 
 def _pm_label(pm):

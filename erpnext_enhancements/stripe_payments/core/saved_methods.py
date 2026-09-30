@@ -95,7 +95,9 @@ def create_setup_session(customer: str, channel: str = "Desk") -> dict:
 			params, idempotency_key=f"ee-setup-{customer}-{frappe.generate_hash(length=8)}"
 		)
 	except Exception as exc:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: create_setup_session failed")
+		frappe.log_error(
+			title="Stripe: create_setup_session failed", message=error_snippet(frappe.get_traceback())
+		)
 		frappe.throw(f"Could not start autopay setup: {error_snippet(str(exc), 200)}")
 
 	_record_consent(customer, channel, settings, session["id"])
@@ -381,10 +383,14 @@ def _alert_failed_autocharge(sp, reason):
 				}
 			).insert(ignore_permissions=True)
 		if not recipients:
-			frappe.log_error(f"{subject}: {content}", "Stripe: auto-charge failure (no Accounts Manager)")
+			frappe.log_error(
+				title="Stripe: auto-charge failure (no Accounts Manager)", message=f"{subject}: {content}"
+			)
 		frappe.db.commit()
 	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: auto-charge failure alert failed")
+		frappe.log_error(
+			title="Stripe: auto-charge failure alert failed", message=error_snippet(frappe.get_traceback())
+		)
 
 
 # Auto-charge fires on Sales Invoice on_submit. A currently-billed invoice is submitted
@@ -483,7 +489,7 @@ def _record_consent(customer, channel, settings, setup_session):
 		).insert(ignore_permissions=True)
 		frappe.db.commit()
 	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: consent record failed")
+		frappe.log_error(title="Stripe: consent record failed", message=error_snippet(frappe.get_traceback()))
 
 
 def revoke_autopay(customer):
@@ -498,7 +504,9 @@ def revoke_autopay(customer):
 
 			detach_payment_method(pm)
 		except Exception:
-			frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: detach payment method failed")
+			frappe.log_error(
+				title="Stripe: detach payment method failed", message=error_snippet(frappe.get_traceback())
+			)
 
 	frappe.db.set_value(
 		"Customer",

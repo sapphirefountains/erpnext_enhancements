@@ -208,11 +208,13 @@ def _record_failure(docname):
 		failed.db_set("status", "Failed", update_modified=False)
 		failed.db_set("error", traceback, update_modified=False)
 		frappe.db.commit()
-		frappe.log_error(traceback, "Fountain Move Conversion", defer_insert=True)
+		frappe.log_error(title="Fountain Move Conversion", message=traceback, defer_insert=True)
 		notify.notify_conversion_failure(failed)
 	except Exception:
 		# Never let the failure handler mask the original failure.
-		frappe.log_error(frappe.get_traceback(), "Fountain Move: failure handler", defer_insert=True)
+		frappe.log_error(
+			title="Fountain Move: failure handler", message=frappe.get_traceback(), defer_insert=True
+		)
 
 
 # ---------------------------------------------------------------------------
@@ -464,9 +466,9 @@ def _sweep_stray_contact(lead, ours):
 	if not stray_name or stray_name == ours:
 		return
 	frappe.log_error(
-		f"Lead {lead.name} produced an unexpected auto-Contact {stray_name}; "
+		title="Fountain Move: stray Contact",
+		message=f"Lead {lead.name} produced an unexpected auto-Contact {stray_name}; "
 		f"ours is {ours}. Suppression via utm_source may have stopped working.",
-		"Fountain Move: stray Contact",
 		defer_insert=True,
 	)
 	try:
@@ -474,7 +476,9 @@ def _sweep_stray_contact(lead, ours):
 			"Contact", stray_name, force=1, ignore_permissions=True, delete_permanently=True
 		)
 	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Fountain Move: stray Contact cleanup", defer_insert=True)
+		frappe.log_error(
+			title="Fountain Move: stray Contact cleanup", message=frappe.get_traceback(), defer_insert=True
+		)
 
 
 def _refresh_lead(name, req, customer, contact, lead_source):
