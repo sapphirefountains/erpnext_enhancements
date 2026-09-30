@@ -656,8 +656,9 @@ format is `<PREFIX>-<DD>-<NNNN>`:
 
 So `SOP-06-0001`, `POL-00-0001`, `PRO-02-0003`. The one definition is in `constants.py`:
 `ARTICLE_NUMBER` (canonical, as stored), `ARTICLE_NUMBER_WRITTEN` (as people write one),
-`article_number`, `number_scope`, `parse_article_number`, `normalize_article_number` and
-`written_article_numbers`. Every module that reads or writes a number imports them, and
+`article_number`, `number_scope`, `parse_article_number`, `normalize_article_number`,
+`written_article_numbers` and `cited_article_numbers`. Every module that reads or writes a number
+imports them, and
 `tests/test_knowledge_base_rules.py` fails the build on a number in the retired `KB-` format written
 anywhere in the Knowledge Base's code, schema or workspace, comments included.
 
@@ -702,6 +703,14 @@ no `tabSeries` row with these prefixes when this landed.
 between the department and the sequence is required, so the Drive register's own `PREFIX-DDNN` numbers
 (`SOP-0601`, `POL-0600`) are never read as article numbers; the two are separate series.
 
+**What running text cites is read more strictly** (`constants.cited_article_numbers`, review of
+v1.567.0). Running text holds ordinary words with a number's shape: a product called "Pro 2 1000" is
+`PRO-02-1000` in the loose reading. So in a body, a space may separate the parts only when the
+department is written with two digits: `sop 06 0001`, `SOP-6-1` and `sop_6_1` are citations, and
+`Pro 2 1000`, `pro 5 10 times` and `SOP 1 2 3` are words. Fetch's `related` uses it, so the AI is never
+shown a cited article the text never cited. The loose reading stays where the text is meant as a
+number: fetch's and the drafting tool's argument, and a search query, which pins what it names.
+
 **The retired `KB-` format maps to nothing.** No number in it was ever issued (prod had no Knowledge
 Article and no version when this landed), and it holds no kind, so it could not be mapped anyway. Fetch
 gives it the same `found: false` as every other miss, whose message now says what a number looks like;
@@ -717,8 +726,13 @@ ranked, keeps the index, and shapes results. v16's own search cannot do this: pr
 
 1. NFKC.
 2. An **article number**, however it is written (`SOP-06-0001`, `sop 06 1`, `sop_6_1`, en dashes;
-   `constants.ARTICLE_NUMBER_WRITTEN`), is one term, the canonical number casefolded, `sop-06-0001`: a
-   citation in a body is one term, not three words. One shaped like a number that is not one (sequence
+   `constants.ARTICLE_NUMBER_WRITTEN`), is one term, the canonical number casefolded, `sop-06-0001`, so
+   every spelling of a citation meets every other. In an article's text, not in a query, its prefix
+   and each digit run of 2 or more characters, as written, are indexed beside it, as a document
+   number's parts are: a product called "Pro 2 1000" has the same shape, and `1000`, `pro 1000` and
+   `Pro 2` must still find it (found in review of v1.567.0, when they had stopped). A query leaves the
+   parts out, because naming a number means that article, not every article of its kind and department
+   (whose `sop` and `06` the meta field carries). One shaped like a number that is not one (sequence
    `0000`) is read as its words.
 3. A document number, 2 to 5 letters, `-`, 2 to 6 digits (`SOP-9001`, the register's `POL-0600`, a
    retired `KB-0601`), is one term, and its two parts are indexed as well.
@@ -1202,7 +1216,7 @@ portal user and a guest; fails closed on a request it cannot read; and reads no 
 | [`../tests/test_knowledge_base_transitions.py`](../tests/test_knowledge_base_transitions.py) | The state machine, every rule of every move, the buttons, who is asked, `shows_anything`/`referenced_files`/`text_diff`, and the example-key placeholders (PR 3). No stub; its own CI step |
 | [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, a hidden article taking no slot, the cache) (PR 5); the AI tools' payloads (`AiToolPayloadsTest`: no draft sentinel on any page of any tool, the one `found: false`, the 40,000-character cap, the table of contents, a retired article in no table of contents and unavailable in `related`, a citation fetching its article, no email address, the failure path with nothing of the request in its Error Log) (PR 6a); the drafting tool end to end (`AiDraftTest`: queued through the real gate over a FAC stub and confirmed through the real `_confirm_one`; only the requester's confirmation writes; submitted in the same card, then the requester's approval refused, any approval under a gate flag refused, another approver publishing; the savepoint; the only move being Submit for Review; pictures, secrets, open versions; no text in any result or refusal; and from its review, a submit refused on `write` leaving no draft, a department and an enabled-staff process owner required, a retire or a revision committed after the check refused under the lock, nulls and wrong types refused before any card) (PR 6b); the mirror's snapshot (`MirrorSnapshotTest`: refused without KB Mirror before any read, Published only, a file equal to fetch's Markdown byte for byte and whole past 40,000 characters, the paths, a skipped department, the stamp and `since`, no header read, nothing written or logged) (PR 8); the mirror account's confinement (`MirrorConfinementTest`: every other method, address, method and page refused, `cmd` refused, the snapshot answered through it, every other user untouched, fail closed, no header read) (PR 8 review). Its own CI step: it stubs `frappe` and FAC |
 | [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review); the paragraph pointing to the search bar and the Integrity report's kind check (PR 5). Its own CI step: it stubs `frappe` |
-| [`../tests/test_knowledge_base_tools.py`](../tests/test_knowledge_base_tools.py) | The three AI tools as FAC sees them (PR 6a): in `EXPLICIT_READONLY` (the build fails if one leaves), `requires_permission`, descriptions (at most 600 characters, "not instructions", "KB-"), the kind and department enums, no property named `title`, `doctype` or `id`, no read-path file naming the Version doctype (comments and docstrings stripped; since PR 8 the mirror's endpoint too), the hook's order, the failure path (never `frappe.log_error`, whose v16 metadata holds the request's form_dict, the arguments). On the AI-gate CI step, on `test_assistant_tools_schema`'s stubs. The payloads' behavior is `AiToolPayloadsTest` in `test_knowledge_base_actions`; the renderer is `TestArticleMarkdown` in `test_knowledge_base_rules`. PR 6b: the drafting tool's contract (Medium, `requires_permission`, the schema and `ai_draft.TYPES`, the four card lines, the card's target), the gate's refusals with no card and their withheld log rows (a misnamed argument, a failed log insert and a quoting error included), `ai_draft`'s pure checks (secrets as sent and as shown, invisible characters, titles, pictures matched exactly, addresses a browser reads differently), and the static allowlist on `ai_draft.py` |
+| [`../tests/test_knowledge_base_tools.py`](../tests/test_knowledge_base_tools.py) | The three AI tools as FAC sees them (PR 6a): in `EXPLICIT_READONLY` (the build fails if one leaves), `requires_permission`, descriptions (at most 600 characters, "not instructions", an article-number example such as 'SOP-06-0001 v3' and none in the retired KB- format), the kind and department enums, no property named `title`, `doctype` or `id`, no read-path file naming the Version doctype (comments and docstrings stripped; since PR 8 the mirror's endpoint too), the hook's order, the failure path (never `frappe.log_error`, whose v16 metadata holds the request's form_dict, the arguments). On the AI-gate CI step, on `test_assistant_tools_schema`'s stubs. The payloads' behavior is `AiToolPayloadsTest` in `test_knowledge_base_actions`; the renderer is `TestArticleMarkdown` in `test_knowledge_base_rules`. PR 6b: the drafting tool's contract (Medium, `requires_permission`, the schema and `ai_draft.TYPES`, the four card lines, the card's target), the gate's refusals with no card and their withheld log rows (a misnamed argument, a failed log insert and a quoting error included), `ai_draft`'s pure checks (secrets as sent and as shown, invisible characters, titles, pictures matched exactly, addresses a browser reads differently), and the static allowlist on `ai_draft.py` |
 | [`../tests/test_knowledge_base_search.py`](../tests/test_knowledge_base_search.py) | `search.py` (PR 5), **pytest**, on its own `python -m pytest` step: every tokenizer rule (a punctuated acronym such as W-2 or T&M included), the stemmer table, pinning, filters before scoring, the kind's aliases, ties, snippets, an invented golden set (`tests/data/kb_search_golden.json`), a performance guard, a fresh-interpreter import with `frappe` absent, and static checks that search never names the Version doctype or a SQL function string |
 
 ## What arrives later

@@ -19,10 +19,14 @@ the knowledge base with are exactly the short ones.
 2. **Article numbers** (``constants.ARTICLE_NUMBER_WRITTEN``, 2026-09-29): ``POL``, ``PRO`` or
    ``SOP``, the department block and the sequence, however they are written (``SOP-06-0001``,
    ``sop 06 0001``, ``SOP-06-1``, ``sop_6_1``, en dashes too), are **one** term, the canonical number
-   casefolded (``sop-06-0001``): a citation in a body is one term, not three words. A match that is
-   not a number (sequence ``0000``) is read as the words it is made of. The department and the
-   sequence must be separated, so the Drive register's own ``SOP-0601`` and ``POL-0600`` are
-   document numbers (3), never article numbers.
+   casefolded (``sop-06-0001``), so every spelling of a citation meets every other. In an article's
+   text (not in a query) its prefix and each digit run of 2 or more characters, as written, are
+   indexed as well, as a document number's parts are: ordinary words can have the same shape (a
+   product called ``Pro 2 1000``), and those words must still be found by ``1000`` or ``pro``. A
+   query leaves them out, because a query naming a number means that article, not every article
+   of its kind and department. A match that is not a number (sequence ``0000``) is read as the words
+   it is made of. The department and the sequence must be separated, so the Drive register's own
+   ``SOP-0601`` and ``POL-0600`` are document numbers (3), never article numbers.
 3. **Document numbers**: 2 to 5 letters, ``-``, 2 to 6 digits (``SOP-9001``, ``PO-1234``, and a
    number in the retired ``KB`` format) is kept as one compound term, and its two parts are indexed
    as well.
@@ -151,6 +155,9 @@ _TOKEN = re.compile(
 	r"|(?P<word>[^\W_]+)"
 )
 _JOINED_PIECE = re.compile(r"[A-Za-z0-9]+")
+#: An article number's pieces as written: its prefix, then its digit runs (``SOP06-0001`` is
+#: ``SOP``, ``06``, ``0001``).
+_NUMBER_PIECE = re.compile(r"[A-Za-z]+|[0-9]+")
 _WORD_RUN = re.compile(r"[^\W_]+")
 #: Where one run of text ends and the next begins: a line break, or a sentence's end.
 _RUN_BREAK = re.compile(r"[\r\n]+|[.!?;:](?=\s|$)")
@@ -211,23 +218,24 @@ def stem(word):
 	return word
 
 
-def _scan(text, keywords=False):
+def _scan(text, keywords=False, parts=True):
 	"""``[(start, end, tokens)]`` over ``unicodedata.normalize("NFKC", text)``: every token-bearing
 	span, with the positions the snippet and the highlighter need. A span whose word was dropped
-	(one character, or a stopword) is not listed."""
+	(one character, or a stopword) is not listed. ``parts=False`` for a query: an article number is
+	then its one term, without its prefix and digit runs (rule 2 above)."""
 	if not text:
 		return []
 	text = unicodedata.normalize("NFKC", str(text))
 	spans = []
 	start = 0
 	for boundary in _RUN_BREAK.finditer(text):
-		_scan_run(text, start, boundary.start(), keywords, spans)
+		_scan_run(text, start, boundary.start(), keywords, parts, spans)
 		start = boundary.end()
-	_scan_run(text, start, len(text), keywords, spans)
+	_scan_run(text, start, len(text), keywords, parts, spans)
 	return spans
 
 
-def _scan_run(text, start, end, keywords, out):
+def _scan_run(text, start, end, keywords, parts, out):
 	run = text[start:end]
 	if not run.strip():
 		return
@@ -237,7 +245,14 @@ def _scan_run(text, start, end, keywords, out):
 		if match.group("art") is not None:
 			number = constants.normalize_article_number(match.group("art"))
 			if number is not None:
-				out.append((begin, finish, (Token(number.casefold(), True),)))
+				tokens = [Token(number.casefold(), True)]
+				if parts:
+					letters, *digit_runs = _NUMBER_PIECE.findall(match.group("art"))
+					part = _word(letters, shouting, keywords)
+					if part is not None:
+						tokens.append(part)
+					tokens.extend(Token(digits, False) for digits in digit_runs if len(digits) >= 2)
+				out.append((begin, finish, tuple(tokens)))
 				continue
 			# Shaped like one but not a number (sequence 0000): the words it is made of.
 			for word in _WORD_RUN.finditer(run, match.start(), match.end()):
@@ -310,7 +325,7 @@ def _slots(query):
 		return []
 	text = unicodedata.normalize("NFKC", query)
 	slots, seen = [], set()
-	for start, end, tokens in _scan(text):
+	for start, end, tokens in _scan(text, parts=False):
 		for token in tokens:
 			slot = {token.term}
 			if not token.acronym and len(tokens) == 1:

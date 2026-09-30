@@ -268,6 +268,10 @@ ARTICLE_NUMBER = re.compile(r"(POL|PRO|SOP)-([0-9]{2})-([0-9]{4})")
 #: :data:`DEPARTMENT_BLOCKS`, so a block ``10`` fails the build until this is widened). So
 #: ``sop 06 0001``, ``SOP-06-1``, ``sop_6_1``, ``SOP06-0001`` and ``SOP-06-00001`` all read as
 #: ``SOP-06-0001``; :func:`normalize_article_number` refuses a match whose sequence is 0 or past 9999.
+#:
+#: This loose form is for text meant **as** a number, or a query naming one. Running text (an article's
+#: body, a lesson) holds ordinary words shaped like it, such as a product's ``Pro 2 1000``, so what it
+#: *cites* is read more strictly: :func:`cited_article_numbers`.
 ARTICLE_NUMBER_WRITTEN = r"\b(pol|pro|sop)[ _\-‐-–]?(0?[0-9])[ _\-‐-–](0*[0-9]{1,4})\b"
 _WRITTEN_NUMBER = re.compile(ARTICLE_NUMBER_WRITTEN, re.IGNORECASE)
 
@@ -329,13 +333,31 @@ def normalize_article_number(text):
 
 
 def written_article_numbers(text):
-	"""Every article number written in ``text``, canonical, in order of first mention, each once. A
-	register number (``POL-0600``) and one in the retired ``KB`` format are not article numbers, and are
-	not listed."""
+	"""Every article number written in ``text``, canonical, in order of first mention, each once, read
+	as loosely as :func:`normalize_article_number` reads one. For a query, where a number is meant: in
+	running text use :func:`cited_article_numbers`. A register number (``POL-0600``) and one in the
+	retired ``KB`` format are not article numbers, and are not listed."""
+	return _numbers_in(text, cited=False)
+
+
+def cited_article_numbers(text):
+	"""Every article number ``text`` **cites**, as :func:`written_article_numbers` lists them, except
+	that a space may separate the parts only when the department is written with two digits. So
+	``SOP-06-0001``, ``sop 06 0001``, ``SOP-6-1`` and ``sop_6_1`` are citations, and ``Pro 2 1000`` (a
+	product's name), ``pro 5 10 times`` and ``SOP 1 2 3`` are words. For running text: an article's
+	body, what fetch lists as ``related``, a lesson."""
+	return _numbers_in(text, cited=True)
+
+
+def _numbers_in(text, cited):
 	if not isinstance(text, str) or not text:
 		return []
 	numbers = []
 	for match in _WRITTEN_NUMBER.finditer(unicodedata.normalize("NFKC", text)):
+		# The only whitespace a match can hold is a separator's space. Nothing is lost by skipping a
+		# match here rather than in the pattern: no other number can start inside one.
+		if cited and len(match.group(2)) == 1 and " " in match.group(0):
+			continue
 		number = _canonical(match)
 		if number is not None and number not in numbers:
 			numbers.append(number)

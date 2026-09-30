@@ -14,7 +14,8 @@ once ran nowhere for weeks (CLAUDE.md). Locally, run it with plugin autoload off
 * **every tokenizer rule**: words of 2 or more characters, acronyms and their plurals, the all-caps
   run, IT against it, stopwords (never an acronym's, never a keyword's), NFKC, the spellings of an
   article number (2026-09-29: ``SOP-06-0001`` by kind and department, one term however written, and
-  never the Drive register's ``SOP-0601`` or the retired ``KB`` format), a document number with its
+  never the Drive register's ``SOP-0601`` or the retired ``KB`` format), running text shaped like
+  one (a product's ``Pro 2 1000``) still found by its words, a document number with its
   parts, and a punctuated acronym (W-2, I-9, T&M, A/R, P.O.) as one term that meets its unpunctuated
   and lowercase spellings;
 * **the stemmer's table**;
@@ -159,27 +160,54 @@ def test_nfkc_reads_a_full_width_or_ligature_spelling_as_the_plain_one():
 
 
 @pytest.mark.parametrize(
-	"spelling",
+	("spelling", "parts"),
 	[
-		"SOP-06-0001",
-		"sop 06 0001",
-		"SOP-06-1",
-		"sop_6_1",
-		"SOP06-0001",
-		"SOP\u201306\u20130001",
-		"SOP-06-00001",
-		"\uff33\uff2f\uff30-06-0001",
+		("SOP-06-0001", ["sop", "06", "0001"]),
+		("sop 06 0001", ["sop", "06", "0001"]),
+		("SOP-06-1", ["sop", "06"]),
+		("sop_6_1", ["sop"]),
+		("SOP06-0001", ["sop", "06", "0001"]),
+		("SOP\u201306\u20130001", ["sop", "06", "0001"]),
+		("SOP-06-00001", ["sop", "06", "00001"]),
+		("\uff33\uff2f\uff30-06-0001", ["sop", "06", "0001"]),
 	],
 )
-def test_the_spellings_of_an_article_number(spelling):
-	"""2026-09-29: one term, the canonical number casefolded, however it is written."""
-	assert S.tokenize(f"See {spelling} first") == [
-		S.Token("see", False),
-		S.Token("sop-06-0001", True),
-		S.Token("first", False),
-	]
+def test_the_spellings_of_an_article_number(spelling, parts):
+	"""2026-09-29: one term, the canonical number casefolded, however it is written. In an article's
+	text its prefix and its digit runs of 2 or more characters, as written, follow it (review of
+	v1.567.0); a query holds the one term alone."""
+	tokens = S.tokenize(f"See {spelling} first")
+	assert tokens[:2] == [S.Token("see", False), S.Token("sop-06-0001", True)]
+	assert [t.term for t in tokens[2:]] == [*parts, "first"]
+	assert S.query_terms(f"See {spelling} first") == {"see", "sop-06-0001", "first"}
 	assert S.normalize_article_number(spelling) == "SOP-06-0001"
 	assert S.normalize_article_number is K.normalize_article_number
+
+
+def test_running_text_shaped_like_a_number_keeps_its_words():
+	"""Review of v1.567.0: a product called "Pro 2 1000" has an article number's shape (``PRO-02-1000``
+	in the loose form a query may use). Before numbers were read, its words were found by ``1000``,
+	``pro 1000`` and ``Pro 2``; they still are, because an article's text indexes a number's prefix
+	and digit runs beside its term. And fetch's ``related`` never lists it
+	(``constants.cited_article_numbers``, pinned in ``test_knowledge_base_rules``)."""
+	assert terms("Use the Pro 2 1000 pump kit") == ["use", "pro-02-1000", "pro", "1000", "pump", "kit"]
+	assert terms("pro 5 10 times") == ["pro-05-0010", "pro", "10", "time"]
+	body = "Before startup, use the Pro 2 1000 pump kit."
+	index = S.build_index(
+		[
+			doc("SOP-06-0001", title="Starting the fountain", body=body, kind="SOP"),
+			doc("SOP-06-0002", title="Draining the basin", kind="SOP"),
+		]
+	)
+	for query in ("1000", "pro 1000", "Pro 2", "Pro 2 1000 pump", "pump 1000"):
+		hits = S.search(index, query)
+		assert keys(hits) == ["SOP-06-0001"], query
+		assert hits[0].matched == ("body",) and not hits[0].pinned, query
+	assert "Pro 2 1000 pump" in S.snippet(body, "1000")
+	# A query naming a number means that article, so its parts are no query terms: an unknown number
+	# finds nothing, although both articles here are SOPs in 06 (the meta field's "sop" and "06").
+	assert S.query_terms("SOP-06-0099") == {"sop-06-0099"}
+	assert S.search(index, "SOP-06-0099") == []
 
 
 def test_what_is_not_an_article_number():
@@ -205,6 +233,9 @@ def test_what_is_not_an_article_number():
 		S.Token("pol", True),
 		S.Token("0600", False),
 		S.Token("sop-06-0001", True),
+		S.Token("sop", True),
+		S.Token("06", False),
+		S.Token("0001", False),
 	]
 	assert terms("KB-0601") == ["kb-0601", "kb", "0601"]
 	# Shaped like one but not a number: the words it is made of.

@@ -988,7 +988,7 @@ A Triton PR, in the triton repo:
   - Read it with `get_single_value`/`get_password`, never `db.get_value("Singles")`.
 - **Article fields:** `drive_file_id`, `exported_hash` and `exported_on`. On a normal doctype NULL correctly means "not exported".
 - **Exporter:**
-  - It writes Google Docs with a header: KB number, version, approver, review-by, and "Generated from ERPNext; edit at <link>". Private images are removed and linked.
+  - It writes Google Docs with a header: article number, version, approver, review-by, and "Generated from ERPNext; edit at <link>". Private images are removed and linked.
   - Files are marked `kb_source=erpnext` in `appProperties`.
   - Compare hashes in Python.
   - Never trash when either listing is empty, and abort above 25% trashed.
@@ -1001,7 +1001,7 @@ This slice is one-way, KB → Training, and read-only. **It changes no Training 
 
 - **Read seam.** Add one small public function in `training/`, e.g. `training/public_api.py: courses_citing(kb_number, user)`. It wraps `_visible_course_names` (`api/training.py:234-276`) and reads only each published course's `current_version` payload. The KB imports only this. **Training never imports `knowledge_base`, and never refuses to publish because of KB state.**
 - **On `approve_and_publish` (inline, non-fatal):**
-  - Scan the live `published_content_json` for the KB number.
+  - Scan the live `published_content_json` for the article number, in any form a citation in running text takes (`constants.cited_article_numbers`: `SOP-06-0001`, `sop 06 0001`, `SOP-6-1`).
   - For each affected course owner (`Training Course.author`, falling back to Training Managers who pass `_is_staff`, never triton@), keep **one open ToDo per (article, owner) on the Knowledge Article**.
     - When one is already open, update its description. v16 dedupes on reference + assignee and ignores the description (`assign_to.py:66-76`).
     - The ToDo sits on the Article, which the owner and the approver can read, so no `ignore_permissions` is needed.
@@ -1014,7 +1014,7 @@ This slice is one-way, KB → Training, and read-only. **It changes no Training 
   - Optional with self-enrollment → Start;
   - otherwise → **Ask**. `start_attempt` refuses an unassigned Required course before it reads `allow_self_enrollment` (`api/training.py:877-887`).
   - **It never contains lesson text.** The field is additive, so it is not a contract change.
-- Zero-code companions (T0, now): set the real `author` on the 7 published courses, and have authors cite "see KB-0612" in lesson text.
+- Zero-code companions (T0, now): set the real `author` on the 7 published courses, and have authors cite article numbers (e.g. "see SOP-06-0001") in lesson text.
 
 ### Slice 6: private Markdown mirror (PR 8) [S–M, 1–1.5 d + a manual setup]
 

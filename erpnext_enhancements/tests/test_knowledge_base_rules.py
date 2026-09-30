@@ -611,6 +611,27 @@ class TestArticleNumberFormat(unittest.TestCase):
 		self.assertEqual(K.written_article_numbers(None), [])
 		self.assertEqual(K.written_article_numbers(""), [])
 
+	def test_what_running_text_cites(self):
+		"""Review of v1.567.0: running text holds ordinary words shaped like a number, such as a product
+		called "Pro 2 1000". What it *cites* allows a space between the parts only when the department
+		is written with two digits, so fetch's ``related`` never lists an article the text never cited.
+		The loose reading, for a query, still finds them all."""
+		text = (
+			"Use the Pro 2 1000 pump kit, pro 5 10 times, SOP 1 2 3, SOP 6-9; then sop 06 0003, SOP-6-4, "
+			"sop_6_5, SOP06-0006, SOP 06-7, SOP–6–8 and POL-0600."
+		)
+		self.assertEqual(
+			K.cited_article_numbers(text),
+			["SOP-06-0003", "SOP-06-0004", "SOP-06-0005", "SOP-06-0006", "SOP-06-0007", "SOP-06-0008"],
+		)
+		self.assertEqual(
+			K.written_article_numbers(text)[:4], ["PRO-02-1000", "PRO-05-0010", "SOP-01-0002", "SOP-06-0009"]
+		)
+		self.assertEqual(K.cited_article_numbers(None), [])
+		self.assertEqual(K.cited_article_numbers(""), [])
+		# Whole-string readings (fetch, the drafting tool, a query) stay loose.
+		self.assertEqual(K.normalize_article_number("sop 6 1"), "SOP-06-0001")
+
 
 class TestNextArticleNumber(unittest.TestCase):
 	def test_the_first_number_in_a_scope_is_0001(self):
@@ -798,6 +819,31 @@ class TestNoRetiredNumbersInTheCode(unittest.TestCase):
 	def test_the_one_kept_pattern_is_where_the_scan_expects_it(self):
 		text = (APP / "knowledge_base" / "ai_tools.py").read_text(encoding="utf-8")
 		self.assertEqual(sum(line.startswith("_RETIRED_FORMAT = ") for line in text.splitlines()), 1)
+
+	def test_what_the_docs_say_to_do_now_uses_the_new_format(self):
+		"""Review of v1.567.0: the docs may name the retired format as history, but not in an
+		instruction someone acts on today. WI-080's T0 companion ("now") told course authors to cite
+		``see KB-0612`` in lesson text while ADR 0017 said article numbers, and Slice 5's scanner
+		looked for "the KB number". Each line must name the new format, and the scan must read what
+		running text cites."""
+		wi = (REPO_ROOT / "work-items" / "WI-080-company-knowledge-base.md").read_text(encoding="utf-8")
+		adr = (
+			REPO_ROOT / "decisions" / "adr" / "0017-company-knowledge-lives-in-a-native-module.md"
+		).read_text(encoding="utf-8")
+		lines = {
+			"WI-080's T0 companion": [line for line in wi.splitlines() if "Zero-code companions (T0" in line],
+			"ADR 0017's T0 rule": [line for line in adr.splitlines() if "Until then (T0)" in line],
+		}
+		for where, found in lines.items():
+			with self.subTest(where=where):
+				self.assertEqual(len(found), 1, found)
+				self.assertIn("lesson text", found[0])
+				self.assertNotRegex(found[0], _RETIRED_LITERAL)
+				self.assertRegex(found[0], K.ARTICLE_NUMBER)
+		scan = [line for line in wi.splitlines() if "Scan the live `published_content_json`" in line]
+		self.assertEqual(len(scan), 1, scan)
+		self.assertIn("constants.cited_article_numbers", scan[0])
+		self.assertNotIn("KB number", scan[0])
 
 
 # ------------------------------------------------------------------ review dates
@@ -2034,6 +2080,13 @@ class TestArticleMarkdown(unittest.TestCase):
 		self.assertEqual(M.related_numbers(None, "SOP-06-0001"), [])
 		# The Drive register's numbers are what the first article actually cites; neither is an article.
 		self.assertEqual(M.related_numbers("See POL-0600 and PRO-0210.", "SOP-06-0001"), [])
+		# Review of v1.567.0: a product's name shaped like a number is no citation.
+		self.assertEqual(
+			M.related_numbers(
+				"Use the Pro 2 1000 pump kit, pro 5 10 times, then SOP-06-0002.", "SOP-06-0001"
+			),
+			["SOP-06-0002"],
+		)
 
 	def test_truncation_at_a_line_boundary(self):
 		lines = [f"Step {n}: turn the fictitious valve a quarter turn." for n in range(2000)]

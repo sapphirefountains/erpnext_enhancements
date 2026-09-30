@@ -35,10 +35,10 @@ row with a `POL`, `PRO`, `SOP` or `KB` prefix. No `KB-` number was ever issued. 
 
 - **One definition of the number**, in `knowledge_base/constants.py` (standard library only):
   `KIND_PREFIXES`, `ARTICLE_NUMBER` (canonical, as stored), `ARTICLE_NUMBER_WRITTEN` (as people write
-  one), `article_number`, `number_scope`, `parse_article_number`, `normalize_article_number` and
-  `written_article_numbers`. Search, the Markdown renderer, the rules, the Integrity report and both AI
-  modules import them; the private copies of the old pattern (in search, markdown, workflow and
-  reporting) are gone.
+  one), `article_number`, `number_scope`, `parse_article_number`, `normalize_article_number`,
+  `written_article_numbers` and `cited_article_numbers`. Search, the Markdown renderer, the rules, the
+  Integrity report and both AI modules import them; the private copies of the old pattern (in search,
+  markdown, workflow and reporting) are gone.
   - `SOP-06-0001`, `sop 06 0001`, `SOP-06-1`, `sop_6_1`, `SOP06-0001`, `SOP-06-00001`, the en-dash
     spelling Word and Docs paste, and full-width letters all read as `SOP-06-0001`.
   - The separator between the department and the sequence is required, so the Drive register's own
@@ -97,6 +97,19 @@ row with a `POL`, `PRO`, `SOP` or `KB` prefix. No `KB-` number was ever issued. 
 - **Search.** An article number, however it is written, is one term (`sop-06-0001`) and pins its
   article. `SOP-06` alone pins nothing, and ranks by the kind and department the meta field carries.
   The AwesomeBar's label bolds `SOP-06-0001` as one span.
+  - Found in review: the loose reading also matched ordinary running text with a number's shape. A
+    product called "Pro 2 1000" became one term, `pro-02-1000`, so `1000`, `pro 1000` and `Pro 2`
+    stopped finding the article whose body held it, which they did before numbers were read. Now an
+    article's text also indexes a number's prefix and its digit runs of 2 or more characters, as
+    written, beside its term, as a document number's parts always were. A query leaves them out:
+    naming a number means that article, not every SOP in 06, whose `sop` and `06` the meta field
+    carries. So `SOP-06-0099` still finds nothing.
+- **What running text cites is read more strictly** (`constants.cited_article_numbers`, found in
+  review). A space may separate the parts only when the department has two digits: `sop 06 0001`,
+  `SOP-6-1` and `sop_6_1` are citations; `Pro 2 1000`, `pro 5 10 times` and `SOP 1 2 3` are words.
+  Fetch's `related` uses it, so a body holding "Pro 2 1000" no longer shows the AI a cited
+  `PRO-02-1000` (`available: false`) that the text never cited. The loose reading stays where a whole
+  string is meant as a number (fetch's and the drafting tool's argument) and for a query's pinning.
 - **The AI tools' descriptions and examples** say `SOP-06-0001` (`cite as 'SOP-06-0001 v3'`), and the
   descriptions stay under 600 characters. Fetch's not-found message now says what a number looks like.
   It is the same text for every miss, so it leaks nothing. A search query naming the retired format
@@ -108,6 +121,13 @@ row with a `POL`, `PRO`, `SOP` or `KB` prefix. No `KB-` number was ever issued. 
 - A test fails the build on a number in the retired format (`KB-0601`, `KB0601`) written anywhere in
   the Knowledge Base's code, schema or workspace, comments and docstrings included. The one pattern kept
   on purpose is `ai_tools._RETIRED_FORMAT`, the search hint, found by its name.
+- **Docs that still gave retired-format instructions** (found in review), each now pinned by a test:
+  - WI-080's T0 companion ("now") told course authors to cite "see KB-0612" in lesson text, while ADR
+    0017 said article numbers. It now says `see SOP-06-0001`.
+  - Slice 5's scanner looked for "the KB number"; it reads what running text cites
+    (`constants.cited_article_numbers`). Slice 4's export header says "article number".
+  - The Knowledge Base README's tests table said a tool description must hold "KB-", the opposite of
+    what the test checks. It now names the `'SOP-06-0001 v3'` example, as `tests/README.md` did.
 
 ### Notes
 

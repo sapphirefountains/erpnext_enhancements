@@ -271,6 +271,22 @@ class TestDescriptions(unittest.TestCase):
 				self.assertIn("'SOP-06-0001 v3'", tool.description)
 				self.assertIn("Sapphire Fountains' ", tool.description)
 
+	def test_the_readmes_describe_this_check_as_it_is(self):
+		"""Review of v1.567.0: the Knowledge Base README's tests table still said a description must hold
+		"KB-", the opposite of the check above; someone editing a description who followed it would put
+		the retired example back. Both READMEs' rows for this suite name the new example."""
+		readmes = (APP / "knowledge_base" / "README.md", APP / "tests" / "README.md")
+		for path in readmes:
+			rows = [
+				line
+				for line in path.read_text(encoding="utf-8").splitlines()
+				if line.startswith("|") and "test_knowledge_base_tools.py" in line.split("|")[1]
+			]
+			with self.subTest(readme=str(path.relative_to(APP))):
+				self.assertEqual(len(rows), 1, rows)
+				self.assertIn("SOP-06-0001 v3", rows[0])
+				self.assertNotIn('"KB-"', rows[0])
+
 	def test_what_each_says(self):
 		self.assertIn("If nothing matches, say so.", tools["search_company_knowledge"].description)
 		self.assertIn("follow an SOP's steps in order", tools["search_company_knowledge"].description)

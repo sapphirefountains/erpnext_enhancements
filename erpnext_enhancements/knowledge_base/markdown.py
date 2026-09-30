@@ -199,12 +199,13 @@ def keyword_list(keywords):
 
 
 def related_numbers(markdown_text, self_number):
-	"""The article numbers ``markdown_text`` mentions, canonical (``sop 6 12`` is ``SOP-06-0012``), in
-	order of first mention, each once, without ``self_number``, and at most :data:`RELATED_LIMIT`. A
-	Drive register number (``POL-0600``, ``PRO-0210``) is not an article number and is never listed
-	(``constants.ARTICLE_NUMBER_WRITTEN``)."""
+	"""The article numbers ``markdown_text`` cites, canonical (``SOP-6-12`` is ``SOP-06-0012``), in
+	order of first mention, each once, without ``self_number``, and at most :data:`RELATED_LIMIT`. Read
+	as running text (``constants.cited_article_numbers``): a product called ``Pro 2 1000`` is not a
+	citation of ``PRO-02-1000``, and fetch never shows the AI a cited article the text never cited. A
+	Drive register number (``POL-0600``, ``PRO-0210``) is not an article number and is never listed."""
 	own = constants.normalize_article_number(_text(self_number))
-	numbers = [n for n in constants.written_article_numbers(_text(markdown_text)) if n != own]
+	numbers = [n for n in constants.cited_article_numbers(_text(markdown_text)) if n != own]
 	return numbers[:RELATED_LIMIT]
 
 
