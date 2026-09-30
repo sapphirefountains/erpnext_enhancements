@@ -247,6 +247,25 @@ class TestMoney(unittest.TestCase):
 		self.assertEqual(rules.default_hold_expiry(datetime.date(2026, 9, 29)), datetime.date(2026, 10, 6))
 
 
+class TestCoveredHours(unittest.TestCase):
+	def test_empty(self):
+		self.assertEqual(rules.covered_hours([], dt(1), dt(2)), 0)
+
+	def test_clipped_to_the_window(self):
+		self.assertEqual(rules.covered_hours([(dt(1, 12), dt(3, 12))], dt(2), dt(3)), 24)
+
+	def test_overlaps_count_once(self):
+		"""Two bookings the same afternoon are one afternoon of use, never more hours than exist."""
+		windows = [(dt(1, 8), dt(1, 16)), (dt(1, 12), dt(1, 20)), (dt(1, 18), dt(1, 19))]
+		self.assertEqual(rules.covered_hours(windows, dt(1), dt(2)), 12)
+
+	def test_separate_windows_add(self):
+		self.assertEqual(rules.covered_hours([(dt(1, 0), dt(1, 6)), (dt(1, 12), dt(1, 18))], dt(1), dt(2)), 12)
+
+	def test_outside_the_window_is_ignored(self):
+		self.assertEqual(rules.covered_hours([(dt(5), dt(6))], dt(1), dt(2)), 0)
+
+
 class TestSchemaPins(unittest.TestCase):
 	def load(self, name):
 		return json.loads((DOCTYPES / name / f"{name}.json").read_text(encoding="utf-8"))

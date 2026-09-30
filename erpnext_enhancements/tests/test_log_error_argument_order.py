@@ -25,7 +25,7 @@ of the body) and the intended title is the body.
 Prod had 77 rows like that in the 90 days to 2026-09-29, for example a row titled
 ``Bridge token failed: 503 {"message":"database temporarily unavailable"...`` whose body
 was just ``Triton Chat``. Such a row cannot be found by its title, and every report or
-alert that filters on the Error Log title misses it. v1.566.1 moved 87 direct calls, and
+alert that filters on the Error Log title misses it. v1.567.1 moved 87 direct calls, and
 the two forwards inside ``log_error_throttled``, to keywords.
 
 The rules

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.566.1] - 2026-09-30
+## [1.567.1] - 2026-09-30
 
 **Error Log rows are titled with their title: `frappe.log_error` calls pass `title=` and
 `message=` by keyword.** Builds on 1.561.2, which worked around the same problem for the Search
@@ -149,6 +149,45 @@ rows under one title each, where it used to count one entry per distinct message
 - **Left positional, because the heuristic already gets them right:** 295 `(traceback, title)`
   calls in files this change does not otherwise touch, and 19 that span several lines in files
   it does. The 5 calls with a single argument are also left alone: that argument is the title.
+
+## [1.567.0] - 2026-09-30
+
+**Event rentals, part 5: fleet KPIs, assistant tools, and calendar feeds.** This is the last of the
+five rental PRs.
+
+### Added
+
+- **Fleet KPIs on the Product dashboard.**
+  - The existing Events KPIs count projects, which cannot show whether the fountains themselves are
+    earning their keep. These read each fountain's calendar, the Rental Bookings, the accessory
+    pools and the out-of-service records.
+  - The new KPIs: Fleet Utilization (30d), Idle Fountains (30d), Rental Revenue Booked (90d),
+    Rental Revenue per Fountain (90d), Rental Holds Open, Fountains Out of Service, and Accessory
+    Pool-days Fully Booked (next 30d).
+  - Utilization counts overlapping bookings once, through a new pure helper
+    `rental_rules.covered_hours`, so a fountain can never read busier than a day has hours.
+  - A failure in these KPIs is logged and costs only them, not the rest of the Product snapshot.
+- **Two read-only assistant tools**, both requiring read access to Rental Booking:
+  - `rental_board`: what is delivering, out or coming back, with crew, site details and invoice
+    state; holds lapsing within three days; and fountains out of service.
+  - `rental_availability`: which fountains and accessories are free for given dates. It never
+    books anything.
+- **Calendar feeds.** One `.ics` feed for the whole fleet and one per fountain, to subscribe to in
+  Google Calendar or on a phone. They are read-only and one-way.
+  - A calendar app cannot log in, so the feed is guest-readable and the URL is the credential.
+  - The key is 256 bits, stored encrypted and hidden (`Rental Settings.calendar_feed_key`), and
+    compared in constant time. With no key set there is no feed.
+  - **Calendar Feeds** on Rental Settings (System Manager, Operations Team) shows the links, and
+    **Rotate Key** replaces the key.
+  - Entries use stable UIDs, so a moved booking updates in place.
+- `tests/test_rental_insights.py`, with its own CI step, and `covered_hours` cases in
+  `test_rental_rules`.
+
+### Notes
+
+- The feed shows customer names. Share the link with staff only, and rotate it if it leaks.
+- The assistant sees the new tools after it reconnects: an MCP client caches its tool list when it
+  connects.
 
 ## [1.566.0] - 2026-09-30
 

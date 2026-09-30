@@ -188,5 +188,5 @@ def test_missing_column_logs_loudly_instead_of_returning_silently():
 		frappe.db.has_column = original
 	assert frappe._written == {}
 	assert frappe._logs, "a missing column must be reported, not silently skipped"
-	# ... under its own title: the one-line sentence used to become the title (v1.566.1).
+	# ... under its own title: the one-line sentence used to become the title (v1.567.1).
 	assert [entry[0] for entry in frappe._logs if isinstance(entry, tuple)] == ["Won-date backfill skipped"]

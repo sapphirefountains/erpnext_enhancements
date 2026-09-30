@@ -15,7 +15,7 @@ same 403 as a missing grant. These pin:
   timeout is retried with backoff, a 4xx and a certificate failure never are, and a failure
   that outlasts the retries writes exactly one short Error Log row;
 * that a one-line message (that one, and the refusal) is stored as the row's body under the
-  title ``GSC API Error``, not as the title itself (see ``stored_row``). Since v1.566.1 that is
+  title ``GSC API Error``, not as the title itself (see ``stored_row``). Since v1.567.1 that is
   ``log_error_throttled`` passing ``title=`` and ``message=`` by keyword, not a trailing newline
   added here, so the body is the message exactly;
 * that the key is loaded with a Search Console scope, and that the scoped object is the one

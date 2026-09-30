@@ -335,7 +335,7 @@ class TestApplyWindow(unittest.TestCase):
 	def test_unparseable_json_is_logged_not_raised(self):
 		STATE["reports"][REPORT]["json"] = "{not json"
 		self.assertFalse(pay_period_reports._apply_window("2026-08-01", "2026-08-15"))
-		# Titled by its title: the one-line sentence used to become the title (v1.566.1).
+		# Titled by its title: the one-line sentence used to become the title (v1.567.1).
 		self.assertEqual([title for title, _ in STATE["errors"]], ["Pay-period report window"])
 
 

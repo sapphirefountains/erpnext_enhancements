@@ -1096,7 +1096,7 @@ class TestErrorLogRowsAreTitledWithTheirTitle(unittest.TestCase):
 	"""Grading's three best-effort failures file an Error Log row under their title.
 
 	Frappe v16's ``log_error`` makes the first argument the title unless it holds a newline.
-	Until v1.566.1 these calls passed ``(message, title)``, so each one-line sentence became
+	Until v1.567.1 these calls passed ``(message, title)``, so each one-line sentence became
 	the row's title and "Training AI" or "Training analytics" its body. ``_v16_log_error``
 	stores what v16 stores, so either call put back in that order fails here.
 	"""

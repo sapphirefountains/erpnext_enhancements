@@ -269,3 +269,29 @@ def booking_total(fountain_rates, accessory_lines, fees):
 	total += sum(float(rate or 0) * whole(qty) for rate, qty in accessory_lines)
 	total += sum(float(fee or 0) for fee in fees)
 	return round(total, 2)
+
+
+def covered_hours(windows, window_from, window_to):
+	"""Hours inside ``[window_from, window_to)`` covered by any of ``windows`` (``[(from, to), ...]``).
+
+	Overlapping windows count once: two bookings on the same fountain the same afternoon are one
+	afternoon of use, not two. Used for fleet utilization, where a double count would report a
+	fountain busier than a day has hours.
+	"""
+	clipped = sorted(
+		(max(start, window_from), min(end, window_to))
+		for start, end in windows
+		if overlaps(window_from, window_to, start, end)
+	)
+	total = datetime.timedelta(0)
+	current_start = current_end = None
+	for start, end in clipped:
+		if current_end is None or start > current_end:
+			if current_end is not None:
+				total += current_end - current_start
+			current_start, current_end = start, end
+		else:
+			current_end = max(current_end, end)
+	if current_end is not None:
+		total += current_end - current_start
+	return total.total_seconds() / 3600

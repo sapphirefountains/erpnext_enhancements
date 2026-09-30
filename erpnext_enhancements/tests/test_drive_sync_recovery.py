@@ -289,7 +289,7 @@ def _v16_log_error(
 	"""``frappe.log_error`` as v16 stores it: given a message, the two are swapped when -- and
 	only when -- ``title`` holds a newline (``frappe/utils/error.py``). Reading ``a[0]``, as this
 	stub used to, recorded whatever came first, which stopped being the body once
-	``log_error_throttled`` passed ``title=`` and ``message=`` by keyword (v1.566.1)."""
+	``log_error_throttled`` passed ``title=`` and ``message=`` by keyword (v1.567.1)."""
 	if message and "\n" in title:
 		title, message = message, title
 	STATE["errors"].append(message or "")

@@ -77,6 +77,9 @@ EXPLICIT_READONLY = {
     "run_database_query",
     # this app's read-only tools (the write tools live in APP_MUTATING below)
     "maintenance_day_board",
+    # event rentals (v1.567.0): the board and the availability check. Neither books anything.
+    "rental_board",
+    "rental_availability",
     "maintenance_contract_status",
     "maintenance_visit_history",
     "maintenance_site_briefing",

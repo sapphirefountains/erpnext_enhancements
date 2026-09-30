@@ -90,7 +90,7 @@ class TestSignatureBlockPatch(unittest.TestCase):
 		"""Frappe v16's ``log_error`` makes its first argument the title unless that holds a newline.
 
 		This call shipped in v1.564.0 as ``log_error(sentence, title)``: prod would have filed the
-		one-line sentence as the row's title and the title as its body (fixed in v1.566.1). The stub
+		one-line sentence as the row's title and the title as its body (fixed in v1.567.1). The stub
 		stores the row the way v16 does, so that order fails here.
 		"""
 		unpatched = self.shipped.replace(self.patch.NEW_BLOCK, self.patch.OLD_BLOCK)
