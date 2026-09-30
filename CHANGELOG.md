@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.569.0] - 2026-09-30
+
+**Knowledge articles print, preview and open as the company register's templates.** Nik asked whether
+articles "can be printed and previewed and viewed as the templates in the google drive", and said
+"please proceed 1-3": the print and PDF, a draft's preview, and the article's form, each laid out as the
+register's template for the article's kind (POL-0002 Policy, POL-0003 Process, POL-0004 SOP). WI-080,
+"Decided 2026-09-30". The Drive copy itself stays Slice 4.
+
+Added:
+- **One renderer, `knowledge_base/document.py`**, standard library only and tested bench-free. The
+  templates' look, measured from their Google Docs export: Arial; "Sapphire Fountains" and "Masters of
+  Fountaineering" top left; "Document ID: SOP-06-0001", the version and "Last Updated" ("Effective Date"
+  on a Policy) top right; the title in 24pt sapphire (`#004a7c`); a grey row with the owner (their
+  Employee designation, then their name) and the department; the body's top-level headings numbered; a
+  Revision History; the logo and the template's own Confidential line. A printed copy adds a footnote
+  saying it is not controlled and the current version is in ERPNext.
+- **Two print formats**, "Article Document" (Knowledge Article's default) and "Article Version Preview"
+  (Knowledge Article Version's default), upserted on every migrate by
+  `knowledge_base/setup_print_formats.py`, above the chrome pin. Each is one line,
+  `{{ kb_document(doc) }}`: the Jinja global `printing.kb_document` loads the record again by name and
+  checks read permission itself, because v16's print view also renders a document a caller posts as
+  JSON (the Trip Sheet's reason). An unsaved draft is refused ("Save the draft to preview it.").
+- **The article form opens on the document**: a new `document_view` field at the top, drawn from
+  `__onload.kb.document`, with every field below it collapsed, and a *Print / PDF* button. If drawing it
+  fails, the Article Text section opens instead and the failure's type goes to the Error Log (deferred:
+  the form loads on a GET, which v16 never commits).
+- **A draft's *Preview* button**: saves any edits, then opens the preview in the print view, with the PDF
+  there. It says "SOP-06-####" until the version is numbered at approval, carries a red "Draft - not
+  approved" box ("In review" while in review), prints a faint DRAFT across every page, and ends its
+  Revision History with its own line, marked "(draft)".
+- **The Revision History**, a child table on the article, `revisions` (Knowledge Article Revision:
+  version, approved on, author, approved by, change note). `publish.publish` adds one row per published
+  version through the article's own guarded save, so the printed history never reads the Version
+  doctype. An article published before this shows its live version's line, and gets that line written
+  first at its next publish; prod had no published article when this was written. **A version's change
+  note is now what its printed history line says**, so "Initial release" reads better than a note to the
+  reviewer.
+- **New drafts start from the template.** Choosing a kind on a draft whose body is empty fills it with
+  that kind's sections and the template's guidance under each, in square brackets (`constants.KIND_SECTIONS`,
+  served by a new GET endpoint, `api/knowledge_base.document_template`, KB roles only, fixed text). The
+  drafting tool's `body_markdown` description now lists each kind's sections, and its `change_note`
+  description says the note becomes the history line.
+
+Changed:
+- **Submit for Review refuses a draft that still has the template's guidance** ("it still has the
+  template's guidance under Scope: replace it with the article's own words, or delete it"), found however
+  the editor wraps it (`content.guidance_left`), so no guidance is ever published. Other headings are
+  allowed; nothing checks that an article uses the template's.
+
+Worked around:
+- **Frappe v16's chrome PDF engine cannot load a private image.** It sets the page's content in a
+  headless browser pointed at the site with no session (`utils/pdf_generator/browser.py`,
+  `setup_body_page`), and only the wkhtmltopdf path inlines private images (`utils/pdf.py`,
+  `prepare_options` -> `inline_private_images`). Every knowledge base picture is private, so each would
+  print as a broken box. `printing.inline_images` writes each picture the body uses into the printed page
+  as a `data:` URI, and only a File attached to the record being printed (or a revision's article), up to
+  5 MB each.
+- **Frappe's print CSS forces its own cell padding with `!important`** (`standard.css`, and the Redesign
+  print style's `padding: 10px !important`). The document's cell rules are `!important` on selectors
+  more specific than `.print-format td`, which is what wins over them; every rule is scoped to `.kb-doc`,
+  so the same markup sits in the Desk form without restyling it.
+
+Tests: `tests/test_knowledge_base_document.py`, its own CI step (the sections, the skeleton and the
+guidance check, the page, `printing.py` over a stub, the wiring); the schema test pins the child table
+and the form's first section; the actions suite's stub gains v16's `append`, and pins the new endpoint
+and the reader's document naming nothing of an open revision.
+
 ## [1.568.0] - 2026-09-30
 
 **Knowledge articles are numbered by kind and department: `SOP-06-0001`, not `KB-0601`.** Nik, on

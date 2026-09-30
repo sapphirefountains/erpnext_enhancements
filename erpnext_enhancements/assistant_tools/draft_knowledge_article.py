@@ -115,13 +115,21 @@ class DraftKnowledgeArticle(BaseTool):
                     "description": (
                         "The article's text in Markdown, at most 60,000 characters. Raw HTML shows as "
                         "text, and links and pictures take no title. No pictures in a new article (add "
-                        "them in ERPNext); a revision may keep the article's own pictures, as they are"
+                        "them in ERPNext); a revision may keep the article's own pictures, as they are. "
+                        "Use the company register template's sections for its kind as ## headings, in "
+                        "this order, leaving out any that do not apply: "
+                        + "; ".join(
+                            f"{kind}: {', '.join(constants.kind_section_names(kind))}"
+                            for kind in constants.ARTICLE_KINDS
+                        )
+                        + ". Do not number them or add a Revision History: the printed article does both"
                     ),
                 },
                 "change_note": {
                     "type": "string",
                     "description": (
-                        "What changed and why, and where it came from, at most 1,000 characters"
+                        "What changed and why, and where it came from, at most 1,000 characters. It "
+                        "becomes this version's line in the article's printed Revision History"
                     ),
                 },
                 "process_owner": {

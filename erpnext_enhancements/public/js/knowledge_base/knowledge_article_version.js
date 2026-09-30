@@ -26,6 +26,18 @@
 // No screen of its own: every action is a dialog over the form or a route to another form
 // (frappe.set_route, which gives it a history entry), so Back and Forward work as they do
 // everywhere else in the Desk.
+//
+// 2026-09-30, the company register's templates (POL-0002 Policy, POL-0003 Process, POL-0004 SOP):
+//
+// * Preview opens the print view (frm.print_doc, a route), whose default format for this doctype
+//   is "Article Version Preview": the draft laid out as its kind's template, marked as not approved,
+//   with the PDF button there. Unsaved edits are saved first, the same way Submit for Review does,
+//   because the preview draws the version as stored (knowledge_base/printing.kb_document loads it
+//   again by name).
+// * Choosing a kind on a draft whose body is empty fills the body with that kind's sections and the
+//   template's guidance under each (api document_template). Choosing another kind before anything
+//   was typed swaps them; once the author has written anything, the body is never touched. Guidance
+//   left in the body stops the draft being submitted (workflow.submit_problems says where).
 
 const KB_METHOD = "erpnext_enhancements.api.knowledge_base.";
 
@@ -71,6 +83,13 @@ frappe.ui.form.on("Knowledge Article Version", {
 				frappe.set_route("Form", "Knowledge Article", frm.doc.article)
 			);
 		}
+		if (frappe.model.can_print(frm.doctype, frm)) {
+			frm.add_custom_button(__("Preview"), () => kb_preview(frm));
+		}
+	},
+
+	kind(frm) {
+		kb_fill_template(frm);
 	},
 
 	// Frappe's own Discard, should it be reached some other way than the menu item removed above
@@ -227,6 +246,61 @@ function kb_show_diff(frm) {
 		dialog.fields_dict.diff.$wrapper.html(kb_diff_html(out));
 		dialog.show();
 	});
+}
+
+// ------------------------------------------------------------------ the template (2026-09-30)
+
+function kb_preview(frm) {
+	// As kb_submit: v16's frm.save() resolves even when the server refuses, and only an accepted
+	// save clears the dirty flag, so a form still dirty afterwards was refused and stays as it is.
+	if (frm.is_dirty()) {
+		frm.save().then(() => {
+			if (!frm.is_dirty()) frm.print_doc();
+		});
+	} else {
+		frm.print_doc();
+	}
+}
+
+function kb_fill_template(frm) {
+	const state = frm.doc.review_state || "Draft";
+	if (frm.doc.docstatus !== 0 || state !== "Draft" || !frm.doc.kind) return;
+	const body = kb_visible_text(frm.doc.body);
+	// Empty, or exactly the template this form put in for another kind and nobody has touched.
+	const untouched = frm.__kb_template && body === kb_visible_text(frm.__kb_template);
+	if (!untouched && (body || kb_has_picture(frm.doc.body))) return;
+	kb_call("document_template", { kind: frm.doc.kind }, __("Loading the template..."), "GET").then((r) => {
+		const out = r.message || {};
+		// The author may have changed the kind again, or started typing, while it loaded.
+		if (out.kind !== frm.doc.kind) return;
+		const now = kb_visible_text(frm.doc.body);
+		if (now && !(frm.__kb_template && now === kb_visible_text(frm.__kb_template))) return;
+		frm.__kb_template = out.body || "";
+		frm.set_value("body", frm.__kb_template);
+		frappe.show_alert(
+			{
+				message: __("Started from the {0} template ({1}). Replace the guidance in square brackets.", [
+					kb_escape(out.kind),
+					kb_escape(out.register_template || ""),
+				]),
+				indicator: "blue",
+			},
+			7
+		);
+	});
+}
+
+// The text a reader would see in a body, whitespace folded. DOMParser, not jQuery: jQuery's .html()
+// runs a <script> in what it is given, and this reads whatever is in the editor.
+function kb_visible_text(html) {
+	if (!html) return "";
+	const doc = new DOMParser().parseFromString(String(html), "text/html");
+	return (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function kb_has_picture(html) {
+	if (!html) return false;
+	return !!new DOMParser().parseFromString(String(html), "text/html").querySelector("img[src]");
 }
 
 // ------------------------------------------------------------------ what the form says

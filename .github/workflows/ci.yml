@@ -967,6 +967,19 @@ jobs:
       # that neither module names that doctype or passes a SQL function string as a field.
       - name: Knowledge base search (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_knowledge_base_search.py -q
+      # v1.569.0: an article as the company register's template (POL-0002/0003/0004), printed, in a
+      # draft's preview and on its form. The templates' sections and a new draft's starting text; the
+      # check that stops their guidance being submitted, however the editor wraps it; the page
+      # (header, owner row, numbered headings that change nothing else, the Revision History, every
+      # typed value escaped, a stylesheet scoped to .kb-doc with no flex or grid, cell rules that beat
+      # frappe's !important print padding); and printing.py over a small stub: the record drawn AS
+      # SAVED, never the document the print view is handed (it renders JSON a caller posts), an
+      # unsaved draft and an unreadable one refused, an article's page reading no version, and only a
+      # picture attached to the record (or a revision's article) written into the page. Plus the
+      # wiring: one-line formats, the global and the migrate hook registered, the hook above the
+      # chrome pin. Own step: it installs its own frappe stub.
+      - name: Knowledge base document (print, preview and the form, in the register's templates)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_document -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the

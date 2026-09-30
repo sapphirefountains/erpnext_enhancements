@@ -29,6 +29,9 @@ body with no words and no picture is not sent for review), :func:`referenced_fil
 body uses, so publishing moves exactly those onto the article) and :func:`text_diff` (the
 live-vs-draft diff a reviewer reads).
 
+2026-09-30 adds :func:`guidance_left`: the register template's guidance a new draft starts with
+(``constants.KIND_SECTIONS``) and the author has not yet replaced, which stops it being submitted.
+
 **When they run.** The Version controller strips on every save and scans on every save that
 changes content (``before_validate``, which runs before v16's own ``sanitize_html``), and scans
 again at approval. ``body_md`` and ``content_hash`` are **not** computed
@@ -53,6 +56,8 @@ import unicodedata
 from collections import namedtuple
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlsplit
+
+from erpnext_enhancements.knowledge_base import constants
 
 # ------------------------------------------------------------------ presentation
 
@@ -766,6 +771,67 @@ class _Visible(HTMLParser):
 	def handle_data(self, data):
 		if self.cdata_elem not in DROPPED_WITH_CONTENT and data.strip():
 			self.found = True
+
+
+#: Whitespace of any kind, including the no-break space an editor puts between words.
+_ANY_SPACE = re.compile(r"\s+")
+
+#: Elements that end a line of text: :class:`_Words` puts a space where one ends. An inline element
+#: (``em``, ``strong``, ``span``) ends inside a sentence and adds nothing.
+_BLOCK_ELEMENTS = frozenset(
+	{"p", "div", "li", "ul", "ol", "blockquote", "pre", "table", "tr", "td", "th"}
+	| {f"h{level}" for level in range(1, 7)}
+)
+
+
+def guidance_left(markup):
+	"""The template sections whose guidance is still in a body (2026-09-30), as their headings, in
+	the templates' order, each once; ``[]`` when there is none.
+
+	A new draft starts with its kind's sections and, under each, the template's guidance in square
+	brackets (``constants.KIND_SECTIONS``, ``document.skeleton``). Guidance is for the author, never
+	for a reader, so ``workflow.submit_problems`` refuses a draft that still has any. Every kind's
+	guidance is looked for, because a draft can change its kind after it was filled. A section counts
+	only while its whole guidance text is there, whatever the brackets, italics, line breaks and
+	spaces around it: once the author has rewritten it, it is theirs.
+	"""
+	if not isinstance(markup, str) or not markup.strip():
+		return []
+	reader = _Words()
+	reader.feed(markup)
+	reader.close()
+	text = _plain_words(" ".join(reader.words))
+	found = []
+	for kind in constants.ARTICLE_KINDS:
+		for name, guidance in constants.KIND_SECTIONS[kind]:
+			if name not in found and _plain_words(guidance) in text:
+				found.append(name)
+	return found
+
+
+def _plain_words(text):
+	return _ANY_SPACE.sub(" ", unicodedata.normalize("NFKC", text)).strip()
+
+
+class _Words(HTMLParser):
+	"""The text a reader sees, entities decoded. A block's end is a space, so a heading and the
+	paragraph after it never run together."""
+
+	def __init__(self):
+		super().__init__(convert_charrefs=True)
+		self.words = []
+
+	def handle_endtag(self, tag):
+		if tag in _BLOCK_ELEMENTS:
+			self.words.append(" ")
+
+	def handle_starttag(self, tag, attrs):
+		if tag == "br" or tag in _BLOCK_ELEMENTS:
+			self.words.append(" ")
+
+	def handle_data(self, data):
+		if self.cdata_elem not in DROPPED_WITH_CONTENT:
+			self.words.append(data)
 
 
 #: Where a private File's bytes live. A body names one by this path, with ``?fid=<File name>``

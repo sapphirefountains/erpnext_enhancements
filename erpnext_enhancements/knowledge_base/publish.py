@@ -29,7 +29,9 @@ permission check is the endpoint's, done first and explicitly).
    interval the version was approved with (``workflow.review_interval``) is stored with it. The
    kind and department are written **when the article is created, and never again**: they are
    part of its number, which never changes (``workflow.identity_problem`` refuses a revision that
-   changes either, and the Article controller refuses any write that would).
+   changes either, and the Article controller refuses any write that would). The version's line is
+   added to the article's Revision History (``revisions``, 2026-09-30), which the printed article
+   draws; an article published before the rows existed gets its live version's line first.
 3. **The Files** the version's body uses (``content.referenced_files``: every ``?fid=`` and every
    ``/private/files/`` path in an ``src`` or ``href``) that are attached to the version are moved
    onto the article, each under ``flags.kb_action`` (``files.force_private`` refuses any other
@@ -72,7 +74,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime, to_markdown
 
-from erpnext_enhancements.knowledge_base import constants, content, notify, workflow
+from erpnext_enhancements.knowledge_base import constants, content, notify, printing, workflow
 from erpnext_enhancements.knowledge_base.doctype.knowledge_article_version import (
 	knowledge_article_version as version_controller,
 )
@@ -178,6 +180,20 @@ def publish(version, article, *, opened_modified, approver):
 	version_number = cint(article.get("version_number")) + 1
 	months = workflow.review_interval(version.get("review_every_months"))
 
+	# The Revision History (2026-09-30). An article published before its rows existed has none: its
+	# live version's line goes in first, from the article, before the update below overwrites it.
+	if not article.is_new() and not article.get("revisions") and cint(article.get("version_number")):
+		article.append("revisions", printing.revision_values(article))
+	article.append(
+		"revisions",
+		{
+			"version_number": version_number,
+			"approved_on": now,
+			"author": version.get("owner"),
+			"approved_by": approver,
+			"change_note": version.get("change_note"),
+		},
+	)
 	article.update(
 		{
 			"title": version.get("title"),
@@ -476,8 +492,11 @@ def _number_scope(doc):
 
 
 def article_onload(doc):
-	"""``__onload.kb`` for an article's form: the actions this person may take now, and the open
-	revision (KB roles only: a reader is told nothing about drafts)."""
+	"""``__onload.kb`` for an article's form: the actions this person may take now, the open
+	revision (KB roles only: a reader is told nothing about drafts), and ``document``, the article
+	laid out as its kind's register template (2026-09-30, ``printing.article_html``), which the form
+	draws at the top. ``document`` is ``None`` when drawing it failed; the form then opens the text
+	instead, and the failure's type is in the Error Log."""
 	ask = asker()
 	open_row = open_version(doc.name) if workflow.holds_kb_role(ask.roles) else None
 	open_name = open_row.get("name") if open_row else None
@@ -494,7 +513,25 @@ def article_onload(doc):
 		"actions": list(actions),
 		"open_version": open_name,
 		"open_state": open_row.get("review_state") if open_row else None,
+		"document": _article_document(doc),
 	}
+
+
+def _article_document(doc):
+	"""The form's copy of the document, or ``None``: a drawing that fails must not stop the article
+	opening. Only the exception's type is logged, never text, and deferred, as :func:`body_markdown`
+	logs: the form loads on a GET, whose transaction v16 does not commit."""
+	failed = None
+	try:
+		return printing.article_html(doc)
+	except Exception as exc:
+		failed = type(exc).__name__
+	frappe.log_error(
+		title="Knowledge article document view",
+		message=f"{failed} drawing {doc.name}",
+		defer_insert=True,
+	)
+	return None
 
 
 def article_row(name):

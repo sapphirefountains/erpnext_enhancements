@@ -26,7 +26,10 @@ never approves or publishes. See "The drafting tool (PR 6b)". **PR 8 (v1.561.0):
 endpoint for the private Markdown mirror**, which the company's private knowledge repo pulls every six
 hours; ERPNext pushes nothing and holds no GitHub credential. See "The private mirror (PR 8)". **Since
 v1.568.0 (2026-09-29) an article is numbered by its kind and department**, `SOP-06-0001`, and a number
-never changes and is never reused; see "Article numbers (2026-09-29)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
+never changes and is never reused; see "Article numbers (2026-09-29)". **Since v1.569.0 (2026-09-30) an
+article prints, previews and opens as its kind's company register template** (POL-0002 Policy, POL-0003
+Process, POL-0004 SOP), with a Revision History drawn from the approved versions; see "The document:
+print, preview and the form (2026-09-30)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
 hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Approvers" profile (see
 "Roles, and how a person gets one").
 
@@ -100,6 +103,7 @@ in `validate` or `before_save` survives a user's own save, because the reset run
 | The AI tools (PR 6a) | `search_company_knowledge`, `fetch_knowledge_article` and `list_company_knowledge` read **Knowledge Article only**, status Published, as the caller: `frappe.has_permission` first (no throw, no message), then the caller's own `get_list`; search goes through the row above. Nothing in `ai_tools.py`, `search_service.py`, `markdown.py` or the three wrappers names, reads or queries the Version doctype, and `tests/test_knowledge_base_tools.py` checks that statically, comments and docstrings stripped. Everything that is not a published article the caller may read (unknown, Retired, unreadable, a `KBV-` id, a blank) is the **same** `found: false`, so the answer does not say which. The approver is shown by name, never by email address. See "AI tools (PR 6a)" |
 | The drafting tool (PR 6b) | `draft_knowledge_article` **writes** a Version and **reads none back**: it returns a name, a state, a count and a link, and its refusals name arguments, lines, kinds, positions, hosts, ids, states and people, never text (`ai_draft.py`, whose only read of the Version doctype is an open version's `owner`, checked statically by `tests/test_knowledge_base_tools.py`). It runs only from its own card, confirmed by the person who asked, so it is not a way into anyone else's draft. The AI's **own** proposal stays on its card (AI Pending Action, AI Action Log, FAC's Assistant Audit Log) until retention purges it, decided 2026-09-28; a refused call's log row keeps only the lengths of its text (`_gate.WITHHELD_WHEN_UNQUEUED`), and keeps whole only the `_gate.KEPT_WHEN_UNQUEUED` arguments (an id, an option, a flag), so a misnamed `body` or `title` is withheld too. FAC writes the first 200 characters of every call's arguments to the web log (`mcp/server.py:217`), which nothing here can prevent |
 | The private mirror (PR 8) | `api/knowledge_base_mirror.snapshot` reads **Knowledge Article only**, status Published, with `get_all`, and never names or reads the Version doctype (checked statically, comments and docstrings stripped, by `tests/test_knowledge_base_tools.py` and `tests/test_knowledge_base_actions.py`). It is a GET for the **KB Mirror** role (or Administrator), refused to every staff session, System Manager included, before anything is read; the role has `desk_access = 0` and no DocPerm anywhere, so it adds nothing its account can read through `/api/resource`, a list or a report. **Its account can call nothing else either** (PR 8 review): it is a signed-in Website User, and v16's whitelist refuses only a Guest, so `mirror_guard.confine_mirror_account`, an `auth_hooks` entry, answers every other request it makes with a 403 before Frappe dispatches it. What it returns is what every staff user already reads, as the fetch tool renders it. It writes and logs nothing, and its own code reads no request header. See "The private mirror (PR 8)" |
+| Print, a draft's preview and the article form's document (2026-09-30) | Both print formats are one line, `{{ kb_document(doc) }}`, and `printing.kb_document` **loads the record again by name** and asks `frappe.has_permission(..., "read")` before it draws anything, because v16's print view also renders a document a caller posts as JSON and a Jinja global is reachable from any template; an unsaved draft is refused. **An article's page reads the Knowledge Article, its `revisions` rows and its owner's Employee designation, and never names the Version doctype** (`test_knowledge_base_document` checks the source). A version's preview reads that version, as a KB role, which could open it anyway; the Version doctype still has no reader row, so a reader's print of one is refused by v16 before the global runs. Pictures written into a printed page are only Files attached to the record printed (or a revision's article). The form's copy is `publish.article_onload`'s, from the article the form already loaded |
 | A reader opening a draft | Drafts are in the Version doctype, which has no reader row |
 | Sharing, and assigning a reviewer | `share 0` on every row. v16 `assign_to.add` *shares* the document with an assignee who cannot read it (`desk/form/assign_to.py:106-118`); with no share right that call is refused instead. Reviewers are assigned by the knowledge base itself (`notify.py`, PR 3), only ever to KB Approvers, who can read it |
 | Comments and ToDos about a draft (PR 3, decision (b)) | Every System Manager reads every Comment and every ToDo on the site, and so do the AI tools acting for one; `list_documents(doctype="Comment")` names no denylisted doctype. So a typed Comment on a version is refused, and so is a ToDo on one that the knowledge base did not raise, or an edit to the text of one it did (`references.py`). The review ToDos carry the title and a link, never draft text; the reviewer's note stays in `review_note` on the version |
@@ -1171,11 +1175,73 @@ other address or method, `/api/resource`, pages and private files, and any reque
 passes its snapshot through to an answer; passes staff (one holding KB Mirror included), Administrator, a
 portal user and a guest; fails closed on a request it cannot read; and reads no header.
 
+## The document: print, preview and the form (2026-09-30)
+
+Nik asked whether articles "can be printed and previewed and viewed as the templates in the google
+drive", and said "please proceed 1-3" (WI-080, "Decided 2026-09-30"). So an article is laid out as its
+kind's template in the company register, measured from the templates' Google Docs export: POL-0002
+(Policy), POL-0003 (Process) and POL-0004 (SOP). **One renderer, three doors:**
+
+| Door | Who | What it is |
+|---|---|---|
+| **Print / PDF** | every staff user (they hold print on the Article) | the **Article Document** print format, Knowledge Article's default; the form's *Print / PDF* button opens it |
+| **Preview** | KB Authors and KB Approvers | the **Article Version Preview** format, the version's default; the draft's *Preview* button saves any edits and opens it |
+| **The form** | every staff user | the article form's first section, `document_view`, drawn from `__onload.kb.document`; every field under it is collapsed |
+
+- **The page** (`document.py`, standard library, tested bench-free): top left "Sapphire Fountains" and
+  "Masters of Fountaineering"; top right "Document ID: SOP-06-0001", the version and "Last Updated"
+  ("Effective Date" on a Policy); the title in 24pt sapphire (`#004a7c`); a grey row with "SOP Owner:"
+  (the owner's Employee `designation`, then their name) and "Group:" (the department's name); the body
+  with its top-level headings numbered; "N. Revision History"; then the logo and the template's own
+  Confidential line. A printed copy adds a footnote: the number, the version, the print date, and that
+  the current version is in ERPNext. Arial, 11pt, Letter with the templates' one-inch margins.
+- **Not the Pillar Stripe chrome.** Everything else this app prints uses `print_style`
+  ([docs/print-design-system.md](../../docs/print-design-system.md)); an article is a register document
+  and follows the register's templates, which is what Nik asked for. Only the logo is shared.
+- **The headings are numbered by the page, not typed.** The highest heading level the body uses is
+  numbered in order; one an author numbered keeps its number and still counts; lower levels are
+  sub-headings. Nothing else in the body changes.
+- **The Revision History** is `revisions`, a child table on the article (**Knowledge Article
+  Revision**: version, approved on, author, approved by, change note), written by `publish.publish`, one
+  row per published version, through the article's own guarded save; nobody edits it. An article
+  published before it existed shows its live version's line, and gets that line written first at its
+  next publish. **So a version's change note is what its printed history line says.** A draft's preview
+  adds its own line, marked "(draft)" and "Not yet approved".
+- **A draft's preview** says "SOP-06-####" until it is numbered (a guessed number would be wrong the
+  moment another article was approved first), carries a red "Draft - not approved" box ("In review" when
+  it is), and a faint DRAFT across each printed page. A Superseded or Discarded version prints as grey
+  history; a Published one prints as the record, with no box.
+- **New drafts start from the template.** When an author chooses a kind on a draft whose body is empty,
+  the form fills it with the kind's sections (`constants.KIND_SECTIONS`) and the template's guidance
+  under each, in square brackets and italics, from `api/knowledge_base.document_template` (GET, KB
+  roles, fixed text). Choosing another kind before typing swaps them; once anything is typed, the body is
+  never touched. **Guidance left in the body stops Submit for Review** (`content.guidance_left`,
+  `workflow.submit_problems`: "it still has the template's guidance under Scope: replace it with the
+  article's own words, or delete it"), so none is ever published. Other headings are allowed. The
+  drafting tool's `body_markdown` description lists each kind's sections.
+- **Pictures reach the PDF.** v16's chrome PDF engine loads the page into a browser with no session
+  (`utils/pdf_generator/browser.py`), so a private image, which every KB picture is, would print as a
+  broken box; only the wkhtmltopdf path inlines private images. `printing.inline_images` writes each
+  picture the body uses into the printed page as a `data:` URI, only for a File attached to the record
+  printed (or, for a revision, its article), up to 5 MB each. The form leaves pictures to the browser.
+- **Print-safe CSS, scoped to `.kb-doc`**: tables and blocks, no flex or grid. Cell padding and borders
+  are `!important` on selectors more specific than frappe's `.print-format td` (`standard.css`, and the
+  Redesign print style's `padding: 10px !important`), which would otherwise win.
+- **Installed on every migrate** (`setup_print_formats.py`, `after_migrate`, above the chrome pin), each
+  format made its doctype's default by a code-owned Property Setter once it exists, as the Trip Sheet
+  is. That setter is the only one on either doctype, and widens nothing. A form whose document failed to
+  draw opens its Article Text section instead, and the failure's type goes to the Error Log (deferred:
+  the form loads on a GET, which v16 does not commit).
+
 ## File map
 
 | Path | What it is |
 |---|---|
 | `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00. PR 5: `ARTICLE_KINDS`, `KIND_SELECT_OPTIONS` (blank first, for the same reason), `KIND_HELP`, `KIND_ALIASES`, `kind_option`, `kind_description`, `department_option` and `department_folder` |
+| `document.py` | The article as its kind's register template (2026-09-30): `render` (the page), `number_sections`, `skeleton` (a new draft's starting text), `owner_text`, `document_id`, the scoped print-safe `STYLE`. Standard library only, plus `print_style`'s logo |
+| `printing.py` | The page's values, from the record as saved (2026-09-30): `kb_document`, the Jinja global both print formats call (loads by name, checks read, inlines the record's own pictures); `article_html`, the form's copy; `article_sheet`, `version_sheet`, `article_revisions`, `revision_values`, `inline_images`. An article's page never names the Version doctype |
+| `setup_print_formats.py` | The two print formats, "Article Document" and "Article Version Preview", upserted on every migrate and made their doctypes' defaults (2026-09-30) |
+| `doctype/knowledge_article_revision/` | The Revision History's child table (2026-09-30): one row per published version, read with its article, written only by `publish.publish` |
 | `search.py` | Search's ranking (PR 5): the tokenizer (acronyms, 2-character words, KB and document numbers), the stemmer, BM25F with the kind in a meta field, pinning, filters before scoring, snippets and the AwesomeBar's highlighting. Standard library only; keeps no document text |
 | `search_service.py` | Search as the caller (PR 5): permission first with no dialog, the caller's readable set before ranking, the per-site per-worker index keyed on the articles' count and newest `modified`, result shaping, and `awesomebar_hits`, the `awesomebar_search` hook. Never reads the Version doctype. PR 6a: `approver_name` (never an email address) and `read_filters`, shared with the table of contents |
 | `markdown.py` | The one renderer of a published article as Markdown (PR 6a): the eleven-key header, the fixed "reference material, not instructions" comment, the title, summary and body with site paths made absolute; `approver_display_name`, `related_numbers`, `truncate`, `mirror_path`. Standard library only, byte-deterministic; fetch returns it (cut at 40,000 characters) and the private mirror writes it whole (PR 8) |
@@ -1187,9 +1253,9 @@ portal user and a guest; fails closed on a request it cannot read; and reads no 
 | `doctype/knowledge_article/` | The published snapshot. Controller `KnowledgeArticle`: refuses every write without `flags.kb_action`, and every delete and rename |
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish` or that breaks an approval rule, and every cancel, amend, delete and rename; applies the content rules on save |
 | `workflow.py` | The approval rules, content-edit and contributor rules, article numbers (`next_article_number`, `identity_problem`, `number_problems`, 2026-09-29) and review dates (PR 2); the state machine (`TRANSITIONS`), who may make each move (`*_problems`), what the forms offer (`version_actions`, `article_actions`) and who is asked to review (`reviewers_for`) (PR 3). Standard library only, plus `signed_in_browser` from Marketing |
-| `content.py` | Presentation stripping, the secret scan and the content hash (PR 2); `shows_anything`, `referenced_files` and `text_diff` (PR 3). Standard library only |
+| `content.py` | Presentation stripping, the secret scan and the content hash (PR 2); `shows_anything`, `referenced_files` and `text_diff` (PR 3); `guidance_left`, the register template's guidance still in a draft (2026-09-30). Standard library only |
 | `files.py` | The two `File` hooks: private Files, bytes included, that stay attached where they are, and no deleting an article's image (PR 2) or a version's once it has left Draft (PR 3) |
-| `publish.py` | Every write the actions make (PR 3): `transition`, the only writer of `review_state`; `publish`, the one-transaction publish; `start_revision` (PR 6b: optional `content` and `provenance`, for the drafting tool), `retire`, `confirm_still_accurate`; `run`, the deadlock retry; `asker`; the forms' `onload` payloads |
+| `publish.py` | Every write the actions make (PR 3): `transition`, the only writer of `review_state`; `publish`, the one-transaction publish; `start_revision` (PR 6b: optional `content` and `provenance`, for the drafting tool), `retire`, `confirm_still_accurate`; `run`, the deadlock retry; `asker`; the forms' `onload` payloads (since 2026-09-30 the article's includes `document`); the Revision History row each publish adds |
 | `notify.py` | Review ToDos (PR 3): closed on every move, raised inline for the new state, title and link only |
 | `references.py` | The `Comment` and `ToDo` guards (PR 3, decision (b)): no typed text about a draft outside the draft |
 | `emailed_reports.py` | The `Auto Email Report` guard (PR 4 review): a KB report is emailed only by, and as, someone who holds its role, because v16 sends an emailed report as Administrator |
@@ -1202,9 +1268,10 @@ portal user and a guest; fails closed on a request it cannot read; and reads no 
 | [`../hooks.py`](../hooks.py) `standard_help_items` | Help > Company Knowledge Base (PR 4) |
 | [`../hooks.py`](../hooks.py) `awesomebar_search` | The AwesomeBar's knowledge base hits (PR 5), `search_service.awesomebar_hits` |
 | [`../hooks.py`](../hooks.py) `auth_hooks` | `mirror_guard.confine_mirror_account` (PR 8 review): an auth_hook, because v16 reads the API key after `before_request` |
-| [`../api/knowledge_base.py`](../api/knowledge_base.py) | The nine endpoints (PR 3): the permission and rule checks, then `publish`; `submit_version`, Submit for Review's body, shared with the drafting tool and not whitelisted (PR 6b) |
+| [`../api/knowledge_base.py`](../api/knowledge_base.py) | The nine endpoints (PR 3): the permission and rule checks, then `publish`; `submit_version`, Submit for Review's body, shared with the drafting tool and not whitelisted (PR 6b); `document_template`, a new draft's template sections, a tenth, GET (2026-09-30) |
 | [`../api/knowledge_base_mirror.py`](../api/knowledge_base_mirror.py) | The private mirror's one endpoint (PR 8): `snapshot`, a rate-limited GET for KB Mirror or Administrator; every Published article through `ai_tools.article_text`, untruncated, with its path, sha256 and the set's stamp; `stamp_of`. Reads only |
-| [`../public/js/knowledge_base/`](../public/js/knowledge_base/) | The two form scripts (PR 3), registered in `doctype_js`: the buttons `__onload.kb` allows, the dialogs, View Changes |
+| [`../public/js/knowledge_base/`](../public/js/knowledge_base/) | The two form scripts (PR 3), registered in `doctype_js`: the buttons `__onload.kb` allows, the dialogs, View Changes; since 2026-09-30 the article's document view and *Print / PDF*, and the draft's *Preview* and template fill |
+| [`../hooks.py`](../hooks.py) `jinja` and `after_migrate` | `printing.kb_document`, and `setup_print_formats.ensure_knowledge_base_print_formats` above the chrome pin (2026-09-30) |
 | `module_def/knowledge_base.json` | The `Module Def`. Documentation only: `module_def` is not in v16's `IMPORTABLE_DOCTYPES`, so the module is installed by its DocTypes and `refresh_module_map` (see `tests/test_module_installability.py`) |
 | [`../patches/seed_knowledge_base_roles.py`](../patches/seed_knowledge_base_roles.py) | The two roles and the one-role "KB Approvers" Role Profile. Insert-only; cannot raise |
 | [`../patches/seed_knowledge_base_mirror_role.py`](../patches/seed_knowledge_base_mirror_role.py) | "KB Mirror" (PR 8): `desk_access = 0`, no DocPerm, granted to nobody. Insert-only; cannot raise |
@@ -1217,6 +1284,7 @@ portal user and a guest; fails closed on a request it cannot read; and reads no 
 | [`../tests/test_knowledge_base_actions.py`](../tests/test_knowledge_base_actions.py) | The endpoints end to end over an in-memory Frappe running the real controllers and hooks: the WI-080 person test, the publish steps and their order, numbers and concurrency, revisions, ToDos with no draft text, decisions (a) and (b), the forms' buttons (PR 3); the kind through submit, publish, revisions and the form's intro, and `search_service` over the same site (`SearchServiceTest`: no draft ever found, permission before ranking, a hidden article taking no slot, the cache) (PR 5); the AI tools' payloads (`AiToolPayloadsTest`: no draft sentinel on any page of any tool, the one `found: false`, the 40,000-character cap, the table of contents, a retired article in no table of contents and unavailable in `related`, a citation fetching its article, no email address, the failure path with nothing of the request in its Error Log) (PR 6a); the drafting tool end to end (`AiDraftTest`: queued through the real gate over a FAC stub and confirmed through the real `_confirm_one`; only the requester's confirmation writes; submitted in the same card, then the requester's approval refused, any approval under a gate flag refused, another approver publishing; the savepoint; the only move being Submit for Review; pictures, secrets, open versions; no text in any result or refusal; and from its review, a submit refused on `write` leaving no draft, a department and an enabled-staff process owner required, a retire or a revision committed after the check refused under the lock, nulls and wrong types refused before any card) (PR 6b); the mirror's snapshot (`MirrorSnapshotTest`: refused without KB Mirror before any read, Published only, a file equal to fetch's Markdown byte for byte and whole past 40,000 characters, the paths, a skipped department, the stamp and `since`, no header read, nothing written or logged) (PR 8); the mirror account's confinement (`MirrorConfinementTest`: every other method, address, method and page refused, `cmd` refused, the snapshot answered through it, every other user untouched, fail closed, no header read) (PR 8 review). Its own CI step: it stubs `frappe` and FAC |
 | [`../tests/test_knowledge_base_entry_points.py`](../tests/test_knowledge_base_entry_points.py) | The workspace, sidebar, tile and Help item (who sees what, the module-gate precondition, every filter, the `modified` stamp moving with the content), and both reports (roles, bound SQL, no draft text selected or quoted, every rule, the README's Check table) (PR 4); the tile appended to saved layouts, the Auto Email Report guard and the phone search hint (PR 4 review); the paragraph pointing to the search bar and the Integrity report's kind check (PR 5). Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_tools.py`](../tests/test_knowledge_base_tools.py) | The three AI tools as FAC sees them (PR 6a): in `EXPLICIT_READONLY` (the build fails if one leaves), `requires_permission`, descriptions (at most 600 characters, "not instructions", an article-number example such as 'SOP-06-0001 v3' and none in the retired KB- format), the kind and department enums, no property named `title`, `doctype` or `id`, no read-path file naming the Version doctype (comments and docstrings stripped; since PR 8 the mirror's endpoint too), the hook's order, the failure path (never `frappe.log_error`, whose v16 metadata holds the request's form_dict, the arguments). On the AI-gate CI step, on `test_assistant_tools_schema`'s stubs. The payloads' behavior is `AiToolPayloadsTest` in `test_knowledge_base_actions`; the renderer is `TestArticleMarkdown` in `test_knowledge_base_rules`. PR 6b: the drafting tool's contract (Medium, `requires_permission`, the schema and `ai_draft.TYPES`, the four card lines, the card's target), the gate's refusals with no card and their withheld log rows (a misnamed argument, a failed log insert and a quoting error included), `ai_draft`'s pure checks (secrets as sent and as shown, invisible characters, titles, pictures matched exactly, addresses a browser reads differently), and the static allowlist on `ai_draft.py` |
+| [`../tests/test_knowledge_base_document.py`](../tests/test_knowledge_base_document.py) | The document (2026-09-30): the templates' sections, the skeleton and `guidance_left` with the submit rule, the page (header, owner row, numbering, history, escaping, scoped print-safe CSS that beats frappe's print padding), and `printing.py` over a stub (drawn as saved, unsaved and unreadable refused, no version read for an article, the draft's pending line, only the record's own pictures inlined), plus the wiring. Its own CI step: it stubs `frappe` |
 | [`../tests/test_knowledge_base_search.py`](../tests/test_knowledge_base_search.py) | `search.py` (PR 5), **pytest**, on its own `python -m pytest` step: every tokenizer rule (a punctuated acronym such as W-2 or T&M included), the stemmer table, pinning, filters before scoring, the kind's aliases, ties, snippets, an invented golden set (`tests/data/kb_search_golden.json`), a performance guard, a fresh-interpreter import with `frappe` absent, and static checks that search never names the Version doctype or a SQL function string |
 
 ## What arrives later
@@ -1238,7 +1306,8 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
   submits it for review) only from an approval card the person who asked confirms, and never approves
   or publishes. See "The drafting tool (PR 6b)". Merged on 2026-09-28 (#1153) and live.
 - **PR 7**: the one-way Drive copy for Gemini and outages. It keys its export on
-  `(content_hash, version_number)`, because the kind is not in the hash.
+  `(content_hash, version_number)`, because the kind is not in the hash. Since 2026-09-30 the page it
+  should export is `document.render`'s, so a Drive copy looks like the register's templates too.
 - ~~**PR 8**: the ERPNext side of the Markdown mirror~~. Written in v1.561.0: the read-only `snapshot`
   endpoint and the KB Mirror role (WI-080 Slice 6). See "The private mirror (PR 8)". The workflow that
   pulls it lives in the company's private repo.

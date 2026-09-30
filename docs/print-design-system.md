@@ -214,6 +214,7 @@ and the ` - Inactive` marker QuickBooks' tax codes carry.
 | Training Certificate | `training/setup_print_formats.py` | neutral |
 | Trip Sheet (Travel Trip) | `travel_management/setup_print_formats.py` + `travel_management/print_formats/trip_sheet.html` | neutral |
 | Crew Qualification Roster, Supplier Pickup List (report sheets) | the report's `.html` beside it | neutral, **without the wordmark** |
+| Knowledge Article, and a version's preview | `knowledge_base/setup_print_formats.py` + `knowledge_base/document.py` | **none: the register's templates** (see below) |
 
 **Contracts are a third door.** The chrome cannot go into the agreement body — a signed
 contract prints its frozen `agreement_html` snapshot, and chrome inside it would never
@@ -263,7 +264,17 @@ procurement defaults are: `setup_print_formats._make_default` sets it after the 
 the format exists, because a default naming a missing format makes the desk drop "Standard"
 from the Print menu (see the travel README's *The Trip Sheet*). Standard stays selectable.
 
-Everything the app prints is now on the chrome.
+Everything the app prints is now on the chrome, with one deliberate exception.
+
+**Knowledge base articles follow the company register's templates instead** (v1.569.0). An
+article is a controlled document of the register (POL-0002 Policy, POL-0003 Process, POL-0004
+SOP), and Nik asked for it to print, preview and show "as the templates in the google drive"
+(2026-09-30). So `knowledge_base/document.py` draws the templates' own look (Arial, the sapphire
+title, the grey owner-and-group row, numbered sections, the Revision History, the logo over the
+Confidential line), and shares only `print_style.logo_svg` with the chrome. It keeps this
+document's rules: print-safe CSS with no flex or grid, and cell geometry `!important` on
+selectors more specific than `.print-format td`. See the knowledge base README, "The document:
+print, preview and the form".
 
 ## Before you push
 

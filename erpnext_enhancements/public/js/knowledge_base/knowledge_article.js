@@ -15,6 +15,15 @@
 //   with the reason. Nothing is deleted.
 //
 // Every endpoint checks again. Routes go through frappe.set_route, so Back returns here.
+//
+// 2026-09-30: the top of the form is the article as a document, laid out as its kind's company
+// register template (POL-0002 Policy, POL-0003 Process, POL-0004 SOP): the same page the printer and
+// the PDF give. The server draws it (publish.article_onload -> knowledge_base/printing.article_html,
+// every value escaped there, the body the stored text the Version controller cleaned) and this only
+// puts it in the document_view field. The fields under it are collapsed; if the drawing failed
+// (__onload.kb.document is null) the Article Text section opens instead, so nothing is ever hidden.
+// Print / PDF opens the print view (frm.print_doc, a route, so Back returns here), whose default
+// format is "Article Document".
 
 const KB_METHOD = "erpnext_enhancements.api.knowledge_base.";
 
@@ -24,6 +33,10 @@ frappe.ui.form.on("Knowledge Article", {
 		const kb = (frm.doc.__onload && frm.doc.__onload.kb) || {};
 		const can = new Set(kb.actions || []);
 		kb_article_intro(frm, kb);
+		kb_draw_document(frm, kb);
+		if (frappe.model.can_print(frm.doctype, frm)) {
+			frm.add_custom_button(__("Print / PDF"), () => frm.print_doc());
+		}
 
 		if (can.has("start_revision")) {
 			const open = kb.open_version;
@@ -124,6 +137,27 @@ function kb_article_intro(frm, kb) {
 		frm.set_intro(__("A revision is open: {0} ({1}).", [kb_escape(kb.open_version), kb_escape(__(kb.open_state || ""))]), "blue");
 	} else {
 		frm.set_intro();
+	}
+}
+
+function kb_draw_document(frm, kb) {
+	const field = frm.get_field("document_view");
+	if (!field || !field.$wrapper) return;
+	if (kb.document) {
+		field.$wrapper.html(kb.document);
+		return;
+	}
+	field.$wrapper.html(
+		`<p class="text-muted">${kb_escape(
+			__("The document view could not be drawn. The article's text is under Article Text below.")
+		)}</p>`
+	);
+	// expanded_by_user keeps it open: v16's layout re-collapses every collapsible section on each
+	// refresh unless the person opened it (layout.js refresh_section_collapse).
+	const section = frm.fields_dict.section_body;
+	if (section && section.collapse) {
+		section.expanded_by_user = true;
+		section.collapse(false);
 	}
 }
 

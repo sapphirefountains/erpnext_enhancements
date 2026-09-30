@@ -17,6 +17,7 @@ reads, with a second person's approval enforced rather than requested?*
 | :func:`confirm_still_accurate` | POST | the review date restarts | the process owner or a KB Approver, from a browser |
 | :func:`retire` | POST | Published -> Retired, with a reason | a KB Approver, from a browser |
 | :func:`review_diff` | GET | none: the published text against the draft | KB Author, KB Approver, from a browser |
+| :func:`document_template` | GET | none: a new draft's template sections for its kind (2026-09-30) | KB Author, KB Approver |
 
 The rules are ``knowledge_base/workflow.py`` (pure, every branch tested bench-free); the writes are
 ``knowledge_base/publish.py``, which is the only code that changes a version's ``review_state`` or
@@ -56,7 +57,7 @@ import frappe
 from frappe import _
 from frappe.utils import cstr, get_fullname, now_datetime, to_markdown
 
-from erpnext_enhancements.knowledge_base import constants, content, publish, workflow
+from erpnext_enhancements.knowledge_base import constants, content, document, publish, workflow
 
 ARTICLE = constants.ARTICLE_DOCTYPE
 VERSION = constants.VERSION_DOCTYPE
@@ -241,6 +242,27 @@ def review_diff(version):
 		"fields": fields,
 		"body": content.text_diff(before, _markdown(doc.get("body"))),
 		"change_note": cstr(doc.get("change_note")),
+	}
+
+
+@frappe.whitelist(methods=["GET"])
+def document_template(kind):
+	"""A new draft's starting text for ``kind`` (2026-09-30): the company register template's
+	sections as headings, with the template's guidance under each in square brackets
+	(``document.skeleton``). The Version form puts it into an empty body when the author chooses a
+	kind. Fixed text, no record read; KB roles only, like every other door into drafting. Guidance
+	left in a draft stops it being submitted (``workflow.submit_problems``)."""
+	_require_kb_role(publish.asker())
+	chosen = constants.kind_option(kind)
+	if chosen is None:
+		frappe.throw(
+			_("{0} is not a kind. Choose Policy, Process or SOP.").format(cstr(kind)), title=_("Not done")
+		)
+	return {
+		"kind": chosen,
+		"register_template": constants.KIND_REGISTER_TEMPLATES[chosen],
+		"sections": list(constants.kind_section_names(chosen)),
+		"body": document.skeleton(chosen),
 	}
 
 
