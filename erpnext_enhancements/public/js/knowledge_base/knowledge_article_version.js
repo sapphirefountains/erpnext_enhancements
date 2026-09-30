@@ -83,7 +83,9 @@ frappe.ui.form.on("Knowledge Article Version", {
 				frappe.set_route("Form", "Knowledge Article", frm.doc.article)
 			);
 		}
-		if (frappe.model.can_print(frm.doctype, frm)) {
+		// can_print_doc, not can_print: a version is submittable, and v16 refuses to print a draft
+		// when Print Settings says so (model.js can_print_doc), which would open an error page.
+		if (frappe.model.can_print_doc(frm)) {
 			frm.add_custom_button(__("Preview"), () => kb_preview(frm));
 		}
 	},

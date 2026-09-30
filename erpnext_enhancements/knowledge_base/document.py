@@ -29,10 +29,18 @@ tested bench-free.
 
 What is not obvious:
 
-* **The headings are numbered here, not typed.** The highest level of heading the body uses (``##``
-  in the drafting tool's Markdown, Heading 2 in the editor) is numbered in order, "1. Purpose", and
-  the Revision History takes the next number. A heading that already starts with a number ("3. Scope")
-  keeps it and still counts. Lower headings are sub-headings.
+* **The headings are numbered by the stylesheet, never by rewriting the body.** :func:`outline`
+  reads the body (``HTMLParser``, nothing written) for the highest level of heading it uses (``##`` in
+  the drafting tool's Markdown, Heading 2 in the editor) and how many there are, and :func:`render`
+  puts the body inside ``<div class="kb-body kb-top-h2 kb-count">`` **byte for byte as stored**; CSS
+  counters number that level, "1. Purpose", and style lower levels as sub-headings. The Revision
+  History takes the next number, which :func:`outline` counted. If the author numbered every top-level
+  heading themselves ("1. Purpose"), ``kb-count`` is left off so nothing is numbered twice. The first
+  version of this rewrote each heading's start tag with a regular expression, and the security review
+  showed why that must never come back: a pattern that assumes no ``>`` inside an attribute value
+  turns an inert ``<h2 title="a><img onerror=...>">`` into live markup, in the Desk and in an
+  approver's preview, where a script could approve the draft as them. The body is only ever passed
+  through.
 * **The Revision History is drawn, never typed**: from the article's ``revisions`` rows, which
   publishing writes (``publish.publish``), plus a draft's own line in its preview, marked as not yet
   approved. A template's section list stops before it for that reason (``constants.KIND_SECTIONS``).
@@ -44,13 +52,18 @@ What is not obvious:
   ``!important`` rule, or an inline one (docs/print-design-system.md, "Cell geometry").
 * **Everything a person typed is escaped, except the body**: the stored HTML the Version controller
   cleaned on save (``content.strip_presentation``, then v16's own sanitizer), which the Desk already
-  shows as it is. :func:`number_sections` adds a class and a number to its headings and nothing else.
+  shows as it is, and which goes onto the page unchanged.
+* **The editor's own wrapper is neutralised.** A stored body keeps Quill's ``<div class="ql-editor
+  read-mode">``, and frappe's print bundle and Desk theme style ``.ql-editor`` (its font, its colour,
+  a light grey in the dark theme, and its padding), so ``.kb-doc .kb-body .ql-editor`` sets them back
+  to the page's.
 """
 
 import datetime
 import html
 import re
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 
 from erpnext_enhancements import print_style
 from erpnext_enhancements.knowledge_base import constants
@@ -153,7 +166,8 @@ class Sheet:
 def render(sheet):
 	"""The document as HTML: one ``<style>`` and one ``<div class="kb-doc">``."""
 	labels = KIND_LABELS.get(sheet.kind, UNCLASSIFIED)
-	body, sections = number_sections(sheet.body or "")
+	body = sheet.body or ""
+	top, sections, numbered_by_author = outline(body)
 	parts = [STYLE, f'<div class="kb-doc{" kb-screen" if sheet.screen else ""}">']
 	if sheet.watermark and not sheet.screen:
 		parts.append('<div class="kb-watermark">DRAFT</div>')
@@ -164,7 +178,13 @@ def render(sheet):
 	parts.append('<hr class="kb-rule">')
 	parts.append(_owner_row(sheet, labels))
 	if body.strip():
-		parts.append(f'<div class="kb-body">{body}</div>')
+		classes = ["kb-body"]
+		if top:
+			classes.append(f"kb-top-h{top}")
+			if not numbered_by_author:
+				classes.append("kb-count")
+		# The body exactly as stored: never parsed and written back (see the module docstring).
+		parts.append(f'<div class="{" ".join(classes)}">{body}</div>')
 	parts.append(_revision_history(sheet.revisions, sections + 1))
 	parts.append(_footer(labels, sheet.footnote))
 	parts.append("</div>")
@@ -192,47 +212,51 @@ def skeleton(kind):
 	return "".join(f"<h2>{_e(name)}</h2><p><em>[{_e(guidance)}]</em></p>" for name, guidance in sections)
 
 
-# ------------------------------------------------------------------ the numbered headings
+# ------------------------------------------------------------------ the headings
 
-#: One heading element and what it holds. Headings never nest, so the lazy match ends at its own close.
-_HEADING = re.compile(r"<h([1-6])((?:\s[^>]*)?)>(.*?)</h\1\s*>", re.IGNORECASE | re.DOTALL)
 #: A heading its author already numbered: "1. Purpose", "2) Scope".
 _OWN_NUMBER = re.compile(r"^\d+[.)]\s")
-_TAG = re.compile(r"<[^>]*>")
-_CLASS_ATTRIBUTE = re.compile(r"(\sclass\s*=\s*)([\"'])", re.IGNORECASE)
+_HEADING_TAGS = {f"h{level}": level for level in range(1, 7)}
 
 
-def number_sections(body):
-	"""``(body, count)``: the body with its top-level headings numbered and classed ``kb-section``, its
-	lower ones classed ``kb-sub``, and how many sections it has. Nothing else in the body changes."""
-	levels = [int(match.group(1)) for match in _HEADING.finditer(body)]
-	if not levels:
-		return body, 0
-	top = min(levels)
-	count = 0
-
-	def heading(match):
-		nonlocal count
-		level, attributes, inner = int(match.group(1)), match.group(2) or "", match.group(3)
-		if level != top:
-			return f"<h{level}{_with_class(attributes, 'kb-sub')}>{inner}</h{level}>"
-		count += 1
-		if _OWN_NUMBER.match(_plain(inner)):
-			return f"<h{level}{_with_class(attributes, 'kb-section')}>{inner}</h{level}>"
-		number = f'<span class="kb-number">{count}.</span> '
-		return f"<h{level}{_with_class(attributes, 'kb-section')}>{number}{inner}</h{level}>"
-
-	return _HEADING.sub(heading, body), count
+def outline(body):
+	"""``(top, count, numbered_by_author)`` for a body, read and never rewritten: the highest heading
+	level it uses (``2`` for ``<h2>``; ``None`` for no heading), how many headings it has at that level,
+	and whether its author numbered every one of them. A heading counts wherever it sits, as the
+	stylesheet's counter does."""
+	if not isinstance(body, str) or "<" not in body:
+		return None, 0, False
+	reader = _Headings()
+	reader.feed(body)
+	reader.close()
+	if not reader.headings:
+		return None, 0, False
+	top = min(level for level, _text in reader.headings)
+	texts = [text for level, text in reader.headings if level == top]
+	return top, len(texts), all(_OWN_NUMBER.match(text) for text in texts)
 
 
-def _with_class(attributes, name):
-	"""``attributes`` with ``name`` added to its class, or a class of its own."""
-	merged, found = _CLASS_ATTRIBUTE.subn(lambda m: f"{m.group(1)}{m.group(2)}{name} ", attributes, count=1)
-	return merged if found else f'{attributes} class="{name}"'
+class _Headings(HTMLParser):
+	"""Each heading's level and its text, entities decoded. Reads only."""
 
+	def __init__(self):
+		super().__init__(convert_charrefs=True)
+		self.headings = []
+		self._open = None
 
-def _plain(markup):
-	return " ".join(html.unescape(_TAG.sub(" ", markup)).split())
+	def handle_starttag(self, tag, attrs):
+		level = _HEADING_TAGS.get(tag)
+		if level and self._open is None:
+			self._open = (level, [])
+
+	def handle_endtag(self, tag):
+		if self._open is not None and _HEADING_TAGS.get(tag) == self._open[0]:
+			self.headings.append((self._open[0], " ".join("".join(self._open[1]).split())))
+			self._open = None
+
+	def handle_data(self, data):
+		if self._open is not None:
+			self._open[1].append(data)
 
 
 # ------------------------------------------------------------------ the parts
@@ -328,13 +352,20 @@ def _e(value):
 
 # ------------------------------------------------------------------ the stylesheet
 
+#: The heading rules for each possible top level, so the level the body uses is numbered and styled
+#: as sections and every level under it as sub-headings (:func:`outline` says which, :func:`render`
+#: puts it on the body's class).
+_SECTION_SELECTORS = ", ".join(f".kb-doc .kb-top-h{n} h{n}" for n in range(1, 7))
+_SUB_SELECTORS = ", ".join(f".kb-doc .kb-top-h{n} h{m}" for n in range(1, 7) for m in range(n + 1, 7))
+_COUNTED_SELECTORS = ", ".join(f".kb-doc .kb-count.kb-top-h{n} h{n}::before" for n in range(1, 7))
+
 #: Every rule is under ``.kb-doc``; see the module docstring for the specificity the cell rules need.
 STYLE = f"""<style>
 .kb-doc {{ font-family: Arial, "Liberation Sans", Helvetica, sans-serif; font-size: 11pt;
 	line-height: 1.25; color: #000; background: #fff; text-align: left; position: relative; }}
 .kb-doc.kb-screen {{ max-width: 8.5in; margin: 0 auto; padding: 0.75in; border: 1px solid #d1d8dd;
 	box-sizing: border-box; }}
-@media (max-width: 640px) {{
+@media screen and (max-width: 640px) {{
 	.kb-doc.kb-screen {{ padding: 16px; }}
 	.kb-doc h1.kb-title {{ font-size: 20pt; }}
 }}
@@ -359,10 +390,14 @@ STYLE = f"""<style>
 .kb-doc table.kb-owner td {{ background: #f2f2f2; border: 1pt solid #cccccc !important;
 	padding: 7.5pt !important; vertical-align: top !important; }}
 .kb-doc table.kb-owner td.kb-label {{ width: 1%; white-space: nowrap; font-weight: 700; }}
-.kb-doc .kb-section {{ color: #000; font-size: 18pt; font-weight: 700; line-height: 1.15;
-	margin: 16pt 0 8pt; padding: 0; border: 0; page-break-after: avoid; }}
-.kb-doc .kb-body .kb-sub {{ color: #000; font-size: 13pt; font-weight: 700; line-height: 1.2;
-	margin: 12pt 0 6pt; padding: 0; page-break-after: avoid; }}
+.kb-doc .kb-section, {_SECTION_SELECTORS} {{ color: #000; font-size: 18pt; font-weight: 700;
+	line-height: 1.15; margin: 16pt 0 8pt; padding: 0; border: 0; page-break-after: avoid; }}
+{_SUB_SELECTORS} {{ color: #000; font-size: 13pt; font-weight: 700; line-height: 1.2;
+	margin: 12pt 0 6pt; padding: 0; border: 0; page-break-after: avoid; }}
+.kb-doc .kb-body {{ counter-reset: kb-section; }}
+{_COUNTED_SELECTORS} {{ counter-increment: kb-section; content: counter(kb-section) ". "; }}
+.kb-doc .kb-body .ql-editor {{ font-family: inherit; font-size: inherit; color: inherit;
+	line-height: inherit; padding: 0; }}
 .kb-doc .kb-body p {{ margin: 0 0 8pt; }}
 .kb-doc .kb-body ul, .kb-doc .kb-body ol {{ margin: 0 0 8pt; padding-left: 24pt; }}
 .kb-doc .kb-body li {{ line-height: 1.5; }}

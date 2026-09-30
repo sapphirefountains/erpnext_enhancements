@@ -1198,18 +1198,26 @@ kind's template in the company register, measured from the templates' Google Doc
 - **Not the Pillar Stripe chrome.** Everything else this app prints uses `print_style`
   ([docs/print-design-system.md](../../docs/print-design-system.md)); an article is a register document
   and follows the register's templates, which is what Nik asked for. Only the logo is shared.
-- **The headings are numbered by the page, not typed.** The highest heading level the body uses is
-  numbered in order; one an author numbered keeps its number and still counts; lower levels are
-  sub-headings. Nothing else in the body changes.
+- **The headings are numbered by the stylesheet, and the body is never rewritten.** `document.outline`
+  reads the body (nothing written) for the highest heading level it uses and how many there are; the
+  body goes on the page byte for byte inside `<div class="kb-body kb-top-h2 kb-count">`, and CSS
+  counters number that level while lower levels are styled as sub-headings. If the author numbered every
+  top-level heading themselves, `kb-count` is left off. **Never rewrite the body's tags**: the first
+  draft of this did, with a regular expression, and the review showed an attribute value holding `>`
+  (which the sanitizer keeps) becoming live markup in an approver's preview, where a script could
+  approve the draft as them.
 - **The Revision History** is `revisions`, a child table on the article (**Knowledge Article
   Revision**: version, approved on, author, approved by, change note), written by `publish.publish`, one
   row per published version, through the article's own guarded save; nobody edits it. An article
-  published before it existed shows its live version's line, and gets that line written first at its
-  next publish. **So a version's change note is what its printed history line says.** A draft's preview
+  published before it existed shows its live version's line, and at its next publish gets a line for
+  every version approved before (`publish.earlier_history`, from the versions themselves: the publishing
+  path may read them). The AI gate never exempts the table (`_gate.KNOWLEDGE_BASE_CHILD_DOCTYPES`),
+  though v16 already refuses a generic write to it, since no role may write its article. **So a version's change note is what its printed history line says.** A draft's preview
   adds its own line, marked "(draft)" and "Not yet approved".
 - **A draft's preview** says "SOP-06-####" until it is numbered (a guessed number would be wrong the
   moment another article was approved first), carries a red "Draft - not approved" box ("In review" when
-  it is), and a faint DRAFT across each printed page. A Superseded or Discarded version prints as grey
+  it is), and a faint DRAFT across each printed page. The Preview button is offered only when Print
+  Settings allow printing a draft (`frappe.model.can_print_doc`). A Superseded or Discarded version prints as grey
   history; a Published one prints as the record, with no box.
 - **New drafts start from the template.** When an author chooses a kind on a draft whose body is empty,
   the form fills it with the kind's sections (`constants.KIND_SECTIONS`) and the template's guidance
@@ -1219,14 +1227,22 @@ kind's template in the company register, measured from the templates' Google Doc
   `workflow.submit_problems`: "it still has the template's guidance under Scope: replace it with the
   article's own words, or delete it"), so none is ever published. Other headings are allowed. The
   drafting tool's `body_markdown` description lists each kind's sections.
-- **Pictures reach the PDF.** v16's chrome PDF engine loads the page into a browser with no session
-  (`utils/pdf_generator/browser.py`), so a private image, which every KB picture is, would print as a
-  broken box; only the wkhtmltopdf path inlines private images. `printing.inline_images` writes each
-  picture the body uses into the printed page as a `data:` URI, only for a File attached to the record
-  printed (or, for a revision, its article), up to 5 MB each. The form leaves pictures to the browser.
+- **Pictures are written into the printed page.** v16's chrome PDF engine loads the page in a
+  browser pointed at the site's own address, which fetches each picture over the network: with the
+  person's session cookie inside a request (since 16.31), with none in a job or the email queue, and
+  always dependent on the worker reaching the site's public address (`docs/pdf-generation.md`). Every
+  KB picture is private. So `printing.inline_images` writes each picture the body uses into the printed
+  page as a `data:` URI: only a File attached to the record printed (or, for a revision, its article),
+  at most 5 MB each, 20 MB and 40 pictures a page, sized from the file on disk (not `file_size`, which
+  v16 takes from the request) and read as raw bytes. The form leaves pictures to the browser.
 - **Print-safe CSS, scoped to `.kb-doc`**: tables and blocks, no flex or grid. Cell padding and borders
   are `!important` on selectors more specific than frappe's `.print-format td` (`standard.css`, and the
   Redesign print style's `padding: 10px !important`), which would otherwise win.
+- **The page margins are CSS.** v16's chrome generator ignores a Print Format's `margin_*` fields and
+  takes margins only from a top-level rule whose selector is exactly `.print-format`
+  (`utils/pdf.py` `get_print_format_styles`); with none it prints nothing at the top and bottom. So each
+  format's `css` sets the templates' inch there, and takes it back off the element with a selector the
+  generator does not read, so it is not applied twice.
 - **Installed on every migrate** (`setup_print_formats.py`, `after_migrate`, above the chrome pin), each
   format made its doctype's default by a code-owned Property Setter once it exists, as the Trip Sheet
   is. That setter is the only one on either doctype, and widens nothing. A form whose document failed to
@@ -1238,9 +1254,9 @@ kind's template in the company register, measured from the templates' Google Doc
 | Path | What it is |
 |---|---|
 | `constants.py` | The fixed vocabulary: article statuses, review states, the POL-0000 department blocks, and `DEFAULT_REVIEW_EVERY_MONTHS` (6: POL-0001 mandates a review every six months), the default of `review_every_months` on both doctypes. Standard library only. Every Select option on both doctypes comes from here, and the schema test asserts the JSON matches. `department_block` stores a blank first option, because v16 defaults a Select to its first option and `reqd` would otherwise never fire: a draft nobody placed would be published into block 00. PR 5: `ARTICLE_KINDS`, `KIND_SELECT_OPTIONS` (blank first, for the same reason), `KIND_HELP`, `KIND_ALIASES`, `kind_option`, `kind_description`, `department_option` and `department_folder` |
-| `document.py` | The article as its kind's register template (2026-09-30): `render` (the page), `number_sections`, `skeleton` (a new draft's starting text), `owner_text`, `document_id`, the scoped print-safe `STYLE`. Standard library only, plus `print_style`'s logo |
+| `document.py` | The article as its kind's register template (2026-09-30): `render` (the page; the body passed through unchanged), `outline` (the body's top heading level and count, read only), `skeleton` (a new draft's starting text), `owner_text`, `document_id`, the scoped print-safe `STYLE` with its section counters. Standard library only, plus `print_style`'s logo |
 | `printing.py` | The page's values, from the record as saved (2026-09-30): `kb_document`, the Jinja global both print formats call (loads by name, checks read, inlines the record's own pictures); `article_html`, the form's copy; `article_sheet`, `version_sheet`, `article_revisions`, `revision_values`, `inline_images`. An article's page never names the Version doctype |
-| `setup_print_formats.py` | The two print formats, "Article Document" and "Article Version Preview", upserted on every migrate and made their doctypes' defaults (2026-09-30) |
+| `setup_print_formats.py` | The two print formats, "Article Document" and "Article Version Preview", upserted on every migrate with `FORMAT_CSS` (the PDF page margins) and made their doctypes' defaults (2026-09-30) |
 | `doctype/knowledge_article_revision/` | The Revision History's child table (2026-09-30): one row per published version, read with its article, written only by `publish.publish` |
 | `search.py` | Search's ranking (PR 5): the tokenizer (acronyms, 2-character words, KB and document numbers), the stemmer, BM25F with the kind in a meta field, pinning, filters before scoring, snippets and the AwesomeBar's highlighting. Standard library only; keeps no document text |
 | `search_service.py` | Search as the caller (PR 5): permission first with no dialog, the caller's readable set before ranking, the per-site per-worker index keyed on the articles' count and newest `modified`, result shaping, and `awesomebar_hits`, the `awesomebar_search` hook. Never reads the Version doctype. PR 6a: `approver_name` (never an email address) and `read_filters`, shared with the table of contents |

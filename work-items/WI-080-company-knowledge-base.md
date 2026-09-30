@@ -68,21 +68,28 @@ Slice 4. v1.569.0.
   written by `publish.publish`, one row per approved version: its number, when it was published, its
   author, its approver and its change note. The printed page draws it from there, so an article's page
   never reads the Version doctype. An article published before the table existed shows its live
-  version's line, and gets that line written first at its next publish. **The change note is now what
+  version's line, and at its next publish gets a line for every version approved before, read from the
+  versions (the publishing path may). **The change note is now what
   the printed history says about a version**, so it should read as one ("Initial release", "Added the
   damaged-goods step").
 - **The owner line is a role, as the template asks:** the owner's Employee `designation`, then their
   name, `Purchasing Agent/Inventory Clerk (Parker Bailey)`. The group is the department's name.
-- **Headings are numbered by the page, not typed**, and the Revision History takes the next number.
+- **Headings are numbered by the stylesheet (CSS counters), not typed, and the body is never
+  rewritten**: it goes on the page exactly as stored. The Revision History takes the next number. (The
+  first draft rewrote heading tags with a regular expression; the security review showed a crafted
+  attribute becoming live script in an approver's preview.)
 - **New drafts start from the template.** Choosing a kind on a draft with an empty body fills it with
   the kind's sections (`constants.KIND_SECTIONS`) and the template's guidance under each, in square
   brackets, from the GET endpoint `document_template` (KB roles; fixed text, reads no record). **Guidance
   left in a draft stops Submit for Review** (`content.guidance_left`, in `workflow.submit_problems`), so
   none is ever published. The drafting tool's `body_markdown` description names each kind's sections.
   Not enforced beyond that: an article may use other headings.
-- **Pictures reach the PDF.** v16's chrome PDF engine loads the page with no session, so a private image
-  would print as a broken box; the global writes each picture the body uses, and that is attached to the
-  record (or a revision's article), into the page as a `data:` URI, up to 5 MB each.
+- **Pictures are written into the printed page.** v16's chrome PDF engine fetches them over the network
+  (with no session in a job, and always through the site's public address); the global writes each
+  picture the body uses, and that is attached to the record (or a revision's article), into the page as
+  a `data:` URI, at most 5 MB each and 20 MB and 40 pictures a page.
+- **The page margins are the format's CSS**, a top-level `.print-format` rule: v16's chrome generator
+  ignores the Print Format's margin fields and would print no top or bottom margin.
 - **Printed copies say they are not controlled:** a footnote names the number, version and print date,
   and that the current version is in ERPNext. A draft's preview carries a red "Draft - not approved"
   box and a faint DRAFT across each printed page.

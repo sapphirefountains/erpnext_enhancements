@@ -31,9 +31,11 @@ Run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_document 
 import copy
 import datetime
 import importlib
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -283,42 +285,77 @@ def _sheet(**values):
 	return sheet
 
 
-class TestNumberSections(unittest.TestCase):
-	def test_the_top_level_is_numbered_in_order_and_the_rest_are_sub_headings(self):
-		body, count = D.number_sections(SOP_BODY)
-		self.assertEqual(count, 3)
-		self.assertIn('<h2 class="kb-section"><span class="kb-number">1.</span> Purpose</h2>', body)
-		self.assertIn('<span class="kb-number">2.</span> Step-by-Step Procedure</h2>', body)
-		self.assertIn('<h3 class="kb-sub">Check the delivery</h3>', body)
+#: The security review's proof (2026-09-30): an attribute value holding ">" that nh3 before 0.3.7 and
+#: ``content.strip_presentation`` both keep byte for byte. A regex that rewrote heading tags turned it
+#: into a live ``<img onerror>``; the page must carry it exactly as stored.
+CRAFTED = '<h2 title="a><img src=x onerror=alert(document.cookie)>">Purpose</h2><p title="<h2 x>">y</p>'
 
-	def test_a_class_already_there_is_kept(self):
-		body, _count = D.number_sections(SOP_BODY)
-		self.assertIn(
-			'<h2 class="kb-section ql-align-center"><span class="kb-number">3.</span> Troubleshooting &amp; Exceptions</h2>',
-			body,
+
+class TestOutline(unittest.TestCase):
+	def test_the_top_level_its_count_and_whether_the_author_numbered_it(self):
+		self.assertEqual(D.outline(SOP_BODY), (2, 3, False))
+		self.assertEqual(D.outline("<h1>Purpose</h1><h2>Detail</h2><h1>Scope</h1>"), (1, 2, False))
+		self.assertEqual(D.outline("<h2>1. Purpose</h2><h2>2) Scope</h2><h3>x</h3>"), (2, 2, True))
+		self.assertEqual(D.outline("<h2>1. Purpose</h2><h2>Scope</h2>"), (2, 2, False))
+		for body in ("<p>Count it.</p>", "", None, "plain text"):
+			with self.subTest(body=body):
+				self.assertEqual(D.outline(body), (None, 0, False))
+
+	def test_the_body_goes_on_the_page_byte_for_byte(self):
+		for body in (SOP_BODY, CRAFTED, "<h2>1. Purpose</h2><p>ok</p>"):
+			with self.subTest(body=body[:30]):
+				page = D.render(_sheet(body=body))
+				self.assertIn(f">{body}</div>", page)
+				self.assertEqual(page.count(body), 1)
+
+	def test_a_crafted_attribute_stays_an_attribute(self):
+		"""Parsed as a browser would, the page holds no ``img`` element and no ``onerror`` attribute:
+		the markup the body carried in an attribute value is still text in that value."""
+		from html.parser import HTMLParser
+
+		class Tags(HTMLParser):
+			def __init__(self):
+				super().__init__()
+				self.tags, self.attributes = [], []
+
+			def handle_starttag(self, tag, attrs):
+				self.tags.append(tag)
+				self.attributes.extend(name for name, _value in attrs)
+
+		reader = Tags()
+		reader.feed(D.render(_sheet(body=CRAFTED)))
+		self.assertNotIn("img", reader.tags)
+		self.assertNotIn("onerror", reader.attributes)
+		self.assertEqual(D.outline(CRAFTED), (2, 1, False))
+
+	def test_the_body_carries_its_top_level_and_the_counter(self):
+		page = D.render(_sheet())
+		self.assertIn('<div class="kb-body kb-top-h2 kb-count">', page)
+		own = D.render(_sheet(body="<h2>1. Purpose</h2><h2>2. Scope</h2>"))
+		self.assertIn('<div class="kb-body kb-top-h2">', own)
+		none = D.render(_sheet(body="<p>Count it.</p>"))
+		self.assertIn('<div class="kb-body"><p>Count it.</p></div>', none)
+
+	def test_the_stylesheet_numbers_the_top_level_and_styles_the_rest_as_sub_headings(self):
+		self.assertIn(".kb-doc .kb-body { counter-reset: kb-section; }", D.STYLE)
+		self.assertIn(".kb-doc .kb-count.kb-top-h2 h2::before", D.STYLE)
+		self.assertIn('content: counter(kb-section) ". "', D.STYLE)
+		self.assertIn(".kb-doc .kb-top-h2 h2", D.STYLE)
+		self.assertIn(".kb-doc .kb-top-h2 h3", D.STYLE)
+		self.assertNotIn(".kb-doc .kb-top-h2 h1", D.STYLE)
+
+	def test_the_editors_wrapper_takes_the_pages_font_and_colour(self):
+		"""frappe's print bundle and the Desk's dark theme style ``.ql-editor``, which a stored body
+		keeps: its font, and a light grey on the white page."""
+		self.assertRegex(
+			D.STYLE,
+			r"\.kb-doc \.kb-body \.ql-editor \{\{? ?font-family: inherit; font-size: inherit; color: inherit;",
 		)
 
-	def test_nothing_else_in_the_body_changes(self):
-		body, _count = D.number_sections(SOP_BODY)
-
-		def without_headings(markup):
-			return re.sub(r"<h[1-6][^>]*>.*?</h[1-6]>", "", markup, flags=re.S)
-
-		self.assertEqual(without_headings(body), without_headings(SOP_BODY))
-
-	def test_an_authors_own_number_is_kept_and_still_counts(self):
-		body, count = D.number_sections("<h2>1. Purpose</h2><h2>Scope</h2>")
-		self.assertEqual(count, 2)
-		self.assertIn('<h2 class="kb-section">1. Purpose</h2>', body)
-		self.assertIn('<span class="kb-number">2.</span> Scope', body)
-
-	def test_the_highest_level_used_is_the_top_level(self):
-		body, count = D.number_sections("<h1>Purpose</h1><h2>Detail</h2><h1>Scope</h1>")
-		self.assertEqual(count, 2)
-		self.assertIn('<h2 class="kb-sub">Detail</h2>', body)
-
-	def test_a_body_with_no_heading_is_unchanged(self):
-		self.assertEqual(D.number_sections("<p>Count it.</p>"), ("<p>Count it.</p>", 0))
+	def test_the_small_screen_rule_is_for_screens(self):
+		"""A Letter page with one-inch margins is 624px wide, so a bare max-width query matches in print."""
+		self.assertIn("@media screen and (max-width: 640px)", D.STYLE)
+		self.assertNotRegex(D.STYLE, r"@media \(max-width")
 
 
 class TestRender(unittest.TestCase):
@@ -475,8 +512,12 @@ class _Doc:
 	def get(self, key, default=None):
 		return self.__dict__.get(key, default)
 
-	def get_content(self):
+	def get_content(self, encodings=None):
+		STATE["content_reads"].append((self.name, encodings))
 		return STATE["contents"][self.name]
+
+	def get_full_path(self):
+		return STATE["paths"][self.name]
 
 
 def _reset():
@@ -489,6 +530,8 @@ def _reset():
 			"employees": {OWNER: "Purchasing Agent/Inventory Clerk"},
 			"names": {AUTHOR: "Parker Bailey", APPROVER: "James Harris", "nik@example.com": "Nik Bradshaw"},
 			"contents": {},
+			"paths": {},
+			"content_reads": [],
 		}
 	)
 
@@ -606,7 +649,12 @@ def _stored_version(**values):
 	return version
 
 
+_FILES = tempfile.TemporaryDirectory()
+
+
 def _file(name, url, doctype, docname, content=b"\x89PNG....", size=None, private=1):
+	"""A File row, its bytes on disk (the size the code reads), and ``file_size`` as stored, which
+	v16 takes from the request and which ``size`` can make lie."""
 	STATE["db"]["File"][name] = {
 		"name": name,
 		"file_url": url,
@@ -615,7 +663,11 @@ def _file(name, url, doctype, docname, content=b"\x89PNG....", size=None, privat
 		"is_private": private,
 		"file_size": len(content) if size is None else size,
 	}
+	path = os.path.join(_FILES.name, name)
+	with open(path, "wb") as handle:
+		handle.write(content)
 	STATE["contents"][name] = content
+	STATE["paths"][name] = path
 
 
 class GlueBase(unittest.TestCase):
@@ -819,17 +871,71 @@ class TestPicturesInThePrintedPage(GlueBase):
 		out = printing.inline_images(body, [("Knowledge Article", "SOP-06-0001")])
 		self.assertEqual(out.count("data:image/png;base64,"), 2)
 
+	def _limits(self, **values):
+		saved = {key: getattr(printing, key) for key in values}
+		for key, value in values.items():
+			setattr(printing, key, value)
+		self.addCleanup(lambda: [setattr(printing, key, value) for key, value in saved.items()])
+
 	def test_too_big_or_not_a_picture_is_left_as_a_link(self):
-		_file(
-			"F1",
-			"/private/files/huge.png",
-			"Knowledge Article",
-			"SOP-06-0001",
-			size=printing.INLINE_IMAGE_LIMIT + 1,
-		)
+		self._limits(INLINE_IMAGE_LIMIT=8)
+		_file("F1", "/private/files/huge.png", "Knowledge Article", "SOP-06-0001", content=b"123456789")
 		_file("F2", "/private/files/notes.pdf", "Knowledge Article", "SOP-06-0001", content=b"%PDF")
 		body = '<img src="/private/files/huge.png"><img src="/private/files/notes.pdf">'
 		self.assertEqual(printing.inline_images(body, [("Knowledge Article", "SOP-06-0001")]), body)
+
+	def test_the_size_is_the_files_own_not_the_stored_field(self):
+		"""v16's ``File.validate`` takes ``file_size`` from the request, so a small stored size must not
+		let a big file be read."""
+		self._limits(INLINE_IMAGE_LIMIT=8)
+		_file(
+			"F1", "/private/files/huge.png", "Knowledge Article", "SOP-06-0001", content=b"123456789", size=1
+		)
+		body = '<img src="/private/files/huge.png">'
+		self.assertEqual(printing.inline_images(body, [("Knowledge Article", "SOP-06-0001")]), body)
+		self.assertEqual(STATE["content_reads"], [])
+
+	def test_a_page_has_a_budget(self):
+		self._limits(INLINE_IMAGE_COUNT=1)
+		_file("F1", "/private/files/a.png", "Knowledge Article", "SOP-06-0001", content=b"AAAA")
+		_file("F2", "/private/files/b.png", "Knowledge Article", "SOP-06-0001", content=b"BBBB")
+		body = (
+			'<img src="/private/files/a.png"><img src="/private/files/b.png"><img src="/private/files/a.png">'
+		)
+		out = printing.inline_images(body, [("Knowledge Article", "SOP-06-0001")])
+		self.assertEqual(out.count("data:image/png;base64,QUFBQQ=="), 2)
+		self.assertIn('src="/private/files/b.png"', out)
+		_reset()
+		self._limits(INLINE_IMAGE_COUNT=40, INLINE_TOTAL_LIMIT=6)
+		_file("F1", "/private/files/a.png", "Knowledge Article", "SOP-06-0001", content=b"AAAA")
+		_file("F2", "/private/files/b.png", "Knowledge Article", "SOP-06-0001", content=b"BBBB")
+		out = printing.inline_images(body, [("Knowledge Article", "SOP-06-0001")])
+		self.assertIn('src="/private/files/b.png"', out)
+
+	def test_the_bytes_are_read_raw(self):
+		"""v16's ``get_content`` would try to decode a picture as text (windows-1252 among others)."""
+		_file("F1", "/private/files/a.png", "Knowledge Article", "SOP-06-0001", content=b"AAAA")
+		printing.inline_images('<img src="/private/files/a.png">', [("Knowledge Article", "SOP-06-0001")])
+		self.assertEqual(STATE["content_reads"], [("F1", ())])
+
+	def test_what_is_written_cannot_change_the_markup_around_it(self):
+		"""The substitution is a regular expression, safe only because a data URI holds no quote,
+		angle bracket or ampersand: an ``<img src>`` written inside another attribute's value stays text."""
+		_file("F1", "/private/files/a.png", "Knowledge Article", "SOP-06-0001", content=bytes(range(256)))
+		attribute = "<p title='<img src=\"/private/files/a.png\">'>x</p>"
+		# Alone, the text in the attribute names no picture (content.referenced_files reads attributes),
+		# so nothing is read or written.
+		self.assertEqual(printing.inline_images(attribute, [("Knowledge Article", "SOP-06-0001")]), attribute)
+		# With a real picture of the same file, the regex also rewrites the text in the attribute: it
+		# stays text in that attribute.
+		body = '<img src="/private/files/a.png">' + attribute
+		out = printing.inline_images(body, [("Knowledge Article", "SOP-06-0001")])
+		self.assertEqual(out.count("data:image/png;base64,"), 2)
+		data = out.split("data:image/png;base64,", 1)[1].split('"', 1)[0]
+		self.assertFalse(set(data) & set("\"'<>&"))
+		tail = out.split("<p title='", 1)[1]
+		self.assertTrue(tail.startswith('<img src="data:image/png;base64,'))
+		self.assertTrue(tail.endswith("\">'>x</p>"))
 
 	def test_the_forms_copy_leaves_pictures_to_the_browser(self):
 		_file("F1", "/private/files/map.png", "Knowledge Article", "SOP-06-0001", content=b"PNGDATA")
@@ -852,6 +958,23 @@ class TestWiring(unittest.TestCase):
 		self.assertIn("ARTICLE_FORMAT: constants.ARTICLE_DOCTYPE", source)
 		self.assertIn("VERSION_FORMAT: constants.VERSION_DOCTYPE", source)
 		self.assertIn('pf.pdf_generator = "chrome"', source)
+		self.assertIn("pf.css = FORMAT_CSS", source)
+
+	def test_the_page_margins_are_a_rule_the_chrome_generator_reads(self):
+		"""v16 ``utils/pdf.py`` ``get_print_format_styles`` takes margins only from a top-level rule
+		whose selector is exactly ``.print-format``, never the Print Format's margin fields."""
+		source = (MODULE_DIR / "setup_print_formats.py").read_text(encoding="utf-8")
+		css = re.search(r'FORMAT_CSS = """(.*?)"""', source, re.S).group(1)
+		css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+		top = re.sub(r"@media[^{]*\{[^{}]*\{[^{}]*\}\s*\}", "", css)
+		rules = dict((sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", top))
+		read = rules[".print-format"]
+		for side in ("top", "bottom", "left", "right"):
+			with self.subTest(side=side):
+				self.assertIn(f"margin-{side}: 25.4mm", read)
+		# Taken off the element itself by a selector the generator does not read.
+		self.assertIn("margin: 0 !important", rules[".print-format.print-format"])
+		self.assertNotIn("margin_top", source)
 
 	def test_the_global_and_the_hook_are_registered_the_hook_above_the_chrome_pin(self):
 		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
@@ -877,6 +1000,7 @@ class TestWiring(unittest.TestCase):
 		self.assertIn('"GET"', version_js)
 		self.assertIn("kind(frm) {", version_js)
 		self.assertIn('__("Preview")', version_js)
+		self.assertIn("frappe.model.can_print_doc(frm)", version_js)
 		# A body is read with DOMParser, never jQuery's .html(), which runs a script in what it is given.
 		self.assertNotIn('$("<div>").html(', version_js)
 

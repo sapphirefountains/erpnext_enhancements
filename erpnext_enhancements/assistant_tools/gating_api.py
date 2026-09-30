@@ -58,6 +58,7 @@ from frappe.utils import get_datetime, now_datetime
 from erpnext_enhancements.assistant_tools._gate import (
     DOCSTATUS_TOOLS,
     GATE_OWN_DOCTYPES,
+    KNOWLEDGE_BASE_CHILD_DOCTYPES,
     KNOWLEDGE_BASE_DOCTYPES,
     NEVER_EXEMPT,
     SealError,
@@ -406,7 +407,7 @@ def _never_exempt_reason(doctype):
         return _("creates or changes a Task")
     if doctype in GATE_OWN_DOCTYPES:
         return _("changes the AI gate's own records or settings")
-    if doctype in KNOWLEDGE_BASE_DOCTYPES:
+    if doctype in KNOWLEDGE_BASE_DOCTYPES or doctype in KNOWLEDGE_BASE_CHILD_DOCTYPES:
         return _("changes the company knowledge base")
     return _("changes a doctype the AI gate never exempts")
 

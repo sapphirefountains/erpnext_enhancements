@@ -23,7 +23,14 @@ for the reason the Trip Sheet's module gives: a default naming a missing format 
 nothing, which is what ``tests/test_knowledge_base_schema.py`` guards against in the fixtures; it is
 ``is_system_generated``, so the fixture export never picks it up.
 
-The margins are the templates' own inch, all round.
+**The margins are the templates' own inch, all round, and they are CSS** (:data:`FORMAT_CSS`, the
+format's ``css``). v16's chrome PDF generator never reads a Print Format's ``margin_*`` fields (only
+the weasyprint and format-builder paths do): it reads ``margin-top`` and its siblings from a top-level
+CSS rule whose selector is exactly ``.print-format`` (``utils/pdf.py`` ``get_print_format_styles``,
+``utils/pdf_generator/browser.py`` ``_parse_pdf_options_from_html``), and with none it prints 15mm at
+the sides and **nothing** at the top and bottom. The same rule would also put the margin on the element
+itself, doubling it, so a more specific rule takes it off again (the generator reads only a selector
+that is exactly ``.print-format``), and on screen centres the page as frappe's own stylesheet does.
 """
 
 import frappe
@@ -42,14 +49,22 @@ FORMAT_HTML = (
 	"{{ kb_document(doc) }}\n"
 )
 
+#: The format's ``css``, which ``printview.get_print_style`` appends to the page's stylesheet: the PDF
+#: page margins, then the element's own margin taken off (see the module docstring). Top level, not in
+#: a media query: the generator skips rules inside one.
+FORMAT_CSS = """/* Page margins for frappe's chrome PDF generator, which reads only a rule whose selector is
+   exactly .print-format (knowledge_base/setup_print_formats.py). */
+.print-format { margin-top: 25.4mm; margin-bottom: 25.4mm; margin-left: 25.4mm; margin-right: 25.4mm; }
+/* ...and not on the element as well, where it would double them. */
+.print-format.print-format { margin: 0 !important; }
+@media screen { .print-format.print-format { margin: 0 auto !important; } }
+"""
+
 #: Format name -> the doctype it prints.
 FORMATS = {
 	ARTICLE_FORMAT: constants.ARTICLE_DOCTYPE,
 	VERSION_FORMAT: constants.VERSION_DOCTYPE,
 }
-
-#: The templates' page margin, one inch, in the Print Format's millimetres.
-MARGIN_MM = 25.4
 
 
 def ensure_knowledge_base_print_formats():
@@ -80,9 +95,7 @@ def _upsert_print_format(name, doc_type):
 	pf.standard = "No"
 	pf.disabled = 0
 	pf.html = FORMAT_HTML
-	for side in ("margin_top", "margin_bottom", "margin_left", "margin_right"):
-		if frappe.db.has_column("Print Format", side):
-			pf.set(side, MARGIN_MM)
+	pf.css = FORMAT_CSS
 	if frappe.db.has_column("Print Format", "pdf_generator"):
 		pf.pdf_generator = "chrome"
 	pf.save(ignore_permissions=True)

@@ -143,8 +143,16 @@ function kb_article_intro(frm, kb) {
 function kb_draw_document(frm, kb) {
 	const field = frm.get_field("document_view");
 	if (!field || !field.$wrapper) return;
+	const section = frm.fields_dict.section_body;
 	if (kb.document) {
 		field.$wrapper.html(kb.document);
+		// The form is reused for every article in the session: an Article Text section this opened
+		// for an article whose document failed goes back to collapsed, unless the person opened it.
+		if (section && section.__kb_opened) {
+			section.__kb_opened = false;
+			section.expanded_by_user = false;
+			section.collapse(true);
+		}
 		return;
 	}
 	field.$wrapper.html(
@@ -154,8 +162,8 @@ function kb_draw_document(frm, kb) {
 	);
 	// expanded_by_user keeps it open: v16's layout re-collapses every collapsible section on each
 	// refresh unless the person opened it (layout.js refresh_section_collapse).
-	const section = frm.fields_dict.section_body;
 	if (section && section.collapse) {
+		section.__kb_opened = section.__kb_opened || !section.expanded_by_user;
 		section.expanded_by_user = true;
 		section.collapse(false);
 	}

@@ -31,7 +31,8 @@ permission check is the endpoint's, done first and explicitly).
    part of its number, which never changes (``workflow.identity_problem`` refuses a revision that
    changes either, and the Article controller refuses any write that would). The version's line is
    added to the article's Revision History (``revisions``, 2026-09-30), which the printed article
-   draws; an article published before the rows existed gets its live version's line first.
+   draws; an article published before the rows existed gets its earlier approved versions' lines
+   first (:func:`earlier_history`).
 3. **The Files** the version's body uses (``content.referenced_files``: every ``?fid=`` and every
    ``/private/files/`` path in an ``src`` or ``href``) that are attached to the version are moved
    onto the article, each under ``flags.kb_action`` (``files.force_private`` refuses any other
@@ -181,9 +182,10 @@ def publish(version, article, *, opened_modified, approver):
 	months = workflow.review_interval(version.get("review_every_months"))
 
 	# The Revision History (2026-09-30). An article published before its rows existed has none: its
-	# live version's line goes in first, from the article, before the update below overwrites it.
+	# earlier versions' lines go in first, before the update below overwrites the live one's.
 	if not article.is_new() and not article.get("revisions") and cint(article.get("version_number")):
-		article.append("revisions", printing.revision_values(article))
+		for line in earlier_history(article):
+			article.append("revisions", line)
 	article.append(
 		"revisions",
 		{
@@ -240,6 +242,27 @@ def publish(version, article, *, opened_modified, approver):
 		"files_moved": moved,
 		"superseded": superseded,
 	}
+
+
+def earlier_history(article):
+	"""The Revision History of an article published before its rows existed (v1.569.0), oldest first:
+	one line per version of it that was approved (docstatus 1: Published or Superseded), read from the
+	versions themselves, which the publishing path may read (an article's reader never does); and the
+	article's own live line if its version is not among them (a version removed past the ORM, which
+	the Integrity report names). Versions are numbered from 1 to the article's number, each once."""
+	live = cint(article.get("version_number"))
+	lines = {}
+	for row in frappe.get_all(
+		VERSION,
+		filters={"article": article.name, "docstatus": 1},
+		fields=["version_number", "approved_on", "owner", "approved_by", "change_note"],
+	):
+		number = cint(row.get("version_number"))
+		if 0 < number <= live and number not in lines:
+			lines[number] = printing.revision_values(row, author=row.get("owner"))
+	if live not in lines:
+		lines[live] = printing.revision_values(article)
+	return [lines[number] for number in sorted(lines)]
 
 
 def allocate_number(kind, block):

@@ -30,19 +30,29 @@ checks for itself.
 so the reader path stays what "Every leak path" in the README says it is. Only a version's own
 preview reads that version, as a KB role that can open it anyway.
 
-**Pictures are carried into the PDF.** Frappe v16's chrome PDF engine loads the page into a
-headless browser pointed at the site with no session (``utils/pdf_generator/browser.py``,
-``setup_body_page``), so a private image, which every KB picture is (``files.force_private``),
-would print as a broken box. Only the wkhtmltopdf path inlines private images
-(``utils/pdf.py``, ``prepare_options`` -> ``inline_private_images``). So :func:`kb_document` writes
-each picture the body uses into the page as a ``data:`` URI, and only a File attached to the record
-being printed (or, for a revision, to its article), up to :data:`INLINE_IMAGE_LIMIT` bytes each.
-The form does not: the browser loads them with the reader's own session.
+**Pictures are carried into the page.** Every KB picture is a private File (``files.force_private``).
+Frappe v16's chrome PDF engine loads the page into a headless browser pointed at the site's own
+address (``utils/pdf_generator/browser.py``, ``setup_body_page``), which fetches each picture over the
+network: with the person's session cookie when there is a request (``page.py`` ``set_cookies``, since
+16.31), and with none when there is not (a job, the email queue), when a private picture prints as a
+broken box. Only the wkhtmltopdf path inlines private images (``utils/pdf.py``, ``prepare_options`` ->
+``inline_private_images``). And on this host a PDF that depends on the worker reaching the site's own
+public address is one more thing to fail (``docs/pdf-generation.md``; it is why the print chrome's font
+is a ``data:`` URI). So :func:`kb_document` writes each picture the body uses into the page as a
+``data:`` URI: only a File attached to the record being printed (or, for a revision, to its article),
+at most :data:`INLINE_IMAGE_LIMIT` bytes each and :data:`INLINE_TOTAL_LIMIT` bytes and
+:data:`INLINE_IMAGE_COUNT` pictures a page, sized from the file on disk rather than ``file_size``
+(which v16's ``File.validate`` takes from the request) and read as raw bytes (``get_content`` would
+otherwise decode a small picture as windows-1252 text). The substitution is a regular expression, which
+is safe here only because what it writes, the ``data:`` URI, holds no quote, angle bracket or
+ampersand: it can change the text inside one quoted value and never the markup around it. The form
+does not inline: the browser loads pictures with the reader's own session.
 """
 
 import base64
 import html
 import mimetypes
+import os
 import re
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -55,9 +65,13 @@ from erpnext_enhancements.knowledge_base import constants, content, document, wo
 ARTICLE = constants.ARTICLE_DOCTYPE
 VERSION = constants.VERSION_DOCTYPE
 
-#: The largest picture written into a printed page, in bytes. A bigger one is left as a link, which
-#: prints as a broken box: a PDF of many such pictures would be too big to send anyone.
+#: The largest picture written into a printed page, in bytes. A bigger one is left as a link: a PDF of
+#: many such pictures would be too big to send anyone.
 INLINE_IMAGE_LIMIT = 5 * 1024 * 1024
+#: The most picture bytes, and pictures, one page carries; the rest are left as links. A page is
+#: rendered in the worker's memory, several copies of it, and any staff reader can print it again.
+INLINE_TOTAL_LIMIT = 20 * 1024 * 1024
+INLINE_IMAGE_COUNT = 40
 
 #: An ``<img>``'s ``src``, quoted either way.
 _IMAGE_SOURCE = re.compile(r"(<img\b[^>]*?\ssrc\s*=\s*)([\"'])(.*?)\2", re.IGNORECASE | re.DOTALL)
@@ -277,6 +291,7 @@ def inline_images(body, attachments):
 	if not files_by_name:
 		return body
 	cache = {}
+	spent = {"bytes": 0, "pictures": 0}
 
 	def source(match):
 		prefix, quote, url = match.group(1), match.group(2), match.group(3)
@@ -284,7 +299,7 @@ def inline_images(body, attachments):
 		if row is None:
 			return match.group(0)
 		if row.name not in cache:
-			cache[row.name] = _data_uri(row)
+			cache[row.name] = _data_uri(row, spent)
 		data = cache[row.name]
 		return f"{prefix}{quote}{data}{quote}" if data else match.group(0)
 
@@ -299,18 +314,25 @@ def _file_for(url, files_by_name, files_by_path):
 	return files_by_path.get(unquote(parts.path))
 
 
-def _data_uri(row):
+def _data_uri(row, spent):
+	"""The picture as a ``data:`` URI, or ``""`` to leave it a link: not a picture, too big, over the
+	page's budget (``spent``, updated), or unreadable."""
 	mime = mimetypes.guess_type(row.file_url or "")[0] or ""
-	if not mime.startswith("image/") or cint(row.file_size) > INLINE_IMAGE_LIMIT:
+	if not mime.startswith("image/") or spent["pictures"] >= INLINE_IMAGE_COUNT:
 		return ""
 	try:
-		data = frappe.get_doc("File", row.name).get_content()
+		file = frappe.get_doc("File", row.name)
+		size = os.path.getsize(file.get_full_path())
+		if size > INLINE_IMAGE_LIMIT or spent["bytes"] + size > INLINE_TOTAL_LIMIT:
+			return ""
+		# No encodings: the raw bytes. v16 would otherwise try to decode them as text.
+		data = file.get_content(encodings=())
 	except Exception:
 		return ""
-	if isinstance(data, str):
-		data = data.encode("utf-8")
-	if not data or len(data) > INLINE_IMAGE_LIMIT:
+	if not isinstance(data, bytes) or not data or len(data) > INLINE_IMAGE_LIMIT:
 		return ""
+	spent["bytes"] += len(data)
+	spent["pictures"] += 1
 	return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 

@@ -1770,8 +1770,8 @@ jinja = {
 		# template for its kind (POL-0002/0003/0004). Like the Trip Sheet's global, it loads the
 		# record again by name and checks read permission itself, because the print view also
 		# renders a document posted as JSON and a global is reachable from any template; and it
-		# writes the article's own pictures into the page, which the chrome PDF engine cannot fetch
-		# (it has no session). kb_ prefix, for the reason above.
+		# writes the article's own pictures into the page, so the chrome PDF engine never has to fetch
+		# a private file over the network (it has no session in a job). kb_ prefix, for the reason above.
 		"erpnext_enhancements.knowledge_base.printing.kb_document",
 	],
 }
