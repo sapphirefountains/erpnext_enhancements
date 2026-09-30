@@ -3078,7 +3078,7 @@ class AiToolPayloadsTest(Base):
 		self.assertEqual(self._call("contents_payload", {"department": "01"}, user=NIK)["total"], 0)
 		self.assertEqual(self._call("contents_payload", {"kind": "Policy"}, user=NIK)["total"], 1)
 
-		# "Pro 2 1000" is a product's name shaped like PRO-02-1000, and no citation (review of v1.567.0).
+		# "Pro 2 1000" is a product's name shaped like PRO-02-1000, and no citation (review of v1.568.0).
 		body = (
 			'<div class="ql-editor read-mode">'
 			f"<p>This replaces {retired}; pay under {policy}, not SOP-01-0099.</p>"

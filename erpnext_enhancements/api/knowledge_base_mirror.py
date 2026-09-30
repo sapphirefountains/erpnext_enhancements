@@ -53,7 +53,7 @@ Each of ``articles``, in article-number order, is ``{"kb_number", "version", "pa
 ``knowledge_base/README.md`` ("The private mirror (PR 8)") shows one. Adding a field is allowed;
 renaming or removing one, or changing what a file holds, is a new ``schema``.
 
-The article-number format changed in v1.567.0 (numbered by kind, ``SOP-06-0001``, where it had been
+The article-number format changed in v1.568.0 (numbered by kind, ``SOP-06-0001``, where it had been
 a ``KB`` number), and ``schema`` stayed 1: no schema-1 snapshot had carried an article before it
 (there were none), so no consumer had seen the old path, and the keys did not change. The private
 repository's script changed with it.

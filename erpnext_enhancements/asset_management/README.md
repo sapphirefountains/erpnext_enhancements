@@ -17,6 +17,7 @@ what went out with each one and what came back.
 | `rental_availability.py` | The reads and writes: conflicts, pool peaks, calendar sync, the form's endpoints |
 | `out_of_service.py` | Automatic out-of-service from damaged return inspections and Asset Repairs |
 | `rental_holds.py`, `rental_sales.py`, `doctype/rental_settings/` | Hold expiry, the Rental Agreement, deposit/balance invoices, Submit & Send (v1.564.0) |
+| `rental_kpis.py`, `rental_calendar.py`, `../assistant_tools/rental_*.py` | Fleet KPIs, calendar feeds, assistant tools (v1.567.0) |
 | `rental_logistics.py`, `rental_deposit.py`, `rental_reminders.py`, `doctype/rental_booking_crew/` | Crew tasks + 6am digest + checklists, deposit release, customer reminders (v1.566.0) |
 | `rental_portal.py`, `rental_requests.py`, `../www/rentals.*`, `../www/rent*a*fountain.*`, `../portal_login.py` | Customer portal, public request form, email-link sign-in and its staff guard (v1.565.0) |
 | `rental_planner.py`, `page/rental_planner/` | The Rental Planner page: fleet timeline + the four-step new-rental flow (v1.563.0) |
@@ -353,6 +354,35 @@ applies on existing sites; read it with `get_cached_doc`).
   - Each is sent once per booking (a date stamp).
 - `patches/backfill_rental_settings_defaults` fills the two ticked-by-default switches on an
   already-saved Rental Settings.
+
+### Insights: KPIs, assistant tools, calendar feeds (v1.567.0)
+
+- **Fleet KPIs on the Product dashboard** (`rental_kpis.py`). They sit beside the Events KPIs, which
+  count projects and cannot tell whether the fountains themselves are earning.
+  - Fleet Utilization (30d): the share of fountain-hours in firm Rental legs. Overlaps count once
+    (`rental_rules.covered_hours`).
+  - Idle Fountains (30d).
+  - Rental Revenue Booked (90d) and per fountain.
+  - Rental Holds Open.
+  - Fountains Out of Service.
+  - Accessory Pool-days Fully Booked (next 30d).
+  - The block runs in a `try` inside `_product_metrics`, so a failure costs these KPIs only.
+- **Assistant tools**, both read-only (`EXPLICIT_READONLY`) and both needing read access to Rental
+  Booking:
+  - `rental_board`: what is delivering, out or coming back in the next N days, with crew, site
+    details and invoice state; holds lapsing within 3 days; fountains out of service.
+    (`rental_planner.board_summary`.)
+  - `rental_availability`: which fountains and accessories are free for given dates, through the
+    permission-checked `get_availability`. It never books anything.
+- **Calendar feeds** (`rental_calendar.py`): an `.ics` feed for the whole fleet and one per fountain,
+  to subscribe to from Google Calendar or a phone. It is read-only and one-way.
+  - A calendar app cannot log in, so the feed is guest-readable and **the URL is the credential**.
+    The key is `secrets.token_urlsafe(32)`, stored as a hidden Password (`calendar_feed_key`) and
+    compared in constant time. With no key set there is no feed.
+  - **Calendar Feeds** on Rental Settings (System Manager, Operations Team) shows the links. **Rotate
+    Key** replaces the key, and every old subscription stops.
+  - UIDs are the Asset Booking and out-of-service names, so a moved entry updates in place and a
+    released one drops out.
 
 ### Out of service
 

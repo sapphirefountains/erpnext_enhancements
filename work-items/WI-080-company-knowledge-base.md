@@ -41,7 +41,7 @@ pointer to the new one, so old citations still resolve.**
   retire reason, and the Retire dialog says so.
 - **Hold every Approve and Publish on prod until this is deployed and verified**: approval is the only
   thing that allocates a number, and one approved first would keep a `KB-` number for good.
-- v1.567.0. The PR-design narration below keeps the examples it was written with, in the retired
+- v1.568.0. The PR-design narration below keeps the examples it was written with, in the retired
   `KB-DDNN` format (`KB-0601`, `kb 601`); the normative lines and the acceptance criteria are updated.
 
 ## Why
@@ -1171,7 +1171,7 @@ All checks are read-only, against prod after each deploy. No MCP query names the
   - after a kind is chosen and saved, Submit appears.
 - After a version with kind SOP is approved, its article shows SOP, and the Knowledge Base Integrity report returns 0 rows.
 
-**Numbering by kind (2026-09-29, v1.567.0)**
+**Numbering by kind (2026-09-29, v1.568.0)**
 - Before merging, ``SELECT COUNT(*) FROM `tabKnowledge Article` `` is still 0. If it is not, stop and design a migration.
 - The first approval gives ``SELECT name, kind, department_block FROM `tabKnowledge Article` `` = `SOP-06-0001` | SOP | 06 Operations, and the Integrity report (run as a KB Approver) is empty.
 - A second SOP in 06 Operations is `SOP-06-0002`; the first Policy there is `POL-06-0001`.

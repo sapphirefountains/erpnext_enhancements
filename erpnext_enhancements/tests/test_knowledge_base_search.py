@@ -175,7 +175,7 @@ def test_nfkc_reads_a_full_width_or_ligature_spelling_as_the_plain_one():
 def test_the_spellings_of_an_article_number(spelling, parts):
 	"""2026-09-29: one term, the canonical number casefolded, however it is written. In an article's
 	text its prefix and its digit runs of 2 or more characters, as written, follow it (review of
-	v1.567.0); a query holds the one term alone."""
+	v1.568.0); a query holds the one term alone."""
 	tokens = S.tokenize(f"See {spelling} first")
 	assert tokens[:2] == [S.Token("see", False), S.Token("sop-06-0001", True)]
 	assert [t.term for t in tokens[2:]] == [*parts, "first"]
@@ -185,7 +185,7 @@ def test_the_spellings_of_an_article_number(spelling, parts):
 
 
 def test_running_text_shaped_like_a_number_keeps_its_words():
-	"""Review of v1.567.0: a product called "Pro 2 1000" has an article number's shape (``PRO-02-1000``
+	"""Review of v1.568.0: a product called "Pro 2 1000" has an article number's shape (``PRO-02-1000``
 	in the loose form a query may use). Before numbers were read, its words were found by ``1000``,
 	``pro 1000`` and ``Pro 2``; they still are, because an article's text indexes a number's prefix
 	and digit runs beside its term. And fetch's ``related`` never lists it

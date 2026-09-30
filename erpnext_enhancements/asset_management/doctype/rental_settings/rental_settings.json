@@ -26,6 +26,8 @@
   "remind_day_before",
   "send_thank_you",
   "review_url",
+  "section_calendar",
+  "calendar_feed_key",
   "section_billing",
   "company",
   "rental_item",
@@ -170,6 +172,19 @@
    "description": "Where the thank-you email asks for a review. Blank leaves the ask out."
   },
   {
+   "fieldname": "section_calendar",
+   "fieldtype": "Section Break",
+   "label": "Calendar Feeds",
+   "description": "Subscribe to the fleet's calendar in Google Calendar or on a phone. Use the Calendar Feeds button at the top: the link is the password, so share it only with staff."
+  },
+  {
+   "fieldname": "calendar_feed_key",
+   "fieldtype": "Password",
+   "label": "Calendar Feed Key",
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
    "fieldname": "section_billing",
    "fieldtype": "Section Break",
    "label": "Invoicing",
@@ -255,7 +270,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-30 09:00:00.000000",
+ "modified": "2026-09-30 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
  "name": "Rental Settings",

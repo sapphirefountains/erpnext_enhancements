@@ -612,7 +612,7 @@ class TestArticleNumberFormat(unittest.TestCase):
 		self.assertEqual(K.written_article_numbers(""), [])
 
 	def test_what_running_text_cites(self):
-		"""Review of v1.567.0: running text holds ordinary words shaped like a number, such as a product
+		"""Review of v1.568.0: running text holds ordinary words shaped like a number, such as a product
 		called "Pro 2 1000". What it *cites* allows a space between the parts only when the department
 		is written with two digits, so fetch's ``related`` never lists an article the text never cited.
 		The loose reading, for a query, still finds them all."""
@@ -821,7 +821,7 @@ class TestNoRetiredNumbersInTheCode(unittest.TestCase):
 		self.assertEqual(sum(line.startswith("_RETIRED_FORMAT = ") for line in text.splitlines()), 1)
 
 	def test_what_the_docs_say_to_do_now_uses_the_new_format(self):
-		"""Review of v1.567.0: the docs may name the retired format as history, but not in an
+		"""Review of v1.568.0: the docs may name the retired format as history, but not in an
 		instruction someone acts on today. WI-080's T0 companion ("now") told course authors to cite
 		``see KB-0612`` in lesson text while ADR 0017 said article numbers, and Slice 5's scanner
 		looked for "the KB number". Each line must name the new format, and the scan must read what
@@ -2080,7 +2080,7 @@ class TestArticleMarkdown(unittest.TestCase):
 		self.assertEqual(M.related_numbers(None, "SOP-06-0001"), [])
 		# The Drive register's numbers are what the first article actually cites; neither is an article.
 		self.assertEqual(M.related_numbers("See POL-0600 and PRO-0210.", "SOP-06-0001"), [])
-		# Review of v1.567.0: a product's name shaped like a number is no citation.
+		# Review of v1.568.0: a product's name shaped like a number is no citation.
 		self.assertEqual(
 			M.related_numbers(
 				"Use the Pro 2 1000 pump kit, pro 5 10 times, then SOP-06-0002.", "SOP-06-0001"

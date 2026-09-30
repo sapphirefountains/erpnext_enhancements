@@ -813,7 +813,7 @@ jobs:
       # normal publish: the author approving their own draft, a contributor or the person who
       # asked an AI to draft it approving, Administrator (which holds every role) or any
       # non-System-User account approving, a token or a confirmed AI gate card approving, or a
-      # copy that changed after the approver opened it. Also the article number (since v1.567.0
+      # copy that changed after the approver opened it. Also the article number (since v1.568.0
       # <PREFIX>-<DD>-<NNNN> by kind and department, one definition in constants.py: every written
       # form read as the canonical one and never the Drive register's SOP-0601; each scope from
       # 0001, one past the highest, never reused; a revision keeping its article's kind and
@@ -912,7 +912,7 @@ jobs:
       # file shows, and `since` answering unchanged; no header read, nothing written, nothing
       # logged; a GET whose whitelist is the OUTER decorator (inside a rate_limit it would be "not
       # whitelisted"). The stub gains frappe.rate_limiter.
-      # Since v1.567.0 also the article number end to end: each kind and department its own
+      # Since v1.568.0 also the article number end to end: each kind and department its own
       # sequence, a vanished article's number never reused (the allocation reads the versions too),
       # a revision's change of kind or department refused at the save, and the article row refusing
       # it whatever the flags; and the version form's Approve question (the scope, never a number).
@@ -936,7 +936,7 @@ jobs:
       # Since PR 4's review also: the tile appended to every saved home-screen layout (v16 draws a
       # saved Desktop Layout instead of the site's icons), the Auto Email Report guard (a scheduled
       # send runs as Administrator), and the README's Check table equal to reporting.CHECKS.
-      # Since v1.567.0 also the Integrity report's Number check (canonical, never 0000, a real
+      # Since v1.568.0 also the Integrity report's Number check (canonical, never 0000, a real
       # block, the article's own department and its kind's prefix).
       # Own step: it installs its own frappe stub.
       - name: Knowledge base entry points (workspace, tile, help item, the two reports)
@@ -2514,6 +2514,13 @@ jobs:
       # first -- cleaning always falls after take-down. Every customer reminder ships OFF.
       - name: Rental operations (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_rental_ops -v
+      # Rental fleet KPIs, calendar feeds and assistant tools (v1.567.0). The feed is guest-readable
+      # by design (a calendar app cannot log in) and names customers, so the secret in its URL is
+      # the only guard: compared in constant time, required, 256 bits, stored as a Password, and
+      # handed out only to the roles that manage it. The KPI block cannot break the rest of the
+      # Product snapshot, and utilization counts firm rentals only.
+      - name: Rental KPIs, calendar feeds, assistant tools (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_rental_insights -v
       # Stock Scan (v1.521.0): a warehouse QR label opens /stock-scan, where a tap posts a
       # SUBMITTED stock voucher. The rules behind it are pure Python (stock_scan_rules), and
       # every one of them fails in the direction that looks fine: a take past what is on hand

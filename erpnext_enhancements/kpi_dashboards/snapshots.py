@@ -1509,6 +1509,19 @@ def _product_metrics():
 				metrics.HIGHER,
 			)
 
+	# --- the rental FLEET (v1.567.0): the Events KPIs above count projects, which cannot say
+	#     whether the fountains themselves are earning their keep. Utilization and idle
+	#     fountains read each fountain's calendar; revenue reads the Rental Bookings; the pool
+	#     figure looks ahead. asset_management/rental_kpis.py. A failure there is logged and
+	#     costs these KPIs only, never the rest of the snapshot. ---
+	try:
+		from erpnext_enhancements.asset_management.rental_kpis import metrics as rental_fleet_metrics
+
+		for key, label, value, unit, source, direction in rental_fleet_metrics():
+			add(key, label, value, unit, source, direction)
+	except Exception:
+		frappe.log_error(title="Rental fleet KPIs failed", message=frappe.get_traceback())
+
 	# --- inventory: Inventory Stock Value and Out-of-Stock Sellable Items moved to
 	#     _operations_metrics in v1.530.0 with their definitions unchanged. Stock quantity
 	#     and cost are Operations' to manage; catalogue data quality stays here. ---

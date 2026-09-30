@@ -25,7 +25,7 @@ submits it for review, only from an approval card that the person who asked conf
 never approves or publishes. See "The drafting tool (PR 6b)". **PR 8 (v1.561.0): a read-only snapshot
 endpoint for the private Markdown mirror**, which the company's private knowledge repo pulls every six
 hours; ERPNext pushes nothing and holds no GitHub credential. See "The private mirror (PR 8)". **Since
-v1.567.0 (2026-09-29) an article is numbered by its kind and department**, `SOP-06-0001`, and a number
+v1.568.0 (2026-09-29) an article is numbered by its kind and department**, `SOP-06-0001`, and a number
 never changes and is never reused; see "Article numbers (2026-09-29)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
 hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Approvers" profile (see
 "Roles, and how a person gets one").
@@ -646,7 +646,7 @@ on 2026-09-28 ("SOP, Policy, and Process"): there is no other kind and no defaul
 
 ## Article numbers (2026-09-29)
 
-Decided 2026-09-29 (Nik: "KB-#### is too limiting"; he chose "SOP-06-0001 by kind"), v1.567.0. The
+Decided 2026-09-29 (Nik: "KB-#### is too limiting"; he chose "SOP-06-0001 by kind"), v1.568.0. The
 format is `<PREFIX>-<DD>-<NNNN>`:
 
 - **PREFIX** is the article's kind: `POL` for a Policy, `PRO` for a Process, `SOP` for an SOP
@@ -704,7 +704,7 @@ between the department and the sequence is required, so the Drive register's own
 (`SOP-0601`, `POL-0600`) are never read as article numbers; the two are separate series.
 
 **What running text cites is read more strictly** (`constants.cited_article_numbers`, review of
-v1.567.0). Running text holds ordinary words with a number's shape: a product called "Pro 2 1000" is
+v1.568.0). Running text holds ordinary words with a number's shape: a product called "Pro 2 1000" is
 `PRO-02-1000` in the loose reading. So in a body, a space may separate the parts only when the
 department is written with two digits: `sop 06 0001`, `SOP-6-1` and `sop_6_1` are citations, and
 `Pro 2 1000`, `pro 5 10 times` and `SOP 1 2 3` are words. Fetch's `related` uses it, so the AI is never
@@ -730,7 +730,7 @@ ranked, keeps the index, and shapes results. v16's own search cannot do this: pr
    every spelling of a citation meets every other. In an article's text, not in a query, its prefix
    and each digit run of 2 or more characters, as written, are indexed beside it, as a document
    number's parts are: a product called "Pro 2 1000" has the same shape, and `1000`, `pro 1000` and
-   `Pro 2` must still find it (found in review of v1.567.0, when they had stopped). A query leaves the
+   `Pro 2` must still find it (found in review of v1.568.0, when they had stopped). A query leaves the
    parts out, because naming a number means that article, not every article of its kind and department
    (whose `sop` and `06` the meta field carries). One shaped like a number that is not one (sequence
    `0000`) is read as its words.

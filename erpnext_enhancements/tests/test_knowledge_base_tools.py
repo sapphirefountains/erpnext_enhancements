@@ -272,7 +272,7 @@ class TestDescriptions(unittest.TestCase):
 				self.assertIn("Sapphire Fountains' ", tool.description)
 
 	def test_the_readmes_describe_this_check_as_it_is(self):
-		"""Review of v1.567.0: the Knowledge Base README's tests table still said a description must hold
+		"""Review of v1.568.0: the Knowledge Base README's tests table still said a description must hold
 		"KB-", the opposite of the check above; someone editing a description who followed it would put
 		the retired example back. Both READMEs' rows for this suite name the new example."""
 		readmes = (APP / "knowledge_base" / "README.md", APP / "tests" / "README.md")
