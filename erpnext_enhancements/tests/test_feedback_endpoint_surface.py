@@ -359,10 +359,13 @@ class WriterResultShape(unittest.TestCase):
 		)
 
 
-#: Where the one-writer rule is enforced. Add the Design Review module and the capture endpoints
-#: here as they land (WI-079 slices 2 and 5). Task creation elsewhere in the app for human-driven
-#: reasons, such as corrective actions in hr_enhancements/safety.py, is outside this rule.
-SCANNED = (MODULE, API)
+#: Where the one-writer rule is enforced. The Design Review module and its endpoints joined in
+#: WI-079 slice 5: a promoted decision files an Enhancement Request and lets task_writer make the
+#: Tasks, never makes one itself. Task creation elsewhere in the app for human-driven reasons, such
+#: as corrective actions in hr_enhancements/safety.py, is outside this rule.
+DESIGN_REVIEW = APP / "design_review"
+DESIGN_REVIEW_API = APP / "api" / "design_review.py"
+SCANNED = (MODULE, API, DESIGN_REVIEW, DESIGN_REVIEW_API)
 
 
 def _scanned_files():

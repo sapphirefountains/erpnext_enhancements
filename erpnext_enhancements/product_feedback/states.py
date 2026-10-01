@@ -123,3 +123,25 @@ def assert_transition(old: str, new: str) -> str:
 def is_open(status: str) -> bool:
 	"""Is this request still something a human or a worker will act on?"""
 	return (status or RequestState.SUBMITTED).strip() not in TERMINAL_STATES
+
+
+#: The one way a request may be born in a state other than ``Submitted`` (ADR 0016 §2): a
+#: design decision promoted by a human System Manager is filed already ``Approved``, because
+#: a System Manager is exactly who approves requests. The transition table above is
+#: unchanged; this is a rule about *insert*, which it never governed.
+DESIGN_REVIEW_SOURCE: Final[str] = "Design Review"
+
+
+def may_insert_with(status: str, source: str, human_system_manager: bool) -> bool:
+	"""May a new request be inserted with ``status``?
+
+	``Submitted`` always. ``Approved`` only when ``source`` is Design Review and the session
+	user is a human System Manager (``design_review.authority``). Anything else never: a
+	request born ``Tasks Created`` would skip every human decision the lifecycle exists for.
+	"""
+	status = (status or RequestState.SUBMITTED).strip()
+	if status == RequestState.SUBMITTED:
+		return True
+	if status == RequestState.APPROVED:
+		return (source or "").strip() == DESIGN_REVIEW_SOURCE and bool(human_system_manager)
+	return False

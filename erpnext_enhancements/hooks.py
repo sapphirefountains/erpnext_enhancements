@@ -2134,7 +2134,11 @@ fixtures = [
 	},
 	{
 		"dt": "Workflow",
-		"filters": [["document_type", "in", ["Sapphire Maintenance Record", "Purchase Invoice", "Payment Entry"]]],
+		# Design Review Lifecycle (WI-079 slice 5): Draft -> Open -> Closed -> Decided on the
+		# review's own `status` field, every move a System Manager's.
+		"filters": [
+			["document_type", "in", ["Sapphire Maintenance Record", "Purchase Invoice", "Payment Entry", "Design Review"]]
+		],
 	},
 	{
 		"dt": "Workflow State",
@@ -2149,6 +2153,10 @@ fixtures = [
 					"Pending Approval",
 					"Approved",
 					"Rejected",
+					# Design Review Lifecycle (Draft is shared with the maintenance workflow)
+					"Open",
+					"Closed",
+					"Decided",
 				],
 			]
 		],
@@ -2156,7 +2164,22 @@ fixtures = [
 	{
 		"dt": "Workflow Action Master",
 		"filters": [
-			["name", "in", ["Request Review", "Approve & Submit", "Submit for Approval", "Approve", "Reject"]]
+			[
+				"name",
+				"in",
+				[
+					"Request Review",
+					"Approve & Submit",
+					"Submit for Approval",
+					"Approve",
+					"Reject",
+					# Design Review Lifecycle
+					"Open for Review",
+					"Close Review",
+					"Record as Decided",
+					"Reopen Review",
+				],
+			]
 		],
 	},
 	{
@@ -2600,9 +2623,32 @@ permission_query_conditions = {
 	# them too (read), because that person may approve them; HR Manager / Projects
 	# Manager / System Manager see all.
 	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_query_conditions",
+	# Design Review (WI-079 slice 5, ADR 0016 §2): a System User who is not a System Manager
+	# sees a review, and everything hung off it, only if they are on its participant list.
+	# The DocPerms grant read to Desk User and System Manager only, so Website Users and
+	# Guests never reach these filters. Votes, verdicts and notes have no write DocPerm for
+	# any role: api/design_review.py writes them after the participant check.
+	"Design Review": "erpnext_enhancements.design_review.permissions.review_query",
+	"Design Option": "erpnext_enhancements.design_review.permissions.record_query",
+	"Design Screen": "erpnext_enhancements.design_review.permissions.record_query",
+	"Design Part": "erpnext_enhancements.design_review.permissions.record_query",
+	"Design Note": "erpnext_enhancements.design_review.permissions.record_query",
+	"Design Vote": "erpnext_enhancements.design_review.permissions.record_query",
+	"Design Verdict": "erpnext_enhancements.design_review.permissions.record_query",
+	"Design Decision": "erpnext_enhancements.design_review.permissions.record_query",
 }
 
 has_permission = {
+	# Design Review's single-document counterparts of the filters above. v16 reads any falsy
+	# answer, None included, as a denial, so these return True when they have no objection.
+	"Design Review": "erpnext_enhancements.design_review.permissions.has_review_permission",
+	"Design Option": "erpnext_enhancements.design_review.permissions.has_record_permission",
+	"Design Screen": "erpnext_enhancements.design_review.permissions.has_record_permission",
+	"Design Part": "erpnext_enhancements.design_review.permissions.has_record_permission",
+	"Design Note": "erpnext_enhancements.design_review.permissions.has_record_permission",
+	"Design Vote": "erpnext_enhancements.design_review.permissions.has_record_permission",
+	"Design Verdict": "erpnext_enhancements.design_review.permissions.has_record_permission",
+	"Design Decision": "erpnext_enhancements.design_review.permissions.has_record_permission",
 	# The single-document counterpart of the KPI Snapshot query condition above.
 	# A query condition filters lists; this is what refuses a direct read of one
 	# snapshot by name.

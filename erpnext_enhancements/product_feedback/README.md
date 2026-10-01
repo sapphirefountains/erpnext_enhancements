@@ -99,8 +99,15 @@ the ones that shape the code.
 
 - **One way in.** `api.feedback.file_request` is the only code that creates a request. It holds
   the validation, the provenance stamps and the per-person limit: ten a minute, keyed on the
-  session user, a 429 after that. `submit_request` (the `/feedback` form) and `submit_capture`
-  (the widget) both call it, and Design Review promotion will too.
+  session user, a 429 after that. `submit_request` (the `/feedback` form), `submit_capture`
+  (the widget) and Design Review promotion all call it.
+- **Born Submitted, with one exception.** A new request is `Submitted`. A design decision that a
+  human System Manager promotes from the Review Room is filed `Approved`, with the promoter as
+  `decided_by` and the breakdown queued by `file_request` itself (`approve=True`), because a System
+  Manager is exactly who approves requests (ADR 0016 §2). `EnhancementRequest.validate` enforces it
+  on insert through `states.may_insert_with`, so no other door can mint an approved request, and
+  `triton@` cannot either. A promoted request's Claude Code brief carries the decision's accepted
+  notes by element code, with no names.
 - **Provenance is never client input.** `source`, `source_doctype`, `source_ref` and
   `context_release` are set by the endpoint, absent from `SUBMIT_ALLOWED_FIELDS`, and in
   `_FROZEN_FIELDS`. `source` defaults to `Feedback form`, so the ALTER labeled the existing rows

@@ -378,6 +378,40 @@ convention, `mark_shipped` and the hourly `release_sync`. Deviations and gaps:
   include proxy votes, are stored as imported records with the artifact URL and the original voter as
   text, shown apart from live votes and exempt from the participant check.
 
+**Spike result (2026-10-01): the frame approach works, with one change.** Run in headless Chrome with
+real DevTools-Protocol mouse input against four real concept screens (L3 S04 desktop and phone, C2 S03
+desktop, E8 S02 phone) and a deliberately hostile, *unsanitized* screen:
+
+| Question | Result |
+|---|---|
+| Can the parent read the frame's layout? | Yes. `contentDocument` is readable under `allow-same-origin`; every `data-c` part was measured and pinned with its frozen code. |
+| Do pin clicks work? | Yes, from the parent. |
+| Do clicks *inside* the frame reach the page? | Yes. A listener the parent registers on the frame's document fires on a real click, though the frame itself runs no script. Hover too. |
+| Does an unsanitized screen run anything? | No. Inline `<script>`, `onclick`, `onerror` and a `javascript:` link all stayed inert. |
+| Can it reach the network? | Without a policy, yes: its `img src`, `background:url()` and `<iframe src>` were all requested. With `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; …">` inside the frame, Chrome blocked both requests (`blockedReason: csp`) before they were sent. **The policy is therefore required, not optional**, and the Review Room sends it in every frame. |
+| Fonts | The brand face loads in the frame from the site's own `/assets` under `font-src 'self'`; pins are re-measured once fonts settle. |
+| Found | Parts below a frame's drawn height got pins outside it. The Review Room skips them. |
+
+**Status, v1.570.0 (2026-10-01).** Shipped: the module (ten doctypes, permissions, Workflow,
+workspace), `api/design_review.py`, the importer and sanitizer, the Review Room page, promotion into
+an already-approved Enhancement Request with the `EnhancementRequest.validate` insert rule, design notes
+in the Claude Code brief, and `scripts/design_review/` (the Concept Viewer exporter and a browser test
+that drives the real page: 28 checks, including clicks inside the frames and Back/Forward). The
+Training review exports to a bundle of 4 tracks, 21 options, 195 screens and 358 parts, and the
+sanitizer drops nothing from it.
+
+Not yet:
+
+- **Importing the other four reviews** (Desk, UI concepts, Estimating and Billing, Email and Print).
+  Their generators live in other sessions' scratch folders and need the same exporter treatment.
+- **Importing the artifact ballots and notes.** The importer stores `ballots` (votes, verdicts, notes,
+  imported and counted apart) but they still have to be read out of each artifact's database. The
+  Training Concept Viewer's notes use the old `ENTRY-S01-E03` prefix for shared entry screens, which maps
+  to each entry option's own code here (`E1-S01-E03`); the export has to choose which.
+- **A bench run.** There is no Frappe integration job in CI. The service layer is covered bench-free
+  with a stub; the Workflow fixture, the permission hooks and the page against a real site are checked
+  on the first deploy (acceptance criteria above).
+
 ## Acceptance criteria
 
 - **Slice 1:** `SELECT COUNT(*) FROM tabTask WHERE IFNULL(custom_enhancement_request,'') != ''` = 37

@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-10-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "review",
+  "track",
+  "option_code",
+  "title",
+  "column_break_state",
+  "status",
+  "decided_by",
+  "promoted_request",
+  "promoted_by",
+  "promoted_at",
+  "decision_section",
+  "decision",
+  "notes_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "review",
+   "fieldtype": "Link",
+   "label": "Design Review",
+   "options": "Design Review",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "track",
+   "fieldtype": "Data",
+   "label": "Track",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "option_code",
+   "fieldtype": "Data",
+   "label": "Option chosen",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Recorded\nPromoted",
+   "default": "Recorded",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Recorded by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "promoted_request",
+   "fieldtype": "Link",
+   "label": "Enhancement Request",
+   "options": "Enhancement Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "promoted_by",
+   "fieldtype": "Link",
+   "label": "Promoted by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "promoted_at",
+   "fieldtype": "Datetime",
+   "label": "Promoted at",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decision_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "decision",
+   "fieldtype": "Text",
+   "label": "Decision",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes_json",
+   "fieldtype": "Small Text",
+   "label": "Notes it carries",
+   "read_only": 1,
+   "description": "The Design Notes this decision takes forward, as a JSON list of names. They travel to the Claude Code brief by element code."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Design Review",
+ "name": "Design Decision",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 0,
+   "email": 0,
+   "share": 0
+  },
+  {
+   "role": "Desk User",
+   "read": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:DD-{YYYY}-{####}",
+ "naming_rule": "Expression",
+ "title_field": "title"
+}

@@ -1,0 +1,84 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Review Room harness</title>
+<style>
+:root{--text-color:#1f272e;--text-muted:#6b7280;--border-color:#e2e6e9;--card-bg:#fff;--bg-light-gray:#f3f3f3;--primary:#2490ef;--font-stack:system-ui,sans-serif;--gray-100:#f3f3f3}
+body{margin:0;font-family:system-ui,sans-serif;background:#f8f8f8}
+.btn{border:1px solid #ccd;background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}.btn-primary{background:#2490ef;color:#fff;border-color:#2490ef}.btn[disabled]{opacity:.5}
+#page-head{padding:10px 16px;font-weight:700}
+</style>
+<script src="/jquery.js"></script>
+<script>
+// ---------------------------------------------------------------- minimal frappe stub
+window.CALLS = []; window.ALERTS = []; window.ERRORS = [];
+window.addEventListener("error", (e) => window.ERRORS.push(String(e.message)));
+window.addEventListener("unhandledrejection", (e) => window.ERRORS.push("rejection: " + String(e.reason && (e.reason.message || e.reason))));
+window.__ = (s, args) => (args || []).reduce((acc, a, i) => acc.replace("{" + i + "}", a), s);
+const MOCK = { data: null };
+window.frappe = {
+  pages: { "review-room": {} },
+  route_flags: {},
+  user: { has_role: () => true },
+  scrub: (s) => String(s).toLowerCase().replace(/ /g, "_"),
+  utils: {
+    escape_html: (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
+    debounce: (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; },
+  },
+  show_alert: (m) => window.ALERTS.push(typeof m === "string" ? m : m.message),
+  msgprint: (m) => window.ALERTS.push(typeof m === "string" ? m : m.message),
+  get_route: () => location.hash.replace(/^#/, "").split("/").filter(Boolean),
+  set_route: (parts) => {
+    const next = "#" + parts.map(encodeURIComponent).join("/");
+    if (frappe.route_flags.replace_route) history.replaceState(null, "", next), route_changed();
+    else location.hash = next;
+  },
+  ui: {
+    make_app_page: ({ parent, title }) => {
+      const page = {
+        main: $('<div id="page-main"></div>').appendTo(parent),
+        set_title: (t) => $("#page-head").text(t),
+        clear_inner_toolbar: () => $("#toolbar").empty(),
+        clear_menu: () => {},
+        add_menu_item: () => {},
+        add_inner_button: (label, fn) => $('<button class="btn"></button>').text(label).on("click", fn).appendTo("#toolbar"),
+      };
+      return page;
+    },
+    Dialog: class { constructor(o) { this.o = o; window.DIALOG = this; } show() {} hide() {} },
+    FileUploader: class { constructor() {} },
+    form: { make_control: () => ({ get_value: () => "" }) },
+  },
+  call: async ({ method, args }) => {
+    const m = method.split(".").pop();
+    window.CALLS.push({ m, args });
+    const R = MOCK.data.review;
+    if (m === "list_reviews") return { message: [{ name: R.name, title: R.title, status: R.status, description: R.description, participant: true }] };
+    if (m === "get_review") return { message: JSON.parse(JSON.stringify(R)) };
+    if (m === "get_screens") return { message: Object.fromEntries(JSON.parse(args.names).map((n) => [n, MOCK.data.html[n] || ""])) };
+    if (m === "cast_vote") { R.my_votes[args.track] = { ranking: JSON.parse(args.ranking) }; return { message: {} }; }
+    if (m === "cast_verdict") { R.verdicts.mine[args.option_code + ":" + args.screen_code] = args.verdict; return { message: {} }; }
+    if (m === "add_note") {
+      const [o, s, e] = args.code.split("-");
+      R.notes.push({ name: "DN-" + R.notes.length, code: args.code, option_code: o, screen_code: s, part_number: Number(e.slice(1)), part_name: "", text: args.text, status: "Open", author_name: "Pat", mine: true, track: "learner" });
+      return { message: {} };
+    }
+    return { message: {} };
+  },
+};
+function route_changed() { if (window.ROOM) window.ROOM.handle_route(); }
+window.addEventListener("hashchange", route_changed);
+</script>
+<script src="/review_room.js"></script>
+</head>
+<body>
+<div id="page-head"></div><div id="toolbar"></div><div id="wrapper"></div>
+<script>
+fetch("/mock.json").then((r) => r.json()).then((d) => {
+  MOCK.data = d;
+  const wrapper = document.getElementById("wrapper");
+  frappe.pages["review-room"].on_page_load(wrapper);
+  window.ROOM = wrapper.review_room;
+  if (!location.hash) location.hash = "#review-room"; else route_changed();
+  window.READY = true;
+});
+</script>
+</body></html>

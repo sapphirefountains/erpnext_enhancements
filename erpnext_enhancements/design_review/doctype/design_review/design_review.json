@@ -1,0 +1,167 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-10-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "status",
+  "column_break_head",
+  "revision",
+  "source_url",
+  "description",
+  "people_section",
+  "participants",
+  "content_section",
+  "tracks",
+  "stylesheet",
+  "flow_rules",
+  "column_break_content",
+  "imported_at",
+  "imported_by",
+  "import_report"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "in_list_view": 1,
+   "bold": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nOpen\nClosed\nDecided",
+   "default": "Draft",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1,
+   "description": "Moved by the Design Review Lifecycle workflow. Participants can rank, give verdicts and write notes only while the review is Open."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "read_only": 1,
+   "default": "0",
+   "description": "Bumped by every import. Element codes never change meaning between revisions."
+  },
+  {
+   "fieldname": "source_url",
+   "fieldtype": "Data",
+   "label": "Imported from",
+   "read_only": 1,
+   "description": "Where the concepts were drawn, for example the claude.ai canvas."
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "What this review decides"
+  },
+  {
+   "fieldname": "people_section",
+   "fieldtype": "Section Break",
+   "label": "Participants"
+  },
+  {
+   "fieldname": "participants",
+   "fieldtype": "Table",
+   "label": "Participants",
+   "options": "Design Review Participant",
+   "description": "System Users only. Being on this list is what lets someone vote and write notes; a System Manager not on it can read and moderate but not vote."
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Content",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "tracks",
+   "fieldtype": "Table",
+   "label": "Tracks",
+   "options": "Design Review Track",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stylesheet",
+   "fieldtype": "Code",
+   "label": "Concept stylesheet",
+   "options": "CSS",
+   "read_only": 1,
+   "description": "Sanitized on import. Drawn inside each screen's sandboxed frame, never into the Desk."
+  },
+  {
+   "fieldname": "flow_rules",
+   "fieldtype": "Code",
+   "label": "Click-through rules",
+   "options": "JSON",
+   "read_only": 1,
+   "description": "Where a click on each part or button in a concept goes. Read by the Review Room."
+  },
+  {
+   "fieldname": "column_break_content",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "imported_at",
+   "fieldtype": "Datetime",
+   "label": "Last imported",
+   "read_only": 1
+  },
+  {
+   "fieldname": "imported_by",
+   "fieldtype": "Link",
+   "label": "Imported by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "import_report",
+   "fieldtype": "Small Text",
+   "label": "Last import report",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Design Review",
+ "name": "Design Review",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1,
+   "email": 1,
+   "share": 1
+  },
+  {
+   "role": "Desk User",
+   "read": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:DR-{YYYY}-{###}",
+ "naming_rule": "Expression",
+ "title_field": "title"
+}

@@ -32,3 +32,7 @@ dump.rdb
 *-key.json
 service-account*.json
 *credentials*.json
+
+# Design Review browser test output (scripts/design_review/qa): generated from a bundle, never committed
+scripts/design_review/qa/mock.json
+scripts/design_review/qa/*.png

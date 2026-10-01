@@ -523,33 +523,65 @@ def submit_capture(payload=None, context=None, attachments=None, client_id=None)
     }
 
 
-def file_request(values, requested_by, source, source_doctype=None, source_ref=None):
+def file_request(
+    values,
+    requested_by,
+    source,
+    source_doctype=None,
+    source_ref=None,
+    approve=False,
+    target_erpnext=0,
+    target_triton=0,
+    decision_reason=None,
+):
     """File one Enhancement Request. The only way a request is created (ADR 0016 §1).
 
-    The ``/feedback`` form, the capture widget and (slice 5) Design Review promotion all come
-    through here, so the rate limit, the validation, the provenance stamps and the reviewer's
+    The ``/feedback`` form, the capture widget and Design Review promotion all come through
+    here, so the rate limit, the validation, the provenance stamps and the reviewer's
     notification exist once. ``values`` must already be filtered to ``SUBMIT_ALLOWED_FIELDS``
     by the caller; ``source``, ``source_doctype``, ``source_ref`` and ``context_release`` are
     set here and frozen afterwards, and none of them is ever taken from client input.
 
     ``requested_by`` is a parameter rather than ``frappe.session.user`` so a promotion can say
     who it files for; every caller today passes the session user.
+
+    ``approve`` is Design Review promotion (ADR 0016 §2, WI-079 slice 5): the promoter is a
+    System Manager, which is who approves requests, so the request is filed ``Approved`` with
+    ``decided_by`` set to them and the breakdown enqueued here. ``EnhancementRequest.validate``
+    refuses the insert unless ``source`` is Design Review and the session user is a human
+    System Manager, so a caller cannot use the flag to skip review. A pre-approved request
+    sends no "waiting for review" notice — nothing is waiting — and the promoter must pick at
+    least one board, exactly as ``review_decision`` requires when approving.
     """
     _enforce_filing_rate(requested_by)
     _validate_submission(values)
+    if approve and not (cint(target_erpnext) or cint(target_triton)):
+        frappe.throw(
+            _("Pick at least one of ERPNext or Triton before approving — there is nothing to plan otherwise."),
+            frappe.ValidationError,
+        )
 
     doc = frappe.new_doc(DOCTYPE)
     doc.update(values)
     doc.requested_by = requested_by
     doc.requested_at = now_datetime()
-    doc.status = RequestState.SUBMITTED.value
+    doc.status = RequestState.APPROVED.value if approve else RequestState.SUBMITTED.value
     doc.source = source
     doc.source_doctype = source_doctype or None
     doc.source_ref = source_ref or None
     doc.context_release = _deployed_release()
+    if approve:
+        doc.decided_by = frappe.session.user
+        doc.decided_at = now_datetime()
+        doc.decision_reason = (decision_reason or "").strip()[:1000]
+        doc.target_erpnext = cint(target_erpnext)
+        doc.target_triton = cint(target_triton)
     doc.insert(ignore_permissions=True)
 
-    _notify("request_submitted", doc.name)
+    if approve:
+        _enqueue_breakdown(doc.name)
+    else:
+        _notify("request_submitted", doc.name)
     return doc
 
 
@@ -902,8 +934,15 @@ def claude_code_brief(name):
     ]
     # `{}` when nothing could be anchored or the build failed; it never raises.
     anchors = code_anchors.build_anchors(request["context_url"], request["context_doctype"])
-    # Design notes arrive with Design Review (WI-079 slice 5).
-    markdown, data = brief.render_brief(request, tasks, duplicates, anchors, [])
+    # A request promoted from a Design Decision carries the notes that decision took forward,
+    # by element code and with no names (WI-079 slice 5). `[]` for every other request; the
+    # reader never raises, because the brief must render whatever happens there.
+    from erpnext_enhancements.design_review.service import notes_for_request
+
+    design_notes = notes_for_request(
+        {"source_doctype": doc.get("source_doctype"), "source_ref": doc.get("source_ref")}
+    )
+    markdown, data = brief.render_brief(request, tasks, duplicates, anchors, design_notes)
     return {"markdown": markdown, "data": data}
 
 

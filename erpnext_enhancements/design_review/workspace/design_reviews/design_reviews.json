@@ -1,0 +1,97 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\": \"dr_head\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Design reviews</b></span>\", \"col\": 12}}, {\"id\": \"dr_sc_room\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Review Room\", \"col\": 4}}, {\"id\": \"dr_sc_reviews\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Design Reviews\", \"col\": 4}}, {\"id\": \"dr_sc_decisions\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Decisions\", \"col\": 4}}, {\"id\": \"dr_spacer\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"dr_cards_head\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Records</b></span>\", \"col\": 12}}, {\"id\": \"dr_card_records\", \"type\": \"card\", \"data\": {\"card_name\": \"Records\", \"col\": 4}}]",
+ "creation": "2026-10-01 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "image-view",
+ "is_hidden": 0,
+ "label": "Design Reviews",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Records",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Review",
+   "link_count": 0,
+   "link_to": "Design Review",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Note",
+   "link_count": 0,
+   "link_to": "Design Note",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Decision",
+   "link_count": 0,
+   "link_to": "Design Decision",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Vote",
+   "link_count": 0,
+   "link_to": "Design Vote",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-10-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Design Review",
+ "name": "Design Reviews",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 62,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "",
+   "label": "Review Room",
+   "link_to": "review-room",
+   "type": "Page"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Design Reviews",
+   "link_to": "Design Review",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Decisions",
+   "link_to": "Design Decision",
+   "type": "DocType"
+  }
+ ],
+ "title": "Design Reviews"
+}
