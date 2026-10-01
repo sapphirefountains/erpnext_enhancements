@@ -12,7 +12,7 @@ async function launch(port) {
   const proc = spawn(CHROME, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=' + port, '--user-data-dir=' + dir, '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
   for (let i = 0; i < 80; i++) {
-    try { const r = await fetch('http://127.0.0.1:' + port + '/json/version'); if (r.ok) break; } catch (e) {}
+    try { const r = await fetch('http://127.0.0.1:' + port + '/json/version'); if (r.ok) break; } catch (e) { /* Chrome is still starting */ }
     await sleep(150);
   }
   return { proc, dir, port };
@@ -57,12 +57,12 @@ async function open(b, url, w, h) {
       fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'));
     },
     errors() { return events.filter(e => e.method === 'Runtime.exceptionThrown').map(e => JSON.stringify(e.params.exceptionDetails).slice(0, 400)); },
-    close() { try { ws.close(); } catch (e) {} },
+    close() { try { ws.close(); } catch (e) { /* already closed */ } },
   };
   await page.goto(url);
   return page;
 }
 
-function shutdown(b) { try { b.proc.kill(); } catch (e) {} }
+function shutdown(b) { try { b.proc.kill(); } catch (e) { /* already exited */ } }
 
 module.exports = { launch, open, shutdown, sleep };
