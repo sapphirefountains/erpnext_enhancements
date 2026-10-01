@@ -878,7 +878,8 @@ class TestHelpItem(unittest.TestCase):
 		"""``sync_table`` keys the existing rows by label (``navbar_settings.py:55``)."""
 		labels = [i["item_label"] for i in self.items]
 		self.assertEqual(len(labels), len(set(labels)))
-		self.assertEqual(labels, ["Company Knowledge Base", "Report a Problem"])
+		# "Design Reviews" (v1.571.0, WI-079 slice 5) opens /review; it sits between the two.
+		self.assertEqual(labels, ["Company Knowledge Base", "Design Reviews", "Report a Problem"])
 
 	def test_no_page_is_named_like_the_workspace(self):
 		for path in APP.glob("*/page/*/*.json"):

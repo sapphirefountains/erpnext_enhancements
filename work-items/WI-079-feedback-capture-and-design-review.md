@@ -412,6 +412,36 @@ Not yet:
   with a stub; the Workflow fixture, the permission hooks and the page against a real site are checked
   on the first deploy (acceptance criteria above).
 
+**Status, v1.571.0 (2026-10-01): rebuilt as its own app.** On production, v1.570.0's screens were
+visibly broken. Frappe v16 runs `sanitize_html` over every Long Text field on save, which stripped
+CSS `gap` from 195 of 195 screens, SVG path geometry from 186 and circles from 121. That happened
+after this module's own sanitizer had already made them safe. The Desk chrome also fought the
+Concept Viewer's layout. Nik chose (2026-10-01) to keep ERPNext as the backend and give the review
+its own front end, while keeping the JSON bundle as a format any AI can write and submit. What
+changed:
+
+- **The Review Room is a website app at `/review`** (`www/review.*`, `public/js/design_review/`),
+  with the Concept Viewer's layout. Every view is a real path, and a route rule makes deep links and
+  refreshes work. The Desk page, the workspace, the Workflow and the permission hooks are gone. The
+  status is a plain Select a System Manager sets at `/review`, and every Design doctype is System
+  Manager-only, with `api/design_review.py` as the only door.
+- **Content is one private JSON File per review**, not fields. Design Option, Design Screen, Design
+  Part and Design Review Track are deleted, and `patches/rebuild_design_review_storage.py` drops them,
+  their tables, the Workflow, the Page, the workspace, and the one empty review imported under
+  v1.570.0. That review had no participants, votes, verdicts, notes or decisions on production (checked
+  2026-10-01).
+- **The format is documented as a framework:** `docs/design-review-bundle.md`,
+  `design_review/bundle.schema.json`, `design_review/examples/minimal-bundle.json`, and a house kit
+  stylesheet (`"kit": "sapphire-ux/1"`) so a generator can draw screens with no CSS of its own.
+- **AI tools:** `check_design_review_bundle` (read) and `submit_design_review` (gated, prechecked,
+  people with System Manager only).
+- The browser test drives the real `/review` app: 33 checks. They include SVG geometry and `gap`
+  surviving, the X5 board drawing, click-through inside frames, Back and Forward, deep links and
+  phone width.
+
+**After the v1.571.0 deploy:** re-import the Training bundle at `/review`, add the participants,
+and set it Open.
+
 ## Acceptance criteria
 
 - **Slice 1:** `SELECT COUNT(*) FROM tabTask WHERE IFNULL(custom_enhancement_request,'') != ''` = 37

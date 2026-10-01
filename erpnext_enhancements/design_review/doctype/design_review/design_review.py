@@ -1,16 +1,12 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""A design review round: options, screens, participants, and a lifecycle.
+"""A design review round: its participants, its status, and the content file it shows.
 
-The lifecycle is the ``status`` Select, moved by the **Design Review Lifecycle** Frappe Workflow
-(Draft -> Open -> Closed -> Decided), because every transition is a human action gated by a
-role — the case ADR 0016 §2 adopts a Workflow for, unlike the Enhancement Request's machine
-states.
-
-Content (tracks, stylesheet, click-through rules) is written by ``design_review.importer``
-only. ``validate`` refuses a change to it from anywhere else, so the sanitized copy is the only
-copy.
+The review itself is drawn by the Review Room at ``/review`` (``www/review.py`` and the
+``design_review`` bundle), not by the Desk. This record is the moderator's: the participant list,
+the status, and a link to the sanitized content file an import wrote. Content is changed only by
+importing a new revision (``design_review.importer``); ``validate`` refuses anything else.
 """
 
 from frappe.model.document import Document

@@ -1,0 +1,54 @@
+{#
+  Review Room shell (served at /review and every sub-path; controller: review.py).
+
+  A chrome-free full-viewport application page, like /feedback and /kiosk. Its jobs, and only these:
+
+    * load design_review.bundle.css and design_review.bundle.js, resolved through assets.json to
+      content-hashed filenames (never raw /assets paths: those are cached for a year with no hash).
+    * hand the server-computed identity to the front end as window.EE_REVIEW_BOOT.
+    * provide the single mount point. Every node inside it is built by the bundle with
+      createElement and textContent: notes are text employees wrote, and a template that
+      interpolated them would be a stored-XSS path to every moderator.
+
+  Concept screens never enter this document. They are drawn inside
+  <iframe sandbox="allow-same-origin"> frames, never with allow-scripts, each carrying
+  Content-Security-Policy: default-src 'none' (see design_review/sanitize.py and WI-079).
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Design Review{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#00263e">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="{{ bundled_asset('design_review.bundle.css') }}">
+{% endblock %}
+
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+
+{% block page_content %}
+<div id="ee-review-root" class="rr-root" role="application" aria-label="Design Review">
+	<div class="rr-boot" role="status">
+		<div class="rr-boot-text">Loading the review…</div>
+		<noscript>This page needs JavaScript enabled.</noscript>
+	</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+	window.EE_REVIEW_BOOT = {
+		user: {{ review_user | tojson }},
+		full_name: {{ review_full_name | tojson }},
+		moderator: {{ review_moderator | tojson }},
+		csrf_token: {{ csrf_token | tojson }},
+		build: {{ deploy_version | tojson }}
+	};
+</script>
+<script src="{{ bundled_asset('design_review.bundle.js') }}"></script>
+{% endblock %}

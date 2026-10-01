@@ -1,0 +1,128 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/sapphirefountains/erpnext_enhancements/blob/main/erpnext_enhancements/design_review/bundle.schema.json",
+ "title": "Sapphire design review bundle, format sapphire-design-review/1",
+ "description": "The shape design_review/importer.py accepts. The importer is the authority: it also checks cross-references (an option's track, a screen's option), the append-only rule for parts, sizes, and that every flow pattern compiles. docs/design-review-bundle.md is the authoring guide.",
+ "type": "object",
+ "required": ["format", "title", "tracks", "options", "screens"],
+ "properties": {
+  "format": {"const": "sapphire-design-review/1"},
+  "title": {"type": "string", "minLength": 1, "maxLength": 140},
+  "description": {"type": "string", "maxLength": 2000},
+  "source_url": {"type": "string", "maxLength": 500, "description": "Where the concepts came from. An import with no review named updates the review with the same source_url, if one exists."},
+  "kit": {"enum": ["sapphire-ux/1"], "description": "A house stylesheet every frame gets before the bundle's own. Omit it to ship all CSS in stylesheet."},
+  "stylesheet": {"type": "string", "description": "CSS for every frame, after the kit. url(), @import, expression() and javascript: are removed on import."},
+  "tracks": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": ["id"],
+    "properties": {
+     "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,30}$"},
+     "label": {"type": "string", "maxLength": 140},
+     "short": {"type": "string", "maxLength": 40},
+     "votable": {"type": "boolean", "default": true, "description": "False for a track of shared screens (an entry, a chooser) that nobody ranks."},
+     "blurb": {"type": "string", "maxLength": 1000},
+     "groups": {
+      "type": "array",
+      "description": "Stages of the journey, in order. The rail and the story order follow them.",
+      "items": {
+       "type": "object",
+       "required": ["name", "screens"],
+       "properties": {
+        "name": {"type": "string", "maxLength": 140},
+        "screens": {"type": "array", "items": {"$ref": "#/$defs/code"}}
+       }
+      }
+     }
+    }
+   }
+  },
+  "options": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": ["track", "code", "name"],
+    "properties": {
+     "track": {"type": "string"},
+     "code": {"$ref": "#/$defs/code", "description": "Unique across the whole bundle, e.g. L3."},
+     "name": {"type": "string", "maxLength": 140},
+     "what": {"type": "string", "maxLength": 2000},
+     "tradeoff": {"type": "string", "maxLength": 2000}
+    }
+   }
+  },
+  "screens": {
+   "type": "array",
+   "minItems": 1,
+   "maxItems": 1500,
+   "items": {
+    "type": "object",
+    "required": ["track", "option", "screen", "frame", "w", "h", "html"],
+    "properties": {
+     "track": {"type": "string"},
+     "option": {"$ref": "#/$defs/code"},
+     "screen": {"$ref": "#/$defs/code", "description": "The same code means the same screen across every option of a track, e.g. S04."},
+     "name": {"type": "string", "maxLength": 140},
+     "group": {"type": "string", "maxLength": 140},
+     "frame": {"enum": ["desk", "phone", "board"]},
+     "w": {"type": "integer", "minimum": 40, "maximum": 8000},
+     "h": {"type": "integer", "minimum": 40, "maximum": 8000},
+     "html": {"type": "string", "description": "The screen's body markup, at most 400 KB. Mark notable parts with data-c=\"Part name\"."}
+    }
+   }
+  },
+  "parts": {
+   "type": "object",
+   "description": "Element numbers per track:screen. A part's number never changes once imported; new parts take new numbers.",
+   "patternProperties": {
+    "^[a-z][a-z0-9_]{0,30}:[A-Z][A-Z0-9]{0,11}$": {
+     "type": "array",
+     "items": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "string", "minLength": 1}], "minItems": 2, "maxItems": 2}
+    }
+   },
+   "additionalProperties": false
+  },
+  "flow": {"$ref": "#/$defs/flow"},
+  "ballots": {
+   "type": "object",
+   "description": "Optional history: rankings, verdicts and notes cast before the review was in ERPNext. Imported apart from live ones.",
+   "required": ["source_url"],
+   "properties": {
+    "source_url": {"type": "string", "minLength": 1, "description": "Where these ballots were cast. Required: without it nothing is imported, and re-importing the same source_url replaces the earlier copy."},
+    "votes": {"type": "array", "items": {"type": "object", "required": ["voter", "ranking"], "properties": {"voter": {"type": "string"}, "ranking": {"type": "array", "items": {"type": "string"}}, "cast_at": {"type": "string"}}}},
+    "verdicts": {"type": "array", "items": {"type": "object", "required": ["voter", "option", "verdict"], "properties": {"voter": {"type": "string"}, "option": {"type": "string"}, "screen": {"type": "string"}, "verdict": {"enum": ["Yes", "Maybe", "No"]}}}},
+    "notes": {"type": "array", "items": {"type": "object", "required": ["code", "text"], "properties": {"code": {"type": "string"}, "text": {"type": "string"}, "author": {"type": "string"}, "status": {"enum": ["Open", "Accepted", "Rejected", "Done"]}}}}
+   }
+  }
+ },
+ "$defs": {
+  "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9]{0,11}$"},
+  "target": {
+   "type": "string",
+   "pattern": "^(?:[a-z][a-z0-9_]{0,30}:)?[A-Z][A-Z0-9]{0,11}$|^(?:next|up|end|\\+1|-1)$|^done:.{1,300}$",
+   "description": "S04 (this track), learner:S01 (another track, same option position), next, up, end, +1, -1, or done:<message shown without moving>."
+  },
+  "rule": {"type": "array", "prefixItems": [{"type": "string", "description": "A regular expression."}, {"$ref": "#/$defs/target"}], "minItems": 2},
+  "flow": {
+   "type": "object",
+   "properties": {
+    "next": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/target"}}, "description": "{track: {screen: target}} for NEXT and the target 'next'. Default: the next screen in order."},
+    "backto": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/target"}}, "description": "{track: {screen: target}} for the target 'up'. Default: browser Back."},
+    "chain": {"type": "object", "additionalProperties": {"$ref": "#/$defs/target"}, "description": "{\"track:screen\": target} where the target 'end' continues instead of ending."},
+    "nav": {
+     "type": "object",
+     "description": "{track: {part name: rule}}. A rule is a target, {screen or *: target}, or [[pattern on the part's text, target], ...].",
+     "additionalProperties": {"type": "object", "additionalProperties": {"anyOf": [{"$ref": "#/$defs/target"}, {"type": "object", "additionalProperties": {"$ref": "#/$defs/target"}}, {"type": "array", "items": {"$ref": "#/$defs/rule"}}]}}
+    },
+    "text": {"type": "object", "description": "{track: [[pattern on a link's or button's upper-cased text, target, [screens]?, [options]?], ...]}", "additionalProperties": {"type": "array"}},
+    "icon": {"type": "array", "description": "[[pattern on an icon button's aria-label, target, track?], ...]", "items": {"type": "array"}},
+    "aria": {"type": "array", "description": "[[pattern on any element's aria-label, target, track?], ...]", "items": {"type": "array"}},
+    "disabled": {"type": "object", "description": "{track: {part name: target}} for an .is-disabled control inside that part.", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/target"}}},
+    "dom": {"type": "object", "description": "Selector overrides: icon, step, step_label, noinherit, inert, bars.", "properties": {"icon": {"type": "string"}, "step": {"type": "string"}, "step_label": {"type": "string"}, "noinherit": {"type": "string"}, "inert": {"type": "string"}, "bars": {"type": "array", "items": {"type": "string"}}}},
+    "say": {"type": "object", "description": "Narration shown under the caption: {\"track:screen\": text} on arrival, or {\"track:from>track:to\": text} for one move. Up to 300 characters.", "additionalProperties": {"type": "string", "maxLength": 300}}
+   }
+  }
+ }
+}

@@ -14,9 +14,8 @@
   "people_section",
   "participants",
   "content_section",
-  "tracks",
-  "stylesheet",
-  "flow_rules",
+  "content_file",
+  "content_hash",
   "column_break_content",
   "imported_at",
   "imported_by",
@@ -39,8 +38,7 @@
    "default": "Draft",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "read_only": 1,
-   "description": "Moved by the Design Review Lifecycle workflow. Participants can rank, give verdicts and write notes only while the review is Open."
+   "description": "Draft while it is set up, Open while participants rank and write notes, Closed while it is decided, Decided after. Change it here or from the review's header in /review."
   },
   {
    "fieldname": "column_break_head",
@@ -58,8 +56,7 @@
    "fieldname": "source_url",
    "fieldtype": "Data",
    "label": "Imported from",
-   "read_only": 1,
-   "description": "Where the concepts were drawn, for example the claude.ai canvas."
+   "read_only": 1
   },
   {
    "fieldname": "description",
@@ -76,7 +73,7 @@
    "fieldtype": "Table",
    "label": "Participants",
    "options": "Design Review Participant",
-   "description": "System Users only. Being on this list is what lets someone vote and write notes; a System Manager not on it can read and moderate but not vote."
+   "description": "System Users only. Being on this list is what lets someone rank, give verdicts and write notes at /review."
   },
   {
    "fieldname": "content_section",
@@ -85,27 +82,18 @@
    "collapsible": 1
   },
   {
-   "fieldname": "tracks",
-   "fieldtype": "Table",
-   "label": "Tracks",
-   "options": "Design Review Track",
+   "fieldname": "content_file",
+   "fieldtype": "Link",
+   "label": "Content file",
+   "options": "File",
+   "read_only": 1,
+   "description": "The sanitized bundle the review shows, a private JSON file. Written by an import only, and never passed through Frappe's field sanitizer, which strips SVG geometry and modern CSS."
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content hash",
    "read_only": 1
-  },
-  {
-   "fieldname": "stylesheet",
-   "fieldtype": "Code",
-   "label": "Concept stylesheet",
-   "options": "CSS",
-   "read_only": 1,
-   "description": "Sanitized on import. Drawn inside each screen's sandboxed frame, never into the Desk."
-  },
-  {
-   "fieldname": "flow_rules",
-   "fieldtype": "Code",
-   "label": "Click-through rules",
-   "options": "JSON",
-   "read_only": 1,
-   "description": "Where a click on each part or button in a concept goes. Read by the Review Room."
   },
   {
    "fieldname": "column_break_content",
@@ -133,7 +121,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-01 12:00:00.000000",
+ "modified": "2026-10-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Design Review",
  "name": "Design Review",
@@ -150,10 +138,6 @@
    "print": 1,
    "email": 1,
    "share": 1
-  },
-  {
-   "role": "Desk User",
-   "read": 1
   }
  ],
  "row_format": "Dynamic",
@@ -161,7 +145,7 @@
  "sort_order": "DESC",
  "states": [],
  "track_changes": 1,
- "autoname": "format:DR-{YYYY}-{###}",
- "naming_rule": "Expression",
+ "autoname": "DR-.YYYY.-.###",
+ "naming_rule": "Expression (old style)",
  "title_field": "title"
 }

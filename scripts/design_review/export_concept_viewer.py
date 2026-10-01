@@ -148,7 +148,10 @@ bundle = {
 	"description": "Five learner layouts, five authoring layouts and ten ways in, for the Training module. "
 	"Rank each track and pin notes to parts of any screen.",
 	"source_url": "https://claude.ai/artifact/HampNeHhPEPKYVVN2FMvFb",
-	"stylesheet": build.CSS,
+	# build.CSS is the house kit verbatim (design_review/kit/sapphire_ux_1.css was cut from it), so the
+	# bundle names the kit instead of carrying 11 KB of it in every revision.
+	"kit": "sapphire-ux/1",
+	"stylesheet": "",
 	"flow": flow,
 	"tracks": out_tracks,
 	"options": options,

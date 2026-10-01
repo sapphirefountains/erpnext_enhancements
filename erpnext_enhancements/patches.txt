@@ -1257,3 +1257,10 @@ erpnext_enhancements.patches.enable_login_with_email_link
 # generate_inspections, both ticked by default. A default never reaches a Single that already has rows, so
 # fill each only where no tabSingles row exists; a never-saved Single is left alone. Safe twice.
 erpnext_enhancements.patches.backfill_rental_settings_defaults
+# v1.571.0 design reviews (WI-079 slice 5): v1.570.0 stored concept screens in Long Text fields, which
+# v16 sanitizes on save (every screen lost CSS gap, most lost SVG geometry). Content is now one private
+# JSON File per review, shown at /review. Drops the four old content doctypes and their tables, the
+# Design Review Lifecycle workflow (and its actions and states where nothing else uses them), the
+# review-room Page and Design Reviews workspace, and any review with no content File and no activity.
+# Cannot raise; safe twice.
+erpnext_enhancements.patches.rebuild_design_review_storage

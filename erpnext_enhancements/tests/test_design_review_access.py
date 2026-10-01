@@ -11,6 +11,12 @@ The acceptance criteria these pin:
 - **``triton@`` cannot promote**, nor ``Administrator``, though both hold System Manager. A human
   System Manager's promotion files through ``api.feedback.file_request`` with
   ``approve=True``, ``source = Design Review`` and the decision as ``source_ref``.
+- **Content arrives only by import, and as a File.** A review's screens are one private JSON File
+  written by ``importer.import_bundle``; the seed below imports a real bundle through it, so the
+  service is tested against content the importer actually wrote. A revision may add parts and
+  may never renumber one, and the example bundle in ``design_review/examples`` must import.
+- **The AI tools refuse what a person would be refused.** ``triton@`` cannot import, an inline
+  bundle has a size cap, and a bundle File must be private.
 
 ``frappe`` is a local in-memory stub installed in ``setUpModule`` and removed in
 ``tearDownModule``, so this suite gets its own CI step (CLAUDE.md: stub-installing suites are
@@ -37,8 +43,9 @@ STUBBED = (
 	"frappe.permissions",
 	"erpnext_enhancements.api.feedback",
 	"erpnext_enhancements.design_review.service",
-	"erpnext_enhancements.design_review.permissions",
+	"erpnext_enhancements.design_review.content",
 	"erpnext_enhancements.design_review.importer",
+	"erpnext_enhancements.design_review.ai_tools",
 )
 _saved = {}
 service = None
@@ -59,6 +66,13 @@ class DoesNotExistError(Exception):
 
 class Row(dict):
 	__getattr__ = dict.get
+
+
+class Flags(dict):
+	"""``frappe._dict``: attribute reads and writes are its keys."""
+
+	__getattr__ = dict.get
+	__setattr__ = dict.__setitem__
 
 
 def _match(row, filters):
@@ -97,6 +111,10 @@ class FakeDoc:
 		self.doctype = doctype
 		self._row = Row(values or {})
 		self._new = "name" not in self._row
+		self.flags = Flags()
+
+	def get_content(self):
+		return self._row.get("content")
 
 	def update(self, values):
 		self._row.update(values)
@@ -110,7 +128,7 @@ class FakeDoc:
 		return self._row.get(key)
 
 	def __setattr__(self, key, value):
-		if key in ("doctype", "_row", "_new"):
+		if key in ("doctype", "_row", "_new", "flags"):
 			object.__setattr__(self, key, value)
 		else:
 			self._row[key] = value
@@ -187,6 +205,19 @@ def _install():
 	]
 	db.escape = lambda v: "'" + str(v).replace("'", "''") + "'"
 	frappe.db = db
+	frappe.has_permission = lambda *a, **k: True
+
+	class Cache:
+		def __init__(self):
+			self.store = {}
+
+		def get_value(self, key):
+			return self.store.get(key)
+
+		def set_value(self, key, value, expires_in_sec=None):
+			self.store[key] = value
+
+	frappe.cache = Cache()
 	frappe.new_doc = lambda doctype: FakeDoc(doctype)
 
 	def get_doc(doctype, name=None):
@@ -232,8 +263,8 @@ def _install():
 	import erpnext_enhancements.api as api_pkg
 
 	api_pkg.feedback = feedback
-	sys.modules.pop("erpnext_enhancements.design_review.permissions", None)
-	sys.modules.pop("erpnext_enhancements.design_review.service", None)
+	for name in STUBBED[4:]:
+		sys.modules.pop(name, None)
 	return importlib.import_module("erpnext_enhancements.design_review.service")
 
 
@@ -261,6 +292,35 @@ TRITON = "triton@sapphirefountains.com"
 CUSTOMER = "buyer@example.com"  # Website User
 
 
+def _content_bundle():
+	"""One track, three options, S04 drawn in each, with the parts the tests name."""
+	return {
+		"format": "sapphire-design-review/1",
+		"title": "Training",
+		"kit": "sapphire-ux/1",
+		"tracks": [{"id": "learner", "label": "Learner", "votable": True}],
+		"options": [{"track": "learner", "code": code, "name": code} for code in ("L1", "L2", "L3")],
+		"screens": [
+			{
+				"track": "learner",
+				"option": code,
+				"screen": "S04",
+				"frame": "phone",
+				"w": 390,
+				"h": 844,
+				"html": '<div class="ux-app" data-c="Video block">'
+				'<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>',
+			}
+			for code in ("L1", "L2", "L3")
+		],
+		"parts": {"learner:S04": [[1, "Top bar"], [5, "Video block"]]},
+	}
+
+
+def importer():
+	return importlib.import_module("erpnext_enhancements.design_review.importer")
+
+
 def _seed(status="Open"):
 	global DB
 	DB = FakeDB()
@@ -273,7 +333,11 @@ def _seed(status="Open"):
 		"Administrator": ["System Manager"],
 		CUSTOMER: [],
 	}
+	sys.modules["frappe"].cache.store.clear()
 	DB.add("Design Review", name="DR-2026-001", title="Training", status=status)
+	DB.user = "Administrator"
+	importer().import_bundle(_content_bundle(), review="DR-2026-001")
+	DB.user = PAT
 	DB.add(
 		"Design Review Participant",
 		parent="DR-2026-001",
@@ -281,34 +345,139 @@ def _seed(status="Open"):
 		parentfield="participants",
 		user=PAT,
 	)
-	DB.add(
-		"Design Review Track", parent="DR-2026-001", parenttype="Design Review", track_id="learner", votable=1
-	)
-	for i, code in enumerate(["L1", "L2", "L3"]):
-		DB.add(
-			"Design Option",
-			review="DR-2026-001",
-			track="learner",
-			option_code=code,
-			option_name=code,
-			sort_order=i,
-		)
-		DB.add(
-			"Design Screen",
-			review="DR-2026-001",
-			track="learner",
-			option_code=code,
-			screen_code="S04",
-			frame="phone",
-		)
-	DB.add(
-		"Design Part",
-		review="DR-2026-001",
-		track="learner",
-		screen_code="S04",
-		number=5,
-		part_name="Video block",
-	)
+	DB.rows("Design Review")[0]["participants"] = [Row(user=PAT)]
+
+
+def _review_doc(name="DR-2026-001"):
+	return sys.modules["frappe"].get_doc("Design Review", name)
+
+
+class TestImportedContent(unittest.TestCase):
+	"""What the import wrote is what the Review Room reads, unchanged by any second sanitizer."""
+
+	def setUp(self):
+		_seed()
+
+	def test_content_is_one_private_file_attached_to_the_review(self):
+		review = DB.rows("Design Review")[0]
+		files = DB.rows("File")
+		self.assertEqual(len(files), 1)
+		self.assertEqual((files[0]["is_private"], files[0]["attached_to_name"]), (1, "DR-2026-001"))
+		self.assertEqual(review["content_file"], files[0]["name"])
+		self.assertEqual(review["revision"], 1)
+
+	def test_svg_geometry_survives(self):
+		data = service.get_content("DR-2026-001")
+		self.assertIn('d="M8 5v14l11-7z"', data["screens"][0]["html"])
+		self.assertIn('viewBox="0 0 24 24"', data["screens"][0]["html"])
+		self.assertIn(".ux-app", data["kit_css"])
+
+	def test_a_revision_replaces_the_file_and_keeps_activity(self):
+		service.add_note("DR-2026-001", "L3-S04-E05", "Make the video bigger")
+		bundle = _content_bundle()
+		bundle["parts"] = {"learner:S04": [[6, "Caption"]]}
+		DB.user = "Administrator"
+		report = importer().import_bundle(bundle, review="DR-2026-001")
+		self.assertEqual((report["revision"], report["parts_added"]), (2, 1))
+		self.assertEqual(len(DB.rows("File")), 1)
+		self.assertEqual(len(DB.rows("Design Note")), 1)
+		parts = importer().content.load("DR-2026-001")["parts"]["learner:S04"]
+		self.assertEqual([n for n, _p in parts], [1, 5, 6])
+
+	def test_a_revision_cannot_rename_a_part(self):
+		bundle = _content_bundle()
+		bundle["parts"] = {"learner:S04": [[5, "Hero video"]]}
+		with self.assertRaises(ValidationError):
+			importer().import_bundle(bundle, review="DR-2026-001")
+		self.assertEqual(DB.rows("Design Review")[0]["revision"], 1)
+
+	def test_get_review_names_no_note_author(self):
+		service.add_note("DR-2026-001", "L3-S04-E05", "Make the video bigger")
+		state = service.get_review("DR-2026-001")
+		self.assertTrue(state["has_content"])
+		self.assertEqual((state["me"]["participant"], state["me"]["moderator"]), (True, False))
+		note = state["notes"][0]
+		self.assertNotIn("author", note)
+		self.assertTrue(note["mine"])
+
+	def test_the_desk_form_cannot_open_an_empty_review(self):
+		doc = _review_doc()
+		doc._row = Row(dict(doc._row, status="Open", participants=[]))
+		with self.assertRaises(ValidationError):
+			service.validate_review(doc)
+		doc._row = Row(dict(doc._row, status="Open", participants=[Row(user=PAT)], content_file=None))
+		with self.assertRaises(ValidationError):
+			service.validate_review(doc)
+
+	def test_content_fields_change_only_by_import(self):
+		doc = _review_doc()
+		before = FakeDoc("Design Review", dict(doc._row))
+		doc._row = Row(dict(doc._row, content_hash="forged", participants=[Row(user=PAT)]))
+		doc.get_doc_before_save = lambda: before
+		with self.assertRaises(ValidationError) as caught:
+			service.validate_review(doc)
+		self.assertIn("content_hash", str(caught.exception))
+
+	def test_the_example_bundle_imports(self):
+		example = REPO_ROOT / "erpnext_enhancements" / "design_review" / "examples" / "minimal-bundle.json"
+		bundle = importer().parse_bundle_text(example.read_text(encoding="utf-8"))
+		DB.user = "Administrator"
+		check = importer().check_bundle(bundle)
+		self.assertEqual((check["ok"], check["sanitizer_dropped"]), (True, {}))
+		report = importer().import_bundle(bundle)
+		self.assertEqual(report["screens"], 4)
+
+
+class TestStatus(unittest.TestCase):
+	def setUp(self):
+		_seed("Draft")
+
+	def test_only_a_moderator_sets_status(self):
+		with self.assertRaises(PermissionError_):
+			service.set_status("DR-2026-001", "Open")
+
+	def test_open_needs_content_and_participants(self):
+		DB.user = NIK
+		DB.add("Design Review", name="DR-2026-002", title="Empty", status="Draft", participants=[Row(user=PAT)])
+		with self.assertRaises(ValidationError):
+			service.set_status("DR-2026-002", "Open")
+		_review_doc()._row["participants"] = []
+		with self.assertRaises(ValidationError):
+			service.set_status("DR-2026-001", "Open")
+		_review_doc()._row["participants"] = [Row(user=PAT)]
+		self.assertEqual(service.set_status("DR-2026-001", "Open"), {"status": "Open"})
+
+
+class TestAiTools(unittest.TestCase):
+	def setUp(self):
+		_seed("Draft")
+		self.ai = importlib.import_module("erpnext_enhancements.design_review.ai_tools")
+
+	def test_service_accounts_and_non_managers_cannot_import(self):
+		for user in (TRITON, "Administrator", PAT):
+			DB.user = user
+			self.assertTrue(self.ai.precheck({"bundle_json": json.dumps(_content_bundle())}))
+			with self.assertRaises(PermissionError_):
+				self.ai.submit({"bundle_json": json.dumps(_content_bundle())})
+
+	def test_a_person_imports_and_gets_a_link(self):
+		DB.user = NIK
+		self.assertEqual(self.ai.precheck({"bundle_json": json.dumps(_content_bundle())}), [])
+		report = self.ai.submit({"bundle_json": json.dumps(_content_bundle()), "review": "DR-2026-001"})
+		self.assertEqual((report["revision"], report["link"]), (2, "/review/DR-2026-001"))
+
+	def test_the_bundle_comes_from_exactly_one_place(self):
+		DB.user = NIK
+		self.assertFalse(self.ai.check({})["ok"])
+		self.assertFalse(self.ai.check({"bundle_json": "{}", "file_name": "x"})["ok"])
+		self.assertIn("MB", self.ai.check({"bundle_json": " " * (self.ai.MAX_INLINE_BYTES + 1)})["error"])
+
+	def test_a_bundle_file_must_be_private(self):
+		DB.user = NIK
+		DB.add("File", name="pub-1", is_private=0, is_folder=0, content=json.dumps(_content_bundle()))
+		DB.add("File", name="priv-1", is_private=1, is_folder=0, content=json.dumps(_content_bundle()))
+		self.assertIn("private", self.ai.check({"file_name": "pub-1"})["error"])
+		self.assertTrue(self.ai.check({"file_name": "priv-1"})["ok"])
 
 
 class TestReadGate(unittest.TestCase):
