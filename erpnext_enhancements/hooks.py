@@ -1776,6 +1776,13 @@ jinja = {
 	],
 }
 
+# Every print format renders through this hook (www/printview.py get_rendered_template takes the
+# LAST app's entry). Ours renders with the previous entry (frappe's own utils/pdf.py) and raises a
+# flag while it does, because v16 renders a print format with no flag of its own, unlike
+# frappe.render_template: knowledge_base/template_guard.py then refuses any read of the knowledge
+# base's drafts table from inside a print format (2026-10-01). It changes nothing else.
+pdf_body_html = "erpnext_enhancements.knowledge_base.template_guard.pdf_body_html"
+
 # Run BEFORE each `bench migrate` (in pre_schema_updates, before fixture sync).
 before_migrate = [
 	# Rebuild the app -> modules map from every app's modules.txt BEFORE model sync.
@@ -2429,7 +2436,15 @@ before_request = [
 	# name (frappe.www.login.frappe.www.login.send_login_link) that the override above does not
 	# match; taking the function object off the whitelist closes every alias. Never raises.
 	"erpnext_enhancements.portal_login.seal_original",
+	# The runtime monkeypatches (see the bottom of this file), applied here too: v16 serves hooks from
+	# the redis cache and imports this file only on a miss, so a worker that never misses would run
+	# without them. Idempotent and cheap; never raises (2026-10-01).
+	"erpnext_enhancements.monkeypatches.ensure_applied",
 ]
+
+# The same for every background job (Auto Repeat, the email queue's print attachments, scheduled
+# Server Scripts and Notifications all render templates in a job).
+before_job = ["erpnext_enhancements.monkeypatches.ensure_applied"]
 
 # knowledge_base (WI-080 PR 8 review, v1.561.0): the private mirror's account, a Website User holding
 # only "KB Mirror" and signed in by an API key, may call api/knowledge_base_mirror.snapshot and nothing
@@ -2944,14 +2959,20 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently two:
+# monkeypatches.py for what/why — currently three:
 #   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
 #      get_modules_from_all_apps and the app switcher;
 #   2. force-download every executable attachment type from /private/files/ and
 #      set `nosniff`. v16's list is four extensions; frappe's develop widened it
 #      to fourteen, and the seven in the gap are served INLINE from our own
 #      origin with a scriptable Content-Type. nginx cannot hold this fix —
-#      startup_script.sh regenerates its config from bench's template on boot.
+#      startup_script.sh regenerates its config from bench's template on boot;
+#   3. templates, scripts and print formats never read knowledge base drafts
+#      (2026-10-01): their globals read tables with no permission check. Wraps
+#      Database.execute_query and File.get_content, and keeps drafts out of the
+#      document cache; see knowledge_base/template_guard.py.
+# Also applied from before_request and before_job (monkeypatches.ensure_applied):
+# hooks are served from the redis cache, so this import does not run in every worker.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches
 
 _apply_monkeypatches()

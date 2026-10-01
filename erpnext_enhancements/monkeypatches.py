@@ -127,10 +127,58 @@ def _patch_private_files_are_never_served_inline():
     _frappe_response.send_private_file = send_private_file
 
 
+def _patch_templates_cannot_read_kb_drafts():
+    """Templates, scripts and print formats never read knowledge base drafts (2026-10-01).
+
+    Every Jinja template the server renders, every Server Script and every print format gets
+    Frappe's scripting globals, which read tables with no permission check, and not every role that
+    may write a stored template can open a draft. The guards: ``Database.execute_query`` (every
+    statement, checked as the driver will send it), ``File.get_content``, and a document cache that
+    never holds a draft. The rule, the flags it reads and what it leaves open are
+    ``knowledge_base/template_guard.py``; the print-format flag is its ``pdf_body_html`` hook.
+    """
+    from erpnext_enhancements.knowledge_base import template_guard
+
+    template_guard.apply_patches()
+
+
 _PATCHES = (
     _patch_get_modules_from_app_none_safe,
     _patch_private_files_are_never_served_inline,
+    _patch_templates_cannot_read_kb_drafts,
 )
+
+
+def ensure_applied(*args, **kwargs):
+    """``before_request`` and ``before_job``: apply every patch in this process if it is not yet.
+
+    The bottom of ``hooks.py`` is not enough. v16 reads hooks from the redis cache
+    (``frappe.get_hooks``: ``client_cache "app_hooks"``) and imports ``{app}.hooks`` only on a miss,
+    so a web or background worker that never misses never runs it, and none of these patches would
+    be in force there. Each patch checks its own marker, so a repeat costs a few attribute lookups.
+    Takes and ignores whatever arguments the hook passes (``before_job`` passes the job's method and
+    kwargs).
+
+    Also says once per process, in the log, if another app's ``pdf_body_html`` hook now comes after
+    ours: printview calls only the last, so print formats would lose the knowledge base's flag.
+    """
+    apply()
+    global _hook_order_checked
+    if _hook_order_checked:
+        return
+    _hook_order_checked = True
+    try:
+        from erpnext_enhancements.knowledge_base import template_guard
+
+        if not template_guard.hook_is_last():
+            frappe.logger("erpnext_enhancements").warning(
+                "pdf_body_html: another app's hook comes after ours; print formats are not flagged"
+            )
+    except Exception:
+        pass
+
+
+_hook_order_checked = False
 
 
 def apply():
