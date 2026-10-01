@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.572.0] - 2026-10-01
+
+**Ring any number with the desk, and make an incoming call hard to miss.** Inbound calls already
+rang in parallel, as one Twilio `<Dial>` built by Triton from the rules configured here. On
+production, though, there were **zero** Call Routing Rules, so every call went to the fallback:
+the four desk softphones plus one forward number. There was no way to add a second phone either.
+A rule target had to be an Employee, rung on their `cell_number`, and only **3 of 15** active
+Employees had one. The desk alert was a 320px card in the bottom-right corner. It made no sound
+unless the Twilio SDK's own leg rang, and it asked for desktop-notification permission from inside
+a realtime event. Browsers ignore that request without a click, so the prompt never appeared.
+
+### Added
+
+- **`Phone Number` call-routing target.** A typed number with an optional label, for people with
+  no Employee record and for lines that are not a person. It compiles to the same `number` dial
+  leg an Employee target does, so **Triton needs no change** and the shared
+  `call_routing_vectors.json` did not move. "Ring these phones and every desk at once" is now one
+  rule: any caller, any time, one target per phone, `also_ring_softphones` ticked. The rule's
+  `validate` stores the number as E.164. It **throws** on anything undialable, where an Employee
+  with no cell only gets a warning: a typed number is fixable right there in the form.
+  - It also refuses **the business line itself**. Dialing it from its own inbound call loops the
+    leg back into the IVR, which answers it within a second. Every call would read as answered,
+    and nobody's phone would ring.
+  - Twilio's cap of 10 legs per call still applies, softphones included.
+- **Incoming calls get attention on the desk** (`public/js/telephony_client.js`).
+  - **Everyone** gets the panel. While a call rings it sits top-centre under the navbar, larger,
+    with a pulsing halo and a shaking handset, then docks bottom-right once the call is dealt
+    with. The tab title also flashes `📞 Call: <caller>`, so a background tab says something too.
+  - **Softphone users**, the only people who can pick up from the desk, also get the rest:
+    - a synthesized ringtone (WebAudio) that plays in a background tab;
+    - a glow around the screen edge;
+    - a desktop notification that stays up until the call is answered or gone, shown only when
+      the tab is not in front;
+    - a vibrate on phones;
+    - a per-browser **Mute ringer** toggle.
+  - **When it rings**: the ring starts when phones actually ring, not during the phone menu. Only
+    one tab per browser rings, via a short-lived `localStorage` claim.
+  - **Desktop alerts**: the panel offers to turn them on from a click, the only way a browser will
+    show the permission prompt.
+  - **Missed calls** now stay on screen until closed instead of vanishing after 8 seconds. The
+    person who most needs to see one is the person who was away.
+
+### Changed
+
+- The Twilio Voice SDK's own incoming sound is switched off (`device.audio.incoming(false)`)
+  because the new ringtone replaces it. The SDK only rings once the desk's own leg arrives, which
+  is after the phone menu, and one sound source is the only way to keep two from playing over
+  each other.
+- Browsers refuse audio until a page has had a click or keypress, so the audio context unlocks on
+  the first one. A desk nobody has touched since it loaded shows "Click anywhere on this page once
+  to hear calls ring" instead of failing silently. That click also starts a call that is already
+  ringing.
+- Pressing Accept marks the call so nothing can start ringing again while the microphone prompt
+  is open. Without this, the first-click audio unlock and Accept could race, and the ringtone could
+  start under a call that had already been answered.
+
 ## [1.571.0] - 2026-10-01
 
 **Design reviews get their own app at `/review`, and a bundle format any AI can write (WI-079

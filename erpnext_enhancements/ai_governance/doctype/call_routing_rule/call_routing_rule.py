@@ -11,7 +11,7 @@ trip on the Twilio webhook path.
 ``validate`` here draws a deliberate line between two kinds of wrong:
 
 * **Throw** when the rule is *provably inert* — a custom-days schedule naming no parseable
-  day, or a number-matching rule with no numbers. Those cannot ever fire, and a rule that
+  day, a number-matching rule with no numbers, or a Phone Number target that is not one. Those cannot ever fire, and a rule that
   silently never matches is far harder to notice than a save that refuses.
 * **Warn** when the rule can fire but may not reach somebody — most often an Employee with
   no Cell Number. On 2026-09-11 only 2 of 20 Employee records had one, so throwing here
@@ -35,10 +35,16 @@ TARGET_DOCTYPE_FOR = {
 	"Softphone User": "User",
 }
 
+#: A target that carries its own number rather than linking to a record — for someone with
+#: no Employee row, or a line that is not a person. Compiles to the same dial leg an
+#: Employee does, so the Triton gateway needs nothing new to ring it.
+PHONE_NUMBER = "Phone Number"
+
 
 class CallRoutingRule(Document):
 	def validate(self) -> None:
 		self._stamp_target_doctypes()
+		self._normalise_phone_targets()
 		self._check_schedule()
 		self._check_caller_numbers()
 		self.ring_seconds = max(0, min(match.MAX_RING_SECONDS, cint(self.get("ring_seconds"))))
@@ -67,10 +73,46 @@ class CallRoutingRule(Document):
 		thought they had removed.
 		"""
 		for row in self.get("targets") or []:
-			doctype = TARGET_DOCTYPE_FOR.get((row.target_type or "").strip(), "")
+			kind = (row.target_type or "").strip()
+			doctype = TARGET_DOCTYPE_FOR.get(kind, "")
 			row.target_doctype = doctype
 			if not doctype:
 				row.target_value = None
+			if kind != PHONE_NUMBER:
+				row.phone_number = None
+				row.phone_label = None
+
+	def _normalise_phone_targets(self) -> None:
+		"""Store every Phone Number target as the E.164 string Twilio will dial.
+
+		Throws rather than warns, unlike an Employee with no cell: a typed number that
+		cannot be dialed is a mistake in *this* form, fixable right here, and saving it would
+		hand the person a rule that looks configured and rings nothing.
+
+		The business line itself is refused too. Dialing it from its own inbound call sends
+		the leg straight back into the IVR, which answers it — so every call would be
+		"answered" by the phone menu within a second and nobody's phone would ever ring.
+		"""
+		business = match.to_e164(frappe.db.get_single_value("Triton Settings", "primary_twilio_number"))
+		for row in self.get("targets") or []:
+			if (row.target_type or "").strip() != PHONE_NUMBER:
+				continue
+			raw = (row.phone_number or "").strip()
+			number = match.to_e164(raw)
+			if not number:
+				frappe.throw(
+					_("Row {0}: {1} is not a phone number Twilio can dial.").format(
+						row.idx, raw or _("(blank)")
+					)
+				)
+			if business and number == business:
+				frappe.throw(
+					_(
+						"Row {0}: {1} is the business line itself. Ringing it would send the call "
+						"straight back into the phone menu, so nobody would ever ring."
+					).format(row.idx, number)
+				)
+			row.phone_number = number
 
 	def _check_schedule(self) -> None:
 		if (self.get("schedule") or "").strip() != match.SCHEDULE_CUSTOM:
@@ -123,6 +165,9 @@ class CallRoutingRule(Document):
 						_("{0} has no usable Cell Number on their Employee record, so they will not ring.")
 						.format(name or row.target_value)
 					)
+			elif kind == PHONE_NUMBER:
+				# Already normalised (or refused) by _normalise_phone_targets.
+				reachable += 1
 			elif kind == "Softphone User":
 				if not row.target_value:
 					problems.append(_("A Softphone User target has nobody selected."))

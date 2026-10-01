@@ -2716,6 +2716,13 @@ jobs:
       # to "simplify" away by matching Triton Settings.on_update, which does pass it.
       - name: Call routing gateway ping (suppressed on migrate, no secret in the queue)
         run: python -m unittest erpnext_enhancements.tests.test_call_routing_gateway_notify -v
+      # The typed Phone Number routing target. Its own step because it stubs frappe (and
+      # frappe.model.document, which the gateway-ping suite does not), so it must not share a
+      # process with that one. The case worth knowing about: a rule may not ring the business
+      # line itself -- that leg loops back into the IVR, which answers it, so every call would
+      # read as answered and nobody's phone would ring.
+      - name: Call routing Phone Number targets (compile, normalise, refuse the business line)
+        run: python -m unittest erpnext_enhancements.tests.test_call_routing_phone_targets -v
       # The repo's first JavaScript test, and it needs no runner beyond the node
       # already on the GitHub image — deliberately not a new framework.
       #
