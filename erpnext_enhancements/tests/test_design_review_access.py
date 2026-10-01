@@ -239,6 +239,7 @@ def _install():
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(v or 0) if str(v or 0).lstrip("-").isdigit() else 0
 	utils.now_datetime = lambda: datetime(2026, 10, 1, 12, 0, 0)
+	utils.get_datetime = lambda v: v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
 	frappe.utils = utils
 
 	perms = types.ModuleType("frappe.permissions")
@@ -406,6 +407,24 @@ class TestImportedContent(unittest.TestCase):
 		with self.assertRaises(ValidationError):
 			service.validate_review(doc)
 		doc._row = Row(dict(doc._row, status="Open", participants=[Row(user=PAT)], content_file=None))
+		with self.assertRaises(ValidationError):
+			service.validate_review(doc)
+
+	def test_a_form_save_after_an_import_is_not_a_content_edit(self):
+		"""The Desk form sends imported_at back as text and revision as a string (v1.572.1).
+
+		The stored document holds a datetime and an int. Compared raw they always differed, so every
+		form save after an import was refused: no participant could be added and no review opened.
+		"""
+		doc = _review_doc()
+		stored = Row(dict(doc._row, imported_at=datetime(2026, 10, 1, 15, 51, 59, 284502), revision=2))
+		before = FakeDoc("Design Review", stored)
+		doc._row = Row(
+			dict(stored, imported_at="2026-10-01 15:51:59.284502", revision="2", participants=[Row(user=PAT), Row(user=OUTSIDER)])
+		)
+		doc.get_doc_before_save = lambda: before
+		service.validate_review(doc)
+		doc._row["content_hash"] = "forged"
 		with self.assertRaises(ValidationError):
 			service.validate_review(doc)
 
