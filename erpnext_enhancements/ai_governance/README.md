@@ -252,7 +252,7 @@ placeholder into real records.
 | `Training Insight` | Captured insights for assistant tuning |
 | `Call Routing Settings` | Single — the fallback inbound calls land on when no rule matches: default forward number, ring duration, Holiday List, voicemail wording. Its kill switch is `paused`, not `enabled`, for the never-saved-Single reason in `CLAUDE.md` |
 | `Call Routing Rule` | One "when a call looks like this, ring these people" clause. Ordered by `priority`, **first match wins**. Conditions: menu selection, known/unknown/matching caller, days and times |
-| `Call Routing Target` | Child table — one Employee, softphone user, account manager, or voicemail box on a rule |
+| `Call Routing Target` | Child table — one Employee, softphone user, typed phone number, account manager, or voicemail box on a rule |
 
 ## Inbound call routing
 
@@ -280,6 +280,18 @@ while somebody is editing the rule instead of being discovered as a phone that d
 That matters more than it sounds: on 2026-09-11, **2 of 20** Employee records had a
 `cell_number` at all, and those stored it as bare digits. `compile_rules` surfaces every
 dropped target in the payload, the form, and the preview.
+
+**Ringing several phones at once is one rule.** Twilio rings every leg of a `<Dial>`
+simultaneously and bridges whoever answers first, so "ring Brian's cell, the office line and
+every desk softphone together" is a single rule matching any caller at any time, with one
+target per phone and `also_ring_softphones` ticked. The `Phone Number` target exists for the
+numbers that have no Employee record behind them (a shared line, a contractor, a spouse's
+cell on a weekend). It compiles to exactly the same `number` leg an Employee does, so Triton
+needed no change and the shared vectors did not move. Its `validate` throws — rather than
+warns, as an Employee with no cell does — on a number that cannot be dialed and on the
+business line itself, which would loop the call straight back into the phone menu. The cap
+is Twilio's: 10 legs per call, softphones included; the generic softphone fan-out is what
+gets trimmed first.
 
 **Edits reach the gateway twice over.** Saving `Call Routing Settings` or a
 `Call Routing Rule` (or deleting one) enqueues a ping to Triton's `/refresh-settings`, which

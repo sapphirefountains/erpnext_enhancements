@@ -61,7 +61,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `project_migrated_scripts.js` | Project + Stakeholder child | Migrated: hide dashboard, stakeholder contact/address filtering | doctype_js |
 | `sales_order_enhancements.js` | Sales Order | Filter `custom_serial_no` query to a specific item | doctype_js |
 | `task_enhancements.js` | Task | `custom_create_child_task_btn` quick-entry | doctype_js |
-| `telephony_client.js` | whole desk | Twilio softphone + SMS dialer service (`erpnext_enhancements.telephony`) | app_include_js |
+| `telephony_client.js` | whole desk | Twilio softphone + SMS dialer service (`erpnext_enhancements.telephony`), and the incoming-call alert: panel + flashing tab title for everyone; ringtone, edge glow and sticky desktop notification for softphone users only | app_include_js |
 | `travel_trip.js` | Travel Trip | Create buttons (per-traveler Expense Claims, Advance, Vehicle Log, Lead/Opportunity from stop, Send Itinerary, coordinator Reopen) + link scoping + billable row defaults — backed by `travel_management/api.py` | doctype_js |
 | `travel_trip_calendar.js` | Travel Trip calendar | Calendar field-map + filters; one all-day event per (trip, traveler) via `api.travel.get_events` | doctype_calendar_js |
 | `warehouse_stock_scan.js` | Warehouse | The doors to the Stock Scan labels (v1.521.0): **QR Label** and **Open Stock Scan** on a location, **Print QR Labels** on a group (everything beneath it). `window.open`, not `frappe.set_route` — both targets are www routes. Nothing on a disabled or Transit warehouse, matching the labels page | doctype_js |

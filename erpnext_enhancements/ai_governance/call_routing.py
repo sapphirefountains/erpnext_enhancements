@@ -10,8 +10,8 @@ Triton verbatim. This module is the binding to Frappe around it, and it does thr
   Triton gateway. Triton already fetches that endpoint on a 60-second cache, so this rides
   an existing request rather than adding one.
 * :func:`compile_rules` — turns editable records into a plan Triton can execute with no
-  further lookups. Employees become E.164 numbers, users become Twilio Client identities,
-  the Holiday List becomes a list of dates.
+  further lookups. Employees and typed Phone Numbers become E.164 numbers, users become
+  Twilio Client identities, the Holiday List becomes a list of dates.
 * :func:`preview` — answers "who would ring, and why" for a hypothetical call. Backed by a
   button on the settings form.
 
@@ -145,6 +145,19 @@ def _compile_targets(rule_name: str, targets: Any, warnings: list[str]) -> list[
 					"not Active — still dialed, but check this is intended"
 				)
 			out.append({"type": match.TARGET_NUMBER, "value": number, "label": emp.get("employee_name") or value})
+		elif kind == "Phone Number":
+			# The rule's validate already normalised this, but a row saved before that check
+			# existed — or written by a patch — is normalised again rather than trusted.
+			raw = (row.get("phone_number") or "").strip()
+			label = (row.get("phone_label") or "").strip() or raw
+			number = match.to_e164(raw)
+			if not number:
+				warnings.append(
+					f"{rule_name}: {raw or 'a Phone Number target'} is not a dialable number, "
+					"so this target will not ring"
+				)
+				continue
+			out.append({"type": match.TARGET_NUMBER, "value": number, "label": label or number})
 		elif kind == "Softphone User":
 			if not value:
 				warnings.append(f"{rule_name}: a Softphone User target has no user selected")
