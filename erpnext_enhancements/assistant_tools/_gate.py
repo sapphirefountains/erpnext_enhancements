@@ -327,6 +327,12 @@ GATE_OWN_DOCTYPES = frozenset(
 #: generic-tool write to it is refused before it could become a card.
 KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Version"})
 
+#: The knowledge base's child tables (v1.569.0: an article's Revision History). Written only through
+#: their article, which no role may write, so v16's parent check refuses a generic write to one
+#: anyway (``permissions.has_child_permission``); they are listed so no settings row can exempt one
+#: either. Part of the knowledge base's kind below, with its phrase.
+KNOWLEDGE_BASE_CHILD_DOCTYPES = frozenset({"Knowledge Article Revision"})
+
 #: Doctypes the settings allowlist may never exempt, whatever a row says. There are three kinds,
 #: each never exempt for its own reason:
 #:
@@ -334,12 +340,15 @@ KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Ver
 #:   Task would ungate Task creation along with its updates — the one write ADR 0016 §6 exists
 #:   to confirm.
 #: - The gate's own records, ``GATE_OWN_DOCTYPES``.
-#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES``.
+#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES`` and its child tables,
+#:   ``KNOWLEDGE_BASE_CHILD_DOCTYPES``.
 #:
 #: A card that targets any of them never starts ticked in the batch dialog, and the reason it
 #: shows names the kind (`gating_api._never_exempt_reason`). A new entry joins one of the three
 #: kinds or gets its own phrase in that function; `test_ai_gate_batch` fails on one with neither.
-NEVER_EXEMPT = frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES
+NEVER_EXEMPT = (
+    frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES | KNOWLEDGE_BASE_CHILD_DOCTYPES
+)
 
 #: App tools whose card writes a doctype its arguments do not name (v1.560.0, WI-080 PR 6b). A card's
 #: target was only ever `arguments["doctype"]`, which is what a generic create/update carries, so a

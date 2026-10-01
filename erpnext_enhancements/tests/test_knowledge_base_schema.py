@@ -134,7 +134,14 @@ ARTICLE_FIELDS = {
 	"retired_on",
 	"retired_by",
 	"retired_reason",
+	# 2026-09-30: the Revision History, a child table publishing writes.
+	"revisions",
 }
+
+#: 2026-09-30: one line of an article's Revision History, a child table of the Article.
+REVISION = "Knowledge Article Revision"
+REVISION_DIR = MODULE_DIR / "doctype" / "knowledge_article_revision"
+REVISION_FIELDS = ("version_number", "approved_on", "author", "approved_by", "change_note")
 
 #: The fields an author types into. Everything else on a Version is set by the KB's own code.
 VERSION_CONTENT_FIELDS = {
@@ -651,6 +658,60 @@ class TestFields(unittest.TestCase):
 				self.assertEqual(field.get("read_only_depends_on"), "eval:doc.article")
 				self.assertFalse(field.get("read_only"))
 		self.assertIn("SOP-06-0001", _field(_load(VERSION), "article")["description"])
+
+
+class TestTheRevisionHistory(unittest.TestCase):
+	"""2026-09-30: an article's Revision History is a child table of the Article, read with it and
+	written only by publishing, through the article's own guarded save. It carries no permission of
+	its own (a child table has none: v16 asks the parent's), and nobody edits a row."""
+
+	def _meta(self):
+		return json.loads((REVISION_DIR / f"{REVISION_DIR.name}.json").read_text(encoding="utf-8"))
+
+	def test_it_is_a_child_table_in_the_module_with_the_class_frappe_derives(self):
+		meta = self._meta()
+		self.assertEqual(meta["name"], REVISION)
+		self.assertEqual(meta["module"], MODULE)
+		self.assertEqual(meta["istable"], 1)
+		self.assertEqual(meta["permissions"], [])
+		self.assertFalse(meta.get("editable_grid"))
+		self.assertTrue((REVISION_DIR / "__init__.py").exists())
+		tree = ast.parse((REVISION_DIR / f"{REVISION_DIR.name}.py").read_text(encoding="utf-8"))
+		classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+		self.assertEqual(_frappe_classname(REVISION), "KnowledgeArticleRevision")
+		self.assertIn("KnowledgeArticleRevision", classes)
+		bases = [getattr(base, "id", None) for base in classes["KnowledgeArticleRevision"].bases]
+		self.assertEqual(bases, ["Document"])
+
+	def test_it_holds_only_what_was_approved_and_every_field_is_read_only(self):
+		meta = self._meta()
+		self.assertEqual(tuple(f["fieldname"] for f in _value_fields(meta)), REVISION_FIELDS)
+		self.assertEqual(meta["field_order"], [f["fieldname"] for f in meta["fields"]])
+		for field in _value_fields(meta):
+			with self.subTest(field=field["fieldname"]):
+				self.assertEqual(field.get("read_only"), 1)
+				self.assertFalse(field.get("permlevel"))
+				self.assertFalse(field.get("in_global_search"))
+		for fieldname in ("author", "approved_by"):
+			self.assertEqual(_field(meta, fieldname)["options"], "User")
+
+	def test_the_article_holds_it_read_only(self):
+		field = _field(_load(ARTICLE), "revisions")
+		self.assertEqual(field["fieldtype"], "Table")
+		self.assertEqual(field["options"], REVISION)
+		self.assertEqual(field.get("read_only"), 1)
+
+	def test_the_article_form_opens_on_the_document(self):
+		"""The first section holds only ``document_view``, an HTML field the form fills from
+		``__onload.kb.document``; the fields below it are collapsed, so the page is what a reader sees
+		first. An HTML field holds no value, so it widens nothing."""
+		fields = _load(ARTICLE)["fields"]
+		self.assertEqual([f["fieldname"] for f in fields[:2]], ["section_document", "document_view"])
+		self.assertEqual(fields[1]["fieldtype"], "HTML")
+		self.assertNotIn("options", fields[1])
+		for name in ("section_article", "section_summary", "section_body", "section_revisions", "section_record"):
+			with self.subTest(section=name):
+				self.assertEqual(_field(_load(ARTICLE), name).get("collapsible"), 1)
 
 
 class TestSelectOptionsMatchTheCode(unittest.TestCase):

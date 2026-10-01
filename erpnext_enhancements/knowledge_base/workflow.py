@@ -41,7 +41,12 @@ import datetime
 import re
 
 from erpnext_enhancements.knowledge_base import constants
-from erpnext_enhancements.knowledge_base.content import FIELD_LABELS, shows_anything, strip_presentation
+from erpnext_enhancements.knowledge_base.content import (
+	FIELD_LABELS,
+	guidance_left,
+	shows_anything,
+	strip_presentation,
+)
 from erpnext_enhancements.marketing.publish.workflow import signed_in_browser
 
 __all__ = [
@@ -343,6 +348,11 @@ def submit_problems(version, user, roles, *, article=None, secrets=()):
 	one to be **approved** (:func:`publish_problems`): its number is made from it. That rule's own
 	words ("..., so it cannot be numbered") are left out here when this list already says the same
 	thing, so the form's Submit blocker names each missing field once.
+
+	**No template guidance** (2026-09-30): a new draft starts with its kind's sections and the
+	register template's guidance under each (``constants.KIND_SECTIONS``); guidance still in the body
+	(``content.guidance_left``) is refused, so none is ever published. Only here: content cannot change
+	once a version has left Draft, so what is submitted is what is approved.
 	"""
 	problems = []
 	if not holds_kb_role(roles):
@@ -360,6 +370,13 @@ def submit_problems(version, user, roles, *, article=None, secrets=()):
 		problems.append(_NO_KIND)
 	if not shows_anything(_get(version, "body")):
 		problems.append("it has no text")
+	left = guidance_left(_get(version, "body"))
+	if left:
+		# 2026-09-30: a new draft starts with its template's guidance under each heading.
+		problems.append(
+			f"it still has the template's guidance under {_and(left)}: replace it with the "
+			"article's own words, or delete it"
+		)
 	problems.extend(
 		problem
 		for problem in publish_problems(version, article)

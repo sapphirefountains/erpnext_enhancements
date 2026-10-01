@@ -734,7 +734,11 @@ class TestReviewReasons(BatchHarness):
         self.assertNotIn("arguments", rows["AI-PA-1"])
 
     def test_the_three_kinds_make_up_never_exempt_and_do_not_overlap(self):
-        kinds = ({"Task"}, _gate.GATE_OWN_DOCTYPES, _gate.KNOWLEDGE_BASE_DOCTYPES)
+        kinds = (
+            {"Task"},
+            _gate.GATE_OWN_DOCTYPES,
+            _gate.KNOWLEDGE_BASE_DOCTYPES | _gate.KNOWLEDGE_BASE_CHILD_DOCTYPES,
+        )
         self.assertEqual(frozenset().union(*kinds), _gate.NEVER_EXEMPT)
         self.assertEqual(sum(len(kind) for kind in kinds), len(_gate.NEVER_EXEMPT))
 

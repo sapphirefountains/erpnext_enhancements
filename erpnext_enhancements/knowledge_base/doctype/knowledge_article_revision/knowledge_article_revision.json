@@ -1,0 +1,72 @@
+{
+ "actions": [],
+ "creation": "2026-09-30 12:00:00.000000",
+ "description": "One line of a Knowledge Article's Revision History: a version that was approved and published. Written by publishing, and never edited (2026-09-30).",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "version_number",
+  "approved_on",
+  "author",
+  "approved_by",
+  "change_note"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "version_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Version",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "When a second person approved it and it was published.",
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Date",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "author",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Author",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "columns": 3,
+   "fieldname": "change_note",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Description of Change",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-30 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Knowledge Base",
+ "name": "Knowledge Article Revision",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

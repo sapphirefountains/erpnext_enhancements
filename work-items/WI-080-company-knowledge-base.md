@@ -44,6 +44,56 @@ pointer to the new one, so old citations still resolve.**
 - v1.568.0. The PR-design narration below keeps the examples it was written with, in the retired
   `KB-DDNN` format (`KB-0601`, `kb 601`); the normative lines and the acceptance criteria are updated.
 
+## Decided 2026-09-30: print, preview and the form, as the register's templates
+
+Nik asked whether articles "can be printed and previewed and viewed as the templates in the google drive",
+was shown what that would take, and said "please proceed 1-3": the print and PDF, the draft preview, and
+the article's form, each laid out as the company register's template for the article's kind (POL-0002
+Policy, POL-0003 Process, POL-0004 SOP, in the Company Wide shared drive). The Drive copy itself stays
+Slice 4. v1.569.0.
+
+- **One renderer, three doors.** `knowledge_base/document.py` (standard library, tested bench-free) draws
+  the page, with the templates' look measured from their Google Docs export: Arial; the company name and
+  "Masters of Fountaineering" top left; Document ID, Version and Last Updated (Effective Date on a Policy)
+  top right; the title in 24pt sapphire (`#004a7c`); a grey owner-and-group row; numbered section headings;
+  tables with a sapphire header row; the Revision History; the logo and the template's Confidential line.
+  `knowledge_base/printing.py` fills it from the saved record. The doors: the **Article Document** print
+  format (Knowledge Article's default), the **Article Version Preview** format (the version's default,
+  opened by the draft's new **Preview** button), and the article form's new `document_view` field at the
+  top, over the fields, which are now collapsed.
+- **Each print format is one line, `{{ kb_document(doc) }}`.** The Jinja global loads the record again by
+  name and checks read permission, as the Trip Sheet's does: the print view also renders a document
+  posted as JSON, and a global is reachable from any template. An unsaved draft is refused.
+- **The Revision History is a child table on the article, `revisions` (Knowledge Article Revision),**
+  written by `publish.publish`, one row per approved version: its number, when it was published, its
+  author, its approver and its change note. The printed page draws it from there, so an article's page
+  never reads the Version doctype. An article published before the table existed shows its live
+  version's line, and at its next publish gets a line for every version approved before, read from the
+  versions (the publishing path may). **The change note is now what
+  the printed history says about a version**, so it should read as one ("Initial release", "Added the
+  damaged-goods step").
+- **The owner line is a role, as the template asks:** the owner's Employee `designation`, then their
+  name, `Purchasing Agent/Inventory Clerk (Parker Bailey)`. The group is the department's name.
+- **Headings are numbered by the stylesheet (CSS counters), not typed, and the body is never
+  rewritten**: it goes on the page exactly as stored. The Revision History takes the next number. (The
+  first draft rewrote heading tags with a regular expression; the security review showed a crafted
+  attribute becoming live script in an approver's preview.)
+- **New drafts start from the template.** Choosing a kind on a draft with an empty body fills it with
+  the kind's sections (`constants.KIND_SECTIONS`) and the template's guidance under each, in square
+  brackets, from the GET endpoint `document_template` (KB roles; fixed text, reads no record). **Guidance
+  left in a draft stops Submit for Review** (`content.guidance_left`, in `workflow.submit_problems`), so
+  none is ever published. The drafting tool's `body_markdown` description names each kind's sections.
+  Not enforced beyond that: an article may use other headings.
+- **Pictures are written into the printed page.** v16's chrome PDF engine fetches them over the network
+  (with no session in a job, and always through the site's public address); the global writes each
+  picture the body uses, and that is attached to the record (or a revision's article), into the page as
+  a `data:` URI, at most 5 MB each and 20 MB and 40 pictures a page.
+- **The page margins are the format's CSS**, a top-level `.print-format` rule: v16's chrome generator
+  ignores the Print Format's margin fields and would print no top or bottom margin.
+- **Printed copies say they are not controlled:** a footnote names the number, version and print date,
+  and that the current version is in ERPNext. A draft's preview carries a red "Draft - not approved"
+  box and a faint DRAFT across each printed page.
+
 ## Why
 
 Nik wants a company knowledge base that people *and* every AI tool Sapphire uses read from the same place, so that Parker, James and the crews can keep the company running without him. On 2026-09-24 he chose ERPNext as its home. After comparing Frappe Wiki v3, the recommendation is to build a narrow native module (ADR 0017).
@@ -1213,6 +1263,14 @@ All checks are read-only, against prod after each deploy. No MCP query names the
 - A technician's Claude does not list `draft_knowledge_article`, and Triton never lists it, live or in the snapshot.
 - A draft whose text contains an invented written-out password (for example "Password: Otter#2931") is refused before any card: no new AI Pending Action, and the AI Action Log row shows `<withheld: N characters>` for the text fields and "Draft knowledge article (text withheld)" as its summary.
 
+**Print, preview and the form (2026-09-30, v1.569.0)**
+
+- **The formats.** ``SELECT name, doc_type, disabled, pdf_generator, custom_format, print_format_type FROM `tabPrint Format` WHERE name IN ('Article Document','Article Version Preview')`` returns 2 rows, `disabled = 0`, `pdf_generator = chrome`, Jinja, custom. ``SELECT doc_type, value FROM `tabProperty Setter` WHERE property='default_print_format' AND doc_type LIKE 'Knowledge Article%'`` returns those two as the defaults.
+- **The child table.** ``SELECT name, istable, module FROM tabDocType WHERE name = 'Knowledge Article Revision'`` returns 1 row, `istable = 1`, Knowledge Base; ``SELECT COUNT(*) FROM `tabDeleted Document` WHERE deleted_doctype='DocType' AND deleted_name LIKE 'Knowledge%'`` stays 0.
+- **A draft.** On a new draft, choosing SOP fills the body with Purpose, Scope, Prerequisites & Tools, Visual Process Map, Step-by-Step Procedure and Troubleshooting & Exceptions, each with its guidance; Submit for Review is not offered, and the form says which sections still have guidance. *Preview* opens the print view: the SOP layout, "SOP-06-####", a red "Draft - not approved" box, and the Revision History's one line marked "(draft)"; the PDF opens and has DRAFT faintly across each page.
+- **A published article (SOP-06-0001 once it is approved).** The form opens on the document: "Document ID: SOP-06-0001", "Version: 1", the approval date as Last Updated, "SOP Owner:" the owner's designation and name, "Group: Operations", numbered sections, and "N. Revision History" with one line naming the author, the approver and the change note. *Print / PDF* gives the same page as a PDF, pictures included, ending with the logo, "Confidential - Sapphire Fountains Internal Use Only" and the footnote. A technician with no KB role sees the same.
+- **The history.** ``SELECT parent, version_number, author, approved_by FROM `tabKnowledge Article Revision` `` returns one row per published version, and after a revision is published its article has two, oldest first.
+
 **Slice 4**
 - The morning after setup, ``SELECT COUNT(*) FROM `tabKnowledge Article` WHERE status='Published' AND (exported_hash IS NULL OR exported_hash <> content_hash)`` = 0.
 - The shared drive holds one Doc per published article, with `kb_source=erpnext`.
@@ -1249,6 +1307,7 @@ All checks are read-only, against prod after each deploy. No MCP query names the
   - Triton chat drops the tools within an hour;
   - the deployed agents keep them until the next `deploy_agents`, and their calls then fail harmlessly.
 - **PR 6b:** set `enabled=0` on its row, or revert. The drafts it made stay ordinary drafts. A version it submitted stays In Review, and its author side can withdraw it in the Desk as usual. Reverting also puts the Submit for Review body back inside its endpoint, which behaves the same either way.
+- **Print, preview and the form's document view (v1.569.0):** revert. The two print formats stay on the site, disabled by nothing: delete them in the Desk (Print Format "Article Document" and "Article Version Preview") and the two `default_print_format` Property Setters, or the Print menu keeps offering them and their global is gone. The `revisions` rows and the child doctype stay until a `delete_doc` patch; nothing reads them.
 - **Slice 4:** tick `export_paused`, or revert. The Drive copy stays until James removes it.
 - **Slice 5:** revert. It writes only ToDos and Comments and changes no Training data.
 - **Slice 6:**
@@ -1260,7 +1319,7 @@ All checks are read-only, against prod after each deploy. No MCP query names the
 ## Explicitly NOT in this work item
 
 - **A restricted tier inside ERPNext.** Break-glass access, backup and restore, and the pause list stay in the Restricted Drive and the password manager. A plain article may say where they are kept.
-- **Deferred reading surfaces:** the `/kb` reader site, PDF and binder output, a restore-as-draft button.
+- **Deferred reading surfaces:** the `/kb` reader site, binder output (many articles in one PDF), a restore-as-draft button. (Changed 2026-09-30: one article's print and PDF, in its register template, is now built.)
 - **Deferred authoring and review features:** continuing an AI draft by tool, including submitting by tool a draft that already exists (a person finishes and submits it in the Desk), the review sweep and digest, a synonyms Single, embeddings. (Changed 2026-09-28: the AI draft tool itself is now PR 6b.)
 - **A settings Single in v1.** Slice 4 introduces the first one.
 - **Imports we are not building:** the Drive Picker import, and any bulk import driven by the POL-0000 register.

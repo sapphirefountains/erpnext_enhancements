@@ -701,7 +701,15 @@ class TestDraftToolClassification(unittest.TestCase):
 		"""The denylist, NEVER_EXEMPT and the exemptable tools are exactly what PR 1 left them."""
 		self.assertEqual(gate.DENYLIST_DOCTYPES, frozenset({"Triton Chat Attachment", constants.VERSION_DOCTYPE}))
 		self.assertEqual(gate.EXEMPTABLE_TOOLS, {"create_document", "update_document"})
-		self.assertEqual(gate.NEVER_EXEMPT, frozenset({"Task"}) | gate.GATE_OWN_DOCTYPES | gate.KNOWLEDGE_BASE_DOCTYPES)
+		# v1.569.0 added the knowledge base's one child table, the article's Revision History.
+		self.assertEqual(gate.KNOWLEDGE_BASE_CHILD_DOCTYPES, frozenset({"Knowledge Article Revision"}))
+		self.assertEqual(
+			gate.NEVER_EXEMPT,
+			frozenset({"Task"})
+			| gate.GATE_OWN_DOCTYPES
+			| gate.KNOWLEDGE_BASE_DOCTYPES
+			| gate.KNOWLEDGE_BASE_CHILD_DOCTYPES,
+		)
 
 	def test_the_denylist_still_reads_its_arguments(self):
 		self.assertIsNone(gate.denylist_hit(DRAFT_TOOL, _draft_args(kb_number="SOP-06-0001")))

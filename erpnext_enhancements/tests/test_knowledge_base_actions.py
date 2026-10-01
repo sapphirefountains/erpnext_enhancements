@@ -355,6 +355,18 @@ class _Document:
 	def set_onload(self, key, value):
 		self._onload[key] = value
 
+	def append(self, key, value=None):
+		"""v16 ``BaseDocument.append``: a child row at the end of table ``key``, with its ``idx``. The
+		stub keeps a row as a plain dict, so ``row()`` copies the table with the document (2026-09-30:
+		an article's Revision History)."""
+		rows = self.__dict__.get(key)
+		if rows is None:
+			rows = self.__dict__[key] = []
+		row = dict(value or {})
+		row["idx"] = len(rows) + 1
+		rows.append(row)
+		return row
+
 	def is_new(self):
 		return self._new
 
@@ -1109,6 +1121,8 @@ class TestEndpointsAreWhitelistedByMethod(Base):
 		"confirm_still_accurate": ["POST"],
 		"retire": ["POST"],
 		"review_diff": ["GET"],
+		# 2026-09-30: a new draft's template sections for its kind. Fixed text, KB roles only.
+		"document_template": ["GET"],
 	}
 
 	def test_every_endpoint_names_its_method_and_none_is_open_to_guests(self):
@@ -1488,6 +1502,71 @@ class TestRevisions(Base):
 		self.assertEqual((article["live_version"], article["version_number"], article["approved_by"]), (revision, 2, APPROVER))
 		self.assertEqual(open_todos(first), [])
 		self.assertEqual([w["action"] for w in writes(ARTICLE)], ["save"])
+
+	def test_each_publish_adds_its_line_to_the_revision_history(self):
+		"""2026-09-30: the printed Revision History is the article's ``revisions`` rows, one per
+		published version, written in the publish's own guarded save."""
+		first = draft(change_note="Initial release")
+		submitted(first)
+		approve(first)
+		rows = _row(ARTICLE, "SOP-06-0001")["revisions"]
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(
+			(rows[0]["version_number"], rows[0]["author"], rows[0]["approved_by"], rows[0]["change_note"]),
+			(1, AUTHOR, NIK, "Initial release"),
+		)
+		self.assertEqual(rows[0]["approved_on"], _row(ARTICLE, "SOP-06-0001")["approved_on"])
+		revision = request(api.start_revision, "SOP-06-0001", user=AUTHOR)["version"]
+		edit(revision, AUTHOR, body=BODY + "<p>One more step.</p>", change_note="Added a step")
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=APPROVER)
+		rows = _row(ARTICLE, "SOP-06-0001")["revisions"]
+		self.assertEqual(
+			[(r["version_number"], r["approved_by"], r["change_note"]) for r in rows],
+			[(1, NIK, "Initial release"), (2, APPROVER, "Added a step")],
+		)
+
+	def _revise(self, note, approver):
+		revision = request(api.start_revision, "SOP-06-0001", user=AUTHOR)["version"]
+		edit(revision, AUTHOR, body=BODY + f"<p>{note}.</p>", change_note=note)
+		submitted(revision)
+		request(api.approve_and_publish, revision, opened(revision), user=approver)
+		return revision
+
+	def test_an_article_published_before_the_rows_gets_its_whole_history_first(self):
+		"""An article published before v1.569.0 has no rows: its next publish writes a line for every
+		version approved before, from the versions themselves, then the new one's."""
+		first = draft(change_note="Initial release")
+		submitted(first)
+		approve(first)
+		self._revise("Added a step", APPROVER)
+		_db()[ARTICLE]["SOP-06-0001"]["revisions"] = []  # as published before the child table existed
+		self._revise("Fixed a typo", NIK)
+		rows = _row(ARTICLE, "SOP-06-0001")["revisions"]
+		self.assertEqual(
+			[(r["version_number"], r["author"], r["approved_by"], r["change_note"]) for r in rows],
+			[
+				(1, AUTHOR, NIK, "Initial release"),
+				(2, AUTHOR, APPROVER, "Added a step"),
+				(3, AUTHOR, NIK, "Fixed a typo"),
+			],
+		)
+		self.assertEqual(rows[0]["approved_on"], version(first)["approved_on"])
+
+	def test_a_version_that_cannot_be_found_leaves_its_line_to_the_article(self):
+		"""A live version whose number no longer matches (written past the ORM, which the Integrity
+		report names) still gets its line, from the article."""
+		first = draft(change_note="Initial release")
+		submitted(first)
+		approve(first)
+		_db()[ARTICLE]["SOP-06-0001"]["revisions"] = []
+		_db()[VERSION][first]["version_number"] = 0
+		self._revise("Added a step", APPROVER)
+		rows = _row(ARTICLE, "SOP-06-0001")["revisions"]
+		self.assertEqual(
+			[(r["version_number"], r["author"], r["change_note"]) for r in rows],
+			[(1, AUTHOR, "Initial release"), (2, AUTHOR, "Added a step")],
+		)
 
 	def test_a_revision_keeps_its_department(self):
 		"""Refused at the save since 2026-09-29, the earliest place (before, only at submit and approve),
@@ -2126,7 +2205,13 @@ class TestTheFormsOfferTheRules(Base):
 
 			return request(go, user=user, **kwargs)
 
-		self.assertEqual(load(TECH), {"actions": [], "open_version": None, "open_state": None})
+		reader = load(TECH)
+		document = reader.pop("document")
+		self.assertEqual(reader, {"actions": [], "open_version": None, "open_state": None})
+		# 2026-09-30: every reader gets the published article drawn as its template, and it names
+		# nothing of the open revision.
+		self.assertIn("Document ID: SOP-06-0001", document)
+		self.assertNotIn(revision, document)
 		self.assertEqual(load(AUTHOR)["actions"], ["start_revision"])
 		self.assertEqual(load(AUTHOR)["open_version"], revision)
 		self.assertEqual(load(SECOND)["actions"], ["start_revision", "confirm_still_accurate"])

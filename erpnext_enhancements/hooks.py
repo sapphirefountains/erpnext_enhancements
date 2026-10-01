@@ -1765,6 +1765,14 @@ jinja = {
 		# also renders a document posted as JSON), and prices no emailed copy (the email queue
 		# renders an attachment later, as Administrator).
 		"erpnext_enhancements.api.travel.ee_trip_sheet",
+		# The Knowledge Base's two print formats (knowledge_base/setup_print_formats.py) are this
+		# one call: a Knowledge Article, or a version's preview, drawn as the company register's
+		# template for its kind (POL-0002/0003/0004). Like the Trip Sheet's global, it loads the
+		# record again by name and checks read permission itself, because the print view also
+		# renders a document posted as JSON and a global is reachable from any template; and it
+		# writes the article's own pictures into the page, so the chrome PDF engine never has to fetch
+		# a private file over the network (it has no session in a job). kb_ prefix, for the reason above.
+		"erpnext_enhancements.knowledge_base.printing.kb_document",
 	],
 }
 
@@ -2000,6 +2008,12 @@ after_migrate = [
 	# this hook (and install-app runs no after_migrate at all), and a default naming a format
 	# that is not there yet makes the desk drop "Standard" from the Print menu.
 	"erpnext_enhancements.travel_management.setup_print_formats.ensure_travel_print_formats",
+	# knowledge_base: "Article Document" (Knowledge Article) and "Article Version Preview" (a
+	# draft's Preview button), each its doctype's DEFAULT format through a code-owned Property
+	# Setter written after the upsert, for the Trip Sheet's reason above. Each is one line,
+	# {{ kb_document(doc) }}: the layout is knowledge_base/document.py. Idempotent upsert,
+	# guarded. MUST sit ABOVE ensure_chrome_pdf_generator, like the rest.
+	"erpnext_enhancements.knowledge_base.setup_print_formats.ensure_knowledge_base_print_formats",
 	# training: starter Training Badges. Insert-only and inert until gamification is on.
 	# Lives in `setup` beside the starter categories, not in `gamification`, which is
 	# the runtime awarding logic. This pointed at gamification and the function was

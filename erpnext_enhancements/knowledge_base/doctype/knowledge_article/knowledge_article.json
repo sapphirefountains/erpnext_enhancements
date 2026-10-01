@@ -10,6 +10,8 @@
  "email_append_to": 0,
  "engine": "InnoDB",
  "field_order": [
+  "section_document",
+  "document_view",
   "section_article",
   "kb_number",
   "title",
@@ -25,6 +27,8 @@
   "section_body",
   "body",
   "body_md",
+  "section_revisions",
+  "revisions",
   "section_record",
   "author",
   "approved_by",
@@ -46,6 +50,18 @@
  ],
  "fields": [
   {
+   "fieldname": "section_document",
+   "fieldtype": "Section Break",
+   "label": "Document"
+  },
+  {
+   "description": "The article as the company register's template for its kind lays it out (POL-0002 Policy, POL-0003 Process, POL-0004 SOP): the same page the printer and the PDF give. Drawn from the fields below when the form opens.",
+   "fieldname": "document_view",
+   "fieldtype": "HTML",
+   "label": "Document"
+  },
+  {
+   "collapsible": 1,
    "fieldname": "section_article",
    "fieldtype": "Section Break",
    "label": "Article"
@@ -116,6 +132,7 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "section_summary",
    "fieldtype": "Section Break",
    "label": "Summary"
@@ -135,6 +152,7 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "section_body",
    "fieldtype": "Section Break",
    "label": "Article Text"
@@ -151,6 +169,20 @@
    "fieldtype": "Long Text",
    "hidden": 1,
    "label": "Body (Markdown)",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_revisions",
+   "fieldtype": "Section Break",
+   "label": "Revision History"
+  },
+  {
+   "description": "Every version that was approved and published, oldest first. Written when a version is published; the printed article's Revision History is drawn from it.",
+   "fieldname": "revisions",
+   "fieldtype": "Table",
+   "label": "Revisions",
+   "options": "Knowledge Article Revision",
    "read_only": 1
   },
   {
@@ -276,7 +308,7 @@
  "index_web_pages_for_search": 0,
  "links": [],
  "make_attachments_public": 0,
- "modified": "2026-09-29 12:00:00.000000",
+ "modified": "2026-09-30 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Knowledge Base",
  "name": "Knowledge Article",

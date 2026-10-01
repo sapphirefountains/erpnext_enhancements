@@ -237,6 +237,86 @@ def kind_description():
 	return " ".join(lines)
 
 
+# ------------------------------------------------------------------ the register's templates (2026-09-30)
+
+#: The register template each kind follows, by its register number: POL-0002 Company Documentation -
+#: Policy Template, POL-0003 the Process Template, POL-0004 the SOP Template (Drive, the Company Wide
+#: shared drive). An article prints in its kind's layout (``knowledge_base/document.py``).
+KIND_REGISTER_TEMPLATES = {"Policy": "POL-0002", "Process": "POL-0003", "SOP": "POL-0004"}
+
+#: Each kind's sections, in the template's order, with the guidance the template gives under each
+#: heading (reworded for ERPNext where the template's said "Insert > Drawing"). A new draft starts
+#: with them (``document.skeleton``): each heading, then its guidance in square brackets, in italics.
+#: The printed document numbers the headings ("1. Purpose") and adds the Revision History itself, so
+#: neither the numbers nor that section are here. Guidance left in a draft stops it being submitted
+#: for review (``content.guidance_left``, asked by ``workflow.submit_problems``), so no guidance is
+#: ever published; the check matches this exact text, so change it here and nowhere else. Plain ASCII
+#: and no quotation marks, so the text a person sees is the text the check compares.
+KIND_SECTIONS = {
+	"Policy": (
+		(
+			"Introduction & Purpose",
+			"Why this policy exists: the principles, goals or legal requirements behind it, and the "
+			"company's position on the topic.",
+		),
+		(
+			"Scope",
+			"Exactly who it applies to (all employees, contractors, particular departments) and where.",
+		),
+		("Roles & Responsibilities", "Each role or group, and what it is responsible for under this policy."),
+		(
+			"Policy Statements",
+			"The rules themselves. Use must or shall for what is required, one requirement at a time.",
+		),
+		("Non-Compliance", "What happens when it is not followed, including disciplinary action."),
+		("Related Documentation", "The processes and SOPs that carry this policy out, by number."),
+	),
+	"Process": (
+		(
+			"Overview & Objective",
+			"What the workflow is: how its inputs become its outputs, from start to finish.",
+		),
+		(
+			"Inputs & Outputs (SIPOC)",
+			"What is needed to start and where it comes from; what the result is and who receives it.",
+		),
+		(
+			"High-Level Process Map",
+			"A picture of the flowchart showing the major handoffs between departments, or delete this "
+			"section.",
+		),
+		("Key Steps & Handoffs", "Each stage in order, with the role and group responsible for it."),
+		(
+			"Related Procedures (SOPs)",
+			"The SOPs with the step-by-step instructions for the tasks in this process, by number.",
+		),
+	),
+	"SOP": (
+		("Purpose", "Why this procedure exists and the outcome it produces. What problem does it solve?"),
+		(
+			"Scope",
+			"The departments, roles or situations it applies to, and anything it does not cover.",
+		),
+		(
+			"Prerequisites & Tools",
+			"What the person needs before starting: access, equipment, software, approvals.",
+		),
+		("Visual Process Map", "A picture of the flowchart, or delete this section."),
+		(
+			"Step-by-Step Procedure",
+			"Numbered steps, one action each, in the imperative (Open the Purchase Order, not The "
+			"Purchase Order should be opened), each naming the role that does it.",
+		),
+		("Troubleshooting & Exceptions", "If this happens, then do this: a table or a list."),
+	),
+}
+
+
+def kind_section_names(kind):
+	"""``"SOP"`` -> ``("Purpose", "Scope", ...)``: the kind's section headings in order, or ``()``."""
+	return tuple(name for name, _guidance in KIND_SECTIONS.get(kind, ()))
+
+
 # ------------------------------------------------------------------ the article number (2026-09-29)
 
 #: Each kind's number prefix: the company register's own (POL-, PRO-, SOP-), so an article's number
