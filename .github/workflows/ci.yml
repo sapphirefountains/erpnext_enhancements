@@ -467,16 +467,23 @@ jobs:
       # WI-079 slice 5, Design Review (ADR 0016 §2). Sanitize: concept HTML loses every script,
       # handler, external URL and fetching style before it is stored. Codes: a revision that
       # renumbers or renames an existing part is refused whole; the Borda tally matches the
-      # artifact ballots; triton@, mdm@ and Administrator cannot promote. Both stdlib only.
-      - name: Design Review sanitizer, element codes, tally (bench-free)
+      # artifact ballots; triton@, mdm@ and Administrator cannot promote. Surface (v1.571.0): every
+      # endpoint POST and dialled by /review's transport map, the /review route rule, frames never
+      # given allow-scripts, the example bundle + schema + importer agreeing on format and kits, and
+      # no Long Text for screen markup. All three stdlib only.
+      - name: Design Review sanitizer, element codes, tally, surface (bench-free)
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_design_review_sanitize
-          erpnext_enhancements.tests.test_design_review_codes -v
+          erpnext_enhancements.tests.test_design_review_codes
+          erpnext_enhancements.tests.test_design_review_surface -v
       # Who may do what: no Desk, no review; not on the participant list, no vote, verdict or
       # note (a non-participant System Manager included); writes only while Open; every write
       # stamped with the session user; promotion through file_request, already Approved, never
-      # by a service account. Its own step because it installs a frappe stub.
+      # by a service account. Content (v1.571.0) is imported through the real importer into one
+      # private File whose SVG survives; a revision may add parts, never rename one; the example
+      # bundle imports; the AI tools refuse service accounts, oversized inline bundles and public
+      # Files. Its own step because it installs a frappe stub.
       - name: Design Review access rules (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_design_review_access -v
       # The code map the breakdown sends Triton (ADR 0016 §3): every CLAUDE.md gotcha headline

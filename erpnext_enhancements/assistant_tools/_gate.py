@@ -137,6 +137,9 @@ EXPLICIT_READONLY = {
     "search_company_knowledge",
     "fetch_knowledge_article",
     "list_company_knowledge",
+    # v1.571.0 (WI-079 slice 5) -- dry-run a design review bundle: every check an import makes, nothing
+    # written. Its write half, submit_design_review, is in APP_MUTATING.
+    "check_design_review_bundle",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
@@ -189,6 +192,12 @@ APP_MUTATING = {
     # withdraw and discard in the Desk. It never approves or publishes: approval_problems refuses
     # every approval made while a gate card runs, and the requester as the approver.
     "draft_knowledge_article",
+    # v1.571.0 (WI-079 slice 5) -- import a design review bundle: a new Design Review in Draft, or a
+    # new revision of one. Medium, by being in neither risk set: it puts screens in front of the team
+    # and replaces a review's content, but nothing is destroyed (votes, verdicts and notes are kept,
+    # and element codes are append-only), and it opens nothing -- a person adds the participants and
+    # sets the review Open. Prechecked, so an invalid bundle or a service-account caller gets no card.
+    "submit_design_review",
 }
 
 HIGH_RISK = {
@@ -364,7 +373,7 @@ TOOL_TARGET_DOCTYPES = {"draft_knowledge_article": "Knowledge Article Version"}
 #: has a `precheck(arguments)` method returning its problems as short clauses; any problem refuses the
 #: call with no card (`_precheck_refusal`). A precheck that raises queues the card as before, logged by
 #: type only (`_log_failure_type`), because execution runs the same check again.
-APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article"})
+APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_review"})
 
 #: What a log row with no card keeps of a listed tool's arguments (v1.560.0, WI-080 finding 8). The gate
 #: redacts only by key name, so a refused drafting call's AI Action Log row would otherwise hold the
@@ -896,6 +905,22 @@ def summarize_tool_call(tool_name, arguments):
         department = args.get("department") or "no department"
         kind = args.get("kind") or "no kind"
         return f"Draft a new knowledge article “{title}” ({department}, {kind}){tail}"
+    if tool_name == "submit_design_review":
+        # v1.571.0. What the card decides is which review the screens land in, so it says so. Parsing
+        # the bundle here is total: anything that is not a readable object shows as untitled.
+        review = str(args.get("review") or "").strip()
+        where = f"as a new revision of {review}" if review else "as a new review"
+        if args.get("file_name"):
+            return f"Import design review bundle File {str(args.get('file_name'))[:80]} {where}"
+        title, screens = "", 0
+        try:
+            data = args.get("bundle_json")
+            data = data if isinstance(data, dict) else json.loads(data)
+            title = " ".join(str(data.get("title") or "").split())[:80]
+            screens = len(data.get("screens") or [])
+        except Exception:
+            pass
+        return f"Import design review “{title or 'untitled'}” ({screens} screens) {where}"
     return tool_name.replace("_", " ").capitalize()
 
 

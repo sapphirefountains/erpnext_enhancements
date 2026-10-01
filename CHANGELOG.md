@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.571.0] - 2026-10-01
+
+**Design reviews get their own app at `/review`, and a bundle format any AI can write (WI-079
+slice 5).** v1.570.0 put the Review Room inside the Desk and stored each concept screen in Long
+Text fields. On production the screens were visibly broken. The cause is in Frappe, not in this
+app's sanitizer: v16's `BaseDocument._sanitize_content` runs `sanitize_html` over every Long Text
+field on save, and that cleaner knows nothing about SVG or current CSS. It stripped `gap` from
+195 of 195 screens, path geometry from 186 and circles from 121. That happened after
+`design_review/sanitize.py` had already made them safe, so the damage bought no safety. Nik chose
+to keep ERPNext as the backend and give reviews their own front end, keeping the JSON bundle as a
+format that Claude, Triton or a script can write and submit.
+
+### Changed
+
+- **The Review Room is a website app at `/review`** (`www/review.html` + `review.py`,
+  `public/js/design_review/`, `design_review.bundle.js/.css`). It ports the claude.ai Concept
+  Viewer the team reviewed in:
+  - a screen rail grouped by stage, with verdict dots and note counts;
+  - desktop and phone frames side by side, scaled to fit, plus BOTH / DESKTOP / PHONE;
+  - LINKS, MARKUP with numbered part tags, and NEXT with narration;
+  - a notes panel with an All notes tab, and a compare view (ALL) of every option on one screen;
+  - an overview per track with option cards, your ranking, the team tally and decisions;
+  - light and dark themes;
+  - on a phone, a one-row bar, a rail overlay and a bottom sheet.
+
+  Every view is a real path (`/review/DR-2026-001/learner/L3/S04`), and the new
+  `website_route_rules` entry makes deep links and refreshes work, so Back, Forward and shared
+  links behave. Guests are sent to login with the link kept, and Website Users are refused. The
+  Help menu gains **Design Reviews**.
+- **A review's content is one private JSON File** attached to it (`design_review/content.py`),
+  never fields, so the import's own sanitizer is the only one. A revision writes a new File and
+  deletes the old one. Reads are cached in redis by `content_hash`. The content fields change only
+  by import.
+- **Access is checked in `service.py` only.** Every Design doctype is System Manager-only, with no
+  create or write for any role, so `api/design_review.py` (all POST) is the only door. The
+  `permission_query_conditions` / `has_permission` hooks, the **Design Review Lifecycle**
+  Workflow and its fixture entries are gone. Status is a Select that a System Manager sets at
+  `/review`. **Open** needs content and at least one participant.
+- `api/design_review.py`:
+  - `get_screens` is replaced by `get_content`.
+  - New: `find_people` (Employees to name as the person who raised a note), `set_status`,
+    `check_bundle` (dry run).
+  - `import_review` deletes the uploaded, unsanitized File once its sanitized copy is written.
+
+### Added
+
+- **The bundle format as a framework:**
+  - `docs/design-review-bundle.md`, the authoring guide: HTML allowed, parts and element codes,
+    frame sizes, the kit's classes, the click-through grammar, ballots, limits and AI usage;
+  - `design_review/bundle.schema.json`;
+  - `design_review/examples/minimal-bundle.json`, which a test imports.
+- **Kits.** `"kit": "sapphire-ux/1"` gives every frame the house stylesheet
+  (`design_review/kit/sapphire_ux_1.css`, the training concepts' classes in the Sapphire design
+  system's tokens), so a generator can draw screens with no CSS of its own. Kits are append-only,
+  like element codes.
+- **Two assistant tools:**
+  - `check_design_review_bundle` (read): every check an import makes, nothing written.
+  - `submit_design_review` (APP_MUTATING, Medium): imports behind a confirmation card. It is in
+    `APP_PRECHECKED_TOOLS`, so an invalid bundle, or a caller who is not a person with System
+    Manager, gets no card at all. That means `triton@` can never queue one.
+
+  Both take the bundle inline as `bundle_json` (up to 3 MB) or as a private File (`file_name`).
+  The 3 MB cap exists because the gate stores a card's arguments on the AI Pending Action and
+  again on its AI Action Log rows. The logic is in `design_review/ai_tools.py`.
+- `tests/test_design_review_surface.py` (stdlib), in the existing Design Review CI step. It
+  checks that:
+  - every endpoint is POST and dialled by `transport.js`;
+  - the `/review` route rule is present, and the shell hands the app a CSRF token;
+  - frames are never given `allow-scripts` and always carry the policy;
+  - the example, schema and importer agree on the format and kits;
+  - no Design doctype grows a Long Text field for screen markup again.
+- `tests/test_design_review_access.py` now seeds its review through the real importer into a
+  File. On top of the earlier gate checks, it asserts that:
+  - SVG geometry survives the import;
+  - a revision may add a part but not rename one;
+  - the example bundle imports;
+  - **Open** needs content and participants;
+  - the AI tools refuse service accounts, oversized inline bundles and public Files.
+- `scripts/design_review/qa/` drives the real `/review` app in headless Chrome against a mock
+  server built from a bundle: 33 checks with real mouse and keyboard input. They include SVG
+  geometry and `gap` surviving, the X5 experience-map board drawing its SVG, click-through
+  inside the frames, Back and Forward, deep links, light theme, and no sideways scroll at phone
+  width. `export_concept_viewer.py` now names the kit instead of shipping 11 KB of it.
+
+### Removed
+
+- Design Option, Design Screen, Design Part and Design Review Track (the content now lives in
+  the File), `design_review/permissions.py`, Page `review-room` and Workspace **Design Reviews**.
+  `patches/rebuild_design_review_storage.py` (post_model_sync, cannot raise, safe twice) deletes:
+  - the four doctypes, and drops their tables (nothing else would);
+  - the Workflow;
+  - its four Workflow Action Masters and three Workflow States, each only when no other
+    workflow uses it (Open and Closed are generic names);
+  - the Page, the workspace and its v16 Desktop Icon and sidebar;
+  - every review with no content File and nothing recorded on it.
+
+  On production that last item is the one review imported under v1.570.0. It had no
+  participants, votes, verdicts, notes or decisions (checked 2026-10-01), so nothing anyone
+  wrote is lost. Re-import the Training bundle at `/review` after this deploy.
+
 ## [1.570.0] - 2026-10-01
 
 **Design reviews move into ERPNext: the Review Room (WI-079 slice 5, ADR 0016 §2).** Nik asked for the

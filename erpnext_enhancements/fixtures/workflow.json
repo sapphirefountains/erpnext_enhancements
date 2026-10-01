@@ -81,27 +81,5 @@
       { "state": "Pending Approval", "action": "Reject", "next_state": "Rejected", "allowed": "Accounts Manager", "allow_self_approval": 0 },
       { "state": "Rejected", "action": "Submit for Approval", "next_state": "Pending Approval", "allowed": "Accounts User", "allow_self_approval": 1 }
     ]
-  },
-  {
-    "doctype": "Workflow",
-    "name": "Design Review Lifecycle",
-    "workflow_name": "Design Review Lifecycle",
-    "workflow_state_field": "status",
-    "document_type": "Design Review",
-    "is_active": 1,
-    "send_email_alert": 0,
-    "override_status": 0,
-    "states": [
-      { "state": "Draft", "doc_status": 0, "allow_edit": "System Manager" },
-      { "state": "Open", "doc_status": 0, "allow_edit": "System Manager" },
-      { "state": "Closed", "doc_status": 0, "allow_edit": "System Manager" },
-      { "state": "Decided", "doc_status": 0, "allow_edit": "System Manager" }
-    ],
-    "transitions": [
-      { "state": "Draft", "action": "Open for Review", "next_state": "Open", "allowed": "System Manager", "allow_self_approval": 1 },
-      { "state": "Open", "action": "Close Review", "next_state": "Closed", "allowed": "System Manager", "allow_self_approval": 1 },
-      { "state": "Closed", "action": "Reopen Review", "next_state": "Open", "allowed": "System Manager", "allow_self_approval": 1 },
-      { "state": "Closed", "action": "Record as Decided", "next_state": "Decided", "allowed": "System Manager", "allow_self_approval": 1 }
-    ]
   }
 ]

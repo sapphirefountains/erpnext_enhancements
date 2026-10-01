@@ -1,0 +1,160 @@
+{
+ "format": "sapphire-design-review/1",
+ "title": "Example: crew job screen",
+ "description": "A two-option, two-screen example of the bundle format. Copy it as a starting point.",
+ "source_url": "",
+ "kit": "sapphire-ux/1",
+ "stylesheet": "",
+ "tracks": [
+  {
+   "id": "crew",
+   "label": "Crew app",
+   "short": "Crew",
+   "votable": true,
+   "blurb": "How a technician starts the day's job.",
+   "groups": [
+    {
+     "name": "Start",
+     "screens": [
+      "S01"
+     ]
+    },
+    {
+     "name": "On site",
+     "screens": [
+      "S02"
+     ]
+    }
+   ]
+  }
+ ],
+ "options": [
+  {
+   "track": "crew",
+   "code": "A1",
+   "name": "Light",
+   "what": "A calm light screen with the job as a card.",
+   "tradeoff": "Less contrast in direct sun."
+  },
+  {
+   "track": "crew",
+   "code": "A2",
+   "name": "Night",
+   "what": "The same flow on the navy ground.",
+   "tradeoff": "Heavier; reads as a different app."
+  }
+ ],
+ "screens": [
+  {
+   "track": "crew",
+   "option": "A1",
+   "screen": "S01",
+   "name": "Today",
+   "group": "Start",
+   "frame": "phone",
+   "w": 390,
+   "h": 844,
+   "html": "<div class=\"ux-app\" style=\"width:390px;height:844px;display:flex;flex-direction:column\"><header class=\"ux-topbar\" data-c=\"Top bar\"><span class=\"ux-title\">Sapphire</span></header><main class=\"ux-scroll\" style=\"flex:1;padding:24px;display:flex;flex-direction:column;gap:16px\"><p class=\"ux-eyebrow\" data-c=\"Greeting\">GOOD MORNING</p><h1 class=\"ux-display ux-h1\" data-c=\"Headline\">Your next job</h1><div class=\"ux-card\" style=\"border-radius:10px;padding:16px\" data-c=\"Job card\"><p class=\"ux-strong\">Fountain service, Riverside Plaza</p><p class=\"ux-muted ux-small\">Today, 9:00</p></div></main><footer style=\"padding:16px\" data-c=\"Action bar\"><button class=\"ux-btn ux-btn-wide ux-btn-lg\">START</button></footer></div>"
+  },
+  {
+   "track": "crew",
+   "option": "A1",
+   "screen": "S02",
+   "name": "Job",
+   "group": "On site",
+   "frame": "phone",
+   "w": 390,
+   "h": 844,
+   "html": "<div class=\"ux-app\" style=\"width:390px;height:844px;display:flex;flex-direction:column\"><header class=\"ux-topbar\" data-c=\"Top bar\"><button class=\"ux-iconbtn\" aria-label=\"Back\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M15 6l-6 6 6 6\"/></svg></button><span class=\"ux-title\">Riverside Plaza</span></header><main class=\"ux-scroll\" style=\"flex:1;padding:24px;display:flex;flex-direction:column;gap:12px\"><h2 class=\"ux-display ux-h2\" data-c=\"Job title\">Fountain service</h2><ul data-c=\"Checklist\" style=\"display:flex;flex-direction:column;gap:8px\"><li class=\"ux-row ux-card\" style=\"border-radius:10px\">Check the pump</li><li class=\"ux-row ux-card\" style=\"border-radius:10px\">Clean the nozzles</li></ul></main><footer style=\"padding:16px\" data-c=\"Action bar\"><button class=\"ux-btn ux-btn-wide ux-btn-lg\">DONE</button></footer></div>"
+  },
+  {
+   "track": "crew",
+   "option": "A2",
+   "screen": "S01",
+   "name": "Today",
+   "group": "Start",
+   "frame": "phone",
+   "w": 390,
+   "h": 844,
+   "html": "<div class=\"ux-app ux-dark\" style=\"width:390px;height:844px;display:flex;flex-direction:column\"><header class=\"ux-topbar\" data-c=\"Top bar\"><span class=\"ux-title\">Sapphire</span></header><main class=\"ux-scroll\" style=\"flex:1;padding:24px;display:flex;flex-direction:column;gap:16px\"><p class=\"ux-eyebrow\" data-c=\"Greeting\">GOOD MORNING</p><h1 class=\"ux-display ux-h1\" data-c=\"Headline\">Your next job</h1><div class=\"ux-card\" style=\"border-radius:10px;padding:16px\" data-c=\"Job card\"><p class=\"ux-strong\">Fountain service, Riverside Plaza</p><p class=\"ux-muted ux-small\">In 40 minutes</p></div></main><footer style=\"padding:16px\" data-c=\"Action bar\"><button class=\"ux-btn ux-btn-wide ux-btn-lg\">START</button></footer></div>"
+  },
+  {
+   "track": "crew",
+   "option": "A2",
+   "screen": "S02",
+   "name": "Job",
+   "group": "On site",
+   "frame": "phone",
+   "w": 390,
+   "h": 844,
+   "html": "<div class=\"ux-app\" style=\"width:390px;height:844px;display:flex;flex-direction:column\"><header class=\"ux-topbar\" data-c=\"Top bar\"><button class=\"ux-iconbtn\" aria-label=\"Back\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M15 6l-6 6 6 6\"/></svg></button><span class=\"ux-title\">Riverside Plaza</span></header><main class=\"ux-scroll\" style=\"flex:1;padding:24px;display:flex;flex-direction:column;gap:12px\"><h2 class=\"ux-display ux-h2\" data-c=\"Job title\">Fountain service</h2><ul data-c=\"Checklist\" style=\"display:flex;flex-direction:column;gap:8px\"><li class=\"ux-row ux-card\" style=\"border-radius:10px\">Check the pump</li><li class=\"ux-row ux-card\" style=\"border-radius:10px\">Clean the nozzles</li></ul></main><footer style=\"padding:16px\" data-c=\"Action bar\"><button class=\"ux-btn ux-btn-wide ux-btn-lg\">FINISH JOB</button></footer></div>"
+  }
+ ],
+ "parts": {
+  "crew:S01": [
+   [
+    1,
+    "Top bar"
+   ],
+   [
+    2,
+    "Greeting"
+   ],
+   [
+    3,
+    "Headline"
+   ],
+   [
+    4,
+    "Job card"
+   ],
+   [
+    5,
+    "Action bar"
+   ]
+  ],
+  "crew:S02": [
+   [
+    1,
+    "Top bar"
+   ],
+   [
+    2,
+    "Job title"
+   ],
+   [
+    3,
+    "Checklist"
+   ],
+   [
+    4,
+    "Action bar"
+   ]
+  ]
+ },
+ "flow": {
+  "nav": {
+   "crew": {
+    "Action bar": {
+     "S01": "S02",
+     "S02": "done:The job is closed and the office is told."
+    },
+    "Job card": "S02"
+   }
+  },
+  "icon": [
+   [
+    "^Back$",
+    "up"
+   ]
+  ],
+  "backto": {
+   "crew": {
+    "S02": "S01"
+   }
+  },
+  "say": {
+   "crew:S01>crew:S02": "One tap from the morning screen to the job."
+  }
+ }
+}

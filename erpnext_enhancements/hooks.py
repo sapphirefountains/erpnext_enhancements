@@ -83,11 +83,21 @@ web_include_js = "login_enhancements.bundle.js"
 # because sync_table inserts a NEW item at its index in the apps' combined list (core
 # navbar_settings.py:58-64), so it lands right after core's four, above "Report a Problem". The
 # route is /desk/<slug of the workspace name>; tests/test_knowledge_base_entry_points.py pins that.
+#
+# Help menu -> "Design Reviews" (WI-079 slice 5): the Review Room at /review, a website app outside
+# the Desk, so an Action opening a new tab rather than a Route. Same index rule: it lands after the
+# knowledge base, before "Report a Problem".
 standard_help_items = [
 	{
 		"item_label": "Company Knowledge Base",
 		"item_type": "Route",
 		"route": "/desk/knowledge-base",
+		"is_standard": 1,
+	},
+	{
+		"item_label": "Design Reviews",
+		"item_type": "Action",
+		"action": "window.open('/review')",
 		"is_standard": 1,
 	},
 	{
@@ -1651,9 +1661,13 @@ extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 # www/marketing.html for the calendar, composer, media library and approval queue, so a
 # refresh at /marketing/post/SPOST-00001 or /marketing/calendar/2026-10 renders it. The client
 # routes itself (public/js/marketing/routes.js); the server never parses the path.
+#
+# /review (WI-079 slice 5, v1.571.0) is the same shape once more: www/review.html for the design
+# Review Room, so a refresh or a shared link at /review/DR-2026-001/learner/L3/S04 renders it.
 website_route_rules = [
 	{"from_route": "/feedback/<path:feedback_path>", "to_route": "feedback"},
 	{"from_route": "/marketing/<path:marketing_path>", "to_route": "marketing"},
+	{"from_route": "/review/<path:review_path>", "to_route": "review"},
 ]
 
 # Jinja methods available to Print Formats / web templates. The print sandbox
@@ -2134,11 +2148,7 @@ fixtures = [
 	},
 	{
 		"dt": "Workflow",
-		# Design Review Lifecycle (WI-079 slice 5): Draft -> Open -> Closed -> Decided on the
-		# review's own `status` field, every move a System Manager's.
-		"filters": [
-			["document_type", "in", ["Sapphire Maintenance Record", "Purchase Invoice", "Payment Entry", "Design Review"]]
-		],
+		"filters": [["document_type", "in", ["Sapphire Maintenance Record", "Purchase Invoice", "Payment Entry"]]],
 	},
 	{
 		"dt": "Workflow State",
@@ -2153,10 +2163,6 @@ fixtures = [
 					"Pending Approval",
 					"Approved",
 					"Rejected",
-					# Design Review Lifecycle (Draft is shared with the maintenance workflow)
-					"Open",
-					"Closed",
-					"Decided",
 				],
 			]
 		],
@@ -2164,22 +2170,7 @@ fixtures = [
 	{
 		"dt": "Workflow Action Master",
 		"filters": [
-			[
-				"name",
-				"in",
-				[
-					"Request Review",
-					"Approve & Submit",
-					"Submit for Approval",
-					"Approve",
-					"Reject",
-					# Design Review Lifecycle
-					"Open for Review",
-					"Close Review",
-					"Record as Decided",
-					"Reopen Review",
-				],
-			]
+			["name", "in", ["Request Review", "Approve & Submit", "Submit for Approval", "Approve", "Reject"]]
 		],
 	},
 	{
@@ -2623,32 +2614,9 @@ permission_query_conditions = {
 	# them too (read), because that person may approve them; HR Manager / Projects
 	# Manager / System Manager see all.
 	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_query_conditions",
-	# Design Review (WI-079 slice 5, ADR 0016 §2): a System User who is not a System Manager
-	# sees a review, and everything hung off it, only if they are on its participant list.
-	# The DocPerms grant read to Desk User and System Manager only, so Website Users and
-	# Guests never reach these filters. Votes, verdicts and notes have no write DocPerm for
-	# any role: api/design_review.py writes them after the participant check.
-	"Design Review": "erpnext_enhancements.design_review.permissions.review_query",
-	"Design Option": "erpnext_enhancements.design_review.permissions.record_query",
-	"Design Screen": "erpnext_enhancements.design_review.permissions.record_query",
-	"Design Part": "erpnext_enhancements.design_review.permissions.record_query",
-	"Design Note": "erpnext_enhancements.design_review.permissions.record_query",
-	"Design Vote": "erpnext_enhancements.design_review.permissions.record_query",
-	"Design Verdict": "erpnext_enhancements.design_review.permissions.record_query",
-	"Design Decision": "erpnext_enhancements.design_review.permissions.record_query",
 }
 
 has_permission = {
-	# Design Review's single-document counterparts of the filters above. v16 reads any falsy
-	# answer, None included, as a denial, so these return True when they have no objection.
-	"Design Review": "erpnext_enhancements.design_review.permissions.has_review_permission",
-	"Design Option": "erpnext_enhancements.design_review.permissions.has_record_permission",
-	"Design Screen": "erpnext_enhancements.design_review.permissions.has_record_permission",
-	"Design Part": "erpnext_enhancements.design_review.permissions.has_record_permission",
-	"Design Note": "erpnext_enhancements.design_review.permissions.has_record_permission",
-	"Design Vote": "erpnext_enhancements.design_review.permissions.has_record_permission",
-	"Design Verdict": "erpnext_enhancements.design_review.permissions.has_record_permission",
-	"Design Decision": "erpnext_enhancements.design_review.permissions.has_record_permission",
 	# The single-document counterpart of the KPI Snapshot query condition above.
 	# A query condition filters lists; this is what refuses a direct read of one
 	# snapshot by name.
@@ -2894,6 +2862,13 @@ assistant_tools = [
 	# and Triton is never offered it (Triton's own PR, _NOT_OFFERED_PREFIXES, deployed before this
 	# merges). See knowledge_base/ai_draft.py and the CHANGELOG for v1.560.0.
 	"erpnext_enhancements.assistant_tools.draft_knowledge_article.DraftKnowledgeArticle",
+	# WI-079 slice 5 (v1.571.0): design review bundles. check_design_review_bundle is a dry run
+	# (EXPLICIT_READONLY); submit_design_review imports one (APP_MUTATING, Medium, prechecked) and runs
+	# only from a confirmed card, as the person who confirmed it, who must be a person with System
+	# Manager. Both take the bundle inline (bundle_json, up to 3 MB) or as a private File (file_name).
+	# Logic in design_review/ai_tools.py; the format in docs/design-review-bundle.md.
+	"erpnext_enhancements.assistant_tools.check_design_review_bundle.CheckDesignReviewBundle",
+	"erpnext_enhancements.assistant_tools.submit_design_review.SubmitDesignReview",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	# event rentals (v1.567.0): read-only. The board (what is going out, holds lapsing, money
 	# state) and the availability check (which fountains are free for given dates).

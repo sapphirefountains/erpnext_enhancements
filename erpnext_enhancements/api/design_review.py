@@ -1,11 +1,12 @@
-"""Design Review endpoints for the Review Room (WI-079 slice 5, ADR 0016 §2).
+"""Design Review endpoints for the Review Room at ``/review`` (WI-079 slice 5, ADR 0016 §2).
 
 Every method is POST-only and a thin wrapper: the participant, status and role checks live in
-``erpnext_enhancements.design_review.service`` so there is one copy of each. Votes, verdicts
-and notes are written **only** here — those doctypes grant no create or write permission to
-any role — and every one is stamped with the session user, never a value from the client.
+``erpnext_enhancements.design_review.service`` so there is one copy of each. Every Design
+doctype grants read to System Manager only and create or write to nobody, so these are the only
+way a participant reads a review or writes a vote, verdict or note, and every write is stamped
+with the session user, never a value from the client.
 
-Called from ``design_review/page/review_room/review_room.js`` by full dotted path.
+Called from ``public/js/design_review/`` (the ``design_review`` bundle) by full dotted path.
 
 Tabs: a new file in ``api/`` takes the ``.editorconfig`` default (see ``api/README.md``).
 """
@@ -17,6 +18,10 @@ import frappe
 from erpnext_enhancements.design_review import service
 
 
+def _parsed(value):
+	return frappe.parse_json(value) if isinstance(value, str) else value
+
+
 @frappe.whitelist(methods=["POST"])
 def list_reviews():
 	"""The reviews you can open: every one for a System Manager, your own for anyone else."""
@@ -25,22 +30,26 @@ def list_reviews():
 
 @frappe.whitelist(methods=["POST"])
 def get_review(review):
-	"""A review's tracks, options, screen list, parts, tallies, notes and decisions."""
+	"""A review's state: status, people, tallies, notes, decisions."""
 	return service.get_review(review)
 
 
 @frappe.whitelist(methods=["POST"])
-def get_screens(review, names):
-	"""Sanitized markup for some of a review's screens, fetched as the viewer needs them."""
-	return service.get_screens(review, frappe.parse_json(names) if isinstance(names, str) else names)
+def get_content(review):
+	"""The review's sanitized screens, codes, click-through rules and stylesheet."""
+	return service.get_content(review)
+
+
+@frappe.whitelist(methods=["POST"])
+def find_people(review, text):
+	"""Employees a participant can name as the person who raised a note."""
+	return service.find_people(review, text)
 
 
 @frappe.whitelist(methods=["POST"])
 def cast_vote(review, track, ranking):
 	"""Rank one track's options. Participants only, while the review is Open."""
-	return service.cast_vote(
-		review, track, frappe.parse_json(ranking) if isinstance(ranking, str) else ranking
-	)
+	return service.cast_vote(review, track, _parsed(ranking))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -62,6 +71,12 @@ def delete_note(note):
 
 
 @frappe.whitelist(methods=["POST"])
+def set_status(review, status):
+	"""Move a review to Draft, Open, Closed or Decided. System Managers only."""
+	return service.set_status(review, status)
+
+
+@frappe.whitelist(methods=["POST"])
 def set_note_status(note, status):
 	"""Accept, reject or mark a note done. System Managers only."""
 	return service.set_note_status(note, status)
@@ -70,15 +85,26 @@ def set_note_status(note, status):
 @frappe.whitelist(methods=["POST"])
 def record_decision(review, title, decision, track=None, option_code=None, notes=None):
 	"""Record what was decided and which notes it carries. System Managers only."""
-	return service.record_decision(review, title, decision, track or None, option_code or None, notes)
+	return service.record_decision(review, title, decision, track or None, option_code or None, _parsed(notes))
 
 
 @frappe.whitelist(methods=["POST"])
-def promote_decision(
-	decision, target_erpnext=0, target_triton=0, request_type="Feature", impact="Nice to have"
-):
+def promote_decision(decision, target_erpnext=0, target_triton=0, request_type="Feature", impact="Nice to have"):
 	"""File a decision as an Enhancement Request, already Approved. A person with System Manager only."""
 	return service.promote_decision(decision, target_erpnext, target_triton, request_type, impact)
+
+
+@frappe.whitelist(methods=["POST"])
+def check_bundle(file_name, review=None):
+	"""Dry-run an uploaded bundle: every check an import makes, nothing written. System Managers only."""
+	service.require_moderator()
+	from erpnext_enhancements.design_review import importer
+
+	try:
+		bundle = importer.parse_bundle_text(frappe.get_doc("File", file_name).get_content())
+		return importer.check_bundle(bundle, review or None)
+	except (importer.BundleError, ValueError) as exc:
+		return {"ok": False, "error": str(exc)}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -87,4 +113,9 @@ def import_review(file_name, review=None):
 	service.require_moderator()
 	from erpnext_enhancements.design_review import importer
 
-	return importer.import_file(file_name, review or None)
+	report = importer.import_file(file_name, review or None)
+	# The upload held the bundle before sanitizing. The import wrote its own sanitized File, so the
+	# original is only a second, unsanitized copy of unreleased designs.
+	if frappe.db.get_value("File", file_name, "attached_to_doctype") in (None, ""):
+		frappe.delete_doc("File", file_name, ignore_permissions=True)
+	return report

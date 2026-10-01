@@ -37,38 +37,5 @@
     "name": "Rejected",
     "workflow_state_name": "Rejected",
     "style": "Danger"
-  },
-  {
-    "creation": "2026-10-01 12:00:00.000000",
-    "docstatus": 0,
-    "doctype": "Workflow State",
-    "modified": "2026-10-01 12:00:00.000000",
-    "modified_by": "Administrator",
-    "name": "Open",
-    "owner": "Administrator",
-    "style": "Success",
-    "workflow_state_name": "Open"
-  },
-  {
-    "creation": "2026-10-01 12:00:00.000000",
-    "docstatus": 0,
-    "doctype": "Workflow State",
-    "modified": "2026-10-01 12:00:00.000000",
-    "modified_by": "Administrator",
-    "name": "Closed",
-    "owner": "Administrator",
-    "style": "Warning",
-    "workflow_state_name": "Closed"
-  },
-  {
-    "creation": "2026-10-01 12:00:00.000000",
-    "docstatus": 0,
-    "doctype": "Workflow State",
-    "modified": "2026-10-01 12:00:00.000000",
-    "modified_by": "Administrator",
-    "name": "Decided",
-    "owner": "Administrator",
-    "style": "Primary",
-    "workflow_state_name": "Decided"
   }
 ]
