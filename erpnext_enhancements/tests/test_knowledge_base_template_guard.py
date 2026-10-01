@@ -545,6 +545,17 @@ class TestOnlyAGenuinePrint(GuardBase):
 				with guard.rendering_print(doc):
 					self.assertFalse(guard.printing_this(doc))
 
+	def test_never_for_an_email_attachment(self):
+		"""The second review: ``attach_print`` sets ``ignore_print_permissions`` and the email queue
+		renders the attachment later as Administrator, with neither Frappe flag up."""
+		doc = _Doc(VERSION, "KBV-1")
+		_reset(ignore_print_permissions=True)
+		with guard.rendering_print(doc):
+			self.assertFalse(guard.printing_this(doc))
+		_reset(ignore_print_permissions=False)
+		with guard.rendering_print(doc):
+			self.assertTrue(guard.printing_this(doc))
+
 	def test_never_outside_a_print(self):
 		_reset()
 		self.assertFalse(guard.printing_this(_Doc(VERSION, "KBV-1")))

@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `pdf_body_html` hook raises a flag around every print format and records the document printed,
   because v16 renders print formats with no flag of its own. It renders with Frappe's own function.
 - The only exemption is the knowledge base's own print of the very version printview is printing, with
-  no template or script around it. No user is exempt: a template rendered in a job runs as Administrator.
+  no template or script around it and printview's permission check not skipped (an email attachment
+  skips it). No user is exempt: a template rendered in a job runs as Administrator.
 - **The runtime monkeypatches now apply in every worker** (`before_request`, `before_job`:
   `monkeypatches.ensure_applied`). v16 serves hooks from the redis cache and imports `hooks.py` only on a
   miss, so a worker that never missed ran without any of them, the two older patches included.

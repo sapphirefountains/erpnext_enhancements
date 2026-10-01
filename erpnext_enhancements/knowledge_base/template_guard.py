@@ -41,8 +41,9 @@ holds one of those, so the drafts are refused to all of them here, in one place.
 
 **The one exemption** is the knowledge base's own print global, ``printing.kb_document``, and only
 for a genuine print of the very document being printed (:func:`printing_this`): the print flag up,
-neither Frappe flag up (a print requested from inside a template or a script is not genuine), and the
-same object printview handed the template. A Jinja global is callable from every template, and a
+neither Frappe flag up (a print requested from inside a template or a script is not genuine), the
+same object printview handed the template, and printview's own permission check not skipped (an
+email attachment, ``attach_print``, skips it and renders as Administrator). A Jinja global is callable from every template, and a
 template rendered in a job runs as Administrator, whose permission check passes everything, so
 "the session may read it" is no exemption by itself. A template cannot raise any of these flags: its
 ``frappe.flags`` is a fresh dict, never the request's.
@@ -187,9 +188,14 @@ def guarded_context(flags):
 
 def printing_this(doc, flags=None):
 	"""Whether ``doc`` is the very document a genuine print is rendering now: the print flag up, no
-	template or script around it, and ``doc`` the object printview handed the template."""
+	template or script around it, ``doc`` the object printview handed the template, and the print's
+	permission checked. ``attach_print`` (an email's or a Notification's attachment, rendered later
+	in a job as Administrator) sets ``ignore_print_permissions`` and skips printview's check, so it is
+	no genuine print: the attachment falls through to the guard."""
 	flags = _flags() if flags is None else flags
 	if not flags or not flags.get(PRINT_FLAG) or any(flags.get(flag) for flag in FRAPPE_FLAGS):
+		return False
+	if flags.get("ignore_print_permissions"):
 		return False
 	printing = flags.get(PRINTING_DOCS) or []
 	return bool(printing) and printing[-1] is doc
