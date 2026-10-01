@@ -75,7 +75,7 @@ def validate_review(doc) -> None:
 	before = doc.get_doc_before_save()
 	if before is None:
 		return
-	changed = [f for f in CONTENT_FIELDS if (doc.get(f) or "") != (before.get(f) or "")]
+	changed = [f for f in CONTENT_FIELDS if _comparable(f, doc.get(f)) != _comparable(f, before.get(f))]
 	if changed:
 		frappe.throw(
 			_("A review's content changes only by importing a new revision, so the sanitized copy is the only copy ({0}).").format(
@@ -83,6 +83,28 @@ def validate_review(doc) -> None:
 			),
 			frappe.ValidationError,
 		)
+
+
+def _comparable(field: str, value):
+	"""A content field's value in one type, whichever way it arrived.
+
+	The stored document holds ``imported_at`` as a datetime and ``revision`` as an int, but a save
+	from the Desk form (or ``frappe.client.save``) sends them back as text, and Frappe does not cast
+	a Datetime on the way in. Compared raw, every form save after an import looked like an edit to
+	the content and was refused, so participants could not be added and no review could be opened
+	(v1.572.1).
+	"""
+	if value in (None, ""):
+		return ""
+	if field == "imported_at":
+		from frappe.utils import get_datetime
+
+		return get_datetime(value).replace(microsecond=0)
+	if field == "revision":
+		from frappe.utils import cint
+
+		return cint(value)
+	return str(value)
 
 
 # ---------------------------------------------------------------- gates

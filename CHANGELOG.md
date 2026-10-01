@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.572.1] - 2026-10-01
+
+### Fixed
+
+- **A design review could not be saved from its Desk form after an import**, so no participant
+  could be added and no review could be opened (v1.571.0). `service.validate_review` refuses any
+  edit to the import-only content fields. It compared them raw. The stored document holds
+  `imported_at` as a datetime and `revision` as an int, but the form (and `frappe.client.save`)
+  sends both back as text, and Frappe does not cast a Datetime on the way in. So every save looked
+  like an edit to `imported_at` and was refused with "A review's content changes only by importing
+  a new revision". The fields are now compared by value: datetimes as datetimes, revision as an
+  integer. A real edit to the content is still refused, and
+  `tests/test_design_review_access.py` pins both cases. Found on production while adding the first
+  participants to the Training review, DR-2026-001.
+
 ## [1.572.0] - 2026-10-01
 
 **Ring any number with the desk, and make an incoming call hard to miss.** Inbound calls already
