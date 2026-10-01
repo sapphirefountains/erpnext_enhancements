@@ -127,9 +127,27 @@ def _patch_private_files_are_never_served_inline():
     _frappe_response.send_private_file = send_private_file
 
 
+def _patch_templates_cannot_read_kb_drafts():
+    """Refuse any query naming the knowledge base's drafts table while a template, a script or a
+    print format runs (2026-10-01).
+
+    Every Jinja template the server renders, every Server Script and every print format gets
+    Frappe's scripting globals, which read tables with no permission check, and not every role that
+    may write a stored template can open a draft. Every read ends in ``Database.sql``, holding the
+    final query string, so that is where the guard sits; it costs one flag lookup per query outside
+    those contexts. ``File.get_content`` is wrapped the same way for a File attached to a draft. The
+    rule, the flags it reads and what it leaves open are ``knowledge_base/template_guard.py``; the
+    print-format flag is its ``pdf_body_html`` hook.
+    """
+    from erpnext_enhancements.knowledge_base import template_guard
+
+    template_guard.patch_database_sql()
+
+
 _PATCHES = (
     _patch_get_modules_from_app_none_safe,
     _patch_private_files_are_never_served_inline,
+    _patch_templates_cannot_read_kb_drafts,
 )
 
 

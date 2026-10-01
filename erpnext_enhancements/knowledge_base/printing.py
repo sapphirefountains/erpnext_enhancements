@@ -60,7 +60,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, get_fullname, getdate, nowdate
 
-from erpnext_enhancements.knowledge_base import constants, content, document, workflow
+from erpnext_enhancements.knowledge_base import constants, content, document, template_guard, workflow
 
 ARTICLE = constants.ARTICLE_DOCTYPE
 VERSION = constants.VERSION_DOCTYPE
@@ -79,10 +79,19 @@ _IMAGE_SOURCE = re.compile(r"(<img\b[^>]*?\ssrc\s*=\s*)([\"'])(.*?)\2", re.IGNOR
 
 def kb_document(doc):
 	"""The Jinja global both print formats call: the article or version ``doc`` names, as saved,
-	drawn in its kind's template. Anything that is not one of the two doctypes draws nothing."""
+	drawn in its kind's template. Anything that is not one of the two doctypes draws nothing.
+
+	It runs inside a print format, where ``template_guard`` refuses every read of the drafts' table
+	(2026-10-01), so it takes the knowledge base's own exemption for its own reads, and only for them:
+	the permission check in :func:`_saved` is what decides who sees a draft."""
 	doctype = getattr(doc, "doctype", None)
 	if doctype not in (ARTICLE, VERSION):
 		return ""
+	with template_guard.reading_drafts():
+		return _draw(doctype, doc)
+
+
+def _draw(doctype, doc):
 	saved = _saved(doctype, doc)
 	if doctype == ARTICLE:
 		sheet = article_sheet(saved)

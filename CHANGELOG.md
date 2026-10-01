@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.569.1] - 2026-10-01
+
+**Security: templates, scripts and print formats can no longer read knowledge base drafts.**
+
+- `knowledge_base/template_guard.py`, applied at startup by `monkeypatches.py`, wraps `Database.sql`
+  and refuses any query naming the drafts' table while a stored Jinja template renders, a Server
+  Script or Script Report runs, or a print format renders; `File.get_content` is refused the same way
+  for a file attached to a draft. Frappe v16 gives all three contexts globals that read tables without
+  a permission check. Every read reaches `Database.sql` with its final query string, so the check holds
+  however a template assembles it, and only the table is matched, so Frappe's own reads about the
+  doctype still work.
+- A new `pdf_body_html` hook raises a flag around every print format, because v16 renders print
+  formats with no flag of its own (unlike `frappe.render_template`). It renders with Frappe's own
+  function and changes nothing else.
+- The knowledge base's own print global, `printing.kb_document`, takes a scoped exemption around its
+  own reads; it checks read permission itself. No user is exempt, because a template rendered in a
+  job runs as Administrator.
+- A refusal logs one deferred Error Log ("Knowledge base drafts refused") naming the user and the kind
+  of context, never the query.
+
+Tests: `tests/test_knowledge_base_template_guard.py` (own CI step); the document suite checks
+`kb_document` holds the exemption only while it draws.
+
 ## [1.569.0] - 2026-09-30
 
 **Knowledge articles print, preview and open as the company register's templates.** Nik asked whether

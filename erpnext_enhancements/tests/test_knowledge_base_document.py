@@ -532,6 +532,7 @@ def _reset():
 			"contents": {},
 			"paths": {},
 			"content_reads": [],
+			"exempt_while_asked": [],
 		}
 	)
 
@@ -550,6 +551,7 @@ def _get_doc(doctype, name=None):
 
 def _has_permission(doctype, ptype="read", doc=None, **kwargs):
 	STATE["permission_asked"].append((doctype, ptype, getattr(doc, "name", None), getattr(doc, "body", None)))
+	STATE["exempt_while_asked"].append(sys.modules["frappe"].local.flags.get("kb_reads_drafts"))
 	return doctype in STATE["readable"]
 
 
@@ -585,6 +587,8 @@ def _install_frappe_stub():
 	frappe.get_doc = _get_doc
 	frappe.get_all = _get_all
 	frappe.has_permission = _has_permission
+	# template_guard's exemption counter (2026-10-01) lives on the request's flags.
+	frappe.local = types.SimpleNamespace(flags={})
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(float(v)) if v not in (None, "") and str(v).strip() else 0
 	utils.get_fullname = lambda user=None: STATE["names"].get(user, user)
@@ -690,6 +694,21 @@ class TestKbDocumentDrawsTheSavedRecord(GlueBase):
 		self.assertNotIn("Forged", page)
 		self.assertNotIn("KBV-99999", page)
 		self.assertEqual(STATE["permission_asked"], [("Knowledge Article", "read", "SOP-06-0001", SOP_BODY)])
+
+	def test_it_holds_the_drafts_exemption_while_it_draws_and_only_then(self):
+		"""Inside a print format ``template_guard`` refuses every read of the drafts' table; the global
+		takes the knowledge base's exemption for its own reads, and gives it up even when it refuses."""
+		_stored_version()
+		printing.kb_document(_Doc({"doctype": "Knowledge Article Version", "name": "KBV-00002"}))
+		self.assertEqual(STATE["exempt_while_asked"], [1])
+		flags = sys.modules["frappe"].local.flags
+		self.assertEqual(flags.get("kb_reads_drafts"), 0)
+		STATE["readable"] = set()
+		with self.assertRaises(PermissionRefused):
+			printing.kb_document(_Doc({"doctype": "Knowledge Article Version", "name": "KBV-00002"}))
+		self.assertEqual(flags.get("kb_reads_drafts"), 0)
+		self.assertEqual(printing.kb_document(_Doc({"doctype": "Sales Invoice", "name": "X"})), "")
+		self.assertEqual(flags.get("kb_reads_drafts"), 0)
 
 	def test_a_reader_who_cannot_read_it_is_refused(self):
 		_stored_version()

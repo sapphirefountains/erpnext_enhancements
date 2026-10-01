@@ -1776,6 +1776,13 @@ jinja = {
 	],
 }
 
+# Every print format renders through this hook (www/printview.py get_rendered_template takes the
+# LAST app's entry). Ours renders with the previous entry (frappe's own utils/pdf.py) and raises a
+# flag while it does, because v16 renders a print format with no flag of its own, unlike
+# frappe.render_template: knowledge_base/template_guard.py then refuses any read of the knowledge
+# base's drafts table from inside a print format (2026-10-01). It changes nothing else.
+pdf_body_html = "erpnext_enhancements.knowledge_base.template_guard.pdf_body_html"
+
 # Run BEFORE each `bench migrate` (in pre_schema_updates, before fixture sync).
 before_migrate = [
 	# Rebuild the app -> modules map from every app's modules.txt BEFORE model sync.
@@ -2944,14 +2951,18 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently two:
+# monkeypatches.py for what/why — currently three:
 #   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
 #      get_modules_from_all_apps and the app switcher;
 #   2. force-download every executable attachment type from /private/files/ and
 #      set `nosniff`. v16's list is four extensions; frappe's develop widened it
 #      to fourteen, and the seven in the gap are served INLINE from our own
 #      origin with a scriptable Content-Type. nginx cannot hold this fix —
-#      startup_script.sh regenerates its config from bench's template on boot.
+#      startup_script.sh regenerates its config from bench's template on boot;
+#   3. refuse any query naming the knowledge base's drafts table while a template,
+#      a script or a print format runs (2026-10-01), and a draft File's bytes there:
+#      their globals read tables with no permission check. Wraps Database.sql and
+#      File.get_content; see knowledge_base/template_guard.py.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches
 
 _apply_monkeypatches()

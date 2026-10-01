@@ -980,6 +980,15 @@ jobs:
       # chrome pin. Own step: it installs its own frappe stub.
       - name: Knowledge base document (print, preview and the form, in the register's templates)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_document -v
+      # v1.569.1: templates, scripts and print formats never read knowledge base drafts. The
+      # Database.sql wrapper (template_guard, applied by monkeypatches.py): the drafts' table matched
+      # however a query writes it and never as a value, each guarded context (Frappe's
+      # in_render_safe_exec and in_safe_exec, our print flag) refusing, the knowledge base's own
+      # exemption passing, the original untouched elsewhere, a refusal naming nothing of the query;
+      # File.get_content for a draft's file; the pdf_body_html hook handing on with its flag up. Own
+      # step: it installs its own frappe stub.
+      - name: Knowledge base template guard (no template, script or print format reads a draft)
+        run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_template_guard -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
       # frappe would have built, so an object literal without a `doctype` key goes to
       # frappe.client.save as-is and raises `"doctype" is a required key` before the
