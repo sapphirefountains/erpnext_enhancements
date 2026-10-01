@@ -81,14 +81,20 @@ def kb_document(doc):
 	"""The Jinja global both print formats call: the article or version ``doc`` names, as saved,
 	drawn in its kind's template. Anything that is not one of the two doctypes draws nothing.
 
-	It runs inside a print format, where ``template_guard`` refuses every read of the drafts' table
-	(2026-10-01), so it takes the knowledge base's own exemption for its own reads, and only for them:
-	the permission check in :func:`_saved` is what decides who sees a draft."""
+	Inside a print format ``template_guard`` refuses every read of the drafts' table (2026-10-01). A
+	version's preview takes the knowledge base's exemption for its own reads, and only when it is a
+	genuine print of that very version (``template_guard.printing_this``: the print flag up, no
+	template or script around it, and ``doc`` the object printview handed the template). This is a
+	Jinja global, callable from any template, and a template rendered in a job runs as Administrator,
+	whom :func:`_saved`'s permission check never refuses; so anywhere else its reads go through the
+	guard like any template's. An article needs no exemption: its page reads no draft."""
 	doctype = getattr(doc, "doctype", None)
 	if doctype not in (ARTICLE, VERSION):
 		return ""
-	with template_guard.reading_drafts():
-		return _draw(doctype, doc)
+	if doctype == VERSION and template_guard.printing_this(doc):
+		with template_guard.reading_drafts():
+			return _draw(doctype, doc)
+	return _draw(doctype, doc)
 
 
 def _draw(doctype, doc):

@@ -11,24 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Security: templates, scripts and print formats can no longer read knowledge base drafts.**
 
-- `knowledge_base/template_guard.py`, applied at startup by `monkeypatches.py`, wraps `Database.sql`
-  and refuses any query naming the drafts' table while a stored Jinja template renders, a Server
-  Script or Script Report runs, or a print format renders; `File.get_content` is refused the same way
-  for a file attached to a draft. Frappe v16 gives all three contexts globals that read tables without
-  a permission check. Every read reaches `Database.sql` with its final query string, so the check holds
-  however a template assembles it, and only the table is matched, so Frappe's own reads about the
-  doctype still work.
-- A new `pdf_body_html` hook raises a flag around every print format, because v16 renders print
-  formats with no flag of its own (unlike `frappe.render_template`). It renders with Frappe's own
-  function and changes nothing else.
-- The knowledge base's own print global, `printing.kb_document`, takes a scoped exemption around its
-  own reads; it checks read permission itself. No user is exempt, because a template rendered in a
-  job runs as Administrator.
-- A refusal logs one deferred Error Log ("Knowledge base drafts refused") naming the user and the kind
-  of context, never the query.
+- `knowledge_base/template_guard.py`, applied by `monkeypatches.py`, wraps `Database.execute_query`, the
+  one place every MariaDB statement reaches the driver, and refuses a statement that reads the drafts'
+  table while a stored Jinja template renders, a Server Script or Script Report runs, or a print format
+  renders. Frappe v16 gives all three globals that read tables without a permission check. It checks the
+  statement as the driver will send it (the cursor's own `mogrify`), because the driver applies Python
+  `%` formatting and a directive that prints nothing could otherwise rejoin a table name split to pass a
+  check of the query alone. A write may target a draft (Frappe's own updates of one run inside scripts)
+  but may not read one. The server's view of statements in flight is refused there too.
+- Drafts are never put in the document cache, so `frappe.get_cached_doc` cannot hand one to a template
+  without a statement; `File.get_content` refuses a draft's file in the same contexts.
+- A `pdf_body_html` hook raises a flag around every print format and records the document printed,
+  because v16 renders print formats with no flag of its own. It renders with Frappe's own function.
+- The only exemption is the knowledge base's own print of the very version printview is printing, with
+  no template or script around it. No user is exempt: a template rendered in a job runs as Administrator.
+- **The runtime monkeypatches now apply in every worker** (`before_request`, `before_job`:
+  `monkeypatches.ensure_applied`). v16 serves hooks from the redis cache and imports `hooks.py` only on a
+  miss, so a worker that never missed ran without any of them, the two older patches included.
+- A refusal logs one deferred Error Log ("Knowledge base drafts refused") naming the user and the kind of
+  context, never the query.
 
 Tests: `tests/test_knowledge_base_template_guard.py` (own CI step); the document suite checks
-`kb_document` holds the exemption only while it draws.
+`kb_document` is exempt only in a genuine print of that version.
 
 ## [1.569.0] - 2026-09-30
 

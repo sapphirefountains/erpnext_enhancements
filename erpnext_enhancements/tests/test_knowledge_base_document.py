@@ -695,19 +695,32 @@ class TestKbDocumentDrawsTheSavedRecord(GlueBase):
 		self.assertNotIn("KBV-99999", page)
 		self.assertEqual(STATE["permission_asked"], [("Knowledge Article", "read", "SOP-06-0001", SOP_BODY)])
 
-	def test_it_holds_the_drafts_exemption_while_it_draws_and_only_then(self):
-		"""Inside a print format ``template_guard`` refuses every read of the drafts' table; the global
-		takes the knowledge base's exemption for its own reads, and gives it up even when it refuses."""
+	def test_the_drafts_exemption_only_in_a_genuine_print_of_that_version(self):
+		"""Inside a print format ``template_guard`` refuses every read of the drafts' table. The global
+		takes the knowledge base's exemption only when printview is printing this very object, with no
+		template or script around it (2026-10-01 review: a Jinja global is callable from any template,
+		and a template in a job runs as Administrator)."""
+		from erpnext_enhancements.knowledge_base import template_guard
+
 		_stored_version()
-		printing.kb_document(_Doc({"doctype": "Knowledge Article Version", "name": "KBV-00002"}))
-		self.assertEqual(STATE["exempt_while_asked"], [1])
 		flags = sys.modules["frappe"].local.flags
+		printed = _Doc({"doctype": "Knowledge Article Version", "name": "KBV-00002"})
+		with template_guard.rendering_print(printed):
+			printing.kb_document(printed)
+			printing.kb_document(_Doc({"doctype": "Knowledge Article Version", "name": "KBV-00002"}))
+		printing.kb_document(printed)
+		flags["in_render_safe_exec"] = 1
+		try:
+			with template_guard.rendering_print(printed):
+				printing.kb_document(printed)
+		finally:
+			flags["in_render_safe_exec"] = 0
+		# Exempt for the genuine print only; not for another object, outside a print, or in a template.
+		self.assertEqual([bool(x) for x in STATE["exempt_while_asked"]], [True, False, False, False])
 		self.assertEqual(flags.get("kb_reads_drafts"), 0)
 		STATE["readable"] = set()
-		with self.assertRaises(PermissionRefused):
-			printing.kb_document(_Doc({"doctype": "Knowledge Article Version", "name": "KBV-00002"}))
-		self.assertEqual(flags.get("kb_reads_drafts"), 0)
-		self.assertEqual(printing.kb_document(_Doc({"doctype": "Sales Invoice", "name": "X"})), "")
+		with template_guard.rendering_print(printed), self.assertRaises(PermissionRefused):
+			printing.kb_document(printed)
 		self.assertEqual(flags.get("kb_reads_drafts"), 0)
 
 	def test_a_reader_who_cannot_read_it_is_refused(self):

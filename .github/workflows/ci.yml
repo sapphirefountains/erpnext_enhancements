@@ -980,13 +980,14 @@ jobs:
       # chrome pin. Own step: it installs its own frappe stub.
       - name: Knowledge base document (print, preview and the form, in the register's templates)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_document -v
-      # v1.569.1: templates, scripts and print formats never read knowledge base drafts. The
-      # Database.sql wrapper (template_guard, applied by monkeypatches.py): the drafts' table matched
-      # however a query writes it and never as a value, each guarded context (Frappe's
-      # in_render_safe_exec and in_safe_exec, our print flag) refusing, the knowledge base's own
-      # exemption passing, the original untouched elsewhere, a refusal naming nothing of the query;
-      # File.get_content for a draft's file; the pdf_body_html hook handing on with its flag up. Own
-      # step: it installs its own frappe stub.
+      # v1.569.1: templates, scripts and print formats never read knowledge base drafts.
+      # template_guard (applied by monkeypatches.py, in every request and job): the statement checked
+      # as the driver sends it, so a table name split with % directives the driver rejoins is refused;
+      # a write may target a draft but read none; the server's view of statements refused; no draft
+      # in the document cache; File.get_content for a draft's file; each guarded context (Frappe's
+      # in_render_safe_exec and in_safe_exec, our print flag) refusing; the exemption only for a
+      # genuine print of the object printview handed the template; the pdf_body_html hook; and
+      # ensure_applied from before_request and before_job. Own step: it installs its own frappe stub.
       - name: Knowledge base template guard (no template, script or print format reads a draft)
         run: python -m unittest erpnext_enhancements.tests.test_knowledge_base_template_guard -v
       # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
