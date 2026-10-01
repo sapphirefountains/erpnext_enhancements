@@ -32,6 +32,7 @@ from erpnext_enhancements.product_feedback.states import (
 	assert_transition,
 	is_legal,
 	is_open,
+	may_insert_with,
 )
 
 APP = Path(__file__).resolve().parents[1]
@@ -138,6 +139,25 @@ class TestTransitions(unittest.TestCase):
 		"""A row loaded before the default applied must not raise on save."""
 		self.assertTrue(is_legal("", RequestState.APPROVED.value))
 		self.assertTrue(is_open(""))
+class TestInsertRule(unittest.TestCase):
+	"""ADR 0016 §2: a request is born Submitted, or Approved only as a promoted design decision."""
+
+	def test_submitted_is_always_allowed(self):
+		for source in ("Feedback form", "Capture", "Design Review", ""):
+			self.assertTrue(may_insert_with("Submitted", source, False))
+		self.assertTrue(may_insert_with("", "Feedback form", False))
+
+	def test_approved_needs_design_review_and_a_human_system_manager(self):
+		self.assertTrue(may_insert_with("Approved", "Design Review", True))
+		self.assertFalse(may_insert_with("Approved", "Design Review", False))
+		self.assertFalse(may_insert_with("Approved", "Feedback form", True))
+		self.assertFalse(may_insert_with("Approved", "Capture", True))
+
+	def test_no_other_state_can_be_born(self):
+		for status in ("Breakdown Ready", "Breakdown Failed", "Tasks Created", "Rejected", "Duplicate", "Bogus"):
+			self.assertFalse(may_insert_with(status, "Design Review", True), status)
+
+
 class TestTheDerivedLabelIsNotAStatus(unittest.TestCase):
 	"""The SPA shows a label this machine deliberately cannot produce.
 

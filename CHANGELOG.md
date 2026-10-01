@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.570.0] - 2026-10-01
+
+**Design reviews move into ERPNext: the Review Room (WI-079 slice 5, ADR 0016 §2).** Nik asked for the
+training UX votes and notes to live in ERPNext instead of claude.ai artifacts. The September concept
+reviews ran as artifact ballots that kept their votes outside ERPNext and needed proxy voting because
+the company has no Claude accounts. Now everyone who votes signs in to the Desk.
+
+- **A new `Design Review` module** with ten doctypes: Design Review (participants, tracks, a sanitized
+  stylesheet and click-through rules), Design Option, Design Screen, Design Part, Design Note, Design
+  Vote, Design Verdict and Design Decision. The **Design Review Lifecycle** Workflow moves a review
+  Draft → Open → Closed → Decided on its own `status` field; every move is a System Manager's.
+- **The Review Room**, `/desk/review-room`. A participant ranks each track's options, gives a Yes,
+  Maybe or No per screen, and pins notes to parts by element code (`L3-S04-E05`), optionally naming the
+  Employee who raised it. Clicking a concept's buttons moves through its screens the way the claude.ai
+  Concept Viewer did, because its click-through rules are imported with the review. Every view is a
+  route, so Back and Forward work.
+- **Security.** Concept screens are model-written HTML rendered in the Desk's origin. They are
+  sanitized on import (`design_review/sanitize.py`, an allowlist built on the stdlib parser and
+  re-serialized, never patched with a regex), and drawn in `<iframe sandbox="allow-same-origin">`,
+  never with `allow-scripts`, carrying `Content-Security-Policy: default-src 'none'`. The spike
+  recorded in WI-079 found the policy is required: without it, an unsanitized screen in a sandboxed
+  frame still made network requests. With it, Chrome blocked them before sending.
+- **Access.** Read is granted only to `Desk User` (v16's automatic role for System Users) and System
+  Manager. Hooks then restrict other System Users to reviews they participate in. Votes, verdicts and
+  notes have no write DocPerm for any role. `api/design_review.py` writes them after checking
+  participation and that the review is Open, stamped with the session user. A System Manager who is
+  not a participant moderates but does not vote. v16 reads a `None` from a `has_permission` hook as a
+  denial (`frappe/permissions.py`, `has_controller_permissions`), so the hooks return `True` when they
+  have no objection.
+- **Element codes are append-only.** An import that would renumber or rename an existing part is
+  refused whole, before anything is written, so a note keeps pointing at the same part across
+  revisions.
+- **Promotion.** A human System Manager promotes a Decision. `file_request` gains `approve=True`, which
+  files the request `Approved` with the promoter as `decided_by`, requires a target board, sends no
+  "waiting for review" notice and queues the breakdown itself. `EnhancementRequest.validate` gets its
+  first insert-time rule (`states.may_insert_with`): a new request is `Submitted` unless it is a Design
+  Review promotion by a human System Manager. `triton@`, `mdm@` and `Administrator` hold System Manager
+  but cannot promote (`design_review/authority.py`). A promoted request's Claude Code brief carries the
+  decision's notes by element code, with no names.
+- **`scripts/design_review/`**: the exporter that turns the Concept Viewer's generator into an
+  importable bundle, and a browser test that drives the real Review Room page in headless Chrome with
+  real mouse input against a bundle (28 checks, including clicks inside the sandboxed frames and
+  Back/Forward).
+
+Not in this release: importing the other four artifact-era reviews and the artifacts' own ballots and
+notes. The importer already accepts them; see WI-079.
+
+Tests: `test_design_review_sanitize` and `test_design_review_codes` (stdlib),
+`test_design_review_access` (frappe stub, own CI step); `test_feedback_states` covers the insert rule;
+`test_feedback_endpoint_surface` now scans the Design Review module, and fails when a Task writer is
+added there.
+
 ## [1.569.1] - 2026-10-01
 
 **Security: templates, scripts and print formats can no longer read knowledge base drafts.**

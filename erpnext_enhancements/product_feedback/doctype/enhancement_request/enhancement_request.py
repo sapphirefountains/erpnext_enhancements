@@ -36,6 +36,7 @@ from erpnext_enhancements.product_feedback.states import (
 	IllegalTransition,
 	RequestState,
 	assert_transition,
+	may_insert_with,
 )
 
 #: Who filed it, and what their browser said at the time. Frozen after insert — see the
@@ -61,6 +62,7 @@ class EnhancementRequest(Document):
 	def validate(self) -> None:
 		if self.is_new():
 			self._default_requester()
+			self._refuse_unearned_status()
 			return
 		self._stamp_terminal_at()
 		before = self.get_doc_before_save()
@@ -81,6 +83,28 @@ class EnhancementRequest(Document):
 			self.requested_by = frappe.session.user
 		if not self.get("requested_at"):
 			self.requested_at = frappe.utils.now_datetime()
+
+	def _refuse_unearned_status(self) -> None:
+		"""A new request is ``Submitted`` — unless it is a design decision a human System
+		Manager promoted, which is filed ``Approved`` (ADR 0016 §2, WI-079 slice 5).
+
+		The first insert-time rule this controller has had. ``api.feedback.file_request`` is the
+		only writer and always passes one of those two, so this is the second lock on the
+		door: a Desk form, a data import or an API ``insert`` cannot mint an approved request,
+		and neither can ``triton@``, which holds System Manager for its sync work.
+		"""
+		from erpnext_enhancements.design_review.authority import is_human_system_manager
+
+		user = frappe.session.user
+		human = is_human_system_manager(user, frappe.get_roles(user))
+		if not may_insert_with(self.get("status"), self.get("source"), human):
+			frappe.throw(
+				frappe._(
+					"A new enhancement request starts as Submitted. Only a design decision promoted "
+					"by a person with the System Manager role may start as Approved."
+				),
+				frappe.PermissionError,
+			)
 
 	def _stamp_terminal_at(self) -> None:
 		"""When the request closed: the clock the capture retention job runs on (WI-079).

@@ -23,5 +23,25 @@
     "doctype": "Workflow Action Master",
     "name": "Reject",
     "workflow_action_name": "Reject"
+  },
+  {
+    "doctype": "Workflow Action Master",
+    "name": "Open for Review",
+    "workflow_action_name": "Open for Review"
+  },
+  {
+    "doctype": "Workflow Action Master",
+    "name": "Close Review",
+    "workflow_action_name": "Close Review"
+  },
+  {
+    "doctype": "Workflow Action Master",
+    "name": "Record as Decided",
+    "workflow_action_name": "Record as Decided"
+  },
+  {
+    "doctype": "Workflow Action Master",
+    "name": "Reopen Review",
+    "workflow_action_name": "Reopen Review"
   }
 ]

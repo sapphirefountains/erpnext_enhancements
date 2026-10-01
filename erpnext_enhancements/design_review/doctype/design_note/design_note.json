@@ -1,0 +1,195 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-10-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "review",
+  "track",
+  "code",
+  "option_code",
+  "screen_code",
+  "part_number",
+  "part_name",
+  "column_break_who",
+  "status",
+  "author",
+  "raised_by",
+  "decided_by",
+  "promoted_request",
+  "text_section",
+  "text",
+  "imported_section",
+  "is_imported",
+  "imported_by_name",
+  "imported_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "review",
+   "fieldtype": "Link",
+   "label": "Design Review",
+   "options": "Design Review",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "track",
+   "fieldtype": "Data",
+   "label": "Track",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "code",
+   "fieldtype": "Data",
+   "label": "Element code",
+   "read_only": 1,
+   "in_list_view": 1,
+   "search_index": 1,
+   "description": "For example L3-S04-E05."
+  },
+  {
+   "fieldname": "option_code",
+   "fieldtype": "Data",
+   "label": "Option",
+   "read_only": 1
+  },
+  {
+   "fieldname": "screen_code",
+   "fieldtype": "Data",
+   "label": "Screen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "part_number",
+   "fieldtype": "Int",
+   "label": "Part",
+   "read_only": 1
+  },
+  {
+   "fieldname": "part_name",
+   "fieldtype": "Data",
+   "label": "Part name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nAccepted\nRejected\nDone",
+   "default": "Open",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "author",
+   "fieldtype": "Link",
+   "label": "Typed by",
+   "options": "User",
+   "read_only": 1,
+   "description": "The participant who wrote it. Always the session user; never supplied by the client."
+  },
+  {
+   "fieldname": "raised_by",
+   "fieldtype": "Link",
+   "label": "Raised by",
+   "options": "Employee",
+   "read_only": 1,
+   "description": "Someone in the meeting who said it, who need not have a login. Optional."
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Status set by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "promoted_request",
+   "fieldtype": "Link",
+   "label": "Enhancement Request",
+   "options": "Enhancement Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "text_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "text",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "imported_section",
+   "fieldtype": "Section Break",
+   "label": "Imported from an earlier ballot",
+   "collapsible": 1,
+   "depends_on": "eval:doc.is_imported"
+  },
+  {
+   "fieldname": "is_imported",
+   "fieldtype": "Check",
+   "label": "Imported",
+   "read_only": 1,
+   "default": "0",
+   "description": "Recorded on a claude.ai ballot before reviews moved into ERPNext. Shown apart from live entries and never counted as a participant's own."
+  },
+  {
+   "fieldname": "imported_by_name",
+   "fieldtype": "Data",
+   "label": "Recorded on the ballot as",
+   "read_only": 1
+  },
+  {
+   "fieldname": "imported_from",
+   "fieldtype": "Data",
+   "label": "Ballot URL",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Design Review",
+ "name": "Design Note",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 0,
+   "email": 0,
+   "share": 0
+  },
+  {
+   "role": "Desk User",
+   "read": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:DN-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "code"
+}
