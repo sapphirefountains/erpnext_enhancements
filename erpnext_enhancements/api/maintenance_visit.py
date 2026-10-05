@@ -283,7 +283,8 @@ def _section_meta(doc):
 
     Keyed by Section docname (the ``section`` link every visit row carries):
     {title, type, instructions (Text Editor HTML), images:[{image, caption}],
-    location: {note, photo, latitude, longitude} or None}. Instructions/images
+    location: {note, photo, latitude, longitude} or None, order: the section's
+    position in the record's template, or None}. Instructions/images
     come from the Section library (write once, used everywhere); the location
     comes from the record's resolved template's step row — templates are
     customer/project-scoped, so each site's form carries its own spots. Only
@@ -319,7 +320,11 @@ def _section_meta(doc):
     # Step locations live on the resolved template's section rows. A Per Site
     # Visit can mix per-feature templates; the header template's spots are
     # shown (a section's location rarely differs between a site's templates).
+    # The same rows give each section its place in the template, which the
+    # wizard uses to put the Cleaning and Inspection steps in the order the
+    # template lists them (Water Chemistry is always first, Chemicals Used last).
     locations = {}
+    positions = {}
     if doc.get("template"):
         for row in frappe.get_all(
             "Sapphire Template Section",
@@ -327,6 +332,7 @@ def _section_meta(doc):
             fields=["section", "location_note", "location_photo", "latitude", "longitude"],
             order_by="idx asc",
         ):
+            positions.setdefault(row.section, len(positions))
             if row.section in locations:
                 continue
             if row.location_note or row.location_photo or (row.latitude and row.longitude):
@@ -344,6 +350,7 @@ def _section_meta(doc):
             "instructions": row.step_instructions,
             "images": images_by_section.get(row.name, []),
             "location": locations.get(row.name),
+            "order": positions.get(row.name),
         }
         for row in rows
     }
