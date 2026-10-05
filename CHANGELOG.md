@@ -41,7 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vacuuming, and to clean the upper tier too. The template "Utah State Capitol - Oval Fountain
   Service" runs pH & ORP, then the basin, the equipment room, the wrap-up checks and chemical
   dosing. Its safety notes include the wedding blackout: no service on days marked "CAP Central
-  Plaza" on the Capitol events calendar.
+  Plaza" on the Capitol events calendar. Its Maintenance Contract is Bi-Weekly from 2026-10-05 and
+  bills Per Visit. The agreement says "$280 per visit, invoiced monthly", but Monthly invoicing here
+  bills a flat `recurring_amount` per period, so it would bill a fixed amount whatever the number of
+  visits.
 
 ## [1.572.1] - 2026-10-01
 
