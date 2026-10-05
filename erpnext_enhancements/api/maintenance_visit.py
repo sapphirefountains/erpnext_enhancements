@@ -61,6 +61,24 @@ PAYLOAD_TABLE_MAP = {
 }
 
 
+def open_regular_draft(contract):
+    """The open draft of a site's *regular* visit, or None.
+
+    A regular visit is one with no ``visit_label``. A labelled draft (a
+    Winterization or Seasonal Startup, a Chemistry Follow-Up, an Extra Visit) is
+    a separate visit with its own template, so it never stands in for the
+    regular one. Before v1.574.1 any open draft did: once Myers Mortuary's
+    Winterization draft existed, "Log a visit" and the kiosk both opened it, and
+    there was no way to start that day's regular visit. The scheduler
+    (``tasks.predictive_maintenance_scheduling``) dedupes on the same filter.
+    """
+    return frappe.db.get_value(
+        "Sapphire Maintenance Record",
+        {"maintenance_contract": contract, "visit_label": ["is", "not set"], "docstatus": 0},
+        "name",
+    )
+
+
 def _get_record(record):
     doc = frappe.get_doc("Sapphire Maintenance Record", record)
     doc.check_permission("read")
@@ -552,17 +570,20 @@ def get_upcoming_visits(days=UPCOMING_WINDOW_DAYS):
         contract = by_name[feature.parent]
         if contract.visit_shape == "Per Site Visit":
             # one entry per site, at its earliest-due feature (features are
-            # ordered, so the first one wins). Suppress when any open draft
-            # already exists for the contract — the scheduler's regular site
-            # draft, or an Extra Visit a tech just pulled forward — so a site
-            # can't be queued twice.
+            # ordered, so the first one wins). Suppress when the contract
+            # already has the scheduler's regular site draft, or an Extra Visit
+            # a tech just pulled forward, so a site can't be queued twice. A
+            # seasonal draft is a different visit and does not hide the
+            # regular one.
             if contract.name in site_seen:
                 continue
             site_seen.add(contract.name)
-            if frappe.db.exists(
+            open_labels = frappe.get_all(
                 "Sapphire Maintenance Record",
-                {"maintenance_contract": contract.name, "docstatus": 0},
-            ):
+                filters={"maintenance_contract": contract.name, "docstatus": 0},
+                pluck="visit_label",
+            )
+            if any(not label or label == EXTRA_VISIT_LABEL for label in open_labels):
                 continue
             serial_no = None
         else:
@@ -634,8 +655,9 @@ def get_loggable_sites():
     Each Active contract yields one entry carrying its covered features, so
     the caller can offer a feature picker for Per Feature contracts (a Per
     Site Visit contract logs one record for the whole site). ``open_draft``
-    names an existing unsubmitted record for the site when there is one — the
-    caller should open that rather than create a second.
+    names the site's open regular draft when there is one (see
+    :func:`open_regular_draft`), which the caller should open rather than
+    create a second.
 
     Returns:
         list[dict]: [{contract, project, project_title, customer, visit_shape,
@@ -685,11 +707,7 @@ def get_loggable_sites():
             "customer": contract.customer,
             "visit_shape": contract.visit_shape,
             "next_visit_date": str(min(due)) if due else None,
-            "open_draft": frappe.db.get_value(
-                "Sapphire Maintenance Record",
-                {"maintenance_contract": contract.name, "docstatus": 0},
-                "name",
-            ),
+            "open_draft": open_regular_draft(contract.name),
             "features": [
                 {"serial_no": row.serial_no, "item_name": item_names.get(row.serial_no)}
                 for row in rows
@@ -716,8 +734,10 @@ def create_visit(contract, serial_no=None, visit_date=None):
     and wrong here: a backfilled form *is* the visit that was due, so it must
     advance the schedule — from ``visit_date``, not from the day it was typed in.
 
-    An existing open draft for the site is returned as-is instead of creating a
+    The site's open regular draft is returned as-is instead of creating a
     duplicate, so two technicians tapping the same site converge on one record.
+    An open seasonal or other labelled draft is a different visit and is left
+    alone (:func:`open_regular_draft`).
 
     Returns:
         str: the Sapphire Maintenance Record name (the wizard opens it).
@@ -749,9 +769,7 @@ def create_visit(contract, serial_no=None, visit_date=None):
     if serial_no and serial_no not in covered:
         frappe.throw(_("{0} is not a covered feature on {1}.").format(serial_no, contract))
 
-    existing = frappe.db.get_value(
-        "Sapphire Maintenance Record", {"maintenance_contract": contract_doc.name, "docstatus": 0}, "name"
-    )
+    existing = open_regular_draft(contract_doc.name)
     if existing:
         return existing
 

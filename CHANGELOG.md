@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.574.1] - 2026-10-05
+
+### Fixed
+
+- **An open Winterization draft no longer blocks a site's regular visit.** On 2026-10-05 a
+  technician did Myers Mortuary's regular monthly visit, and every way of opening the form
+  gave them the Winterization visit instead. Its draft, scheduled for 10-25, was the only open
+  record for the site, and each entry point treated "an open draft" as "the site's visit":
+
+  - The kiosk's Maintenance Form button opened the newest open draft of any kind.
+  - **Log a visit** (`create_visit`) returned any open draft on the contract instead of making
+    a new one, and its alert said "This site already had an open form".
+  - **Upcoming: do one early** hid a Per Site Visit site that had any open draft.
+
+  A labelled draft (Winterization, Seasonal Startup, Chemistry Follow-Up, Extra Visit) is now a
+  different visit everywhere. Only an open *unlabelled* draft counts as the site's regular
+  visit (`api/maintenance_visit.py::open_regular_draft`). That is the same
+  `visit_label is not set` rule the daily scheduler has always deduped on, so this brings the
+  three entry points into line with it rather than adding a new rule. Log a visit starts a
+  fresh regular record next to the seasonal one. Upcoming still hides a site that has a
+  regular or Extra Visit draft, which is what its comment always said it meant to do. The
+  kiosk card now shows the regular visit first (its draft, or a new form) and a named button
+  for each labelled draft underneath, for example "Open the Winterization form". The
+  clock-out warning offers the same choices. A site with only regular work keeps its single
+  button and its old wording.
+
+  New bench-free suite `tests/test_maintenance_seasonal_drafts.py` runs the real endpoints
+  against Myers' shape. 8 of its 9 tests fail on 1.574.0.
+
 ## [1.574.0] - 2026-10-05
 
 ### Added
