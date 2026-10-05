@@ -731,6 +731,11 @@ jobs:
       # winter pause defers those to spring. Bench-free, own frappe stub, own step.
       - name: Maintenance winter pause (visit roll-forward)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_winter_pause -v
+      # A Winterization draft was treated as the site's visit by the kiosk button,
+      # "Log a visit" and the Upcoming list, so a regular visit could not be started
+      # while it was open. Runs the real endpoints. Bench-free, own frappe stub, own step.
+      - name: Maintenance seasonal drafts (regular visit stays reachable)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_seasonal_drafts -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

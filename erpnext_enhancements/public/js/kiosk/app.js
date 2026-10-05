@@ -219,7 +219,7 @@
       ]),
       h('div', { class: 'tk-card', id: 'tk-maintenance', hidden: true }, [
         h('p', { class: 'tk-card-title', text: 'Maintenance visit' }),
-        h('a', { class: 'tk-btn tk-btn-outline', id: 'tk-maintenance-link', target: '_blank', rel: 'noopener', text: 'Maintenance form' }),
+        h('div', { class: 'tk-stack', id: 'tk-maintenance-links', style: { gap: '8px' } }),
       ]),
       h('div', { class: 'tk-card', id: 'tk-note-card' }, [
         h('p', { class: 'tk-card-title', text: 'Note' }),
@@ -318,7 +318,7 @@
     el.switchBtn = $('tk-switch');
     el.clockOut = $('tk-clock-out');
     el.maintenance = $('tk-maintenance');
-    el.maintenanceLink = $('tk-maintenance-link');
+    el.maintenanceLinks = $('tk-maintenance-links');
     el.noteCard = $('tk-note-card');
     el.readonlyNote = $('tk-readonly-note');
     el.attachmentList = $('tk-attachment-list');
@@ -720,12 +720,26 @@
       .catch(function () { /* offline — link/warning are best-effort */ });
   }
 
+  // One button per form: the regular visit first, then each open labelled
+  // draft (Winterization, Extra Visit, …) by name. A context saved offline
+  // before `forms` existed still carries form_route.
+  function maintenanceForms(ctx) {
+    if (!ctx || !ctx.required) return [];
+    if (ctx.forms && ctx.forms.length) return ctx.forms;
+    if (!ctx.form_route) return [];
+    return [{ label: ctx.draft ? 'Open the draft form' : 'New maintenance form', route: ctx.form_route }];
+  }
+
   function renderMaintenance() {
     var active = (app.status === 'Open' || app.status === 'Paused');
-    var ctx = app.maintenance && app.maintenance.ctx;
-    if (active && ctx && ctx.required && ctx.form_route) {
-      el.maintenanceLink.href = ctx.form_route;
-      el.maintenanceLink.textContent = ctx.draft ? 'Open the draft form' : 'New maintenance form';
+    var forms = maintenanceForms(app.maintenance && app.maintenance.ctx);
+    UI.clear(el.maintenanceLinks);
+    if (active && forms.length) {
+      forms.forEach(function (form) {
+        el.maintenanceLinks.appendChild(h('a', {
+          class: 'tk-btn tk-btn-outline', href: form.route, target: '_blank', rel: 'noopener', text: form.label,
+        }));
+      });
       el.maintenance.hidden = false;
     } else {
       el.maintenance.hidden = true;
@@ -749,14 +763,14 @@
         return new Promise(function (resolve) {
           var settled = false;
           var finish = function (v) { if (!settled) { settled = true; resolve(v); } };
-          var actions = [];
-          if (ctx.form_route) {
-            actions.push({ label: 'Open the form', kind: 'primary', onClick: function () {
-              try { window.open(ctx.form_route, '_blank', 'noopener'); } catch (e) { /* noop */ }
+          var forms = maintenanceForms(ctx);
+          var actions = forms.map(function (form, i) {
+            return { label: forms.length === 1 ? 'Open the form' : form.label, kind: i ? 'outline' : 'primary', onClick: function () {
+              try { window.open(form.route, '_blank', 'noopener'); } catch (e) { /* noop */ }
               finish(false);
-            } });
-          }
-          actions.push({ label: 'Go back', kind: ctx.form_route ? 'outline' : 'primary', onClick: function () { finish(false); } });
+            } };
+          });
+          actions.push({ label: 'Go back', kind: forms.length ? 'outline' : 'primary', onClick: function () { finish(false); } });
           actions.push({ label: capitalize(verb) + ' anyway', kind: 'ghost', onClick: function () { finish(true); } });
           UI.sheet.open({
             title: 'Maintenance form not submitted',
