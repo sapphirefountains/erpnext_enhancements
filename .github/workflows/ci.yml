@@ -726,6 +726,11 @@ jobs:
       # This suite is bench-free, installs its own frappe stub, and RUNS the sweeps.
       - name: Maintenance expiry/billing filters (nullable columns)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_expiry_filters -v
+      # The visit roll-forward had no off-season: a drained fountain kept drafting
+      # November-March visits, and a weekly site kept drafting one every week. The
+      # winter pause defers those to spring. Bench-free, own frappe stub, own step.
+      - name: Maintenance winter pause (visit roll-forward)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_winter_pause -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.574.0] - 2026-10-05
+
+### Added
+
+- **Maintenance contracts can pause regular visits over winter.** Each submitted visit moved
+  the next one forward by its frequency, with no off-season. So once the maintenance schedule
+  went live from the old Google Maintenance calendar, drained fountains would have kept
+  drafting November-March visits. Highlands is weekly and was the worst case: its calendar
+  series stops on 10-12, but ERPNext would have drafted a visit every week until spring.
+
+  The new contract checkbox **Pause Regular Visits Over Winter** applies to contracts with both
+  Spring Startup and Winterization. When it is ticked, a rolled-forward next visit that lands
+  between the 1st of the Winterization Month and the Startup Month moves to the 1st of the
+  Startup Month. That is the day the Spring Startup visit is drafted, and regular visits
+  restart then too. Submitting the Winterization visit moves every feature on the contract
+  there as well; before, labelled visits never touched the cadence. The window opens *at* the
+  winterization month, not after it, because the winterization visit replaces that month's
+  regular visit (the old calendar booked both, two days apart). A next visit date typed onto
+  the contract by hand is never deferred.
+
+  Fountains that keep running with a heater (The Charles, Myers, Hardware) leave it unticked.
+  The rule is `defer_for_winter` in `api/maintenance_scheduling.py`, and
+  `tests/test_maintenance_winter_pause.py` runs it bench-free in its own CI step.
+  `api/maintenance_scheduling.py` now keeps copies of the `Winterization` label and the month
+  list, and the suite fails if they ever stop matching the contract controller.
+
 ## [1.573.0] - 2026-10-05
 
 ### Changed

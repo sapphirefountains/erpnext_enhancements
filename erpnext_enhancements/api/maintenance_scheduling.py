@@ -13,8 +13,18 @@ Side effects: writes to Sapphire Contract Feature and Sales Order Item rows.
 No external services.
 """
 
+import datetime
+
 import frappe
 from frappe.utils import add_days, add_months, getdate, nowdate
+
+# Load-bearing strings, kept in step with the contract controller's
+# WINTERIZATION_LABEL / MONTHS (draft dedup and the cadence skip key on them).
+WINTERIZATION_LABEL = "Winterization"
+MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
 
 
 def update_next_visit_dates(doc, method):
@@ -24,9 +34,14 @@ def update_next_visit_dates(doc, method):
     Maintenance Contract, and mirrors them onto the Sales Order Item rows.
 
     Seasonal visits (``visit_label`` set — startup/winterization) are annual
-    one-offs outside the regular cadence, so they don't advance it.
+    one-offs outside the regular cadence, so they don't advance it. The one
+    exception: finishing the Winterization visit on a contract that pauses over
+    winter parks every feature's next visit at the spring startup (see
+    ``defer_for_winter``).
     """
     if doc.get("visit_label"):
+        if doc.get("visit_label") == WINTERIZATION_LABEL:
+            _park_until_spring(doc)
         return
 
     serials = _visited_serials(doc)
@@ -44,7 +59,7 @@ def update_next_visit_dates(doc, method):
                 continue
             if not serials and doc.serial_no and row.serial_no != doc.serial_no:
                 continue
-            next_visit = calculate_next_date(completion_date, row.frequency)
+            next_visit = defer_for_winter(contract, calculate_next_date(completion_date, row.frequency))
             updates = {"last_visit_date": completion_date}
             if next_visit:
                 updates["next_visit_date"] = next_visit
@@ -78,6 +93,76 @@ def _resolve_contract(doc):
         if name:
             return frappe.get_doc("Sapphire Maintenance Contract", name)
     return None
+
+
+def _winter_months(contract):
+    """(winterization month, startup month) as 1-12, or None when not pausing."""
+    if not contract or not contract.get("pause_over_winter"):
+        return None
+    stop = contract.get("winterization_month")
+    resume = contract.get("startup_month")
+    if stop not in MONTHS or resume not in MONTHS or stop == resume:
+        return None
+    return MONTHS.index(stop) + 1, MONTHS.index(resume) + 1
+
+
+def spring_resume_date(contract, after):
+    """The 1st of the contract's startup month, the first one after ``after``.
+
+    The Spring Startup visit is drafted on the first scheduler run of that
+    month, and regular visits restart the same day (decided 2026-10-05).
+    """
+    months = _winter_months(contract)
+    if not months:
+        return None
+    resume = months[1]
+    after = getdate(after)
+    year = after.year if after.month < resume else after.year + 1
+    return datetime.date(year, resume, 1)
+
+
+def defer_for_winter(contract, next_visit):
+    """Move a regular visit that would fall in the off-season to spring.
+
+    On a contract with ``pause_over_winter``, the off-season runs from the 1st
+    of the winterization month up to (not including) the startup month,
+    wrapping the year end. A rolled-forward visit landing in it is moved to the
+    1st of the startup month. Starting the window at the winterization month,
+    not after it, is deliberate: the winterization visit stands in for that
+    month's regular visit (the old calendar booked both, two days apart), and a
+    weekly site like Highlands must stop at its last September/early-October
+    visit, not keep drafting until the drain-down.
+
+    Only rolled-forward dates pass through here — a next visit typed onto the
+    contract by hand is left as entered.
+    """
+    if not next_visit:
+        return next_visit
+    months = _winter_months(contract)
+    if not months:
+        return next_visit
+    stop, resume = months
+    month = getdate(next_visit).month
+    in_window = stop <= month < resume if stop < resume else (month >= stop or month < resume)
+    if not in_window:
+        return next_visit
+    return spring_resume_date(contract, next_visit)
+
+
+def _park_until_spring(doc):
+    """After the Winterization visit, every feature waits for spring.
+
+    Covers the case the roll-forward cannot: a regular visit still pending
+    after the fountain has been drained (winterization done before the
+    month's regular visit), which would otherwise be drafted for a dry basin.
+    """
+    contract = _resolve_contract(doc)
+    completion_date = getdate(doc.get("visit_date") or nowdate())
+    resume = spring_resume_date(contract, completion_date)
+    if not resume:
+        return
+    for row in contract.covered_features:
+        frappe.db.set_value("Sapphire Contract Feature", row.name, "next_visit_date", resume)
 
 
 def _mirror_to_sales_order(project, serial_no, completion_date):
