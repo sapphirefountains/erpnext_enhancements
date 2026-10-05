@@ -655,6 +655,11 @@ class TestMaintenanceSections(unittest.TestCase):
 		self.assertEqual((location["latitude"], location["longitude"]), (40.123456, -111.654321))
 		# sections without a template-step location stay location-less
 		self.assertIsNone(data["sections"]["Test Cleaning Section"]["location"])
+		# every section carries its place in the template (the wizard orders
+		# its Cleaning and Inspection steps by it)
+		for position, row in enumerate(template.sections):
+			if row.section in data["sections"]:
+				self.assertEqual(data["sections"][row.section]["order"], position)
 
 	def test_template_named_by_template_name(self):
 		"""autoname field:template_name -> the doc name IS the friendly name,

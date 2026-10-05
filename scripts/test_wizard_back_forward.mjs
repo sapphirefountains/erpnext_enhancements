@@ -668,7 +668,7 @@ async function test(name, fn) {
 
 // ------------------------------------------------------------------ Visit Wizard fixtures
 
-function visitServer(records) {
+function visitServer(records, sections) {
 	const db = {};
 	Object.entries(records).forEach(([name, rec]) => {
 		db[name] = { ...rec, name, modified: rec.modified || `${name}@1`, docstatus: rec.docstatus || 0 };
@@ -678,7 +678,11 @@ function visitServer(records) {
 	server.handlers.get_upcoming_visits = () => [];
 	server.handlers.get_visit_bootstrap = ({ record }) => {
 		const rec = clone(db[record]);
-		return { record: rec, state: { modified: rec.modified, docstatus: rec.docstatus, completion_percent: 10 } };
+		return {
+			record: rec,
+			sections: sections || {},
+			state: { modified: rec.modified, docstatus: rec.docstatus, completion_percent: 10 },
+		};
 	};
 	server.handlers.save_visit = ({ record, patch, modified }) => {
 		const rec = db[record];
@@ -737,7 +741,7 @@ async function visitWizardSuite() {
 		assert.equal(url(), "/desk/visit-wizard/MNT-1/readings/SN-A");
 		press("vz-nav Next");
 		await settle();
-		assert.equal(url(), "/desk/visit-wizard/MNT-1/consumables/SN-A");
+		assert.equal(url(), "/desk/visit-wizard/MNT-1/tasks/SN-A");
 		assert.equal(browser.hist.length, 4, browser.hist.urls().join(" | "));
 
 		await back();
@@ -754,8 +758,35 @@ async function visitWizardSuite() {
 		await forward();
 		assert.equal(last().step, "readings");
 		await forward();
-		assert.equal(last().step, "consumables");
+		assert.equal(last().step, "tasks");
 		assert.equal(browser.hist.length, 4, "Back/Forward must not add entries");
+	});
+
+	await test("readings come first and chemicals last; Cleaning and Inspection follow the template", async () => {
+		const steps = () => wizard().steps.map((step) => step.key);
+		const rows = {
+			chemistry_readings: [{ name: "r1", reading: "pH", section: "Chem" }],
+			cleaning_tasks: [{ name: "t1", task: "Skim", section: "Clean" }],
+			maintenance_results: [{ name: "m1", question: "Pump running?", section: "Inspect" }],
+			consumables: [{ name: "c1", item: "Chlorine", section: "Dose" }],
+		};
+		// No template positions (an older record): Cleaning before Inspection.
+		visitServer({ "MNT-1": visit(rows) });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		assert.deepEqual(steps(), ["safety", "readings", "tasks", "results", "consumables", "wrapup"]);
+
+		// A template that inspects before it cleans (inspect, then drain) keeps that order,
+		// but its readings still lead and its chemicals still close the visit.
+		visitServer({ "MNT-2": visit(rows) }, {
+			Dose: { order: 0 },
+			Inspect: { order: 1 },
+			Clean: { order: 2 },
+			Chem: { order: 3 },
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-2");
+		await settle();
+		assert.deepEqual(steps(), ["safety", "readings", "results", "tasks", "consumables", "wrapup"]);
 	});
 
 	await test("no history entry is ever an /app/ path (the v16 router cannot parse one)", async () => {
@@ -823,7 +854,7 @@ async function visitWizardSuite() {
 		assert.equal(browser.hist.length, before, "in-app Back must not push");
 		press("vz-nav Next");
 		await settle();
-		assert.equal(last().step, "consumables");
+		assert.equal(last().step, "tasks");
 		assert.equal(browser.hist.length, before, "Next after Back replaces the forward entry");
 		await back();
 		await back();

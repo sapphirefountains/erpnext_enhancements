@@ -8,11 +8,12 @@
   Renders, top to bottom: the visit header (name, date, serial no, project) with
   a workflow-state badge; an optional Service Duration block (clock in/out and
   net worked hours = total minus paused_duration) shown only when `show_labor`
-  and a clock-in exist; the Checklist Results table (maintenance_results, with
-  Pass/Fail/Other styling); the Water Chemistry table (readings vs target
-  range, out-of-range badge); the Cleaning Tasks table; the Parts &
-  Consumables table (consumed rows only); and the captured client sign-off
-  signature image when present.
+  and a clock-in exist; then the visit in the order it is worked — the Water
+  Chemistry table (readings vs target range, out-of-range badge; read on
+  arrival), the Cleaning Tasks table, the Checklist Results table
+  (maintenance_results, with Pass/Fail/Other styling), and the Parts &
+  Consumables table (consumed rows only, counted last); and the captured client
+  sign-off signature image when present.
 
   Per Site Visit records (a Maintenance Contract covering several water
   features in one form) have no header serial — child rows are tagged with
@@ -62,45 +63,6 @@
         </div>
     </div>
     {% endif %}
-
-    <!-- Maintenance Results -->
-    <div class="mb-10">
-        <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Checklist Results</h2>
-        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-            <table class="min-w-full divide-y divide-gray-300">
-                <thead class="bg-gray-50">
-                    <tr>
-                        {% if per_site %}<th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Water Feature</th>{% endif %}
-                        <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Question</th>
-                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
-                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Notes</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-200 bg-white">
-                    {% for row in doc.maintenance_results %}
-                    <tr>
-                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
-                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.question }}</td>
-                        <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                                {% if row.selection == 'Pass' %} bg-green-100 text-green-800 
-                                {% elif row.selection == 'Fail' %} bg-red-100 text-red-800 
-                                {% else %} bg-gray-100 text-gray-800 {% endif %}">
-                                {{ row.selection }}
-                            </span>
-                        </td>
-                        <td class="px-3 py-4 text-sm text-gray-500">
-                            {{ row.answer or '' }}
-                            {% if row.selection == 'Other' and row.other_details %}
-                                <div class="text-xs italic text-gray-400 mt-1">Details: {{ row.other_details }}</div>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
 
     <!-- Water Chemistry -->
     {% if doc.chemistry_readings %}
@@ -173,6 +135,45 @@
         </div>
     </div>
     {% endif %}
+
+    <!-- Maintenance Results -->
+    <div class="mb-10">
+        <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Checklist Results</h2>
+        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table class="min-w-full divide-y divide-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        {% if per_site %}<th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Water Feature</th>{% endif %}
+                        <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Question</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {% for row in doc.maintenance_results %}
+                    <tr>
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
+                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.question }}</td>
+                        <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                {% if row.selection == 'Pass' %} bg-green-100 text-green-800 
+                                {% elif row.selection == 'Fail' %} bg-red-100 text-red-800 
+                                {% else %} bg-gray-100 text-gray-800 {% endif %}">
+                                {{ row.selection }}
+                            </span>
+                        </td>
+                        <td class="px-3 py-4 text-sm text-gray-500">
+                            {{ row.answer or '' }}
+                            {% if row.selection == 'Other' and row.other_details %}
+                                <div class="text-xs italic text-gray-400 mt-1">Details: {{ row.other_details }}</div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
 
     <!-- Consumables -->
     {% set used_consumables = doc.consumables | selectattr("qty") | list %}

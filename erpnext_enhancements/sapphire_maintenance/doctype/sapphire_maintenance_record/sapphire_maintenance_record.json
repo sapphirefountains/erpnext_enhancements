@@ -24,9 +24,9 @@
   "total_labor_cost",
   "safety_acknowledged",
   "dashboard",
-  "maintenance_results",
   "chemistry_readings",
   "cleaning_tasks",
+  "maintenance_results",
   "consumables",
   "visit_notes",
   "historical_visits",
@@ -143,12 +143,6 @@
    "label": "Dashboard"
   },
   {
-   "fieldname": "maintenance_results",
-   "fieldtype": "Table",
-   "label": "Maintenance Results",
-   "options": "Sapphire Maintenance Result"
-  },
-  {
    "fieldname": "chemistry_readings",
    "fieldtype": "Table",
    "label": "Water Chemistry",
@@ -159,6 +153,12 @@
    "fieldtype": "Table",
    "label": "Cleaning Tasks",
    "options": "Sapphire Cleaning Task"
+  },
+  {
+   "fieldname": "maintenance_results",
+   "fieldtype": "Table",
+   "label": "Maintenance Results",
+   "options": "Sapphire Maintenance Result"
   },
   {
    "fieldname": "consumables",

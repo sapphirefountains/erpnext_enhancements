@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.573.0] - 2026-10-05
+
+### Changed
+
+- **A maintenance visit now runs in the order it is worked: water chemistry first, chemicals and
+  supplies last.** The Visit Wizard used to go Safety → Water Chemistry → Chemicals Used →
+  Inspection → Cleaning → Wrap-up. That had the technician count chemicals second, before any
+  cleaning or dosing. It also put every site's "Visit Wrap-Up Checks" ("Chemicals used?",
+  "Everything in order and running normally?") ahead of that site's cleaning list, because those
+  checks are Inspection rows. Now pH and ORP are always read first, on arrival, before cleaning or
+  dosing moves them. Chemicals Used is always the last step before Wrap-up. Cleaning and Inspection
+  sit between them in the order the template lists their first sections.
+  The template order is used rather than a fixed one because one template needs the opposite:
+  "Tiered Garden Fountain - Winterization" inspects the fountain running *before* draining it, and
+  a fixed Cleaning → Inspection order would have asked for "pump operating normally" on an empty
+  basin. `_section_meta` (`api/maintenance_visit.py`) now returns each section's position in the
+  record's template as `order`. With no positions (an untemplated record), Cleaning goes first.
+  The desk form, the portal view and the printed visit report list the tables in the matching order:
+  Water Chemistry, Cleaning, Checklist, Consumables.
+- On production, the 24 templates that listed a pH/ORP (or other water chemistry) section after
+  their cleaning list now list it first, so the template reads the way the visit runs. Chemical
+  Dosing was already last everywhere. That is a data change made in the Desk, not by a patch. Only
+  the `idx` of the template's section rows moved; location notes and photos are unchanged.
+
+### Added
+
+- Utah State Capitol (PRJ-00769): the oval fountain in the Central Plaza is set up for the
+  maintenance module, made in the Desk on production. It has a Serial No
+  (`MAINT-CAPITOL-Oval-Fountain`) and two site sections, "Capitol Oval Fountain - Basin Cleaning"
+  and "Capitol Oval Fountain - Equipment Room", with step instructions taken from the first
+  cleaning. Those instructions say it is a two-person job, to pull large debris out before
+  vacuuming, and to clean the upper tier too. The template "Utah State Capitol - Oval Fountain
+  Service" runs pH & ORP, then the basin, the equipment room, the wrap-up checks and chemical
+  dosing. Its safety notes include the wedding blackout: no service on days marked "CAP Central
+  Plaza" on the Capitol events calendar.
+
 ## [1.572.1] - 2026-10-01
 
 ### Fixed

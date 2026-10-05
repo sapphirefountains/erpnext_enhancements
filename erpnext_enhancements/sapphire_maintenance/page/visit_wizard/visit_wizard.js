@@ -2,7 +2,7 @@
 //
 // A desk Page (/desk/visit-wizard/MNT-REC-...) that steps through a
 // Sapphire Maintenance Record one section at a time: Safety → Water
-// Chemistry → Chemicals Used → Inspection → Cleaning → Wrap-up. Every input
+// Chemistry → Cleaning → Inspection → Chemicals Used → Wrap-up. Every input
 // is a tap (steppers, segmented buttons, toggles) or a short numeric entry —
 // no child-table grids. Without a record it lists today's open visits.
 //
@@ -832,19 +832,35 @@ class VisitWizard {
 		);
 	}
 
+	// The order a technician actually works a visit in, for every template:
+	// pH/ORP are read on arrival, before any cleaning or dosing moves them, and
+	// the chemicals and supplies used are counted last, once nothing more will
+	// be added. Between them, Cleaning and Inspection follow the template:
+	// whichever has the earlier section there comes first, so a site's wrap-up
+	// checks ("Chemicals used?") land after its cleaning list, and a template
+	// that inspects before draining (Tiered Garden winterization) still does.
+	// Without template positions (an untemplated or older record), Cleaning
+	// goes first.
 	build_steps() {
 		this.steps = [{ key: "safety", title: __("Safety") }];
 		if ((this.doc.chemistry_readings || []).length) {
 			this.steps.push({ key: "readings", title: __("Water Chemistry"), table: "chemistry_readings" });
 		}
+		const middle = [
+			{ key: "tasks", title: __("Cleaning"), table: "cleaning_tasks" },
+			{ key: "results", title: __("Inspection"), table: "maintenance_results" },
+		].filter((step) => (this.doc[step.table] || []).length);
+		const first_position = (table) => {
+			const positions = (this.doc[table] || [])
+				.map((row) => ((this.section_meta || {})[row.section] || {}).order)
+				.filter((order) => typeof order === "number");
+			return positions.length ? Math.min(...positions) : Infinity;
+		};
+		// Array.prototype.sort is stable, so equal positions keep Cleaning first.
+		middle.sort((a, b) => first_position(a.table) - first_position(b.table) || 0);
+		this.steps.push(...middle);
 		if ((this.doc.consumables || []).length) {
 			this.steps.push({ key: "consumables", title: __("Chemicals Used"), table: "consumables" });
-		}
-		if ((this.doc.maintenance_results || []).length) {
-			this.steps.push({ key: "results", title: __("Inspection"), table: "maintenance_results" });
-		}
-		if ((this.doc.cleaning_tasks || []).length) {
-			this.steps.push({ key: "tasks", title: __("Cleaning"), table: "cleaning_tasks" });
 		}
 		this.steps.push({ key: "wrapup", title: __("Wrap-up") });
 	}
