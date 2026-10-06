@@ -56,6 +56,20 @@ this release reverses that on purpose — the dialogs are now curated.
   `quick_entry`/`allow_in_quick_entry` fixtures, so with the "Contact & Address
   Quick Entry" toggle off (or the bundle unloaded) behavior reverts to the
   stock full form, never to an orphan-creating stock dialog.
+  **Since v1.575.0 the form's party is a suggestion the user can refuse.** On a
+  Project or Customer-sourced Opportunity, New Contact pre-fills the Account with
+  that Customer and links it only while it is still the Account (cleared, the
+  person is the job's only; changed, the chosen Customer's and the job's). New
+  Address on a job or a Contact asks "Whose address is this?", a required choice
+  with no default ("This Project only" / "Also <Customer>'s address"), when there
+  is a Customer/party to ask about; from a Contact form the Contact is always kept.
+  Transaction forms (Quotation, Sales Order, Purchase Order…) still file a new
+  address under their party without asking. Created from a Project Stakeholder
+  row, either record belongs to that row's party (plus the job; on a job the
+  address choice is pre-answered "Also" and can be changed); a blank-party row on
+  a Customer/Supplier form is that company's own person. Before, both dialogs
+  always filed the record under the project's Customer, so a GC's job site became
+  the GC's billing address. Guarded by `scripts/test_contact_quick_entry.mjs`.
 - **Customer / Supplier contact & address sections** — **superseded in
   v1.499.0**: both dialogs are now app-owned
   (`public/js/global_enhancements/party_quick_entry.js`). ERPNext's stock

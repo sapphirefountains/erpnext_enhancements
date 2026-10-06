@@ -1452,6 +1452,28 @@ jobs:
       # the (doctype, name) pair since v1.561.1, and its contacts silently left the directory.
       - name: Directory party sources keep same-named parties (bench-free, node)
         run: node scripts/test_party_sources.mjs
+      # v1.575.0, from the 2026-10-06 link audit: the directory's Link Existing linked a contact to
+      # the open form AND its Customer AND every Project Stakeholder, so a county health inspector
+      # added to a Harwood project became a Harwood and a Layton Construction contact. New Contact /
+      # New Address from a job filed the record under the job's Customer whatever the user chose
+      # (it now must be told whose address it is), and a record created from a stakeholder row went
+      # to the job's Customer instead of the row's party. Runs the real dialogs and Link Existing
+      # against a frappe stub that does the per-doc df swap and the async defaults the real dialog
+      # does (a stub without them hid a bug).
+      - name: New Contact / New Address obey the user, Link Existing links one record (bench-free, node)
+        run: node scripts/test_contact_quick_entry.mjs
+      # Same audit: the Contact "Account" field mirrored the first Customer link, so a supplier's
+      # employee took the first fanned-out Customer as their employer, and clearing it promoted the
+      # next one. Also AddressLinkGuard: a staff-created linkless Address is never filed under the
+      # creator's own Contact links. Own step: installs its own frappe stub.
+      - name: Contact Account follows the person's employer, never a fanned-out Customer (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_contact_account_rule -v
+      # The one-off cleanup of those links. Its value is what it refuses: a link is removed only from
+      # the row the review saw; one record that no longer matches the review (link re-added under a
+      # new row, company renamed or merged, own company or job link gone, record renamed) stops the
+      # whole run before the first save; a dry run writes nothing. Own step: own frappe stub.
+      - name: Wrong-link cleanup refuses anything it was not reviewed for (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_party_link_cleanup -v
       # The URL-field rule, in the one place both callers share it: the CRM
       # before_validate hook and the QuickBooks sync's _heal_invalid_urls. Most of the
       # suite is the rule table, including the two clauses that look like oversights

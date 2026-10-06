@@ -14,17 +14,21 @@
  * current doc — the doc itself, its customer/supplier/party links, and any
  * child-table rows referencing parties or Dynamic Links — then asks the backend
  * (`sync_contact.*`) for all contacts/addresses linked to ANY of them. This is
- * why, e.g., a Project shows contacts attached to its Customer. Link Existing /
- * Unlink round-trip through the same sync_contact API and re-render; New Contact /
- * New Address open the quick-entry dialogs (contact_address_quick_entry.js), which
- * re-render this widget after insert.
+ * why, e.g., a Project shows contacts attached to its Customer. Those sources are
+ * for DISPLAY only. Link Existing links the picked Contact/Address to the open form
+ * (`get_link_target`; see that function for why it no longer sends the sources),
+ * and to the job's own Customer (or an Opportunity's party) only when the user
+ * ticks "Also add to …" in the prompt (`get_form_party`). Unlink round-trips through the same sync_contact API and
+ * re-renders; New Contact / New Address open the quick-entry dialogs
+ * (contact_address_quick_entry.js), which re-render this widget after insert.
  *
  * Import Contacts is the bulk counterpart of Link Existing: it lists the related
  * parties' contacts that this document does not carry yet, with tick boxes, and
  * links exactly the ticked ones (`sync_contact.get_importable_contacts` /
  * `import_contacts`). It only appears where there is something to import *from*,
  * i.e. where `get_all_party_sources` finds a party besides the form itself —
- * Project and Opportunity, not Customer or Supplier.
+ * Project and Opportunity, and a Customer/Supplier only when it carries
+ * Project Stakeholder rows.
  *
  * Set Primary is the exception, and deliberately so: only Customer and Supplier
  * write the account-wide `is_primary_contact` / `is_primary_address` flags through
@@ -188,6 +192,13 @@ erpnext_enhancements.unified_controller = {
 
 		if (frm.doc.customer) sources.push({ doctype: "Customer", name: frm.doc.customer });
 		if (frm.doc.supplier) sources.push({ doctype: "Supplier", name: frm.doc.supplier });
+		// A Project shows the people on the deal it was won from. Since v1.575.0 Link
+		// Existing on an Opportunity links the Opportunity only (no longer its Customer as
+		// well), so without this a person added on the deal vanished from the job. Display
+		// and Import only, like every source here.
+		if (frm.doc.custom_opportunity) {
+			sources.push({ doctype: "Opportunity", name: frm.doc.custom_opportunity });
+		}
 		if (frm.doc.party_name && frm.doc.party_type) {
 			sources.push({ doctype: frm.doc.party_type, name: frm.doc.party_name });
 		}
@@ -575,36 +586,100 @@ erpnext_enhancements.unified_controller = {
 	},
 
 	link_existing_record: function (doctype) {
-		frappe.prompt(
-			[
-				{
-					label: `Select ${doctype}`,
-					fieldname: "record",
-					fieldtype: "Link",
-					options: doctype,
-					reqd: 1,
+		const target = this.get_link_target();
+		if (!target) {
+			frappe.msgprint(__("Save this {0} first, then link the {1}.", [__(this.frm.doctype), __(doctype)]));
+			return;
+		}
+		// The job's own Customer (or an Opportunity's party) is offered, UNTICKED: the
+		// person is put on this job either way, and on the company only when the user
+		// says they work there. Stakeholder companies are never offered.
+		const party = this.get_form_party();
+		const fields = [
+			{
+				label: `Select ${doctype}`,
+				fieldname: "record",
+				fieldtype: "Link",
+				options: doctype,
+				reqd: 1,
+			},
+		];
+		if (party) {
+			fields.push({
+				label: __("Also add to {0} {1}", [__(party.link_doctype), party.link_name]),
+				fieldname: "also_party",
+				fieldtype: "Check",
+				default: 0,
+				description: __(
+					"Only if this {0} belongs to {1}. A consultant, inspector or subcontractor on the job does not.",
+					[__(doctype), party.link_name],
+				),
+			});
+		}
+		const link_to = (link, callback, error) =>
+			frappe.call({
+				method: "erpnext_enhancements.sync_contact.link_existing_record",
+				args: {
+					doctype: doctype,
+					docname: link.record,
+					link_doctype: link.link_doctype,
+					link_name: link.link_name,
 				},
-			],
+				callback: callback,
+				error: error,
+			});
+		frappe.prompt(
+			fields,
 			(values) => {
-				frappe.call({
-					method: "erpnext_enhancements.sync_contact.link_existing_record",
-					args: {
-						doctype: doctype,
-						docname: values.record,
-						links: JSON.stringify(this.get_base_links()),
-					},
-					callback: (r) => {
+				const done = () => {
+					this.render_all();
+					frappe.show_alert({
+						message: `${doctype} linked successfully`,
+						indicator: "green",
+					});
+				};
+				// One record per request: the server refuses more (sync_contact).
+				link_to(Object.assign({ record: values.record }, target), () => {
+					if (party && values.also_party) {
+						// The first link is already saved: show it now, whatever happens to the
+						// second (some server errors never reach an error callback).
 						this.render_all();
-						frappe.show_alert({
-							message: `${doctype} linked successfully`,
-							indicator: "green",
+						link_to(Object.assign({ record: values.record }, party), done, () => {
+							frappe.show_alert({
+								message: __("Linked to this {0}, but not added to {1}.", [
+									__(this.frm.doctype),
+									party.link_name,
+								]),
+								indicator: "orange",
+							});
 						});
-					},
+					} else {
+						done();
+					}
 				});
 			},
 			`Add ${doctype}`,
 			"Add",
 		);
+	},
+
+	/**
+	 * The open job's own party, offered as an explicit opt-in on Link Existing: a
+	 * Project's Customer, an Opportunity's Customer, Lead or Prospect. Null on a party
+	 * form (it IS the party), on a Master Project (it has no customer field) and on an
+	 * unsaved form.
+	 */
+	get_form_party: function () {
+		const frm = this.frm;
+		const doc = frm.doc || {};
+		if (frm.is_new()) return null;
+		if (frm.doctype === "Project" && doc.customer) {
+			return { link_doctype: "Customer", link_name: doc.customer };
+		}
+		if (frm.doctype === "Opportunity" && doc.opportunity_from && doc.party_name) {
+			return { link_doctype: doc.opportunity_from, link_name: doc.party_name };
+		}
+		return null;
 	},
 
 	// ------------------------------------------------------------ bulk import
@@ -818,12 +893,23 @@ erpnext_enhancements.unified_controller = {
 		);
 	},
 
-	get_base_links: function () {
-		const sources = this.get_all_party_sources();
-		return sources.map((s) => ({
-			link_doctype: s.doctype,
-			link_name: s.name,
-		}));
+	/**
+	 * The one record Link Existing links to: the open form, or null while it is unsaved
+	 * (its placeholder "new-project-…" name stops existing on save).
+	 *
+	 * Until v1.575.0 this was every party source — the form, its Customer or party, and
+	 * every Project Stakeholder row — so linking a county health inspector from a Harwood
+	 * project also filed him as a Harwood *and* a Layton Construction contact, and the
+	 * Contact's Account field then named Harwood as his employer. "This person is on this
+	 * job" was being recorded as "this person works for every company on this job". The
+	 * sources still decide what the directory SHOWS; they never decide what a link says.
+	 * The server refuses a multi-link request too (`sync_contact.link_existing_record`),
+	 * so a Desk tab still running the old script cannot do it either.
+	 */
+	get_link_target: function () {
+		const frm = this.frm;
+		if (!frm.doc || !frm.doc.name || frm.is_new()) return null;
+		return { link_doctype: frm.doctype, link_name: frm.doc.name };
 	},
 
 	unlink_record: function (doctype, docname) {

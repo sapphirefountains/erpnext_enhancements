@@ -686,10 +686,17 @@ class RequestNamesTest(Base):
 		self.assertEqual([c for c in STATE["perm_calls"] if c[0] == "Contact"], [])
 		self.assertEqual(STATE["saves"], [])
 
-	def test_link_existing_skips_a_link_row_that_is_not_an_object(self):
+	def test_link_existing_refuses_a_link_row_that_is_not_an_object(self):
+		"""Refused as a malformed request (v1.575.0) rather than skipped and then refused for want of
+		a writable party, and a malformed row beside a good one is not quietly dropped either."""
 		grant("Contact", "C-HP", "write")
-		with self.assertRaises(StubPermissionError):
+		grant("Project", "PROJ-0001", "write")
+		with self.assertRaises(StubValidationError):
 			sync_contact.link_existing_record("Contact", "C-HP", links=json.dumps(["PROJ-0001"]))
+		with self.assertRaises(StubValidationError):
+			sync_contact.link_existing_record(
+				"Contact", "C-HP", links=[{"link_doctype": "Project", "link_name": "PROJ-0001"}, "x"]
+			)
 		self.assertEqual(STATE["saves"], [])
 
 	def test_unlink_refuses_names_that_are_not_text(self):
@@ -753,29 +760,105 @@ class ImportableContactsTest(Base):
 
 
 class LinkExistingTest(Base):
-	"""Write on the Contact/Address; write on each party, unwritable ones skipped."""
+	"""One link, to the document being viewed; write on the Contact/Address and on that document.
 
-	#: What the widget's Link Existing sends from a Project form: every party it draws from.
-	DESK_LINKS = json.dumps(
+	Until v1.575.0 the widget sent every party the open form draws from and each writable one got a
+	link, which is how a county health inspector linked from a Harwood project became a Harwood and
+	a Layton Construction contact. A multi-link request is now refused outright.
+	"""
+
+	#: What a Desk tab still running the pre-v1.575.0 script sends from a Project form.
+	OLD_DESK_LINKS = json.dumps(
 		[
 			{"link_doctype": "Project", "link_name": "PROJ-0001"},
 			{"link_doctype": "Customer", "link_name": "Northwind Fountains"},
 		]
 	)
 
-	def test_refused_without_write_on_the_contact(self):
+	def test_the_old_multi_link_request_is_refused_and_writes_nothing(self):
+		"""Even with write on every party: the fan-out itself is the bug, not the permission."""
+		grant("Contact", "C-HP", "write")
 		grant("Project", "PROJ-0001", "read", "write")
 		grant("Customer", "Northwind Fountains", "read", "write")
+		STATE[EXCLUSION].append(
+			{
+				"name": "EXCL-P",
+				"source_doctype": "Project",
+				"source_name": "PROJ-0001",
+				"ref_doctype": "Contact",
+				"ref_name": "C-HP",
+			}
+		)
+
+		with self.assertRaises(StubValidationError):
+			sync_contact.link_existing_record("Contact", "C-HP", links=self.OLD_DESK_LINKS)
+
+		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza")})
+		self.assertEqual(STATE["saves"], [])
+		self.assertEqual(len(STATE[EXCLUSION]), 1, "a refused link still cleared an exclusion")
+
+	def test_the_desk_path_links_only_the_viewed_document(self):
+		grant("Contact", "C-HP", "write")
+		grant("Project", "PROJ-0001", "write")
+		grant("Customer", "Northwind Fountains", "write")
+		STATE[EXCLUSION].append(
+			{
+				"name": "EXCL-NW",
+				"source_doctype": "Customer",
+				"source_name": "Northwind Fountains",
+				"ref_doctype": "Contact",
+				"ref_name": "C-HP",
+			}
+		)
+
+		self.assertTrue(sync_contact.link_existing_record("Contact", "C-HP", "Project", "PROJ-0001"))
+
+		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza"), ("Project", "PROJ-0001")})
+		self.assertEqual(STATE["saves"], [("Contact", "C-HP", {})], "saved with ignore_permissions")
+		self.assertIn(("Contact", "write", "C-HP", True), STATE["perm_calls"])
+		self.assertIn(
+			("Customer", "Northwind Fountains", "Contact", "C-HP"),
+			_exclusions(),
+			"it cleared an exclusion on a document it did not link",
+		)
+
+	def test_a_one_entry_list_still_works(self):
+		"""The list form with a single entry is what a script or an API caller may still send."""
+		grant("Contact", "C-HP", "write")
+		grant("Project", "PROJ-0001", "write")
+		links = json.dumps([{"link_doctype": "Project", "link_name": "PROJ-0001"}])
+		self.assertTrue(sync_contact.link_existing_record("Contact", "C-HP", links=links))
+		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza"), ("Project", "PROJ-0001")})
+
+	def test_the_same_document_named_twice_is_one_link(self):
+		grant("Contact", "C-HP", "write")
+		grant("Project", "PROJ-0001", "write")
+		links = [{"link_doctype": "Project", "link_name": "PROJ-0001"}] * 2
+		self.assertTrue(sync_contact.link_existing_record("Contact", "C-HP", links=links))
+		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza"), ("Project", "PROJ-0001")})
+
+	def test_an_entry_that_is_not_a_document_is_refused(self):
+		grant("Contact", "C-HP", "write")
+		for links in ([{"link_doctype": "Project"}], ["PROJ-0001"], [{"link_name": "PROJ-0001"}], []):
+			with self.subTest(links=links), self.assertRaises(StubValidationError):
+				sync_contact.link_existing_record("Contact", "C-HP", links=json.dumps(links))
+		with self.assertRaises(StubValidationError):
+			sync_contact.link_existing_record("Contact", "C-HP")
+		self.assertEqual(STATE["saves"], [])
+
+	def test_refused_without_write_on_the_contact(self):
+		grant("Project", "PROJ-0001", "read", "write")
 		grant("Contact", "C-HP", "read")
 
 		with self.assertRaises(StubPermissionError):
-			sync_contact.link_existing_record("Contact", "C-HP", links=self.DESK_LINKS)
+			sync_contact.link_existing_record("Contact", "C-HP", "Project", "PROJ-0001")
 
 		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza")})
 		self.assertEqual(STATE["saves"], [])
 
-	def test_refused_when_no_party_is_writable(self):
+	def test_refused_without_write_on_the_document(self):
 		grant("Contact", "C-HP", "write")
+		grant("Project", "PROJ-0001", "read")
 		STATE[EXCLUSION].append(
 			{
 				"name": "EXCL-X",
@@ -787,54 +870,17 @@ class LinkExistingTest(Base):
 		)
 
 		with self.assertRaises(StubPermissionError):
-			sync_contact.link_existing_record("Contact", "C-HP", links=self.DESK_LINKS)
+			sync_contact.link_existing_record("Contact", "C-HP", "Project", "PROJ-0001")
 
 		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza")})
 		self.assertEqual(STATE["saves"], [])
 		self.assertEqual(len(STATE[EXCLUSION]), 1, "a refused link still cleared an exclusion")
 
-	def test_the_single_link_form_is_gated_too(self):
+	def test_an_already_linked_record_is_not_saved_again(self):
 		grant("Contact", "C-HP", "write")
-		with self.assertRaises(StubPermissionError):
-			sync_contact.link_existing_record("Contact", "C-HP", "Project", "PROJ-0001")
+		grant("Customer", "Harbor Plaza", "write")
+		self.assertTrue(sync_contact.link_existing_record("Contact", "C-HP", "Customer", "Harbor Plaza"))
 		self.assertEqual(STATE["saves"], [])
-
-	def test_an_unwritable_related_party_is_skipped(self):
-		"""A Projects User links a contact from a Project whose Customer they can only select."""
-		grant("Contact", "C-HP", "write")
-		grant("Project", "PROJ-0001", "read", "write")
-		STATE[EXCLUSION].append(
-			{
-				"name": "EXCL-NW",
-				"source_doctype": "Customer",
-				"source_name": "Northwind Fountains",
-				"ref_doctype": "Contact",
-				"ref_name": "C-HP",
-			}
-		)
-
-		self.assertTrue(sync_contact.link_existing_record("Contact", "C-HP", links=self.DESK_LINKS))
-
-		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza"), ("Project", "PROJ-0001")})
-		self.assertIn(
-			("Customer", "Northwind Fountains", "Contact", "C-HP"),
-			_exclusions(),
-			"it cleared an exclusion on a directory the user may not change",
-		)
-
-	def test_the_desk_path_links_to_every_writable_party(self):
-		grant("Contact", "C-HP", "write")
-		grant("Project", "PROJ-0001", "write")
-		grant("Customer", "Northwind Fountains", "write")
-
-		self.assertTrue(sync_contact.link_existing_record("Contact", "C-HP", links=self.DESK_LINKS))
-
-		self.assertEqual(
-			_links_of("C-HP"),
-			{("Customer", "Harbor Plaza"), ("Project", "PROJ-0001"), ("Customer", "Northwind Fountains")},
-		)
-		self.assertEqual(STATE["saves"], [("Contact", "C-HP", {})], "saved with ignore_permissions")
-		self.assertIn(("Contact", "write", "C-HP", True), STATE["perm_calls"])
 
 	def test_an_address_links_the_same_way(self):
 		grant("Address", "A-HP", "write")
@@ -842,19 +888,12 @@ class LinkExistingTest(Base):
 		sync_contact.link_existing_record("Address", "A-HP", "Project", "PROJ-0001")
 		self.assertIn(("Project", "PROJ-0001"), _links_of("A-HP"))
 
-	def test_an_unsaved_forms_placeholder_still_fails_and_writes_nothing(self):
-		"""Before, the save failed link validation on ``new-project-…``. It must not now quietly link
-		the contact to the Customer instead."""
+	def test_an_unsaved_forms_placeholder_fails_and_writes_nothing(self):
 		grant("Contact", "C-HP", "write")
-		grant("Customer", "Northwind Fountains", "write")
-		links = [
-			{"link_doctype": "Project", "link_name": "new-project-abc123"},
-			{"link_doctype": "Customer", "link_name": "Northwind Fountains"},
-		]
-
 		with self.assertRaises(StubDoesNotExistError):
-			sync_contact.link_existing_record("Contact", "C-HP", links=links)
+			sync_contact.link_existing_record("Contact", "C-HP", "Project", "new-project-abc123")
 		self.assertEqual(_links_of("C-HP"), {("Customer", "Harbor Plaza")})
+		self.assertEqual(STATE["saves"], [])
 
 	def test_a_child_table_row_is_not_a_party(self):
 		grant("Contact", "C-HP", "write")

@@ -364,11 +364,18 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				"custom_rent_customer_requests": "custom_rent_customer_requests",
 				"custom_rent_deliverables": "custom_rent_deliverables",
 			}
+			# The row's own identity and audit stamps stay behind. Frappe keeps a child
+			# row's creation/owner when they are already set, so a straight as_dict() copy
+			# made every stakeholder row on a new Project look older than the Project and
+			# authored by whoever filled in the Opportunity (20 of 26 copied rows on prod,
+			# 2026-10-06), which misdirects anyone tracing who put a party on a job.
+			row_identity = {"name", "parent", "parenttype", "parentfield", "idx", "docstatus", "doctype",
+				"creation", "owner", "modified", "modified_by"}
 			for source_table, target_table in child_table_mappings.items():
 				project.set(target_table, [])
 				for source_row in opp.get(source_table):
 					new_row = project.append(target_table, {})
-					new_row.update(source_row.as_dict())
+					new_row.update({k: v for k, v in source_row.as_dict().items() if k not in row_identity})
 
 			# Map Opportunity notes to Project comments
 			notes_html_parts = []

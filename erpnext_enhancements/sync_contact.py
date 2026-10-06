@@ -479,79 +479,100 @@ def _visible_links(parenttype, record_names, parties):
     return link_map
 
 
+def _requested_links(link_doctype, link_name, links):
+    """The ``(doctype, name)`` pairs a link request names, de-duplicated, in order.
+
+    ``links`` is the list form (a JSON string over HTTP) that the directory widget sent
+    until v1.575.0; ``link_doctype`` / ``link_name`` is the single-link form it sends now.
+    An entry that is not a usable pair is kept as ``None`` so the caller refuses the
+    request rather than quietly linking whatever else it carried.
+    """
+    import json
+
+    if links:
+        entries = json.loads(links) if isinstance(links, str) else links
+        if not isinstance(entries, (list, tuple)):
+            entries = [entries]
+    elif link_doctype or link_name:
+        entries = [{"link_doctype": link_doctype, "link_name": link_name}]
+    else:
+        entries = []
+
+    pairs = []
+    for entry in entries:
+        pair = None
+        if isinstance(entry, dict):
+            dt, nm = entry.get("link_doctype"), _docname(entry.get("link_name"))
+            if isinstance(dt, str) and dt and nm:
+                pair = (dt, nm)
+        if pair not in pairs:
+            pairs.append(pair)
+    return pairs
+
+
 @frappe.whitelist()
 def link_existing_record(doctype, docname, link_doctype=None, link_name=None, links=None):
-    """Links an existing Contact or Address to a document(s).
+    """Link an existing Contact or Address to ONE document: the one the user is viewing.
 
-    **Permissions** (v1.561.1; there were none before, and the save ran with
-    ``ignore_permissions``):
+    **One link, never more** (v1.575.0). Until then the directory widget sent every party
+    the open form draws its directory from (the form, its Customer or party, every Project
+    Stakeholder row) and this appended a link to each one the user could write. Linking a
+    county health inspector from a Harwood project therefore filed him as a contact of
+    Harwood *and* of Layton Construction, the project's general contractor, and
+    ``contacts_ux`` then named Harwood as his Account. The 2026-10-06 audit found 15
+    people and 2 addresses attached to companies they have nothing to do with this way
+    (and a 16th, the company's CPA on its own Customer, removed on the user's decision),
+    and everyone who uses the directory holds write on both Customer and Supplier, so the
+    write check below never narrowed it. "This person is on this job" is a link to the
+    job; whether they work for a company is decided on that company's form or by the
+    Contact's own Account field, not as a side effect of a project.
 
-    * **write on the Contact/Address**, because adding a link row changes that record.
-      Refused otherwise, before anything is written.
-    * **write on each party it is linked to**, because the link puts the record in that
-      party's directory. The widget sends every party the open form draws from (the form
-      itself first, then its Customer, stakeholders and so on), so a party the user may
-      not write is **skipped**: a Projects User linking a contact from a Project gets it
-      linked to the Project, not to a Customer they can only select. If they may write
-      none of the parties, the call is refused. A party that does not exist (an unsaved
-      form's placeholder name) raises, as the save did before.
+    So a request naming more than one record is **refused**, not trimmed: a Desk tab still
+    running the pre-fix script sends the old list, and quietly keeping its first entry
+    would hide that the user is on a stale page. Nothing is written in that case.
 
-    The save no longer passes ``ignore_permissions``. With write on the record required
-    anyway, all it would skip is Frappe's own write check on the changed document.
+    **Permissions** (v1.561.1): write on the Contact/Address, because adding a link row
+    changes that record; and write on the document it is linked to, because the link puts
+    the record in that document's directory. Both are checked before anything is written.
+    A document that does not exist (an unsaved form's placeholder name) raises.
 
     Every name is taken as text (:func:`_docname`): an integer ``link_name`` would pass the
     write check on one party and then clear the exclusions of every party whose name
     starts with the same digits.
     """
-    import json
-
     _assert_directory_doctype(doctype)
     docname = _require_docname(docname, doctype)
     frappe.has_permission(doctype, "write", doc=docname, throw=True)
-    doc = frappe.get_doc(doctype, docname)
 
-    links_to_add = []
-    if links:
-        if isinstance(links, str):
-            links_to_add = json.loads(links)
-        else:
-            links_to_add = links
-    elif link_doctype and link_name:
-        links_to_add = [{"link_doctype": link_doctype, "link_name": link_name}]
-
-    writable = []
-    for l in links_to_add:
-        if not isinstance(l, dict):
-            continue
-        link_dt = l.get("link_doctype")
-        link_nm = _docname(l.get("link_name"))
-        if not (isinstance(link_dt, str) and link_dt and link_nm) or frappe.is_table(link_dt):
-            continue
-        if frappe.has_permission(link_dt, "write", doc=link_nm):
-            writable.append((link_dt, link_nm))
-
-    if links_to_add and not writable:
+    pairs = _requested_links(link_doctype, link_name, links)
+    if len(pairs) > 1:
         frappe.throw(
-            frappe._("You do not have permission to change the directory of any of those records."),
+            frappe._(
+                "Link Existing links a {0} to the record you are viewing and nothing else. "
+                "This page is running an older version: reload it (Ctrl+Shift+R) and try again."
+            ).format(frappe._(doctype)),
+            title=frappe._("Reload the page"),
+        )
+    if not pairs or pairs[0] is None:
+        frappe.throw(frappe._("Name the one record to link this {0} to.").format(frappe._(doctype)))
+
+    link_dt, link_nm = pairs[0]
+    if frappe.is_table(link_dt) or not frappe.has_permission(link_dt, "write", doc=link_nm):
+        frappe.throw(
+            frappe._("You do not have permission to change the directory of {0} {1}.").format(
+                frappe._(link_dt), link_nm
+            ),
             exc=frappe.PermissionError,
         )
 
-    changed = False
-    existing_links = set((l.link_doctype, l.link_name) for l in doc.links)
-
-    for link_dt, link_nm in dict.fromkeys(writable):
-        if (link_dt, link_nm) not in existing_links:
-            doc.append("links", {
-                "link_doctype": link_dt,
-                "link_name": link_nm
-            })
-            changed = True
-        # Re-linking clears any prior "hidden from this directory" exclusion so
-        # the record shows up again where it was added.
-        _remove_exclusion(link_dt, link_nm, doctype, docname)
-
-    if changed:
+    doc = frappe.get_doc(doctype, docname)
+    if not any(l.link_doctype == link_dt and l.link_name == link_nm for l in doc.links):
+        doc.append("links", {"link_doctype": link_dt, "link_name": link_nm})
         doc.save()
+
+    # Re-linking clears any prior "hidden from this directory" exclusion so the record
+    # shows up again where it was added.
+    _remove_exclusion(link_dt, link_nm, doctype, docname)
     return True
 
 @frappe.whitelist()

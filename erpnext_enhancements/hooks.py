@@ -476,6 +476,15 @@ doctype_css = {
 	"Opportunity": "public/css/global_enhancements/horizontal_scroll.css",
 }
 
+# Extend (not replace) a core controller; frappe mixes these in ahead of the class, and of
+# ERPNext's own extensions, so each defers to the next through super().
+extend_doctype_class = {
+	# An Address a staff user creates without a link is never filed under that user's own
+	# Contact links (frappe Address.link_address's fallback). Portal users keep it. v1.575.0,
+	# contacts_ux.AddressLinkGuard.
+	"Address": ["erpnext_enhancements.contacts_ux.AddressLinkGuard"],
+}
+
 # Override standard doctype classes (from task_enhancements)
 override_doctype_class = {
 	"Task": "erpnext_enhancements.task_enhancements.doctype.task.task.Task",

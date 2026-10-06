@@ -2,11 +2,17 @@ import frappe
 
 
 def execute():
-	"""One-time normalization of ``Contact.custom_account`` to its invariant.
+	"""One-time normalization of ``Contact.custom_account`` to its invariant AS IT WAS
+	until v1.575.0 ("the first Customer link"). Ran on prod 2026-07-10. **Do not re-run
+	it**: v1.575.0 replaced that invariant (contacts_ux.sync_contact_account_links),
+	because "first Customer link" handed a supplier's employee the first Customer a
+	directory fan-out linked them to. Re-running this would put those back, by
+	``db.set_value`` and so with no Version row.
 
-	The field is now editable and kept in two-way sync with the Links grid by
-	``contacts_ux.sync_contact_account_links`` (invariant: it mirrors the FIRST
-	Customer Dynamic Link row). Historically it was read-only and written only
+	When this ran, the field had just been made editable and kept in two-way sync
+	with the Links grid by ``contacts_ux.sync_contact_account_links``, whose
+	invariant was then "it mirrors the FIRST Customer Dynamic Link row" (until
+	v1.575.0). Before that it was read-only and written only
 	by a client-side mirror that persisted whenever someone happened to save the
 	Contact form — so existing values are stale ("first Customer link at some
 	past save"), orphaned (link since removed), or missing entirely, and the
