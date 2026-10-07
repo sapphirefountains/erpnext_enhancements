@@ -7,6 +7,226 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.575.0] - 2026-10-06
+
+### Fixed
+
+- **Linking a contact or address to a job no longer files it under every company on the job.**
+  People from the Summit County Health Department were showing up as Layton Construction
+  contacts. The cause was the Contacts/Addresses directory's **Link Existing** button. It sent
+  every party the open form draws its directory from: the form itself, its Customer or party,
+  and every **Project Stakeholder** row. `sync_contact.link_existing_record` then linked the
+  picked record to each one. So on 2026-08-31, linking Nathan Brooks (Summit County Health
+  Department, a Supplier) from PRJ-00703 linked him to the project, to its customer Harwood,
+  and to its stakeholder general contractor Layton Construction, all in one save.
+
+  A read-only audit of production on 2026-10-06 traced 15 people and 2 addresses to 25 such
+  links, 24 of them still on prod (James Harris unlinked Nathan from Layton by hand that
+  morning). They came from 17 saves between 2026-06-07 and 2026-10-01. Three independent
+  reviewers re-checked every link against prod. Each one has evidence that the record belongs
+  to another company, came from a fan-out save, and is used by no document. The exception is
+  Nathan's Layton link, which draft quotation SAL-QTN-2026-01918 still names; that link was
+  already removed by hand on prod, and the quotation is left for the office. A sixteenth person,
+  the company's outside CPA linked to its own Customer record from the internal migration
+  project, was removed too on the user's decision (one more link). Of the first 27 wrong
+  links, 17 came from the form's own Customer and 10 from stakeholders, so dropping only the
+  stakeholder rows would not have fixed it. The v1.561.1 write check never narrowed it, because
+  everyone who uses the directory holds write on both Customer and Supplier.
+
+  Link Existing now links the open form and nothing else (`get_link_target`). The server
+  **refuses** a request naming more than one record rather than trimming it. A Desk tab still
+  running the old script sends the old list, and keeping its first entry quietly would hide
+  that the page is stale. To also file the person under the job's own Customer (or an
+  Opportunity's party), tick **"Also add to <Customer>"** in the Link Existing prompt. It is
+  unticked by default, and it sends a second one-link request. Stakeholder companies are never
+  offered. The party sources still decide what the directory *shows*; they no longer decide
+  what a link *says*. A Project's directory now also shows the people on the Opportunity it
+  was won from (`custom_opportunity`). Without that, someone linked on the deal would have
+  vanished from the job now that the deal's Customer no longer comes along. This reverses the
+  fan-out that v1.561.1's tests asserted as intended; those tests now assert the refusal.
+
+  On a Contact form, Link Existing (Address) now links the address to that Contact only. The
+  stock Contact "Address" field lists only addresses linked to the Contact's own links, so such
+  an address shows in the directory but not in that field (one address on prod is linked to a
+  Contact).
+
+- **A contact's Account no longer names a company they were only linked to.** The Account
+  field (`Contact.custom_account`) mirrored the contact's first Customer link on every save.
+  A supplier's employee has no Customer link of their own, so the first Customer the directory
+  fanned them out to became their "Account". Eight Supplier contacts showed a customer as
+  their employer, five of them "Harwood". Clearing the field removed that row and promoted the
+  next Customer, so on four contacts "Harwood" would have become "Layton".
+  `contacts_ux.sync_contact_account_links` now works as follows:
+
+  - A stored Account that is still linked is kept.
+  - A Customer the user picks in the same save that edits the grid is honoured if it is
+    linked. Deleting the "Big D Construction" row and picking "Big-D Construction" in one
+    save gives Big-D, not a blank.
+  - Otherwise a new Account is adopted only from a Customer row added in that save that is
+    also the contact's first organisation link, with no Supplier row before it. A person whose
+    company exists as both Supplier and Customer under one name gets a blank Account from a
+    grid edit and keeps it until someone picks one. Blank, never wrong.
+  - Clearing the Account removes that one row and promotes nothing, on that save or the next,
+    including when the same save also edits the grid.
+  - Changing the Account swaps the old Account's own row, never whichever Customer row
+    happened to come first.
+  - An ordinary save rewrites nothing, except that an Account the contact is no longer
+    linked to is cleared.
+  - On a Customer's own form, a new contact is that Customer's person: the Account follows
+    the form's Customer even if the user empties the field. This is accepted, like the
+    same-named Supplier/Customer case above.
+
+  `patches/backfill_contact_custom_account.py` implements the old rule. It ran on 2026-07-10
+  and its docstring now says not to re-run it.
+
+- **New Contact and New Address on a job obey the user.** Both dialogs
+  (`contact_address_quick_entry.js`) always filed the new record under the job's Customer.
+
+  - **New Contact** on a Project or Customer-sourced Opportunity still pre-fills the Account
+    with that Customer: 14 of the last 15 contacts made this way were
+    the customer's own people. The Customer is now linked only while it is still the Account.
+    Before, the link was pushed whatever the field said, and the server then put the Account
+    straight back. On a Customer's **own** form the Customer is never dropped, whatever the
+    Account says.
+  - **New Address** on a job or a Contact form now asks **"Whose address is this?"**, a
+    required choice with no default: "This Project only" or "Also <Customer>'s address". The
+    dialog will not save until the user answers (decided 2026-10-06). It asks only when the job
+    has a Customer/party (or the Contact an Account), and only on forms that are themselves one
+    of the links: from a Quotation, Sales Order or Purchase Order the address still goes to the
+    document's party without a question, as before. The one pre-answered case is a create from
+    a Project Stakeholder row on a job ("Also <row party>", still changeable). Every audited misfiling
+    was the default case: the Saltair site became Wadman Corporation's primary address and
+    reached a draft invoice, and the Stenmark lot became a Hess Construction address. Two older
+    Hess sites were filed the same way by the stock New Address before this dialog existed.
+    From a Contact form the Contact itself is always linked, and "Also" adds the Contact's
+    Account. Before, it was one or the other, so a person's own address could be filed as their
+    company's instead of theirs. Answering "only" never leaves the address with no links: it
+    keeps the job, or the Contact.
+  - **Created from a Project Stakeholder row** (the row's Contact or Address field, "Create a
+    new …"): the record now belongs to **that row's party**, plus the job when the form is a
+    job. On a Customer or Supplier form it belongs to the row's party only, and an Address
+    there asks nothing; a row whose party is left blank there is the form's own company (that
+    is how people list their own staff in it). The dialog used to take its context from the route alone. So a contact
+    typed into the Summit County Health row on a Harwood project was pre-filled "Account:
+    Harwood" and filed under Harwood, the same shape as the audited Nathan Brooks record. On a
+    job, a row whose party is not picked yet gives the job only, never the job's Customer.
+    frappe's link control sets `frappe._from_link` (whose `.doc` is the row and whose
+    `set_route_args` name the form) before it opens the dialog. It is read
+    only when the dialog was opened by such a create (frappe always passes an `after_insert`
+    there, and `frappe.new_doc` never does) and the doc is a Project Stakeholder row of the
+    form on screen. So a stale `_from_link` left by a cancelled create is never used, and
+    neither is a form whose own fields happen to be called party_type/party_name (Payment
+    Entry's party_name is a display name, not a Customer ID).
+  - **The dialogs' own field settings now apply.** frappe's Layout replaces each control's df
+    with a per-doc copy of the meta docfield right after building the dialog
+    (`attach_doc_and_docfields`). That dropped every `onchange`, `reqd` and `read_only` the
+    dialogs set on a field that exists in meta. The "Will be linked to …" banner never
+    followed an Account edit. First name was never required in the dialog. A point typed into
+    the latitude/longitude fields was never marked Manual, so picking a place afterwards could
+    discard it. `ee_reapply_df_overrides` puts them back on the per-doc copy, which belongs to
+    this new document: its dialog, and its full form if the user picks Edit Full Form.
+
+- **The Contact and Address dialogs run again on frappe 16.50.** Production moved to frappe
+  16.50.0 on 2026-10-06. That release ships its own `ContactQuickEntryForm` and
+  `AddressQuickEntryForm` (`frappe/utils/address_and_contact.js`, loaded by `form.bundle.js`
+  before this app's bundle) and turns `quick_entry` on for Contact and Address.
+  `contact_address_quick_entry.js` stepped aside whenever such a class existed, and it defined
+  the `contacts_ux` helpers after that check. So on prod none of the dialog fixes above would
+  have run, every new Contact or Address opened frappe's dialog, and the directory's **New
+  Contact** and **New Address** buttons threw a TypeError. frappe's Contact dialog writes phone
+  and email into the `phone_nos` / `email_ids` tables, which this site hides in favour of
+  `custom_phone_number` / `custom_mobile_number` / `custom_email`, and it has no Account. Its
+  `insert()` replaces the links with the one form it was opened from, so the party is not first
+  (`Contact.autoname` names the record from `links[0]`), and it then reloads that form,
+  discarding unsaved edits.
+
+  Ours are now registered over frappe's on purpose: `make_quick_entry` looks the class up by
+  name when it is called, so the last assignment wins. They still extend the base
+  `QuickEntryForm`, which is identical in 16.36.1 and 16.50.0, rather than frappe's new classes,
+  so there is no frappe override to bypass method by method. The helpers are defined first, and
+  the directory's buttons fall back to a plain new record if a helper is ever missing. With the
+  Contacts & Addresses setting off, the dialog now hands over to the class frappe would have
+  used: frappe's own dialog from 16.50 (told which form it was opened from, as frappe's own
+  section button does), and the full form before it. "Off" used to promise the full form, which
+  stock frappe no longer opens. As of this fix no Contact or Address had been created on prod
+  since the upgrade, so none needs repair.
+
+- **An address a staff member creates without a link is no longer filed under that staff
+  member's own contact.** frappe's `Address.link_address` runs on every save. For an address
+  with no links it copies every link of the Contact whose email is the address's **creator**
+  (`owner`). That is meant for portal customers, whose own Contact is their account. For
+  staff it is a silent misfiling. A stray Lead on James Harris's Contact filed eight company
+  addresses (MGM Grand, CenterCal, Big-D Ogden and more) under that Lead in 2025, and Nikolas
+  Bradshaw's Contact carries a Customer, a Lead and an Opportunity left from Fountain Move
+  testing. An address created by a System User now stays unlinked, visibly, for a person to
+  file, whether it is made in the full form, over REST or by Data Import. Portal (Website
+  User) addresses keep frappe's behaviour.
+  `contacts_ux.AddressLinkGuard` is wired through `extend_doctype_class`, not
+  `override_doctype_class`, so ERPNext's own extension of the same method (`ERPNextAddress`,
+  which skips company addresses) still runs after it.
+
+- **Opportunity → Project hand-off copies child rows without their identity.** Every child
+  table, Project Stakeholders included, was copied with `as_dict()`, which carried each row's
+  `creation` and `owner` across. Frappe keeps those on a child row when they are already set,
+  so 20 of 26 copied stakeholder rows looked older than their Project and authored by whoever
+  filled in the Opportunity. That misdirects anyone tracing who put a party on a job.
+
+### Added
+
+- **`crm_enhancements/party_link_cleanup.py`**: a one-off `bench execute` script that removes
+  the reviewed wrong links (`WRONG_LINKS`: 16 contacts and 2 addresses, 26 links, of which 25
+  are on prod), and, decided 2026-10-06, the three links on Nikolas Bradshaw's own staff
+  contact: a renamed telephony placeholder Customer and a Fountain Move test Lead and
+  Opportunity. Frappe files every email a contact sends or receives under all of its links, so
+  10,541 emails had been timeline-linked to those test records. That entry has no company or job
+  to keep; it is guarded instead by still being his own contact (`staff_user`). **It is a dry
+  run unless called with `dry_run: False`.**
+
+  - It only removes listed links, and adds none.
+  - **It removes only the rows the review saw.** Each wrong link carries the Dynamic Link row
+    name(s) it had at the audit. A listed value on a row with another name was linked again
+    after the review, so someone chose it and it is theirs. An audited row now holding another
+    company means a rename or merge (`rename_doc` rewrites Dynamic Link rows in place). Either
+    case, a record that still carries a listed link but lost its own-company or job link (or,
+    for the staff contact, is no longer that user's), or a record renamed or deleted, is
+    **blocked**,
+    and one blocked record stops the whole run before the first save. Edits to anything else
+    on these records do not matter. A record with nothing listed left on it is reported
+    clean.
+  - Each record is saved once, inside one transaction. Its Account is recomputed by the rule
+    above in the same save, and a Version records the change.
+  - The cleanup sets `flags.is_syncing` so the save does not cascade into Project saves.
+  - What only the office can decide is printed, not changed, under a heading that says to act
+    on it **only after the cleanup has been applied on production**. Picking Harwood's primary
+    contact while Nathan Brooks is still linked to Harwood would strip his Health Department
+    primary flag. The list: the duplicate "Jaxon
+    Kier-Lowe Property Group" (delete it, do not merge, or Document Merge copies its wrong
+    Lowe link onto the real one); draft quotation SAL-QTN-2026-01918, which names Nathan
+    Brooks as Layton's contact; Harwood's primary contact; "Test Address-Billing-1"; and the
+    job sites already filed under a job's Customer (Saltair under Wadman and the Stenmark lot
+    under Hess by the New Address dialog, two older Hess sites by the stock New Address, and
+    the Rob Wise residence under Kodiak America by the same 2026-10-01 Link Existing save this
+    script partly undoes, with four drafts on it). Removing those would break the drafts that
+    use them.
+
+  Rehearse on the mirror first:
+  `bench --site erp.local execute erpnext_enhancements.crm_enhancements.party_link_cleanup.run`.
+
+- Tests, each in CI with its own step. Each one fails on the code before this release, and
+  every safety check in the cleanup was mutated to confirm a test catches it.
+  - `tests/test_contact_account_rule.py` (bench-free): the Account rule and `AddressLinkGuard`.
+  - `tests/test_party_link_cleanup.py` (bench-free): the cleanup's refusals against a fake
+    database.
+  - `scripts/test_contact_quick_entry.mjs` (node): both dialogs, the stakeholder-row create
+    and Link Existing. Its frappe stub performs the per-doc df swap and the asynchronous
+    defaults the real dialog does, because a stub without them hid the banner bug. It runs
+    twice: as frappe 16.50.0, with frappe's own Contact/Address dialogs registered before this
+    app's file loads, and as 16.36.1, without them.
+
+  Known and left as is: the stock Address `address_title` is mandatory while an address has
+  no links (`mandatory_depends_on`), and this dialog adds its links only on save, so the
+  dialog asks for a title. That predates this release.
+
 ## [1.574.2] - 2026-10-06
 
 Production went from frappe 16.36.1 / erpnext 16.37.0 to **16.50.0** on 2026-10-06 (16:50 to

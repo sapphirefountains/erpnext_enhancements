@@ -5,15 +5,45 @@
  * list-view "+ New", awesome bar and link-field create paths fire outside any
  * doctype_js). Server half: contacts_ux.py.
  *
- * Frappe resolves `frappe.ui.form.<Doctype>QuickEntryForm` by naming
- * convention in make_quick_entry, so registering these classes routes EVERY
- * "new Contact/Address" entry point (stock Contacts & Addresses section
- * buttons, list + New, awesome bar, link-field "Create a new…", our directory
- * widget) through the dialog — no meta/property-setter changes. Behavior is
- * gated by frappe.boot.ee_contacts_ux (ERPNext Enhancements Settings →
- * Contacts & Addresses): off, is_quick_entry() falls back to the base class,
- * which routes to the stock full form because Contact/Address have
- * meta.quick_entry = 0.
+ * Frappe resolves `frappe.ui.form.<Doctype>QuickEntryForm` by name when
+ * make_quick_entry is CALLED (quick_entry.js, the same at v16.36.1 and
+ * v16.50.0), so registering these classes routes EVERY "new Contact/Address"
+ * entry point (stock Contacts & Addresses section buttons, list + New, awesome
+ * bar, link-field "Create a new…", our directory widget) through the dialog — no
+ * meta/property-setter changes.
+ *
+ * frappe v16.50.0 ships its own ContactQuickEntryForm and AddressQuickEntryForm
+ * (frappe/public/js/frappe/utils/address_and_contact.js, imported by
+ * form.bundle.js, which loads before this app's bundle) and sets
+ * quick_entry = 1 on Contact and Address. This file used to step aside when
+ * either class existed, and it defined the contacts_ux helpers after that check,
+ * so on 16.50 none of the dialog below ran and the directory widget's New
+ * Contact / New Address threw a TypeError. The helpers now come first and
+ * depend on nothing, and the classes are registered OVER frappe's on purpose.
+ * They still extend frappe.ui.form.QuickEntryForm rather than frappe's classes:
+ *   - frappe's Contact dialog adds Phone / Mobile / Email and writes them into
+ *     the phone_nos / email_ids tables, which this site hides (Property Setters)
+ *     in favour of custom_phone_number / custom_mobile_number / custom_email. It
+ *     has no Account, and its other quick-entry fields (designation,
+ *     company_name) are hidden here too.
+ *   - frappe's insert() replaces doc.links with the one source form, so the
+ *     Customer/party is no longer first (Contact.autoname names the record from
+ *     links[0]), and its after-insert reloads that form, discarding unsaved edits.
+ *   - The one thing it adds that matters is the source form: the stock section
+ *     passes it as `source_frm` and points frappe.dynamic_link at it.
+ *     resolve_party_context already covers that from the route and the same
+ *     dynamic_link guard.
+ *   - QuickEntryForm itself did not change between the two releases, so the
+ *     dialog runs on the base it was written and tested against, with no frappe
+ *     override in between to bypass method by method (party_quick_entry.js does
+ *     that, because it extends erpnext's class to keep its toggle-off path stock;
+ *     here the constructor hands that path over instead, below).
+ *
+ * Gated by frappe.boot.ee_contacts_ux (ERPNext Enhancements Settings →
+ * Contacts & Addresses). Off, the constructor returns an instance of the class
+ * frappe would have used without this file, so off is stock, whatever stock is:
+ * frappe's own dialog from v16.50, and before it the base class, which routed to
+ * the full form because quick_entry was 0.
  *
  * Opened from a party form, the dialog resolves that form as context —
  * explicitly from the current route, never from the stale `frappe.dynamic_link`
@@ -22,77 +52,24 @@
  * BEFORE insert (core Contact.autoname names the record from links[0], so the
  * rows must exist at naming time and the Customer/party row must come first),
  * and refreshes the source form's contact/address surfaces in place.
+ *
+ * Since v1.575.0: a create from a Project Stakeholder row (frappe._from_link,
+ * whose .doc is the row and whose set_route_args name the form) is filed under
+ * that row's party; a suggested Customer is linked only while it is still the
+ * Account; and New Address on a job or a Contact asks "Whose address is this?"
+ * with no default.
  */
 
 frappe.provide("erpnext_enhancements.contacts_ux");
 
-(function register() {
-	if (!(frappe.ui && frappe.ui.form && frappe.ui.form.QuickEntryForm)) {
-		$(document).one("app_ready", register);
-		return;
-	}
-	// If a future frappe/erpnext ships its own Contact/Address quick entry,
-	// skip ours and re-evaluate on upgrade (nothing defines these as of v16).
-	if (frappe.ui.form.ContactQuickEntryForm || frappe.ui.form.AddressQuickEntryForm) {
-		return;
-	}
-
+// The helpers first, ahead of anything that can return early: the directory widget
+// (unified_tab_controller.js) and the Contact / Address form scripts call them whether
+// or not the dialogs below are registered.
+(function define_helpers() {
 	const ux = erpnext_enhancements.contacts_ux;
 
-	// Per-doctype context: which Dynamic Links a Contact/Address created from
-	// this form should carry ([party first] — link order drives Contact naming)
-	// and which Customer pre-fills the Account field.
-	const PARTY_CONTEXT = {
-		Customer: (d) => ({ account: d.name, links: [["Customer", d.name]] }),
-		Supplier: (d) => ({ account: null, links: [["Supplier", d.name]] }),
-		Lead: (d) => ({ account: null, links: [["Lead", d.name]] }),
-		Prospect: (d) => ({ account: null, links: [["Prospect", d.name]] }),
-		Opportunity: (d) => ({
-			account: d.opportunity_from === "Customer" ? d.party_name : null,
-			links: [
-				...(d.opportunity_from && d.party_name ? [[d.opportunity_from, d.party_name]] : []),
-				["Opportunity", d.name],
-			],
-		}),
-		Project: (d) => ({
-			account: d.customer || null,
-			links: [...(d.customer ? [["Customer", d.customer]] : []), ["Project", d.name]],
-		}),
-		"Master Project": (d) => ({
-			account: d.customer || null,
-			links: [...(d.customer ? [["Customer", d.customer]] : []), ["Master Project", d.name]],
-		}),
-		// "New Address" from a Contact form: attach to its account when set.
-		Contact: (d) => ({
-			account: d.custom_account || null,
-			links: [d.custom_account ? ["Customer", d.custom_account] : ["Contact", d.name]],
-		}),
-	};
-
-	function resolve_party_context() {
-		const route = frappe.get_route();
-		if (!route || route[0] !== "Form" || route.length < 3) return null;
-		const doctype = route[1];
-		const name = route.slice(2).join("/");
-		const frm = frappe.views.formview[doctype] && frappe.views.formview[doctype].frm;
-		if (!frm || frm.is_new() || !frm.doc || frm.doc.name !== name) return null;
-
-		let resolved = null;
-		if (PARTY_CONTEXT[doctype]) {
-			resolved = PARTY_CONTEXT[doctype](frm.doc);
-		} else {
-			// Doctypes outside the map (Sales Partner, Company, Bank…) still get
-			// stock-section parity: honor frappe.dynamic_link, but only under the
-			// same guard frappe's own contact.js uses — it must point at the form
-			// the user is actually on.
-			const dl = frappe.dynamic_link;
-			if (dl && dl.doc && dl.doc.name === frm.doc.name) {
-				resolved = { account: null, links: [[dl.doctype, dl.doc[dl.fieldname]]] };
-			}
-		}
-		if (!resolved) return null;
-		return Object.assign({ doctype: doctype, name: name }, resolved);
-	}
+	/** ERPNext Enhancements Settings → Contacts & Addresses, from the boot payload. */
+	ux.enabled = () => !!cint(frappe.boot && frappe.boot.ee_contacts_ux);
 
 	/**
 	 * Refresh a party form's contact/address surfaces WITHOUT reloading it.
@@ -141,9 +118,26 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		});
 	};
 
+	/**
+	 * The init_callback frappe's own Contacts & Addresses section passes since v16.50:
+	 * the open form as `source_frm`, which frappe's dialog (the one that opens with the
+	 * toggle off) links the new record to. Ours resolves its context itself and ignores
+	 * it. Set on a dialog only: when quick entry is off, frappe calls init_callback with
+	 * the bare new doc instead, and a form object on a doc cannot be serialised on save.
+	 */
+	function source_form_callback(frm) {
+		// An unsaved form has no name a link can point at (frappe's dialog would
+		// write links=[{Doctype, "new-…"}]), so only a saved form is offered.
+		if (!frm || !frm.doc || frm.is_new()) return undefined;
+		return (quick_entry) => {
+			const Dialog = frappe.ui.form.QuickEntryForm;
+			if (Dialog && quick_entry instanceof Dialog) quick_entry.source_frm = frm;
+		};
+	}
+
 	/** "New Contact" from our directory widget (context self-resolves from the route). */
-	ux.new_contact = function () {
-		frappe.new_doc("Contact");
+	ux.new_contact = function (frm) {
+		frappe.new_doc("Contact", null, source_form_callback(frm));
 	};
 
 	/** "New Address" from our directory widget — stock parity with the section
@@ -164,7 +158,7 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 			}).show();
 			return;
 		}
-		frappe.new_doc("Address");
+		frappe.new_doc("Address", null, source_form_callback(frm));
 	};
 
 	/** Contact/Address after_save (wired in their doctype_js): push fresh
@@ -177,6 +171,136 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 			(frm.doc.links || []).map((l) => ({ doctype: l.link_doctype, name: l.link_name }))
 		);
 	};
+})();
+
+(function register() {
+	if (!(frappe.ui && frappe.ui.form && frappe.ui.form.QuickEntryForm)) {
+		$(document).one("app_ready", register);
+		return;
+	}
+
+	const ux = erpnext_enhancements.contacts_ux;
+
+	// frappe's own classes (v16.50+; null before), captured before ours replace them: they
+	// are what the toggle-off path builds. A second run of this file finds ours registered
+	// and takes what they captured, never our own class.
+	const stock_class = (name) => {
+		const current = frappe.ui.form[name];
+		if (current && "ee_stock" in current) return current.ee_stock;
+		return current || null;
+	};
+	const STOCK = {
+		Contact: stock_class("ContactQuickEntryForm"),
+		Address: stock_class("AddressQuickEntryForm"),
+	};
+
+	// Per-doctype context: which Dynamic Links a Contact/Address created from
+	// this form should carry ([party first] — link order drives Contact naming)
+	// and which Customer pre-fills the Account field.
+	const PARTY_CONTEXT = {
+		Customer: (d) => ({ account: d.name, links: [["Customer", d.name]] }),
+		Supplier: (d) => ({ account: null, links: [["Supplier", d.name]] }),
+		Lead: (d) => ({ account: null, links: [["Lead", d.name]] }),
+		Prospect: (d) => ({ account: null, links: [["Prospect", d.name]] }),
+		Opportunity: (d) => ({
+			account: d.opportunity_from === "Customer" ? d.party_name : null,
+			links: [
+				...(d.opportunity_from && d.party_name ? [[d.opportunity_from, d.party_name]] : []),
+				["Opportunity", d.name],
+			],
+		}),
+		Project: (d) => ({
+			account: d.customer || null,
+			links: [...(d.customer ? [["Customer", d.customer]] : []), ["Project", d.name]],
+		}),
+		"Master Project": (d) => ({
+			account: d.customer || null,
+			links: [...(d.customer ? [["Customer", d.customer]] : []), ["Master Project", d.name]],
+		}),
+		// "New Address" from a Contact form: always that Contact; its Account is an
+		// option (the Address dialog asks), so a person's own address is never filed
+		// as their company's instead of theirs.
+		Contact: (d) => ({
+			account: d.custom_account || null,
+			links: [...(d.custom_account ? [["Customer", d.custom_account]] : []), ["Contact", d.name]],
+		}),
+	};
+
+	//: Forms that are a JOB rather than a party. A record created from one of their
+	//: Project Stakeholder rows is linked to the job as well as to the row's party.
+	const JOB_DOCTYPES = ["Project", "Master Project", "Opportunity"];
+
+	/**
+	 * The Project Stakeholder row the user is creating this record from, or null.
+	 *
+	 * "Create a new Contact" in a stakeholder row's Contact field (or its Address
+	 * field) means "a person (address) of THAT row's party". Until v1.575.0 the
+	 * dialog took its context from the route alone, so on a Harwood project a new
+	 * contact typed into the Summit County Health row was pre-filled with Account
+	 * Harwood and filed under Harwood, the exact shape of the audited Nathan
+	 * Brooks record. frappe's link control sets frappe._from_link (the doc it was
+	 * called from) synchronously before it opens quick entry, and always passes an
+	 * after_insert; frappe.new_doc (the directory's own New Contact) passes none.
+	 * Requiring both, and a Project Stakeholder row of the form on screen, keeps a
+	 * stale _from_link from a cancelled create from ever being read, and keeps
+	 * forms whose own doc happens to carry party_type/party_name out (Payment
+	 * Entry's party_name is a display name, not a Customer ID).
+	 */
+	function stakeholder_row(after_insert, doctype, name) {
+		const from = frappe._from_link;
+		const row = from && from.doc;
+		if (typeof after_insert !== "function" || !row) return null;
+		if (row.doctype !== "Project Stakeholder" || row.parenttype !== doctype || row.parent !== name) return null;
+		const route_args = from.set_route_args || [];
+		if (route_args[1] !== doctype || route_args[2] !== name) return null;
+		return row;
+	}
+
+	function resolve_party_context(after_insert) {
+		const route = frappe.get_route();
+		if (!route || route[0] !== "Form" || route.length < 3) return null;
+		const doctype = route[1];
+		const name = route.slice(2).join("/");
+		const frm = frappe.views.formview[doctype] && frappe.views.formview[doctype].frm;
+		if (!frm || frm.is_new() || !frm.doc || frm.doc.name !== name) return null;
+
+		const row = stakeholder_row(after_insert, doctype, name);
+		const row_party = row && row.party_type && row.party_name ? [row.party_type, row.party_name] : null;
+		const on_job = JOB_DOCTYPES.includes(doctype);
+		// A row with no party yet: on a job it gives the job only (falling back to the route
+		// would file the person under the job's Customer, the audited shape); on a Customer
+		// or Supplier form it is how people list that company's OWN staff, so it falls
+		// through to the form's own context below.
+		if (row && (row_party || on_job)) {
+			const party = row_party;
+			return {
+				doctype: doctype,
+				name: name,
+				from_row: true,
+				account: party && party[0] === "Customer" ? party[1] : null,
+				// The row's party, and the job when the form is one. A stakeholder row on a
+				// Customer or Supplier form links to that party only: filing the stakeholder's
+				// person under the form's own company is the fan-out this release removes.
+				links: [...(party ? [party] : []), ...(on_job ? [[doctype, name]] : [])],
+			};
+		}
+
+		let resolved = null;
+		if (PARTY_CONTEXT[doctype]) {
+			resolved = PARTY_CONTEXT[doctype](frm.doc);
+		} else {
+			// Doctypes outside the map (Sales Partner, Company, Bank…) still get
+			// stock-section parity: honor frappe.dynamic_link, but only under the
+			// same guard frappe's own contact.js uses — it must point at the form
+			// the user is actually on.
+			const dl = frappe.dynamic_link;
+			if (dl && dl.doc && dl.doc.name === frm.doc.name) {
+				resolved = { account: null, links: [[dl.doctype, dl.doc[dl.fieldname]]] };
+			}
+		}
+		if (!resolved) return null;
+		return Object.assign({ doctype: doctype, name: name }, resolved);
+	}
 
 	function clone_meta_field(doctype, fieldname, overrides) {
 		const df = frappe.meta.get_docfield(doctype, fieldname);
@@ -186,8 +310,16 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 
 	class ContactAddressQuickEntry extends frappe.ui.form.QuickEntryForm {
 		constructor(doctype, after_insert, init_callback, doc, force, skip_insert) {
+			if (!ux.enabled()) {
+				// Toggle off: exactly what make_quick_entry builds without this file —
+				// frappe's own class from v16.50, the base class (the full form) before.
+				// A derived constructor may return an object instead of calling super();
+				// `new` then yields that object.
+				const Stock = new.target.ee_stock || frappe.ui.form.QuickEntryForm;
+				return new Stock(doctype, after_insert, init_callback, doc, force, skip_insert);
+			}
 			super(doctype, after_insert, init_callback, doc, force, skip_insert);
-			this.ee_context = resolve_party_context();
+			this.ee_context = resolve_party_context(after_insert);
 			if (!this.after_insert && this.ee_context) {
 				// Also suppresses open_form_if_not_list(), which would route away
 				// from the party form to the freshly created record.
@@ -196,12 +328,10 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		}
 
 		is_quick_entry() {
-			// Toggle off -> base behavior: Contact/Address have meta.quick_entry=0,
-			// so this returns false and setup() routes to the stock full form.
-			// (Deliberately not this.force: force hides the Edit Full Form link.)
-			if (!cint(frappe.boot.ee_contacts_ux)) {
-				return super.is_quick_entry();
-			}
+			// Always: the field list is ours, so meta's checks (quick_entry, a mandatory
+			// child table, no docfields) have nothing to say about it, and the toggle was
+			// settled in the constructor. (Deliberately not this.force: force hides the
+			// Edit Full Form link.)
 			return true;
 		}
 
@@ -214,7 +344,34 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				this.docfields = fields.filter(Boolean);
 			}
 			super.render_dialog();
+			this.ee_reapply_df_overrides();
 			this.ee_show_context_intro();
+		}
+
+		/**
+		 * frappe's Layout replaces each control's df with the per-doc copy of its meta
+		 * docfield right after building the controls (layout.js attach_doc_and_docfields,
+		 * reached from FieldGroup.make's refresh). That copy is built from meta, so it drops
+		 * whatever this dialog set on its clone for a field that exists in meta: an
+		 * onchange, reqd, read_only. Put those back on the copy the control now holds. That
+		 * copy is keyed by this new doc's name, so it reaches nothing but this dialog and,
+		 * if the user picks Edit Full Form, the full form of the same unsaved doc (where a
+		 * required first name and a no-op banner refresh are harmless). A dialog-only field
+		 * (not in meta) keeps its clone and is skipped.
+		 */
+		ee_reapply_df_overrides() {
+			(this.docfields || []).forEach((df) => {
+				const control = df && df.fieldname && this.fields_dict && this.fields_dict[df.fieldname];
+				if (!control || !control.df || control.df === df) return;
+				let changed = false;
+				["onchange", "reqd", "read_only"].forEach((key) => {
+					if (key in df && control.df[key] !== df[key]) {
+						control.df[key] = df[key];
+						changed = true;
+					}
+				});
+				if (changed && typeof control.refresh === "function") control.refresh();
+			});
 		}
 
 		update_doc() {
@@ -264,7 +421,7 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 			};
 
 			this.ee_leading_links(doc).forEach((l) => push(l[0], l[1]));
-			((this.ee_context && this.ee_context.links) || []).forEach((l) => push(l[0], l[1]));
+			this.ee_context_links(doc).forEach((l) => push(l[0], l[1]));
 			(doc.links || []).forEach((row) => push(row.link_doctype, row.link_name));
 
 			if (!desired.length) return;
@@ -285,17 +442,37 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 			ux.refresh_directory_surfaces(targets);
 		}
 
+		/** What the dialog will save right now: the doc overlaid with every field's current
+		 *  value. Read field by field because get_values() leaves out empty fields, and an
+		 *  emptied field is exactly the case that matters here. */
+		ee_current_values() {
+			const values = Object.assign({}, this.doc);
+			Object.values(this.fields_dict || {}).forEach((field) => {
+				if (field && field.df && field.df.fieldname && typeof field.get_value === "function") {
+					values[field.df.fieldname] = field.get_value();
+				}
+			});
+			return values;
+		}
+
 		ee_show_context_intro() {
 			if (!this.ee_context || !this.ee_is_new()) return;
-			const parts = (this.ee_context.links || []).map(
-				([link_doctype, link_name]) => `${__(link_doctype)} ${link_name}`
-			);
-			if (parts.length) {
-				this.set_intro(__("Will be linked to {0}", [parts.join(", ")]), "blue");
-			}
+			const values = this.ee_current_values();
+			const parts = this.ee_leading_links(values)
+				.concat(this.ee_context_links(values))
+				.filter((l, i, all) => all.findIndex((m) => m[0] === l[0] && m[1] === l[1]) === i)
+				.map(([link_doctype, link_name]) => `${__(link_doctype)} ${link_name}`);
+			// An empty text clears the banner (QuickEntryForm.set_intro), so it never keeps
+			// naming a company the user has just removed.
+			// "info": v16 styles only info/success/warning/danger alerts.
+			this.set_intro(parts.length ? __("Will be linked to {0}", [parts.join(", ")]) : "", "info");
 		}
 
 		// Subclass hooks.
+		/** The context's links that this record should still carry, given what the user chose. */
+		ee_context_links() {
+			return (this.ee_context && this.ee_context.links) || [];
+		}
 		ee_prepare_new_doc() {}
 		ee_dialog_fields() {
 			return null;
@@ -306,9 +483,7 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		ee_finalize_doc() {}
 	}
 
-	frappe.ui.form.ContactQuickEntryForm = class ContactQuickEntryForm extends (
-		ContactAddressQuickEntry
-	) {
+	class ContactQuickEntryForm extends ContactAddressQuickEntry {
 		ee_prepare_new_doc() {
 			// Link-field create writes the typed text into the field: autoname
 			// target (custom_full_name_and_role), where the server would discard
@@ -336,7 +511,9 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				clone_meta_field("Contact", "last_name"),
 				{ fieldtype: "Column Break" },
 				clone_meta_field("Contact", "custom_title"),
-				clone_meta_field("Contact", "custom_account"),
+				clone_meta_field("Contact", "custom_account", {
+					onchange: () => this.ee_show_context_intro(),
+				}),
 				{ fieldtype: "Section Break", label: __("Contact Details") },
 				clone_meta_field("Contact", "custom_email"),
 				{ fieldtype: "Column Break" },
@@ -350,11 +527,46 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 			// directly in the dialog) — first, so it names the record.
 			return doc.custom_account ? [["Customer", doc.custom_account]] : [];
 		}
-	};
 
-	frappe.ui.form.AddressQuickEntryForm = class AddressQuickEntryForm extends (
-		ContactAddressQuickEntry
-	) {
+		update_doc() {
+			// The control writes the doc on change (set_model_value), so an emptied Account
+			// normally reaches the doc already. update_doc itself copies only non-empty
+			// values, though, so make the emptied field authoritative here rather than
+			// depend on a change event having fired.
+			const field = this.fields_dict && this.fields_dict.custom_account;
+			if (field && this.ee_is_new() && !field.get_value()) {
+				this.doc.custom_account = "";
+			}
+			return super.update_doc();
+		}
+
+		ee_context_links(doc) {
+			// On a Project / Customer-sourced Opportunity the Account is
+			// pre-filled with that form's Customer as a SUGGESTION — usually right (the
+			// customer's own people), but not for the GC's super, the architect or the
+			// county inspector on the job. Until v1.575.0 the context still pushed that
+			// Customer link after the user cleared or changed the Account, so the person
+			// was filed under the customer anyway and the Account came straight back. The
+			// user's choice in the Account field is the answer: keep the suggested Customer
+			// only while it is still the Account.
+			const ctx = this.ee_context;
+			// A Contact is never linked to another Contact (the Contact context's
+			// self-link exists for New Address on a Contact form).
+			const links = super.ee_context_links(doc).filter(([link_doctype]) => link_doctype !== "Contact");
+			const suggested = ctx && ctx.account;
+			if (!suggested || (doc.custom_account || "") === suggested) return links;
+			// The form the user is standing on is never optional: on a Customer form the
+			// "suggestion" IS that Customer, and dropping it saved a contact linked to
+			// nothing at all.
+			return links.filter(
+				([link_doctype, link_name]) =>
+					!(link_doctype === "Customer" && link_name === suggested) ||
+					(link_doctype === ctx.doctype && link_name === ctx.name)
+			);
+		}
+	}
+
+	class AddressQuickEntryForm extends ContactAddressQuickEntry {
 		ee_prepare_new_doc() {
 			if (!this.doc.address_type) {
 				this.doc.address_type = "Billing";
@@ -377,6 +589,7 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				clone_meta_field("Address", "address_type"),
 				{ fieldtype: "Column Break" },
 				clone_meta_field("Address", "address_title"),
+				this.ee_party_choice_field(),
 				// Coordinates last, collapsed: needed only when the address text
 				// cannot locate the site (new construction, a lot number), which
 				// is rare — but this dialog is the main creation path, so leaving
@@ -400,6 +613,85 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 					onchange: () => this.ee_coordinates_edited(),
 				}),
 			];
+		}
+
+		/** The context links that name a PARTY rather than the open form itself: on a
+		 *  Project, its Customer; on an Opportunity, its Customer/Lead/Prospect; on a
+		 *  Contact, its Account. */
+		ee_party_links() {
+			const ctx = this.ee_context;
+			if (!ctx) return [];
+			return (ctx.links || []).filter(([link_doctype, link_name]) => !(link_doctype === ctx.doctype && link_name === ctx.name));
+		}
+
+		/**
+		 * "Whose address is this?": a required choice between this form only and also
+		 * the form's party, or null when there is nothing to ask (a Customer/Supplier
+		 * form IS the party).
+		 *
+		 * Until v1.575.0 an address made from a job always went to its Customer/party as
+		 * well, with no way to say no. When that Customer is the general contractor rather
+		 * than the owner, the job site is filed under the wrong company: the Saltair site
+		 * became Wadman Corporation's primary address and the address on a draft invoice,
+		 * and the Stenmark lot became a Hess Construction address. Those were the default
+		 * case, so there is no default: the dialog will not save until the user answers
+		 * (decided 2026-10-06). The one exception is a create from a Project Stakeholder
+		 * row on a job, where the user already chose the party by starting from its row;
+		 * it is pre-answered "Also" and can still be changed.
+		 */
+		ee_party_choice_field() {
+			const party = this.ee_party_links();
+			if (!this.ee_is_new() || !party.length) return null;
+			// Ask only where the open form is itself one of the links (a job, or a Contact):
+			// "this form only" then means something. Elsewhere — a transaction form whose
+			// script sets frappe.dynamic_link (Quotation, Sales Order, Purchase Order…), or a
+			// stakeholder row on a Customer/Supplier form — the party is the only link there
+			// is, and answering "only" would save an address linked to nothing.
+			const ctx_self = this.ee_context;
+			if (!(ctx_self.links || []).some(([dt, nm]) => dt === ctx_self.doctype && nm === ctx_self.name)) return null;
+			const names = party
+				.map(([link_doctype, link_name]) => frappe.utils.get_link_title(link_doctype, link_name) || link_name)
+				.join(", ");
+			const ctx = this.ee_context;
+			this.ee_choice = {
+				only: __("This {0} only", [__(ctx.doctype)]),
+				also: __("Also {0}'s address", [names]),
+			};
+			return {
+				fieldtype: "Select",
+				fieldname: "ee_file_under_party",
+				label: __("Whose address is this?"),
+				options: ["", this.ee_choice.only, this.ee_choice.also],
+				reqd: 1,
+				default: ctx.from_row ? this.ee_choice.also : undefined,
+				description: __(
+					"A job site that belongs to someone else (e.g. a general contractor's project) is this {0}'s only.",
+					[__(ctx.doctype)]
+				),
+				onchange: () => this.ee_show_context_intro(),
+			};
+		}
+
+		ee_context_links(doc) {
+			const links = super.ee_context_links(doc);
+			const field = this.fields_dict && this.fields_dict.ee_file_under_party;
+			if (!field || (this.ee_choice && field.get_value() === this.ee_choice.also)) return links;
+			// Not answered yet, or "this form only": the party is not added. An unanswered
+			// dialog cannot save (reqd), so this only shapes the banner until then.
+			const party = this.ee_party_links();
+			const kept = links.filter(([link_doctype, link_name]) => !party.some((p) => p[0] === link_doctype && p[1] === link_name));
+			// "This <form> only" keeps the form's own link: the job, or the Contact, which every
+			// context with a choice carries. No fallback is needed or wanted: falling back to the
+			// open form is how a stakeholder's address used to land on a Customer form's own
+			// company.
+			return kept;
+		}
+
+		update_doc() {
+			const doc = super.update_doc();
+			// Dialog-only answer: never a field on the Address.
+			delete doc.ee_file_under_party;
+			return doc;
 		}
 
 		/** A hand edit makes the point the user's, so it must survive from here on. */
@@ -521,5 +813,13 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				}
 			}
 		}
-	};
+	}
+
+	// Registered OVER frappe's own classes on purpose (see the header). make_quick_entry
+	// looks the name up when it is called, and this runs after frappe's form.bundle.js,
+	// so these assignments are the ones it finds. `ee_stock` is the toggle-off class.
+	ContactQuickEntryForm.ee_stock = STOCK.Contact;
+	AddressQuickEntryForm.ee_stock = STOCK.Address;
+	frappe.ui.form.ContactQuickEntryForm = ContactQuickEntryForm;
+	frappe.ui.form.AddressQuickEntryForm = AddressQuickEntryForm;
 })();

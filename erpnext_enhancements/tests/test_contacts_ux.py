@@ -120,17 +120,35 @@ class TestContactAccountSync(FrappeTestCase):
 		self.assertEqual(_customer_links(contact), [self.cust_b.name])
 		self.assertEqual(contact.custom_account, self.cust_b.name)
 
-	def test_clear_account_removes_row_and_promotes_next_customer(self):
+	def test_clear_account_removes_row_and_promotes_nothing(self):
 		contact = _make_contact(
 			"Grace",
 			links=[("Customer", self.cust_a.name), ("Customer", self.cust_b.name)],
 		)
 		contact.custom_account = None
 		contact.save(ignore_permissions=True)
-		# A's row removed; B promoted (the field mirrors the first Customer
-		# link, so it can only stay blank when no Customer link remains).
+		# A's row removed; B is NOT promoted (v1.575.0). Promotion is how a cleared
+		# "Harwood" became "Layton" on a supplier's person, and the next save must not
+		# promote it either.
 		self.assertEqual(_customer_links(contact), [self.cust_b.name])
-		self.assertEqual(contact.custom_account, self.cust_b.name)
+		self.assertFalse(contact.custom_account)
+		contact.save(ignore_permissions=True)
+		self.assertFalse(contact.custom_account)
+
+	def test_supplier_first_contact_never_adopts_a_customer(self):
+		supplier = frappe.get_doc(
+			{
+				"doctype": "Supplier",
+				"supplier_name": f"_Test CUX S {frappe.generate_hash(length=6)}",
+				"supplier_group": _leaf("Supplier Group"),
+			}
+		)
+		with patch.object(frappe, "enqueue"):
+			supplier.insert(ignore_permissions=True)
+		contact = _make_contact("Hank", links=[("Supplier", supplier.name)])
+		contact.append("links", {"link_doctype": "Customer", "link_name": self.cust_a.name})
+		contact.save(ignore_permissions=True)
+		self.assertFalse(contact.custom_account)
 
 	def test_clear_account_with_single_customer_clears_both(self):
 		contact = _make_contact("Heidi", links=[("Customer", self.cust_a.name)])
