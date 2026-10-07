@@ -126,6 +126,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     discard it. `ee_reapply_df_overrides` puts them back on the per-doc copy, which belongs to
     this new document: its dialog, and its full form if the user picks Edit Full Form.
 
+- **The Contact and Address dialogs run again on frappe 16.50.** Production moved to frappe
+  16.50.0 on 2026-10-06. That release ships its own `ContactQuickEntryForm` and
+  `AddressQuickEntryForm` (`frappe/utils/address_and_contact.js`, loaded by `form.bundle.js`
+  before this app's bundle) and turns `quick_entry` on for Contact and Address.
+  `contact_address_quick_entry.js` stepped aside whenever such a class existed, and it defined
+  the `contacts_ux` helpers after that check. So on prod none of the dialog fixes above would
+  have run, every new Contact or Address opened frappe's dialog, and the directory's **New
+  Contact** and **New Address** buttons threw a TypeError. frappe's Contact dialog writes phone
+  and email into the `phone_nos` / `email_ids` tables, which this site hides in favour of
+  `custom_phone_number` / `custom_mobile_number` / `custom_email`, and it has no Account. Its
+  `insert()` replaces the links with the one form it was opened from, so the party is not first
+  (`Contact.autoname` names the record from `links[0]`), and it then reloads that form,
+  discarding unsaved edits.
+
+  Ours are now registered over frappe's on purpose: `make_quick_entry` looks the class up by
+  name when it is called, so the last assignment wins. They still extend the base
+  `QuickEntryForm`, which is identical in 16.36.1 and 16.50.0, rather than frappe's new classes,
+  so there is no frappe override to bypass method by method. The helpers are defined first, and
+  the directory's buttons fall back to a plain new record if a helper is ever missing. With the
+  Contacts & Addresses setting off, the dialog now hands over to the class frappe would have
+  used: frappe's own dialog from 16.50 (told which form it was opened from, as frappe's own
+  section button does), and the full form before it. "Off" used to promise the full form, which
+  stock frappe no longer opens. As of this fix no Contact or Address had been created on prod
+  since the upgrade, so none needs repair.
+
 - **An address a staff member creates without a link is no longer filed under that staff
   member's own contact.** frappe's `Address.link_address` runs on every save. For an address
   with no links it copies every link of the Contact whose email is the address's **creator**
@@ -194,7 +219,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     database.
   - `scripts/test_contact_quick_entry.mjs` (node): both dialogs, the stakeholder-row create
     and Link Existing. Its frappe stub performs the per-doc df swap and the asynchronous
-    defaults the real dialog does, because a stub without them hid the banner bug.
+    defaults the real dialog does, because a stub without them hid the banner bug. It runs
+    twice: as frappe 16.50.0, with frappe's own Contact/Address dialogs registered before this
+    app's file loads, and as 16.36.1, without them.
 
   Known and left as is: the stock Address `address_title` is mandatory while an address has
   no links (`mandatory_depends_on`), and this dialog adds its links only on save, so the

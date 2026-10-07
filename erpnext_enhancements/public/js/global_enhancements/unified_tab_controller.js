@@ -290,11 +290,17 @@ erpnext_enhancements.unified_controller = {
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
 		).appendTo(wrapper);
 
-		// Quick-entry create (context self-resolves from the open form; falls
-		// back to the stock full form when the toggle is off).
+		// Quick-entry create (context self-resolves from the open form; with the
+		// toggle off, frappe's own create flow). Guarded: on frappe v16.50 the helper
+		// was never defined and this click threw; a missing helper now falls back to
+		// a plain new Contact rather than a dead button.
 		$('<button class="btn btn-sm btn-primary">New Contact</button>')
 			.appendTo(btn_container)
-			.on("click", () => erpnext_enhancements.contacts_ux.new_contact());
+			.on("click", () =>
+				erpnext_enhancements.contacts_ux?.new_contact
+					? erpnext_enhancements.contacts_ux.new_contact(frm)
+					: frappe.new_doc("Contact"),
+			);
 
 		$('<button class="btn btn-sm btn-default">Link Existing</button>')
 			.appendTo(btn_container)
@@ -461,10 +467,14 @@ erpnext_enhancements.unified_controller = {
 		).appendTo(wrapper);
 
 		// Quick-entry create; respects the Geolocation autocomplete dialog when
-		// that feature is enabled (stock-section parity).
+		// that feature is enabled (stock-section parity). Guarded like New Contact.
 		$('<button class="btn btn-sm btn-primary">New Address</button>')
 			.appendTo(btn_container)
-			.on("click", () => erpnext_enhancements.contacts_ux.new_address(frm));
+			.on("click", () =>
+				erpnext_enhancements.contacts_ux?.new_address
+					? erpnext_enhancements.contacts_ux.new_address(frm)
+					: frappe.new_doc("Address"),
+			);
 
 		$('<button class="btn btn-sm btn-default">Link Existing</button>')
 			.appendTo(btn_container)

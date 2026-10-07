@@ -1459,7 +1459,8 @@ jobs:
       # (it now must be told whose address it is), and a record created from a stakeholder row went
       # to the job's Customer instead of the row's party. Runs the real dialogs and Link Existing
       # against a frappe stub that does the per-doc df swap and the async defaults the real dialog
-      # does (a stub without them hid a bug).
+      # does (a stub without them hid a bug). The script runs itself twice: as frappe 16.50.0, whose
+      # own Contact/Address dialogs once made ours step aside on prod, and as 16.36.1.
       - name: New Contact / New Address obey the user, Link Existing links one record (bench-free, node)
         run: node scripts/test_contact_quick_entry.mjs
       # Same audit: the Contact "Account" field mirrored the first Customer link, so a supplier's

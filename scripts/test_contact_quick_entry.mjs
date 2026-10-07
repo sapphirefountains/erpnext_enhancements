@@ -20,15 +20,30 @@
  *      dialog's onchange; the stub below does the same swap, so that cannot hide again.
  *   5. Link Existing links the open form, and the form's own Customer only when the user
  *      ticks the (unticked) box. Never a stakeholder.
+ *   6. frappe v16.50.0 defines its own ContactQuickEntryForm / AddressQuickEntryForm
+ *      (utils/address_and_contact.js, form.bundle.js) before this app's bundle loads. The
+ *      dialogs used to step aside when those existed, with the contacts_ux helpers defined
+ *      after that check, so on prod none of 1-4 ran and the directory's New Contact / New
+ *      Address threw a TypeError. Ours must be the classes make_quick_entry finds, must not
+ *      inherit frappe's phone_nos / email_ids fields, must hand the toggle-off path to
+ *      frappe's own class, and the helpers must exist before anything can return early.
  *
  * The QuickEntryForm stub follows frappe v16 where it matters (quick_entry.js, field_group.js,
  * layout.js attach_doc_and_docfields): controls get the per-doc meta df after build, defaults
  * arrive asynchronously through set_value (firing onchange), get_values() leaves empty fields
  * out, update_doc() copies only non-empty values, and a user's edit writes the doc model.
- * Every name here is invented. Run: node scripts/test_contact_quick_entry.mjs
+ * make_quick_entry resolves the class by name when it is called, as quick_entry.js does.
+ *
+ * The suite runs twice. The default run models frappe v16.50.0 (what prod runs since
+ * 2026-10-06): frappe's own Contact/Address classes, modelled on address_and_contact.js:4-79,
+ * are registered BEFORE this app's file loads, and Contact/Address carry quick_entry = 1. It
+ * then re-runs itself as v16.36.1 (no frappe classes, quick_entry = 0), the shape the dialogs
+ * were written against. Every name here is invented.
+ * Run: node scripts/test_contact_quick_entry.mjs
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +53,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(HERE, "..", "erpnext_enhancements", "public", "js", "global_enhancements");
 const QUICK_ENTRY_JS = path.join(DIR, "contact_address_quick_entry.js");
 const CONTROLLER_JS = path.join(DIR, "unified_tab_controller.js");
+
+/** Which frappe the stub models: v16.50.0 by default, v16.36.1 in the re-run. */
+const SHAPE = process.env.EE_QE_FRAPPE_SHAPE || "v16.50.0";
+const FRAPPE_DIALOGS = SHAPE === "v16.50.0";
 
 const TESTS = [];
 const test = (name, fn) => TESTS.push({ name, fn });
@@ -96,13 +115,49 @@ class Control {
 	}
 }
 
+/** Contact/Address meta.quick_entry: 1 from v16.50.0 (contact.json, address.json), 0 before. */
+const META_QUICK_ENTRY = FRAPPE_DIALOGS ? 1 : 0;
+/** set_meta_and_mandatory_fields: meta fields that are reqd or allow_in_quick_entry. */
+const QUICK_ENTRY_FIELDS = FRAPPE_DIALOGS
+	? {
+			Contact: ["first_name", "last_name", "designation", "company_name"],
+			Address: ["address_title", "address_line1", "city", "state", "pincode", "country", "address_type"],
+		}
+	: { Contact: [], Address: ["address_title", "address_line1", "city", "country", "address_type"] };
+const ROUTED = [];
+const ROUTED_DOCS = [];
+const INSERTED = [];
+
 class QuickEntryForm {
 	constructor(doctype, after_insert, init_callback, doc) {
 		this.doctype = doctype;
 		this.after_insert = after_insert;
+		this.init_callback = init_callback;
 		this.doc = doc || { doctype, __islocal: 1, name: "new-" + doctype.toLowerCase() + "-1" };
 		this.dialog = this;
 		this.intro = null;
+	}
+	/** quick_entry.js setup(): the dialog, or the full form with init_callback(doc). */
+	setup() {
+		this.docfields = (QUICK_ENTRY_FIELDS[this.doctype] || []).map((f) => ({ fieldname: f, fieldtype: "Data" }));
+		if (this.is_quick_entry()) {
+			this.render_dialog();
+		} else {
+			frappe.quick_entry = null;
+			ROUTED.push(["Form", this.doctype, this.doc.name]);
+			ROUTED_DOCS.push(this.doc);
+			if (this.init_callback) this.init_callback(this.doc);
+		}
+		return Promise.resolve(this);
+	}
+	is_quick_entry() {
+		return META_QUICK_ENTRY === 1 && (this.docfields || []).length > 0;
+	}
+	/** insert(): update_doc(), then frappe.client.save of this.doc (recorded, not sent). */
+	insert() {
+		this.update_doc();
+		INSERTED.push(JSON.parse(JSON.stringify(this.doc)));
+		return Promise.resolve(this.doc);
 	}
 	render_dialog() {
 		this.fields_dict = {};
@@ -120,6 +175,7 @@ class QuickEntryForm {
 		Object.values(this.fields_dict).forEach((c) => {
 			if (!is_null(this.doc[c.df.fieldname])) c.set_input(this.doc[c.df.fieldname]);
 		});
+		if (this.init_callback) this.init_callback(this);
 	}
 	get_values() {
 		const ret = {};
@@ -141,12 +197,54 @@ class QuickEntryForm {
 		if (txt) assert.ok(["info", "success", "warning", "danger"].includes(color), `unstyled alert colour '${color}'`);
 		this.intro = txt || null;
 	}
-	is_quick_entry() {
-		return false;
-	}
+}
+
+/**
+ * frappe v16.50.0's own classes (frappe/public/js/frappe/utils/address_and_contact.js:4-79),
+ * modelled on the stub above. Contact extends Address there too.
+ */
+const UPSTREAM = {};
+if (FRAPPE_DIALOGS) {
+	UPSTREAM.Address = class AddressQuickEntryForm extends QuickEntryForm {
+		insert() {
+			if (this.source_frm) {
+				this.dialog.doc.links = [{ link_doctype: this.source_frm.doctype, link_name: this.source_frm.docname }];
+			}
+			return super.insert();
+		}
+		open_form_if_not_list() {
+			this.source_frm.reload_doc();
+		}
+	};
+	UPSTREAM.Contact = class ContactQuickEntryForm extends UPSTREAM.Address {
+		render_dialog() {
+			const fields = this.get_detail_fields().map(({ table, value_field, primary_flag, ...field }) => field);
+			this.docfields = this.docfields.concat({ fieldtype: "Column Break" }, ...fields);
+			super.render_dialog();
+		}
+		update_doc() {
+			const doc = super.update_doc();
+			for (const { fieldname, table, value_field, primary_flag } of this.get_detail_fields()) {
+				const value = doc[fieldname];
+				delete doc[fieldname];
+				if (!value) continue;
+				doc[table] = doc[table] || [];
+				doc[table].push({ [value_field]: value, [primary_flag]: 1 });
+			}
+			return doc;
+		}
+		get_detail_fields() {
+			return [
+				{ fieldname: "contact_phone", fieldtype: "Data", table: "phone_nos", value_field: "phone", primary_flag: "is_primary_phone" },
+				{ fieldname: "contact_mobile_no", fieldtype: "Data", table: "phone_nos", value_field: "phone", primary_flag: "is_primary_mobile_no" },
+				{ fieldname: "contact_email", fieldtype: "Data", table: "email_ids", value_field: "email_id", primary_flag: "is_primary" },
+			];
+		}
+	};
 }
 
 let ROUTE = [];
+let RELOADED = 0;
 const FORMS = {};
 const CALLS = [];
 let PROMPT = null;
@@ -156,7 +254,23 @@ const ALERTS = [];
 globalThis.window = globalThis;
 globalThis.__ = (text, args) => String(text).replace(/\{(\d+)\}/g, (_, i) => (args && args[i] !== undefined ? args[i] : ""));
 globalThis.cint = (v) => parseInt(v, 10) || 0;
-globalThis.$ = () => ({ one: () => {} });
+/** jQuery, as far as the directory's button rows use it: chainable, with click handlers kept. */
+const CLICKS = [];
+globalThis.$ = (html) => {
+	const node = {};
+	["one", "empty", "html", "append", "appendTo", "find", "remove"].forEach((m) => (node[m] = () => node));
+	node.on = (event, fn) => {
+		if (event === "click") CLICKS.push({ html: String(html), fn });
+		return node;
+	};
+	return node;
+};
+const click = (label) => {
+	const button = CLICKS.filter((c) => c.html.includes(`>${label}<`)).at(-1);
+	assert.ok(button, `no '${label}' button was rendered`);
+	button.fn();
+};
+const NEW_DOCS = [];
 globalThis.erpnext_enhancements = {};
 globalThis.frappe = {
 	provide: (ns) => {
@@ -166,7 +280,28 @@ globalThis.frappe = {
 			obj = obj[part];
 		});
 	},
-	ui: { form: { QuickEntryForm, on: () => {} } },
+	ui: {
+		form: Object.assign(
+			{
+				QuickEntryForm,
+				on: () => {},
+				// quick_entry.js: the class is looked up by name when this is called.
+				make_quick_entry: (doctype, after_insert, init_callback, doc, force, skip_insert) => {
+					const name = doctype.replace(/ /g, "") + "QuickEntryForm";
+					const Dialog = frappe.ui.form[name] || frappe.ui.form.QuickEntryForm;
+					frappe.quick_entry = new Dialog(doctype, after_insert, init_callback, doc, force, skip_insert);
+					return frappe.quick_entry.setup();
+				},
+			},
+			// form.bundle.js loads frappe's classes before any app bundle.
+			FRAPPE_DIALOGS ? { AddressQuickEntryForm: UPSTREAM.Address, ContactQuickEntryForm: UPSTREAM.Contact } : {}
+		),
+	},
+	/** create_new.js: no create_routes here, so straight to make_quick_entry. */
+	new_doc: (doctype, opts, init_callback) => {
+		NEW_DOCS.push({ doctype, init_callback });
+		return frappe.ui.form.make_quick_entry(doctype, null, init_callback);
+	},
 	boot: { ee_contacts_ux: 1 },
 	sys_defaults: { country: "United States" },
 	get_route: () => ROUTE,
@@ -192,6 +327,11 @@ globalThis.frappe = {
 	},
 	call: (opts) => {
 		CALLS.push(opts.args);
+		// The directory's own list fetches: nothing linked yet.
+		if (/_for_context$/.test(opts.method || "")) {
+			if (opts.callback) opts.callback({ message: [] });
+			return;
+		}
 		if (FAIL_ON && opts.args.link_doctype === FAIL_ON) {
 			if (opts.error) opts.error({});
 			return;
@@ -207,12 +347,13 @@ vm.runInThisContext(fs.readFileSync(CONTROLLER_JS, "utf8"), { filename: CONTROLL
 
 const { ContactQuickEntryForm, AddressQuickEntryForm } = globalThis.frappe.ui.form;
 assert.ok(ContactQuickEntryForm && AddressQuickEntryForm, "the dialogs did not register");
+const ux = globalThis.erpnext_enhancements.contacts_ux;
 
 /** Put the user on a saved form, the way the Desk route and formview cache would. */
 function on_form(doctype, doc, dynamic_link = null) {
 	ROUTE = ["Form", doctype, doc.name];
 	for (const key of Object.keys(FORMS)) delete FORMS[key];
-	FORMS[doctype] = { frm: { doc, is_new: () => false } };
+	FORMS[doctype] = { frm: { doctype, docname: doc.name, doc, is_new: () => false, reload_doc: () => (RELOADED += 1) } };
 	delete frappe._from_link;
 	// ERPNext's own form scripts set this on transactions (sales_common.js, buying.js).
 	frappe.dynamic_link = dynamic_link;
@@ -624,8 +765,163 @@ test("a Project's directory shows the people on the deal it came from", () => {
 	assert.equal(controller.get_base_links, undefined, "the fan-out helper is back");
 });
 
+// ------------------------------------- frappe's own dialogs (v16.50.0) and the toggle
+
+test("ours are the classes make_quick_entry finds, built on the base QuickEntryForm", () => {
+	assert.equal(frappe.ui.form.ContactQuickEntryForm, ContactQuickEntryForm);
+	assert.ok(ContactQuickEntryForm.prototype instanceof QuickEntryForm);
+	assert.ok(AddressQuickEntryForm.prototype instanceof QuickEntryForm);
+	if (FRAPPE_DIALOGS) {
+		assert.notEqual(ContactQuickEntryForm, UPSTREAM.Contact, "frappe's own Contact dialog is still registered");
+		assert.notEqual(AddressQuickEntryForm, UPSTREAM.Address, "frappe's own Address dialog is still registered");
+		assert.ok(!(ContactQuickEntryForm.prototype instanceof UPSTREAM.Address), "ours inherits frappe's dialog");
+		assert.ok(!(AddressQuickEntryForm.prototype instanceof UPSTREAM.Address), "ours inherits frappe's dialog");
+	}
+	assert.equal(ContactQuickEntryForm.ee_stock, FRAPPE_DIALOGS ? UPSTREAM.Contact : null);
+	assert.equal(AddressQuickEntryForm.ee_stock, FRAPPE_DIALOGS ? UPSTREAM.Address : null);
+});
+
+test("the directory's New Contact opens our dialog: Account, custom_* fields, Customer first", async () => {
+	const customer = { name: "Harbor Plaza" };
+	on_form("Customer", customer);
+	const frm = FORMS.Customer.frm;
+	INSERTED.length = 0;
+	RELOADED = 0;
+	ux.new_contact(frm);
+	await tick();
+	const dialog = frappe.quick_entry;
+	assert.ok(dialog instanceof ContactQuickEntryForm, "make_quick_entry did not build ours");
+	assert.equal(dialog.fields_dict.custom_account.get_value(), "Harbor Plaza", "Account not pre-filled");
+	for (const stock of ["contact_phone", "contact_mobile_no", "contact_email", "designation", "company_name"]) {
+		assert.ok(!dialog.fields_dict[stock], `frappe's '${stock}' field is in the dialog`);
+	}
+	dialog.fields_dict.first_name.user_sets("Dee");
+	dialog.fields_dict.custom_email.user_sets("dee@example.com");
+	dialog.fields_dict.custom_phone_number.user_sets("555-0100");
+	await dialog.insert();
+	const saved = INSERTED.at(-1);
+	assert.deepEqual(links_of(saved), [["Customer", "Harbor Plaza"]]);
+	assert.equal(saved.custom_email, "dee@example.com");
+	assert.equal(saved.custom_phone_number, "555-0100");
+	assert.ok(!saved.email_ids && !saved.phone_nos, "wrote the tables this site hides");
+	assert.equal(RELOADED, 0, "reloaded the source form (discards its unsaved edits)");
+});
+
+test("the directory's New Address opens our dialog and asks whose it is", async () => {
+	on_form("Project", { name: "PRJ-0001", customer: "Harbor Plaza" });
+	ux.new_address(FORMS.Project.frm);
+	await tick();
+	const dialog = frappe.quick_entry;
+	assert.ok(dialog instanceof AddressQuickEntryForm, "make_quick_entry did not build ours");
+	assert.equal(dialog.fields_dict.ee_file_under_party.df.reqd, 1);
+	dialog.fields_dict.address_line1.user_sets("Lot 12");
+	dialog.fields_dict.ee_file_under_party.user_sets(dialog.ee_choice.only);
+	INSERTED.length = 0;
+	await dialog.insert();
+	assert.deepEqual(links_of(INSERTED.at(-1)), [["Project", "PRJ-0001"]]);
+});
+
+test("toggle off: frappe's own create flow, still linked to the open form", async () => {
+	on_form("Project", { name: "PRJ-0001", customer: "Harbor Plaza" });
+	const frm = FORMS.Project.frm;
+	ROUTED.length = 0;
+	INSERTED.length = 0;
+	frappe.boot.ee_contacts_ux = 0;
+	try {
+		ux.new_contact(frm);
+		await tick();
+		if (FRAPPE_DIALOGS) {
+			const dialog = frappe.quick_entry;
+			assert.ok(dialog instanceof UPSTREAM.Contact, "toggle off did not open frappe's own dialog");
+			assert.ok(!(dialog instanceof ContactQuickEntryForm));
+			assert.ok(dialog.fields_dict.contact_phone, "frappe's dialog lost its own fields");
+			assert.equal(dialog.source_frm, frm, "frappe's dialog was not told the open form");
+			dialog.fields_dict.first_name.user_sets("Off");
+			await dialog.insert();
+			assert.deepEqual(links_of(INSERTED.at(-1)), [["Project", "PRJ-0001"]]);
+		} else {
+			assert.deepEqual(ROUTED.at(-1), ["Form", "Contact", "new-contact-1"], "toggle off did not open the full form");
+			assert.equal(frappe.quick_entry, null);
+		}
+		// Whatever frappe builds, a form object never lands on the doc (it could not be saved).
+		const doc = FRAPPE_DIALOGS ? frappe.quick_entry.doc : ROUTED_DOCS.at(-1);
+		assert.ok(doc && !("source_frm" in doc), "source_frm was set on the new doc");
+	} finally {
+		frappe.boot.ee_contacts_ux = 1;
+	}
+});
+
+test("the directory's buttons work, and never throw when the helpers are missing", async () => {
+	const ctx = directory({ doctype: "Customer", doc: { name: "Harbor Plaza" }, fields_dict: { contact_list_html: {}, address_list_html: {} } });
+	on_form("Customer", { name: "Harbor Plaza" });
+	CLICKS.length = 0;
+	NEW_DOCS.length = 0;
+	ctx.render_contact_table();
+	ctx.render_address_table();
+	click("New Contact");
+	click("New Address");
+	assert.deepEqual(NEW_DOCS.map((n) => n.doctype), ["Contact", "Address"]);
+	assert.equal(typeof NEW_DOCS[0].init_callback, "function", "the helper was bypassed");
+
+	const saved = globalThis.erpnext_enhancements.contacts_ux;
+	NEW_DOCS.length = 0;
+	try {
+		delete globalThis.erpnext_enhancements.contacts_ux;
+		click("New Contact");
+		click("New Address");
+		globalThis.erpnext_enhancements.contacts_ux = {};
+		click("New Contact");
+		click("New Address");
+	} finally {
+		globalThis.erpnext_enhancements.contacts_ux = saved;
+	}
+	assert.deepEqual(NEW_DOCS.map((n) => n.doctype), ["Contact", "Address", "Contact", "Address"]);
+	await tick();
+});
+
+test("the helpers exist before the dialogs can register; a second load keeps frappe's class", () => {
+	let queued = null;
+	const sandbox = {
+		cint: globalThis.cint,
+		__: globalThis.__,
+		$: () => ({ one: (event, fn) => (queued = event === "app_ready" ? fn : queued) }),
+	};
+	sandbox.window = sandbox;
+	sandbox.document = {};
+	sandbox.frappe = {
+		provide: (ns) => {
+			let obj = sandbox;
+			ns.split(".").forEach((part) => {
+				obj[part] = obj[part] || {};
+				obj = obj[part];
+			});
+		},
+		ui: { form: {} },
+		boot: { ee_contacts_ux: 1 },
+	};
+	vm.createContext(sandbox);
+	const source = fs.readFileSync(QUICK_ENTRY_JS, "utf8");
+	vm.runInContext(source, sandbox, { filename: QUICK_ENTRY_JS });
+	const helpers = sandbox.erpnext_enhancements.contacts_ux;
+	for (const name of ["new_contact", "new_address", "refresh_linked_sources", "refresh_directory_surfaces", "enabled"]) {
+		assert.equal(typeof helpers[name], "function", `contacts_ux.${name} is not defined before the dialogs register`);
+	}
+	assert.equal(typeof queued, "function", "registration was not deferred to app_ready");
+
+	Object.assign(sandbox.frappe.ui.form, { QuickEntryForm }, FRAPPE_DIALOGS ? { ContactQuickEntryForm: UPSTREAM.Contact, AddressQuickEntryForm: UPSTREAM.Address } : {});
+	queued();
+	const first = sandbox.frappe.ui.form.ContactQuickEntryForm;
+	assert.notEqual(first, UPSTREAM.Contact || null);
+	assert.equal(first.ee_stock, FRAPPE_DIALOGS ? UPSTREAM.Contact : null);
+	vm.runInContext(source, sandbox, { filename: QUICK_ENTRY_JS });
+	const second = sandbox.frappe.ui.form.ContactQuickEntryForm;
+	assert.notEqual(second, first);
+	assert.equal(second.ee_stock, FRAPPE_DIALOGS ? UPSTREAM.Contact : null, "a reload took our own class as frappe's");
+});
+
 // ------------------------------------------------------------------- runner
 
+console.log(`frappe ${SHAPE} shape${FRAPPE_DIALOGS ? " (frappe's own Contact/Address dialogs present)" : ""}`);
 let failures = 0;
 for (const { name, fn } of TESTS) {
 	try {
@@ -637,5 +933,16 @@ for (const { name, fn } of TESTS) {
 		console.error("        " + (err && err.message ? err.message : err));
 	}
 }
-console.log(`\n${TESTS.length - failures}/${TESTS.length} passed`);
-process.exit(failures ? 1 : 0);
+console.log(`\n${TESTS.length - failures}/${TESTS.length} passed (frappe ${SHAPE} shape)`);
+
+// The same suite against frappe v16.36.1's shape, in a fresh process (the stubs are globals).
+let child_failed = false;
+if (!process.env.EE_QE_FRAPPE_SHAPE) {
+	console.log("");
+	const run = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
+		env: Object.assign({}, process.env, { EE_QE_FRAPPE_SHAPE: "v16.36.1" }),
+		stdio: "inherit",
+	});
+	child_failed = run.status !== 0;
+}
+process.exit(failures || child_failed ? 1 : 0);

@@ -104,7 +104,8 @@ def contacts_ux_enabled():
 	Address anywhere on the desk opens a quick-entry dialog that auto-links the
 	record to the party form it was opened from, and the source form's
 	contact/address lists refresh in place. Turning it off restores the stock
-	full-form create flow on the next page load.
+	create flow on the next page load: frappe's own quick-entry dialog from
+	frappe v16.50, the full form before it.
 
 	Deliberately gates ONLY that client UX (via ``frappe.boot.ee_contacts_ux``).
 	The server-side ``contacts_ux.sync_contact_account_links`` invariant and the

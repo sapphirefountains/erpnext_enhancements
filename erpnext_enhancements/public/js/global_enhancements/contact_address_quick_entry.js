@@ -5,15 +5,45 @@
  * list-view "+ New", awesome bar and link-field create paths fire outside any
  * doctype_js). Server half: contacts_ux.py.
  *
- * Frappe resolves `frappe.ui.form.<Doctype>QuickEntryForm` by naming
- * convention in make_quick_entry, so registering these classes routes EVERY
- * "new Contact/Address" entry point (stock Contacts & Addresses section
- * buttons, list + New, awesome bar, link-field "Create a new…", our directory
- * widget) through the dialog — no meta/property-setter changes. Behavior is
- * gated by frappe.boot.ee_contacts_ux (ERPNext Enhancements Settings →
- * Contacts & Addresses): off, is_quick_entry() falls back to the base class,
- * which routes to the stock full form because Contact/Address have
- * meta.quick_entry = 0.
+ * Frappe resolves `frappe.ui.form.<Doctype>QuickEntryForm` by name when
+ * make_quick_entry is CALLED (quick_entry.js, the same at v16.36.1 and
+ * v16.50.0), so registering these classes routes EVERY "new Contact/Address"
+ * entry point (stock Contacts & Addresses section buttons, list + New, awesome
+ * bar, link-field "Create a new…", our directory widget) through the dialog — no
+ * meta/property-setter changes.
+ *
+ * frappe v16.50.0 ships its own ContactQuickEntryForm and AddressQuickEntryForm
+ * (frappe/public/js/frappe/utils/address_and_contact.js, imported by
+ * form.bundle.js, which loads before this app's bundle) and sets
+ * quick_entry = 1 on Contact and Address. This file used to step aside when
+ * either class existed, and it defined the contacts_ux helpers after that check,
+ * so on 16.50 none of the dialog below ran and the directory widget's New
+ * Contact / New Address threw a TypeError. The helpers now come first and
+ * depend on nothing, and the classes are registered OVER frappe's on purpose.
+ * They still extend frappe.ui.form.QuickEntryForm rather than frappe's classes:
+ *   - frappe's Contact dialog adds Phone / Mobile / Email and writes them into
+ *     the phone_nos / email_ids tables, which this site hides (Property Setters)
+ *     in favour of custom_phone_number / custom_mobile_number / custom_email. It
+ *     has no Account, and its other quick-entry fields (designation,
+ *     company_name) are hidden here too.
+ *   - frappe's insert() replaces doc.links with the one source form, so the
+ *     Customer/party is no longer first (Contact.autoname names the record from
+ *     links[0]), and its after-insert reloads that form, discarding unsaved edits.
+ *   - The one thing it adds that matters is the source form: the stock section
+ *     passes it as `source_frm` and points frappe.dynamic_link at it.
+ *     resolve_party_context already covers that from the route and the same
+ *     dynamic_link guard.
+ *   - QuickEntryForm itself did not change between the two releases, so the
+ *     dialog runs on the base it was written and tested against, with no frappe
+ *     override in between to bypass method by method (party_quick_entry.js does
+ *     that, because it extends erpnext's class to keep its toggle-off path stock;
+ *     here the constructor hands that path over instead, below).
+ *
+ * Gated by frappe.boot.ee_contacts_ux (ERPNext Enhancements Settings →
+ * Contacts & Addresses). Off, the constructor returns an instance of the class
+ * frappe would have used without this file, so off is stock, whatever stock is:
+ * frappe's own dialog from v16.50, and before it the base class, which routed to
+ * the full form because quick_entry was 0.
  *
  * Opened from a party form, the dialog resolves that form as context —
  * explicitly from the current route, never from the stale `frappe.dynamic_link`
@@ -32,18 +62,137 @@
 
 frappe.provide("erpnext_enhancements.contacts_ux");
 
+// The helpers first, ahead of anything that can return early: the directory widget
+// (unified_tab_controller.js) and the Contact / Address form scripts call them whether
+// or not the dialogs below are registered.
+(function define_helpers() {
+	const ux = erpnext_enhancements.contacts_ux;
+
+	/** ERPNext Enhancements Settings → Contacts & Addresses, from the boot payload. */
+	ux.enabled = () => !!cint(frappe.boot && frappe.boot.ee_contacts_ux);
+
+	/**
+	 * Refresh a party form's contact/address surfaces WITHOUT reloading it.
+	 * Pushes fresh __onload lists (contacts_ux.get_directory_onload) into the
+	 * cached form and re-renders the stock section + our directory widget —
+	 * frm.reload_doc() would discard unsaved edits and race the link-field
+	 * route restore. Forms not in the formview cache are skipped (nothing
+	 * stale exists for them).
+	 */
+	ux.refresh_directory_surfaces = function (targets) {
+		const seen = new Set();
+		(Array.isArray(targets) ? targets : [targets]).forEach((target) => {
+			if (!target || !target.doctype || !target.name) return;
+			const key = target.doctype + "::" + target.name;
+			if (seen.has(key)) return;
+			seen.add(key);
+
+			const view = frappe.views.formview[target.doctype];
+			const frm = view && view.frm;
+			if (!frm || !frm.doc || frm.doc.name !== target.name || frm.is_new()) return;
+			const has_stock = frm.fields_dict.contact_html || frm.fields_dict.address_html;
+			const has_widget = frm.fields_dict.contact_list_html || frm.fields_dict.address_list_html;
+			if (!has_stock && !has_widget) return;
+
+			frappe.call({
+				method: "erpnext_enhancements.contacts_ux.get_directory_onload",
+				args: { doctype: target.doctype, name: target.name },
+				callback(r) {
+					if (!r.message || !frm.doc) return;
+					frm.doc.__onload = Object.assign({}, frm.doc.__onload, r.message);
+					if (has_stock && frappe.contacts && frappe.contacts.render_address_and_contact) {
+						frappe.contacts.render_address_and_contact(frm);
+					}
+					// The widget is a singleton holding this.frm — only re-render
+					// for the form on screen; a background form re-renders it on
+					// its own next refresh anyway (from the pushed-fresh server data).
+					if (
+						has_widget &&
+						window.cur_frm === frm &&
+						erpnext_enhancements.unified_controller
+					) {
+						erpnext_enhancements.unified_controller.init(frm);
+					}
+				},
+			});
+		});
+	};
+
+	/**
+	 * The init_callback frappe's own Contacts & Addresses section passes since v16.50:
+	 * the open form as `source_frm`, which frappe's dialog (the one that opens with the
+	 * toggle off) links the new record to. Ours resolves its context itself and ignores
+	 * it. Set on a dialog only: when quick entry is off, frappe calls init_callback with
+	 * the bare new doc instead, and a form object on a doc cannot be serialised on save.
+	 */
+	function source_form_callback(frm) {
+		// An unsaved form has no name a link can point at (frappe's dialog would
+		// write links=[{Doctype, "new-…"}]), so only a saved form is offered.
+		if (!frm || !frm.doc || frm.is_new()) return undefined;
+		return (quick_entry) => {
+			const Dialog = frappe.ui.form.QuickEntryForm;
+			if (Dialog && quick_entry instanceof Dialog) quick_entry.source_frm = frm;
+		};
+	}
+
+	/** "New Contact" from our directory widget (context self-resolves from the route). */
+	ux.new_contact = function (frm) {
+		frappe.new_doc("Contact", null, source_form_callback(frm));
+	};
+
+	/** "New Address" from our directory widget — stock parity with the section
+	 *  button: the Geolocation autocomplete dialog wins when it's enabled. */
+	ux.new_address = function (frm) {
+		if (
+			frappe.boot.enable_address_autocompletion === 1 &&
+			frm &&
+			!frm.is_new() &&
+			frappe.ui.AddressAutocompleteDialog
+		) {
+			new frappe.ui.AddressAutocompleteDialog({
+				title: __("New Address"),
+				link_doctype: frm.doctype,
+				link_name: frm.doc.name,
+				after_insert: () =>
+					ux.refresh_directory_surfaces({ doctype: frm.doctype, name: frm.doc.name }),
+			}).show();
+			return;
+		}
+		frappe.new_doc("Address", null, source_form_callback(frm));
+	};
+
+	/** Contact/Address after_save (wired in their doctype_js): push fresh
+	 *  directory data at every cached form the record links to — this is what
+	 *  fixes the stale Contacts & Addresses section after the full-form
+	 *  save + route-back flow (deliberately NOT gated: it is a data-staleness
+	 *  bug fix, not a UX experiment). */
+	ux.refresh_linked_sources = function (frm) {
+		ux.refresh_directory_surfaces(
+			(frm.doc.links || []).map((l) => ({ doctype: l.link_doctype, name: l.link_name }))
+		);
+	};
+})();
+
 (function register() {
 	if (!(frappe.ui && frappe.ui.form && frappe.ui.form.QuickEntryForm)) {
 		$(document).one("app_ready", register);
 		return;
 	}
-	// If a future frappe/erpnext ships its own Contact/Address quick entry,
-	// skip ours and re-evaluate on upgrade (nothing defines these as of v16).
-	if (frappe.ui.form.ContactQuickEntryForm || frappe.ui.form.AddressQuickEntryForm) {
-		return;
-	}
 
 	const ux = erpnext_enhancements.contacts_ux;
+
+	// frappe's own classes (v16.50+; null before), captured before ours replace them: they
+	// are what the toggle-off path builds. A second run of this file finds ours registered
+	// and takes what they captured, never our own class.
+	const stock_class = (name) => {
+		const current = frappe.ui.form[name];
+		if (current && "ee_stock" in current) return current.ee_stock;
+		return current || null;
+	};
+	const STOCK = {
+		Contact: stock_class("ContactQuickEntryForm"),
+		Address: stock_class("AddressQuickEntryForm"),
+	};
 
 	// Per-doctype context: which Dynamic Links a Contact/Address created from
 	// this form should carry ([party first] — link order drives Contact naming)
@@ -153,90 +302,6 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		return Object.assign({ doctype: doctype, name: name }, resolved);
 	}
 
-	/**
-	 * Refresh a party form's contact/address surfaces WITHOUT reloading it.
-	 * Pushes fresh __onload lists (contacts_ux.get_directory_onload) into the
-	 * cached form and re-renders the stock section + our directory widget —
-	 * frm.reload_doc() would discard unsaved edits and race the link-field
-	 * route restore. Forms not in the formview cache are skipped (nothing
-	 * stale exists for them).
-	 */
-	ux.refresh_directory_surfaces = function (targets) {
-		const seen = new Set();
-		(Array.isArray(targets) ? targets : [targets]).forEach((target) => {
-			if (!target || !target.doctype || !target.name) return;
-			const key = target.doctype + "::" + target.name;
-			if (seen.has(key)) return;
-			seen.add(key);
-
-			const view = frappe.views.formview[target.doctype];
-			const frm = view && view.frm;
-			if (!frm || !frm.doc || frm.doc.name !== target.name || frm.is_new()) return;
-			const has_stock = frm.fields_dict.contact_html || frm.fields_dict.address_html;
-			const has_widget = frm.fields_dict.contact_list_html || frm.fields_dict.address_list_html;
-			if (!has_stock && !has_widget) return;
-
-			frappe.call({
-				method: "erpnext_enhancements.contacts_ux.get_directory_onload",
-				args: { doctype: target.doctype, name: target.name },
-				callback(r) {
-					if (!r.message || !frm.doc) return;
-					frm.doc.__onload = Object.assign({}, frm.doc.__onload, r.message);
-					if (has_stock && frappe.contacts && frappe.contacts.render_address_and_contact) {
-						frappe.contacts.render_address_and_contact(frm);
-					}
-					// The widget is a singleton holding this.frm — only re-render
-					// for the form on screen; a background form re-renders it on
-					// its own next refresh anyway (from the pushed-fresh server data).
-					if (
-						has_widget &&
-						window.cur_frm === frm &&
-						erpnext_enhancements.unified_controller
-					) {
-						erpnext_enhancements.unified_controller.init(frm);
-					}
-				},
-			});
-		});
-	};
-
-	/** "New Contact" from our directory widget (context self-resolves from the route). */
-	ux.new_contact = function () {
-		frappe.new_doc("Contact");
-	};
-
-	/** "New Address" from our directory widget — stock parity with the section
-	 *  button: the Geolocation autocomplete dialog wins when it's enabled. */
-	ux.new_address = function (frm) {
-		if (
-			frappe.boot.enable_address_autocompletion === 1 &&
-			frm &&
-			!frm.is_new() &&
-			frappe.ui.AddressAutocompleteDialog
-		) {
-			new frappe.ui.AddressAutocompleteDialog({
-				title: __("New Address"),
-				link_doctype: frm.doctype,
-				link_name: frm.doc.name,
-				after_insert: () =>
-					ux.refresh_directory_surfaces({ doctype: frm.doctype, name: frm.doc.name }),
-			}).show();
-			return;
-		}
-		frappe.new_doc("Address");
-	};
-
-	/** Contact/Address after_save (wired in their doctype_js): push fresh
-	 *  directory data at every cached form the record links to — this is what
-	 *  fixes the stale Contacts & Addresses section after the full-form
-	 *  save + route-back flow (deliberately NOT gated: it is a data-staleness
-	 *  bug fix, not a UX experiment). */
-	ux.refresh_linked_sources = function (frm) {
-		ux.refresh_directory_surfaces(
-			(frm.doc.links || []).map((l) => ({ doctype: l.link_doctype, name: l.link_name }))
-		);
-	};
-
 	function clone_meta_field(doctype, fieldname, overrides) {
 		const df = frappe.meta.get_docfield(doctype, fieldname);
 		if (!df) return null;
@@ -245,6 +310,14 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 
 	class ContactAddressQuickEntry extends frappe.ui.form.QuickEntryForm {
 		constructor(doctype, after_insert, init_callback, doc, force, skip_insert) {
+			if (!ux.enabled()) {
+				// Toggle off: exactly what make_quick_entry builds without this file —
+				// frappe's own class from v16.50, the base class (the full form) before.
+				// A derived constructor may return an object instead of calling super();
+				// `new` then yields that object.
+				const Stock = new.target.ee_stock || frappe.ui.form.QuickEntryForm;
+				return new Stock(doctype, after_insert, init_callback, doc, force, skip_insert);
+			}
 			super(doctype, after_insert, init_callback, doc, force, skip_insert);
 			this.ee_context = resolve_party_context(after_insert);
 			if (!this.after_insert && this.ee_context) {
@@ -255,12 +328,10 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		}
 
 		is_quick_entry() {
-			// Toggle off -> base behavior: Contact/Address have meta.quick_entry=0,
-			// so this returns false and setup() routes to the stock full form.
-			// (Deliberately not this.force: force hides the Edit Full Form link.)
-			if (!cint(frappe.boot.ee_contacts_ux)) {
-				return super.is_quick_entry();
-			}
+			// Always: the field list is ours, so meta's checks (quick_entry, a mandatory
+			// child table, no docfields) have nothing to say about it, and the toggle was
+			// settled in the constructor. (Deliberately not this.force: force hides the
+			// Edit Full Form link.)
 			return true;
 		}
 
@@ -412,9 +483,7 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		ee_finalize_doc() {}
 	}
 
-	frappe.ui.form.ContactQuickEntryForm = class ContactQuickEntryForm extends (
-		ContactAddressQuickEntry
-	) {
+	class ContactQuickEntryForm extends ContactAddressQuickEntry {
 		ee_prepare_new_doc() {
 			// Link-field create writes the typed text into the field: autoname
 			// target (custom_full_name_and_role), where the server would discard
@@ -495,11 +564,9 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 					(link_doctype === ctx.doctype && link_name === ctx.name)
 			);
 		}
-	};
+	}
 
-	frappe.ui.form.AddressQuickEntryForm = class AddressQuickEntryForm extends (
-		ContactAddressQuickEntry
-	) {
+	class AddressQuickEntryForm extends ContactAddressQuickEntry {
 		ee_prepare_new_doc() {
 			if (!this.doc.address_type) {
 				this.doc.address_type = "Billing";
@@ -746,5 +813,13 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				}
 			}
 		}
-	};
+	}
+
+	// Registered OVER frappe's own classes on purpose (see the header). make_quick_entry
+	// looks the name up when it is called, and this runs after frappe's form.bundle.js,
+	// so these assignments are the ones it finds. `ee_stock` is the toggle-off class.
+	ContactQuickEntryForm.ee_stock = STOCK.Contact;
+	AddressQuickEntryForm.ee_stock = STOCK.Address;
+	frappe.ui.form.ContactQuickEntryForm = ContactQuickEntryForm;
+	frappe.ui.form.AddressQuickEntryForm = AddressQuickEntryForm;
 })();

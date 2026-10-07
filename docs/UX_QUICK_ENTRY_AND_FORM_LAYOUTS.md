@@ -53,9 +53,13 @@ this release reverses that on purpose — the dialogs are now curated.
   (`public/js/global_enhancements/contact_address_quick_entry.js`) that resolve
   the party form they were opened from and inject the `links` rows client-side
   before insert. Different mechanism from this sweep on purpose — no
-  `quick_entry`/`allow_in_quick_entry` fixtures, so with the "Contact & Address
-  Quick Entry" toggle off (or the bundle unloaded) behavior reverts to the
-  stock full form, never to an orphan-creating stock dialog.
+  `quick_entry`/`allow_in_quick_entry` fixtures. With the "Contact & Address
+  Quick Entry" toggle off, behaviour reverts to stock: the full form on frappe
+  16.36, but **frappe's own Contact/Address dialog on 16.50+** (frappe now ships
+  `ContactQuickEntryForm`/`AddressQuickEntryForm` and sets `quick_entry=1`).
+  That dialog links only a saved source form, so from a list's + New or a link
+  field it saves an unlinked record, and it writes phone/email into the
+  `phone_nos`/`email_ids` tables this site hides. Keep the toggle on.
   **Since v1.575.0 the form's party is a suggestion the user can refuse.** On a
   Project or Customer-sourced Opportunity, New Contact pre-fills the Account with
   that Customer and links it only while it is still the Account (cleared, the
