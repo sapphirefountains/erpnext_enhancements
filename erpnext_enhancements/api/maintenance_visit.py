@@ -529,10 +529,17 @@ def _workflow_actions(doc):
     import applies no defaults; see CHANGELOG), a technician who had started
     their own visit could not even Request Review, and taking the first
     transition blindly answered "Self approval is not allowed".
-    """
-    from frappe.model.workflow import get_transitions, has_approval_access
 
-    available = get_transitions(doc)
+    A transition back to the workflow's first state (the reviewer's "Send
+    Back") is never a way to *finish* a visit, so it is left out. Otherwise a
+    reviewer who started a visit, and so may not approve it, would have
+    Finish send their own visit back to Draft.
+    """
+    from frappe.model.workflow import get_transitions, get_workflow, has_approval_access
+
+    workflow = get_workflow(doc.doctype)
+    start = workflow.states[0].state if workflow.states else None
+    available = [t for t in get_transitions(doc, workflow) if t.get("next_state") != start]
     user = frappe.session.user
     return available, [t for t in available if has_approval_access(user, doc, t)]
 
