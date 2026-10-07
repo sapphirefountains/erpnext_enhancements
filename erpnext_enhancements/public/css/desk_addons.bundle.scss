@@ -2,7 +2,7 @@
  * Global desk styles that used to be raw app_include_css entries — bundled so
  * the built filename carries a content hash (raw /assets paths are served with
  * a 1-year immutable Cache-Control and never pick up edits on devices that
- * already cached them; see kanban.bundle.js for the full story).
+ * already cached them; see ee_kanban.bundle.js for the full story).
  *
  * Import order mirrors the old hooks.py app_include_css order, and this bundle
  * is listed AFTER desk_enhancements.bundle.css in hooks.py, so the CSS cascade
@@ -20,6 +20,31 @@
  * runtime CSS import — which would 404. The built asset keeps its name:
  * hooks.py still references "desk_addons.bundle.css" via assets.json.
  */
+
+/*
+ * FontAwesome 4.7 — STOPGAP for frappe v16.50.0 (v1.574.2). frappe dropped this exact line
+ * from the top of its desk.bundle.scss (frappe/frappe#40571, "fix(ui): make icons
+ * consistent", squash f44d24699a), and nothing else loads the font on the desk since 16.50.0,
+ * so every `fa fa-*` icon in this app rendered blank — icon-only buttons (comment
+ * Reply/Edit/Delete, directory Edit/Unlink, attachment refresh/download/delete) became empty
+ * boxes. The font files are still shipped at that path.
+ *
+ * This one KEEPS its .css suffix, unlike the imports below, and it has to: sass passes it
+ * through as a plain CSS @import (frappe's sass importer never sees a .css url), and the
+ * esbuild postcss plugin then resolves it against the build's cwd, which bundler.py sets to
+ * apps/frappe — so "frappe/public/..." is found and inlined, exactly as it was for frappe's
+ * own bundle. A relative "./x.css" fails that same hop, which is why ours are extension-less.
+ * The @font-face urls are absolute /assets/frappe/... paths, left external by ignore-assets.
+ *
+ * It cannot reach inside a Custom HTML Block: those render in a shadow root that links only
+ * frappe's desk.bundle.css, so the Projects Dashboard block's `fa` class icons stay blank
+ * (its sort arrows name the font directly, and a document @font-face does reach them).
+ *
+ * Remove once the 67 `fa fa-*` usages move to frappe.utils.icon() (lucide); see the
+ * v1.574.2 CHANGELOG entry for the list. tests/test_frappe_16_50_desk_compat.py fails the
+ * build if this goes while any of them remain.
+ */
+@import "frappe/public/css/fonts/fontawesome/font-awesome.min.css";
 @import "./global_enhancements/triton_widget";
 @import "./global_enhancements/field_description_icons";
 @import "./global_enhancements/field_text_wrap";
