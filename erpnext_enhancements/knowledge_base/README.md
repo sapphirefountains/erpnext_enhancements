@@ -227,7 +227,7 @@ world: Frappe's `.icon` is `font-size: 0`, and Quill's `.ql-clipboard` is 100000
 
 | Kept | What it is |
 |---|---|
-| `ql-editor`, `read-mode` | The wrapper round every saved body (`text_editor.js:402`) |
+| `ql-editor`, `read-mode` | The wrapper round every saved body (`text_editor.js:562`) |
 | `ql-indent-1` to `ql-indent-8` | Indent, and list nesting, which Quill writes as one flat list of indented items |
 | `ql-align-right`, `-center`, `-justify` | Quill's class form of alignment. v16 writes a `text-align` style instead, but reads these from pasted HTML |
 | `ql-direction-rtl` | Right-to-left text |

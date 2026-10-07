@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.576.1] - 2026-10-07
+
+### Fixed
+
+- **The Knowledge Base's frappe v16 citations point at the right lines again.**
+  `test_knowledge_base_rules.TestKeptClasses.test_the_cited_frappe_lines_are_v16s` failed 10
+  of its assertions on any machine with a frappe checkout beside this repo and an up-to-date
+  `origin/version-16`. For example, it expected `CustomColor.tagName = "font";` at
+  `text_editor.js:132` and found `class MyLink extends Link {`. CI never saw it, because the test
+  skips when there is no frappe checkout, and CI has none.
+
+  The lines had moved, but the code had not changed. Frappe v16.50.0 added toolbar chrome to
+  `frappe/public/js/frappe/form/controls/text_editor.js`: lucide icons, tooltips and picker
+  dressing from the text-editor redesign (frappe#41505), plus a few lines from the mention-email
+  merge (frappe#35214). Cited lines moved down by 49 near the top of the file and by 160 near the
+  end. The `quill` row in `package.json` moved twice: it was line 73 in 16.49.0, 75 in 16.50.0
+  (new dependencies above it) and 74 in 16.51.0 (the Playwright port dropped a script line). The
+  test reads the tip of `version-16`, so a row can go stale on any release that edits a cited
+  file. Every cited line was checked against `90735d570e`, the revision the list was written
+  from, and each one has identical text at its new number.
+  Quill is still pinned at 2.0.3. Nothing the redesign added reaches a saved body: the new
+  classes (`ql-picker-caret`, `ql-label-icon`) are on the toolbar's own DOM, not on
+  `quill.root`. So `content.KEPT_CLASSES` and `content.KEPT_ELEMENTS` are unchanged, and only
+  the line numbers were updated.
+
+  - **The test's 10 rows**: `package.json` 73 → 74; `text_editor.js` 53–54 → 102–103 (the
+    table classes), 115–116 → 164–165 (the direction class attributor), 132 → 181
+    (`CustomColor`), 350 → 510 (the indent toolbar), 402 → 562 (the `ql-editor read-mode`
+    wrapper, cited twice) and 428 → 588 (`patch_unordered_list`'s `<ul>`).
+  - **The prose citations the test does not check**, which had shifted in the same way and
+    were re-measured individually: in `content.py`, `text_editor.js` 405 → 565, 106/111 →
+    155/160 (alignment as a style), 44–46 → 93–95 and 103–110 → 152–159 (presentation
+    attributors), 281 → 438 (mentions in use), 302 → 459 (`enable_mentions`) and 338–365 →
+    498–525 (the toolbar); `utils/html_utils.py` +2 on each of `font`, `bgcolor`, `color`,
+    `face`, `hidden` and `size` (16.50 added a `gap`/`row-gap` style allowance above them);
+    `public/scss/desk/global.scss` `#freeze` 511–514 → 532–535. The knowledge_base README's
+    class table also cites the wrapper line, 402 → 562.
+
+  Only comments, docs and test data changed. No executable behavior changed.
+
 ## [1.576.0] - 2026-10-07
 
 ### Added
