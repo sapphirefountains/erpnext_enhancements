@@ -1927,7 +1927,12 @@ after_migrate = [
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
 	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source
-	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home
+	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home.
+	# Also puts ERPNext's Projects workspace back on our layout (Projects Dashboard
+	# first) when it holds exactly ERPNext's shipped content: an ERPNext upgrade that
+	# bumps projects.json re-imports it over the site's layout, as 16.50.0 did on
+	# 2026-10-06 (v1.576.1). Must run after model sync, which is when that re-import
+	# happens; a layout someone chose is kept (setup/README.md).
 	"erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks",
 	# hr_enhancements (WI-072): place every Employee on the Position ladder. NOT in
 	# the seeding patch, because the column it writes is `Employee.custom_position`

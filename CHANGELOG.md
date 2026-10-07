@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.576.1] - 2026-10-07
+
+### Fixed
+
+- **The Projects home page has its dashboards back.** Since the frappe/ERPNext 16.50.0 upgrade
+  on 2026-10-06, the Projects workspace (the **Home** link in the Projects sidebar, and where
+  the "Project Dashboard" desk shortcut goes) showed ERPNext's stock page: the Projects
+  onboarding, the Project Summary chart, three number cards and a Project Reports card. The
+  Projects Dashboard (Priority Overview, Active Internal Projects, Completed Projects,
+  Portfolio Gantt) was gone from it, and so were the other blocks under it.
+
+  The cause is how frappe syncs a standard workspace. `import_file_by_path` re-imports a JSON
+  file whenever the file's `modified` is newer than the database row's, and the re-import
+  replaces the row whole, child tables included. It writes no Version. The Projects workspace
+  is ERPNext's (`erpnext/projects/workspace/projects/projects.json`), and our layout on it was
+  built on the site by hand. Its last edit was 2026-06-12. ERPNext 16.50.0 ships that file
+  stamped 2026-10-04 23:30, so the upgrade's migrate overwrote the layout. Production's content
+  on 2026-10-07 matched the 16.50.0 file byte for byte. Home kept its blocks, because this
+  app's `after_migrate` seeder re-adds them there on every migrate. No code had ever placed the
+  Projects Dashboard on the Projects workspace, although the Project Enhancements README said
+  the seeder did. A block row added by hand on 2026-10-07 did not bring the dashboard back,
+  because the desk draws a block only when the page's content also lists it.
+
+  `setup/custom_html_blocks.sync_custom_html_blocks` now also manages the Projects workspace.
+  It restores the layout from the last edit before the upgrade (Version `4rr8ouhqvr`):
+  **Projects Dashboard**, **Home Dashboard Tasks** (My Priority Tasks), **Morning Briefing**,
+  **Task Dashboard**, all full width (`PROJECTS_LAYOUT`).
+
+  - **While the page holds exactly what ERPNext ships, it is replaced with that layout.** The
+    check compares the content with the installed ERPNext file, both parsed. That case is a
+    fresh install or a re-import, never a layout someone chose. Writing the content moves
+    `modified` past ERPNext's stamp, so later migrates leave the page alone. When a future
+    ERPNext release bumps the file again, that migrate re-imports it and this hook, which runs
+    after model sync, restores the layout in the same migrate.
+  - **Any other layout is kept.** The only change is that the Projects Dashboard goes back at
+    the top if it is missing. The other three blocks are not re-added, so removing one on the
+    site sticks. If the Projects Dashboard block does not exist, the page is not touched.
+  - **Home Dashboard Tasks is a site block with no source in this repo.** It is placed only
+    where it exists and is never created.
+  - Each block on the page gets its `Workspace Custom Block` row, without duplicates.
+  - The step is wrapped. A failure logs an Error Log titled `Projects workspace layout not
+    restored` and the rest of the migrate goes on.
+
+  ERPNext's chart, number card and card rows stay in the workspace's child tables. They are no
+  longer drawn because the content no longer lists them, so the page looks as it did before
+  the upgrade. Nothing is deleted.
+
+### Tests
+
+- `tests/test_custom_html_blocks.py` (already in CI) now covers the restore rule and its
+  database side. It uses ERPNext 16.50.0's Projects content byte for byte as a fixture and
+  replays production as it stood on 2026-10-07: the stock content plus the one hand-added row.
+  The restore runs once and a second migrate changes nothing. The suite also checks that a
+  chosen layout is kept, that a missing ERPNext file only adds the dashboard, and that the
+  call cannot raise out of the hook. The file is read from a real path. Three breakages were
+  each tried once to confirm a test fails: no stock restore, no child rows, no `try`.
+
+### After the deploy
+
+Open **Projects → Home**. It should show the Projects Dashboard tabs first, then My Priority
+Tasks, the Morning Briefing and the Task Dashboard. A browser tab that was already open needs
+a reload.
+
 ## [1.576.0] - 2026-10-07
 
 ### Added

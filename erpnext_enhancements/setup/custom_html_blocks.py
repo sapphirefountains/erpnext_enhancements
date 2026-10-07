@@ -24,6 +24,12 @@ widgets on that department's workspace only (``DEPARTMENT_DASHBOARD_BLOCKS``).
 Blocks created on the site under names *not* listed here are left alone, and
 nothing is ever deleted.
 
+It also keeps ERPNext's **Projects** workspace the way it was built here
+(``PROJECTS_LAYOUT``: the Projects Dashboard first). Unlike Home, that page is
+replaced outright when it holds exactly what ERPNext ships, because an ERPNext
+upgrade that bumps the file's stamp re-imports it over the site's layout (16.50.0
+did, on 2026-10-06). Any other layout on it is kept; see ``_plan_projects_layout``.
+
 The source files live INSIDE the Python package, so they ship with it on every
 install and partial sync (the legacy repo-root ``Custom HTML Block/`` folder is
 still honoured as a fallback for older checkouts). If the source folder is
@@ -106,6 +112,24 @@ BLOCKS = [
 HOME_BLOCKS = {"Desk Shortcuts", "Projects Dashboard", "Task Dashboard", "Morning Briefing"}
 
 HOME_WORKSPACE = "Home"
+
+# The Projects workspace (the Projects sidebar's "Home" link) is ERPNext's, shipped from
+# erpnext/projects/workspace/projects/projects.json, and its layout here was built on the
+# site by hand. ERPNext 16.50.0 stamped that file 2026-10-04, newer than the site's last
+# edit, so the 2026-10-06 upgrade re-imported it and the page went back to ERPNext's
+# onboarding, chart and number cards. A re-import writes no Version. This is the layout
+# from the last edit before that (2026-06-12), in order. "Home Dashboard Tasks" (My
+# Priority Tasks) is a block made on the site, not seeded here: it is placed only where
+# it exists, and never created.
+PROJECTS_WORKSPACE = "Projects"
+PROJECTS_DASHBOARD = "Projects Dashboard"
+PROJECTS_LAYOUT = (
+	PROJECTS_DASHBOARD,
+	"Home Dashboard Tasks",
+	"Morning Briefing",
+	"Task Dashboard",
+)
+PROJECTS_STOCK_FILE = ("projects", "workspace", "projects", "projects.json")
 
 # The KPI Cockpit (with its department picker) lands on Home and on each
 # department workspace below, where it auto-locks to that department by route
@@ -281,6 +305,19 @@ def sync_custom_html_blocks():
 		if placed and _append_custom_blocks(workspace, placed):
 			changed = True
 
+	# The Projects workspace is ERPNext's page, so an ERPNext upgrade can replace it at
+	# any time; a failure here must not stop the migrate (after_migrate hooks after this
+	# one would not run).
+	if PROJECTS_DASHBOARD in synced:
+		try:
+			if _place_projects_layout():
+				changed = True
+		except Exception:
+			frappe.log_error(
+				title="Projects workspace layout not restored",
+				message=frappe.get_traceback(),
+			)
+
 	if changed:
 		frappe.clear_cache()
 
@@ -313,6 +350,95 @@ def _merge_blocks(blocks, block_names):
 		changed = True
 
 	return blocks, changed
+
+
+def _plan_projects_layout(blocks, stock_blocks, available):
+	"""Decide the Projects workspace's content. No DB IO: returns ``(blocks, changed)``.
+
+	``blocks`` is the workspace's parsed content, ``stock_blocks`` the content ERPNext
+	ships for it (None when the file could not be read), and ``available`` the names
+	in PROJECTS_LAYOUT that exist as Custom HTML Blocks on this site.
+
+	- Content that is exactly ERPNext's file (a fresh install, or an upgrade that just
+	  re-imported the page) is replaced with PROJECTS_LAYOUT. That page is ERPNext's
+	  defaults, not a layout anyone chose, so nothing a person made is lost.
+	- Any other content is a layout someone chose, so it stays as it is. The only change
+	  is that the Projects Dashboard goes back at the top if it is missing. The other
+	  blocks in PROJECTS_LAYOUT are not re-added, so removing one on the site sticks.
+	"""
+	if PROJECTS_DASHBOARD not in available:
+		return blocks, False
+	if not isinstance(blocks, list):
+		blocks = []
+
+	def widget(name):
+		return {
+			"id": "ee_chb_" + frappe.scrub(name),
+			"type": "custom_block",
+			"data": {"custom_block_name": name, "col": 12},
+		}
+
+	if stock_blocks is not None and blocks == stock_blocks:
+		return [widget(name) for name in PROJECTS_LAYOUT if name in available], True
+
+	present = {
+		(b.get("data") or {}).get("custom_block_name")
+		for b in blocks
+		if isinstance(b, dict) and b.get("type") == "custom_block"
+	}
+	if PROJECTS_DASHBOARD in present:
+		return blocks, False
+	return [widget(PROJECTS_DASHBOARD), *blocks], True
+
+
+def _stock_projects_content():
+	"""The content ERPNext ships for the Projects workspace, parsed; None if unreadable."""
+	try:
+		path = frappe.get_app_path("erpnext", *PROJECTS_STOCK_FILE)
+		with open(path, encoding="utf-8") as f:
+			content = json.load(f).get("content")
+		return json.loads(content or "[]")
+	except Exception:
+		return None
+
+
+def _place_projects_layout():
+	"""Give the Projects workspace the layout it had before ERPNext 16.50 replaced it.
+
+	Returns True if anything changed. See ``_plan_projects_layout`` for the rule. The
+	content is written with ``db.set_value``, which also moves ``modified`` past the
+	stamp in ERPNext's file, so later migrates leave the page alone until ERPNext ships
+	a newer file; that migrate re-imports it, and this runs after it in the same migrate.
+	"""
+	if not frappe.db.exists("Workspace", PROJECTS_WORKSPACE):
+		return False
+
+	content = frappe.db.get_value("Workspace", PROJECTS_WORKSPACE, "content")
+	try:
+		blocks = json.loads(content or "[]")
+	except (ValueError, TypeError):
+		blocks = []
+	if not isinstance(blocks, list):
+		blocks = []
+
+	available = {name for name in PROJECTS_LAYOUT if frappe.db.exists("Custom HTML Block", name)}
+	blocks, changed = _plan_projects_layout(blocks, _stock_projects_content(), available)
+	if changed:
+		frappe.db.set_value("Workspace", PROJECTS_WORKSPACE, "content", json.dumps(blocks))
+
+	placed = [
+		name
+		for name in PROJECTS_LAYOUT
+		if any(
+			isinstance(b, dict)
+			and b.get("type") == "custom_block"
+			and (b.get("data") or {}).get("custom_block_name") == name
+			for b in blocks
+		)
+	]
+	if _ensure_custom_block_rows(PROJECTS_WORKSPACE, placed):
+		changed = True
+	return changed
 
 
 def _append_custom_blocks(workspace_name, block_names):

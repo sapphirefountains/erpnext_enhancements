@@ -23,7 +23,7 @@ every time, so they both *create* what's missing and *correct* drift.
 | `module_map.py` | `before_migrate` | Rebuilds the app → modules map from every app's `modules.txt` — must run before model sync (see below) |
 | `document_locks.py` | `before_migrate` | Clears stale Role Profile document locks — must run before fixture sync (see below) |
 | `process_documents.py` | `after_migrate` | Upserts the business's Mermaid.js process charts |
-| `custom_html_blocks.py` | `after_migrate` | Upserts the Projects-module dashboard widgets from `custom_html_blocks/` |
+| `custom_html_blocks.py` | `after_migrate` | Upserts the Projects-module dashboard widgets from `custom_html_blocks/`, places them on Home and the department dashboards, and keeps ERPNext's Projects workspace on our layout (see below) |
 | `custom_fields.py` | `after_migrate` | Provisions the "Contacts & Addresses" tab — Primary Contact link, directory widgets, primary address + location map — on the party doctypes, plus a Comments tab for Master Project (every other doctype's is fixture-owned) |
 | `supplier_groups.py` | `after_migrate` | Relabels `supplier_group` to "Primary Supplier Group" and adds the additional-groups Table MultiSelect plus the denormalized text fields `supplier_query.sync_supplier_groups` populates |
 | `workspace_tweaks.py` | `after_migrate` | Re-asserts overrides on core (erpnext-owned) workspaces and sidebars |
@@ -44,6 +44,31 @@ Two boundaries keep that from being destructive:
 
 So the rule is: if you want a process chart or dashboard widget changed, change it here. A
 site-side edit is temporary by design.
+
+### ERPNext's Projects workspace: replaced only while it is ERPNext's
+
+The Projects workspace (the Projects sidebar's **Home** link) belongs to ERPNext, and its
+layout here (Projects Dashboard, My Priority Tasks, Morning Briefing, Task Dashboard) was built
+on the site. A standard workspace is re-imported whenever the app's JSON carries a newer
+`modified` than the database row, and the re-import replaces the row whole, with no Version.
+ERPNext 16.50.0 stamped `projects.json` 2026-10-04, so the 2026-10-06 upgrade put the stock
+onboarding, chart and number cards back over our layout.
+
+`custom_html_blocks._place_projects_layout` handles it in two cases:
+
+- **The content is exactly what ERPNext ships** (compared with the installed
+  `erpnext/projects/workspace/projects/projects.json`, parsed). That is a fresh install or a
+  re-import, never a layout someone chose, so it is replaced with `PROJECTS_LAYOUT`. The write
+  moves `modified` past ERPNext's stamp, so later migrates leave the page alone until ERPNext
+  ships a newer file. That migrate re-imports it, and this hook runs after the re-import in the
+  same migrate.
+- **Anything else** is a layout someone chose, and it is kept. The only change is that the
+  Projects Dashboard goes back at the top if it is missing. Removing one of the other three
+  blocks on the site sticks.
+
+"Home Dashboard Tasks" (My Priority Tasks) was made on the site and has no source here. It is
+placed only where it exists and never created. The step is wrapped so a failure logs an Error
+Log titled `Projects workspace layout not restored` instead of stopping the migrate.
 
 Note the contrast with the seeding patches (`seed_process_step_templates`,
 `seed_contract_templates`), which are deliberately *insert-only* so that human edits survive.
