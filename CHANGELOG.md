@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.576.1] - 2026-10-07
+
+### Fixed
+
+- **The Projects home page has its dashboards back.** Since the frappe/ERPNext 16.50.0 upgrade
+  on 2026-10-06, the Projects workspace (the **Home** link in the Projects sidebar, and where
+  the "Project Dashboard" desk shortcut goes) showed ERPNext's stock page: the Projects
+  onboarding, the Project Summary chart, three number cards and a Project Reports card. The
+  Projects Dashboard (Priority Overview, Active Internal Projects, Completed Projects,
+  Portfolio Gantt) was gone from it, and so were the other blocks under it.
+
+  The cause is how frappe syncs a standard workspace. `import_file_by_path` re-imports a JSON
+  file whenever the file's `modified` is newer than the database row's, and the re-import
+  replaces the row whole, child tables included. It writes no Version. The Projects workspace
+  is ERPNext's (`erpnext/projects/workspace/projects/projects.json`), and our layout on it was
+  built on the site by hand. Its last edit was 2026-06-12. ERPNext 16.50.0 ships that file
+  stamped 2026-10-04 23:30, so the upgrade's migrate overwrote the layout. Production's content
+  on 2026-10-07 matched the 16.50.0 file byte for byte. Home kept its blocks, because this
+  app's `after_migrate` seeder re-adds them there on every migrate. No code had ever placed the
+  Projects Dashboard on the Projects workspace, although the Project Enhancements README said
+  the seeder did. A block row added by hand on 2026-10-07 did not bring the dashboard back,
+  because the desk draws a block only when the page's content also lists it.
+
+  `setup/custom_html_blocks.sync_custom_html_blocks` now also manages the Projects workspace.
+  It restores the layout from the last edit before the upgrade (Version `4rr8ouhqvr`):
+  **Projects Dashboard**, **Home Dashboard Tasks** (My Priority Tasks), **Morning Briefing**,
+  **Task Dashboard**, all full width (`PROJECTS_LAYOUT`).
+
+  - **While the page holds exactly what ERPNext ships, it is replaced with that layout.** The
+    check compares the content with the installed ERPNext file, both parsed. That case is a
+    fresh install or a re-import, never a layout someone chose. Writing the content moves
+    `modified` past ERPNext's stamp, so later migrates leave the page alone. When a future
+    ERPNext release bumps the file again, that migrate re-imports it and this hook, which runs
+    after model sync, restores the layout in the same migrate.
+  - **Any other layout is kept.** The only change is that the Projects Dashboard goes back at
+    the top if it is missing. The other three blocks are not re-added, so removing one on the
+    site sticks. If the Projects Dashboard block does not exist, the page is not touched.
+  - **Home Dashboard Tasks is a site block with no source in this repo.** It is placed only
+    where it exists and is never created.
+  - Each block on the page gets its `Workspace Custom Block` row, without duplicates.
+  - The step is wrapped. A failure logs an Error Log titled `Projects workspace layout not
+    restored` and the rest of the migrate goes on.
+
+  ERPNext's chart, number card and card rows stay in the workspace's child tables. They are no
+  longer drawn because the content no longer lists them, so the page looks as it did before
+  the upgrade. Nothing is deleted.
+
+- **The "Project" link is hidden from the Projects sidebar again.** It was hidden in v1.159.6
+  (user request, "for now") by `setup/workspace_tweaks.hide_core_sidebar_items`, which drops the
+  row from the Projects `Workspace Sidebar` on every migrate. frappe 16.50 draws a module's
+  sidebar from a `Sidebar` document (the areas on the new Dock rail) and no longer reads
+  `Workspace Sidebar`. So the hook kept cleaning a table nobody looks at, and the link was back
+  between Dashboard and Task from 2026-10-06.
+
+  The hook now also sets `hidden` on that row in ERPNext's `Sidebar` "Projects", and only on
+  that row: a `DocType` link to `Project` labelled "Project". The Dashboard link, which also
+  points at Project, stays. Why it is done this way and not the way frappe suggests:
+
+  - frappe 16.50 tells a site to change an app's sidebar through a `Custom Sidebar` layer. But
+    a layer that names any of the app's rows counts as an *arrangement*, and the rows it names
+    come first (`frappe/desk/layers.py` `apply_layer`). A one-row layer that hides this link
+    would therefore be an arrangement of one row. The next workspace anyone created in the
+    Projects module is appended to that layer by frappe (`add_site_sidebar_item`), so it would
+    sort above Home. A module opens on the first item of its sidebar, so the Projects area
+    would then open on that workspace instead of on Home and the Projects Dashboard.
+  - The app's own row can carry `hidden`. frappe reads that column from base rows so that an
+    app can ship an item switched off (`sidebar.get_sidebar_items`). A hidden base row is
+    dropped before the landing page is chosen, it changes no order, and it leaves the site
+    layer empty. A Workspace Manager can still bring the link back from the sidebar editor,
+    because a site layer's `hidden: 0` wins over the base.
+  - It is written with `db.set_value`. Outside developer mode, saving an app's `Sidebar` is
+    refused except during a migrate (`Sidebar.validate_app_content`). In developer mode a save
+    would export the JSON into ERPNext's own folder.
+  - An ERPNext release that ships a newer sidebar file re-imports the row unflagged. The hook
+    runs after model sync and flags it again in the same migrate, as it always has for the old
+    table. It clears the cached boot payload (`bootinfo`) when it changes a row, which is the
+    key frappe's own sidebar customizations clear. A failure logs an Error Log titled `Core
+    sidebar item not hidden` and the deploy carries on.
+
+  Before 16.50 the old path still runs unchanged, so a site on either version gets the same
+  sidebar.
+
+### Tests
+
+- `tests/test_custom_html_blocks.py` (already in CI) now covers the restore rule and its
+  database side. It uses ERPNext 16.50.0's Projects content byte for byte as a fixture and
+  replays production as it stood on 2026-10-07: the stock content plus the one hand-added row.
+  The restore runs once and a second migrate changes nothing. The suite also checks that a
+  chosen layout is kept, that a missing ERPNext file only adds the dashboard, and that the
+  call cannot raise out of the hook. The file is read from a real path. Three breakages were
+  each tried once to confirm a test fails: no stock restore, no child rows, no `try`.
+- New `tests/test_workspace_tweaks.py`, in its own CI step, replays production's Projects
+  sidebar rows as read on 2026-10-07. Only ERPNext's "Project" row is flagged, without a new
+  `modified`, and the boot cache is cleared once. A second migrate writes nothing, and an
+  ERPNext re-import is flagged again. A link sharing the label or the type but opening
+  something else is left alone. A site still on frappe before 16.50 takes the old path, and a
+  failure is logged rather than raised. Each condition of the match, the `hidden: 0` filter,
+  the cache clear and the `try` were broken once to confirm a test fails.
+
+### After the deploy
+
+Open **Projects → Home**. It should show the Projects Dashboard tabs first, then My Priority
+Tasks, the Morning Briefing and the Task Dashboard. The Projects sidebar should list Home,
+Dashboard, Task and Timesheet, with no "Project" between Dashboard and Task. A browser tab
+that was already open needs a reload.
+
 ## [1.576.0] - 2026-10-07
 
 ### Added

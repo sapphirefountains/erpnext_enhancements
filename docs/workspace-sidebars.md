@@ -34,7 +34,8 @@ Overrides on **core, erpnext-owned** workspaces and sidebars do not belong there
 re-asserted on `after_migrate` by
 [`../erpnext_enhancements/setup/workspace_tweaks.py`](../erpnext_enhancements/setup/README.md),
 because Frappe syncs standard records from every app and a plain file would be overwritten by
-whichever app imported last.
+whichever app imported last. From frappe 16.50 the desk draws module sidebars from `Sidebar`
+documents instead of `Workspace Sidebar`, and `workspace_tweaks.py` handles both (v1.576.1).
 
 ## Sidebars are also what make a desk tile visible
 
