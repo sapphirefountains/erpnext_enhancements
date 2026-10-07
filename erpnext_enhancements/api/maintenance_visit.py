@@ -483,6 +483,11 @@ def finish_visit(record, signature=None, modified=None):
 
     ``before_submit`` enforcement (mandatory rows, clock-out autofill) runs
     inside whichever path changes docstatus.
+
+    Only a transition the user may actually apply is taken (see
+    :func:`_workflow_actions`). The person who started a visit can send it
+    for review but not approve it: the office reviews every visit before
+    it is billed.
     """
     doc = _get_record(record)
     if doc.docstatus != 0:
@@ -493,21 +498,43 @@ def finish_visit(record, signature=None, modified=None):
         doc.client_sign_off = signature
         doc.save()
 
-    from frappe.model.workflow import apply_workflow, get_transitions, get_workflow_name
+    from frappe.model.workflow import apply_workflow, get_workflow_name
 
     if get_workflow_name(doc.doctype):
-        transitions = get_transitions(doc)
-        if not transitions:
+        available, usable = _workflow_actions(doc)
+        if not usable:
+            if available:
+                # Only the self-approval rule stands in the way: the transition
+                # exists for this user's role but not for the record's creator.
+                frappe.throw(_("A visit is approved by someone other than the person who started it."))
             frappe.throw(
                 _("You don't have a workflow action available from the {0} state.").format(
                     doc.get("workflow_state") or _("current")
                 )
             )
-        doc = apply_workflow(doc, transitions[0]["action"])
+        doc = apply_workflow(doc, usable[0]["action"])
     else:
         doc.submit()
 
     return _wizard_state(doc)
+
+
+def _workflow_actions(doc):
+    """(every transition open to the user's roles, the ones they may apply).
+
+    ``get_transitions`` filters by role only. ``apply_workflow`` then refuses a
+    transition without ``allow_self_approval`` when the user created the record,
+    so the second list drops those. That refusal applies to *every* transition,
+    sending for review included: when the fixture left the flag out (a fixture
+    import applies no defaults; see CHANGELOG), a technician who had started
+    their own visit could not even Request Review, and taking the first
+    transition blindly answered "Self approval is not allowed".
+    """
+    from frappe.model.workflow import get_transitions, has_approval_access
+
+    available = get_transitions(doc)
+    user = frappe.session.user
+    return available, [t for t in available if has_approval_access(user, doc, t)]
 
 
 @frappe.whitelist()

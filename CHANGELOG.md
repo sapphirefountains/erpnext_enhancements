@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.576.0] - 2026-10-07
+
+### Added
+
+- **Maintenance Planner: a calendar where people drag visits to another day**
+  (`/app/maintenance-planner`, Sapphire Maintenance workspace). It has month and week views,
+  a technician filter, and an **Unscheduled** tray for drafts with no date. Asked for so that
+  Austin, Lisa and the rest of the team can plan maintenance by moving cards around rather
+  than editing dates record by record. Dragging uses pointer events instead of HTML5 drag
+  and drop, which phones and tablets do not support. On a touch screen the finger has to rest
+  on a card for a moment before it lifts, so a swipe still scrolls the page. Clicking a card
+  opens a dialog that changes the date or the technician without dragging. Every month, week
+  and view is a route, so Back and Forward step through them.
+
+  The calendar shows three kinds of card:
+
+  - **Visit records.** Moving an open draft rewrites its Scheduled Visit Date. The save runs
+    as the mover, so the workflow and the time-off and training warnings all apply. The
+    warnings come back as alerts beside the move rather than as a dialog after every drag.
+    A draft that has been started (it has a Visit Date) does not move, and neither does a
+    finished visit. Changing the technician moves the dispatch assignment too.
+  - **Projected visits.** The nightly scheduler only drafts a visit seven days ahead, so a
+    calendar of drafts alone goes blank after a week. These cards are worked out from each
+    Active contract's feature rows: next visit date, then frequency, through the same winter
+    pause as the roll-forward. A Per Site Visit contract comes round at its most frequent
+    feature. An open draft is the next visit, and the series continues from it.
+    The first projected card of a series is the contract's stored next visit date. Dragging
+    it rewrites that date on the rows the scheduler reads; on a site visit, that means every
+    row due that day plus any due before the new day. The cards after it are arithmetic,
+    because they follow whenever the visit before them is done, so they stay put.
+    A projected visit dropped inside the seven-day window is drafted at once, on that exact
+    day (`_draft_maintenance_record(..., exact_date=True)`). Without that, a visit dropped
+    on today would only be drafted by tomorrow's run, which clamps the date to tomorrow.
+    Each move leaves a timeline note on the contract.
+  - **Seasonal visits** that are not drafted yet, on the 1st of their month.
+
+  The technician filter and the technician picker list the people visits go to. That is an
+  active employee with a Technician designation who holds Maintenance User: Austin, Korben,
+  Jesse and Daniel today. The role alone would have listed the office as well. Lisa holds
+  it because she reviews visits before billing, and she can move cards on the planner, but
+  visits are not assigned to her.
+
+  Backend: `api/maintenance_planner.py` (`get_planner`, `move_visit`, `move_projected`).
+  The seven-day window is now `tasks.MAINTENANCE_DRAFT_HORIZON_DAYS`, which both the
+  scheduler and the planner read. `tests/test_maintenance_planner.py` runs the projections
+  against the real roll-forward and the moves against a stub, bench-free, in its own CI step.
+
+### Fixed
+
+- **A technician can send a visit they started for review.** Austin could not submit his
+  visits. The "Sapphire Maintenance Workflow" fixture left `allow_self_approval` off both
+  transitions. Frappe's default for the field is 1, but a fixture import sets
+  `frappe.flags.in_import`, and `Document._set_defaults` returns early under it, so both
+  transitions reached production as **0**. Frappe applies that rule to every transition,
+  not only to approval. A technician who had created the visit record (through Log a Visit,
+  Do Visit Today or a new record) therefore could not even **Request Review**. The form
+  showed them no action at all, and the Visit Wizard's Finish answered "Self approval is not
+  allowed". Visits the scheduler drafted are owned by Administrator, so they went through.
+  2hkckpg374 (Myers Mortuary, an Extra Visit Austin started on 2026-10-06) is the one that
+  stuck; it reached Pending Review only when Nik moved it by hand. On 2026-10-07 production
+  held no submitted maintenance record at all.
+  - **Request Review** now allows self-approval, so whoever did the visit can send it in.
+  - **Approve & Submit** still refuses the visit's own creator, now stated explicitly. The
+    office reviews every visit before it is billed (Lisa), so a technician approving their
+    own visit would skip that review.
+  - `finish_visit` applies the first transition the user may actually apply, rather than the
+    first one their roles list. When the self-approval rule is the only thing in the way, it
+    now says so.
+  - `test_maintenance_planner` fails the build on any workflow transition in the fixtures that
+    leaves the flag out.
+
 ## [1.575.0] - 2026-10-06
 
 ### Fixed

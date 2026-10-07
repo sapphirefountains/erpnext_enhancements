@@ -759,6 +759,16 @@ jobs:
       # while it was open. Runs the real endpoints. Bench-free, own frappe stub, own step.
       - name: Maintenance seasonal drafts (regular visit stays reachable)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_seasonal_drafts -v
+      # The Maintenance Planner projects every visit the scheduler has not drafted yet, and
+      # a drag rewrites the contract dates the scheduler reads next. A projection that
+      # disagrees with the roll-forward (the winter pause, a site visit's shortest
+      # frequency) shows visits that will never be drafted. A move that rewrites the wrong
+      # rows reschedules features nobody touched. The same suite pins allow_self_approval
+      # on every fixture transition: a fixture import applies no field defaults, so leaving
+      # it out shipped 0, and a technician could not send their own visit for review.
+      # Bench-free, own frappe stub, own step.
+      - name: Maintenance planner (projections, moves, self-approval)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_planner -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget
