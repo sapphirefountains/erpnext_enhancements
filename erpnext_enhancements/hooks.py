@@ -1910,7 +1910,11 @@ after_migrate = [
 	# patches. Fills blanks only; one cheap statement on every later migrate.
 	"erpnext_enhancements.crm_enhancements.lead_triage.backfill_first_responses",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
-	# Hide the "Project" DocType link in the core Projects module sidebar (user request)
+	# Hide the "Project" DocType link in the core Projects module sidebar (user request).
+	# Before frappe 16.50 it drops the row from the Workspace Sidebar; from 16.50, which
+	# draws module sidebars from `Sidebar` instead, it sets `hidden` on ERPNext's own row
+	# rather than adding a Custom Sidebar layer, which would reorder the sidebar (v1.576.1).
+	# Re-applied after an ERPNext re-import; logs instead of raising.
 	"erpnext_enhancements.setup.workspace_tweaks.hide_core_sidebar_items",
 	# Desk home-grid tile artwork. Every tile this app contributes rendered as a grey
 	# letter avatar because create_desktop_icons_from_workspace() assigns `icon.app_name`,

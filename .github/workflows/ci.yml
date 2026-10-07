@@ -1587,6 +1587,14 @@ jobs:
         run: node scripts/test_workspace_block_return.mjs
       - name: Workspace block return (registration + lifecycle claims)
         run: python -m unittest erpnext_enhancements.tests.test_workspace_block_return -v
+      # frappe 16.50 draws module sidebars from `Sidebar` and no longer reads `Workspace
+      # Sidebar`, so the hidden "Project" link came back on the 2026-10-06 upgrade (v1.576.1).
+      # Replays production's Projects sidebar rows: only ERPNext's own row is flagged hidden,
+      # once, and again after an ERPNext re-import; the pre-16.50 path still drops the row;
+      # a failure is logged, never raised. Execs the module against a fake database passed in
+      # as `frappe`, so nothing goes in sys.modules.
+      - name: Core sidebar tweaks (16.50 Sidebar + pre-16.50 Workspace Sidebar)
+        run: python -m unittest erpnext_enhancements.tests.test_workspace_tweaks -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other stub-installing suites.
       #

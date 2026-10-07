@@ -54,6 +54,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer drawn because the content no longer lists them, so the page looks as it did before
   the upgrade. Nothing is deleted.
 
+- **The "Project" link is hidden from the Projects sidebar again.** It was hidden in v1.159.6
+  (user request, "for now") by `setup/workspace_tweaks.hide_core_sidebar_items`, which drops the
+  row from the Projects `Workspace Sidebar` on every migrate. frappe 16.50 draws a module's
+  sidebar from a `Sidebar` document (the areas on the new Dock rail) and no longer reads
+  `Workspace Sidebar`. So the hook kept cleaning a table nobody looks at, and the link was back
+  between Dashboard and Task from 2026-10-06.
+
+  The hook now also sets `hidden` on that row in ERPNext's `Sidebar` "Projects", and only on
+  that row: a `DocType` link to `Project` labelled "Project". The Dashboard link, which also
+  points at Project, stays. Why it is done this way and not the way frappe suggests:
+
+  - frappe 16.50 tells a site to change an app's sidebar through a `Custom Sidebar` layer. But
+    a layer that names any of the app's rows counts as an *arrangement*, and the rows it names
+    come first (`frappe/desk/layers.py` `apply_layer`). A one-row layer that hides this link
+    would therefore be an arrangement of one row. The next workspace anyone created in the
+    Projects module is appended to that layer by frappe (`add_site_sidebar_item`), so it would
+    sort above Home. A module opens on the first item of its sidebar, so the Projects area
+    would then open on that workspace instead of on Home and the Projects Dashboard.
+  - The app's own row can carry `hidden`. frappe reads that column from base rows so that an
+    app can ship an item switched off (`sidebar.get_sidebar_items`). A hidden base row is
+    dropped before the landing page is chosen, it changes no order, and it leaves the site
+    layer empty. A Workspace Manager can still bring the link back from the sidebar editor,
+    because a site layer's `hidden: 0` wins over the base.
+  - It is written with `db.set_value`. Outside developer mode, saving an app's `Sidebar` is
+    refused except during a migrate (`Sidebar.validate_app_content`). In developer mode a save
+    would export the JSON into ERPNext's own folder.
+  - An ERPNext release that ships a newer sidebar file re-imports the row unflagged. The hook
+    runs after model sync and flags it again in the same migrate, as it always has for the old
+    table. It clears the cached boot payload (`bootinfo`) when it changes a row, which is the
+    key frappe's own sidebar customizations clear. A failure logs an Error Log titled `Core
+    sidebar item not hidden` and the deploy carries on.
+
+  Before 16.50 the old path still runs unchanged, so a site on either version gets the same
+  sidebar.
+
 ### Tests
 
 - `tests/test_custom_html_blocks.py` (already in CI) now covers the restore rule and its
@@ -63,12 +98,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chosen layout is kept, that a missing ERPNext file only adds the dashboard, and that the
   call cannot raise out of the hook. The file is read from a real path. Three breakages were
   each tried once to confirm a test fails: no stock restore, no child rows, no `try`.
+- New `tests/test_workspace_tweaks.py`, in its own CI step, replays production's Projects
+  sidebar rows as read on 2026-10-07. Only ERPNext's "Project" row is flagged, without a new
+  `modified`, and the boot cache is cleared once. A second migrate writes nothing, and an
+  ERPNext re-import is flagged again. A link sharing the label or the type but opening
+  something else is left alone. A site still on frappe before 16.50 takes the old path, and a
+  failure is logged rather than raised. Each condition of the match, the `hidden: 0` filter,
+  the cache clear and the `try` were broken once to confirm a test fails.
 
 ### After the deploy
 
 Open **Projects → Home**. It should show the Projects Dashboard tabs first, then My Priority
-Tasks, the Morning Briefing and the Task Dashboard. A browser tab that was already open needs
-a reload.
+Tasks, the Morning Briefing and the Task Dashboard. The Projects sidebar should list Home,
+Dashboard, Task and Timesheet, with no "Project" between Dashboard and Task. A browser tab
+that was already open needs a reload.
 
 ## [1.576.0] - 2026-10-07
 
