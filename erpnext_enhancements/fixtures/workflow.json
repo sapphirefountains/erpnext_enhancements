@@ -29,13 +29,15 @@
         "state": "Draft",
         "action": "Request Review",
         "next_state": "Pending Review",
-        "allowed": "Maintenance User"
+        "allowed": "Maintenance User",
+        "allow_self_approval": 1
       },
       {
         "state": "Pending Review",
         "action": "Approve & Submit",
         "next_state": "Final/Submitted",
         "allowed": "Projects Manager",
+        "allow_self_approval": 0,
         "run_in_background": 1
       }
     ]

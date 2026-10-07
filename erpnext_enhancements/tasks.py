@@ -12,6 +12,11 @@ Two unrelated scheduling features live here, both registered in hooks.py:
 import frappe
 from frappe.utils import add_days, add_months, add_years, get_weekday, getdate
 
+# How far ahead the nightly run drafts a contract's due visits. The Maintenance
+# Planner (api.maintenance_planner) reads it too: a visit dragged into this window
+# is drafted on the spot, because the next nightly run would book it a day late.
+MAINTENANCE_DRAFT_HORIZON_DAYS = 7
+
 
 def generate_next_task(doc, method):
 	"""
@@ -167,7 +172,7 @@ def generate_predictive_maintenance_records():
 	)
 
 	today = getdate(nowdate())
-	horizon = add_days(today, 7)
+	horizon = add_days(today, MAINTENANCE_DRAFT_HORIZON_DAYS)
 	month_name = today.strftime("%B")
 
 	# 0. Expire or (§9.2) auto-renew contracts whose term ran out. Runs before
@@ -474,11 +479,14 @@ def suggest_truck_restocks():
 		)
 
 
-def _draft_maintenance_record(contract, serial_no=None, visit_label=None, scheduled_date=None):
+def _draft_maintenance_record(contract, serial_no=None, visit_label=None, scheduled_date=None, exact_date=False):
 	"""Insert a draft visit record for a contract, dispatched (date + technician).
 
 	Stamps the Scheduled Visit Date (feature due date shifted to a preferred
 	day) and the site's Default Technician, then creates a Frappe assignment.
+	``exact_date`` keeps ``scheduled_date`` as given: the Maintenance Planner
+	passes the day somebody dropped the visit on, and shifting it to the
+	agreement's preferred weekday would quietly overrule them.
 	"""
 	from erpnext_enhancements.api.maintenance_dispatch import (
 		assign_to_technician,
@@ -492,7 +500,10 @@ def _draft_maintenance_record(contract, serial_no=None, visit_label=None, schedu
 	record.maintenance_contract = contract.name
 	record.serial_no = serial_no
 	record.visit_label = visit_label
-	record.scheduled_visit_date = resolve_scheduled_date(scheduled_date, contract.get("project_contract"))
+	if exact_date and scheduled_date:
+		record.scheduled_visit_date = getdate(scheduled_date)
+	else:
+		record.scheduled_visit_date = resolve_scheduled_date(scheduled_date, contract.get("project_contract"))
 	record.technician = default_technician_for(contract.project)
 	record.insert(ignore_permissions=True)
 	if record.technician:
