@@ -39,8 +39,14 @@ app merge.
 - **A raw `/assets` path in `hooks.py` is a bug**, even when it works in testing — desktop
   browsers you have just cleared will show you the new file while field devices will not.
 - Adding a global script means adding it to the relevant bundle entry
-  (`public/js/erpnext_enhancements.bundle.js`, `kanban.bundle.js`, …), not adding a new
+  (`public/js/erpnext_enhancements.bundle.js`, `ee_kanban.bundle.js`, …), not adding a new
   include line.
+- **A bundle's file name is its identity on the whole bench** (added v1.574.2). `assets.json`
+  is one map for every app, keyed by nothing but the file name, so two apps shipping the same
+  name do not error — one silently replaces the other. frappe v16.50.0 shipped its own
+  `kanban.bundle.js` (Kanban v2) while ours had that name; ours is `ee_kanban.bundle.js` now.
+  Give a new bundle a distinctive name, and refresh the pinned upstream list in
+  `tests/test_bundle_name_collisions.py` on every frappe/erpnext upgrade.
 - `.scss` entries build to a `.css` asset name — `desk_addons.bundle.scss` is referenced as
   `desk_addons.bundle.css` — because its imports must be inlined by sass rather than esbuild.
 - Include **order** is preserved deliberately in the bundle entry files, because the CSS

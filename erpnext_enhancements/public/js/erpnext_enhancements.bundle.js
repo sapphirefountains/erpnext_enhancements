@@ -1,7 +1,7 @@
 /*
  * Global desk scripts — single esbuild bundle (content-hashed filename).
  *
- * Same rationale as kanban.bundle.js: raw /assets paths are served with a
+ * Same rationale as ee_kanban.bundle.js: raw /assets paths are served with a
  * 1-year immutable Cache-Control and carry no content hash, so an edit to any
  * of these files never reached a device that had already cached it (only
  * hard-refreshed desktops saw fixes). Bundle filenames are content-hashed via
@@ -21,7 +21,7 @@
  *     setting the global — and their content never changes, so the immutable
  *     /assets cache cannot serve them stale. They stay raw includes, listed
  *     BEFORE this bundle in hooks.py.
- *   - the Kanban patch suite: see kanban.bundle.js.
+ *   - the Kanban patch suite: see ee_kanban.bundle.js.
  *   - doctype_js / lazy dashboard components: loaded on demand through
  *     frappe.require, which has a version-aware client-side cache.
  */
@@ -94,7 +94,11 @@ import "./global_enhancements/global_sidebar.js";
 // Drops localStorage sidebar picks that point at deleted Workspace Sidebars
 // (the desk trusts them blindly and never validates them)
 import "./global_enhancements/sidebar_pref_heal.js";
-import "./global_enhancements/auto_collapse_sidebar.js";
+// One-time heal (v1.574.2): reopens the desk sidebar that auto_collapse_sidebar.js hid.
+// That script is deleted -- in frappe v16.50.0 the page-head toggle it clicked hides the
+// MODULE sidebar (and the Help menu with it) and remembers that per browser. Nothing in
+// this app may click .sidebar-toggle-btn; tests/test_frappe_16_50_desk_compat.py holds it.
+import "./global_enhancements/sidebar_collapse_heal.js";
 // erpnext_enhancements.workspace_blocks.onWorkspaceReturn: reloads a workspace's data
 // blocks when you come back to it. v16's Workspace.show() returns early on the
 // workspace already shown, so a return from a form re-runs no block script, and every

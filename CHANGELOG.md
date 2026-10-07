@@ -227,6 +227,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no links (`mandatory_depends_on`), and this dialog adds its links only on save, so the
   dialog asks for a title. That predates this release.
 
+## [1.574.2] - 2026-10-06
+
+Production went from frappe 16.36.1 / erpnext 16.37.0 to **16.50.0** on 2026-10-06 (16:50 to
+16:52 MDT), with this app still on 1.574.1. Four of our desk customisations broke in that
+upgrade with nothing in the console, the Error Log or the build output. This release fixes
+them. It is a hotfix cut from `main`: the open branches carrying 1.575.0 to 1.580.1 will
+rebase onto it and renumber above it.
+
+### Fixed
+
+- **Our Kanban patch bundle and frappe's new Kanban v2 engine no longer share a name.**
+  frappe 16.50.0 ships its own `kanban.bundle.js` (`views/kanban_v2/`), which
+  `list_factory.js` loads with `frappe.require("kanban.bundle.js")` for every board that has
+  `use_kanban_v2` set. Six of the 13 boards on production do. Ours had the same name.
+  `sites/assets/assets.json` is one map for the whole bench, keyed by nothing but the file
+  name (esbuild.js `write_assets_json`: `key = path.basename(entryPoint)`). frappe's
+  duplicate check compares `<app>/dist/...` output paths, so it never fires across apps; the
+  bundle written last simply replaces the other. So depending on build order, one of two
+  things happened, silently:
+  - The six v2 boards could not build `frappe.views.KanbanV2View`.
+  - Every desk page loaded the v2 engine instead of ours, and hold-to-drag, the Opportunity
+    card styling, the frappe/frappe#24156 leak fix and the drag-to-scroll fix never loaded.
+
+  Ours is now `public/js/ee_kanban.bundle.js` (a `git mv`, so its history follows), and
+  `hooks.py`, the four patch files' headers, `public/README.md` and ADR 0008 name it. Its
+  contents are unchanged. New bench-free suite `tests/test_bundle_name_collisions.py`
+  computes the assets.json key of each of our 17 bundles (a `.scss` entry builds to `.css`)
+  and fails when one matches a frappe, erpnext or newsletter bundle. It also fails when two of
+  ours share a key, or when `hooks.py` includes a bundle we do not ship: after a rename, a
+  stale name there loads somebody else's bundle rather than 404ing. CI has no upstream
+  checkout, so the upstream names are pinned: 56 keys read from the v16.50.0 tags, plus
+  newsletter's two. The module docstring has the command to refresh them, and **they need
+  refreshing on every frappe/erpnext upgrade**. Before this rename, `kanban.bundle.js` was
+  the only collision.
+
+- **FontAwesome icons draw again (stopgap).** frappe/frappe#40571 ("fix(ui): make icons
+  consistent", squash f44d24699a) removed
+  `@import "frappe/public/css/fonts/fontawesome/font-awesome.min.css";` from the top of
+  frappe's `desk.bundle.scss`. Nothing else in 16.50.0 loads that font on the desk, so every
+  `fa fa-*` icon here drew nothing. The worst cases were icon-only buttons, which became empty
+  boxes: comment Reply, Edit and Delete; directory Edit and Unlink; and the attachment
+  widget's refresh, download and delete. `desk_addons.bundle.scss` now starts with that exact
+  line. The font files are still shipped at that path in 16.50.0 (same blob, 960587be), and
+  their `@font-face` urls are absolute `/assets/frappe/...` paths that frappe's ignore-assets
+  plugin leaves external.
+
+  The import keeps its `.css` suffix, unlike our other imports, which deliberately have none.
+  The reason is how the build resolves it:
+  - sass passes a `.css` url through untouched, so frappe's sass importer never sees it.
+  - `@frappe/esbuild-plugin-postcss2` then resolves `frappe/public/...` with `resolve-file`
+    against `process.cwd()`. `bundler.py` always sets that cwd to `apps/frappe`, whichever
+    app is building, so the path is found and inlined exactly as it was for frappe's own
+    bundle.
+  - A relative `./x.css` is resolved against the plugin's temp dir instead, which is why
+    ours are extension-less.
+
+  We checked this rather than assumed it. The real `desk_addons.bundle.scss` went through a
+  replica of 16.50.0's style pipeline: the mirror's sass 1.69.5, postcss2 0.1.3 and esbuild,
+  all three pinned identically at v16.36.1 and v16.50.0, with cwd set to `apps/frappe`. The
+  font was inlined, no `@import` was left in the output, the urls stayed external, and the
+  entry built to the key `desk_addons.bundle.css`.
+
+  **One place this does not reach.** The Projects Dashboard block is a Custom HTML Block,
+  rendered in a shadow root that links only frappe's `desk.bundle.css`
+  (`frappe.create_shadow_element`). In 16.36.1 that stylesheet carried FontAwesome. Our
+  document-level stylesheet does not cross into the shadow root, so the block's five
+  `fa fa-*` class icons stay blank until they are migrated. Its sort arrows do come back,
+  because they name the font family directly and an `@font-face` declared in the document is
+  available inside shadow trees.
+
+  New suite `tests/test_frappe_16_50_desk_compat.py` fails the build if the import goes while
+  any `fa` markup remains.
+
+  **Follow-up, not in this release: move to `frappe.utils.icon()` (lucide)**, starting with
+  the icon-only buttons and giving them `aria-label`s, and doing the Projects Dashboard block
+  early because the stopgap cannot reach it. Then drop the import. There are 67 occurrences in
+  12 files, at v1.574.2:
+  - `public/js/project_enhancements/task_tree_manager.js`: 24 (146 to 760)
+  - `public/js/erpnext_enhancements.js`: 11 (649, 836 to 881, 927 to 931)
+  - `public/js/comments.js`: 10 (213, 219, 322, 328, 419 to 425, 447 to 453)
+  - `public/js/global_comments.js`: 5 (113, 239, 275, 278)
+  - `public/js/global_enhancements/unified_tab_controller.js`: 4 (392, 403, 538, 549)
+  - `custom_html_blocks/projects_dashboard.html`: 4 (45, 52, 53, 63)
+  - `custom_html_blocks/projects_dashboard.css`: 2 (55 and 56, the sort arrows by code point)
+  - `public/js/crm_note_enhancements.js`: 2 (103, 115)
+  - `task_enhancements/doctype/task/task.py`: 2 (242, server-built tree toggles)
+  - `custom_html_blocks/projects_dashboard.js`: 1 (220)
+  - `project_enhancements/doctype/project/project.js`: 1 (43)
+  - `public/js/project_enhancements/dashboard_components/column_selector.js`: 1 (121)
+
+  Separately, 19 DocTypes in `hr_enhancements` and `training` declare `"icon": "fa fa-*"`.
+
+- **The desk sidebar no longer disappears on laptops, and a one-time heal brings it back.**
+  `auto_collapse_sidebar.js` (deleted) clicked `$(".sidebar-toggle-btn, .sidebar-toggle")` on
+  every form opened in a window under 1400px wide, meaning to fold the form's own sidebar. In
+  16.50.0 that button is `page.html`'s only toggle, and `page.js` wires it to
+  `frappe.app.sidebar.toggle_width()`, which folds the desk's module sidebar instead.
+  `sidebar.js` then saves the state as `desk-sidebar-collapsed` in the browser. Beside a pinned
+  Dock (all 18 enabled desk users here), a collapsed sidebar is hidden outright, and the Help menu
+  (Report a Problem, Company Knowledge Base, Design Reviews) goes with it. The form's sidebar
+  was never folded, so each new form clicked the toggle again and flipped the panel back. This
+  is the likely cause of the "rail only" screenshot.
+
+  The new `global_enhancements/sidebar_collapse_heal.js` clears `desk-sidebar-collapsed` once
+  per browser, keyed by `ee_sidebar_heal_16_50` in localStorage:
+  - It runs at evaluation. `app_include_js` is plain `<script>` tags that run before
+    `frappe.start_app()`, so the sidebar is then simply drawn open.
+  - It also runs at `app_ready` as a safety net. `app_ready` fires inside the Application
+    constructor, before `frappe.app` is assigned, so the reopen waits one tick for
+    `frappe.app.sidebar` to exist.
+  - It never opens the phone drawer, and storage access is wrapped in try/catch.
+  - It marks itself done on the first run even when there was nothing to clear. It cannot
+    tell our collapse from a person's, so it must never run twice, or a deliberate Ctrl+/
+    would be undone on some later reload. The one cost is that someone who had collapsed
+    the sidebar on purpose sees it open once.
+
+  `scripts/test_sidebar_collapse_heal.js` executes the heal against a stubbed localStorage,
+  jQuery and frappe in 21 checks. `test_frappe_16_50_desk_compat.py` fails the build if any
+  script of ours selects `.sidebar-toggle(-btn)` or calls `toggle_width()` again. A tab that
+  stayed open across the deploy still runs the old script until it reloads.
+
+- **Tile names on the /desk home wrap again instead of reading "Inventory E…".** 16.50.0's
+  `desktop.css` scopes every rule to `body.desktop-page`. `body.desktop-page .icon-title`
+  (nowrap and ellipsis) is specificity (0,2,1), which beats our `.desktop-icon .icon-title`
+  at (0,2,0). That rule had been enough against 16.36.1's unscoped `.icon-title` at (0,1,0).
+  Our four tile rules now carry the same prefix plus `.desktop-icon`, giving (0,3,1). That
+  includes the 380px font-size rule, since frappe sets the title's size only in its base rule.
+  The phone geometry the 380px rule was written for is unchanged in 16.50.0: a 100px tile
+  with 16px side padding. `desk.js` adds `desktop-page` to `<body>` unconditionally at
+  startup, so the prefix narrows nothing. The new suite resolves this cascade against
+  frappe's rules (pinned from v16.50.0) rather than grepping for the selectors. Each rule
+  also keeps its bare selector, so a site still on 16.36.1 keeps the fix: there `desktop-page`
+  is never set, and the bare (0,2,0) selector still outranks 16.36.1's (0,1,0).
+
+### Verify on the mirror once it is on 16.50.0
+
+1. `bench build`. In `sites/assets/assets.json`, `kanban.bundle.js` should map to frappe's
+   path and `ee_kanban.bundle.js` to ours.
+2. Open a v2 board (Opportunity Pipeline) and the classic Opportunity board. The classic board
+   should still have hold-to-drag and the card styling.
+3. Open a Project with comments. Reply, Edit and Delete should show their icons.
+4. At 1280px wide, open three forms in a row. The module sidebar should stay as you left it,
+   including after a reload.
+5. Check that `/desk` tile names wrap, at desktop width and at 375px.
+
 ## [1.574.1] - 2026-10-05
 
 ### Fixed

@@ -49,9 +49,16 @@ app_include_js = [
 	"/assets/erpnext_enhancements/js/vue.global.js",
 	"/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js",
 	# Kanban patch suite (hold-to-drag, Opportunity styling, leak hotfix for
-	# frappe/frappe#24156, drag-to-scroll perf fix). See public/js/kanban.bundle.js
+	# frappe/frappe#24156, drag-to-scroll perf fix). See public/js/ee_kanban.bundle.js
 	# for the imports and each file's removal conditions.
-	"kanban.bundle.js",
+	#
+	# The "ee_" prefix is load-bearing (v1.574.2). assets.json is ONE flat map keyed by
+	# bundle FILE NAME across every app on the bench, and frappe v16.50.0 shipped its own
+	# kanban.bundle.js (the Kanban v2 engine, frappe.require'd by list_factory.js), so
+	# while ours was also called that, one of the two could never be reached and which
+	# one depended on build order. tests/test_bundle_name_collisions.py fails the build
+	# if any of our bundle names matches a frappe or erpnext one.
+	"ee_kanban.bundle.js",
 	# Every other global desk script (awesomebar/nav/drafts, Comments App,
 	# Triton widget, telephony, task tree/gantt preloads, ...), in the old
 	# include order: see public/js/erpnext_enhancements.bundle.js.

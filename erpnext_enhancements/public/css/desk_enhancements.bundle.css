@@ -1445,25 +1445,40 @@ mark {
      `height`. On the desktop grid that takes a third line; on a phone, where
      Frappe's 117px/100px tile only ever had room for one, a two-line name
      makes that row ~16px taller. It is min-height rather than `height: auto`
-     on purpose — Frappe sets that height at (0,1,0) on the grid, (0,3,0) in
-     a folder's modal and (0,4,0) on phones, and sets no min-height anywhere,
+     on purpose — Frappe sets that height at (0,2,1) on the grid, (0,4,1) in
+     a folder's modal and (0,5,1) on phones, and sets no min-height anywhere,
      so there is no specificity contest, and each breakpoint keeps its own
      tile size as the floor.
 
    Frappe injects the page stylesheet when the page loads, AFTER this bundle,
    so a rule of equal specificity here loses on source order; each rule below
-   outranks the one it overrides by a class. `:has(> .icon-caption)` leaves
-   out the thumbnails inside a folder tile, which have no caption.
+   outranks the one it overrides by a class. Since frappe v16.50.0 desktop.css
+   scopes every rule to `body.desktop-page` — `body.desktop-page .icon-title`
+   is (0,2,1) — so these carry the same prefix plus `.desktop-icon`, (0,3,1).
+   Until v1.574.2 they were bare `.desktop-icon .icon-title`, (0,2,0): enough
+   against 16.36.1's unscoped `.icon-title` (0,1,0), and silently outranked the
+   day 16.50.0 deployed, which put "Inventory E…" back on the grid. desk.js
+   adds `desktop-page` to <body> unconditionally at startup, so the prefix
+   narrows nothing. Each rule also keeps the bare selector, so a site still on
+   16.36.1 (the local mirror until it is re-pinned) keeps the fix: there
+   `desktop-page` is never set, and the bare (0,2,0) still outranks 16.36.1's
+   (0,1,0). tests/test_frappe_16_50_desk_compat.py resolves this
+   cascade against frappe's rules rather than grepping for the selectors.
+   `:has(> .icon-caption)` leaves out the thumbnails inside a folder tile,
+   which have no caption.
    ========================================================================== */
+body.desktop-page .desktop-icon:has(> .icon-caption),
 .desktop-icon:has(> .icon-caption) {
     min-height: max-content;
 }
 
+body.desktop-page .desktop-icon .icon-caption,
 .desktop-icon .icon-caption {
     width: calc(100% + 24px);
     height: auto;
 }
 
+body.desktop-page .desktop-icon .icon-title,
 .desktop-icon .icon-title {
     white-space: normal;
     text-wrap: balance;
@@ -1471,8 +1486,13 @@ mark {
 }
 
 /* Under 380px wide the phone tile is 100px square, which leaves the caption
-   ~90px — "Documentation" needs ~104px at 14px, and ~89px at 12px. */
+   ~90px — "Documentation" needs ~104px at 14px, and ~89px at 12px. Rechecked
+   against 16.50.0: the tile is still 100px (`--desktop-icon-container`) with
+   the same 16px side padding, and frappe sets the title's font-size only in
+   its base rule, (0,2,1) — so this needs the prefix too, or the phone grid
+   goes back to clipping "Documentation". */
 @media screen and (max-width: 380px) {
+    body.desktop-page .desktop-icon .icon-title,
     .desktop-icon .icon-title {
         font-size: var(--text-xs);
     }
