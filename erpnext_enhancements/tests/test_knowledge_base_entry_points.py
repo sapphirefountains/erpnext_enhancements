@@ -81,12 +81,12 @@ VERSION = K.VERSION_DOCTYPE
 #: its ``modified`` past the stamp below; then put the new fingerprint and stamp here.
 PINNED = {
 	WORKSPACE_PATH: (
-		"3949fb600c08e269e2065bbfe0440914cbb7d4e1b886f33a85d5401b8e3bcc57",
-		"2026-09-29 12:00:00.000000",
+		"089a93f00ba44c05a2d60c1a0b438b5465021a8f3a158be6ae4b561f1d944bd9",
+		"2026-10-07 12:00:00.000000",
 	),
 	SIDEBAR_PATH: (
-		"602355a1de2f7d8bd5e5f405064d1b1497fddbd5071f601b71751fa5b957e3ca",
-		"2026-09-28 21:00:00.000000",
+		"ec3c2b2a332407ab16040f5db79842db72b20db01b743d4ccbe90977e32110ea",
+		"2026-10-07 12:00:00.000000",
 	),
 }
 
