@@ -415,6 +415,16 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_frappe_16_50_desk_compat -v
       - name: Desk sidebar one-time heal (executed, not grepped)
         run: node scripts/test_sidebar_collapse_heal.js
+      # An icon name no sprite has draws nothing and raises nothing: on frappe v16.50.0 five
+      # slots on our Dock rail were blank, from workspace icons (money, service, water,
+      # assistant, mobile) that no v16 sprite ever had, plus book-marked, which 16.50's lucide
+      # upgrade renamed (v1.575.1). Every icon in our workspace, sidebar and dock files, and
+      # every literal frappe.utils.icon() name in our scripts, must be in the pinned inventory
+      # of the deployed release (tests/data/desk_icon_names.txt; regenerate it on every
+      # frappe/erpnext upgrade with scripts/list_desk_icon_names.py). Also the patch that heals
+      # the copies the 16.50 conversion made, against a stub. Own step: own frappe stub.
+      - name: Every shipped desk icon name draws on frappe v16.50 (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_icon_names -v
       # The payment step's follow-up button and its two whitelisted endpoints.
       # The suites that exercise the real behaviour need a bench and so never
       # run here -- which is why the seam is pinned statically: a renamed

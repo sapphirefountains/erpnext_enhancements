@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.575.1] - 2026-10-07
+
+### Fixed
+
+- **Every one of our areas has an icon on the new Dock rail again.** After the frappe 16.50
+  upgrade, five slots on the rail were blank (QuickBooks Online, Sapphire Maintenance, Water
+  Engineering, AI Governance and Devices), and so were the matching sidebar headers and
+  workspace page titles. The Dock draws an icon with `frappe.utils.icon(name)`, an
+  `<svg><use href="#icon-<name>">` into the sprites frappe and ERPNext load, and a name that no
+  sprite has draws nothing and raises nothing. The one-time conversion to the new desk copied
+  each workspace's `icon` into the Dock Item row and the "<area> (Custom)" Sidebar it made
+  for it. Six of our names are in no v16.50 sprite: `money`, `service`, `water`, `assistant`
+  and `mobile` never were, and `book-marked` was dropped by 16.50's lucide upgrade, which
+  renamed it `book-bookmark`. Before 16.50 these names were wrong but harmless, because the
+  desk drew our home tiles from `logo_url` artwork and never looked them up.
+
+  Each of the nine affected workspaces now carries its /desk tile glyph
+  (`setup/desktop_icon_map.TILES`), so the rail and the tile show the same picture:
+  QuickBooks Online `book-open-check`, Finance Hub `wallet`, Sapphire Maintenance `wrench`,
+  Support Hub `life-buoy`, Water Engineering `droplets`, Design Hub `palette`, AI Governance
+  `bot`, Devices `smartphone`, Knowledge Base `book-bookmark`.
+
+  The new `heal_desk_icon_names` patch puts the same names on the copies already in the
+  database: `Workspace.icon`, `Sidebar.header_icon` and `Dock Item.icon`. It changes a row only
+  when that row belongs to one of the nine areas and still holds a broken name, so an icon
+  someone picked by hand is never overwritten. The workspace JSONs' `modified` stamps are
+  deliberately left alone. Bumping one makes migrate re-import that workspace, and on 16.50 a
+  re-import wipes the site's edits to a standard workspace. Knowledge Base is the exception:
+  its own suite requires a bump with every content change, so its workspace and sidebar files
+  are re-stamped 2026-10-07 and re-pinned. Prod's Knowledge Base row still carried the file's
+  own stamp, so no one had edited it on site and the re-import replaces nothing a person made.
+  The patch clears the cache once if
+  it changed anything, because migrate clears the cache only before its patches. It cannot
+  raise, and it is safe to run twice.
+
+  Not fixed here: frappe's own Build sidebar names `file-code-2` (lucide's `file-code` now) for
+  its DocType entry, so that one row draws blank. The row is frappe's, and frappe's next
+  re-import of it would undo an edit made by this app.
+
+### Added
+
+- **`tests/test_desk_icon_names.py`, with its own CI step.** Every `icon` and `header_icon` in
+  our workspace, sidebar and dock files, and every literal `frappe.utils.icon()` name in
+  `public/`, must be in `tests/data/desk_icon_names.txt`. That file is an allowlist of the 2,274
+  names that frappe and ERPNext v16.50.0 define in the sprites their `app_include_icons` hooks
+  load. It is written by the new `scripts/list_desk_icon_names.py`. **Regenerate it whenever
+  production moves to a new frappe or ERPNext release.** `test_hr_module` keeps a denylist
+  instead, on the grounds that an inventory goes stale on upgrade. But a denylist only catches
+  a name somebody has already hit, and none of these six was on it. The older
+  `test_every_icon_is_in_v16s_sprites` reads a sibling frappe checkout, so it skips in CI, which
+  is how `book-marked` got through. The suite also tests the patch against a stub, and every
+  safety check in the patch was deliberately broken once to confirm a test fails.
+
 ## [1.575.0] - 2026-10-06
 
 ### Fixed

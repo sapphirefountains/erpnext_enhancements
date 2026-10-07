@@ -1264,3 +1264,8 @@ erpnext_enhancements.patches.backfill_rental_settings_defaults
 # review-room Page and Design Reviews workspace, and any review with no content File and no activity.
 # Cannot raise; safe twice.
 erpnext_enhancements.patches.rebuild_design_review_storage
+# v1.575.1 frappe 16.50 Dock: the conversion to the new desk copied our workspaces' icons into Dock Item and
+# "(Custom)" Sidebar rows, and six of those names are in no v16.50 sprite, so their rail slots drew blank.
+# Puts each area's tile glyph on Workspace.icon, Sidebar.header_icon and Dock Item.icon, only where the row
+# still holds a broken name. Cannot raise; safe twice.
+erpnext_enhancements.patches.heal_desk_icon_names
