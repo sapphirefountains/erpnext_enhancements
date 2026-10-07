@@ -1,7 +1,7 @@
 /*
  * Kanban "press-and-hold to grab" — drag delay for mouse AND touch.
  *
- * Targets: every Kanban board (board-agnostic). Loaded via kanban.bundle.js
+ * Targets: every Kanban board (board-agnostic). Loaded via ee_kanban.bundle.js
  *   (hooks.py `app_include_js`). See CHANGELOG for the full history of this fix —
  *   including the stale-cache root cause (raw /assets paths + 1-year immutable
  *   Cache-Control) that kept phones running pre-fix copies of this file until

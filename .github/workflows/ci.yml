@@ -392,6 +392,29 @@ jobs:
       # on `.sort-selector` is what trapped the sort menu in the first place.
       - name: Desk menus are not trapped in a stacking context (cascade resolved)
         run: python -m unittest erpnext_enhancements.tests.test_dropdown_stacking -v
+      # assets.json is ONE map for the whole bench, keyed by bundle FILE NAME, and a second
+      # app shipping the same name replaces the first without an error or a warning. frappe
+      # v16.50.0 shipped kanban.bundle.js (Kanban v2) while ours had that name, so either the
+      # v2 boards or our hold-to-drag/Opportunity patches were unreachable, depending on
+      # build order (v1.574.2). Checks our names against a pinned list of frappe's and
+      # erpnext's (CI has no checkout of either; the module says how to refresh it), and
+      # that every bundle hooks.py includes is one we ship -- a stale name there resolves to
+      # SOMEONE ELSE's bundle rather than 404ing. Reads files only; no frappe stub.
+      - name: Bundle names are unique on the bench (assets.json is keyed by file name)
+        run: python -m unittest erpnext_enhancements.tests.test_bundle_name_collisions -v
+      # Three desk customisations frappe v16.50.0 broke with nothing logged anywhere
+      # (v1.574.2): the FontAwesome font stays imported while any `fa fa-*` markup remains
+      # (frappe stopped loading it, and icon-only buttons drew as empty boxes); nothing of
+      # ours clicks .sidebar-toggle-btn, which since 16.50.0 hides the DESK sidebar and the
+      # Help menu beside a pinned Dock and remembers it; and the /desk tile-name overrides
+      # beat frappe's new body.desktop-page rules -- the cascade resolved, not grepped.
+      # The node step executes the one-time heal for browsers the old script collapsed:
+      # once per browser even when there was nothing to clear (it cannot tell our collapse
+      # from a person's), before the desk draws, never popping the phone drawer open.
+      - name: Desk compatibility with frappe v16.50.0 (icons, desk sidebar, /desk tile names)
+        run: python -m unittest erpnext_enhancements.tests.test_frappe_16_50_desk_compat -v
+      - name: Desk sidebar one-time heal (executed, not grepped)
+        run: node scripts/test_sidebar_collapse_heal.js
       # The payment step's follow-up button and its two whitelisted endpoints.
       # The suites that exercise the real behaviour need a bench and so never
       # run here -- which is why the seam is pinned statically: a renamed
