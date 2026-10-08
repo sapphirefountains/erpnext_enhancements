@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.576.2] - 2026-10-08
+
+### Changed
+
+- **Only the office reviewers approve maintenance visits.** Every visit is reviewed before it is
+  billed. Approve & Submit was given to **Projects Manager**, and every technician holds that
+  role, so a technician could approve a colleague's visit. A technician could also approve their
+  own visit whenever the nightly scheduler had drafted it: the self-approval rule only compares
+  against the record's owner, which is then Administrator. On 2026-10-07 Nik named the reviewers:
+  Lisa Symanski, James Harris, Nikolas Bradshaw and Clegg Mabey.
+  - A new role, **Maintenance Reviewer**, now runs Approve & Submit and edits a visit in Pending
+    Review.
+  - It also gets a new **Send Back** action (Pending Review to Draft), so a reviewer can return a
+    visit to the technician to fix rather than correcting it themselves.
+  - `patches/seed_maintenance_reviewer_role.py` creates the role and the "Send Back" Workflow
+    Action Master. It runs in `post_model_sync`, because `workflow.json` sorts before
+    `workflow_action_master.json` in fixture sync and links to both. It grants the role to
+    nobody.
+  - **Until the reviewers hold the role, nobody can approve a visit.** Lisa and Clegg have Role
+    Profiles, and a profiled user's roles are rebuilt from those profiles on every save, so they
+    receive it through a one-role "Maintenance Reviewer" profile. James and Nik receive it
+    directly.
+  - `finish_visit` no longer considers a transition back to the first state. A reviewer who
+    started a visit may not approve it, and the wizard's Finish would otherwise have sent their
+    own visit back to Draft.
+  - `test_maintenance_planner` pins all of this: who approves, Send Back's wiring and order, that
+    every workflow action has a Workflow Action Master fixture and is exported, and that the seed
+    runs before fixture sync and never raises.
+
 ## [1.576.1] - 2026-10-07
 
 ### Fixed

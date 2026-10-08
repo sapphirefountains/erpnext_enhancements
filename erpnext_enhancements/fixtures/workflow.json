@@ -16,7 +16,7 @@
       {
         "state": "Pending Review",
         "doc_status": 0,
-        "allow_edit": "Projects Manager"
+        "allow_edit": "Maintenance Reviewer"
       },
       {
         "state": "Final/Submitted",
@@ -36,9 +36,16 @@
         "state": "Pending Review",
         "action": "Approve & Submit",
         "next_state": "Final/Submitted",
-        "allowed": "Projects Manager",
+        "allowed": "Maintenance Reviewer",
         "allow_self_approval": 0,
         "run_in_background": 1
+      },
+      {
+        "state": "Pending Review",
+        "action": "Send Back",
+        "next_state": "Draft",
+        "allowed": "Maintenance Reviewer",
+        "allow_self_approval": 1
       }
     ]
   },
