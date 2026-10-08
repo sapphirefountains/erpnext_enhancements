@@ -682,7 +682,7 @@ class TestSelfApproval(unittest.TestCase):
 
 
 class TestReviewerWorkflow(unittest.TestCase):
-	"""Only the office reviewers approve a visit (v1.576.1).
+	"""Only the office reviewers approve a visit (v1.576.2).
 
 	Every technician holds Projects Manager, so approval keyed on it let a technician approve a
 	colleague's visit, or their own whenever the scheduler had drafted it. The reviewers named on

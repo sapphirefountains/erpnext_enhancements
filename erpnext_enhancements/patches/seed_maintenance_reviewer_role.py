@@ -1,4 +1,4 @@
-"""Seed the "Maintenance Reviewer" role and the "Send Back" workflow action (v1.576.1).
+"""Seed the "Maintenance Reviewer" role and the "Send Back" workflow action (v1.576.2).
 
 A maintenance visit is reviewed before it is billed. Until now the Sapphire Maintenance Workflow
 let **Projects Manager** approve, and every technician holds Projects Manager, so a technician
