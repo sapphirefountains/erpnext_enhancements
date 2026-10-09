@@ -21,6 +21,8 @@
   "scheduled_visit_date",
   "visit_date",
   "dispatch_digest_sent_on",
+  "customer_confirmation_due",
+  "customer_confirmed_for",
   "clock_in_time",
   "clock_out_time",
   "paused_duration",
@@ -130,6 +132,24 @@
    "fieldtype": "Date",
    "hidden": 1,
    "label": "Dispatch Digest Sent On",
+   "read_only": 1
+  },
+  {
+   "description": "Customer date confirmation (Project Planner): the date waiting to be emailed to the customer. Written by the system.",
+   "fieldname": "customer_confirmation_due",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "Customer Confirmation Due",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Customer date confirmation (Project Planner): the date the customer was last emailed. Written by the system.",
+   "fieldname": "customer_confirmed_for",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "Customer Confirmed For",
+   "no_copy": 1,
    "read_only": 1
   },
   {
@@ -244,7 +264,7 @@
    "label": "Client Sign-off"
   }
  ],
- "modified": "2026-10-09 14:00:00.000000",
+ "modified": "2026-10-09 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",

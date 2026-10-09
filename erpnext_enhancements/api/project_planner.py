@@ -641,6 +641,7 @@ def get_planner(start, end, draft=0):
 		)
 		for row in unscheduled_rows
 	]
+	_phase5_cards(tasks + unscheduled, today)  # Phase 5: outdoor / customer-facing flags, weather
 
 	project_names = {card["project"] for card in tasks + unscheduled if card.get("project")}
 	result = {
@@ -1789,6 +1790,8 @@ def _copy_values(source, state, days):
 		"expected_time": flt(source.get("expected_time")),
 		"custom_crew_size": cint(source.get("custom_crew_size")),
 		"custom_tentative": 1 if engine.is_tentative(source) else 0,
+		"custom_outdoor": cint(source.get("custom_outdoor")),  # Phase 5
+		"custom_customer_visit": cint(source.get("custom_customer_visit")),  # Phase 5
 		"color": source.get("color"),
 		"description": f"{description}<p>{note}</p>",
 	}
@@ -2268,8 +2271,10 @@ def get_route(resource, date):
 	stop_bookings = [b for b in cell.get("bookings") or [] if b.get("kind") in routing.STOP_KINDS]
 	details = routing.locate(stop_bookings, detail=True) if stop_bookings else {}
 	titles = _project_titles(b.get("project") for b in stop_bookings)
-	return route_payload(
-		person, day, cell, route, data["settings"], details, titles, _maps_config(), _depot_address()
+	return _route_weather(  # Phase 5: a weather chip on outdoor stops
+		route_payload(
+			person, day, cell, route, data["settings"], details, titles, _maps_config(), _depot_address()
+		)
 	)
 
 
@@ -2363,6 +2368,7 @@ def suggest_dates(task, start=None, days=None, resource=None):
 					person, day, cell, routes.get((name, day)), point, shop, matrix, needed, settings, titles
 				)
 			)
+	entries = _weather_entries(entries, doc, point)  # Phase 5: outdoor tasks avoid flagged days
 	result["suggestions"] = rank_suggestions(entries, with_site=bool(point))
 	if not result["suggestions"]:
 		hours = engine.fmt_hours(needed) + "h" if needed is not None else _("a full day")
@@ -3668,3 +3674,293 @@ def get_equipment(start, end):
 		"equipment": out,
 		"conflicts": engine.equipment_conflicts(tasks, equipment, start, end, statuses, bookings),
 	}
+
+
+# ====================================================================== Phase 5: extras
+#
+# Weather on outdoor work (P5.2), "who is free" for the planner and the AI tool (P5.3), and the
+# customer date confirmation's flag and preview (P5.4). One block at the end of the module on
+# purpose: Phase 4 changes the functions above in parallel, and the only Phase 5 edits up there are
+# one line each in get_planner (``_phase5_cards``), get_route (``_route_weather``) and suggest_dates
+# (``_weather_entries``), plus the two flags copy_week carries in ``_copy_values``.
+#
+# Things this block is careful about, some of which look like bugs:
+#
+# * **Weather never fails a read.** ``planner_weather`` answers from a three-hour cache, asks
+#   Open-Meteo once for every uncached site, and on any failure answers nothing; a card then has
+#   ``weather: None``, which the page draws as no chip. ``[]`` means "looked, and it is clear".
+# * **A flagged day is a worse suggestion, never an impossible one.** Each flag adds
+#   WEATHER_PENALTY_MINUTES to the day's score, as if it were that much more driving, and the
+#   reason says why; a crew lead deciding to pour in the rain is their call.
+# * **who_is_free prices driving from the cache and the straight-line estimate** (engine
+#   ``google=False``): a question someone asks a chat assistant must not spend Routes calls.
+# * **The two flags are written without touching ``modified``** (set_task_flags). They change no
+#   booking, so a planner with the card open, or a draft built on it, must not be refused as
+#   "changed by someone else" because somebody ticked *Outdoor work*. The change still goes on the
+#   timeline. They are never drafted: draft mode holds back bookings, and these are not bookings.
+# * **The preview never sends**, works while customer confirmations are switched off, and is for
+#   System Managers and Projects Managers only: it shows a customer's email address.
+
+WHO_FREE_MAX_DAYS = 31
+WHO_FREE_DEFAULT_HOURS = 1.0
+#: A forecast flag on a suggested day counts as this many minutes of extra driving.
+WEATHER_PENALTY_MINUTES = 30
+#: ``set_task_flags`` argument → Task Check field.
+FLAG_FIELDS = {"outdoor": "custom_outdoor", "customer_visit": "custom_customer_visit"}
+PREVIEW_DOCTYPES = ("Task", "Sapphire Maintenance Record")
+
+
+def free_entry(person, cell, need):
+	"""``(is_free, entry)`` for one person on one day: free means ``need`` hours or more spare.
+
+	``entry`` is ``{"resource", "label", "group", "free_hours", "capacity", "booked"}`` plus, for
+	someone not free, ``reason``: the day-off label ("Time off", "Holiday: ...", "Not a work day"),
+	"Travelling", or "Only 2h free (6h booked of 8h)".
+	"""
+	cell = cell or {}
+	capacity, free, booked = flt(cell.get("capacity")), flt(cell.get("free")), flt(cell.get("booked"))
+	entry = {
+		"resource": person.get("name"),
+		"label": person.get("label"),
+		"group": person.get("group"),
+		"free_hours": round(free, 2),
+		"capacity": round(capacity, 2),
+		"booked": round(booked, 2),
+	}
+	if capacity > 0 and free + engine.TOLERANCE >= need:
+		return True, entry
+	if capacity <= 0:
+		entry["reason"] = _(cell.get("off") or "Not a work day")
+	elif any(b.get("kind") == "travel" for b in cell.get("bookings") or []):
+		entry["reason"] = _("Travelling")
+	else:
+		entry["reason"] = _("Only {0}h free ({1}h booked of {2}h)").format(
+			engine.fmt_hours(free), engine.fmt_hours(booked), engine.fmt_hours(capacity)
+		)
+	return False, entry
+
+
+def free_days(resources, days, first, last, need):
+	"""``[{"date", "free": [...], "not_free": [...]}]``: most free hours first, then by name."""
+	out = []
+	for day in engine.daterange(first, last):
+		free, busy = [], []
+		for person in resources or []:
+			ok, entry = free_entry(person, (days.get(person["name"]) or {}).get(str(day)), need)
+			(free if ok else busy).append(entry)
+		free.sort(key=lambda e: (-e["free_hours"], e.get("label") or ""))
+		busy.sort(key=lambda e: e.get("label") or "")
+		out.append({"date": str(day), "free": free, "not_free": busy})
+	return out
+
+
+def weather_adjust(entry, flags):
+	"""A suggestion with its day's forecast flags: ``weather``, a score penalty and the reason."""
+	if not entry:
+		return entry
+	flags = list(flags or [])
+	out = dict(entry, weather=flags)
+	if flags:
+		out["score"] = round(flt(entry.get("score")) + WEATHER_PENALTY_MINUTES * len(flags), 2)
+		out["reason"] = " ".join(
+			part for part in (entry.get("reason"), _("Forecast: {0}.").format(", ".join(flags))) if part
+		)
+	return out
+
+
+def _task_has_column(column):
+	try:
+		return bool(frappe.db.has_column("Task", column))
+	except Exception:
+		return False
+
+
+def _flag_rows(names):
+	"""``{task: {"outdoor": bool, "customer_visit": bool}}`` for the two Phase 5 Checks."""
+	names = sorted({n for n in names or () if n})
+	columns = [c for c in FLAG_FIELDS.values() if _task_has_column(c)]
+	if not names or not columns:
+		return {}
+	out = {}
+	for row in frappe.get_all(
+		"Task", filters={"name": ["in", names]}, fields=["name", *columns], limit_page_length=0
+	):
+		out[row.get("name")] = {key: bool(cint(row.get(field))) for key, field in FLAG_FIELDS.items()}
+	return out
+
+
+def _phase5_cards(cards, today):
+	"""Give each card ``outdoor``, ``customer_visit`` and ``weather`` (in place). Never raises."""
+	try:
+		from erpnext_enhancements.project_enhancements import planner_weather
+
+		flags = _flag_rows(card.get("name") for card in cards)
+		first, last = planner_weather.window(getdate(today))
+		outdoor = []
+		for card in cards:
+			mine = flags.get(card.get("name")) or {}
+			card["outdoor"] = bool(mine.get("outdoor"))
+			card["customer_visit"] = bool(mine.get("customer_visit"))
+			card["weather"] = None
+			if card["outdoor"] and card.get("start"):
+				span = (getdate(card["start"]), getdate(card.get("end") or card["start"]))
+				if span[0] <= last and span[1] >= first:
+					outdoor.append((card, span))
+		if not outdoor:
+			return
+		known = planner_weather.forecast_for_tasks(
+			[{"name": card["name"], "project": card.get("project")} for card, _span in outdoor]
+		)
+		for card, span in outdoor:
+			card["weather"] = planner_weather.span_weather(span, known.get(card["name"]), getdate(today))
+	except Exception:
+		frappe.log_error(title="Project Planner: Phase 5 card details", message=frappe.get_traceback())
+
+
+def _route_weather(payload):
+	"""``get_route``'s answer with ``weather`` (flags, or None) on each outdoor task stop."""
+	try:
+		from erpnext_enhancements.project_enhancements import planner_weather
+
+		stops = [
+			s for s in payload.get("stops") or [] if s.get("kind") in ("task", "rental") and s.get("ref")
+		]
+		flags = _flag_rows(s["ref"] for s in stops)
+		outdoor = [s for s in stops if (flags.get(s["ref"]) or {}).get("outdoor")]
+		day = getdate(payload.get("date"))
+		first, last = planner_weather.window(getdate(nowdate()))
+		if not outdoor or not first <= day <= last:
+			return payload
+		known = planner_weather.forecast_for_tasks(
+			[{"name": s["ref"], "project": s.get("project")} for s in outdoor]
+		)
+		for stop in outdoor:
+			forecast = known.get(stop["ref"])
+			stop["weather"] = planner_weather.flags_on(forecast, day) if forecast is not None else None
+	except Exception:
+		frappe.log_error(title="Project Planner: route weather", message=frappe.get_traceback())
+	return payload
+
+
+def _weather_entries(entries, doc, point):
+	"""``suggest_dates`` entries with the forecast weighed in, for an outdoor task with a location."""
+	if not point or not cint(doc.get("custom_outdoor")):
+		return entries
+	try:
+		from erpnext_enhancements.project_enhancements import planner_weather
+
+		forecast = planner_weather.forecasts([point]).get(planner_weather.point_key(point))
+		if forecast is None:
+			return entries
+		return [weather_adjust(e, planner_weather.flags_on(forecast, e["date"])) if e else e for e in entries]
+	except Exception:
+		frappe.log_error(title="Project Planner: suggestion weather", message=frappe.get_traceback())
+		return entries
+
+
+@frappe.whitelist()
+def who_is_free(start, end=None, hours=None, group=None):
+	"""Who has ``hours`` free on each day from ``start`` to ``end`` (P5.3). Read-only.
+
+	``end`` defaults to ``start`` (at most 31 days); ``hours`` to 1; ``group`` narrows to one Planner
+	Resource group (Field, PM, Design, Subcontractor). Driving is priced without Google. Returns
+	``{"start", "end", "hours", "group", "days": [{"date", "free": [{resource, label, group,
+	free_hours, capacity, booked}], "not_free": [{..., reason}]}], "note"}``.
+	"""
+	_require_planner()
+	first = getdate(start)
+	last = getdate(given(end) or start)
+	if last < first:
+		frappe.throw(_("The end date is before the start date."))
+	if date_diff(last, first) + 1 > WHO_FREE_MAX_DAYS:
+		frappe.throw(_("Ask about {0} days or fewer.").format(WHO_FREE_MAX_DAYS))
+	need = flt(given(hours)) if given(hours) is not None else WHO_FREE_DEFAULT_HOURS
+	if need <= 0 or need > 24:
+		frappe.throw(_("Hours must be more than 0 and at most 24."))
+	group = given(group)
+	names = None
+	if group:
+		names = frappe.get_all(
+			"Planner Resource",
+			filters={"is_active": 1, "resource_group": group},
+			pluck="name",
+			limit_page_length=0,
+		)
+	answer = {"start": str(first), "end": str(last), "hours": need, "group": group, "days": [], "note": None}
+	if names is not None and not names:
+		answer["note"] = _("Nobody active is in the {0} group.").format(group)
+		return answer
+	data = engine.availability(first, last, names, google=False)
+	answer["days"] = free_days(data["resources"], data["days"], first, last, need)
+	return answer
+
+
+@frappe.whitelist(methods=["POST"])
+def set_task_flags(task, outdoor=None, customer_visit=None):
+	"""Tick or untick *Outdoor work* and *Customer-facing visit* on a Task (P5.2, P5.4).
+
+	Planner gate and ``write`` permission. Written straight to the row without moving ``modified``
+	(see the block comment), with a timeline note. Turning *Customer-facing visit* on for a firm,
+	dated task counts as setting its customer date, so with confirmations switched on the customer
+	is told (once). Returns ``{"name", "outdoor", "customer_visit", "queued"}``.
+	"""
+	_require_planner()
+	doc = frappe.get_doc("Task", task)
+	doc.check_permission("write")
+	from erpnext_enhancements.project_enhancements import customer_confirmations as confirmations
+
+	wanted = {"outdoor": given(outdoor), "customer_visit": given(customer_visit)}
+	changes = {}
+	for key, value in wanted.items():
+		field = FLAG_FIELDS[key]
+		if value is None or not _task_has_column(field):
+			continue
+		flag = 1 if as_bool(value) else 0
+		if flag != cint(doc.get(field)):
+			changes[field] = flag
+	queued = False
+	if changes:
+		before_day = confirmations.task_customer_date(doc)
+		frappe.db.set_value("Task", doc.name, changes, update_modified=False)
+		for field, flag in changes.items():
+			doc.set(field, flag)
+		labels = {"custom_outdoor": _("Outdoor work"), "custom_customer_visit": _("Customer-facing visit")}
+		doc.add_comment(
+			"Info",
+			_("On the Project Planner: {0}.").format(
+				", ".join(
+					(_("{0} on") if flag else _("{0} off")).format(labels[field])
+					for field, flag in changes.items()
+				)
+			),
+		)
+		if "custom_customer_visit" in changes and confirmations.enabled():
+			after_day = confirmations.task_customer_date(doc)
+			if after_day:
+				queued = bool(confirmations.consider(confirmations.TASK, doc, before_day, after_day))
+	return {
+		"name": doc.name,
+		"outdoor": bool(cint(doc.get("custom_outdoor"))),
+		"customer_visit": bool(cint(doc.get("custom_customer_visit"))),
+		"queued": queued,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def preview_customer_confirmation(doctype, name):
+	"""The customer date confirmation for a Task or a maintenance visit, rendered and NOT sent (P5.4).
+
+	System Manager or Projects Manager. Works while confirmations are switched off. See
+	``customer_confirmations.preview`` for the answer: subject, HTML, the recipient it would use,
+	whether it would send, and why not.
+	"""
+	if frappe.session.user != "Administrator" and not DIGEST_PREVIEW_ROLES & set(frappe.get_roles()):
+		frappe.throw(
+			_("Only a System Manager or Projects Manager can preview customer emails."),
+			frappe.PermissionError,
+		)
+	if doctype not in PREVIEW_DOCTYPES:
+		frappe.throw(_("Only Tasks and maintenance visits have a customer date confirmation."))
+	from erpnext_enhancements.project_enhancements import customer_confirmations
+
+	return customer_confirmations.preview(doctype, name)

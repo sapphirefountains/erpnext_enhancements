@@ -147,6 +147,9 @@ EXPLICIT_READONLY = {
     # business write, the same as the rental availability reads above.
     "crew_schedule_suggestions",
     "crew_day_route",
+    # Project Planner Phase 5 -- who has free hours, day by day, from the same engine (driving
+    # priced without Google). Reads only; it books nothing.
+    "crew_who_is_free",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even

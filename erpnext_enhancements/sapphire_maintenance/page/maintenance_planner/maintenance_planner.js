@@ -1867,6 +1867,7 @@ class MaintenancePlanner {
 			if (card.status !== "done") links.push(["wizard", __("Open in Visit Wizard")]);
 		}
 		if (card.contract) links.push(["contract", __("Open contract")]);
+		links.push(...this.phase5_links(card));
 
 		const fields = [
 			{
@@ -1969,6 +1970,7 @@ class MaintenancePlanner {
 			if (action === "form") frappe.set_route("Form", "Sapphire Maintenance Record", card.name);
 			else if (action === "wizard") frappe.set_route("visit-wizard", { record: card.name });
 			else if (action === "contract") frappe.set_route("Form", "Sapphire Maintenance Contract", card.contract);
+			else this.phase5_action(action, card);
 		});
 	}
 
@@ -2034,3 +2036,71 @@ class MaintenancePlanner {
 		return rows;
 	}
 }
+
+// ====================================================================== Project Planner Phase 5
+//
+// "Preview customer email" in a visit's dialog: what the customer date confirmation would say for
+// this visit, and to whom, rendered by the Project Planner's preview endpoint (the confirmation
+// covers both planners). It never sends, works while confirmations are switched off (they ship
+// off), and opens in a sandboxed frame so the email's styles and links stay inside it. Only stored
+// visits have one: a projected visit has no record yet. The endpoint lives in the Project Planner's
+// API, so it is named here rather than in MP.methods, which lists this page's own endpoints.
+// The hooks into the class above are one line each: phase5_links and phase5_action (open_card).
+
+const MP5 = {
+	preview_method: "erpnext_enhancements.api.project_planner.preview_customer_confirmation",
+	preview_roles: ["System Manager", "Projects Manager"],
+	record: "Sapphire Maintenance Record",
+};
+
+const MP5_METHODS = {
+	phase5_links(card) {
+		const can = MP5.preview_roles.some((role) => frappe.user.has_role(role));
+		return card.kind === "visit" && card.name && can ? [["customer_preview", __("Preview customer email")]] : [];
+	},
+
+	phase5_action(action, card) {
+		if (action === "customer_preview") this.preview_customer_email(card.name);
+	},
+
+	preview_customer_email(name) {
+		return Promise.resolve(
+			frappe.call({
+				method: MP5.preview_method,
+				args: { doctype: MP5.record, name },
+				freeze: true,
+				freeze_message: __("Rendering the customer email…"),
+			})
+		)
+			.then((r) => this.show_customer_preview((r && r.message) || {}))
+			.catch(() => null);
+	},
+
+	show_customer_preview(answer) {
+		const status = answer.would_send ? __("This email would be sent.") : __("This email would not be sent now.");
+		const to = answer.recipient ? __("To: {0}", [answer.recipient]) : __("To: nobody (no email address found)");
+		const notes = (answer.notes || []).map((text) => `<li>${mp_esc(text)}</li>`).join("");
+		const parts = [
+			`<div class="mp-p5-meta"><b>${mp_esc(status)}</b></div>`,
+			`<div class="mp-p5-meta">${mp_esc(to)}</div>`,
+		];
+		if (answer.subject) parts.push(`<div class="mp-p5-meta">${mp_esc(__("Subject: {0}", [answer.subject]))}</div>`);
+		if (notes) parts.push(`<ul class="mp-p5-meta">${notes}</ul>`);
+		if (answer.error) parts.push(`<div class="mp-p5-meta"><b>${mp_esc(answer.error)}</b></div>`);
+		parts.push(
+			`<iframe class="mp-p5-frame" sandbox="" title="${mp_esc(__("Email preview"))}" ` +
+				'style="display:block;width:100%;min-height:420px;border:1px solid var(--border-color);border-radius:8px;background:#ffffff"></iframe>'
+		);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Customer email preview"),
+			size: "large",
+			fields: [{ fieldtype: "HTML", fieldname: "preview", options: parts.join("") }],
+		});
+		dialog.show();
+		const $frame = dialog.$wrapper.find("iframe.mp-p5-frame");
+		if (answer.html) $frame.attr("srcdoc", answer.html);
+		else $frame.hide();
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP5_METHODS);

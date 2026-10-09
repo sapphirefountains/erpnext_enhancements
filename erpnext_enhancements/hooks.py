@@ -584,12 +584,25 @@ doc_events = {
 			# change_alerts (off by default); skipped during a publish, which tells people itself.
 			# Best effort, never raises. See project_enhancements/planner_notices.py.
 			"erpnext_enhancements.project_enhancements.planner_notices.queue_task_change",
+			# Project Planner Phase 5 (P5.4): a customer-facing task's firm start date set or moved
+			# -> one email to the customer, sent after commit. OFF unless Project Planner Settings
+			# customer_date_confirmations is ticked. The date is persisted as "due" first, so the
+			# */10 sweep re-drives a job a deploy's FLUSHDB destroyed. At most once per (task, date).
+			# Never raises. See project_enhancements/customer_confirmations.py. Before crew_sync,
+			# which stays last (tests/test_planner_doctypes.py).
+			"erpnext_enhancements.project_enhancements.customer_confirmations.on_task_update",
 			# Project Planner (v1.577.0): mirror the Task's crew table into ordinary assignments
 			# (ToDos) so the tech digest, ToDo lists and morning briefing keep working. Adds only
 			# for users newly on the crew, removes only users who were on it before this save,
 			# never touches a sidebar assignee. Best effort; never raises. See crew_sync.py.
 			"erpnext_enhancements.project_enhancements.crew_sync.on_task_update",
 		],
+		# Project Planner Phase 5 (P5.1): a Task made from a template Task (ERPNext's
+		# create_task_from_template sets template_task) gets the template's hours, crew size,
+		# qualifications, outdoor and customer-facing flags wherever it has none of its own. Never
+		# overwrites, never copies the crew, never raises. before_insert so the values are saved in
+		# the one insert and pass the Task's validate. See project_enhancements/task_templates.py.
+		"before_insert": "erpnext_enhancements.project_enhancements.task_templates.copy_template_planning",
 		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 		"validate": [
 			# training: warn-only certification check when a task is assigned to somebody
@@ -602,6 +615,10 @@ doc_events = {
 			# matching the row's type, and the label filled from the vehicle or asset (one fetch_from
 			# cannot serve two links). Reads the table defensively. See planner_tracking.py.
 			"erpnext_enhancements.project_enhancements.planner_tracking.validate_equipment",
+			# Project Planner Phase 5 (P5.4): the customer confirmation's due date and sent stamp are
+			# the database's, never the form's -- a Desk save posts read-only fields back, and a stale
+			# stamp would let the sweep email the customer twice. Never raises.
+			"erpnext_enhancements.project_enhancements.customer_confirmations.keep_stamps",
 		],
 	},
 	"Project": {
@@ -716,6 +733,9 @@ doc_events = {
 			# different questions (may they, versus can they be there) and a site may
 			# want one without the other.
 			"erpnext_enhancements.hr_enhancements.availability.warn_unavailable_technician",
+			# Project Planner Phase 5 (P5.4): the customer confirmation's stamps are the database's,
+			# never the form's (see the Task entry). Never raises.
+			"erpnext_enhancements.project_enhancements.customer_confirmations.keep_stamps",
 		],
 		# Multi-person visits (P1.8): mirror the visit's `crew` table into ordinary assignments
 		# (ToDos), the same one-sided mirror crew_sync.py keeps for a Task's crew. Adds a ToDo
@@ -725,6 +745,11 @@ doc_events = {
 		# See sapphire_maintenance/visit_crew.py.
 		"on_update": [
 			"erpnext_enhancements.sapphire_maintenance.visit_crew.on_record_update",
+			# Project Planner Phase 5 (P5.4): a draft visit's scheduled date set or moved -> one email
+			# telling the customer, after commit. OFF unless Project Planner Settings
+			# customer_date_confirmations is ticked; at most once per (visit, date); re-driven by the
+			# */10 sweep. Never raises. See project_enhancements/customer_confirmations.py.
+			"erpnext_enhancements.project_enhancements.customer_confirmations.on_visit_update",
 		],
 	},
 	"Project Contract": {
@@ -1315,6 +1340,11 @@ scheduler_events = {
 			# time, so a Friday-evening enquiry is not chased overnight. No-op unless
 			# lead_sla_enabled; only Leads an inbound channel stamped a deadline on.
 			"erpnext_enhancements.crm_enhancements.lead_triage.sweep_first_response_sla",
+			# Project Planner Phase 5 (P5.4): send every customer date confirmation still due. The
+			# trigger enqueues the send after commit, and the deploy FLUSHDBs redis, so this sweep
+			# is what makes a lost job a ten-minute delay instead of a customer never told. A no-op
+			# while Project Planner Settings customer_date_confirmations is off (the default).
+			"erpnext_enhancements.project_enhancements.customer_confirmations.send_due_confirmations",
 		],
 		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
 		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
@@ -2956,6 +2986,10 @@ assistant_tools = [
 	# call api/project_planner and inherit its planner role gate. See assistant_tools/README.md.
 	"erpnext_enhancements.assistant_tools.crew_schedule_suggestions.CrewScheduleSuggestions",
 	"erpnext_enhancements.assistant_tools.crew_day_route.CrewDayRoute",
+	# Project Planner Phase 5: "who is free on <day> for <n> hours?", per day, with the reason for
+	# everyone who is not (day off, travelling, only so many hours left). Read-only, planner role
+	# gate inherited from api/project_planner.who_is_free; "what is <person> doing" is crew_day_route.
+	"erpnext_enhancements.assistant_tools.crew_who_is_free.CrewWhoIsFree",
 	# Contracts: where each stands in the e-signature flow. Returns none of the
 	# signing evidence -- token hashes, the agreement text as signed, the signature
 	# image, signer IP, user agent, consent wording. days_out is measured from

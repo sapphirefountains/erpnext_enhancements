@@ -55,3 +55,57 @@ function add_toggle_functionality() {
         $(this).toggleClass("fa-plus-square fa-minus-square");
     });
 }
+
+/*
+ * Project Planner Phase 5: "Preview customer email" on a customer-facing task.
+ *
+ * Shows the customer date confirmation this task would send (subject, recipient, the email itself
+ * in a sandboxed frame) and why it would not send now. It never sends, and works while
+ * confirmations are switched off in Project Planner Settings (they ship off). System Manager and
+ * Projects Manager only; the endpoint checks the same roles.
+ */
+const EE_CUSTOMER_PREVIEW = {
+    method: "erpnext_enhancements.api.project_planner.preview_customer_confirmation",
+    roles: ["System Manager", "Projects Manager"],
+};
+
+frappe.ui.form.on("Task", {
+    refresh(frm) {
+        if (frm.is_new() || !frm.doc.custom_customer_visit) return;
+        if (!EE_CUSTOMER_PREVIEW.roles.some((role) => frappe.user.has_role(role))) return;
+        frm.add_custom_button(__("Preview customer email"), () => ee_preview_customer_email(frm.doc.name));
+    },
+});
+
+function ee_preview_customer_email(name) {
+    frappe.call({
+        method: EE_CUSTOMER_PREVIEW.method,
+        args: { doctype: "Task", name },
+        freeze: true,
+        freeze_message: __("Rendering the customer email…"),
+        callback: (r) => {
+            const answer = (r && r.message) || {};
+            const esc = (value) => frappe.utils.escape_html(value == null ? "" : String(value));
+            const status = answer.would_send ? __("This email would be sent.") : __("This email would not be sent now.");
+            const to = answer.recipient ? __("To: {0}", [answer.recipient]) : __("To: nobody (no email address found)");
+            const parts = [`<p><b>${esc(status)}</b><br>${esc(to)}</p>`];
+            if (answer.subject) parts.push(`<p>${esc(__("Subject: {0}", [answer.subject]))}</p>`);
+            const notes = (answer.notes || []).map((text) => `<li>${esc(text)}</li>`).join("");
+            if (notes) parts.push(`<ul>${notes}</ul>`);
+            if (answer.error) parts.push(`<p><b>${esc(answer.error)}</b></p>`);
+            parts.push(
+                `<iframe class="ee-customer-preview" sandbox="" title="${esc(__("Email preview"))}" ` +
+                    'style="display:block;width:100%;min-height:420px;border:1px solid var(--border-color);border-radius:8px;background:#ffffff"></iframe>'
+            );
+            const dialog = new frappe.ui.Dialog({
+                title: __("Customer email preview"),
+                size: "large",
+                fields: [{ fieldtype: "HTML", fieldname: "preview", options: parts.join("") }],
+            });
+            dialog.show();
+            const $frame = dialog.$wrapper.find("iframe.ee-customer-preview");
+            if (answer.html) $frame.attr("srcdoc", answer.html);
+            else $frame.hide();
+        },
+    });
+}

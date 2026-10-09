@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.583.0] - 2026-10-09
+
+### Added
+
+- **Project Planner: extras** (Phase 5, TASK-2026-02457).
+  - **Templates carry planning.** A Task made from a template Task gets the template's hours, crew
+    size, qualifications and the *Outdoor work* / *Customer-facing visit* flags wherever it has none
+    of its own. It never overwrites anything and never copies the crew. It runs on `before_insert`,
+    not `after_insert`, so the values go in with the one insert and pass the Task's own validation.
+  - **Weather flags** from Open-Meteo (free, no key). A task ticked *Outdoor work* shows a chip on
+    forecast days with rain of 60% or more, a low of 0 °C or below, or wind of 40 km/h or more. The
+    same flags appear on route stops, and *Suggest dates* ranks a flagged day lower and says why
+    ("Forecast: Rain 70%"). One request per load covers every site not already cached, and each
+    point is cached for 3 hours. A failure hides the chip, backs off for 10 minutes and logs a
+    status or class name only, never the request URL.
+  - **Who is free.** `who_is_free` lists, for each day in a range, who has the hours free and why
+    everyone else does not: a day off, travelling, or "Only 2h free (6h booked of 8h)". It is
+    capped at 31 days and makes no Google calls. A new read-only AI tool, `crew_who_is_free`,
+    answers "who is free Thursday for 6 hours?" through it. Triton needs a tool-snapshot refresh
+    after this deploys.
+  - **Customer date confirmation for both planners — off by default.** Nik asked for this behind a
+    switch so the email can be fully designed before the first one goes out. Until Project Planner
+    Settings → *Email customers their visit date* is ticked, nothing is queued or sent.
+    - **What sends one, once the switch is on:** a customer-facing task's firm start date being set
+      or moved, a pencil task being firmed up, or a draft visit's scheduled date being set or moved.
+      That includes every visit the nightly scheduler drafts with a date, and every customer-facing
+      task Copy week makes.
+    - **How it is sent:** each document and date is emailed at most once. The date is first saved
+      as *due*, then sent after commit. A 10-minute sweep re-drives any send a deploy's Redis flush
+      destroyed.
+    - **Wording:** it comes from a new Email Template, *Planner Date Confirmation*, created once and
+      never overwritten.
+    - **Preview:** *Preview customer email*, on the Task form and in both planners' dialogs, renders
+      the email and its recipient without sending, even with the switch off. It is for System
+      Manager and Projects Manager.
+  - `set_task_flags` saves the two checkboxes without changing `modified`, so ticking *Outdoor work*
+    never makes an open card or a draft look like someone else changed it.
+
 ## [1.582.0] - 2026-10-09
 
 ### Added

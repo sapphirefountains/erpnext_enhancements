@@ -26,7 +26,11 @@
   "section_notices",
   "combined_morning_digest",
   "column_break_notices",
-  "change_alerts"
+  "change_alerts",
+  "section_customers",
+  "customer_date_confirmations",
+  "column_break_customers",
+  "customer_confirmation_phone"
  ],
  "fields": [
   {
@@ -161,12 +165,35 @@
    "fieldname": "change_alerts",
    "fieldtype": "Check",
    "label": "Alert people when their next 48 hours change"
+  },
+  {
+   "fieldname": "section_customers",
+   "fieldtype": "Section Break",
+   "label": "Telling customers"
+  },
+  {
+   "default": "0",
+   "description": "Email the customer the date we are coming: a customer-facing project task when its firm start date is set or moves, and a maintenance visit when its scheduled date is set or moves. One email per date, worded by the Email Template \"Planner Date Confirmation\". Leave this off until the message is ready: while it is off nothing is sent, and \"Preview customer email\" on a task or visit still shows exactly what would go out.",
+   "fieldname": "customer_date_confirmations",
+   "fieldtype": "Check",
+   "label": "Email customers their visit date"
+  },
+  {
+   "fieldname": "column_break_customers",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The number customers are asked to call. Blank: the company's phone number.",
+   "fieldname": "customer_confirmation_phone",
+   "fieldtype": "Data",
+   "label": "Phone number in the email",
+   "options": "Phone"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-09 12:00:00.000000",
+ "modified": "2026-10-09 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Planner Settings",

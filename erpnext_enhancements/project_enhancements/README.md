@@ -38,6 +38,9 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`), and the Task equipment validator | `task_actuals`, `labor_forecast`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
+| `planner_weather.py` | Phase 5 weather flags (v1.583.0): one Open-Meteo request per load for every uncached site, each point cached 3 hours; flags rain ≥ 60%, a low ≤ 0 °C and wind ≥ 40 km/h on tasks ticked *Outdoor work*. Never fails a read and never logs a request URL | `day_flags`, `forecasts`, `forecast_for_tasks`, `span_weather` | `api/project_planner` (`get_planner`, `get_route`, `suggest_dates`, `who_is_free`) |
+| `customer_confirmations.py` | Phase 5 customer date confirmations for **both** planners (v1.583.0), **off until Settings → *Email customers their visit date* is ticked**: triggers on a customer-facing task or a draft visit, the at-most-once send, the 10-minute sweep and the preview | `on_task_update`, `on_visit_update`, `keep_stamps`, `send_one`, `send_due_confirmations`, `preview` | `doc_events` (Task, Sapphire Maintenance Record); `scheduler_events`; `api/project_planner.preview_customer_confirmation` |
+| `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
 | `doctype/planner_draft_change/` | One pending change per planner per task while in draft mode; Publish applies them, Discard drops them | `PlannerDraftChange` | `api/project_planner` |
 | `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
@@ -732,10 +735,55 @@ shop" is one setting), through each located task, rental crew task and maintenan
   equipment row group.
 - **No Google calls**: actuals, the forecast and the report all run the engine with `google=False`.
 
+### Extras (v1.583.0, Phase 5 — TASK-2026-02457)
+
+- **Templates carry planning** (`task_templates`): ERPNext's `create_task_from_template` sets
+  `template_task`; on `before_insert` the new Task gets the template's `expected_time`,
+  `custom_crew_size`, qualifications and the *Outdoor work* / *Customer-facing visit* flags wherever
+  it has none of its own. It never overwrites, never copies the crew (people are a planning
+  decision), and copies only from a Task with `is_template`. `before_insert` rather than
+  `after_insert`, so the values go in with the one insert and pass the Task's own validation.
+- **Weather** (`planner_weather`, Open-Meteo: free and keyless): a task ticked *Outdoor work*
+  (`custom_outdoor`) carries `weather`, the days of its span with rain ≥ 60%, a low ≤ 0 °C or wind
+  ≥ 40 km/h. `[]` means the forecast is clear and `null` means there is none, which the page draws
+  as no chip. Route stops on outdoor tasks show it too, and *Suggest dates* scores each flagged day
+  as 30 more minutes of driving and says why ("Forecast: Rain 70%") — a worse suggestion, never an
+  impossible one. A failure hides the chip, backs off for 10 minutes and logs once an hour with a
+  status or class name only.
+- **Who is free** (`who_is_free`, and the read-only AI tool `crew_who_is_free`): per day, who has
+  the hours free and why everyone else does not (day off, travelling, "Only 2h free (6h booked of
+  8h)"). At most 31 days, and Google-free. It answers **when** and **who could**; it never books
+  anyone ("suggest a crew" was declined).
+- **Customer date confirmation, both planners** (`customer_confirmations`). **Off until Settings →
+  *Email customers their visit date* is ticked**, and it stays off until Nik has designed the
+  email (2026-10-08). With it on:
+  - A customer-facing task's firm start date being set or moved, a pencil task being firmed up, or
+    the flag being ticked on a dated task emails the customer once. So does a draft visit that has
+    not started having its scheduled date set or moved. Tasks created from a template are skipped
+    on insert, because their dates are ERPNext's arithmetic, not a person's decision. **Every visit
+    the scheduler drafts with a date, and every customer-facing task Copy week makes, would be
+    emailed.**
+  - The date is first written as *due* and the send is queued after commit; a sweep every 10
+    minutes sends whatever is still due, so a deploy's FLUSHDB delays an email rather than losing
+    it. The send locks the row and writes the Email Queue row and the *confirmed for* stamp in one
+    transaction, so each document and date is emailed at most once. `keep_stamps` stops a stale
+    Desk form from writing the stamps back.
+  - The words come from the Email Template **Planner Date Confirmation** (seeded once, never
+    overwritten), inside the shared email shell. The recipient is the customer's primary contact,
+    then the customer's email, then the project's `custom_customer_email`; the phone number is
+    Settings' *Phone number in the email*, else the company's.
+  - **Preview** (`preview_customer_confirmation`, System Manager or Projects Manager): the subject,
+    HTML and recipient in a sandboxed frame, from the Task form and both planners' dialogs. It
+    never sends and works with the switch off.
+- `set_task_flags` writes the two checkboxes without moving `modified`, so ticking *Outdoor work*
+  never makes an open card or a draft look "changed by someone else". It adds a timeline note but
+  no Version row, and is never drafted: the flags are not bookings.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
-- `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0), then `planner_tracking.validate_equipment` (one row per vehicle/asset, label filled, v1.582.0).
+- `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0), then `planner_tracking.validate_equipment` (one row per vehicle/asset, label filled, v1.582.0) and `customer_confirmations.keep_stamps`; `on_update` also runs `customer_confirmations.on_task_update` before `crew_sync`; `before_insert` → `task_templates.copy_template_planning` (v1.583.0).
+- `scheduler_events` (every 10 minutes) → `customer_confirmations.send_due_confirmations`, a no-op while the switch is off (v1.583.0).
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
