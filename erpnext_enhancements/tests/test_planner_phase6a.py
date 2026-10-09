@@ -891,7 +891,10 @@ def _strip(code):
 
 
 def _block(code, marker):
-	return code[code.index(marker) :]
+	# Phase 6A's own block: from its marker to the next phase's marker (later phases append theirs).
+	start = code.index(marker)
+	following = code.find("\n" + marker[: marker.rindex("=") + 1] + " Phase", start + len(marker))
+	return code[start:] if following < 0 else code[start:following]
 
 
 PP_MARKER = "// ====================================================================== Phase 6A"

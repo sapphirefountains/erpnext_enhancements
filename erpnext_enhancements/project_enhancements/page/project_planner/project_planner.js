@@ -379,6 +379,7 @@ class ProjectPlanner {
 		this.init_phase4();
 		this.init_phase5();
 		this.init_phase6a();
+		this.init_phase6b();
 		this.bind_drag();
 	}
 
@@ -787,6 +788,7 @@ class ProjectPlanner {
 		this.render_phase3b();
 		this.render_phase4();
 		this.render_phase6a();
+		this.render_phase6b();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -1457,6 +1459,7 @@ class ProjectPlanner {
 	// What is under the pointer when it went down: a task card, or a person.
 	drag_source(el) {
 		if (!this.data || !this.data.can_edit) return null;
+		if (el.closest(".p6b-grip")) return null; // Phase 6B: an edge resizes, it never moves
 		if (el.closest(".pk-drawer")) return this.p6a_drag_source(el);
 		const person_el = el.closest(".pp-person[data-resource]");
 		if (person_el) return { kind: "person", el: person_el, resource: person_el.getAttribute("data-resource") };
@@ -1558,6 +1561,7 @@ class ProjectPlanner {
 		document.body.classList.add("pp-drag-active");
 		this.place_ghost(drag.x, drag.y);
 		if (drag.touch && navigator.vibrate) navigator.vibrate(12);
+		this.p6b_lift(drag);
 	}
 
 	place_ghost(x, y) {
@@ -1697,6 +1701,7 @@ class ProjectPlanner {
 	}
 
 	drop(source, target) {
+		if (this.p6b_drop(source, target)) return;
 		if (source.kind === "overdue") {
 			this.drop_overdue(source.row, target);
 			return;
@@ -1751,7 +1756,7 @@ class ProjectPlanner {
 	send(method, args, opts) {
 		opts = opts || {};
 		args = this.with_draft(method, args);
-		return Promise.resolve(frappe.call({ method: `${PP.api}.${method}`, args }))
+		return Promise.resolve(frappe.call({ method: `${(this.p6_send_modules || {})[method] || PP.api}.${method}`, args }))
 			.then((r) => {
 				const result = (r && r.message) || {};
 				if (result.needs_reason) {
@@ -1847,6 +1852,7 @@ class ProjectPlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
+		if (this.p6b_undo(snap)) return;
 		const card = this.by_task[snap.task];
 		if (card) {
 			card.saving = true;
@@ -5095,10 +5101,1815 @@ const PP6A_METHODS = {
 						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
 					],
 				},
-			],
+			].concat(this.p6b_legend_sections()),
 			{ title: __("How to read the Project Planner"), owner: PP6A.owner }
 		);
 	},
 };
 
 Object.assign(ProjectPlanner.prototype, PP6A_METHODS);
+
+// ====================================================================== Phase 6B: faster scheduling
+//
+// Nik picked four things on 2026-10-09 (TASK-2026-02468), and they all live here:
+//
+//   - right-click a card, an empty spot or a name (a long press of about half a second on a touch
+//     screen, when the finger does not move)  a menu (planner_kit.menu): Edit, Assign to..., Move to
+//                                            next free day, Pencil / Firm up, Duplicate, Duplicate
+//                                            to..., Split, Project at a glance; Add task here... on an
+//                                            empty spot; See their week on a name. Other phases add
+//                                            items through this.p6_menu_providers
+//   - drag the left or right edge of a card (week and crew views)
+//                                            its start or end day moves (save_task start + end)
+//   - double-click an empty spot             quick add for that person and day (quick_add_task)
+//   - Shift-, Ctrl- or Cmd-click cards        a selection (this.p6_selection); drag one and they all
+//                                            move by the same number of calendar days (move_many,
+//                                            one reason, one Undo); a bar offers Move, Pencil, Clear
+//   - the search box (or /)                  tasks, projects and people on screen first, then the
+//                                            server (search_planner); a task jumps to its week
+//   - T, the arrows, 1 2 3, Ctrl/Cmd+Z, ?, Esc keyboard shortcuts, listed in the legend
+//
+// Nothing here picks a person: Assign to... lists who is free on the day (who_is_free) and the
+// planner clicks one ("suggest a crew" was declined). Every write goes through send(), so the reason
+// prompt, draft mode and Undo apply; the planner_actions endpoints are routed there through
+// this.p6_send_modules. A new task cannot be a draft, so duplicate, split and quick add say so in
+// draft mode instead of asking the server.
+//
+// Hooks into the class above, one line each: init_phase6b (constructor), render_phase6b (render),
+// p6_send_modules (send), the grip check (drag_source), p6b_lift (lift), p6b_drop (drop), p6b_undo
+// (undo), and p6b_legend_sections (p6a_legend).
+
+const PP6B = {
+	actions: "erpnext_enhancements.api.planner_actions",
+	conflicts: "erpnext_enhancements.api.planner_conflicts",
+	// The planner_actions writes. send() looks their module up in this.p6_send_modules.
+	action_methods: ["duplicate_task", "split_task", "quick_add_task", "move_many", "remove_created_task"],
+	long_press_ms: 500,
+	search_min: 2,
+	search_wait_ms: 250,
+	search_limit: 20,
+	flash_ms: 2600,
+	widths: { assign: 440, panel: 460 },
+};
+
+// Pure helpers: no frappe, no moment, no page. tests/test_planner_phase6b.py runs them under node
+// (and the Maintenance Planner keeps an identical copy, MP6B_PURE, run through the same cases).
+const PP6B_PURE = {
+	// "2026-10-12" + 3 -> "2026-10-15", by the calendar (in UTC, so no daylight-saving step).
+	ymd_add(ymd, days) {
+		const date = new Date(`${ymd}T00:00:00Z`);
+		date.setUTCDate(date.getUTCDate() + (Number(days) || 0));
+		return date.toISOString().slice(0, 10);
+	},
+	// Days from `a` to `b`, negative when `b` is earlier.
+	ymd_diff(a, b) {
+		return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+	},
+	// Monday to Friday from `first` to `last` inclusive (0 when `last` is earlier).
+	working_days(first, last) {
+		let count = 0;
+		for (let day = first, i = 0; day <= last && i < 400; day = PP6B_PURE.ymd_add(day, 1), i++) {
+			const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+			if (weekday !== 0 && weekday !== 6) count++;
+		}
+		return count;
+	},
+	// How a split shares hours: api/planner_actions.split_weights, kept in step (both are tested).
+	split_weights(start, end, split) {
+		const first_last = PP6B_PURE.ymd_add(split, -1);
+		const first = PP6B_PURE.working_days(start, first_last);
+		const second = PP6B_PURE.working_days(split, end);
+		if (first && second) return [first, second];
+		return [PP6B_PURE.ymd_diff(start, first_last) + 1, PP6B_PURE.ymd_diff(split, end) + 1];
+	},
+	split_hours(total, first_weight, second_weight) {
+		const weight = (Number(first_weight) || 0) + (Number(second_weight) || 0);
+		const amount = Math.round((Number(total) || 0) * 100) / 100;
+		if (amount <= 0 || weight <= 0) return [0, 0];
+		const first = Math.round(((amount * first_weight) / weight) * 100) / 100;
+		return [first, Math.round((amount - first) * 100) / 100];
+	},
+	// A multi-select move: every card the same calendar days later (or earlier), keeping its length.
+	offset_moves(cards, days, modified_of) {
+		return (cards || [])
+			.filter((card) => card && card.start)
+			.map((card) => ({
+				task: card.name,
+				modified: modified_of ? modified_of(card.name) : card.modified,
+				start: PP6B_PURE.ymd_add(card.start, days),
+				end: PP6B_PURE.ymd_add(card.end && card.end >= card.start ? card.end : card.start, days),
+			}));
+	},
+	// The hours one person needs free on a day of this task: who_is_free's `hours`. A slot is its
+	// length; no estimate is a full day; otherwise the estimate shared by the crew (one more when
+	// someone is added) over the task's working days.
+	need_hours(card, mode, day_hours) {
+		const full = Number(day_hours) > 0 ? Number(day_hours) : 8;
+		if (card.slot && card.slot.length === 2) {
+			const minutes = card.slot.map((text) => {
+				const parts = String(text).split(":");
+				return Number(parts[0]) * 60 + Number(parts[1] || 0);
+			});
+			if (minutes[1] > minutes[0]) return Math.max(0.25, Math.round(((minutes[1] - minutes[0]) / 60) * 100) / 100);
+		}
+		const expected = Number(card.expected_time) || 0;
+		if (expected <= 0) return Math.min(24, full);
+		const people = Math.max(1, (card.crew || []).length + (mode === "add" ? 1 : 0));
+		const last = card.end && card.end >= card.start ? card.end : card.start;
+		const days = (card.start && PP6B_PURE.working_days(card.start, last)) || 1;
+		return Math.min(24, Math.max(0.25, Math.round((expected / people / days) * 100) / 100));
+	},
+	// Toggle one key in a selection Set; true when it is selected afterwards.
+	toggle(set, key) {
+		if (set.has(key)) {
+			set.delete(key);
+			return false;
+		}
+		set.add(key);
+		return true;
+	},
+	// A keydown as a planner shortcut, or null. `info`: key, ctrl, meta, shift, alt, editable (focus in
+	// an input, textarea, select or contenteditable) and dialog (a frappe dialog is open).
+	shortcut(info) {
+		if (!info || info.editable || info.dialog) return null;
+		const key = String(info.key || "");
+		if ((info.ctrl || info.meta) && !info.alt && !info.shift && key.toLowerCase() === "z") return "undo";
+		// Ctrl+S, Ctrl+K, Ctrl+G, Alt+... stay frappe's.
+		if (info.ctrl || info.meta || info.alt) return null;
+		if (key === "Escape" || key === "Esc") return "escape";
+		if (key === "?") return "legend";
+		// Shift+T is frappe's console.
+		if (info.shift) return null;
+		if (key === "t" || key === "T") return "today";
+		if (key === "/") return "search";
+		if (key === "ArrowLeft") return "prev";
+		if (key === "ArrowRight") return "next";
+		if (key === "1" || key === "2" || key === "3") return `view${key}`;
+		return null;
+	},
+	// The menu: the page's own items, then each provider's group, a divider before each group.
+	with_providers(items, providers, target) {
+		const out = (items || []).slice();
+		(providers || []).forEach((provider) => {
+			let group = [];
+			try {
+				group = (provider(target) || []).filter(Boolean);
+			} catch (e) {
+				group = [];
+			}
+			if (!group.length) return;
+			if (out.length && !out[out.length - 1].divider) out.push({ divider: true });
+			out.push(...group);
+		});
+		return out;
+	},
+	// Search what is loaded: every word somewhere in an entry's label or keys. A label that starts
+	// with the first word comes first, then people, projects (sites) and tasks (visits), then by label.
+	search_local(q, entries, limit) {
+		const words = String(q || "")
+			.toLowerCase()
+			.split(/\s+/)
+			.filter(Boolean);
+		if (!words.length) return [];
+		const order = { person: 0, project: 1, site: 1, task: 2, visit: 2 };
+		const rank = (kind) => (kind in order ? order[kind] : 3);
+		const found = [];
+		(entries || []).forEach((entry) => {
+			const hay = [entry.label].concat(entry.keys || []).join(" ").toLowerCase();
+			if (!words.every((word) => hay.includes(word))) return;
+			const starts = String(entry.label || "").toLowerCase().startsWith(words[0]) ? 0 : 1;
+			found.push({ entry, starts });
+		});
+		found.sort(
+			(a, b) =>
+				a.starts - b.starts ||
+				rank(a.entry.kind) - rank(b.entry.kind) ||
+				String(a.entry.label || "").localeCompare(String(b.entry.label || ""))
+		);
+		return found.slice(0, limit || 20).map((item) => item.entry);
+	},
+};
+
+const PP6B_STYLE = `
+.pp-card.p6b-selected{outline:2px solid #7c3aed;outline-offset:1px;}
+.p6b-bar{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:1020;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;max-width:calc(100vw - 24px);padding:6px 10px;border:1px solid #7c3aed;border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px;}
+.p6b-bar-count{font-weight:600;}
+.p6b-bar-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
+.p6b-count{position:absolute;top:-9px;right:-9px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.p6b-grip{position:absolute;top:0;bottom:0;width:9px;cursor:ew-resize;touch-action:none;z-index:2;}
+.p6b-grip-l{left:-4px;}
+.p6b-grip-r{right:-4px;}
+.p6b-grip::after{content:"";position:absolute;top:25%;bottom:25%;left:3px;width:3px;border-radius:2px;background:var(--text-muted);opacity:0;}
+.pp-card:hover .p6b-grip::after,.p6b-grip:focus::after{opacity:.55;}
+.p6b-span{background:rgba(124,58,237,.10);box-shadow:inset 0 0 0 2px rgba(124,58,237,.55);}
+.p6b-span-label{position:fixed;z-index:1100;pointer-events:none;padding:3px 8px;border-radius:6px;background:var(--text-color);color:var(--card-bg);font-size:12px;white-space:nowrap;}
+body.p6b-resizing,body.p6b-resizing *{cursor:ew-resize !important;-webkit-user-select:none;user-select:none;}
+.pp-card.p6b-flash{animation:p6b-flash .8s ease-in-out 3;}
+@keyframes p6b-flash{0%,100%{box-shadow:none;}50%{box-shadow:0 0 0 4px rgba(245,158,11,.85);}}
+.p6b-search-wrap{position:relative;display:inline-block;}
+.pp-toolbar input.p6b-search{width:210px;}
+.p6b-results{position:absolute;top:100%;left:0;z-index:1030;margin-top:4px;min-width:300px;max-width:min(420px,calc(100vw - 24px));max-height:60vh;overflow-y:auto;padding:4px 0;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);box-shadow:0 10px 28px rgba(0,0,0,.2);}
+.p6b-result{display:flex;flex-direction:column;padding:5px 10px;cursor:pointer;font-size:13px;}
+.p6b-result.p6b-active,.p6b-result:hover{background:var(--control-bg);}
+.p6b-result-kind{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);}
+.p6b-result-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.p6b-result-sub{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.p6b-results-note{padding:4px 10px;font-size:11px;color:var(--text-muted);}
+.p6b-modes{margin:4px 0 8px;}
+.p6b-modes label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:normal;}
+.p6b-pick{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;margin-bottom:4px;padding:6px 8px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);color:var(--text-color);text-align:left;cursor:pointer;}
+.p6b-pick:hover,.p6b-pick:focus{background:var(--control-bg);outline:none;}
+.p6b-pick-busy{border-style:dashed;}
+.p6b-pick-why{font-size:11px;color:var(--text-muted);}
+.p6b-kbd{display:inline-block;min-width:18px;margin-right:3px;padding:0 5px;border:1px solid var(--border-color);border-bottom-width:2px;border-radius:4px;background:var(--control-bg);font-size:11px;font-family:inherit;text-align:center;}
+.p6b-legend-grip{display:inline-block;position:relative;width:46px;height:16px;border:1px solid var(--border-color);border-left:4px solid #2563eb;border-radius:4px;}
+.p6b-legend-grip::after{content:"";position:absolute;top:3px;bottom:3px;right:2px;width:3px;border-radius:2px;background:var(--text-muted);}
+@media (max-width:760px){
+.p6b-search-wrap{flex:1 1 100%;}
+.pp-toolbar input.p6b-search{width:100%;}
+.pp-week .p6b-grip{display:none;}
+.p6b-bar{bottom:64px;}
+}
+`;
+
+const PP6B_METHODS = {
+	init_phase6b() {
+		if (!document.getElementById("pp-style-6b")) {
+			$("<style id='pp-style-6b'>").text(PP6B_STYLE).appendTo(document.head);
+		}
+		// The registries other phases add to (phase6-wave2): menu items, legend sections, endpoint modules.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_legend_providers = this.p6_legend_providers || [];
+		this.p6_send_modules = this.p6_send_modules || {};
+		PP6B.action_methods.forEach((method) => (this.p6_send_modules[method] = PP6B.actions));
+		// The multi-selection: task names. 6C's print reads it.
+		this.p6_selection = this.p6_selection || new Set();
+		this.p6b = {
+			press: null,
+			resize: null,
+			flash: null,
+			seen: null,
+			next_free: {},
+			keys_on: false,
+			search: { q: "", token: 0, timer: null, local: [], remote: [], loading: false, active: 0, shown: [], list_id: "" },
+		};
+		this.p6b_build_search();
+		this.$p6b_bar = $('<div class="p6b-bar" role="toolbar"></div>')
+			.attr("aria-label", __("Selected tasks"))
+			.hide()
+			.appendTo(this.$body);
+		const root = this.$body[0];
+		// Capture on the page's own container: a modified click on a card selects it, ahead of the
+		// card's own click (which opens it) and of 6A's quick-look clicks.
+		(root.parentElement || root).addEventListener("click", (e) => this.p6b_modifier_click(e), true);
+		root.addEventListener("click", (e) => this.p6b_plain_click(e));
+		root.addEventListener("contextmenu", (e) => this.p6b_contextmenu(e));
+		root.addEventListener("dblclick", (e) => this.p6b_dblclick(e));
+		root.addEventListener("pointerdown", (e) => this.p6b_pointer_down(e), true);
+		document.addEventListener("pointermove", (e) => this.p6b_pointer_move(e));
+		document.addEventListener("pointerup", (e) => this.p6b_pointer_up(e));
+		document.addEventListener("pointercancel", (e) => this.p6b_pointer_cancel(e));
+		document.addEventListener(
+			"touchmove",
+			(e) => {
+				if (this.p6b.resize) e.preventDefault();
+			},
+			{ passive: false }
+		);
+		this.p6b_bind_keys();
+		// The route view, My week and the heatmap draw no cards: the selection bar and an open search
+		// list must not stay on top of them.
+		if (frappe.router && typeof frappe.router.on === "function") {
+			frappe.router.on("change", () => this.p6b_route_changed());
+		}
+	},
+
+	p6b_route_changed() {
+		const route = frappe.get_route() || [];
+		const calendar = route[0] === PP.route && (!route[1] || PP.views.includes(route[1]));
+		if (!calendar && this.$p6b_bar) this.$p6b_bar.hide();
+		if (this.p6b.resize) this.p6b_resize_end(false);
+		this.p6b_close_results();
+	},
+
+	render_phase6b() {
+		if (!this.p6b) return;
+		if (this.p6b.seen !== this.data) {
+			// A new answer from the server: the next-free-day answers may be out of date.
+			this.p6b.seen = this.data;
+			this.p6b.next_free = {};
+		}
+		this.p6b_prune_selection();
+		this.p6b_decorate_selection();
+		this.p6b_add_grips();
+		this.p6b_render_bar();
+		this.p6b_flash_pending();
+	},
+
+	// Writes to api/planner_actions go through send() like every other write.
+	p6b_send(method, args, opts) {
+		return this.send(method, args, opts);
+	},
+
+	p6b_kit() {
+		return (this.p6a && this.p6a.kit) || null;
+	},
+
+	p6b_user(resource) {
+		const person = resource && this.by_resource[resource];
+		return (person && person.user) || null;
+	},
+
+	p6b_span_text(start, end) {
+		if (!start) return __("No dates");
+		return end && end !== start ? `${pp_when(start)} – ${pp_when(end)}` : pp_when(start);
+	},
+
+	// A route change from a menu item or search result: the kit closes its drawer first.
+	p6b_navigate(fn) {
+		const kit = this.p6b_kit();
+		return kit ? kit.drawer.navigate(fn) : fn();
+	},
+
+	// The kit's side panel (or a Dialog until the kit has loaded) for the small forms here.
+	p6b_panel(opts) {
+		const kit = this.p6b_kit();
+		if (!kit) return new frappe.ui.Dialog({ title: opts.title, fields: opts.fields });
+		return kit.panel({
+			title: opts.title,
+			subtitle: opts.subtitle || "",
+			fields: opts.fields,
+			width: PP6B.widths.panel,
+			key: opts.key || null,
+			owner: PP6A.owner,
+			push: this.$body[0],
+		});
+	},
+
+	p6b_panel_open(panel) {
+		return panel && (typeof panel.is_open === "function" ? panel.is_open() : !!panel.display);
+	},
+
+	p6b_refuse_in_draft() {
+		if (!this.draft_on) return false;
+		frappe.msgprint(
+			__(
+				"Draft mode holds back changes to tasks that already exist; a new task cannot be a draft. Turn Draft mode off to add it."
+			)
+		);
+		return true;
+	},
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	// What a right-click or long press landed on, in the shape the menu providers take.
+	p6b_target(el) {
+		if (!el || !el.closest || !this.$body[0].contains(el)) return null;
+		if (el.closest("button, a, input, select, textarea, .pp-toolbar, .pp-fcard, .pp-route, .p6b-bar, .pp-draft-bar")) {
+			return null;
+		}
+		const card_el = el.closest(".pp-card[data-task]");
+		if (card_el) {
+			const card = this.by_task[card_el.getAttribute("data-task")];
+			if (!card) return null;
+			return {
+				kind: "card",
+				card,
+				ymd: card_el.getAttribute("data-date") || card.start || null,
+				resource: card_el.getAttribute("data-resource") || null,
+				el: card_el,
+			};
+		}
+		const person_el = el.closest(".pp-person[data-resource]");
+		if (person_el) {
+			const resource = person_el.getAttribute("data-resource");
+			return { kind: "person", resource, user: this.p6b_user(resource), el: person_el };
+		}
+		const cell = el.closest(".pp-cell[data-date][data-resource]");
+		if (cell) {
+			const resource = cell.getAttribute("data-resource");
+			return { kind: "cell", resource, user: this.p6b_user(resource), ymd: cell.getAttribute("data-date"), el: cell };
+		}
+		const day = el.closest(".pp-day[data-date]");
+		if (day) return { kind: "cell", resource: null, user: null, ymd: day.getAttribute("data-date"), el: day };
+		return null;
+	},
+
+	p6b_contextmenu(e) {
+		if (this.drag || this.p6b.resize) return;
+		if (!this.p6b_open_for(e.target, { x: e.clientX, y: e.clientY }, !!this.p6b.press)) return;
+		e.preventDefault();
+		if (this.p6b.press) this.p6b.press.opened = true;
+	},
+
+	// Opens the menu for whatever is under `el`. False (and the browser's own menu) when there is
+	// nothing of ours there or the kit has not loaded.
+	p6b_open_for(el, anchor, from_touch) {
+		if (!this.p6b_kit() || !this.data || !PP.views.includes(this.view)) return false;
+		const target = this.p6b_target(el);
+		if (!target) return false;
+		const items = this.p6b_menu_items(target);
+		if (!items.length) return false;
+		if (from_touch) {
+			// The finger lifting is a click on whatever the menu now covers.
+			this.click_blocked_until = Date.now() + 600;
+			this.p6b_swallow_click();
+		}
+		this.p6b_open_menu(target, items, anchor);
+		return true;
+	},
+
+	p6b_swallow_click() {
+		// The click a lifting finger makes comes at once; a later one is the planner's own.
+		const until = Date.now() + 350;
+		const swallow = (e) => {
+			document.removeEventListener("click", swallow, true);
+			if (Date.now() < until) {
+				e.stopPropagation();
+				e.preventDefault();
+			}
+		};
+		document.addEventListener("click", swallow, true);
+		setTimeout(() => document.removeEventListener("click", swallow, true), 500);
+	},
+
+	p6b_menu_title(target) {
+		if (target.kind === "card") return target.card.subject || target.card.name;
+		if (target.kind === "person") return this.resource_label(target.resource);
+		return [target.resource ? this.resource_label(target.resource) : "", target.ymd ? pp_when(target.ymd) : ""]
+			.filter(Boolean)
+			.join(" · ");
+	},
+
+	p6b_menu_items(target) {
+		if (target.kind === "card") return this.p6b_card_items(target);
+		if (target.kind === "person") {
+			return [{ label: __("See their week"), on_click: () => this.p6a_open_person(target.resource) }];
+		}
+		if (target.kind === "cell") return this.p6b_cell_items(target);
+		return [];
+	},
+
+	p6b_open_menu(target, items, anchor) {
+		const kit = this.p6b_kit();
+		const all = PP6B_PURE.with_providers(items, this.p6_menu_providers, target);
+		const handle = kit.menu({ anchor, items: all, title: this.p6b_menu_title(target), owner: PP6A.owner });
+		// The next free day is asked for as the menu opens; its hint fills in when the answer arrives.
+		all.forEach((item) => {
+			if (!item || !item.p6b_lookup) return;
+			item.p6b_lookup.then((answer) => {
+				const state = this.p6b_free_state(answer);
+				this.p6b_menu_hint(handle, item.label, state.hint, state.disabled);
+			});
+		});
+		return handle;
+	},
+
+	p6b_menu_hint(handle, label, hint, disabled) {
+		if (!handle || !handle.el || !handle.el.isConnected) return;
+		const button = Array.from(handle.el.querySelectorAll(".pk-menu-item")).find(
+			(node) => node.firstChild && node.firstChild.textContent === label
+		);
+		if (!button) return;
+		let span = button.querySelector(".pk-menu-hint");
+		if (!span) {
+			span = document.createElement("span");
+			span.className = "pk-menu-hint";
+			button.appendChild(span);
+		}
+		span.textContent = hint || "";
+		button.disabled = !!disabled;
+	},
+
+	p6b_card_items(target) {
+		const card = target.card;
+		const can_edit = !!(this.data && this.data.can_edit);
+		const editable = !!(card.movable && can_edit);
+		const why = !can_edit
+			? __("You cannot change tasks")
+			: card.rental_kind
+			? __("Follows its Rental Booking")
+			: __("Read-only here");
+		const creating = editable && !this.draft_on;
+		const create_why = !editable ? why : this.draft_on ? __("Not in Draft mode") : "";
+		const end = card.end && card.start && card.end > card.start ? card.end : card.start;
+		const multi = !!(card.start && end > card.start);
+		const items = [
+			{ label: __("Edit"), on_click: () => this.open_card(card) },
+			{
+				label: __("Assign to…"),
+				hint: editable ? "" : why,
+				disabled: !editable,
+				on_click: () => this.p6b_assign(card, target.ymd),
+			},
+			this.p6b_next_free_item(target, editable, why),
+			card.tentative
+				? { label: __("Firm up"), hint: editable ? "" : why, disabled: !editable, on_click: () => this.firm_up(card) }
+				: {
+						label: __("Pencil"),
+						hint: editable ? __("Make it tentative") : why,
+						disabled: !editable,
+						on_click: () => this.p6b_pencil(card),
+				  },
+			{
+				label: __("Duplicate"),
+				hint: create_why || __("Same days"),
+				disabled: !creating,
+				on_click: () => this.p6b_duplicate(card, null),
+			},
+			{ label: __("Duplicate to…"), hint: create_why, disabled: !creating, on_click: () => this.p6b_duplicate_to(card) },
+			{
+				label: multi ? __("Split across days…") : __("Split in two…"),
+				hint: create_why || (card.start ? "" : __("No dates")),
+				disabled: !creating || !card.start,
+				on_click: () => this.p6b_split(card, target),
+			},
+		];
+		if (card.project) {
+			items.push(
+				{ divider: true },
+				{ label: __("Project at a glance"), on_click: () => this.p6a_open_project(card.project) },
+				{
+					label: __("Open project"),
+					on_click: () => this.p6b_navigate(() => frappe.set_route("Form", "Project", card.project)),
+				}
+			);
+		}
+		return items;
+	},
+
+	p6b_cell_items(target) {
+		const can = !!(this.data && this.data.can_edit);
+		const items = [
+			{
+				label: __("Add task here…"),
+				hint: !can ? __("You cannot add tasks") : this.draft_on ? __("Not in Draft mode") : __("Double-click"),
+				disabled: !can || this.draft_on,
+				on_click: () => this.p6b_quick_add(target),
+			},
+		];
+		if (target.ymd) items.push({ label: __("Everyone's day"), on_click: () => this.p6a_open_day(target.ymd) });
+		return items;
+	},
+
+	// The person a "next free day" or "split in two" is about: the crew-view row the card sits in, the
+	// lead, or the only person on it. None when several are on it and none leads.
+	p6b_lead(card, row) {
+		const crew = card.crew || [];
+		if (row && crew.some((member) => member.resource === row)) return row;
+		const lead = crew.find((member) => member.is_lead);
+		if (lead) return lead.resource;
+		return crew.length === 1 ? crew[0].resource : null;
+	},
+
+	p6b_next_free(card, resource, hours) {
+		const key = [card.name, resource, hours || "", this.modified[card.name] || card.modified].join("|");
+		if (!this.p6b.next_free[key]) {
+			const args = { resource, task: card.name };
+			if (card.start) args.after = card.start;
+			if (hours) args.hours = hours;
+			this.p6b.next_free[key] = Promise.resolve(
+				frappe.call({ method: `${PP6B.conflicts}.get_next_free_day`, args })
+			)
+				.then((r) => (r && r.message) || null)
+				.catch(() => null);
+		}
+		return this.p6b.next_free[key];
+	},
+
+	p6b_free_state(answer) {
+		if (!answer) return { hint: __("Could not check"), disabled: false };
+		if (answer.date) return { hint: pp_when(answer.date), disabled: false };
+		return { hint: __("Nothing free in {0} days", [answer.horizon || 30]), disabled: true };
+	},
+
+	p6b_next_free_item(target, editable, why) {
+		const card = target.card;
+		const item = { label: __("Move to next free day"), hint: __("Looking…"), disabled: false };
+		if (!editable) return Object.assign(item, { hint: why, disabled: true });
+		const resource = this.p6b_lead(card, target.resource);
+		if (!resource) {
+			return Object.assign(item, { hint: (card.crew || []).length ? __("Mark a lead first") : __("No crew"), disabled: true });
+		}
+		const who = this.resource_label(resource);
+		const lookup = this.p6b_next_free(card, resource);
+		item.p6b_lookup = lookup;
+		item.on_click = () =>
+			lookup.then((answer) => {
+				if (answer && answer.date) {
+					this.p6b_move_to(card, answer.date);
+					return;
+				}
+				frappe.show_alert(
+					{ message: (answer && answer.note) || __("No free day found for {0}.", [who]), indicator: "orange" },
+					7
+				);
+			});
+		return item;
+	},
+
+	p6b_move_to(card, date) {
+		const subject = card.subject || card.name;
+		return this.commit(card, "save_task", { task: card.name, start: date }, __("{0} moved to {1}", [subject, pp_when(date)]));
+	},
+
+	p6b_pencil(card) {
+		return this.commit(
+			card,
+			"save_task",
+			{ task: card.name, tentative: 1 },
+			__("{0} is now pencilled in", [card.subject || card.name])
+		);
+	},
+
+	// ------------------------------------------------------------------ assign to...
+
+	// Who has the hours free that day, from who_is_free. The planner picks; nothing is picked for them.
+	p6b_assign(card, ymd) {
+		const kit = this.p6b_kit();
+		const day = ymd || card.start;
+		if (!kit) {
+			this.open_card(card);
+			return;
+		}
+		if (!day) {
+			frappe.msgprint(__("Give the task a date first: who is free depends on the day."));
+			return;
+		}
+		const state = { mode: "add", data: null, token: 0 };
+		const handle = kit.drawer.open({
+			title: __("Assign to…"),
+			subtitle: [card.subject || card.name, pp_when(day)].join(" · "),
+			body: `<p class="pk-empty">${pp_esc(__("Finding who is free…"))}</p>`,
+			width: PP6B.widths.assign,
+			key: `assign:${card.name}`,
+			owner: PP6A.owner,
+			push: this.$body[0],
+			reopen: () => this.p6b_assign(this.by_task[card.name] || card, ymd),
+			on_click: (e, h) => this.p6b_assign_click(e, h, card, day, state),
+		});
+		this.p6b_assign_load(handle, card, day, state);
+	},
+
+	p6b_assign_need(card, state) {
+		const day_hours = this.data && this.data.settings && this.data.settings.default_day_hours;
+		return PP6B_PURE.need_hours(card, state.mode === "add" ? "add" : "replace", day_hours);
+	},
+
+	p6b_assign_load(handle, card, day, state) {
+		const token = ++state.token;
+		const hours = this.p6b_assign_need(card, state);
+		return Promise.resolve(frappe.call({ method: `${PP.api}.who_is_free`, args: { start: day, hours } }))
+			.then((r) => {
+				if (token !== state.token || !handle.is_open()) return;
+				state.data = (r && r.message) || null;
+				handle.set_body(this.p6b_assign_html(card, day, state));
+			})
+			.catch(() => {
+				if (token !== state.token || !handle.is_open()) return;
+				state.data = null;
+				handle.set_body(this.p6b_assign_html(card, day, state));
+			});
+	},
+
+	p6b_assign_html(card, day, state) {
+		const crew = card.crew || [];
+		const on = new Set(crew.map((member) => member.resource));
+		const parts = [
+			`<p class="pk-note">${pp_esc(
+				__("Pick who should do it: nobody is chosen for you. Someone who is not free can still be booked; you will be asked for a reason.")
+			)}</p>`,
+		];
+		if (crew.length) {
+			const option = (value, text) =>
+				`<label><input type="radio" name="p6b-mode" value="${pp_esc(value)}"${state.mode === value ? " checked" : ""}> ${pp_esc(text)}</label>`;
+			parts.push(
+				`<div class="p6b-modes" role="radiogroup" aria-label="${pp_esc(__("How to assign"))}">${option(
+					"add",
+					__("Add to the crew")
+				)}${crew
+					.map((member) => option(member.resource, __("Replace {0}", [this.resource_label(member.resource, member.label)])))
+					.join("")}</div>`
+			);
+		}
+		const data = state.data;
+		if (!data) {
+			parts.push(`<p class="pk-empty">${pp_esc(__("Who is free could not be loaded. Close this and try again."))}</p>`);
+			return parts.join("");
+		}
+		const entry = (data.days || [])[0] || { free: [], not_free: [] };
+		const row = (person, busy) =>
+			`<button type="button" class="p6b-pick${busy ? " p6b-pick-busy" : ""}" data-p6b-pick="${pp_esc(person.resource)}">` +
+			`<span><b>${pp_esc(person.label || person.resource)}</b>${
+				person.group ? ` <span class="p6b-pick-why">${pp_esc(__(person.group))}</span>` : ""
+			}</span>` +
+			`<span class="p6b-pick-why">${pp_esc(busy ? person.reason || "" : __("{0}h free", [pp_hours(person.free_hours)]))}</span></button>`;
+		const free = (entry.free || []).filter((person) => !on.has(person.resource));
+		const busy = (entry.not_free || []).filter((person) => !on.has(person.resource));
+		parts.push(
+			`<div class="pk-section-title">${pp_esc(
+				__("Free on {0} ({1}h or more)", [pp_when(entry.date || day), pp_hours(data.hours)])
+			)}</div>`
+		);
+		parts.push(
+			free.length
+				? free.map((person) => row(person, false)).join("")
+				: `<p class="pk-empty">${pp_esc(__("Nobody has those hours free that day."))}</p>`
+		);
+		if (busy.length) {
+			parts.push(`<div class="pk-section-title">${pp_esc(__("Not free"))}</div>`);
+			parts.push(busy.map((person) => row(person, true)).join(""));
+		}
+		if (crew.length) {
+			parts.push(
+				`<div class="pk-section-title">${pp_esc(__("Already on it"))}</div><p class="pk-note">${pp_esc(
+					crew.map((member) => this.resource_label(member.resource, member.label)).join(", ")
+				)}</p>`
+			);
+		}
+		if (data.note) parts.push(`<p class="pk-note">${pp_esc(data.note)}</p>`);
+		return parts.join("");
+	},
+
+	p6b_assign_click(e, handle, card, day, state) {
+		const radio = e.target && e.target.closest ? e.target.closest("input[name='p6b-mode']") : null;
+		if (radio) {
+			const before = this.p6b_assign_need(card, state);
+			state.mode = radio.value;
+			if (this.p6b_assign_need(card, state) !== before) this.p6b_assign_load(handle, card, day, state);
+			return;
+		}
+		const pick = e.target && e.target.closest ? e.target.closest("[data-p6b-pick]") : null;
+		if (!pick) return;
+		const resource = pick.getAttribute("data-p6b-pick");
+		const mode = state.mode;
+		handle.close();
+		this.p6b_assign_to(card, resource, mode);
+	},
+
+	p6b_assign_to(card, resource, mode) {
+		const fresh = this.by_task[card.name] || card;
+		const who = this.resource_label(resource);
+		const subject = fresh.subject || fresh.name;
+		if (this.crew_has(fresh, resource)) {
+			frappe.show_alert({ message: __("{0} is already on {1}.", [who, subject]), indicator: "orange" }, 6);
+			return null;
+		}
+		if (mode && mode !== "add" && this.crew_has(fresh, mode)) {
+			return this.commit(
+				fresh,
+				"swap_crew",
+				{ task: fresh.name, from_resource: mode, to_resource: resource },
+				__("{0}: {1} in place of {2}", [subject, who, this.resource_label(mode)])
+			);
+		}
+		return this.commit(fresh, "add_crew", { task: fresh.name, resource }, __("{0} added to {1}", [who, subject]));
+	},
+
+	// ------------------------------------------------------------------ duplicate, split, quick add
+
+	// A new task from api/planner_actions. Undo deletes it again (remove_created_task), and only when
+	// nothing has been attached to it since; `extra` shapes the Undo entry (a split's puts the first
+	// half back too).
+	p6b_create(method, args, subject, message, extra) {
+		return this.p6b_send(method, args, {})
+			.then((result) => {
+				if (!result || !result.name) return result;
+				const created = extra ? extra(result) : { task: result.name, modified: result.modified };
+				if (created.task && created.modified) this.modified[created.task] = created.modified;
+				const snapshot = Object.assign({ p6b: "created", subject }, created);
+				if (!this.push_undo(snapshot, message)) frappe.show_alert({ message, indicator: "green" }, 5);
+				const card = result.second ? result.second.card : result.card;
+				this.p6b.flash = { name: created.task, date: (card && card.start) || null, wait: false };
+				return result;
+			})
+			.finally(() => this.load());
+	},
+
+	p6b_duplicate(card, date) {
+		if (this.p6b_refuse_in_draft()) return null;
+		const subject = card.subject || card.name;
+		const args = { task: card.name };
+		if (date) args.date = date;
+		const message = date ? __("{0} duplicated to {1}", [subject, pp_when(date)]) : __("{0} duplicated", [subject]);
+		return this.p6b_create("duplicate_task", args, subject, message);
+	},
+
+	p6b_duplicate_to(card) {
+		if (this.p6b_refuse_in_draft()) return;
+		const panel = this.p6b_panel({
+			title: __("Duplicate to…"),
+			subtitle: card.subject || card.name,
+			key: `p6b-duplicate:${card.name}`,
+			fields: [
+				{
+					fieldtype: "Date",
+					fieldname: "date",
+					label: __("The copy starts on"),
+					reqd: 1,
+					default: card.start || this.today(),
+					description: __("The copy keeps the task's length, crew, hours, qualifications, equipment and pencil flag."),
+				},
+			],
+		});
+		panel.set_primary_action(__("Duplicate"), (values) => {
+			const date = values && values.date;
+			if (!date) return;
+			panel.hide();
+			this.p6b_duplicate(card, date);
+		});
+		panel.show();
+	},
+
+	p6b_split(card, target) {
+		if (this.p6b_refuse_in_draft() || !card.start) return;
+		const end = card.end && card.end >= card.start ? card.end : card.start;
+		const multi = end > card.start;
+		const subject = card.subject || card.name;
+		const middle = PP6B_PURE.ymd_add(card.start, Math.ceil((PP6B_PURE.ymd_diff(card.start, end) + 1) / 2));
+		const panel = this.p6b_panel({
+			title: multi ? __("Split across days") : __("Split in two"),
+			subtitle: subject,
+			key: `p6b-split:${card.name}`,
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "p6b_split_note",
+					options: `<p class="pk-note">${pp_esc(
+						multi
+							? __("The task keeps the days before the day you pick. A new task does the rest, depends on it and has the same crew, qualifications and equipment. Hours are shared by working days.")
+							: __("The task keeps its day with half the hours. A new task with the other half goes on the day you pick, with the same crew, qualifications and equipment.")
+					)}</p>`,
+				},
+				{
+					fieldtype: "Date",
+					fieldname: "split_date",
+					label: multi ? __("The second part starts on") : __("The second half goes on"),
+					reqd: 1,
+					default: multi ? middle : "",
+				},
+				{ fieldtype: "HTML", fieldname: "p6b_split_preview", options: '<p class="pk-note p6b-split-preview"></p>' },
+			],
+		});
+		const preview = () => this.p6b_split_preview(panel, card, end, multi);
+		panel.set_primary_action(__("Split"), (values) => {
+			const date = values && values.split_date;
+			if (!date) return;
+			if (multi && !(date > card.start && date <= end)) {
+				frappe.msgprint(__("Pick a day from {0} to {1}.", [pp_when(PP6B_PURE.ymd_add(card.start, 1)), pp_when(end)]));
+				return;
+			}
+			if (!multi && date <= card.start) {
+				frappe.msgprint(__("Pick a day after {0}.", [pp_when(card.start)]));
+				return;
+			}
+			panel.hide();
+			this.p6b_split_save(card, date);
+		});
+		panel.show();
+		const field = panel.fields_dict && panel.fields_dict.split_date;
+		if (field && field.$input) field.$input.on("change", preview);
+		preview();
+		if (multi) return;
+		// Split in two: the second half goes on the person's next free day, unless the planner picks one.
+		const resource = this.p6b_lead(card, target && target.resource);
+		if (!resource) return;
+		const who = this.resource_label(resource);
+		const day_hours = this.data && this.data.settings && this.data.settings.default_day_hours;
+		const half = Math.max(0.25, Math.round((PP6B_PURE.need_hours(card, "replace", day_hours) / 2) * 100) / 100);
+		this.p6b_next_free(card, resource, half).then((answer) => {
+			if (!this.p6b_panel_open(panel)) return;
+			if (answer && answer.date && !panel.get_value("split_date")) panel.set_value("split_date", answer.date);
+			const note =
+				answer && answer.date
+					? __("{0} is {1}'s next free day.", [pp_when(answer.date), who])
+					: __("{0} has no free day in the next 30 days: pick one.", [who]);
+			panel.$wrapper.find(".p6b-split-preview").attr("data-p6b-free", note);
+			preview();
+		});
+	},
+
+	p6b_split_preview(panel, card, end, multi) {
+		const $box = panel.$wrapper.find(".p6b-split-preview");
+		if (!$box.length) return;
+		const date = panel.get_value("split_date");
+		const free = $box.attr("data-p6b-free") || "";
+		let text = "";
+		if (!date) {
+			text = free;
+		} else if (multi) {
+			if (!(date > card.start && date <= end)) {
+				text = __("Pick a day from {0} to {1}.", [pp_when(PP6B_PURE.ymd_add(card.start, 1)), pp_when(end)]);
+			} else {
+				const [a, b] = PP6B_PURE.split_weights(card.start, end, date);
+				const [first_hours, second_hours] = PP6B_PURE.split_hours(card.expected_time, a, b);
+				const first = this.p6b_span_text(card.start, PP6B_PURE.ymd_add(date, -1));
+				const second = this.p6b_span_text(date, end);
+				text =
+					Number(card.expected_time) > 0
+						? __("First part: {0}, {1}h. Second part: {2}, {3}h.", [first, pp_hours(first_hours), second, pp_hours(second_hours)])
+						: __("First part: {0}. Second part: {1}. With no estimate, each still books a full day per day.", [first, second]);
+			}
+		} else {
+			text = [__("First half: {0}. Second half: {1}. The hours are shared equally.", [pp_when(card.start), pp_when(date)]), free]
+				.filter(Boolean)
+				.join(" ");
+		}
+		$box.text(text);
+	},
+
+	p6b_split_save(card, date) {
+		const subject = card.subject || card.name;
+		const restore = {
+			task: card.name,
+			start: card.start,
+			end: card.end || card.start,
+			expected_time: Number(card.expected_time) || 0,
+			crew: this.crew_rows(card),
+		};
+		return this.p6b_create(
+			"split_task",
+			{ task: card.name, split_date: date, modified: this.modified[card.name] || card.modified },
+			subject,
+			__("{0} split in two", [subject]),
+			(result) => ({
+				p6b: "split",
+				task: result.second.name,
+				modified: result.second.modified,
+				restore: Object.assign({}, restore, { modified: result.modified }),
+			})
+		);
+	},
+
+	p6b_dblclick(e) {
+		if (!this.data || !this.data.can_edit || !PP.views.includes(this.view)) return;
+		const el = e.target;
+		if (!el || !el.closest) return;
+		if (el.closest(".pp-card, .pp-fcard, .pp-day-head, button, a, input, select, textarea, .pp-route, [data-pp6a-day], .p6b-grip")) {
+			return;
+		}
+		const target = this.p6b_target(el);
+		if (!target || target.kind !== "cell") return;
+		e.preventDefault();
+		if (window.getSelection) window.getSelection().removeAllRanges();
+		this.p6b_quick_add(target);
+	},
+
+	p6b_quick_add(target) {
+		if (!this.data || !this.data.can_edit || this.p6b_refuse_in_draft()) return;
+		// The project list is the planner's own: Active customer jobs (engine.PLANNER_PROJECT_TYPES).
+		const names = (this.data.projects || []).map((project) => project.name);
+		const panel = this.p6b_panel({
+			title: __("Add a task"),
+			subtitle: [target.resource ? this.resource_label(target.resource) : "", target.ymd ? pp_when(target.ymd) : ""]
+				.filter(Boolean)
+				.join(" · "),
+			key: `p6b-add:${target.resource || ""}:${target.ymd || ""}`,
+			fields: [
+				{
+					fieldtype: "Link",
+					fieldname: "project",
+					label: __("Project"),
+					options: "Project",
+					reqd: 1,
+					default: this.project || "",
+					description: __("Customer jobs only."),
+					get_query: () => ({ filters: { name: ["in", names.length ? names : [""]] } }),
+				},
+				{ fieldtype: "Data", fieldname: "subject", label: __("Subject"), reqd: 1 },
+				{
+					fieldtype: "Float",
+					fieldname: "hours",
+					label: __("Hours"),
+					description: __("Blank: a full day for the person. More hours than a day holds run over the next weekdays."),
+				},
+				{
+					fieldtype: "Link",
+					fieldname: "resource",
+					label: __("Person"),
+					options: "Planner Resource",
+					default: target.resource || "",
+					get_query: () => ({ filters: { is_active: 1 } }),
+				},
+				{ fieldtype: "Date", fieldname: "date", label: __("Date"), reqd: 1, default: target.ymd || this.today() },
+				{ fieldtype: "Check", fieldname: "tentative", label: __("Pencil (tentative)") },
+			],
+		});
+		panel.set_primary_action(__("Add"), (values) => this.p6b_quick_add_save(panel, values || {}));
+		panel.show();
+	},
+
+	p6b_quick_add_save(panel, values) {
+		const subject = String(values.subject || "").trim();
+		if (!values.project || !subject || !values.date) return null;
+		const args = { project: values.project, subject, date: values.date, tentative: values.tentative ? 1 : 0 };
+		if (Number(values.hours) > 0) args.hours = Number(values.hours);
+		if (values.resource) args.resource = values.resource;
+		panel.hide();
+		return this.p6b_create("quick_add_task", args, subject, __("{0} added on {1}", [subject, pp_when(values.date)]));
+	},
+
+	// ------------------------------------------------------------------ resize
+
+	// The left and right edges of a card become grips: on the first and last day of a multi-day task
+	// in the week view, and on every card in the crew view. Never on a rental crew task (its dates
+	// follow its booking), a time-slot task (the slot decides its day) or in the month view.
+	p6b_add_grips() {
+		if (!this.data || !this.data.can_edit || (this.view !== "week" && this.view !== "crew")) return;
+		const tip_start = pp_esc(__("Drag to change the first day"));
+		const tip_end = pp_esc(__("Drag to change the last day"));
+		this.$grid_wrap[0].querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			if (el.querySelector(".p6b-grip")) return;
+			const card = this.by_task[el.getAttribute("data-task")];
+			const ymd = el.getAttribute("data-date");
+			if (!card || !card.movable || !card.start || !ymd || (card.slot && card.slot.length === 2)) return;
+			const end = card.end && card.end >= card.start ? card.end : card.start;
+			if (end === card.start && this.view !== "crew") return;
+			if (ymd === card.start) {
+				el.insertAdjacentHTML("beforeend", `<span class="p6b-grip p6b-grip-l" data-p6b-edge="start" title="${tip_start}"></span>`);
+			}
+			if (ymd === end) {
+				el.insertAdjacentHTML("beforeend", `<span class="p6b-grip p6b-grip-r" data-p6b-edge="end" title="${tip_end}"></span>`);
+			}
+		});
+	},
+
+	p6b_pointer_down(e) {
+		const grip = e.target && e.target.closest ? e.target.closest(".p6b-grip[data-p6b-edge]") : null;
+		if (grip && !(e.button > 0)) {
+			this.p6b_resize_start(e, grip);
+			return;
+		}
+		// A touch press is remembered for the long-press menu.
+		this.p6b.press =
+			e.pointerType === "touch" && !(e.button > 0)
+				? { id: e.pointerId, x: e.clientX, y: e.clientY, at: Date.now(), target: e.target, moved: false, opened: false }
+				: null;
+	},
+
+	p6b_pointer_move(e) {
+		const resize = this.p6b.resize;
+		if (resize && e.pointerId === resize.id) {
+			this.p6b_resize_move(e);
+			return;
+		}
+		const press = this.p6b.press;
+		if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > PP.drag_px) {
+			press.moved = true;
+		}
+	},
+
+	p6b_pointer_up(e) {
+		const resize = this.p6b.resize;
+		if (resize && e.pointerId === resize.id) {
+			this.p6b_resize_end(true);
+			return;
+		}
+		const press = this.p6b.press;
+		this.p6b.press = null;
+		if (!press || e.pointerId !== press.id || press.moved || press.opened) return;
+		// A long press that did not become a drag: the card was lifted but never moved.
+		if (Date.now() - press.at < PP6B.long_press_ms) return;
+		this.p6b_open_for(press.target, { x: e.clientX, y: e.clientY }, true);
+	},
+
+	p6b_pointer_cancel(e) {
+		if (this.p6b.resize && e.pointerId === this.p6b.resize.id) this.p6b_resize_end(false);
+		if (this.p6b.press && e.pointerId === this.p6b.press.id) this.p6b.press = null;
+	},
+
+	p6b_resize_start(e, grip) {
+		if (this.drag || this.p6b.resize || !this.data || !this.data.can_edit) return;
+		const card_el = grip.closest(".pp-card[data-task]");
+		const card = card_el && this.by_task[card_el.getAttribute("data-task")];
+		if (!card || !card.movable || card.saving || !card.start) return;
+		// Never a move: the page's own pointerdown (bubble) never sees this one.
+		e.preventDefault();
+		e.stopPropagation();
+		const end = card.end && card.end >= card.start ? card.end : card.start;
+		const label = document.createElement("div");
+		label.className = "p6b-span-label";
+		document.body.appendChild(label);
+		this.p6b.resize = {
+			id: e.pointerId,
+			edge: grip.getAttribute("data-p6b-edge") === "start" ? "start" : "end",
+			card,
+			row: card_el.getAttribute("data-resource") || null,
+			start: card.start,
+			end,
+			new_start: card.start,
+			new_end: end,
+			label,
+		};
+		document.body.classList.add("p6b-resizing");
+		this.p6b_resize_paint(e.clientX, e.clientY);
+	},
+
+	p6b_resize_move(e) {
+		const resize = this.p6b.resize;
+		e.preventDefault();
+		const el = document.elementFromPoint(e.clientX, e.clientY);
+		const spot = el && el.closest ? el.closest(".pp-cell[data-date], .pp-day[data-date]") : null;
+		if (spot && this.$grid_wrap[0].contains(spot)) {
+			const ymd = spot.getAttribute("data-date");
+			// At least one day: an edge never passes the other one.
+			if (resize.edge === "end") resize.new_end = ymd < resize.start ? resize.start : ymd;
+			else resize.new_start = ymd > resize.end ? resize.end : ymd;
+		}
+		this.edge_scroll(e.clientX, e.clientY);
+		this.p6b_resize_paint(e.clientX, e.clientY);
+	},
+
+	// The live ghost: the days of the new span lit up (in the card's own row in the crew view) and a
+	// label by the pointer.
+	p6b_resize_paint(x, y) {
+		const resize = this.p6b.resize;
+		if (!resize) return;
+		const grid = this.$grid_wrap[0];
+		grid.querySelectorAll(".p6b-span").forEach((el) => el.classList.remove("p6b-span"));
+		const spots = grid.querySelectorAll(this.view === "crew" ? ".pp-cell[data-date][data-resource]" : ".pp-day[data-date]");
+		spots.forEach((el) => {
+			if (this.view === "crew" && resize.row && el.getAttribute("data-resource") !== resize.row) return;
+			const ymd = el.getAttribute("data-date");
+			if (ymd >= resize.new_start && ymd <= resize.new_end) el.classList.add("p6b-span");
+		});
+		const days = PP6B_PURE.ymd_diff(resize.new_start, resize.new_end) + 1;
+		resize.label.textContent =
+			days === 1
+				? __("{0} · 1 day", [pp_when(resize.new_start)])
+				: __("{0} – {1} · {2} days", [pp_when(resize.new_start), pp_when(resize.new_end), days]);
+		resize.label.style.left = `${Math.round(x + 14)}px`;
+		resize.label.style.top = `${Math.round(y + 14)}px`;
+	},
+
+	p6b_resize_end(save) {
+		const resize = this.p6b.resize;
+		this.p6b.resize = null;
+		if (!resize) return;
+		document.body.classList.remove("p6b-resizing");
+		if (resize.label) resize.label.remove();
+		this.$grid_wrap[0].querySelectorAll(".p6b-span").forEach((el) => el.classList.remove("p6b-span"));
+		if (!save || (resize.new_start === resize.start && resize.new_end === resize.end)) return;
+		this.click_blocked_until = Date.now() + 400;
+		const card = resize.card;
+		const subject = card.subject || card.name;
+		const message =
+			resize.new_start === resize.new_end
+				? __("{0} is now on {1}", [subject, pp_when(resize.new_start)])
+				: __("{0} now runs {1} – {2}", [subject, pp_when(resize.new_start), pp_when(resize.new_end)]);
+		// The same save as the dialog's: both dates, through send(), so a conflict asks for a reason
+		// and Undo puts the old span back.
+		const run = () => this.commit(card, "save_task", { task: card.name, start: resize.new_start, end: resize.new_end }, message);
+		if (resize.new_start !== resize.start && resize.new_start < this.today()) {
+			frappe.confirm(__("{0} is before today. Schedule the task on a past day?", [pp_when(resize.new_start)]), run);
+			return;
+		}
+		run();
+	},
+
+	// ------------------------------------------------------------------ selection
+
+	p6b_selectable(card) {
+		return !!(card && card.movable && card.start && this.data && this.data.can_edit);
+	},
+
+	p6b_selected_cards() {
+		return [...this.p6_selection].map((name) => this.by_task[name]).filter((card) => this.p6b_selectable(card));
+	},
+
+	p6b_modifier_click(e) {
+		if (!(e.shiftKey || e.ctrlKey || e.metaKey) || e.button > 0 || Date.now() < this.click_blocked_until) return;
+		const el = e.target && e.target.closest ? e.target.closest(".pp-card[data-task]") : null;
+		if (!el || !this.$body[0].contains(el) || e.target.closest("button, a, input, select, textarea, .p6b-grip")) return;
+		e.preventDefault();
+		e.stopPropagation();
+		this.p6b_toggle(el.getAttribute("data-task"));
+	},
+
+	p6b_toggle(name) {
+		const card = this.by_task[name];
+		if (!card) return;
+		if (!this.p6_selection.has(name) && !this.p6b_selectable(card)) {
+			frappe.show_alert(
+				{ message: __("{0} cannot be moved from the planner, so it cannot be selected.", [card.subject || name]), indicator: "orange" },
+				5
+			);
+			return;
+		}
+		PP6B_PURE.toggle(this.p6_selection, name);
+		this.p6b_selection_changed();
+	},
+
+	// A plain click on empty space clears the selection.
+	p6b_plain_click(e) {
+		if (!this.p6_selection.size || e.shiftKey || e.ctrlKey || e.metaKey) return;
+		const el = e.target;
+		if (!el || !el.closest) return;
+		if (el.closest(".pp-card, .pp-fcard, .p6b-bar, .pp-toolbar, .pp-draft-bar, button, a, input, select, textarea, label")) return;
+		this.p6b_clear_selection();
+	},
+
+	p6b_clear_selection() {
+		if (!this.p6_selection.size) return false;
+		this.p6_selection.clear();
+		this.p6b_selection_changed();
+		return true;
+	},
+
+	p6b_selection_changed() {
+		this.p6b_decorate_selection();
+		this.p6b_render_bar();
+		$(document).trigger("p6-selection-changed", [this]);
+	},
+
+	p6b_prune_selection() {
+		if (!this.p6_selection.size || !this.data) return;
+		let changed = false;
+		[...this.p6_selection].forEach((name) => {
+			if (!this.p6b_selectable(this.by_task[name])) {
+				this.p6_selection.delete(name);
+				changed = true;
+			}
+		});
+		if (changed) $(document).trigger("p6-selection-changed", [this]);
+	},
+
+	p6b_decorate_selection() {
+		this.$body[0].querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			el.classList.toggle("p6b-selected", this.p6_selection.has(el.getAttribute("data-task")));
+		});
+	},
+
+	p6b_render_bar() {
+		const $bar = this.$p6b_bar;
+		if (!$bar) return;
+		const cards = this.p6b_selected_cards();
+		if (!cards.length || !PP.views.includes(this.view)) {
+			$bar.hide().empty();
+			return;
+		}
+		$bar.empty().show();
+		$('<span class="p6b-bar-count"></span>').text(__("{0} selected", [cards.length])).appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Move…"))
+			.on("click", () => this.p6b_move_panel())
+			.appendTo($bar);
+		const all_pencil = cards.every((card) => card.tentative);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(all_pencil ? __("Firm up") : __("Pencil"))
+			.attr("title", all_pencil ? __("Make them all firm bookings") : __("Make them all tentative"))
+			.on("click", () => this.p6b_pencil_many(all_pencil ? 0 : 1))
+			.appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Clear"))
+			.on("click", () => this.p6b_clear_selection())
+			.appendTo($bar);
+		$('<span class="p6b-bar-note"></span>')
+			.text(
+				__("Drag any of them and they all move by the same number of calendar days, each keeping its length. Esc clears the selection.")
+			)
+			.appendTo($bar);
+	},
+
+	p6b_lift(drag) {
+		if (!drag || !drag.ghost || !drag.source || drag.source.kind !== "card") return;
+		if (!this.p6_selection.has(drag.source.card.name)) return;
+		const count = this.p6b_selected_cards().length;
+		if (count < 2) return;
+		const badge = document.createElement("span");
+		badge.className = "p6b-count";
+		badge.textContent = String(count);
+		drag.ghost.appendChild(badge);
+	},
+
+	// A drop of one selected card when several are selected: they all move by the same calendar days.
+	// True when it was handled here (drop() then does nothing more).
+	p6b_drop(source, target) {
+		if (!source || source.kind !== "card" || !source.card || this.p6_selection.size < 2) return false;
+		if (!this.p6_selection.has(source.card.name) || this.p6b_selected_cards().length < 2) return false;
+		if (target.resource && source.from_resource && target.resource !== source.from_resource) {
+			frappe.show_alert(
+				{
+					message: __(
+						"Several tasks are selected: drop them on the same person's row to change their days. To hand one task to someone else, clear the selection first."
+					),
+					indicator: "orange",
+				},
+				8
+			);
+			return true;
+		}
+		const from = source.from_date || source.card.start;
+		if (!from || !target.date) return true;
+		const days = PP6B_PURE.ymd_diff(from, target.date);
+		if (days) this.p6b_move_selection(days);
+		return true;
+	},
+
+	p6b_move_panel() {
+		const cards = this.p6b_selected_cards();
+		if (!cards.length) return;
+		const panel = this.p6b_panel({
+			title: __("Move {0} tasks", [cards.length]),
+			key: "p6b-move",
+			fields: [
+				{
+					fieldtype: "Int",
+					fieldname: "days",
+					label: __("Move by (days)"),
+					reqd: 1,
+					default: 7,
+					description: __("Calendar days; a negative number moves them earlier. Each task keeps its length and time of day."),
+				},
+			],
+		});
+		panel.set_primary_action(__("Move"), (values) => {
+			const days = parseInt(values && values.days, 10) || 0;
+			if (!days) return;
+			panel.hide();
+			this.p6b_move_selection(days);
+		});
+		panel.show();
+	},
+
+	p6b_move_selection(days) {
+		const cards = this.p6b_selected_cards();
+		if (!cards.length || !days) return null;
+		const moves = PP6B_PURE.offset_moves(cards, days, (name) => this.modified[name] || (this.by_task[name] || {}).modified);
+		const snapshot = {
+			p6b: "many",
+			what: "dates",
+			subject: __("{0} tasks", [cards.length]),
+			items: cards.map((card) => ({ task: card.name, start: card.start, end: card.end || card.start })),
+		};
+		const message =
+			days > 0
+				? __("{0} tasks moved {1} day(s) later", [cards.length, days])
+				: __("{0} tasks moved {1} day(s) earlier", [cards.length, -days]);
+		const run = () => this.p6b_commit_many(cards, moves, snapshot, message);
+		if (moves.some((move) => move.start < this.today())) {
+			frappe.confirm(__("Some of these tasks would start before today. Move them anyway?"), run);
+			return null;
+		}
+		return run();
+	},
+
+	p6b_pencil_many(on) {
+		const cards = this.p6b_selected_cards().filter((card) => (card.tentative ? 1 : 0) !== on);
+		if (!cards.length) return null;
+		const moves = cards.map((card) => ({ task: card.name, modified: this.modified[card.name] || card.modified, tentative: on }));
+		const snapshot = {
+			p6b: "many",
+			what: "pencil",
+			subject: __("{0} tasks", [cards.length]),
+			items: cards.map((card) => ({ task: card.name, tentative: card.tentative ? 1 : 0 })),
+		};
+		const message = on ? __("{0} tasks pencilled in", [cards.length]) : __("{0} tasks firmed up", [cards.length]);
+		return this.p6b_commit_many(cards, moves, snapshot, message);
+	},
+
+	// One move_many through send(): one reason prompt for the lot, all or nothing, one Undo entry.
+	p6b_commit_many(cards, moves, snapshot, message) {
+		cards.forEach((card) => (card.saving = true));
+		this.render();
+		return this.p6b_send("move_many", { moves: JSON.stringify(moves), draft: this.draft_on ? 1 : 0 }, { snapshot, message })
+			.then((result) => {
+				((result && result.moved) || []).forEach((move) => {
+					if (move.modified) this.modified[move.task] = move.modified;
+				});
+				return result;
+			})
+			.finally(() => this.load());
+	},
+
+	// ------------------------------------------------------------------ undo
+
+	// Undo of a Phase 6B change. False for any other entry, which undo() handles as before.
+	p6b_undo(snap) {
+		if (!snap || !snap.p6b) return false;
+		const message = __("Undone: {0}", [snap.subject]);
+		if (snap.p6b === "many") {
+			const moves = (snap.items || []).map((item) => {
+				const move = { task: item.task, modified: this.modified[item.task] || (this.by_task[item.task] || {}).modified || "" };
+				if (snap.what === "pencil") move.tentative = item.tentative;
+				else Object.assign(move, { start: item.start, end: item.end });
+				return move;
+			});
+			this.p6b_send(
+				"move_many",
+				{ moves: JSON.stringify(moves), draft: this.draft_on ? 1 : 0 },
+				{ message, auto_reason: __(PP.undo_reason) }
+			).finally(() => this.load());
+			return true;
+		}
+		// A task created here (a duplicate, a quick add, a split's second half): delete it again, and
+		// put a split's first half back. The server refuses when anything was attached since.
+		const args = { task: snap.task, modified: this.modified[snap.task] || snap.modified };
+		if (snap.restore) {
+			const first = snap.restore.task;
+			args.restore = JSON.stringify(Object.assign({}, snap.restore, { modified: this.modified[first] || snap.restore.modified }));
+		}
+		this.p6b_send("remove_created_task", args, { message }).finally(() => this.load());
+		return true;
+	},
+
+	// ------------------------------------------------------------------ search
+
+	p6b_build_search() {
+		const $wrap = $('<span class="p6b-search-wrap"></span>');
+		const $seg = this.$toolbar.children(".pp-seg").first();
+		if ($seg.length) $wrap.insertAfter($seg);
+		else $wrap.appendTo(this.$toolbar);
+		const list_id = `p6b-results-${Math.random().toString(36).slice(2, 9)}`;
+		this.p6b.search.list_id = list_id;
+		this.$p6b_search = $('<input type="search" class="form-control input-sm p6b-search" autocomplete="off" spellcheck="false">')
+			.attr({
+				placeholder: __("Search  ( / )"),
+				title: __("Find a task, project or person. Press / to come here."),
+				"aria-label": __("Search tasks, projects and people"),
+				role: "combobox",
+				"aria-autocomplete": "list",
+				"aria-expanded": "false",
+				"aria-controls": list_id,
+			})
+			.appendTo($wrap);
+		this.$p6b_results = $('<div class="p6b-results" role="listbox"></div>').attr("id", list_id).hide().appendTo($wrap);
+		this.$p6b_search.on("input", () => this.p6b_search_input());
+		this.$p6b_search.on("keydown", (e) => this.p6b_search_key(e));
+		this.$p6b_search.on("focus", () => {
+			if (this.p6b.search.q.length >= PP6B.search_min) this.p6b_render_results();
+		});
+		this.$p6b_search.on("blur", () => setTimeout(() => this.p6b_close_results(), 150));
+		// Keep the focus in the box while a result is clicked.
+		this.$p6b_results.on("mousedown", (e) => e.preventDefault());
+		this.$p6b_results.on("click", "[data-p6b-result]", (e) => {
+			const item = this.p6b.search.shown[Number(e.currentTarget.getAttribute("data-p6b-result"))];
+			if (item) this.p6b_pick(item);
+		});
+	},
+
+	p6b_search_input() {
+		const search = this.p6b.search;
+		search.q = String(this.$p6b_search.val() || "").trim();
+		search.active = 0;
+		search.remote = [];
+		clearTimeout(search.timer);
+		const token = ++search.token;
+		if (search.q.length < PP6B.search_min) {
+			search.local = [];
+			search.loading = false;
+			this.p6b_close_results();
+			return;
+		}
+		search.local = PP6B_PURE.search_local(search.q, this.p6b_local_entries(), PP6B.search_limit);
+		search.loading = true;
+		this.p6b_render_results();
+		const q = search.q;
+		search.timer = setTimeout(() => this.p6b_remote_search(q, token), PP6B.search_wait_ms);
+	},
+
+	// What is on screen: every task card, the projects of the filter and the people.
+	p6b_local_entries() {
+		const out = [];
+		Object.values(this.by_task || {}).forEach((card) => {
+			out.push({
+				kind: "task",
+				name: card.name,
+				label: card.subject || card.name,
+				keys: [card.name, card.project_title || "", card.project || ""],
+				sub: [card.project_title || card.project, this.p6b_span_text(card.start, card.end)].filter(Boolean).join(" · "),
+				start: card.start || null,
+				end: card.end || null,
+			});
+		});
+		((this.data && this.data.projects) || []).forEach((project) => {
+			out.push({
+				kind: "project",
+				name: project.name,
+				label: project.title || project.name,
+				keys: [project.name],
+				sub: project.title && project.title !== project.name ? project.name : "",
+			});
+		});
+		((this.data && this.data.resources) || []).forEach((person) => {
+			out.push({
+				kind: "person",
+				resource: person.name,
+				user: person.user || null,
+				label: person.label || person.name,
+				keys: [],
+				sub: person.group ? __(person.group) : "",
+			});
+		});
+		return out;
+	},
+
+	p6b_result_key(item) {
+		return `${item.kind}|${item.name || item.resource || ""}`;
+	},
+
+	p6b_from_server(item) {
+		if (!item || !item.kind) return null;
+		if (item.kind === "task") {
+			return {
+				kind: "task",
+				name: item.name,
+				label: item.label || item.name,
+				sub: [item.project_title || item.project, this.p6b_span_text(item.start, item.end)].filter(Boolean).join(" · "),
+				start: item.start || null,
+				end: item.end || null,
+			};
+		}
+		if (item.kind === "project") {
+			return { kind: "project", name: item.name, label: item.label || item.name, sub: [item.name, item.status ? __(item.status) : ""].filter(Boolean).join(" · ") };
+		}
+		if (item.kind === "person") {
+			return { kind: "person", resource: item.resource, user: item.user || null, label: item.label || item.resource, sub: item.group ? __(item.group) : "" };
+		}
+		return null;
+	},
+
+	// Tasks outside the range on screen (and projects or people the page has not loaded) come from
+	// the server; what the page already listed is not repeated.
+	p6b_remote_search(q, token) {
+		return Promise.resolve(frappe.call({ method: `${PP6B.actions}.search_planner`, args: { q, start: this.anchor } }))
+			.then((r) => {
+				const search = this.p6b.search;
+				if (token !== search.token) return;
+				const seen = new Set(search.local.map((item) => this.p6b_result_key(item)));
+				search.remote = (((r && r.message) || {}).results || [])
+					.map((item) => this.p6b_from_server(item))
+					.filter((item) => item && !seen.has(this.p6b_result_key(item)));
+				search.loading = false;
+				if (this.$p6b_search.is(":focus")) this.p6b_render_results();
+			})
+			.catch(() => {
+				if (token !== this.p6b.search.token) return;
+				this.p6b.search.loading = false;
+				if (this.$p6b_search.is(":focus")) this.p6b_render_results();
+			});
+	},
+
+	p6b_render_results() {
+		const search = this.p6b.search;
+		if (search.q.length < PP6B.search_min) {
+			this.p6b_close_results();
+			return;
+		}
+		const shown = search.local.concat(search.remote).slice(0, PP6B.search_limit);
+		search.shown = shown;
+		if (search.active >= shown.length) search.active = 0;
+		const kinds = { task: __("Task"), project: __("Project"), person: __("Person") };
+		const rows = shown.map(
+			(item, index) =>
+				`<div class="p6b-result${index === search.active ? " p6b-active" : ""}" role="option" id="${pp_esc(
+					`${search.list_id}-${index}`
+				)}" aria-selected="${index === search.active ? "true" : "false"}" data-p6b-result="${index}">` +
+				`<span class="p6b-result-kind">${pp_esc(kinds[item.kind] || item.kind)}</span>` +
+				`<span class="p6b-result-label">${pp_esc(item.label)}</span>` +
+				(item.sub ? `<span class="p6b-result-sub">${pp_esc(item.sub)}</span>` : "") +
+				`</div>`
+		);
+		const note = search.loading ? __("Searching the rest…") : shown.length ? "" : __("Nothing found.");
+		this.$p6b_results.html(rows.join("") + (note ? `<div class="p6b-results-note">${pp_esc(note)}</div>` : "")).show();
+		this.$p6b_search.attr("aria-expanded", "true");
+		if (shown.length) this.$p6b_search.attr("aria-activedescendant", `${search.list_id}-${search.active}`);
+		else this.$p6b_search.removeAttr("aria-activedescendant");
+	},
+
+	p6b_close_results() {
+		if (!this.$p6b_results) return;
+		this.$p6b_results.hide().empty();
+		this.$p6b_search.attr("aria-expanded", "false").removeAttr("aria-activedescendant");
+	},
+
+	p6b_search_key(e) {
+		const search = this.p6b.search;
+		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+			if (!search.shown.length) return;
+			e.preventDefault();
+			search.active = (search.active + (e.key === "ArrowDown" ? 1 : -1) + search.shown.length) % search.shown.length;
+			this.p6b_render_results();
+		} else if (e.key === "Enter") {
+			e.preventDefault();
+			const item = search.shown[search.active] || search.shown[0];
+			if (item) this.p6b_pick(item);
+		} else if (e.key === "Escape") {
+			// The box's own Esc: it never reaches the drawer or frappe behind it.
+			e.preventDefault();
+			e.stopPropagation();
+			if (this.$p6b_results.is(":visible")) this.p6b_close_results();
+			else this.$p6b_search.val("").trigger("blur");
+		}
+	},
+
+	p6b_pick(item) {
+		this.p6b_close_results();
+		this.$p6b_search.trigger("blur");
+		if (item.kind === "person") this.p6a_open_person(item.resource);
+		else if (item.kind === "project") this.p6a_open_project(item.name);
+		else if (item.kind === "task") this.p6b_jump_to_task(item);
+	},
+
+	// A task: the calendar goes to its week (a real route, so Back comes back) and the card flashes.
+	p6b_jump_to_task(item) {
+		const card = this.by_task[item.name];
+		const start = item.start || (card && card.start) || null;
+		if (!start) {
+			if (card && PP.views.includes(this.view)) {
+				this.p6b.flash = { name: card.name, date: null, wait: false };
+				this.p6b_flash_pending();
+				return;
+			}
+			this.p6b_navigate(() => frappe.set_route("Form", "Task", item.name));
+			return;
+		}
+		this.p6b.flash = { name: item.name, date: start, wait: true };
+		if (PP.views.includes(this.view) && this.range_days().includes(start)) {
+			this.p6b_flash_pending();
+			return;
+		}
+		this.go(this.view === "week" || this.view === "crew" ? this.view : "week", start);
+	},
+
+	p6b_flash_pending() {
+		const flash = this.p6b.flash;
+		if (!flash || !this.data || !PP.views.includes(this.view)) return;
+		if (flash.date && !(this.data.start <= flash.date && flash.date <= this.data.end)) {
+			// A jump waits for its week to load; a new task drawn elsewhere is simply not flashed.
+			if (!flash.wait) this.p6b.flash = null;
+			return;
+		}
+		this.p6b.flash = null;
+		const el = Array.from(this.$body[0].querySelectorAll(".pp-card[data-task]")).find(
+			(node) => node.getAttribute("data-task") === flash.name
+		);
+		if (!el) {
+			if (flash.wait) {
+				frappe.show_alert({ message: __("{0} is hidden by the filters on screen.", [flash.name]), indicator: "orange" }, 6);
+			}
+			return;
+		}
+		el.classList.add("p6b-flash");
+		try {
+			el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+		} catch (e) {
+			el.scrollIntoView();
+		}
+		setTimeout(() => el.classList.remove("p6b-flash"), PP6B.flash_ms);
+	},
+
+	// ------------------------------------------------------------------ keyboard
+
+	// One keydown listener on the document (capture, so frappe's window handler does not also act on
+	// a key used here), added while the page shows and removed when it hides. frappe.ui.keys does not
+	// fit: its "shift+/" handler is global and would open frappe's own shortcut list next to ours.
+	p6b_bind_keys() {
+		const handler = (e) => this.p6b_key(e);
+		const on = () => {
+			if (this.p6b.keys_on) return;
+			document.addEventListener("keydown", handler, true);
+			this.p6b.keys_on = true;
+		};
+		const off = () => {
+			if (!this.p6b.keys_on) return;
+			document.removeEventListener("keydown", handler, true);
+			this.p6b.keys_on = false;
+			this.p6b_close_results();
+		};
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			// frappe triggers these on the page itself; a Bootstrap dropdown's or collapse's show/hide
+			// inside the page bubbles up as the same event name and must not switch the keys off.
+			wrapper.on("show", (e) => e.target === wrapper[0] && on()).on("hide", (e) => e.target === wrapper[0] && off());
+		}
+		on();
+	},
+
+	p6b_page_live() {
+		const route = frappe.get_route() || [];
+		if (route[0] !== PP.route) return false;
+		const wrapper = this.page && this.page.wrapper;
+		return !wrapper || typeof wrapper.is !== "function" || wrapper.is(":visible");
+	},
+
+	p6b_key(e) {
+		if (e.defaultPrevented || !this.p6b_page_live()) return;
+		const target = e.target;
+		const editable = !!(
+			target &&
+			((target.closest && target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) ||
+				target.isContentEditable)
+		);
+		const action = PP6B_PURE.shortcut({
+			key: e.key,
+			ctrl: e.ctrlKey,
+			meta: e.metaKey,
+			shift: e.shiftKey,
+			alt: e.altKey,
+			editable,
+			dialog: !!(window.cur_dialog && window.cur_dialog.display),
+		});
+		if (!action) return;
+		// A menu's own keys (arrows, Enter, Esc) are the menu's.
+		if (target && target.closest && target.closest(".pk-menu")) return;
+		if (action === "escape") {
+			// Never swallowed: the kit closes its overlay and frappe blurs as usual.
+			this.p6b_escape();
+			return;
+		}
+		if (!this.p6b_run_key(action)) return;
+		e.preventDefault();
+		e.stopPropagation();
+	},
+
+	p6b_run_key(action) {
+		// The route view and My week keep their own buttons.
+		if (!PP.views.includes(this.view) && this.view !== PP.heatmap_view) return false;
+		if (action === "today") {
+			this.go(this.view, frappe.datetime.get_today());
+			return true;
+		}
+		if (action === "prev" || action === "next") {
+			this.shift(action === "prev" ? -1 : 1);
+			return true;
+		}
+		if (action.startsWith("view")) {
+			const view = PP.views[Number(action.slice(4)) - 1];
+			if (!view) return false;
+			this.go(view, this.anchor);
+			return true;
+		}
+		if (action === "undo") {
+			this.undo();
+			return true;
+		}
+		if (action === "legend") {
+			if (!this.p6b_kit()) return false;
+			this.p6a_legend();
+			return true;
+		}
+		if (action === "search") {
+			if (!this.$p6b_search || !this.$p6b_search.is(":visible")) return false;
+			this.$p6b_search.trigger("focus").trigger("select");
+			return true;
+		}
+		return false;
+	},
+
+	p6b_escape() {
+		if (this.drag) return;
+		if (this.p6b.resize) {
+			this.p6b_resize_end(false);
+			return;
+		}
+		const kit = this.p6b_kit();
+		// An open menu or drawer closes first; the selection stays.
+		if (kit && kit.guard && typeof kit.guard.top === "function" && kit.guard.top()) return;
+		this.p6b_clear_selection();
+	},
+
+	// The legend's Keyboard and Faster scheduling sections, then any other phase's (p6_legend_providers).
+	p6b_legend_sections() {
+		const key = (text) => `<kbd class="p6b-kbd">${pp_esc(text)}</kbd>`;
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		const own = [
+			{
+				title: __("Keyboard"),
+				note: __("Not while typing in a box or with a dialog open."),
+				items: [
+					item(key("T"), "Go to today."),
+					item(key("←") + key("→"), "The previous or next week (month, or four weeks of the heatmap)."),
+					item(key("1") + key("2") + key("3"), "Week, month or crew view."),
+					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
+					item(key("/"), "Search tasks, projects and people."),
+					item(key("?"), "This help."),
+					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
+				],
+			},
+			{
+				title: __("Faster scheduling"),
+				items: [
+					item("", "Right-click a card, an empty spot or a name (on a touch screen, hold it still for a moment) for a menu: assign someone, move to the next free day, pencil, duplicate, split."),
+					item(
+						`<span class="pp-p6a-sample-card p6b-selected">${pp_esc(__("Dig"))}</span>`,
+						"Shift-click (or Ctrl- or ⌘-click) cards to select several. Drag one and they all move by the same number of calendar days."
+					),
+					item('<span class="p6b-legend-grip"></span>', "Drag a card's left or right edge to change its first or last day (week and crew views)."),
+					item("", "Double-click an empty spot to add a task for that person and day."),
+					item("", "Assign to… lists who is free that day. Nobody is picked for you."),
+				],
+			},
+		];
+		const extra = (this.p6_legend_providers || []).flatMap((provider) => {
+			try {
+				return provider() || [];
+			} catch (e) {
+				return [];
+			}
+		});
+		return own.concat(extra);
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP6B_METHODS);

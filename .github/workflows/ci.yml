@@ -886,6 +886,18 @@ jobs:
       # that the combined digest still goes once a day. Bench-free, own frappe stub, own step.
       - name: Project planner blocks, day notes and Conflict center (Phase 6D)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase6d -v
+      # Planner Phase 6B, faster scheduling (both planners): the right-click menu, resize, quick
+      # add, multi-select and search. Pins that nothing picks a person (Assign to... is a list the
+      # planner clicks), that every write goes through the page's send() so the reason prompt,
+      # draft mode and Undo apply, that duplicate/split/quick add refuse in draft mode and refuse a
+      # rental crew task, that a split refuses a task with a timesheet or clocked time, shares hours
+      # by working days and makes the second half depend on the first, all or nothing; that a
+      # multi-task move is one conflict check and one reason; that Undo of a new task deletes it
+      # only when nothing was attached, never with force; and that search is customer jobs only.
+      # Under node it runs the pages' pure helpers (offset math, shortcuts, the selection set).
+      # Own frappe stub, own step.
+      - name: Planner faster scheduling (menu, resize, quick add, multi-select, search; Phase 6B)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase6b -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

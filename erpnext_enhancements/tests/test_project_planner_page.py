@@ -82,6 +82,10 @@ API_CONTRACT = {
 	# email preview, which never sends.
 	"set_task_flags": {"task", "outdoor", "customer_visit"},
 	"preview_customer_confirmation": {"doctype", "name"},
+	# Phase 6B (tests/test_planner_phase6b.py): Assign to... lists who is free on the task's day. The
+	# Phase 6B writes live in api/planner_actions.py and have a contract of their own there
+	# (ACTIONS_CONTRACT), reached through send() and this.p6_send_modules.
+	"who_is_free": {"start", "hours"},
 }
 for _method in ("get_planner", "save_task", "add_crew", "swap_crew"):
 	API_CONTRACT[_method] = API_CONTRACT[_method] | {"draft"}
