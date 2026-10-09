@@ -36,6 +36,10 @@ re-asserted on `after_migrate` by
 because Frappe syncs standard records from every app and a plain file would be overwritten by
 whichever app imported last. From frappe 16.50 the desk draws module sidebars from `Sidebar`
 documents instead of `Workspace Sidebar`, and `workspace_tweaks.py` handles both (v1.576.1).
+Adding a link to a core sidebar works the same way, by writing ERPNext's own rows rather than a
+`Custom Sidebar` layer: a layer that names no base row is appended at the very end of the sidebar,
+and one that names any base row reorders the module. `add_core_sidebar_items` inserts the Project
+Planner and Crew Utilization into the Projects sidebar at the right `idx` (v1.583.1).
 
 ## Sidebars are also what make a desk tile visible
 
