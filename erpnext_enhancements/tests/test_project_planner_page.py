@@ -54,7 +54,44 @@ API_CONTRACT = {
 	},
 	"add_crew": {"task", "resource", "modified", "reason"},
 	"swap_crew": {"task", "from_resource", "to_resource", "modified", "date", "reason"},
+	# Phase 2: one person's driving day, and the days that suit a task by drive time.
+	"get_route": {"resource", "date"},
+	"suggest_dates": {"task"},
 }
+
+# What the route view reads from get_route (spec section B) and the per-day keys the engine adds
+# to a day cell. The page only ever reads these; a rename on the server must be a conscious one.
+ROUTE_KEYS = (
+	"stops",
+	"start",
+	"end",
+	"maps_url",
+	"maps_key",
+	"map_ids",
+	"drive_minutes",
+	"km",
+	"source",
+	"long_drive",
+	"travel",
+	"off",
+)
+STOP_KEYS = (
+	"order",
+	"kind",
+	"ref",
+	"label",
+	"project_title",
+	"address",
+	"lat",
+	"lng",
+	"slot",
+	"hours",
+	"arrive",
+	"depart",
+	"located",
+)
+DAY_KEYS = ("drive_minutes", "drive_source", "long_drive", "unlocated")
+SUGGESTION_KEYS = ("date", "resource", "label", "free_hours", "added_minutes", "long_drive", "reason")
 
 
 def _code():
@@ -126,6 +163,28 @@ class TestRouting(unittest.TestCase):
 		for view in ("month", "week", "crew"):
 			self.assertIn(f'["{view}", __(', code)
 
+	def test_the_route_shape(self):
+		# /desk/project-planner/route/<resource>/<date>: a full view, re-rendered from handle_route
+		# so Back and Forward step through it, and stepping a day is itself a route change.
+		code = _code_without_comments()
+		self.assertIn('route_view: "route"', code)
+		self.assertIn("route[1] === PP.route_view && route[2]", code)
+		self.assertIn("frappe.set_route(PP.route, PP.route_view, resource, ymd)", code)
+		self.assertRegex(code, r"step = \(sign\) =>\s*this\.go_route\(")
+		self.assertIn("this.load_route()", code)
+		# The route view is not one of the three calendar views.
+		self.assertIn('views: ["week", "month", "crew"]', code)
+		self.assertNotIn('"route"', code.split("views:")[1].split("\n")[0])
+
+	def test_the_route_view_degrades_when_the_map_cannot_load(self):
+		code = _code_without_comments()
+		self.assertIn("No location — set the task's address", code)
+		self.assertIn("Add a Google Maps API key in Travel Settings", code)
+		self.assertIn("only the list is shown", code)
+		# The list is built before the map, and a map failure only hides the map.
+		self.assertLess(code.index("const $list ="), code.index("this.draw_route_map("))
+		self.assertIn("$map.hide()", code)
+
 
 class TestApiCalls(unittest.TestCase):
 	def _called(self):
@@ -151,6 +210,24 @@ class TestApiCalls(unittest.TestCase):
 			params = {a.arg for a in functions[method].args.args + functions[method].args.kwonlyargs}
 			self.assertTrue(args <= params, f"{method} lacks {sorted(args - params)}")
 
+	def test_the_api_returns_the_keys_the_page_reads(self):
+		if not API.exists() or "def get_route" not in API.read_text(encoding="utf-8"):
+			self.skipTest("api/project_planner.py has no get_route yet")
+		source = API.read_text(encoding="utf-8")
+		engine = (APP / "project_enhancements" / "crew_availability.py").read_text(encoding="utf-8")
+
+		def built(text, key):
+			# A key is built as a dict literal ("key": ...) or as a keyword (key=...).
+			return f'"{key}"' in text or re.search(rf"\b{key}\s*=", text) is not None
+
+		for key in ROUTE_KEYS + STOP_KEYS + SUGGESTION_KEYS + ("suggestions", "note"):
+			self.assertTrue(built(source, key), key)
+		for key in DAY_KEYS:
+			self.assertTrue(built(engine, key), key)
+		code = _code()
+		for key in ROUTE_KEYS + DAY_KEYS + SUGGESTION_KEYS:
+			self.assertRegex(code, rf"\b{key}\b", key)
+
 	def test_nothing_is_sent_as_a_get(self):
 		code = _code_without_comments()
 		self.assertNotRegex(code, r"type:\s*[\"']GET[\"']")
@@ -160,6 +237,63 @@ class TestApiCalls(unittest.TestCase):
 		code = _code()
 		for key in ("crew", "credentials"):
 			self.assertRegex(code, rf"{key}: JSON\.stringify\(")
+
+
+class TestMapsAndSuggestions(unittest.TestCase):
+	def test_the_only_maps_loader_is_the_shared_one(self):
+		code = _code_without_comments()
+		self.assertIn("window.EEGoogleMaps.load(", code)
+		self.assertIn("window.EEGoogleMaps.mapOptions(", code)
+		self.assertIn('libraries: ["maps"]', code)
+		# No second script tag, no hand-built Maps URL, no second bootstrap.
+		for forbidden in ("<script", 'createElement("script")', "createElement('script')", "maps.googleapis.com", "importLibrary"):
+			self.assertNotIn(forbidden, code)
+		# The theme is read once per render, from the page itself.
+		self.assertIn("document.documentElement.dataset.theme", code)
+
+	def test_open_in_google_maps_is_a_new_tab_without_an_opener(self):
+		code = _code_without_comments()
+		self.assertIn('window.open(maps_url, "_blank", "noopener")', code)
+		# Only a Google Maps URL is ever opened, whatever the server sent.
+		self.assertIn(r"/^https:\/\/www\.google\.com\/maps\//.test(maps_url)", code)
+
+	def test_markers_and_the_info_window_use_text_not_html(self):
+		code = _code_without_comments()
+		self.assertIn("textContent", code)
+		self.assertNotRegex(code, r"info\.setContent\(`")
+		self.assertNotRegex(code, r"setContent\(\w*html")
+
+	def test_the_route_list_escapes_what_people_typed(self):
+		code = _code()
+		for field in ("stop.label", "stop.address", "stop.order", "stop.ref", "data.start.address", "when"):
+			self.assertIn(f"pp_esc({field}", code)
+		for field in ("stop.project_title", "data.travel", "data.off"):
+			self.assertIn(field, code)
+		# The person's name in the header, and the notices (a travel purpose, an off label), are
+		# free text: they reach the page through .text(), not through markup.
+		self.assertRegex(code, r"pp-route-title[^\n]*\n\s*\.text\(")
+		self.assertRegex(code, r"pp-route-note\"></div>'\)\s*\.text\(text\)")
+
+	def test_drive_bookings_are_hours_not_cards(self):
+		code = _code_without_comments()
+		self.assertIn('booking.kind === "drive"', code)
+		# The cell offers the route; the drive line and a Long drive chip come from the day cell.
+		self.assertIn("drive_html(", code)
+		self.assertIn("Long drive", code)
+		self.assertIn("data-route-resource", code)
+
+	def test_suggest_dates_books_through_the_same_save_path_as_a_drag(self):
+		code = _code_without_comments()
+		self.assertIn("${PP.api}.suggest_dates", code)
+		self.assertIn("${PP.api}.get_route", code)
+		# Book is a commit() of save_task, so a conflict asks for a reason exactly as a drop does.
+		self.assertRegex(code, r'(?s)book_suggestion\(card, item\) \{.*?this\.commit\(\s*card,\s*"save_task"')
+		# The person joins the crew in the same call (as a tray card dropped on a row does), so a
+		# conflict asks for a reason once.
+		self.assertIn("this.crew_has(card, item.resource)", code)
+		# On a tray card and in the task dialog.
+		self.assertIn('class="btn btn-default btn-xs pp-suggest"', code)
+		self.assertIn('links.push(["suggest", __("Suggest dates")])', code)
 
 
 class TestDragging(unittest.TestCase):

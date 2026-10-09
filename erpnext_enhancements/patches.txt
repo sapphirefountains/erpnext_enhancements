@@ -1278,3 +1278,7 @@ erpnext_enhancements.patches.seed_maintenance_reviewer_role
 # employee, so the planner opens with people on it. Insert-only, keyed on employee, no work-pattern rows
 # (Austin's Mon-Wed week is entered by hand). Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_planner_resources
+# v1.578.0 Project Planner Routes: the Routes section added four fields to Project Planner Settings, a Single saved
+# since v1.577.0. A default never reaches a row that already exists, so fill each only where no tabSingles row
+# exists; a never-saved Single is left alone. Insert-only, cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_project_planner_route_settings

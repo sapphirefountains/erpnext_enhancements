@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:pair_key",
+ "creation": "2026-10-09 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "pair_key",
+  "origin_lat",
+  "origin_lng",
+  "dest_lat",
+  "dest_lng",
+  "minutes",
+  "km",
+  "source",
+  "fetched_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "pair_key",
+   "fieldtype": "Data",
+   "label": "Pair",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "origin_lat",
+   "fieldtype": "Float",
+   "label": "Origin latitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "origin_lng",
+   "fieldtype": "Float",
+   "label": "Origin longitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dest_lat",
+   "fieldtype": "Float",
+   "label": "Destination latitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dest_lng",
+   "fieldtype": "Float",
+   "label": "Destination longitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "minutes",
+   "fieldtype": "Float",
+   "label": "Drive minutes",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "km",
+   "fieldtype": "Float",
+   "label": "Kilometers",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "default": "Google",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Google",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fetched_on",
+   "fieldtype": "Datetime",
+   "label": "Fetched on",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-09 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Drive Time",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

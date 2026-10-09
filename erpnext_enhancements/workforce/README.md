@@ -30,7 +30,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `tracking_health.py` | **Frappe-free** trail scoring: coverage, gaps, stops, distance, dwell |
 | `overtime.py` | **Frappe-free** weekly regular / overtime split |
 | `costing.py` | Pay rate → interval cost → Activity Cost |
-| `sites.py` | Where a project's site is; Google geocoding of project addresses |
+| `sites.py` | Where a project's site is; Google geocoding of project addresses. `geocode_text` (v1.578.0) is the app's one server-side geocoder, also used by the Project Planner's routing: it never raises or logs, and reports a failure only as Google's status or an exception class name, because a `requests` error contains the request URL and the key with it |
 | `corrections.py` | Reviewing a Time Correction Request: apply, re-sync, email |
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |

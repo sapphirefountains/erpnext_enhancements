@@ -24,6 +24,15 @@ Moving a projected visit into the drafting window drafts it right away, on the
 day it was dropped. Otherwise a visit dragged onto today would only be drafted
 by tomorrow's run, which clamps an overdue date forward to tomorrow.
 
+**Overbooking warns and never blocks**, exactly as on the Project Planner. A move
+that would leave a technician over their hours, on a day off or double-booked
+returns ``needs_reason`` with the conflicts and saves nothing; sent again with a
+``reason`` it saves, and the reason goes on the visit's (or, for a projected
+visit, the contract's) timeline. Only conflicts the move *creates* count: the
+target day is checked with and without this visit, using the shared availability
+engine (``project_enhancements.crew_availability``), so a day that was already
+over does not ask again for a visit that changes nothing about it.
+
 The pure pieces (series, site names, which feature rows a move touches) take
 plain values so ``tests/test_maintenance_planner.py`` runs them without a bench.
 """
@@ -309,7 +318,7 @@ def get_planner(start, end):
 		card["movable"] = card["movable"] and can_move_projected
 
 	_decorate(visits + unscheduled + projected)
-	technicians = _technicians(visits + unscheduled + projected)
+	view = _project_view(_technicians(visits + unscheduled + projected), start, end)
 	return {
 		"start": str(start),
 		"end": str(end),
@@ -317,72 +326,137 @@ def get_planner(start, end):
 		"visits": visits,
 		"unscheduled": unscheduled,
 		"projected": projected,
-		"technicians": technicians,
-		"bookings": _project_bookings(technicians, start, end),
+		"technicians": view["technicians"],
+		"bookings": view["bookings"],
 		"can_move_visits": can_move_visits,
 		"can_move_projected": can_move_projected,
 	}
 
 
-# Booking kinds the Maintenance Planner shows read-only. Visits are its own cards.
+# Booking kinds the Maintenance Planner shows read-only. Visits are its own cards; the engine's
+# "drive" padding is not a card either, it only shows as the day's drive time.
 FOREIGN_BOOKING_KINDS = ("task", "rental", "travel")
+
+# The Planner Resource group whose people help with visits (Korben, Jesse and Daniel are Field
+# techs on a project team). They are offered as technicians so a visit can be handed to them.
+HELPER_GROUP = "Field"
+
+# Day-cell keys the engine adds for the Project Planner's routes. Passed through when present, so
+# this page needs no change when they are absent (an older engine) and none when they arrive.
+DRIVE_KEYS = ("drive_minutes", "drive_source", "long_drive", "unlocated")
 
 
 def _project_bookings(technicians, start, end):
 	"""Each technician's free hours and non-visit bookings, from the shared availability engine.
 
-	``{user: {"YYYY-MM-DD": {"capacity", "booked", "free", "off", "conflicts", "items"}}}``
+	``{user: {"YYYY-MM-DD": {"capacity", "booked", "free", "off", "conflicts", "warnings", "items"}}}``
 	where ``items`` are the project tasks, rental crew tasks and travel days that use the
-	technician's hours (``{kind, ref, label, project, hours, slot}``). Maintenance and
-	Projects share technicians, and a technician's free hours must read the same in both
-	planners, so the numbers come from ``project_enhancements.crew_availability`` and are
-	never computed here.
+	technician's hours (``{kind, ref, label, project, hours, slot}``). A cell also carries
+	``drive_minutes``, ``drive_source``, ``long_drive`` and ``unlocated`` whenever the engine
+	provides them. Maintenance and Projects share technicians, and a technician's free hours must
+	read the same in both planners, so the numbers come from
+	``project_enhancements.crew_availability`` and are never computed here.
 
 	A technician with no active Planner Resource is simply absent: the planner then shows no
 	free hours for them rather than a wrong number. A failure in the engine returns ``{}``
 	(logged), because a bug on the project side must never blank the maintenance calendar.
 	The engine is imported lazily: it imports this module back for the visit projections.
 	"""
-	users = [t["user"] for t in technicians or [] if t.get("user")]
+	return _project_view(technicians, start, end)["bookings"]
+
+
+def _project_view(technicians, start, end):
+	"""``{"technicians", "bookings"}``: :func:`_project_bookings` plus the people it was worked out for.
+
+	The technicians come back with the Planner Resource they map to (``resource``, ``group``,
+	``color``; None when they have none), and active Field resources that have a user and are not
+	technicians yet are appended (``helper: True``): people on a project team who help with visits.
+	Both come from the one engine call that provides the bookings.
+	"""
+	people = [dict(t, resource=None, group=None, color=None) for t in technicians or []]
+	users = [t["user"] for t in people if t.get("user")]
 	if not users:
-		return {}
+		return {"technicians": people, "bookings": {}}
 	try:
 		from erpnext_enhancements.project_enhancements.crew_availability import availability
 
 		data = availability(start, end)
 		user_to_resource = data.get("user_to_resource") or {}
+		resources = {r.get("name"): r for r in data.get("resources") or []}
+		for person in people:
+			resource = resources.get(user_to_resource.get(person.get("user"))) or {}
+			person.update(
+				resource=resource.get("name"), group=resource.get("group"), color=resource.get("color")
+			)
+		known = {p["user"] for p in people}
+		helpers = sorted(
+			(
+				r
+				for r in resources.values()
+				if r.get("group") == HELPER_GROUP and r.get("user") and r["user"] not in known
+			),
+			key=lambda r: str(r.get("label") or r.get("name")).lower(),
+		)
+		for resource in helpers:
+			people.append(
+				{
+					"user": resource["user"],
+					"name": resource.get("label") or resource["user"],
+					"enabled": True,
+					"resource": resource.get("name"),
+					"group": resource.get("group"),
+					"color": resource.get("color"),
+					"helper": True,
+				}
+			)
 		out = {}
-		for user in users:
+		for person in people:
+			user = person["user"]
 			resource = user_to_resource.get(user)
 			per_day = (data.get("days") or {}).get(resource) if resource else None
 			if not per_day:
 				continue
-			out[user] = {
-				day: {
-					"capacity": cell.get("capacity"),
-					"booked": cell.get("booked"),
-					"free": cell.get("free"),
-					"off": cell.get("off"),
-					"conflicts": list(cell.get("conflicts") or []),
-					"items": [
-						{
-							"kind": b.get("kind"),
-							"ref": b.get("ref"),
-							"label": b.get("label"),
-							"project": b.get("project"),
-							"hours": b.get("hours"),
-							"slot": b.get("slot"),
-						}
-						for b in cell.get("bookings") or []
-						if b.get("kind") in FOREIGN_BOOKING_KINDS
-					],
-				}
-				for day, cell in per_day.items()
-			}
-		return out
+			out[user] = {day: _booking_cell(cell) for day, cell in per_day.items()}
+		return {"technicians": people, "bookings": out}
 	except Exception:
-		frappe.log_error(title="Maintenance Planner: project bookings failed", message=frappe.get_traceback())
-		return {}
+		_log_failure("Maintenance Planner: project bookings failed")
+		return {"technicians": people, "bookings": {}}
+
+
+def _booking_cell(cell):
+	"""One engine day cell, as the planner page reads it."""
+	out = {
+		"capacity": cell.get("capacity"),
+		"booked": cell.get("booked"),
+		"free": cell.get("free"),
+		"off": cell.get("off"),
+		"conflicts": list(cell.get("conflicts") or []),
+		"warnings": list(cell.get("warnings") or []),
+		"items": [
+			{
+				"kind": b.get("kind"),
+				"ref": b.get("ref"),
+				"label": b.get("label"),
+				"project": b.get("project"),
+				"hours": b.get("hours"),
+				"slot": b.get("slot"),
+			}
+			for b in cell.get("bookings") or []
+			if b.get("kind") in FOREIGN_BOOKING_KINDS
+		],
+	}
+	for key in DRIVE_KEYS:
+		if key in cell:
+			out[key] = cell[key]
+	return out
+
+
+def _log_failure(title):
+	"""Log the current exception without ever raising: a logging problem must not break a planner."""
+	try:
+		frappe.log_error(title=title, message=frappe.get_traceback())
+	except Exception:
+		pass
 
 
 def _records_between(start, end):
@@ -573,13 +647,19 @@ def _technicians(cards):
 
 
 @frappe.whitelist()
-def move_visit(record, date=None, technician=None, modified=None):
+def move_visit(record, date=None, technician=None, modified=None, reason=None):
 	"""Reschedule an open draft visit and/or hand it to another technician.
 
 	Saved through the record under the caller's permissions, so the workflow
 	and both validate warnings run (time off, training). Their messages come
 	back as ``warnings`` for the planner to show beside the card, rather than
 	as a dialog after every drag.
+
+	Overbooking never blocks. When the move would leave the technician over their
+	hours, on a day off or double-booked on that day (and the day was not already
+	so), nothing is saved and the answer is ``{"needs_reason": True, "conflicts":
+	{technician: ["YYYY-MM-DD: Over by 2h"]}}``. Sent again with a ``reason`` it
+	saves and the reason goes on the visit's timeline.
 	"""
 	_require_planner()
 	doc = frappe.get_doc("Sapphire Maintenance Record", record)
@@ -596,6 +676,7 @@ def move_visit(record, date=None, technician=None, modified=None):
 		)
 
 	changed = False
+	date_changed = False
 	if date:
 		target = getdate(date)
 		if doc.get("visit_date"):
@@ -608,7 +689,7 @@ def move_visit(record, date=None, technician=None, modified=None):
 			frappe.throw(_("Pick today or a later day."))
 		if not doc.scheduled_visit_date or getdate(doc.scheduled_visit_date) != target:
 			doc.scheduled_visit_date = target
-			changed = True
+			changed = date_changed = True
 
 	prior = None
 	if technician is not None and (technician or None) != (doc.technician or None):
@@ -617,6 +698,18 @@ def move_visit(record, date=None, technician=None, modified=None):
 		prior = doc.technician or ""
 		doc.technician = technician or None
 		changed = True
+
+	conflicts = {}
+	if changed and (date_changed or prior is not None) and doc.technician and doc.scheduled_visit_date:
+		conflicts = visit_conflicts(
+			doc.technician,
+			doc.scheduled_visit_date,
+			ref=doc.name,
+			label=doc.name,
+		)
+		reason = (reason or "").strip()
+		if conflicts and not reason:
+			return {"needs_reason": True, "conflicts": conflicts}
 
 	warnings = []
 	if changed:
@@ -630,14 +723,19 @@ def move_visit(record, date=None, technician=None, modified=None):
 			del log[before:]
 		if prior is not None:
 			_move_assignment(doc, prior)
+		if conflicts and reason:
+			_comment_conflict(doc, conflicts, reason)
 
-	return {
+	result = {
 		"name": doc.name,
 		"date": str(doc.scheduled_visit_date) if doc.scheduled_visit_date else None,
 		"technician": doc.technician,
 		"modified": str(doc.modified),
 		"warnings": [w for w in warnings if w],
 	}
+	if conflicts:
+		result["conflicts"] = conflicts
+	return result
 
 
 def _message_text(message):
@@ -650,6 +748,86 @@ def _message_text(message):
 			return strip_html_tags(message)
 	text = message.get("message") if isinstance(message, dict) else message
 	return strip_html_tags(str(text or "")).strip()
+
+
+# ---------------------------------------------------------------------- conflicts
+
+
+def conflict_summary(conflicts):
+	"""``{"Austin": ["2026-10-12: Over by 2h"]}`` as one sentence for a timeline comment."""
+	return "; ".join(f"{label}: {', '.join(messages)}" for label, messages in (conflicts or {}).items())
+
+
+def new_visit_conflicts(day_conflicts, cell, ref, hours, label=None):
+	"""The conflicts that adding one visit to a technician's day creates.
+
+	``cell`` is the engine's day cell (``capacity``, ``off``, ``bookings``); ``day_conflicts`` is
+	``crew_availability.day_conflicts``. The day is judged twice, without this visit and with it,
+	and only the sentences the second has and the first lacks are returned, so a day that was
+	already over (or already booked on a day off) does not ask again for a visit that changes
+	nothing about it. A visit already on the day (same ``ref``) is taken out of both sides first.
+	"""
+	capacity, off = cell.get("capacity"), cell.get("off")
+	others = [b for b in cell.get("bookings") or [] if not (b.get("kind") == "visit" and b.get("ref") == ref)]
+	visit = {
+		"kind": "visit",
+		"ref": ref,
+		"label": label,
+		"project": None,
+		"hours": hours,
+		"slot": None,
+		"estimated": True,
+	}
+	known = set(day_conflicts(capacity, off, others))
+	return [text for text in day_conflicts(capacity, off, [*others, visit]) if text not in known]
+
+
+def visit_conflicts(user, day, ref, label=None, hours=None):
+	"""``{technician: ["YYYY-MM-DD: ..."]}`` for putting one visit on ``user``'s ``day``; {} when clear.
+
+	Worked out by the shared availability engine for just that technician's Planner Resource.
+	A technician with no resource has no hours to overbook, and an engine failure must never
+	stop a move (it is logged and the move goes ahead): both answer {}.
+	"""
+	try:
+		from erpnext_enhancements.project_enhancements.crew_availability import (
+			availability,
+			day_conflicts,
+			get_settings,
+		)
+
+		resource = frappe.get_all(
+			"Planner Resource",
+			filters={"user": user, "is_active": 1},
+			fields=["name", "resource_name"],
+			limit_page_length=1,
+		)
+		if not resource:
+			return {}
+		name, label_of = resource[0].get("name"), resource[0].get("resource_name")
+		data = availability(day, day, [name])
+		cell = ((data.get("days") or {}).get(name) or {}).get(str(getdate(day)))
+		if not cell:
+			return {}
+		if hours is None:
+			hours = get_settings().get("maintenance_visit_hours")
+			hours = 2.0 if hours is None else hours
+		new = new_visit_conflicts(day_conflicts, cell, ref, hours, label)
+		if not new:
+			return {}
+		return {label_of or user: [f"{getdate(day)}: {text}" for text in new]}
+	except Exception:
+		_log_failure("Maintenance Planner: conflict check failed")
+		return {}
+
+
+def _comment_conflict(doc, conflicts, reason):
+	doc.add_comment(
+		"Comment",
+		_("Scheduled over a conflict on the Maintenance Planner: {0}. Reason: {1}").format(
+			frappe.utils.escape_html(conflict_summary(conflicts)), frappe.utils.escape_html(reason)
+		),
+	)
 
 
 def _move_assignment(doc, prior):
@@ -676,15 +854,23 @@ def _move_assignment(doc, prior):
 
 
 @frappe.whitelist()
-def move_projected(contract, from_date, to_date, serial_no=None):
+def move_projected(contract, from_date, to_date, serial_no=None, reason=None):
 	"""Move a contract's next (not yet drafted) visit to another day.
 
 	Rewrites ``next_visit_date`` on the feature rows :func:`rows_to_move` picks,
 	leaves a note on the contract's timeline, and drafts the visit at once when
 	the new day is inside the scheduler's drafting window.
 
+	The visit stays with the contract's default technician (the Maintenance
+	Profile's), so only its day moves. Like :func:`move_visit` it never blocks on
+	overbooking: a day that would leave that technician over their hours, on a day
+	off or double-booked answers ``{"needs_reason": True, "conflicts": {...}}``
+	before anything is written, and with a ``reason`` it moves and the reason goes
+	on the contract's timeline.
+
 	Returns:
-		dict: ``{"moved": rows rewritten, "drafted": the new record or None}``.
+		dict: ``{"moved": rows rewritten, "drafted": the new record or None}``, plus
+		``"conflicts"`` when the move was made over some.
 	"""
 	_require_planner()
 	from erpnext_enhancements.tasks import MAINTENANCE_DRAFT_HORIZON_DAYS
@@ -707,6 +893,11 @@ def move_projected(contract, from_date, to_date, serial_no=None):
 	if source == target:
 		return {"moved": 0, "drafted": None}
 
+	conflicts = _projected_conflicts(doc, serial_no, target)
+	reason = (reason or "").strip()
+	if conflicts and not reason:
+		return {"needs_reason": True, "conflicts": conflicts}
+
 	for row in rows:
 		frappe.db.set_value("Sapphire Contract Feature", row.name, "next_visit_date", target)
 		row.next_visit_date = target
@@ -719,6 +910,9 @@ def move_projected(contract, from_date, to_date, serial_no=None):
 			formatdate(target),
 		),
 	)
+
+	if conflicts:
+		_comment_conflict(doc, conflicts, reason)
 
 	drafted = None
 	if target <= getdate(add_days(today, MAINTENANCE_DRAFT_HORIZON_DAYS)) and _scheduler_would_draft(
@@ -733,7 +927,26 @@ def move_projected(contract, from_date, to_date, serial_no=None):
 			exact_date=True,
 		)
 		drafted = record.name
-	return {"moved": len(rows), "drafted": drafted}
+	result = {"moved": len(rows), "drafted": drafted}
+	if conflicts:
+		result["conflicts"] = conflicts
+	return result
+
+
+def _projected_conflicts(contract, serial_no, target):
+	"""Conflicts for the projected visit of ``contract`` landing on ``target``, for its default technician."""
+	try:
+		from erpnext_enhancements.api.maintenance_dispatch import default_technician_for
+
+		technician = default_technician_for(contract.get("project"))
+	except Exception:
+		_log_failure("Maintenance Planner: default technician lookup failed")
+		return {}
+	if not technician:
+		return {}
+	return visit_conflicts(
+		technician, target, ref=f"{contract.name}|{serial_no or ''}|{target}", label=contract.name
+	)
 
 
 def _open_regular_draft_exists(contract, serial_no):

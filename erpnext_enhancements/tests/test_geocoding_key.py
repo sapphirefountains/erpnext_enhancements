@@ -147,6 +147,34 @@ class TestSitesUsesIt(unittest.TestCase):
         self.assertIn("return None", body)
 
 
+class TestTheKeyNeverReachesTheErrorLog(unittest.TestCase):
+    """A ``requests`` connection error spells out the request URL, ``key=`` included, and a
+    ``log_error`` with no message records the traceback (with every frame's locals in developer
+    mode). ``geocode_project`` used to do exactly that around the Google call, and from v1.578.0
+    the Project Planner's daily geocoding job runs it every day."""
+
+    def test_geocode_text_reports_an_exception_by_class_name_only(self):
+        body = _segment(_function("geocode_text"))
+        self.assertIn("except Exception as exc:", body)
+        self.assertIn("return None, type(exc).__name__", body)
+        self.assertNotIn("str(exc)", body)
+        self.assertNotIn("log_error", body)
+        self.assertNotIn("get_traceback", body)
+
+    def test_the_project_geocoder_goes_through_it(self):
+        body = _segment(_function("_geocode_project"))
+        self.assertIn("geocode_text(", body)
+        self.assertNotIn("requests", body)
+
+    def test_every_log_error_around_geocoding_passes_a_message(self):
+        for name in ("geocode_project", "_geocode_project"):
+            node = _function(name)
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and getattr(call.func, "attr", None) == "log_error":
+                    with self.subTest(function=name):
+                        self.assertIn("message", {k.arg for k in call.keywords})
+
+
 class TestOnlyOneServerSideCaller(unittest.TestCase):
     def test_no_other_python_calls_a_google_web_service(self):
         """Every other key read in Python hands the key to a BROWSER, where a referrer

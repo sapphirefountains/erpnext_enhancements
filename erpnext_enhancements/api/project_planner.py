@@ -14,6 +14,12 @@ free (Nik, 2026-10-08).
   only gives ``start`` keeps the task's length. :func:`add_crew` (a person dropped on a card)
   and :func:`swap_crew` (a chip dropped on another person's row) build a crew and hand it to the
   same path.
+* **Routes (Phase 2).** :func:`get_route` is one person's day as a drive: shop → stops in the
+  order ``project_enhancements.routing`` picks → shop, with arrival times, drive minutes, a
+  Google Maps link and what could not be located. :func:`suggest_dates` ranks the next days (and
+  people) for a task by how much driving it would add to each person-day's route, so a task goes
+  to whoever is already nearby. :func:`check_routes` asks Google whether the Routes API answers
+  for this site's server key, for confirming a Cloud console change without reading a key.
 
 Things this module is careful about, some of which look like bugs:
 
@@ -48,6 +54,7 @@ from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
+from erpnext_enhancements.project_enhancements import routing
 
 # The people who schedule work: projects staff, and maintenance staff who must see project
 # bookings on their technicians. The task reads below are raw SQL, so this set is the gate.
@@ -63,6 +70,17 @@ PLANNER_ROLES = {
 MAX_RANGE_DAYS = 100
 UNSCHEDULED_LIMIT = 300
 ACTIVE_PROJECT = "Active"
+
+# Who may ask Google whether Routes works (a billable call, and a question about the site's setup).
+ROUTE_CHECK_ROLES = {"System Manager", "Projects Manager"}
+# Route-aware date suggestions: how far ahead they look, and how many come back.
+SUGGEST_MAX_DAYS = 30
+SUGGEST_DEFAULT_DAYS = 10
+SUGGEST_LIMIT = 8
+NO_LOCATION_NOTE = (
+	"This task has no location, so drive time is not considered. "
+	"Set its address to get route-aware suggestions."
+)
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -696,3 +714,475 @@ def swap_crew(task, from_resource, to_resource, modified, date=None, reason=None
 		else:
 			crew[place] = dict(crew[place], resource=to_resource, label=None)
 	return _apply(doc, start=given(date), crew=crew, reason=reason)
+
+
+# ---------------------------------------------------------------------- routes: pure helpers
+
+
+def fmt_km(km):
+	"""``4.0`` → ``"4"``, ``3.46`` → ``"3.5"``, ``12.7`` → ``"13"``: a driver's precision."""
+	km = flt(km)
+	if km >= 10:
+		return str(int(round(km)))
+	return engine.fmt_hours(round(km, 1))
+
+
+def fmt_minutes(minutes):
+	return str(int(round(flt(minutes))))
+
+
+def first_name(label):
+	label = (label or "").strip()
+	return label.split()[0] if label else label
+
+
+def place_label(stop, titles):
+	"""What a driver calls a stop's place: a visit's site name, else the project's title, else the
+	booking's own label."""
+	title = (titles or {}).get(stop.get("project")) if stop.get("project") else None
+	if stop.get("kind") == "visit":
+		from erpnext_enhancements.api.maintenance_planner import short_site_name
+
+		return short_site_name(title) if title else (stop.get("label") or "")
+	return title or stop.get("label") or stop.get("ref") or ""
+
+
+def stop_label(stop, titles):
+	"""A route stop's label: a visit is its site name (Phase 2 spec); a task its subject."""
+	if stop.get("kind") == "visit":
+		return place_label(stop, titles)
+	return stop.get("label") or stop.get("ref") or ""
+
+
+def hours_per_day(task, crew_count, settings, first_day):
+	"""Hours one person needs on one day of the task, or None for "a full day" (no estimate).
+
+	A time slot is its length. Otherwise the estimate is shared by the people on it (its crew, or
+	``custom_crew_size`` when that is larger) over its weekdays: the task's own span when it is
+	dated, else the span its estimate would get (``engine.span_for_estimate``).
+	"""
+	slot = engine.task_slot(task)
+	if slot:
+		return round((slot[1] - slot[0]).total_seconds() / 3600, 2)
+	expected = flt(task.get("expected_time"))
+	if expected <= 0:
+		return None
+	people = max(cint(crew_count), cint(task.get("custom_crew_size")), 1)
+	span = engine.task_span(task) or engine.span_for_estimate(
+		first_day, expected, people, settings.get("default_day_hours") or 8.0
+	)
+	days = engine.daterange(*span)
+	working = [day for day in days if day.weekday() < 5] or days
+	return round(expected / people / max(len(working), 1), 2)
+
+
+def merge_unlocated(ordered, unlocated, arrivals):
+	"""Put the stops with no location where they most likely happen in the day.
+
+	``ordered`` are the routed stops and ``arrivals`` their arrival minutes. A slotted unlocated
+	stop goes before the first routed stop that arrives after its slot starts; the rest go at the
+	end of the day, by ref. They are never driven to (``routing.route_times`` skips them).
+	"""
+	out = list(ordered)
+	times = list(arrivals)
+	for stop in sorted(
+		(s for s in unlocated if s.get("slot")), key=lambda s: (str(s["slot"][0]), str(s.get("ref") or ""))
+	):
+		start = routing.parse_minutes(stop["slot"][0])
+		position = next((i for i, t in enumerate(times) if t > start), len(out))
+		out.insert(position, stop)
+		times.insert(position, start)
+	out.extend(sorted((s for s in unlocated if not s.get("slot")), key=lambda s: str(s.get("ref") or "")))
+	return out
+
+
+def _long_limit(settings):
+	value = (settings or {}).get("long_drive_minutes")
+	return flt(value if value is not None else engine.DEFAULT_SETTINGS["long_drive_minutes"])
+
+
+def route_payload(person, day, cell, route, settings, details, titles, maps, shop_address):
+	"""The :func:`get_route` answer from the engine's cell and route for one person-day."""
+	bookings = cell.get("bookings") or []
+	travel = next((b.get("label") for b in bookings if b.get("kind") == "travel"), None)
+	shop = route["shop"] if route else None
+	legs = {(entry["from"], entry["to"]): entry for entry in (route or {}).get("legs") or []}
+
+	def leg_of(a, b):
+		return legs.get((a, b)) or routing.leg({}, a, b)
+
+	def between(a, b):
+		found = leg_of(a, b)
+		return found["minutes"] if found else 0.0
+
+	def hours_of(stop):
+		return stop.get("hours")
+
+	day_start = settings.get("day_start_time") or routing.DEFAULT_DAY_START
+	if route:
+		located = list(route["stops"])
+		first_pass = routing.route_times(day_start, located, between, hours_of, start=shop, end=shop)
+		arrivals = [routing.parse_minutes(t["arrive"]) for t in first_pass["stops"]]
+		ordered = merge_unlocated(located, route["unlocated"], arrivals)
+		times = routing.route_times(day_start, ordered, between, hours_of, start=shop, end=shop)
+	else:
+		# A travel day (or a day with nothing to drive to): the stops are listed, not routed.
+		ordered = sorted(
+			(
+				{
+					"ref": b.get("ref"),
+					"kind": b.get("kind"),
+					"label": b.get("label"),
+					"project": b.get("project"),
+					"slot": b.get("slot"),
+					"hours": flt(b.get("hours")),
+					"point": None,
+				}
+				for b in bookings
+				if b.get("kind") in routing.STOP_KINDS
+			),
+			key=lambda s: (str((s.get("slot") or ["99:99"])[0]), str(s.get("ref") or "")),
+		)
+		times = None
+
+	stops = []
+	for index, stop in enumerate(ordered):
+		detail = (details or {}).get(stop.get("ref")) or {}
+		point = stop.get("point") if route else None
+		timing = times["stops"][index] if times else {}
+		origin = timing.get("from_point")
+		driven = leg_of(origin, point) if (origin is not None and point is not None) else None
+		stops.append(
+			{
+				"order": index + 1,
+				"kind": stop.get("kind"),
+				"ref": stop.get("ref"),
+				"label": stop_label(stop, titles),
+				"project": stop.get("project"),
+				"project_title": (titles or {}).get(stop.get("project")) if stop.get("project") else None,
+				"address": detail.get("address"),
+				"lat": point[0] if point else None,
+				"lng": point[1] if point else None,
+				"slot": stop.get("slot"),
+				"hours": flt(stop.get("hours")),
+				"arrive": timing.get("arrive"),
+				"depart": timing.get("depart"),
+				"drive_minutes": timing.get("drive_minutes"),
+				"wait_minutes": timing.get("wait_minutes"),
+				"km": round(flt(driven["km"]), 1) if driven else None,
+				"located": point is not None,
+			}
+		)
+
+	def shop_end(extra=None):
+		if shop is None:
+			return None
+		return {"label": _("Shop"), "address": shop_address, "lat": shop[0], "lng": shop[1], **(extra or {})}
+
+	back = None
+	if route and route["points"] and shop is not None:
+		back = leg_of(route["points"][-2], shop) if len(route["points"]) > 1 else None
+	located_points = [s["point"] for s in (route or {}).get("stops") or []]
+	drive = flt((route or {}).get("drive_minutes"))
+	return {
+		"resource": person.get("name"),
+		"label": person.get("label"),
+		"date": str(day),
+		"day_start": routing.fmt_clock(routing.parse_minutes(day_start)),
+		"start": shop_end(),
+		"end": shop_end(
+			{
+				"arrive": times["finish"] if times and located_points else None,
+				"drive_minutes": times["back_minutes"] if times and located_points else None,
+				"km": round(flt(back["km"]), 1) if back else None,
+			}
+		),
+		"stops": stops,
+		"drive_minutes": drive,
+		"km": flt((route or {}).get("km")),
+		"source": (route or {}).get("source") if drive > 0 else None,
+		"long_drive": bool(route and drive > _long_limit(settings)),
+		"unlocated": [
+			{"kind": s.get("kind"), "ref": s.get("ref"), "label": stop_label(s, titles)}
+			for s in (route or {}).get("unlocated") or []
+		],
+		"maps_url": routing.maps_url(shop, shop, located_points) if located_points else None,
+		"maps_key": (maps or {}).get("maps_key") or "",
+		"map_ids": (maps or {}).get("map_ids") or {"map_id_light": "", "map_id_dark": ""},
+		"travel": travel,
+		"off": cell.get("off"),
+	}
+
+
+def suggestion(person, day, cell, route, site, shop, matrix, needed, settings, titles):
+	"""One candidate day for a task, scored by the driving it adds, or None when it does not fit.
+
+	A day fits when the person has capacity, is not travelling, and has at least ``needed`` free
+	hours (their whole capacity when the task has no estimate). Score = minutes the task adds to
+	the day's route at its cheapest insertion (an empty day: shop → site → shop) + 0.5 × hours
+	over capacity once that driving is counted (0 when it fits). Lower is better.
+	"""
+	capacity, free = flt(cell.get("capacity")), flt(cell.get("free"))
+	if capacity <= 0 or any(b.get("kind") == "travel" for b in cell.get("bookings") or []):
+		return None
+	need = needed if needed is not None else capacity
+	if free + engine.TOLERANCE < need:
+		return None
+	name = first_name(person.get("label")) or person.get("name")
+	base = {
+		"date": str(day),
+		"resource": person.get("name"),
+		"label": person.get("label"),
+		"free_hours": round(free, 2),
+	}
+	if site is None:
+		return dict(
+			base,
+			added_minutes=None,
+			source=None,
+			nearby=[],
+			long_drive=bool(cell.get("long_drive")),
+			score=0.0,
+			reason=_("{0} has {1}h free.").format(name, engine.fmt_hours(free)),
+		)
+
+	def between(a, b):
+		found = routing.leg(matrix, a, b)
+		return found["minutes"] if found else 0.0
+
+	stops = (route or {}).get("stops") or []
+	points = list((route or {}).get("points") or [])
+	if not points:
+		points = [shop, shop] if shop is not None else [s["point"] for s in stops]
+	added, position = routing.best_insertion(points, site, between)
+	used = []
+	clean = [p for p in points if p is not None]
+	if len(clean) == 1:
+		used = [routing.leg(matrix, clean[0], site), routing.leg(matrix, site, clean[0])]
+	elif len(clean) > 1:
+		used = [routing.leg(matrix, clean[position - 1], site), routing.leg(matrix, site, clean[position])]
+	source = routing.combine_sources((entry or {}).get("source") for entry in used)
+
+	pad = settings.get("pad_drive_time")
+	pad = pad is None or bool(flt(pad))
+	over = max(need + (added / 60 if pad else 0.0) - free, 0.0)
+	score = round(added + 0.5 * over, 2)
+
+	near, seen = [], set()
+	for stop in sorted(stops, key=lambda s: (routing.haversine_km(site, s["point"]), str(s.get("ref")))):
+		km = routing.haversine_km(site, stop["point"])
+		if km > routing.NEARBY_KM or stop.get("ref") in seen:
+			continue
+		seen.add(stop.get("ref"))
+		near.append({"ref": stop.get("ref"), "label": place_label(stop, titles), "km": round(km, 1)})
+	near = near[:3]
+
+	drive_total = flt((route or {}).get("drive_minutes")) + added
+	if near:
+		reason = _("{0} is already at {1} that day ({2} km away): +{3} min driving.").format(
+			name, near[0]["label"], fmt_km(near[0]["km"]), fmt_minutes(added)
+		)
+	elif stops:
+		nearest = min(routing.haversine_km(site, s["point"]) for s in stops)
+		reason = _("{0} has other stops that day, the nearest {1} km away: +{2} min driving.").format(
+			name, fmt_km(nearest), fmt_minutes(added)
+		)
+	elif any(b.get("kind") in routing.STOP_KINDS for b in cell.get("bookings") or []):
+		reason = _("Nothing else on {0}'s day has a location: +{1} min driving.").format(
+			name, fmt_minutes(added)
+		)
+	else:
+		reason = _("Nobody is near; {0}'s day is empty: +{1} min driving.").format(name, fmt_minutes(added))
+	if over > engine.TOLERANCE:
+		reason += " " + _("Over by {0}h with the driving.").format(engine.fmt_hours(over))
+	return dict(
+		base,
+		added_minutes=round(added, 1),
+		source=source,
+		nearby=near,
+		long_drive=bool(drive_total > _long_limit(settings)),
+		score=score,
+		reason=reason,
+	)
+
+
+def rank_suggestions(entries, with_site, limit=SUGGEST_LIMIT):
+	"""Best first: by score then date with a site; by free hours then date without one."""
+	if with_site:
+		key = lambda s: (s["score"], s["date"], s.get("label") or "")  # noqa: E731
+	else:
+		key = lambda s: (-s["free_hours"], s["date"], s.get("label") or "")  # noqa: E731
+	return sorted((e for e in entries if e), key=key)[:limit]
+
+
+# ---------------------------------------------------------------------- routes: reads
+
+
+def _project_titles(names):
+	names = sorted({n for n in names or () if n})
+	if not names:
+		return {}
+	return {
+		row.get("name"): row.get("project_name") or row.get("name")
+		for row in frappe.get_all(
+			"Project", filters={"name": ["in", names]}, fields=["name", "project_name"], limit_page_length=0
+		)
+	}
+
+
+def _maps_config():
+	"""The browser Maps key and Map IDs (Travel Settings), as ``api.travel.get_maps_config``
+	hands any logged-in user: the key is referrer-restricted by design."""
+	out = {"maps_key": "", "map_ids": {"map_id_light": "", "map_id_dark": ""}}
+	try:
+		out["maps_key"] = frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or ""
+		out["map_ids"] = {
+			"map_id_light": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_light") or "",
+			"map_id_dark": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_dark") or "",
+		}
+	except Exception:
+		pass
+	return out
+
+
+@frappe.whitelist()
+def get_route(resource, date):
+	"""One person's day as a drive. See :func:`route_payload` for the shape.
+
+	``resource`` is a Planner Resource name. The day comes from the same engine call the planner
+	makes (so its order, drive minutes and padding are exactly what the week view counted).
+	"""
+	_require_planner()
+	from erpnext_enhancements.api.pickup_routing import _depot_address
+
+	day = getdate(date)
+	data = engine._compute(day, day, [resource])
+	person = next((r for r in data["resources"] if r["name"] == resource), None)
+	if not person:
+		frappe.throw(_("{0} is not an active Planner Resource.").format(resource))
+	cell = (data["days"].get(resource) or {}).get(str(day)) or {}
+	route = (data.get("routes") or {}).get((resource, day))
+	stop_bookings = [b for b in cell.get("bookings") or [] if b.get("kind") in routing.STOP_KINDS]
+	details = routing.locate(stop_bookings, detail=True) if stop_bookings else {}
+	titles = _project_titles(b.get("project") for b in stop_bookings)
+	return route_payload(
+		person, day, cell, route, data["settings"], details, titles, _maps_config(), _depot_address()
+	)
+
+
+def _suggest_candidates(crew, resource=None):
+	"""The task's crew; with no crew, every active Field resource; ``resource`` narrows to one."""
+	if resource:
+		return [resource]
+	if crew:
+		return [m["resource"] for m in crew]
+	return frappe.get_all(
+		"Planner Resource",
+		filters={"is_active": 1, "resource_group": "Field"},
+		pluck="name",
+		order_by="resource_name asc",
+		limit_page_length=0,
+	)
+
+
+@frappe.whitelist()
+def suggest_dates(task, start=None, days=None, resource=None):
+	"""The best days, and people, for a task by drive time. Read-only: it books nothing.
+
+	Looks at the next ``days`` days (default 10, at most 30) from ``start`` (default today, never
+	before today) for the task's crew, or every active Field resource when it has none, or just
+	``resource``. A day qualifies when the person has the hours (see :func:`suggestion`); the
+	best eight come back with a one-sentence ``reason``. The task's own current booking is left
+	out of the free hours, so moving it does not count against itself. A task with no location
+	is ranked by free hours alone, with a ``note`` saying so.
+	"""
+	_require_planner()
+	doc = frappe.get_doc("Task", task)
+	state = _state(doc)
+	project_title = (
+		frappe.db.get_value("Project", doc.project, "project_name") if doc.get("project") else None
+	)
+	crew = _current_crew(doc)
+	today = getdate(nowdate())
+	first = max(getdate(start) if given(start) else today, today)
+	count = min(max(cint(given(days) or SUGGEST_DEFAULT_DAYS), 1), SUGGEST_MAX_DAYS)
+	last = first + datetime.timedelta(days=count - 1)
+	settings = engine.get_settings()
+	needed = hours_per_day(state, len(crew), settings, first)
+
+	kind = "rental" if state.get("custom_rental_booking") else "task"
+	point = routing.locate([{"kind": kind, "ref": doc.name, "project": doc.get("project")}]).get(doc.name)
+	site = {"lat": point[0], "lng": point[1], "label": project_title or doc.get("subject")} if point else None
+	result = {
+		"task": doc.name,
+		"subject": doc.get("subject") or doc.name,
+		"site": site,
+		"hours_needed": needed,
+		"suggestions": [],
+		"note": None if point else _(NO_LOCATION_NOTE),
+	}
+
+	candidates = _suggest_candidates(crew, given(resource))
+	if not candidates:
+		result["note"] = " ".join(
+			n
+			for n in (
+				result["note"],
+				_("Nobody to suggest: the task has no crew and no Field resource is active."),
+			)
+			if n
+		)
+		return result
+
+	data = engine._compute(first, last, candidates, exclude={doc.name})
+	routes = data.get("routes") or {}
+	people = {r["name"]: r for r in data["resources"]}
+	shop = routing.start_point() if point else None
+
+	matrix = {}
+	if point:
+		pairs = set()
+		for (resource_name, _day), route in routes.items():
+			if resource_name in people:
+				for p in route.get("points") or [s["point"] for s in route.get("stops") or []]:
+					pairs.update({(p, point), (point, p)})
+		if shop is not None:
+			pairs.update({(shop, point), (point, shop)})
+		matrix = routing.drive_matrix(pairs, settings)
+
+	titles = _project_titles(s.get("project") for route in routes.values() for s in route.get("stops") or [])
+	entries = []
+	for name, person in people.items():
+		for day_text, cell in sorted((data["days"].get(name) or {}).items()):
+			day = getdate(day_text)
+			entries.append(
+				suggestion(
+					person, day, cell, routes.get((name, day)), point, shop, matrix, needed, settings, titles
+				)
+			)
+	result["suggestions"] = rank_suggestions(entries, with_site=bool(point))
+	if not result["suggestions"]:
+		hours = engine.fmt_hours(needed) + "h" if needed is not None else _("a full day")
+		result["note"] = " ".join(
+			n
+			for n in (
+				result["note"],
+				_("Nobody has {0} free in the {1} days from {2}.").format(hours, count, first),
+			)
+			if n
+		)
+	return result
+
+
+@frappe.whitelist()
+def check_routes():
+	"""``{"google": bool, "detail": str}``: whether Google Routes answers for the server key now.
+
+	One tiny billable call, so System Manager / Projects Manager only. Success also clears the
+	hour-long "Google is down" flag, so the planner uses Google again at once.
+	"""
+	if frappe.session.user != "Administrator" and not ROUTE_CHECK_ROLES & set(frappe.get_roles()):
+		frappe.throw(
+			_("Only a System Manager or Projects Manager can check Google Routes."), frappe.PermissionError
+		)
+	return routing.routes_status()

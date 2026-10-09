@@ -31,6 +31,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. See [Project Planner](#project-planner-v15770) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`; pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py` and `api/maintenance_planner.py` |
+| `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
+| `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng>lat,lng` (5 decimals). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
 | `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
 | `doctype/planner_resource_work_pattern/` | Child table: hours for each weekday, optionally between two dates (a seasonal schedule) | `PlannerResourceWorkPattern` | child-table controller |
@@ -577,10 +579,52 @@ Things that look like bugs and are not:
 - Adding someone to a crew sends the standard "New ToDo Created" email, exactly as assigning from
   the sidebar does. Batching those notices is planned (draft and publish, TASK-2026-02448).
 
+### Daily routes and drive time (v1.578.0, Phase 2 — TASK-2026-02435)
+
+Every person's day is a route: **from the shop and back** (85 W 300 S, Bountiful — the same
+`ERPNext Enhancements Settings.pickup_route_start_address` the pick-up runs start from, so "the
+shop" is one setting), through each located task, rental crew task and maintenance visit.
+
+- **Where a stop is**: the task's own address (`custom_locationaddress_of_task`), else its project's
+  site (`workforce/sites.site_coordinates_bulk`: Maintenance Profile → linked Address → geocoded
+  Project); a rental crew task's booking venue; a visit's site. A stop with no coordinates is
+  listed (and counted as `unlocated`) but adds no driving. `backfill_coordinates` geocodes missing
+  task and venue addresses daily, because a deploy's Redis flush kills any queued geocode.
+- **Drive time** comes from Google Routes' `computeRouteMatrix` on the server key, cached per pair in
+  `Planner Drive Time`. **One planner load makes one matrix request** for every pair it is missing,
+  not one per person-day: each costs money. If Google refuses or fails, routing stops asking for an
+  hour, logs once, and uses a straight-line estimate (`km × 1.3 at 56 km/h + 4 min`); every figure
+  carries its source (`google` / `estimate` / `mixed`) and the page says which. Settings → *Drive
+  times from Google Routes* turns Google off entirely.
+- **Driving counts against hours.** With *Count drive time against people's hours* on (the default),
+  each person-day gets a `drive` booking, so free hours, overbooking and the reason prompt all include
+  it. A day with more driving than *Flag a day with more driving than* (90 min) carries `long_drive`.
+  A travel day has no route.
+- **Order of stops**: a task with a same-day time slot is an anchor at its time; everything else is
+  placed by cheapest insertion and improved with 2-opt. Arrival times count from *Day starts at*
+  (08:00); arriving early for a slot shows the wait instead of hiding it.
+- **The route view** (`/app/project-planner/route/<person>/<date>`, linked from both planners) shows the
+  stops in driving order on a Google map, with arrival times, drive per leg and *Open in Google Maps*.
+  The map polyline is straight segments; the times are Google's.
+- **Suggest dates** ranks the next 10 days (≤ 30) by the driving the task would add to each person's
+  route (`insertion_cost`), among people with the free hours — the task's crew, else the Field
+  group. It suggests **when**; it never picks a crew on its own (Nik declined that). "Book" saves the
+  date and adds the person in one `save_task`, through the same reason prompt as a drag. Also a
+  read-only AI tool: `crew_schedule_suggestions`, with `crew_day_route` beside it.
+- **The Google key never reaches a log.** Only `routing._google_post` (Routes) and
+  `workforce.sites.geocode_text` (Geocoding — the app's one server-side geocoder) touch it, and they
+  report only a status or an exception's class name: a `requests` connection error contains the
+  whole request URL. `api/project_planner.check_routes` makes one tiny call to confirm the console
+  setting without showing the key.
+- GET requests roll back their transaction in Frappe, so after caching a drive time or the shop's
+  coordinates during one, routing sets `frappe.local.flags.commit`; otherwise the cache would vanish
+  and every load would pay Google again.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
 - `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0).
+- `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.

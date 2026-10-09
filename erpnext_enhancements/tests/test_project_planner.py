@@ -38,6 +38,7 @@ if str(REPO_ROOT) not in sys.path:
 APP = Path(__file__).resolve().parents[1]
 ENGINE_PATH = APP / "project_enhancements/crew_availability.py"
 API_PATH = APP / "api/project_planner.py"
+ROUTING_PATH = APP / "project_enhancements/routing.py"
 TASK_CONTROLLER = APP / "task_enhancements/doctype/task/task.py"
 PAGE_JSON = APP / "project_enhancements/page/project_planner/project_planner.json"
 
@@ -51,6 +52,7 @@ STUBBED = (
 	"frappe.utils",
 	"erpnext_enhancements.project_enhancements",
 	"erpnext_enhancements.project_enhancements.crew_availability",
+	"erpnext_enhancements.project_enhancements.routing",
 	"erpnext_enhancements.api.project_planner",
 	"erpnext_enhancements.api.maintenance_planner",
 )
@@ -58,6 +60,7 @@ _saved_modules = {}
 _modules_before = set()
 frappe = None
 engine = None
+routing = None
 api = None
 mp = None
 
@@ -106,7 +109,7 @@ class _Meta:
 
 
 def setUpModule():
-	global frappe, engine, api, mp
+	global frappe, engine, routing, api, mp
 	_modules_before.update(sys.modules)
 	for name in STUBBED:
 		_saved_modules[name] = sys.modules.pop(name, None)
@@ -135,6 +138,7 @@ def setUpModule():
 	_reset()
 
 	engine = importlib.import_module("erpnext_enhancements.project_enhancements.crew_availability")
+	routing = importlib.import_module("erpnext_enhancements.project_enhancements.routing")
 	api = importlib.import_module("erpnext_enhancements.api.project_planner")
 	mp = importlib.import_module("erpnext_enhancements.api.maintenance_planner")
 
@@ -178,8 +182,12 @@ def _reset():
 		exists=lambda *a, **k: True,
 		has_column=lambda doctype, column: True,
 		get_value=lambda doctype, name, field=None, *a, **k: frappe.values.get((doctype, name, field)),
+		get_single_value=lambda doctype, field, *a, **k: frappe.singles.get((doctype, field)),
 	)
 	frappe.values = {}
+	frappe.singles = {}
+	frappe.enqueued = []
+	frappe.enqueue = lambda *a, **k: frappe.enqueued.append((a, k))
 
 
 def _get_all(doctype, filters=None, fields=None, pluck=None, as_list=False, **kwargs):
@@ -975,9 +983,42 @@ class _Readers:
 		restrictions=None,
 		visits=(),
 		travel=(),
+		points=None,
+		shop=None,
+		matrix=None,
+		settings=None,
 	):
+		# Routing: where each stop is (``points`` by ref), the shop, and the legs. With no points
+		# every stop is unlocated and no day is padded, which is what the Phase 1 tests assume.
+		self.points = dict(points or {})
+		self.matrix_calls = []
+		self.missing = []
+
+		def locate(bookings, detail=False):
+			out = {}
+			for booking in bookings:
+				point = self.points.get(booking.get("ref"))
+				out[booking.get("ref")] = (
+					{"point": point, "address": f"Address of {booking.get('ref')}" if point else None}
+					if detail
+					else point
+				)
+			return out
+
+		def drive_matrix(pairs, settings=None):
+			self.matrix_calls.append(set(pairs))
+			out = {}
+			for a, b in pairs:
+				found = (matrix or {}).get((a, b))
+				out[(a, b)] = dict(found, source="google") if found else routing.estimate_leg(a, b)
+			return out
+
 		self.patches = [
-			mock.patch.object(engine, "get_settings", lambda: _settings()),
+			mock.patch.object(engine, "get_settings", lambda: _settings(**(settings or {}))),
+			mock.patch.object(routing, "locate", locate),
+			mock.patch.object(routing, "start_point", lambda: shop),
+			mock.patch.object(routing, "drive_matrix", drive_matrix),
+			mock.patch.object(routing, "enqueue_missing", lambda refs: self.missing.append(list(refs))),
 			mock.patch.object(
 				engine,
 				"_read_resources",
@@ -1567,6 +1608,367 @@ class TestGetPlanner(unittest.TestCase):
 		)
 
 
+# ---------------------------------------------------------------------- routes (Phase 2)
+
+# The shop in Bountiful, a Highlands site 30-odd km south, a second job 2 km from it, and a job up
+# in Ogden: enough geography for "already nearby" to mean something.
+SHOP = (40.884, -111.882)
+HIGHLANDS = (40.6, -111.85)
+NEAR_HIGHLANDS = (40.62, -111.86)
+OGDEN = (41.1, -112.0)
+
+
+class TestDrivePadding(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def _two_sites(self, **kwargs):
+		return _Readers(
+			[_person("RES-1", employee="EMP-1")],
+			tasks=[_task("T-H", start=MON, expected_time=4), _task("T-O", start=MON, expected_time=4)],
+			crew_rows={"T-H": [{"resource": "RES-1"}], "T-O": [{"resource": "RES-1"}]},
+			points={"T-H": HIGHLANDS, "T-O": OGDEN},
+			shop=SHOP,
+			**kwargs,
+		)
+
+	def test_the_days_driving_is_booked_and_makes_a_full_day_over(self):
+		with self._two_sites() as readers:
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		drive = [b for b in monday["bookings"] if b["kind"] == "drive"]
+		self.assertEqual(len(drive), 1)
+		self.assertEqual(
+			{k: drive[0][k] for k in ("ref", "label", "project", "slot", "estimated")},
+			{"ref": None, "label": "Driving", "project": None, "slot": None, "estimated": True},
+		)
+		self.assertGreater(monday["drive_minutes"], 60)  # Bountiful → Highlands → Ogden → Bountiful
+		self.assertEqual(drive[0]["hours"], round(monday["drive_minutes"] / 60, 2))
+		self.assertEqual(monday["booked"], round(8 + drive[0]["hours"], 2))
+		self.assertEqual(monday["free"], 0.0)
+		self.assertEqual(monday["conflicts"], [f"Over by {engine.fmt_hours(drive[0]['hours'])}h"])
+		self.assertEqual((monday["drive_source"], monday["unlocated"]), ("estimate", 0))
+		self.assertTrue(monday["long_drive"])  # well past the default 90 minutes
+		self.assertEqual(len(readers.matrix_calls), 1)
+
+	def test_padding_off_still_reports_the_driving(self):
+		with self._two_sites(settings={"pad_drive_time": 0}):
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertEqual([b["kind"] for b in monday["bookings"]], ["task", "task"])
+		self.assertEqual((monday["booked"], monday["conflicts"]), (8.0, []))
+		self.assertGreater(monday["drive_minutes"], 0)
+
+	def test_a_long_drive_is_against_the_settings_threshold(self):
+		with self._two_sites(settings={"long_drive_minutes": 600}):
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertFalse(monday["long_drive"])
+
+	def test_google_legs_are_not_estimated(self):
+		legs = {}
+		for a in (SHOP, HIGHLANDS, OGDEN):
+			for b in (SHOP, HIGHLANDS, OGDEN):
+				if a != b:
+					legs[(a, b)] = {"minutes": 30.0, "km": 30.0}
+		with self._two_sites(matrix=legs):
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertEqual((monday["drive_minutes"], monday["drive_source"]), (90.0, "google"))
+		self.assertFalse(next(b for b in monday["bookings"] if b["kind"] == "drive")["estimated"])
+
+	def test_one_drive_matrix_call_for_every_person_day(self):
+		people = [_person("RES-1", employee="EMP-1"), _person("RES-2", employee="EMP-2", label="Lisa")]
+		tasks = [_task(f"T-{i}", start=MON, end=FRI, expected_time=10) for i in range(4)]
+		crew_rows = {f"T-{i}": [{"resource": "RES-1"}, {"resource": "RES-2"}] for i in range(4)}
+		points = {"T-0": HIGHLANDS, "T-1": OGDEN, "T-2": NEAR_HIGHLANDS, "T-3": HIGHLANDS}
+		with _Readers(people, tasks=tasks, crew_rows=crew_rows, points=points, shop=SHOP) as readers:
+			days = engine.availability(MON, FRI)["days"]
+		self.assertEqual(len(readers.matrix_calls), 1)  # ten person-days, one call
+		self.assertTrue(all(days[r][str(d)]["drive_minutes"] > 0 for r in days for d in (MON, FRI)))
+		# Distinct points only: shop + three sites (two tasks share Highlands) → 4 × 3 legs.
+		self.assertEqual(len(readers.matrix_calls[0]), 12)
+
+	def test_stops_with_no_location_are_counted_and_not_driven(self):
+		with _Readers(
+			[_person()],
+			tasks=[_task("T-H", start=MON, expected_time=2), _task("T-X", start=MON, expected_time=2)],
+			crew_rows={"T-H": [{"resource": "RES-1"}], "T-X": [{"resource": "RES-1"}]},
+			points={"T-H": HIGHLANDS},
+			shop=SHOP,
+		) as readers:
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertEqual(monday["unlocated"], 1)
+		round_trip = routing.estimate_leg(SHOP, HIGHLANDS)["minutes"] + routing.estimate_leg(HIGHLANDS, SHOP)["minutes"]
+		self.assertEqual(monday["drive_minutes"], round(round_trip, 1))
+		self.assertEqual(readers.missing, [["T-X"]])  # the backfill is asked to find it
+
+	def test_nothing_located_is_no_padding_and_no_source(self):
+		with _Readers([_person()], tasks=[_task("T", start=MON, expected_time=2)], crew_rows={"T": [{"resource": "RES-1"}]}):
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertEqual(
+			{k: monday[k] for k in ("drive_minutes", "drive_source", "long_drive", "unlocated")},
+			{"drive_minutes": 0.0, "drive_source": None, "long_drive": False, "unlocated": 1},
+		)
+		self.assertEqual([b["kind"] for b in monday["bookings"]], ["task"])
+
+	def test_a_travel_day_has_no_route(self):
+		with self._two_sites(
+			travel=[{"employee": "EMP-1", "date": MON, "ref": "TRIP-1", "label": "Travel: Vegas", "project": None}]
+		) as readers:
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertNotIn("drive", [b["kind"] for b in monday["bookings"]])
+		self.assertEqual((monday["drive_minutes"], monday["unlocated"]), (0.0, 0))
+		self.assertEqual(readers.matrix_calls, [])
+
+	def test_routing_raising_never_breaks_availability(self):
+		def boom(*args, **kwargs):
+			raise RuntimeError("Google exploded")
+
+		with self._two_sites(), mock.patch.object(routing, "plan_routes", boom):
+			monday = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		self.assertEqual((monday["booked"], monday["conflicts"]), (8.0, []))
+		self.assertEqual((monday["drive_minutes"], monday["drive_source"]), (0.0, None))
+		self.assertEqual(frappe.errors[-1][1]["title"], "Project Planner: routes failed")
+		self.assertEqual(frappe.errors[-1][0], ())  # keyword arguments only
+
+	def test_a_preview_counts_the_driving_a_far_task_adds(self):
+		# 7h at Highlands already; moving a 1h Ogden task onto the same day fits by hours but not
+		# once the drive up to Ogden is counted.
+		stored = _task("T-O", start=TUE, expected_time=1)
+		with _Readers(
+			[_person()],
+			tasks=[_task("T-H", start=MON, expected_time=7), stored],
+			crew_rows={"T-H": [{"resource": "RES-1"}], "T-O": [{"resource": "RES-1"}]},
+			points={"T-H": HIGHLANDS, "T-O": OGDEN},
+			shop=SHOP,
+		):
+			moved = dict(stored, exp_start_date=MON)
+			got = engine.preview_conflicts(moved, [{"resource": "RES-1"}])
+		self.assertEqual(list(got), ["Austin Healey"])
+		self.assertTrue(got["Austin Healey"][0].startswith("2026-10-12: Over by"))
+
+
+class TestSettingsWithRoutes(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def test_unsaved_route_fields_read_as_their_defaults(self):
+		# An existing Single row has no tabSingles row for the Phase 2 fields until the backfill.
+		frappe.cached["Project Planner Settings"] = _Doc(default_day_hours=8, pad_drive_time=None)
+		got = engine.get_settings()
+		self.assertEqual(
+			{k: got[k] for k in ("pad_drive_time", "use_google_routes", "long_drive_minutes", "day_start_time")},
+			{"pad_drive_time": 1.0, "use_google_routes": 1.0, "long_drive_minutes": 90.0, "day_start_time": "08:00:00"},
+		)
+
+	def test_a_deliberate_off_and_a_time_stay(self):
+		frappe.cached["Project Planner Settings"] = _Doc(
+			pad_drive_time=0, use_google_routes=0, long_drive_minutes=0, day_start_time="07:30:00"
+		)
+		got = engine.get_settings()
+		self.assertEqual((got["pad_drive_time"], got["use_google_routes"], got["long_drive_minutes"]), (0.0, 0.0, 0.0))
+		self.assertEqual(got["day_start_time"], "07:30:00")
+
+
+class TestGetRoute(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		frappe.tables["Project"] = [
+			{"name": "PRJ-H", "project_name": "Highlands Maintenance Contract"},
+			{"name": "PRJ-O", "project_name": "Ogden Plaza"},
+		]
+		frappe.singles[("Travel Settings", "google_maps_api_key")] = "browser-key"
+		frappe.singles[("Travel Settings", "google_maps_map_id_light")] = "light-id"
+
+	def _readers(self, **kwargs):
+		return _Readers(
+			[_person("RES-1", label="Jesse Pinkman", employee="EMP-1")],
+			tasks=[
+				_task("T-O", start=MON, expected_time=2, project="PRJ-O", subject="Install pump"),
+				_task(
+					"T-X",
+					start=MON,
+					project=None,
+					subject="Pick up parts",
+					custom_start_datetime="2026-10-12 10:00:00",
+					custom_end_datetime="2026-10-12 11:00:00",
+				),
+			],
+			crew_rows={"T-O": [{"resource": "RES-1"}], "T-X": [{"resource": "RES-1"}]},
+			visits=[
+				{
+					"user": "res-1@example.com",
+					"date": MON,
+					"ref": "SMR-1",
+					"label": "Highlands · Winterization",
+					"project": "PRJ-H",
+					"hours": 2.0,
+					"slot": None,
+					"estimated": True,
+				}
+			],
+			points={"SMR-1": HIGHLANDS, "T-O": OGDEN},
+			shop=SHOP,
+			# Google legs that make Highlands-first the only sensible order (100 min) and the
+			# reverse loop expensive (180 min).
+			matrix={
+				(SHOP, HIGHLANDS): {"minutes": 30.0, "km": 35.0},
+				(HIGHLANDS, OGDEN): {"minutes": 45.0, "km": 60.0},
+				(OGDEN, SHOP): {"minutes": 25.0, "km": 28.0},
+				(SHOP, OGDEN): {"minutes": 60.0, "km": 28.0},
+				(OGDEN, HIGHLANDS): {"minutes": 60.0, "km": 60.0},
+				(HIGHLANDS, SHOP): {"minutes": 60.0, "km": 35.0},
+			},
+			**kwargs,
+		)
+
+	def test_the_day_as_a_drive(self):
+		with self._readers():
+			got = api.get_route("RES-1", "2026-10-12")
+		self.assertEqual((got["resource"], got["label"], got["date"]), ("RES-1", "Jesse Pinkman", "2026-10-12"))
+		self.assertEqual(
+			got["start"],
+			{"label": "Shop", "address": "85 W 300 S, Bountiful, UT 84010", "lat": SHOP[0], "lng": SHOP[1]},
+		)
+		self.assertEqual([s["ref"] for s in got["stops"]], ["SMR-1", "T-X", "T-O"])
+		visit, unlocated, ogden = got["stops"]
+		# A visit is labelled with its site; the contract boilerplate is dropped.
+		self.assertEqual((visit["label"], visit["kind"], visit["located"]), ("Highlands", "visit", True))
+		self.assertEqual(visit["project_title"], "Highlands Maintenance Contract")
+		self.assertEqual((visit["arrive"], visit["depart"], visit["drive_minutes"], visit["km"]), ("08:30", "10:30", 30.0, 35.0))
+		self.assertEqual(visit["address"], "Address of SMR-1")
+		# The slotted stop with no location sits by its time (after the visit that starts before
+		# 10:00, before Ogden) and is not driven to: it starts when the visit ends.
+		self.assertEqual(
+			{k: unlocated[k] for k in ("located", "lat", "lng", "drive_minutes", "km", "arrive")},
+			{"located": False, "lat": None, "lng": None, "drive_minutes": None, "km": None, "arrive": visit["depart"]},
+		)
+		# Driven from Highlands, past the stop with no location; it waited for nothing.
+		self.assertEqual((ogden["drive_minutes"], ogden["km"], ogden["arrive"]), (45.0, 60.0, "12:15"))
+		self.assertEqual(got["unlocated"], [{"kind": "task", "ref": "T-X", "label": "Pick up parts"}])
+		self.assertEqual([s["order"] for s in got["stops"]], [1, 2, 3])
+		self.assertEqual((got["drive_minutes"], got["km"], got["source"]), (100.0, 123.0, "google"))
+		self.assertTrue(got["long_drive"])  # over the default 90 minutes
+		self.assertEqual(
+			{k: got["end"][k] for k in ("label", "arrive", "drive_minutes", "km")},
+			{"label": "Shop", "arrive": "14:40", "drive_minutes": 25.0, "km": 28.0},
+		)
+		self.assertEqual(
+			got["maps_url"],
+			"https://www.google.com/maps/dir/?api=1&origin=40.88400,-111.88200&destination=40.88400,-111.88200"
+			"&travelmode=driving&waypoints=40.60000,-111.85000|41.10000,-112.00000",
+		)
+		self.assertEqual(
+			(got["maps_key"], got["map_ids"]), ("browser-key", {"map_id_light": "light-id", "map_id_dark": ""})
+		)
+		self.assertEqual((got["travel"], got["off"]), (None, None))
+		self.assertEqual(
+			set(got),
+			{
+				"resource", "label", "date", "day_start", "start", "end", "stops", "drive_minutes", "km",
+				"source", "long_drive", "unlocated", "maps_url", "maps_key", "map_ids", "travel", "off",
+			},
+		)
+
+	def test_a_travel_day_lists_the_stops_without_a_route(self):
+		with self._readers(
+			travel=[{"employee": "EMP-1", "date": MON, "ref": "TRIP-1", "label": "Travel: Vegas", "project": None}]
+		):
+			got = api.get_route("RES-1", "2026-10-12")
+		self.assertEqual(got["travel"], "Travel: Vegas")
+		self.assertEqual((got["start"], got["maps_url"], got["drive_minutes"]), (None, None, 0.0))
+		self.assertEqual(len(got["stops"]), 3)
+		self.assertTrue(all(s["arrive"] is None and not s["located"] for s in got["stops"]))
+
+	def test_an_unknown_resource_is_refused(self):
+		with self._readers(), self.assertRaises(_Throw):
+			api.get_route("RES-404", "2026-10-12")
+
+	def test_outsiders_are_refused(self):
+		frappe.roles = ["Customer"]
+		with self.assertRaises(_PermissionError):
+			api.get_route("RES-1", "2026-10-12")
+
+
+class TestSuggestDates(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		frappe.tables["Project"] = [{"name": "PRJ-H", "project_name": "Highlands"}]
+		frappe.tables["Planner Resource"] = [{"name": "RES-1"}, {"name": "RES-2"}]
+		frappe.values[("Project", "PRJ-N", "project_name")] = "Highlands East"
+		doc = _TaskDoc(_task("T-NEW", start=None, expected_time=4, project="PRJ-N", subject="Replace lights"))
+		doc["custom_crew"] = []
+		frappe.docs[("Task", "T-NEW")] = doc
+
+	def _readers(self, points):
+		return _Readers(
+			[_person("RES-1", label="Jesse Pinkman"), _person("RES-2", label="Korben Dallas")],
+			tasks=[_task("T-H", start=TUE, expected_time=2, project="PRJ-H")],
+			crew_rows={"T-H": [{"resource": "RES-1"}]},
+			points=points,
+			shop=SHOP,
+		)
+
+	def test_the_person_already_nearby_comes_first(self):
+		with self._readers({"T-H": HIGHLANDS, "T-NEW": NEAR_HIGHLANDS}):
+			got = api.suggest_dates("T-NEW", start="2026-10-12", days=3)
+		self.assertEqual((got["task"], got["subject"], got["hours_needed"], got["note"]), ("T-NEW", "Replace lights", 4.0, None))
+		self.assertEqual(got["site"], {"lat": NEAR_HIGHLANDS[0], "lng": NEAR_HIGHLANDS[1], "label": "Highlands East"})
+		best = got["suggestions"][0]
+		self.assertEqual((best["date"], best["resource"], best["label"]), ("2026-10-13", "RES-1", "Jesse Pinkman"))
+		self.assertEqual(best["nearby"], [{"ref": "T-H", "label": "Highlands", "km": 2.4}])
+		self.assertLess(best["added_minutes"], 15)
+		self.assertTrue(best["reason"].startswith("Jesse is already at Highlands that day (2.4 km away): +"))
+		self.assertEqual(best["source"], "estimate")
+		# Everyone else has an empty day: a round trip from the shop, same score, by date then name.
+		rest = got["suggestions"][1:]
+		self.assertEqual(
+			[(s["date"], s["resource"]) for s in rest],
+			[("2026-10-12", "RES-1"), ("2026-10-12", "RES-2"), ("2026-10-13", "RES-2"), ("2026-10-14", "RES-1"), ("2026-10-14", "RES-2")],
+		)
+		self.assertTrue(rest[0]["reason"].startswith("Nobody is near; Jesse's day is empty: +"))
+		self.assertTrue(all(s["score"] > best["score"] for s in rest))
+		self.assertEqual(
+			set(best),
+			{"date", "resource", "label", "free_hours", "added_minutes", "source", "nearby", "long_drive", "score", "reason"},
+		)
+
+	def test_a_task_with_no_location_is_ranked_by_free_hours(self):
+		with self._readers({"T-H": HIGHLANDS}):
+			got = api.suggest_dates("T-NEW", start="2026-10-12", days=3)
+		self.assertIsNone(got["site"])
+		self.assertEqual(got["note"], api.NO_LOCATION_NOTE)
+		first = got["suggestions"][0]
+		self.assertEqual((first["added_minutes"], first["source"], first["score"]), (None, None, 0.0))
+		self.assertEqual(first["free_hours"], 8.0)
+		self.assertEqual(first["reason"], "Jesse has 8h free.")
+		# Jesse's Tuesday (2h booked plus the drive) has the least free time, so it comes last.
+		self.assertEqual((got["suggestions"][-1]["resource"], got["suggestions"][-1]["date"]), ("RES-1", "2026-10-13"))
+
+	def test_the_past_is_never_suggested_and_the_window_is_capped(self):
+		with self._readers({}):
+			got = api.suggest_dates("T-NEW", start="2026-01-01", days=99)
+		self.assertTrue(all(s["date"] >= str(TODAY) for s in got["suggestions"]))
+		self.assertEqual(len(got["suggestions"]), api.SUGGEST_LIMIT)
+
+	def test_hours_per_day(self):
+		settings = _settings()
+		self.assertIsNone(api.hours_per_day(_task(start=None, expected_time=0), 0, settings, MON))
+		self.assertEqual(api.hours_per_day(_task(start=MON, end=TUE, expected_time=16), 2, settings, MON), 4.0)
+		self.assertEqual(api.hours_per_day(_task(start=None, expected_time=24), 1, settings, MON), 8.0)
+		slot = _task(custom_start_datetime="2026-10-12 09:00:00", custom_end_datetime="2026-10-12 10:30:00")
+		self.assertEqual(api.hours_per_day(slot, 3, settings, MON), 1.5)
+
+
+class TestCheckRoutes(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def test_only_managers_may_ask_google(self):
+		with mock.patch.object(routing, "routes_status", lambda: {"google": True, "detail": "ok"}):
+			with self.assertRaises(_PermissionError):
+				api.check_routes()  # a Projects User
+			frappe.roles = ["Projects Manager"]
+			self.assertEqual(api.check_routes(), {"google": True, "detail": "ok"})
+
+
 # ---------------------------------------------------------------------- wiring
 
 
@@ -1609,22 +2011,28 @@ class TestWiring(unittest.TestCase):
 
 	def test_every_write_is_post_only_and_the_read_is_not(self):
 		endpoints = _whitelisted(API_PATH)
-		self.assertEqual(set(endpoints), {"get_planner", "save_task", "add_crew", "swap_crew"})
+		self.assertEqual(
+			set(endpoints),
+			{"get_planner", "save_task", "add_crew", "swap_crew", "get_route", "suggest_dates", "check_routes"},
+		)
 		for name in ("save_task", "add_crew", "swap_crew"):
 			self.assertEqual(endpoints[name], ["POST"], name)
-		self.assertIsNone(endpoints["get_planner"])
+		# The reads (and the read-only route check) take GET, as the UI and the AI tools call them.
+		for name in ("get_planner", "get_route", "suggest_dates", "check_routes"):
+			self.assertIsNone(endpoints[name], name)
 		self.assertEqual(_whitelisted(ENGINE_PATH), {})  # the engine is not an endpoint
+		self.assertEqual(_whitelisted(ROUTING_PATH), {})  # nor is the routing module
 
 	def test_log_error_is_called_with_keywords(self):
 		# v16's log_error guesses which positional argument is the title; keywords leave nothing to guess.
-		for path in (ENGINE_PATH, API_PATH):
+		for path in (ENGINE_PATH, API_PATH, ROUTING_PATH):
 			for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
 				if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "log_error":
 					self.assertEqual(node.args, [], path.name)
 
 	def test_no_sql_function_strings_in_get_all_fields(self):
 		# Frappe 16 raises "SQL functions are not allowed as strings in SELECT".
-		for path in (ENGINE_PATH, API_PATH):
+		for path in (ENGINE_PATH, API_PATH, ROUTING_PATH):
 			for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
 				if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "get_all":
 					for keyword in node.keywords:

@@ -15,6 +15,12 @@ length or rental length: those mean "do not book hours for this", which is a cho
 
 There is no backfill patch for the defaults, unlike a Single that gained fields later (see
 CLAUDE.md): this doctype is new, so every field is declared before any row can exist.
+
+The Routes section (v1.578.0) added fields to a Single that already had rows, so the defaults
+never reached it: `backfill_project_planner_route_settings` fills them in once. That is why
+`validate` refuses nothing about the new fields when they are None or blank. Only a value that
+cannot mean anything is refused: a negative drive limit. The shop's coordinates are a read-only
+cache the routing module writes, so validate never looks at them.
 """
 
 import frappe
@@ -39,3 +45,6 @@ class ProjectPlannerSettings(Document):
 				frappe.throw(_("{0} must be between 0 and 24 hours.").format(self.meta.get_label(field)))
 		if self.default_day_hours is not None and float(self.default_day_hours) <= 0:
 			frappe.throw(_("Full-day hours must be more than 0."))
+		minutes = self.get("long_drive_minutes")
+		if minutes not in (None, "") and float(minutes) < 0:
+			frappe.throw(_("{0} cannot be negative.").format(self.meta.get_label("long_drive_minutes")))

@@ -799,6 +799,21 @@ jobs:
       # workspace link with a bumped `modified` (an unbumped Workspace JSON never re-imports).
       - name: Project planner page (routes, drag, workspace)
         run: python -m unittest erpnext_enhancements.tests.test_project_planner_page -v
+      # Daily routes and drive time (v1.578.0). The order of a day's stops, the drive minutes
+      # padded onto people's hours, and the date suggestions are all arithmetic nobody checks by
+      # eye: a wrong insertion cost recommends the far side of the valley, a padding bug books a
+      # tech over on a day that fits. Also pins that one planner load makes ONE Routes matrix
+      # call (not one per person-day: each costs money), that a refused Google key falls back to
+      # an estimate and says so, and that the server key never appears in a logged message.
+      # Bench-free, own frappe + requests stub, own step.
+      - name: Project planner routing (stop order, drive padding, suggestions, key handling)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_routing -v
+      # Settings that arrive on an EXISTING Single never get their JSON defaults (CLAUDE.md), so
+      # the route settings ship with a backfill that fills only missing rows; this suite pins that
+      # it never overwrites a stored value, plus the Planner Drive Time cache doctype and the two
+      # read-only AI tools' schemas and classification. Bench-free, own frappe stub, own step.
+      - name: Project planner route setup (settings backfill, drive-time cache, AI tools)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_route_setup -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

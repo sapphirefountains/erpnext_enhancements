@@ -140,6 +140,13 @@ EXPLICIT_READONLY = {
     # v1.571.0 (WI-079 slice 5) -- dry-run a design review bundle: every check an import makes, nothing
     # written. Its write half, submit_design_review, is in APP_MUTATING.
     "check_design_review_bundle",
+    # v1.578.0 (Project Planner routes) -- the two read tools over the route engine. Both only read:
+    # crew_schedule_suggestions ranks candidate days by drive time and books nothing; crew_day_route
+    # returns one person's ordered route for one day. Neither writes a Planner Drive Time row
+    # directly -- the routing module caches Google's answers, which is a read-through cache, not a
+    # business write, the same as the rental availability reads above.
+    "crew_schedule_suggestions",
+    "crew_day_route",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
