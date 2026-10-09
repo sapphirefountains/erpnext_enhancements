@@ -1290,6 +1290,10 @@ erpnext_enhancements.patches.materialize_project_planner_settings
 # default off. A default never reaches a Single's existing row, so materialize_defaults() writes a row for every field
 # with none (never over a stored value). Cannot raise, safe twice.
 erpnext_enhancements.patches.materialize_planner_notice_settings
+# Project Planner Phase 4: Project Budget Line.labor_forecast is a wage when one person is on the job, so it sits at
+# permlevel 2 (ERPNext's own Project perms give Desk User read at level 1). Grant level-2 read on Project to the cost
+# roles that exist, after setup_custom_perms so the standard rows are kept. Insert-only, cannot raise, safe twice.
+erpnext_enhancements.patches.grant_labor_forecast_visibility
 # Project Planner Phase 5: the "Telling customers" fields on Project Planner Settings (customer_date_confirmations,
 # default OFF, and customer_confirmation_phone). materialize_defaults() writes a row for every field with none, never over
 # a stored value. Cannot raise, safe twice.

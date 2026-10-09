@@ -844,6 +844,19 @@ jobs:
       # sheet escaping what people typed. Bench-free, own frappe + email_style stub, own step.
       - name: Project planner telling people (drafts, publish, digest, alerts, crew sheet)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase3b -v
+      # Project Planner Phase 4, tracking (v1.582.0). With one person on a job, the labor
+      # forecast IS their wage, so it must reach the cost roles only: anyone else gets hours, and
+      # this suite asserts their pay rates are never even read. Also pins the customer-jobs-only
+      # rule (Nik, 2026-10-09: no internal projects on either planner), today counted once in
+      # the forecast, two firm tasks on one truck as a conflict while pencils are ignored, and
+      # that no tracking read calls Google. Bench-free, own frappe stub, own step.
+      - name: Project planner tracking (actuals, labor forecast, equipment, customer jobs only)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase4 -v
+      # Phase 4 page: planned-vs-actual on cards, the "Running over" filter, the forecast strip,
+      # the equipment row group and its conflicts. Pins that the page reads only keys the API
+      # builds and that the forecast strip never shows money the API did not send.
+      - name: Project planner page, Phase 4 (actuals, forecast strip, equipment rows)
+        run: python -m unittest erpnext_enhancements.tests.test_project_planner_phase4_page -v
       # Project Planner Phase 5, extras. A customer email is the one message this app sends outside
       # the company, so this pins that nothing is queued or sent while the Settings switch is off (its
       # default), that a sent date is stamped in the same transaction (at most once per document and

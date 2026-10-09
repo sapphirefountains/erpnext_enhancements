@@ -35,6 +35,9 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
 | `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine; at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
+| `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`), and the Task equipment validator | `task_actuals`, `labor_forecast`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `doc_events["Task"]["validate"]` |
+| `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
+| `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
 | `doctype/planner_draft_change/` | One pending change per planner per task while in draft mode; Publish applies them, Discard drops them | `PlannerDraftChange` | `api/project_planner` |
 | `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
@@ -573,6 +576,18 @@ Conflicts that were already there before the change do not ask again.
 technicians' free hours and shows their project work read-only; each planner moves only its own
 records. That is the whole point of the engine living here rather than in either API.
 
+**Customer jobs only** (Nik, 2026-10-09, v1.582.0). The planners show Design, Build, Service,
+Events (Rent) and Delivery work and nothing internal. A task counts when its project's
+`project_type` is in `crew_availability.PLANNER_PROJECT_TYPES`, or the project has a `Value Stream`
+row in `PLANNER_VALUE_STREAMS` (either the `value_stream` or the older `value_streams` column). A
+rental crew task always counts, project or not. Internal, Group Projects, Overhead, a blank type
+with no qualifying stream, and a task with no project are left out — PRJ-00580, PRJ-00739, the IDP
+and Stage 1–4 projects among them. The condition lives once in the engine
+(`planner_job_condition`, re-checked in Python by `is_planner_job`) and is applied in `read_tasks`,
+so availability, conflicts, the heatmap, suggestions and the Maintenance Planner's project items
+all agree; the Unscheduled and Overdue trays, the project filter and Copy week apply the same rule.
+On 2026-10-09 production had 373 open customer-job projects and 26 internal ones.
+
 Things that look like bugs and are not:
 
 - An undated task dropped from the Unscheduled tray gets enough days for its estimate
@@ -679,10 +694,48 @@ shop" is one setting), through each located task, rental crew task and maintenan
 - **My week** (`/app/project-planner/my-week/<date>`): the signed-in person's week on a phone,
   with time, site, address (opens Google Maps), crewmates and a route link per day.
 
+### Tracking (v1.582.0, Phase 4 — TASK-2026-02452)
+
+- **Planned vs actual** (`planner_tracking.task_actuals`, `get_actuals`): actual hours are the
+  kiosk's Job Intervals per task and person, net of pauses (an Open interval counts to now). Cards
+  read "14h of 12h"; a task that is not finished and is more than 10% over its plan is **running
+  over** (`over_plan`) and has a filter chip. Planned is `expected_time`, or the engine's allocated
+  hours when there is no estimate. Someone who clocked onto the task but is not a Planner Resource
+  is still listed, with `resource: None`.
+- **Labor forecast** (`get_labor_forecast`, and `Project Budget Line.labor_forecast` on the Labor
+  line): hours booked from today to the project's last open task (at most 180 days), plus hours
+  already clocked, each at that day's `Employee Pay Rate`. Today counts once — a booking today
+  counts only beyond what has been clocked today. A rate is burdened only where `burden_pct` is set;
+  otherwise it is the base rate and the answer says "base rate" (Time Kiosk Settings' default
+  burden is deliberately not used). Subcontractors and people without a rate show hours and
+  `no_rate`. It is a forecast, not spend: the line's Actual and Coverage are untouched.
+  - **Who sees money.** With one person on a job, the project's labor total *is* their wage, so
+    costs go only to `planner_tracking.COST_ROLES` (System Manager, Finance Team, Executive Team,
+    Estimator, HR Manager — whichever exist). Everyone else gets hours and nothing else, and their
+    request never reads a pay rate.
+  - **Why the stored field is permlevel 2, not 1.** ERPNext v16's own Project permissions give
+    **Desk User** read at permlevel 1, and every desk user holds Desk User. A child-table field
+    answers to its parent's permissions, so level 1 would show the forecast to everyone.
+    `patches/grant_labor_forecast_visibility` grants level-2 read on Project to the cost roles (after
+    `setup_custom_perms`, so a site without Custom DocPerm rows keeps its standard ones; production
+    already had 27). Frappe strips level-2 fields from the save response for anyone else.
+  - The stored figure is refreshed when the Project is saved (`budget_rollup.refresh_labor_forecast`,
+    its own `try`), so it can go stale between saves; the planner's strip always reads it live.
+- **Crew Utilization** report: capacity vs booked vs clocked per person per week (site's first
+  weekday) or month. Clocked time on non-customer work is its own **Other clocked** column, never
+  dropped. Hours only.
+- **Equipment** (`Task.custom_equipment`, rows of Fleet Vehicle or Asset): two firm tasks on one
+  vehicle or asset on the same day are a conflict (pencils are ignored on both sides), as is a
+  vehicle In Shop or Retired, or an Asset with a submitted Asset Booking that overlaps — unless the
+  booking is for the task's own project. Conflicts come through the same reason prompt, keyed
+  `Equipment`, and publishing drafts checks the whole batch. `get_equipment` feeds the timeline's
+  equipment row group.
+- **No Google calls**: actuals, the forecast and the report all run the engine with `google=False`.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
-- `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0).
+- `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0), then `planner_tracking.validate_equipment` (one row per vehicle/asset, label filled, v1.582.0).
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.

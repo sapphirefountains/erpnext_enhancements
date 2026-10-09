@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.582.0] - 2026-10-09
+
+### Added
+
+- **Project Planner: tracking** (Phase 4, TASK-2026-02452).
+  - **Planned vs actual hours.** Cards show what the kiosk clocked against the plan ("14h of
+    12h"), per task and per person, from Job Intervals net of pauses. A task that is not finished
+    and is more than 10% over is **running over** and has a filter chip. `get_actuals` serves it.
+  - **Labor forecast** for a project: hours booked from today on plus hours already clocked, each
+    at that day's pay rate. It shows as a strip in the planner and fills a new **Labor Forecast**
+    figure on the budget's Labor line (refreshed when the Project is saved). Today is counted once,
+    so a booking for today counts only beyond what has already been clocked. A rate is burdened
+    only where `burden_pct` is set, otherwise it is the base rate and the forecast says so; Time
+    Kiosk's default burden is deliberately not used. A subcontractor or anyone without a rate shows
+    hours with "no rate". It is a forecast, not spend: the line's Actual and Coverage are unchanged.
+  - **Crew Utilization** report: capacity vs booked (tasks, visits, rental crew work, travel,
+    driving) vs clocked, per person per week or month. Clocked time on internal work is its own
+    **Other clocked** column rather than dropped. Hours only.
+  - **Equipment on tasks** (`Task.custom_equipment`, new child table `Task Equipment`): the Fleet
+    Vehicles and Assets a task uses. Two firm tasks on one truck the same day, a vehicle In Shop or
+    Retired, or an Asset with an overlapping Asset Booking for another project is a conflict, through
+    the same reason prompt as a person's. Pencilled work is ignored on both sides. The timeline gets
+    an equipment row group (`get_equipment`).
+  - All tracking reads run the availability engine with Google switched off, so they never cost a
+    Routes request.
+
+### Changed
+
+- **The planners show customer jobs only** (Nik, 2026-10-09: "It should only do Design, Build,
+  Service, Events (Rent), Delivery"). A task counts when its project's type is one of those, or the
+  project has a qualifying Value Stream row; a rental crew task always counts. Internal, Group
+  Projects, Overhead, untyped projects and tasks with no project no longer appear in the calendars,
+  trays, heatmap, suggestions, Copy week or the Maintenance Planner's project items. The rule lives
+  once in the shared engine (`crew_availability.PLANNER_PROJECT_TYPES`), so every surface agrees. On
+  production that keeps 373 open projects and drops 26.
+
+### Security
+
+- **Labor cost reaches the cost roles only.** With one person on a job, the project's labor total
+  *is* that person's wage. So `get_labor_forecast` returns money only to System Manager, Finance
+  Team, Executive Team, Estimator and HR Manager (whichever exist); everyone else gets hours, and
+  their request never reads a pay rate. The stored `labor_forecast` field is at **permlevel 2, not
+  1**, because ERPNext v16's own Project permissions give **Desk User** read at permlevel 1 — every
+  desk user — and a child-table field answers to its parent's permissions. The new patch
+  `grant_labor_forecast_visibility` grants level-2 read on Project to the cost roles, after
+  `setup_custom_perms` so a site with no Custom DocPerm rows for Project keeps its standard ones
+  (production already had 27, so nothing else changes there). Frappe strips level-2 fields from the
+  save response for everyone else.
+
 ## [1.581.0] - 2026-10-09
 
 ### Added

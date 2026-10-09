@@ -75,7 +75,7 @@ from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
-from erpnext_enhancements.project_enhancements import routing
+from erpnext_enhancements.project_enhancements import planner_tracking, routing
 
 # The people who schedule work: projects staff, and maintenance staff who must see project
 # bookings on their technicians. The task reads below are raw SQL, so this set is the gate.
@@ -210,6 +210,8 @@ def schedule_state(task, crew):
 		flt(task.get("expected_time")),
 		tuple((m.get("resource"), flt(m.get("hours"))) for m in crew or []),
 		engine.is_tentative(task),
+		# Phase 4: a vehicle or asset added or taken off can create (or clear) a conflict too.
+		tuple(sorted((e["type"], e["name"]) for e in engine.task_equipment(task.get("equipment")))),
 	)
 
 
@@ -445,6 +447,9 @@ def build_card(
 	depends_on=None,
 	predecessors=None,
 	held=None,
+	equipment=None,
+	equipment_conflicts=None,
+	actuals=None,
 ):
 	"""One task card, from a Task row (or doc) and its resolved crew.
 
@@ -452,6 +457,11 @@ def build_card(
 	the hours the engine allocated it over the task's whole span. ``depends_on`` names the task's
 	predecessors and ``predecessors`` are their rows (for ``blocked_by``); ``held`` is the crew's
 	current credentials (:func:`qualification_gaps`), None when they could not be read.
+
+	Phase 4: ``equipment`` is ``[{"type", "name", "label"}]`` and ``equipment_conflicts`` its
+	sentences (the card's ``conflicts``, a list, empty when there are none); ``actuals`` is
+	``{person key: clocked hours}`` (``planner_tracking.task_actuals``), giving ``actual_hours``,
+	each crew entry's ``actual`` and ``over_plan``.
 	"""
 	span = engine.task_span(task)
 	slot = engine.task_slot(task)
@@ -459,6 +469,9 @@ def build_card(
 	crew_size = max(cint(task.get("custom_crew_size")), 0)
 	today = getdate(today)
 	gaps = qualification_gaps(credentials, crew, held, span[1] if span else today) if held is not None else []
+	actuals = actuals or {}
+	actual_hours = round(sum(flt(h) for h in actuals.values()), 2)
+	planned = planner_tracking.planned_total(task, booked)
 	return {
 		"name": task.get("name"),
 		"subject": task.get("subject") or task.get("name"),
@@ -476,6 +489,7 @@ def build_card(
 				"hours": member.get("hours"),
 				"is_lead": bool(member.get("is_lead")),
 				"booked": round(flt((booked or {}).get(member.get("resource"))), 2),
+				"actual": round(flt(actuals.get(member.get("resource"))), 2),
 			}
 			for member in crew
 		],
@@ -495,6 +509,13 @@ def build_card(
 		"blocked_by": blocked_by(task, predecessors),
 		"qualification_gaps": gaps,
 		"qualification_warning": qualification_warning(gaps),
+		"equipment": list(equipment or []),
+		# The card's own problems: today only its vehicle/asset clashes, as sentences. (The
+		# needs_reason ``conflicts`` of a save is a different thing: a dict keyed by person.)
+		"conflicts": list(equipment_conflicts or []),
+		"planned_hours": planned,
+		"actual_hours": actual_hours,
+		"over_plan": planner_tracking.is_over_plan(planned, actual_hours, task.get("status")),
 	}
 
 
@@ -533,9 +554,9 @@ def get_planner(start, end, draft=0):
 	overlay = _draft_overlay() if cint(given(draft)) else None
 
 	if overlay:
-		data = engine._compute(start, end, exclude=overlay["exclude"], extra=overlay["extra"])
+		data = engine._compute(start, end, exclude=overlay["exclude"], extra=overlay["extra"], equipment=True)
 	else:
-		data = engine._compute(start, end)
+		data = engine._compute(start, end, equipment=True)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	unscheduled_rows = _unscheduled()
 	crew_rows, todo_users = engine.read_crews([row.get("name") for row in unscheduled_rows])
@@ -547,6 +568,12 @@ def get_planner(start, end, draft=0):
 		{r["name"]: r for r in data["resources"]},
 		{c for types in credentials.values() for c in types},
 	)
+	# Phase 4: vehicles/equipment (the dated tasks' from the engine pass, the tray's read here) and
+	# the kiosk's clocked hours for every card, in one read each.
+	equipment = dict(data.get("equipment") or {})
+	equipment.update(_equipment_labelled(engine.read_equipment([r.get("name") for r in unscheduled_rows])))
+	equipment_conflicts = data.get("equipment_conflicts") or {}
+	actuals, _actual_labels = planner_tracking.task_actuals(card_names)
 
 	def labelled(crew):
 		return [dict(m, label=m.get("label") or labels.get(m["resource"]) or m["resource"]) for m in crew]
@@ -557,6 +584,9 @@ def get_planner(start, end, draft=0):
 			"depends_on": preds,
 			"predecessors": [predecessors[p] for p in preds if p in predecessors],
 			"held": held,
+			"equipment": equipment.get(name),
+			"equipment_conflicts": equipment_conflicts.get(name),
+			"actuals": actuals.get(name),
 		}
 
 	tasks, needs, foreign = [], [], []
@@ -654,30 +684,43 @@ def _crewless_rental(task, start, end):
 
 
 def _unscheduled():
-	"""Undated open tasks on Active projects, newest project first. Python re-checks "undated"."""
+	"""Undated open tasks on Active customer-job projects (``engine.PLANNER_PROJECT_TYPES``),
+	newest project first. Python re-checks "undated" and "customer job"."""
 	cols = engine._task_columns()
 	selected = ", ".join(f"{expr} AS `{column}`" for column, expr in cols.items())
+	type_expr, stream = engine.planner_job_sql("p")
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			t.name, t.subject, t.project, t.status, t.exp_start_date, t.exp_end_date,
 			t.expected_time, t.color, t.modified, {selected},
-			p.project_name AS project_title
+			p.project_name AS project_title,
+			{type_expr} AS project_type, {stream} AS planner_stream
 		FROM `tabTask` t
 		INNER JOIN `tabProject` p ON p.name = t.project
 		WHERE IFNULL(t.is_group, 0) = 0
 			AND IFNULL(t.is_template, 0) = 0
 			AND IFNULL(t.status, '') NOT IN %(finished)s
 			AND p.status = %(active)s
+			AND {engine.planner_job_condition("p")}
 			AND t.exp_start_date IS NULL
 			AND t.exp_end_date IS NULL
 		ORDER BY p.creation DESC, t.creation
 		LIMIT %(limit)s
 		""",
-		{"finished": engine.FINISHED_STATUSES, "active": ACTIVE_PROJECT, "limit": UNSCHEDULED_LIMIT},
+		{
+			"finished": engine.FINISHED_STATUSES,
+			"active": ACTIVE_PROJECT,
+			"limit": UNSCHEDULED_LIMIT,
+			**engine.PLANNER_SQL_VALUES,
+		},
 		as_dict=True,
 	)
-	return [row for row in rows if not engine.task_span(row) and not row.get("custom_rental_booking")]
+	return [
+		row
+		for row in rows
+		if not engine.task_span(row) and not row.get("custom_rental_booking") and engine.is_planner_job(row)
+	]
 
 
 def _credentials(task_names):
@@ -807,7 +850,11 @@ def _held_credentials(people, credential_types):
 
 
 def _projects(names):
-	"""Active projects plus any project on a card, for the project and PM filters."""
+	"""Active customer-job projects plus any project on a card, for the project and PM filters.
+
+	Internal projects are not offered (Nik, 2026-10-09, ``engine.PLANNER_PROJECT_TYPES``). A card's
+	project that is not a customer job can only be a rental crew task's, which counts anyway.
+	"""
 	try:
 		owner = "e.employee_name" if frappe.db.has_column("Project", "custom_project_owner") else "NULL"
 	except Exception:
@@ -818,10 +865,14 @@ def _projects(names):
 		SELECT p.name, p.project_name AS title, {owner} AS pm
 		FROM `tabProject` p
 		{join}
-		WHERE p.status = %(active)s OR p.name IN %(names)s
+		WHERE (p.status = %(active)s AND {engine.planner_job_condition("p")}) OR p.name IN %(names)s
 		ORDER BY p.project_name
 		""",
-		{"active": ACTIVE_PROJECT, "names": tuple(sorted(names)) or ("__none__",)},
+		{
+			"active": ACTIVE_PROJECT,
+			"names": tuple(sorted(names)) or ("__none__",),
+			**engine.PLANNER_SQL_VALUES,
+		},
 		as_dict=True,
 	)
 	return [
@@ -863,7 +914,11 @@ def _state(doc):
 		"custom_crew_size",
 		"custom_tentative",
 	)
-	return {key: doc.get(key) for key in keys}
+	state = {key: doc.get(key) for key in keys}
+	# Phase 4: the task's vehicles and assets, as the engine judges them (``equipment`` on a
+	# hypothetical task replaces its stored rows in ``engine._compute``).
+	state["equipment"] = engine.task_equipment(doc.get("custom_equipment"))
+	return state
 
 
 def _resources(names):
@@ -1087,6 +1142,7 @@ def _apply(
 	credentials=None,
 	reason=None,
 	tentative=None,
+	equipment=None,
 ):
 	"""The shared write: edit, check for new conflicts, save or ask for a reason."""
 	before_state = _state(doc)
@@ -1113,6 +1169,8 @@ def _apply(
 		)
 	if tentative is not None:
 		doc.custom_tentative = 1 if tentative else 0
+	if equipment is not None:
+		_set_equipment(doc, equipment)
 
 	after_state = _state(doc)
 	after_crew = _current_crew(doc)
@@ -1159,7 +1217,7 @@ def _card(doc):
 	if doc.get("project"):
 		state["project_title"] = frappe.db.get_value("Project", doc.project, "project_name")
 	crew = _current_crew(doc)
-	booked = engine._preview(state, crew)[1] if engine.task_span(state) else {}
+	conflicts, booked = engine._preview(state, crew) if engine.task_span(state) else ({}, {})
 	credentials = [row.get("credential_type") for row in (doc.get("custom_required_credentials") or [])]
 	predecessors = _predecessor_rows(doc)
 	held = (
@@ -1177,6 +1235,9 @@ def _card(doc):
 		depends_on=[row.get("task") for row in (doc.get("depends_on") or []) if row.get("task")],
 		predecessors=predecessors,
 		held=held,
+		equipment=_equipment_labelled({doc.name: state["equipment"]}).get(doc.name),
+		equipment_conflicts=(conflicts or {}).get(engine.EQUIPMENT_KEY),
+		actuals=planner_tracking.task_actuals([doc.name])[0].get(doc.name),
 	)
 
 
@@ -1192,11 +1253,14 @@ def save_task(
 	credentials=None,
 	reason=None,
 	tentative=None,
+	equipment=None,
 	draft=0,
 ):
-	"""Change a task's dates, hours, crew size, crew, qualifications or pencil flag. Unset
-	arguments stay as they are; ``crew`` and ``credentials`` are JSON lists; ``tentative`` is a
-	Check (``1``/``0``/``true``/``false``).
+	"""Change a task's dates, hours, crew size, crew, qualifications, pencil flag or equipment.
+	Unset arguments stay as they are; ``crew``, ``credentials`` and ``equipment`` are JSON lists;
+	``tentative`` is a Check (``1``/``0``/``true``/``false``). ``equipment`` (Phase 4) is
+	``[{"equipment_type": "Vehicle"|"Asset", "vehicle"|"asset": name}]`` and replaces the task's
+	equipment rows (``[]`` clears them); a vehicle or asset clash is filed under ``"Equipment"``.
 
 	Returns ``{"needs_reason": True, "conflicts": {person: [..]}}`` without saving when the change
 	creates a conflict and no ``reason`` came with it (starting before a predecessor ends is filed
@@ -1218,6 +1282,7 @@ def save_task(
 			crew=parse_list(given(crew)),
 			credentials=parse_list(given(credentials)),
 			tentative=None if tentative is None else as_bool(tentative),
+			equipment=parse_list(given(equipment)),
 		)
 	doc = _load(task, modified)
 	return _apply(
@@ -1230,6 +1295,7 @@ def save_task(
 		credentials=parse_list(given(credentials)),
 		reason=reason,
 		tentative=None if tentative is None else as_bool(tentative),
+		equipment=parse_list(given(equipment)),
 	)
 
 
@@ -1537,18 +1603,21 @@ def get_overdue(project=None, limit=OVERDUE_DEFAULT_LIMIT):
 	rental = cols["custom_rental_booking"]
 	project = given(project)
 	project_filter = "AND t.project = %(project)s" if project else ""
+	type_expr, stream = engine.planner_job_sql("p")
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			t.name, t.subject, t.project, t.status, t.exp_start_date, t.exp_end_date,
 			t.expected_time, t.modified, {selected},
-			p.project_name AS project_title
+			p.project_name AS project_title,
+			{type_expr} AS project_type, {stream} AS planner_stream
 		FROM `tabTask` t
 		INNER JOIN `tabProject` p ON p.name = t.project
 		WHERE IFNULL(t.is_group, 0) = 0
 			AND IFNULL(t.is_template, 0) = 0
 			AND IFNULL(t.status, '') NOT IN %(finished)s
 			AND p.status = %(active)s
+			AND {engine.planner_job_condition("p")}
 			AND IFNULL({rental}, '') = ''
 			AND COALESCE(DATE(t.exp_end_date), DATE(t.exp_start_date), DATE({slot_end}), DATE({slot_start})) < %(today)s
 			{project_filter}
@@ -1561,13 +1630,17 @@ def get_overdue(project=None, limit=OVERDUE_DEFAULT_LIMIT):
 			"today": today,
 			"project": project,
 			"limit": count,
+			**engine.PLANNER_SQL_VALUES,
 		},
 		as_dict=True,
 	)
 	rows = [
 		row
 		for row in rows
-		if not row.get("custom_rental_booking") and engine.task_span(row) and engine.task_span(row)[1] < today
+		if not row.get("custom_rental_booking")
+		and engine.is_planner_job(row)
+		and engine.task_span(row)
+		and engine.task_span(row)[1] < today
 	]
 	labels = _crew_labels([row.get("name") for row in rows]) if rows else {}
 	return {"today": str(today), "total": len(rows), "projects": group_overdue(rows, labels)}
@@ -1768,14 +1841,22 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 		frappe.throw(_("You cannot create Tasks."), frappe.PermissionError)
 
 	source_end = source + datetime.timedelta(days=6)
-	plans, copies, skipped = [], [], []
+	plans, copies, skipped, docs = [], [], [], []
 	for name in names:
 		doc = frappe.get_doc("Task", name)
 		doc.check_permission("read")
+		docs.append(doc)
+	# Customer jobs only (Nik, 2026-10-09): a task on an internal project is not the planner's.
+	jobs = engine.planner_projects({doc.get("project") for doc in docs if doc.get("project")})
+	for doc in docs:
+		name = doc.name
 		state = _state(doc)
 		span = engine.task_span(state)
 		if not span or not engine._range_overlaps(span[0], span[1], source, source_end):
 			skipped.append({"task": name, "reason": _("It is not in the week of {0}.").format(source)})
+			continue
+		if not doc.get("custom_rental_booking") and doc.get("project") not in jobs:
+			skipped.append({"task": name, "reason": _("Its project is not a customer job.")})
 			continue
 		if doc.get("custom_rental_booking"):
 			skipped.append(
@@ -1824,6 +1905,8 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 				if row.get("credential_type")
 			],
 		)
+		if doc.get("custom_equipment"):
+			_set_equipment(new, equipment_payload(doc.get("custom_equipment")))
 		new.insert()
 		if conflicts:
 			new.add_comment(
@@ -2343,7 +2426,7 @@ def check_routes():
 DRAFT_DOCTYPE = "Planner Draft Change"
 DRAFT, PUBLISHED, DISCARDED = "Draft", "Published", "Discarded"
 #: The ``save_task`` arguments a Draft row may carry. Nothing else in a stored payload is applied.
-DRAFT_KEYS = ("start", "end", "expected_time", "crew_size", "crew", "credentials", "tentative")
+DRAFT_KEYS = ("start", "end", "expected_time", "crew_size", "crew", "credentials", "tentative", "equipment")
 DRAFT_LIMIT = 300
 #: The timeline reason for the rare task that only conflicts while its batch is half saved.
 PUBLISH_FALLBACK_REASON = "Published from the Project Planner with other drafted changes"
@@ -2564,6 +2647,7 @@ def _draft_edit(
 	crew=None,
 	credentials=None,
 	tentative=None,
+	equipment=None,
 ):
 	"""The edit half of :func:`_apply`, with no conflict check and no save. Keep the two in step:
 	``tests/test_planner_phase3b.py`` runs both on the same change and compares the result."""
@@ -2591,6 +2675,8 @@ def _draft_edit(
 		# Phase 3A's pencil flag. On a site without the field this only sets an attribute on a doc
 		# that is never saved here.
 		doc.set("custom_tentative", 1 if cint(tentative) else 0)
+	if equipment is not None:
+		_set_equipment(doc, equipment)
 
 
 def _quiet_message_log():
@@ -2670,6 +2756,7 @@ def _store_draft(
 	crew=None,
 	credentials=None,
 	tentative=None,
+	equipment=None,
 ):
 	"""Apply one change to a drafted task in memory and keep it on the caller's Draft row.
 
@@ -2679,7 +2766,7 @@ def _store_draft(
 	"""
 	doc = context["doc"]
 	stored_state, stored_crew = context["stored"]
-	_draft_edit(doc, start, end, expected_time, crew_size, crew, credentials, tentative)
+	_draft_edit(doc, start, end, expected_time, crew_size, crew, credentials, tentative, equipment)
 	after_state, after_crew = _state(doc), _current_crew(doc)
 
 	recorded = {"start": start, "end": end}
@@ -2695,6 +2782,8 @@ def _store_draft(
 		]
 	if tentative is not None:
 		recorded["tentative"] = 1 if cint(tentative) else 0
+	if equipment is not None:
+		recorded["equipment"] = equipment_payload(doc.get("custom_equipment"))
 	payload = merge_payload(context["payload"], recorded, engine.task_span(after_state))
 
 	conflicts = {}
@@ -2835,6 +2924,7 @@ def _batch_check(plans):
 	""":func:`batch_conflicts` for a publish: the week as stored against the week with every
 	draft in place, for everyone on any of the drafted tasks before or after."""
 	names = [plan["name"] for plan in plans]
+	pairs = [(plan["before"], plan["after"]) for plan in plans]
 	resources, first, last = set(), None, None
 	for plan in plans:
 		for state, crew in (plan["before"], plan["after"]):
@@ -2843,13 +2933,25 @@ def _batch_check(plans):
 				first = span[0] if first is None else min(first, span[0])
 				last = span[1] if last is None else max(last, span[1])
 			resources.update(m.get("resource") for m in crew or [] if m.get("resource"))
-	if not resources or first is None:
+	# A crewless draft can still clash over a vehicle (Phase 4), so no people is no reason to stop.
+	if first is None or not (resources or any(after[0].get("equipment") for _b, after in pairs)):
 		return {}
 	people = sorted(resources)
-	before = engine._compute(first, last, people)
-	after = engine._compute(first, last, people, exclude=set(names), extra=[plan["after"] for plan in plans])
+	before = engine._compute(first, last, people, equipment=True)
+	after = engine._compute(
+		first, last, people, exclude=set(names), extra=[plan["after"] for plan in plans], equipment=True
+	)
 	labels = {r["name"]: r["label"] for r in after["resources"]}
-	return batch_conflicts(before["days"], after["days"], names, labels)
+	out = batch_conflicts(before["days"], after["days"], names, labels)
+	# Phase 4: the drafted tasks' vehicle and asset clashes that were not there as stored.
+	known = {line for lines in (before.get("equipment_conflicts") or {}).values() for line in lines}
+	for name in sorted(names):
+		for line in (after.get("equipment_conflicts") or {}).get(name) or []:
+			if line not in known and line not in out.setdefault(engine.EQUIPMENT_KEY, []):
+				out[engine.EQUIPMENT_KEY].append(line)
+	if not out.get(engine.EQUIPMENT_KEY):
+		out.pop(engine.EQUIPMENT_KEY, None)
+	return out
 
 
 def _publish_one(plan, reason):
@@ -3307,6 +3409,271 @@ def send_digest_preview(date=None):
 	from erpnext_enhancements.project_enhancements import planner_digest
 
 	return planner_digest.send_preview(frappe.session.user, getdate(given(date) or nowdate()))
+
+
+# ====================================================================== Phase 4: tracking
+#
+# Planned against actual hours from the kiosk (P4.1), the labor cost forecast (P4.2) and vehicle and
+# equipment booking (P4.4). The arithmetic and the readers live in
+# ``project_enhancements/planner_tracking.py`` and the engine; this block is the endpoints and the
+# small write helpers ``save_task(equipment=...)`` uses. Edits above this block for Phase 4 are the
+# ``equipment``/``actuals`` arguments of ``build_card``, ``_state``/``schedule_state`` carrying the
+# equipment, ``save_task``/``_apply``/the drafts taking ``equipment``, and the customer-job filter
+# (``engine.PLANNER_PROJECT_TYPES``) in ``_unscheduled``, ``get_overdue``, ``_projects`` and
+# ``copy_week``.
+#
+# * **Money goes only to the cost roles** (``planner_tracking.COST_ROLES``). Everybody else who can
+#   open the planner gets hours: :func:`get_labor_forecast` answers them with no rate, no cost and
+#   no total, because a per-person cost, or a total with one person's labor in it, is a wage.
+# * **No paid Google fan-out.** The forecast and the actuals run the engine with ``google=False``.
+
+#: Most tasks one get_actuals call answers for.
+ACTUALS_MAX_TASKS = 300
+#: The planner roles plus the cost roles may ask for a project's labor forecast.
+FORECAST_ROLES = PLANNER_ROLES | planner_tracking.COST_ROLES
+
+
+def equipment_payload(rows):
+	"""Task Equipment rows as ``save_task`` takes them: ``[{"equipment_type", "vehicle"|"asset"}]``."""
+	out = []
+	for entry in engine.task_equipment(rows):
+		key = "vehicle" if entry["type"] == "Vehicle" else "asset"
+		out.append({"equipment_type": entry["type"], key: entry["name"]})
+	return out
+
+
+def _equipment_labelled(equipment):
+	"""``{task: [{type, name, label}]}`` with each label read fresh (an Asset's ``asset_name``)."""
+	equipment = {task: rows for task, rows in (equipment or {}).items() if rows}
+	refs = {(e["type"], e["name"]) for rows in equipment.values() for e in rows}
+	if not refs:
+		return equipment
+	labels, _statuses = engine.read_equipment_details(refs)
+	return {
+		task: [dict(e, label=labels.get((e["type"], e["name"])) or e.get("label") or e["name"]) for e in rows]
+		for task, rows in equipment.items()
+	}
+
+
+def _set_equipment(doc, equipment):
+	"""Replace ``Task.custom_equipment``. Each entry names a Fleet Vehicle or an Asset that exists;
+	the same one twice keeps the first. A vehicle In Shop or Retired may still be put on (it is a
+	conflict, which asks for a reason, never a refusal)."""
+	wanted = []
+	for entry in equipment or []:
+		ref = engine.equipment_ref(entry if isinstance(entry, dict) else {})
+		if not ref:
+			frappe.throw(_("Each equipment row needs a vehicle or an asset."))
+		if ref not in wanted:
+			wanted.append(ref)
+	labels, _statuses = engine.read_equipment_details(wanted) if wanted else ({}, {})
+	doc.set("custom_equipment", [])
+	for kind, name in wanted:
+		doctype = "Fleet Vehicle" if kind == "Vehicle" else "Asset"
+		if (kind, name) not in labels and not frappe.db.exists(doctype, name):
+			frappe.throw(_("{0} {1} does not exist.").format(_(doctype), name))
+		doc.append(
+			"custom_equipment",
+			{
+				"equipment_type": kind,
+				"vehicle": name if kind == "Vehicle" else None,
+				"asset": name if kind == "Asset" else None,
+				"label": labels.get((kind, name)) or name,
+			},
+		)
+
+
+def _actuals_rows(names):
+	"""The Task rows :func:`get_actuals` needs, customer jobs only, in the order asked."""
+	optional = [
+		column
+		for column, expr in engine._task_columns().items()
+		if expr != "NULL"
+		and column
+		in ("custom_start_datetime", "custom_end_datetime", "custom_rental_booking", "custom_tentative")
+	]
+	rows = {
+		row.get("name"): row
+		for row in frappe.get_all(
+			"Task",
+			filters={"name": ["in", names]},
+			fields=[
+				"name",
+				"subject",
+				"project",
+				"status",
+				"expected_time",
+				"exp_start_date",
+				"exp_end_date",
+				"modified",
+				*optional,
+			],
+			limit_page_length=0,
+		)
+	}
+	jobs = engine.planner_projects({row.get("project") for row in rows.values() if row.get("project")})
+	return [
+		rows[name]
+		for name in names
+		if name in rows and (rows[name].get("custom_rental_booking") or rows[name].get("project") in jobs)
+	]
+
+
+@frappe.whitelist()
+def get_actuals(project=None, tasks=None):
+	"""Planned against clocked hours, per task (P4.1). Read-only.
+
+	``tasks`` (JSON list, up to 300) or ``project`` (its non-group, non-template tasks) names the
+	tasks; tasks not on a customer job are left out. Returns ``{task: {"planned", "actual",
+	"by_person": [{"resource", "label", "planned", "actual"}], "over_plan"}}``: ``planned`` is the
+	task's estimate, else the engine's allocation to its crew (``google=False``); ``actual`` is the
+	kiosk's Job Interval hours net of pauses (an open one counts to now); ``over_plan`` is actual >
+	planned × 1.10 on a task that is not finished. Somebody who clocked time on a task without being
+	on its crew is listed with ``resource`` None when they are not a Planner Resource.
+	"""
+	_require_planner()
+	names = parse_list(given(tasks))
+	if names is None:
+		if not given(project):
+			frappe.throw(_("Name a project or the tasks."))
+		names = frappe.get_all(
+			"Task",
+			filters={"project": project, "is_group": 0, "is_template": 0},
+			pluck="name",
+			order_by="exp_start_date asc",
+			limit_page_length=ACTUALS_MAX_TASKS,
+		)
+	names = [n for n in dict.fromkeys(names) if n]
+	if len(names) > ACTUALS_MAX_TASKS:
+		frappe.throw(_("Ask for {0} tasks or fewer.").format(ACTUALS_MAX_TASKS))
+	rows = _actuals_rows(names) if names else []
+	if not rows:
+		return {}
+
+	people = frappe.get_all("Planner Resource", fields=["name", "resource_name", "user"], limit_page_length=0)
+	user_to_resource = {p.get("user"): p.get("name") for p in people if p.get("user")}
+	resource_labels = {p.get("name"): p.get("resource_name") or p.get("name") for p in people}
+	crew_rows, todo_users = engine.read_crews([row.get("name") for row in rows])
+	crews = {
+		row.get("name"): [
+			dict(m, label=m.get("label") or resource_labels.get(m["resource"]) or m["resource"])
+			for m in engine.resolve_crew(
+				crew_rows.get(row.get("name")), todo_users.get(row.get("name")), user_to_resource
+			)
+		]
+		for row in rows
+	}
+	planned = engine._preview_many(
+		[(row, crews[row.get("name")]) for row in rows if engine.task_span(row)], google=False
+	)[1]
+	actuals, labels = planner_tracking.task_actuals([row.get("name") for row in rows])
+	labels = {**resource_labels, **labels}
+	return {
+		row.get("name"): planner_tracking.actuals_summary(
+			row,
+			planned.get(row.get("name")) or {},
+			actuals.get(row.get("name")) or {},
+			labels,
+			crews.get(row.get("name")),
+		)
+		for row in rows
+	}
+
+
+@frappe.whitelist()
+def get_labor_forecast(project):
+	"""A project's labor forecast (P4.2): booked hours from today on plus clocked hours.
+
+	``{"project", "through", "booked_hours", "actual_hours", "burdened", "by_person": [{"label",
+	"booked", "actual"}], "can_see_cost"}`` for everyone who can open the planner. A caller with a
+	cost role (``planner_tracking.COST_ROLES``) also gets ``booked_cost``, ``actual_cost``,
+	``forecast_cost``, ``rate_label`` ("burdened rate" or "base rate"), ``no_rate`` (labels), and
+	``rate``, ``cost``, ``burdened`` and ``no_rate`` per person. Nobody else is given any money,
+	not even a total: a total with one person's labor in it is that person's wage. ``burdened`` is
+	None for them, since no pay rate is read at all.
+
+	Booked hours run to the project's last open task (at most 180 days out), from the engine with
+	Google switched off; today's booking counts only beyond what is already clocked today.
+	"""
+	if frappe.session.user != "Administrator" and not FORECAST_ROLES & set(frappe.get_roles()):
+		frappe.throw(_("Only planners and cost roles can see a labor forecast."), frappe.PermissionError)
+	project = given(project)
+	if not project or not frappe.db.exists("Project", project):
+		frappe.throw(_("Project {0} does not exist.").format(frappe.utils.escape_html(str(project or ""))))
+	return planner_tracking.labor_forecast(project, with_cost=planner_tracking.can_see_cost())
+
+
+def equipment_day_state(entry, status):
+	"""``"in_use"``, ``"double_booked"`` (two firm tasks, or a firm task and another project's asset
+	booking) or ``"unavailable"`` (a vehicle In Shop or Retired that is still booked)."""
+	firm = [t for t in entry.get("tasks") or [] if not t.get("tentative")]
+	projects = {t.get("project") for t in firm}
+	foreign = [
+		b for b in entry.get("bookings") or [] if not b.get("project") or b.get("project") not in projects
+	]
+	if status in engine.UNAVAILABLE_VEHICLE_STATUSES and entry.get("tasks"):
+		return "unavailable"
+	if len(firm) > 1 or (firm and foreign):
+		return "double_booked"
+	return "in_use"
+
+
+@frappe.whitelist()
+def get_equipment(start, end):
+	"""Each vehicle and asset per day (P4.4): which tasks use it, its asset bookings, its status.
+
+	``{"start", "end", "equipment": [{"type", "name", "label", "status", "days": {date: {"tasks":
+	[{task, subject, project, tentative}], "bookings": [{name, booking_type, project}], "state"}}}],
+	"conflicts": {task: [sentence]}}``. Every Fleet Vehicle that is not Retired is listed (an empty
+	``days`` is a free range), plus any vehicle or asset a task in the range uses. ``state`` is
+	``in_use``, ``double_booked`` or ``unavailable`` (see :func:`equipment_day_state`); a day with
+	nothing on it is absent. ``status`` is a vehicle's Fleet status (Active, In Shop, Retired), None
+	for an asset. Only customer-job and rental tasks count, as everywhere on the planner.
+	"""
+	_require_planner()
+	start, end = getdate(start), getdate(end)
+	if end < start:
+		frappe.throw(_("The end date is before the start date."))
+	if date_diff(end, start) > MAX_RANGE_DAYS:
+		frappe.throw(_("Pick a range of {0} days or less.").format(MAX_RANGE_DAYS))
+	tasks = engine.read_tasks(start, end)
+	stored = engine.read_equipment([t.get("name") for t in tasks])
+	refs = {(e["type"], e["name"]) for rows in stored.values() for e in rows}
+	fleet = frappe.get_all(
+		"Fleet Vehicle", filters={"status": ["!=", "Retired"]}, fields=["name"], limit_page_length=0
+	)
+	refs |= {("Vehicle", row.get("name")) for row in fleet if row.get("name")}
+	labels, statuses = engine.read_equipment_details(refs)
+	equipment = {
+		task: [dict(e, label=labels.get((e["type"], e["name"])) or e["label"]) for e in rows]
+		for task, rows in stored.items()
+	}
+	bookings = engine.read_asset_bookings([name for kind, name in refs if kind == "Asset"], start, end)
+	board = engine.equipment_board(tasks, equipment, start, end, statuses, bookings)
+	out = []
+	for kind, name in sorted(
+		refs, key=lambda r: (r[0] != "Vehicle", str(labels.get(r) or r[1]).lower(), r[1])
+	):
+		status = statuses.get(name) if kind == "Vehicle" else None
+		days = {
+			str(day): dict(entry, state=equipment_day_state(entry, status))
+			for day, entry in sorted((board.get((kind, name)) or {}).items())
+		}
+		out.append(
+			{
+				"type": kind,
+				"name": name,
+				"label": labels.get((kind, name)) or name,
+				"status": status,
+				"days": days,
+			}
+		)
+	return {
+		"start": str(start),
+		"end": str(end),
+		"equipment": out,
+		"conflicts": engine.equipment_conflicts(tasks, equipment, start, end, statuses, bookings),
+	}
 
 
 # ====================================================================== Phase 5: extras
