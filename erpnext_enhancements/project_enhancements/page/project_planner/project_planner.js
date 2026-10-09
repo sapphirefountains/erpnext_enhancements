@@ -10,6 +10,8 @@
 //   /desk/project-planner/route/<person>/2026-10-12
 //                                             one person's driving day: stops in order, drive
 //                                             time between them, and a map
+//   /desk/project-planner/heatmap/2026-10-12  eight weeks of load per person, one cell per week
+//                                             (the arrows step four weeks; a cell opens its week)
 //
 // Every move between weeks, months and views is a route, so Back and Forward step through them
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
@@ -35,6 +37,15 @@
 //   - "Suggest dates" on a card or its dialog     suggest_dates, then Book -> save_task
 //   - the route icon / drive line on a person's
 //     day                                         the route view (get_route)
+// Planning helpers (Phase 3A):
+//   - a Tentative (pencil) task is hatched; its hours are "soft" load, drawn apart from the firm
+//     hours, and "Firm up" turns it into a real booking (checked like any other change)
+//   - a task that starts before a predecessor ends carries a warning, and moving a task later
+//     offers to shift the tasks that follow it by the same working days (shift_successors)
+//   - a task whose required qualifications nobody on the crew holds says so (never a block)
+//   - the Overdue tray lists late open tasks by project: reschedule, mark done or cancel them in
+//     bulk (bulk_update), or drag one onto a day
+//   - "Copy week..." copies chosen tasks into another week as new tasks (copy_week), previewed first
 // Overbooking warns and never blocks: when a change would put someone over their hours, on a day
 // off or in two places at once, the server answers needs_reason instead of saving, and the page
 // asks for a reason and sends the change again with it. The reason lands on the task's timeline.
@@ -48,6 +59,8 @@ const PP = {
 	api: "erpnext_enhancements.api.project_planner",
 	views: ["week", "month", "crew"],
 	route_view: "route",
+	heatmap_view: "heatmap",
+	heatmap_weeks: 8,
 	groups: ["Field", "PM", "Design", "Subcontractor"],
 	prefs: {
 		project: "ee_project_planner_project",
@@ -125,19 +138,22 @@ const PP_STYLE = `
 .pp-dot{flex:0 0 auto;width:10px;height:10px;border-radius:50%;}
 .pp-avail{padding:3px 4px;font-size:11px;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;border-left:1px solid var(--border-color);}
 .pp-avail-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-bar{height:4px;border-radius:2px;background:var(--control-bg);overflow:hidden;}
+.pp-bar{position:relative;height:4px;border-radius:2px;background:var(--control-bg);overflow:hidden;}
 .pp-bar i{display:block;height:100%;}
+.pp-bar b{position:absolute;top:0;bottom:0;background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.85) 0 2px,transparent 2px 4px);}
 .pp-green .pp-bar i{background:#16a34a;}
 .pp-amber .pp-bar i{background:#d97706;}
 .pp-red .pp-bar i{background:#dc2626;}
 .pp-red .pp-avail-text,.pp-red .pp-cap-text{color:#b91c1c;font-weight:600;}
 .pp-offday{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--control-bg) 6px 8px);color:var(--text-muted);}
 .pp-conflict{box-shadow:inset 0 0 0 2px rgba(220,38,38,.55);}
+.pp-softover{box-shadow:inset 0 0 0 2px rgba(217,119,6,.55);}
 .pp-mini{padding:0;min-height:22px;}
 .pp-mini.pp-green{background:rgba(22,163,74,.22);}
 .pp-mini.pp-amber{background:rgba(217,119,6,.28);}
 .pp-mini.pp-red{background:rgba(220,38,38,.38);}
 .pp-mini.pp-idle{background:transparent;}
+.pp-mini.pp-soft-mini{background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.5) 0 2px,transparent 2px 5px);}
 .pp-tray{border:1px dashed var(--border-color);border-radius:10px;padding:8px 10px;margin-bottom:10px;}
 .pp-tray h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);display:flex;align-items:center;gap:8px;}
 .pp-tray h5 .btn{text-transform:none;letter-spacing:0;}
@@ -176,6 +192,9 @@ const PP_STYLE = `
 .pp-chip{display:inline-block;font-size:10px;border-radius:8px;padding:0 6px;margin-right:3px;background:var(--control-bg);color:var(--text-muted);}
 .pp-chip.pp-red{background:rgba(220,38,38,.12);color:#b91c1c;}
 .pp-chip.pp-amber{background:rgba(217,119,6,.14);color:#b45309;}
+.pp-chip.pp-pencil{background:rgba(100,116,139,.2);color:var(--text-color);font-style:italic;}
+.pp-card.pp-tentative{border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background-color:var(--card-bg);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);}
+.pp-firm-row{margin-top:3px;}
 .pp-card.pp-overdue{border-left-color:#dc2626 !important;}
 .pp-card.pp-saving{opacity:.55;pointer-events:none;}
 .pp-card.pp-dragging{opacity:.3;}
@@ -242,7 +261,53 @@ body.pp-drag-active,body.pp-drag-active *{cursor:grabbing !important;-webkit-use
 .pp-sug tr:first-child td{border-top:none;}
 .pp-sug-when{white-space:nowrap;font-weight:600;}
 .pp-sug-reason{color:var(--text-muted);font-size:12px;}
+.pp-hm-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.pp-hm{display:grid;min-width:640px;}
+.pp-hm > div{border-top:1px solid var(--border-color);padding:2px;min-width:0;}
+.pp-hm > .pp-hm-head{border-top:none;font-size:11px;color:var(--text-muted);text-align:center;white-space:nowrap;padding:5px 2px;}
+.pp-hm > .pp-hm-head.pp-today{color:var(--primary,#2490ef);font-weight:700;}
+.pp-hm > .pp-hm-name{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 8px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
+.pp-hm-name span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-hm-cell{border-radius:6px;padding:4px 6px;min-height:46px;cursor:pointer;font-size:11px;display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0;overflow:hidden;border:1px solid var(--border-color);}
+.pp-hm-cell:hover,.pp-hm-cell:focus{box-shadow:0 1px 4px rgba(0,0,0,.25);outline:none;}
+.pp-hm-cell.pp-green{background:rgba(22,163,74,.22);}
+.pp-hm-cell.pp-amber{background:rgba(217,119,6,.28);}
+.pp-hm-cell.pp-red{background:rgba(220,38,38,.38);}
+.pp-hm-cell.pp-idle{background:transparent;color:var(--text-muted);}
+.pp-hm-pct{font-weight:600;white-space:nowrap;}
+.pp-hm-sub{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-hm-legend{display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:12px;color:var(--text-muted);margin:8px 0 0;}
+.pp-hm-key{display:inline-flex;align-items:center;gap:5px;}
+.pp-hm-key i{display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid var(--border-color);}
+.pp-hm-key i.pp-green{background:rgba(22,163,74,.35);}
+.pp-hm-key i.pp-amber{background:rgba(217,119,6,.4);}
+.pp-hm-key i.pp-red{background:rgba(220,38,38,.5);}
+.pp-hm-key i.pp-soft-key{background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.85) 0 2px,transparent 2px 4px);}
+.pp-od{border:1px solid rgba(220,38,38,.4);border-radius:10px;padding:8px 10px;margin-bottom:10px;}
+.pp-od h5{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#b91c1c;display:flex;align-items:center;gap:8px;}
+.pp-od h5 .btn{text-transform:none;letter-spacing:0;}
+.pp-od-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 2px;}
+.pp-od-count{font-size:12px;color:var(--text-muted);}
+.pp-od-list{max-height:360px;overflow-y:auto;}
+.pp-od-project{display:flex;align-items:center;gap:6px;font-weight:600;font-size:12px;margin:8px 0 3px;}
+.pp-od-project input,.pp-od-card input{flex:0 0 auto;margin:0;}
+.pp-od-card{display:flex;align-items:center;gap:8px;border:1px solid var(--border-color);border-left:4px solid #dc2626;border-radius:6px;background:var(--card-bg);padding:3px 8px;font-size:12px;margin-bottom:3px;cursor:grab;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;min-width:0;}
+.pp-od-card.pp-dragging{opacity:.3;}
+.pp-od-main{flex:1 1 auto;min-width:0;}
+.pp-od-subject{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-od-sub{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-od-end{font-size:11px;color:#b91c1c;white-space:nowrap;}
+.pp-copy-list{max-height:300px;overflow-y:auto;border:1px solid var(--border-color);border-radius:8px;padding:4px 8px;}
+.pp-copy-row{display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:13px;}
+.pp-copy-row input{margin-top:3px;flex:0 0 auto;}
+.pp-copy-sub{font-size:11px;color:var(--text-muted);}
+.pp-copy-table{width:100%;font-size:13px;border-collapse:collapse;}
+.pp-copy-table td{padding:4px 8px 4px 0;border-top:1px solid var(--border-color);vertical-align:top;}
+.pp-copy-table tr:first-child td{border-top:none;}
 @media (max-width:760px){
+.pp-hm{min-width:560px;}
+.pp-hm-cell{padding:3px 4px;}
+.pp-od-card{flex-wrap:wrap;}
 .pp-title{min-width:0;width:100%;order:-1;margin:0;}
 .pp-toolbar select{max-width:none;flex:1 1 40%;}
 .pp-spacer{display:none;}
@@ -296,6 +361,13 @@ class ProjectPlanner {
 		this.route_date = "";
 		this.route_data = null;
 		this.route_map = null;
+		// Phase 3A: the Overdue tray (collapsed until opened; the tasks ticked in it), and the
+		// heatmap view's data.
+		this.overdue = null;
+		this.overdue_open = false;
+		this.overdue_selected = new Set();
+		this.overdue_request = 0;
+		this.heatmap = null;
 
 		this.page.add_menu_item(__("Planner Resources"), () => frappe.set_route("List", "Planner Resource"));
 		this.page.add_menu_item(__("Project Planner Settings"), () =>
@@ -319,6 +391,11 @@ class ProjectPlanner {
 			const date = route[3] && moment(route[3], "YYYY-MM-DD", true).isValid() ? route[3] : frappe.datetime.get_today();
 			return { view: PP.route_view, resource: route[2], anchor: date };
 		}
+		// /project-planner/heatmap/<date>
+		if (route[1] === PP.heatmap_view) {
+			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
+			return { view: PP.heatmap_view, anchor: date };
+		}
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
 		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 		return { view, anchor: day };
@@ -336,26 +413,37 @@ class ProjectPlanner {
 		if (target.view === PP.route_view) {
 			this.route_resource = target.resource;
 			this.route_date = target.anchor;
-			this.set_mode(true);
+			this.set_mode("route");
 			this.load_route();
 			return;
 		}
-		this.set_mode(false);
+		if (target.view === PP.heatmap_view) {
+			this.set_mode("heatmap");
+			this.load_heatmap();
+			return;
+		}
+		this.set_mode("");
 		this.load();
 	}
 
 	// The route view replaces the toolbar, panel, trays and calendar; the others replace it.
-	// (The panel is shown and hidden by render_panel, so leaving this view does not reveal a stale one.)
-	set_mode(route) {
+	// The heatmap keeps the toolbar but swaps the calendar for its grid, and drops the controls
+	// that only mean something on the calendar. (The panel is shown and hidden by render_panel,
+	// so leaving a view does not reveal a stale one.)
+	set_mode(mode) {
+		const route = mode === "route";
+		const heatmap = mode === PP.heatmap_view;
 		this.$toolbar.toggle(!route);
-		this.$trays.toggle(!route);
+		this.$trays.toggle(!route && !heatmap);
 		this.$grid_wrap.toggle(!route);
 		this.$hint.toggle(!route);
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
 		if (route && this.$draft_bar) this.$draft_bar.hide();
-		if (route) this.$panel.hide();
-		else this.clear_route_map();
+		[this.$project, this.$pm, this.$foreign, this.$undo].forEach(($el) => $el && $el.toggle(!heatmap));
+		if (heatmap && this.$copy) this.$copy.hide();
+		if (route || heatmap) this.$panel.hide();
+		if (!route) this.clear_route_map();
 	}
 
 	go_route(resource, ymd) {
@@ -410,6 +498,12 @@ class ProjectPlanner {
 	range() {
 		const first = this.first_weekday();
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
+		if (this.view === PP.heatmap_view) {
+			// The same weeks as the calendar: they begin on the site's first weekday, which is also
+			// what get_heatmap and copy_week snap to.
+			const start = anchor.clone().subtract((anchor.day() - first + 7) % 7, "days");
+			return { start, end: start.clone().add(PP.heatmap_weeks * 7 - 1, "days") };
+		}
 		if (this.view !== "month") {
 			const start = anchor.clone().subtract((anchor.day() - first + 7) % 7, "days");
 			return { start, end: start.clone().add(6, "days") };
@@ -431,8 +525,11 @@ class ProjectPlanner {
 
 	shift(sign) {
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
+		// The heatmap steps half its span, so each step keeps four weeks in common.
 		const next =
-			this.view === "month" ? anchor.startOf("month").add(sign, "months") : anchor.add(sign * 7, "days");
+			this.view === "month"
+				? anchor.startOf("month").add(sign, "months")
+				: anchor.add(sign * (this.view === PP.heatmap_view ? (PP.heatmap_weeks / 2) * 7 : 7), "days");
 		this.go(this.view, pp_ymd(next));
 	}
 
@@ -469,6 +566,7 @@ class ProjectPlanner {
 			["month", __("Month")],
 			["week", __("Week")],
 			["crew", __("Crew")],
+			[PP.heatmap_view, __("Heatmap")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
 				.text(label)
@@ -499,6 +597,7 @@ class ProjectPlanner {
 		this.group = this.$group.val() || "";
 
 		const $foreign = $("<label></label>").appendTo($bar);
+		this.$foreign = $foreign;
 		$('<input type="checkbox">')
 			.prop("checked", this.show_foreign)
 			.on("change", (e) => {
@@ -509,6 +608,12 @@ class ProjectPlanner {
 			.appendTo($foreign);
 		$foreign.append(document.createTextNode(__("Maintenance, rentals, travel")));
 
+		this.$copy = $('<button type="button" class="btn btn-default btn-sm pp-copy"></button>')
+			.text(__("Copy week…"))
+			.attr("title", __("Copy tasks from this week into another week"))
+			.hide()
+			.on("click", () => this.open_copy_week())
+			.appendTo($bar);
 		this.$undo = $('<button class="btn btn-default btn-sm pp-undo pp-empty"></button>')
 			.text(__("Undo"))
 			.on("click", () => this.undo())
@@ -538,6 +643,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ data
 
 	load() {
+		if (this.view === PP.heatmap_view) return this.load_heatmap();
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
@@ -556,6 +662,7 @@ class ProjectPlanner {
 				this.index();
 				this.fill_filters();
 				this.render();
+				this.load_overdue();
 			})
 			.catch(() => {
 				if (token === this.request) this.$body.removeClass("pp-loading");
@@ -652,7 +759,12 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
+		if (this.view === PP.heatmap_view) {
+			this.render_heatmap();
+			return;
+		}
 		if (!this.data) return;
+		this.$copy.toggle(this.view !== "month" && !!this.data.can_edit);
 		this.render_panel();
 		this.render_trays();
 		if (this.view === "crew") this.render_crew();
@@ -671,9 +783,11 @@ class ProjectPlanner {
 
 	// The availability of one person on one day, as a class and a short text.
 	avail_state(day) {
-		if (!day) return { cls: "pp-idle", text: "", ratio: 0 };
+		if (!day) return { cls: "pp-idle", text: "", ratio: 0, soft: 0, soft_ratio: 0 };
 		const capacity = Number(day.capacity) || 0;
 		const booked = Number(day.booked) || 0;
+		// Pencilled (tentative) hours: soft load. `booked`, `free` and the colors count firm work only.
+		const soft = Math.max(0, Number(day.soft_booked) || 0);
 		const over = booked - capacity;
 		const conflict = (day.conflicts || []).length > 0;
 		let state;
@@ -695,13 +809,31 @@ class ProjectPlanner {
 			if (day.off) state.text += ` · ${__("½ day off")}`;
 		}
 		if (conflict) state.cls += " pp-conflict";
+		state.soft = soft;
+		state.soft_ratio = capacity > 0 ? Math.min(Math.max(0, 1 - state.ratio), soft / capacity) : 0;
+		if (soft > 0.01) {
+			state.text += ` · ${__("+{0}h pencil", [pp_hours(soft)])}`;
+			if (capacity > 0 && booked + soft - capacity > 0.01) state.cls += " pp-softover";
+		}
 		return state;
+	}
+
+	// The bar under a person-day: firm hours solid, pencilled hours hatched after them.
+	bar_html(state) {
+		const width = Math.round(Math.min(1, state.ratio) * 100);
+		const soft = Math.round(Math.min(1, state.soft_ratio || 0) * 100);
+		return `<div class="pp-bar"><i style="width:${width}%"></i>${
+			soft > 0 ? `<b style="left:${width}%;width:${soft}%"></b>` : ""
+		}</div>`;
 	}
 
 	day_tip(resource, ymd, day) {
 		const lines = [`${this.resource_label(resource)} · ${pp_when(ymd)}`];
 		if (!day) return lines.join("\n");
 		lines.push(__("{0}h of {1}h booked", [pp_hours(day.booked), pp_hours(day.capacity)]));
+		if (Number(day.soft_booked) > 0) {
+			lines.push(__("{0}h pencilled (tentative, not counted as booked)", [pp_hours(day.soft_booked)]));
+		}
 		if (day.off) lines.push(__(day.off));
 		if (Number(day.drive_minutes) > 0) {
 			lines.push(
@@ -719,6 +851,7 @@ class ProjectPlanner {
 			const parts = [`${pp_hours(booking.hours)}h`];
 			if (booking.slot) parts.push(booking.slot.join("–"));
 			if (booking.estimated) parts.push(__("estimated"));
+			if (booking.tentative) parts.push(__("pencil"));
 			lines.push(`• ${booking.label || booking.ref} (${parts.join(", ")})`);
 		});
 		(day.conflicts || []).forEach((text) => lines.push(`${__("Conflict")}: ${text}`));
@@ -818,14 +951,14 @@ class ProjectPlanner {
 				const state = this.avail_state(day);
 				const tip = this.day_tip(resource.name, ymd, day);
 				if (month) {
-					html.push(`<div class="pp-avail pp-mini ${state.cls}" title="${pp_esc(tip)}"></div>`);
+					const hatch = state.soft > 0.01 ? " pp-soft-mini" : "";
+					html.push(`<div class="pp-avail pp-mini ${state.cls}${hatch}" title="${pp_esc(tip)}"></div>`);
 					return;
 				}
-				const width = Math.round(Math.min(1, state.ratio) * 100);
 				html.push(`
 					<div class="pp-avail ${state.cls}" title="${pp_esc(tip)}">
 						<span class="pp-avail-text">${pp_esc(state.text)}</span>
-						<div class="pp-bar"><i style="width:${width}%"></i></div>
+						${this.bar_html(state)}
 						${this.drive_html(resource.name, ymd, day)}
 					</div>`);
 			});
@@ -840,6 +973,7 @@ class ProjectPlanner {
 
 	render_trays() {
 		this.$trays.empty();
+		this.render_overdue_tray();
 		const needs = (this.data.tasks || [])
 			.filter((card) => this.needs_crew.has(card.name) && this.task_visible(card))
 			.sort((a, b) => this.compare(a, b));
@@ -960,7 +1094,6 @@ class ProjectPlanner {
 			days.forEach((ymd) => {
 				const day = this.day_of(resource.name, ymd);
 				const state = this.avail_state(day);
-				const width = Math.round(Math.min(1, state.ratio) * 100);
 				const chips = ((day && day.bookings) || [])
 					.map((booking) => this.booking_html(resource.name, ymd, booking))
 					.join("");
@@ -970,7 +1103,7 @@ class ProjectPlanner {
 				)}">
 						<div class="pp-cap ${state.cls}" title="${pp_esc(this.day_tip(resource.name, ymd, day))}">
 							<span class="pp-cap-text">${pp_esc(state.text)}</span>
-							<div class="pp-bar"><i style="width:${width}%"></i></div>
+							${this.bar_html(state)}
 							${this.drive_html(resource.name, ymd, day)}
 						</div>
 						${chips}
@@ -1001,13 +1134,26 @@ class ProjectPlanner {
 			if (card.saving) classes.push("pp-saving");
 			if (!this.task_visible(card)) classes.push("pp-dim");
 			if (card.overdue) classes.push("pp-overdue");
+			const pencil = !!(card.tentative || booking.tentative);
+			if (pencil) classes.push("pp-tentative");
 			const color = pp_color(card.color, PP.default_color);
-			const tip = [card.subject, card.project_title || card.project, hours].filter(Boolean).join("\n");
+			const warned = this.dependency_lines(card).length > 0 || this.gap_lines(card).length > 0;
+			const tip = [
+				card.subject,
+				card.project_title || card.project,
+				hours,
+				pencil ? __("Pencil (tentative)") : "",
+				...this.dependency_lines(card),
+				...this.gap_lines(card),
+			]
+				.filter(Boolean)
+				.join("\n");
+			const sub = [hours, pencil ? __("Pencil") : "", warned ? "⚠" : ""].filter(Boolean).join(" · ");
 			return `
 				<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd)}"
 					data-resource="${pp_esc(resource)}" tabindex="0" title="${pp_esc(tip)}" style="border-left-color:${pp_esc(color)}">
 					<div class="pp-card-title">${pp_esc(card.subject || card.name)}</div>
-					<div class="pp-card-sub">${pp_esc(hours)}</div>
+					<div class="pp-card-sub">${pp_esc(sub)}</div>
 				</div>`;
 		}
 		if (!this.show_foreign) return "";
@@ -1034,6 +1180,29 @@ class ProjectPlanner {
 			(day.conflicts || []).forEach((text) => out.push(`${this.resource_label(resource)}, ${pp_when(ymd)}: ${text}`));
 		});
 		return out;
+	}
+
+	// Planning-helper warnings on a card, as sentences. They never block anything.
+	dependency_lines(card) {
+		return (card.blocked_by || []).map((item) => {
+			const who = item.subject ? `${item.task} (${item.subject})` : item.task;
+			return item.end
+				? __("Starts before {0} ends on {1}", [who, pp_when(item.end)])
+				: __("Starts before {0} ends", [who]);
+		});
+	}
+
+	// One qualification gap as the credential type it names ("Confined Space Entry").
+	gap_type(gap) {
+		const raw = gap && typeof gap === "object" ? gap.credential_type || gap.type || gap.message || "" : gap;
+		return String(raw == null ? "" : raw).replace(/^No one on the crew holds:\s*/i, "");
+	}
+
+	gap_lines(card) {
+		return (card.qualification_gaps || [])
+			.map((gap) => this.gap_type(gap))
+			.filter(Boolean)
+			.map((type) => __("No one on the crew holds: {0}", [type]));
 	}
 
 	hours_text(card) {
@@ -1080,21 +1249,58 @@ class ProjectPlanner {
 		if (card.overdue) chips.push(red(__("Overdue")));
 		if (card.rental_kind) chips.push(plain(__(card.rental_kind)));
 		if (!card.start) chips.push(plain(__("No dates")));
+		if (card.tentative) chips.unshift(`<span class="pp-chip pp-pencil">${pp_esc(__("Pencil"))}</span>`);
+		const amber = (text) => `<span class="pp-chip pp-amber">${pp_esc(text)}</span>`;
+		const blocked = card.blocked_by || [];
+		if (blocked.length) {
+			const first = blocked[0].subject || blocked[0].task;
+			chips.push(
+				amber(
+					blocked.length > 1
+						? __("Starts before {0} +{1}", [first, blocked.length - 1])
+						: __("Starts before {0}", [first])
+				)
+			);
+		}
+		const gaps = (card.qualification_gaps || []).map((gap) => this.gap_type(gap)).filter(Boolean);
+		if (gaps.length) {
+			chips.push(
+				amber(gaps.length > 1 ? __("Missing {0} +{1}", [gaps[0], gaps.length - 1]) : __("Missing {0}", [gaps[0]]))
+			);
+		}
 
 		const classes = ["pp-card"];
 		if (card.movable && this.data.can_edit) classes.push("pp-movable");
 		if (card.overdue) classes.push("pp-overdue");
+		if (card.tentative) classes.push("pp-tentative");
 		if (card.saving) classes.push("pp-saving");
 		const color = pp_color(card.color, PP.default_color);
 		const sub = [card.project_title || card.project, this.hours_text(card)].filter(Boolean).join(" · ");
 		const crew_names = (card.crew || []).map((member) => this.resource_label(member.resource, member.label));
-		const tip = [card.subject, sub, crew_names.join(", "), ...conflicts].filter(Boolean).join("\n");
+		const tip = [
+			card.subject,
+			sub,
+			card.tentative ? __("Pencil (tentative): not counted as booked") : "",
+			crew_names.join(", "),
+			...conflicts,
+			...this.dependency_lines(card),
+			...this.gap_lines(card),
+		]
+			.filter(Boolean)
+			.join("\n");
 		// Cards in the Needs crew and Unscheduled trays offer to find a day (ymd is null there).
 		const suggest =
 			!ymd && card.movable && this.data.can_edit
 				? `<div class="pp-suggest-row"><button type="button" class="btn btn-default btn-xs pp-suggest" data-suggest="${pp_esc(
 						card.name
 				  )}">${pp_esc(__("Suggest dates"))}</button></div>`
+				: "";
+		// A pencilled task can be made firm from its card (the server checks it like any change).
+		const firm =
+			card.tentative && card.movable && this.data.can_edit && this.view !== "month"
+				? `<div class="pp-firm-row"><button type="button" class="btn btn-default btn-xs pp-firm" data-firm="${pp_esc(
+						card.name
+				  )}">${pp_esc(__("Firm up"))}</button></div>`
 				: "";
 		return `
 			<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd || "")}"
@@ -1105,7 +1311,7 @@ class ProjectPlanner {
 				</div>
 				<div class="pp-card-sub">${pp_esc(sub)}</div>
 				<div class="pp-card-chips">${chips.join("")}</div>
-				${suggest}
+				${suggest}${firm}
 			</div>`;
 	}
 
@@ -1166,7 +1372,7 @@ class ProjectPlanner {
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
-			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route")) return;
+			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell")) return;
 			e.preventDefault();
 			this.activate(e.target);
 		});
@@ -1177,6 +1383,26 @@ class ProjectPlanner {
 		const route_el = target.closest(".pp-route[data-route-resource]");
 		if (route_el) {
 			this.go_route(route_el.getAttribute("data-route-resource"), route_el.getAttribute("data-route-date"));
+			return;
+		}
+		const cell_el = target.closest(".pp-hm-cell[data-hm-week]");
+		if (cell_el) {
+			this.go("week", cell_el.getAttribute("data-hm-week"));
+			return;
+		}
+		const firm_el = target.closest(".pp-firm[data-firm]");
+		if (firm_el) {
+			const task = this.by_task[firm_el.getAttribute("data-firm")];
+			if (task) this.firm_up(task);
+			return;
+		}
+		const od_el = target.closest(".pp-od-card[data-od-task]");
+		if (od_el) {
+			if (target.closest("input, button")) return;
+			const name = od_el.getAttribute("data-od-task");
+			const task = this.by_task[name];
+			if (task) this.open_card(task);
+			else frappe.set_route("Form", "Task", name);
 			return;
 		}
 		const suggest_el = target.closest(".pp-suggest[data-suggest]");
@@ -1208,6 +1434,13 @@ class ProjectPlanner {
 		if (!this.data || !this.data.can_edit) return null;
 		const person_el = el.closest(".pp-person[data-resource]");
 		if (person_el) return { kind: "person", el: person_el, resource: person_el.getAttribute("data-resource") };
+		// One overdue row at a time; its tick box and buttons stay clickable.
+		const od_el = el.closest(".pp-od-card[data-od-task]");
+		if (od_el) {
+			if (el.closest("input, button")) return null;
+			const row = this.overdue_row(od_el.getAttribute("data-od-task"));
+			return row ? { kind: "overdue", el: od_el, row, from_date: null, from_resource: null } : null;
+		}
 		const card_el = el.closest(".pp-card[data-task]");
 		if (!card_el) return null;
 		const card = this.by_task[card_el.getAttribute("data-task")];
@@ -1437,6 +1670,10 @@ class ProjectPlanner {
 	}
 
 	drop(source, target) {
+		if (source.kind === "overdue") {
+			this.drop_overdue(source.row, target);
+			return;
+		}
 		const plan = this.plan_drop(source, target);
 		if (!plan) return;
 		if (plan.refuse) {
@@ -1464,6 +1701,7 @@ class ProjectPlanner {
 			crew_size: Number(card.crew_size) || 0,
 			crew: this.crew_rows(card),
 			credentials: (card.credentials || []).slice(),
+			tentative: card.tentative ? 1 : 0,
 		};
 	}
 
@@ -1476,7 +1714,9 @@ class ProjectPlanner {
 		return this.send(method, Object.assign({ modified: this.modified[card.name] || card.modified }, args), {
 			snapshot,
 			message,
-		}).finally(() => this.load());
+		})
+			.then((result) => this.offer_shift(snapshot, method, result))
+			.finally(() => this.load());
 	}
 
 	// Resolves either way: a refusal has already shown the server's own message.
@@ -1590,6 +1830,7 @@ class ProjectPlanner {
 			crew: JSON.stringify(snap.crew),
 			credentials: JSON.stringify(snap.credentials),
 		};
+		if (snap.tentative != null) args.tentative = snap.tentative;
 		if (snap.start) {
 			args.start = snap.start;
 			args.end = snap.end || snap.start;
@@ -1644,11 +1885,18 @@ class ProjectPlanner {
 		if (Number(card.short) > 0) add(__("Short"), __("Needs {0} more", [card.short]));
 		this.task_conflicts(card).forEach((text) => add(__("Conflict"), text));
 		if (card.overdue) add(__("Overdue"), __("The task's end date has passed."));
+		if (card.tentative) {
+			add(__("Pencil"), __("Tentative: pencilled in, shown as soft load and not counted as booked until firmed up."));
+		}
+		this.dependency_lines(card).forEach((text) => add(__("Dependency"), text));
+		if ((card.depends_on || []).length) add(__("Depends on"), card.depends_on.join(", "));
+		this.gap_lines(card).forEach((text) => add(__("Qualification"), text));
 		if (!editable) add(__("Note"), __("This task is read-only here."));
 
 		const links = [["task", __("Open task")]];
 		if (card.project) links.push(["project", __("Open project")]);
 		if (editable) links.push(["suggest", __("Suggest dates")]);
+		if (editable && card.tentative) links.push(["firm", __("Firm up")]);
 		const fields = [
 			{
 				fieldtype: "HTML",
@@ -1681,6 +1929,13 @@ class ProjectPlanner {
 					fieldname: "crew_size",
 					label: __("Crew needed"),
 					default: Number(card.crew_size) || 0,
+				},
+				{
+					fieldtype: "Check",
+					fieldname: "tentative",
+					label: __("Tentative (pencil)"),
+					default: card.tentative ? 1 : 0,
+					description: __("A pencilled task is soft load: it never needs a reason and is not counted as booked."),
 				},
 				{ fieldtype: "Section Break", label: __("Crew") },
 				{
@@ -1730,6 +1985,7 @@ class ProjectPlanner {
 			if (action === "task") frappe.set_route("Form", "Task", card.name);
 			else if (action === "project") frappe.set_route("Form", "Project", card.project);
 			else if (action === "suggest") this.suggest_dates(card);
+			else if (action === "firm") this.firm_up(card);
 		});
 		dialog.show();
 		if (editable && (card.credentials || []).length) dialog.set_value("credentials", card.credentials.slice());
@@ -1765,6 +2021,8 @@ class ProjectPlanner {
 		if (expected !== (Number(card.expected_time) || 0)) args.expected_time = expected;
 		const crew_size = Math.max(0, parseInt(values.crew_size, 10) || 0);
 		if (crew_size !== (Number(card.crew_size) || 0)) args.crew_size = crew_size;
+		const tentative = values.tentative ? 1 : 0;
+		if (tentative !== (card.tentative ? 1 : 0)) args.tentative = tentative;
 
 		const crew = (values.crew || [])
 			.filter((row) => row && row.resource)
@@ -1867,6 +2125,696 @@ class ProjectPlanner {
 			args,
 			__("{0} booked for {1} on {2}", [card.subject || card.name, who, pp_when(item.date)])
 		);
+	}
+
+	// ------------------------------------------------------------------ tentative and dependencies
+
+	// Turn a pencilled task into a firm booking. The server checks it like any other change, so a
+	// conflict asks for a reason through the same dialog.
+	firm_up(card) {
+		return this.commit(
+			card,
+			"save_task",
+			{ task: card.name, tentative: 0 },
+			__("{0} is now firm", [card.subject || card.name])
+		);
+	}
+
+	// Mon-Fri days stepped from `from` (exclusive) to `to` (inclusive); 0 unless `to` is later.
+	working_days_between(from, to) {
+		if (!from || !to || to <= from) return 0;
+		const day = moment(from, "YYYY-MM-DD");
+		const last = moment(to, "YYYY-MM-DD");
+		let count = 0;
+		for (let i = 0; i < 400 && day.isBefore(last, "day"); i++) {
+			day.add(1, "days");
+			if (day.isoWeekday() <= 5) count++;
+		}
+		return count;
+	}
+
+	// After a task moved later: when other tasks depend on it, offer to move them by the same
+	// working days. `successors` is the server's answer to the move (a count and the names).
+	offer_shift(snapshot, method, result) {
+		const found = result && result.successors;
+		if (method !== "save_task" || !found) return result;
+		const names = Array.isArray(found) ? found : found.names || found.tasks || [];
+		const count = Number((Array.isArray(found) ? found.length : found.count) || names.length) || 0;
+		if (!count) return result;
+		const moved_to = (result.card && result.card.start) || "";
+		const days = Number(found.working_days || found.days) || this.working_days_between(snapshot.start, moved_to);
+		if (days <= 0) return result;
+		const what = count === 1 ? __("Shift 1 task that follows") : __("Shift {0} tasks that follow", [count]);
+		const by = days === 1 ? __("by 1 working day?") : __("by {0} working days?", [days]);
+		const shown = names.slice(0, 8).map((name) => {
+			const known = this.by_task[name];
+			const label = known && known.subject ? `${name} · ${known.subject}` : name;
+			return `<li>${pp_esc(label)}</li>`;
+		});
+		if (names.length > 8) shown.push(`<li>${pp_esc(__("and {0} more", [names.length - 8]))}</li>`);
+		const message =
+			`<p>${pp_esc(`${what} ${by}`)}</p>` +
+			(shown.length ? `<ul>${shown.join("")}</ul>` : "") +
+			`<p class="pp-stop-sub">${pp_esc(__("Each keeps its length and time of day. Weekends are skipped."))}</p>`;
+		const task = result.name || snapshot.task;
+		frappe.confirm(message, () => this.shift_successors(task, days, result.modified, count, names));
+		return result;
+	}
+
+	// `names` are the successors save_task reported as still to move: passing them keeps a task
+	// ERPNext already pushed during the save from being moved twice.
+	shift_successors(task, days, modified, count, names) {
+		const args = { task, days, modified: modified || this.modified[task] || "" };
+		if ((names || []).length) args.tasks = JSON.stringify(names);
+		return this.send("shift_successors", args)
+			.then((result) => {
+				if (!result) return;
+				const moved = (result.moved || []).length || count;
+				frappe.show_alert(
+					{
+						message:
+							days === 1
+								? __("{0} later task(s) shifted by 1 working day", [moved])
+								: __("{0} later task(s) shifted by {1} working days", [moved, days]),
+						indicator: "green",
+					},
+					6
+				);
+			})
+			.finally(() => this.load());
+	}
+
+	// ------------------------------------------------------------------ overdue tray
+
+	load_overdue() {
+		const token = ++this.overdue_request;
+		return Promise.resolve(
+			frappe.call({ method: `${PP.api}.get_overdue`, args: { limit: PP.overdue_limit } })
+		)
+			.then((r) => {
+				if (token !== this.overdue_request) return;
+				this.overdue = this.normalize_overdue((r && r.message) || {});
+				const known = new Set();
+				this.overdue.groups.forEach((group) => group.rows.forEach((row) => known.add(row.name)));
+				[...this.overdue_selected].forEach((name) => {
+					if (!known.has(name)) this.overdue_selected.delete(name);
+				});
+				if (this.view !== PP.heatmap_view && this.data) this.render_trays();
+			})
+			.catch(() => null);
+	}
+
+	// get_overdue answers one group per project; read it forgivingly (a list or an object keyed
+	// by project, rows under `tasks` or `rows`, crew as labels or as objects).
+	normalize_overdue(raw) {
+		const list = raw.projects || raw.groups || [];
+		const entries = Array.isArray(list)
+			? list
+			: Object.entries(list).map(([project, group]) => Object.assign({ project }, group));
+		const groups = entries.map((group) => {
+			const rows = (group.tasks || group.rows || []).map((row) => ({
+				name: row.name || row.task,
+				subject: row.subject || row.name || row.task,
+				end: row.end || row.exp_end_date || "",
+				modified: row.modified || "",
+				crew: (row.crew_labels || row.crew || []).map((member) =>
+					typeof member === "string" ? member : member.label || member.resource || ""
+				),
+			}));
+			return {
+				project: group.project || "",
+				title: group.project_title || group.title || group.project || "",
+				count: Number(group.count) || rows.length,
+				rows: rows.filter((row) => row.name),
+			};
+		});
+		const total = Number(raw.total != null ? raw.total : raw.count);
+		return { groups, total: Number.isFinite(total) ? total : groups.reduce((sum, group) => sum + group.count, 0) };
+	}
+
+	overdue_group_visible(group) {
+		if (this.project && group.project !== this.project) return false;
+		if (this.pm) {
+			const project = group.project && this.by_project[group.project];
+			if (!project || project.pm !== this.pm) return false;
+		}
+		return true;
+	}
+
+	overdue_row(name) {
+		for (const group of (this.overdue && this.overdue.groups) || []) {
+			const row = group.rows.find((item) => item.name === name);
+			if (row) return row;
+		}
+		return null;
+	}
+
+	overdue_selection() {
+		const rows = [];
+		((this.overdue && this.overdue.groups) || []).forEach((group) =>
+			group.rows.forEach((row) => {
+				if (this.overdue_selected.has(row.name)) rows.push(row);
+			})
+		);
+		return rows;
+	}
+
+	render_overdue_tray() {
+		if (!this.overdue) return;
+		const groups = this.overdue.groups.filter((group) => this.overdue_group_visible(group) && group.rows.length);
+		const total = groups.reduce((sum, group) => sum + group.rows.length, 0);
+		if (!total) return;
+		const editable = !!(this.data && this.data.can_edit);
+		const $tray = $('<div class="pp-od"></div>').appendTo(this.$trays);
+		const $h = $("<h5></h5>").appendTo($tray);
+		$("<span></span>").text(__("Overdue ({0})", [total])).appendTo($h);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(this.overdue_open ? __("Hide") : __("Show"))
+			.on("click", () => {
+				this.overdue_open = !this.overdue_open;
+				this.render_trays();
+			})
+			.appendTo($h);
+		if (!this.overdue_open) return;
+
+		if (editable) {
+			const $actions = $('<div class="pp-od-actions"></div>').appendTo($tray);
+			[
+				["reschedule", __("Reschedule to…"), "btn-default"],
+				["complete", __("Mark done"), "btn-default"],
+				["cancel", __("Cancel"), "btn-default"],
+			].forEach(([action, label, cls]) => {
+				$(`<button type="button" class="btn ${cls} btn-xs pp-od-act"></button>`)
+					.attr("data-od-action", action)
+					.text(label)
+					.on("click", () => this.overdue_act(action))
+					.appendTo($actions);
+			});
+			$('<span class="pp-od-count"></span>').appendTo($actions);
+		}
+		const html = [];
+		groups.forEach((group) => {
+			const all = group.rows.every((row) => this.overdue_selected.has(row.name));
+			html.push(`<div class="pp-od-project">${
+				editable
+					? `<input type="checkbox" data-od-project="${pp_esc(group.project)}" ${all ? "checked" : ""} aria-label="${pp_esc(
+							__("Select all overdue tasks of {0}", [group.title || group.project])
+					  )}">`
+					: ""
+			}<span>${pp_esc(group.title || group.project || __("No project"))}</span><span class="pp-od-count">${pp_esc(
+				group.rows.length
+			)}</span></div>`);
+			group.rows.forEach((row) => {
+				const crew = row.crew.filter(Boolean).join(", ");
+				html.push(`
+					<div class="pp-od-card" data-od-task="${pp_esc(row.name)}" title="${pp_esc(
+					[row.subject, crew, editable ? __("Drag onto a day to reschedule it") : ""].filter(Boolean).join("\n")
+				)}">
+						${
+							editable
+								? `<input type="checkbox" data-od-pick="${pp_esc(row.name)}" ${
+										this.overdue_selected.has(row.name) ? "checked" : ""
+								  } aria-label="${pp_esc(__("Select {0}", [row.subject]))}">`
+								: ""
+						}
+						<div class="pp-od-main">
+							<div class="pp-od-subject">${pp_esc(row.subject)}</div>
+							<div class="pp-od-sub">${pp_esc(crew || __("No crew"))}</div>
+						</div>
+						<span class="pp-od-end">${pp_esc(row.end ? __("Ended {0}", [pp_when(row.end)]) : "")}</span>
+					</div>`);
+			});
+		});
+		const $list = $('<div class="pp-od-list"></div>').html(html.join("")).appendTo($tray);
+		$tray.on("change", "input[data-od-pick], input[data-od-project]", (e) => {
+			const input = e.target;
+			if (input.hasAttribute("data-od-pick")) {
+				const name = input.getAttribute("data-od-pick");
+				if (input.checked) this.overdue_selected.add(name);
+				else this.overdue_selected.delete(name);
+			} else {
+				const project = input.getAttribute("data-od-project");
+				const group = groups.find((item) => item.project === project);
+				((group && group.rows) || []).forEach((row) => {
+					if (input.checked) this.overdue_selected.add(row.name);
+					else this.overdue_selected.delete(row.name);
+				});
+			}
+			this.sync_overdue($tray, groups);
+		});
+		this.sync_overdue($tray, groups);
+		return $list;
+	}
+
+	// Keep the ticks, the count and the action buttons in step with the selection.
+	sync_overdue($tray, groups) {
+		groups.forEach((group) => {
+			const picked = group.rows.filter((row) => this.overdue_selected.has(row.name)).length;
+			const box = $tray.find("input[data-od-project]").filter((i, el) => el.getAttribute("data-od-project") === group.project)[0];
+			if (box) {
+				box.checked = picked === group.rows.length;
+				box.indeterminate = picked > 0 && picked < group.rows.length;
+			}
+			group.rows.forEach((row) => {
+				const pick = $tray.find("input[data-od-pick]").filter((i, el) => el.getAttribute("data-od-pick") === row.name)[0];
+				if (pick) pick.checked = this.overdue_selected.has(row.name);
+			});
+		});
+		const chosen = this.overdue_selection().length;
+		$tray.find(".pp-od-act").prop("disabled", !chosen);
+		$tray.find(".pp-od-actions .pp-od-count").text(chosen ? __("{0} selected", [chosen]) : __("Tick tasks to act on them"));
+	}
+
+	overdue_list_html(rows) {
+		return `<ul>${rows
+			.slice(0, 30)
+			.map((row) => `<li>${pp_esc(row.subject)} <span class="pp-stop-sub">(${pp_esc(row.name)})</span></li>`)
+			.join("")}${rows.length > 30 ? `<li>${pp_esc(__("and {0} more", [rows.length - 30]))}</li>` : ""}</ul>`;
+	}
+
+	overdue_act(action) {
+		const rows = this.overdue_selection();
+		if (!rows.length) return;
+		if (action === "reschedule") {
+			this.ask_reschedule(rows);
+			return;
+		}
+		const done = action === "complete";
+		const head = done
+			? __("Mark these {0} task(s) as Completed?", [rows.length])
+			: __("Cancel these {0} task(s)? They are set to Canceled and leave the planner.", [rows.length]);
+		frappe.confirm(`<p>${pp_esc(head)}</p>${this.overdue_list_html(rows)}`, () =>
+			this.run_bulk(
+				rows.map((row) => row.name),
+				action,
+				null
+			)
+		);
+	}
+
+	ask_reschedule(rows) {
+		const dialog = new frappe.ui.Dialog({
+			title: __("Reschedule {0} overdue task(s)", [rows.length]),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "tasks",
+					options: `<p>${pp_esc(
+						__("Each task starts on the day you pick and keeps its length. Conflicts ask for a reason.")
+					)}</p>${this.overdue_list_html(rows)}`,
+				},
+				{ fieldtype: "Date", fieldname: "date", label: __("Start on"), reqd: 1, default: this.today() },
+			],
+			primary_action_label: __("Reschedule"),
+			primary_action: (values) => {
+				const date = (values && values.date) || "";
+				if (!date) return;
+				if (date < this.today()) {
+					frappe.msgprint(__("Pick today or a later day: the tasks would still be overdue."));
+					return;
+				}
+				dialog.hide();
+				this.run_bulk(
+					rows.map((row) => row.name),
+					"reschedule",
+					date
+				);
+			},
+		});
+		dialog.show();
+	}
+
+	// One bulk_update. Conflicts (rescheduling) ask for a reason once for the whole batch; a task
+	// that fails is reported and never stops the rest.
+	run_bulk(names, action, date) {
+		const args = { tasks: JSON.stringify(names), action };
+		if (date) args.date = date;
+		return this.send("bulk_update", args)
+			.then((result) => {
+				if (!result) return;
+				const failed = result.failed || result.errors || [];
+				const failed_names = new Set(
+					failed.map((item) => (typeof item === "string" ? item : item.task || item.name))
+				);
+				names.forEach((name) => {
+					if (!failed_names.has(name)) this.overdue_selected.delete(name);
+				});
+				const ok = Array.isArray(result.updated) ? result.updated.length : Math.max(names.length - failed.length, 0);
+				const label = {
+					reschedule: __("{0} task(s) rescheduled to {1}", [ok, date ? pp_when(date) : ""]),
+					complete: __("{0} task(s) marked Completed", [ok]),
+					cancel: __("{0} task(s) set to Canceled", [ok]),
+				}[action];
+				if (ok) frappe.show_alert({ message: label, indicator: "green" }, 6);
+				if (failed.length) {
+					const lines = failed.map((item) => {
+						if (typeof item === "string") return `<li>${pp_esc(item)}</li>`;
+						const why = item.error || item.message || item.reason || "";
+						return `<li>${pp_esc(item.task || item.name)}${why ? `: ${pp_esc(why)}` : ""}</li>`;
+					});
+					frappe.msgprint({
+						title: __("Some tasks were not changed"),
+						message: `<p>${pp_esc(__("{0} of {1} task(s) failed:", [failed.length, names.length]))}</p><ul>${lines.join("")}</ul>`,
+						indicator: "orange",
+					});
+				}
+			})
+			.finally(() => this.load());
+	}
+
+	// One overdue row dragged onto a day: reschedule it to start there.
+	drop_overdue(row, target) {
+		if (!target.date) return;
+		const run = () => this.run_bulk([row.name], "reschedule", target.date);
+		if (target.date < this.today()) {
+			frappe.confirm(__("{0} is before today. Schedule the task on a past day?", [pp_when(target.date)]), run);
+			return;
+		}
+		run();
+	}
+
+	// ------------------------------------------------------------------ capacity heatmap
+
+	load_heatmap() {
+		const { start } = this.range();
+		const token = ++this.request;
+		this.$title.text(this.title());
+		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.$body.addClass("pp-loading");
+		return Promise.resolve(
+			frappe.call({ method: `${PP.api}.get_heatmap`, args: { start: pp_ymd(start), weeks: PP.heatmap_weeks } })
+		)
+			.then((r) => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.heatmap = this.normalize_heatmap((r && r.message) || {}, start);
+				this.render_heatmap();
+			})
+			.catch(() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.heatmap = null;
+				this.render_heatmap();
+			});
+	}
+
+	// get_heatmap answers the weeks and, per person, a cell per week. Read it forgivingly: weeks as
+	// dates or objects, a person's cells as a list in week order or keyed by the week's first day.
+	normalize_heatmap(raw, start) {
+		let weeks = (raw.weeks || []).map((week) => (typeof week === "string" ? { start: week } : week || {}));
+		weeks = weeks.map((week) => ({ start: week.start || week.week_start || week.date || "" })).filter((week) => week.start);
+		if (!weeks.length) {
+			// Without a week list, count on from the server's week_start (else the week asked for).
+			const first = moment(raw.week_start || pp_ymd(start), "YYYY-MM-DD");
+			weeks = Array.from({ length: PP.heatmap_weeks }, (v, i) => ({ start: pp_ymd(first.clone().add(i * 7, "days")) }));
+		}
+		const people = raw.resources || raw.rows || raw.people || [];
+		const rows = (Array.isArray(people) ? people : Object.entries(people).map(([name, row]) => Object.assign({ name }, row))).map(
+			(person) => {
+				const name = person.resource || person.name || "";
+				const source = person.weeks || person.cells || (raw.cells && raw.cells[name]) || [];
+				const by_start = {};
+				const ordered = [];
+				if (Array.isArray(source)) {
+					source.forEach((cell, i) => {
+						const key = (cell && (cell.start || cell.week_start || cell.week)) || (weeks[i] && weeks[i].start);
+						by_start[key] = cell;
+						ordered.push(cell);
+					});
+				} else {
+					Object.entries(source).forEach(([key, cell]) => {
+						by_start[key] = cell;
+					});
+				}
+				return { name, label: person.label || name, group: person.group || "", by_start, ordered };
+			}
+		);
+		return { weeks, rows };
+	}
+
+	// A week cell as a color class, a percentage and a short text. Firm hours only decide the
+	// color; pencilled hours are drawn as a hatched stretch after them.
+	heat_state(cell) {
+		const capacity = Number(cell.capacity) || 0;
+		const booked = Number(cell.booked) || 0;
+		const soft = Math.max(0, Number(cell.soft_booked) || 0);
+		const over_days = Number(cell.over_days) || 0;
+		const off_days = Number(cell.off_days) || 0;
+		if (capacity <= 0 && booked <= 0) {
+			return { cls: "pp-idle pp-offday", pct: "", sub: soft > 0 ? __("+{0}h pencil", [pp_hours(soft)]) : __("Off"), ratio: 0, soft_ratio: 0, capacity, booked, soft, over_days, off_days };
+		}
+		const ratio = capacity > 0 ? booked / capacity : 2;
+		// The server's band (get_heatmap `level`) decides the color; the same rule is the fallback.
+		const level = ["green", "amber", "red"].includes(cell.level) ? cell.level : null;
+		const cls = level ? `pp-${level}` : ratio > 1.0001 ? "pp-red" : ratio <= 0.75 ? "pp-green" : "pp-amber";
+		const sub = [__("{0}h of {1}h", [pp_hours(booked), pp_hours(capacity)])];
+		if (soft > 0.01) sub.push(__("+{0}h pencil", [pp_hours(soft)]));
+		if (over_days > 0) sub.push(over_days === 1 ? __("1 day over") : __("{0} days over", [over_days]));
+		return {
+			cls,
+			pct: capacity > 0 ? `${Math.round(ratio * 100)}%` : __("Off"),
+			sub: sub.join(" · "),
+			ratio,
+			soft_ratio: capacity > 0 ? Math.min(Math.max(0, 1 - ratio), soft / capacity) : 0,
+			capacity,
+			booked,
+			soft,
+			over_days,
+			off_days,
+		};
+	}
+
+	heat_tip(label, week, cell, state) {
+		const lines = [`${label} · ${__("week of {0}", [pp_when(week.start)])}`];
+		lines.push(__("{0}h of {1}h booked", [pp_hours(state.booked), pp_hours(state.capacity)]));
+		if (cell.free != null) lines.push(__("{0}h free", [pp_hours(cell.free)]));
+		if (state.soft > 0.01) lines.push(__("{0}h pencilled (tentative, not counted as booked)", [pp_hours(state.soft)]));
+		if (state.over_days > 0) lines.push(__("{0} day(s) over their hours", [state.over_days]));
+		if (state.off_days > 0) lines.push(__("{0} day(s) off", [state.off_days]));
+		lines.push(__("Click to open this week"));
+		return lines.join("\n");
+	}
+
+	render_heatmap() {
+		const data = this.heatmap;
+		this.$hint.text(
+			__(
+				"Each square is one person's week: firm booked hours against their hours. Hatching is pencilled (tentative) work. Driving here uses saved and estimated times only. Click a week to open it."
+			)
+		);
+		this.$grid_wrap.empty().removeClass("pp-month pp-week pp-crew-view");
+		if (!data) {
+			$('<div class="pp-section pp-empty-note"></div>')
+				.text(__("The heatmap could not be loaded. Refresh the planner and try again."))
+				.appendTo(this.$grid_wrap);
+			return;
+		}
+		const order = (group) => {
+			const index = PP.groups.indexOf(group);
+			return index < 0 ? PP.groups.length : index;
+		};
+		const rows = data.rows
+			.filter((row) => !this.group || !row.group || row.group === this.group)
+			.slice()
+			.sort((a, b) => order(a.group) - order(b.group) || String(a.label).localeCompare(String(b.label)));
+		if (!rows.length) {
+			$('<div class="pp-section pp-empty-note"></div>')
+				.text(__("No planner resources to show. Add the people you schedule under Planner Resources."))
+				.appendTo(this.$grid_wrap);
+			return;
+		}
+		const today = this.today();
+		const html = [`<div class="pp-hm-head"></div>`];
+		data.weeks.forEach((week) => {
+			const end = pp_ymd(moment(week.start, "YYYY-MM-DD").add(6, "days"));
+			const current = today >= week.start && today <= end;
+			html.push(
+				`<div class="pp-hm-head${current ? " pp-today" : ""}">${pp_esc(moment(week.start, "YYYY-MM-DD").format("MMM D"))}</div>`
+			);
+		});
+		rows.forEach((row) => {
+			html.push(
+				`<div class="pp-hm-name"><span class="pp-dot" style="background:${pp_esc(
+					this.resource_color(row.name)
+				)}"></span><span title="${pp_esc(row.label)}">${pp_esc(row.label)}</span></div>`
+			);
+			data.weeks.forEach((week, index) => {
+				const cell = row.by_start[week.start] || row.ordered[index] || {};
+				const state = this.heat_state(cell);
+				const bar = state.capacity > 0 ? this.bar_html(state) : "";
+				html.push(`
+					<div>
+						<div class="pp-hm-cell ${state.cls}${state.soft > 0.01 && state.capacity <= 0 ? " pp-soft-mini" : ""}" role="button" tabindex="0"
+							data-hm-week="${pp_esc(week.start)}" title="${pp_esc(this.heat_tip(row.label, week, cell, state))}"
+							aria-label="${pp_esc(`${row.label}, ${pp_when(week.start)}: ${state.pct || state.sub}`)}">
+							<span class="pp-hm-pct">${pp_esc(state.pct)}</span>
+							<span class="pp-hm-sub">${pp_esc(state.sub)}</span>
+							${bar}
+						</div>
+					</div>`);
+			});
+		});
+		const columns = `170px repeat(${data.weeks.length},minmax(78px,1fr))`;
+		const $scroll = $('<div class="pp-section pp-hm-scroll"></div>').appendTo(this.$grid_wrap);
+		$('<div class="pp-hm"></div>').css("grid-template-columns", columns).html(html.join("")).appendTo($scroll);
+		$(`<div class="pp-hm-legend">
+				<span class="pp-hm-key"><i class="pp-green"></i>${pp_esc(__("Up to 75% booked"))}</span>
+				<span class="pp-hm-key"><i class="pp-amber"></i>${pp_esc(__("Up to 100%"))}</span>
+				<span class="pp-hm-key"><i class="pp-red"></i>${pp_esc(__("Over (or a day over)"))}</span>
+				<span class="pp-hm-key"><i class="pp-soft-key"></i>${pp_esc(__("Pencilled (tentative) hours"))}</span>
+			</div>`).appendTo(this.$grid_wrap);
+	}
+
+	// ------------------------------------------------------------------ copy week
+
+	// The first day of the week holding `ymd`, by the site's first weekday: the weeks that
+	// copy_week and get_heatmap use.
+	week_start_of(ymd) {
+		const day = moment(ymd, "YYYY-MM-DD");
+		return pp_ymd(day.clone().subtract((day.day() - this.first_weekday() + 7) % 7, "days"));
+	}
+
+	open_copy_week() {
+		if (!this.data || !this.data.can_edit) return;
+		// The source week is the one on screen (the site's first weekday to the day before it).
+		const first = this.week_start_of(this.anchor);
+		const last = pp_ymd(moment(first, "YYYY-MM-DD").add(6, "days"));
+		const tasks = (this.data.tasks || [])
+			.filter((card) => card.movable && card.start && card.start >= first && card.start <= last && this.task_visible(card))
+			.sort((a, b) => String(a.start).localeCompare(String(b.start)) || this.compare(a, b));
+		if (!tasks.length) {
+			frappe.msgprint(
+				__("No task starts in the week of {0}. (Tasks that began in an earlier week are not copied.)", [pp_when(first)])
+			);
+			return;
+		}
+		const rows = tasks.map((card) => {
+			const when = card.end && card.end !== card.start ? `${pp_when(card.start)} – ${pp_when(card.end)}` : pp_when(card.start);
+			const sub = [card.project_title || card.project, when, this.hours_text(card)].filter(Boolean).join(" · ");
+			const pencil = card.tentative ? ` <span class="pp-chip pp-pencil">${pp_esc(__("Pencil"))}</span>` : "";
+			return `
+				<label class="pp-copy-row">
+					<input type="checkbox" data-copy="${pp_esc(card.name)}" checked>
+					<span><b>${pp_esc(card.subject || card.name)}</b>${pencil}
+						<div class="pp-copy-sub">${pp_esc(sub)}</div></span>
+				</label>`;
+		});
+		const dialog = new frappe.ui.Dialog({
+			title: __("Copy week of {0}", [pp_when(first)]),
+			size: "large",
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "tasks",
+					options:
+						`<p>${pp_esc(
+							__("Copies become new tasks with the same crew, hours and qualifications, shifted by whole weeks. The originals stay where they are.")
+						)}</p>` +
+						`<div class="pp-links">
+							<button type="button" class="btn btn-default btn-xs" data-copy-all="1">${pp_esc(__("Select all"))}</button>
+							<button type="button" class="btn btn-default btn-xs" data-copy-all="0">${pp_esc(__("Select none"))}</button>
+						</div>` +
+						`<div class="pp-copy-list">${rows.join("")}</div>`,
+				},
+				{
+					fieldtype: "Date",
+					fieldname: "target",
+					label: __("Copy into the week holding"),
+					reqd: 1,
+					default: pp_ymd(moment(first, "YYYY-MM-DD").add(7, "days")),
+				},
+			],
+			primary_action_label: __("Preview"),
+			primary_action: (values) => {
+				const target_start = this.week_start_of((values && values.target) || "");
+				const names = [];
+				dialog.$wrapper.find("input[data-copy]").each((i, el) => {
+					if (el.checked) names.push(el.getAttribute("data-copy"));
+				});
+				if (!values || !values.target) return;
+				if (!names.length) {
+					frappe.msgprint(__("Tick at least one task to copy."));
+					return;
+				}
+				if (target_start === first) {
+					frappe.msgprint(__("Pick a different week to copy into."));
+					return;
+				}
+				dialog.hide();
+				this.preview_copy(first, target_start, names);
+			},
+		});
+		dialog.$wrapper.on("click", "[data-copy-all]", (e) => {
+			const on = e.currentTarget.getAttribute("data-copy-all") === "1";
+			dialog.$wrapper.find("input[data-copy]").prop("checked", on);
+		});
+		dialog.show();
+	}
+
+	// A dry run first: what would be created, and which conflicts it would cause. Nothing is
+	// written until the planner confirms.
+	preview_copy(source_start, target_start, names) {
+		const base = { source_start, target_start, tasks: JSON.stringify(names) };
+		return this.send("copy_week", Object.assign({ dry_run: 1 }, base)).then((result) => {
+			if (!result) return;
+			const copies = result.copies || [];
+			if (!copies.length) {
+				frappe.msgprint(__("Nothing to copy."));
+				return;
+			}
+			const conflicts = result.conflicts || {};
+			const clashes = Object.entries(conflicts).filter(([who, list]) => (list || []).length);
+			const table = copies
+				.map((item) => {
+					const known = this.by_task[item.task];
+					const was = known && known.start ? `${pp_when(known.start)} → ` : "";
+					const to =
+						item.to_end && item.to_end !== item.to_start
+							? `${pp_when(item.to_start)} – ${pp_when(item.to_end)}`
+							: pp_when(item.to_start);
+					return `<tr><td><b>${pp_esc(item.subject || item.task)}</b></td><td>${pp_esc(was)}${pp_esc(to)}</td></tr>`;
+				})
+				.join("");
+			const skipped = (result.skipped || []).map(
+				(entry) => `<li>${pp_esc(entry.task)}${entry.reason ? `: ${pp_esc(entry.reason)}` : ""}</li>`
+			);
+			const skip_note = skipped.length
+				? `<div class="pp-route-note"><b>${pp_esc(__("Not copied"))}</b><ul>${skipped.join("")}</ul></div>`
+				: "";
+			const warn = clashes.length
+				? `<div class="pp-route-note"><b>${pp_esc(__("These copies would cause conflicts"))}</b>${clashes
+						.map(
+							([who, list]) =>
+								`<div class="pp-why"><b>${pp_esc(who)}</b><ul>${list.map((text) => `<li>${pp_esc(text)}</li>`).join("")}</ul></div>`
+						)
+						.join("")}<div>${pp_esc(__("You can copy anyway; you will be asked for a reason."))}</div></div>`
+				: "";
+			const dialog = new frappe.ui.Dialog({
+				title: __("Copy {0} task(s) into the week of {1}?", [copies.length, pp_when(target_start)]),
+				size: "large",
+				fields: [
+					{
+						fieldtype: "HTML",
+						fieldname: "preview",
+						options: `${warn}<table class="pp-copy-table">${table}</table>${skip_note}`,
+					},
+				],
+				primary_action_label: clashes.length ? __("Copy anyway") : __("Copy"),
+				primary_action: () => {
+					dialog.hide();
+					this.send("copy_week", Object.assign({ dry_run: 0 }, base)).then((done) => {
+						if (!done) return;
+						const made = (done.copies || done.created || []).length || copies.length;
+						frappe.show_alert(
+							{ message: __("{0} task(s) copied into the week of {1}", [made, pp_when(target_start)]), indicator: "green" },
+							6
+						);
+						this.go(this.view, target_start);
+					});
+				},
+			});
+			dialog.show();
+		});
 	}
 
 	// ------------------------------------------------------------------ route view

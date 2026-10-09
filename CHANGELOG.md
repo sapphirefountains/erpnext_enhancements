@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.580.0] - 2026-10-09
+
+### Added
+
+- **Project Planner planning helpers** (Phase 3A, TASK-2026-02441). These are the features Nik
+  picked on 2026-10-08 for making the planner fast to plan with.
+  - **Pencil (tentative) bookings.** A new *Tentative (pencil)* box on Task. The task's hours show
+    as soft load, hatched on the planner, and count against nobody's free hours or conflicts.
+    Pencilled work that would overbook someone is a warning, never a reason prompt. The crew gets
+    no assignments, and so no notifications, until the task is firmed up, which takes one click
+    and is checked like any other change.
+  - **Dependencies.** Moving a task to start before the task it depends on adds a "Starts before …"
+    line to the reason prompt. After a move later, the planner offers to shift the tasks that follow
+    by the same number of working days (`shift_successors`, all-or-nothing). ERPNext already pushes
+    Open same-project dependents by calendar days on every save; the planner leaves those out of
+    its offer so nothing moves twice.
+  - **Qualification gaps.** When nobody on a task's crew holds a current Employee Credential for one
+    of its *Qualifications needed*, the card carries a chip. It is a warning only.
+  - **8-week heatmap** (`/app/project-planner/heatmap/<date>`): booked vs available per person per
+    week, with pencil load hatched. It never calls Google, using cached and estimated drive times
+    only, so an 8-week view can't fan out paid Routes requests. Weeks start on the site's first
+    weekday, which is Sunday on production. The first build hard-coded Monday and was corrected
+    before release.
+  - **Overdue tray** (470 overdue tasks on Active projects on 2026-10-08): grouped by project, with
+    bulk *Reschedule to…*, *Mark done* and *Cancel*. Each task saves in its own savepoint and
+    failures are reported one by one. ERPNext refuses to complete a task whose dependency is
+    "Canceled", because its check only knows "Cancelled"; those show up as per-task failures.
+  - **Copy week**: copies the chosen tasks into another week as new Tasks, with crew, hours,
+    qualifications, pencil flag and location, and a "Copied from" note. A dry-run preview comes
+    first, and a conflict needs a reason.
+
+### Notes
+
+- **Remaining gap:** the Maintenance Planner does not yet mark tentative project tasks as pencil
+  in a technician's items, although its hours and conflicts already ignore them.
+- **Tests:**
+  - New suite `test_project_planner_phase3a_page`, in its own CI step.
+  - Extended suites: `test_project_planner` (143), `test_planner_routing` (53) and
+    `test_planner_doctypes` (58).
+  - One test proves `get_heatmap` makes zero Google requests with Google on, a key set and an
+    empty cache.
+
 ## [1.579.0] - 2026-10-09
 
 ### Added

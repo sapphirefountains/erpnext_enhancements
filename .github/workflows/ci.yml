@@ -814,6 +814,12 @@ jobs:
       # workspace link with a bumped `modified` (an unbumped Workspace JSON never re-imports).
       - name: Project planner page (routes, drag, workspace)
         run: python -m unittest erpnext_enhancements.tests.test_project_planner_page -v
+      # Phase 3A page features (v1.580.0): pencil bookings, dependency and qualification warnings,
+      # the heatmap, the overdue tray and Copy week. Pins that the heatmap and Copy week take their
+      # weeks from the site's first weekday (production starts on Sunday; a hard-coded Monday listed
+      # the wrong tasks), that every view is a route, and that the page reads only keys the API builds.
+      - name: Project planner page, Phase 3A (pencil, dependencies, heatmap, overdue, copy week)
+        run: python -m unittest erpnext_enhancements.tests.test_project_planner_phase3a_page -v
       # Daily routes and drive time (v1.578.0). The order of a day's stops, the drive minutes
       # padded onto people's hours, and the date suggestions are all arithmetic nobody checks by
       # eye: a wrong insertion cost recommends the far side of the valley, a padding bug books a

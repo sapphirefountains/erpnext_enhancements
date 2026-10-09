@@ -987,12 +987,16 @@ class _Readers:
 		shop=None,
 		matrix=None,
 		settings=None,
+		real_routing=False,
 	):
 		# Routing: where each stop is (``points`` by ref), the shop, and the legs. With no points
 		# every stop is unlocated and no day is padded, which is what the Phase 1 tests assume.
 		self.points = dict(points or {})
 		self.matrix_calls = []
 		self.missing = []
+		# The ``google`` flag every drive_matrix / start_point call was made with (Phase 3A).
+		self.google = []
+		self.shop_google = []
 
 		def locate(bookings, detail=False):
 			out = {}
@@ -1005,19 +1009,33 @@ class _Readers:
 				)
 			return out
 
-		def drive_matrix(pairs, settings=None):
+		def drive_matrix(pairs, settings=None, google=True):
 			self.matrix_calls.append(set(pairs))
+			self.google.append(google)
 			out = {}
 			for a, b in pairs:
 				found = (matrix or {}).get((a, b))
 				out[(a, b)] = dict(found, source="google") if found else routing.estimate_leg(a, b)
 			return out
 
+		def start_point(google=True):
+			self.shop_google.append(google)
+			return shop
+
+		# real_routing keeps the module's own start_point and drive_matrix, for proving what
+		# they would ask Google; the rest of the readers stay canned.
+		routing_patches = (
+			[]
+			if real_routing
+			else [
+				mock.patch.object(routing, "start_point", start_point),
+				mock.patch.object(routing, "drive_matrix", drive_matrix),
+			]
+		)
 		self.patches = [
 			mock.patch.object(engine, "get_settings", lambda: _settings(**(settings or {}))),
 			mock.patch.object(routing, "locate", locate),
-			mock.patch.object(routing, "start_point", lambda: shop),
-			mock.patch.object(routing, "drive_matrix", drive_matrix),
+			*routing_patches,
 			mock.patch.object(routing, "enqueue_missing", lambda refs: self.missing.append(list(refs))),
 			mock.patch.object(
 				engine,
@@ -1969,6 +1987,814 @@ class TestCheckRoutes(unittest.TestCase):
 			self.assertEqual(api.check_routes(), {"google": True, "detail": "ok"})
 
 
+# ---------------------------------------------------------------------- Phase 3A: tentative (engine)
+
+
+class TestTentativeEngine(unittest.TestCase):
+	"""A pencil books softly: soft hours and a warning, never a conflict and never a drive."""
+
+	def setUp(self):
+		_reset()
+
+	def _day(self, tasks, crew_rows, **kwargs):
+		with _Readers([_person()], tasks=tasks, crew_rows=crew_rows, **kwargs) as readers:
+			day = engine.availability(MON, MON)["days"]["RES-1"]["2026-10-12"]
+		return day, readers
+
+	def test_a_pencil_books_softly_and_warns_instead_of_conflicting(self):
+		monday, _readers = self._day(
+			[
+				_task("FIRM", start=MON, expected_time=6),
+				_task("PENCIL", start=MON, expected_time=4, custom_tentative=1),
+			],
+			{"FIRM": [{"resource": "RES-1"}], "PENCIL": [{"resource": "RES-1"}]},
+		)
+		by_ref = {b["ref"]: b for b in monday["bookings"]}
+		self.assertTrue(by_ref["PENCIL"]["tentative"])
+		self.assertNotIn("tentative", by_ref["FIRM"])
+		self.assertEqual((monday["booked"], monday["soft_booked"], monday["free"]), (6.0, 4.0, 2.0))
+		self.assertEqual(monday["conflicts"], [])
+		self.assertEqual(monday["warnings"], ["Pencilled work would put them over by 2h"])
+
+	def test_a_day_without_a_pencil_has_no_soft_hours(self):
+		monday, _readers = self._day(
+			[_task("FIRM", start=MON, expected_time=10)], {"FIRM": [{"resource": "RES-1"}]}
+		)
+		self.assertEqual((monday["soft_booked"], monday["conflicts"], monday["warnings"]), (0.0, ["Over by 2h"], []))
+
+	def test_day_conflicts_leave_pencils_out_and_pencil_warning_counts_both(self):
+		firm = {"hours": 6, "slot": ["09:00", "11:00"], "ref": "A"}
+		pencil = {"hours": 4, "slot": ["10:00", "12:00"], "ref": "B", "tentative": True}
+		self.assertEqual(engine.day_conflicts(8, None, [firm, pencil]), [])  # no overlap, no "Over by"
+		self.assertEqual(engine.day_conflicts(0, "Time off", [pencil]), [])
+		self.assertEqual(engine.pencil_warning(8, [firm, pencil]), "Pencilled work would put them over by 2h")
+		self.assertEqual(engine.pencil_warning(0, [pencil]), "Pencilled work would put them over by 4h")
+		self.assertIsNone(engine.pencil_warning(10, [firm, pencil]))
+		self.assertIsNone(engine.pencil_warning(4, [firm]))  # over with no pencil is a conflict, not this
+		self.assertTrue(engine.is_tentative({"custom_tentative": "1"}))
+		for value in (0, "0", None, ""):
+			self.assertFalse(engine.is_tentative({"custom_tentative": value}))
+
+	def test_a_pencil_never_needs_a_reason_but_firming_it_up_is_checked(self):
+		other = _task("T-OTHER", start=MON, expected_time=6)
+		pencil = _task("T-PEN", start=TUE, expected_time=4, custom_tentative=1)
+		crew = [{"resource": "RES-1"}]
+		with _Readers(
+			[_person()], tasks=[other, pencil], crew_rows={"T-OTHER": crew, "T-PEN": crew}
+		):
+			moved = dict(pencil, exp_start_date=MON)
+			self.assertEqual(engine.preview_conflicts(moved, crew), {})
+			self.assertEqual(engine._preview(moved, crew)[1], {"RES-1": 4.0})  # its card still shows hours
+			self.assertEqual(
+				engine.preview_conflicts(dict(moved, custom_tentative=0), crew),
+				{"Austin Healey": ["2026-10-12: Over by 2h"]},
+			)
+
+	def test_pencilled_work_is_not_driven_to(self):
+		monday, readers = self._day(
+			[_task("T-H", start=MON, expected_time=2, custom_tentative=1)],
+			{"T-H": [{"resource": "RES-1"}]},
+			points={"T-H": HIGHLANDS},
+			shop=SHOP,
+		)
+		self.assertEqual([b["kind"] for b in monday["bookings"]], ["task"])
+		self.assertEqual((monday["drive_minutes"], readers.matrix_calls), (0.0, []))
+
+	def test_a_batch_preview_counts_its_moves_against_each_other(self):
+		first = _task("T-A", start=TUE, expected_time=5)
+		second = _task("T-B", start=WED, expected_time=5)
+		crew = [{"resource": "RES-1"}]
+		with _Readers([_person()], tasks=[first, second], crew_rows={"T-A": crew, "T-B": crew}):
+			self.assertEqual(engine.preview_conflicts(dict(first, exp_start_date=MON), crew), {})
+			got = engine.preview_batch(
+				[(dict(first, exp_start_date=MON), crew), (dict(second, exp_start_date=MON), crew)]
+			)
+			pencilled = engine.preview_batch(
+				[
+					(dict(first, exp_start_date=MON), crew),
+					(dict(second, exp_start_date=MON, custom_tentative=1), crew),
+				]
+			)
+		self.assertEqual(got, {"Austin Healey": ["2026-10-12: Over by 2h"]})
+		self.assertEqual(pencilled, {})  # the pencil is soft, so the firm one fits
+		self.assertEqual(engine.preview_batch([]), {})
+
+
+# ---------------------------------------------------------------------- Phase 3A: pure API helpers
+
+
+class TestPhase3AHelpers(unittest.TestCase):
+	def test_working_days(self):
+		self.assertEqual(api.add_working_days(MON, 2), WED)
+		self.assertEqual(api.add_working_days(FRI, 1), D(2026, 10, 19))
+		self.assertEqual(api.add_working_days(SAT, 1), D(2026, 10, 19))
+		self.assertEqual(api.add_working_days(MON, -1), D(2026, 10, 9))
+		self.assertEqual(api.add_working_days(MON, 0), MON)
+		self.assertEqual(api.working_days_between(MON, WED), 2)
+		self.assertEqual(api.working_days_between(FRI, D(2026, 10, 19)), 1)
+		self.assertEqual(api.working_days_between(FRI, SUN), 0)
+		self.assertEqual(api.working_days_between(WED, MON), -2)
+		self.assertEqual(api.shift_working("2026-10-16 09:30:00", 2), "2026-10-20 09:30:00")
+		self.assertEqual(api.shift_working("2026-10-16", 1), "2026-10-19")
+		self.assertIsNone(api.shift_working(None, 1))
+		# Weeks start on the site's first weekday; Sunday is the default (and production's).
+		self.assertEqual(api.week_start(SUN, 0), MON)
+		self.assertEqual(api.week_start(SUN), SUN)
+		self.assertEqual(api.week_start(SAT), D(2026, 10, 11))
+		self.assertEqual((api.first_weekday("Monday"), api.first_weekday("sunday")), (0, 6))
+		self.assertEqual((api.first_weekday(""), api.first_weekday(None), api.first_weekday("Funday")), (6, 6, 6))
+		self.assertTrue(api.as_bool("true") and api.as_bool(1) and api.as_bool("1"))
+		self.assertFalse(api.as_bool("false") or api.as_bool("0") or api.as_bool(0) or api.as_bool(""))
+
+	def test_blocked_by(self):
+		task = _task("T", start="2026-10-14 08:00:00", end="2026-10-15 17:00:00")
+		pred = _task("P", start=MON, end=WED, subject="Dig")
+		self.assertEqual(api.blocked_by(task, [pred]), [])  # a same-day handoff with no times is fine
+		late = dict(pred, exp_end_date=THU)
+		self.assertEqual(api.blocked_by(task, [late]), [{"task": "P", "subject": "Dig", "end": "2026-10-15"}])
+		timed = dict(pred, exp_end_date="2026-10-14 12:00:00")
+		self.assertEqual(len(api.blocked_by(task, [timed])), 1)  # both have times: noon is after 8:00
+		early = dict(pred, exp_end_date="2026-10-14 07:00:00")
+		self.assertEqual(api.blocked_by(task, [early]), [])
+		self.assertEqual(api.blocked_by(task, [dict(late, status="Completed")]), [])
+		self.assertEqual(api.blocked_by(task, [dict(late, exp_start_date=None, exp_end_date=None)]), [])
+		self.assertEqual(api.blocked_by(_task("U", start=None), [late]), [])
+		self.assertEqual(
+			api.dependency_conflicts(task, [late]), ["Starts before P (Dig) ends on 2026-10-15"]
+		)
+
+	def test_qualification_gaps(self):
+		crew = [{"resource": "RES-1"}, {"resource": "RES-2"}]
+		held = {
+			"RES-1": [{"credential_type": "Forklift", "status": "Valid", "expires_on": None}],
+			"RES-2": [
+				{"credential_type": "Confined Space Entry", "status": "Expiring", "expires_on": "2026-10-20"},
+				{"credential_type": "First Aid", "status": "Expired", "expires_on": None},
+				{"credential_type": "Rigging", "status": "Valid", "expires_on": "2026-10-13"},
+			],
+		}
+		required = ["Forklift", "Confined Space Entry", "First Aid", "Rigging", "Forklift"]
+		self.assertEqual(api.qualification_gaps(required, crew, held, WED), ["First Aid", "Rigging"])
+		self.assertEqual(api.qualification_gaps(required, crew, held, D(2026, 10, 21)), ["Confined Space Entry", "First Aid", "Rigging"])
+		self.assertEqual(api.qualification_gaps(required, [], held, WED), [])  # no crew: the tray says so
+		self.assertEqual(api.qualification_gaps([], crew, held, WED), [])
+		self.assertEqual(
+			api.qualification_warning(["First Aid", "Rigging"]), "No one on the crew holds: First Aid, Rigging"
+		)
+		self.assertIsNone(api.qualification_warning([]))
+
+	def test_card_fields(self):
+		task = _task("T", start=WED, custom_tentative=1)
+		card = api.build_card(
+			task,
+			[{"resource": "RES-1"}],
+			{},
+			["Forklift"],
+			TODAY,
+			True,
+			depends_on=["P"],
+			predecessors=[_task("P", start=MON, end=THU, subject="Dig")],
+			held={},
+		)
+		self.assertEqual(
+			{k: card[k] for k in ("tentative", "depends_on", "blocked_by", "qualification_gaps", "qualification_warning")},
+			{
+				"tentative": True,
+				"depends_on": ["P"],
+				"blocked_by": [{"task": "P", "subject": "Dig", "end": "2026-10-15"}],
+				"qualification_gaps": ["Forklift"],
+				"qualification_warning": "No one on the crew holds: Forklift",
+			},
+		)
+		# Unknown holdings (no HR module) are never a gap; the old positional call still works.
+		plain = api.build_card(task, [{"resource": "RES-1"}], {}, ["Forklift"], TODAY, True)
+		self.assertEqual((plain["qualification_gaps"], plain["depends_on"], plain["blocked_by"]), ([], [], []))
+
+	def test_heatmap_cell(self):
+		cells = [
+			{"capacity": 8, "booked": 6, "soft_booked": 2, "free": 2, "off": None},
+			{"capacity": 8, "booked": 10, "soft_booked": 0, "free": 0, "off": None},
+			{"capacity": 0, "booked": 0, "soft_booked": 0, "free": 0, "off": "Holiday: Columbus Day"},
+			{"capacity": 4, "booked": 0, "soft_booked": 0, "free": 4, "off": "Half day off"},
+			{"capacity": 0, "booked": 0, "soft_booked": 0, "free": 0, "off": "Not a work day"},
+		]
+		self.assertEqual(
+			api.heatmap_cell(cells),
+			{
+				"capacity": 20.0,
+				"booked": 16.0,
+				"soft_booked": 2.0,
+				"free": 6.0,
+				"over_days": 1,
+				"off_days": 2,
+				"load": 0.8,
+				"level": "amber",
+			},
+		)
+
+		def level(capacity, booked):
+			return api.heatmap_cell([{"capacity": capacity, "booked": booked}])["level"]
+
+		self.assertEqual(
+			[level(20, 15), level(20, 20), level(20, 21), level(0, 0), level(0, 2)],
+			["green", "amber", "red", None, "red"],
+		)
+
+
+# ---------------------------------------------------------------------- Phase 3A: writes
+
+
+class _Task3A(_TaskDoc):
+	"""A Task doc that knows its name in calls, can be refused or fail, and can be inserted."""
+
+	def check_permission(self, ptype):
+		frappe.calls.append(("check_permission", ptype, self.get("name")))
+		if self.get("name") in frappe.denied:
+			frappe.local.message_log.append({"message": "<b>No permission</b> for Task"})
+			raise _PermissionError("No permission for Task")
+
+	def save(self):
+		if self.get("name") in frappe.failing:
+			frappe.local.message_log.append({"message": "Cannot complete task <b>X</b>."})
+			raise _Throw("Cannot complete task X.")
+		super().save()
+		for hook in frappe.save_hooks:
+			hook(self)
+
+	def insert(self):
+		self["name"] = f"TASK-NEW-{len(frappe.inserted) + 1}"
+		self["modified"] = "2026-10-09 08:00:00"
+		frappe.inserted.append(json.loads(json.dumps(dict(self), default=str)))
+		return self
+
+
+MODIFIED = "2026-10-08 09:00:00"
+
+
+def _tdoc(name, start, end=None, **values):
+	doc = _Task3A(_task(name, start=start, end=end, **values))
+	doc["doctype"] = "Task"
+	doc.setdefault("custom_crew", [_Doc(resource="RES-1", resource_name="Austin Healey", hours=0, is_lead=1)])
+	doc.setdefault("custom_required_credentials", [])
+	doc.setdefault("depends_on", [])
+	frappe.docs[("Task", name)] = doc
+	return doc
+
+
+class _Phase3AWrites(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		frappe.saved, frappe.comments, frappe.calls, frappe.previews = [], [], [], []
+		frappe.batches, frappe.inserted, frappe.savepoints, frappe.save_hooks = [], [], [], []
+		frappe.denied, frappe.failing = set(), set()
+		frappe.db.savepoint = lambda name: frappe.savepoints.append(("savepoint", name))
+		frappe.db.rollback = lambda save_point=None: frappe.savepoints.append(("rollback", save_point))
+		frappe.tables["Planner Resource"] = [
+			{"name": "RES-1", "resource_name": "Austin Healey", "user": "austin@example.com", "is_active": 1},
+			{"name": "RES-2", "resource_name": "Lisa", "user": "lisa@example.com", "is_active": 1},
+		]
+		frappe.values[("Project", "PRJ-1", "project_name")] = "Vegas Water Wall"
+		# ERPNext's dependency table as (task that depends, the task it depends on) pairs, and the
+		# Task rows the API reads back for spans and successors.
+		self.edges = []
+		self.rows = {}
+		frappe.tables["Task Depends On"] = self._depends_on
+		frappe.tables["Task"] = lambda filters: [
+			dict(self.rows[name]) for name in (filters or {}).get("name", [None, []])[1] if name in self.rows
+		]
+		self.conflicts, self.batch = {}, []
+		self.patches = [
+			mock.patch.object(engine, "preview_conflicts", self._preview),
+			mock.patch.object(engine, "_preview", lambda task, crew, *a: ({}, {})),
+			mock.patch.object(engine, "preview_batch", self._batch),
+		]
+		for patch in self.patches:
+			patch.start()
+
+	def tearDown(self):
+		for patch in self.patches:
+			patch.stop()
+
+	def _depends_on(self, filters):
+		filters = filters or {}
+		if "task" in filters:
+			return [{"parent": parent} for parent, task in self.edges if task in filters["task"][1]]
+		return [{"parent": parent, "task": task} for parent, task in self.edges if parent in filters["parent"][1]]
+
+	def _preview(self, task, crew, start=None, end=None):
+		frappe.previews.append(dict(task))
+		if engine.is_tentative(task):
+			return {}
+		span = engine.task_span(task)
+		return self.conflicts.get(span[0] if span else None, {})
+
+	def _batch(self, changes, start=None, end=None):
+		frappe.batches.append([(dict(task), list(crew)) for task, crew in changes])
+		return self.batch.pop(0) if self.batch else {}
+
+	def _row(self, name, start, end=None, **values):
+		self.rows[name] = dict(_task(name, start=start, end=end, **values))
+		return self.rows[name]
+
+
+class TestTentativeWrites(_Phase3AWrites):
+	def test_firming_up_a_pencil_is_checked_like_any_change(self):
+		_tdoc("TASK-1", "2026-10-12 08:00:00", "2026-10-14 17:00:00", expected_time=12, custom_tentative=1)
+		self.conflicts[MON] = {"Austin Healey": ["2026-10-12: Over by 2h"]}
+		result = api.save_task("TASK-1", MODIFIED, tentative="false")
+		self.assertEqual(result, {"needs_reason": True, "conflicts": {"Austin Healey": ["2026-10-12: Over by 2h"]}})
+		self.assertEqual(frappe.saved, [])
+		result = api.save_task("TASK-1", MODIFIED, tentative=0, reason="Client confirmed")
+		self.assertEqual(frappe.saved[0]["custom_tentative"], 0)
+		self.assertFalse(result["card"]["tentative"])
+
+	def test_pencilling_needs_no_reason_and_unset_leaves_it_alone(self):
+		_tdoc("TASK-1", "2026-10-12 08:00:00", "2026-10-14 17:00:00", expected_time=12)
+		self.conflicts[MON] = {"Austin Healey": ["2026-10-12: Over by 2h"]}
+		result = api.save_task("TASK-1", MODIFIED, tentative="true")
+		self.assertEqual(frappe.saved[0]["custom_tentative"], 1)
+		self.assertTrue(result["card"]["tentative"])
+		frappe.saved.clear()
+		_tdoc("TASK-1", "2026-10-12 08:00:00", "2026-10-14 17:00:00", custom_tentative=1)
+		api.save_task("TASK-1", MODIFIED, tentative="null", expected_time=4)
+		self.assertEqual(frappe.saved[0]["custom_tentative"], 1)
+
+
+class TestDependencyWrites(_Phase3AWrites):
+	def _doc_after(self, pred_end, **values):
+		self._row("TASK-0", D(2026, 10, 5), pred_end, subject="Dig")
+		return _tdoc(
+			"TASK-1",
+			"2026-10-12 08:00:00",
+			"2026-10-14 17:00:00",
+			expected_time=12,
+			depends_on=[_Doc(task="TASK-0")],
+			**values,
+		)
+
+	def test_starting_before_a_predecessor_ends_needs_a_reason(self):
+		self._doc_after(D(2026, 10, 9))
+		result = api.save_task("TASK-1", MODIFIED, start="2026-10-08")
+		self.assertEqual(
+			result,
+			{"needs_reason": True, "conflicts": {"Dependencies": ["Starts before TASK-0 (Dig) ends on 2026-10-09"]}},
+		)
+		self.assertEqual(frappe.saved, [])
+		self._doc_after(D(2026, 10, 9))  # a fresh load, as the page's second request gets
+		result = api.save_task("TASK-1", MODIFIED, start="2026-10-08", reason="Overlap is fine")
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertIn("Dependencies: Starts before TASK-0 (Dig) ends on 2026-10-09", frappe.comments[0][1])
+		self.assertEqual(result["card"]["depends_on"], ["TASK-0"])
+		self.assertEqual(result["card"]["blocked_by"], [{"task": "TASK-0", "subject": "Dig", "end": "2026-10-09"}])
+
+	def test_a_block_that_was_already_there_needs_no_reason(self):
+		self._doc_after(D(2026, 10, 13))
+		result = api.save_task("TASK-1", MODIFIED, expected_time=16)
+		self.assertEqual((len(frappe.saved), result["conflicts"]), (1, {}))
+
+	def test_a_pencil_is_never_blocked(self):
+		self._doc_after(D(2026, 10, 9), custom_tentative=1)
+		api.save_task("TASK-1", MODIFIED, start="2026-10-08")
+		self.assertEqual(len(frappe.saved), 1)
+
+	def test_successors_are_transitive_bounded_and_cycle_safe(self):
+		self.edges = [("B", "A"), ("C", "B"), ("A", "C"), ("D", "A")]
+		self.assertEqual(api.successors("A"), ["B", "D", "C"])
+		self.assertEqual(api.successors("A", limit=1), ["B"])
+		self.assertEqual(api.successors("A", depth=1), ["B", "D"])
+		self.assertEqual(api.successors("Z"), [])
+
+	def test_a_move_later_reports_the_successors_erpnext_did_not_already_push(self):
+		_tdoc("TASK-1", "2026-10-12 08:00:00", "2026-10-13 17:00:00")
+		self.edges = [("TASK-2", "TASK-1"), ("TASK-3", "TASK-2"), ("TASK-4", "TASK-1"), ("TASK-5", "TASK-1")]
+		self._row("TASK-2", WED, THU)
+		self._row("TASK-3", D(2026, 10, 20))
+		self._row("TASK-4", WED, status="Completed")
+		self._row("TASK-5", WED, custom_rental_booking="RB-1")
+
+		def erpnext_reschedules(doc):  # Task.reschedule_dependent_tasks, during the save
+			self.rows["TASK-2"]["exp_start_date"] = FRI
+
+		frappe.save_hooks.append(erpnext_reschedules)
+		result = api.save_task("TASK-1", MODIFIED, start="2026-10-14")
+		self.assertEqual(
+			result["successors"], {"count": 1, "names": ["TASK-3"], "days": 2, "auto_moved": ["TASK-2"]}
+		)
+		# Moving earlier offers nothing.
+		_tdoc("TASK-1", "2026-10-12 08:00:00", "2026-10-13 17:00:00")
+		self.assertNotIn("successors", api.save_task("TASK-1", MODIFIED, start="2026-10-09"))
+
+	def _chain(self):
+		root = _tdoc("TASK-1", "2026-10-12 08:00:00", "2026-10-13 17:00:00")
+		_tdoc("TASK-2", "2026-10-12 08:00:00", "2026-10-13 17:00:00", custom_crew=[_Doc(resource="RES-2", hours=0)])
+		_tdoc(
+			"TASK-3",
+			"2026-10-16 00:00:00",
+			"2026-10-16 00:00:00",
+			custom_start_datetime="2026-10-16 09:00:00",
+			custom_end_datetime="2026-10-16 11:00:00",
+		)
+		_tdoc("TASK-4", MON, status="Completed")
+		_tdoc("TASK-5", MON, custom_rental_booking="RB-1")
+		self.edges = [("TASK-2", "TASK-1"), ("TASK-3", "TASK-2"), ("TASK-4", "TASK-1"), ("TASK-5", "TASK-1")]
+		return root
+
+	def test_shift_successors_is_all_or_nothing(self):
+		self._chain()
+		self.batch = [{}, {"Lisa": ["2026-10-14: Over by 1h"]}]  # before, after
+		result = api.shift_successors("TASK-1", 2, MODIFIED)
+		self.assertTrue(result["needs_reason"])
+		self.assertEqual(result["conflicts"], {"Lisa": ["2026-10-14: Over by 1h"]})
+		self.assertEqual(
+			[(m["task"], m["from"], m["to"], m["to_end"]) for m in result["moves"]],
+			[("TASK-2", "2026-10-12", "2026-10-14", "2026-10-15"), ("TASK-3", "2026-10-16", "2026-10-20", "2026-10-20")],
+		)
+		self.assertEqual(frappe.saved, [])
+		# The check saw both moves together, against their state before.
+		self.assertEqual([[t["name"] for t, _c in batch] for batch in frappe.batches], [["TASK-2", "TASK-3"]] * 2)
+
+	def test_shift_successors_saves_every_one_furthest_first(self):
+		self._chain()
+		self.batch = [{}, {"Lisa": ["2026-10-14: Over by 1h"]}]
+		result = api.shift_successors("TASK-1", "2", MODIFIED, reason="Pump is late")
+		self.assertEqual([s["name"] for s in frappe.saved], ["TASK-3", "TASK-2"])
+		task3 = frappe.saved[0]
+		self.assertEqual(
+			(task3["custom_start_datetime"], task3["custom_end_datetime"]),
+			("2026-10-20 09:00:00", "2026-10-20 11:00:00"),
+		)
+		self.assertEqual(
+			(frappe.saved[1]["exp_start_date"], frappe.saved[1]["exp_end_date"]),
+			("2026-10-14 08:00:00", "2026-10-15 17:00:00"),
+		)
+		self.assertEqual([m["task"] for m in result["moved"]], ["TASK-3", "TASK-2"])
+		self.assertEqual(result["moved"][0]["modified"], "2026-10-08 10:00:01")
+		self.assertEqual(sorted(s["task"] for s in result["skipped"]), ["TASK-4", "TASK-5"])
+		self.assertEqual(len(frappe.comments), 2)
+		self.assertIn("Reason: Pump is late", frappe.comments[0][1])
+		for name in ("TASK-1", "TASK-2", "TASK-3"):
+			self.assertIn(("check_permission", "write", name), frappe.calls)
+
+	def test_shift_successors_can_be_limited_and_refuses_nonsense(self):
+		self._chain()
+		result = api.shift_successors("TASK-1", 1, MODIFIED, tasks='["TASK-3"]')
+		self.assertEqual([m["task"] for m in result["moved"]], ["TASK-3"])
+		self.assertEqual(result["moved"][0]["to"], "2026-10-19")
+		with self.assertRaises(_Throw):
+			api.shift_successors("TASK-1", 0, MODIFIED)
+		with self.assertRaises(_Throw):
+			api.shift_successors("TASK-1", 1, "2026-01-01 00:00:00")  # stale
+		frappe.denied = {"TASK-2"}
+		frappe.saved.clear()
+		with self.assertRaises(_PermissionError):
+			api.shift_successors("TASK-1", 1, MODIFIED)
+		self.assertEqual(frappe.saved, [])  # checked before anything is written
+
+
+class TestBulkUpdate(_Phase3AWrites):
+	def _three(self):
+		for name in ("TASK-A", "TASK-B", "TASK-C"):
+			_tdoc(name, "2026-10-01 08:00:00", "2026-10-02 17:00:00")
+
+	def test_complete_and_cancel_report_failures_and_carry_on(self):
+		self._three()
+		frappe.failing, frappe.denied = {"TASK-B"}, {"TASK-C"}
+		result = api.bulk_update('["TASK-A", "TASK-B", "TASK-C", "TASK-A"]', "complete")
+		self.assertEqual([u["task"] for u in result["updated"]], ["TASK-A"])
+		self.assertEqual(frappe.saved[0]["status"], "Completed")
+		self.assertEqual(
+			result["failed"],
+			[
+				{"task": "TASK-C", "error": "No permission for Task"},
+				{"task": "TASK-B", "error": "Cannot complete task X."},
+			],
+		)
+		self.assertEqual(frappe.local.message_log, [])  # no dialogs on top of the report
+		self.assertIn(("rollback", "planner_bulk_1"), frappe.savepoints)
+		self.assertEqual(result["warnings"], ["Austin Healey has approved time off."])
+		frappe.saved.clear()
+		frappe.failing, frappe.denied = set(), set()
+		api.bulk_update(["TASK-A"], "cancel")
+		self.assertEqual(frappe.saved[0]["status"], "Canceled")  # the site's spelling, one l
+
+	def test_reschedule_keeps_lengths_and_asks_once_for_a_reason(self):
+		self._three()
+		self.batch = [{"Austin Healey": ["2026-10-19: Over by 4h"]}]
+		result = api.bulk_update('["TASK-A", "TASK-B"]', "reschedule", date="2026-10-19")
+		self.assertTrue(result["needs_reason"])
+		self.assertEqual(
+			[(m["task"], m["to"], m["to_end"]) for m in result["moves"]],
+			[("TASK-A", "2026-10-19", "2026-10-20"), ("TASK-B", "2026-10-19", "2026-10-20")],
+		)
+		self.assertEqual(frappe.saved, [])
+		self._three()
+		self.batch = [{"Austin Healey": ["2026-10-19: Over by 4h"]}]
+		result = api.bulk_update('["TASK-A", "TASK-B"]', "reschedule", date="2026-10-19", reason="Catch-up week")
+		self.assertEqual(
+			[(s["exp_start_date"], s["exp_end_date"]) for s in frappe.saved],
+			[("2026-10-19 08:00:00", "2026-10-20 17:00:00")] * 2,
+		)
+		self.assertEqual([u["start"] for u in result["updated"]], ["2026-10-19", "2026-10-19"])
+		self.assertEqual(len(frappe.comments), 2)
+
+	def test_a_rental_task_cannot_be_rescheduled_here_but_the_rest_are(self):
+		self._three()
+		_tdoc("TASK-R", "2026-10-01 08:00:00", custom_rental_booking="RB-1")
+		result = api.bulk_update('["TASK-R", "TASK-A"]', "reschedule", date="2026-10-19")
+		self.assertEqual([u["task"] for u in result["updated"]], ["TASK-A"])
+		self.assertIn("RB-1", result["failed"][0]["error"])
+
+	def test_bad_requests_are_refused(self):
+		with self.assertRaises(_Throw):
+			api.bulk_update('["TASK-A"]', "delete")
+		with self.assertRaises(_Throw):
+			api.bulk_update("[]", "complete")
+		with self.assertRaises(_Throw):
+			api.bulk_update(json.dumps([f"T-{i}" for i in range(101)]), "complete")
+		with self.assertRaises(_Throw):
+			api.bulk_update('["TASK-A"]', "reschedule")
+		frappe.roles = ["Customer"]
+		with self.assertRaises(_PermissionError):
+			api.bulk_update('["TASK-A"]', "complete")
+
+
+class TestCopyWeek(_Phase3AWrites):
+	def _source(self):
+		frappe.tables["Planner Resource"].append(
+			{"name": "RES-9", "resource_name": "Retired", "user": None, "is_active": 0}
+		)
+		_tdoc(
+			"TASK-1",
+			"2026-10-12 08:00:00",
+			"2026-10-14 17:00:00",
+			expected_time=12,
+			custom_crew_size=2,
+			custom_tentative=1,
+			description="<p>Pump set</p>",
+			parent_task="TASK-P",
+			custom_locationaddress_of_task="ADDR-1",
+			color="#123456",
+			custom_crew=[
+				_Doc(resource="RES-1", resource_name="Austin Healey", hours=0, is_lead=1),
+				_Doc(resource="RES-9", resource_name="Retired", hours=3, is_lead=0),
+			],
+			custom_required_credentials=[_Doc(credential_type="Forklift")],
+		)
+		_tdoc("TASK-OLD", "2026-10-01 08:00:00")
+		_tdoc("TASK-R", "2026-10-13 08:00:00", custom_rental_booking="RB-1")
+		frappe.get_doc = lambda doctype, name=None: (
+			_Task3A(doctype) if isinstance(doctype, dict) else frappe.docs[(doctype, name)]
+		)
+
+	def test_a_dry_run_previews_and_writes_nothing(self):
+		self._source()
+		self.batch = [{"Austin Healey": ["2026-10-19: Over by 2h"]}]
+		result = api.copy_week("2026-10-14", "2026-10-21", '["TASK-1", "TASK-OLD", "TASK-R"]')
+		self.assertEqual(
+			result["copies"],
+			[{"task": "TASK-1", "subject": "Subject TASK-1", "to_start": "2026-10-19", "to_end": "2026-10-21", "tentative": True}],
+		)
+		self.assertEqual(result["conflicts"], {"Austin Healey": ["2026-10-19: Over by 2h"]})
+		self.assertEqual([s["task"] for s in result["skipped"]], ["TASK-OLD", "TASK-R"])
+		self.assertTrue(result["dry_run"])
+		self.assertEqual((result["week_start"], result["target_week_start"]), ("2026-10-11", "2026-10-18"))
+		self.assertEqual(frappe.inserted, [])
+		((preview, crew),) = frappe.batches[0]
+		self.assertEqual((preview["name"], preview["exp_start_date"]), ("TASK-1 (copy)", "2026-10-19 08:00:00"))
+		self.assertEqual([m["resource"] for m in crew], ["RES-1", "RES-9"])
+
+	def test_a_real_run_creates_new_tasks_and_needs_a_reason_over_a_conflict(self):
+		self._source()
+		self.batch = [{"Austin Healey": ["2026-10-19: Over by 2h"]}]
+		result = api.copy_week("2026-10-12", "2026-10-19", '["TASK-1"]', dry_run=0)
+		self.assertEqual(result["needs_reason"], True)
+		self.assertEqual(frappe.inserted, [])
+		self.batch = [{"Austin Healey": ["2026-10-19: Over by 2h"]}]
+		result = api.copy_week("2026-10-12", "2026-10-19", '["TASK-1"]', dry_run="0", reason="Same again")
+		(new,) = frappe.inserted
+		self.assertEqual(
+			{k: new[k] for k in ("subject", "project", "parent_task", "status", "expected_time", "custom_crew_size", "custom_tentative", "custom_locationaddress_of_task", "color")},
+			{
+				"subject": "Subject TASK-1",
+				"project": "PRJ-1",
+				"parent_task": "TASK-P",
+				"status": "Open",
+				"expected_time": 12.0,
+				"custom_crew_size": 2,
+				"custom_tentative": 1,
+				"custom_locationaddress_of_task": "ADDR-1",
+				"color": "#123456",
+			},
+		)
+		self.assertEqual((new["exp_start_date"], new["exp_end_date"]), ("2026-10-19 08:00:00", "2026-10-21 17:00:00"))
+		self.assertEqual(new["description"], "<p>Pump set</p><p>Copied from TASK-1 on the Project Planner</p>")
+		self.assertEqual(
+			[(r["resource"], r["user"], r["hours"], r["is_lead"]) for r in new["custom_crew"]],
+			[("RES-1", "austin@example.com", 0.0, 1), ("RES-9", None, 3.0, 0)],  # inactive, but on the original
+		)
+		self.assertEqual(new["custom_required_credentials"], [{"credential_type": "Forklift"}])
+		self.assertEqual(
+			result["created"],
+			[{"task": "TASK-NEW-1", "source": "TASK-1", "subject": "Subject TASK-1", "start": "2026-10-19", "end": "2026-10-21"}],
+		)
+		self.assertIn("Reason: Same again", frappe.comments[0][1])
+		self.assertEqual(result["week_start"], "2026-10-11")
+
+	def test_on_a_sunday_first_site_a_task_starting_sunday_is_in_that_week(self):
+		self._source()
+		_tdoc("TASK-SUN", "2026-10-18 08:00:00")
+		frappe.singles[("System Settings", "first_day_of_the_week")] = "Sunday"
+		result = api.copy_week("2026-10-21", "2026-10-28", '["TASK-SUN", "TASK-1"]')
+		self.assertEqual(result["week_start"], "2026-10-18")
+		self.assertEqual(
+			[(c["task"], c["to_start"]) for c in result["copies"]], [("TASK-SUN", "2026-10-25")]
+		)
+		self.assertEqual([s["task"] for s in result["skipped"]], ["TASK-1"])  # the week before
+		# A Monday-first site puts that Sunday in the week before, so it is skipped instead.
+		frappe.singles[("System Settings", "first_day_of_the_week")] = "Monday"
+		result = api.copy_week("2026-10-21", "2026-10-28", '["TASK-SUN"]')
+		self.assertEqual((result["week_start"], result["copies"]), ("2026-10-19", []))
+
+	def test_copying_needs_another_week_and_create_permission(self):
+		self._source()
+		with self.assertRaises(_Throw):
+			api.copy_week("2026-10-12", "2026-10-16", '["TASK-1"]')
+		frappe.has_permission = lambda doctype, ptype=None, *a, **k: ptype != "create"
+		self.assertEqual(len(api.copy_week("2026-10-12", "2026-10-19", '["TASK-1"]')["copies"]), 1)  # a dry run is fine
+		with self.assertRaises(_PermissionError):
+			api.copy_week("2026-10-12", "2026-10-19", '["TASK-1"]', dry_run=0)
+
+
+# ---------------------------------------------------------------------- Phase 3A: reads
+
+
+class TestPhase3AReads(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def test_cards_carry_dependencies_and_qualification_gaps(self):
+		austin = _person("RES-1", user="austin@example.com", employee="EMP-1")
+		frappe.tables["Task Required Credential"] = [
+			{"parent": "T-JOB", "credential_type": "Forklift"},
+			{"parent": "T-JOB", "credential_type": "Confined Space Entry"},
+		]
+		frappe.tables["Task Depends On"] = [{"parent": "T-JOB", "task": "T-PRE"}]
+		frappe.tables["Task"] = [dict(_task("T-PRE", start=MON, end=WED, subject="Dig"))]
+		frappe.tables["Employee Credential"] = [
+			{"employee": "EMP-1", "user": None, "credential_type": "Forklift", "status": "Valid", "expires_on": None}
+		]
+		with _Readers(
+			[austin],
+			tasks=[_task("T-JOB", start=TUE, expected_time=4, custom_tentative=1)],
+			crew_rows={"T-JOB": [{"resource": "RES-1"}]},
+		):
+			card = api.get_planner("2026-10-12", "2026-10-18")["tasks"][0]
+		self.assertEqual(card["depends_on"], ["T-PRE"])
+		self.assertEqual(card["blocked_by"], [{"task": "T-PRE", "subject": "Dig", "end": "2026-10-14"}])
+		self.assertEqual(card["qualification_gaps"], ["Confined Space Entry"])
+		self.assertEqual(card["qualification_warning"], "No one on the crew holds: Confined Space Entry")
+		self.assertTrue(card["tentative"])
+		query = next(q for q in frappe.queries if q[0] == "Employee Credential")[1]
+		self.assertEqual(query["filters"]["status"], ["in", ["Valid", "Expiring"]])
+		self.assertEqual(query["or_filters"]["employee"], ["in", ["EMP-1"]])
+
+	def test_no_hr_module_means_no_gaps_not_all_gaps(self):
+		frappe.db.exists = lambda doctype, name=None, *a, **k: name != "Employee Credential"
+		self.assertIsNone(api._held_credentials({"RES-1": {"employee": "EMP-1"}}, ["Forklift"]))
+
+	def test_the_heatmap_is_eight_weeks_from_the_monday_with_google_off(self):
+		frappe.singles[("System Settings", "first_day_of_the_week")] = "Monday"
+		with _Readers(
+			[_person()],
+			tasks=[
+				_task("T-H", start=MON, end=FRI, expected_time=20),
+				_task("T-P", start=D(2026, 10, 19), expected_time=8, custom_tentative=1),
+			],
+			crew_rows={"T-H": [{"resource": "RES-1"}], "T-P": [{"resource": "RES-1"}]},
+			points={"T-H": HIGHLANDS},
+			shop=SHOP,
+		) as readers:
+			data = api.get_heatmap("2026-10-14")
+			self.assertEqual(len(api.get_heatmap("2026-10-14", weeks=40)["weeks"]), 12)
+			self.assertEqual(len(api.get_heatmap("2026-10-14", weeks="")["weeks"]), 8)
+			self.assertEqual(len(api.get_heatmap("2026-10-14", weeks=-3)["weeks"]), 1)
+		self.assertEqual((data["start"], data["end"], data["week_start"]), ("2026-10-12", "2026-12-06", "2026-10-12"))
+		self.assertEqual(len(data["weeks"]), 8)
+		self.assertEqual(data["weeks"][0], {"start": "2026-10-12", "end": "2026-10-18", "label": "2026-W42"})
+		first, second = data["cells"]["RES-1"]["2026-10-12"], data["cells"]["RES-1"]["2026-10-19"]
+		self.assertEqual(first["capacity"], 40.0)
+		self.assertGreater(first["booked"], 20.0)  # 20h of work plus the (estimated) driving
+		self.assertEqual((second["booked"], second["soft_booked"]), (0.0, 8.0))
+		self.assertEqual(set(readers.google), {False})  # every drive priced with Google off
+		self.assertEqual(set(readers.shop_google), {False})
+		frappe.roles = ["Customer"]
+		with self.assertRaises(_PermissionError):
+			api.get_heatmap("2026-10-14")
+
+	def test_a_sunday_first_site_buckets_from_sunday(self):
+		# Production's System Settings: first_day_of_the_week = Sunday (blank reads the same).
+		frappe.singles[("System Settings", "first_day_of_the_week")] = "Sunday"
+		with _Readers(
+			[_person(), _person("RES-2", label="Lisa")],
+			patterns={"RES-2": [{"sunday": 8, "monday": 8}]},
+			tasks=[_task("T-SUN", start=D(2026, 10, 18), expected_time=6)],
+			crew_rows={"T-SUN": [{"resource": "RES-2"}]},
+		):
+			data = api.get_heatmap("2026-10-21", weeks=2)
+		self.assertEqual((data["start"], data["end"], data["week_start"]), ("2026-10-18", "2026-10-31", "2026-10-18"))
+		self.assertEqual(
+			data["weeks"],
+			[
+				{"start": "2026-10-18", "end": "2026-10-24", "label": "2026-W43"},
+				{"start": "2026-10-25", "end": "2026-10-31", "label": "2026-W44"},
+			],
+		)
+		self.assertEqual(data["cells"]["RES-2"]["2026-10-18"]["booked"], 6.0)  # Sunday's work is this week's
+		self.assertEqual(data["cells"]["RES-1"]["2026-10-18"]["capacity"], 40.0)
+		frappe.singles.clear()
+		self.assertEqual(api.get_heatmap("2026-10-21", weeks=1)["week_start"], "2026-10-18")
+
+	def test_the_heatmap_never_sends_a_google_request_even_with_nothing_cached(self):
+		"""The real routing chain, with Google on in Settings, a key, and an empty cache."""
+		calls = []
+		depot = types.ModuleType("_pp_depot_stub")
+		depot._depot_address = lambda: "85 W 300 S, Bountiful, UT 84010"
+		settings_module = types.ModuleType("_pp_settings_stub")
+		settings_module.materialize_defaults = lambda: None
+		controller = "erpnext_enhancements.project_enhancements.doctype.project_planner_settings.project_planner_settings"
+		frappe.cached["Project Planner Settings"] = _Doc(
+			use_google_routes=1, start_latitude=None, start_longitude=None, start_geocoded_from=None
+		)
+		frappe.db.set_single_value = lambda *a, **k: None
+		with (
+			_Readers(
+				[_person()],
+				tasks=[_task("T-H", start=MON, expected_time=2), _task("T-O", start=MON, expected_time=2)],
+				crew_rows={"T-H": [{"resource": "RES-1"}], "T-O": [{"resource": "RES-1"}]},
+				points={"T-H": HIGHLANDS, "T-O": OGDEN},
+				real_routing=True,
+			),
+			mock.patch.dict(sys.modules, {"erpnext_enhancements.api.pickup_routing": depot, controller: settings_module}),
+			mock.patch.object(routing, "_google_post", lambda body: (calls.append("routes"), (None, None, "refused"))[1]),
+			mock.patch.object(routing, "_google_geocode", lambda address: (calls.append("geocode"), (SHOP, None))[1]),
+			mock.patch.object(routing, "_has_key", lambda: True),
+			mock.patch.object(routing, "_flag", lambda name: False),
+			mock.patch.object(routing, "_set_flag", lambda *a, **k: None),
+			mock.patch.object(routing, "_read_cache", lambda pairs: ({}, {})),
+		):
+			data = api.get_heatmap("2026-10-12", weeks=1)
+			self.assertEqual(calls, [])
+			monday = engine.availability(MON, MON, google=False)["days"]["RES-1"]["2026-10-12"]
+			self.assertEqual(calls, [])
+			self.assertGreater(monday["drive_minutes"], 0)  # Highlands and Ogden, estimated between
+			self.assertEqual(monday["drive_source"], "estimate")
+			# The control: the same day with Google allowed does ask (geocode the shop, price legs).
+			engine.availability(MON, MON)
+		self.assertEqual(set(calls), {"geocode", "routes"})
+		self.assertGreater(data["cells"]["RES-1"][data["week_start"]]["booked"], 4.0)
+
+	def test_overdue_is_grouped_by_project_without_rentals_or_future_work(self):
+		frappe.sql_rows["< %(today)s"] = [
+			_task("T-1", start=D(2026, 9, 28), end=D(2026, 10, 1), project_title="Vegas"),
+			_task("T-2", start=D(2026, 10, 5), project_title="Vegas", custom_tentative=1),
+			_task("T-FUTURE", start=D(2026, 10, 20), project_title="Vegas"),
+			_task("T-RENTAL", start=D(2026, 10, 1), custom_rental_booking="RB-1", project_title="Vegas"),
+			_task("T-3", start=D(2026, 10, 7), project="PRJ-2", project_title="Highlands"),
+		]
+		frappe.tables["Task Crew Member"] = [{"parent": "T-1", "resource": "RES-2", "resource_name": "Lisa", "hours": 0}]
+		frappe.tables["ToDo"] = [{"reference_name": "T-2", "allocated_to": "austin@example.com"}]
+		frappe.tables["Planner Resource"] = [
+			{"name": "RES-1", "resource_name": "Austin Healey", "user": "austin@example.com"},
+			{"name": "RES-2", "resource_name": "Lisa", "user": "lisa@example.com"},
+		]
+		data = api.get_overdue()
+		self.assertEqual((data["today"], data["total"]), ("2026-10-08", 3))
+		self.assertEqual(
+			[(g["project"], g["title"], g["count"]) for g in data["projects"]],
+			[("PRJ-1", "Vegas", 2), ("PRJ-2", "Highlands", 1)],
+		)
+		first = data["projects"][0]["tasks"][0]
+		self.assertEqual(
+			first,
+			{
+				"name": "T-1",
+				"subject": "Subject T-1",
+				"status": "Open",
+				"start": "2026-09-28",
+				"end": "2026-10-01",
+				"crew": ["Lisa"],
+				"tentative": False,
+				"modified": "2026-10-08 09:00:00",
+			},
+		)
+		self.assertEqual(data["projects"][0]["tasks"][1]["crew"], ["Austin Healey"])  # from the assignment
+		sql = next(q[1] for q in frappe.queries if q[0] == "sql" and "< %(today)s" in q[1])
+		self.assertNotIn("t.project = %(project)s", sql)
+		api.get_overdue(project="PRJ-2", limit=9999)
+		sql = [q[1] for q in frappe.queries if q[0] == "sql" and "< %(today)s" in q[1]][-1]
+		self.assertIn("AND t.project = %(project)s", sql)
+
+
 # ---------------------------------------------------------------------- wiring
 
 
@@ -1988,6 +2814,28 @@ def _whitelisted(path):
 							methods = ast.literal_eval(keyword.value)
 				out[node.name] = methods
 	return out
+
+
+class TestNoSilentRedefinitions(unittest.TestCase):
+	"""Phases 3A and 3B were built in parallel; each added a ``week_start`` to the API module, and
+	in the merge the later one silently replaced the earlier (numbers vs names), moving every
+	heatmap and Copy week to the wrong week. Python and JS class bodies both let a second
+	definition win without a word, so pin that every name is defined once."""
+
+	def test_each_module_level_function_is_defined_once(self):
+		for path in (API_PATH, ENGINE_PATH, APP / "project_enhancements/routing.py"):
+			tree = ast.parse(path.read_text(encoding="utf-8"))
+			names = [n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))]
+			dupes = sorted({n for n in names if names.count(n) > 1})
+			self.assertEqual(dupes, [], path.name)
+
+	def test_each_page_method_is_defined_once(self):
+		page = (APP / "project_enhancements/page/project_planner/project_planner.js").read_text(encoding="utf-8")
+		methods = re.findall(r"^\t(?:async\s+)?([A-Za-z_]\w*)\s*\([^)]*\)\s*\{\s*$", page, re.M)
+		keywords = {"if", "for", "while", "switch", "catch", "function"}
+		methods = [m for m in methods if m not in keywords]
+		dupes = sorted({m for m in methods if methods.count(m) > 1})
+		self.assertEqual(dupes, [])
 
 
 class TestWiring(unittest.TestCase):
@@ -2013,18 +2861,19 @@ class TestWiring(unittest.TestCase):
 		endpoints = _whitelisted(API_PATH)
 		# Phase 3B (draft and publish, the digest preview, the crew sheet, My week) is pinned in
 		# tests/test_planner_phase3b.py; listed here so this set stays the whole module.
-		phase3b_writes = {"publish_drafts", "discard_drafts", "send_digest_preview"}
-		phase3b_reads = {"get_my_week", "crew_sheet_html"}
-		self.assertEqual(
-			set(endpoints),
-			{"get_planner", "save_task", "add_crew", "swap_crew", "get_route", "suggest_dates", "check_routes"}
-			| phase3b_writes
-			| phase3b_reads,
+		phase3b_writes = ("publish_drafts", "discard_drafts", "send_digest_preview")
+		phase3b_reads = ("get_my_week", "crew_sheet_html")
+		writes = (
+			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes
 		)
-		for name in ("save_task", "add_crew", "swap_crew", *sorted(phase3b_writes)):
+		reads = (
+			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads
+		)
+		self.assertEqual(set(endpoints), set(writes) | set(reads))
+		for name in writes:
 			self.assertEqual(endpoints[name], ["POST"], name)
 		# The reads (and the read-only route check) take GET, as the UI and the AI tools call them.
-		for name in ("get_planner", "get_route", "suggest_dates", "check_routes", *sorted(phase3b_reads)):
+		for name in reads:
 			self.assertIsNone(endpoints[name], name)
 		self.assertEqual(_whitelisted(ENGINE_PATH), {})  # the engine is not an endpoint
 		self.assertEqual(_whitelisted(ROUTING_PATH), {})  # nor is the routing module
