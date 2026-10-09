@@ -579,11 +579,21 @@ doc_events = {
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
+			# Project Planner (v1.577.0): mirror the Task's crew table into ordinary assignments
+			# (ToDos) so the tech digest, ToDo lists and morning briefing keep working. Adds only
+			# for users newly on the crew, removes only users who were on it before this save,
+			# never touches a sidebar assignee. Best effort; never raises. See crew_sync.py.
+			"erpnext_enhancements.project_enhancements.crew_sync.on_task_update",
 		],
 		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
-		# training: warn-only certification check when a task is assigned to somebody
-		# lacking a current certification for the task type. Never blocks.
-		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_assignee",
+		"validate": [
+			# training: warn-only certification check when a task is assigned to somebody
+			# lacking a current certification for the task type. Never blocks.
+			"erpnext_enhancements.training.compliance.warn_uncertified_assignee",
+			# Project Planner (v1.577.0): one row per person, one lead, hours rounded and never
+			# negative. Reads custom_crew defensively -- doc_events fire before the field exists.
+			"erpnext_enhancements.project_enhancements.crew_sync.validate_crew",
+		],
 	},
 	"Project": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",

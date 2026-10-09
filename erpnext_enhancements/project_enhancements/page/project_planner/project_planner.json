@@ -1,0 +1,33 @@
+{
+ "content": "",
+ "creation": "2026-10-08 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "calendar",
+ "modified": "2026-10-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "project-planner",
+ "owner": "Administrator",
+ "page_name": "project-planner",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Projects User"
+  },
+  {
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "role": "Maintenance User"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Project Planner"
+}

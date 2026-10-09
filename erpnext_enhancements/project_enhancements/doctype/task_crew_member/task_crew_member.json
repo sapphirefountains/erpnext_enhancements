@@ -1,0 +1,71 @@
+{
+ "actions": [],
+ "creation": "2026-10-08 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "resource",
+  "resource_name",
+  "user",
+  "hours",
+  "is_lead"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "resource",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Person",
+   "options": "Planner Resource",
+   "reqd": 1
+  },
+  {
+   "columns": 3,
+   "fetch_from": "resource.resource_name",
+   "fieldname": "resource_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "resource.user",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "This person's hours on the task. Blank: an even share of the task's expected hours, or a full day for each day of the task when it has none.",
+   "fieldname": "hours",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Hours",
+   "precision": "2"
+  },
+  {
+   "columns": 2,
+   "fieldname": "is_lead",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Lead"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Task Crew Member",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

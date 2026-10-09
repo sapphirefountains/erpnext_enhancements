@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"pe_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"pe_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Projects Dashboard\",\"col\":4}},{\"id\":\"pe_sc_master\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"pe_sc_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"pe_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"pe_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Projects, Contracts &amp; Process</b></span>\",\"col\":12}},{\"id\":\"pe_card_projects\",\"type\":\"card\",\"data\":{\"card_name\":\"Projects\",\"col\":4}},{\"id\":\"pe_card_contracts\",\"type\":\"card\",\"data\":{\"card_name\":\"Contracts\",\"col\":4}},{\"id\":\"pe_card_process\",\"type\":\"card\",\"data\":{\"card_name\":\"Process and Settings\",\"col\":4}}]",
+ "content": "[{\"id\":\"pe_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"pe_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Projects Dashboard\",\"col\":4}},{\"id\":\"pe_sc_planner\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Planner\",\"col\":4}},{\"id\":\"pe_sc_master\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"pe_sc_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"pe_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"pe_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Projects, Contracts &amp; Process</b></span>\",\"col\":12}},{\"id\":\"pe_card_projects\",\"type\":\"card\",\"data\":{\"card_name\":\"Projects\",\"col\":4}},{\"id\":\"pe_card_contracts\",\"type\":\"card\",\"data\":{\"card_name\":\"Contracts\",\"col\":4}},{\"id\":\"pe_card_process\",\"type\":\"card\",\"data\":{\"card_name\":\"Process and Settings\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -15,7 +15,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Projects",
-   "link_count": 2,
+   "link_count": 3,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -38,6 +38,17 @@
    "link_count": 0,
    "link_to": "Project",
    "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project Planner",
+   "link_count": 0,
+   "link_to": "project-planner",
+   "link_type": "Page",
    "onboard": 0,
    "type": "Link"
   },
@@ -102,7 +113,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-08-03 22:00:00.000000",
+ "modified": "2026-10-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Enhancements",
@@ -117,6 +128,11 @@
    "label": "Projects Dashboard",
    "type": "URL",
    "url": "/app/projects"
+  },
+  {
+   "label": "Project Planner",
+   "link_to": "project-planner",
+   "type": "Page"
   },
   {
    "doc_view": "List",

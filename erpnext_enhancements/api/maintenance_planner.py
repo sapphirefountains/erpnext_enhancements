@@ -309,6 +309,7 @@ def get_planner(start, end):
 		card["movable"] = card["movable"] and can_move_projected
 
 	_decorate(visits + unscheduled + projected)
+	technicians = _technicians(visits + unscheduled + projected)
 	return {
 		"start": str(start),
 		"end": str(end),
@@ -316,10 +317,72 @@ def get_planner(start, end):
 		"visits": visits,
 		"unscheduled": unscheduled,
 		"projected": projected,
-		"technicians": _technicians(visits + unscheduled + projected),
+		"technicians": technicians,
+		"bookings": _project_bookings(technicians, start, end),
 		"can_move_visits": can_move_visits,
 		"can_move_projected": can_move_projected,
 	}
+
+
+# Booking kinds the Maintenance Planner shows read-only. Visits are its own cards.
+FOREIGN_BOOKING_KINDS = ("task", "rental", "travel")
+
+
+def _project_bookings(technicians, start, end):
+	"""Each technician's free hours and non-visit bookings, from the shared availability engine.
+
+	``{user: {"YYYY-MM-DD": {"capacity", "booked", "free", "off", "conflicts", "items"}}}``
+	where ``items`` are the project tasks, rental crew tasks and travel days that use the
+	technician's hours (``{kind, ref, label, project, hours, slot}``). Maintenance and
+	Projects share technicians, and a technician's free hours must read the same in both
+	planners, so the numbers come from ``project_enhancements.crew_availability`` and are
+	never computed here.
+
+	A technician with no active Planner Resource is simply absent: the planner then shows no
+	free hours for them rather than a wrong number. A failure in the engine returns ``{}``
+	(logged), because a bug on the project side must never blank the maintenance calendar.
+	The engine is imported lazily: it imports this module back for the visit projections.
+	"""
+	users = [t["user"] for t in technicians or [] if t.get("user")]
+	if not users:
+		return {}
+	try:
+		from erpnext_enhancements.project_enhancements.crew_availability import availability
+
+		data = availability(start, end)
+		user_to_resource = data.get("user_to_resource") or {}
+		out = {}
+		for user in users:
+			resource = user_to_resource.get(user)
+			per_day = (data.get("days") or {}).get(resource) if resource else None
+			if not per_day:
+				continue
+			out[user] = {
+				day: {
+					"capacity": cell.get("capacity"),
+					"booked": cell.get("booked"),
+					"free": cell.get("free"),
+					"off": cell.get("off"),
+					"conflicts": list(cell.get("conflicts") or []),
+					"items": [
+						{
+							"kind": b.get("kind"),
+							"ref": b.get("ref"),
+							"label": b.get("label"),
+							"project": b.get("project"),
+							"hours": b.get("hours"),
+							"slot": b.get("slot"),
+						}
+						for b in cell.get("bookings") or []
+						if b.get("kind") in FOREIGN_BOOKING_KINDS
+					],
+				}
+				for day, cell in per_day.items()
+			}
+		return out
+	except Exception:
+		frappe.log_error(title="Maintenance Planner: project bookings failed", message=frappe.get_traceback())
+		return {}
 
 
 def _records_between(start, end):
