@@ -22,7 +22,11 @@
   "column_break_routes",
   "start_latitude",
   "start_longitude",
-  "start_geocoded_from"
+  "start_geocoded_from",
+  "section_notices",
+  "combined_morning_digest",
+  "column_break_notices",
+  "change_alerts"
  ],
  "fields": [
   {
@@ -134,6 +138,29 @@
    "label": "Shop coordinates found from",
    "read_only": 1,
    "description": "The shop address these coordinates were found from."
+  },
+  {
+   "fieldname": "section_notices",
+   "fieldtype": "Section Break",
+   "label": "Telling people"
+  },
+  {
+   "default": "0",
+   "description": "One text and email at 6 AM per person with everything booked on them that day: project tasks, maintenance visits, rental jobs and travel, in route order with arrival times. While on, the maintenance technician digest and the rental crew digest skip everyone this covers, so nobody gets three messages.",
+   "fieldname": "combined_morning_digest",
+   "fieldtype": "Check",
+   "label": "Combined 6 AM digest"
+  },
+  {
+   "fieldname": "column_break_notices",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "When a saved or published change moves someone's bookings in the next 48 hours (dates, time, crew), text them one alert with a link to their route. Several changes in one save or publish are one alert.",
+   "fieldname": "change_alerts",
+   "fieldtype": "Check",
+   "label": "Alert people when their next 48 hours change"
   }
  ],
  "index_web_pages_for_search": 1,

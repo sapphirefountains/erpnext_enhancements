@@ -2816,6 +2816,28 @@ def _whitelisted(path):
 	return out
 
 
+class TestNoSilentRedefinitions(unittest.TestCase):
+	"""Phases 3A and 3B were built in parallel; each added a ``week_start`` to the API module, and
+	in the merge the later one silently replaced the earlier (numbers vs names), moving every
+	heatmap and Copy week to the wrong week. Python and JS class bodies both let a second
+	definition win without a word, so pin that every name is defined once."""
+
+	def test_each_module_level_function_is_defined_once(self):
+		for path in (API_PATH, ENGINE_PATH, APP / "project_enhancements/routing.py"):
+			tree = ast.parse(path.read_text(encoding="utf-8"))
+			names = [n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))]
+			dupes = sorted({n for n in names if names.count(n) > 1})
+			self.assertEqual(dupes, [], path.name)
+
+	def test_each_page_method_is_defined_once(self):
+		page = (APP / "project_enhancements/page/project_planner/project_planner.js").read_text(encoding="utf-8")
+		methods = re.findall(r"^\t(?:async\s+)?([A-Za-z_]\w*)\s*\([^)]*\)\s*\{\s*$", page, re.M)
+		keywords = {"if", "for", "while", "switch", "catch", "function"}
+		methods = [m for m in methods if m not in keywords]
+		dupes = sorted({m for m in methods if methods.count(m) > 1})
+		self.assertEqual(dupes, [])
+
+
 class TestWiring(unittest.TestCase):
 	def test_the_role_gate(self):
 		self.assertEqual(
@@ -2837,8 +2859,16 @@ class TestWiring(unittest.TestCase):
 
 	def test_every_write_is_post_only_and_the_read_is_not(self):
 		endpoints = _whitelisted(API_PATH)
-		writes = ("save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week")
-		reads = ("get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue")
+		# Phase 3B (draft and publish, the digest preview, the crew sheet, My week) is pinned in
+		# tests/test_planner_phase3b.py; listed here so this set stays the whole module.
+		phase3b_writes = ("publish_drafts", "discard_drafts", "send_digest_preview")
+		phase3b_reads = ("get_my_week", "crew_sheet_html")
+		writes = (
+			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes
+		)
+		reads = (
+			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads
+		)
 		self.assertEqual(set(endpoints), set(writes) | set(reads))
 		for name in writes:
 			self.assertEqual(endpoints[name], ["POST"], name)

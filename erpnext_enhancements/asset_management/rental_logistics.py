@@ -280,11 +280,28 @@ def send_crew_digests():
 	for task in tasks:
 		frappe.db.set_value("Task", task.name, "custom_rental_digest_sent_on", today, update_modified=False)
 	frappe.db.commit()
+	covered = _combined_digest_covers()
 	for user, items in by_user.items():
+		if user in covered:
+			# The Project Planner's combined 6 AM digest lists this person's rental jobs with the
+			# rest of their day (Phase 3B), so this one would be a second text about the same work.
+			continue
 		try:
 			_send_digest(user, items, today)
 		except Exception:
 			frappe.log_error(title=f"Rental crew digest failed: {user}", message=frappe.get_traceback())
+
+
+def _combined_digest_covers():
+	"""Users the Project Planner's combined morning digest covers; empty while it is off (Project
+	Planner Settings ``combined_morning_digest``). Any failure answers the empty set, which leaves
+	this digest exactly as it was."""
+	try:
+		from erpnext_enhancements.project_enhancements.planner_digest import covered_users
+
+		return covered_users()
+	except Exception:
+		return set()
 
 
 def _send_digest(user, tasks, today):

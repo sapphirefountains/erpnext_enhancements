@@ -474,7 +474,8 @@ class TestMaterializeDefaults(unittest.TestCase):
 		return settings_mod.materialize_defaults()
 
 	def test_a_never_saved_single_gets_every_default(self):
-		self.assertEqual(self._run(stored=()), 10)
+		# Ten declared defaults, plus Phase 3B's two "Telling people" switches (both "0").
+		self.assertEqual(self._run(stored=()), 12)
 		values = _db_writes[0][1]
 		self.assertEqual(values["use_google_routes"], "1")
 		self.assertEqual(values["pad_drive_time"], "1")
@@ -488,7 +489,7 @@ class TestMaterializeDefaults(unittest.TestCase):
 		values = _db_writes[0][1]
 		self.assertEqual(values["use_google_routes"], "1")
 		self.assertNotIn("pad_drive_time", values)
-		self.assertEqual(written, 9)
+		self.assertEqual(written, 11)
 
 	def test_a_whole_single_writes_nothing(self):
 		every = tuple(_settings_meta_fields())

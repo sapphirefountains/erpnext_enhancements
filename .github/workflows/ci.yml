@@ -835,6 +835,15 @@ jobs:
       # read-only AI tools' schemas and classification. Bench-free, own frappe stub, own step.
       - name: Project planner route setup (settings backfill, drive-time cache, AI tools)
         run: python -m unittest erpnext_enhancements.tests.test_planner_route_setup -v
+      # Project Planner Phase 3B, telling people. A draft that wrote the Task would hand out
+      # assignments and alerts for a plan nobody published; a publish judged one task at a time
+      # misses two drafts that overbook a tech together; a digest stamped in redis re-texts the
+      # whole crew after every deploy's FLUSHDB (billed SMS); and the two older 6 AM digests must
+      # skip everyone the combined one covers, or a tech gets three texts. Also pins both new
+      # Settings switches defaulting OFF, one change alert per person per request, and the crew
+      # sheet escaping what people typed. Bench-free, own frappe + email_style stub, own step.
+      - name: Project planner telling people (drafts, publish, digest, alerts, crew sheet)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase3b -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

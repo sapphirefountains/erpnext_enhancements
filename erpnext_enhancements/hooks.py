@@ -579,6 +579,11 @@ doc_events = {
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
+			# Project Planner Phase 3B: a change that moves someone's bookings in the next 48 hours
+			# queues one alert per person, sent after commit. Gated by Project Planner Settings
+			# change_alerts (off by default); skipped during a publish, which tells people itself.
+			# Best effort, never raises. See project_enhancements/planner_notices.py.
+			"erpnext_enhancements.project_enhancements.planner_notices.queue_task_change",
 			# Project Planner (v1.577.0): mirror the Task's crew table into ordinary assignments
 			# (ToDos) so the tech digest, ToDo lists and morning briefing keep working. Adds only
 			# for users newly on the crew, removes only users who were on it before this save,
@@ -1186,6 +1191,12 @@ scheduler_events = {
 			# before the crew is told what their day holds. Both gated in Rental Settings.
 			"erpnext_enhancements.asset_management.rental_logistics.generate_due_inspections",
 			"erpnext_enhancements.asset_management.rental_logistics.send_crew_digests",
+			# Project Planner Phase 3B: one combined message per person (project tasks, visits,
+			# rental jobs, travel, in route order). Gated by Project Planner Settings
+			# combined_morning_digest (off by default); while on, the two digests above skip the
+			# people it covers. At most once per person per day via a Planner Digest Log row (not
+			# redis: the deploy FLUSHDBs it). See project_enhancements/planner_digest.py.
+			"erpnext_enhancements.project_enhancements.planner_digest.send_daily_digests",
 		],
 		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
 		# The three jobs each write the single QuickBooks Online Settings doc (token

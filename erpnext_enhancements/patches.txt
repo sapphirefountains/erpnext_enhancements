@@ -1286,3 +1286,7 @@ erpnext_enhancements.patches.backfill_project_planner_route_settings
 # other field then loaded blank -- a blank Check loads as 0, switching drive padding and Google Routes off. Fill every
 # default that has no tabSingles row (never over a stored value). Cannot raise, safe twice.
 erpnext_enhancements.patches.materialize_project_planner_settings
+# Project Planner Phase 3B: two new Project Planner Settings switches (combined_morning_digest, change_alerts), both
+# default off. A default never reaches a Single's existing row, so materialize_defaults() writes a row for every field
+# with none (never over a stored value). Cannot raise, safe twice.
+erpnext_enhancements.patches.materialize_planner_notice_settings

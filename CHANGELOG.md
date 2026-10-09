@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.581.0] - 2026-10-09
+
+### Added
+
+- **Project Planner: telling people** (Phase 3B, TASK-2026-02441). These are the features Nik
+  picked on 2026-10-08 for how people hear about their schedule.
+  - **Draft and publish.** With *Draft mode* on, a planner can rearrange a week freely. Each change
+    is stored as a `Planner Draft Change`, the planner shows the drafts overlaid, and nobody is
+    assigned or told anything yet. **Publish** applies every draft through the normal save path,
+    skipping any task someone else changed meanwhile and asking for one reason if the batch
+    conflicts. Each affected person then gets **one** notice with their final plan, instead of one
+    per drag. **Discard** drops the drafts.
+  - **One combined morning message** per person: their whole day in one text and email (project
+    tasks, maintenance visits, rental crew jobs, travel), with crewmates, addresses and a route
+    link. **Off until Settings → *One combined morning digest* is ticked.** When on, the maintenance
+    and rental digests skip the people it covers, so nobody gets three texts. It is sent at most
+    once a day: the person's day is claimed by inserting a uniquely keyed `Planner Digest Log` row,
+    committed before anything is sent, so two workers or a deploy's Redis flush can't double-send a
+    billed SMS. *Send me a preview* on the Settings form emails you your own digest and texts
+    nobody.
+  - **48-hour change alerts**: a change to someone's bookings inside the next two days sends them
+    one alert ("Your Thursday changed: …") as a bell notification and a text, or an email when
+    they have no cell number. **Off until Settings → *Change alerts* is ticked.** Alerts are best
+    effort; one queued during a deploy's Redis flush is lost.
+  - **Printable weekly crew sheet**: who is where each day, with sites, addresses, crewmates and
+    hours, on the print design system's chrome, printed from a browser window (server PDF is broken
+    on production).
+  - **My week** (`/app/project-planner/my-week/<date>`): each person's own week on their phone,
+    with a Google Maps link for every address and a route link per day.
+
+### Fixed
+
+- **Two helpers with one name.** Phases 3A and 3B were built in parallel and each defined a
+  `week_start` in `api/project_planner.py`, one taking weekday numbers and one names. In the merged
+  module the later silently replaced the earlier, which would have moved every heatmap and Copy
+  week to the wrong week. Both are now one helper that takes either, and a new test fails the build
+  on any function, or any Project Planner page method, defined twice.
+- **Pencil flag kept through drafts.** A drafted change now carries the task's pencil flag through
+  to Publish.
+
+### Notes
+
+- **Before switching either Settings toggle on,** try Publish, the preview digest and one change
+  alert on the site once. The bench-free suites stub the framework.
+- **Tests:** new suite `test_planner_phase3b` (83), in its own CI step.
+
 ## [1.580.0] - 2026-10-09
 
 ### Added

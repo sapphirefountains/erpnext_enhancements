@@ -274,7 +274,15 @@ def first_weekday(value):
 
 
 def week_start(day, first=WEEKDAY_NUMBERS[DEFAULT_FIRST_WEEKDAY]):
-	"""The first day of the week holding ``day``, for a week that starts on weekday ``first``."""
+	"""The first day of the week holding ``day``, for a week that starts on ``first``.
+
+	``first`` is a weekday number (Monday 0 … Sunday 6) or a System Settings name ("Sunday"); an
+	unknown name is Sunday. One helper for both: Phases 3A and 3B were built in parallel and each
+	defined its own ``week_start``, one taking numbers and one names, and in the merged module the
+	later silently replaced the earlier, moving every heatmap and Copy week to the wrong week.
+	"""
+	if not isinstance(first, int):
+		first = first_weekday(first)
 	day = engine._as_date(day)
 	return day - datetime.timedelta(days=(day.weekday() - first) % 7)
 
@@ -508,8 +516,12 @@ def _require_planner():
 
 
 @frappe.whitelist()
-def get_planner(start, end):
-	"""Everything the planner draws for ``start``..``end`` (inclusive). See the module docstring."""
+def get_planner(start, end, draft=0):
+	"""Everything the planner draws for ``start``..``end`` (inclusive). See the module docstring.
+
+	``draft=1`` (Phase 3B draft mode) overlays the caller's unpublished Draft rows first; see
+	:func:`_draft_overlay`. Without it the answer is exactly what it always was.
+	"""
 	_require_planner()
 	start, end = getdate(start), getdate(end)
 	if end < start:
@@ -518,8 +530,12 @@ def get_planner(start, end):
 		frappe.throw(_("Pick a range of {0} days or less.").format(MAX_RANGE_DAYS))
 	today = getdate(nowdate())
 	can_edit = bool(frappe.has_permission("Task", "write"))
+	overlay = _draft_overlay() if cint(given(draft)) else None
 
-	data = engine._compute(start, end)
+	if overlay:
+		data = engine._compute(start, end, exclude=overlay["exclude"], extra=overlay["extra"])
+	else:
+		data = engine._compute(start, end)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	unscheduled_rows = _unscheduled()
 	crew_rows, todo_users = engine.read_crews([row.get("name") for row in unscheduled_rows])
@@ -597,7 +613,7 @@ def get_planner(start, end):
 	]
 
 	project_names = {card["project"] for card in tasks + unscheduled if card.get("project")}
-	return {
+	result = {
 		"start": str(start),
 		"end": str(end),
 		"today": str(today),
@@ -614,6 +630,7 @@ def get_planner(start, end):
 		},
 		"can_edit": can_edit,
 	}
+	return _with_drafts(result, overlay, start, end) if overlay is not None else result
 
 
 def _crewless_rental(task, start, end):
@@ -1174,6 +1191,7 @@ def save_task(
 	credentials=None,
 	reason=None,
 	tentative=None,
+	draft=0,
 ):
 	"""Change a task's dates, hours, crew size, crew, qualifications or pencil flag. Unset
 	arguments stay as they are; ``crew`` and ``credentials`` are JSON lists; ``tentative`` is a
@@ -1184,9 +1202,23 @@ def save_task(
 	under ``"Dependencies"``); otherwise ``{"name", "modified", "warnings", "conflicts", "card"}``,
 	plus ``successors: {"count", "names", "days", "auto_moved"}`` when the task moved later and
 	has tasks that follow it (see :func:`shift_successors`).
+
+	``draft=1`` (Phase 3B): nothing is written to the Task; the change merges into the caller's
+	Draft row instead (:func:`_store_draft`), and conflicts come back as information.
 	"""
-	doc = _load(task, modified)
 	tentative = given(tentative)
+	if cint(given(draft)):
+		return _store_draft(
+			_draft_context(task, modified),
+			start=given(start),
+			end=given(end),
+			expected_time=given(expected_time),
+			crew_size=given(crew_size),
+			crew=parse_list(given(crew)),
+			credentials=parse_list(given(credentials)),
+			tentative=None if tentative is None else as_bool(tentative),
+		)
+	doc = _load(task, modified)
 	return _apply(
 		doc,
 		start=given(start),
@@ -1201,13 +1233,14 @@ def save_task(
 
 
 @frappe.whitelist(methods=["POST"])
-def add_crew(task, resource, modified, reason=None):
+def add_crew(task, resource, modified, reason=None, draft=0):
 	"""A person dropped on a task card: add them to the crew (nothing happens if they are on it).
 
 	A task crewed only by assignments gets crew rows for those people first, so adding one person
-	does not silently drop the others from the planner.
+	does not silently drop the others from the planner. ``draft=1``: into the caller's draft.
 	"""
-	doc = _load(task, modified)
+	drafting = _draft_context(task, modified) if cint(given(draft)) else None
+	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
 	if resource in [m["resource"] for m in crew]:
 		return {
@@ -1218,15 +1251,19 @@ def add_crew(task, resource, modified, reason=None):
 			"card": _card(doc),
 		}
 	crew.append({"resource": resource, "hours": None, "is_lead": False})
+	if drafting:
+		return _store_draft(drafting, crew=crew)
 	return _apply(doc, crew=crew, reason=reason)
 
 
 @frappe.whitelist(methods=["POST"])
-def swap_crew(task, from_resource, to_resource, modified, date=None, reason=None):
+def swap_crew(task, from_resource, to_resource, modified, date=None, reason=None, draft=0):
 	"""A crew chip dropped on another person's row: hand that person's place on the task over,
 	keeping its hours and lead flag. With ``date``, the task also moves there, keeping its length.
+	``draft=1``: into the caller's draft.
 	"""
-	doc = _load(task, modified)
+	drafting = _draft_context(task, modified) if cint(given(draft)) else None
+	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
 	place = next((i for i, m in enumerate(crew) if m["resource"] == from_resource), None)
 	if place is None:
@@ -1236,6 +1273,8 @@ def swap_crew(task, from_resource, to_resource, modified, date=None, reason=None
 			crew.pop(place)
 		else:
 			crew[place] = dict(crew[place], resource=to_resource, label=None)
+	if drafting:
+		return _store_draft(drafting, start=given(date), crew=crew)
 	return _apply(doc, start=given(date), crew=crew, reason=reason)
 
 
@@ -2267,3 +2306,998 @@ def check_routes():
 			_("Only a System Manager or Projects Manager can check Google Routes."), frappe.PermissionError
 		)
 	return routing.routes_status()
+
+
+# ====================================================================== Phase 3B: telling people
+#
+# Draft and publish (P3.7), the digest preview (P3.8), the printable crew sheet (P3.9) and My week
+# (P3.10). One block at the end of the module on purpose: Phase 3A changes the functions above in
+# parallel, and the only Phase 3B edits up there are the ``draft`` arguments of get_planner,
+# save_task, add_crew and swap_crew, each of which leaves its function exactly as it was when
+# ``draft`` is off.
+#
+# Things this block is careful about, some of which look like bugs:
+#
+# * **A draft never touches the Task.** Drafting loads the task as a save would (planner gate,
+#   ``check_permission("write")``, the ``modified`` lock), applies the planner's earlier draft and
+#   the new change *in memory*, and stores the result on a ``Planner Draft Change`` row. No
+#   ``doc.save()``, so no crew-to-assignment sync, no alert, nothing anyone else can see.
+# * **Publishing replays ``save_task``**: each Draft row's arguments go through ``_apply``, the same
+#   function a drag uses, so ERPNext's date rules, the crew sync and the timeline note all happen
+#   exactly as for a live save. A task somebody else changed since it was drafted is skipped and
+#   reported, never published over.
+# * **Conflicts are judged on the whole batch.** Two drafts that are each fine can overbook a person
+#   together, and two that each clash can cancel out (a swap). So the engine computes the week with
+#   every draft in place, compares it with the week as stored, and asks for one reason for the lot:
+#   all or nothing. Saving one at a time cannot see that, so a task the sequence alone trips over is
+#   retried once the others are saved.
+# * **One notice per person per publish**, summarizing every task that moved for them, sent after
+#   the saves (see ``planner_notices``); the planner who published is not told about their own work.
+
+DRAFT_DOCTYPE = "Planner Draft Change"
+DRAFT, PUBLISHED, DISCARDED = "Draft", "Published", "Discarded"
+#: The ``save_task`` arguments a Draft row may carry. Nothing else in a stored payload is applied.
+DRAFT_KEYS = ("start", "end", "expected_time", "crew_size", "crew", "credentials", "tentative")
+DRAFT_LIMIT = 300
+#: The timeline reason for the rare task that only conflicts while its batch is half saved.
+PUBLISH_FALLBACK_REASON = "Published from the Project Planner with other drafted changes"
+#: Who may email themselves a preview of the combined 6 AM digest.
+DIGEST_PREVIEW_ROLES = {"System Manager", "Projects Manager"}
+WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+NOTE_CHARS = 280
+MAPS_SEARCH = "https://www.google.com/maps/search/?api=1&query="
+
+
+# ---------------------------------------------------------------------- Phase 3B: pure helpers
+
+
+def merge_payload(existing, changes, span=None):
+	"""A Draft row's payload after one more drafted change.
+
+	Keys the change sets replace the stored ones; keys it leaves unset keep theirs, so the payload
+	is everything the planner has changed on the task so far. When the dates moved, ``start`` and
+	``end`` are both stored from the task's resulting ``span`` (a move that only gave a start keeps
+	the task's length, and the payload must say what that length came to).
+	"""
+	out = {key: value for key, value in (existing or {}).items() if key in DRAFT_KEYS}
+	changes = {
+		key: value for key, value in (changes or {}).items() if key in DRAFT_KEYS and value is not None
+	}
+	out.update(changes)
+	if span and ("start" in changes or "end" in changes):
+		out["start"], out["end"] = str(span[0]), str(span[1])
+	return out
+
+
+def load_payload(text):
+	"""A stored payload as a dict of known keys; anything unreadable is an empty draft."""
+	try:
+		value = json.loads(text) if isinstance(text, str) else (text or {})
+	except ValueError:
+		return {}
+	if not isinstance(value, dict):
+		return {}
+	return {key: value[key] for key in DRAFT_KEYS if key in value}
+
+
+def payload_kwargs(payload, with_tentative=True):
+	"""``_apply`` / ``_draft_edit`` keyword arguments for a payload. ``tentative`` (Phase 3A) is
+	passed only to a function that takes it."""
+	out = {key: payload[key] for key in DRAFT_KEYS if (payload or {}).get(key) is not None}
+	if not with_tentative:
+		out.pop("tentative", None)
+	return out
+
+
+def crew_payload(crew):
+	"""A crew as ``save_task`` takes it: a blank or 0 hours is None (an even share)."""
+	return [
+		{
+			"resource": member.get("resource"),
+			"hours": round(flt(member.get("hours")), 2) if flt(member.get("hours")) > 0 else None,
+			"is_lead": 1 if member.get("is_lead") else 0,
+		}
+		for member in crew or []
+		if member.get("resource")
+	]
+
+
+def same_moment(a, b):
+	"""Two ``modified`` values naming the same instant, whatever their type or text."""
+	try:
+		return engine._as_datetime(a) == engine._as_datetime(b)
+	except (TypeError, ValueError):
+		return str(a) == str(b)
+
+
+def batch_conflicts(before_days, after_days, names, labels):
+	"""The conflicts the drafted tasks create together, ``{person: ["2026-10-12: Over by 2h"]}``.
+
+	``before_days``/``after_days`` are the engine's ``days`` for the same people and range, as
+	stored and with every draft in place. Only days a drafted task is booked on count, a conflict
+	already there before does not, and a double booking between two other tasks is not the drafts'
+	doing (the same rules as ``engine._preview``, for many tasks at once).
+	"""
+	names = set(names or ())
+	out = {}
+	for resource, per_day in (after_days or {}).items():
+		for day, cell in sorted((per_day or {}).items()):
+			bookings = cell.get("bookings") or []
+			if not any(b.get("ref") in names and b.get("kind") in ("task", "rental") for b in bookings):
+				continue
+			known = set((((before_days or {}).get(resource) or {}).get(day) or {}).get("conflicts") or [])
+			for conflict in cell.get("conflicts") or []:
+				if conflict in known:
+					continue
+				if conflict.startswith("Double-booked") and not any(
+					f"({name}," in conflict or f", {name})" in conflict for name in names
+				):
+					continue
+				out.setdefault((labels or {}).get(resource, resource), []).append(f"{day}: {conflict}")
+	return out
+
+
+def maps_link(address=None, lat=None, lng=None):
+	"""A Google Maps search link for an address (else the point), or None. Tapping it on a phone
+	opens the Maps app at the site."""
+	from urllib.parse import quote_plus
+
+	if address and str(address).strip():
+		query = " ".join(str(address).split())
+	elif lat not in (None, "") and lng not in (None, ""):
+		query = f"{lat},{lng}"
+	else:
+		return None
+	return MAPS_SEARCH + quote_plus(query)
+
+
+def crewmates(days, labels, crews=None, visit_people=None):
+	"""``{(kind, ref): [names]}``: who is on each booking, from everything computed.
+
+	From the day cells (everyone computed who is booked on it), the tasks' resolved crews (the
+	people not computed, too) and the visits' technician and crew (``visit_people``). The caller
+	leaves the person themselves out.
+	"""
+	out = {}
+
+	def add(key, name):
+		if name and name not in out.setdefault(key, []):
+			out[key].append(name)
+
+	for resource, per_day in (days or {}).items():
+		for cell in (per_day or {}).values():
+			for booking in cell.get("bookings") or []:
+				if booking.get("kind") in routing.STOP_KINDS and booking.get("ref"):
+					add((booking["kind"], booking["ref"]), (labels or {}).get(resource) or resource)
+	for task, crew in (crews or {}).items():
+		for member in crew or []:
+			name = member.get("label") or (labels or {}).get(member.get("resource")) or member.get("resource")
+			add(("task", task), name)
+			add(("rental", task), name)
+	for ref, names in (visit_people or {}).items():
+		for name in names or []:
+			add(("visit", ref), name)
+	return out
+
+
+def day_entry(person, day, cell, route, settings, details, titles, mates, notes):
+	"""One person's day for My week, the crew sheet and the 6 AM digest.
+
+	The stops come from :func:`route_payload`, so they are in the order the route drives them, with
+	the arrival times the route view shows; a slotted stop shows its slot instead. Each carries the
+	site, its address and a Maps link, the crewmates and the hours.
+	"""
+	cell = cell or {}
+	payload = route_payload(person, day, cell, route, settings, details, titles, {}, None)
+	me = person.get("label")
+	items = []
+	for stop in payload["stops"]:
+		slot = stop.get("slot")
+		key = (stop.get("kind"), stop.get("ref"))
+		items.append(
+			{
+				"kind": stop.get("kind"),
+				"ref": stop.get("ref"),
+				"label": stop.get("label"),
+				"project": stop.get("project"),
+				"project_title": stop.get("project_title"),
+				"time": (slot[0] if slot else stop.get("arrive")) or None,
+				"slot": slot,
+				"arrive": stop.get("arrive"),
+				"address": stop.get("address"),
+				"maps_url": maps_link(stop.get("address"), stop.get("lat"), stop.get("lng")),
+				"crew": [name for name in (mates or {}).get(key) or [] if name != me],
+				"hours": stop.get("hours"),
+				"notes": (notes or {}).get(stop.get("ref"))
+				if stop.get("kind") in ("task", "rental")
+				else None,
+			}
+		)
+	return {
+		"date": str(day),
+		"off": cell.get("off"),
+		"capacity": cell.get("capacity"),
+		"booked": cell.get("booked"),
+		"free": cell.get("free"),
+		"travel": payload.get("travel"),
+		"conflicts": list(cell.get("conflicts") or []),
+		"drive_minutes": payload.get("drive_minutes"),
+		"items": items,
+	}
+
+
+# ---------------------------------------------------------------------- Phase 3B: drafts
+
+
+def _draft_rows(user=None):
+	"""``(rows, duplicates)``: the caller's Draft rows, one per task (the newest wins), oldest
+	first, and any older duplicate a racing double-save left behind."""
+	rows = frappe.get_all(
+		DRAFT_DOCTYPE,
+		filters={"owner": user or frappe.session.user, "status": DRAFT},
+		fields=["name", "task", "subject", "payload", "base_modified", "modified"],
+		order_by="creation asc",
+		limit_page_length=DRAFT_LIMIT,
+	)
+	latest = {}
+	for row in rows:
+		known = latest.get(row.get("task"))
+		if known is None or str(row.get("modified")) >= str(known.get("modified")):
+			latest[row.get("task")] = row
+	keep = [latest[task] for task in dict.fromkeys(row.get("task") for row in rows)]
+	kept = {row.get("name") for row in keep}
+	return keep, [row for row in rows if row.get("name") not in kept]
+
+
+def _draft_edit(
+	doc,
+	start=None,
+	end=None,
+	expected_time=None,
+	crew_size=None,
+	crew=None,
+	credentials=None,
+	tentative=None,
+):
+	"""The edit half of :func:`_apply`, with no conflict check and no save. Keep the two in step:
+	``tests/test_planner_phase3b.py`` runs both on the same change and compares the result."""
+	before_crew = _current_crew(doc)
+	_move(doc, start, end)
+	if expected_time is not None:
+		hours = flt(expected_time)
+		if hours < 0:
+			frappe.throw(_("Expected hours cannot be negative."))
+		doc.expected_time = hours
+	if crew_size is not None:
+		doc.custom_crew_size = max(cint(crew_size), 0)
+	if crew is not None:
+		_set_crew(doc, crew, before_crew)
+	if credentials is not None:
+		doc.set(
+			"custom_required_credentials",
+			[
+				{"credential_type": c if isinstance(c, str) else (c or {}).get("credential_type")}
+				for c in credentials
+				if (c if isinstance(c, str) else (c or {}).get("credential_type"))
+			],
+		)
+	if tentative is not None:
+		# Phase 3A's pencil flag. On a site without the field this only sets an attribute on a doc
+		# that is never saved here.
+		doc.set("custom_tentative", 1 if cint(tentative) else 0)
+
+
+def _quiet_message_log():
+	"""``(log, mark)`` so a caught ``frappe.throw`` does not also pop up in the browser."""
+	log = frappe.local.message_log if isinstance(getattr(frappe.local, "message_log", None), list) else None
+	return log, (len(log) if log is not None else 0)
+
+
+def _drafted_doc(row):
+	"""``(doc, problem)``: the Task with ``row``'s draft applied in memory, or why it cannot be.
+
+	Nothing is saved. ``problem`` is None for a draft that applies; otherwise a sentence for the
+	planner (the task is gone, somebody else changed it since, or the change no longer fits).
+	"""
+	try:
+		doc = frappe.get_doc("Task", row.get("task"))
+	except Exception:
+		return None, _("The task no longer exists.")
+	if not same_moment(row.get("base_modified"), doc.modified):
+		return doc, _("Changed by someone else since you drafted it.")
+	log, mark = _quiet_message_log()
+	try:
+		_draft_edit(doc, **payload_kwargs(load_payload(row.get("payload"))))
+	except Exception as exc:
+		if log is not None:
+			del log[mark:]
+		return doc, _("Cannot be applied any more: {0}").format(frappe.utils.strip_html_tags(str(exc))[:300])
+	return doc, None
+
+
+def _draft_context(task, modified):
+	"""Load a task for drafting: as a save would, then with the caller's draft so far applied.
+
+	A Draft row whose task changed since it was drafted is not built on: the new draft starts from
+	the task as it is now, and the planner is told (``reset``).
+	"""
+	doc = _load(task, modified)
+	rows, duplicates = _draft_rows()
+	row = next((r for r in rows if r.get("task") == doc.name), None)
+	stored = (_state(doc), _current_crew(doc))
+	stored_rest = _draft_rest(doc)
+	payload, reset = {}, False
+	if row:
+		if same_moment(row.get("base_modified"), doc.modified):
+			payload = load_payload(row.get("payload"))
+			_draft_edit(doc, **payload_kwargs(payload))
+		else:
+			reset = True
+	return {
+		"doc": doc,
+		"row": row,
+		"payload": payload,
+		"stored": stored,
+		"stored_rest": stored_rest,
+		"reset": reset,
+		"duplicates": [r for r in duplicates if r.get("task") == doc.name],
+	}
+
+
+def _draft_rest(doc):
+	"""What a draft can change that ``schedule_state`` does not see: crew size, qualifications,
+	the lead flag and the pencil flag."""
+	return (
+		cint(doc.get("custom_crew_size")),
+		sorted(row.get("credential_type") or "" for row in (doc.get("custom_required_credentials") or [])),
+		tuple(m.get("resource") for m in _current_crew(doc) if m.get("is_lead")),
+		cint(doc.get("custom_tentative")),
+	)
+
+
+def _store_draft(
+	context,
+	start=None,
+	end=None,
+	expected_time=None,
+	crew_size=None,
+	crew=None,
+	credentials=None,
+	tentative=None,
+):
+	"""Apply one change to a drafted task in memory and keep it on the caller's Draft row.
+
+	Returns the shape a live save does, plus ``"drafted": True``. ``conflicts`` are the ones the
+	draft would create against the task as stored, as information: drafting never needs a reason.
+	They also come back as ``warnings`` so the page shows them without asking anything.
+	"""
+	doc = context["doc"]
+	stored_state, stored_crew = context["stored"]
+	_draft_edit(doc, start, end, expected_time, crew_size, crew, credentials, tentative)
+	after_state, after_crew = _state(doc), _current_crew(doc)
+
+	recorded = {"start": start, "end": end}
+	if expected_time is not None:
+		recorded["expected_time"] = flt(expected_time)
+	if crew_size is not None:
+		recorded["crew_size"] = max(cint(crew_size), 0)
+	if crew is not None:
+		recorded["crew"] = crew_payload(after_crew)
+	if credentials is not None:
+		recorded["credentials"] = [
+			row.get("credential_type") for row in (doc.get("custom_required_credentials") or [])
+		]
+	if tentative is not None:
+		recorded["tentative"] = 1 if cint(tentative) else 0
+	payload = merge_payload(context["payload"], recorded, engine.task_span(after_state))
+
+	conflicts = {}
+	moved = schedule_state(stored_state, stored_crew) != schedule_state(after_state, after_crew)
+	if moved:
+		before = engine.preview_conflicts(stored_state, stored_crew) if engine.task_span(stored_state) else {}
+		conflicts = conflict_delta(before, engine.preview_conflicts(after_state, after_crew))
+	# Drafted back to exactly what is stored (an Undo, a drag there and back): no draft is left.
+	unchanged = not moved and context.get("stored_rest") == _draft_rest(doc)
+
+	_write_draft(context, doc, payload, discard=unchanged)
+	warnings = []
+	if context.get("reset"):
+		warnings.append(
+			_(
+				"Your earlier draft of this task was replaced: someone else changed the task since you drafted it."
+			)
+		)
+	for label, messages in conflicts.items():
+		warnings.append(_("Not published yet. {0}: {1}").format(label, ", ".join(messages)))
+	card = _card(doc)
+	card["drafted"] = not unchanged
+	return {
+		"drafted": True,
+		"name": doc.name,
+		"modified": str(doc.modified),
+		"warnings": warnings,
+		"conflicts": conflicts,
+		"card": card,
+	}
+
+
+def _write_draft(context, doc, payload, discard=False):
+	"""Insert or update the caller's one Draft row for the task (permission-checked). With
+	``discard`` the row, if any, is marked Discarded instead and nothing is inserted."""
+	text = json.dumps(payload, sort_keys=True, default=str)
+	row = context.get("row")
+	if discard:
+		if row:
+			draft = frappe.get_doc(DRAFT_DOCTYPE, row.get("name"))
+			draft.status = DISCARDED
+			draft.save()
+	elif row:
+		draft = frappe.get_doc(DRAFT_DOCTYPE, row.get("name"))
+		draft.payload = text
+		draft.base_modified = doc.modified
+		draft.save()
+	else:
+		frappe.get_doc(
+			{
+				"doctype": DRAFT_DOCTYPE,
+				"task": doc.name,
+				"status": DRAFT,
+				"payload": text,
+				"base_modified": doc.modified,
+			}
+		).insert()
+	for duplicate in context.get("duplicates") or []:
+		frappe.db.set_value(DRAFT_DOCTYPE, duplicate.get("name"), "status", DISCARDED)
+
+
+def _draft_overlay():
+	"""The caller's drafts as the engine takes them: ``exclude`` (drafted task names), ``extra``
+	(``(state, crew)`` as drafted), ``drafted`` (per task, what the card must show) and ``stale``
+	(drafts that cannot be shown: the task changed since, or is gone)."""
+	rows, _duplicates = _draft_rows()
+	overlay = {"exclude": set(), "extra": [], "drafted": {}, "stale": []}
+	docs = []
+	for row in rows:
+		doc, problem = _drafted_doc(row)
+		if problem:
+			overlay["stale"].append(
+				{"task": row.get("task"), "subject": row.get("subject") or row.get("task"), "reason": problem}
+			)
+			continue
+		docs.append(doc)
+	titles = _project_titles(doc.get("project") for doc in docs)
+	for doc in docs:
+		state = _state(doc)
+		state["project_title"] = titles.get(doc.get("project")) if doc.get("project") else None
+		overlay["exclude"].add(doc.name)
+		overlay["extra"].append((state, _current_crew(doc)))
+		overlay["drafted"][doc.name] = {
+			"credentials": [
+				row.get("credential_type") for row in (doc.get("custom_required_credentials") or [])
+			]
+		}
+	return overlay
+
+
+def _with_drafts(result, overlay, start, end):
+	"""``get_planner``'s answer with the drafts marked. A drafted card carries ``"drafted": True``
+	and its drafted qualifications; a draft moved out of the range leaves it; an undated draft stays
+	in the Unscheduled tray (as drafted) and a dated one leaves the tray. ``drafts`` counts them."""
+	drafted = overlay["drafted"]
+	tasks, tray = [], []
+	for card in result["tasks"]:
+		if card["name"] in drafted:
+			card["drafted"] = True
+			card["credentials"] = list(drafted[card["name"]]["credentials"])
+			if not card.get("start"):
+				tray.append(card)
+				continue
+			if (card.get("end") or card["start"]) < str(start) or card["start"] > str(end):
+				continue
+		tasks.append(card)
+	visible = {card["name"] for card in tasks}
+	result["tasks"] = tasks
+	result["unscheduled"] = [card for card in result["unscheduled"] if card["name"] not in drafted] + tray
+	result["needs_crew"] = [name for name in result["needs_crew"] if name in visible or name not in drafted]
+	result["drafts"] = {
+		"count": len(drafted) + len(overlay["stale"]),
+		"tasks": sorted(drafted),
+		"stale": overlay["stale"],
+	}
+	return result
+
+
+def _publish_plan(row):
+	"""``(plan, problem)`` for one Draft row: the task before and after, and its save arguments."""
+	doc, problem = _drafted_doc(row)
+	if problem:
+		return None, problem
+	if not frappe.has_permission("Task", "write", doc=doc):
+		return None, _("You cannot edit this task.")
+	stored = frappe.get_doc("Task", doc.name)
+	return {
+		"row": row,
+		"name": doc.name,
+		"subject": doc.get("subject") or doc.name,
+		"kwargs": payload_kwargs(load_payload(row.get("payload"))),
+		"before": (_state(stored), _current_crew(stored)),
+		"after": (_state(doc), _current_crew(doc)),
+	}, None
+
+
+def _batch_check(plans):
+	""":func:`batch_conflicts` for a publish: the week as stored against the week with every
+	draft in place, for everyone on any of the drafted tasks before or after."""
+	names = [plan["name"] for plan in plans]
+	resources, first, last = set(), None, None
+	for plan in plans:
+		for state, crew in (plan["before"], plan["after"]):
+			span = engine.task_span(state)
+			if span:
+				first = span[0] if first is None else min(first, span[0])
+				last = span[1] if last is None else max(last, span[1])
+			resources.update(m.get("resource") for m in crew or [] if m.get("resource"))
+	if not resources or first is None:
+		return {}
+	people = sorted(resources)
+	before = engine._compute(first, last, people)
+	after = engine._compute(first, last, people, exclude=set(names), extra=[plan["after"] for plan in plans])
+	labels = {r["name"]: r["label"] for r in after["resources"]}
+	return batch_conflicts(before["days"], after["days"], names, labels)
+
+
+def _publish_one(plan, reason):
+	"""Save one draft through ``_apply``. ``("saved", result)``, ``("wait", None)`` when it asks
+	for a reason, or ``("failed", sentence)``, with its own savepoint so a refusal undoes only it."""
+	log, mark = _quiet_message_log()
+	frappe.db.savepoint("planner_publish")
+	try:
+		doc = frappe.get_doc("Task", plan["name"])
+		if not same_moment(plan["row"].get("base_modified"), doc.modified):
+			return "failed", _("Changed by someone else since you drafted it.")
+		result = _apply(doc, reason=reason, **plan["kwargs"])
+	except Exception as exc:
+		frappe.db.rollback(save_point="planner_publish")
+		if log is not None:
+			del log[mark:]
+		return "failed", _("Not saved: {0}").format(frappe.utils.strip_html_tags(str(exc))[:300])
+	if result.get("needs_reason"):
+		return "wait", None
+	return "saved", result
+
+
+def _apply_plans(plans, reason):
+	"""Save every plan. A task that asks for a reason only because the batch is half saved is
+	retried after the rest; one still asking on the third pass is saved with the fallback reason
+	(the batch check already passed, or the planner gave a reason for all of it)."""
+	saved, failed, pending = [], [], list(plans)
+	passes = (reason or None, reason or None, reason or _(PUBLISH_FALLBACK_REASON))
+	frappe.flags.planner_publishing = True
+	try:
+		for pass_reason in passes:
+			waiting = []
+			for plan in pending:
+				status, value = _publish_one(plan, pass_reason)
+				if status == "saved":
+					plan["result"] = value
+					saved.append(plan)
+				elif status == "wait":
+					waiting.append(plan)
+				else:
+					failed.append({"task": plan["name"], "subject": plan["subject"], "reason": value})
+			pending = waiting
+			if not pending:
+				break
+	finally:
+		frappe.flags.planner_publishing = False
+	for plan in pending:
+		failed.append({"task": plan["name"], "subject": plan["subject"], "reason": _("Not saved.")})
+	return saved, failed
+
+
+def _notify_publish(saved):
+	"""One notice per person whose bookings moved (``planner_notices.send_publish_notices``)."""
+	from erpnext_enhancements.project_enhancements import planner_notices as notices
+
+	resources = {
+		member.get("resource")
+		for plan in saved
+		for _state_, crew in (plan["before"], plan["after"])
+		for member in crew or []
+	}
+	users = {name: row.get("user") for name, row in _resources(resources).items()}
+
+	def snap(state, crew):
+		people = [(users.get(m.get("resource")), m.get("hours")) for m in crew or []]
+		return notices.snapshot(state, [u for u, _h in people], {u: h for u, h in people if u})
+
+	window = notices.alert_window() if notices.setting("change_alerts") else None
+	out = {}
+	for plan in saved:
+		before, after = snap(*plan["before"]), snap(*plan["after"])
+		urgent = notices.change_lines(before, after, window, long=True) if window else {}
+		for user, entries in notices.change_lines(before, after).items():
+			notice = out.setdefault(user, {"lines": [], "urgent": [], "task": plan["name"], "day": None})
+			notice["lines"].extend(entries)
+			notice["urgent"].extend(urgent.get(user) or [])
+			days = [e["day"] for e in notice["lines"] if e.get("day")]
+			notice["day"] = min(days) if days else None
+	out.pop(frappe.session.user, None)
+	return notices.send_publish_notices(out, frappe.session.user) if out else 0
+
+
+@frappe.whitelist(methods=["POST"])
+def publish_drafts(reason=None):
+	"""Publish every one of the caller's drafts, all or nothing on conflicts.
+
+	* A draft whose task changed since it was drafted (or is gone, or no longer applies) is
+	  **skipped** and listed in ``skipped``; its row stays a Draft for the planner to redo or discard.
+	* When the drafts together create conflicts and no ``reason`` came, nothing is saved:
+	  ``{"needs_reason": True, "conflicts": {person: [..]}, "skipped": [..], "count": n}``.
+	* Otherwise every draft is saved through ``_apply`` (the same path as ``save_task``), its row
+	  marked Published, and each person whose days moved gets one notice.
+
+	Returns ``{"published": [{task, subject}], "skipped": [..], "failed": [..], "notified": n,
+	"conflicts": {..}}``; ``failed`` lists a task ERPNext refused (its own validation), which never
+	stops the others.
+	"""
+	_require_planner()
+	reason = (given(reason) or "").strip()
+	rows, _duplicates = _draft_rows()
+	plans, skipped = [], []
+	for row in rows:
+		plan, problem = _publish_plan(row)
+		if problem:
+			skipped.append(
+				{"task": row.get("task"), "subject": row.get("subject") or row.get("task"), "reason": problem}
+			)
+		else:
+			plans.append(plan)
+	if not plans:
+		return {"published": [], "skipped": skipped, "failed": [], "notified": 0, "conflicts": {}}
+
+	conflicts = _batch_check(plans)
+	if conflicts and not reason:
+		return {"needs_reason": True, "conflicts": conflicts, "skipped": skipped, "count": len(plans)}
+
+	saved, failed = _apply_plans(plans, reason)
+	now = frappe.utils.now_datetime()
+	for plan in saved:
+		draft = frappe.get_doc(DRAFT_DOCTYPE, plan["row"].get("name"))
+		draft.status = PUBLISHED
+		draft.published_on = now
+		draft.reason = reason or None
+		draft.save()
+	notified = _notify_publish(saved) if saved else 0
+	return {
+		"published": [{"task": plan["name"], "subject": plan["subject"]} for plan in saved],
+		"skipped": skipped,
+		"failed": failed,
+		"notified": notified,
+		"conflicts": conflicts,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def discard_drafts(tasks=None):
+	"""Discard the caller's drafts: all of them, or only those for ``tasks`` (a JSON list). The rows
+	are marked Discarded, not deleted. Returns ``{"discarded": n}``."""
+	_require_planner()
+	wanted = parse_list(given(tasks))
+	rows, duplicates = _draft_rows()
+	count = 0
+	for row in rows + duplicates:
+		if wanted is not None and row.get("task") not in wanted:
+			continue
+		draft = frappe.get_doc(DRAFT_DOCTYPE, row.get("name"))
+		draft.status = DISCARDED
+		draft.save()
+		count += 1
+	return {"discarded": count}
+
+
+# ---------------------------------------------------------------------- Phase 3B: people's days
+
+
+def _first_weekday():
+	try:
+		return frappe.get_system_settings("first_day_of_the_week") or "Sunday"
+	except Exception:
+		return "Sunday"
+
+
+def _visit_people(refs):
+	"""``{visit record: [names]}``: each stored visit's technician and crew, by full name."""
+	refs = sorted({ref for ref in refs or () if ref})
+	if not refs:
+		return {}
+	try:
+		people = {}
+		for row in frappe.db.sql(
+			"SELECT name, technician FROM `tabSapphire Maintenance Record` WHERE name IN %(names)s",
+			{"names": tuple(refs)},
+			as_dict=True,
+		):
+			if row.get("technician"):
+				people.setdefault(row.get("name"), []).append(row.get("technician"))
+		for row in frappe.db.sql(
+			"""
+			SELECT parent, user FROM `tabSapphire Visit Crew Member`
+			WHERE parenttype = %(record)s AND parentfield = 'crew' AND parent IN %(names)s
+			ORDER BY parent, idx
+			""",
+			{"record": "Sapphire Maintenance Record", "names": tuple(refs)},
+			as_dict=True,
+		):
+			if row.get("user") and row.get("user") not in people.get(row.get("parent"), []):
+				people.setdefault(row.get("parent"), []).append(row.get("user"))
+		users = sorted({user for names in people.values() for user in names})
+		full = (
+			{
+				row.get("name"): row.get("full_name") or row.get("name")
+				for row in frappe.get_all(
+					"User", filters={"name": ["in", users]}, fields=["name", "full_name"], limit_page_length=0
+				)
+			}
+			if users
+			else {}
+		)
+		return {ref: [full.get(user, user) for user in names] for ref, names in people.items()}
+	except Exception:
+		frappe.log_error(title="Project Planner: visit crew lookup failed", message=frappe.get_traceback())
+		return {}
+
+
+def _task_notes(refs):
+	"""``{task: plain text}``: the start of each task's description, for the crew to read."""
+	refs = sorted({ref for ref in refs or () if ref})
+	if not refs:
+		return {}
+	out = {}
+	for row in frappe.get_all(
+		"Task", filters={"name": ["in", refs]}, fields=["name", "description"], limit_page_length=0
+	):
+		text = " ".join(frappe.utils.strip_html_tags(str(row.get("description") or "")).split())
+		if text:
+			out[row.get("name")] = text if len(text) <= NOTE_CHARS else text[: NOTE_CHARS - 1].rstrip() + "…"
+	return out
+
+
+def _people_days(start, end, resources=None):
+	"""``(data, {resource: [day_entry, ...]})`` for ``start``..``end``: one engine call for everyone,
+	one bulk locate for every stop, the same route order and arrival times the route view shows."""
+	data = engine._compute(start, end, resources)
+	labels = {r["name"]: r["label"] for r in data["resources"]}
+	stops = [
+		booking
+		for per_day in data["days"].values()
+		for cell in per_day.values()
+		for booking in cell.get("bookings") or []
+		if booking.get("kind") in routing.STOP_KINDS
+	]
+	details = routing.locate(stops, detail=True) if stops else {}
+	titles = _project_titles(b.get("project") for b in stops)
+	missing = {m.get("resource") for crew in (data.get("crews") or {}).values() for m in crew or []} - set(
+		labels
+	)
+	names = dict(labels)
+	for name, row in _resources(missing).items():
+		names[name] = row.get("resource_name") or name
+	mates = crewmates(
+		data["days"],
+		names,
+		data.get("crews"),
+		_visit_people(b.get("ref") for b in stops if b.get("kind") == "visit"),
+	)
+	notes = _task_notes(b.get("ref") for b in stops if b.get("kind") in ("task", "rental"))
+	routes = data.get("routes") or {}
+	out = {}
+	for person in data["resources"]:
+		per_day = data["days"].get(person["name"]) or {}
+		out[person["name"]] = [
+			day_entry(
+				person,
+				day,
+				per_day.get(str(day)),
+				routes.get((person["name"], day)),
+				data["settings"],
+				details,
+				titles,
+				mates,
+				notes,
+			)
+			for day in engine.daterange(start, end)
+		]
+	return data, out
+
+
+@frappe.whitelist()
+def get_my_week(date=None):
+	"""The signed-in person's own week, for the phone (P3.10): ``/app/project-planner/my-week``.
+
+	Found through Planner Resource ``user``. ``{"resource", "label", "start", "end", "today",
+	"days": [day_entry]}``; with no active Planner Resource, ``resource`` is None and ``message``
+	says so. Open to every planner role (technicians have Maintenance User).
+	"""
+	_require_planner()
+	from erpnext_enhancements.project_enhancements import planner_notices
+
+	day = getdate(given(date) or nowdate())
+	first = week_start(day, _first_weekday())
+	last = first + datetime.timedelta(days=6)
+	answer = {
+		"start": str(first),
+		"end": str(last),
+		"today": nowdate(),
+		"resource": None,
+		"label": None,
+		"days": [],
+	}
+	resource = planner_notices.resource_of(frappe.session.user)
+	if not resource:
+		answer["message"] = _(
+			"You are not on the planner's list of people yet, so there is no week to show. "
+			"Ask a project manager to add you under Planner Resources."
+		)
+		return answer
+	data, days = _people_days(first, last, [resource])
+	person = next((r for r in data["resources"] if r["name"] == resource), None)
+	if not person:
+		answer["message"] = _("Your planner entry is not active, so there is no week to show.")
+		return answer
+	answer.update(resource=resource, label=person["label"], days=days.get(resource) or [])
+	return answer
+
+
+def _sheet_cell(entry):
+	"""One person-day of the crew sheet as print-safe HTML; every value escaped."""
+	from erpnext_enhancements import print_style as ps
+
+	esc = ps.escape_html
+	parts = []
+	if entry.get("travel"):
+		parts.append(f'<div class="cs-note">{esc(entry["travel"])}</div>')
+	elif entry.get("off") and not entry.get("items"):
+		parts.append(f'<div class="cs-off">{esc(_(entry["off"]))}</div>')
+	for item in entry.get("items") or []:
+		when = "–".join(item["slot"]) if item.get("slot") else (item.get("arrive") or "")
+		place = item.get("project_title") or item.get("label") or item.get("ref") or ""
+		head = f"<b>{esc(place)}</b>"
+		facts = [esc(when)] if when else []
+		if flt(item.get("hours")) > 0:
+			facts.append(esc(engine.fmt_hours(item["hours"])) + "h")
+		lines = [head + (f' <span class="cs-when">{" · ".join(facts)}</span>' if facts else "")]
+		if item.get("label") and item.get("label") != place:
+			lines.append(esc(item["label"]))
+		if item.get("address"):
+			lines.append(f'<span class="cs-sub">{esc(item["address"])}</span>')
+		if item.get("crew"):
+			lines.append(f'<span class="cs-sub">{esc(_("with {0}").format(", ".join(item["crew"])))}</span>')
+		parts.append('<div class="cs-item">' + "<br>".join(lines) + "</div>")
+	return "".join(parts) or '<span class="cs-free">—</span>'
+
+
+CREW_SHEET_CSS = """
+@page { size: letter landscape; margin: 9mm; }
+html, body { margin: 0; background: #ffffff; }
+body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.cs-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; line-height: 1.3; }
+.cs-grid th { text-align: left; vertical-align: bottom; }
+.cs-grid td { vertical-align: top; word-wrap: break-word; overflow-wrap: anywhere; }
+.cs-grid tr { page-break-inside: avoid; break-inside: avoid; }
+.cs-person { width: 11%; font-weight: 700; }
+.cs-item { margin: 0 0 4px; }
+.cs-when, .cs-sub { color: #363636; }
+.cs-off, .cs-note, .cs-free { color: #363636; font-style: italic; }
+.cs-foot { margin-top: 6px; font-size: 9px; color: #363636; }
+"""
+
+
+def crew_sheet_document(first, rows, title=None, group=None, printed_on=None):
+	"""The printable weekly crew sheet: one row per person, one column per day (P3.9).
+
+	``rows`` are ``[{"label", "days": [day_entry x 7]}]``. On the print design system's chrome
+	(``print_style``: the stripe, the letterhead, ruled tables), landscape, sized so ten people fit
+	one Letter page. People with nothing booked all week are listed under the table rather than
+	given an empty row each. Every value is escaped; the page prints it in a browser window, never
+	through the server PDF (broken on production, see the project_enhancements README).
+	"""
+	from erpnext_enhancements import print_style as ps
+
+	esc = ps.escape_html
+	first = getdate(first)
+	days = [first + datetime.timedelta(days=i) for i in range(7)]
+	last = days[-1]
+	span = (
+		f"{first:%b} {first.day} – {last.day}, {last.year}"
+		if first.month == last.month
+		else f"{first:%b} {first.day} – {last:%b} {last.day}, {last.year}"
+	)
+	title = title or _("Crew sheet")
+	meta = esc(_("Week of {0}").format(span))
+	if group:
+		meta += "<br>" + esc(_("Group: {0}").format(_(group)))
+	if printed_on:
+		meta += "<br>" + esc(_("Printed {0}").format(printed_on))
+
+	busy = [row for row in rows if any(d.get("items") or d.get("travel") for d in row.get("days") or [])]
+	free = [row.get("label") or "" for row in rows if row not in busy]
+
+	head = f'<th class="cs-person" style="{ps.th()}">{esc(_("Person"))}</th>' + "".join(
+		f'<th style="{ps.th()}">{esc(f"{day:%a} {day:%b} {day.day}")}</th>' for day in days
+	)
+	body = []
+	for row in busy:
+		cells = "".join(
+			f'<td style="{ps.TD}">{_sheet_cell(entry)}</td>' for entry in (row.get("days") or [])[:7]
+		)
+		body.append(
+			f'<tr><td class="cs-person" style="{ps.TD}">{esc(row.get("label") or "")}</td>{cells}</tr>'
+		)
+	if not body:
+		body.append(
+			f'<tr><td colspan="8" style="{ps.TD}">{esc(_("Nothing is booked on anyone this week."))}</td></tr>'
+		)
+	foot = (
+		f'<div class="cs-foot">{esc(_("Nothing booked all week: {0}").format(", ".join(free)))}</div>'
+		if free and busy
+		else ""
+	)
+	return (
+		"<!doctype html><html><head><meta charset='utf-8'>"
+		f"<title>{esc(title)} · {esc(span)}</title>"
+		f"<style>{CREW_SHEET_CSS}</style></head><body>"
+		+ ps.page_open(None)
+		+ ps.letterhead(None, esc(_("Crew sheet")), esc(title), meta)
+		+ f'<table class="cs-grid"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>'
+		+ foot
+		+ ps.page_close(None)
+		+ "</body></html>"
+	)
+
+
+@frappe.whitelist()
+def crew_sheet_html(start, group=None):
+	"""The printable weekly crew sheet for the week holding ``start`` (P3.9), as an HTML document.
+
+	``group`` narrows it to one Planner Resource group, as the page's filter does. The page opens it
+	in a new window and prints it there; nothing here makes a PDF.
+	"""
+	_require_planner()
+	first = week_start(getdate(start), _first_weekday())
+	last = first + datetime.timedelta(days=6)
+	group = given(group)
+	names = None
+	if group:
+		names = frappe.get_all(
+			"Planner Resource",
+			filters={"is_active": 1, "resource_group": group},
+			pluck="name",
+			limit_page_length=0,
+		)
+	data, days = _people_days(first, last, names)
+	rows = [
+		{"label": person["label"], "days": days.get(person["name"]) or []} for person in data["resources"]
+	]
+	return crew_sheet_document(
+		first,
+		rows,
+		group=group,
+		printed_on=frappe.utils.format_datetime(frappe.utils.now_datetime(), "MMM d, yyyy h:mm a"),
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_digest_preview(date=None):
+	"""Email the caller what their own combined 6 AM digest would say (P3.8 "Send me a preview").
+
+	System Manager or Projects Manager. Works with the digest switched off, never texts, and never
+	records the day as sent. ``{"sent": bool, "message": str}``.
+	"""
+	if frappe.session.user != "Administrator" and not DIGEST_PREVIEW_ROLES & set(frappe.get_roles()):
+		frappe.throw(
+			_("Only a System Manager or Projects Manager can preview the digest."), frappe.PermissionError
+		)
+	from erpnext_enhancements.project_enhancements import planner_digest
+
+	return planner_digest.send_preview(frappe.session.user, getdate(given(date) or nowdate()))

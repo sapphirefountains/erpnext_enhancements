@@ -317,7 +317,13 @@ def send_morning_digests():
             )
             by_person.setdefault(row.user, []).append((entry, ("crew", row.name, visit.name)))
 
+    covered = _combined_digest_covers()
     for person, entries in by_person.items():
+        if person in covered:
+            # The Project Planner's combined 6 AM digest tells this person their whole day,
+            # visits included. Not stamped, so switching the combined digest off later the same
+            # morning and re-running this sends them their visits after all.
+            continue
         # Stamp before sending: at-most-once/day even if this window runs twice.
         for _entry, stamp in entries:
             _stamp_digest(stamp, today)
@@ -327,6 +333,21 @@ def send_morning_digests():
             )
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Dispatch digest failed: {person}")
+
+
+def _combined_digest_covers():
+    """Users the Project Planner's combined morning digest covers (empty while it is off).
+
+    Project Planner Settings ``combined_morning_digest`` (Phase 3B): while on, one message per
+    person replaces this digest for everyone on the planner, so nobody gets three texts. Any
+    failure answers the empty set, which leaves this digest exactly as it was.
+    """
+    try:
+        from erpnext_enhancements.project_enhancements.planner_digest import covered_users
+
+        return covered_users()
+    except Exception:
+        return set()
 
 
 def _stamp_digest(stamp, today):

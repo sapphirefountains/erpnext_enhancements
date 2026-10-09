@@ -375,6 +375,7 @@ class ProjectPlanner {
 		);
 		this.$body = $('<div class="pp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		this.init_phase3b();
 		this.bind_drag();
 	}
 
@@ -383,6 +384,8 @@ class ProjectPlanner {
 	route_target() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== PP.route) return null;
+		const mine = this.my_week_target(route);
+		if (mine) return mine;
 		// /project-planner/route/<person>/<date>
 		if (route[1] === PP.route_view && route[2]) {
 			const date = route[3] && moment(route[3], "YYYY-MM-DD", true).isValid() ? route[3] : frappe.datetime.get_today();
@@ -403,6 +406,10 @@ class ProjectPlanner {
 		if (!target) return;
 		this.view = target.view;
 		this.anchor = target.anchor;
+		if (target.view === PP3B.my_week) {
+			this.show_my_week(target.anchor);
+			return;
+		}
 		if (target.view === PP.route_view) {
 			this.route_resource = target.resource;
 			this.route_date = target.anchor;
@@ -430,7 +437,9 @@ class ProjectPlanner {
 		this.$trays.toggle(!route && !heatmap);
 		this.$grid_wrap.toggle(!route);
 		this.$hint.toggle(!route);
-		this.$route.toggle(route);
+		this.$route.toggle(!!route);
+		if (this.$my_week) this.$my_week.hide();
+		if (route && this.$draft_bar) this.$draft_bar.hide();
 		[this.$project, this.$pm, this.$foreign, this.$undo].forEach(($el) => $el && $el.toggle(!heatmap));
 		if (heatmap && this.$copy) this.$copy.hide();
 		if (route || heatmap) this.$panel.hide();
@@ -641,7 +650,10 @@ class ProjectPlanner {
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
-			frappe.call({ method: `${PP.api}.get_planner`, args: { start: pp_ymd(start), end: pp_ymd(end) } })
+			frappe.call({
+				method: `${PP.api}.get_planner`,
+				args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end) }, this.draft_args()),
+			})
 		)
 			.then((r) => {
 				if (token !== this.request) return;
@@ -766,6 +778,7 @@ class ProjectPlanner {
 						"Drag a task card to another day to move it; it keeps its length. Drag a person from Resources available onto a task to add them to its crew. On a touch screen, hold for a moment first. Click a card to change its dates, hours and crew."
 				  )
 		);
+		this.render_phase3b();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -1709,6 +1722,7 @@ class ProjectPlanner {
 	// Resolves either way: a refusal has already shown the server's own message.
 	send(method, args, opts) {
 		opts = opts || {};
+		args = this.with_draft(method, args);
 		return Promise.resolve(frappe.call({ method: `${PP.api}.${method}`, args }))
 			.then((r) => {
 				const result = (r && r.message) || {};
@@ -3115,3 +3129,426 @@ class ProjectPlanner {
 		window.google.maps.event.trigger(marker, "click");
 	}
 }
+
+// ====================================================================== Phase 3B: telling people
+//
+//   /desk/project-planner/my-week/2026-10-12  the signed-in person's own week, phone-first: each
+//                                             day's stops in route order with time, site, address
+//                                             (tap for Google Maps), crewmates, hours and notes,
+//                                             and a link to that day's route view
+//
+// Draft mode is a toolbar switch, remembered per browser. While it is on, every drag, dialog save
+// and Undo is sent with draft=1, so it lands on the planner's own drafts (Planner Draft Change)
+// instead of the Task: nobody's assignments move and nobody is told. Drafted cards get a dashed
+// outline and a "Draft" chip, and a bar along the bottom says "N unpublished changes · Publish ·
+// Discard". Publish asks once for a reason when the drafts conflict together (all or nothing) and
+// then tells each person whose days moved. "My week" and "Print crew sheet" are toolbar buttons;
+// the crew sheet opens in a new window and prints there (server PDF is broken on production).
+//
+// Everything Phase 3B adds to the page is in this block, mixed into ProjectPlanner below, so the
+// Phase 3A work on the same file merges cleanly. The hooks into the class above are one line each:
+// init_phase3b (constructor), my_week_target (route_target), show_my_week (handle_route),
+// draft_args (load), with_draft (send) and render_phase3b (render).
+
+const PP3B = {
+	my_week: "my-week",
+	pref: "ee_project_planner_draft",
+	// The writes that go to the drafts while draft mode is on.
+	draft_methods: ["save_task", "add_crew", "swap_crew"],
+};
+
+const PP3B_STYLE = `
+.pp-card.pp-drafted{outline:2px dashed var(--primary,#2490ef);outline-offset:-2px;}
+.pp-chip.pp-draft-chip{background:rgba(36,144,239,.14);color:var(--primary,#2490ef);font-weight:600;}
+.pp-draft-toggle.pp-draft-on{color:var(--primary,#2490ef);font-weight:600;}
+.pp-draft-bar{position:sticky;bottom:8px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;margin:10px 0;border:1px dashed var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:13px;}
+.pp-draft-text{font-weight:600;}
+.pp-my-week{max-width:720px;padding-bottom:24px;}
+.pp-mw-title{font-weight:600;font-size:16px;margin:0 6px;}
+.pp-mw-day{border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:10px;overflow:hidden;}
+.pp-mw-day-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;font-weight:600;font-size:13px;border-bottom:1px solid var(--border-color);}
+.pp-mw-day-head.pp-mw-today{color:var(--primary,#2490ef);}
+.pp-mw-day-head .pp-spacer{flex:1 1 auto;}
+.pp-mw-item{padding:8px 10px;border-top:1px solid var(--border-color);font-size:14px;line-height:1.4;}
+.pp-mw-item:first-of-type{border-top:none;}
+.pp-mw-time{font-size:12px;color:var(--text-muted);font-weight:600;}
+.pp-mw-label{font-weight:600;}
+.pp-mw-sub{font-size:13px;color:var(--text-muted);}
+.pp-mw-addr{display:inline-block;font-size:13px;padding:2px 0;}
+.pp-mw-notes{font-size:12px;color:var(--text-muted);margin-top:2px;white-space:pre-wrap;}
+.pp-mw-empty{padding:8px 10px;font-size:13px;color:var(--text-muted);}
+@media (max-width:760px){
+.pp-mw-title{width:100%;order:-1;margin:0;}
+.pp-mw-item{font-size:15px;}
+.pp-mw-addr{padding:6px 0;}
+}
+`;
+
+const PP3B_METHODS = {
+	init_phase3b() {
+		if (!document.getElementById("pp-style-3b")) {
+			$("<style id='pp-style-3b'>").text(PP3B_STYLE).appendTo(document.head);
+		}
+		this.draft_on = this.load_pref(PP3B.pref, "0") === "1";
+		this.my_week_date = "";
+		this.my_week_data = null;
+
+		this.$draft_toggle = $('<label class="pp-draft-toggle"></label>')
+			.attr("title", __("Keep your changes to yourself until you publish them"))
+			.toggleClass("pp-draft-on", this.draft_on)
+			.insertBefore(this.$undo);
+		$('<input type="checkbox">')
+			.prop("checked", this.draft_on)
+			.on("change", (e) => this.set_draft_mode(e.target.checked))
+			.appendTo(this.$draft_toggle);
+		this.$draft_toggle.append(document.createTextNode(__("Draft mode")));
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("My week"))
+			.on("click", () => this.go_my_week(frappe.datetime.get_today()))
+			.insertBefore(this.$undo);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Print crew sheet"))
+			.attr("title", __("A one-page sheet of who is where this week, to print"))
+			.on("click", () => this.print_crew_sheet())
+			.insertBefore(this.$undo);
+
+		this.$draft_bar = $('<div class="pp-draft-bar"></div>').hide().insertAfter(this.$hint);
+		this.$my_week = $('<div class="pp-my-week"></div>').hide().appendTo(this.$body);
+	},
+
+	// ------------------------------------------------------------------ draft mode
+
+	draft_args() {
+		return this.draft_on ? { draft: 1 } : {};
+	},
+
+	with_draft(method, args) {
+		return this.draft_on && PP3B.draft_methods.includes(method) ? Object.assign({}, args, { draft: 1 }) : args;
+	},
+
+	set_draft_mode(on) {
+		this.draft_on = !!on;
+		this.save_pref(PP3B.pref, this.draft_on ? "1" : "0");
+		this.$draft_toggle.toggleClass("pp-draft-on", this.draft_on);
+		// An undo recorded in one mode must not be replayed in the other.
+		this.undo_stack = [];
+		this.update_undo_button();
+		frappe.show_alert(
+			{
+				message: this.draft_on
+					? __("Draft mode: your changes are kept for you until you publish them.")
+					: __("Draft mode off: changes save straight to the tasks. Your unpublished drafts are kept."),
+				indicator: "blue",
+			},
+			7
+		);
+		this.load();
+	},
+
+	render_phase3b() {
+		this.decorate_drafts();
+		this.render_draft_bar();
+	},
+
+	// A drafted card is drawn by the same card code as any other; the outline and chip go on after.
+	decorate_drafts() {
+		if (!this.draft_on || !this.data) return;
+		this.$body.find(".pp-card[data-task]").each((_index, el) => {
+			const card = this.by_task[el.getAttribute("data-task")];
+			if (!card || !card.drafted) return;
+			el.classList.add("pp-drafted");
+			if (el.querySelector(".pp-draft-chip")) return;
+			const holder = el.querySelector(".pp-card-chips") || el.querySelector(".pp-card-sub");
+			if (holder) {
+				holder.insertAdjacentHTML("afterbegin", `<span class="pp-chip pp-draft-chip">${pp_esc(__("Draft"))}</span>`);
+			}
+		});
+	},
+
+	render_draft_bar() {
+		const $bar = this.$draft_bar;
+		if (!$bar) return;
+		if (!this.draft_on || !this.data || this.view === PP.route_view || this.view === PP3B.my_week) {
+			$bar.hide().empty();
+			return;
+		}
+		const drafts = this.data.drafts || {};
+		const count = Number(drafts.count) || 0;
+		const stale = drafts.stale || [];
+		$bar.empty().show();
+		$('<span class="pp-draft-text"></span>')
+			.text(
+				count
+					? __("{0} unpublished change(s)", [count])
+					: __("Draft mode: nothing drafted yet. Your changes stay yours until you publish them.")
+			)
+			.appendTo($bar);
+		if (stale.length) {
+			$('<span class="pp-chip pp-amber"></span>')
+				.text(__("{0} out of date", [stale.length]))
+				.attr("title", stale.map((entry) => `${entry.subject || entry.task}: ${entry.reason}`).join("\n"))
+				.appendTo($bar);
+		}
+		$('<span class="pp-spacer"></span>').appendTo($bar);
+		if (stale.length) {
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Discard out-of-date"))
+				.on("click", () => this.discard_drafts(stale.map((entry) => entry.task)))
+				.appendTo($bar);
+		}
+		if (count > stale.length) {
+			$('<button type="button" class="btn btn-primary btn-xs"></button>')
+				.text(__("Publish"))
+				.on("click", () => this.publish_drafts())
+				.appendTo($bar);
+		}
+		if (count) {
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Discard"))
+				.on("click", () => this.discard_drafts())
+				.appendTo($bar);
+		}
+	},
+
+	// Publish every draft. Conflicts across the batch come back as needs_reason; the same reason
+	// dialog as a drag asks once, and the batch is sent again with it (all or nothing).
+	publish_drafts(reason) {
+		return Promise.resolve(
+			frappe.call({
+				method: `${PP.api}.publish_drafts`,
+				args: reason ? { reason } : {},
+				freeze: true,
+				freeze_message: __("Publishing your changes…"),
+			})
+		)
+			.then((r) => {
+				const result = (r && r.message) || {};
+				if (result.needs_reason) {
+					if (reason) {
+						frappe.msgprint(__("Nothing was published. Refresh the planner and try again."));
+						return null;
+					}
+					return this.ask_reason(result.conflicts || {}).then((given) =>
+						given ? this.publish_drafts(given) : null
+					);
+				}
+				this.show_publish_result(result);
+				this.undo_stack = [];
+				this.update_undo_button();
+				return this.load();
+			})
+			.catch(() => null);
+	},
+
+	show_publish_result(result) {
+		const published = result.published || [];
+		const problems = [].concat(result.skipped || [], result.failed || []);
+		const told = Number(result.notified) || 0;
+		if (!problems.length) {
+			frappe.show_alert(
+				{ message: __("{0} change(s) published; {1} people told.", [published.length, told]), indicator: "green" },
+				8
+			);
+			return;
+		}
+		const list = problems
+			.map((entry) => `<li><b>${pp_esc(entry.subject || entry.task)}</b>: ${pp_esc(entry.reason)}</li>`)
+			.join("");
+		frappe.msgprint({
+			title: __("Published {0} of {1}", [published.length, published.length + problems.length]),
+			message:
+				`<p>${pp_esc(__("{0} people were told about their changes.", [told]))}</p>` +
+				`<p>${pp_esc(__("Not published (still in your drafts):"))}</p><ul>${list}</ul>`,
+			indicator: "orange",
+		});
+	},
+
+	// Discard every draft, or only `tasks` (the out-of-date ones). The tasks stay as they are.
+	discard_drafts(tasks) {
+		const drafts = (this.data && this.data.drafts) || {};
+		const count = tasks ? tasks.length : Number(drafts.count) || 0;
+		frappe.confirm(__("Discard {0} unpublished change(s)? The tasks stay as they are.", [count]), () =>
+			Promise.resolve(
+				frappe.call({
+					method: `${PP.api}.discard_drafts`,
+					args: tasks ? { tasks: JSON.stringify(tasks) } : {},
+				})
+			)
+				.then((r) => {
+					const done = ((r && r.message) || {}).discarded || 0;
+					frappe.show_alert({ message: __("{0} draft(s) discarded", [done]), indicator: "blue" }, 5);
+					this.undo_stack = [];
+					this.update_undo_button();
+					return this.load();
+				})
+				.catch(() => null)
+		);
+	},
+
+	// ------------------------------------------------------------------ My week
+
+	my_week_target(route) {
+		if (route[1] !== PP3B.my_week) return null;
+		const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
+		return { view: PP3B.my_week, anchor: date };
+	},
+
+	go_my_week(ymd) {
+		const route = frappe.get_route() || [];
+		if (route[0] === PP.route && route[1] === PP3B.my_week && route[2] === ymd) {
+			this.load_my_week();
+			return;
+		}
+		frappe.set_route(PP.route, PP3B.my_week, ymd);
+	},
+
+	show_my_week(anchor) {
+		this.my_week_date = anchor;
+		this.set_mode(true);
+		this.$route.hide();
+		this.$my_week.show();
+		this.load_my_week();
+	},
+
+	load_my_week() {
+		const token = ++this.request;
+		this.$body.addClass("pp-loading");
+		return Promise.resolve(
+			frappe.call({ method: `${PP.api}.get_my_week`, args: { date: this.my_week_date } })
+		)
+			.then((r) => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.my_week_data = (r && r.message) || null;
+				this.render_my_week();
+			})
+			.catch(() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.my_week_data = null;
+				this.render_my_week();
+			});
+	},
+
+	render_my_week() {
+		const data = this.my_week_data;
+		const anchor = this.my_week_date || frappe.datetime.get_today();
+		const step = (sign) => this.go_my_week(pp_ymd(moment(anchor, "YYYY-MM-DD").add(sign * 7, "days")));
+		const $root = this.$my_week.empty();
+		const $head = $('<div class="pp-route-head"></div>').appendTo($root);
+		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
+			.attr("title", __("Previous week"))
+			.on("click", () => step(-1))
+			.appendTo($head);
+		$('<button type="button" class="btn btn-default btn-sm">›</button>')
+			.attr("title", __("Next week"))
+			.on("click", () => step(1))
+			.appendTo($head);
+		const $title = $('<span class="pp-mw-title"></span>').appendTo($head);
+		$('<span class="pp-spacer"></span>').appendTo($head);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Back to planner"))
+			.on("click", () => this.go("week", anchor))
+			.appendTo($head);
+
+		if (!data) {
+			$title.text(__("My week"));
+			$('<div class="pp-route-note"></div>').text(__("Your week could not be loaded. Refresh to try again.")).appendTo($root);
+			return;
+		}
+		const start = moment(data.start, "YYYY-MM-DD");
+		const end = moment(data.end, "YYYY-MM-DD");
+		$title.text(`${data.label || __("My week")} · ${start.format("MMM D")} – ${end.format("MMM D, YYYY")}`);
+		if (!data.resource) {
+			$('<div class="pp-route-note"></div>').text(data.message || __("There is no week to show.")).appendTo($root);
+			return;
+		}
+		(data.days || []).forEach((entry) => {
+			const items = entry.items || [];
+			const $day = $('<div class="pp-mw-day"></div>').appendTo($root);
+			const $dh = $('<div class="pp-mw-day-head"></div>').appendTo($day);
+			if (entry.date === data.today) $dh.addClass("pp-mw-today");
+			$("<span></span>").text(moment(entry.date, "YYYY-MM-DD").format("dddd, MMM D")).appendTo($dh);
+			if (entry.off) $('<span class="pp-chip"></span>').text(__(entry.off)).appendTo($dh);
+			$('<span class="pp-spacer"></span>').appendTo($dh);
+			if (items.length) {
+				$('<button type="button" class="btn btn-default btn-xs"></button>')
+					.text(__("Route"))
+					.attr("title", __("This day's stops in order, with drive times and a map"))
+					.on("click", () => this.go_route(data.resource, entry.date))
+					.appendTo($dh);
+			}
+			if (entry.travel) $('<div class="pp-mw-empty"></div>').text(entry.travel).appendTo($day);
+			if (!items.length && !entry.travel) {
+				$('<div class="pp-mw-empty"></div>').text(entry.off ? __("Off") : __("Nothing booked")).appendTo($day);
+			}
+			items.forEach((stop) => $day.append(this.my_week_item_html(stop)));
+		});
+	},
+
+	// One stop. Everything is escaped; the address links to Google Maps only when the server sent a
+	// Google Maps URL, and opens without an opener.
+	my_week_item_html(stop) {
+		const when = stop.slot && stop.slot.length === 2 ? stop.slot.join("–") : stop.time || "";
+		const place = stop.project_title && stop.project_title !== stop.label ? stop.project_title : "";
+		const maps = stop.maps_url && /^https:\/\/www\.google\.com\/maps\//.test(stop.maps_url) ? stop.maps_url : "";
+		const facts = [place, Number(stop.hours) > 0 ? `${pp_hours(stop.hours)}h` : ""].filter(Boolean).join(" · ");
+		let address = "";
+		if (stop.address && maps) {
+			address = `<a class="pp-mw-addr" href="${pp_esc(maps)}" target="_blank" rel="noopener noreferrer">${pp_esc(
+				stop.address
+			)}</a>`;
+		} else if (stop.address) {
+			address = `<div class="pp-mw-addr">${pp_esc(stop.address)}</div>`;
+		}
+		const crew = (stop.crew || []).length ? `<div class="pp-mw-sub">${pp_esc(__("With {0}", [stop.crew.join(", ")]))}</div>` : "";
+		const notes = stop.notes ? `<div class="pp-mw-notes">${pp_esc(stop.notes)}</div>` : "";
+		return `
+			<div class="pp-mw-item">
+				${when ? `<div class="pp-mw-time">${pp_esc(when)}</div>` : ""}
+				<div class="pp-mw-label">${pp_esc(stop.label || stop.ref)}</div>
+				${facts ? `<div class="pp-mw-sub">${pp_esc(facts)}</div>` : ""}
+				${address}${crew}${notes}
+			</div>`;
+	},
+
+	// ------------------------------------------------------------------ crew sheet
+
+	// The server renders the sheet; the browser prints it. The window opens on the click itself
+	// (a window opened after the request returns is a pop-up the browser blocks) and fills in when
+	// the sheet arrives.
+	print_crew_sheet() {
+		const win = window.open("", "_blank");
+		if (!win) {
+			frappe.msgprint(__("Allow pop-ups for this site to print the crew sheet."));
+			return;
+		}
+		win.document.write(
+			`<!doctype html><title>${pp_esc(__("Crew sheet"))}</title><p style="font-family:sans-serif">${pp_esc(
+				__("Preparing the crew sheet…")
+			)}</p>`
+		);
+		const start = this.view === "month" ? this.anchor : pp_ymd(this.range().start);
+		Promise.resolve(frappe.call({ method: `${PP.api}.crew_sheet_html`, args: { start, group: this.group || "" } }))
+			.then((r) => {
+				const html = r && r.message;
+				if (win.closed) return;
+				if (!html) {
+					win.close();
+					return;
+				}
+				win.document.open();
+				win.document.write(html);
+				win.document.close();
+				win.focus();
+				const fonts = win.document.fonts && win.document.fonts.ready ? win.document.fonts.ready : Promise.resolve();
+				// Let the sheet lay out and its display face arrive before the print dialog measures it.
+				fonts.then(() => win.setTimeout(() => win.print(), 250));
+			})
+			.catch(() => {
+				if (!win.closed) win.close();
+			});
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
