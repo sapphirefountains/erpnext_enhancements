@@ -1484,13 +1484,18 @@ class TestPlannerParity(unittest.TestCase):
 			{"contract", "from_date", "to_date", "serial_no", "reason"} <= params(planner.move_projected)
 		)
 		self.assertEqual(params(planner.get_planner), {"start", "end"})
-		# The page calls exactly these three methods of its API.
-		self.assertEqual(set(re.findall(r'this\.send\(\s*"(\w+)"', code)), {"move_projected", "move_visit"})
+		# The page calls exactly these methods of its API (add_crew since v1.579.0: a chip dropped on
+		# a visit that has a technician adds a helper to its crew).
+		self.assertEqual(
+			set(re.findall(r'this\.send\(\s*"(\w+)"', code)), {"move_projected", "move_visit", "add_crew"}
+		)
 		self.assertIn('visit ? "move_visit" : "move_projected"', code)
 		self.assertIn("frappe.call({ method: MP.methods[method], args })", code)
 		methods = self._body("MP.methods = {", "};")
 		found = set(re.findall(r"(\w+): `\$\{MP\.api\}\.(\w+)`", methods))
-		self.assertEqual(found, {(name, name) for name in ("get_planner", "move_visit", "move_projected")})
+		self.assertEqual(
+			found, {(name, name) for name in ("get_planner", "move_visit", "move_projected", "add_crew")}
+		)
 
 
 class TestWiring(unittest.TestCase):

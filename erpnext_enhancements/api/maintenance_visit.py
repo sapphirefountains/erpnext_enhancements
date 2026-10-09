@@ -120,25 +120,69 @@ def _claim_visit(doc):
     substitute usually reads the site briefing before clocking in, then reopens
     after clock-in to take the visit.
 
-    Returns the previously-assigned technician (``str``, possibly ``""`` for an
-    unassigned draft) when it changed ``technician``, else ``None``. A truthy
-    return means a *named* technician was displaced, so the caller re-points that
-    technician's dispatch assignment (after saving). Consumable source warehouses
-    need no realignment here: only the tech-independent feature warehouse is baked
-    at instantiation, and the vehicle fallback is resolved from the final
-    ``technician`` at submit (see get_visit_payload / build_stock_entry_rows).
+    **A crew member** (P1.8: anyone on the visit's ``crew`` table may fill it in)
+    claims under exactly the same rule, but the technician they take over from is
+    not dropped from the visit: they **move into the crew**, in the claimer's
+    place, so nobody silently falls off a visit they were booked on. Their
+    assignments need no change (both already hold one), and their digest stamps
+    swap with their places so the morning SMS stays at most once per person.
+
+    Returns the previously-assigned technician (``str``) when a substitute from
+    outside the crew displaced them, so the caller re-points that technician's
+    dispatch assignment (after saving); ``""`` when ``technician`` changed with no
+    assignment to move (an unassigned draft, or a crew member's claim); else
+    ``None``. Consumable source warehouses need no realignment here: only the
+    tech-independent feature warehouse is baked at instantiation, and the vehicle
+    fallback is resolved from the final ``technician`` at submit (see
+    get_visit_payload / build_stock_entry_rows).
     """
+    from erpnext_enhancements.sapphire_maintenance.visit_crew import crew_users
+
     user = frappe.session.user
     if doc.technician == user or "Maintenance User" not in frappe.get_roles():
         return None
+    on_crew = user in crew_users(doc)
     if not doc.technician:
         doc.technician = user
+        if on_crew:
+            _take_crew_place(doc, user, None)
         return ""  # was unassigned — no prior owner / assignment to move
     if _clocked_into_project(user, doc.project) and not _clocked_into_project(doc.technician, doc.project):
         prior = doc.technician
         doc.technician = user
+        if on_crew:
+            _take_crew_place(doc, user, prior)
+            return ""
         return prior
     return None
+
+
+def _take_crew_place(doc, user, prior):
+    """``user`` (on the crew) became the technician: swap them with ``prior`` in the crew.
+
+    The claimer's crew row goes; ``prior`` (the technician they displaced, if any)
+    joins the crew with the visit's length (blank hours) — the claimer's own row
+    hours described the claimer, not them. Digest stamps travel with the people:
+    ``prior`` keeps the record's "technician digest sent" date on their new row,
+    and the record takes the claimer's, so a same-day re-run of the digest texts
+    neither of them twice.
+    """
+    rows = list(doc.get("crew") or [])
+    mine = next((row for row in rows if row.get("user") == user), None)
+    claimer_stamp = mine.get("digest_sent_on") if mine is not None else None
+    if mine is not None:
+        doc.remove(mine)
+    if prior and prior not in [row.get("user") for row in doc.get("crew") or []]:
+        doc.append(
+            "crew",
+            {
+                "user": prior,
+                "full_name": frappe.db.get_value("User", prior, "full_name"),
+                "hours": 0,
+                "digest_sent_on": doc.get("dispatch_digest_sent_on"),
+            },
+        )
+    doc.dispatch_digest_sent_on = claimer_stamp
 
 
 def _reassign_todo(doc, prior):

@@ -114,10 +114,19 @@ def _advisory(fn):
 
 @_advisory
 def warn_uncertified_technician(doc, method=None):
-	"""``Sapphire Maintenance Record`` validate — warn about the assigned tech."""
+	"""``Sapphire Maintenance Record`` validate — warn about the assigned tech and the crew.
+
+	A multi-person visit (P1.8) books everyone on its ``crew`` table too, and each of them may
+	end up filling the form in, so each is checked. ``getattr(..., None) or []``: doc_events fire
+	during the test bootstrap, before the field exists.
+	"""
 	if cint(getattr(doc, "docstatus", 0)) == 2:
 		return
-	_check(doc, [getattr(doc, "technician", None)])
+	crew = [
+		getattr(row, "user", None) or (row.get("user") if isinstance(row, dict) else None)
+		for row in getattr(doc, "crew", None) or []
+	]
+	_check(doc, [getattr(doc, "technician", None), *crew])
 
 
 @_advisory

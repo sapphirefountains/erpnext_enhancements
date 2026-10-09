@@ -11,6 +11,10 @@
   "safety_instructions",
   "access_codes",
   "wrapup_instructions",
+  "visit_crew_section",
+  "default_crew",
+  "visit_hours",
+  "visit_full_day",
   "site_location_section",
   "latitude",
   "longitude"
@@ -58,6 +62,32 @@
    "label": "Wrap-up Instructions"
   },
   {
+   "fieldname": "visit_crew_section",
+   "fieldtype": "Section Break",
+   "label": "Visit crew and length"
+  },
+  {
+   "description": "People who go with the default technician on every visit to this site.",
+   "fieldname": "default_crew",
+   "fieldtype": "Table",
+   "label": "Default Crew",
+   "options": "Sapphire Visit Crew Member"
+  },
+  {
+   "description": "Blank: Project Planner Settings' maintenance visit hours (2).",
+   "fieldname": "visit_hours",
+   "fieldtype": "Float",
+   "label": "Visit Hours",
+   "precision": "2"
+  },
+  {
+   "default": "0",
+   "description": "The visit takes each person's whole day.",
+   "fieldname": "visit_full_day",
+   "fieldtype": "Check",
+   "label": "Visit Takes the Full Day"
+  },
+  {
    "description": "Site coordinates power the Time Kiosk's \"clock in here?\" suggestion when a technician arrives.",
    "fieldname": "site_location_section",
    "fieldtype": "Section Break",
@@ -78,7 +108,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2024-04-20 10:00:00.000000",
+ "modified": "2026-10-09 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Profile",

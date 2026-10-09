@@ -13,7 +13,9 @@
 // Forward re-render through on_page_show -> handle_route.
 //
 // Cards come from erpnext_enhancements.api.maintenance_planner.get_planner:
-//   visit      a Sapphire Maintenance Record. A draft nobody has started can be dragged; that
+//   visit      a Sapphire Maintenance Record. It carries `technician` (the lead, who fills it in),
+//              `crew` ([{user, name, hours}]: the others booked on it), `planned_hours`, `full_day` and
+//              `hours` (the length each person is booked for). A draft nobody has started can be dragged; that
 //              rewrites its Scheduled Visit Date and/or its technician (move_visit).
 //   projected  a visit the nightly scheduler has not drafted yet, worked out from the contract.
 //              The first one of a series is the contract's stored next visit and can be dragged
@@ -41,7 +43,14 @@
 //   - in the crew view, drag a visit to another
 //     technician's row                            move_visit(technician and date)
 //   - drag a technician from the panel onto a
-//     visit card                                  move_visit(technician)
+//     visit card                                  add_crew (the visit's crew grows); a visit
+//                                                 with nobody on it gets them as technician
+//   - a multi-person visit                        shows in every crew member's row; dragging
+//                                                 one person's chip to another row moves only
+//                                                 that person (move_visit with from_user when
+//                                                 the dragged person is a helper)
+//   - the card's dialog                           technician, crew (with optional hours each),
+//                                                 planned hours and Full day
 //   - the route icon on a technician's day        the Project Planner's route view for that day
 // Overbooking warns and never blocks: when a move would put a technician over their hours, on a
 // day off or in two places at once, the server answers needs_reason instead of saving, and the
@@ -79,6 +88,8 @@ MP.methods = {
 	get_planner: `${MP.api}.get_planner`,
 	move_visit: `${MP.api}.move_visit`,
 	move_projected: `${MP.api}.move_projected`,
+	// Adding a helper to a visit's crew is its own POST: dropping a chip on a visit sends it.
+	add_crew: `${MP.api}.add_crew`,
 };
 
 const mp_ymd = (m) => m.format("YYYY-MM-DD");
@@ -203,6 +214,14 @@ const MP_STYLE = `
 .mp-month .mp-card-who{display:none;}
 .mp-tech{flex:0 0 auto;width:20px;height:20px;border-radius:50%;font-size:9px;font-weight:700;color:#fff;display:inline-flex;align-items:center;justify-content:center;}
 .mp-tech.mp-tech-off{opacity:.45;background-image:repeating-linear-gradient(135deg,transparent 0 3px,rgba(255,255,255,.55) 3px 5px);}
+.mp-techs{flex:0 0 auto;display:inline-flex;align-items:center;gap:3px;}
+.mp-tech.mp-lead{box-shadow:0 0 0 1.5px var(--card-bg),0 0 0 3px var(--text-color);margin-right:2px;}
+.mp-more{font-size:10px;color:var(--text-muted);}
+.mp-cm-list{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-bottom:6px;}
+.mp-cm-row{display:flex;align-items:center;gap:8px;}
+.mp-cm-row label{flex:1 1 auto;margin:0;font-weight:normal;display:flex;align-items:center;gap:6px;}
+.mp-cm-row input[type=number]{width:84px;flex:0 0 auto;}
+.mp-cm-row.mp-cm-lead{opacity:.5;}
 .mp-chip{display:inline-block;font-size:10px;border-radius:8px;padding:0 6px;margin-right:3px;background:var(--control-bg);color:var(--text-muted);}
 .mp-chip.mp-red{background:rgba(220,38,38,.12);color:#b91c1c;}
 .mp-card.mp-seasonal{border-left-color:#d97706;}
@@ -250,7 +269,7 @@ body.mp-drag-active,body.mp-drag-active *{cursor:grabbing !important;-webkit-use
 @media (max-width:760px){
 .mp-day{min-height:84px;padding:2px;}
 .mp-month .mp-card{padding:1px 3px;font-size:10px;border-left-width:3px;}
-.mp-month .mp-card-sub,.mp-month .mp-tech{display:none;}
+.mp-month .mp-card-sub,.mp-month .mp-tech,.mp-month .mp-techs{display:none;}
 .mp-month .mp-off-badges{display:none;}
 .mp-week .mp-grid{grid-template-columns:1fr;}
 .mp-week .mp-day{min-height:0;border-right:none;}
@@ -515,8 +534,14 @@ class MaintenancePlanner {
 			this.tech_by_user[person.user] = person;
 			this.tech_names[person.user] = person.name;
 		});
-		[].concat(data.visits || [], data.unscheduled || []).forEach((card) => {
+		[].concat(data.visits || [], data.unscheduled || [], data.projected || []).forEach((card) => {
 			if (card.modified) this.modified[card.name] = card.modified;
+			// A helper who is not on the technician list still has a name on the card.
+			(card.crew || []).forEach((member) => {
+				if (member && member.user && member.name && !this.tech_names[member.user]) {
+					this.tech_names[member.user] = member.name;
+				}
+			});
 		});
 	}
 
@@ -719,7 +744,38 @@ class MaintenancePlanner {
 		if (card.kind === "projected" && !this.show_projected) return false;
 		if (!this.technician) return true;
 		if (this.technician === "__none__") return !card.technician;
-		return card.technician === this.technician;
+		return this.visit_people(card).includes(this.technician);
+	}
+
+	// Everyone booked on a visit: the technician (the lead) first, then the crew, each once.
+	visit_people(card) {
+		const out = [];
+		const add = (user) => {
+			if (user && !out.includes(user)) out.push(user);
+		};
+		add(card.technician);
+		(card.crew || []).forEach((member) => add(member && member.user));
+		return out;
+	}
+
+	crew_has(card, user) {
+		return !!user && (card.crew || []).some((member) => member && member.user === user);
+	}
+
+	// The crew as move_visit takes it: the users besides the lead, with their own hours when set.
+	crew_rows(card) {
+		return (card.crew || [])
+			.filter((member) => member && member.user && member.user !== card.technician)
+			.map((member) => ({ user: member.user, hours: Number(member.hours) > 0 ? Number(member.hours) : null }));
+	}
+
+	// Order does not matter to the crew, so compare it sorted.
+	crew_key(rows) {
+		return JSON.stringify(
+			(rows || [])
+				.map((row) => [row.user, row.hours == null ? null : Number(row.hours)])
+				.sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+		);
 	}
 
 	// ------------------------------------------------------------------ render
@@ -731,8 +787,11 @@ class MaintenancePlanner {
 		const cards = this.all_cards();
 		cards.forEach((card) => {
 			this.by_key[card.key] = card;
-			if ((card.kind === "visit" || card.kind === "projected") && card.technician && card.date) {
-				(this.day_cards[`${card.technician}|${card.date}`] = this.day_cards[`${card.technician}|${card.date}`] || []).push(card);
+			if ((card.kind === "visit" || card.kind === "projected") && card.date) {
+				// A multi-person visit is on every crew member's day.
+				this.visit_people(card).forEach((user) => {
+					(this.day_cards[`${user}|${card.date}`] = this.day_cards[`${user}|${card.date}`] || []).push(card);
+				});
 			}
 		});
 		this.$tech.toggle(this.view !== "crew");
@@ -742,10 +801,10 @@ class MaintenancePlanner {
 		this.$hint.text(
 			this.view === "crew"
 				? __(
-						"Drag a visit to another day on the same row to move it, or onto another technician's row to hand it over. On a touch screen, hold for a moment first. Dashed visits follow the technician on the site's Maintenance Profile, so they only change day."
+						"Drag a visit to another day on the same row to move it, or onto another technician's row to hand it over. On a touch screen, hold for a moment first. A visit with a crew shows in every crew member's row: drag one person's card to another row to swap only that person. Drag a technician onto a visit to add them to its crew. Dashed visits follow the technician on the site's Maintenance Profile, so they only change day."
 				  )
 				: __(
-						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to assign them. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Teal, amber and gray cards are project, rental and travel bookings of the same people: they open the task but are moved on the Project Planner."
+						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Teal, amber and gray cards are project, rental and travel bookings of the same people: they open the task but are moved on the Project Planner."
 				  )
 		);
 	}
@@ -874,7 +933,7 @@ class MaintenancePlanner {
 	person_html(person, compact) {
 		const group = person.group ? __(person.group) : "";
 		const tip = this.data.can_move_visits
-			? __("Drag {0} onto a visit to assign them", [person.name])
+			? __("Drag {0} onto a visit to add them to its crew", [person.name])
 			: person.name;
 		const selected = this.technician === person.user ? " mp-selected" : "";
 		return `
@@ -963,8 +1022,12 @@ class MaintenancePlanner {
 				if (card.kind === "visit") unscheduled.push(card);
 				return;
 			}
-			const key = `${card.technician || ""}|${card.date}`;
-			(by_cell[key] = by_cell[key] || []).push(card);
+			// A multi-person visit sits in every crew member's row.
+			const owners = card.kind === "booking" ? [card.technician || ""] : this.visit_people(card);
+			(owners.length ? owners : [""]).forEach((user) => {
+				const key = `${user}|${card.date}`;
+				(by_cell[key] = by_cell[key] || []).push(card);
+			});
 		});
 		this.render_tray(unscheduled);
 
@@ -1006,7 +1069,7 @@ class MaintenancePlanner {
 					<div class="mp-cell${ymd < today ? " mp-past" : ""}${this.is_off(cell) ? " mp-off-day" : ""}"
 						data-date="${mp_esc(ymd)}" data-user="${mp_esc(user)}">
 						${cap}
-						${list.map((card) => this.card_html(card)).join("")}
+						${list.map((card) => this.card_row_html(card, user)).join("")}
 					</div>`);
 			});
 		});
@@ -1061,6 +1124,12 @@ class MaintenancePlanner {
 	}
 
 	card_html(card) {
+		return this.card_row_html(card, undefined);
+	}
+
+	// `row_user` is the crew-view row the card sits in: the same visit shows in every crew member's
+	// row, and a drag needs to know which person's chip was picked up. The calendar passes none.
+	card_row_html(card, row_user) {
 		if (card.kind === "booking") return this.booking_html(card);
 		const sub = [];
 		if (card.label) sub.push(__(card.label));
@@ -1072,6 +1141,12 @@ class MaintenancePlanner {
 		if (card.status === "pending") chips.push(__("Pending review"));
 		if (card.status === "done") chips.push(__("Done"));
 		if (card.overdue) chips.push(`<span class="mp-chip mp-red">${mp_esc(__("Overdue"))}</span>`);
+		// How long it books each person, when that is not just the default.
+		const people = this.visit_people(card);
+		if (card.full_day) chips.push(__("Full day"));
+		else if (Number(card.planned_hours) > 0 || (people.length > 1 && Number(card.hours) > 0)) {
+			chips.push(__("{0}h each", [mp_hours(Number(card.planned_hours) > 0 ? card.planned_hours : card.hours)]));
+		}
 		if (card.on_hold) chips.push(`<span class="mp-chip mp-red">${mp_esc(__("On hold"))}</span>`);
 		if (card.flagged) chips.push(`<span class="mp-chip mp-red">${mp_esc(__("Chemistry"))}</span>`);
 		// A visit on a day its technician does not work still gets done by somebody: say so.
@@ -1089,15 +1164,22 @@ class MaintenancePlanner {
 
 		// In a technician's row the row says who it is.
 		const in_row = this.view === "crew" && !!card.date;
-		const who = card.technician ? this.tech_name(card.technician) : __("Unassigned");
-		const tip = [card.site_full, sub.join(" · "), who, day_cell && this.is_off(day_cell) ? this.off_label(day_cell) : ""]
+		const who = people.length ? people.map((user) => this.tech_name(user)).join(", ") : __("Unassigned");
+		const crew_line = people.length > 1 ? `${__("Crew")}: ${who}` : "";
+		const tip = [
+			card.site_full,
+			sub.join(" · "),
+			crew_line || who,
+			day_cell && this.is_off(day_cell) ? this.off_label(day_cell) : "",
+		]
 			.filter(Boolean)
 			.join("\n");
+		const row_attr = row_user === undefined ? "" : ` data-row-user="${mp_esc(row_user)}"`;
 		return `
-			<div class="mp-card ${this.kind_class(card)}" data-key="${mp_esc(card.key)}" tabindex="0" title="${mp_esc(tip)}">
+			<div class="mp-card ${this.kind_class(card)}" data-key="${mp_esc(card.key)}"${row_attr} tabindex="0" title="${mp_esc(tip)}">
 				<div class="mp-card-top">
 					<span class="mp-card-title">${mp_esc(card.site || card.project || card.name)}</span>
-					${in_row ? "" : this.tech_badge(card.technician)}
+					${this.people_badges(card, in_row)}
 				</div>
 				<div class="mp-card-sub">${mp_esc(sub.join(" · "))}</div>
 				<div class="mp-card-who">${in_row ? "" : mp_esc(who)} ${chips
@@ -1110,14 +1192,30 @@ class MaintenancePlanner {
 		return (this.tech_names && this.tech_names[user]) || user;
 	}
 
-	tech_badge(user, extra) {
+	// The initials of everyone on a visit, the lead first and ringed when there is a crew. In a crew-view
+	// row a lone person is the row, so only a multi-person visit shows them.
+	people_badges(card, in_row) {
+		const people = this.visit_people(card);
+		if (!people.length || (in_row && people.length < 2)) return "";
+		const shown = people.slice(0, 4);
+		const badges = shown
+			.map((user) => {
+				const lead = people.length > 1 && user === card.technician;
+				return this.tech_badge(user, lead ? "mp-lead" : "", lead ? __("Technician") : "");
+			})
+			.join("");
+		const more = people.length > shown.length ? `<span class="mp-more">+${people.length - shown.length}</span>` : "";
+		return `<span class="mp-techs">${badges}${more}</span>`;
+	}
+
+	tech_badge(user, extra, role) {
 		if (!user) return "";
 		const name = this.tech_name(user);
 		const parts = String(name).split(/\s+/).filter(Boolean);
 		const initials = (parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "");
 		return `<span class="mp-tech${extra ? ` ${mp_esc(extra)}` : ""}" style="background:${mp_esc(
 			this.tech_color(user)
-		)}" title="${mp_esc(name)}">${mp_esc(initials.toUpperCase())}</span>`;
+		)}" title="${mp_esc(role ? `${name} (${role})` : name)}">${mp_esc(initials.toUpperCase())}</span>`;
 	}
 
 	// ------------------------------------------------------------------ dragging
@@ -1184,7 +1282,9 @@ class MaintenancePlanner {
 		if (!card_el) return null;
 		const card = this.by_key[card_el.getAttribute("data-key")];
 		if (!card || !card.movable || card.saving) return null;
-		return { kind: "card", el: card_el, card };
+		// In the crew view the same visit sits in each crew member's row: remember whose chip it is.
+		const row = card_el.getAttribute("data-row-user");
+		return { kind: "card", el: card_el, card, from_user: row == null ? null : row };
 	}
 
 	on_down(e) {
@@ -1318,8 +1418,9 @@ class MaintenancePlanner {
 		return card.site || card.site_full || card.name;
 	}
 
-	// Work out what a drop means. `{ card, change }` is a move to send (`change` holds a date and/or
-	// a technician), `{ refuse }` a reason it cannot be done, and null changes nothing.
+	// Work out what a drop means. `{ card, change }` is a move to send (`change` holds a date, a
+	// technician, and for a helper's chip the `from_user` it replaces), `{ card, add_crew }` a person
+	// added to the visit's crew, `{ refuse }` a reason it cannot be done, and null changes nothing.
 	plan_drop(source, target) {
 		if (source.kind === "person") {
 			const card = this.by_key[target.key];
@@ -1329,16 +1430,20 @@ class MaintenancePlanner {
 			if (card.kind === "projected") {
 				return {
 					refuse: __(
-						"{0} is a projected visit: it follows the technician on the site's Maintenance Profile, so it cannot be handed to {1} here. It can once the visit is drafted.",
+						"{0} is a projected visit: it follows the technician on the site's Maintenance Profile, so {1} cannot be added to it here. Set the site's default crew on its Maintenance Profile, or add them once the visit is drafted.",
 						[site, name]
 					),
 				};
 			}
 			if (!card.movable) {
-				return { refuse: __("{0} is started or finished, so it keeps its technician.", [site]) };
+				return { refuse: __("{0} is started or finished, so its crew stays as it is.", [site]) };
 			}
-			if ((card.technician || "") === source.user) return { refuse: __("{0} is already on {1}.", [name, site]) };
-			return { card, change: { technician: source.user } };
+			if ((card.technician || "") === source.user || this.crew_has(card, source.user)) {
+				return { refuse: __("{0} is already on {1}.", [name, site]) };
+			}
+			// Nobody on the visit yet: the person becomes its technician. Otherwise they join the crew.
+			if (!card.technician) return { card, change: { technician: source.user } };
+			return { card, add_crew: source.user };
 		}
 
 		const card = source.card;
@@ -1347,15 +1452,33 @@ class MaintenancePlanner {
 		}
 		const change = {};
 		if (target.date !== card.date) change.date = target.date;
-		if (target.row && (target.user || "") !== (card.technician || "")) {
-			if (card.kind === "projected") {
+		// The row the chip was picked up from: a helper's chip sits in the helper's own row.
+		const row_user = source.from_user == null ? card.technician || "" : source.from_user;
+		const helper = !!row_user && row_user !== (card.technician || "") && this.crew_has(card, row_user);
+		const hands_over = target.row && (target.user || "") !== row_user;
+		if (hands_over && card.kind === "projected") {
+			return {
+				refuse: __(
+					"{0} is a projected visit: it follows the technician on the site's Maintenance Profile, so it cannot move to another technician's row. Drop it on a day of its own row to change the date.",
+					[this.site_of(card)]
+				),
+			};
+		}
+		if (hands_over && helper) {
+			if (!target.user) {
 				return {
-					refuse: __(
-						"{0} is a projected visit: it follows the technician on the site's Maintenance Profile, so it cannot move to another technician's row. Drop it on a day of its own row to change the date.",
-						[this.site_of(card)]
-					),
+					refuse: __("Drop {0} on a technician's row to hand their place on the visit over.", [
+						this.tech_name(row_user),
+					]),
 				};
 			}
+			if (target.user === (card.technician || "") || this.crew_has(card, target.user)) {
+				return { refuse: __("{0} is already on {1}.", [this.tech_name(target.user), this.site_of(card)]) };
+			}
+			// Only the helper whose chip it is changes; the technician and the rest of the crew stay.
+			change.technician = target.user;
+			change.from_user = row_user;
+		} else if (target.row && (target.user || "") !== (card.technician || "") && !helper) {
 			change.technician = target.user;
 		}
 		return Object.keys(change).length ? { card, change } : null;
@@ -1368,17 +1491,65 @@ class MaintenancePlanner {
 			frappe.show_alert({ message: plan.refuse, indicator: "orange" }, 6);
 			return;
 		}
+		if (plan.add_crew) {
+			this.add_to_crew(plan.card, plan.add_crew);
+			return;
+		}
 		this.apply(plan.card, plan.change);
+	}
+
+	// What a visit looks like before a change, for Undo: date, technician, crew, length and Full day.
+	snapshot_of(card) {
+		const before = { date: card.date || null, technician: card.technician || "" };
+		before.crew = this.crew_rows(card);
+		before.planned_hours = Number(card.planned_hours) || 0;
+		before.full_day = card.full_day ? 1 : 0;
+		return before;
 	}
 
 	// Show the card on its new day straight away; the reload afterwards is the truth.
 	apply(card, change) {
 		const before = { date: card.date || null, technician: card.technician || "" };
+		Object.assign(before, this.snapshot_of(card));
 		if (change.date) card.date = change.date;
-		if (change.technician !== undefined) card.technician = change.technician || null;
+		if (change.from_user) {
+			// A helper's place is handed over: the technician and the rest of the crew stay.
+			card.crew = (card.crew || []).map((member) =>
+				member.user === change.from_user
+					? Object.assign({}, member, { user: change.technician, name: this.tech_name(change.technician) })
+					: member
+			);
+		} else if (change.technician !== undefined) {
+			card.technician = change.technician || null;
+			card.crew = (card.crew || []).filter((member) => member.user !== change.technician);
+		}
+		if (change.crew !== undefined) {
+			card.crew = change.crew.map((row) => ({ user: row.user, name: this.tech_name(row.user), hours: row.hours }));
+		}
+		if (change.planned_hours !== undefined) card.planned_hours = change.planned_hours || null;
+		if (change.full_day !== undefined) card.full_day = change.full_day ? 1 : 0;
 		card.saving = true;
 		this.render();
 		return this.save_move(card, change, before).finally(() => this.load());
+	}
+
+	// A technician chip dropped on a visit that has a technician already: add_crew. The conflict
+	// check, the reason dialog and Undo are the same as for a move.
+	add_to_crew(card, user) {
+		const before = this.snapshot_of(card);
+		const site = this.site_of(card);
+		card.crew = (card.crew || []).concat([{ user, name: this.tech_name(user), hours: null }]);
+		card.saving = true;
+		this.render();
+		return this.send(
+			"add_crew",
+			{ record: card.name, user, modified: this.modified[card.name] || card.modified },
+			{
+				snapshot: Object.assign({ kind: "visit", site, record: card.name }, before),
+				message: __("{0} added to {1}", [this.tech_name(user), site]),
+				noun: "visit",
+			}
+		).finally(() => this.load());
 	}
 
 	// Resolves either way: a refusal has already shown the server's own message.
@@ -1393,8 +1564,19 @@ class MaintenancePlanner {
 					to_date: change.date,
 					serial_no: card.serial_no || null,
 			  };
+		// The crew goes as a JSON list of {user, hours} rows; Full day as 1 or 0.
+		if (visit && args.crew !== undefined) args.crew = JSON.stringify(args.crew);
+		if (visit && args.full_day !== undefined) args.full_day = args.full_day ? 1 : 0;
 		const snapshot = visit
-			? { kind: "visit", site, record: card.name, date: before.date, technician: before.technician }
+			? {
+					kind: "visit",
+					site,
+					record: card.name,
+					date: before.date, technician: before.technician,
+					crew: before.crew,
+					planned_hours: before.planned_hours,
+					full_day: before.full_day,
+			  }
 			: {
 					kind: "projected",
 					site,
@@ -1404,7 +1586,14 @@ class MaintenancePlanner {
 					to_date: before.date,
 			  };
 		let message;
-		if (change.date && change.technician !== undefined) {
+		if (visit && change.from_user) {
+			message = __("{0}: {1} handed over to {2}", [
+				site,
+				this.tech_name(change.from_user),
+				this.tech_name(change.technician),
+			]);
+			if (change.date) message += `, ${__("moved to {0}", [mp_when(change.date)])}`;
+		} else if (change.date && change.technician !== undefined) {
 			message = __("{0} moved to {1}, assigned to {2}", [
 				site,
 				mp_when(change.date),
@@ -1579,6 +1768,17 @@ class MaintenancePlanner {
 		};
 		const date_back = !!(snap.date && snap.date >= today);
 		if (date_back) args.date = snap.date;
+		// Crew, length and Full day go back too, but only what differs now (everything, when the visit is
+		// not on screen to compare with).
+		if (snap.crew && (!card || this.crew_key(this.crew_rows(card)) !== this.crew_key(snap.crew))) {
+			args.crew = JSON.stringify(snap.crew);
+		}
+		if (snap.planned_hours !== undefined && (!card || (Number(card.planned_hours) || 0) !== snap.planned_hours)) {
+			args.planned_hours = snap.planned_hours;
+		}
+		if (snap.full_day !== undefined && (!card || (card.full_day ? 1 : 0) !== snap.full_day)) {
+			args.full_day = snap.full_day;
+		}
 		if (card) {
 			card.saving = true;
 			this.render();
@@ -1626,6 +1826,21 @@ class MaintenancePlanner {
 		add(__("Visit"), card.label ? __(card.label) : card.kind === "visit" ? __("Regular visit") : "");
 		add(__("Water feature"), card.feature);
 		add(__("Technician"), card.technician ? this.tech_name(card.technician) : __("Unassigned"));
+		const helpers = (card.crew || []).filter((member) => member && member.user && member.user !== card.technician);
+		add(
+			__("Crew"),
+			helpers
+				.map((member) => {
+					const hours = Number(member.hours) > 0 ? ` (${__("{0}h", [mp_hours(member.hours)])})` : "";
+					return `${this.tech_name(member.user)}${hours}`;
+				})
+				.join(", ")
+		);
+		if (card.full_day) add(__("Length"), __("Full day for each person"));
+		else if (Number(card.planned_hours) > 0) add(__("Length"), __("{0}h for each person", [mp_hours(card.planned_hours)]));
+		else if (this.visit_people(card).length > 1 && Number(card.hours) > 0) {
+			add(__("Length"), __("{0}h for each person", [mp_hours(card.hours)]));
+		}
 		add(
 			__("Status"),
 			card.kind === "projected"
@@ -1687,6 +1902,27 @@ class MaintenancePlanner {
 					),
 					default: card.technician || "",
 				});
+				// Who else goes: filled in below as a checkbox and optional hours for each person.
+				fields.push(
+					{ fieldtype: "Section Break", label: __("Crew") },
+					{ fieldtype: "HTML", fieldname: "crew_editor", options: '<div class="mp-cm-list"></div>' },
+					{ fieldtype: "Section Break" },
+					{
+						fieldtype: "Float",
+						fieldname: "planned_hours",
+						label: __("Planned hours"),
+						default: Number(card.planned_hours) || 0,
+						description: __("Hours each person is booked. Blank or 0: the site's default length."),
+					},
+					{ fieldtype: "Column Break" },
+					{
+						fieldtype: "Check",
+						fieldname: "full_day",
+						label: __("Full day"),
+						default: card.full_day ? 1 : 0,
+						description: __("The visit takes each person's whole day."),
+					}
+				);
 			}
 		}
 
@@ -1697,6 +1933,16 @@ class MaintenancePlanner {
 				if (values.date && values.date !== card.date) change.date = values.date;
 				if (card.kind === "visit" && (values.technician || "") !== (card.technician || "")) {
 					change.technician = values.technician || "";
+				}
+				if (card.kind === "visit") {
+					// Only what changed goes to the server.
+					const lead = values.technician || "";
+					const crew = this.read_crew_editor(dialog, lead);
+					if (this.crew_key(crew) !== this.crew_key(this.crew_rows(card))) change.crew = crew;
+					const planned = Math.max(0, Number(values.planned_hours) || 0);
+					if (planned !== (Number(card.planned_hours) || 0)) change.planned_hours = planned;
+					const full_day = values.full_day ? 1 : 0;
+					if (full_day !== (card.full_day ? 1 : 0)) change.full_day = full_day;
 				}
 				if (!Object.keys(change).length) {
 					dialog.hide();
@@ -1715,6 +1961,8 @@ class MaintenancePlanner {
 				this.apply(card, change);
 			});
 		}
+		dialog.show();
+		if (card.movable && card.kind === "visit") this.build_crew_editor(dialog, card);
 		dialog.$wrapper.find("[data-action]").on("click", (e) => {
 			const action = e.currentTarget.getAttribute("data-action");
 			dialog.hide();
@@ -1722,6 +1970,67 @@ class MaintenancePlanner {
 			else if (action === "wizard") frappe.set_route("visit-wizard", { record: card.name });
 			else if (action === "contract") frappe.set_route("Form", "Sapphire Maintenance Contract", card.contract);
 		});
-		dialog.show();
+	}
+
+	// The people who can go on a visit: every active technician and Field helper, plus anyone already
+	// on it. A checkbox for each, and an hours box that is blank when they just share the visit's length.
+	build_crew_editor(dialog, card) {
+		const $list = dialog.$wrapper.find(".mp-cm-list");
+		const on = {};
+		(card.crew || []).forEach((member) => {
+			if (member && member.user) on[member.user] = member;
+		});
+		const people = [];
+		const seen = {};
+		const add = (user, name) => {
+			if (!user || seen[user]) return;
+			seen[user] = true;
+			people.push({ user, name: name || this.tech_name(user) });
+		};
+		((this.data && this.data.technicians) || []).forEach((person) => {
+			if (person.enabled || on[person.user]) add(person.user, person.name);
+		});
+		Object.keys(on).forEach((user) => add(user, on[user].name));
+		if (!people.length) {
+			$("<div class='mp-empty-note'></div>").text(__("No technicians to add.")).appendTo($list);
+			return;
+		}
+		people.forEach((person) => {
+			const $row = $("<div class='mp-cm-row'></div>").attr("data-user", person.user).appendTo($list);
+			const $label = $("<label></label>").appendTo($row);
+			$("<input type='checkbox' class='mp-cm-on'>").prop("checked", !!on[person.user]).appendTo($label);
+			$("<span></span>").text(person.name).appendTo($label);
+			const hours = on[person.user] && Number(on[person.user].hours) > 0 ? Number(on[person.user].hours) : "";
+			$("<input type='number' min='0' step='0.25' class='form-control input-sm mp-cm-hours'>")
+				.attr("placeholder", __("hours"))
+				.attr("aria-label", __("{0}: hours", [person.name]))
+				.val(hours)
+				.appendTo($row);
+		});
+		// The technician is not also a crew member: grey that row out as the technician changes.
+		const sync = () => {
+			const lead = dialog.get_value("technician") || "";
+			$list.find(".mp-cm-row").each((i, el) => {
+				const is_lead = el.getAttribute("data-user") === lead;
+				$(el).toggleClass("mp-cm-lead", is_lead);
+				$(el).find("input").prop("disabled", is_lead);
+			});
+		};
+		const technician = dialog.fields_dict.technician;
+		if (technician && technician.$input) technician.$input.on("change", sync);
+		sync();
+	}
+
+	// The crew as ticked in the dialog, without the technician: [{user, hours}].
+	read_crew_editor(dialog, lead) {
+		const rows = [];
+		dialog.$wrapper.find(".mp-cm-list .mp-cm-row").each((i, el) => {
+			const user = el.getAttribute("data-user");
+			if (!user || user === lead) return;
+			if (!$(el).find(".mp-cm-on").prop("checked")) return;
+			const hours = Number($(el).find(".mp-cm-hours").val());
+			rows.push({ user, hours: hours > 0 ? hours : null });
+		});
+		return rows;
 	}
 }

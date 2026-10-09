@@ -779,6 +779,21 @@ jobs:
       # Bench-free, own frappe stub, own step.
       - name: Maintenance planner (projections, moves, self-approval)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_planner -v
+      # Multi-person maintenance visits (v1.579.0). A visit books its technician AND every crew
+      # member, at the crew row's hours, the visit's planned hours or each person's whole day. A
+      # wrong rule here shows a helper free on a day they are on site. Also pins the billed 6 AM
+      # SMS at most once per person per day (a persisted date per crew row, because the deploy's
+      # Redis flush would re-text everyone), the crew -> ToDo mirror removing only people taken off
+      # the crew, and a crew member's claim moving the displaced technician INTO the crew rather
+      # than off the visit. Bench-free, own frappe stub, own step.
+      - name: Maintenance visit crews (hours per person, digest once, assignments, claim)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_visit_crews -v
+      # The Maintenance Planner page's crew handling: a technician chip dropped on a visit ADDS a
+      # helper (add_crew) instead of replacing the technician, a helper's chip moves only that
+      # helper, and Undo restores crew, hours and full day. Reads the page as text and drives its
+      # pure methods under node when node is on PATH.
+      - name: Maintenance planner crews (page)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_planner_crews_page -v
       # The Project Planner books people by the hour, and its free-hours figure is the only
       # thing standing between a PM and sending one technician to two sites at once. Wrong
       # arithmetic here does not error: it reports Austin free on a Thursday he never works,

@@ -16,6 +16,10 @@ record covers every covered feature — ``serial_no`` stays empty and each child
 row is tagged with its feature's ``serial_no`` instead.
 
 Lifecycle / wiring:
+  * ``crew`` / ``planned_hours`` / ``full_day`` (P1.8): everyone booked on the visit besides
+    ``technician``, who stays the person filling it in. ``validate`` tidies the crew
+    (``sapphire_maintenance.visit_crew.validate_crew``) and an ``on_update`` doc-event mirrors
+    it into assignments (``visit_crew.on_record_update``).
   * ``validate`` computes per-reading ``out_of_range`` flags and the parent
     ``has_out_of_range_readings`` (drives the "Maintenance Reading Out of
     Range" Notification fixture on submit).
@@ -55,6 +59,11 @@ class SapphireMaintenanceRecord(Document):
 	website = frappe._dict(condition_field="docstatus")
 
 	def validate(self):
+		# The crew (P1.8): no row for the technician, no person twice, no negative hours. See
+		# sapphire_maintenance/visit_crew.py; the on_update doc_event mirrors it into ToDos.
+		from erpnext_enhancements.sapphire_maintenance.visit_crew import validate_crew
+
+		validate_crew(self)
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
 		self.completion_percent = compute_completion_percent(self)
 		self._autofill_clock_in()

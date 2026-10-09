@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.579.0] - 2026-10-09
+
+### Added
+
+- **Maintenance visits with a crew and a length** (P1.8). Nik, on TASK-2026-02465: "Some
+  maintenance jobs take multiple people, and some even take the entire day of multiple people."
+  Until now a visit had one technician and the planners booked every visit at 2 hours.
+  - **A crew beside the technician.** A visit has a Crew table (person, own hours), Planned hours
+    and Full day. `technician` keeps its meaning: the person filling in the visit, which drives
+    clock autofill, the timesheet, the consumable warehouse and kiosk attribution.
+  - **Site defaults, editable per visit** (Nik's call). The Maintenance Profile has Default crew,
+    Visit hours and Full day. The nightly scheduler and the Sales Order drafting path copy them
+    onto every new draft, projected visits on the planners carry them, and a planner can change
+    any one visit.
+  - **Exceptions that start with one person, on purpose.** Visits started on site (*Log a visit*,
+    *Do visit today*) and chemistry follow-ups start with just the person who opened them. Copying
+    the site's crew there would book and notify people who may not be present.
+  - **Helpers are told like the lead** (Nik's call). Each crew member gets an assignment and the
+    visit in their 6 AM digest ("with Austin Healey"). The SMS is billed, so the once-a-day stamp
+    is a persisted date per person (`digest_sent_on` on the crew row) rather than Redis, which every
+    deploy flushes and would re-text everyone after each merge. Crew edits are mirrored into
+    assignments, adding only people new to the crew and removing only people taken off it.
+  - **Any crew member can fill in the visit** (Nik's call). Their kiosk *Today's Visits* and the
+    visit lookups include crew visits. A crew member who is clocked into the project, opening a
+    visit whose technician is not, takes the form, and the displaced technician moves into the
+    crew rather than off the visit.
+  - **Both planners count every person**, using the first of these that applies: the crew row's
+    hours; else the person's whole day on a full-day visit; else Planned hours; else 2h. A clocked
+    visit books its clocked length for the technician. The time-off and training warnings now cover
+    the crew too.
+  - **The Maintenance Planner shows and edits crews.** Cards carry crew initials, and the dialog
+    edits crew, hours and full day. A technician chip dropped on a visit that has a technician
+    **adds them to the crew** (`add_crew`) instead of replacing the technician. In the crew view a
+    multi-person visit sits in every member's row, and dragging one person's chip moves only that
+    person. Every affected person is checked for new conflicts, through the same reason prompt.
+
+### Notes
+
+- **New bench-free suites, each in its own CI step:**
+  - `test_maintenance_visit_crews`: hours per person, digest once per person per day, the
+    assignment mirror, the claim.
+  - `test_maintenance_planner_crews_page`: the page's crew handling.
+- **`test_maintenance_planner` assertions widened.** They now allow `add_crew` among the page's API
+  calls; the page calls it by name, so the test still guards the exact set.
+
 ## [1.578.1] - 2026-10-09
 
 ### Fixed

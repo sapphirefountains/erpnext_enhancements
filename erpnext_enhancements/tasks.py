@@ -328,7 +328,6 @@ def generate_predictive_maintenance_records():
 			}):
 				# Create the Maintenance Record (dispatched: scheduled date + site technician)
 				from erpnext_enhancements.api.maintenance_dispatch import (
-					assign_to_technician,
 					default_technician_for,
 					resolve_scheduled_date,
 				)
@@ -339,9 +338,9 @@ def generate_predictive_maintenance_records():
 				maintenance_record.serial_no = item.custom_serial_no
 				maintenance_record.scheduled_visit_date = resolve_scheduled_date(item.custom_next_predictive_visit, None)
 				maintenance_record.technician = default_technician_for(so_project)
+				_apply_default_crew(maintenance_record, so_project)
 				maintenance_record.insert(ignore_permissions=True)
-				if maintenance_record.technician:
-					assign_to_technician(maintenance_record.name, maintenance_record.technician)
+				_assign_visit_people(maintenance_record)
 
 				frappe.logger().info(f"Generated predictive Maintenance Record for serial_no {item.custom_serial_no} in project {so_project}")
 
@@ -479,17 +478,54 @@ def suggest_truck_restocks():
 		)
 
 
+def _apply_default_crew(record, project):
+	"""Copy the site's default crew, visit length and full-day flag onto a new visit (P1.8).
+
+	From the project's Maintenance Profile (``maintenance_dispatch.default_crew_for``): each
+	enabled ``default_crew`` user with their own hours, ``visit_hours`` -> ``planned_hours`` and
+	``visit_full_day`` -> ``full_day``. Blank stays blank, which means "the default". Best effort:
+	the lookup never raises, and a visit with no crew is exactly what was drafted before.
+	"""
+	from erpnext_enhancements.api.maintenance_dispatch import default_crew_for
+
+	crew = default_crew_for(project) if project else None
+	if not crew:
+		return
+	for row in crew.get("rows") or [{"user": user} for user in crew.get("crew") or []]:
+		if row.get("user") and row.get("user") != record.get("technician"):
+			record.append("crew", {"user": row["user"], "hours": row.get("hours") or 0})
+	if crew.get("hours"):
+		record.planned_hours = crew["hours"]
+	if crew.get("full_day"):
+		record.full_day = 1
+
+
+def _assign_visit_people(record):
+	"""Assign a drafted visit to its technician and to each crew member (silently).
+
+	``assign_to_technician`` is best effort and skips anyone who already holds an open ToDo on
+	the visit: the crew mirror (``sapphire_maintenance.visit_crew.on_record_update``) has
+	usually assigned the crew during the insert already.
+	"""
+	from erpnext_enhancements.api.maintenance_dispatch import assign_to_technician
+
+	people = [record.get("technician")] + [row.get("user") for row in record.get("crew") or []]
+	for user in dict.fromkeys(u for u in people if u):
+		assign_to_technician(record.name, user)
+
+
 def _draft_maintenance_record(contract, serial_no=None, visit_label=None, scheduled_date=None, exact_date=False):
-	"""Insert a draft visit record for a contract, dispatched (date + technician).
+	"""Insert a draft visit record for a contract, dispatched (date + technician + crew).
 
 	Stamps the Scheduled Visit Date (feature due date shifted to a preferred
-	day) and the site's Default Technician, then creates a Frappe assignment.
+	day), the site's Default Technician and its default crew, length and
+	full-day flag (P1.8, :func:`_apply_default_crew`), then creates a Frappe
+	assignment for each of those people.
 	``exact_date`` keeps ``scheduled_date`` as given: the Maintenance Planner
 	passes the day somebody dropped the visit on, and shifting it to the
 	agreement's preferred weekday would quietly overrule them.
 	"""
 	from erpnext_enhancements.api.maintenance_dispatch import (
-		assign_to_technician,
 		default_technician_for,
 		resolve_scheduled_date,
 	)
@@ -505,9 +541,9 @@ def _draft_maintenance_record(contract, serial_no=None, visit_label=None, schedu
 	else:
 		record.scheduled_visit_date = resolve_scheduled_date(scheduled_date, contract.get("project_contract"))
 	record.technician = default_technician_for(contract.project)
+	_apply_default_crew(record, contract.project)
 	record.insert(ignore_permissions=True)
-	if record.technician:
-		assign_to_technician(record.name, record.technician)
+	_assign_visit_people(record)
 	frappe.logger().info(
 		f"Generated predictive Maintenance Record for contract {contract.name}"
 		f" ({serial_no or visit_label or 'site visit'})"
