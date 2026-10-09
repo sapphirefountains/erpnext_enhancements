@@ -7,7 +7,9 @@ Project Planner Phase 4 (P4.3). One row per person per week (weeks begin on the 
 weekday, System Settings ``first_day_of_the_week``, Sunday on production) or per month:
 
 * **Capacity**: the hours the shared availability engine gives them (work pattern, less holidays
-  and time off), the same figure both planners use.
+  and time off), the same figure both planners use, less their personal blocks (Phase 6D: an
+  all-day block is 0 already; a timed one comes off capacity and booked alike, being absence, not
+  work).
 * **Booked**: firm hours, split by what booked them: project tasks, maintenance visits, rental
   crew work, travel and driving (the drive padding the planner adds). Pencilled work is not
   booked; it is not a commitment.
@@ -137,8 +139,15 @@ def aggregate(resources, days, actual, other, periods):
 			}
 			for day in engine.daterange(period["start"], period["end"]):
 				cell = per_day.get(str(day)) or {}
-				row["capacity"] += engine._float(cell.get("capacity"))
-				row["booked"] += engine._float(cell.get("booked"))
+				# Phase 6D: a timed personal block is time the person is not there, not work, so it
+				# comes off capacity and booked alike (an all-day block is 0 capacity already).
+				blocked = sum(
+					engine._float(b.get("hours"))
+					for b in cell.get("bookings") or []
+					if b.get("kind") == engine.BLOCK_KIND and not b.get("tentative")
+				)
+				row["capacity"] += engine._float(cell.get("capacity")) - blocked
+				row["booked"] += engine._float(cell.get("booked")) - blocked
 				for booking in cell.get("bookings") or []:
 					column = KIND_COLUMNS.get(booking.get("kind"))
 					if column and not booking.get("tentative"):

@@ -150,6 +150,10 @@ EXPLICIT_READONLY = {
     # Project Planner Phase 5 -- who has free hours, day by day, from the same engine (driving
     # priced without Google). Reads only; it books nothing.
     "crew_who_is_free",
+    # Project Planner Phase 6D -- the Conflict center's list (double bookings, over hours, day off,
+    # personal blocks, equipment, qualifications). Reads only; it keeps, moves and books nothing,
+    # and never returns a block's note.
+    "crew_conflicts",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even

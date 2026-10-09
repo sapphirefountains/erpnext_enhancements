@@ -876,6 +876,16 @@ jobs:
       # replaces it. Own frappe stub, own step.
       - name: Planner quick looks + planner kit (person, day, project, site; Back closes drawers)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase6a -v
+      # Project Planner Phase 6D, personal blocks, day notes and the Conflict center (both planners).
+      # A block's note is someone's private appointment, so this pins that the engine never reads it
+      # and no booking, conflict sentence, payload or AI answer carries it except to the person and
+      # the schedulers; that only the person or a scheduler can write a block; that an all-day block
+      # is a day off and a timed one clashes with an overlapping slot, a pencil never; that the
+      # Conflict center makes ONE Google-free engine pass, offers fixes only on the calling planner's
+      # own records, needs a reason to keep a conflict and brings it back when anything changes; and
+      # that the combined digest still goes once a day. Bench-free, own frappe stub, own step.
+      - name: Project planner blocks, day notes and Conflict center (Phase 6D)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase6d -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

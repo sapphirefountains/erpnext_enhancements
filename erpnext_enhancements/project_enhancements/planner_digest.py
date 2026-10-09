@@ -26,7 +26,9 @@ Things this module is careful about, some of which look like bugs:
   cache marker would have re-texted everyone after every merge. A send that fails after the claim
   is not retried: a missed digest is better than two.
 * **Nothing booked, nothing sent**, and no claim either, so switching the digest on mid-morning
-  and running it by hand still reaches the people who have work.
+  and running it by hand still reaches the people who have work. Since Phase 6D a **day note** for
+  the person's audience ("Shop meeting 7 am") counts as something to say, and leads the message;
+  their own personal blocks are listed with their own note, but never send a message by themselves.
 * **One person failing never stops the next**; each is logged on its own.
 * **Texts follow the technician digest's rules** (``planner_notices.cell_number``: the Employee's
   ``cell_number`` by ``user_id``, through ``send_system_sms``), and email goes only through the
@@ -91,7 +93,29 @@ def _people():
 
 def digest_lines(entry):
 	"""``[{"time", "what", "where", "with", "hours"}]`` for one day entry (``api.project_planner.
-	day_entry``), in route order; a travel day is one line."""
+	day_entry``), in route order; a travel day is one line.
+
+	Phase 6D: the day's notes for the person's audience come first (``day_notes``), then their own
+	personal blocks with their own note (``blocks``), each entry carrying its ``text``
+	(``api/planner_blocks.digest_extras``). A day note is worth a message on its own ("Shop meeting
+	7 am" reaches someone with nothing booked); a person's own block is not, so blocks are listed
+	only when there is something else to say.
+	"""
+	notes = [
+		{"time": "", "what": e.get("text") or e.get("note") or "", "where": "", "with": "", "hours": None}
+		for e in entry.get("day_notes") or []
+	]
+	work = _work_lines(entry)
+	blocks = [
+		{"time": "", "what": e.get("text") or "", "where": "", "with": "", "hours": None}
+		for e in entry.get("blocks") or []
+		if e.get("text")
+	]
+	return notes + (blocks if (notes or work) else []) + work
+
+
+def _work_lines(entry):
+	"""The bookings of one day entry as digest lines (the digest before Phase 6D)."""
 	out = []
 	if entry.get("travel"):
 		out.append({"time": "", "what": entry["travel"], "where": "", "with": "", "hours": None})
@@ -174,7 +198,20 @@ def _entries(day, resources):
 
 	data, days = _people_days(day, day, resources)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
-	return {name: (labels.get(name), (entries or [None])[0]) for name, entries in days.items()}
+	out = {name: (labels.get(name), (entries or [None])[0]) for name, entries in days.items()}
+	return _with_notes_and_blocks(out, day)
+
+
+def _with_notes_and_blocks(entries, day):
+	"""Phase 6D: each person's day notes (for their audience) and own blocks onto their entry.
+	``api/planner_blocks.digest_extras`` never raises, so neither does this."""
+	from erpnext_enhancements.api import planner_blocks
+
+	extras = planner_blocks.digest_extras(day, list(entries))
+	for name, (_label, entry) in entries.items():
+		if entry is not None:
+			entry.update(extras.get(name) or {})
+	return entries
 
 
 def _claim(user, day, bookings):

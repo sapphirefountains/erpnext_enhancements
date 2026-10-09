@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.584.0] - 2026-10-09
+
+### Added
+
+- **Personal blocks, day notes and the Conflict center: the server side** (Planner Phase 6D,
+  TASK-2026-02470; Nik's UX round, 2026-10-09). This works in both planners through the shared
+  availability engine. Their screens come with the next planner releases. Until then, schedulers
+  can add day notes from the Desk.
+  - **Personal blocks** (`Planner Block`: "unavailable 2–4 pm", "shop day").
+    - **An all-day block** makes the day unavailable, like a day off.
+    - **A timed block** books its hours, and firm work overlapping it is a conflict labeled
+      "Unavailable 2–4 pm".
+    - **Who can add them:** planners can block anyone, and each person can block their own time
+      (Nik). Everyone else sees "Unavailable"; schedulers and the person themselves see the note.
+    - **How the note stays private:** it never goes into a booking or a conflict sentence. It
+      reaches a screen only through `crew_availability.block_notes`, so an endpoint that forgets
+      it shows nothing.
+    - Blocks reach everything that reads availability: free hours, who is free, date suggestions,
+      the heatmap, Crew Utilization, My week, the Maintenance Planner, and the AI tools.
+    - Endpoints: `api/planner_blocks.get_blocks` / `save_block` / `delete_block`. Saving a block
+      never refuses on a conflict; it returns the overlaps so the screen can say so.
+  - **Day notes** (`Planner Day Note`: "Shop meeting 7 am") apply to everyone or to one group.
+    They go in both planners' payloads, in My week, and in every 6 AM digest a person gets
+    (combined, maintenance and rental). A day note alone sends the combined digest, so a crew
+    with nothing booked still hears about the 7 am meeting.
+  - **Conflict center** (`api/planner_conflicts.get_conflicts`): one list of everything wrong in a
+    range, in one engine pass that never calls Google.
+    - **What it lists:** over-booked days, overlapping slots, work on a day off, blocked time,
+      truck and equipment clashes, and missing qualifications.
+    - **Ownership:** each planner owns only its own records. Rental and travel items are listed
+      but never fixable.
+    - **Fixes** go through the existing write paths, so the reason prompt, drafts, alerts and undo
+      all still apply:
+      - move to the person's next free day (`get_next_free_day`, one-day tasks);
+      - pick someone who's free (you choose; nothing is auto-filled);
+      - make it pencil (project tasks only);
+      - keep it with a reason (`acknowledge_conflict`). This stores a `Planner Conflict Ack` and
+        comments on each record. The conflict comes back as soon as any record involved changes.
+  - **New read-only AI tool `crew_conflicts`** ("what's double-booked next week?"). It never
+    shows block notes, even to schedulers. Triton needs another tool-snapshot refresh to see it.
+
+## [1.583.1] - 2026-10-09
+
+### Changed
+
+- **The Project Planner is in the Projects module** (Nik: "I'd also like the Project Planner to
+  exist in the Projects module"). Before this it was linked only from the Project Enhancements
+  workspace.
+  - The core Projects sidebar now lists **Project Planner** right after Task, and its **Crew
+    Utilization** report after the module's other reports.
+  - frappe 16.50 builds that sidebar from ERPNext's own `Sidebar` rows in `idx` order. So the new
+    `workspace_tweaks.add_core_sidebar_items` (`after_migrate`) inserts the two rows at the right
+    `idx` and shifts the rest. A `Custom Sidebar` layer was not usable here: one that names no app
+    row is appended at the very end (under Setup → Settings), and one that names any app row
+    reorders the whole module.
+  - The rows are written with `db_insert`, not a document save. `Sidebar.validate_app_content`
+    refuses a save outside a migrate, and in developer mode a save would export the JSON into
+    ERPNext's own folder.
+  - If the link is already there, even hidden or renamed, it is left alone. An ERPNext release
+    that re-imports the sidebar loses the rows, and the same migrate adds them back.
+  - People who can't open the page or report never see the links.
+
 ## [1.583.0] - 2026-10-09
 
 ### Added
