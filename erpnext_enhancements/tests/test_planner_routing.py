@@ -1002,6 +1002,74 @@ class TestPlanRoutes(unittest.TestCase):
 		self.assertEqual((route["drive_minutes"], route["source"], len(route["unlocated"])), (0.0, None, 1))
 
 
+class TestGoogleOff(unittest.TestCase):
+	"""``google=False`` (the capacity heatmap, Phase 3A): no Google request of any kind.
+
+	Every HTTP entry point is a recorder that would answer happily, because ``_google_post``
+	swallows exceptions: an ``_unexpected`` that raises would be caught and the test would pass
+	whether or not Google was asked.
+	"""
+
+	ON = {"use_google_routes": 1.0}
+
+	def setUp(self):
+		_reset()
+		requests.post = _post(200, _all_ok)
+
+		def get(url, params=None, timeout=None):
+			requests.calls.append({"url": url, "params": params})
+			return _Response(
+				200, {"status": "OK", "results": [{"geometry": {"location": {"lat": 40.9, "lng": -111.9}}}]}
+			)
+
+		requests.get = get
+
+	def test_drive_matrix_uses_the_cache_and_the_estimate_only(self):
+		stale = {
+			"pair_key": routing.pair_key(SHOP, HIGHLANDS),
+			"minutes": 33.0,
+			"km": 41.0,
+			"fetched_on": NOW - datetime.timedelta(days=120),
+		}
+		frappe.tables["Planner Drive Time"] = [stale]
+		got = routing.drive_matrix([(SHOP, OGDEN), (SHOP, HIGHLANDS)], self.ON, google=False)
+		self.assertEqual(requests.calls, [])
+		self.assertEqual(got[(SHOP, OGDEN)], routing.estimate_leg(SHOP, OGDEN))
+		self.assertEqual(got[(SHOP, HIGHLANDS)], {"minutes": 33.0, "km": 41.0, "source": "google"})
+		self.assertEqual((frappe.inserted, frappe.set_values), ([], []))
+		# The same call with Google allowed does ask: the recorder is live.
+		routing.drive_matrix([(SHOP, OGDEN)], self.ON)
+		self.assertEqual(len(requests.calls), 1)
+
+	def test_start_point_never_geocodes(self):
+		self.assertIsNone(routing.start_point(google=False))  # nothing cached
+		frappe.cached["Project Planner Settings"] = _Doc(
+			start_latitude=SHOP[0], start_longitude=SHOP[1], start_geocoded_from="an older shop address"
+		)
+		self.assertEqual(routing.start_point(google=False), SHOP)  # stale, but no request
+		self.assertEqual((requests.calls, frappe.singles_written), ([], []))
+
+	def test_plan_routes_end_to_end(self):
+		points = {"T-1": HIGHLANDS, "T-2": OGDEN}
+		frappe.cached["Project Planner Settings"] = _Doc(use_google_routes=1)
+		with (
+			mock.patch.object(
+				routing, "locate", lambda bookings, detail=False: {b["ref"]: points.get(b["ref"]) for b in bookings}
+			),
+			mock.patch.object(routing, "enqueue_missing", lambda refs: None),
+		):
+			routes = routing.plan_routes(
+				{("RES-1", "MON"): [{"kind": "task", "ref": "T-1", "hours": 2}, {"kind": "task", "ref": "T-2", "hours": 2}]},
+				self.ON,
+				google=False,
+			)
+		self.assertEqual(requests.calls, [])
+		route = routes[("RES-1", "MON")]
+		self.assertIsNone(route["shop"])  # the shop was never geocoded
+		self.assertEqual(route["source"], "estimate")
+		self.assertGreater(route["drive_minutes"], 0)
+
+
 class TestKeyHandling(unittest.TestCase):
 	SOURCE = Path(__file__).resolve().parents[1] / "project_enhancements/routing.py"
 

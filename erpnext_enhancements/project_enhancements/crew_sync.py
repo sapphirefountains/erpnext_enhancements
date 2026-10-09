@@ -20,6 +20,12 @@ The mirror is deliberately one-sided and conservative:
   planner but cannot hold a ToDo.
 * Finished tasks are skipped: re-saving a Completed task must not hand its crew new open ToDos,
   and cancelling one should not churn assignments the close-out already settled.
+* **A tentative ("pencil") task assigns nobody** (P3.3, `custom_tentative`): pencilled work is
+  not yet anyone's to do, and an assignment notifies the person. When it is firmed up (tentative
+  before this save, not now) everyone on the crew is "added", so the whole crew gets its
+  assignments at that moment (an existing open ToDo is still left alone). Removal is unchanged:
+  someone taken off a pencilled crew loses the assignment they had, and turning a firm task into
+  a pencil removes nothing.
 
 `frappe.desk.form.assign_to.add` in v16 has no `notify` switch, so a new assignee gets Frappe's
 standard assignment notification, exactly as if someone had used the sidebar. It also reports a
@@ -45,6 +51,14 @@ FINISHED_STATUSES = ("Completed", "Canceled", "Cancelled", "Invoiced", "Template
 
 def _crew_rows(doc):
 	return getattr(doc, "custom_crew", None) or []
+
+
+def _tentative(doc):
+	# custom_tentative is a Check; getattr because doc_events fire before the field exists.
+	try:
+		return bool(flt(getattr(doc, "custom_tentative", None) or 0))
+	except Exception:
+		return False
 
 
 def _crew_users(rows):
@@ -107,7 +121,12 @@ def on_task_update(doc, method=None):
 		before_doc = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
 		before = _crew_users(_crew_rows(before_doc)) if before_doc else set()
 
-		added = sorted(now - before)
+		if _tentative(doc):
+			added = []
+		elif before_doc is not None and _tentative(before_doc):
+			added = sorted(now)  # firmed up: the whole crew is assigned now
+		else:
+			added = sorted(now - before)
 		removed = sorted(before - now)
 		if not added and not removed:
 			return

@@ -291,6 +291,26 @@ class TestCrewSync(unittest.TestCase):
 		crew_sync.on_task_update(_task(["a@x"]))
 		self.assertEqual(frappe.logged, ["Task crew sync failed"])
 
+	def test_a_pencilled_task_assigns_nobody_but_still_removes(self):
+		# P3.3: tentative work is nobody's to do yet, and an assignment notifies the person.
+		crew_sync.on_task_update(_task(["a@x", "b@x"], custom_tentative=1))
+		self.assertEqual(assign_calls, [])
+		frappe.open_todos = ["a@x"]
+		crew_sync.on_task_update(_task(["b@x"], before=["a@x"], custom_tentative=1))
+		self.assertEqual(assign_calls, [("remove", "TASK-1", "a@x")])
+
+	def test_firming_up_assigns_the_whole_crew(self):
+		frappe.open_todos = ["a@x"]  # an assignment that already exists is left alone
+		doc = _task(["a@x", "b@x", "c@x"], before=["a@x", "b@x"], custom_tentative=0)
+		doc._before.custom_tentative = 1
+		crew_sync.on_task_update(doc)
+		self.assertEqual(assign_calls, [("add", "TASK-1", "b@x"), ("add", "TASK-1", "c@x")])
+
+	def test_turning_a_firm_task_into_a_pencil_removes_nothing(self):
+		frappe.open_todos = ["a@x", "b@x"]
+		crew_sync.on_task_update(_task(["a@x", "b@x"], before=["a@x", "b@x"], custom_tentative="1"))
+		self.assertEqual(assign_calls, [])
+
 	def test_one_failed_removal_does_not_stop_the_next(self):
 		frappe.open_todos = ["a@x", "b@x"]
 		remover = sys.modules["frappe.desk.form.assign_to"].remove
@@ -690,6 +710,24 @@ class TestTaskCustomFields(unittest.TestCase):
 	def test_names_are_unique(self):
 		names = [r["name"] for r in self.rows]
 		self.assertEqual(len(names), len(set(names)))
+
+	def test_the_tentative_check(self):
+		# P3.3: the pencil flag the planner, the engine and crew_sync all read.
+		row = self.by_name["Task-custom_tentative"]
+		self.assertEqual(
+			{k: row[k] for k in ("dt", "fieldname", "fieldtype", "label", "insert_after", "module", "default")},
+			{
+				"dt": "Task",
+				"fieldname": "custom_tentative",
+				"fieldtype": "Check",
+				"label": "Tentative (pencil)",
+				"insert_after": "custom_crew_size",
+				"module": "ERPNext Enhancements",
+				"default": "0",
+			},
+		)
+		self.assertEqual(set(row), set(self.template))
+		self.assertEqual(row["no_copy"], 0)
 
 
 class TestRegistration(unittest.TestCase):
