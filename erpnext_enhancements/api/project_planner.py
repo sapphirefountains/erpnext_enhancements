@@ -3171,10 +3171,12 @@ def _task_notes(refs):
 	return out
 
 
-def _people_days(start, end, resources=None):
+def _people_days(start, end, resources=None, google=True):
 	"""``(data, {resource: [day_entry, ...]})`` for ``start``..``end``: one engine call for everyone,
-	one bulk locate for every stop, the same route order and arrival times the route view shows."""
-	data = engine._compute(start, end, resources)
+	one bulk locate for every stop, the same route order and arrival times the route view shows.
+	``google=False`` (Phase 6A's quick looks, ``api/planner_views.py``) prices the drives from the
+	cache and the straight-line estimate only, never a Routes call."""
+	data = engine._compute(start, end, resources, google=google)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	stops = [
 		booking

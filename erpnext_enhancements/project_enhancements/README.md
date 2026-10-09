@@ -29,7 +29,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
-| `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. See [Project Planner](#project-planner-v15770) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py) |
+| `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. See [Project Planner](#project-planner-v15770) and [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py) and [`api/planner_views.py`](../api/planner_views.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`; pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py` and `api/maintenance_planner.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
@@ -53,6 +53,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `report/pending_items_by_project/` | **Pending Items by Project** Query Report — unreceived Purchase Order lines for one job. The whole report is the SQL in its `.json`; the `.js` holds the filter, the colouring and the reasoning | — | Standard report (synced on migrate) |
 
 Related code outside this folder:
+- `api/planner_views.py` — the Phase 6A quick looks both planners open in a drawer: a person's week, everyone's day, a project, a maintenance site. Read-only and Google-free. See [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467).
+- `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
@@ -778,6 +780,117 @@ shop" is one setting), through each located task, rental crew task and maintenan
 - `set_task_flags` writes the two checkboxes without moving `modified`, so ticking *Outdoor work*
   never makes an open card or a draft look "changed by someone else". It adds a timeline note but
   no Version row, and is never drafted: the flags are not bookings.
+
+### Quick looks and polish (Phase 6A — TASK-2026-02467)
+
+Nik, 2026-10-09: "make it as user friendly as possible … one feature I want is to be able to click
+the Technicians name or something and see what their specific schedule is in a pop up or something
+so as not to lose context overall." Everything here applies to **both** planners and opens in the
+planner kit's side drawer (below), which leaves the calendar visible and usable behind it: it still
+scrolls, and cards still move by drag.
+
+- **Person peek.** Click a name anywhere it appears (Resources available, a crew-view row, a crew
+  badge on a card, the route view's title; on the Maintenance Planner also a visit's initials and an
+  "off" badge) and the drawer shows that person's week, starting on the site's first weekday: each
+  booking (task, visit, rental crew task, travel, driving) with its slot, hours and site; free hours;
+  days off as **"Off" / "Holiday" only** (`planner_views.off_label` maps anything else to "Off", so a
+  time-off reason can never pass through); conflicts; the chosen day's stops in driving order with a
+  **Full route** button to `/app/project-planner/route/<resource>/<date>`; group and home team; and
+  call / text / email buttons only where a number or address exists. Its own ‹ › step its own week
+  and never move the calendar. `get_person_schedule` takes a Planner Resource or a User (the
+  Maintenance Planner names people by User) and resolves one to the other through
+  `Planner Resource.user`.
+- **Day peek.** Click a date (the week and month day numbers, Resources available's day heads, the
+  crew view's column heads) to see everyone's day side by side: stops in order with times, drive
+  minutes, booked and free hours, off. `get_day_overview` makes **one** engine call for everybody.
+  This replaces the day number's old "show this week"; the drawer has an *Open this week* button.
+- **Project peek** (Project Planner). Click a project's name on a card, *At a glance* beside the
+  project filter, or *Project at a glance* in a task's panel: project, account, PM, status and type;
+  every open dated task on a timeline over the project's span (or the next eight weeks when the
+  span is longer), the undated ones under it; crew initials, planned against worked hours (Phase 4's
+  `get_actuals`), running over and pencil; the labor forecast (Phase 4's `get_labor_forecast`: hours
+  for everyone, **money only for `planner_tracking.COST_ROLES`**). Customer jobs only: anything
+  `crew_availability.planner_projects` refuses answers "not on the planner". At most 300 tasks.
+- **Site peek** (Maintenance Planner). *Site at a glance* in a visit's panel: the site's coming,
+  projected (90 days) and recent visits, its default technician and crew, and a link to its
+  Maintenance Profile (`get_site_overview`, the Maintenance Planner's own roles). Its access codes
+  and safety notes are never in the answer.
+- **Edit in a side panel.** A card's editor (the Project Planner's task dialog, the Maintenance
+  Planner's visit dialog) opens in the drawer instead of a modal. `planner_kit.panel` hosts the
+  **same** `frappe.ui.FieldGroup` the dialog built and offers the Dialog methods the pages call, so
+  the field list, `save_dialog`, the reason prompt, the crew editors, equipment, the outdoor and
+  customer flags, Phase 4's rows and Phase 5's links all run unchanged (`p6a_dialog` falls back to
+  `frappe.ui.Dialog` until the kit has loaded). After every load the open panel is reopened from its
+  new card when the task changed (a drag of the same task), so its `modified` lock and its fields
+  are never stale; a task or visit no longer on screen (another week) keeps its panel as it was.
+- **Drag out of a drawer.** Tasks in a person, day or project drawer (Project Planner) and visits in
+  a person, day or site drawer (Maintenance Planner) can be dragged onto a day or a person's row.
+  The page binds its own `on_down` to the drawer, and `drag_source` hands a `.pk-drawer` element to
+  `p6a_drag_source`, so `plan_drop`, `drop`, the reason prompt and Undo are the page's own. Only what
+  the page owns and may move is offered: a task's full planner card comes with the person and day
+  answers (`cards`) and as the project answer's tasks, so a task not on the board moves exactly like
+  one that is; a visit must be on the calendar.
+- **Undo toast.** Every change that goes onto the Undo stack (`push_undo`) shows
+  `planner_kit.toast("<what changed>", {action_label: "Undo"})` in place of the green alert, and its
+  Undo undoes only the change it announced (the toolbar Undo is still there). A projected visit the
+  move drafted gets the toast without Undo, as Undo itself cannot reverse it.
+- **Hover glow.** Hovering a person's name lights up every booking of theirs on screen (`pk-glow`); on
+  the Project Planner hovering a project's name lights up its cards. The class is generic on purpose:
+  6C's click-to-highlight uses it too.
+- **Sticky headers.** On a screen wider than 760px the crew view, the week grid and the Resources
+  available panel scroll inside themselves (a capped height), so their day header row and the people
+  column stay in place; `position: sticky` needs the scroll container to be the element that scrolls,
+  and `.pp-scroll` (`overflow-x: auto`) already was one in both directions. A drag near their top or
+  bottom edge scrolls them (`p6a_edge_scroll`). Phones keep the page's own scroll.
+- **Legend and help.** A "?" toolbar button opens `planner_kit.legend(...)`, which explains every card,
+  chip, badge, bar, outline and icon the page draws, using the page's own classes, so the legend shows
+  exactly what the calendar shows. Two first-time tips at a time (`planner_kit.hint`).
+
+The page work is in `PP6A_METHODS` / `MP6A_METHODS`, each hooked into the class by one line per
+method (`init_phase6a`, `render_phase6a`, `p6a_route` in `go`, `p6a_drag_source`, `p6a_edge_scroll`,
+`p6a_undo_toast` in `push_undo`, `p6a_close_toast` in `undo`, and `p6a_dialog` / `p6a_links` /
+`p6a_action` in `open_card`); `send` reads `push_undo`'s answer so the alert is not shown twice.
+`tests/test_planner_phase6a.py` pins the endpoints (gates, `google=False`, the 31-day cap, user to
+resource, no time-off reason, no money without a cost role, internal projects refused) and, under
+node, drives the kit's history handling against a fake browser history.
+
+### Planner kit
+
+`public/js/planner_kit/` with the entry `public/js/planner_kit.bundle.js`: the small UI layer both
+planner pages share, and that Phases 6B–6D build on. A content-hashed esbuild bundle (raw `/assets`
+paths are cached for a year), loaded only by the two planner pages with
+`frappe.require("planner_kit.bundle.js", callback)`, and deliberately **not** in `app_include_js`.
+It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
+
+| Part | Use | Notes |
+|---|---|---|
+| `escape(value)` | The one HTML-escaping helper of the kit's renderers (`& < > " ' \``) | Pages keep their own `pp_esc` / `mp_esc`; `safe_color`, `glow_key(s)` and `format.{hours, drive, day_label, add_days}` beside it |
+| `drawer.open({title, subtitle, body, tools, actions, width, key, owner, push, reopen, on_click, on_close})` | The right-side drawer. `body` is an HTML string (already escaped), an Element or jQuery; `actions` are footer buttons `{label, primary, on_click(handle)}`; `push` is an element squeezed by the drawer's width on a wide screen so the calendar is not hidden under it; `on_click(e, handle)` is one delegated listener for whatever the body shows (Enter/Space on a `role="button"` counts); `reopen` is how Forward opens it again | Returns a handle (`set_title`, `set_subtitle`, `set_body`, `set_tools`, `set_actions`, `close`, `is_open`, `body`). A second `open` replaces the first in place. Esc and Back close it. Full width under 768px. No backdrop: the page stays usable. `owner` says which page opened it (the planners share one drawer element) |
+| `drawer.route(fn, keep)` / `drawer.navigate(fn)` | A route change of the page's own while a drawer may be open: `route(() => frappe.set_route(...), true)` keeps the drawer open over the new route; `navigate(fn)` closes it first (an "Open project" button) | Either way the kit's history entry is replaced by the route, so Back never lands on a drawer that has gone |
+| `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide` | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog |
+| `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered | `toast.close()` |
+| `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
+| `legend(sections, {title, owner})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}` | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
+| `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
+| `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
+| `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change. `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code |
+
+**How Back closes a drawer without reloading the planner** (`history.js`). While any overlay is
+open there is one kit history entry on top, `history.pushState({planner_kit: <id>}, "")` with no
+URL, pushed from the click that opened it. frappe v16's router (read from
+`git show origin/version-16:frappe/public/js/frappe/router.js`) has one `popstate` listener, added at
+Desk boot, that calls `frappe.router.route()`: a re-render that would re-run the planner's
+`handle_route` (a reload) and scroll to the top. A browser runs the listeners on `window` in the order
+they were added, capture or not (checked in Chromium 152: capture-first holds on an element, not on
+`window`), so no listener of the kit's could run first. Instead the kit wraps `frappe.router.route`
+once: called during a popstate (`window.event`), it asks the kit first, and for the kit's own
+popstates (a Back off its entry on the same route, its own cleanup Back, a Forward onto a drawer that
+closed) the router does not route; every other call passes straight through. An overlay closed any
+other way steps back off its entry on a timer of 0 with `route_flags.replace_route` set meanwhile, so
+`dialog.hide(); frappe.set_route(...)` replaces the entry instead of stacking on it. Where
+`window.event` is not set or there is no router to wrap, no entry is pushed (Esc and × still work).
+A route change nobody announced (a sidebar link) closes every overlay; an entry it buried is then the
+router's, which costs at most one Back that re-renders the same planner.
 
 ## `hooks.py` touchpoints
 
