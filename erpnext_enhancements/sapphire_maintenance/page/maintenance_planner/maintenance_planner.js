@@ -3011,13 +3011,16 @@ const MP6B_METHODS = {
 		if (!this.p6b_kit() || !this.data) return false;
 		const target = this.p6b_target(el);
 		if (!target) return false;
+		// The page's own items, then every provider's (6C, 6D-UI): a target with none of ours can still
+		// carry theirs, and a provider that throws is skipped.
 		const items = this.p6b_menu_items(target);
-		if (!items.length) return false;
+		const all = MP6B_PURE.with_providers(items, this.p6_menu_providers, target);
+		if (!all.length) return false;
 		if (from_touch) {
 			this.click_blocked_until = Date.now() + 600;
 			this.p6b_swallow_click();
 		}
-		this.p6b_open_menu(target, items, anchor);
+		this.p6b_open_menu(target, all, anchor);
 		return true;
 	},
 
@@ -3052,9 +3055,9 @@ const MP6B_METHODS = {
 		return [];
 	},
 
-	p6b_open_menu(target, items, anchor) {
+	// `all`: the page's items with the providers' already appended (p6b_open_for).
+	p6b_open_menu(target, all, anchor) {
 		const kit = this.p6b_kit();
-		const all = MP6B_PURE.with_providers(items, this.p6_menu_providers, target);
 		const handle = kit.menu({ anchor, items: all, title: this.p6b_menu_title(target), owner: MP6A.owner });
 		all.forEach((item) => {
 			if (!item || !item.p6b_lookup) return;
@@ -3082,8 +3085,8 @@ const MP6B_METHODS = {
 		button.disabled = !!disabled;
 	},
 
-	// A visit's items. A project task, rental crew task or travel day shown here is read-only and
-	// gets the browser's own menu.
+	// A visit's items. A project task, rental crew task or travel day shown here is read-only: none of
+	// ours (another phase's provider may still add some; with none at all the browser's menu shows).
 	p6b_card_items(target) {
 		const card = target.card;
 		if (card.kind === "booking") return [];

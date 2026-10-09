@@ -5508,14 +5508,17 @@ const PP6B_METHODS = {
 		if (!this.p6b_kit() || !this.data || !PP.views.includes(this.view)) return false;
 		const target = this.p6b_target(el);
 		if (!target) return false;
+		// The page's own items, then every provider's (6C, 6D-UI): a target with none of ours can still
+		// carry theirs, and a provider that throws is skipped.
 		const items = this.p6b_menu_items(target);
-		if (!items.length) return false;
+		const all = PP6B_PURE.with_providers(items, this.p6_menu_providers, target);
+		if (!all.length) return false;
 		if (from_touch) {
 			// The finger lifting is a click on whatever the menu now covers.
 			this.click_blocked_until = Date.now() + 600;
 			this.p6b_swallow_click();
 		}
-		this.p6b_open_menu(target, items, anchor);
+		this.p6b_open_menu(target, all, anchor);
 		return true;
 	},
 
@@ -5550,9 +5553,9 @@ const PP6B_METHODS = {
 		return [];
 	},
 
-	p6b_open_menu(target, items, anchor) {
+	// `all`: the page's items with the providers' already appended (p6b_open_for).
+	p6b_open_menu(target, all, anchor) {
 		const kit = this.p6b_kit();
-		const all = PP6B_PURE.with_providers(items, this.p6_menu_providers, target);
 		const handle = kit.menu({ anchor, items: all, title: this.p6b_menu_title(target), owner: PP6A.owner });
 		// The next free day is asked for as the menu opens; its hint fills in when the answer arrives.
 		all.forEach((item) => {

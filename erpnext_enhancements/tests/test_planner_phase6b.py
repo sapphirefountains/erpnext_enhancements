@@ -1405,11 +1405,13 @@ def _strip(code):
 
 
 def _block(code):
+	# Phase 6B's own block: to the next phase banner, so blocks appended after it are not read.
 	start = code.index(PHASE_MARKER)
-	following = code.find(
-		"\n" + PHASE_MARKER[: PHASE_MARKER.rindex("=") + 1] + " Phase", start + len(PHASE_MARKER)
+	end = code.find(
+		"\n// ======================================================================",
+		start + len(PHASE_MARKER),
 	)
-	return code[start:] if following < 0 else code[start:following]
+	return code[start:] if end < 0 else code[start:end]
 
 
 def _method(code, name):
@@ -1516,7 +1518,14 @@ class TestPages(unittest.TestCase):
 	def test_the_menu_is_the_kits_and_takes_the_providers(self):
 		for block, pure in ((self.pp_block, "PP6B_PURE"), (self.mp_block, "MP6B_PURE")):
 			self.assertIn("this.p6_menu_providers = this.p6_menu_providers || [];", block)
-			self.assertIn(f"const all = {pure}.with_providers(items, this.p6_menu_providers, target);", block)
+			opening = _method(block, "p6b_open_for")
+			self.assertIn(
+				f"const all = {pure}.with_providers(items, this.p6_menu_providers, target);", opening
+			)
+			# A target with none of the page's own items still gets the other phases' (6C, 6D-UI).
+			self.assertIn("if (!all.length) return false;", opening)
+			self.assertNotIn("if (!items.length)", opening)
+			self.assertIn("this.p6b_open_menu(target, all, anchor);", opening)
 			self.assertIn("kit.menu({ anchor, items: all, title: this.p6b_menu_title(target), owner:", block)
 			self.assertIn('root.addEventListener("contextmenu", (e) => this.p6b_contextmenu(e));', block)
 			# The long press: half a second, only when the finger did not move, and the click it ends
