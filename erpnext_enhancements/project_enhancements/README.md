@@ -57,6 +57,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 
 Related code outside this folder:
 - `api/planner_views.py` — the Phase 6A quick looks both planners open in a drawer: a person's week, everyone's day, a project, a maintenance site. Read-only and Google-free. See [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467).
+- `api/planner_actions.py` — the Phase 6B writes (duplicate, split, quick add, move several, the Undo of a new task) and the search box of both planners. See [Faster scheduling](#faster-scheduling-phase-6b--task-2026-02468).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
 - `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
@@ -973,6 +974,106 @@ Nik's decisions of 2026-10-09.
 - **AI tool** `crew_conflicts` (read-only): the list for a range, without fixes and **without any
   block's note**, even for a caller allowed to read it. Triton needs a tool snapshot refresh.
 
+### Faster scheduling (Phase 6B — TASK-2026-02468)
+
+Nik picked four things on 2026-10-09: a right-click menu, drag-to-resize with double-click quick add,
+moving several tasks at once, and search with keyboard shortcuts. The Maintenance Planner gets what
+applies to visits (see its README). Two rules run through all of it: **nobody is picked for anyone**
+("suggest a crew" was declined: Assign to… lists who is free and the planner clicks one), and **every
+write goes through the page's own `send()`**, so the reason prompt, draft mode and Undo apply as they
+do to a drag.
+
+- **Right-click menu.** On a card, an empty spot of a person's day (or a day) and a person's name, with
+  `planner_kit.menu`; on a touch screen a press of about half a second that does not move (the card
+  lifts at 0.3 s as before, and is only dropped back where it was). On a task card: *Edit* (the 6A side
+  panel), *Assign to…*, *Move to next free day*, *Pencil* or *Firm up*, *Duplicate*, *Duplicate to…*,
+  *Split across days…* (one-day task: *Split in two…*), *Project at a glance*, *Open project*. On an empty
+  spot: *Add task here…* and *Everyone's day*. On a name: *See their week*.
+  - *Assign to…* opens a drawer listing who has the hours free on that day (`who_is_free`, the hours
+    being the task's estimate shared by the crew over its working days, a full day with no estimate)
+    and who does not, with the reason. Click one to add them (`add_crew`), or pick "Replace <person>"
+    first (`swap_crew`). Someone who is not free can still be booked; the reason prompt asks.
+  - *Move to next free day* asks Phase 6D's `planner_conflicts.get_next_free_day` for the crew-view row
+    the card sits in, else the lead, else the only person, as the menu opens; the hint fills in with
+    the day ("Thu, Oct 15"), and the item is disabled with the reason when there is no crew, several
+    people and no lead, or nothing free within 30 days. It saves `save_task(start=)`, so a multi-day
+    task keeps its length and a conflict still asks.
+  - *Duplicate* (same days) and *Duplicate to…* call `duplicate_task`, which copies with Copy week's own
+    `_copy_values`: crew, hours, crew size, qualifications, pencil flag, location, equipment, the two
+    Phase 5 flags. *Split* calls `split_task`: the task keeps the days before the chosen day and a new
+    task gets the rest, `depends_on` the first, hours (and each crew member's own hours) shared by
+    working days, a note on both timelines, all or nothing in a savepoint. A one-day task splits into
+    two halves; the second goes on the person's next free day unless the planner picks another. The
+    split refuses a rental crew task and a task with time on a timesheet or clocked at the kiosk.
+  - Other phases add items without touching this code: each page has `this.p6_menu_providers`, an array
+    of `function (target) { return [menu items] }`; `target` is `{kind: "card", card, ymd, resource, el}`,
+    `{kind: "cell", resource, user, ymd, el}` or `{kind: "person", resource, user, el}`. Each provider's
+    items come after the page's own, a divider before each group; a provider that throws is skipped.
+- **Resize.** Week view: a grip on the left edge of a multi-day task's first day and on the right edge
+  of its last day. Crew view: on every card's first and last day, one-day cards included. Dragging one
+  moves that day by whole days (never past the other edge: one day at least), with the new span lit up
+  in the card's row and a label by the pointer; on release `save_task(start, end)` through `commit`, so
+  overbooking asks and Undo restores the old span. Pointer events only; `drag_source` ignores a grip, so
+  a resize never starts a move. No grips on a rental crew task, a time-slot task (its slot decides its
+  day), in the month view or, on a phone, in the stacked week view.
+- **Quick add.** Double-click an empty spot (or *Add task here…*): a side panel with the project (the
+  planner's own list of Active customer jobs), subject, hours, person (the row's, in the crew view),
+  date and pencil. `quick_add_task` creates it as the user (`check_permission("create")`), books only the
+  person named, spreads more hours than a day holds over the next weekdays, and answers `needs_reason`
+  when it overbooks them. The new card flashes; Undo deletes it again.
+- **Several at once.** Shift-, Ctrl- or ⌘-click cards to select them (`this.p6_selection`, a Set of task
+  names; `$(document).trigger("p6-selection-changed", [page])` on every change, which 6C's print reads).
+  Selected cards get a purple outline and a bar offers *Move…*, *Pencil* (or *Firm up*) and *Clear*; Esc
+  or a click on empty space clears it. Drag any selected card and they all move by **the same number of
+  calendar days**, each keeping its length: the card in hand lands exactly where it is dropped, as a
+  single drag does, and a weekend is not skipped (working days would land the others somewhere the
+  drag does not show). A drop on another person's row is refused while several are selected (hand one
+  over with the selection cleared). `move_many` checks the lot together (`preview_batch`, as
+  `shift_successors` and `copy_week` do), asks for one reason, saves all or nothing, furthest first when
+  moving later so ERPNext's own `reschedule_dependent_tasks` finds nothing to push, and is one Undo.
+- **Undo of a new task.** A duplicate, a quick add or a split's second half is undone with
+  `remove_created_task`: it deletes the task (`frappe.delete_doc`, never `force`, delete permission, so it
+  lands in Deleted Documents) only when its creator undoes it, it is unchanged, and nothing was attached
+  since: no timesheet, no clocked time, no sub-task, no task depending on it, no comment by anyone else,
+  no file, no draft change. Otherwise it refuses with the reason. A split's Undo also puts the first half
+  back (its old end, hours and crew) through `save_task`'s own path.
+- **Draft mode.** A new task cannot be a draft: a `Planner Draft Change` is a pending change *of an
+  existing task*. So Duplicate, Split and quick add say so and do nothing while Draft mode is on (the
+  page refuses before it asks, and the server refuses too); `move_many` drafts each move properly.
+- **Search.** A box in the toolbar (`/` jumps to it): tasks (subject, name), projects (name, title) and
+  people on screen first, then `search_planner` for tasks outside the range (customer jobs and open work
+  only, nearest the week on screen first, at most 20). Arrow keys and Enter pick. A task goes to its
+  week through `go`, a real route, and its card flashes; a project opens the 6A project drawer, a person
+  their week.
+- **Shortcuts**, only while focus is not in a box and no dialog is open: `T` today, `←` `→` the previous
+  and next period, `1` `2` `3` week, month and crew, `Ctrl`/`⌘`+`Z` Undo, `?` the legend, `/` search, `Esc`
+  close a menu or drawer (the kit's) or clear the selection. One `keydown` listener on the document in
+  the capture phase, added when the page shows and removed when it hides. `frappe.ui.keys` did not fit:
+  frappe binds `Shift+/` globally to its own shortcut list, and both would open. `Ctrl+S`, `Ctrl+K`,
+  `Ctrl+G` and `Shift+T` (frappe's console) are left alone. The legend has a *Keyboard* section.
+- **Registries for the other phases** (all created by whichever init runs first): `p6_menu_providers`
+  (above), `p6_legend_providers` (functions returning legend sections, appended after 6B's own),
+  `p6_send_modules` (`{method: python module}`: `send()` calls `<module>.<method>` instead of
+  `project_planner.<method>`, which is how the `planner_actions` writes reach the reason prompt, drafts
+  and Undo) and `p6_selection`.
+
+The page work is in `PP6B_METHODS` / `MP6B_METHODS`, hooked in by one line each: `init_phase6b`
+(constructor), `render_phase6b` (render), `p6b_lift` (lift), `p6b_drop` (drop), `p6b_undo` (undo),
+`p6b_legend_sections` (`p6a_legend`, whose section list was not extensible) and, on the Project Planner,
+the grip check in `drag_source` and the module lookup in `send`. The pure helpers (the day-offset math,
+the shortcut table, the selection set, the menu's provider groups, local search) are `PP6B_PURE` /
+`MP6B_PURE`; `tests/test_planner_phase6b.py` runs both through the same cases under node, checks the
+split preview against the server's weights, and pins the endpoints (gates, `needs_reason`, all or
+nothing, the split's refusals, pro-rata hours and `depends_on`, the Undo's checks, customer jobs only in
+search).
+
+Things that look like bugs and are not:
+
+- The split's second task has the same subject as the first; the timeline notes and `depends_on` say
+  which is which.
+- A one-day task with no estimate books a full day; split in two, each half gets half of Settings'
+  full-day hours per person, written as an estimate, so the two halves do not book two full days.
+- Tasks that depended on the original still depend on the first half after a split.
 ### Big picture, tablet mode and print (Phase 6C — TASK-2026-02469)
 
 Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_METHODS` /

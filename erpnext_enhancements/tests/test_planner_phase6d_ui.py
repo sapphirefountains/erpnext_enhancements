@@ -74,6 +74,8 @@ BLOCKS_CONTRACT = {
 CONFLICTS_CONTRACT = {
 	"get_conflicts": {"start", "end", "planner"},
 	"acknowledge_conflict": {"key", "reason", "items", "planner", "fingerprint"},
+	# Phase 6B's "Move to next free day" menu item (both pages).
+	"get_next_free_day": {"resource", "hours", "after", "task"},
 }
 # The Project Planner endpoint the kit's picker calls (the fix names it; the kit checks it is this one).
 KIT_PP_CONTRACT = {"who_is_free": {"start", "end", "hours"}}
