@@ -33,6 +33,10 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`; pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py` and `api/maintenance_planner.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
+| `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
+| `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine; at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
+| `doctype/planner_draft_change/` | One pending change per planner per task while in draft mode; Publish applies them, Discard drops them | `PlannerDraftChange` | `api/project_planner` |
+| `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
 | `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
 | `doctype/planner_resource_work_pattern/` | Child table: hours for each weekday, optionally between two dates (a seasonal schedule) | `PlannerResourceWorkPattern` | child-table controller |
@@ -649,6 +653,31 @@ shop" is one setting), through each located task, rental crew task and maintenan
 - **Copy week**: copies chosen tasks into another week as new Tasks, with crew, hours,
   qualifications, pencil flag, location and a "Copied from" note. It shows a dry-run preview
   first, and a conflict needs a reason.
+
+### Telling people (v1.581.0, Phase 3B — TASK-2026-02441)
+
+- **Draft and publish.** With *Draft mode* on, a drag or a dialog save writes a `Planner Draft
+  Change` row for the planner instead of the Task. The planner overlays the caller's drafts
+  (`get_planner(draft=1)`), and conflicts come back as information. **Publish** applies them all
+  through the normal save path, one savepoint each. A draft whose task changed meanwhile is
+  skipped and reported. A conflict across the batch needs one reason, all-or-nothing. Each
+  affected person then gets **one** notice. Assignments happen at publish, not while drafting.
+- **One combined morning message** (`planner_digest`): each person's whole day from the engine
+  (tasks, visits, rental crew tasks, travel), with crewmates, addresses and a route link. **Off
+  until Settings → *One combined morning digest* is ticked.** When on, the maintenance and rental
+  digests skip the people it covers, so nobody gets three texts. It is sent at most once per
+  person per day by inserting a `Planner Digest Log` row (unique `user|date`) **before** sending,
+  committed; Redis would not survive a deploy's flush. *Send me a preview* on the Settings form
+  emails the caller their own digest and texts nobody.
+- **Change alerts** (`planner_notices`): a saved or published change to someone's bookings inside
+  the next 48 hours queues one alert per person ("Your Thursday changed: …"): a bell notification
+  plus a text, or email when there is no cell number. **Off until Settings → *Change alerts* is
+  ticked.** Best effort: an alert queued as a deploy flushes Redis is lost.
+- **Weekly crew sheet**: `crew_sheet_html(start)` renders the week on the print design system's
+  chrome, landscape, and the page prints it from a browser window (server PDF is broken on
+  production).
+- **My week** (`/app/project-planner/my-week/<date>`): the signed-in person's week on a phone,
+  with time, site, address (opens Google Maps), crewmates and a route link per day.
 
 ## `hooks.py` touchpoints
 
