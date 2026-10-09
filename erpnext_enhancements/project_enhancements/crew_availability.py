@@ -66,6 +66,14 @@ Things this module is careful about, some of which look like bugs:
   not people: a vehicle or asset is used or not used on a day, by the same span rules. Two firm
   tasks on one vehicle, a vehicle In Shop or Retired, or an asset already out on a submitted
   Asset Booking are conflicts under the ``"Equipment"`` key (:func:`equipment_conflicts`).
+* **Personal blocks** (Phase 6D, ``Planner Block``: "unavailable 2–4 pm", "shop day") are
+  bookings of kind ``"block"``. An all-day block makes the day like a day off: capacity 0, ``off``
+  "Unavailable", and any firm booking on it is "Booked on a day off (Unavailable)". A timed block
+  books its hours (clipped to what the day has, and never twice where two blocks overlap) and a
+  firm slot that overlaps it is "Unavailable 2–4 pm (TASK-1)". A block alone is never a conflict,
+  is not a stop and has no location. **The note is never read here** except by
+  :func:`block_notes`, which answers only for a viewer who may read it, so a booking dict or a
+  conflict sentence can never carry it.
 
 The pure functions take plain dicts and dates, so ``tests/test_project_planner.py`` runs them
 without a bench.
@@ -153,6 +161,24 @@ EQUIPMENT_KEY = "Equipment"
 EQUIPMENT_TYPES = ("Vehicle", "Asset")
 #: A Fleet Vehicle in one of these cannot go out, so booking it is a conflict.
 UNAVAILABLE_VEHICLE_STATUSES = ("In Shop", "Retired")
+
+#: Phase 6D (TASK-2026-02470): personal blocks. A ``Planner Block`` is one person's one day, all
+#: day or from a time to a time, with a private note.
+BLOCK_DOCTYPE = "Planner Block"
+BLOCK_KIND = "block"
+#: What everybody sees for a block, and the ``off`` label of an all-day one.
+UNAVAILABLE = "Unavailable"
+#: The start of a timed block's overlap sentence ("Unavailable 2–4 pm (TASK-1)").
+BLOCK_OVERLAP_PREFIX = UNAVAILABLE + " "
+#: The columns the engine reads. ``note`` is deliberately absent: see :func:`block_notes`.
+BLOCK_FIELDS = ("name", "resource", "user", "date", "all_day", "from_time", "to_time", "modified")
+#: Nik's "planners" (2026-10-09): they may block anyone's time and read every block's note.
+#: Everyone else with planner access (Maintenance User: the technicians) blocks only their own
+#: time and sees other people's blocks as "Unavailable". Defined once, here; ``api/planner_blocks``
+#: and ``api/planner_conflicts`` import it.
+SCHEDULER_ROLES = frozenset({"System Manager", "Projects Manager", "Projects User", "Maintenance Supervisor"})
+#: How far ahead :func:`next_free_day` looks.
+NEXT_FREE_HORIZON_DAYS = 30
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -420,24 +446,81 @@ def day_conflicts(capacity, off, bookings):
 	Tentative (pencil) bookings are left out entirely: a pencil never conflicts, it only warns
 	(:func:`pencil_warning`). Doing it here rather than in each caller means the Maintenance
 	Planner's own conflict check, which calls this with a whole day's bookings, agrees.
+
+	Personal blocks (Phase 6D, kind ``"block"``): an all-day block's day reads ``off``
+	"Unavailable", so a booking on it is "Booked on a day off (Unavailable)"; a timed block's hours
+	count towards "Over by", and a firm slot overlapping it is "Unavailable 2–4 pm (TASK-1)". A
+	block alone, or two blocks overlapping, is never a conflict. The sentences are
+	:func:`day_conflict_details`' messages.
 	"""
-	bookings = [b for b in bookings or [] if not b.get("tentative")]
+	return [entry["message"] for entry in day_conflict_details(capacity, off, bookings)]
+
+
+def day_conflict_details(capacity, off, bookings):
+	""":func:`day_conflicts` with what each sentence is about, for the Conflict center (Phase 6D).
+
+	``[{"type", "message", "bookings", "block"}]``: ``type`` is ``"day_off"``, ``"blocked"`` (an
+	all-day block's day, or a slot overlapping a timed block), ``"overbooked"`` or ``"overlap"``;
+	``bookings`` are the firm, non-block bookings it involves (the booking dicts themselves); ``block``
+	is the block booking it involves, or None. ``message`` is exactly the sentence
+	:func:`day_conflicts` returns, in the same order.
+	"""
+	firm = [b for b in bookings or [] if not b.get("tentative")]
+	work = [b for b in firm if b.get("kind") != BLOCK_KIND]
+	blocks = [b for b in firm if b.get("kind") == BLOCK_KIND]
 	capacity = _float(capacity)
 	out = []
-	if capacity <= 0 and any(_float(b.get("hours")) > 0 for b in bookings):
-		out.append(f"Booked on a day off ({off})" if off else "Booked on a day off")
+	if capacity <= 0 and any(_float(b.get("hours")) > 0 for b in work):
+		out.append(
+			{
+				"type": "blocked" if off == UNAVAILABLE else "day_off",
+				"message": f"Booked on a day off ({off})" if off else "Booked on a day off",
+				"bookings": [b for b in work if _float(b.get("hours")) > 0],
+				"block": next((b for b in blocks if b.get("all_day")), None) if off == UNAVAILABLE else None,
+			}
+		)
 	else:
-		booked = sum(_float(b.get("hours")) for b in bookings)
-		if booked - capacity > TOLERANCE:
-			out.append(f"Over by {fmt_hours(booked - capacity)}h")
-	slotted = sorted((b for b in bookings if b.get("slot")), key=lambda b: tuple(b["slot"]))
+		booked = sum(_float(b.get("hours")) for b in firm)
+		# A block alone never overbooks anyone (its hours are clipped to the day): it takes real
+		# work for the day to be over. Without blocks ``work`` is every booking, as before.
+		if booked - capacity > TOLERANCE and any(_float(b.get("hours")) > 0 for b in work):
+			out.append(
+				{
+					"type": "overbooked",
+					"message": f"Over by {fmt_hours(booked - capacity)}h",
+					"bookings": [b for b in work if _float(b.get("hours")) > 0],
+					"block": next((b for b in blocks if _float(b.get("hours")) > 0), None),
+				}
+			)
+	slotted = sorted((b for b in firm if b.get("slot")), key=lambda b: tuple(b["slot"]))
 	for i, first in enumerate(slotted):
 		for second in slotted[i + 1 :]:
 			if second["slot"][0] >= first["slot"][1]:
 				break
+			first_block, second_block = first.get("kind") == BLOCK_KIND, second.get("kind") == BLOCK_KIND
+			if first_block and second_block:
+				continue
+			if first_block or second_block:
+				block, other = (first, second) if first_block else (second, first)
+				out.append(
+					{
+						"type": "blocked",
+						"message": f"{BLOCK_OVERLAP_PREFIX}{block_window(block['slot'])} ({other.get('ref')})",
+						"bookings": [other],
+						"block": block,
+					}
+				)
+				continue
 			start = max(first["slot"][0], second["slot"][0])
 			end = min(first["slot"][1], second["slot"][1])
-			out.append(f"Double-booked {start}–{end} ({first.get('ref')}, {second.get('ref')})")
+			out.append(
+				{
+					"type": "overlap",
+					"message": f"Double-booked {start}–{end} ({first.get('ref')}, {second.get('ref')})",
+					"bookings": [first, second],
+					"block": None,
+				}
+			)
 	return out
 
 
@@ -456,6 +539,177 @@ def pencil_warning(capacity, bookings):
 	if over <= TOLERANCE:
 		return None
 	return f"Pencilled work would put them over by {fmt_hours(over)}h"
+
+
+# ---------------------------------------------------------------------- Phase 6D: personal blocks
+
+
+def time_minutes(value):
+	"""Minutes after midnight of a Time value, or None.
+
+	A Time column comes back from MariaDB as a ``timedelta``, from a form as ``"14:00:00"`` and from
+	the page as ``"14:00"``; all of them, and a ``datetime.time``, are read here.
+	"""
+	if value is None or value == "":
+		return None
+	if isinstance(value, datetime.timedelta):
+		minutes = int(value.total_seconds() // 60)
+	elif isinstance(value, datetime.datetime | datetime.time):
+		minutes = value.hour * 60 + value.minute
+	else:
+		parts = str(value).strip().split(":")
+		try:
+			minutes = int(parts[0]) * 60 + (int(parts[1][:2]) if len(parts) > 1 and parts[1] else 0)
+		except ValueError:
+			return None
+	return minutes if 0 <= minutes <= 24 * 60 else None
+
+
+def _hhmm(minutes):
+	return f"{int(minutes) // 60:02d}:{int(minutes) % 60:02d}"
+
+
+def _clock12(text):
+	"""``"14:30"`` → ``("2:30", "pm")``; ``"09:00"`` → ``("9", "am")``."""
+	minutes = time_minutes(text) or 0
+	hour, minute = divmod(minutes, 60)
+	suffix = "am" if hour < 12 or hour == 24 else "pm"
+	shown = hour % 12 or 12
+	return (str(shown) if not minute else f"{shown}:{minute:02d}"), suffix
+
+
+def block_window(slot):
+	"""A block's time window as people say it: ``["14:00", "16:00"]`` → ``"2–4 pm"``,
+	``["11:00", "13:30"]`` → ``"11 am–1:30 pm"``; None for an all-day block."""
+	if not slot:
+		return None
+	(first, first_suffix), (last, last_suffix) = _clock12(slot[0]), _clock12(slot[1])
+	if first_suffix == last_suffix:
+		return f"{first}–{last} {last_suffix}"
+	return f"{first} {first_suffix}–{last} {last_suffix}"
+
+
+def is_all_day_block(row):
+	"""True for an all-day block. ``all_day`` is a Check defaulting to 1, so blank reads as all day."""
+	value = (row or {}).get("all_day")
+	return True if value is None or value == "" else bool(_float(value))
+
+
+def block_slot(row):
+	"""``(from_minutes, to_minutes)`` of a timed block, or None (all day, or no usable window)."""
+	if is_all_day_block(row):
+		return None
+	first, last = time_minutes(row.get("from_time")), time_minutes(row.get("to_time"))
+	if first is None or last is None or last <= first:
+		return None
+	return first, last
+
+
+def block_booking(row, minutes, hours):
+	"""The booking a block puts on its person's day. Name, label and window only: never the note."""
+	slot = [_hhmm(minutes[0]), _hhmm(minutes[1])] if minutes else None
+	return {
+		"kind": BLOCK_KIND,
+		"ref": row.get("name"),
+		"block": row.get("name"),
+		"label": UNAVAILABLE,
+		"project": None,
+		"hours": round(_float(hours), 2),
+		"slot": slot,
+		"estimated": False,
+		"all_day": minutes is None,
+		"window": block_window(slot),
+	}
+
+
+def block_bookings(rows, capacity):
+	"""The bookings for one person-day's blocks.
+
+	An all-day block takes the day (the caller has already made its capacity 0), so it books 0
+	hours and any timed block that day is left out: the whole day is unavailable already. Timed
+	blocks book their length, never counting twice where two overlap, and never more than
+	``capacity`` all together, so a block alone can never make a day "Over by". A timed row with
+	no usable window is ignored (the controller refuses one).
+	"""
+	rows = [row for row in rows or [] if row and row.get("name")]
+	whole = [row for row in rows if is_all_day_block(row)]
+	if whole:
+		return [block_booking(row, None, 0.0) for row in whole]
+	timed = sorted(
+		((block_slot(row), row) for row in rows if block_slot(row)),
+		key=lambda entry: (entry[0], str(entry[1].get("name"))),
+	)
+	left, reach, out = max(_float(capacity), 0.0), None, []
+	for (first, last), row in timed:
+		begin = first if reach is None else max(first, reach)
+		fresh = max(last - begin, 0) / 60
+		reach = last if reach is None else max(reach, last)
+		hours = round(min(fresh, left), 2)
+		left = max(left - hours, 0.0)
+		out.append(block_booking(row, (first, last), hours))
+	return out
+
+
+def blocked_capacity(capacity, off):
+	"""``(capacity, off)`` of a day with an all-day block: 0 hours, labeled "Unavailable".
+
+	A day that had no hours anyway (not a work day, a holiday, time off) keeps its own label: the
+	block changes nothing about it, and "Holiday: Thanksgiving" says more than "Unavailable".
+	"""
+	if _float(capacity) > 0:
+		return 0.0, UNAVAILABLE
+	return 0.0, off
+
+
+def block_reason(cell):
+	"""``"Unavailable 2–4 pm"`` (windows joined) when the day has timed blocks, else None."""
+	windows = [
+		block_window(b.get("slot"))
+		for b in (cell or {}).get("bookings") or []
+		if b.get("kind") == BLOCK_KIND and b.get("slot")
+	]
+	windows = [w for w in windows if w]
+	return BLOCK_OVERLAP_PREFIX + ", ".join(windows) if windows else None
+
+
+def next_free_day(days_by_resource, resource, hours, after, exclude_task=None, horizon=NEXT_FREE_HORIZON_DAYS):
+	"""The first working day after ``after`` on which ``resource`` has ``hours`` free, or None.
+
+	``days_by_resource`` is the engine's ``days`` (``{resource: {"YYYY-MM-DD": cell}}``). A working
+	day has capacity, so a day off, a holiday, time off, an all-day block or a day the pattern does
+	not cover is skipped, and so is a travel day. Free hours are capacity less the day's firm
+	bookings (tasks, visits, timed blocks, driving); ``exclude_task``'s own firm hours that day are
+	given back, so a task never stands in its own way. ``hours`` 0 or None asks for the whole day.
+	At most ``horizon`` days are looked at; a day ``days_by_resource`` does not cover is skipped,
+	never assumed free. Pencils never count, as everywhere else.
+	"""
+	after = _as_date(after)
+	if not after:
+		return None
+	per_day = (days_by_resource or {}).get(resource) or {}
+	need = _float(hours)
+	for offset in range(1, max(int(horizon or 0), 0) + 1):
+		day = after + datetime.timedelta(days=offset)
+		cell = per_day.get(str(day))
+		if not cell:
+			continue
+		capacity = _float(cell.get("capacity"))
+		if capacity <= 0:
+			continue
+		firm = [b for b in cell.get("bookings") or [] if not b.get("tentative")]
+		if any(b.get("kind") == "travel" for b in firm):
+			continue
+		booked = sum(_float(b.get("hours")) for b in firm)
+		if exclude_task:
+			booked -= sum(
+				_float(b.get("hours"))
+				for b in firm
+				if b.get("ref") == exclude_task and b.get("kind") in TASK_KINDS
+			)
+		free = max(capacity - booked, 0.0)
+		if free + TOLERANCE >= (need if need > 0 else capacity):
+			return day
+	return None
 
 
 def resolve_crew(rows, todo_users, user_to_resource):
@@ -547,7 +801,22 @@ def equipment_conflicts(tasks, equipment, start, end, statuses=None, bookings=No
 	  task's own project is the job it is booked for, not a clash, and is not reported.
 
 	Tentative tasks are left out on both sides, as for people: a pencil never needs a reason and
-	never makes a firm task need one.
+	never makes a firm task need one. The sentences are :func:`equipment_findings`' messages.
+	"""
+	out = {}
+	for finding in equipment_findings(tasks, equipment, start, end, statuses, bookings):
+		out.setdefault(finding["task"], []).append(finding["message"])
+	return out
+
+
+def equipment_findings(tasks, equipment, start, end, statuses=None, bookings=None):
+	""":func:`equipment_conflicts` with what each sentence is about, for the Conflict center (6D).
+
+	``[{"task", "type", "ref", "label", "day", "message", "other", "booking", "status"}]`` in the
+	order :func:`equipment_conflicts` lists them: ``type`` is ``"shared"`` (``other`` is the other
+	firm task, ``day`` the first day in range they share), ``"status"`` (``status`` is the vehicle's,
+	``day`` None) or ``"booking"`` (``booking`` is the Asset Booking row, ``day`` the first day in
+	range it overlaps). ``ref`` is ``(type, name)`` and ``label`` its display name.
 	"""
 	start, end = _as_date(start), _as_date(end)
 	firm = [t for t in tasks or [] if not is_tentative(t) and (equipment or {}).get(t.get("name"))]
@@ -568,27 +837,47 @@ def equipment_conflicts(tasks, equipment, start, end, statuses=None, bookings=No
 		if booking.get("asset") and days:
 			by_asset[booking["asset"]].append((booking, days))
 
-	out = {}
+	out = []
 	for task in firm:
 		name = task.get("name")
 		days = days_of.get(name) or []
 		if not days:
 			continue
-		lines = []
+
+		def found(kind, ref, label, message, day=None, other=None, booking=None, status=None):
+			out.append(
+				{
+					"task": name,
+					"type": kind,
+					"ref": ref,
+					"label": label,
+					"day": day,
+					"message": message,
+					"other": other,
+					"booking": booking,
+					"status": status,
+				}
+			)
+
 		for entry in equipment[name]:
 			ref = (entry["type"], entry["name"])
 			label = entry.get("label") or entry["name"]
 			status = (statuses or {}).get(entry["name"]) if entry["type"] == "Vehicle" else None
 			if status in UNAVAILABLE_VEHICLE_STATUSES:
-				lines.append(f"{label} is {status}")
+				found("status", ref, label, f"{label} is {status}", status=status)
 			reported = set()
 			for day in days:
 				for other in usage[ref].get(day) or []:
 					if other.get("name") == name or other.get("name") in reported:
 						continue
 					reported.add(other.get("name"))
-					lines.append(
-						f"{day}: {label} is also on {other.get('name')} ({other.get('subject') or other.get('name')})"
+					found(
+						"shared",
+						ref,
+						label,
+						f"{day}: {label} is also on {other.get('name')} ({other.get('subject') or other.get('name')})",
+						day=day,
+						other=other.get("name"),
 					)
 			if entry["type"] == "Asset":
 				for booking, (first, last) in by_asset.get(entry["name"]) or []:
@@ -597,11 +886,14 @@ def equipment_conflicts(tasks, equipment, start, end, statuses=None, bookings=No
 					shared = [d for d in days if first <= d <= last]
 					if shared:
 						kind = f" ({booking.get('booking_type')})" if booking.get("booking_type") else ""
-						lines.append(
-							f"{shared[0]}: {label} is booked on Asset Booking {booking.get('name')}{kind}"
+						found(
+							"booking",
+							ref,
+							label,
+							f"{shared[0]}: {label} is booked on Asset Booking {booking.get('name')}{kind}",
+							day=shared[0],
+							booking=booking,
 						)
-		if lines:
-			out[name] = lines
 	return out
 
 
@@ -1124,11 +1416,12 @@ def read_asset_bookings(assets, start, end):
 
 
 def _equipment_state(tasks, start, end, overrides=None):
-	"""``{"equipment", "conflicts", "labels", "statuses", "bookings"}`` for ``tasks``.
+	"""``{"equipment", "conflicts", "findings", "labels", "statuses", "bookings"}`` for ``tasks``.
 
 	``overrides`` maps a task name to equipment entries that replace the stored ones (the
 	hypothetical tasks of a preview). One read each for the rows, the vehicles and assets, and the
-	asset bookings.
+	asset bookings. ``findings`` (Phase 6D) are :func:`equipment_findings`, the structured form of
+	``conflicts``, for the Conflict center.
 	"""
 	names = [t.get("name") for t in tasks if t.get("name") not in (overrides or {})]
 	equipment = dict(read_equipment(names))
@@ -1144,6 +1437,7 @@ def _equipment_state(tasks, start, end, overrides=None):
 	return {
 		"equipment": equipment,
 		"conflicts": equipment_conflicts(tasks, equipment, start, end, statuses, bookings),
+		"findings": equipment_findings(tasks, equipment, start, end, statuses, bookings),
 		"labels": labels,
 		"statuses": statuses,
 		"bookings": bookings,
@@ -1338,6 +1632,14 @@ def _read_visits(users, start, end, settings):
 			"key": card.get("key"),
 			"label": "Projected visit: " + (card.get("site") or card.get("project") or ""),
 			"project": card.get("project"),
+			# Phase 6D: what the Conflict center needs to offer move_projected for the card that
+			# can move (the contract's stored next visit), and nothing for the arithmetic after it.
+			"projected": {
+				"contract": card.get("contract"),
+				"serial_no": card.get("serial_no"),
+				"movable": bool(card.get("movable")),
+				"from_date": card.get("from_date"),
+			},
 		}
 		entries = _visit_entries(
 			base, people, bool(card.get("full_day")), card.get("planned_hours"), visit_hours
@@ -1388,10 +1690,120 @@ def _read_travel(employees, start, end):
 	return out
 
 
+def _blocks_installed():
+	"""True when the Planner Block table exists. A fresh database, a site part-way through the
+	migrate that brings it, or a test stub without ``table_exists`` all answer False, quietly."""
+	check = getattr(getattr(frappe, "db", None), "table_exists", None)
+	if not callable(check):
+		return False
+	try:
+		return bool(check(BLOCK_DOCTYPE))
+	except Exception:
+		return False
+
+
+def _read_blocks(people, start, end, exclude=()):
+	"""``{resource: {date: [row]}}``: the Planner Blocks of ``people`` from ``start`` to ``end``.
+
+	One query. It reads :data:`BLOCK_FIELDS` only, **never the note**, so nothing the engine
+	returns can carry it. ``exclude`` drops blocks by name (``api/planner_blocks.save_block`` asks
+	"what would this day be without the block" to say which conflicts the block made). A failure
+	is logged and reads as no blocks: a block must never blank a planner.
+	"""
+	names = [p.get("name") for p in people or [] if p.get("name")]
+	if not names or not _blocks_installed():
+		return {}
+	try:
+		rows = frappe.get_all(
+			BLOCK_DOCTYPE,
+			filters={"resource": ["in", names], "date": ["between", [start, end]]},
+			fields=list(BLOCK_FIELDS),
+			order_by="date asc, name asc",
+			limit_page_length=0,
+		)
+	except Exception:
+		frappe.log_error(title="Project Planner: personal blocks unreadable", message=frappe.get_traceback())
+		return {}
+	wanted, exclude = set(names), set(exclude or ())
+	out = defaultdict(lambda: defaultdict(list))
+	for row in rows or []:
+		day = _as_date(row.get("date"))
+		if not day or not (start <= day <= end) or row.get("resource") not in wanted:
+			continue
+		if row.get("name") in exclude:
+			continue
+		out[row.get("resource")][day].append(row)
+	return {resource: dict(days) for resource, days in out.items()}
+
+
+def can_read_every_note(viewer):
+	"""True for Administrator and :data:`SCHEDULER_ROLES`: Nik's "planners see the note"."""
+	if not viewer:
+		return False
+	if viewer == "Administrator":
+		return True
+	try:
+		return bool(SCHEDULER_ROLES & set(frappe.get_roles(viewer) or ()))
+	except Exception:
+		return False
+
+
+def block_notes(names, viewer=None):
+	"""``{block: note}`` for the blocks ``names`` whose note ``viewer`` may read. The only reader of
+	``Planner Block.note``.
+
+	A scheduler (:data:`SCHEDULER_ROLES`, or Administrator) reads every note; anyone else reads only
+	the notes of their own blocks, a block being theirs when its Planner Resource's ``user`` is them
+	(the block's own ``user`` copy when the resource is gone). Blocks without a note are left out.
+	``viewer`` defaults to the session user. An endpoint that never calls this leaks nothing, which
+	is why the note lives here and not on the booking.
+	"""
+	names = sorted({n for n in names or () if n})
+	if viewer is None:
+		viewer = getattr(getattr(frappe, "session", None), "user", None)
+	if not names or not viewer or not _blocks_installed():
+		return {}
+	try:
+		rows = frappe.get_all(
+			BLOCK_DOCTYPE,
+			filters={"name": ["in", names]},
+			fields=["name", "resource", "user", "note"],
+			limit_page_length=0,
+		)
+		everyone = can_read_every_note(viewer)
+		owners = {}
+		if not everyone:
+			resources = sorted({row.get("resource") for row in rows or [] if row.get("resource")})
+			if resources:
+				owners = {
+					row.get("name"): row.get("user")
+					for row in frappe.get_all(
+						"Planner Resource",
+						filters={"name": ["in", resources]},
+						fields=["name", "user"],
+						limit_page_length=0,
+					)
+				}
+	except Exception:
+		frappe.log_error(title="Project Planner: block notes unreadable", message=frappe.get_traceback())
+		return {}
+	out = {}
+	for row in rows or []:
+		note = str(row.get("note") or "").strip()
+		if not note or row.get("name") not in names:
+			continue
+		owner = owners[row.get("resource")] if row.get("resource") in owners else row.get("user")
+		if everyone or (owner and owner == viewer):
+			out[row.get("name")] = note
+	return out
+
+
 # ---------------------------------------------------------------------- assembly
 
 
-def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equipment=False):
+def _compute(
+	start, end, resources=None, exclude=(), extra=(), google=True, equipment=False, exclude_blocks=()
+):
 	"""Everything :func:`availability` returns, plus what the Project Planner API reuses.
 
 	``exclude`` drops tasks by name and ``extra`` adds ``(task_like, crew)`` pairs: together they
@@ -1401,6 +1813,13 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 	``equipment=True`` (P4.4) also reads the tasks' vehicles and assets and adds ``equipment``
 	(``{task: [{type, name, label}]}``) and ``equipment_conflicts`` (``{task: [sentence]}``, see
 	:func:`equipment_conflicts`); a hypothetical task's ``equipment`` key replaces its stored rows.
+	It also adds ``equipment_findings`` (Phase 6D, :func:`equipment_findings`).
+
+	Personal blocks (Phase 6D) are read for the same days capacity is: an all-day block zeroes the
+	day (:func:`blocked_capacity`) before any task is spread over it, exactly as time off does, and
+	each block in range becomes a ``block`` booking (:func:`block_bookings`). ``blocks`` in the
+	answer is ``{name: {"resource", "user", "date", "all_day", "slot", "window", "modified"}}`` for
+	the blocks in range, without notes. ``exclude_blocks`` leaves blocks out by name.
 	"""
 	start, end = _as_date(start), _as_date(end)
 	settings = get_settings()
@@ -1435,6 +1854,7 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 	high = min(high, end + datetime.timedelta(days=CAPACITY_MARGIN_DAYS))
 	holidays = _read_holidays(people, low, high) if people else {}
 	time_off = _read_time_off(people, low, high) if people else {}
+	blocks = _read_blocks(people, low, high, exclude_blocks) if people else {}
 	day_hours = settings["default_day_hours"]
 
 	cache = {}
@@ -1446,6 +1866,9 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 			cache[key] = day_capacity(
 				base, (holidays.get(resource) or {}).get(day), (time_off.get(resource) or {}).get(day)
 			)
+			# Phase 6D: an all-day personal block is a day off for the planners (Nik, 2026-10-09).
+			if any(is_all_day_block(row) for row in (blocks.get(resource) or {}).get(day) or ()):
+				cache[key] = blocked_capacity(*cache[key])
 		return cache[key]
 
 	def capacity_of(resource, day):
@@ -1480,18 +1903,19 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 		if hours is None:
 			# A full-day visit (P1.8): the person's whole day, the same rule as an unestimated task.
 			hours = full_day_hours(capacity_of(resource, visit["date"]), day_hours)
-		bookings[(resource, visit["date"])].append(
-			{
-				"kind": "visit",
-				"ref": visit["ref"],
-				"key": visit.get("key") or visit["ref"],
-				"label": visit["label"],
-				"project": visit["project"],
-				"hours": hours,
-				"slot": visit["slot"],
-				"estimated": visit["estimated"],
-			}
-		)
+		booking = {
+			"kind": "visit",
+			"ref": visit["ref"],
+			"key": visit.get("key") or visit["ref"],
+			"label": visit["label"],
+			"project": visit["project"],
+			"hours": hours,
+			"slot": visit["slot"],
+			"estimated": visit["estimated"],
+		}
+		if visit.get("projected"):
+			booking["projected"] = dict(visit["projected"])
+		bookings[(resource, visit["date"])].append(booking)
 
 	for trip in _read_travel(list(employee_to_resource), start, end) if employee_to_resource else []:
 		resource = employee_to_resource.get(trip["employee"])
@@ -1509,6 +1933,29 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 				"estimated": True,
 			}
 		)
+
+	# Phase 6D: personal blocks, after everything else so a timed block's hours are clipped to the
+	# day's capacity, not to what is left of it (a block is the person's own time, not spare time).
+	block_index = {}
+	for resource, per_day in blocks.items():
+		if resource not in by_name:
+			continue
+		for day, rows in per_day.items():
+			if not (start <= day <= end):
+				continue
+			for booking in block_bookings(rows, capacity_of(resource, day)):
+				bookings[(resource, day)].append(booking)
+				row = next((r for r in rows if r.get("name") == booking["ref"]), {})
+				block_index[booking["ref"]] = {
+					"resource": resource,
+					"user": by_name[resource].get("user") or row.get("user"),
+					"date": str(day),
+					"all_day": booking["all_day"],
+					"slot": booking["slot"],
+					"window": booking["window"],
+					"hours": booking["hours"],
+					"modified": str(row.get("modified")) if row.get("modified") else None,
+				}
 
 	try:
 		routes = _apply_routes(bookings, by_name, start, end, settings, google=google)
@@ -1574,6 +2021,7 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 		"crews": crews,
 		"todo_users": todo_users,
 		"task_hours": {task: dict(hours) for task, hours in task_hours.items()},
+		"blocks": block_index,
 	}
 	if equipment:
 		overrides = {
@@ -1584,6 +2032,7 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equi
 		state = _equipment_state(tasks, start, end, overrides)
 		out["equipment"] = state["equipment"]
 		out["equipment_conflicts"] = state["conflicts"]
+		out["equipment_findings"] = state.get("findings") or []
 	return out
 
 
@@ -1707,6 +2156,11 @@ def _preview_many(changes, start=None, end=None, google=True):
 				# A double booking between two other tasks is not this batch's doing.
 				if conflict.startswith("Double-booked") and not any(
 					f"({name}," in conflict or f", {name})" in conflict for name in firm
+				):
+					continue
+				# Nor is another task's slot overlapping a personal block (Phase 6D).
+				if conflict.startswith(BLOCK_OVERLAP_PREFIX) and not any(
+					conflict.endswith(f"({name})") for name in firm
 				):
 					continue
 				out.setdefault(labels.get(resource, resource), []).append(f"{day}: {conflict}")

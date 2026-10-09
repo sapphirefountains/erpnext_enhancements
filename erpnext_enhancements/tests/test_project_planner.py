@@ -1634,6 +1634,10 @@ class TestGetPlanner(unittest.TestCase):
 				"projects",
 				"settings",
 				"can_edit",
+				# Phase 6D (api/planner_blocks.payload_extras)
+				"day_notes",
+				"block_notes",
+				"can_schedule",
 			},
 		)
 

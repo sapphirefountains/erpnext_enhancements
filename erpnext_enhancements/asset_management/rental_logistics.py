@@ -304,6 +304,18 @@ def _combined_digest_covers():
 		return set()
 
 
+def _planner_notes(user, today):
+	"""The planners' day notes for this person and their own personal blocks, as plain lines
+	(Project Planner Phase 6D, ``api/planner_blocks.digest_note_lines``). Never raises: the jobs
+	still go out without them."""
+	try:
+		from erpnext_enhancements.api.planner_blocks import digest_note_lines
+
+		return digest_note_lines(user, today)
+	except Exception:
+		return []
+
+
 def _send_digest(user, tasks, today):
 	from erpnext_enhancements import email_style
 
@@ -311,12 +323,14 @@ def _send_digest(user, tasks, today):
 	tasks = sorted(tasks, key=lambda t: order.get(t.custom_rental_task_kind, 9))
 	when = frappe.utils.formatdate(today)
 	count = len(tasks)
+	notes = _planner_notes(user, today)  # Phase 6D: day notes for them + their own blocks
 
 	cell = frappe.db.get_value("Employee", {"user_id": user}, "cell_number")
 	if cell:
 		lines = [f"{i}. {t.subject}" for i, t in enumerate(tasks[:10], 1)]
 		if count > 10:
 			lines.append(_("…and {0} more — see email").format(count - 10))
+		lines.extend(notes)
 		try:
 			from erpnext_enhancements.api.telephony import send_system_sms
 
@@ -334,7 +348,8 @@ def _send_digest(user, tasks, today):
 		subject=_("Your rental jobs — {0} ({1})").format(when, count),
 		message=email_style.wrap(
 			email_style.p(_("Your rental jobs for {0}:").format(when))
-			+ email_style.table(["#", _("Job"), _("What"), _("Rental")], rows),
+			+ email_style.table(["#", _("Job"), _("What"), _("Rental")], rows)
+			+ ((email_style.p(_("Also today:")) + email_style.bullets(notes)) if notes else ""),
 			title=_("Your rental jobs"),
 			eyebrow=_("Rentals") + " · " + str(when),
 			pillar="rent",

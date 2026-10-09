@@ -1,0 +1,138 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "PCA-.YYYY.-.#####",
+ "creation": "2026-10-09 18:00:00.000000",
+ "custom": 0,
+ "description": "A conflict someone chose to keep from the Conflict center, with their reason. It hides that conflict only while the records involved are unchanged.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "conflict_key",
+  "kind",
+  "conflict_date",
+  "planner",
+  "column_break_main",
+  "acknowledged_by",
+  "acknowledged_on",
+  "fingerprint",
+  "section_detail",
+  "message",
+  "reason"
+ ],
+ "fields": [
+  {
+   "description": "kind|date|person or equipment|a hash of the records involved. The same conflict has the same key on every load.",
+   "fieldname": "conflict_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Conflict",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Kind",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conflict_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date",
+   "read_only": 1
+  },
+  {
+   "description": "The planner it was kept from: project or maintenance.",
+   "fieldname": "planner",
+   "fieldtype": "Data",
+   "label": "Planner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "acknowledged_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Kept by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "acknowledged_on",
+   "fieldtype": "Datetime",
+   "label": "Kept on",
+   "read_only": 1
+  },
+  {
+   "description": "Worked out from the involved records' last-modified times and the conflict's wording. When it no longer matches, the conflict shows again.",
+   "fieldname": "fingerprint",
+   "fieldtype": "Data",
+   "label": "Fingerprint",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_detail",
+   "fieldtype": "Section Break",
+   "label": "Detail"
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "label": "Conflict",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1,
+   "reqd": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-09 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Conflict Ack",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects User"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "message",
+ "track_changes": 0
+}
