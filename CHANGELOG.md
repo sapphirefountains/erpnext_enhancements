@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.587.0] - 2026-10-09
+
+### Added
+
+- **Faster scheduling on both planners** (Phase 6B, TASK-2026-02468, from Nik's UX round).
+  - **Right-click menu** on cards, empty spots and names. On touch screens, a long press opens it.
+    - **Project Planner:**
+      - Edit.
+      - **Assign to…**: a list of who is free that day, with busy people and their reasons. You
+        pick; nobody is filled in for you.
+      - **Move to next free day**: the lead's next day with the hours free.
+      - **Pencil / Firm up.**
+      - **Duplicate** (or **Duplicate to…**): uses Copy week's own copy.
+      - **Split across days**: a multi-day task is cut at a date into two tasks. Hours are shared
+        pro rata by working days, and the second part depends on the first. A one-day task can be
+        split in two. Split refuses rental crew tasks and anything with time logged.
+      - Project at a glance.
+    - **Maintenance Planner:** Edit, Assign to…, Move to next free day (draft visits) and Site at a
+      glance.
+    - Phases 6C and 6D add their own items to the same menu: highlight, move with taps, show
+      conflicts and block time.
+  - **Resize** (Project Planner): drag the edge of a task bar to change its days. It goes through the
+    normal save, reason prompt and Undo.
+  - **Quick add** (Project Planner): double-click an empty spot, or use "Add task here…", for a
+    compact form with customer-job project, subject, hours, person, date and pencil. Undo deletes the
+    task only while nothing else has been attached to it, and never forces a delete.
+  - **Move several at once:** shift- or Ctrl-click cards to select them, then drag one to move them
+    all by the same number of calendar days.
+    - Project Planner: one batch with one reason prompt, all or nothing, and one Undo.
+    - Maintenance Planner: the same for draft visits, as a series of moves with a single reason.
+  - **Search** (press `/`): finds tasks, projects or sites and people on the board, then on the
+    server. Picking a result jumps to the week, or opens the peek.
+  - **Keyboard shortcuts**, ignored while typing:
+    - `T` today, `←` / `→` previous / next, `1` / `2` / `3` views;
+    - Ctrl/Cmd+Z undo, `?` legend, `/` search, `Esc` clear the selection.
+
+    On the planner pages, `?` now opens the planner's legend rather than Frappe's shortcut list.
+  - New endpoints in `api/planner_actions.py`: `duplicate_task`, `split_task`, `quick_add_task`,
+    `move_many`, `remove_created_task` (the Undo of a creation) and `search_planner`. Duplicate,
+    split and quick add are refused in Draft mode, because a draft is a change to an existing task;
+    `move_many` drafts properly.
+
 ## [1.586.0] - 2026-10-09
 
 ### Added
