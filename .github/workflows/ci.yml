@@ -779,6 +779,26 @@ jobs:
       # Bench-free, own frappe stub, own step.
       - name: Maintenance planner (projections, moves, self-approval)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_planner -v
+      # The Project Planner books people by the hour, and its free-hours figure is the only
+      # thing standing between a PM and sending one technician to two sites at once. Wrong
+      # arithmetic here does not error: it reports Austin free on a Thursday he never works,
+      # books a no-estimate task as zero hours instead of a full day, or counts a rental
+      # delivery as eight. Also pins the save contract: a conflict without a reason must come
+      # back as needs_reason and never save. Bench-free, own frappe stub, own step.
+      - name: Project planner (availability math, conflicts, save contract)
+        run: python -m unittest erpnext_enhancements.tests.test_project_planner -v
+      # A crew row is mirrored to an ordinary assignment so the 6 AM digest still finds the
+      # person. The sync may remove only people it added: deleting a PM's own sidebar
+      # assignment because they were never on the crew would silently empty someone's
+      # ToDo list. Also checks the new DocTypes and Task fields are where migrate expects.
+      # Bench-free, own frappe stub, own step.
+      - name: Project planner crew sync + DocTypes
+        run: python -m unittest erpnext_enhancements.tests.test_planner_doctypes -v
+      # The planner page: Back/Forward through every view (Nik's rule), POST-only writes,
+      # pointer-event dragging (HTML5 drag and drop does nothing on a phone), and the
+      # workspace link with a bumped `modified` (an unbumped Workspace JSON never re-imports).
+      - name: Project planner page (routes, drag, workspace)
+        run: python -m unittest erpnext_enhancements.tests.test_project_planner_page -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

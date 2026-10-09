@@ -1,0 +1,107 @@
+{
+ "actions": [],
+ "creation": "2026-10-08 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "effective_from",
+  "effective_to",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "description": "Leave both dates blank for the everyday schedule.",
+   "fieldname": "effective_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "From"
+  },
+  {
+   "columns": 2,
+   "fieldname": "effective_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "To"
+  },
+  {
+   "columns": 1,
+   "default": "8",
+   "fieldname": "monday",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Mon",
+   "precision": "1"
+  },
+  {
+   "columns": 1,
+   "default": "8",
+   "fieldname": "tuesday",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Tue",
+   "precision": "1"
+  },
+  {
+   "columns": 1,
+   "default": "8",
+   "fieldname": "wednesday",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Wed",
+   "precision": "1"
+  },
+  {
+   "columns": 1,
+   "default": "8",
+   "fieldname": "thursday",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Thu",
+   "precision": "1"
+  },
+  {
+   "columns": 1,
+   "default": "8",
+   "fieldname": "friday",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Fri",
+   "precision": "1"
+  },
+  {
+   "default": "0",
+   "fieldname": "saturday",
+   "fieldtype": "Float",
+   "label": "Sat",
+   "precision": "1"
+  },
+  {
+   "default": "0",
+   "fieldname": "sunday",
+   "fieldtype": "Float",
+   "label": "Sun",
+   "precision": "1"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Resource Work Pattern",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

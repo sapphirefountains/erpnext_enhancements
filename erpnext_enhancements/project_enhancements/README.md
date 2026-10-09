@@ -29,6 +29,14 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
+| `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. See [Project Planner](#project-planner-v15770) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py) |
+| `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`; pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py` and `api/maintenance_planner.py` |
+| `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
+| `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
+| `doctype/planner_resource_work_pattern/` | Child table: hours for each weekday, optionally between two dates (a seasonal schedule) | `PlannerResourceWorkPattern` | child-table controller |
+| `doctype/task_crew_member/` | Child table on Task (`custom_crew`): resource, hours (blank = an even share, or a full day), lead | `TaskCrewMember` | child-table controller |
+| `doctype/task_required_credential/` | Child table behind Task's *Qualifications needed* (`custom_required_credentials`, a Table MultiSelect on Credential Type) | `TaskRequiredCredential` | child-table controller |
+| `doctype/project_planner_settings/` | Single: full-day hours (8), maintenance visit hours (2), and the default hours of each rental crew task kind | `ProjectPlannerSettings` | read through `get_cached_doc` by the engine |
 | `report/supplier_pickup_list/` | **Supplier Pickup List** Script Report — unreceived Purchase Order lines by vendor, plus `supplier_pickup_list.html`, the driver-facing checklist print template (on the print design system's chrome minus the wordmark, since the report wrapper prints the letter head above it — see [docs/print-design-system.md](../../docs/print-design-system.md)) | `execute`, `get_data` | Standard report (synced on migrate) |
 | `report/pending_items_by_project/` | **Pending Items by Project** Query Report — unreceived Purchase Order lines for one job. The whole report is the SQL in its `.json`; the `.js` holds the filter, the colouring and the reasoning | — | Standard report (synced on migrate) |
 
@@ -514,9 +522,65 @@ Format record and nothing to register: tick box first, supplier and date at the 
 per supplier, and a signature line. It is bypassed if the user picks explicit columns in the
 print dialog — frappe falls back to `print_grid` then.
 
+## Project Planner (v1.577.0)
+
+A drag-and-drop calendar for planning project Tasks and booking people by the hour
+(`/app/project-planner`, Projects workspace). Built so a PM cannot send one technician to two
+places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
+under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
+
+**Who can be booked.** A **Planner Resource** per person or outside crew, not Employee: the pool
+includes subcontractors, who have no HR record, and only some staff (field techs, PMs on site,
+designers). `patches/seed_planner_resources` created one for each active technician, Project
+Manager and Design employee; anyone else is added by hand. Each has a weekly **work pattern** —
+hours per weekday, optionally between two dates for a seasonal schedule. With no pattern rows a
+person works Monday to Friday at the Settings' full-day hours. Austin works Monday to Wednesday.
+
+**How a task books hours** (`crew_availability.allocate_task`):
+
+- Its crew is the Task's **Crew** table (`custom_crew`) when it has rows, otherwise its open
+  assignees who are Planner Resources. The second rule is how the tasks assigned before this
+  existed, and the rental crew tasks, still count.
+- `expected_time` is shared evenly across the crew (minus any row's own hours), then spread over
+  each person's working days within the task's dates.
+- **No estimate books a full day** for each person on each day — their pattern hours, or 8 when the
+  pattern says they do not work. A rental crew task (Delivery, Setup, Take-down, Cleaning — made by
+  `asset_management/rental_logistics.sync_tasks`) with no estimate books its kind's Settings hours
+  instead.
+- A task whose `custom_start_datetime`/`custom_end_datetime` fall on one day books that **time
+  slot**, and two overlapping slots for one person are a double booking.
+- A blank crew-row `hours` is 0 (a Frappe Float is never NULL), so 0 means "an even share", not
+  "no hours".
+
+**What else uses a person's day:** maintenance visits (Settings, 2h; clock-out minus clock-in once
+recorded; plus the visits the scheduler has not drafted yet, projected exactly as the Maintenance
+Planner projects them), Travel Trip days (the whole working day; a non-working day of a trip books
+nothing and is not a conflict), company holidays and approved Time Off Requests (0, or half for a
+half day — never naming the type or reason). Work Restrictions are warnings only.
+
+**Overbooking warns and never blocks.** A change that *creates* a conflict — over hours, an
+overlapping slot, a booking on a day off — comes back from `save_task` as `needs_reason`
+unsaved. The page asks for a reason, sends it again, and the reason goes on the Task timeline.
+Conflicts that were already there before the change do not ask again.
+
+**Both planners share one engine.** The Maintenance Planner reads the same `availability()` for its
+technicians' free hours and shows their project work read-only; each planner moves only its own
+records. That is the whole point of the engine living here rather than in either API.
+
+Things that look like bugs and are not:
+
+- An undated task dropped from the Unscheduled tray gets enough days for its estimate
+  (`span_for_estimate`: 24h for one person is three weekdays), not always one day.
+- A rental crew task cannot be moved here: its dates belong to its Rental Booking.
+- Tasks on Completed, Invoiced, Paid or Canceled projects are not bookings; Client Hold and
+  Parked ones still are, because a PM moving paused work needs to see it.
+- Adding someone to a crew sends the standard "New ToDo Created" email, exactly as assigning from
+  the sidebar does. Batching those notices is planned (draft and publish, TASK-2026-02448).
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
+- `doc_events["Task"]`: `on_update` → `crew_sync.on_task_update` (crew rows → assignments) and `validate` → `crew_sync.validate_crew` (Project Planner, v1.577.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.

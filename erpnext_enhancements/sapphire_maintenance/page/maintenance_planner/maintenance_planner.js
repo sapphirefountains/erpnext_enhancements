@@ -19,6 +19,13 @@
 //              (move_projected); the ones after it follow whenever that visit actually happens.
 // Visits with no date at all wait in the Unscheduled tray until somebody drags them onto a day.
 //
+// Maintenance and Projects share technicians, so the same response also carries `bookings`: each
+// technician's project tasks, rental crew tasks and travel days, and their free hours, all from the
+// shared availability engine (project_enhancements.crew_availability). They are read-only here:
+// shown as teal / amber / gray cards that open the Task or Travel Trip, never dragged. The free
+// hours in a day header are the engine's figure and must match the Project Planner's, so this page
+// never works them out itself. Projects moves its own bookings on the Project Planner.
+//
 // Dragging is done with pointer events rather than HTML5 drag and drop, which phones and
 // tablets do not support. A touch has to rest on a card for a moment before it lifts, so a
 // swipe still scrolls the page. Clicking or pressing Enter on a card opens it, and its dialog
@@ -29,11 +36,14 @@ const MP = {
 	api: "erpnext_enhancements.api.maintenance_planner",
 	tech_key: "ee_maintenance_planner_technician",
 	projected_key: "ee_maintenance_planner_projected",
+	project_key: "ee_maintenance_planner_project_work",
 	hold_ms: 300,
 	drag_px: 6,
 	// Labels for one-off visits; any other label is a seasonal visit.
 	extra_labels: ["Extra Visit", "Chemistry Follow-Up"],
-	status_order: { draft: 0, pending: 1, projected: 2, done: 3 },
+	status_order: { draft: 0, pending: 1, projected: 2, done: 3, booking: 4 },
+	// Engine booking kind -> chip text. The engine calls a project task "task".
+	booking_kinds: { task: "Project", rental: "Rental", travel: "Travel" },
 };
 
 const mp_ymd = (m) => m.format("YYYY-MM-DD");
@@ -109,6 +119,14 @@ const MP_STYLE = `
 .mp-card.mp-projected.mp-seasonal{border-left-color:#d97706;}
 .mp-card.mp-overdue{border-left-color:#dc2626;}
 .mp-card.mp-saving{opacity:.55;pointer-events:none;}
+.mp-card.mp-booking{background:rgba(13,148,136,.07);}
+.mp-card.mp-booking.mp-bk-task{border-left-color:#0d9488;}
+.mp-card.mp-booking.mp-bk-rental{border-left-color:#b45309;background:rgba(180,83,9,.08);}
+.mp-card.mp-booking.mp-bk-travel{border-left-color:#6b7280;background:rgba(107,114,128,.10);}
+.mp-day-free{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:#15803d;}
+.mp-day-free.mp-free-full{color:#b45309;}
+.mp-day-free.mp-free-over{color:#b91c1c;font-weight:600;}
+.mp-day-free.mp-free-off{color:var(--text-muted);}
 .mp-card.mp-dragging{opacity:.3;}
 .mp-ghost{position:fixed;z-index:1100;pointer-events:none;box-shadow:0 10px 28px rgba(0,0,0,.28);transform:rotate(2deg);opacity:.96;margin:0;}
 body.mp-drag-active,body.mp-drag-active *{cursor:grabbing !important;-webkit-user-select:none;user-select:none;}
@@ -139,6 +157,7 @@ class MaintenancePlanner {
 		this.anchor = frappe.datetime.get_today();
 		this.technician = this.load_pref(MP.tech_key, "");
 		this.show_projected = this.load_pref(MP.projected_key, "1") !== "0";
+		this.show_project_work = this.load_pref(MP.project_key, "1") !== "0";
 		this.data = null;
 		this.by_key = {};
 		this.request = 0;
@@ -284,6 +303,18 @@ class MaintenancePlanner {
 			})
 			.appendTo($projected);
 		$projected.append(document.createTextNode(__("Projected visits")));
+		const $project_work = $("<label></label>")
+			.attr("title", __("Project tasks, rental crew tasks and travel, read-only. Move them on the Project Planner."))
+			.appendTo($bar);
+		$('<input type="checkbox">')
+			.prop("checked", this.show_project_work)
+			.on("change", (e) => {
+				this.show_project_work = e.target.checked;
+				this.save_pref(MP.project_key, this.show_project_work ? "1" : "0");
+				this.render();
+			})
+			.appendTo($project_work);
+		$project_work.append(document.createTextNode(__("Project work")));
 		$('<button class="btn btn-default btn-sm">↻</button>')
 			.attr("title", __("Refresh"))
 			.on("click", () => this.load())
@@ -298,6 +329,9 @@ class MaintenancePlanner {
 			["#16a34a", "solid", __("Done")],
 			["#94a3b8", "dashed", __("Projected from the contract")],
 			["#dc2626", "solid", __("Overdue")],
+			["#0d9488", "solid", __("Project task (read-only)")],
+			["#b45309", "solid", __("Rental crew (read-only)")],
+			["#6b7280", "solid", __("Travel (read-only)")],
 		].forEach(([color, style, label]) => {
 			const $item = $("<span></span>").appendTo($legend);
 			$('<i class="mp-swatch"></i>').css({ "border-left-color": color, "border-style": style }).appendTo($item);
@@ -309,7 +343,7 @@ class MaintenancePlanner {
 		$('<div class="mp-hint"></div>')
 			.text(
 				__(
-					"Drag a card to another day to move the visit. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow."
+					"Drag a card to another day to move the visit. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Teal, amber and gray cards are project, rental and travel bookings of the same people: they open the task but are moved on the Project Planner."
 				)
 			)
 			.appendTo(this.$body);
@@ -358,10 +392,78 @@ class MaintenancePlanner {
 
 	all_cards() {
 		const data = this.data || {};
-		return [].concat(data.visits || [], data.unscheduled || [], data.projected || []);
+		return [].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.booking_cards());
+	}
+
+	// The engine's read-only bookings as cards, one per booking per day. Never movable: they carry
+	// no `movable` flag, which is also what keeps them out of the drag path (on_down).
+	booking_cards() {
+		const out = [];
+		const bookings = (this.data && this.data.bookings) || {};
+		Object.keys(bookings).forEach((user) => {
+			Object.keys(bookings[user] || {}).forEach((ymd) => {
+				((bookings[user][ymd] || {}).items || []).forEach((item, index) => {
+					out.push({
+						kind: "booking",
+						booking_kind: item.kind,
+						key: `bk|${user}|${ymd}|${item.kind}|${item.ref}|${index}`,
+						date: ymd,
+						technician: user,
+						ref: item.ref,
+						name: item.ref,
+						project: item.project,
+						label: item.label,
+						hours: item.hours,
+						slot: item.slot,
+					});
+				});
+			});
+		});
+		return out;
+	}
+
+	// 3 -> "3", 2.5 -> "2.5", 1.25 -> "1.25"
+	fmt_hours(hours) {
+		return String(+Number(hours || 0).toFixed(2));
+	}
+
+	// The day header's free-hours text for the selected technician, from the engine's numbers.
+	free_info(user, ymd) {
+		const cell = (((this.data && this.data.bookings) || {})[user] || {})[ymd];
+		if (!cell) return null;
+		const lines = [];
+		let text;
+		let cls = "";
+		if (cell.off) {
+			text = __(cell.off);
+			cls = "mp-free-off";
+		} else if (!(cell.capacity > 0)) {
+			text = __("Not a work day");
+			cls = "mp-free-off";
+		} else if (cell.booked - cell.capacity > 0.01) {
+			text = __("Over {0}h", [this.fmt_hours(cell.booked - cell.capacity)]);
+			cls = "mp-free-over";
+		} else if (!(cell.free > 0.005)) {
+			text = __("Full");
+			cls = "mp-free-full";
+		} else {
+			text = __("{0}h free", [this.fmt_hours(cell.free)]);
+		}
+		lines.push(
+			__("{0}h of {1}h booked on projects, rentals, travel and visits", [
+				this.fmt_hours(cell.booked),
+				this.fmt_hours(cell.capacity),
+			])
+		);
+		(cell.conflicts || []).forEach((conflict) => lines.push(conflict));
+		return { text, cls, title: lines.join("\n") };
 	}
 
 	visible(card) {
+		if (card.kind === "booking") {
+			if (!this.show_project_work || this.technician === "__none__") return false;
+			return !this.technician || card.technician === this.technician;
+		}
 		if (card.kind === "projected" && !this.show_projected) return false;
 		if (!this.technician) return true;
 		if (this.technician === "__none__") return !card.technician;
@@ -415,8 +517,17 @@ class MaintenancePlanner {
 				.attr("title", __("Show this week"))
 				.on("click", () => this.go("week", ymd))
 				.appendTo($head);
-			if (cards.length > 1) {
-				$('<span class="mp-day-count"></span>').text(__("{0} visits", [cards.length])).appendTo($head);
+			const free = this.technician && this.technician !== "__none__" ? this.free_info(this.technician, ymd) : null;
+			if (free) {
+				$('<span class="mp-day-free"></span>')
+					.addClass(free.cls)
+					.text(free.text)
+					.attr("title", free.title)
+					.appendTo($head);
+			}
+			const visit_count = cards.filter((card) => card.kind !== "booking").length;
+			if (visit_count > 1) {
+				$('<span class="mp-day-count"></span>').text(__("{0} visits", [visit_count])).appendTo($head);
 			}
 			cards.forEach((card) => $day.append(this.card_html(card)));
 		}
@@ -434,7 +545,8 @@ class MaintenancePlanner {
 	}
 
 	compare(a, b) {
-		const order = (card) => MP.status_order[card.kind === "projected" ? "projected" : card.status] || 0;
+		const order = (card) =>
+			MP.status_order[card.kind === "projected" || card.kind === "booking" ? card.kind : card.status] || 0;
 		return order(a) - order(b) || String(a.site || "").localeCompare(String(b.site || ""));
 	}
 
@@ -447,7 +559,30 @@ class MaintenancePlanner {
 		return classes.join(" ");
 	}
 
+	// A project task, rental crew task or travel day of a technician. Read-only: no mp-movable.
+	booking_html(card) {
+		const kind = card.booking_kind in MP.booking_kinds ? card.booking_kind : "task";
+		const sub = [];
+		if (card.project) sub.push(card.project);
+		sub.push(card.slot ? card.slot.join("–") : `${this.fmt_hours(card.hours)}h`);
+		const who = card.technician ? this.tech_name(card.technician) : "";
+		const tip = [card.label, sub.join(" · "), who, __("Read-only. Move it on the Project Planner.")]
+			.filter(Boolean)
+			.join("\n");
+		const badge = this.technician ? "" : this.tech_badge(card.technician);
+		return `
+			<div class="mp-card mp-booking mp-bk-${kind}" data-key="${mp_esc(card.key)}" tabindex="0" title="${mp_esc(tip)}">
+				<div class="mp-card-top">
+					<span class="mp-card-title">${mp_esc(card.label || card.ref)}</span>
+					${badge}
+				</div>
+				<div class="mp-card-sub">${mp_esc(sub.join(" · "))}</div>
+				<div class="mp-card-who"><span class="mp-chip">${mp_esc(__(MP.booking_kinds[kind]))}</span></div>
+			</div>`;
+	}
+
 	card_html(card) {
+		if (card.kind === "booking") return this.booking_html(card);
 		const sub = [];
 		if (card.label) sub.push(__(card.label));
 		if (card.feature) sub.push(card.feature);
@@ -684,6 +819,12 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ dialog
 
 	open_card(card) {
+		if (card.kind === "booking") {
+			// Travel days open their trip; project and rental bookings are Tasks.
+			if (card.booking_kind === "travel") frappe.set_route("Form", "Travel Trip", card.ref);
+			else frappe.set_route("Form", "Task", card.ref);
+			return;
+		}
 		const rows = [];
 		const add = (label, value) => {
 			if (value) rows.push(`<tr><th>${mp_esc(label)}</th><td>${mp_esc(value)}</td></tr>`);

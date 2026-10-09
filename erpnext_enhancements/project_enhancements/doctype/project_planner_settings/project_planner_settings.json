@@ -1,0 +1,108 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-08 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "default_day_hours",
+  "maintenance_visit_hours",
+  "section_rental",
+  "rental_delivery_hours",
+  "rental_setup_hours",
+  "column_break_rental",
+  "rental_takedown_hours",
+  "rental_cleaning_hours"
+ ],
+ "fields": [
+  {
+   "default": "8",
+   "description": "Hours a task with no estimate books per person per day, and the weekday hours of a resource with no work pattern.",
+   "fieldname": "default_day_hours",
+   "fieldtype": "Float",
+   "label": "Full-day hours",
+   "precision": "1"
+  },
+  {
+   "default": "2",
+   "description": "Hours each maintenance visit books on its technician when the visit has no clock-in and clock-out.",
+   "fieldname": "maintenance_visit_hours",
+   "fieldtype": "Float",
+   "label": "Maintenance visit hours",
+   "precision": "1"
+  },
+  {
+   "fieldname": "section_rental",
+   "fieldtype": "Section Break",
+   "label": "Rental crew tasks (hours when the task has no estimate)"
+  },
+  {
+   "default": "2",
+   "fieldname": "rental_delivery_hours",
+   "fieldtype": "Float",
+   "label": "Delivery",
+   "precision": "1"
+  },
+  {
+   "default": "3",
+   "fieldname": "rental_setup_hours",
+   "fieldtype": "Float",
+   "label": "Setup",
+   "precision": "1"
+  },
+  {
+   "fieldname": "column_break_rental",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "2",
+   "fieldname": "rental_takedown_hours",
+   "fieldtype": "Float",
+   "label": "Take-down",
+   "precision": "1"
+  },
+  {
+   "default": "2",
+   "fieldname": "rental_cleaning_hours",
+   "fieldtype": "Float",
+   "label": "Cleaning",
+   "precision": "1"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Project Planner Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Projects User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

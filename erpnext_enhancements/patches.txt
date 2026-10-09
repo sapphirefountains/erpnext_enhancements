@@ -1274,3 +1274,7 @@ erpnext_enhancements.patches.heal_desk_icon_names
 # workflow.json sorts before workflow_action_master.json and links to both. Grants the role to nobody; the
 # reviewers are set in the Desk. Insert-only, cannot raise, safe twice.
 erpnext_enhancements.patches.seed_maintenance_reviewer_role
+# v1.577.0 Project Planner: seed a Planner Resource for each active technician, project manager and design
+# employee, so the planner opens with people on it. Insert-only, keyed on employee, no work-pattern rows
+# (Austin's Mon-Wed week is entered by hand). Cannot raise, safe twice.
+erpnext_enhancements.patches.seed_planner_resources

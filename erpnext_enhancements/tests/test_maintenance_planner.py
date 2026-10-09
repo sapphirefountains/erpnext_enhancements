@@ -631,6 +631,209 @@ class TestGetPlanner(unittest.TestCase):
 			planner.get_planner("2026-10-31", "2026-10-01")
 
 
+ENGINE_MODULE = "erpnext_enhancements.project_enhancements.crew_availability"
+
+
+class TestProjectBookings(unittest.TestCase):
+	"""Project work shown read-only, with free hours from the shared engine (P1.6).
+
+	Maintenance and Projects share technicians, so a technician's free hours must read the same in
+	both planners. The planner takes them from ``crew_availability.availability`` and never works
+	them out itself; a failure there must leave the maintenance calendar standing.
+	"""
+
+	TECHS = [
+		{"user": "austin@example.com", "name": "Austin Healey", "enabled": True},
+		{"user": "lisa@example.com", "name": "Lisa", "enabled": True},
+	]
+
+	def setUp(self):
+		_reset()
+		frappe.get_traceback = lambda: "traceback"
+		self.logged = []
+		frappe.log_error = lambda *a, **k: self.logged.append(k)
+		self._saved_engine = sys.modules.get(ENGINE_MODULE)
+		self.calls = []
+		self.engine = types.ModuleType(ENGINE_MODULE)
+		self.engine.availability = self._availability
+		sys.modules[ENGINE_MODULE] = self.engine
+
+		def booking(kind, ref, label, project, hours, slot=None):
+			return {
+				"kind": kind,
+				"ref": ref,
+				"label": label,
+				"project": project,
+				"hours": hours,
+				"slot": slot,
+				"estimated": slot is None,
+			}
+
+		self.result = {
+			"resources": [],
+			"user_to_resource": {"austin@example.com": "RES-1"},
+			"days": {
+				"RES-1": {
+					"2026-10-12": {
+						"capacity": 8.0,
+						"booked": 10.0,
+						"free": 0.0,
+						"off": None,
+						"conflicts": ["Over by 2h"],
+						"warnings": ["On restricted duty"],
+						"bookings": [
+							booking("visit", "SMR-1", "Highlands", "PRJ-1", 2.0),
+							booking("task", "TASK-1", "Install pump", "PRJ-2", 6.0, ["09:00", "15:00"]),
+							booking("rental", "TASK-2", "Delivery", None, 1.0),
+							booking("travel", "TRIP-1", "Travel: Vegas", None, 1.0),
+						],
+					},
+					"2026-10-13": {
+						"capacity": 0.0,
+						"booked": 0.0,
+						"free": 0.0,
+						"off": "Not a work day",
+						"conflicts": [],
+						"warnings": [],
+						"bookings": [],
+					},
+				}
+			},
+		}
+
+	def tearDown(self):
+		if self._saved_engine is None:
+			sys.modules.pop(ENGINE_MODULE, None)
+		else:
+			sys.modules[ENGINE_MODULE] = self._saved_engine
+
+	def _availability(self, start, end, resources=None):
+		self.calls.append((start, end, resources))
+		if isinstance(self.result, Exception):
+			raise self.result
+		return self.result
+
+	def test_bookings_are_keyed_by_user_with_non_visit_items_only(self):
+		bookings = planner._project_bookings(self.TECHS, D(2026, 10, 12), D(2026, 10, 13))
+		# One engine call for the range, whatever the number of technicians.
+		self.assertEqual(self.calls, [(D(2026, 10, 12), D(2026, 10, 13), None)])
+		# Lisa has no Planner Resource: absent, so the planner shows no free hours for her.
+		self.assertEqual(list(bookings), ["austin@example.com"])
+		day = bookings["austin@example.com"]["2026-10-12"]
+		self.assertEqual(
+			{k: day[k] for k in ("capacity", "booked", "free", "off", "conflicts")},
+			{"capacity": 8.0, "booked": 10.0, "free": 0.0, "off": None, "conflicts": ["Over by 2h"]},
+		)
+		self.assertEqual([i["kind"] for i in day["items"]], ["task", "rental", "travel"])
+		self.assertEqual(
+			day["items"][0],
+			{
+				"kind": "task",
+				"ref": "TASK-1",
+				"label": "Install pump",
+				"project": "PRJ-2",
+				"hours": 6.0,
+				"slot": ["09:00", "15:00"],
+			},
+		)
+		self.assertEqual(bookings["austin@example.com"]["2026-10-13"]["off"], "Not a work day")
+		self.assertEqual(bookings["austin@example.com"]["2026-10-13"]["items"], [])
+
+	def test_get_planner_returns_the_bookings(self):
+		names = ("_records_between", "_unscheduled_drafts", "_projections", "_decorate", "_technicians")
+		saved = {name: getattr(planner, name) for name in names}
+		try:
+			planner._records_between = lambda start, end: []
+			planner._unscheduled_drafts = lambda: []
+			planner._projections = lambda start, end, today: []
+			planner._decorate = lambda cards: None
+			planner._technicians = lambda cards: self.TECHS
+			data = planner.get_planner("2026-10-12", "2026-10-13")
+		finally:
+			for name, value in saved.items():
+				setattr(planner, name, value)
+		self.assertEqual(data["technicians"], self.TECHS)
+		self.assertEqual(list(data["bookings"]), ["austin@example.com"])
+		self.assertEqual(len(data["bookings"]["austin@example.com"]["2026-10-12"]["items"]), 3)
+
+	def test_an_engine_failure_returns_no_bookings_and_logs(self):
+		self.result = RuntimeError("project side broke")
+		self.assertEqual(planner._project_bookings(self.TECHS, D(2026, 10, 12), D(2026, 10, 13)), {})
+		self.assertEqual(len(self.logged), 1)
+		self.assertIn("title", self.logged[0])
+		self.assertEqual(self.logged[0]["message"], "traceback")
+
+	def test_get_planner_survives_an_engine_failure(self):
+		self.result = RuntimeError("project side broke")
+		names = ("_records_between", "_unscheduled_drafts", "_projections", "_decorate", "_technicians")
+		saved = {name: getattr(planner, name) for name in names}
+		try:
+			planner._records_between = lambda start, end: []
+			planner._unscheduled_drafts = lambda: []
+			planner._projections = lambda start, end, today: []
+			planner._decorate = lambda cards: None
+			planner._technicians = lambda cards: self.TECHS
+			data = planner.get_planner("2026-10-12", "2026-10-13")
+		finally:
+			for name, value in saved.items():
+				setattr(planner, name, value)
+		self.assertEqual(data["bookings"], {})
+		self.assertEqual(len(self.logged), 1)
+
+	def test_no_technicians_means_no_engine_call(self):
+		self.assertEqual(planner._project_bookings([], D(2026, 10, 12), D(2026, 10, 13)), {})
+		self.assertEqual(self.calls, [])
+
+	def test_the_engine_is_imported_lazily(self):
+		# The engine imports this module back for the visit projections; a top-level import
+		# here would make the pair cyclic at import time.
+		source = inspect.getsource(planner)
+		self.assertNotIn("\nfrom erpnext_enhancements.project_enhancements", source)
+		self.assertNotIn("\nimport erpnext_enhancements.project_enhancements", source)
+		self.assertIn(
+			"\t\tfrom erpnext_enhancements.project_enhancements.crew_availability import availability",
+			source,
+		)
+
+	def test_the_page_shows_them_read_only(self):
+		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
+		start = code.index("booking_html(card) {")
+		card = code[start : code.index("card_html(card) {", start)]
+		self.assertNotIn("mp-movable", card)
+		cards = code[code.index("booking_cards() {") : code.index("fmt_hours(hours) {")]
+		self.assertNotIn("movable", cards)
+		# Only a card flagged movable is ever picked up by a drag.
+		self.assertIn("if (!card || !card.movable || card.saving) return;", code)
+		# Free hours come from the engine's numbers, never from the visit cards.
+		self.assertIn("this.data.bookings", code)
+		self.assertIn("{0}h free", code)
+
+	def test_the_project_work_pref_is_guarded_and_remembered(self):
+		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
+		self.assertIn('project_key: "ee_maintenance_planner_project_work"', code)
+		self.assertIn('this.load_pref(MP.project_key, "1") !== "0"', code)
+		self.assertIn("this.save_pref(MP.project_key,", code)
+		self.assertIn('__("Project work")', code)
+		# The same try/catch wraps every read and write of a pref.
+		for helper in ("load_pref(key, fallback) {", "save_pref(key, value) {"):
+			body = code[code.index(helper) :]
+			self.assertLess(body.index("try {"), body.index("catch (e)"), helper)
+			self.assertLess(body.index("catch (e)"), body.index("\n\t}\n"), helper)
+
+	def test_cards_open_the_task_or_the_trip(self):
+		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
+		self.assertIn('frappe.set_route("Form", "Task", card.ref)', code)
+		self.assertIn('frappe.set_route("Form", "Travel Trip", card.ref)', code)
+		# Back and Forward stay with frappe.set_route.
+		self.assertNotIn("pushState", code)
+		self.assertNotIn("replaceState", code)
+
+	def test_the_legend_names_the_new_kinds(self):
+		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
+		for label in ("Project task (read-only)", "Rental crew (read-only)", "Travel (read-only)"):
+			self.assertIn(f'__("{label}")', code)
+
+
 class TestWiring(unittest.TestCase):
 	def test_planner_roles_are_the_roles_that_read_every_record(self):
 		permissions = importlib.import_module("erpnext_enhancements.sapphire_maintenance.permissions")

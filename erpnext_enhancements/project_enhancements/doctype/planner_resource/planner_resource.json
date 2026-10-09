@@ -1,0 +1,179 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:RES-{#####}",
+ "creation": "2026-10-08 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "resource_name",
+  "resource_type",
+  "employee",
+  "user",
+  "supplier",
+  "column_break_main",
+  "resource_group",
+  "home_team",
+  "color",
+  "is_active",
+  "section_pattern",
+  "work_patterns",
+  "section_notes",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "resource_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1
+  },
+  {
+   "default": "Employee",
+   "fieldname": "resource_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Employee\nSubcontractor",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.resource_type=='Employee'",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "mandatory_depends_on": "eval:doc.resource_type=='Employee'",
+   "options": "Employee"
+  },
+  {
+   "depends_on": "eval:doc.resource_type=='Employee'",
+   "fetch_from": "employee.user_id",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.resource_type=='Subcontractor'",
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "resource_group",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Group",
+   "options": "Field\nPM\nDesign\nSubcontractor",
+   "reqd": 1
+  },
+  {
+   "default": "Projects",
+   "description": "Which planner shows the person first. Both planners see the person's bookings either way.",
+   "fieldname": "home_team",
+   "fieldtype": "Select",
+   "label": "Home team",
+   "options": "Projects\nMaintenance"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Color"
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Active"
+  },
+  {
+   "fieldname": "section_pattern",
+   "fieldtype": "Section Break",
+   "label": "Work pattern"
+  },
+  {
+   "description": "Hours worked on each weekday. Add a row with dates for a seasonal schedule; the row whose dates cover a day wins over a row with no dates. With no rows, Monday to Friday at the Project Planner Settings' full-day hours.",
+   "fieldname": "work_patterns",
+   "fieldtype": "Table",
+   "label": "Work pattern",
+   "options": "Planner Resource Work Pattern"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_notes",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Resource",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects User"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User"
+  }
+ ],
+ "search_fields": "resource_name,resource_group",
+ "show_title_field_in_link": 1,
+ "sort_field": "resource_name",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "resource_name",
+ "track_changes": 1
+}
