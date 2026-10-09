@@ -907,7 +907,7 @@ class TestOverlay(_Base):
 		]
 		frappe.tables["Task Required Credential"] = []
 
-		def compute(start, end, resources=None, exclude=(), extra=()):
+		def compute(start, end, resources=None, exclude=(), extra=(), **_kwargs):
 			self.calls.append({"exclude": set(exclude or ()), "extra": [dict(e[0]) for e in extra or ()]})
 			tasks = [t for t in stored if t["name"] not in set(exclude or ())] + [
 				_Doc(e[0]) for e in extra or ()
@@ -973,7 +973,7 @@ class TestPublish(_Base):
 		self.before_after = {"before": {}, "after": {}}
 		self.batch_calls = []
 
-		def compute(start, end, resources=None, exclude=(), extra=()):
+		def compute(start, end, resources=None, exclude=(), extra=(), **_kwargs):
 			which = "after" if exclude else "before"
 			self.batch_calls.append((which, set(exclude or ()), [e[0]["name"] for e in extra or ()]))
 			return {

@@ -598,6 +598,10 @@ doc_events = {
 			# Project Planner (v1.577.0): one row per person, one lead, hours rounded and never
 			# negative. Reads custom_crew defensively -- doc_events fire before the field exists.
 			"erpnext_enhancements.project_enhancements.crew_sync.validate_crew",
+			# Project Planner Phase 4 (P4.4): one row per vehicle/asset on custom_equipment, the link
+			# matching the row's type, and the label filled from the vehicle or asset (one fetch_from
+			# cannot serve two links). Reads the table defensively. See planner_tracking.py.
+			"erpnext_enhancements.project_enhancements.planner_tracking.validate_equipment",
 		],
 	},
 	"Project": {

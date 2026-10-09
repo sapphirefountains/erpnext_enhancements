@@ -219,6 +219,37 @@ def refresh(doc):
 		line.spend_coverage = budgets.coverage(actual_source, source_has_rows(actual_source))
 
 	doc.estimated_costing = budgets.total_budgeted(lines)
+	refresh_labor_forecast(doc)
+
+
+def refresh_labor_forecast(doc):
+	"""Fill the Labor line's ``labor_forecast`` from the Project Planner (Phase 4, P4.2).
+
+	``planner_tracking.labor_forecast``: hours booked from today on plus hours clocked at the
+	kiosk, each at that day's pay rate (base rate where no burden is set). Only the line whose
+	category is ``budgets.CATEGORY_LABOR`` gets one; every other line is left alone, and so are
+	``actual_amount`` and ``spend_coverage``: a forecast is not spend, and Labor's coverage stays
+	the honest Not Tracked until Timesheets hold rows. The field is at permlevel 2 (cost roles
+	only), which is why this computes with cost regardless of who is saving: the save response is
+	stripped of it for anyone else.
+
+	Its own ``try``: a forecast that fails (an engine bug, a missing table during ERPNext's test
+	bootstrap) logs and leaves the figure as it was, and never costs the line its committed and
+	actual figures, which are already filled in by now.
+	"""
+	line = budgets.line_for(doc.get(budgets.LINES_FIELD) or [], budgets.CATEGORY_LABOR)
+	if line is None or not doc.name:
+		return
+	try:
+		from erpnext_enhancements.project_enhancements import planner_tracking
+
+		forecast = planner_tracking.labor_forecast(doc.name, with_cost=True)
+		line.labor_forecast = forecast.get("forecast_cost") or 0
+	except Exception:
+		frappe.log_error(
+			title="Labor forecast rollup failed",
+			message=f"Project {doc.name}: {frappe.get_traceback()}",
+		)
 
 
 def _figure(source, category, spend):

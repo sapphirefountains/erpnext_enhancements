@@ -376,6 +376,7 @@ class ProjectPlanner {
 		this.$body = $('<div class="pp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
 		this.init_phase3b();
+		this.init_phase4();
 		this.bind_drag();
 	}
 
@@ -439,6 +440,7 @@ class ProjectPlanner {
 		this.$hint.toggle(!route);
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
+		this.p4_set_mode(mode);
 		if (route && this.$draft_bar) this.$draft_bar.hide();
 		[this.$project, this.$pm, this.$foreign, this.$undo].forEach(($el) => $el && $el.toggle(!heatmap));
 		if (heatmap && this.$copy) this.$copy.hide();
@@ -661,6 +663,7 @@ class ProjectPlanner {
 				this.$body.removeClass("pp-loading");
 				this.index();
 				this.fill_filters();
+				this.load_phase4();
 				this.render();
 				this.load_overdue();
 			})
@@ -719,6 +722,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ filters
 
 	task_visible(card) {
+		if (this.over_only && !card.over_plan) return false;
 		if (this.project && card.project !== this.project) return false;
 		if (this.pm) {
 			const project = card.project && this.by_project[card.project];
@@ -779,6 +783,7 @@ class ProjectPlanner {
 				  )
 		);
 		this.render_phase3b();
+		this.render_phase4();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -1110,6 +1115,7 @@ class ProjectPlanner {
 					</div>`);
 			});
 		});
+		html.push(this.p4_equipment_rows(days));
 		this.$grid_wrap.empty().removeClass("pp-month pp-week").addClass("pp-crew-view");
 		if (!resources.length) {
 			$('<div class="pp-section pp-empty-note"></div>')
@@ -1151,9 +1157,12 @@ class ProjectPlanner {
 			const sub = [hours, pencil ? __("Pencil") : "", warned ? "⚠" : ""].filter(Boolean).join(" · ");
 			return `
 				<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd)}"
-					data-resource="${pp_esc(resource)}" tabindex="0" title="${pp_esc(tip)}" style="border-left-color:${pp_esc(color)}">
+					data-resource="${pp_esc(resource)}" tabindex="0" title="${pp_esc(
+					[tip, ...this.p4_tip_lines(card)].filter(Boolean).join("\n")
+				)}" style="border-left-color:${pp_esc(color)}">
 					<div class="pp-card-title">${pp_esc(card.subject || card.name)}</div>
 					<div class="pp-card-sub">${pp_esc(sub)}</div>
+					<div class="pp-card-chips">${this.p4_card_chips(card).join("")}</div>
 				</div>`;
 		}
 		if (!this.show_foreign) return "";
@@ -1179,7 +1188,8 @@ class ProjectPlanner {
 		(this.task_days[card.name] || []).forEach(({ resource, ymd, day }) => {
 			(day.conflicts || []).forEach((text) => out.push(`${this.resource_label(resource)}, ${pp_when(ymd)}: ${text}`));
 		});
-		return out;
+		// A vehicle or asset used twice, in the shop or retired (the card's own `conflicts` list).
+		return out.concat(this.p4_card_conflicts(card));
 	}
 
 	// Planning-helper warnings on a card, as sentences. They never block anything.
@@ -1249,6 +1259,7 @@ class ProjectPlanner {
 		if (card.overdue) chips.push(red(__("Overdue")));
 		if (card.rental_kind) chips.push(plain(__(card.rental_kind)));
 		if (!card.start) chips.push(plain(__("No dates")));
+		this.p4_card_chips(card).forEach((chip) => chips.push(chip));
 		if (card.tentative) chips.unshift(`<span class="pp-chip pp-pencil">${pp_esc(__("Pencil"))}</span>`);
 		const amber = (text) => `<span class="pp-chip pp-amber">${pp_esc(text)}</span>`;
 		const blocked = card.blocked_by || [];
@@ -1285,6 +1296,7 @@ class ProjectPlanner {
 			...conflicts,
 			...this.dependency_lines(card),
 			...this.gap_lines(card),
+			...this.p4_tip_lines(card),
 		]
 			.filter(Boolean)
 			.join("\n");
@@ -1372,7 +1384,7 @@ class ProjectPlanner {
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
-			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell")) return;
+			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard")) return;
 			e.preventDefault();
 			this.activate(e.target);
 		});
@@ -1388,6 +1400,14 @@ class ProjectPlanner {
 		const cell_el = target.closest(".pp-hm-cell[data-hm-week]");
 		if (cell_el) {
 			this.go("week", cell_el.getAttribute("data-hm-week"));
+			return;
+		}
+		const equip_el = target.closest(".pp-ecard[data-etask]");
+		if (equip_el) {
+			const name = equip_el.getAttribute("data-etask");
+			const task = this.by_task[name];
+			if (task) this.open_card(task);
+			else frappe.set_route("Form", "Task", name);
 			return;
 		}
 		const firm_el = target.closest(".pp-firm[data-firm]");
@@ -1702,6 +1722,7 @@ class ProjectPlanner {
 			crew: this.crew_rows(card),
 			credentials: (card.credentials || []).slice(),
 			tentative: card.tentative ? 1 : 0,
+			equipment: this.p4_equipment_of(card),
 		};
 	}
 
@@ -1763,7 +1784,7 @@ class ProjectPlanner {
 			const people = Object.entries(conflicts || {})
 				.map(
 					([who, list]) =>
-						`<div class="pp-why"><b>${pp_esc(who)}</b><ul>${(list || [])
+						`<div class="pp-why"><b>${pp_esc(this.p4_conflict_heading(who))}</b><ul>${(list || [])
 							.map((text) => `<li>${pp_esc(text)}</li>`)
 							.join("")}</ul></div>`
 				)
@@ -1831,6 +1852,7 @@ class ProjectPlanner {
 			credentials: JSON.stringify(snap.credentials),
 		};
 		if (snap.tentative != null) args.tentative = snap.tentative;
+		if (snap.equipment) args.equipment = JSON.stringify(snap.equipment);
 		if (snap.start) {
 			args.start = snap.start;
 			args.end = snap.end || snap.start;
@@ -1891,6 +1913,7 @@ class ProjectPlanner {
 		this.dependency_lines(card).forEach((text) => add(__("Dependency"), text));
 		if ((card.depends_on || []).length) add(__("Depends on"), card.depends_on.join(", "));
 		this.gap_lines(card).forEach((text) => add(__("Qualification"), text));
+		rows.push(...this.p4_dialog_rows(card));
 		if (!editable) add(__("Note"), __("This task is read-only here."));
 
 		const links = [["task", __("Open task")]];
@@ -1973,6 +1996,7 @@ class ProjectPlanner {
 					get_data: (txt) => frappe.db.get_link_options("Credential Type", txt),
 				}
 			);
+			fields.push(...this.p4_equipment_fields(card));
 		}
 
 		const dialog = new frappe.ui.Dialog({ title: card.subject || card.name, fields, size: "large" });
@@ -1989,6 +2013,7 @@ class ProjectPlanner {
 		});
 		dialog.show();
 		if (editable && (card.credentials || []).length) dialog.set_value("credentials", card.credentials.slice());
+		this.p4_refine_actuals(card, dialog);
 	}
 
 	save_dialog(card, dialog, values) {
@@ -2037,6 +2062,7 @@ class ProjectPlanner {
 		if (JSON.stringify(credentials.slice().sort()) !== JSON.stringify(before)) {
 			args.credentials = JSON.stringify(credentials);
 		}
+		this.p4_equipment_arg(card, values, args);
 
 		dialog.hide();
 		if (Object.keys(args).length === 1) return;
@@ -2785,7 +2811,7 @@ class ProjectPlanner {
 				? `<div class="pp-route-note"><b>${pp_esc(__("These copies would cause conflicts"))}</b>${clashes
 						.map(
 							([who, list]) =>
-								`<div class="pp-why"><b>${pp_esc(who)}</b><ul>${list.map((text) => `<li>${pp_esc(text)}</li>`).join("")}</ul></div>`
+								`<div class="pp-why"><b>${pp_esc(this.p4_conflict_heading(who))}</b><ul>${list.map((text) => `<li>${pp_esc(text)}</li>`).join("")}</ul></div>`
 						)
 						.join("")}<div>${pp_esc(__("You can copy anyway; you will be asked for a reason."))}</div></div>`
 				: "";
@@ -3552,3 +3578,563 @@ const PP3B_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
+
+// ====================================================================== Phase 4: tracking
+//
+// Planned against worked hours, the labor forecast of the project on screen, and the vehicles and
+// assets a task uses. Everything here is read from the server's numbers; nothing is computed on
+// this side that decides anything:
+//   - a card that has clock-in hours says "14h of 12h" (red when the server marks it over_plan);
+//     the dialog lists each person's hours (card.crew[].actual, refined by get_actuals); the
+//     toolbar's "Running over" chip shows only the over_plan tasks
+//   - with a project picked, a strip shows its labor forecast (get_labor_forecast): hours always;
+//     cost only when the answer says can_see_cost, and the rate it is at ("base rate" until the
+//     burdened rates are in) - a wage is never worked out here from hours
+//   - card.equipment shows as chips, the dialog has an Equipment table (Fleet Vehicle / Asset) sent
+//     to save_task as `equipment`, an equipment conflict arrives in needs_reason under the
+//     "Equipment" key and is asked about like any other, and the crew view gains an Equipment row
+//     group (get_equipment): each vehicle or asset, the tasks using it each day
+//   - a "Utilization" button opens the Crew Utilization report
+//
+// Everything Phase 4 adds is in this block, mixed into ProjectPlanner below. The hooks into the
+// class above are one line each: init_phase4 (constructor), p4_set_mode (set_mode), load_phase4
+// (load), render_phase4 (render), p4_equipment_rows (render_crew), p4_card_chips / p4_tip_lines /
+// p4_card_conflicts (the cards), p4_conflict_heading (the reason dialogs), p4_equipment_of
+// (snapshot) and p4_dialog_rows / p4_equipment_fields / p4_refine_actuals / p4_equipment_arg
+// (the card dialog).
+
+const PP4 = {
+	report: "Crew Utilization",
+	equipment_key: "Equipment",
+	equipment_chips: 2,
+	// A vehicle in either state cannot go out, whatever is booked on it.
+	unavailable: ["In Shop", "Retired"],
+};
+
+const PP4_STYLE = `
+.pp-chip.pp-equip{background:rgba(37,99,235,.12);color:var(--text-color);}
+.pp-toggle{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-color);border-radius:14px;background:var(--card-bg);padding:3px 11px;font-size:13px;color:var(--text-color);}
+.pp-toggle.pp-on{background:rgba(220,38,38,.12);border-color:#dc2626;color:#b91c1c;font-weight:600;}
+.pp-forecast{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);padding:8px 12px;margin-bottom:10px;font-size:13px;}
+.pp-forecast-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
+.pp-forecast .btn{margin-left:auto;}
+.pp-fc-table{width:100%;font-size:13px;border-collapse:collapse;}
+.pp-fc-table th{color:var(--text-muted);font-weight:normal;text-align:right;padding:3px 0 3px 12px;white-space:nowrap;}
+.pp-fc-table td{padding:4px 0 4px 12px;text-align:right;border-top:1px solid var(--border-color);white-space:nowrap;}
+.pp-fc-table th:first-child,.pp-fc-table td:first-child{text-align:left;padding-left:0;white-space:normal;}
+.pp-actual-row{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--text-muted);}
+.pp-crew-group{grid-column:1 / -1;padding:5px 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);background:var(--control-bg);}
+.pp-equip-name{display:flex;flex-direction:column;gap:1px;padding:6px 8px;font-size:12px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
+.pp-equip-name b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-equip-sub{font-size:11px;color:var(--text-muted);}
+.pp-ecell{border-left:1px solid var(--border-color);padding:4px;display:flex;flex-direction:column;gap:3px;min-width:0;min-height:40px;}
+.pp-ecell.pp-unavailable{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--control-bg) 6px 8px);}
+.pp-ecard{border:1px solid var(--border-color);border-left:4px solid #64748b;border-radius:6px;background:var(--card-bg);padding:2px 5px;font-size:11px;line-height:1.3;cursor:pointer;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-ecard:hover,.pp-ecard:focus{box-shadow:0 1px 4px rgba(0,0,0,.18);outline:none;}
+.pp-ecard.pp-clash{border-left-color:#dc2626;box-shadow:inset 0 0 0 1px rgba(220,38,38,.55);}
+@media (max-width:760px){
+.pp-forecast{padding:6px 10px;}
+.pp-forecast .btn{margin-left:0;}
+.pp-equip-name{padding:4px 6px;}
+}
+`;
+
+const PP4_METHODS = {
+	init_phase4() {
+		if (!document.getElementById("pp-style-4")) {
+			$("<style id='pp-style-4'>").text(PP4_STYLE).appendTo(document.head);
+		}
+		this.over_only = false;
+		this.forecast = null;
+		this.forecast_for = "";
+		this.forecast_request = 0;
+		this.equip = null;
+		this.equip_request = 0;
+
+		// The filter is for this visit to the page: a chip that quietly hides most of the board
+		// the next morning would be a trap, so it is not remembered.
+		this.$over = $('<button type="button" class="pp-toggle" aria-pressed="false"></button>')
+			.attr("title", __("Show only the tasks whose clocked hours are past their plan"))
+			.on("click", () => {
+				this.over_only = !this.over_only;
+				this.render();
+			})
+			.insertAfter(this.$foreign);
+		this.$util = $('<button type="button" class="btn btn-default btn-sm pp-util"></button>')
+			.text(__("Utilization"))
+			.attr("title", __("The Crew Utilization report: capacity, booked and worked hours per person"))
+			.on("click", () => frappe.set_route("query-report", PP4.report))
+			.insertBefore(this.$undo);
+		this.$forecast = $('<div class="pp-forecast"></div>').hide().insertBefore(this.$panel);
+	},
+
+	// The route, heatmap and My week views have none of this; the calendar views draw it.
+	p4_set_mode(mode) {
+		const calendar = mode === "";
+		if (this.$over) this.$over.toggle(calendar);
+		if (this.$forecast && !calendar) this.$forecast.hide();
+	},
+
+	// A reload refreshes the forecast in place (the strip stays up until the new figures arrive).
+	load_phase4() {
+		this.forecast_for = this.project;
+		this.p4_fetch_forecast();
+		this.p4_load_equipment();
+	},
+
+	render_phase4() {
+		this.p4_sync_forecast();
+		this.p4_render_forecast();
+		this.p4_update_over();
+	},
+
+	// ------------------------------------------------------------------ running over
+
+	p4_update_over() {
+		if (!this.data || !this.$over) return;
+		const saved = this.over_only;
+		this.over_only = false;
+		const count = []
+			.concat(this.data.tasks || [], this.data.unscheduled || [])
+			.filter((card) => card.over_plan && this.task_visible(card)).length;
+		this.over_only = saved;
+		this.$over
+			.text(`${__("Running over")} (${count})`)
+			.toggleClass("pp-on", !!saved)
+			.attr("aria-pressed", saved ? "true" : "false");
+	},
+
+	// What a task was planned for: its estimate, else what the engine booked for its crew.
+	p4_planned(card) {
+		const estimate = Number(card.expected_time) || 0;
+		if (estimate > 0) return estimate;
+		return (card.crew || []).reduce((sum, member) => sum + (Number(member.booked) || 0), 0);
+	},
+
+	// "14h of 12h": clocked hours against the plan. The server decides whether that is too far over.
+	p4_actual_text(card) {
+		const actual = Number(card.actual_hours) || 0;
+		if (!(actual > 0)) return "";
+		const planned = this.p4_planned(card);
+		return planned > 0
+			? __("{0}h of {1}h", [pp_hours(actual), pp_hours(planned)])
+			: __("{0}h worked", [pp_hours(actual)]);
+	},
+
+	p4_equipment_list(card) {
+		return (Array.isArray(card.equipment) ? card.equipment : []).filter((item) => item && (item.name || item.label));
+	},
+
+	p4_equipment_label(item) {
+		return item.label || item.name || "";
+	},
+
+	p4_card_chips(card) {
+		const out = [];
+		const text = this.p4_actual_text(card);
+		if (text) {
+			const tip = card.over_plan
+				? __("Worked {0}h against {1}h planned: running over", [
+						pp_hours(card.actual_hours),
+						pp_hours(this.p4_planned(card)),
+				  ])
+				: __("Hours clocked so far against the plan");
+			const tone = card.over_plan ? " pp-red" : "";
+			out.push(`<span class="pp-chip${tone}" title="${pp_esc(tip)}">${pp_esc(text)}</span>`);
+		}
+		const equipment = this.p4_equipment_list(card);
+		equipment.slice(0, PP4.equipment_chips).forEach((item) => {
+			const tip = `${__(item.type || "Vehicle")}: ${this.p4_equipment_label(item)}`;
+			out.push(`<span class="pp-chip pp-equip" title="${pp_esc(tip)}">${pp_esc(this.p4_equipment_label(item))}</span>`);
+		});
+		if (equipment.length > PP4.equipment_chips) {
+			const rest = equipment.slice(PP4.equipment_chips).map((item) => this.p4_equipment_label(item));
+			out.push(`<span class="pp-chip pp-equip" title="${pp_esc(rest.join(", "))}">+${pp_esc(rest.length)}</span>`);
+		}
+		return out;
+	},
+
+	p4_tip_lines(card) {
+		const lines = [];
+		const text = this.p4_actual_text(card);
+		if (text) lines.push(`${__("Hours")}: ${text}${card.over_plan ? ` (${__("running over")})` : ""}`);
+		const equipment = this.p4_equipment_list(card);
+		if (equipment.length) {
+			lines.push(__("Equipment: {0}", [equipment.map((item) => this.p4_equipment_label(item)).join(", ")]));
+		}
+		return lines;
+	},
+
+	// An equipment problem the server put on the card itself (a vehicle used twice, in the shop).
+	p4_card_conflicts(card) {
+		if (!Array.isArray(card.conflicts)) return [];
+		return card.conflicts
+			.map((entry) => (entry && typeof entry === "object" ? entry.text || entry.message || "" : entry))
+			.filter((text) => typeof text === "string" && text);
+	},
+
+	// The reason dialogs list conflicts under a heading per person; equipment has its own.
+	p4_conflict_heading(who) {
+		return who === PP4.equipment_key ? __("Equipment") : who;
+	},
+
+	// ------------------------------------------------------------------ card dialog
+
+	// The rows save_task takes, from a card: [{equipment_type, vehicle | asset}], or null when the
+	// server did not send equipment (an older server), so nothing is ever sent for it.
+	p4_equipment_of(card) {
+		if (!Array.isArray(card.equipment)) return null;
+		return this.p4_equipment_list(card).map((item) => this.p4_equipment_row(item.type, item.name));
+	},
+
+	p4_equipment_row(type, name) {
+		return type === "Asset" ? { equipment_type: "Asset", asset: name } : { equipment_type: "Vehicle", vehicle: name };
+	},
+
+	p4_equipment_key(rows) {
+		return (rows || [])
+			.map((row) => `${row.equipment_type}:${row.asset || row.vehicle}`)
+			.sort()
+			.join("|");
+	},
+
+	// What the dialog's Equipment table holds, as save_task rows: one per vehicle or asset, blank
+	// rows dropped. A row without a type is read from whichever link it filled in.
+	p4_rows_from_dialog(rows) {
+		const seen = new Set();
+		const out = [];
+		(rows || []).forEach((row) => {
+			if (!row) return;
+			const type = row.equipment_type || (row.asset && !row.vehicle ? "Asset" : "Vehicle");
+			const name = type === "Asset" ? row.asset : row.vehicle;
+			if (!name || seen.has(`${type}:${name}`)) return;
+			seen.add(`${type}:${name}`);
+			out.push(this.p4_equipment_row(type, name));
+		});
+		return out;
+	},
+
+	p4_equipment_arg(card, values, args) {
+		const before = this.p4_equipment_of(card);
+		if (!before || !Array.isArray(values.equipment)) return;
+		const next = this.p4_rows_from_dialog(values.equipment);
+		if (this.p4_equipment_key(next) !== this.p4_equipment_key(before)) args.equipment = JSON.stringify(next);
+	},
+
+	p4_equipment_fields(card) {
+		const before = this.p4_equipment_of(card);
+		if (!before) return [];
+		return [
+			{ fieldtype: "Section Break", label: __("Equipment") },
+			{
+				fieldtype: "Table",
+				fieldname: "equipment",
+				label: __("Vehicles and assets"),
+				cannot_add_rows: false,
+				in_place_edit: true,
+				data: before.map((row) => Object.assign({ vehicle: "", asset: "" }, row)),
+				fields: [
+					{
+						fieldtype: "Select",
+						fieldname: "equipment_type",
+						label: __("Type"),
+						options: "Vehicle\nAsset",
+						default: "Vehicle",
+						in_list_view: 1,
+						columns: 2,
+					},
+					{
+						fieldtype: "Link",
+						fieldname: "vehicle",
+						label: __("Vehicle"),
+						options: "Fleet Vehicle",
+						depends_on: "eval:doc.equipment_type=='Vehicle'",
+						in_list_view: 1,
+						columns: 4,
+						get_query: () => ({ filters: { status: "Active" } }),
+					},
+					{
+						fieldtype: "Link",
+						fieldname: "asset",
+						label: __("Asset"),
+						options: "Asset",
+						depends_on: "eval:doc.equipment_type=='Asset'",
+						in_list_view: 1,
+						columns: 4,
+						get_query: () => ({ filters: { docstatus: 1, status: ["not in", ["Scrapped", "Sold"]] } }),
+					},
+				],
+			},
+			{
+				fieldtype: "HTML",
+				fieldname: "equipment_note",
+				options: `<p class="pp-equip-sub">${pp_esc(
+					__("A vehicle or asset can be on one task at a time. A double booking asks for a reason, like a crew one.")
+				)}</p>`,
+			},
+		];
+	},
+
+	// Each person's worked hours against their planned share, as lines. `people` are get_actuals'
+	// by_person rows; without them the card's own crew figures are used.
+	p4_people_html(card, people) {
+		const rows = Array.isArray(people)
+			? people.map((row) => ({
+					label: row.label || row.resource,
+					planned: Number(row.planned) || 0,
+					actual: Number(row.actual) || 0,
+			  }))
+			: (card.crew || []).map((member) => ({
+					label: this.resource_label(member.resource, member.label),
+					planned: Number(member.booked) || 0,
+					actual: Number(member.actual) || 0,
+			  }));
+		return rows
+			.filter((row) => row.actual > 0 || row.planned > 0)
+			.map((row) => {
+				const text =
+					row.planned > 0
+						? __("{0}h of {1}h", [pp_hours(row.actual), pp_hours(row.planned)])
+						: __("{0}h worked", [pp_hours(row.actual)]);
+				return `<div class="pp-actual-row"><span>${pp_esc(row.label)}</span><span>${pp_esc(text)}</span></div>`;
+			})
+			.join("");
+	},
+
+	// Rows for the dialog's summary table: hours worked (with each person's) and equipment.
+	p4_dialog_rows(card) {
+		const out = [];
+		const text = this.p4_actual_text(card);
+		if (text) {
+			const flag = card.over_plan ? ` <span class="pp-chip pp-red">${pp_esc(__("Running over"))}</span>` : "";
+			out.push(
+				`<tr><th>${pp_esc(__("Hours worked"))}</th><td>${pp_esc(text)}${flag}` +
+					`<div class="pp-actuals-people">${this.p4_people_html(card, null)}</div></td></tr>`
+			);
+		}
+		const equipment = this.p4_equipment_list(card);
+		if (equipment.length) {
+			out.push(
+				`<tr><th>${pp_esc(__("Equipment"))}</th><td>${pp_esc(
+					equipment.map((item) => this.p4_equipment_label(item)).join(", ")
+				)}</td></tr>`
+			);
+		}
+		return out;
+	},
+
+	// get_actuals knows each person's plan as well as their clock-ins; swap its lines in when they
+	// arrive. The card's own figures are already showing, so a failure costs nothing.
+	p4_refine_actuals(card, dialog) {
+		if (!(Number(card.actual_hours) > 0)) return;
+		Promise.resolve(frappe.call({ method: `${PP.api}.get_actuals`, args: { tasks: JSON.stringify([card.name]) } }))
+			.then((r) => {
+				const entry = this.p4_actuals_entry((r && r.message) || {}, card.name);
+				if (!entry || !Array.isArray(entry.by_person)) return;
+				dialog.$wrapper.find(".pp-actuals-people").html(this.p4_people_html(card, entry.by_person));
+			})
+			.catch(() => null);
+	},
+
+	// get_actuals answers per task; read it forgivingly (keyed by task, or under `tasks`, or a list).
+	p4_actuals_entry(raw, name) {
+		const table = raw.tasks || raw;
+		if (Array.isArray(table)) return table.find((item) => item && (item.task === name || item.name === name)) || null;
+		return (table && table[name]) || null;
+	},
+
+	// ------------------------------------------------------------------ labor forecast
+
+	p4_money(value) {
+		const number = Number(value);
+		if (!Number.isFinite(number)) return "";
+		return typeof format_currency === "function" ? format_currency(number) : number.toFixed(2);
+	},
+
+	// A different project in the toolbar: drop the old figures and fetch the new ones.
+	p4_sync_forecast() {
+		if (this.forecast_for === this.project) return;
+		this.forecast_for = this.project;
+		this.forecast = null;
+		this.p4_fetch_forecast();
+	},
+
+	p4_fetch_forecast() {
+		if (!this.project) {
+			this.forecast = null;
+			return;
+		}
+		const project = this.project;
+		const token = ++this.forecast_request;
+		Promise.resolve(frappe.call({ method: `${PP.api}.get_labor_forecast`, args: { project } }))
+			.then((r) => {
+				if (token !== this.forecast_request || project !== this.project) return;
+				this.forecast = (r && r.message) || null;
+				this.p4_render_forecast();
+			})
+			.catch(() => {
+				if (token !== this.forecast_request) return;
+				this.forecast = null;
+				this.p4_render_forecast();
+			});
+	},
+
+	p4_render_forecast() {
+		const forecast = this.forecast;
+		if (!this.$forecast) return;
+		if (!forecast || !this.project || !PP.views.includes(this.view) || this.forecast_for !== this.project) {
+			this.$forecast.hide().empty();
+			return;
+		}
+		const project = this.by_project[this.project];
+		const title = (project && (project.title || project.name)) || this.project;
+		const parts = [`<span><b>${pp_esc(__("Labor forecast"))}</b> ${pp_esc(title)}</span>`];
+		const hours = [];
+		if (forecast.booked_hours != null) hours.push(__("{0}h booked ahead", [pp_hours(forecast.booked_hours)]));
+		if (forecast.actual_hours != null) hours.push(__("{0}h worked so far", [pp_hours(forecast.actual_hours)]));
+		if (hours.length) parts.push(`<span>${pp_esc(hours.join(" · "))}</span>`);
+		let note = "";
+		// Money only when the server says this person may see it, and only the figures it sent.
+		if (forecast.can_see_cost === true) {
+			if (forecast.forecast_cost != null) {
+				parts.push(`<span><b>${pp_esc(this.p4_money(forecast.forecast_cost))}</b> ${pp_esc(__("forecast"))}</span>`);
+			}
+			const split = [];
+			if (forecast.actual_cost != null) split.push(__("{0} worked", [this.p4_money(forecast.actual_cost)]));
+			if (forecast.booked_cost != null) split.push(__("{0} booked ahead", [this.p4_money(forecast.booked_cost)]));
+			if (split.length) parts.push(`<span>${pp_esc(split.join(" + "))}</span>`);
+			const unrated = (forecast.by_person || []).filter((row) => row.rate == null).length;
+			note = forecast.burdened ? __("At burdened rates.") : __("At base pay rates: payroll burden is not included yet.");
+			if (unrated) note += ` ${__("{0} without a rate are counted in hours only.", [unrated])}`;
+		}
+		const $strip = this.$forecast.empty().show();
+		$strip.html(parts.join(""));
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("By person"))
+			.on("click", () => this.p4_forecast_dialog())
+			.appendTo($strip);
+		if (note) $('<div class="pp-forecast-note"></div>').text(note).appendTo($strip);
+	},
+
+	p4_forecast_dialog() {
+		const forecast = this.forecast;
+		if (!forecast) return;
+		const money = forecast.can_see_cost === true;
+		const rows = (forecast.by_person || [])
+			.map((row) => {
+				const cost = money
+					? `<td>${pp_esc(row.rate == null ? __("no rate") : `${this.p4_money(row.rate)}/h`)}</td><td>${pp_esc(
+							row.cost == null ? "" : this.p4_money(row.cost)
+					  )}</td>`
+					: "";
+				return `<tr><td>${pp_esc(row.label)}</td><td>${pp_esc(pp_hours(row.booked))}h</td><td>${pp_esc(
+					pp_hours(row.actual)
+				)}h</td>${cost}</tr>`;
+			})
+			.join("");
+		const head = `<tr><th>${pp_esc(__("Person"))}</th><th>${pp_esc(__("Booked ahead"))}</th><th>${pp_esc(__("Worked"))}</th>${
+			money ? `<th>${pp_esc(__("Rate"))}</th><th>${pp_esc(__("Cost"))}</th>` : ""
+		}</tr>`;
+		const dialog = new frappe.ui.Dialog({
+			title: __("Labor forecast by person"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "people",
+					options: rows
+						? `<table class="pp-fc-table">${head}${rows}</table>`
+						: `<p>${pp_esc(__("Nobody is booked on this project yet."))}</p>`,
+				},
+			],
+		});
+		dialog.show();
+	},
+
+	// ------------------------------------------------------------------ equipment in the crew view
+
+	p4_load_equipment() {
+		if (this.view !== "crew") return;
+		const { start, end } = this.range();
+		const first = pp_ymd(start);
+		const token = ++this.equip_request;
+		Promise.resolve(frappe.call({ method: `${PP.api}.get_equipment`, args: { start: first, end: pp_ymd(end) } }))
+			.then((r) => {
+				if (token !== this.equip_request) return;
+				this.equip = { start: first, items: this.p4_normalize_equipment((r && r.message) || {}) };
+				if (this.view === "crew" && this.data) this.render();
+			})
+			.catch(() => {
+				if (token === this.equip_request) this.equip = null;
+			});
+	},
+
+	// get_equipment answers each vehicle or asset with, per day, the tasks using it. Read it
+	// forgivingly: a list or an object keyed by name, days keyed by date, tasks as names or objects.
+	p4_normalize_equipment(raw) {
+		const list = Array.isArray(raw) ? raw : raw.equipment || raw.items || raw.rows || [];
+		const entries = Array.isArray(list) ? list : Object.entries(list).map(([name, item]) => Object.assign({ name }, item));
+		return entries
+			.map((item) => {
+				const name = item.name || item.vehicle || item.asset || "";
+				const days = {};
+				const source = item.days || {};
+				const pairs = Array.isArray(source)
+					? source.map((day) => [day && (day.date || day.day), day])
+					: Object.entries(source);
+				pairs.forEach(([ymd, value]) => {
+					if (!ymd) return;
+					const used = Array.isArray(value) ? value : (value && (value.in_use_by || value.tasks || value.used_by)) || [];
+					days[ymd] = used
+						.map((use) =>
+							typeof use === "string"
+								? { task: use, subject: "" }
+								: { task: use.task || use.name || use.ref || "", subject: use.subject || use.label || "" }
+						)
+						.filter((use) => use.task);
+				});
+				return {
+					type: item.type || item.equipment_type || "Vehicle",
+					name,
+					label: item.label || name,
+					status: item.status || "",
+					days,
+				};
+			})
+			.filter((item) => item.name);
+	},
+
+	// The grid cells of the Equipment group: a header across the row, then each vehicle or asset
+	// with the tasks using it on each day. Two tasks on one day, or any on a vehicle that is in
+	// the shop, are outlined red. Empty when the data is not here for this week.
+	p4_equipment_rows(days) {
+		const equip = this.equip;
+		if (!equip || equip.start !== days[0] || !equip.items.length) return "";
+		const html = [`<div class="pp-crew-group">${pp_esc(__("Equipment"))}</div>`];
+		equip.items.forEach((item) => {
+			const down = PP4.unavailable.includes(item.status);
+			const status = down ? ` · <span class="pp-chip pp-red">${pp_esc(__(item.status))}</span>` : "";
+			html.push(
+				`<div class="pp-equip-name"><b title="${pp_esc(item.label)}">${pp_esc(item.label)}</b>` +
+					`<span class="pp-equip-sub">${pp_esc(__(item.type))}${status}</span></div>`
+			);
+			days.forEach((ymd) => {
+				const used = item.days[ymd] || [];
+				const clash = used.length > 1 || (down && used.length > 0);
+				const cards = used
+					.map((use) => {
+						const known = this.by_task[use.task];
+						const subject = use.subject || (known && known.subject) || use.task;
+						const tip = [subject, item.label, clash ? __("Conflict") : ""].filter(Boolean).join("\n");
+						return `<div class="pp-ecard${clash ? " pp-clash" : ""}" data-etask="${pp_esc(use.task)}" tabindex="0" title="${pp_esc(
+							tip
+						)}">${pp_esc(subject)}</div>`;
+					})
+					.join("");
+				html.push(`<div class="pp-ecell${down ? " pp-unavailable" : ""}">${cards}</div>`);
+			});
+		});
+		return html.join("");
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP4_METHODS);
