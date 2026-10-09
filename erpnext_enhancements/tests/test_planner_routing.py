@@ -160,6 +160,7 @@ def _reset():
 	frappe.server_key = KEY
 	frappe.cache = _Cache()
 	frappe.local = types.SimpleNamespace(flags=types.SimpleNamespace(commit=False))
+	frappe.flags = types.SimpleNamespace(mute_messages=False)
 	frappe.logged = []
 	frappe.log_error = lambda *a, **k: frappe.logged.append((a, k))
 	# A traceback with locals would carry the key: anything that logs one fails the leak tests.
@@ -266,8 +267,23 @@ class TestDistances(unittest.TestCase):
 		self.assertEqual(routing.estimate_leg(SHOP, SHOP), {"minutes": 0.0, "km": 0.0, "source": None})
 
 	def test_pair_key_is_directional_and_five_decimals(self):
-		self.assertEqual(routing.pair_key(SHOP, HIGHLANDS), "40.88400,-111.88200>40.60000,-111.85000")
+		self.assertEqual(routing.pair_key(SHOP, HIGHLANDS), "40.88400,-111.88200~40.60000,-111.85000")
 		self.assertNotEqual(routing.pair_key(SHOP, HIGHLANDS), routing.pair_key(HIGHLANDS, SHOP))
+
+	def test_pair_key_is_a_name_frappe_accepts(self):
+		# v1.578.1: the key is the Planner Drive Time document name, and frappe.model.naming
+		# .validate_name refuses "<" and ">" in any name. The old "a>b" form failed every cache
+		# write and showed "Name cannot contain special characters" on loading the planner.
+		for a, b in ((SHOP, HIGHLANDS), (HIGHLANDS, SHOP), ((-33.9, 18.4), (51.5, -0.1))):
+			key = routing.pair_key(a, b)
+			self.assertFalse(set(key) & set("<>"), key)
+			self.assertEqual(key, key.strip())
+
+	def test_a_refused_cache_write_shows_the_user_nothing(self):
+		source = (Path(__file__).resolve().parents[1] / "project_enhancements/routing.py").read_text(encoding="utf-8")
+		body = source[source.index("def _store(") : source.index("def _store_rows(")]
+		self.assertIn("frappe.flags.mute_messages = True", body)
+		self.assertIn("finally:", body)
 
 	def test_a_point_needs_two_non_zero_finite_numbers(self):
 		self.assertTrue(routing.valid_point(SHOP))
@@ -485,6 +501,10 @@ class TestDriveMatrix(unittest.TestCase):
 		requests.post = _post(200, _all_ok)
 		got = routing.drive_matrix([(SHOP, OGDEN), (OGDEN, SHOP), (SHOP, HIGHLANDS)], self.ON)
 		self.assertEqual(len(requests.calls), 1)
+		self.assertFalse(frappe.flags.mute_messages)  # muted only while writing the cache, then restored
+		# The block also answers SHOP->SHOP etc.; a point to itself is never stored.
+		self.assertFalse([r for r in frappe.inserted if routing.same_point(
+			(r["origin_lat"], r["origin_lng"]), (r["dest_lat"], r["dest_lng"]))])
 		call = requests.calls[0]
 		self.assertEqual(call["url"], routing.ROUTES_URL)
 		self.assertEqual(call["headers"]["X-Goog-Api-Key"], KEY)

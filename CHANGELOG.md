@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Single is whole and stays whole. CLAUDE.md now records this inverse of the "a new field's
     default never backfills" gotcha: code that writes **one** field of a never-saved Single wipes
     the defaults of all the others.
+- **"Name cannot contain special characters like '<', '>'" when opening the Project Planner.**
+  Each cached drive time is a `Planner Drive Time` document named after its leg, and the name was
+  written `lat,lng>lat,lng`. Frappe refuses `<` and `>` in any document name
+  (`naming.validate_name`), so every cache write failed. The failure itself was caught and logged,
+  but `frappe.throw` had already queued its message for the browser, so the planner opened on an
+  error dialog, and every load paid Google again for drive times it could never keep.
+  - **Fix:** the legs are now named `lat,lng~lat,lng`, and cache writes run with
+    `frappe.flags.mute_messages`, so a refused write in the future is logged rather than shown to
+    the user.
+  - **Clean-up:** nothing was ever stored under the old name, so none is needed. Reported by Nik
+    on first load, 2026-10-09.
+  - **Also stopped:** storing a point's drive to itself. A matrix block asks every origin against
+    every destination, so Google answers the diagonal too. The two failed writes in the Error Log
+    were exactly such legs.
 - **Google Routes is confirmed working with the server key** (TASK-2026-02440): `check_routes` drove
   the test leg from the shop. Every drive time is Google's, not an estimate, as soon as the setting
   reads on.
