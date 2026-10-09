@@ -844,6 +844,15 @@ jobs:
       # sheet escaping what people typed. Bench-free, own frappe + email_style stub, own step.
       - name: Project planner telling people (drafts, publish, digest, alerts, crew sheet)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase3b -v
+      # Project Planner Phase 5, extras. A customer email is the one message this app sends outside
+      # the company, so this pins that nothing is queued or sent while the Settings switch is off (its
+      # default), that a sent date is stamped in the same transaction (at most once per document and
+      # date, re-driven after a deploy's FLUSHDB, never re-opened by a stale Desk form), and that the
+      # preview never sends. Also: template tasks fill blanks without overwriting, the weather asks
+      # Open-Meteo once per load and never logs a request URL, who_is_free is gated and Google-free,
+      # and the AI tool is read-only. Bench-free, own frappe + requests + email_style stub, own step.
+      - name: Project planner extras (templates, weather, who is free, customer confirmations)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase5 -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget

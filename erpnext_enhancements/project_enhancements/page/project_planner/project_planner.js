@@ -376,6 +376,7 @@ class ProjectPlanner {
 		this.$body = $('<div class="pp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
 		this.init_phase3b();
+		this.init_phase5();
 		this.bind_drag();
 	}
 
@@ -1268,6 +1269,7 @@ class ProjectPlanner {
 				amber(gaps.length > 1 ? __("Missing {0} +{1}", [gaps[0], gaps.length - 1]) : __("Missing {0}", [gaps[0]]))
 			);
 		}
+		chips.push(...this.weather_chips(card, ymd));
 
 		const classes = ["pp-card"];
 		if (card.movable && this.data.can_edit) classes.push("pp-movable");
@@ -1285,6 +1287,7 @@ class ProjectPlanner {
 			...conflicts,
 			...this.dependency_lines(card),
 			...this.gap_lines(card),
+			...this.weather_lines(card),
 		]
 			.filter(Boolean)
 			.join("\n");
@@ -1891,12 +1894,14 @@ class ProjectPlanner {
 		this.dependency_lines(card).forEach((text) => add(__("Dependency"), text));
 		if ((card.depends_on || []).length) add(__("Depends on"), card.depends_on.join(", "));
 		this.gap_lines(card).forEach((text) => add(__("Qualification"), text));
+		this.weather_lines(card).forEach((text) => add(__("Weather"), text));
 		if (!editable) add(__("Note"), __("This task is read-only here."));
 
 		const links = [["task", __("Open task")]];
 		if (card.project) links.push(["project", __("Open project")]);
 		if (editable) links.push(["suggest", __("Suggest dates")]);
 		if (editable && card.tentative) links.push(["firm", __("Firm up")]);
+		links.push(...this.phase5_links(card));
 		const fields = [
 			{
 				fieldtype: "HTML",
@@ -1937,6 +1942,7 @@ class ProjectPlanner {
 					default: card.tentative ? 1 : 0,
 					description: __("A pencilled task is soft load: it never needs a reason and is not counted as booked."),
 				},
+				...this.phase5_dialog_fields(card),
 				{ fieldtype: "Section Break", label: __("Crew") },
 				{
 					fieldtype: "Table",
@@ -1986,6 +1992,7 @@ class ProjectPlanner {
 			else if (action === "project") frappe.set_route("Form", "Project", card.project);
 			else if (action === "suggest") this.suggest_dates(card);
 			else if (action === "firm") this.firm_up(card);
+			else this.phase5_action(action, card);
 		});
 		dialog.show();
 		if (editable && (card.credentials || []).length) dialog.set_value("credentials", card.credentials.slice());
@@ -2039,8 +2046,13 @@ class ProjectPlanner {
 		}
 
 		dialog.hide();
-		if (Object.keys(args).length === 1) return;
-		this.commit(card, "save_task", args, __("{0} updated", [card.subject || card.name]));
+		// Phase 5: Outdoor work / Customer-facing visit are saved first, on their own (see save_phase5_flags).
+		const flags = this.save_phase5_flags(card, values);
+		if (Object.keys(args).length === 1) {
+			flags.then((saved) => saved && this.load());
+			return;
+		}
+		flags.then(() => this.commit(card, "save_task", args, __("{0} updated", [card.subject || card.name])));
 	}
 
 	// ------------------------------------------------------------------ suggestions
@@ -2088,7 +2100,7 @@ class ProjectPlanner {
 						<td>
 							<div><b>${pp_esc(item.label || item.resource)}</b> <span class="pp-stop-sub">${free}</span></div>
 							<div class="pp-sug-reason">${pp_esc(item.reason || "")}</div>
-							<div>${drive}${long}</div>
+							<div>${drive}${long}${this.suggestion_weather_html(item)}</div>
 						</td>
 						<td><button type="button" class="btn btn-primary btn-xs" data-book="${pp_esc(index)}">${pp_esc(
 					__("Book")
@@ -2973,7 +2985,7 @@ class ProjectPlanner {
 						<div class="pp-stop-label">${pp_esc(stop.label || stop.ref)}</div>
 						${sub ? `<div class="pp-stop-sub">${pp_esc(sub)}</div>` : ""}
 						${stop.address ? `<div class="pp-stop-sub">${pp_esc(stop.address)}</div>` : ""}
-						${leg}${waits}${missing}${open ? `<div class="pp-stop-leg">${open}</div>` : ""}
+						${leg}${waits}${missing}${this.stop_weather_html(stop)}${open ?`<div class="pp-stop-leg">${open}</div>` : ""}
 					</div>
 				</div>`);
 		});
@@ -3552,3 +3564,186 @@ const PP3B_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
+
+// ====================================================================== Phase 5: extras
+//
+// Weather (P5.2): a task ticked "Outdoor work" carries `weather` from get_planner, the forecast
+// days of its span that have rain, freezing or high wind ([] when clear, null when there is no
+// forecast for it). The card shows that day's flags as a chip (a tray card, its first flagged day),
+// the dialog lists them, the route view puts them on the stop, and suggest_dates ranks flagged days
+// lower and shows why.
+//
+// Customer-facing visits (P5.4): the dialog's "Customer-facing visit" box marks a task whose
+// customer is emailed the date once it is firm, when Project Planner Settings has customer date
+// confirmations switched on (they ship off). "Preview customer email" renders exactly what would go
+// out, and to whom, and sends nothing; it opens in a sandboxed frame so the email's own styles and
+// links stay inside it.
+//
+// The two boxes are saved by set_task_flags, straight to the task and never drafted: they are not
+// bookings, and the server leaves the task's `modified` alone so the save_task that may follow in
+// the same dialog is not refused as out of date.
+//
+// Everything Phase 5 adds to the page is in this block, mixed into ProjectPlanner below, so the
+// Phase 4 work on the same file merges cleanly. The hooks into the class above are one line each:
+// init_phase5 (constructor), weather_chips and weather_lines (card_html), weather_lines,
+// phase5_links, phase5_dialog_fields and phase5_action (open_card), save_phase5_flags
+// (save_dialog), suggestion_weather_html (show_suggestions) and stop_weather_html (render_route).
+
+const PP5 = {
+	// Who may preview a customer email (the endpoint checks the same roles).
+	preview_roles: ["System Manager", "Projects Manager"],
+};
+
+const PP5_STYLE = `
+.pp-chip.pp-weather{background:rgba(14,116,144,.14);color:#0e7490;font-weight:600;}
+.pp-p5-meta{font-size:13px;margin-bottom:4px;}
+.pp-p5-notes{margin:6px 0 10px;padding-left:18px;font-size:13px;color:var(--text-muted);}
+.pp-p5-frame{display:block;width:100%;min-height:460px;border:1px solid var(--border-color);border-radius:8px;background:#ffffff;}
+@media (max-width:760px){
+.pp-p5-frame{min-height:340px;}
+}
+`;
+
+const PP5_METHODS = {
+	init_phase5() {
+		if (!document.getElementById("pp-style-5")) {
+			$("<style id='pp-style-5'>").text(PP5_STYLE).appendTo(document.head);
+		}
+	},
+
+	// ------------------------------------------------------------------ weather
+
+	// One forecast day of a card: the day it is drawn on, or (in a tray) its first flagged day.
+	weather_day(card, ymd) {
+		const days = Array.isArray(card.weather) ? card.weather : [];
+		if (!days.length) return null;
+		if (ymd) return days.find((entry) => entry.date === ymd) || null;
+		return days[0];
+	},
+
+	weather_chips(card, ymd) {
+		const entry = this.weather_day(card, ymd);
+		const flags = (entry && entry.flags) || [];
+		if (!flags.length) return [];
+		const text = ymd ? flags.join(" · ") : `${flags[0]} · ${pp_when(entry.date)}`;
+		return [`<span class="pp-chip pp-weather" title="${pp_esc(flags.join(", "))}">${pp_esc(text)}</span>`];
+	},
+
+	// "Thu, Oct 15: Rain 70%, Wind 45 km/h" for every flagged day of the task.
+	weather_lines(card) {
+		return (Array.isArray(card.weather) ? card.weather : [])
+			.filter((entry) => (entry.flags || []).length)
+			.map((entry) => `${pp_when(entry.date)}: ${entry.flags.join(", ")}`);
+	},
+
+	suggestion_weather_html(item) {
+		const flags = (item && item.weather) || [];
+		return flags.length ? `<span class="pp-chip pp-weather">${pp_esc(flags.join(" · "))}</span>` : "";
+	},
+
+	stop_weather_html(stop) {
+		const flags = (stop && stop.weather) || [];
+		return flags.length
+			? `<div class="pp-stop-leg"><span class="pp-chip pp-weather">${pp_esc(flags.join(" · "))}</span></div>`
+			: "";
+	},
+
+	// ------------------------------------------------------------------ the card dialog
+
+	phase5_dialog_fields(card) {
+		return [
+			{
+				fieldtype: "Check",
+				fieldname: "outdoor",
+				label: __("Outdoor work"),
+				default: card.outdoor ? 1 : 0,
+				description: __("Flag days whose forecast has rain, freezing or high wind, and avoid them in suggestions."),
+			},
+			{
+				fieldtype: "Check",
+				fieldname: "customer_visit",
+				label: __("Customer-facing visit"),
+				default: card.customer_visit ? 1 : 0,
+				description: __(
+					"The customer is emailed the date once it is firm, when customer date confirmations are switched on."
+				),
+			},
+		];
+	},
+
+	can_preview_customer() {
+		return PP5.preview_roles.some((role) => frappe.user.has_role(role));
+	},
+
+	phase5_links(card) {
+		return card.customer_visit && this.can_preview_customer()
+			? [["customer_preview", __("Preview customer email")]]
+			: [];
+	},
+
+	phase5_action(action, card) {
+		if (action === "customer_preview") this.preview_customer_email("Task", card.name);
+	},
+
+	// Outdoor / Customer-facing go to the task on their own, before any save_task from the same
+	// dialog. Resolves true when something was saved.
+	save_phase5_flags(card, values) {
+		values = values || {};
+		const args = { task: card.name };
+		const outdoor = values.outdoor ? 1 : 0;
+		const customer_visit = values.customer_visit ? 1 : 0;
+		if (outdoor !== (card.outdoor ? 1 : 0)) args.outdoor = outdoor;
+		if (customer_visit !== (card.customer_visit ? 1 : 0)) args.customer_visit = customer_visit;
+		if (Object.keys(args).length === 1) return Promise.resolve(false);
+		return Promise.resolve(frappe.call({ method: `${PP.api}.set_task_flags`, args }))
+			.then((r) => {
+				const result = (r && r.message) || {};
+				if (result.queued) {
+					frappe.show_alert({ message: __("The customer will be emailed the date."), indicator: "blue" }, 6);
+				}
+				return true;
+			})
+			.catch(() => false);
+	},
+
+	// ------------------------------------------------------------------ customer email preview
+
+	preview_customer_email(doctype, name) {
+		return Promise.resolve(
+			frappe.call({
+				method: `${PP.api}.preview_customer_confirmation`,
+				args: { doctype, name },
+				freeze: true,
+				freeze_message: __("Rendering the customer email…"),
+			})
+		)
+			.then((r) => this.show_customer_preview((r && r.message) || {}))
+			.catch(() => null);
+	},
+
+	// What would go out, to whom, and why it would not go out now. Nothing here sends.
+	show_customer_preview(answer) {
+		const status = answer.would_send ? __("This email would be sent.") : __("This email would not be sent now.");
+		const to = answer.recipient ? __("To: {0}", [answer.recipient]) : __("To: nobody (no email address found)");
+		const notes = (answer.notes || []).map((text) => `<li>${pp_esc(text)}</li>`).join("");
+		const parts = [
+			`<div class="pp-p5-meta"><b>${pp_esc(status)}</b></div>`,
+			`<div class="pp-p5-meta">${pp_esc(to)}</div>`,
+		];
+		if (answer.subject) parts.push(`<div class="pp-p5-meta">${pp_esc(__("Subject: {0}", [answer.subject]))}</div>`);
+		if (notes) parts.push(`<ul class="pp-p5-notes">${notes}</ul>`);
+		if (answer.error) parts.push(`<div class="pp-route-note">${pp_esc(answer.error)}</div>`);
+		parts.push(`<iframe class="pp-p5-frame" sandbox="" title="${pp_esc(__("Email preview"))}"></iframe>`);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Customer email preview"),
+			size: "large",
+			fields: [{ fieldtype: "HTML", fieldname: "preview", options: parts.join("") }],
+		});
+		dialog.show();
+		const $frame = dialog.$wrapper.find("iframe.pp-p5-frame");
+		if (answer.html) $frame.attr("srcdoc", answer.html);
+		else $frame.hide();
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP5_METHODS);

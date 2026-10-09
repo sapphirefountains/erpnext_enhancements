@@ -71,6 +71,10 @@ API_CONTRACT = {
 	"discard_drafts": {"tasks"},
 	"get_my_week": {"date"},
 	"crew_sheet_html": {"start", "group"},
+	# Phase 5 (tests/test_planner_phase5.py): the Outdoor / Customer-facing boxes, and the customer
+	# email preview, which never sends.
+	"set_task_flags": {"task", "outdoor", "customer_visit"},
+	"preview_customer_confirmation": {"doctype", "name"},
 }
 for _method in ("get_planner", "save_task", "add_crew", "swap_crew"):
 	API_CONTRACT[_method] = API_CONTRACT[_method] | {"draft"}

@@ -2863,11 +2863,17 @@ class TestWiring(unittest.TestCase):
 		# tests/test_planner_phase3b.py; listed here so this set stays the whole module.
 		phase3b_writes = ("publish_drafts", "discard_drafts", "send_digest_preview")
 		phase3b_reads = ("get_my_week", "crew_sheet_html")
+		# Phase 5 (weather flags, who is free, customer date confirmation) is pinned in
+		# tests/test_planner_phase5.py.
+		phase5_writes = ("set_task_flags", "preview_customer_confirmation")
+		phase5_reads = ("who_is_free",)
 		writes = (
-			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes
+			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes,
+			*phase5_writes,
 		)
 		reads = (
-			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads
+			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads,
+			*phase5_reads,
 		)
 		self.assertEqual(set(endpoints), set(writes) | set(reads))
 		for name in writes:

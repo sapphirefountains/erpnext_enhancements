@@ -436,7 +436,9 @@ class TestDocTypes(unittest.TestCase):
 		self.assertEqual(fields["crew"]["options"], CREW)
 		self.assertEqual(fields["planned_hours"]["label"], "Planned hours")
 		self.assertEqual(fields["full_day"]["label"], "Full day")
-		self.assertEqual(doc["modified"], "2026-10-09 14:00:00.000000")
+		# Moved on by Project Planner Phase 5 (the customer confirmation stamps); never backwards, or
+		# bench migrate skips the JSON.
+		self.assertGreaterEqual(doc["modified"], "2026-10-09 14:00:00.000000")
 
 	def test_the_profile_carries_the_site_default(self):
 		doc = self._json("sapphire_maintenance_profile")

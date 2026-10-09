@@ -1290,3 +1290,10 @@ erpnext_enhancements.patches.materialize_project_planner_settings
 # default off. A default never reaches a Single's existing row, so materialize_defaults() writes a row for every field
 # with none (never over a stored value). Cannot raise, safe twice.
 erpnext_enhancements.patches.materialize_planner_notice_settings
+# Project Planner Phase 5: the "Telling customers" fields on Project Planner Settings (customer_date_confirmations,
+# default OFF, and customer_confirmation_phone). materialize_defaults() writes a row for every field with none, never over
+# a stored value. Cannot raise, safe twice.
+erpnext_enhancements.patches.materialize_planner_phase5_settings
+# Project Planner Phase 5: seed the Email Template "Planner Date Confirmation" that words the customer date confirmation,
+# so Nik designs it in the Desk. Insert-only (never over his edits), sends nothing (the switch stays off), cannot raise.
+erpnext_enhancements.patches.seed_planner_date_confirmation_template
