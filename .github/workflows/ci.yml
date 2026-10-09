@@ -886,6 +886,17 @@ jobs:
       # that the combined digest still goes once a day. Bench-free, own frappe stub, own step.
       - name: Project planner blocks, day notes and Conflict center (Phase 6D)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase6d -v
+      # Planner Phase 6C, big picture, tablet mode and print (both planners). A saved view follows a
+      # person across devices only if it is on the server, so this pins that views are written
+      # straight to the caller's own __UserSettings row (frappe's user_settings.save writes only to
+      # Redis, which every deploy flushes), that unknown keys are dropped and the size capped, that
+      # Running over is never restored as "last used", and each planner's own role gate. Under node it
+      # drives the real page code: a bare planner URL is REPLACED by the saved view (never a second
+      # history entry) and a URL that names a view wins; the color hash matches its Python twin; the
+      # team strip is red past capacity and amber at 90%; a tap-to-move goes through drop(); a print
+      # escapes what people typed and prints only the selection when asked. Own frappe stub, own step.
+      - name: Planner big picture, saved views, tap to move and print (Phase 6C)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase6c -v
       # Planner Phase 6D UI: the Conflict center drawer, personal blocks and day notes on both
       # planners' pages and in My week. Pins that every fix is the server's method and arguments sent
       # through the page's own send path (reason prompt, Draft mode, Undo) and only the page's own

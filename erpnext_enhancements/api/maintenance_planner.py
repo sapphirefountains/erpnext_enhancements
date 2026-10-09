@@ -439,6 +439,7 @@ def _booking_cell(cell):
 	out = {
 		"capacity": cell.get("capacity"),
 		"booked": cell.get("booked"),
+		"soft_booked": cell.get("soft_booked") or 0,  # Phase 6C: the team strip's pencil hours
 		"free": cell.get("free"),
 		"off": cell.get("off"),
 		"conflicts": list(cell.get("conflicts") or []),
