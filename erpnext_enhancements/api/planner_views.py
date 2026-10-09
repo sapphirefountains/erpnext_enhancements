@@ -78,12 +78,17 @@ _EMAIL = re.compile(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$")
 
 
 def off_label(off):
-	"""The day-off label a drawer shows: "Holiday", "Holiday (half day)", "Off", "Half day off" or
-	"Not a work day", or None on a working day.
+	"""The day-off label a drawer shows: "Holiday", "Holiday (half day)", "Off", "Half day off",
+	"Not a work day" or "Unavailable", or None on a working day.
 
 	The engine's own labels already never name a kind of time off, but the drawer is a new place to
 	show them, so anything it does not recognise reads as plain "Off" rather than passing through.
 	A holiday's name is left out too: the spec asks for "Off" / "Holiday" and nothing else.
+
+	"Unavailable" is the engine's label for a day with an all-day personal block (Phase 6D,
+	``crew_availability.UNAVAILABLE``), so it is shown as it is rather than as "Off" (Phase 6D UI).
+	Only that exact word passes: a label that merely starts with it ("Unavailable: Medical") is not
+	the engine's and still reads "Off", so no time-off reason can ride in on it.
 	"""
 	text = str(off or "").strip()
 	if not text:
@@ -92,13 +97,14 @@ def off_label(off):
 		return "Holiday (half day)"
 	if text.startswith("Holiday"):
 		return "Holiday"
-	if text in ("Half day off", "Not a work day"):
+	if text in ("Half day off", "Not a work day", engine.UNAVAILABLE):
 		return text
 	return "Off"
 
 
 def off_kind(off):
-	"""``"holiday"``, ``"time_off"``, ``"half_day"``, ``"not_working"`` or None, for styling."""
+	"""``"holiday"``, ``"time_off"``, ``"half_day"``, ``"not_working"``, ``"blocked"`` or None, for
+	styling."""
 	label = off_label(off)
 	return {
 		None: None,
@@ -106,6 +112,7 @@ def off_kind(off):
 		"Holiday (half day)": "half_day",
 		"Half day off": "half_day",
 		"Not a work day": "not_working",
+		engine.UNAVAILABLE: "blocked",
 	}.get(label, "time_off")
 
 

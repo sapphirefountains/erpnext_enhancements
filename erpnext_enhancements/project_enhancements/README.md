@@ -58,6 +58,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 Related code outside this folder:
 - `api/planner_views.py` — the Phase 6A quick looks both planners open in a drawer: a person's week, everyone's day, a project, a maintenance site. Read-only and Google-free. See [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
+- `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
@@ -799,7 +800,8 @@ scrolls, and cards still move by drag.
   "off" badge) and the drawer shows that person's week, starting on the site's first weekday: each
   booking (task, visit, rental crew task, travel, driving) with its slot, hours and site; free hours;
   days off as **"Off" / "Holiday" only** (`planner_views.off_label` maps anything else to "Off", so a
-  time-off reason can never pass through); conflicts; the chosen day's stops in driving order with a
+  time-off reason can never pass through; since Phase 6D UI an all-day personal block reads
+  "Unavailable", the engine's exact word); conflicts; the chosen day's stops in driving order with a
   **Full route** button to `/app/project-planner/route/<resource>/<date>`; group and home team; and
   call / text / email buttons only where a number or address exists. Its own ‹ › step its own week
   and never move the calendar. `get_person_schedule` takes a Planner Resource or a User (the
@@ -878,7 +880,9 @@ It installs `window.planner_kit` (use it through `window.` — eslint does not k
 | `legend(sections, {title, owner})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}` | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
-| `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change. `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code |
+| `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
+| `conflicts.center({planner, owner, push, width, range, can_schedule, draft, block_note, run_fix, open_item, exclude, pick_context, on_list})` | The Conflict center drawer (Phase 6D UI), one per page | `open(focus)`, `schedule()`, `refresh()`, `list()`, `count()`, `index()`, `find(doctype, name, key)`, `is_open()`. Pure renderers beside it: `html`, `picker_html`, `free_people`, `fix_args`, `open_count`, `index_by_ref` |
+| `blocks.form({...})`, `blocks.note_form({...})`, `blocks.chip_html(block, ctx)`, `blocks.notes_html(notes, ctx)`, `blocks.note_list_html(notes, ctx)` | Personal blocks and day notes on screen (Phase 6D UI): the two small forms (frappe Dialogs, so the drawer under them stays) and the markup | The note on a chip is only `ctx.note` (the page's `block_notes`); `get_notes(date)` reads one day's notes; `block_text`, `block_window`, `block_slot` |
 
 **How Back closes a drawer without reloading the planner** (`history.js`). While any overlay is
 open there is one kit history entry on top, `history.pushState({planner_kit: <id>}, "")` with no
@@ -898,8 +902,8 @@ A route change nobody announced (a sidebar link) closes every overlay; an entry 
 router's, which costs at most one Back that re-renders the same planner.
 ### Personal blocks, day notes and the Conflict center (Phase 6D — TASK-2026-02470)
 
-The backend half, for both planners; the page UI comes next, on top of the Phase 6A kit. Nik's
-decisions of 2026-10-09.
+The backend half, for both planners; the page UI is the next section, on top of the Phase 6A kit.
+Nik's decisions of 2026-10-09.
 
 - **Personal blocks** (`Planner Block`, [`api/planner_blocks.py`](../api/planner_blocks.py)):
   "unavailable 2–4 pm", "shop day". One person, one day (several days away belong in HR time off),
@@ -966,6 +970,86 @@ decisions of 2026-10-09.
     the Phase 6B "Move to next free day" menu.
 - **AI tool** `crew_conflicts` (read-only): the list for a range, without fixes and **without any
   block's note**, even for a caller allowed to read it. Triton needs a tool snapshot refresh.
+
+### On screen: the Conflict center, blocks and day notes (Phase 6D UI — TASK-2026-02470)
+
+The page half of Phase 6D, for **both** planners and My week. The drawer, the two forms and the
+markup are the planner kit's (`planner_kit/conflicts.js`, `planner_kit/blocks.js`), so both planners
+show the same thing; each page's `PP6D_METHODS` / `MP6D_METHODS` block wires it to its own data and
+its own write path. No new endpoint: everything calls the Phase 6D backend above.
+
+- **Conflict center.** A toolbar button **Conflicts (N)** (red above 0; N is what nobody has kept)
+  opens a kit drawer with `get_conflicts(start, end, planner)` for the dates on screen, grouped by
+  day: each conflict's icon, the person (or vehicle, or task for a qualification), the sentence, the
+  block's note when `block_notes` has it, and its records. The page's own record opens in its side
+  panel; anything else is a read-only link (*Open in Maintenance Planner* / *Open in Project Planner*
+  / *Open trip* / *Open task*). Kept conflicts hide behind **Show kept (N)**, which shows who kept
+  each and why. The count is the same call, read once after each load (debounced, `silent`), never on
+  a plain re-render; an open drawer reads it again after every change.
+- **Fixes run through the page's own write path.** Each button sends exactly the method and arguments
+  the server worked out (`fixes_for`), looked up again in the newest list when it runs so `modified`
+  is fresh, through the Project Planner's `commit()` (or `send()` for a task not on the board) or the
+  Maintenance Planner's `send()` with the same Undo snapshot `save_move` takes. So a fix that makes a
+  conflict asks for a reason, Draft mode drafts it (`draft=1` on `save_task`/`add_crew`/`swap_crew`)
+  and Undo puts it back. Each page runs only its own writes (`PP6D.fix_methods`: `save_task`,
+  `swap_crew`, `add_crew`; `MP6D.fix_methods`: `move_visit`, `move_projected`); the kit never calls a
+  fix's method itself.
+  - *Move to Thu Oct 15*: one tap. *Make it pencil*: one tap.
+  - *Pick someone who's free* opens a section of the same drawer (‹ Back to the conflicts) listing
+    `who_is_free` for the fix's dates and hours: free people first with their free hours, busy ones
+    greyed with their reason (still choosable: a planner may overbook on purpose, and the reason
+    prompt follows), the person it is booked on and anyone already on it disabled, and on the
+    Maintenance Planner anyone without a user. **Nothing is selected or applied** until a person is
+    tapped; over several days (a qualification gap) a person is free only when free on all of them.
+  - *Keep it with a reason* opens a small required reason box; a blank reason never reaches the
+    server. A refusal because the conflict changed reloads the list and says "That conflict changed;
+    here is the current list". A conflict with nothing of this planner's in it can be kept only by a
+    scheduler, so the button is off for anyone else, with the reason as its tooltip.
+- **Card markers.** A card in a conflict nobody kept gets its existing red *Conflict* chip (or, for a
+  missing qualification, its amber *Missing …* chip; on a visit, its *Day off* chip) turned into the
+  way in: it opens the Conflict center at that conflict. A card with no such chip gets one small
+  *Conflict* marker. Never two marks for one conflict.
+- **Personal blocks on the calendar.** The crew view draws a block in the person's day as a hatched
+  *Unavailable 2–4 pm* bar (*Unavailable all day* for an all-day one, whose day already reads
+  "Unavailable" rather than "Off" in *Resources available*); week and month draw a chip per blocked
+  person (initials and the window in month). The note shows only when the payload's `block_notes` has
+  it (`p6d_block_note`, the one reader); everyone else sees "Unavailable". A block is never a card:
+  it carries no drag attribute and neither page's drag code can pick it up. Clicking one you may
+  edit (a scheduler, or your own) opens the block form with **Delete**; anyone else's says who is
+  unavailable when.
+- **Blocking time.** The form (person, day, all day or from–to, note) comes from a toolbar **Block
+  time** button (schedulers only, `can_schedule`), **Block time…** in a person's drawer (a kit
+  extension point, `peeks.person({actions})`) and the right-click menu. A scheduler picks anyone on the
+  planner; a technician's form has no person at all and sends none, so the server makes the block
+  their own. A note the page could not read is never wiped: the form sends `note` only when it
+  changed. Saving never refuses: the server's sentence ("This overlaps Dig at Riverwalk; your PM will
+  see it in the Conflict center") shows as a warning toast. Blocks save straight away, even in Draft
+  mode.
+- **Day notes.** A thin, truncated row under each day's head (week), a row under the crew view's
+  column heads and a small 🗒 marker (month), with the full text on hover; a tap opens the day drawer,
+  where the 6A day peek now shows the day's notes in full at the top (`peeks.day({head_html})`; a day
+  the drawer steps past the dates on screen is read once with `get_day_notes`). The audience shows as
+  a tag ("Field"); a linked project opens the 6A project peek (Project Planner). Schedulers add notes
+  with **+ note** in the row and **Add a note** in the day drawer, and edit or delete them from the
+  drawer.
+- **My week** (the phone view): each day lists the person's own blocks with their notes (from
+  `get_my_week`, filled through `block_notes` on the server), the day's notes for their group, and a
+  **Block my time** button that opens the same form limited to themselves (`self_only`: no person is
+  sent).
+- **Right-click menu** (6B's registry, `p6_menu_providers`): *Show conflicts* on a card in a conflict,
+  *Conflicts this day*, *Add a day note…* (schedulers) and *Block time…* on a cell, *Block time…* on a
+  name. Every one also has a way in without the menu.
+- The person drawer reads a block day as "Unavailable" (`planner_views.off_label` passes that exact
+  engine word; anything else that is not a known label still reads "Off", so no time-off reason can
+  ride in on it) and lists a block as *Blocked*, never with its note.
+
+Hooks into the classes, one line each: `init_phase6d`, `render_phase6d`, `p6d_set_mode` (Project
+Planner `set_mode`), `p6d_state` (`avail_state`), `p6d_block_html` (`booking_html`), `p6d_day_html`
+(`render_calendar`), `p6d_crew_notes_row` (both `render_crew`s), `p6d_my_week_day`
+(`render_my_week`), the Maintenance Planner's `off_label` line, `p6d_day_head` and `p6d_cell_blocks`,
+and in Phase 6A's blocks `p6d_person_actions`, `p6d_day_peek_opts` and `p6d_legend_sections` (the
+legend explains the bar, the chip, the note row and the marker). `tests/test_planner_phase6d_ui.py`
+pins it, and runs the kit's renderers and forms under node.
 
 ## `hooks.py` touchpoints
 

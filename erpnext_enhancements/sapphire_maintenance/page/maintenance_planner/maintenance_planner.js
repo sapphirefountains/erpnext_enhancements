@@ -308,6 +308,7 @@ class MaintenancePlanner {
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
 		this.init_phase6a();
+		this.init_phase6d();
 		this.bind_drag();
 	}
 
@@ -614,6 +615,7 @@ class MaintenancePlanner {
 		const off = String((cell && cell.off) || "");
 		if (off.startsWith("Holiday")) return __("Holiday");
 		if (off === "Time off") return __("Time off");
+		if (off === "Unavailable") return __("Unavailable"); // Phase 6D: an all-day personal block
 		return __("Not a work day");
 	}
 
@@ -809,6 +811,7 @@ class MaintenancePlanner {
 				  )
 		);
 		this.render_phase6a();
+		this.render_phase6d();
 	}
 
 	render_calendar(cards) {
@@ -885,6 +888,7 @@ class MaintenancePlanner {
 			} else if (everyone) {
 				this.append_off_badges($day, planned, ymd);
 			}
+			this.p6d_day_head($day, ymd);
 			day_cards.forEach((card) => $day.append(this.card_html(card)));
 		}
 		this.$grid_wrap.empty().removeClass("mp-month mp-week mp-crew-view").addClass(`mp-${this.view}`).append($grid);
@@ -1049,6 +1053,7 @@ class MaintenancePlanner {
 				)}">${mp_esc(mp_when(ymd))}</div>`
 			);
 		});
+		html.push(this.p6d_crew_notes_row(days));
 		rows.forEach(({ person, user }) => {
 			html.push(
 				person
@@ -1071,6 +1076,7 @@ class MaintenancePlanner {
 					<div class="mp-cell${ymd < today ? " mp-past" : ""}${this.is_off(cell) ? " mp-off-day" : ""}"
 						data-date="${mp_esc(ymd)}" data-user="${mp_esc(user)}">
 						${cap}
+						${this.p6d_cell_blocks(person, ymd)}
 						${list.map((card) => this.card_row_html(card, user)).join("")}
 					</div>`);
 			});
@@ -2450,6 +2456,7 @@ const MP6A_METHODS = {
 			can_drag: (booking) => this.p6a_can_drag(booking),
 			on_full_route: (resource, ymd) =>
 				kit.drawer.navigate(() => frappe.set_route(MP.project_route, "route", resource, ymd)),
+			actions: this.p6d_person_actions(user),
 		});
 	},
 
@@ -2470,6 +2477,7 @@ const MP6A_METHODS = {
 				if (person.user) this.p6a_open_person(person.user, ymd);
 			},
 			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
+			...this.p6d_day_peek_opts(),
 		});
 	},
 
@@ -2722,6 +2730,7 @@ const MP6A_METHODS = {
 						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
 					],
 				},
+				...this.p6d_legend_sections(),
 			],
 			{ title: __("How to read the Maintenance Planner"), owner: MP6A.owner }
 		);
@@ -2729,3 +2738,632 @@ const MP6A_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);
+
+// ====================================================================== Phase 6D: Conflict center, personal blocks, day notes
+//
+// The Maintenance Planner's half of Phase 6D's page work (the Project Planner has the same; see its
+// own block). The backend is api/planner_blocks.py and api/planner_conflicts.py; the drawer, the two
+// forms and the markup are the planner kit's (planner_kit/conflicts.js and blocks.js).
+//
+//   - "Conflicts (N)" on the toolbar        the Conflict center for the dates on screen, with
+//                                            planner="maintenance": only visits (and the contract
+//                                            behind the next projected visit) have fixes here; project
+//                                            tasks show with "Open in Project Planner". A visit in a
+//                                            conflict gets a Conflict marker (its "Day off" chip when
+//                                            it has one) that opens the list there.
+//   - a fix                                 move_visit / move_projected exactly as the server worked
+//                                            them out, through send() with the same Undo snapshot a
+//                                            drag takes; "Pick someone who's free" hands the visit to
+//                                            the person tapped (by user) and picks nobody itself
+//   - personal blocks                       a hatched chip in each technician's day (calendar and crew
+//                                            view, from each day cell's `blocks`); its note only when
+//                                            block_notes has it; never dragged. "Block time" for the
+//                                            planners, "Block time…" in a person's drawer and the menu
+//   - day notes                             under each day's head, under the crew view's column heads,
+//                                            and at the top of the day drawer
+//
+// Hooks into the class above, one line each: init_phase6d (constructor), render_phase6d (render),
+// off_label ("Unavailable" for an all-day block), p6d_day_head (render_calendar),
+// p6d_crew_notes_row and p6d_cell_blocks (render_crew), and in Phase 6A's block p6d_person_actions
+// (p6a_open_person), p6d_day_peek_opts (p6a_open_day) and p6d_legend_sections (p6a_legend).
+
+const MP6D = {
+	planner: "maintenance",
+	width: 540,
+	max_days: 60,
+	visit: "Sapphire Maintenance Record",
+	// The Conflict center runs only these, each the page's own write sent through send().
+	fix_methods: {
+		[`${MP.api}.move_visit`]: "move_visit",
+		[`${MP.api}.move_projected`]: "move_projected",
+	},
+	targets: "[data-pk-block], [data-pk-note-open], [data-p6d-conflict]",
+};
+
+const MP6D_STYLE = `
+.mp-p6d-conflicts.mp-p6d-hot{color:#b91c1c;border-color:rgba(220,38,38,.55);font-weight:600;}
+.mp-chip.mp-p6d-link{cursor:pointer;text-decoration:underline dotted;}
+.mp-p6d-crew-notes{border-left:1px solid var(--border-color);padding:3px 4px;min-width:0;}
+.mp-p6d-crew-corner{position:sticky;left:0;z-index:1;border-left:none;background:var(--card-bg);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);padding:4px 8px;}
+`;
+
+const MP6D_METHODS = {
+	init_phase6d() {
+		if (!document.getElementById("mp-style-6d")) {
+			$("<style id='mp-style-6d'>").text(MP6D_STYLE).appendTo(document.head);
+		}
+		this.p6d = { center: null, counted: null, notes: {}, asked: {}, notes_for: null };
+		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
+		this.$p6d_conflicts = $('<button type="button" class="btn btn-default btn-sm mp-p6d-conflicts"></button>')
+			.text(__("Conflicts"))
+			.attr("title", __("Everything wrong in the dates on screen, with one-click fixes"))
+			.on("click", () => this.p6d_open_conflicts(null))
+			.insertBefore(this.$undo);
+		this.$p6d_block = $('<button type="button" class="btn btn-default btn-sm mp-p6d-block-btn"></button>')
+			.text(__("Block time"))
+			.attr("title", __("Mark someone unavailable for part of a day or all of it"))
+			.hide()
+			.on("click", () => this.p6d_block_form({ date: this.p6d_default_date() }))
+			.insertBefore(this.$undo);
+		const root = this.$body[0];
+		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click.
+		root.addEventListener("click", (e) => this.p6d_click(e), true);
+		root.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const el = e.target && e.target.closest ? e.target.closest(MP6D.targets) : null;
+				if (!el || e.target !== el) return;
+				e.preventDefault();
+				e.stopPropagation();
+				el.click();
+			},
+			true
+		);
+		frappe.require(MP6A.kit, () => this.p6d_ready());
+	},
+
+	p6d_ready() {
+		const kit = window.planner_kit;
+		if (!kit || !kit.conflicts || !kit.blocks || (this.p6d && this.p6d.center)) return;
+		this.p6d.center = kit.conflicts.center({
+			planner: MP6D.planner,
+			owner: MP6A.owner,
+			push: this.$body[0],
+			width: MP6D.width,
+			range: () => this.p6d_range(),
+			can_schedule: () => !!(this.data && this.data.can_schedule),
+			draft: () => false,
+			block_note: (name) => this.p6d_block_note(name),
+			run_fix: (job) => this.p6d_run_fix(job),
+			open_item: (conflict, item) => this.p6d_open_item(conflict, item),
+			exclude: (conflict, fix) => this.p6d_exclude(conflict, fix),
+			pick_context: (conflict, fix) => this.p6d_pick_context(conflict, fix),
+			on_list: () => this.p6d_after_list(),
+		});
+		if (this.data) this.render();
+	},
+
+	p6d_kit() {
+		return this.p6d && this.p6d.center ? window.planner_kit : null;
+	},
+
+	// ------------------------------------------------------------------ hooks
+
+	render_phase6d() {
+		if (!this.p6d || !this.data) return;
+		if (this.$p6d_block) this.$p6d_block.toggle(!!this.data.can_schedule);
+		if (this.p6d.notes_for !== this.data) {
+			this.p6d.notes = {};
+			this.p6d.asked = {};
+			this.p6d.notes_for = this.data;
+		}
+		this.p6d_decorate();
+		// One Conflict center read per load (debounced), never one per render.
+		const center = this.p6d.center;
+		if (center && this.p6d.counted !== this.data) {
+			this.p6d.counted = this.data;
+			center.schedule();
+		}
+	},
+
+	// Under a day's head in the month and week views: its notes, then the blocked technicians shown.
+	p6d_day_head($day, ymd) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return;
+		const month = this.view === "month";
+		const can = !!this.data.can_schedule;
+		const parts = [kit.blocks.notes_html(this.p6d_notes_of(ymd), { date: ymd, compact: month, can_add: can && !month })];
+		const single = !!this.technician && this.technician !== "__none__";
+		const people =
+			this.technician === "__none__"
+				? []
+				: (this.data.technicians || []).filter((person) => (single ? person.user === this.technician : person.enabled));
+		people.forEach((person) => {
+			this.p6d_blocks_of(person.user, ymd).forEach((block) => {
+				const who = single ? "" : month ? this.p6d_initials(person.name) : person.name;
+				parts.push(this.p6d_chip(block, person, ymd, { who, compact: month }));
+			});
+		});
+		const html = parts.join("");
+		if (html) $day.append(html);
+	},
+
+	// The crew view: one technician's blocks in their day's cell, under the hours.
+	p6d_cell_blocks(person, ymd) {
+		if (!person || !this.p6d_kit()) return "";
+		return this.p6d_blocks_of(person.user, ymd)
+			.map((block) => this.p6d_chip(block, person, ymd, {}))
+			.join("");
+	},
+
+	p6d_chip(block, person, ymd, extra) {
+		const kit = this.p6d_kit();
+		return kit.blocks.chip_html(
+			block,
+			Object.assign(
+				{
+					note: extra.compact ? "" : this.p6d_block_note(block.ref),
+					date: ymd,
+					user: person.user,
+					resource: person.resource || "",
+					person: person.user,
+					editable: this.p6d_can_edit_block(person.user),
+				},
+				extra
+			)
+		);
+	},
+
+	p6d_crew_notes_row(days) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const can = !!this.data.can_schedule;
+		if (!can && !days.some((ymd) => this.p6d_notes_of(ymd).length)) return "";
+		const cells = days.map(
+			(ymd) =>
+				`<div class="mp-p6d-crew-notes">${kit.blocks.notes_html(this.p6d_notes_of(ymd), { date: ymd, can_add: can })}</div>`
+		);
+		return `<div class="mp-p6d-crew-notes mp-p6d-crew-corner">${mp_esc(__("Notes"))}</div>${cells.join("")}`;
+	},
+
+	// ------------------------------------------------------------------ what the page knows
+
+	p6d_notes_of(ymd) {
+		return ((this.data && this.data.day_notes) || {})[ymd] || [];
+	},
+
+	// A technician's blocks on a day: the day cell's `blocks` (maintenance_planner._booking_cell).
+	p6d_blocks_of(user, ymd) {
+		const cell = user ? this.cell_of(user, ymd) : null;
+		return ((cell && cell.blocks) || []).filter((block) => block && block.ref);
+	},
+
+	// A block's note: ONLY from the payload's block_notes (filled for the viewer by the server).
+	p6d_block_note(name) {
+		const notes = (this.data && this.data.block_notes) || {};
+		return name && notes[name] ? String(notes[name]) : "";
+	},
+
+	p6d_initials(name) {
+		const parts = String(name || "?").split(/\s+/).filter(Boolean);
+		return ((parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+	},
+
+	p6d_can_edit_block(user) {
+		if (this.data && this.data.can_schedule) return true;
+		return !!user && user === (frappe.session && frappe.session.user);
+	},
+
+	p6d_can_block(user) {
+		if (this.data && this.data.can_schedule) return true;
+		return !user || user === (frappe.session && frappe.session.user);
+	},
+
+	p6d_default_date() {
+		const today = this.today();
+		const { start, end } = this.range();
+		return today >= mp_ymd(start) && today <= mp_ymd(end) ? today : mp_ymd(start);
+	},
+
+	// ------------------------------------------------------------------ clicks
+
+	p6d_click(e) {
+		if (!this.p6d || Date.now() < this.click_blocked_until) return;
+		const target = e.target;
+		if (!target || !target.closest) return;
+		const take = () => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		const marker = target.closest("[data-p6d-conflict]");
+		if (marker) {
+			take();
+			this.p6d_open_conflicts({ key: marker.getAttribute("data-p6d-conflict") });
+			return;
+		}
+		const add = target.closest("[data-pk-note-add]");
+		if (add) {
+			take();
+			this.p6d_note_form({ date: add.getAttribute("data-pk-note-add") });
+			return;
+		}
+		const note = target.closest("[data-pk-note-open]");
+		if (note) {
+			take();
+			this.p6a_open_day(note.getAttribute("data-pk-note-open"));
+			return;
+		}
+		const block = target.closest("[data-pk-block]");
+		if (block) {
+			take();
+			this.p6d_block_click(block);
+		}
+	},
+
+	p6d_block_click(el) {
+		const kit = this.p6d_kit();
+		const name = el.getAttribute("data-pk-block");
+		const ymd = el.getAttribute("data-pk-block-date");
+		const user = el.getAttribute("data-pk-block-user");
+		if (!kit || !name) return;
+		const block = this.p6d_blocks_of(user, ymd).find((entry) => entry.ref === name);
+		if (!block) return;
+		if (this.p6d_can_edit_block(user)) {
+			this.p6d_block_form({
+				block: { name, date: ymd, all_day: !!block.all_day, slot: block.slot || null },
+				user,
+				date: ymd,
+			});
+			return;
+		}
+		kit.toast(`${this.tech_name(user)}: ${kit.blocks.block_text(block)}`, { tone: "info" });
+	},
+
+	// ------------------------------------------------------------------ blocks and notes
+
+	// The block form: a planner picks anyone on the planner; a technician blocks only their own time
+	// (the form then sends no person, and the server makes it the caller's own).
+	p6d_block_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return;
+		opts = opts || {};
+		const can = !!this.data.can_schedule;
+		const me = frappe.session && frappe.session.user;
+		const user = opts.user || (can ? "" : me);
+		if (!can && user && user !== me) {
+			frappe.show_alert({ message: __("You can only block your own time."), indicator: "orange" }, 6);
+			return;
+		}
+		const person = (this.tech_by_user || {})[user] || null;
+		const resource = (person && person.resource) || "";
+		if (can && user && !resource) {
+			frappe.msgprint(
+				__("{0} is not on the planner's list of people (Planner Resources), so their time cannot be blocked here.", [
+					this.tech_name(user),
+				])
+			);
+			return;
+		}
+		const people = (this.data.technicians || [])
+			.filter((entry) => entry.enabled && entry.resource)
+			.map((entry) => ({ value: entry.resource, label: entry.name }));
+		kit.blocks.form({
+			block: opts.block || null,
+			note: opts.block ? this.p6d_block_note(opts.block.name) : "",
+			date: opts.date || this.p6d_default_date(),
+			resource,
+			resource_label: user ? this.tech_name(user) : "",
+			people: can ? people : null,
+			self_only: !can,
+			on_saved: () => this.load(),
+			on_deleted: () => this.load(),
+		});
+	},
+
+	p6d_note_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data || !this.data.can_schedule) return;
+		opts = opts || {};
+		kit.blocks.note_form({
+			note: opts.note || null,
+			date: opts.date || this.p6d_default_date(),
+			on_saved: () => this.load(),
+			on_deleted: () => this.load(),
+		});
+	},
+
+	p6d_person_actions(user) {
+		if (!this.data || !this.p6d_can_block(user)) return [];
+		return [{ label: __("Block time…"), on_click: (info) => this.p6d_block_form({ user, date: info && info.date }) }];
+	},
+
+	p6d_day_peek_opts() {
+		const can = !!(this.data && this.data.can_schedule);
+		return {
+			head_html: (ymd) => this.p6d_peek_head(ymd),
+			on_head_click: (e, ymd) => this.p6d_peek_click(e, ymd),
+			actions: can ? [{ label: __("Add a note"), on_click: (ymd) => this.p6d_note_form({ date: ymd }) }] : [],
+		};
+	},
+
+	p6d_peek_head(ymd) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const notes = this.p6d_peek_notes(ymd);
+		return kit.blocks.note_list_html(notes || [], { loading: notes === null });
+	},
+
+	p6d_peek_notes(ymd) {
+		const { start, end } = this.range();
+		if (ymd >= mp_ymd(start) && ymd <= mp_ymd(end)) return this.p6d_notes_of(ymd);
+		const p6d = this.p6d;
+		if (p6d.notes[ymd]) return p6d.notes[ymd];
+		if (!p6d.asked[ymd]) {
+			p6d.asked[ymd] = true;
+			const kit = this.p6d_kit();
+			if (!kit) return [];
+			kit.blocks
+				.get_notes(ymd)
+				.then((notes) => {
+					p6d.notes[ymd] = notes || [];
+					const peek = this.p6a && this.p6a.peek;
+					if (peek && peek.is_open() && typeof peek.render === "function" && peek.date && peek.date() === ymd) peek.render();
+				})
+				.catch(() => {
+					p6d.notes[ymd] = [];
+				});
+		}
+		return null;
+	},
+
+	p6d_peek_click(e, ymd) {
+		const target = e.target;
+		const edit = target && target.closest ? target.closest("[data-pk-note-edit]") : null;
+		if (!edit) return false;
+		const name = edit.getAttribute("data-pk-note-edit");
+		const note = (this.p6d_peek_notes(ymd) || []).find((entry) => entry.name === name);
+		if (note) this.p6d_note_form({ note, date: ymd });
+		return true;
+	},
+
+	// ------------------------------------------------------------------ the Conflict center
+
+	p6d_open_conflicts(focus) {
+		const center = this.p6d && this.p6d.center;
+		if (center) center.open(focus || null);
+	},
+
+	p6d_range() {
+		if (!this.data || !MP.views.includes(this.view)) return null;
+		const { start, end } = this.range();
+		const last = moment.min(end.clone(), start.clone().add(MP6D.max_days - 1, "days"));
+		return { start: mp_ymd(start), end: mp_ymd(last), label: `${mp_when(mp_ymd(start))} – ${mp_when(mp_ymd(last))}` };
+	},
+
+	p6d_after_list() {
+		const center = this.p6d && this.p6d.center;
+		const count = center ? center.count() : null;
+		if (this.$p6d_conflicts) {
+			this.$p6d_conflicts
+				.text(count == null ? __("Conflicts") : __("Conflicts ({0})", [count]))
+				.toggleClass("mp-p6d-hot", Number(count) > 0)
+				.attr(
+					"title",
+					count
+						? __("{0} conflict(s) nobody has kept in the dates on screen", [count])
+						: __("Everything wrong in the dates on screen, with one-click fixes")
+				);
+		}
+		this.p6d_decorate();
+	},
+
+	p6d_projected_card(args) {
+		return (
+			Object.values(this.by_key || {}).find(
+				(card) => card && card.kind === "projected" && card.movable && card.contract === args.contract && card.from_date === args.from_date
+			) || null
+		);
+	},
+
+	// A fix from the Conflict center: exactly the method and arguments the server worked out, sent
+	// through send() with the Undo snapshot save_move takes for a drag, so the reason prompt and Undo
+	// apply. Nothing but this page's own writes (move_visit, move_projected) may run from here.
+	p6d_run_fix(job) {
+		const method = MP6D.fix_methods[job.fix.method];
+		if (!method || !job.args) {
+			frappe.show_alert({ message: __("That fix cannot run from this planner."), indicator: "orange" }, 6);
+			return Promise.resolve(null);
+		}
+		const visit = method === "move_visit";
+		const card = visit ? this.by_key[job.args.record] || null : this.p6d_projected_card(job.args);
+		const item = (job.conflict.items || []).find((entry) => entry.name === job.fix.name) || {};
+		const site = card ? this.site_of(card) : item.title || job.fix.name;
+		const snapshot = card ? this.p6d_snapshot(card, job.args, visit, site) : null;
+		if (card) {
+			card.saving = true;
+			this.render();
+		}
+		return this.send(method, job.args, { snapshot, message: this.p6d_fix_message(job, site), noun: visit ? "visit" : "contract" }).finally(
+			() => this.load()
+		);
+	},
+
+	// What Undo needs, in the shape save_move() records for the same move.
+	p6d_snapshot(card, args, visit, site) {
+		const before = this.snapshot_of(card);
+		if (visit) {
+			return {
+				kind: "visit",
+				site,
+				record: card.name,
+				date: before.date,
+				technician: before.technician,
+				crew: before.crew,
+				planned_hours: before.planned_hours,
+				full_day: before.full_day,
+			};
+		}
+		return {
+			kind: "projected",
+			site,
+			contract: card.contract,
+			serial_no: card.serial_no || null,
+			from_date: args.to_date,
+			to_date: before.date,
+		};
+	},
+
+	p6d_fix_message(job, site) {
+		const args = job.args;
+		if (job.fix.type === "next_free_day") return __("{0} moved to {1}", [site, mp_when(args.date || args.to_date)]);
+		if (job.fix.type === "pick_free") {
+			const to = (job.picked && job.picked.label) || this.tech_name(args.technician);
+			return __("{0}: {1} handed over to {2}", [site, this.tech_name(args.from_user), to]);
+		}
+		return __("{0} updated", [site]);
+	},
+
+	// A record in a conflict: a visit of this planner opens in its side panel; a project task opens on
+	// the Project Planner; a trip or a rental crew task opens its form.
+	p6d_open_item(conflict, item) {
+		const kit = this.p6d_kit();
+		const go = (fn) => (kit ? kit.drawer.navigate(fn) : fn());
+		if (item.own) {
+			const card = (item.key && this.by_key[item.key]) || this.by_key[item.name];
+			if (card && card.kind !== "booking") this.open_card(card);
+			else go(() => frappe.set_route("Form", item.doctype, item.name));
+			return;
+		}
+		if (item.planner === "project") go(() => frappe.set_route(MP.project_route, "week", conflict.date));
+		else if (item.planner === "travel") go(() => frappe.set_route("Form", "Travel Trip", item.name));
+		else if (item.doctype === "Task") go(() => frappe.set_route("Form", "Task", item.name));
+	},
+
+	// Who cannot take a visit: whoever has it now and everyone already on it.
+	p6d_exclude(conflict, fix) {
+		const out = {};
+		const card = this.by_key[fix.name];
+		if (card && card.kind === "visit") this.visit_people(card).forEach((user) => (out[user] = __("Already on it")));
+		const from = (fix.args && fix.args.from_user) || fix.user;
+		if (from) out[from] = __("Booked on it now");
+		return out;
+	},
+
+	p6d_pick_context(conflict, fix) {
+		const card = this.by_key[fix.name];
+		const item = (conflict.items || []).find((entry) => entry.name === fix.name) || {};
+		const site = card ? this.site_of(card) : item.title || fix.name;
+		const from = (fix.args && fix.args.from_user) || fix.user;
+		return from ? __("Hand {0} over from {1}", [site, this.tech_name(from)]) : site;
+	},
+
+	// A visit in a conflict nobody kept: its "Day off" chip (for a day off or a block) becomes the way
+	// into the Conflict center, else one small Conflict marker. Never two marks for one conflict.
+	p6d_decorate() {
+		const center = this.p6d && this.p6d.center;
+		if (!center || !this.data) return;
+		const root = this.$body[0];
+		root.querySelectorAll("[data-p6d-conflict]").forEach((node) => this.p6d_undecorate(node));
+		const index = center.index();
+		const day_off = __("Day off");
+		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			const card = this.by_key[el.getAttribute("data-key")];
+			if (!card || card.kind === "booking") return;
+			const found = card.kind === "projected" ? index[`key|${card.key}`] : index[`${MP6D.visit}|${card.name}`];
+			if (!found) return;
+			const row = el.getAttribute("data-row-user");
+			const hit = row ? found.find((entry) => entry.user === row) : found[0];
+			const holder = el.querySelector(".mp-card-who");
+			if (!hit || !holder) return;
+			let chip = null;
+			if (hit.kind === "day_off" || hit.kind === "blocked") {
+				chip = Array.from(holder.querySelectorAll(".mp-chip.mp-red")).find((node) => node.textContent.indexOf(day_off) === 0);
+			}
+			if (!chip) {
+				chip = document.createElement("span");
+				chip.className = "mp-chip mp-red mp-p6d-mark";
+				chip.textContent = __("Conflict");
+				holder.appendChild(chip);
+			}
+			chip.classList.add("mp-p6d-link");
+			chip.setAttribute("data-p6d-conflict", hit.key);
+			chip.setAttribute("role", "button");
+			chip.setAttribute("tabindex", "0");
+			chip.setAttribute("title", __("Open the Conflict center at this conflict"));
+		});
+	},
+
+	p6d_undecorate(node) {
+		if (node.classList.contains("mp-p6d-mark")) {
+			node.remove();
+			return;
+		}
+		node.classList.remove("mp-p6d-link");
+		["data-p6d-conflict", "role", "tabindex", "title"].forEach((name) => node.removeAttribute(name));
+	},
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	p6d_menu_items(target) {
+		if (!this.p6d || !this.data || !target) return [];
+		const out = [];
+		const center = this.p6d.center;
+		const card = target.kind === "card" ? target.card : null;
+		if (card && center && card.kind !== "booking") {
+			const hits = card.kind === "projected" ? center.find("", "", card.key) : center.find(MP6D.visit, card.name);
+			if (hits && hits.length) {
+				out.push({ label: __("Show conflicts"), on_click: () => this.p6d_open_conflicts({ key: hits[0].key }) });
+			}
+		}
+		if (target.kind === "cell" && target.ymd) {
+			if (center) out.push({ label: __("Conflicts this day"), on_click: () => this.p6d_open_conflicts({ date: target.ymd }) });
+			if (this.data.can_schedule) {
+				out.push({ label: __("Add a day note…"), on_click: () => this.p6d_note_form({ date: target.ymd }) });
+			}
+		}
+		if ((target.kind === "cell" || target.kind === "person") && this.p6d_can_block(target.user)) {
+			out.push({
+				label: __("Block time…"),
+				on_click: () => this.p6d_block_form({ user: target.user || "", date: target.ymd || this.p6d_default_date() }),
+			});
+		}
+		return out;
+	},
+
+	// ------------------------------------------------------------------ legend
+
+	p6d_legend_sections() {
+		const kit = this.p6d_kit();
+		if (!kit) return [];
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		return [
+			{
+				title: __("Unavailable time, day notes and conflicts"),
+				items: [
+					item(
+						kit.blocks.chip_html({ name: "", slot: ["14:00", "16:00"] }, {}),
+						"A personal block: the technician is unavailable then. The planners and the person see its note; everyone else sees “Unavailable”."
+					),
+					item(kit.blocks.chip_html({ name: "", all_day: 1 }, {}), "Unavailable all day: the day counts like time off."),
+					item(
+						kit.blocks.notes_html([{ note: __("Shop meeting 7 am") }], {}),
+						"A note for the crew on that day. Hover over it or tap it to read it all."
+					),
+					item(
+						`<span class="mp-chip mp-red mp-p6d-link">${mp_esc(__("Conflict"))}</span>`,
+						"Click it to open the Conflict center at that conflict."
+					),
+					item(
+						"",
+						"Conflicts (N) on the toolbar lists everything wrong in the dates on screen, with one-click fixes for visits. A fix that causes a conflict still asks for a reason, like a drag."
+					),
+				],
+			},
+		];
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);

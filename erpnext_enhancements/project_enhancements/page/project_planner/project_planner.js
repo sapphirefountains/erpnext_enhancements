@@ -379,6 +379,7 @@ class ProjectPlanner {
 		this.init_phase4();
 		this.init_phase5();
 		this.init_phase6a();
+		this.init_phase6d();
 		this.bind_drag();
 	}
 
@@ -443,6 +444,7 @@ class ProjectPlanner {
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
 		this.p4_set_mode(mode);
+		this.p6d_set_mode(mode);
 		if (route && this.$draft_bar) this.$draft_bar.hide();
 		[this.$project, this.$pm, this.$foreign, this.$undo].forEach(($el) => $el && $el.toggle(!heatmap));
 		if (heatmap && this.$copy) this.$copy.hide();
@@ -787,6 +789,7 @@ class ProjectPlanner {
 		this.render_phase3b();
 		this.render_phase4();
 		this.render_phase6a();
+		this.render_phase6d();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -816,6 +819,7 @@ class ProjectPlanner {
 			};
 			if (day.off) state.text += ` · ${__("½ day off")}`;
 		}
+		this.p6d_state(day, state);
 		if (conflict) state.cls += " pp-conflict";
 		state.soft = soft;
 		state.soft_ratio = capacity > 0 ? Math.min(Math.max(0, 1 - state.ratio), soft / capacity) : 0;
@@ -1076,6 +1080,7 @@ class ProjectPlanner {
 								: ""
 						}
 					</div>
+					${this.p6d_day_html(ymd, resources)}
 					${cards.map((card) => this.card_html(card, ymd)).join("")}
 					${(foreign_by_day[ymd] || []).map((item) => this.foreign_html(item)).join("")}
 				</div>`);
@@ -1097,6 +1102,7 @@ class ProjectPlanner {
 				)}">${pp_esc(pp_when(ymd))}</div>`
 			);
 		});
+		html.push(this.p6d_crew_notes_row(days));
 		resources.forEach((resource) => {
 			html.push(this.person_html(resource, true));
 			days.forEach((ymd) => {
@@ -1135,6 +1141,7 @@ class ProjectPlanner {
 	booking_html(resource, ymd, booking) {
 		// Driving is padding on the day's hours, not a thing to open: the cell's drive line shows it.
 		if (booking.kind === "drive") return "";
+		if (booking.kind === "block") return this.p6d_block_html(resource, ymd, booking);
 		const card = booking.ref && this.by_task[booking.ref];
 		const hours = booking.slot ? booking.slot.join("–") : `${pp_hours(booking.hours)}h`;
 		if (card) {
@@ -3529,6 +3536,7 @@ const PP3B_METHODS = {
 				$('<div class="pp-mw-empty"></div>').text(entry.off ? __("Off") : __("Nothing booked")).appendTo($day);
 			}
 			items.forEach((stop) => $day.append(this.my_week_item_html(stop)));
+			this.p6d_my_week_day($day, $dh, entry, data);
 		});
 	},
 
@@ -4732,6 +4740,7 @@ const PP6A_METHODS = {
 			width: PP6A.widths.person,
 			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
 			on_full_route: (who, ymd) => kit.drawer.navigate(() => this.go_route(who, ymd)),
+			actions: this.p6d_person_actions(resource),
 		});
 	},
 
@@ -4749,6 +4758,7 @@ const PP6A_METHODS = {
 			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
 			on_person: (person) => this.p6a_open_person(person.resource, ymd),
 			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
+			...this.p6d_day_peek_opts(),
 		});
 	},
 
@@ -5095,6 +5105,7 @@ const PP6A_METHODS = {
 						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
 					],
 				},
+				...this.p6d_legend_sections(),
 			],
 			{ title: __("How to read the Project Planner"), owner: PP6A.owner }
 		);
@@ -5102,3 +5113,707 @@ const PP6A_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP6A_METHODS);
+
+// ====================================================================== Phase 6D: Conflict center, personal blocks, day notes
+//
+// Nik, 2026-10-09, for both planners: one list of everything wrong right now with one-click fixes
+// (the Conflict center); personal blocks ("unavailable 2–4 pm", "shop day") that planners put on
+// anyone and each person on their own time, which others see as "Unavailable" and planners with the
+// note; and day notes for the whole crew ("Shop meeting 7 am"). The backend is api/planner_blocks.py
+// and api/planner_conflicts.py (Phase 6D); the drawer, the two forms and the markup are the planner
+// kit's (planner_kit/conflicts.js and blocks.js), shared with the Maintenance Planner.
+//
+//   - "Conflicts (N)" on the toolbar        the Conflict center for the dates on screen. N is what
+//                                            nobody has kept, red above 0, read after each load (one
+//                                            call, debounced), never on a plain re-render. A card in
+//                                            a conflict has its Conflict chip turned into the way in
+//                                            (a small marker when it had no chip): it opens the list
+//                                            at that conflict.
+//   - a fix in the list                     exactly the method and arguments the server worked out,
+//                                            sent through commit()/send() like a drag, so a conflict
+//                                            asks for a reason, Draft mode drafts it and Undo puts it
+//                                            back. "Pick someone who's free" lists who_is_free and
+//                                            picks nobody; "Keep it with a reason" needs a reason.
+//   - "Block time" (planners), "Block       the block form. A block shows in the crew view as a
+//     time…" in a person's drawer and the    hatched "Unavailable 2–4 pm" bar, in week and month as a
+//     right-click menu                       chip; its note only when block_notes has it. Blocks are
+//                                            never dragged.
+//   - a day's notes                         a thin row under each day head (week), a row under the
+//                                            crew view's column heads, a small marker (month); "+ note"
+//                                            for planners; the day drawer shows them in full on top
+//   - My week                               your own blocks with their notes, the notes for your
+//                                            group, and "Block my time" on each day (only your own)
+//
+// Hooks into the class above, one line each: init_phase6d (constructor), render_phase6d (render),
+// p6d_set_mode (set_mode), p6d_state (avail_state), p6d_block_html (booking_html), p6d_day_html
+// (render_calendar), p6d_crew_notes_row (render_crew), p6d_my_week_day (render_my_week), and in
+// Phase 6A's block p6d_person_actions (p6a_open_person), p6d_day_peek_opts (p6a_open_day) and
+// p6d_legend_sections (p6a_legend).
+
+const PP6D = {
+	planner: "project",
+	width: 540,
+	max_days: 60,
+	unavailable: "Unavailable",
+	// The Conflict center runs only these, each the page's own write sent through commit()/send().
+	fix_methods: {
+		[`${PP.api}.save_task`]: "save_task",
+		[`${PP.api}.swap_crew`]: "swap_crew",
+		[`${PP.api}.add_crew`]: "add_crew",
+	},
+	// A maintenance visit opens on the Maintenance Planner, which Projects Users cannot open.
+	maintenance_roles: ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"],
+	// What this block's capture listener answers: a block, a note, a conflict marker.
+	targets: "[data-pk-block], [data-pk-note-open], [data-p6d-conflict]",
+};
+
+const PP6D_STYLE = `
+.pp-p6d-conflicts.pp-p6d-hot{color:#b91c1c;border-color:rgba(220,38,38,.55);font-weight:600;}
+.pp-chip.pp-p6d-link{cursor:pointer;text-decoration:underline dotted;}
+.pp-day > .pk-notes,.pp-day > .pk-notes-mark{margin:0 2px;}
+.pp-p6d-crew-notes{border-left:1px solid var(--border-color);padding:3px 4px;min-width:0;}
+.pp-p6d-crew-corner{position:sticky;left:0;z-index:1;border-left:none;background:var(--card-bg);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);padding:4px 8px;}
+.pp-p6d-mw{display:flex;flex-direction:column;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border-color);}
+.pp-p6d-mw .pk-block{font-size:13px;padding:6px 8px;}
+@media (max-width:760px){
+.pp-p6d-mw-btn{padding:4px 10px;font-size:13px;}
+}
+`;
+
+const PP6D_METHODS = {
+	init_phase6d() {
+		if (!document.getElementById("pp-style-6d")) {
+			$("<style id='pp-style-6d'>").text(PP6D_STYLE).appendTo(document.head);
+		}
+		this.p6d = { center: null, counted: null, notes: {}, asked: {}, notes_for: null };
+		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
+		this.$p6d_conflicts = $('<button type="button" class="btn btn-default btn-sm pp-p6d-conflicts"></button>')
+			.text(__("Conflicts"))
+			.attr("title", __("Everything wrong in the dates on screen, with one-click fixes"))
+			.on("click", () => this.p6d_open_conflicts(null))
+			.insertBefore(this.$undo);
+		this.$p6d_block = $('<button type="button" class="btn btn-default btn-sm pp-p6d-block-btn"></button>')
+			.text(__("Block time"))
+			.attr("title", __("Mark someone unavailable for part of a day or all of it"))
+			.hide()
+			.on("click", () => this.p6d_block_form({ date: this.p6d_default_date() }))
+			.insertBefore(this.$undo);
+		const root = this.$body[0];
+		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click,
+		// not the card's (which opens the task) and not the day's.
+		root.addEventListener("click", (e) => this.p6d_click(e), true);
+		root.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const el = e.target && e.target.closest ? e.target.closest(PP6D.targets) : null;
+				if (!el || e.target !== el) return;
+				e.preventDefault();
+				e.stopPropagation();
+				el.click();
+			},
+			true
+		);
+		frappe.require(PP6A.kit, () => this.p6d_ready());
+	},
+
+	p6d_ready() {
+		const kit = window.planner_kit;
+		if (!kit || !kit.conflicts || !kit.blocks || (this.p6d && this.p6d.center)) return;
+		this.p6d.center = kit.conflicts.center({
+			planner: PP6D.planner,
+			owner: PP6A.owner,
+			push: this.$body[0],
+			width: PP6D.width,
+			range: () => this.p6d_range(),
+			can_schedule: () => !!(this.data && this.data.can_schedule),
+			draft: () => !!this.draft_on,
+			block_note: (name) => this.p6d_block_note(name),
+			run_fix: (job) => this.p6d_run_fix(job),
+			open_item: (conflict, item) => this.p6d_open_item(conflict, item),
+			exclude: (conflict, fix) => this.p6d_exclude(conflict, fix),
+			pick_context: (conflict, fix) => this.p6d_pick_context(conflict, fix),
+			on_list: () => this.p6d_after_list(),
+		});
+		// The calendar may have been drawn before the kit arrived: draw its blocks and notes now.
+		if (this.data && PP.views.includes(this.view)) this.render();
+	},
+
+	p6d_kit() {
+		return this.p6d && this.p6d.center ? window.planner_kit : null;
+	},
+
+	// ------------------------------------------------------------------ hooks
+
+	render_phase6d() {
+		if (!this.p6d || !this.data) return;
+		if (this.$p6d_block) this.$p6d_block.toggle(!!this.data.can_schedule && PP.views.includes(this.view));
+		if (this.p6d.notes_for !== this.data) {
+			// Notes read for days off the screen are as old as the last load.
+			this.p6d.notes = {};
+			this.p6d.asked = {};
+			this.p6d.notes_for = this.data;
+		}
+		this.p6d_decorate();
+		// One Conflict center read per load (debounced), never one per render.
+		const center = this.p6d.center;
+		if (center && this.p6d.counted !== this.data) {
+			this.p6d.counted = this.data;
+			center.schedule();
+		}
+	},
+
+	// The route, heatmap and My week views have no Conflicts or Block time button.
+	p6d_set_mode(mode) {
+		const calendar = mode === "";
+		if (this.$p6d_conflicts) this.$p6d_conflicts.toggle(calendar);
+		if (this.$p6d_block && !calendar) this.$p6d_block.hide();
+	},
+
+	// An all-day personal block makes the day read "Unavailable" rather than "Off".
+	p6d_state(day, state) {
+		if (!day || day.off !== PP6D.unavailable || Number(day.capacity) > 0) return;
+		const booked = Number(day.booked) || 0;
+		state.text = booked > 0.01 ? __("Unavailable, {0}h booked", [pp_hours(booked)]) : __("Unavailable");
+	},
+
+	// A block in the crew view: a hatched "Unavailable 2–4 pm" bar, never a card that drags.
+	p6d_block_html(resource, ymd, booking) {
+		const kit = this.p6d_kit();
+		if (!kit) return "";
+		return kit.blocks.chip_html(booking, {
+			note: this.p6d_block_note(booking.ref),
+			date: ymd,
+			resource,
+			person: resource,
+			editable: this.p6d_can_edit_block(resource),
+		});
+	},
+
+	// Under a day's head in the week and month views: its notes, then everyone shown who is blocked.
+	p6d_day_html(ymd, resources) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const month = this.view === "month";
+		const can = !!this.data.can_schedule;
+		const parts = [
+			kit.blocks.notes_html(this.p6d_notes_of(ymd), { date: ymd, compact: month, can_add: can && !month, project_link: true }),
+		];
+		(resources || []).forEach((person) => {
+			this.p6d_blocks_of(person.name, ymd).forEach((booking) => {
+				parts.push(
+					kit.blocks.chip_html(booking, {
+						who: month ? this.p6a_initials(person.name, person.label) : person.label,
+						note: month ? "" : this.p6d_block_note(booking.ref),
+						date: ymd,
+						resource: person.name,
+						person: person.name,
+						compact: month,
+						editable: this.p6d_can_edit_block(person.name),
+					})
+				);
+			});
+		});
+		return parts.join("");
+	},
+
+	// The crew view's notes row under its column heads; left out when there is nothing to show or add.
+	p6d_crew_notes_row(days) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const can = !!this.data.can_schedule;
+		if (!can && !days.some((ymd) => this.p6d_notes_of(ymd).length)) return "";
+		const cells = days.map(
+			(ymd) =>
+				`<div class="pp-p6d-crew-notes">${kit.blocks.notes_html(this.p6d_notes_of(ymd), {
+					date: ymd,
+					can_add: can,
+					project_link: true,
+				})}</div>`
+		);
+		return `<div class="pp-p6d-crew-notes pp-p6d-crew-corner">${pp_esc(__("Notes"))}</div>${cells.join("")}`;
+	},
+
+	// ------------------------------------------------------------------ what the page knows
+
+	p6d_notes_of(ymd) {
+		return ((this.data && this.data.day_notes) || {})[ymd] || [];
+	},
+
+	p6d_blocks_of(resource, ymd) {
+		const day = resource ? this.day_of(resource, ymd) : null;
+		return ((day && day.bookings) || []).filter((booking) => booking && booking.kind === "block" && booking.ref);
+	},
+
+	// A block's note: ONLY from the payload's block_notes, which the server fills for the viewer (the
+	// planners read every note, a person their own). Every block this page draws reads it here.
+	p6d_block_note(name) {
+		const notes = (this.data && this.data.block_notes) || {};
+		return name && notes[name] ? String(notes[name]) : "";
+	},
+
+	p6d_block_of(booking, resource, ymd) {
+		return { name: booking.ref, date: ymd, resource, all_day: !!booking.all_day, slot: booking.slot || null };
+	},
+
+	p6d_own_resource() {
+		const me = frappe.session && frappe.session.user;
+		const own = ((this.data && this.data.resources) || []).find((person) => person.user && person.user === me);
+		return own ? own.name : "";
+	},
+
+	// A planner edits anyone's block; everyone else only their own.
+	p6d_can_edit_block(resource) {
+		if (this.data && this.data.can_schedule) return true;
+		return !!resource && resource === this.p6d_own_resource();
+	},
+
+	// Who may be offered "Block time…" for `resource` (none: the person themselves, if on the planner).
+	p6d_can_block(resource) {
+		if (this.data && this.data.can_schedule) return true;
+		const own = this.p6d_own_resource();
+		return !!own && (!resource || resource === own);
+	},
+
+	p6d_default_date() {
+		const today = this.today();
+		const { start, end } = this.range();
+		return today >= pp_ymd(start) && today <= pp_ymd(end) ? today : pp_ymd(start);
+	},
+
+	p6d_reload() {
+		if (this.view === PP3B.my_week) return this.load_my_week();
+		if (PP.views.includes(this.view)) return this.load();
+		return null;
+	},
+
+	// ------------------------------------------------------------------ clicks
+
+	p6d_click(e) {
+		if (!this.p6d || Date.now() < this.click_blocked_until) return;
+		const target = e.target;
+		if (!target || !target.closest) return;
+		const take = () => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		const marker = target.closest("[data-p6d-conflict]");
+		if (marker) {
+			take();
+			this.p6d_open_conflicts({ key: marker.getAttribute("data-p6d-conflict") });
+			return;
+		}
+		const add = target.closest("[data-pk-note-add]");
+		if (add) {
+			take();
+			this.p6d_note_form({ date: add.getAttribute("data-pk-note-add") });
+			return;
+		}
+		const note = target.closest("[data-pk-note-open]");
+		if (note) {
+			take();
+			this.p6a_open_day(note.getAttribute("data-pk-note-open"));
+			return;
+		}
+		const block = target.closest("[data-pk-block]");
+		if (block) {
+			take();
+			this.p6d_block_click(block);
+		}
+	},
+
+	p6d_block_click(el) {
+		const kit = this.p6d_kit();
+		const name = el.getAttribute("data-pk-block");
+		const ymd = el.getAttribute("data-pk-block-date");
+		if (!kit || !name) return;
+		if (this.view === PP3B.my_week) {
+			const mine = ((this.my_week_data && this.my_week_data.blocks) || []).find((block) => block && block.name === name);
+			if (mine) this.p6d_my_week_block(mine.date, mine);
+			return;
+		}
+		const resource = el.getAttribute("data-pk-block-resource");
+		const booking = this.p6d_blocks_of(resource, ymd).find((entry) => entry.ref === name);
+		if (!booking) return;
+		if (this.p6d_can_edit_block(resource)) {
+			this.p6d_block_form({ block: this.p6d_block_of(booking, resource, ymd), resource, date: ymd });
+			return;
+		}
+		kit.toast(`${this.resource_label(resource)}: ${kit.blocks.block_text(booking)}`, { tone: "info" });
+	},
+
+	// ------------------------------------------------------------------ blocks and notes
+
+	// The block form: a planner picks anyone; everyone else blocks only their own time (the form then
+	// sends no person at all, and the server makes it the caller's own).
+	p6d_block_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return;
+		opts = opts || {};
+		const can = !!this.data.can_schedule;
+		const own = this.p6d_own_resource();
+		const resource = opts.resource || (can ? "" : own);
+		if (!can && resource && resource !== own) {
+			frappe.show_alert({ message: __("You can only block your own time."), indicator: "orange" }, 6);
+			return;
+		}
+		const people = (this.data.resources || [])
+			.slice()
+			.sort((a, b) => String(a.label).localeCompare(String(b.label)))
+			.map((person) => ({ value: person.name, label: person.label }));
+		kit.blocks.form({
+			block: opts.block || null,
+			note: opts.block ? this.p6d_block_note(opts.block.name) : "",
+			date: opts.date || this.p6d_default_date(),
+			resource,
+			resource_label: resource ? this.resource_label(resource) : "",
+			people: can ? people : null,
+			self_only: !can,
+			on_saved: () => this.p6d_reload(),
+			on_deleted: () => this.p6d_reload(),
+		});
+	},
+
+	p6d_note_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data || !this.data.can_schedule) return;
+		opts = opts || {};
+		kit.blocks.note_form({
+			note: opts.note || null,
+			date: opts.date || this.p6d_default_date(),
+			on_saved: () => this.load(),
+			on_deleted: () => this.load(),
+		});
+	},
+
+	// "Block time…" in a person's drawer (6A), for a planner or for the person themselves.
+	p6d_person_actions(resource) {
+		if (!this.data || !this.p6d_can_block(resource)) return [];
+		return [
+			{
+				label: __("Block time…"),
+				on_click: (info) => this.p6d_block_form({ resource: (info && info.resource) || resource, date: info && info.date }),
+			},
+		];
+	},
+
+	// The day drawer (6A): the day's notes in full at the top, Edit on each for a planner, "Add a note".
+	p6d_day_peek_opts() {
+		const can = !!(this.data && this.data.can_schedule);
+		return {
+			head_html: (ymd) => this.p6d_peek_head(ymd),
+			on_head_click: (e, ymd) => this.p6d_peek_click(e, ymd),
+			actions: can ? [{ label: __("Add a note"), on_click: (ymd) => this.p6d_note_form({ date: ymd }) }] : [],
+		};
+	},
+
+	p6d_peek_head(ymd) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const notes = this.p6d_peek_notes(ymd);
+		return kit.blocks.note_list_html(notes || [], { loading: notes === null, project_link: true });
+	},
+
+	// The notes of a day on screen come with the planner; a day the drawer stepped past them is read
+	// once (get_day_notes) and drawn when it arrives.
+	p6d_peek_notes(ymd) {
+		const { start, end } = this.range();
+		if (ymd >= pp_ymd(start) && ymd <= pp_ymd(end)) return this.p6d_notes_of(ymd);
+		const p6d = this.p6d;
+		if (p6d.notes[ymd]) return p6d.notes[ymd];
+		if (!p6d.asked[ymd]) {
+			p6d.asked[ymd] = true;
+			const kit = this.p6d_kit();
+			if (!kit) return [];
+			kit.blocks
+				.get_notes(ymd)
+				.then((notes) => {
+					p6d.notes[ymd] = notes || [];
+					const peek = this.p6a && this.p6a.peek;
+					if (peek && peek.is_open() && typeof peek.render === "function" && peek.date && peek.date() === ymd) peek.render();
+				})
+				.catch(() => {
+					p6d.notes[ymd] = [];
+				});
+		}
+		return null;
+	},
+
+	p6d_peek_click(e, ymd) {
+		const target = e.target;
+		if (!target || !target.closest) return false;
+		const edit = target.closest("[data-pk-note-edit]");
+		if (edit) {
+			const name = edit.getAttribute("data-pk-note-edit");
+			const note = (this.p6d_peek_notes(ymd) || []).find((entry) => entry.name === name);
+			if (note) this.p6d_note_form({ note, date: ymd });
+			return true;
+		}
+		const project = target.closest("[data-pk-note-project]");
+		if (project) {
+			this.p6a_open_project(project.getAttribute("data-pk-note-project"));
+			return true;
+		}
+		return false;
+	},
+
+	// ------------------------------------------------------------------ My week
+
+	// The phone view: the person's own blocks with their notes, the notes for their group, and "Block
+	// my time" on each day, which only ever blocks their own time.
+	p6d_my_week_day($day, $dh, entry, data) {
+		const kit = this.p6d_kit();
+		if (!kit || !data || !data.resource || !entry) return;
+		$('<button type="button" class="btn btn-default btn-xs pp-p6d-mw-btn"></button>')
+			.text(__("Block my time"))
+			.attr("title", __("Mark yourself unavailable for part of this day or all of it"))
+			.on("click", () => this.p6d_my_week_block(entry.date, null))
+			.appendTo($dh);
+		const notes = (data.day_notes || {})[entry.date] || [];
+		const mine = (data.blocks || []).filter((block) => block && block.date === entry.date);
+		if (!notes.length && !mine.length) return;
+		const $box = $('<div class="pp-p6d-mw"></div>');
+		if (notes.length) $box.append(kit.blocks.notes_html(notes, { date: entry.date, full: true }));
+		// get_my_week returns only the person's own blocks, with the note it read through block_notes.
+		mine.forEach((block) =>
+			$box.append(kit.blocks.chip_html(block, { note: block.note, date: entry.date, editable: !!block.can_edit }))
+		);
+		$box.insertAfter($dh);
+		// An all-day block says so itself; the plain "Off" line under it would only repeat it.
+		if (mine.some((block) => block.all_day) && !(entry.items || []).length && !entry.travel) {
+			$day.children(".pp-mw-empty").remove();
+		}
+	},
+
+	p6d_my_week_block(ymd, block) {
+		const kit = this.p6d_kit();
+		const data = this.my_week_data;
+		if (!kit || !data || !data.resource) return;
+		kit.blocks.form({
+			block: block || null,
+			note: block ? block.note : "",
+			date: ymd,
+			resource_label: data.label,
+			self_only: true,
+			can_delete: block ? !!block.can_edit : false,
+			on_saved: () => this.load_my_week(),
+			on_deleted: () => this.load_my_week(),
+		});
+	},
+
+	// ------------------------------------------------------------------ the Conflict center
+
+	p6d_open_conflicts(focus) {
+		const center = this.p6d && this.p6d.center;
+		if (center) center.open(focus || null);
+	},
+
+	p6d_range() {
+		if (!this.data || !PP.views.includes(this.view)) return null;
+		const { start, end } = this.range();
+		const last = moment.min(end.clone(), start.clone().add(PP6D.max_days - 1, "days"));
+		return { start: pp_ymd(start), end: pp_ymd(last), label: `${pp_when(pp_ymd(start))} – ${pp_when(pp_ymd(last))}` };
+	},
+
+	p6d_after_list() {
+		const center = this.p6d && this.p6d.center;
+		const count = center ? center.count() : null;
+		if (this.$p6d_conflicts) {
+			this.$p6d_conflicts
+				.text(count == null ? __("Conflicts") : __("Conflicts ({0})", [count]))
+				.toggleClass("pp-p6d-hot", Number(count) > 0)
+				.attr(
+					"title",
+					count
+						? __("{0} conflict(s) nobody has kept in the dates on screen", [count])
+						: __("Everything wrong in the dates on screen, with one-click fixes")
+				);
+		}
+		this.p6d_decorate();
+	},
+
+	// A fix from the Conflict center: exactly the method and arguments the server worked out, sent
+	// through commit() (or send() for a task that is not on the board) like any drag, so the reason
+	// prompt, Draft mode and Undo all apply. Nothing but this page's own writes may run from here.
+	p6d_run_fix(job) {
+		const method = PP6D.fix_methods[job.fix.method];
+		if (!method || !job.args || !job.args.task) {
+			frappe.show_alert({ message: __("That fix cannot run from this planner."), indicator: "orange" }, 6);
+			return Promise.resolve(null);
+		}
+		const card = this.by_task[job.args.task] || null;
+		const message = this.p6d_fix_message(job, card);
+		if (card) return this.commit(card, method, job.args, message);
+		return this.send(method, job.args, { message }).finally(() => this.load());
+	},
+
+	p6d_fix_message(job, card) {
+		const fix = job.fix;
+		const args = job.args;
+		const item = (job.conflict.items || []).find((entry) => entry.name === args.task) || {};
+		const subject = (card && (card.subject || card.name)) || item.title || args.task;
+		const picked = (job.picked && job.picked.label) || "";
+		if (fix.type === "next_free_day") return __("{0} moved to {1}", [subject, pp_when(args.start)]);
+		if (fix.type === "pencil") return __("{0} is now pencil", [subject]);
+		if (fix.type === "pick_free" && args.to_resource) {
+			return __("{0}: {1} in place of {2}", [subject, this.resource_label(args.to_resource, picked), this.resource_label(args.from_resource)]);
+		}
+		if (fix.type === "pick_free") return __("{0} added to {1}", [this.resource_label(args.resource, picked), subject]);
+		return __("{0} updated", [subject]);
+	},
+
+	// A record in a conflict: this planner's task opens in its side panel; anything else is a link.
+	p6d_open_item(conflict, item) {
+		const kit = this.p6d_kit();
+		const go = (fn) => (kit ? kit.drawer.navigate(fn) : fn());
+		if (item.own && item.doctype === "Task") {
+			const card = this.by_task[item.name];
+			if (card) this.open_card(card);
+			else go(() => frappe.set_route("Form", "Task", item.name));
+			return;
+		}
+		if (item.planner === "maintenance") {
+			if (frappe.user && frappe.user.has_role && frappe.user.has_role(PP6D.maintenance_roles)) {
+				go(() => frappe.set_route("maintenance-planner", "week", conflict.date));
+			} else {
+				frappe.show_alert({ message: __("A maintenance visit: it moves on the Maintenance Planner."), indicator: "blue" });
+			}
+		} else if (item.planner === "travel") {
+			go(() => frappe.set_route("Form", "Travel Trip", item.name));
+		} else if (item.doctype === "Task") {
+			go(() => frappe.set_route("Form", "Task", item.name));
+		}
+	},
+
+	// Who cannot be picked to take a task: whoever it is booked on now and everyone already on it.
+	p6d_exclude(conflict, fix) {
+		const out = {};
+		const card = this.by_task[fix.name];
+		((card && card.crew) || []).forEach((member) => {
+			if (member && member.resource) out[member.resource] = __("Already on it");
+		});
+		if (fix.resource) out[fix.resource] = __("Booked on it now");
+		return out;
+	},
+
+	p6d_pick_context(conflict, fix) {
+		const card = this.by_task[fix.name];
+		const item = (conflict.items || []).find((entry) => entry.name === fix.name) || {};
+		const subject = (card && (card.subject || card.name)) || item.title || fix.name;
+		if (fix.args && fix.args.from_resource) {
+			return __("In place of {0} on {1}", [this.resource_label(fix.args.from_resource), subject]);
+		}
+		if ((fix.credentials || []).length) return __("Add someone to {0}. It needs: {1}", [subject, fix.credentials.join(", ")]);
+		return __("Add someone to {0}", [subject]);
+	},
+
+	// A card in a conflict nobody kept: its red Conflict chip (or, for a missing qualification, the
+	// amber chip that says so) becomes the way into the Conflict center; a card with neither gets one
+	// small marker. Never two marks for one conflict.
+	p6d_decorate() {
+		const center = this.p6d && this.p6d.center;
+		if (!center || !this.data) return;
+		const root = this.$body[0];
+		root.querySelectorAll("[data-p6d-conflict]").forEach((node) => this.p6d_undecorate(node));
+		const index = center.index();
+		const missing = __("Missing {0}", ["|"]).split("|")[0];
+		root.querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			const found = index[`Task|${el.getAttribute("data-task")}`];
+			if (!found) return;
+			const row = el.getAttribute("data-resource");
+			const ymd = el.getAttribute("data-date");
+			const hit = row ? found.find((entry) => entry.resource === row && entry.date === ymd) : found[0];
+			const holder = el.querySelector(".pp-card-chips");
+			if (!hit || !holder) return;
+			const chips = Array.from(holder.querySelectorAll(".pp-chip"));
+			let chip = chips.find((node) => node.classList.contains("pp-red") && node.textContent === __("Conflict"));
+			if (!chip && hit.kind === "qualification") {
+				chip = chips.find((node) => node.classList.contains("pp-amber") && missing && node.textContent.indexOf(missing) === 0);
+			}
+			if (!chip) {
+				chip = document.createElement("span");
+				chip.className = "pp-chip pp-red pp-p6d-mark";
+				chip.textContent = __("Conflict");
+				holder.appendChild(chip);
+			}
+			chip.classList.add("pp-p6d-link");
+			chip.setAttribute("data-p6d-conflict", hit.key);
+			chip.setAttribute("role", "button");
+			chip.setAttribute("tabindex", "0");
+			chip.setAttribute("title", __("Open the Conflict center at this conflict"));
+		});
+	},
+
+	p6d_undecorate(node) {
+		if (node.classList.contains("pp-p6d-mark")) {
+			node.remove();
+			return;
+		}
+		node.classList.remove("pp-p6d-link");
+		["data-p6d-conflict", "role", "tabindex", "title"].forEach((name) => node.removeAttribute(name));
+	},
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	// 6B's menu calls this with what was right-clicked (phase6-wave2's registry).
+	p6d_menu_items(target) {
+		if (!this.p6d || !this.data || !target) return [];
+		const out = [];
+		const center = this.p6d.center;
+		if (target.kind === "card" && target.card && center) {
+			const hits = center.find("Task", target.card.name);
+			if (hits && hits.length) {
+				out.push({ label: __("Show conflicts"), on_click: () => this.p6d_open_conflicts({ key: hits[0].key }) });
+			}
+		}
+		if (target.kind === "cell" && target.ymd) {
+			if (center) out.push({ label: __("Conflicts this day"), on_click: () => this.p6d_open_conflicts({ date: target.ymd }) });
+			if (this.data.can_schedule) {
+				out.push({ label: __("Add a day note…"), on_click: () => this.p6d_note_form({ date: target.ymd }) });
+			}
+		}
+		if ((target.kind === "cell" || target.kind === "person") && this.p6d_can_block(target.resource)) {
+			out.push({
+				label: __("Block time…"),
+				on_click: () => this.p6d_block_form({ resource: target.resource || "", date: target.ymd || this.p6d_default_date() }),
+			});
+		}
+		return out;
+	},
+
+	// ------------------------------------------------------------------ legend
+
+	p6d_legend_sections() {
+		const kit = this.p6d_kit();
+		if (!kit) return [];
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		return [
+			{
+				title: __("Unavailable time, day notes and conflicts"),
+				items: [
+					item(
+						kit.blocks.chip_html({ name: "", slot: ["14:00", "16:00"] }, {}),
+						"A personal block: the person is unavailable then. The planners and the person see its note; everyone else sees “Unavailable”. Click it to change it, if it is yours to change."
+					),
+					item(kit.blocks.chip_html({ name: "", all_day: 1 }, {}), "Unavailable all day: the day counts like time off."),
+					item(
+						kit.blocks.notes_html([{ note: __("Shop meeting 7 am") }], {}),
+						"A note for the crew on that day. Hover over it or tap it to read it all; planners add one with + note."
+					),
+					item(
+						`<span class="pp-chip pp-red pp-p6d-link">${pp_esc(__("Conflict"))}</span>`,
+						"Click a Conflict chip to open the Conflict center at that conflict."
+					),
+					item(
+						"",
+						"Conflicts (N) on the toolbar lists everything wrong in the dates on screen, with one-click fixes. A fix that causes a conflict still asks for a reason, like a drag, and Undo puts it back."
+					),
+				],
+			},
+		];
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP6D_METHODS);

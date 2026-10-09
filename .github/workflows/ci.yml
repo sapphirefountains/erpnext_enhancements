@@ -886,6 +886,16 @@ jobs:
       # that the combined digest still goes once a day. Bench-free, own frappe stub, own step.
       - name: Project planner blocks, day notes and Conflict center (Phase 6D)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase6d -v
+      # Planner Phase 6D UI: the Conflict center drawer, personal blocks and day notes on both
+      # planners' pages and in My week. Pins that every fix is the server's method and arguments sent
+      # through the page's own send path (reason prompt, Draft mode, Undo) and only the page's own
+      # writes; that "pick someone who's free" picks nobody; that keeping a conflict needs a reason;
+      # that a block's note shows only from block_notes; that blocks never drag; that My week blocks
+      # only your own time; that the notes row is escaped; and that off_label says "Unavailable" for a
+      # block day without ever passing a time-off reason. The kit's renderers and forms run under
+      # node. Own frappe stub, own step.
+      - name: Planner Conflict center, blocks and notes on screen (Phase 6D UI)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase6d_ui -v
       # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
       # with NO deadline -- and because both callers order by `exp_end_date asc` and take
       # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget
