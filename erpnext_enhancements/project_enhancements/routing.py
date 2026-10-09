@@ -820,7 +820,7 @@ def _read_cache(pairs):
 	return fresh, stale
 
 
-def drive_matrix(pairs, settings=None):
+def drive_matrix(pairs, settings=None, google=True):
 	"""``{(a, b): {"minutes", "km", "source"}}`` for every leg asked for.
 
 	Cache first (one query), then Google Routes for the misses when Settings
@@ -828,6 +828,10 @@ def drive_matrix(pairs, settings=None):
 	straight-line estimate. A stale cached leg Google could not refresh is still used (a
 	three-month-old drive time beats a guess). ``source`` is ``"google"`` or ``"estimate"``.
 	Pairs of the same point are answered 0 and never sent anywhere.
+
+	``google=False`` skips Google whatever Settings say: cached legs (fresh or stale) and the
+	estimate only. The capacity heatmap prices eight weeks of routes this way, so one view can
+	never fan out into hundreds of billable requests.
 	"""
 	wanted = []
 	seen = set()
@@ -846,7 +850,7 @@ def drive_matrix(pairs, settings=None):
 	missing = [pair for pair in wanted if pair not in out]
 
 	fetched = {}
-	if missing and _use_google(settings) and not _flag(ROUTES_DOWN_FLAG) and _has_key():
+	if missing and google and _use_google(settings) and not _flag(ROUTES_DOWN_FLAG) and _has_key():
 		fetched = _fetch_google(missing)
 		_store(fetched, {pair_key(*pair) for pair in stale})
 
@@ -1029,22 +1033,24 @@ def _project_addresses(projects):
 	}
 
 
-def start_point():
+def start_point(google=True):
 	"""The shop's ``(lat, lng)``, or None when it cannot be located.
 
 	From Project Planner Settings' cached ``start_latitude/longitude`` while
 	``start_geocoded_from`` still equals the shop address (``pickup_routing._depot_address()``);
 	otherwise the address is geocoded and the three fields are written. A failed geocode is not
-	retried for an hour.
+	retried for an hour. ``google=False`` never geocodes: the cached point, even one geocoded
+	from an older address (the shop rarely moves far), else None.
 	"""
 	from erpnext_enhancements.api.pickup_routing import _depot_address
 
 	address = (_depot_address() or "").strip()
 	doc = _settings_doc()
-	if doc is not None:
-		cached = make_point(doc.get("start_latitude"), doc.get("start_longitude"))
-		if cached and (doc.get("start_geocoded_from") or "").strip() == address:
-			return cached
+	cached = make_point(doc.get("start_latitude"), doc.get("start_longitude")) if doc is not None else None
+	if cached and (doc.get("start_geocoded_from") or "").strip() == address:
+		return cached
+	if not google:
+		return cached
 	if not address or _flag(SHOP_FAILED_FLAG):
 		return None
 	point, problem = _google_geocode(address)
@@ -1262,14 +1268,18 @@ def _stop(booking, point):
 	}
 
 
-def plan_routes(day_bookings, settings=None):
+def plan_routes(day_bookings, settings=None, google=True):
 	"""Routes for many person-days at once: ``{key: route}`` (see :func:`build_route`).
 
 	``day_bookings`` is ``{(resource, day): [booking, ...]}``. A day with a travel booking has no
 	route (the person is away); a day with no task, rental or visit has nothing to route. Every
 	stop is located in one :func:`locate`, every leg any day needs is priced in **one**
 	:func:`drive_matrix` call, and then each day is ordered on its own.
+
+	``google=False`` makes no Google request of any kind: the shop comes from its cached point
+	(:func:`start_point`) and legs from the cache or the estimate (:func:`drive_matrix`).
 	"""
+	options = {} if google else {"google": False}
 	days = {}
 	for key, bookings in (day_bookings or {}).items():
 		if any(b.get("kind") == "travel" for b in bookings or []):
@@ -1281,7 +1291,7 @@ def plan_routes(day_bookings, settings=None):
 		return {}
 
 	points = locate([b for stops in days.values() for b in stops])
-	shop = start_point() if any(points.values()) else None
+	shop = start_point(**options) if any(points.values()) else None
 
 	day_stops, pairs = {}, set()
 	for key, bookings in days.items():
@@ -1292,7 +1302,7 @@ def plan_routes(day_bookings, settings=None):
 			if point is not None and not any(same_point(point, p) for p in distinct):
 				distinct.append(point)
 		pairs.update((a, b) for a in distinct for b in distinct if not same_point(a, b))
-	matrix = drive_matrix(pairs, settings) if pairs else {}
+	matrix = drive_matrix(pairs, settings, **options) if pairs else {}
 
 	routes = {key: build_route(shop, stops, matrix) for key, stops in day_stops.items()}
 	missing = sorted({s["ref"] for route in routes.values() for s in route["unlocated"]})

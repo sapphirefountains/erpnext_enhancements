@@ -50,6 +50,12 @@ Things this module is careful about, some of which look like bugs:
   than they need and decide in plain Python.
 * **Work restrictions are warnings only**, read with the same rules as
   ``hr_enhancements.availability.restrictions_covering`` (dates, not status).
+* **A tentative ("pencil") task books softly** (P3.3, ``Task.custom_tentative``). Its bookings
+  carry ``"tentative": True`` and land in the day's ``soft_booked``; ``booked``, ``free`` and
+  ``conflicts`` count firm work only, so a pencil never asks anyone for a reason. When the pencil
+  would push the day over, the cell gets a warning instead ("Pencilled work would put them over
+  by 2h"). A pencil is not driven to either: routes and drive padding are worked out from firm
+  stops, so pencilled work never books driving hours.
 
 The pure functions take plain dicts and dates, so ``tests/test_project_planner.py`` runs them
 without a bench.
@@ -111,6 +117,9 @@ CAPACITY_MARGIN_DAYS = 62
 
 TOLERANCE = 0.01
 
+#: The booking kinds that are Tasks (as opposed to visits, travel and driving).
+TASK_KINDS = ("task", "rental")
+
 
 # ---------------------------------------------------------------------- pure helpers
 
@@ -147,6 +156,11 @@ def _float(value):
 		return float(value or 0)
 	except (TypeError, ValueError):
 		return 0.0
+
+
+def is_tentative(task):
+	"""True when the task is a pencil booking (``custom_tentative``, a Check: 1/0/None/"1")."""
+	return bool(_float((task or {}).get("custom_tentative")))
 
 
 def daterange(start, end):
@@ -353,8 +367,12 @@ def day_conflicts(capacity, off, bookings):
 	  off still has capacity, so it only conflicts once it is over. A zero-hour booking does not
 	  count: a trip across a weekend books nothing on the Saturday, and showing every such trip
 	  red would teach people to ignore the color.
+
+	Tentative (pencil) bookings are left out entirely: a pencil never conflicts, it only warns
+	(:func:`pencil_warning`). Doing it here rather than in each caller means the Maintenance
+	Planner's own conflict check, which calls this with a whole day's bookings, agrees.
 	"""
-	bookings = bookings or []
+	bookings = [b for b in bookings or [] if not b.get("tentative")]
 	capacity = _float(capacity)
 	out = []
 	if capacity <= 0 and any(_float(b.get("hours")) > 0 for b in bookings):
@@ -372,6 +390,23 @@ def day_conflicts(capacity, off, bookings):
 			end = min(first["slot"][1], second["slot"][1])
 			out.append(f"Double-booked {start}–{end} ({first.get('ref')}, {second.get('ref')})")
 	return out
+
+
+def pencil_warning(capacity, bookings):
+	"""``"Pencilled work would put them over by 2h"``, or None.
+
+	Firm and tentative hours together against capacity, reported only when the day has pencilled
+	work and the two together exceed it. The figure is the whole overrun, firm part included.
+	"""
+	bookings = bookings or []
+	soft = sum(_float(b.get("hours")) for b in bookings if b.get("tentative"))
+	if soft <= TOLERANCE:
+		return None
+	firm = sum(_float(b.get("hours")) for b in bookings if not b.get("tentative"))
+	over = firm + soft - _float(capacity)
+	if over <= TOLERANCE:
+		return None
+	return f"Pencilled work would put them over by {fmt_hours(over)}h"
 
 
 def resolve_crew(rows, todo_users, user_to_resource):
@@ -640,6 +675,7 @@ def _task_columns():
 		"custom_rental_booking",
 		"custom_rental_task_kind",
 		"custom_crew_size",
+		"custom_tentative",
 	)
 	out = {}
 	for column in optional:
@@ -969,11 +1005,13 @@ def _read_travel(employees, start, end):
 # ---------------------------------------------------------------------- assembly
 
 
-def _compute(start, end, resources=None, exclude=(), extra=()):
+def _compute(start, end, resources=None, exclude=(), extra=(), google=True):
 	"""Everything :func:`availability` returns, plus what the Project Planner API reuses.
 
 	``exclude`` drops tasks by name and ``extra`` adds ``(task_like, crew)`` pairs: together they
 	answer "what if this task had these dates and this crew" for :func:`preview_conflicts`.
+	``google=False`` prices drives from the cache and the straight-line estimate only (see
+	``routing.plan_routes``), for long ranges such as the capacity heatmap.
 	"""
 	start, end = _as_date(start), _as_date(end)
 	settings = get_settings()
@@ -1027,20 +1065,22 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 		crew = [m for m in crews.get(task.get("name")) or [] if m.get("resource") in by_name]
 		kind = "rental" if task.get("custom_rental_booking") else "task"
 		slot = _slot_text(task_slot(task))
+		tentative = is_tentative(task)
 		for resource, day, hours, estimated in allocate_task(task, crew, capacity_of, settings):
 			task_hours[task.get("name")][resource] += hours
 			if start <= day <= end:
-				bookings[(resource, day)].append(
-					{
-						"kind": kind,
-						"ref": task.get("name"),
-						"label": task.get("subject") or task.get("name"),
-						"project": task.get("project"),
-						"hours": hours,
-						"slot": slot,
-						"estimated": estimated,
-					}
-				)
+				booking = {
+					"kind": kind,
+					"ref": task.get("name"),
+					"label": task.get("subject") or task.get("name"),
+					"project": task.get("project"),
+					"hours": hours,
+					"slot": slot,
+					"estimated": estimated,
+				}
+				if tentative:
+					booking["tentative"] = True
+				bookings[(resource, day)].append(booking)
 
 	for visit in _read_visits(list(user_to_resource), start, end, settings) if user_to_resource else []:
 		resource = user_to_resource.get(visit["user"])
@@ -1079,7 +1119,7 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 		)
 
 	try:
-		routes = _apply_routes(bookings, by_name, start, end, settings)
+		routes = _apply_routes(bookings, by_name, start, end, settings, google=google)
 	except Exception:
 		# Routing is a refinement: a bug or an outage there must never blank a planner. The
 		# day reads as it did before Phase 2, with no driving counted.
@@ -1096,17 +1136,23 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 		for day in daterange(start, end):
 			capacity, off = capacity_and_off(name, day)
 			mine = bookings.get((name, day), [])
-			booked = round(sum(_float(b["hours"]) for b in mine), 2)
+			booked = round(sum(_float(b["hours"]) for b in mine if not b.get("tentative")), 2)
+			soft = round(sum(_float(b["hours"]) for b in mine if b.get("tentative")), 2)
 			route = routes.get((name, day))
 			drive = route["drive_minutes"] if route else 0.0
+			warnings = list((restrictions.get(name) or {}).get(day, []))
+			pencil = pencil_warning(capacity, mine)
+			if pencil:
+				warnings.append(pencil)
 			per_day[str(day)] = {
 				"capacity": capacity,
 				"booked": booked,
+				"soft_booked": soft,
 				"free": round(max(capacity - booked, 0.0), 2),
 				"off": off,
 				"bookings": mine,
 				"conflicts": day_conflicts(capacity, off, mine),
-				"warnings": list((restrictions.get(name) or {}).get(day, [])),
+				"warnings": warnings,
 				"drive_minutes": drive,
 				"drive_source": route["source"] if route and drive > 0 else None,
 				"long_drive": bool(drive > long_limit) if route else False,
@@ -1152,7 +1198,7 @@ def drive_booking(minutes, source):
 	}
 
 
-def _apply_routes(bookings, people, start, end, settings):
+def _apply_routes(bookings, people, start, end, settings, google=True):
 	"""Route every visible person-day that has stops, and pad the day with its driving.
 
 	``{(resource, day): route}`` from ``routing.plan_routes``, which locates every stop and
@@ -1160,11 +1206,20 @@ def _apply_routes(bookings, people, start, end, settings):
 	person-day). When Settings ``pad_drive_time`` is on, a ``drive`` booking is appended so free
 	hours, "Over by" and the preview a save is checked against all include the driving. Nothing is
 	appended until every route is worked out, so a failure leaves the bookings as they were.
+
+	Tentative bookings are not routed: a pencil is not a drive anyone has committed to, and its
+	driving would otherwise book firm hours. ``google=False`` is passed on to
+	``routing.plan_routes`` (cached and estimated legs only).
 	"""
-	day_bookings = {
-		key: value for key, value in bookings.items() if key[0] in people and start <= key[1] <= end and value
-	}
-	routes = routing.plan_routes(day_bookings, settings) if day_bookings else {}
+	day_bookings = {}
+	for key, value in bookings.items():
+		if key[0] not in people or not (start <= key[1] <= end):
+			continue
+		firm = [b for b in value or [] if not b.get("tentative")]
+		if firm:
+			day_bookings[key] = firm
+	options = {} if google else {"google": False}
+	routes = routing.plan_routes(day_bookings, settings, **options) if day_bookings else {}
 	pad = settings.get("pad_drive_time")
 	if pad is None or _float(pad):
 		padding = [
@@ -1177,42 +1232,73 @@ def _apply_routes(bookings, people, start, end, settings):
 	return routes
 
 
-def availability(start, end, resources=None):
+def availability(start, end, resources=None, google=True):
 	"""Capacity, bookings, conflicts and warnings per Planner Resource per day.
 
 	See the module docstring for what counts. ``resources`` limits the answer to those Planner
 	Resource names. Callers apply their own role gate first: the task and visit reads are raw SQL.
+	``google=False`` never asks Google anything: legs come from the drive time cache or the
+	straight-line estimate, and the shop only from its cached coordinates.
 	"""
-	data = _compute(start, end, resources)
+	data = _compute(start, end, resources, google=google)
 	return {key: data[key] for key in ("resources", "days", "user_to_resource")}
 
 
-def _preview(task_like, crew, start=None, end=None):
-	"""``(conflicts, task_hours)`` for a hypothetical state of one task. See preview_conflicts."""
-	crew = [m for m in (crew or []) if m.get("resource")]
-	span = task_span(task_like)
-	start = _as_date(start) or (span[0] if span else None)
-	end = _as_date(end) or (span[1] if span else None)
-	if not crew or not start or not end:
+def _preview_many(changes, start=None, end=None):
+	"""``(conflicts, task_hours)`` for hypothetical states of several tasks at once.
+
+	``changes`` is ``[(task_like, crew)]``. Every task named is taken out of the stored data and
+	its hypothetical state put in, so moves that land on one person's day count against each
+	other (the batch writes: shifting successors, rescheduling overdue work, copying a week).
+	``conflicts`` is ``{resource label: ["YYYY-MM-DD: ...", ...]}`` for the days a **firm** task
+	of the batch books; a tentative one never conflicts. ``task_hours`` is
+	``{task: {resource: hours}}`` over each task's whole span. ``start``/``end`` default to the
+	union of the tasks' spans.
+	"""
+	prepared, spans, resources = [], [], []
+	for task_like, crew in changes or ():
+		crew = [m for m in (crew or []) if m.get("resource")]
+		span = task_span(task_like)
+		if not crew or not span:
+			continue
+		prepared.append((task_like, crew))
+		spans.append(span)
+		resources.extend(m["resource"] for m in crew)
+	start = _as_date(start) or (min(s[0] for s in spans) if spans else None)
+	end = _as_date(end) or (max(s[1] for s in spans) if spans else None)
+	if not prepared or not start or not end:
 		return {}, {}
-	name = task_like.get("name")
-	data = _compute(start, end, [m["resource"] for m in crew], exclude={name}, extra=[(task_like, crew)])
+	names = {task.get("name") for task, _crew in prepared}
+	firm = {task.get("name") for task, _crew in prepared if not is_tentative(task)}
+	data = _compute(start, end, list(dict.fromkeys(resources)), exclude=names, extra=prepared)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	out = {}
 	for resource, per_day in data["days"].items():
 		for day, cell in sorted(per_day.items()):
-			if not any(b["ref"] == name and b["kind"] in ("task", "rental") for b in cell["bookings"]):
+			if not any(b["ref"] in firm and b["kind"] in TASK_KINDS for b in cell["bookings"]):
 				continue
 			for conflict in cell["conflicts"]:
-				# A double booking between two other tasks is not this task's doing.
-				if (
-					conflict.startswith("Double-booked")
-					and f"({name}," not in conflict
-					and f", {name})" not in conflict
+				# A double booking between two other tasks is not this batch's doing.
+				if conflict.startswith("Double-booked") and not any(
+					f"({name}," in conflict or f", {name})" in conflict for name in firm
 				):
 					continue
 				out.setdefault(labels.get(resource, resource), []).append(f"{day}: {conflict}")
-	return out, data["task_hours"].get(name, {})
+	return out, {name: data["task_hours"].get(name, {}) for name in names}
+
+
+def preview_batch(changes, start=None, end=None):
+	"""What would be wrong if every ``(task_like, crew)`` in ``changes`` had that state at once.
+
+	The many-task form of :func:`preview_conflicts`, with the same answer shape.
+	"""
+	return _preview_many(changes, start, end)[0]
+
+
+def _preview(task_like, crew, start=None, end=None):
+	"""``(conflicts, task_hours)`` for a hypothetical state of one task. See preview_conflicts."""
+	conflicts, hours = _preview_many([(task_like, crew)], start, end)
+	return conflicts, hours.get(task_like.get("name"), {})
 
 
 def preview_conflicts(task_like, crew, start=None, end=None):
@@ -1220,6 +1306,7 @@ def preview_conflicts(task_like, crew, start=None, end=None):
 
 	``{resource label: ["2026-10-12: Over by 2h", ...]}`` for the crew's days that the task would
 	book, with the task's stored state left out and the hypothetical one put in. ``start``/``end``
-	default to the task's span. An empty dict means nothing would conflict.
+	default to the task's span. An empty dict means nothing would conflict, which is always the
+	answer for a tentative task: a pencil never needs a reason.
 	"""
 	return _preview(task_like, crew, start, end)[0]

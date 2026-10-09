@@ -38,7 +38,7 @@ PLANNER_ROLES = {
 	"Maintenance User",
 }
 
-# The endpoints the page may call and the arguments it may send them: the shared Phase 1 contract.
+# The endpoints the page may call and the arguments it may send them: the shared Phase 1-3A contract.
 API_CONTRACT = {
 	"get_planner": {"start", "end"},
 	"save_task": {
@@ -50,6 +50,7 @@ API_CONTRACT = {
 		"crew_size",
 		"crew",
 		"credentials",
+		"tentative",
 		"reason",
 	},
 	"add_crew": {"task", "resource", "modified", "reason"},
@@ -57,6 +58,12 @@ API_CONTRACT = {
 	# Phase 2: one person's driving day, and the days that suit a task by drive time.
 	"get_route": {"resource", "date"},
 	"suggest_dates": {"task"},
+	# Phase 3A: planning helpers (tests/test_project_planner_phase3a_page.py checks each feature).
+	"shift_successors": {"task", "days", "modified", "reason", "tasks"},
+	"get_heatmap": {"start", "weeks"},
+	"get_overdue": {"limit"},
+	"bulk_update": {"tasks", "action", "date", "reason"},
+	"copy_week": {"source_start", "target_start", "tasks", "dry_run", "reason"},
 }
 
 # What the route view reads from get_route (spec section B) and the per-day keys the engine adds
@@ -154,7 +161,7 @@ class TestRouting(unittest.TestCase):
 		)
 
 	def test_the_four_route_shapes(self):
-		# /desk/project-planner, and /week|month|crew/<date>.
+		# /desk/project-planner, and /week|month|crew/<date> (the route and heatmap views are separate shapes).
 		code = _code()
 		self.assertIn('route: "project-planner"', code)
 		self.assertIn('views: ["week", "month", "crew"]', code)

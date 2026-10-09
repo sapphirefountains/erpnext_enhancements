@@ -620,6 +620,36 @@ shop" is one setting), through each located task, rental crew task and maintenan
   coordinates during one, routing sets `frappe.local.flags.commit`; otherwise the cache would vanish
   and every load would pay Google again.
 
+### Planning helpers (v1.580.0, Phase 3A — TASK-2026-02441)
+
+- **Pencil bookings** (`Task.custom_tentative`): a tentative task's hours are *soft load*. Each day
+  cell has `soft_booked`, while `booked`, `free` and conflicts count firm work only. Pencilled work
+  that would overbook someone is a warning, never a reason prompt, and it books no drive time.
+  `crew_sync` gives a tentative task no assignments, and adds the whole crew when it is firmed up,
+  so nobody is notified of work that may not happen.
+- **Dependencies** (`depends_on`): moving a task to start before a predecessor ends adds a
+  "Starts before …" line under *Dependencies* in the reason prompt. After a move later, the page
+  offers to shift the tasks that follow by the same number of **working** days
+  (`shift_successors`, all-or-nothing, furthest first). ERPNext's own
+  `Task.on_update → reschedule_dependent_tasks` already pushes Open same-project dependents by
+  calendar days on every save. The planner detects those (`successors.auto_moved`) and leaves
+  them out of its offer, so nothing moves twice.
+- **Qualification gaps**: a task's *Qualifications needed* that no crew member holds as a current
+  Employee Credential (Valid or Expiring, not expired by the task's last day) shows as a chip.
+  It is a warning only.
+- **Heatmap** (`/app/project-planner/heatmap/<date>`): 8 weeks of booked vs available per person,
+  with pencil load hatched. It runs the engine with `google=False`, so cached and estimated drive
+  times only and never a fan-out of Routes calls. Weeks start on the site's **first weekday**
+  (Sunday on production), the same as the calendar.
+- **Overdue tray**: open, dated tasks on Active projects that ended before today, grouped by
+  project, with bulk *Reschedule to…*, *Mark done* and *Cancel* (`bulk_update`: one savepoint per
+  task, failures reported per task, writes "Canceled" with one l). ERPNext refuses to complete a
+  task whose dependency is "Canceled", because its check knows only "Cancelled"; that shows as a
+  per-task failure.
+- **Copy week**: copies chosen tasks into another week as new Tasks, with crew, hours,
+  qualifications, pencil flag, location and a "Copied from" note. It shows a dry-run preview
+  first, and a conflict needs a reason.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
