@@ -13,6 +13,7 @@
   "committed_amount",
   "actual_amount",
   "spend_coverage",
+  "labor_forecast",
   "section_detail",
   "notes",
   "budget_key"
@@ -67,6 +68,16 @@
    "description": "Whether the <b>Actual</b> figure beside this means anything. <b>Tracked</b>: the source is in use, so a zero means nothing was spent. <b>Not Tracked</b>: the source holds no rows anywhere on this site, so a zero means nobody records this. <b>No Source</b>: nothing could ever be spent against this category directly, which is correct for Contingency and Fee — money leaves those by reallocation. Committed is reported separately and can be real even when Actual is not."
   },
   {
+   "depends_on": "eval:doc.category=='Labor'",
+   "description": "Labor line only. Hours booked on the Project Planner from today on, plus hours clocked at the kiosk, each at the person's pay rate on that day: the burdened rate where a burden is set, otherwise the <b>base rate</b>. A forecast, not spend: <b>Actual</b> and <b>Coverage</b> are unaffected. Computed on save; visible only to the cost roles, because one person's labor in a total is their wage.",
+   "fieldname": "labor_forecast",
+   "fieldtype": "Currency",
+   "label": "Labor Forecast",
+   "no_copy": 1,
+   "permlevel": 2,
+   "read_only": 1
+  },
+  {
    "fieldname": "section_detail",
    "fieldtype": "Section Break"
   },
@@ -88,7 +99,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-15 09:05:00.000000",
+ "modified": "2026-10-09 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Budget Line",

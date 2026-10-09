@@ -57,6 +57,16 @@ Things this module is careful about, some of which look like bugs:
   by 2h"). A pencil is not driven to either: routes and drive padding are worked out from firm
   stops, so pencilled work never books driving hours.
 
+* **Customer jobs only** (Nik, 2026-10-09). A task counts only when its project is a Design,
+  Build, Service, Events/Rent or Delivery job, by ``project_type`` or by a value-stream row
+  (:data:`PLANNER_PROJECT_TYPES`, :data:`PLANNER_VALUE_STREAMS`); internal projects and tasks
+  with no project are left out of every planner surface, because every surface reads
+  :func:`read_tasks`. A rental crew task always counts.
+* **Vehicles and equipment** (Phase 4, P4.4) are booked on tasks (``Task.custom_equipment``),
+  not people: a vehicle or asset is used or not used on a day, by the same span rules. Two firm
+  tasks on one vehicle, a vehicle In Shop or Retired, or an asset already out on a submitted
+  Asset Booking are conflicts under the ``"Equipment"`` key (:func:`equipment_conflicts`).
+
 The pure functions take plain dicts and dates, so ``tests/test_project_planner.py`` runs them
 without a bench.
 """
@@ -78,6 +88,23 @@ FINISHED_STATUSES = ("Completed", "Canceled", "Cancelled", "Invoiced", "Template
 #: Canceled; Invoiced and Paid come after Completed, so a stale open task on one is no booking.
 #: Client Hold and Parked stay in: the work is paused, not done, and a PM moving it needs to see it.
 CLOSED_PROJECT_STATUSES = ("Completed", "Invoiced", "Paid", "Cancelled", "Canceled")
+
+#: Nik, 2026-10-09: "remove internal projects from the Project Planner. It should only do Design,
+#: Build, Service, Events (Rent), Delivery." A task counts only when its project is a customer job:
+#: its ``project_type`` is one of these, or it carries a qualifying value-stream row (below). So
+#: Internal, Group Projects, Overhead, Other, External, Organizational Projects, a blank type with
+#: no qualifying stream, and a task with no project are all left out of every planner surface.
+#: The one exception is a rental crew task (``custom_rental_booking``), which always counts, with
+#: or without a project: it is Events work by nature.
+PLANNER_PROJECT_TYPES = ("Design", "Build", "Service", "Events", "Rent", "Delivery")
+
+#: The value streams (``tabValue Stream`` rows on the Project, either the live ``value_stream``
+#: column or the older ``value_streams`` one) that make a project a customer job when its type does
+#: not. Products is deliberately absent: Products jobs are ``project_type`` Design, so they are in.
+PLANNER_VALUE_STREAMS = ("Design", "Build", "Service", "Events", "Delivery")
+
+#: Bound into every query that uses :func:`planner_job_sql`.
+PLANNER_SQL_VALUES = {"planner_types": PLANNER_PROJECT_TYPES, "planner_streams": PLANNER_VALUE_STREAMS}
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
@@ -120,6 +147,13 @@ TOLERANCE = 0.01
 #: The booking kinds that are Tasks (as opposed to visits, travel and driving).
 TASK_KINDS = ("task", "rental")
 
+#: Phase 4 (P4.4): vehicles and equipment booked on Tasks (``Task.custom_equipment``, child doctype
+#: Task Equipment). Their conflicts are filed under this needs_reason key; the others are people.
+EQUIPMENT_KEY = "Equipment"
+EQUIPMENT_TYPES = ("Vehicle", "Asset")
+#: A Fleet Vehicle in one of these cannot go out, so booking it is a conflict.
+UNAVAILABLE_VEHICLE_STATUSES = ("In Shop", "Retired")
+
 
 # ---------------------------------------------------------------------- pure helpers
 
@@ -161,6 +195,21 @@ def _float(value):
 def is_tentative(task):
 	"""True when the task is a pencil booking (``custom_tentative``, a Check: 1/0/None/"1")."""
 	return bool(_float((task or {}).get("custom_tentative")))
+
+
+def is_planner_job(row):
+	"""True when a task row belongs on the planners (see :data:`PLANNER_PROJECT_TYPES`).
+
+	``row`` carries ``project``, ``custom_rental_booking`` and, from :func:`planner_job_sql`,
+	``project_type`` and ``planner_stream`` (1 when the project has a qualifying value stream).
+	A rental crew task always counts; a task with no project never does.
+	"""
+	row = row or {}
+	if row.get("custom_rental_booking"):
+		return True
+	if not row.get("project"):
+		return False
+	return (row.get("project_type") or "") in PLANNER_PROJECT_TYPES or bool(_float(row.get("planner_stream")))
 
 
 def daterange(start, end):
@@ -440,6 +489,160 @@ def resolve_crew(rows, todo_users, user_to_resource):
 	return out
 
 
+def equipment_ref(row):
+	"""``(type, name)`` for a Task Equipment row (``equipment_type`` + ``vehicle``/``asset``), or
+	for an already-normalized ``{"type", "name"}`` entry; None when it names nothing."""
+	row = row or {}
+	if row.get("type") and row.get("name") and not row.get("equipment_type"):
+		kind, name = row.get("type"), row.get("name")
+	else:
+		kind = row.get("equipment_type") or (
+			"Vehicle" if row.get("vehicle") else ("Asset" if row.get("asset") else None)
+		)
+		name = row.get("vehicle") if kind == "Vehicle" else (row.get("asset") if kind == "Asset" else None)
+	if kind not in EQUIPMENT_TYPES or not name:
+		return None
+	return kind, name
+
+
+def task_equipment(rows, labels=None):
+	"""A task's equipment as ``[{"type", "name", "label"}]``, one entry per vehicle/asset.
+
+	``labels`` maps ``(type, name)`` to a display name; else the row's own ``label``, else the name
+	(a Fleet Vehicle is named by its vehicle name, so that is already readable).
+	"""
+	out, seen = [], set()
+	for row in rows or []:
+		ref = equipment_ref(row)
+		if not ref or ref in seen:
+			continue
+		seen.add(ref)
+		label = (labels or {}).get(ref) or (row or {}).get("label") or ref[1]
+		out.append({"type": ref[0], "name": ref[1], "label": label})
+	return out
+
+
+def _booking_days(booking):
+	"""``(first, last)`` dates of an Asset Booking, or None when it has no start."""
+	first = _as_date(booking.get("from_datetime"))
+	if not first:
+		return None
+	last = _as_date(booking.get("to_datetime")) or first
+	return (first, last) if last >= first else (first, first)
+
+
+def equipment_conflicts(tasks, equipment, start, end, statuses=None, bookings=None):
+	"""``{task: [sentence, ...]}``: what is wrong with each firm task's vehicles and assets.
+
+	``tasks`` are Task rows; ``equipment`` maps a task name to :func:`task_equipment` entries.
+	Only days from ``start`` to ``end`` are judged, and a vehicle or asset is simply used or not
+	used on a day, by the same span rules as people (:func:`task_span`). Three findings:
+
+	* another **firm** task uses it on one of the task's days: ``"2026-10-12: Truck 2 is also on
+	  TASK-9 (Dig)"``, once per other task, on the first day they share;
+	* a Fleet Vehicle whose ``statuses`` entry is In Shop or Retired: ``"Truck 2 is In Shop"``;
+	* an Asset with a submitted Asset Booking (``bookings``: rows with ``asset``, ``name``,
+	  ``from_datetime``, ``to_datetime``, ``booking_type``, ``project``) overlapping a task day:
+	  ``"2026-10-12: Fountain A is booked on Asset Booking AB-1 (Rental)"``. A booking for the
+	  task's own project is the job it is booked for, not a clash, and is not reported.
+
+	Tentative tasks are left out on both sides, as for people: a pencil never needs a reason and
+	never makes a firm task need one.
+	"""
+	start, end = _as_date(start), _as_date(end)
+	firm = [t for t in tasks or [] if not is_tentative(t) and (equipment or {}).get(t.get("name"))]
+	usage = defaultdict(lambda: defaultdict(list))
+	days_of = {}
+	for task in firm:
+		span = task_span(task)
+		if not span:
+			continue
+		days = [d for d in daterange(*span) if start <= d <= end]
+		days_of[task.get("name")] = days
+		for entry in equipment[task.get("name")]:
+			for day in days:
+				usage[(entry["type"], entry["name"])][day].append(task)
+	by_asset = defaultdict(list)
+	for booking in bookings or []:
+		days = _booking_days(booking)
+		if booking.get("asset") and days:
+			by_asset[booking["asset"]].append((booking, days))
+
+	out = {}
+	for task in firm:
+		name = task.get("name")
+		days = days_of.get(name) or []
+		if not days:
+			continue
+		lines = []
+		for entry in equipment[name]:
+			ref = (entry["type"], entry["name"])
+			label = entry.get("label") or entry["name"]
+			status = (statuses or {}).get(entry["name"]) if entry["type"] == "Vehicle" else None
+			if status in UNAVAILABLE_VEHICLE_STATUSES:
+				lines.append(f"{label} is {status}")
+			reported = set()
+			for day in days:
+				for other in usage[ref].get(day) or []:
+					if other.get("name") == name or other.get("name") in reported:
+						continue
+					reported.add(other.get("name"))
+					lines.append(
+						f"{day}: {label} is also on {other.get('name')} ({other.get('subject') or other.get('name')})"
+					)
+			if entry["type"] == "Asset":
+				for booking, (first, last) in by_asset.get(entry["name"]) or []:
+					if task.get("project") and booking.get("project") == task.get("project"):
+						continue
+					shared = [d for d in days if first <= d <= last]
+					if shared:
+						kind = f" ({booking.get('booking_type')})" if booking.get("booking_type") else ""
+						lines.append(
+							f"{shared[0]}: {label} is booked on Asset Booking {booking.get('name')}{kind}"
+						)
+		if lines:
+			out[name] = lines
+	return out
+
+
+def equipment_board(tasks, equipment, start, end, statuses=None, bookings=None):
+	"""``{(type, name): {date: {"tasks": [...], "bookings": [...]}}}``: each vehicle/asset's days.
+
+	Every task counts here, pencils included (marked ``tentative``), because the board shows what
+	is planned; :func:`equipment_conflicts` decides what clashes.
+	"""
+	start, end = _as_date(start), _as_date(end)
+	board = defaultdict(lambda: defaultdict(lambda: {"tasks": [], "bookings": []}))
+	for task in tasks or []:
+		span = task_span(task)
+		if not span:
+			continue
+		for entry in (equipment or {}).get(task.get("name")) or []:
+			for day in daterange(*span):
+				if start <= day <= end:
+					board[(entry["type"], entry["name"])][day]["tasks"].append(
+						{
+							"task": task.get("name"),
+							"subject": task.get("subject") or task.get("name"),
+							"project": task.get("project"),
+							"tentative": is_tentative(task),
+						}
+					)
+	for booking in bookings or []:
+		days = _booking_days(booking)
+		if not booking.get("asset") or not days:
+			continue
+		for day in daterange(max(days[0], start), min(days[1], end)):
+			board[("Asset", booking["asset"])][day]["bookings"].append(
+				{
+					"name": booking.get("name"),
+					"booking_type": booking.get("booking_type"),
+					"project": booking.get("project"),
+				}
+			)
+	return board
+
+
 def _slot_text(slot):
 	return [slot[0].strftime("%H:%M"), slot[1].strftime("%H:%M")] if slot else None
 
@@ -687,27 +890,99 @@ def _task_columns():
 	return out
 
 
+def _stream_columns():
+	"""The ``tabValue Stream`` columns that exist: ``value_stream`` (live) and ``value_streams``
+	(older rows). A site part-way through a migrate answers without the missing one."""
+	out = []
+	for column in ("value_stream", "value_streams"):
+		try:
+			present = frappe.db.has_column("Value Stream", column)
+		except Exception:
+			present = False
+		if present:
+			out.append(column)
+	return out
+
+
+def planner_job_sql(project="p"):
+	"""``(type_expr, stream_expr)``: SQL for "is the project aliased ``project`` a customer job".
+
+	``type_expr`` is the project's type ('' when blank); ``stream_expr`` is 1 when the project has
+	a value-stream row in :data:`PLANNER_VALUE_STREAMS` (either column), else 0. A query using
+	them binds :data:`PLANNER_SQL_VALUES`. The condition itself is :func:`planner_job_condition`;
+	Python re-checks every row with :func:`is_planner_job`, which is the definition.
+	"""
+	columns = _stream_columns()
+	if columns:
+		matches = " OR ".join(f"vs.`{column}` IN %(planner_streams)s" for column in columns)
+		stream = (
+			"EXISTS (SELECT 1 FROM `tabValue Stream` vs WHERE vs.parenttype = 'Project' "
+			f"AND vs.parent = {project}.name AND ({matches}))"
+		)
+	else:
+		stream = "0"
+	return f"IFNULL({project}.project_type, '')", stream
+
+
+def planner_job_condition(project="p", rental=None):
+	"""The WHERE condition for :func:`is_planner_job`: a customer-job project, or (with ``rental``,
+	the SQL for the task's ``custom_rental_booking``) a rental crew task."""
+	type_expr, stream = planner_job_sql(project)
+	job = f"({project}.name IS NOT NULL AND ({type_expr} IN %(planner_types)s OR {stream}))"
+	if rental and rental != "NULL":
+		return f"(IFNULL({rental}, '') <> '' OR {job})"
+	return job
+
+
+def planner_projects(names):
+	"""The subset of the Project ``names`` that are customer jobs (:data:`PLANNER_PROJECT_TYPES`)."""
+	names = sorted({n for n in names or () if n})
+	if not names:
+		return set()
+	type_expr, stream = planner_job_sql("proj")
+	rows = frappe.db.sql(
+		f"""
+		SELECT proj.name, {type_expr} AS project_type, {stream} AS planner_stream
+		FROM `tabProject` proj
+		WHERE proj.name IN %(names)s
+		""",
+		{"names": tuple(names), **PLANNER_SQL_VALUES},
+		as_dict=True,
+	)
+	return {
+		row.get("name")
+		for row in rows or []
+		if is_planner_job({"project": row.get("name"), **row}) and row.get("name") in names
+	}
+
+
 def read_tasks(start, end):
-	"""Open, non-group, non-template Tasks whose span overlaps ``start``..``end``.
+	"""Open, non-group, non-template Tasks whose span overlaps ``start``..``end``, on customer jobs.
 
 	Raw SQL after the planners' role gate, for the COALESCE over nullable dates (Frappe's ``<=``
-	filter matches NULLs). Re-checked against :func:`task_span` in Python, which is the definition.
+	filter matches NULLs). Re-checked against :func:`task_span` and :func:`is_planner_job` in
+	Python, which are the definitions. Internal projects are left out (Nik, 2026-10-09: see
+	:data:`PLANNER_PROJECT_TYPES`); a rental crew task always counts.
 	"""
 	cols = _task_columns()
 	selected = ", ".join(f"{expr} AS `{column}`" for column, expr in cols.items())
 	slot_start, slot_end = cols["custom_start_datetime"], cols["custom_end_datetime"]
+	type_expr, stream = planner_job_sql("p")
+	job = planner_job_condition("p", cols["custom_rental_booking"])
 	rows = frappe.db.sql(
 		f"""
 		SELECT
 			t.name, t.subject, t.project, t.status, t.exp_start_date, t.exp_end_date,
 			t.expected_time, t.color, t.modified, {selected},
-			p.project_name AS project_title, p.status AS project_status
+			p.project_name AS project_title, p.status AS project_status,
+			{type_expr} AS project_type, {stream} AS planner_stream
 		FROM `tabTask` t
 		LEFT JOIN `tabProject` p ON p.name = t.project
 		WHERE IFNULL(t.is_group, 0) = 0
 			AND IFNULL(t.is_template, 0) = 0
 			AND IFNULL(t.status, '') NOT IN %(finished)s
 			AND (IFNULL(t.project, '') = '' OR IFNULL(p.status, '') NOT IN %(closed)s)
+			AND {job}
 			AND (
 				(
 					COALESCE(DATE(t.exp_start_date), DATE(t.exp_end_date), DATE({slot_start})) <= %(end)s
@@ -723,6 +998,7 @@ def read_tasks(start, end):
 			"end": end,
 			"finished": FINISHED_STATUSES,
 			"closed": CLOSED_PROJECT_STATUSES,
+			**PLANNER_SQL_VALUES,
 		},
 		as_dict=True,
 	)
@@ -736,7 +1012,9 @@ def read_tasks(start, end):
 def _task_is_live(row):
 	if row.get("status") in FINISHED_STATUSES or row.get("is_group") or row.get("is_template"):
 		return False
-	return not (row.get("project") and row.get("project_status") in CLOSED_PROJECT_STATUSES)
+	if row.get("project") and row.get("project_status") in CLOSED_PROJECT_STATUSES:
+		return False
+	return is_planner_job(row)
 
 
 def read_crews(task_names):
@@ -762,6 +1040,114 @@ def read_crews(task_names):
 		if row.get("allocated_to") and row.get("allocated_to") not in todos[row.get("reference_name")]:
 			todos[row.get("reference_name")].append(row.get("allocated_to"))
 	return rows, todos
+
+
+EQUIPMENT_DOCTYPE = "Task Equipment"
+
+
+def _equipment_installed():
+	try:
+		return bool(frappe.db.exists("DocType", EQUIPMENT_DOCTYPE))
+	except Exception:
+		return False
+
+
+def read_equipment(task_names):
+	"""``{task: [{"type", "name", "label"}]}`` from the tasks' Task Equipment rows (P4.4).
+
+	Empty on a site where the doctype has not landed yet, so the planners answer as before.
+	"""
+	names = [n for n in dict.fromkeys(task_names or []) if n]
+	if not names or not _equipment_installed():
+		return {}
+	rows = defaultdict(list)
+	for row in frappe.get_all(
+		EQUIPMENT_DOCTYPE,
+		filters={"parenttype": "Task", "parent": ["in", names]},
+		fields=["parent", "idx", "equipment_type", "vehicle", "asset", "label"],
+		order_by="idx asc",
+		limit_page_length=0,
+	):
+		rows[row.get("parent")].append(row)
+	return {name: task_equipment(found) for name, found in rows.items() if task_equipment(found)}
+
+
+def read_equipment_details(refs):
+	"""``(labels, statuses)`` for ``(type, name)`` refs: ``{ref: label}`` (an Asset's
+	``asset_name``; a Fleet Vehicle is named by its vehicle name) and ``{vehicle: status}``."""
+	vehicles = sorted({name for kind, name in refs or () if kind == "Vehicle"})
+	assets = sorted({name for kind, name in refs or () if kind == "Asset"})
+	labels, statuses = {}, {}
+	if vehicles:
+		for row in frappe.get_all(
+			"Fleet Vehicle",
+			filters={"name": ["in", vehicles]},
+			fields=["name", "vehicle_name", "status"],
+			limit_page_length=0,
+		):
+			labels[("Vehicle", row.get("name"))] = row.get("vehicle_name") or row.get("name")
+			statuses[row.get("name")] = row.get("status") or None
+	if assets:
+		for row in frappe.get_all(
+			"Asset", filters={"name": ["in", assets]}, fields=["name", "asset_name"], limit_page_length=0
+		):
+			labels[("Asset", row.get("name"))] = row.get("asset_name") or row.get("name")
+	return labels, statuses
+
+
+def read_asset_bookings(assets, start, end):
+	"""Submitted Asset Bookings (asset_management) of ``assets`` overlapping ``start``..``end``.
+
+	Fetched by asset and docstatus only; the dates are nullable Datetimes, so the overlap is
+	decided in Python (a ``<=`` filter would match a blank end).
+	"""
+	assets = sorted({a for a in assets or () if a})
+	if not assets:
+		return []
+	try:
+		if not frappe.db.exists("DocType", "Asset Booking"):
+			return []
+	except Exception:
+		return []
+	start, end = _as_date(start), _as_date(end)
+	out = []
+	for row in frappe.get_all(
+		"Asset Booking",
+		filters={"docstatus": 1, "asset": ["in", assets]},
+		fields=["name", "asset", "from_datetime", "to_datetime", "booking_type", "project"],
+		limit_page_length=0,
+	):
+		days = _booking_days(row)
+		if days and _range_overlaps(days[0], days[1], start, end):
+			out.append(row)
+	return out
+
+
+def _equipment_state(tasks, start, end, overrides=None):
+	"""``{"equipment", "conflicts", "labels", "statuses", "bookings"}`` for ``tasks``.
+
+	``overrides`` maps a task name to equipment entries that replace the stored ones (the
+	hypothetical tasks of a preview). One read each for the rows, the vehicles and assets, and the
+	asset bookings.
+	"""
+	names = [t.get("name") for t in tasks if t.get("name") not in (overrides or {})]
+	equipment = dict(read_equipment(names))
+	equipment.update({name: list(rows) for name, rows in (overrides or {}).items()})
+	equipment = {name: rows for name, rows in equipment.items() if rows}
+	refs = {(e["type"], e["name"]) for rows in equipment.values() for e in rows}
+	labels, statuses = read_equipment_details(refs) if refs else ({}, {})
+	for name, rows in equipment.items():
+		equipment[name] = [
+			dict(e, label=labels.get((e["type"], e["name"])) or e.get("label") or e["name"]) for e in rows
+		]
+	bookings = read_asset_bookings([n for kind, n in refs if kind == "Asset"], start, end) if refs else []
+	return {
+		"equipment": equipment,
+		"conflicts": equipment_conflicts(tasks, equipment, start, end, statuses, bookings),
+		"labels": labels,
+		"statuses": statuses,
+		"bookings": bookings,
+	}
 
 
 def visit_person_hours(person_hours, full_day, planned_hours, default_hours):
@@ -1005,13 +1391,16 @@ def _read_travel(employees, start, end):
 # ---------------------------------------------------------------------- assembly
 
 
-def _compute(start, end, resources=None, exclude=(), extra=(), google=True):
+def _compute(start, end, resources=None, exclude=(), extra=(), google=True, equipment=False):
 	"""Everything :func:`availability` returns, plus what the Project Planner API reuses.
 
 	``exclude`` drops tasks by name and ``extra`` adds ``(task_like, crew)`` pairs: together they
 	answer "what if this task had these dates and this crew" for :func:`preview_conflicts`.
 	``google=False`` prices drives from the cache and the straight-line estimate only (see
 	``routing.plan_routes``), for long ranges such as the capacity heatmap.
+	``equipment=True`` (P4.4) also reads the tasks' vehicles and assets and adds ``equipment``
+	(``{task: [{type, name, label}]}``) and ``equipment_conflicts`` (``{task: [sentence]}``, see
+	:func:`equipment_conflicts`); a hypothetical task's ``equipment`` key replaces its stored rows.
 	"""
 	start, end = _as_date(start), _as_date(end)
 	settings = get_settings()
@@ -1021,7 +1410,10 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True):
 	employee_to_resource = {p.get("employee"): p.get("name") for p in people if p.get("employee")}
 
 	exclude = set(exclude or ())
-	tasks = [t for t in read_tasks(start, end) if t.get("name") not in exclude] if people else []
+	# Equipment is booked on tasks, not people, so a crewless check still needs the tasks.
+	tasks = (
+		[t for t in read_tasks(start, end) if t.get("name") not in exclude] if (people or equipment) else []
+	)
 	crew_rows, todo_users = read_crews([t.get("name") for t in tasks])
 	crews = {
 		t.get("name"): resolve_crew(
@@ -1160,7 +1552,7 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True):
 			}
 		days[name] = per_day
 
-	return {
+	out = {
 		"resources": [
 			{
 				"name": p.get("name"),
@@ -1183,6 +1575,16 @@ def _compute(start, end, resources=None, exclude=(), extra=(), google=True):
 		"todo_users": todo_users,
 		"task_hours": {task: dict(hours) for task, hours in task_hours.items()},
 	}
+	if equipment:
+		overrides = {
+			task_like.get("name"): task_equipment(task_like.get("equipment"))
+			for task_like, _crew in extra or ()
+			if "equipment" in (task_like or {})
+		}
+		state = _equipment_state(tasks, start, end, overrides)
+		out["equipment"] = state["equipment"]
+		out["equipment_conflicts"] = state["conflicts"]
+	return out
 
 
 def drive_booking(minutes, source):
@@ -1244,14 +1646,17 @@ def availability(start, end, resources=None, google=True):
 	return {key: data[key] for key in ("resources", "days", "user_to_resource")}
 
 
-def _preview_many(changes, start=None, end=None):
+def _preview_many(changes, start=None, end=None, google=True):
 	"""``(conflicts, task_hours)`` for hypothetical states of several tasks at once.
 
 	``changes`` is ``[(task_like, crew)]``. Every task named is taken out of the stored data and
 	its hypothetical state put in, so moves that land on one person's day count against each
 	other (the batch writes: shifting successors, rescheduling overdue work, copying a week).
 	``conflicts`` is ``{resource label: ["YYYY-MM-DD: ...", ...]}`` for the days a **firm** task
-	of the batch books; a tentative one never conflicts. ``task_hours`` is
+	of the batch books; a tentative one never conflicts. Vehicle and equipment clashes of the
+	batch's firm tasks (P4.4) are filed under :data:`EQUIPMENT_KEY`; a ``task_like`` carrying an
+	``equipment`` list is judged with it, one without with its stored rows. ``google=False`` (the
+	Phase 4 actuals) prices drives without Google, as in :func:`_compute`. ``task_hours`` is
 	``{task: {resource: hours}}`` over each task's whole span. ``start``/``end`` default to the
 	union of the tasks' spans.
 	"""
@@ -1259,7 +1664,14 @@ def _preview_many(changes, start=None, end=None):
 	for task_like, crew in changes or ():
 		crew = [m for m in (crew or []) if m.get("resource")]
 		span = task_span(task_like)
-		if not crew or not span:
+		# A crewless task with a vehicle on it still has something to check (P4.4). Without the
+		# ``equipment`` key nothing is known about its equipment here, so it is read as stored.
+		has_equipment = (
+			bool(task_equipment(task_like.get("equipment")))
+			if "equipment" in task_like
+			else bool(read_equipment([task_like.get("name")]))
+		)
+		if not span or not (crew or has_equipment):
 			continue
 		prepared.append((task_like, crew))
 		spans.append(span)
@@ -1270,9 +1682,23 @@ def _preview_many(changes, start=None, end=None):
 		return {}, {}
 	names = {task.get("name") for task, _crew in prepared}
 	firm = {task.get("name") for task, _crew in prepared if not is_tentative(task)}
-	data = _compute(start, end, list(dict.fromkeys(resources)), exclude=names, extra=prepared)
+	data = _compute(
+		start,
+		end,
+		list(dict.fromkeys(resources)),
+		exclude=names,
+		extra=prepared,
+		google=google,
+		equipment=True,
+	)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	out = {}
+	for name in sorted(firm):
+		for line in (data.get("equipment_conflicts") or {}).get(name) or []:
+			if line not in out.setdefault(EQUIPMENT_KEY, []):
+				out[EQUIPMENT_KEY].append(line)
+	if not out.get(EQUIPMENT_KEY):
+		out.pop(EQUIPMENT_KEY, None)
 	for resource, per_day in data["days"].items():
 		for day, cell in sorted(per_day.items()):
 			if not any(b["ref"] in firm and b["kind"] in TASK_KINDS for b in cell["bookings"]):

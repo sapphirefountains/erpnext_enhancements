@@ -186,6 +186,11 @@ def _reset():
 	)
 	frappe.values = {}
 	frappe.singles = {}
+	# Phase 4: engine.planner_projects asks which projects are customer jobs; both test projects are.
+	frappe.sql_rows["FROM `tabProject` proj"] = [
+		{"name": "PRJ-1", "project_type": "Build", "planner_stream": 0},
+		{"name": "PRJ-2", "project_type": "Service", "planner_stream": 0},
+	]
 	frappe.enqueued = []
 	frappe.enqueue = lambda *a, **k: frappe.enqueued.append((a, k))
 
@@ -248,6 +253,8 @@ def _task(name="TASK-1", start=MON, end=None, **values):
 		"custom_crew_size": 0,
 		"color": None,
 		"modified": "2026-10-08 09:00:00",
+		# Phase 4: a customer job (engine.PLANNER_PROJECT_TYPES), as every planner task must be.
+		"project_type": "Build",
 	}
 	row.update(values)
 	return _Doc(row)
@@ -644,23 +651,28 @@ class TestReadTasks(unittest.TestCase):
 		_reset()
 
 	def test_python_has_the_last_word_on_what_is_live_and_in_range(self):
+		# Phase 4 (Nik, 2026-10-09): customer jobs only, so a task with no project is out unless it
+		# is a rental crew task. tests/test_planner_phase4.py pins the rule itself.
+		job = {"project_type": "Build", "planner_stream": 0}
 		frappe.sql_rows["FROM `tabTask` t"] = [
-			_task("IN", start=MON, end=WED, project_status="Active"),
+			_task("IN", start=MON, end=WED, project_status="Active", **job),
 			_task("NO-PROJECT", start=TUE, project=None, project_status=None),
-			_task("DONE", start=MON, status="Completed"),
-			_task("CANCELED", start=MON, status="Canceled"),
-			_task("CLOSED-PROJECT", start=MON, project_status="Cancelled"),
-			_task("UNDATED", start=None),
-			_task("BEFORE", start=D(2026, 10, 1), end=D(2026, 10, 2)),
+			_task("RENTAL-NO-PROJECT", start=TUE, project=None, project_status=None, custom_rental_booking="RB-1"),
+			_task("DONE", start=MON, status="Completed", **job),
+			_task("CANCELED", start=MON, status="Canceled", **job),
+			_task("CLOSED-PROJECT", start=MON, project_status="Cancelled", **job),
+			_task("UNDATED", start=None, **job),
+			_task("BEFORE", start=D(2026, 10, 1), end=D(2026, 10, 2), **job),
 			_task(
 				"SLOT",
 				start=D(2026, 10, 1),
 				custom_start_datetime="2026-10-13 08:00:00",
 				custom_end_datetime="2026-10-13 10:00:00",
+				**job,
 			),
 		]
 		names = [row["name"] for row in engine.read_tasks(MON, FRI)]
-		self.assertEqual(names, ["IN", "NO-PROJECT", "SLOT"])
+		self.assertEqual(names, ["IN", "RENTAL-NO-PROJECT", "SLOT"])
 
 	def test_the_query_binds_its_values_and_survives_a_missing_column(self):
 		frappe.db.has_column = lambda doctype, column: column != "custom_crew_size"
@@ -1290,7 +1302,7 @@ class TestApiHelpers(unittest.TestCase):
 		)
 		self.assertEqual(
 			card["crew"],
-			[{"resource": "RES-1", "label": "Austin", "hours": None, "is_lead": True, "booked": 12.0}],
+			[{"resource": "RES-1", "label": "Austin", "hours": None, "is_lead": True, "booked": 12.0, "actual": 0.0}],
 		)
 		self.assertEqual(card["credentials"], ["Forklift"])
 		self.assertEqual(card["modified"], "2026-10-08 09:00:00")
@@ -2866,8 +2878,11 @@ class TestWiring(unittest.TestCase):
 		writes = (
 			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes
 		)
+		# Phase 4 (tracking) reads are pinned in tests/test_planner_phase4.py.
+		phase4_reads = ("get_actuals", "get_labor_forecast", "get_equipment")
 		reads = (
-			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads
+			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads,
+			*phase4_reads,
 		)
 		self.assertEqual(set(endpoints), set(writes) | set(reads))
 		for name in writes:

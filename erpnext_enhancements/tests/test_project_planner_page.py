@@ -52,6 +52,8 @@ API_CONTRACT = {
 		"credentials",
 		"tentative",
 		"reason",
+		# Phase 4: the vehicles and assets a task uses, as a JSON list.
+		"equipment",
 	},
 	"add_crew": {"task", "resource", "modified", "reason"},
 	"swap_crew": {"task", "from_resource", "to_resource", "modified", "date", "reason"},
@@ -71,6 +73,11 @@ API_CONTRACT = {
 	"discard_drafts": {"tasks"},
 	"get_my_week": {"date"},
 	"crew_sheet_html": {"start", "group"},
+	# Phase 4 (tests/test_project_planner_phase4_page.py checks each feature): worked hours against
+	# the plan, the labor forecast of the project on screen, and the equipment grid of the crew view.
+	"get_actuals": {"project", "tasks"},
+	"get_labor_forecast": {"project"},
+	"get_equipment": {"start", "end"},
 }
 for _method in ("get_planner", "save_task", "add_crew", "swap_crew"):
 	API_CONTRACT[_method] = API_CONTRACT[_method] | {"draft"}
