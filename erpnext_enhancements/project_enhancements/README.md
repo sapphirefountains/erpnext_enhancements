@@ -29,7 +29,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
-| `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. See [Project Planner](#project-planner-v15770) and [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py) and [`api/planner_views.py`](../api/planner_views.py) |
+| `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. Phase 6C (`PP6C_METHODS`): Color by, highlight a project, saved views, the team strip, tap to move and Print. See [Project Planner](#project-planner-v15770), [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) and [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py), [`api/planner_views.py`](../api/planner_views.py) and [`api/planner_views_prefs.py`](../api/planner_views_prefs.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
@@ -58,6 +58,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 Related code outside this folder:
 - `api/planner_views.py` — the Phase 6A quick looks both planners open in a drawer: a person's week, everyone's day, a project, a maintenance site. Read-only and Google-free. See [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
+- `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
@@ -879,6 +880,7 @@ It installs `window.planner_kit` (use it through `window.` — eslint does not k
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
 | `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change. `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code |
+| `big_picture` | Phase 6C's pure half: `hash_color(key)` (FNV-1a over UTF-16 code units into the 12-color `HASH_PALETTE`), the fixed palettes `JOB_TYPES` / `TASK_STATUSES` / `VISIT_STATUSES` with `job_type`, `task_status`, `visit_status`, `palette_color`, `palette_legend`, `safe_paint` (a hex or a page's `hsl()` person color, else the fallback), `team_day(cells)` / `team_text` / `team_tip` (the capacity strip), `pick_view(state, schema)` (a saved view's keys), `print_document(model)` (a whole printable HTML document from a page's model, every value escaped) | No DOM, no frappe: tests run it under node. A page with an older kit already loaded (no `big_picture`) simply shows none of Phase 6C's colors, strip or print |
 
 **How Back closes a drawer without reloading the planner** (`history.js`). While any overlay is
 open there is one kit history entry on top, `history.pushState({planner_kit: <id>}, "")` with no
@@ -966,6 +968,88 @@ decisions of 2026-10-09.
     the Phase 6B "Move to next free day" menu.
 - **AI tool** `crew_conflicts` (read-only): the list for a range, without fixes and **without any
   block's note**, even for a caller allowed to read it. Triton needs a tool snapshot refresh.
+
+### Big picture, tablet mode and print (Phase 6C — TASK-2026-02469)
+
+Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_METHODS` /
+`MP6C_METHODS`, the pure half is the kit's `big_picture`, and the one backend module is
+[`api/planner_views_prefs.py`](../api/planner_views_prefs.py).
+
+- **Color by** (toolbar). The Project Planner colors each card's left edge by *Task color* (the
+  default, today's look: the task's own color), *Person* (the lead, or in the crew view the row's
+  person, in the same color as their dot and badges), *Job type*, *Project*, *Project manager* or
+  *Status*; the Maintenance Planner by *Visit type* (the default, today's colors), *Technician*, *Site*,
+  *Visit status* or *Contract* (read-only project, rental and travel bookings keep their colors except
+  under Technician). Fixed palettes, mid-tones that read on light and dark cards:
+  - job type: Design `#9333ea`, Build `#ea580c`, Service `#0891b2`, Events (Rent projects and rental
+    crew tasks) `#db2777`, Delivery `#65a30d`, Other (a blank type that counts through a value stream)
+    `#64748b`;
+  - task status: Open `#2563eb`, Working `#16a34a`, Pending review `#ca8a04`, Overdue (and any overdue
+    card) `#dc2626`; visit status: Scheduled `#2563eb`, Next visit `#4f46e5`, Projected `#94a3b8`,
+    Pending review `#ca8a04`, Done `#16a34a`, Overdue `#dc2626`;
+  - project, PM, site and contract: `hash_color`, so the same project is the same color on every
+    device and every day. A key under the toolbar lists what is on screen (a project in it highlights
+    the project); the "?" legend lists it all.
+
+  The job type comes from `project_type`, which `build_card` now carries (one line); the PM from the
+  `projects` payload the PM filter already uses. No new request. The color goes on through a CSS
+  variable with `!important`, so an overdue card keeps its *Overdue* chip but takes the mode's color.
+- **Highlight a project** (Maintenance Planner: a site). A click on a project's name on a card (6A's
+  project drawer opens from the same click), *Highlight* in the project or site drawer's header,
+  *Highlight this project/site* in a card's panel or 6B's right-click menu (`p6_menu_providers`), or a
+  project in the color key: every card of it lights up and the rest fade, in every view and week on
+  screen. A toolbar pill *Highlighting …* ✕ and Esc clear it (Esc closes a drawer or menu first, and
+  yields to a Frappe dialog and a drag). Not remembered: a reload starts clear.
+- **Saved views, per person, on the server.** *Views* in the toolbar: *Save view as…* (a name; the
+  same name replaces), switch, *Manage views…* (use, delete). A view holds the calendar view, the
+  filters (Project Planner: project, PM, group, *Maintenance, rentals, travel*, *Running over*,
+  Resources available open; Maintenance Planner: technician, projected visits, project work, Resources
+  available open) and the color-by. The view **last used** is saved a moment after any change and
+  applied when the planner opens, on any device. Two rules:
+  - **The route wins.** A URL that names a view and a date is used as it is, and only the filters are
+    restored on the first open. Only a bare `/app/project-planner` (or `/app/maintenance-planner`)
+    takes the saved view, and it **replaces** that history entry (`route_flags.replace_route` before
+    `set_route`), so Back from the planner leaves it exactly as it would have.
+  - *Running over* is never part of "last used" (Phase 4's reason: a chip that quietly hides most of
+    the board the next morning is a trap); a named view may hold it.
+
+  Draft mode and Tap to move are not part of a view: one is a way of working, the other a property of
+  the device. The pages' older per-browser filter memory still fills the filters until the server's
+  answer arrives (at most 4 s; after that the planner opens without it).
+- **Team capacity strip.** A row over the week view and inside the crew view, under its day heads: per
+  day, the free hours and capacity of everyone the group filter shows (Maintenance Planner: every
+  technician with hours, or the one the technician filter picks), summed from the loaded `days` /
+  `bookings`. **Red** when the team as a whole is booked past its capacity, **amber** at 90% or more;
+  one person over and another free is not red. Pencil hours hatched after the firm ones, as on the
+  heatmap (the Maintenance Planner's day cells now carry `soft_booked`, one line). Tooltip "Field crew
+  Thu: 46h free of 120h · 3 people off": a holiday, time off or an all-day block counts as off, a day
+  the person's pattern does not work does not, and the kind of time off is never said. A click opens
+  6A's day peek.
+- **Tap to move** (tablet and phone). With *Tap to move* on (the default where the pointer is coarse;
+  remembered per device), a tap on a card selects it ("Moving: Dig at Riverwalk · Open · Cancel") and
+  a tap on a day, or a person's day in the crew view, moves it through the drag's own
+  `drop` → `plan_drop` → `commit`/`apply` → `send`, so the past-day question, the reason prompt, drafts
+  and Undo all apply. Long-press stays 6B's menu (and the drag's lift); a modifier-click stays 6B's
+  multi-select; a name or a date still opens its quick look; *Move with taps…* in the right-click menu
+  starts the same thing from a mouse. With it off, a tap opens the card as before. Layout: toolbar
+  controls, cards and the strip are at least 40 px tall under a coarse pointer; the planner clips any
+  sideways overflow at tablet width and below, and the crew view scrolls inside its own container.
+- **Print this view.** *Print* opens a browser window (on the click itself: one opened after a
+  request is a blocked pop-up) with exactly what is on screen: the view and range, the filters and
+  highlight as faded or lit cards, the color-by and its key, the team strip's figure in each day; the
+  crew view and the heatmap print as tables. With 6B's selection non-empty it offers *Print selection
+  only* (a list). The body is built from the loaded data by `big_picture.print_document`, never by
+  cloning the live DOM (no drag handle or drawer can reach paper), every value escaped; the server
+  adds only the print design system's chrome (`get_print_chrome`, the same stripe, letterhead and ruled
+  tables as the weekly crew sheet; the Service pillar on the Maintenance Planner). Landscape Letter.
+
+Hooks, one line each: `init_phase6c` (constructor), `p6c_before_route` (first line of `handle_route`),
+`p6c_set_mode` (Project Planner `set_mode`), `render_phase6c` (`render`), `p6c_links` / `p6c_action`
+(`open_card`), `p6c_ready` (6A's `p6a_ready`), `p6c_project_drawer` / `p6c_site_drawer` (6A's project
+and site drawers) and `p6c_legend_sections` (first in 6A's legend). `tests/test_planner_phase6c.py`
+pins the views store (own row, straight to the table, cleaned, capped, gated), and under node drives
+the real page code: the bare-route replace and the route winning, the colors per mode, the strip's
+arithmetic and filter, the tap's drop and the printed selection.
 
 ## `hooks.py` touchpoints
 

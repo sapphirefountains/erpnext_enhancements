@@ -477,6 +477,7 @@ def build_card(
 		"subject": task.get("subject") or task.get("name"),
 		"project": task.get("project"),
 		"project_title": task.get("project_title") or task.get("project"),
+		"project_type": task.get("project_type") or None,  # Phase 6C: Color by job type
 		"status": task.get("status"),
 		"start": str(span[0]) if span else None,
 		"end": str(span[1]) if span else None,

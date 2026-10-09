@@ -19,6 +19,7 @@
  *   hover_glow(container, "person")     hovering a name lights up that person's bookings
  *   peeks.person(opts) / peeks.day(opts) the shared quick looks (api/planner_views.py)
  *   glow_key / glow_keys / format.{hours, drive, day_label, add_days}
+ *   big_picture                         Phase 6C: card colors, the team capacity strip, saved views, print
  *
  * See "Planner kit" in project_enhancements/README.md for how to use each one, and
  * planner_kit/history.js for how Back closes a drawer without the router reloading the page.
@@ -35,6 +36,7 @@ import { create_hint } from "./planner_kit/hint.js";
 import { create_glow, GLOW_CLASS } from "./planner_kit/glow.js";
 import { create_peeks, person_week_html, day_overview_html, day_state } from "./planner_kit/peeks.js";
 import { CSS, STYLE_ID } from "./planner_kit/styles.js";
+import * as big_picture from "./planner_kit/big_picture.js";
 
 const VERSION = 1;
 
@@ -128,6 +130,7 @@ function install() {
 		hover_glow: create_glow(env),
 		peeks: create_peeks(env),
 		render: { person_week_html, day_overview_html, day_state },
+		big_picture,
 	};
 
 	// Esc closes the topmost kit overlay (a menu before the drawer under it), unless something
