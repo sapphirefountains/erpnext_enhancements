@@ -1986,6 +1986,12 @@ after_migrate = [
 	# rather than adding a Custom Sidebar layer, which would reorder the sidebar (v1.576.1).
 	# Re-applied after an ERPNext re-import; logs instead of raising.
 	"erpnext_enhancements.setup.workspace_tweaks.hide_core_sidebar_items",
+	# Put the Project Planner (after Task) and its Crew Utilization report (with the module's
+	# reports) into the core Projects module sidebar (Nik, 2026-10-09). frappe 16.50 reads the
+	# base sidebar from ERPNext's own rows in idx order, so the rows go in at the right idx;
+	# a Custom Sidebar layer would append at the very end or reorder the module. Skips a link
+	# already there (hidden or not), re-adds after an ERPNext re-import, logs instead of raising.
+	"erpnext_enhancements.setup.workspace_tweaks.add_core_sidebar_items",
 	# Desk home-grid tile artwork. Every tile this app contributes rendered as a grey
 	# letter avatar because create_desktop_icons_from_workspace() assigns `icon.app_name`,
 	# a field Desktop Icon does not have (the real one is `app`) -- so `app` stays NULL,
