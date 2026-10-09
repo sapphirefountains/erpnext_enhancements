@@ -57,7 +57,16 @@ API_CONTRACT = {
 	# Phase 2: one person's driving day, and the days that suit a task by drive time.
 	"get_route": {"resource", "date"},
 	"suggest_dates": {"task"},
+	# Phase 3B (tests/test_planner_phase3b.py): draft mode adds ``draft`` to the read and to every
+	# write (send() adds it to save_task/add_crew/swap_crew), then publish or discard; My week; the
+	# printable crew sheet.
+	"publish_drafts": {"reason"},
+	"discard_drafts": {"tasks"},
+	"get_my_week": {"date"},
+	"crew_sheet_html": {"start", "group"},
 }
+for _method in ("get_planner", "save_task", "add_crew", "swap_crew"):
+	API_CONTRACT[_method] = API_CONTRACT[_method] | {"draft"}
 
 # What the route view reads from get_route (spec section B) and the per-day keys the engine adds
 # to a day cell. The page only ever reads these; a rename on the server must be a conscious one.

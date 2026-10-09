@@ -2011,14 +2011,20 @@ class TestWiring(unittest.TestCase):
 
 	def test_every_write_is_post_only_and_the_read_is_not(self):
 		endpoints = _whitelisted(API_PATH)
+		# Phase 3B (draft and publish, the digest preview, the crew sheet, My week) is pinned in
+		# tests/test_planner_phase3b.py; listed here so this set stays the whole module.
+		phase3b_writes = {"publish_drafts", "discard_drafts", "send_digest_preview"}
+		phase3b_reads = {"get_my_week", "crew_sheet_html"}
 		self.assertEqual(
 			set(endpoints),
-			{"get_planner", "save_task", "add_crew", "swap_crew", "get_route", "suggest_dates", "check_routes"},
+			{"get_planner", "save_task", "add_crew", "swap_crew", "get_route", "suggest_dates", "check_routes"}
+			| phase3b_writes
+			| phase3b_reads,
 		)
-		for name in ("save_task", "add_crew", "swap_crew"):
+		for name in ("save_task", "add_crew", "swap_crew", *sorted(phase3b_writes)):
 			self.assertEqual(endpoints[name], ["POST"], name)
 		# The reads (and the read-only route check) take GET, as the UI and the AI tools call them.
-		for name in ("get_planner", "get_route", "suggest_dates", "check_routes"):
+		for name in ("get_planner", "get_route", "suggest_dates", "check_routes", *sorted(phase3b_reads)):
 			self.assertIsNone(endpoints[name], name)
 		self.assertEqual(_whitelisted(ENGINE_PATH), {})  # the engine is not an endpoint
 		self.assertEqual(_whitelisted(ROUTING_PATH), {})  # nor is the routing module

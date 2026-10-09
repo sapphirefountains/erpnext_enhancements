@@ -1,0 +1,97 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:log_key",
+ "creation": "2026-10-09 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "log_key",
+  "user",
+  "digest_date",
+  "column_break_main",
+  "sent_on",
+  "bookings",
+  "channels"
+ ],
+ "fields": [
+  {
+   "description": "user|date. Unique, so a second morning message to the same person on the same day cannot be recorded, and so is never sent.",
+   "fieldname": "log_key",
+   "fieldtype": "Data",
+   "label": "Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "digest_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Digest date",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Claimed at",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bookings",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Bookings",
+   "read_only": 1
+  },
+  {
+   "description": "What went out: email, text, or both. Blank when sending failed after the day was claimed (it is not retried).",
+   "fieldname": "channels",
+   "fieldtype": "Data",
+   "label": "Sent by",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-09 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Digest Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
