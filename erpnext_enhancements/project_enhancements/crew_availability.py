@@ -20,6 +20,12 @@ Against that capacity it sets everything that uses their hours:
 * **Maintenance visits**: every open or done visit record on its plan date, plus the visits the
   scheduler has not drafted yet, projected exactly as the Maintenance Planner projects them.
 * **Travel Trip** days: the whole day is spoken for.
+* **Driving** (Phase 2): each person-day with stops is routed from the shop and back
+  (``project_enhancements.routing``), and with Settings ``pad_drive_time`` on the drive time is
+  booked as a ``drive`` booking. Every day cell carries ``drive_minutes`` (0 with no route),
+  ``drive_source`` (``"google"``/``"estimate"``/``"mixed"``, None with no driving), ``long_drive``
+  and ``unlocated`` (stops with no coordinates, which are not driven to). Routing failing never
+  fails the answer: it is logged and the day reads without driving.
 
 **Overbooking warns and never blocks.** :func:`day_conflicts` returns sentences; whether to save
 anyway is the caller's decision, and the Project Planner asks for a reason when it does.
@@ -50,6 +56,8 @@ from collections import defaultdict
 
 import frappe
 
+from erpnext_enhancements.project_enhancements import routing
+
 #: Mirrors ``erpnext_enhancements.task_enhancements.doctype.task.task.FINISHED_STATUSES``.
 #: Not imported: that module imports ERPNext's Task class, which would drag ERPNext into every
 #: caller, including the bench-free tests. ``test_project_planner`` asserts the two literals match.
@@ -64,7 +72,9 @@ CLOSED_PROJECT_STATUSES = ("Completed", "Invoiced", "Paid", "Cancelled", "Cancel
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 #: Project Planner Settings, with the defaults its JSON declares. Used when the Single is
-#: missing or a value reads None; a deliberate 0 is kept.
+#: missing or a value reads None; a deliberate 0 is kept. The route settings (Phase 2) matter
+#: most here: a Single row saved before they existed has no ``tabSingles`` row for them until
+#: the backfill patch runs, so None must read as the default (padding on, Google on).
 DEFAULT_SETTINGS = {
 	"default_day_hours": 8.0,
 	"maintenance_visit_hours": 2.0,
@@ -72,7 +82,15 @@ DEFAULT_SETTINGS = {
 	"rental_setup_hours": 3.0,
 	"rental_takedown_hours": 2.0,
 	"rental_cleaning_hours": 2.0,
+	"pad_drive_time": 1.0,
+	"use_google_routes": 1.0,
+	"long_drive_minutes": 90.0,
+	"day_start_time": "08:00:00",
 }
+
+#: Settings that are not numbers (``day_start_time`` is a Time: text, or a timedelta from the
+#: database), so get_settings must not run them through ``float``.
+TEXT_SETTINGS = ("day_start_time",)
 
 #: ``Task.custom_rental_task_kind`` → the Settings field with that kind's hours.
 RENTAL_KIND_HOURS = {
@@ -408,7 +426,10 @@ def get_settings():
 		return out
 	for key, default in DEFAULT_SETTINGS.items():
 		value = doc.get(key)
-		out[key] = _float(value) if value is not None else default
+		if key in TEXT_SETTINGS:
+			out[key] = str(value) if value not in (None, "") else default
+		else:
+			out[key] = _float(value) if value is not None else default
 	return out
 
 
@@ -942,6 +963,16 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 			}
 		)
 
+	try:
+		routes = _apply_routes(bookings, by_name, start, end, settings)
+	except Exception:
+		# Routing is a refinement: a bug or an outage there must never blank a planner. The
+		# day reads as it did before Phase 2, with no driving counted.
+		frappe.log_error(title="Project Planner: routes failed", message=frappe.get_traceback())
+		routes = {}
+
+	long_limit = settings.get("long_drive_minutes")
+	long_limit = _float(long_limit if long_limit is not None else DEFAULT_SETTINGS["long_drive_minutes"])
 	restrictions = _read_restrictions(people, start, end) if people else {}
 	days = {}
 	for person in people:
@@ -951,6 +982,8 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 			capacity, off = capacity_and_off(name, day)
 			mine = bookings.get((name, day), [])
 			booked = round(sum(_float(b["hours"]) for b in mine), 2)
+			route = routes.get((name, day))
+			drive = route["drive_minutes"] if route else 0.0
 			per_day[str(day)] = {
 				"capacity": capacity,
 				"booked": booked,
@@ -959,6 +992,10 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 				"bookings": mine,
 				"conflicts": day_conflicts(capacity, off, mine),
 				"warnings": list((restrictions.get(name) or {}).get(day, [])),
+				"drive_minutes": drive,
+				"drive_source": route["source"] if route and drive > 0 else None,
+				"long_drive": bool(drive > long_limit) if route else False,
+				"unlocated": len(route["unlocated"]) if route else 0,
 			}
 		days[name] = per_day
 
@@ -979,11 +1016,50 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 		"days": days,
 		"user_to_resource": user_to_resource,
 		"settings": settings,
+		"routes": routes,
 		"tasks": tasks,
 		"crews": crews,
 		"todo_users": todo_users,
 		"task_hours": {task: dict(hours) for task, hours in task_hours.items()},
 	}
+
+
+def drive_booking(minutes, source):
+	"""The booking that counts a day's driving against the person's hours."""
+	return {
+		"kind": "drive",
+		"ref": None,
+		"label": "Driving",
+		"project": None,
+		"hours": round(_float(minutes) / 60, 2),
+		"slot": None,
+		"estimated": source != "google",
+	}
+
+
+def _apply_routes(bookings, people, start, end, settings):
+	"""Route every visible person-day that has stops, and pad the day with its driving.
+
+	``{(resource, day): route}`` from ``routing.plan_routes``, which locates every stop and
+	prices every leg of every day in one go (one ``drive_matrix`` call per load, never one per
+	person-day). When Settings ``pad_drive_time`` is on, a ``drive`` booking is appended so free
+	hours, "Over by" and the preview a save is checked against all include the driving. Nothing is
+	appended until every route is worked out, so a failure leaves the bookings as they were.
+	"""
+	day_bookings = {
+		key: value for key, value in bookings.items() if key[0] in people and start <= key[1] <= end and value
+	}
+	routes = routing.plan_routes(day_bookings, settings) if day_bookings else {}
+	pad = settings.get("pad_drive_time")
+	if pad is None or _float(pad):
+		padding = [
+			(key, drive_booking(route["drive_minutes"], route["source"]))
+			for key, route in routes.items()
+			if _float(route.get("drive_minutes")) > 0
+		]
+		for key, booking in padding:
+			bookings[key].append(booking)
+	return routes
 
 
 def availability(start, end, resources=None):

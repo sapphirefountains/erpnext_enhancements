@@ -13,7 +13,16 @@
   "rental_setup_hours",
   "column_break_rental",
   "rental_takedown_hours",
-  "rental_cleaning_hours"
+  "rental_cleaning_hours",
+  "section_routes",
+  "pad_drive_time",
+  "use_google_routes",
+  "day_start_time",
+  "long_drive_minutes",
+  "column_break_routes",
+  "start_latitude",
+  "start_longitude",
+  "start_geocoded_from"
  ],
  "fields": [
   {
@@ -68,12 +77,69 @@
    "fieldtype": "Float",
    "label": "Cleaning",
    "precision": "1"
+  },
+  {
+   "fieldname": "section_routes",
+   "fieldtype": "Section Break",
+   "label": "Routes"
+  },
+  {
+   "default": "1",
+   "fieldname": "pad_drive_time",
+   "fieldtype": "Check",
+   "label": "Count drive time against people's hours"
+  },
+  {
+   "default": "1",
+   "description": "Off: a straight-line estimate is used everywhere (no Google calls).",
+   "fieldname": "use_google_routes",
+   "fieldtype": "Check",
+   "label": "Drive times from Google Routes"
+  },
+  {
+   "default": "08:00:00",
+   "description": "Leaving the shop; arrival times on a route count from here.",
+   "fieldname": "day_start_time",
+   "fieldtype": "Time",
+   "label": "Day starts at"
+  },
+  {
+   "default": "90",
+   "fieldname": "long_drive_minutes",
+   "fieldtype": "Int",
+   "label": "Flag a day with more driving than (minutes)"
+  },
+  {
+   "fieldname": "column_break_routes",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "start_latitude",
+   "fieldtype": "Float",
+   "label": "Shop latitude",
+   "precision": "6",
+   "read_only": 1,
+   "description": "Filled by the routing module from the shop address. Never typed by hand."
+  },
+  {
+   "fieldname": "start_longitude",
+   "fieldtype": "Float",
+   "label": "Shop longitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "start_geocoded_from",
+   "fieldtype": "Data",
+   "label": "Shop coordinates found from",
+   "read_only": 1,
+   "description": "The shop address these coordinates were found from."
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-08 12:00:00.000000",
+ "modified": "2026-10-09 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Planner Settings",

@@ -7,13 +7,18 @@
 //   /desk/project-planner/week/2026-10-12     the week holding that day
 //   /desk/project-planner/month/2026-10-01    the month holding that day
 //   /desk/project-planner/crew/2026-10-12     the crew timeline for the week holding that day
+//   /desk/project-planner/route/<person>/2026-10-12
+//                                             one person's driving day: stops in order, drive
+//                                             time between them, and a map
 //
 // Every move between weeks, months and views is a route, so Back and Forward step through them
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
 // Forward re-render through on_page_show -> handle_route, exactly like the Maintenance Planner.
 //
 // Everything comes from erpnext_enhancements.api.project_planner.get_planner, which reads the
-// shared availability engine (project_enhancements/crew_availability.py). The Maintenance Planner
+// shared availability engine (project_enhancements/crew_availability.py), which also pads each
+// person-day with the driving it takes (shop -> stops -> shop). get_route draws one such day;
+// suggest_dates ranks the days a task could go by how little driving it adds. The Maintenance Planner
 // reads the same engine, so a person's free hours are the same number in both planners.
 // Maintenance visits, rental crew tasks and travel use people's hours too; they show here
 // read-only ("Maintenance, rentals, travel") and are moved in their own planners.
@@ -27,6 +32,9 @@
 //     or onto another person's row                swap_crew          (and the day, if it changed)
 //   - click a card                                a dialog for dates, hours, crew and
 //                                                 qualifications                       save_task
+//   - "Suggest dates" on a card or its dialog     suggest_dates, then Book -> save_task
+//   - the route icon / drive line on a person's
+//     day                                         the route view (get_route)
 // Overbooking warns and never blocks: when a change would put someone over their hours, on a day
 // off or in two places at once, the server answers needs_reason instead of saving, and the page
 // asks for a reason and sends the change again with it. The reason lands on the task's timeline.
@@ -39,6 +47,7 @@ const PP = {
 	route: "project-planner",
 	api: "erpnext_enhancements.api.project_planner",
 	views: ["week", "month", "crew"],
+	route_view: "route",
 	groups: ["Field", "PM", "Design", "Subcontractor"],
 	prefs: {
 		project: "ee_project_planner_project",
@@ -62,6 +71,17 @@ const pp_hours = (value) => String(Math.round((Number(value) || 0) * 100) / 100)
 // Colors come from records people edit; only a plain hex value goes into a style attribute.
 const pp_color = (value, fallback) => (/^#[0-9a-fA-F]{3,8}$/.test(String(value || "")) ? value : fallback);
 const pp_when = (ymd) => moment(ymd, "YYYY-MM-DD").format("ddd, MMM D");
+// 70 -> "1h 10m", 25 -> "25m", 120 -> "2h": drive time as people say it.
+const pp_drive = (minutes) => {
+	const total = Math.max(0, Math.round(Number(minutes) || 0));
+	const h = Math.floor(total / 60);
+	const m = total % 60;
+	if (!h) return `${m}m`;
+	return m ? `${h}h ${m}m` : `${h}h`;
+};
+const pp_km = (value) => String(Math.round((Number(value) || 0) * 10) / 10);
+const pp_valid_point = (lat, lng) =>
+	Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && (Number(lat) !== 0 || Number(lng) !== 0);
 
 frappe.pages[PP.route].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -188,6 +208,40 @@ body.pp-drag-active,body.pp-drag-active *{cursor:grabbing !important;-webkit-use
 .pp-why{margin:6px 0;}
 .pp-why ul{margin:2px 0 0;padding-left:18px;}
 .pp-empty-note{font-size:12px;color:var(--text-muted);padding:8px 10px;}
+.pp-drive{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-size:10px;color:var(--text-muted);min-width:0;}
+.pp-drive-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-route{display:inline-flex;align-items:center;gap:3px;cursor:pointer;color:var(--text-muted);border-radius:6px;padding:0 3px;}
+.pp-route:hover,.pp-route:focus{color:var(--primary,#2490ef);background:var(--control-bg);outline:none;}
+.pp-route svg{width:12px;height:12px;flex:0 0 auto;}
+.pp-suggest-row{margin-top:3px;}
+.pp-route-view{padding-bottom:24px;}
+.pp-route-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:4px 0 6px;}
+.pp-route-title{font-weight:600;font-size:16px;margin:0 6px;}
+.pp-route-totals{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;margin:0 0 10px;}
+.pp-route-note{font-size:12px;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;padding:6px 10px;margin-bottom:10px;}
+.pp-route-cols{display:grid;grid-template-columns:minmax(300px,420px) minmax(0,1fr);gap:12px;align-items:start;}
+.pp-stops{border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);}
+.pp-stop{display:flex;gap:10px;padding:8px 10px;border-top:1px solid var(--border-color);font-size:13px;}
+.pp-stop:first-child{border-top:none;}
+.pp-stop-num{flex:0 0 auto;width:24px;height:24px;border-radius:50%;background:#2563eb;color:#fff;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.pp-stop-num.pp-shop{background:#16a34a;}
+.pp-stop-body{min-width:0;flex:1 1 auto;}
+.pp-stop-time{font-size:12px;color:var(--text-muted);}
+.pp-stop-label{font-weight:600;}
+.pp-stop-sub{font-size:12px;color:var(--text-muted);}
+.pp-stop-leg{font-size:11px;color:var(--text-muted);margin-top:2px;}
+.pp-stop-link{cursor:pointer;color:var(--primary,#2490ef);}
+.pp-stop.pp-unlocated{background:var(--control-bg);}
+.pp-stop.pp-unlocated .pp-stop-num{background:var(--gray-500,#64748b);}
+.pp-stop.pp-unlocated .pp-stop-label,.pp-stop.pp-unlocated .pp-stop-sub{color:var(--text-muted);}
+.pp-stop-missing{font-size:12px;color:#b45309;margin-top:2px;}
+.pp-route-cols.pp-nomap{grid-template-columns:minmax(0,640px);}
+.pp-map{height:460px;border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--control-bg);}
+.pp-sug{width:100%;font-size:13px;border-collapse:collapse;}
+.pp-sug td{padding:6px 8px 6px 0;border-top:1px solid var(--border-color);vertical-align:top;}
+.pp-sug tr:first-child td{border-top:none;}
+.pp-sug-when{white-space:nowrap;font-weight:600;}
+.pp-sug-reason{color:var(--text-muted);font-size:12px;}
 @media (max-width:760px){
 .pp-title{min-width:0;width:100%;order:-1;margin:0;}
 .pp-toolbar select{max-width:none;flex:1 1 40%;}
@@ -199,6 +253,12 @@ body.pp-drag-active,body.pp-drag-active *{cursor:grabbing !important;-webkit-use
 .pp-week .pp-day{min-height:0;border-right:none;}
 .pp-tray .pp-card{width:100%;}
 .pp-crew{grid-template-columns:110px repeat(7,minmax(104px,1fr));min-width:840px;}
+.pp-route-cols{grid-template-columns:minmax(0,1fr);}
+.pp-map{height:320px;}
+.pp-route-title{min-width:0;width:100%;order:-1;margin:0;}
+.pp-sug td{display:block;border-top:none;padding:2px 0;}
+.pp-sug tr{display:block;border-top:1px solid var(--border-color);padding:6px 0;}
+.pp-sug tr:first-child{border-top:none;}
 }
 `;
 
@@ -230,6 +290,12 @@ class ProjectPlanner {
 		this.request = 0;
 		this.drag = null;
 		this.click_blocked_until = 0;
+		// The route view: one person's day. `route_map` is the live Google map (rebuilt on every
+		// render; a theme flip is picked up the next time the view opens).
+		this.route_resource = "";
+		this.route_date = "";
+		this.route_data = null;
+		this.route_map = null;
 
 		this.page.add_menu_item(__("Planner Resources"), () => frappe.set_route("List", "Planner Resource"));
 		this.page.add_menu_item(__("Project Planner Settings"), () =>
@@ -245,6 +311,11 @@ class ProjectPlanner {
 	route_target() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== PP.route) return null;
+		// /project-planner/route/<person>/<date>
+		if (route[1] === PP.route_view && route[2]) {
+			const date = route[3] && moment(route[3], "YYYY-MM-DD", true).isValid() ? route[3] : frappe.datetime.get_today();
+			return { view: PP.route_view, resource: route[2], anchor: date };
+		}
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
 		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 		return { view, anchor: day };
@@ -255,7 +326,36 @@ class ProjectPlanner {
 		if (!target) return;
 		this.view = target.view;
 		this.anchor = target.anchor;
+		if (target.view === PP.route_view) {
+			this.route_resource = target.resource;
+			this.route_date = target.anchor;
+			this.set_mode(true);
+			this.load_route();
+			return;
+		}
+		this.set_mode(false);
 		this.load();
+	}
+
+	// The route view replaces the toolbar, panel, trays and calendar; the others replace it.
+	// (The panel is shown and hidden by render_panel, so leaving this view does not reveal a stale one.)
+	set_mode(route) {
+		this.$toolbar.toggle(!route);
+		this.$trays.toggle(!route);
+		this.$grid_wrap.toggle(!route);
+		this.$hint.toggle(!route);
+		this.$route.toggle(!!route);
+		if (route) this.$panel.hide();
+		else this.clear_route_map();
+	}
+
+	go_route(resource, ymd) {
+		const route = frappe.get_route() || [];
+		if (route[0] === PP.route && route[1] === PP.route_view && route[2] === resource && route[3] === ymd) {
+			this.load_route();
+			return;
+		}
+		frappe.set_route(PP.route, PP.route_view, resource, ymd);
 	}
 
 	go(view, anchor) {
@@ -339,6 +439,7 @@ class ProjectPlanner {
 
 	build_shell() {
 		const $bar = $('<div class="pp-toolbar"></div>').appendTo(this.$body);
+		this.$toolbar = $bar;
 		$('<button class="btn btn-default btn-sm">‹</button>')
 			.attr("title", __("Earlier"))
 			.on("click", () => this.shift(-1))
@@ -413,6 +514,7 @@ class ProjectPlanner {
 		this.$trays = $("<div></div>").appendTo(this.$body);
 		this.$grid_wrap = $("<div></div>").appendTo(this.$body);
 		this.$hint = $('<div class="pp-hint"></div>').appendTo(this.$body);
+		this.$route = $('<div class="pp-route-view"></div>').hide().appendTo(this.$body);
 	}
 
 	make_select($bar, label, on_change) {
@@ -588,7 +690,19 @@ class ProjectPlanner {
 		if (!day) return lines.join("\n");
 		lines.push(__("{0}h of {1}h booked", [pp_hours(day.booked), pp_hours(day.capacity)]));
 		if (day.off) lines.push(__(day.off));
+		if (Number(day.drive_minutes) > 0) {
+			lines.push(
+				`${__("Driving")}: ${pp_drive(day.drive_minutes)} (${this.source_text(day.drive_source)})${
+					day.long_drive ? ` · ${__("Long drive")}` : ""
+				}`
+			);
+		}
+		if (Number(day.unlocated) > 0) {
+			lines.push(__("{0} stop(s) with no location: not counted in the drive", [day.unlocated]));
+		}
 		(day.bookings || []).forEach((booking) => {
+			// The drive is summarized above; it is only listed when the day carries no figure for it.
+			if (booking.kind === "drive" && Number(day.drive_minutes) > 0) return;
 			const parts = [`${pp_hours(booking.hours)}h`];
 			if (booking.slot) parts.push(booking.slot.join("–"));
 			if (booking.estimated) parts.push(__("estimated"));
@@ -597,6 +711,42 @@ class ProjectPlanner {
 		(day.conflicts || []).forEach((text) => lines.push(`${__("Conflict")}: ${text}`));
 		(day.warnings || []).forEach((text) => lines.push(`${__("Note")}: ${text}`));
 		return lines.join("\n");
+	}
+
+	// "Google", "Estimate", "Google + estimate": where a drive time came from.
+	source_text(source) {
+		if (source === "google") return __("Google");
+		if (source === "mixed") return __("Google + estimate");
+		return __("estimate");
+	}
+
+	// Does this person-day have anything to drive to (so a route is worth opening)?
+	has_route(day) {
+		if (!day) return false;
+		if (Number(day.drive_minutes) > 0) return true;
+		return (day.bookings || []).some((b) => b.kind && b.kind !== "drive" && b.kind !== "travel");
+	}
+
+	// The drive line of a person-day: "1h 10m drive", a Long drive chip when it is long, and the
+	// route icon. Clicking either opens the route view. Empty when there is nothing to show.
+	drive_html(resource, ymd, day) {
+		if (!this.has_route(day)) return "";
+		const minutes = Number(day.drive_minutes) || 0;
+		// With no figure for the day the icon stands alone: it still opens the route.
+		const text = minutes > 0 ? __("{0} drive", [pp_drive(minutes)]) : "";
+		const tip = minutes > 0 ? `${pp_drive(minutes)} · ${this.source_text(day.drive_source)}` : __("Open this day's route");
+		const long = day.long_drive ? `<span class="pp-chip pp-red">${pp_esc(__("Long drive"))}</span>` : "";
+		const icon =
+			'<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">' +
+			'<circle cx="3.5" cy="12.5" r="1.8"/><circle cx="12.5" cy="3.5" r="1.8"/>' +
+			'<path d="M5.3 12.5H10a2.5 2.5 0 0 0 0-5H6a2.5 2.5 0 0 1 0-4h4.7"/></svg>';
+		return `
+			<span class="pp-drive">
+				<span class="pp-route" role="button" tabindex="0" data-route-resource="${pp_esc(resource)}"
+					data-route-date="${pp_esc(ymd)}" title="${pp_esc(tip)}" aria-label="${pp_esc(
+			__("Open the route for {0}", [pp_when(ymd)])
+		)}">${icon}${text ? `<span class="pp-drive-text">${pp_esc(text)}</span>` : ""}</span>${long}
+			</span>`;
 	}
 
 	person_html(resource, compact) {
@@ -663,6 +813,7 @@ class ProjectPlanner {
 					<div class="pp-avail ${state.cls}" title="${pp_esc(tip)}">
 						<span class="pp-avail-text">${pp_esc(state.text)}</span>
 						<div class="pp-bar"><i style="width:${width}%"></i></div>
+						${this.drive_html(resource.name, ymd, day)}
 					</div>`);
 			});
 		});
@@ -807,6 +958,7 @@ class ProjectPlanner {
 						<div class="pp-cap ${state.cls}" title="${pp_esc(this.day_tip(resource.name, ymd, day))}">
 							<span class="pp-cap-text">${pp_esc(state.text)}</span>
 							<div class="pp-bar"><i style="width:${width}%"></i></div>
+							${this.drive_html(resource.name, ymd, day)}
 						</div>
 						${chips}
 					</div>`);
@@ -826,6 +978,8 @@ class ProjectPlanner {
 
 	// One booking in a crew-view cell: a task the planner can move, or someone else's (static).
 	booking_html(resource, ymd, booking) {
+		// Driving is padding on the day's hours, not a thing to open: the cell's drive line shows it.
+		if (booking.kind === "drive") return "";
 		const card = booking.ref && this.by_task[booking.ref];
 		const hours = booking.slot ? booking.slot.join("–") : `${pp_hours(booking.hours)}h`;
 		if (card) {
@@ -922,6 +1076,13 @@ class ProjectPlanner {
 		const sub = [card.project_title || card.project, this.hours_text(card)].filter(Boolean).join(" · ");
 		const crew_names = (card.crew || []).map((member) => this.resource_label(member.resource, member.label));
 		const tip = [card.subject, sub, crew_names.join(", "), ...conflicts].filter(Boolean).join("\n");
+		// Cards in the Needs crew and Unscheduled trays offer to find a day (ymd is null there).
+		const suggest =
+			!ymd && card.movable && this.data.can_edit
+				? `<div class="pp-suggest-row"><button type="button" class="btn btn-default btn-xs pp-suggest" data-suggest="${pp_esc(
+						card.name
+				  )}">${pp_esc(__("Suggest dates"))}</button></div>`
+				: "";
 		return `
 			<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd || "")}"
 				tabindex="0" title="${pp_esc(tip)}" style="border-left-color:${pp_esc(color)}">
@@ -931,6 +1092,7 @@ class ProjectPlanner {
 				</div>
 				<div class="pp-card-sub">${pp_esc(sub)}</div>
 				<div class="pp-card-chips">${chips.join("")}</div>
+				${suggest}
 			</div>`;
 	}
 
@@ -991,7 +1153,7 @@ class ProjectPlanner {
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
-			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard")) return;
+			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route")) return;
 			e.preventDefault();
 			this.activate(e.target);
 		});
@@ -999,6 +1161,17 @@ class ProjectPlanner {
 
 	activate(target) {
 		if (!target || !target.closest) return;
+		const route_el = target.closest(".pp-route[data-route-resource]");
+		if (route_el) {
+			this.go_route(route_el.getAttribute("data-route-resource"), route_el.getAttribute("data-route-date"));
+			return;
+		}
+		const suggest_el = target.closest(".pp-suggest[data-suggest]");
+		if (suggest_el) {
+			const task = this.by_task[suggest_el.getAttribute("data-suggest")];
+			if (task) this.suggest_dates(task);
+			return;
+		}
 		const card_el = target.closest(".pp-card[data-task]");
 		if (card_el) {
 			const card = this.by_task[card_el.getAttribute("data-task")];
@@ -1461,6 +1634,7 @@ class ProjectPlanner {
 
 		const links = [["task", __("Open task")]];
 		if (card.project) links.push(["project", __("Open project")]);
+		if (editable) links.push(["suggest", __("Suggest dates")]);
 		const fields = [
 			{
 				fieldtype: "HTML",
@@ -1541,6 +1715,7 @@ class ProjectPlanner {
 			dialog.hide();
 			if (action === "task") frappe.set_route("Form", "Task", card.name);
 			else if (action === "project") frappe.set_route("Form", "Project", card.project);
+			else if (action === "suggest") this.suggest_dates(card);
 		});
 		dialog.show();
 		if (editable && (card.credentials || []).length) dialog.set_value("credentials", card.credentials.slice());
@@ -1594,5 +1769,401 @@ class ProjectPlanner {
 		dialog.hide();
 		if (Object.keys(args).length === 1) return;
 		this.commit(card, "save_task", args, __("{0} updated", [card.subject || card.name]));
+	}
+
+	// ------------------------------------------------------------------ suggestions
+
+	// Ask the server which days suit this task by drive time, then offer them in a dialog.
+	suggest_dates(card) {
+		return Promise.resolve(
+			frappe.call({
+				method: `${PP.api}.suggest_dates`,
+				args: { task: card.name },
+				freeze: true,
+				freeze_message: __("Looking for the best days…"),
+			})
+		)
+			.then((r) => this.show_suggestions(card, (r && r.message) || {}))
+			.catch(() => null);
+	}
+
+	show_suggestions(card, result) {
+		const suggestions = result.suggestions || [];
+		const subject = card.subject || card.name;
+		const parts = [];
+		if (result.note) parts.push(`<div class="pp-route-note">${pp_esc(result.note)}</div>`);
+		if (result.site && result.site.label) {
+			parts.push(`<p class="pp-stop-sub">${pp_esc(__("Site: {0}", [result.site.label]))}</p>`);
+		}
+		if (!suggestions.length) {
+			parts.push(
+				`<p>${pp_esc(
+					__("No day in the next few weeks has someone free for this task. Try another crew or shorten the task.")
+				)}</p>`
+			);
+		} else {
+			const rows = suggestions.map((item, index) => {
+				const added = Number(item.added_minutes);
+				const drive =
+					item.added_minutes == null || !Number.isFinite(added)
+						? ""
+						: `<span class="pp-chip">${pp_esc(__("+{0} driving", [pp_drive(added)]))}</span>`;
+				const long = item.long_drive ? `<span class="pp-chip pp-red">${pp_esc(__("Long drive"))}</span>` : "";
+				const free = item.free_hours == null ? "" : pp_esc(__("{0}h free", [pp_hours(item.free_hours)]));
+				return `
+					<tr>
+						<td class="pp-sug-when">${pp_esc(pp_when(item.date))}</td>
+						<td>
+							<div><b>${pp_esc(item.label || item.resource)}</b> <span class="pp-stop-sub">${free}</span></div>
+							<div class="pp-sug-reason">${pp_esc(item.reason || "")}</div>
+							<div>${drive}${long}</div>
+						</td>
+						<td><button type="button" class="btn btn-primary btn-xs" data-book="${pp_esc(index)}">${pp_esc(
+					__("Book")
+				)}</button></td>
+					</tr>`;
+			});
+			parts.push(`<table class="pp-sug">${rows.join("")}</table>`);
+		}
+		const dialog = new frappe.ui.Dialog({
+			title: __("Suggested days for {0}", [subject]),
+			fields: [{ fieldtype: "HTML", fieldname: "suggestions", options: parts.join("") }],
+		});
+		dialog.$wrapper.find("[data-book]").on("click", (e) => {
+			const item = suggestions[parseInt(e.currentTarget.getAttribute("data-book"), 10)];
+			if (!item) return;
+			dialog.hide();
+			this.book_suggestion(card, item);
+		});
+		dialog.show();
+	}
+
+	// Book one suggestion exactly as a drag from a tray onto a person's row would: one save_task
+	// for the day (the person is added to the crew in the same call when they are not on it), so a
+	// conflict asks for a reason once, through the same flow.
+	book_suggestion(card, item) {
+		const args = { task: card.name, start: item.date };
+		if (item.resource && !this.crew_has(card, item.resource)) {
+			args.crew = JSON.stringify(this.crew_rows(card).concat([{ resource: item.resource, hours: null, is_lead: 0 }]));
+		}
+		const who = this.resource_label(item.resource, item.label);
+		return this.commit(
+			card,
+			"save_task",
+			args,
+			__("{0} booked for {1} on {2}", [card.subject || card.name, who, pp_when(item.date)])
+		);
+	}
+
+	// ------------------------------------------------------------------ route view
+
+	load_route() {
+		const token = ++this.request;
+		this.$title.text("");
+		this.$body.addClass("pp-loading");
+		return Promise.resolve(
+			frappe.call({
+				method: `${PP.api}.get_route`,
+				args: { resource: this.route_resource, date: this.route_date },
+			})
+		)
+			.then((r) => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.route_data = (r && r.message) || null;
+				this.render_route(token);
+			})
+			.catch(() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.route_data = null;
+				this.render_route(token);
+			});
+	}
+
+	clear_route_map() {
+		const state = this.route_map;
+		this.route_map = null;
+		if (!state) return;
+		(Object.values(state.markers || {}) || []).forEach((marker) => {
+			if (marker && marker.setMap) marker.setMap(null);
+		});
+		if (state.line && state.line.setMap) state.line.setMap(null);
+	}
+
+	route_back_to_week() {
+		this.go("week", this.route_date || frappe.datetime.get_today());
+	}
+
+	render_route(token) {
+		this.clear_route_map();
+		const data = this.route_data;
+		const date = this.route_date;
+		const label = (data && data.label) || this.route_resource;
+		const stops = (data && data.stops) || [];
+		const head = [];
+		const step = (sign) =>
+			this.go_route(this.route_resource, pp_ymd(moment(date, "YYYY-MM-DD").add(sign, "days")));
+
+		this.$route.empty();
+		const $head = $('<div class="pp-route-head"></div>').appendTo(this.$route);
+		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
+			.attr("title", __("Previous day"))
+			.on("click", () => step(-1))
+			.appendTo($head);
+		$('<button type="button" class="btn btn-default btn-sm">›</button>')
+			.attr("title", __("Next day"))
+			.on("click", () => step(1))
+			.appendTo($head);
+		$('<span class="pp-route-title"></span>')
+			.text(`${label} · ${moment(date, "YYYY-MM-DD").format("dddd, MMM D, YYYY")}`)
+			.appendTo($head);
+		$('<span class="pp-spacer"></span>').appendTo($head);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Back to week"))
+			.on("click", () => this.route_back_to_week())
+			.appendTo($head);
+		const maps_url = data && data.maps_url;
+		if (maps_url && /^https:\/\/www\.google\.com\/maps\//.test(maps_url)) {
+			$('<button type="button" class="btn btn-primary btn-sm"></button>')
+				.text(__("Open in Google Maps"))
+				.on("click", () => window.open(maps_url, "_blank", "noopener"))
+				.appendTo($head);
+		}
+
+		if (!data) {
+			$('<div class="pp-route-note"></div>')
+				.text(__("The route could not be loaded. Check that this person is on the Planner Resources list, then refresh."))
+				.appendTo(this.$route);
+			return;
+		}
+
+		// Totals.
+		const sum_legs = stops.reduce((total, stop) => total + (Number(stop.drive_minutes) || 0), 0);
+		const totals = [];
+		totals.push(`<b>${pp_esc(__("Driving"))}</b> ${pp_esc(pp_drive(data.drive_minutes))}`);
+		if (Number(data.km) > 0) totals.push(pp_esc(`${pp_km(data.km)} km`));
+		if (Number(data.drive_minutes) > 0 && data.source) totals.push(pp_esc(this.source_text(data.source)));
+		totals.push(pp_esc(__("{0} stop(s)", [stops.length])));
+		const long = data.long_drive ? `<span class="pp-chip pp-red">${pp_esc(__("Long drive"))}</span>` : "";
+		$(`<div class="pp-route-totals">${totals.join(" · ")}${long}</div>`).appendTo(this.$route);
+
+		// Notices.
+		if (data.travel) head.push(data.travel);
+		if (data.off) head.push(data.off);
+		if (!data.start) head.push(__("The shop address could not be located, so the route starts at the first stop."));
+		if (data.source && data.source !== "google" && Number(data.drive_minutes) > 0) {
+			head.push(__("Some drive times are straight-line estimates, not Google's."));
+		}
+		if (!stops.length) head.push(__("Nothing to drive to on this day."));
+		head.forEach((text) => $('<div class="pp-route-note"></div>').text(text).appendTo(this.$route));
+		const $map_note = $('<div class="pp-route-note"></div>').hide().appendTo(this.$route);
+
+		// The ordered list, then the map: on a phone the list comes first.
+		const $cols = $('<div class="pp-route-cols"></div>').appendTo(this.$route);
+		const html = [];
+		if (data.start) {
+			html.push(`
+				<div class="pp-stop">
+					<span class="pp-stop-num pp-shop">S</span>
+					<div class="pp-stop-body">
+						<div class="pp-stop-label">${pp_esc(data.start.label || __("Shop"))}</div>
+						<div class="pp-stop-sub">${pp_esc(data.start.address || "")}</div>
+					</div>
+				</div>`);
+		}
+		let previous_located = !!data.start;
+		stops.forEach((stop) => {
+			const located = !!stop.located && pp_valid_point(stop.lat, stop.lng);
+			const when =
+				stop.arrive || stop.depart ? [stop.arrive, stop.depart].filter(Boolean).join("–") : "";
+			const sub = [
+				stop.project_title || stop.project,
+				stop.slot && stop.slot.length === 2 ? stop.slot.join("–") : "",
+				Number(stop.hours) > 0 ? `${pp_hours(stop.hours)}h` : "",
+			]
+				.filter(Boolean)
+				.join(" · ");
+			let leg = "";
+			if (located && previous_located && Number(stop.drive_minutes) >= 0 && stop.drive_minutes != null) {
+				const km = Number(stop.km) > 0 ? ` · ${pp_km(stop.km)} km` : "";
+				leg = `<div class="pp-stop-leg">${pp_esc(`${pp_drive(stop.drive_minutes)}${km}`)}</div>`;
+			}
+			if (located) previous_located = true;
+			const waits =
+				Number(stop.wait_minutes) >= 5
+					? `<div class="pp-stop-leg">${pp_esc(__("Waits {0} for the start time", [pp_drive(stop.wait_minutes)]))}</div>`
+					: "";
+			const missing = located
+				? ""
+				: `<div class="pp-stop-missing">${pp_esc(__("No location — set the task's address"))}</div>`;
+			const open =
+				(stop.kind === "task" || stop.kind === "rental") && stop.ref
+					? `<span class="pp-stop-link" role="button" tabindex="0" data-open-task="${pp_esc(stop.ref)}">${pp_esc(
+							__("Open task")
+					  )}</span>`
+					: "";
+			html.push(`
+				<div class="pp-stop${located ? "" : " pp-unlocated"}" data-marker="${pp_esc(located ? stop.order : "")}">
+					<span class="pp-stop-num">${pp_esc(stop.order)}</span>
+					<div class="pp-stop-body">
+						${when ? `<div class="pp-stop-time">${pp_esc(when)}</div>` : ""}
+						<div class="pp-stop-label">${pp_esc(stop.label || stop.ref)}</div>
+						${sub ? `<div class="pp-stop-sub">${pp_esc(sub)}</div>` : ""}
+						${stop.address ? `<div class="pp-stop-sub">${pp_esc(stop.address)}</div>` : ""}
+						${leg}${waits}${missing}${open ? `<div class="pp-stop-leg">${open}</div>` : ""}
+					</div>
+				</div>`);
+		});
+		// The way home: the server prices it (end.drive_minutes); the difference is the fallback.
+		const back =
+			data.end && data.end.drive_minutes != null
+				? Number(data.end.drive_minutes) || 0
+				: (Number(data.drive_minutes) || 0) - sum_legs;
+		if (data.end && stops.some((stop) => stop.located) && back > 0.5) {
+			html.push(`
+				<div class="pp-stop">
+					<span class="pp-stop-num pp-shop">S</span>
+					<div class="pp-stop-body">
+						<div class="pp-stop-label">${pp_esc(__("Back at {0}", [data.end.label || __("Shop")]))}</div>
+						<div class="pp-stop-leg">${pp_esc(pp_drive(back))}</div>
+					</div>
+				</div>`);
+		}
+		const $list = $('<div class="pp-stops"></div>').html(html.join("")).appendTo($cols);
+		$list.find("[data-open-task]").on("click keydown", (e) => {
+			if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return;
+			e.stopPropagation();
+			frappe.set_route("Form", "Task", e.currentTarget.getAttribute("data-open-task"));
+		});
+		$list.find(".pp-stop[data-marker]").on("click", (e) => {
+			const order = e.currentTarget.getAttribute("data-marker");
+			if (order) this.focus_marker(order);
+		});
+		if (!stops.length && !data.start) $list.hide();
+
+		const $map = $('<div class="pp-map"></div>').appendTo($cols);
+		this.draw_route_map(token, data, $map, $map_note, $cols);
+	}
+
+	// Never throws, never leaves a blank pane: when Google cannot be used the list stands alone
+	// with a one-line notice.
+	draw_route_map(token, data, $map, $note, $cols) {
+		const fail = (text) => {
+			if (token !== this.request) return;
+			$map.hide();
+			$cols.addClass("pp-nomap");
+			$note.text(text).show();
+		};
+		const points = (data.stops || []).filter((stop) => stop.located && pp_valid_point(stop.lat, stop.lng));
+		if (!(data.stops || []).length) {
+			$map.hide();
+			$cols.addClass("pp-nomap");
+			return;
+		}
+		if (!points.length) {
+			fail(__("No stop on this route has a location yet, so there is nothing to draw on a map."));
+			return;
+		}
+		if (!data.maps_key) {
+			fail(__("Add a Google Maps API key in Travel Settings to see this route on a map."));
+			return;
+		}
+		if (!window.EEGoogleMaps) {
+			fail(__("The map could not be loaded, so only the list is shown."));
+			return;
+		}
+		const start = data.start && pp_valid_point(data.start.lat, data.start.lng) ? data.start : null;
+		const theme = (document.documentElement.dataset && document.documentElement.dataset.theme) || "light";
+		window.EEGoogleMaps.load({ apiKey: data.maps_key, libraries: ["maps"] })
+			.then((maps) => {
+				if (token !== this.request || !document.body.contains($map[0])) return;
+				const first = start || points[0];
+				const options = Object.assign(
+					{
+						zoom: 10,
+						center: { lat: Number(first.lat), lng: Number(first.lng) },
+						mapTypeControl: false,
+						streetViewControl: false,
+						fullscreenControl: true,
+						gestureHandling: "cooperative",
+					},
+					window.EEGoogleMaps.mapOptions(data.map_ids || {}, theme)
+				);
+				const map = new maps.Map($map[0], options);
+				const info = new maps.InfoWindow();
+				const bounds = new maps.LatLngBounds();
+				const markers = {};
+				const add = (key, point, text, color, title, detail) => {
+					const position = { lat: Number(point.lat), lng: Number(point.lng) };
+					const marker = new maps.Marker({
+						position,
+						map,
+						title,
+						label: { text: String(text), color: "#ffffff", fontWeight: "700", fontSize: "12px" },
+						icon: {
+							path: maps.SymbolPath.CIRCLE,
+							scale: 13,
+							fillColor: color,
+							fillOpacity: 1,
+							strokeColor: "#ffffff",
+							strokeWeight: 2,
+						},
+					});
+					marker.addListener("click", () => {
+						// Text nodes only: stop and task names are typed by people.
+						const box = document.createElement("div");
+						const head = document.createElement("b");
+						head.textContent = title;
+						box.appendChild(head);
+						if (detail) {
+							const line = document.createElement("div");
+							line.textContent = detail;
+							box.appendChild(line);
+						}
+						info.setContent(box);
+						info.open({ map, anchor: marker });
+					});
+					bounds.extend(position);
+					markers[key] = marker;
+				};
+				const path = [];
+				if (start) {
+					add("shop", start, "S", "#16a34a", start.label || __("Shop"), start.address || "");
+					path.push({ lat: Number(start.lat), lng: Number(start.lng) });
+				}
+				points.forEach((stop) => {
+					add(
+						String(stop.order),
+						stop,
+						stop.order,
+						PP.default_color,
+						stop.label || stop.ref || "",
+						[stop.arrive, stop.address].filter(Boolean).join(" · ")
+					);
+					path.push({ lat: Number(stop.lat), lng: Number(stop.lng) });
+				});
+				if (start) path.push({ lat: Number(start.lat), lng: Number(start.lng) });
+				const line = new maps.Polyline({
+					path,
+					map,
+					strokeColor: PP.default_color,
+					strokeOpacity: 0.8,
+					strokeWeight: 4,
+				});
+				if (path.length > 1) map.fitBounds(bounds, 56);
+				else map.setZoom(14);
+				this.route_map = { map, info, markers, line };
+			})
+			.catch(() => fail(__("The map could not be loaded, so only the list is shown.")));
+	}
+
+	// Clicking a stop in the list shows it on the map.
+	focus_marker(order) {
+		const state = this.route_map;
+		const marker = state && state.markers[String(order)];
+		if (!marker) return;
+		state.map.panTo(marker.getPosition());
+		window.google.maps.event.trigger(marker, "click");
 	}
 }

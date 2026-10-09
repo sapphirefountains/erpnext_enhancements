@@ -18,6 +18,12 @@ a technician who had started a visit themselves (Log a Visit, Do Visit Today) co
 for review. Request Review now allows it. Approve & Submit still does not: the office (Lisa) reviews
 every visit before it is billed. Every workflow transition in the fixtures has to state the flag.
 
+The Maintenance Planner has the Project Planner's features (P1.7): a Resources available panel,
+days off on the calendar, a crew timeline (``/crew/<date>``), technicians dragged onto visits, a
+reason for a move that overbooks (never a block), Undo, and a route link. The reason flow lives in
+``move_visit`` / ``move_projected``; the rest is wiring in the page, so those tests read the page's
+source, as ``test_project_planner_page`` does for the Project Planner.
+
 Bench-free: it installs its own ``frappe`` stub and runs the real modules.
 
 Run: python -m unittest erpnext_enhancements.tests.test_maintenance_planner
@@ -126,6 +132,7 @@ def setUpModule():
 	utils.formatdate = lambda value=None, *a, **k: _getdate(value).strftime("%m-%d-%Y")
 	utils.nowdate = lambda: str(TODAY)
 	utils.strip_html_tags = lambda text: re.sub(r"<[^>]+>", "", str(text))
+	utils.escape_html = lambda text: str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 	frappe.utils = utils
 	frappe._ = lambda text, *a, **k: text
 	frappe.whitelist = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda fn: fn))
@@ -178,6 +185,7 @@ def _reset():
 	frappe.get_roles = lambda user=None: list(frappe.roles)
 	frappe.docs = {}
 	frappe.writes = []
+	frappe.comments = []
 	frappe.calls = []
 	frappe.defaults = {}
 	frappe.exists = set()
@@ -486,6 +494,9 @@ class _Record(_Doc):
 	def check_permission(self, ptype):
 		pass
 
+	def add_comment(self, kind, text):
+		frappe.comments.append((self.name, kind, text))
+
 	def save(self):
 		frappe.saved.append(dict(self))
 		frappe.local.message_log.append(
@@ -752,7 +763,7 @@ class TestProjectBookings(unittest.TestCase):
 		finally:
 			for name, value in saved.items():
 				setattr(planner, name, value)
-		self.assertEqual(data["technicians"], self.TECHS)
+		self.assertEqual([t["user"] for t in data["technicians"]], [t["user"] for t in self.TECHS])
 		self.assertEqual(list(data["bookings"]), ["austin@example.com"])
 		self.assertEqual(len(data["bookings"]["austin@example.com"]["2026-10-12"]["items"]), 3)
 
@@ -803,7 +814,7 @@ class TestProjectBookings(unittest.TestCase):
 		cards = code[code.index("booking_cards() {") : code.index("fmt_hours(hours) {")]
 		self.assertNotIn("movable", cards)
 		# Only a card flagged movable is ever picked up by a drag.
-		self.assertIn("if (!card || !card.movable || card.saving) return;", code)
+		self.assertIn("if (!card || !card.movable || card.saving) return null;", code)
 		# Free hours come from the engine's numbers, never from the visit cards.
 		self.assertIn("this.data.bookings", code)
 		self.assertIn("{0}h free", code)
@@ -832,6 +843,654 @@ class TestProjectBookings(unittest.TestCase):
 		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
 		for label in ("Project task (read-only)", "Rental crew (read-only)", "Travel (read-only)"):
 			self.assertIn(f'__("{label}")', code)
+
+
+def _engine_day_conflicts(capacity, off, bookings):
+	"""``crew_availability.day_conflicts`` as documented: day off, over capacity, double-booked slots."""
+	capacity = float(capacity or 0)
+	out = []
+	if capacity <= 0 and any(float(b.get("hours") or 0) > 0 for b in bookings):
+		out.append(f"Booked on a day off ({off})" if off else "Booked on a day off")
+	else:
+		booked = sum(float(b.get("hours") or 0) for b in bookings)
+		if booked - capacity > 0.01:
+			out.append(f"Over by {round(booked - capacity, 2):g}h")
+	return out
+
+
+def _cell(capacity=8.0, bookings=(), off=None):
+	return {
+		"capacity": capacity,
+		"booked": sum(b["hours"] for b in bookings),
+		"free": 0.0,
+		"off": off,
+		"bookings": list(bookings),
+		"conflicts": [],
+		"warnings": [],
+	}
+
+
+def _task(hours, ref="TASK-1"):
+	return {
+		"kind": "task",
+		"ref": ref,
+		"label": "Install pump",
+		"project": "PRJ-2",
+		"hours": hours,
+		"slot": None,
+	}
+
+
+class _FakeEngine:
+	"""Installs a stand-in ``crew_availability`` that answers from a table of day cells."""
+
+	def install(self, cells=None):
+		"""``cells``: ``{planner resource: {"YYYY-MM-DD": day cell}}``."""
+		self.cells = cells or {}
+		self.availability_calls = []
+		self._saved_engine = sys.modules.get(ENGINE_MODULE)
+		engine = types.ModuleType(ENGINE_MODULE)
+		engine.availability = self._availability
+		engine.day_conflicts = _engine_day_conflicts
+		engine.get_settings = lambda: {"maintenance_visit_hours": 2.0}
+		sys.modules[ENGINE_MODULE] = engine
+		self.logged = []
+		frappe.get_traceback = lambda: "traceback"
+		frappe.log_error = lambda *a, **k: self.logged.append(k)
+		# Planner Resources by user: Austin and Lisa have one, nobody else does.
+		resources = {
+			"austin@example.com": {"name": "RES-1", "resource_name": "Austin Healey"},
+			"lisa@example.com": {"name": "RES-2", "resource_name": "Lisa"},
+		}
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Planner Resource":
+				row = resources.get((kwargs.get("filters") or {}).get("user"))
+				return [_Doc(row)] if row else []
+			return []
+
+		frappe.get_all = get_all
+
+	def restore(self):
+		if self._saved_engine is None:
+			sys.modules.pop(ENGINE_MODULE, None)
+		else:
+			sys.modules[ENGINE_MODULE] = self._saved_engine
+
+	def _availability(self, start, end, resources=None):
+		self.availability_calls.append((start, end, resources))
+		if isinstance(self.cells, Exception):
+			raise self.cells
+		return {"days": self.cells}
+
+
+class TestNewConflicts(unittest.TestCase):
+	"""``new_visit_conflicts``: only what the visit adds to a day counts."""
+
+	def _new(self, cell, ref="V-1", hours=2.0):
+		return planner.new_visit_conflicts(_engine_day_conflicts, cell, ref, hours)
+
+	def test_a_visit_that_fits_adds_nothing(self):
+		self.assertEqual(self._new(_cell(8, [_task(5)])), [])
+
+	def test_a_visit_that_overfills_the_day_is_a_conflict(self):
+		self.assertEqual(self._new(_cell(8, [_task(7)])), ["Over by 1h"])
+
+	def test_a_day_off_with_nothing_booked_is_a_conflict(self):
+		self.assertEqual(self._new(_cell(0, [], "Time off")), ["Booked on a day off (Time off)"])
+
+	def test_a_day_that_was_already_a_conflict_is_not_new(self):
+		# Already booked on a day off: one more booking says the same thing, so nobody is asked again.
+		self.assertEqual(self._new(_cell(0, [_task(4)], "Time off")), [])
+
+	def test_a_worse_overbooking_is_new(self):
+		self.assertEqual(self._new(_cell(8, [_task(9)])), ["Over by 3h"])
+
+	def test_the_visit_already_on_the_day_is_not_counted_twice(self):
+		here = {
+			"kind": "visit",
+			"ref": "V-1",
+			"label": "Highlands",
+			"project": None,
+			"hours": 2.0,
+			"slot": None,
+		}
+		self.assertEqual(self._new(_cell(8, [_task(6), here])), [])
+
+	def test_it_agrees_with_the_engine(self):
+		# Guard against the engine renaming a sentence: the real day_conflicts speaks the same.
+		saved = sys.modules.pop(ENGINE_MODULE, None)
+		try:
+			engine = importlib.import_module(ENGINE_MODULE)
+		except Exception as error:  # the engine imports more of the app than this suite stubs
+			self.skipTest(f"the availability engine does not import bench-free: {error}")
+		finally:
+			sys.modules.pop(ENGINE_MODULE, None)
+			if saved is not None:
+				sys.modules[ENGINE_MODULE] = saved
+		for cell in (_cell(8, [_task(7)]), _cell(0, [], "Time off"), _cell(0, [_task(4)], "Time off")):
+			self.assertEqual(
+				self._new(cell),
+				planner.new_visit_conflicts(engine.day_conflicts, cell, "V-1", 2.0),
+			)
+
+
+class TestMoveVisitReason(unittest.TestCase):
+	"""Overbooking warns and never blocks: ask for a reason, save nothing until it comes (P1.7)."""
+
+	def setUp(self):
+		_reset()
+		frappe.saved = []
+		self.engine = _FakeEngine()
+		self.engine.install()
+		self.addCleanup(self.engine.restore)
+
+	def _record(self, **values):
+		doc = _Record(
+			name="REC-1",
+			doctype="Sapphire Maintenance Record",
+			docstatus=0,
+			workflow_state="Draft",
+			project="PRJ-1",
+			scheduled_visit_date=D(2026, 10, 12),
+			visit_date=None,
+			technician="austin@example.com",
+			modified="2026-10-07 10:00:00",
+		)
+		doc.update(values)
+		frappe.docs[("Sapphire Maintenance Record", "REC-1")] = doc
+		return doc
+
+	def test_a_move_that_overbooks_asks_for_a_reason_and_saves_nothing(self):
+		self._record()
+		self.engine.cells = {"RES-1": {"2026-10-15": _cell(8, [_task(7)])}}
+		result = planner.move_visit("REC-1", date="2026-10-15")
+		self.assertEqual(
+			result,
+			{"needs_reason": True, "conflicts": {"Austin Healey": ["2026-10-15: Over by 1h"]}},
+		)
+		self.assertEqual(frappe.saved, [])
+		self.assertEqual(frappe.comments, [])
+		self.assertEqual(frappe.calls, [])
+		# Only the target technician's resource, for just the target day.
+		self.assertEqual(self.engine.availability_calls, [(D(2026, 10, 15), D(2026, 10, 15), ["RES-1"])])
+
+	def test_with_a_reason_it_saves_and_the_reason_goes_on_the_visit(self):
+		self._record()
+		self.engine.cells = {"RES-1": {"2026-10-15": _cell(8, [_task(7)])}}
+		result = planner.move_visit("REC-1", date="2026-10-15", reason="  Pump is failing, <b>urgent</b>  ")
+		self.assertEqual(frappe.saved[0]["scheduled_visit_date"], D(2026, 10, 15))
+		self.assertNotIn("needs_reason", result)
+		self.assertEqual(result["conflicts"], {"Austin Healey": ["2026-10-15: Over by 1h"]})
+		name, kind, text = frappe.comments[0]
+		self.assertEqual((name, kind), ("REC-1", "Comment"))
+		self.assertIn("Scheduled over a conflict on the Maintenance Planner", text)
+		self.assertIn("Austin Healey: 2026-10-15: Over by 1h", text)
+		self.assertIn("Reason: Pump is failing, &lt;b&gt;urgent&lt;/b&gt;", text)
+
+	def test_a_move_that_fits_saves_without_asking_or_commenting(self):
+		self._record()
+		self.engine.cells = {"RES-1": {"2026-10-15": _cell(8, [_task(3)])}}
+		result = planner.move_visit("REC-1", date="2026-10-15", reason="not needed")
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertNotIn("conflicts", result)
+		self.assertEqual(frappe.comments, [])
+
+	def test_a_day_off_asks(self):
+		self._record()
+		self.engine.cells = {"RES-1": {"2026-10-16": _cell(0, [], "Not a work day")}}
+		result = planner.move_visit("REC-1", date="2026-10-16")
+		self.assertEqual(
+			result["conflicts"], {"Austin Healey": ["2026-10-16: Booked on a day off (Not a work day)"]}
+		)
+
+	def test_a_conflict_the_day_already_had_does_not_ask_again(self):
+		self._record()
+		self.engine.cells = {"RES-1": {"2026-10-16": _cell(0, [_task(4)], "Time off")}}
+		result = planner.move_visit("REC-1", date="2026-10-16")
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertNotIn("needs_reason", result)
+		self.assertEqual(frappe.comments, [])
+
+	def test_handing_a_visit_over_checks_the_new_technicians_day(self):
+		self._record()
+		self.engine.cells = {
+			"RES-1": {"2026-10-12": _cell(8, [])},
+			"RES-2": {"2026-10-12": _cell(8, [_task(7)])},
+		}
+		result = planner.move_visit("REC-1", technician="lisa@example.com")
+		self.assertEqual(result["conflicts"], {"Lisa": ["2026-10-12: Over by 1h"]})
+		self.assertEqual(frappe.saved, [])
+		self.assertEqual(frappe.calls, [])  # no assignment moved either
+		self.assertEqual(self.engine.availability_calls, [(D(2026, 10, 12), D(2026, 10, 12), ["RES-2"])])
+		self._record()  # the page asks again with the reason; each request loads the record afresh
+		planner.move_visit("REC-1", technician="lisa@example.com", reason="Austin is out sick")
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertEqual(frappe.calls[-1], ("assign", "REC-1", "lisa@example.com"))
+		self.assertIn("Reason: Austin is out sick", frappe.comments[0][2])
+
+	def test_a_technician_with_no_planner_resource_has_no_hours_to_overbook(self):
+		self._record()
+		planner.move_visit("REC-1", technician="lee@example.com")
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertEqual(self.engine.availability_calls, [])
+
+	def test_unassigning_or_an_unchanged_move_checks_nothing(self):
+		self._record()
+		planner.move_visit("REC-1", technician="")
+		self._record()
+		planner.move_visit("REC-1", date="2026-10-12", technician="austin@example.com")
+		self.assertEqual(self.engine.availability_calls, [])
+
+	def test_an_engine_failure_never_blocks_a_move(self):
+		self._record()
+		self.engine.cells = RuntimeError("project side broke")
+		result = planner.move_visit("REC-1", date="2026-10-15")
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertNotIn("needs_reason", result)
+		self.assertEqual(len(self.engine.logged), 1)
+		self.assertEqual(self.engine.logged[0]["title"], "Maintenance Planner: conflict check failed")
+
+
+class TestMoveProjectedReason(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		self.engine = _FakeEngine()
+		self.engine.install()
+		self.addCleanup(self.engine.restore)
+		frappe.defaults = {"PRJ-1": "austin@example.com"}
+		real = tasks._draft_maintenance_record
+		tasks._draft_maintenance_record = lambda *a, **k: _Doc(name="NEW-1")
+		self.addCleanup(setattr, tasks, "_draft_maintenance_record", real)
+
+	def _next_dates(self):
+		return {name: value for _, name, field, value in frappe.writes if field == "next_visit_date"}
+
+	def test_a_move_that_overbooks_asks_before_writing_anything(self):
+		contract = _contract([_row("A", "2026-10-20", name="r1")])
+		self.engine.cells = {"RES-1": {"2026-11-03": _cell(8, [_task(7)])}}
+		result = planner.move_projected("MNT-CON-1", "2026-10-20", "2026-11-03")
+		self.assertEqual(
+			result, {"needs_reason": True, "conflicts": {"Austin Healey": ["2026-11-03: Over by 1h"]}}
+		)
+		self.assertEqual(frappe.writes, [])
+		self.assertEqual(contract.comments, [])
+		self.assertEqual(self.engine.availability_calls, [(D(2026, 11, 3), D(2026, 11, 3), ["RES-1"])])
+
+	def test_with_a_reason_it_moves_and_the_reason_goes_on_the_contract(self):
+		contract = _contract([_row("A", "2026-10-20", name="r1")])
+		self.engine.cells = {"RES-1": {"2026-11-03": _cell(8, [_task(7)])}}
+		result = planner.move_projected("MNT-CON-1", "2026-10-20", "2026-11-03", reason="Customer asked")
+		self.assertEqual(self._next_dates(), {"r1": D(2026, 11, 3)})
+		self.assertEqual(result["moved"], 1)
+		self.assertEqual(result["conflicts"], {"Austin Healey": ["2026-11-03: Over by 1h"]})
+		self.assertEqual(len(contract.comments), 2)  # the move note, then the reason
+		self.assertIn("Scheduled over a conflict on the Maintenance Planner", contract.comments[1])
+		self.assertIn("Reason: Customer asked", contract.comments[1])
+
+	def test_a_move_that_fits_is_unchanged(self):
+		contract = _contract([_row("A", "2026-10-20", name="r1")])
+		self.engine.cells = {"RES-1": {"2026-11-03": _cell(8, [_task(2)])}}
+		self.assertEqual(
+			planner.move_projected("MNT-CON-1", "2026-10-20", "2026-11-03"), {"moved": 1, "drafted": None}
+		)
+		self.assertEqual(len(contract.comments), 1)
+
+	def test_a_contract_with_no_default_technician_has_nobody_to_overbook(self):
+		frappe.defaults = {}
+		_contract([_row("A", "2026-10-20", name="r1")])
+		planner.move_projected("MNT-CON-1", "2026-10-20", "2026-11-03")
+		self.assertEqual(self.engine.availability_calls, [])
+
+	def test_a_refusal_comes_before_any_conflict_check(self):
+		_contract([_row("A", "2026-10-20", name="r1")])
+		with self.assertRaises(_Throw):
+			planner.move_projected("MNT-CON-1", "2026-10-19", "2026-11-03")  # stale card
+		self.assertEqual(self.engine.availability_calls, [])
+
+
+class TestTechnicianView(unittest.TestCase):
+	"""``get_planner`` says which Planner Resource each technician is, and adds Field helpers."""
+
+	def setUp(self):
+		_reset()
+		self.engine = _FakeEngine()
+		self.engine.install()
+		self.addCleanup(self.engine.restore)
+		self.techs = [{"user": "austin@example.com", "name": "Austin Healey", "enabled": True}]
+		self.resources = [
+			{
+				"name": "RES-1",
+				"label": "Austin",
+				"group": "PM",
+				"user": "austin@example.com",
+				"color": "#2563eb",
+			},
+			{
+				"name": "RES-3",
+				"label": "Korben",
+				"group": "Field",
+				"user": "korben@example.com",
+				"color": None,
+			},
+			{
+				"name": "RES-4",
+				"label": "Jesse",
+				"group": "Field",
+				"user": "jesse@example.com",
+				"color": "#0d9488",
+			},
+			{"name": "RES-5", "label": "Ana", "group": "Design", "user": "ana@example.com", "color": None},
+			{"name": "RES-6", "label": "Crew", "group": "Field", "user": None, "color": None},
+		]
+		self.days = {
+			"RES-1": {"2026-10-12": dict(_cell(8, [_task(6)]), drive_minutes=70, long_drive=True)},
+			"RES-3": {"2026-10-12": _cell(8, [])},
+			"RES-4": {"2026-10-12": _cell(8, [])},
+		}
+		u2r = {r["user"]: r["name"] for r in self.resources if r["user"]}
+
+		def availability(start, end, resources=None):
+			return {"resources": self.resources, "days": self.days, "user_to_resource": u2r}
+
+		sys.modules[ENGINE_MODULE].availability = availability
+
+	def test_technicians_carry_their_resource_and_field_helpers_are_added(self):
+		view = planner._project_view(self.techs, D(2026, 10, 12), D(2026, 10, 12))
+		people = {p["user"]: p for p in view["technicians"]}
+		# The technician first, then the Field helpers by name; a Design resource or one with no user is not offered.
+		self.assertEqual(
+			[p["user"] for p in view["technicians"]],
+			["austin@example.com", "jesse@example.com", "korben@example.com"],
+		)
+		self.assertEqual(people["austin@example.com"]["resource"], "RES-1")
+		self.assertEqual(people["austin@example.com"]["group"], "PM")
+		self.assertEqual(people["austin@example.com"]["color"], "#2563eb")
+		self.assertNotIn("helper", people["austin@example.com"])
+		self.assertEqual(
+			people["korben@example.com"],
+			{
+				"user": "korben@example.com",
+				"name": "Korben",
+				"enabled": True,
+				"resource": "RES-3",
+				"group": "Field",
+				"color": None,
+				"helper": True,
+			},
+		)
+		# Their hours are in the same response.
+		self.assertEqual(
+			sorted(view["bookings"]), ["austin@example.com", "jesse@example.com", "korben@example.com"]
+		)
+
+	def test_a_field_technician_is_not_listed_twice(self):
+		self.techs.append({"user": "korben@example.com", "name": "Korben Dallas", "enabled": True})
+		view = planner._project_view(self.techs, D(2026, 10, 12), D(2026, 10, 12))
+		korben = [p for p in view["technicians"] if p["user"] == "korben@example.com"]
+		self.assertEqual(len(korben), 1)
+		self.assertEqual(korben[0]["name"], "Korben Dallas")
+
+	def test_day_cells_carry_drive_time_only_when_the_engine_does(self):
+		bookings = planner._project_bookings(self.techs, D(2026, 10, 12), D(2026, 10, 12))
+		with_drive = bookings["austin@example.com"]["2026-10-12"]
+		self.assertEqual((with_drive["drive_minutes"], with_drive["long_drive"]), (70, True))
+		self.assertNotIn("drive_source", with_drive)  # not invented
+		plain = bookings["korben@example.com"]["2026-10-12"]
+		for key in ("drive_minutes", "drive_source", "long_drive", "unlocated"):
+			self.assertNotIn(key, plain)
+		self.assertEqual(plain["warnings"], [])
+
+	def test_drive_padding_is_not_a_card_but_still_counts_as_booked(self):
+		drive = {
+			"kind": "drive",
+			"ref": None,
+			"label": "Driving",
+			"project": None,
+			"hours": 1.0,
+			"slot": None,
+		}
+		self.days["RES-1"]["2026-10-12"] = _cell(8, [_task(6), drive])
+		cell = planner._project_bookings(self.techs, D(2026, 10, 12), D(2026, 10, 12))["austin@example.com"][
+			"2026-10-12"
+		]
+		self.assertEqual([item["kind"] for item in cell["items"]], ["task"])
+		self.assertEqual(cell["booked"], 7.0)
+
+	def test_a_technician_without_a_resource_still_lists(self):
+		self.techs.append({"user": "lee@example.com", "name": "Lee", "enabled": True})
+		view = planner._project_view(self.techs, D(2026, 10, 12), D(2026, 10, 12))
+		lee = next(p for p in view["technicians"] if p["user"] == "lee@example.com")
+		self.assertIsNone(lee["resource"])
+		self.assertNotIn("lee@example.com", view["bookings"])
+
+	def test_an_engine_failure_still_returns_the_technicians(self):
+		def broken(start, end, resources=None):
+			raise RuntimeError("project side broke")
+
+		sys.modules[ENGINE_MODULE].availability = broken
+		view = planner._project_view(self.techs, D(2026, 10, 12), D(2026, 10, 12))
+		self.assertEqual(view["bookings"], {})
+		self.assertEqual([p["user"] for p in view["technicians"]], ["austin@example.com"])
+		self.assertIsNone(view["technicians"][0]["resource"])
+		self.assertEqual(len(self.engine.logged), 1)
+
+
+class TestPlannerParity(unittest.TestCase):
+	"""The page has the Project Planner's features (P1.7). Read as source, like test_project_planner_page."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
+
+	def _body(self, header, until):
+		start = self.code.index(header)
+		return self.code[start : self.code.index(until, start + len(header))]
+
+	def test_the_crew_view_is_a_route_like_month_and_week(self):
+		code = self.code
+		self.assertIn('views: ["month", "week", "crew"]', code)
+		self.assertIn("MP.views.includes(route[1])", code)
+		self.assertIn('["crew", __("Crew")]', code)
+		self.assertIn("/crew/2026-10-05", code)
+		# One week, whichever of week and crew is showing.
+		self.assertIn('if (this.view !== "month") {', self._body("range() {", "range_days() {"))
+		# Views change only through frappe.set_route, so Back and Forward step through them.
+		self.assertIn("frappe.set_route(MP.route, view, anchor)", code)
+		for forbidden in ("pushState", "replaceState", "location.hash", "window.location"):
+			self.assertNotIn(forbidden, code)
+
+	def test_the_resources_panel_shows_what_the_project_planner_shows(self):
+		code = self.code
+		panel = self._body(
+			"render_panel() {",
+			"// ------------------------------------------------------------------ crew view",
+		)
+		self.assertIn('__("Resources available")', panel)
+		self.assertIn('this.view !== "crew"', panel)  # the crew view's rows are the panel
+		for text in ("{0}h free", "Full", "Over {0}h", "Holiday", "Time off", "Not a work day"):
+			self.assertIn(f'__("{text}"', code)
+		# Remembered open or closed, behind the same try/catch as every other pref.
+		self.assertIn('panel_key: "ee_maintenance_planner_panel"', code)
+		self.assertIn('this.load_pref(MP.panel_key, "1") !== "0"', code)
+		self.assertIn("this.save_pref(MP.panel_key,", code)
+		self.assertEqual(code.count("localStorage"), 2)  # load_pref and save_pref, nowhere else
+		# The numbers are the engine's.
+		self.assertIn("this.data.bookings", code)
+		self.assertIn("this.avail_state(cell)", panel)
+		# The week panel has a capacity bar; the month panel a compact strip.
+		self.assertIn('class="mp-bar"', panel)
+		self.assertIn("mp-mini", panel)
+
+	def test_days_off_show_on_the_calendar(self):
+		code = self.code
+		calendar_ = self._body("render_calendar(cards) {", "append_off_badges($day, planned, ymd) {")
+		self.assertIn("mp-off-day", calendar_)
+		self.assertIn("this.off_label(cell)", calendar_)
+		self.assertIn("this.append_off_badges($day, planned, ymd)", calendar_)
+		self.assertIn("mp-tech-off", code)
+		self.assertIn('__("Everyone off")', code)
+		# A visit on a day its technician does not work says so.
+		self.assertIn('__("Day off")', self._body("card_html(card) {", "tech_name(user) {"))
+
+	def test_drive_time_is_shown_when_present_and_not_required(self):
+		code = self.code
+		self.assertIn("drive_line(cell) {", code)
+		self.assertIn("cell.drive_minutes", code)
+		self.assertIn('__("{0} drive"', code)
+		self.assertIn('__("Long drive")', code)
+		self.assertIn("cell.long_drive", code)
+		# Nothing is drawn for a day without a figure.
+		self.assertIn('if (minutes <= 0) return "";', code)
+
+	def test_the_crew_view_has_a_row_per_technician_and_drops_on_cells(self):
+		crew = self._body("render_crew(cards) {", "compare(a, b) {")
+		self.assertIn('class="mp-cell', crew)
+		self.assertIn('data-user="${mp_esc(user)}"', crew)
+		self.assertIn("this.person_html(person, true)", crew)
+		self.assertIn('__("Unassigned")', crew)
+		find = self._body("find_target(x, y) {", "mark_target(target) {")
+		self.assertIn(".mp-cell[data-date]", find)
+		# A visit dropped on another technician's row changes the technician (and the date).
+		plan = self._body("plan_drop(source, target) {", "drop(source, target) {")
+		self.assertIn("change.technician = target.user", plan)
+		self.assertIn('(target.user || "") !== (card.technician || "")', plan)
+
+	def test_a_projected_visit_cannot_change_technician(self):
+		plan = self._body("plan_drop(source, target) {", "drop(source, target) {")
+		self.assertEqual(plan.count("follows the technician on the site's Maintenance Profile"), 2)
+		# Refused before anything is sent: the guard sits ahead of the technician change.
+		self.assertLess(
+			plan.index('card.kind === "projected"'), plan.index("change.technician = target.user")
+		)
+		# And the dialog offers a technician only for a visit record.
+		dialog = self._body("open_card(card) {", "\n}\n")
+		self.assertRegex(
+			dialog, r'if \(card\.kind === "visit"\) \{\s+fields\.push\(\{\s+fieldtype: "Select",'
+		)
+
+	def test_a_technician_chip_dragged_onto_a_visit_assigns_it(self):
+		code = self.code
+		self.assertIn('el.closest(".mp-person[data-user]")', code)
+		self.assertIn('kind: "person"', code)
+		plan = self._body("plan_drop(source, target) {", "drop(source, target) {")
+		self.assertIn("change: { technician: source.user }", plan)
+		self.assertIn(
+			'el.closest(".mp-card[data-key]")', self._body("find_target(x, y) {", "mark_target(target) {")
+		)
+		# Started and finished visits keep their technician.
+		self.assertIn("card.movable", plan)
+
+	def test_overbooking_asks_for_a_reason_and_never_blocks(self):
+		code = self.code
+		send = self._body("send(method, args, opts) {", "ask_reason(conflicts, noun) {")
+		self.assertIn("result.needs_reason", send)
+		self.assertIn("Object.assign({}, args, { reason })", send)
+		# One retry only: a server that asks again after a reason is not looped on.
+		self.assertIn("if (args.reason) {", send)
+		ask = self._body(
+			"ask_reason(conflicts, noun) {",
+			"// ------------------------------------------------------------------ undo",
+		)
+		self.assertIn('__("Save anyway")', ask)
+		self.assertIn('fieldname: "reason"', ask)
+		self.assertIn("reqd: 1", ask)
+		self.assertIn("dialog.onhide = () => settle(null)", ask)
+		# The conflict text is escaped on its way into the dialog.
+		self.assertIn("mp_esc(text)", ask)
+		self.assertIn("mp_esc(who)", ask)
+		# Visits and contracts both go through it.
+		self.assertIn('visit ? "move_visit" : "move_projected"', code)
+
+	def test_undo_keeps_twenty_moves_and_sends_the_old_values_back(self):
+		code = self.code
+		self.assertIn("undo_max: 20", code)
+		self.assertIn('undo_reason: "Undo on the Maintenance Planner"', code)
+		self.assertIn("while (this.undo_stack.length > MP.undo_max) this.undo_stack.shift()", code)
+		save = self._body("save_move(card, change, before) {", "send(method, args, opts) {")
+		# The snapshot is taken from the card as it was, before the optimistic move.
+		self.assertIn('const before = { date: card.date || null, technician: card.technician || "" };', code)
+		self.assertIn("date: before.date, technician: before.technician", save)
+		undo = self._body(
+			"undo() {", "// ------------------------------------------------------------------ dialog"
+		)
+		self.assertIn('"move_visit"', undo)
+		self.assertIn('"move_projected"', undo)
+		for key in (
+			"record: snap.record",
+			"modified:",
+			"technician: snap.technician",
+			"args.date = snap.date",
+		):
+			self.assertIn(key, undo)
+		for key in ("contract: snap.contract", "from_date: snap.from_date", "to_date: snap.to_date"):
+			self.assertIn(key, undo)
+		# A conflict on the way back is answered for the person who pressed Undo.
+		self.assertEqual(undo.count("auto_reason: reason"), 2)
+		self.assertIn("const reason = __(MP.undo_reason)", undo)
+		# Moving to a day that has passed is refused by the server, so the page does not try.
+		self.assertIn("snap.date >= today", undo)
+
+	def test_the_route_icon_opens_the_project_planners_route_view(self):
+		code = self.code
+		self.assertIn('project_route: "project-planner"', code)
+		self.assertIn('frappe.set_route(MP.project_route, "route", resource, ymd)', code)
+		self.assertIn("data-route-resource", code)
+		self.assertIn("data-route-date", code)
+		# In the week panel and every crew cell; the month strip is clickable as a whole.
+		panel = self._body(
+			"render_panel() {",
+			"// ------------------------------------------------------------------ crew view",
+		)
+		self.assertIn("this.drive_html(person, ymd, cell)", panel)
+		self.assertIn(
+			"this.drive_html(person, ymd, cell)", self._body("render_crew(cards) {", "compare(a, b) {")
+		)
+		# A technician with no Planner Resource has no route to open.
+		self.assertIn("!person.resource", code)
+		# The Project Planner page is open to Maintenance User, so a technician can follow the link.
+		page = json.loads(
+			(APP / "project_enhancements/page/project_planner/project_planner.json").read_text(
+				encoding="utf-8"
+			)
+		)
+		self.assertIn("Maintenance User", {row["role"] for row in page["roles"]})
+
+	def test_dragging_is_pointer_events_not_html5(self):
+		code = self.code
+		for forbidden in (
+			"draggable",
+			"dragstart",
+			"dragover",
+			"ondrop",
+			"dataTransfer",
+			'addEventListener("drop"',
+		):
+			self.assertNotIn(forbidden, code)
+		for needed in ("pointerdown", "pointermove", "pointerup", "pointercancel"):
+			self.assertIn(needed, code)
+
+	def test_prefs_are_guarded_and_calls_match_the_api(self):
+		code = self.code
+		for helper in ("load_pref(key, fallback) {", "save_pref(key, value) {"):
+			body = code[code.index(helper) :]
+			self.assertLess(body.index("try {"), body.index("catch (e)"), helper)
+
+		def params(fn):
+			return set(inspect.signature(fn).parameters)
+
+		self.assertTrue({"record", "date", "technician", "modified", "reason"} <= params(planner.move_visit))
+		self.assertTrue(
+			{"contract", "from_date", "to_date", "serial_no", "reason"} <= params(planner.move_projected)
+		)
+		self.assertEqual(params(planner.get_planner), {"start", "end"})
+		# The page calls exactly these three methods of its API.
+		self.assertEqual(set(re.findall(r'this\.send\(\s*"(\w+)"', code)), {"move_projected", "move_visit"})
+		self.assertIn('visit ? "move_visit" : "move_projected"', code)
+		self.assertIn("frappe.call({ method: MP.methods[method], args })", code)
+		methods = self._body("MP.methods = {", "};")
+		found = set(re.findall(r"(\w+): `\$\{MP\.api\}\.(\w+)`", methods))
+		self.assertEqual(found, {(name, name) for name in ("get_planner", "move_visit", "move_projected")})
 
 
 class TestWiring(unittest.TestCase):

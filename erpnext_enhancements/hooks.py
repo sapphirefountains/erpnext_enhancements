@@ -1558,6 +1558,12 @@ scheduler_events = {
 		# whatever is still missing is enqueued again here, bounded to 200 a day.
 		# geocode_project is idempotent, so the overlap is harmless.
 		"erpnext_enhancements.workforce.sites.backfill_missing_site_coordinates",
+		# project planner routes (v1.578.0): re-drive the geocoding the Routes feature needs. The
+		# shop's coordinates and every stop's address are geocoded from a Google call that the
+		# routing module enqueues, and a deploy FLUSHDBs the queue redis and destroys queued jobs.
+		# So each day this finds the addresses of open dated tasks and firm rental bookings that
+		# still lack coordinates, and geocodes a bounded batch (40). Never raises; idempotent.
+		"erpnext_enhancements.project_enhancements.routing.backfill_coordinates",
 	],
 	"hourly": [
 		# training: drain Training Attempt progress still sitting in Redis from a
@@ -2920,6 +2926,12 @@ assistant_tools = [
 	# browser. Suppliers with no address are reported, not filtered: dropping them
 	# produces a shorter route that is quietly wrong.
 	"erpnext_enhancements.assistant_tools.project_pickup_route.ProjectPickupRoute",
+	# project planner routes (v1.578.0): two read-only tools over the Project Planner's route engine.
+	# crew_schedule_suggestions ranks the days a task could go by drive time (it books nothing);
+	# crew_day_route returns one person's ordered route for one day, minus the browser key. Both
+	# call api/project_planner and inherit its planner role gate. See assistant_tools/README.md.
+	"erpnext_enhancements.assistant_tools.crew_schedule_suggestions.CrewScheduleSuggestions",
+	"erpnext_enhancements.assistant_tools.crew_day_route.CrewDayRoute",
 	# Contracts: where each stands in the e-signature flow. Returns none of the
 	# signing evidence -- token hashes, the agreement text as signed, the signature
 	# image, signer IP, user agent, consent wording. days_out is measured from

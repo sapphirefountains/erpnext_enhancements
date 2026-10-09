@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.578.0] - 2026-10-09
+
+### Added
+
+- **Daily routes and drive time on the planners** (Project Planner Phase 2, TASK-2026-02435).
+  Nik asked on 2026-10-08 for travel time to be padded onto visits and tasks using Google Maps,
+  for each person to see their route for the day, and for the planner (or Triton) to suggest
+  dates that group nearby jobs so a crew does not backtrack across the valley.
+  - **Every person's day is a route from the shop and back**: 85 W 300 S, Bountiful, the same
+    setting pick-up runs already start from (`pickup_route_start_address`), so "the shop" stays
+    one setting. Stops are each located task, rental crew task and maintenance visit; a time slot
+    is an anchor at its time, and the rest are ordered by cheapest insertion plus 2-opt.
+  - **Driving counts against people's hours.** Each person-day carries a drive booking, so free
+    hours, overbooking and the reason prompt include it, and a day with more than 90 minutes of
+    driving is flagged "Long drive". Both are settings.
+  - **Drive times come from Google Routes** (`computeRouteMatrix`) on the server key and are cached
+    in a new **Planner Drive Time** table. One planner load makes one matrix request for whatever it
+    is missing, not one per person-day, since each request costs money. If Google refuses or fails,
+    routing waits an hour before asking again, logs once, and uses a straight-line estimate
+    (km × 1.3 at 56 km/h plus 4 minutes); every figure says whether it is Google's or an estimate.
+    `check_routes` makes one tiny call so the console change can be confirmed without showing the
+    key.
+  - **A route view for every person and day** (`/app/project-planner/route/<person>/<date>`,
+    linked from both planners): the stops in driving order on a Google map, arrival times, drive
+    per leg, and *Open in Google Maps* for the phone.
+  - **Suggest dates** on a task card and the trays: the next ten days ranked by how much driving
+    the task would add to each person's route, among people with the free hours, each with a plain
+    reason ("Jesse is already at Highlands that day (4 km away): +9 min driving") and a *Book*
+    button that goes through the same reason prompt as a drag. It suggests **when**; it does not
+    pick a crew on its own, which Nik declined. The same suggestions, and a day's route, are
+    read-only AI tools for Triton: `crew_schedule_suggestions` and `crew_day_route`.
+  - **Where stops are**: a task's own address, else its project's site; a rental task's venue; a
+    visit's site. Most sites had no coordinates on 2026-10-09 (none of the five Active projects
+    with current tasks), so a stop that cannot be placed is listed and counted, never silently
+    dropped, and a daily job (`routing.backfill_coordinates`) geocodes the task and venue addresses
+    the routes need. A deploy's Redis flush kills queued geocodes, which is why it is a daily job.
+  - New **Routes** settings on Project Planner Settings (count drive time, use Google, day start
+    08:00, long-drive minutes), with `patches/backfill_project_planner_route_settings.py`: a new
+    field on an existing Single never receives its JSON default, so the patch fills only fields
+    with no stored row and never overwrites one.
+- **The Maintenance Planner gets the Project Planner's tools** (TASK P1.7). Nik asked on
+  2026-10-09 for "all the same features as the Project Planner, so it shows days off and
+  resources":
+  - a Resources available panel (free hours, days off, drive time per technician per day), with
+    the Field techs who help listed too;
+  - days off marked on the calendar;
+  - a crew view where dropping a visit on another technician's row hands it over;
+  - dragging a technician onto a visit to assign them;
+  - the overbooking rule (warn, ask for a reason, comment it on the visit or contract, never
+    block);
+  - Undo, and a route link for each technician-day.
+  A projected visit still cannot change technician, because it follows the site's Maintenance
+  Profile. Austin is the only full-time maintenance technician and works Monday to Wednesday, so
+  a visit on a Thursday or Friday shows as booked on his day off; that is meant to prompt a move.
+
+### Fixed
+
+- **The server Google key could reach the Error Log through project geocoding.**
+  `workforce/sites.geocode_project` logged failures with no message. Frappe then records the
+  traceback itself, with every frame's local variables in developer mode, and a `requests`
+  connection error spells out the whole request URL, `key=` included. All geocoding now goes
+  through one helper, `sites.geocode_text`. It never raises or logs, and it reports a failure only
+  as Google's status or the exception's class name. The routing code uses it too, so the app still
+  has a single server-side geocoder (`tests/test_geocoding_key.py`). This mattered now because the
+  new daily backfill calls the geocoder every day.
+
+### Notes
+
+- **New bench-free suites, each in its own CI step:**
+  - `test_planner_routing` (stop order, padding, suggestions, one matrix call per load, key handling)
+  - `test_planner_route_setup` (settings backfill, the cache doctype, the AI tools)
+- **Existing suites extended:** `test_project_planner`, `test_project_planner_page`,
+  `test_maintenance_planner` and `test_geocoding_key`.
+- **Deployed agents:** Triton's live chat finds the two new AI tools on its own. Triton's deployed
+  agents need their tool snapshot regenerated and a manual `deploy_agents` run (TASK-2026-02460).
+
 ## [1.577.0] - 2026-10-09
 
 ### Added

@@ -242,8 +242,47 @@ def geocode_project(project, force=False):
 	try:
 		return _geocode_project(project, force=force)
 	except Exception:
-		frappe.log_error(title=f"workforce.sites: geocode_project {project}")
+		# A message, so log_error does not fall back to its own traceback of every frame's
+		# locals (developer mode). The Google call itself cannot land here: geocode_text
+		# catches everything and reports only a status or an exception class name.
+		frappe.log_error(title=f"workforce.sites: geocode_project {project}", message=frappe.get_traceback())
 		return None
+
+
+def geocode_text(address):
+	"""``({"lat", "lng"}, None)`` for one address, or ``(None, problem)``. Never raises or logs.
+
+	The single place the server key meets Google's Geocoding API; the Project Planner's
+	routing (``project_enhancements/routing.py``) geocodes the shop and job addresses through
+	it too, so there is still one server-side geocoder (``tests/test_geocoding_key.py``).
+
+	``problem`` is Google's status (with its ``error_message``) or an exception's **class
+	name**, never the exception's text: a ``requests`` connection error spells out the whole
+	request URL, query string and ``key=`` included, and logging that would publish the key in
+	the Error Log. For the same reason nothing here is logged; the caller decides.
+	"""
+	try:
+		key = _geocoding_api_key()
+		if not key:
+			return None, "no key"
+		import requests
+
+		response = requests.get(GEOCODE_URL, params={"address": address, "key": key}, timeout=GEOCODE_TIMEOUT_S)
+		try:
+			payload = response.json() if response.content else {}
+		except ValueError:
+			payload = {}
+		status = payload.get("status") if isinstance(payload, dict) else None
+		if status != "OK" or not payload.get("results"):
+			detail = (payload.get("error_message") or "") if isinstance(payload, dict) else ""
+			return None, f"{status or response.status_code} {detail}".strip()
+		location = (payload["results"][0].get("geometry") or {}).get("location") or {}
+		lat, lng = flt(location.get("lat")), flt(location.get("lng"))
+		if not _valid(lat, lng):
+			return None, "no point"
+		return {"lat": lat, "lng": lng}, None
+	except Exception as exc:
+		return None, type(exc).__name__
 
 
 def _geocode_project(project, force=False):
@@ -266,28 +305,19 @@ def _geocode_project(project, force=False):
 	):
 		return {"lat": flt(row.custom_site_latitude), "lng": flt(row.custom_site_longitude)}
 
-	key = _geocoding_api_key()
-	if not key:
+	if not _geocoding_api_key():
 		return None
 
-	import requests
-
-	response = requests.get(GEOCODE_URL, params={"address": address, "key": key}, timeout=GEOCODE_TIMEOUT_S)
-	payload = response.json() if response.content else {}
-	status = payload.get("status")
-	if status != "OK" or not payload.get("results"):
+	point, problem = geocode_text(address)
+	if not point:
 		# ZERO_RESULTS is a fact about the address; REQUEST_DENIED is almost always the
 		# referrer-restricted browser key. Either way, say so once and stop.
 		frappe.log_error(
-			title=f"workforce.sites: geocode {project} -> {status or response.status_code}",
-			message=f"{address}\n{payload.get('error_message') or ''}",
+			title=f"workforce.sites: geocode {project} -> {problem}",
+			message=f"{address}\n{problem}",
 		)
 		return None
-
-	location = payload["results"][0].get("geometry", {}).get("location", {})
-	lat, lng = flt(location.get("lat")), flt(location.get("lng"))
-	if not _valid(lat, lng):
-		return None
+	lat, lng = point["lat"], point["lng"]
 
 	frappe.db.set_value(
 		"Project",
