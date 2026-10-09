@@ -540,7 +540,9 @@ print dialog — frappe falls back to `print_grid` then.
 ## Project Planner (v1.577.0)
 
 A drag-and-drop calendar for planning project Tasks and booking people by the hour
-(`/app/project-planner`, Projects workspace). Built so a PM cannot send one technician to two
+(`/app/project-planner`). It is linked from the Project Enhancements workspace and, since v1.583.1, from
+the core **Projects** module sidebar right after Task, with Crew Utilization among its reports
+(`setup/workspace_tweaks.add_core_sidebar_items`). Built so a PM cannot send one technician to two
 places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 

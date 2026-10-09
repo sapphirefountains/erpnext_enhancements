@@ -105,3 +105,109 @@ def _hide_sidebar_items():
 		# Every user's boot carries the resolved sidebars; this is the key frappe's own
 		# sidebar customizations clear when they change one.
 		frappe.cache.delete_key("bootinfo")
+
+
+# (sidebar name, [item, ...]) links this app adds to a core (app-owned) sidebar. Each item is
+# placed right after its ``after`` row, matched on (link_type, link_to). Nik, 2026-10-09: "I'd
+# also like the Project Planner to exist in the Projects module". Crew Utilization is the
+# planner's own report, so it goes beside the module's other reports.
+_ADDED_SIDEBAR_ITEMS = {
+	"Projects": [
+		{
+			"label": "Project Planner",
+			"link_type": "Page",
+			"link_to": "project-planner",
+			"icon": "calendar-range",
+			"child": 0,
+			"after": ("DocType", "Task"),
+		},
+		{
+			"label": "Crew Utilization",
+			"link_type": "Report",
+			"link_to": "Crew Utilization",
+			"icon": None,
+			"child": 1,
+			"after": ("Report", "Project wise Stock Tracking"),
+		},
+	],
+}
+
+
+def add_core_sidebar_items():
+	"""``after_migrate`` entry point: add this app's links to frappe 16.50's core ``Sidebar`` documents.
+
+	Written into ERPNext's own rows, for the reason ``_hide_sidebar_items`` gives: a ``Custom
+	Sidebar`` layer that names nothing in the base is read as a set of appends and lands at the
+	very end (after Setup's Settings), and one that names any base row is an arrangement that
+	reorders the module. The base is read from the database in ``idx`` order
+	(``sidebar.get_sidebar_items``), so a row inserted at the right ``idx`` sits exactly where it
+	belongs, and the desk still drops it for anyone who cannot open the page or report.
+
+	Rows go in with ``db_insert`` and the ones below shift with ``db.set_value``, not by saving
+	the document: ``Sidebar.validate_app_content`` refuses a save outside a migrate, and in
+	developer mode a save would export the JSON into ERPNext's own folder. An ERPNext release that
+	ships a newer sidebar file re-imports it without our rows; this runs after that import in the
+	same migrate and adds them again.
+
+	Idempotent: an item already present under the same (link_type, link_to), whatever its label or
+	``hidden``, is left exactly as it is, so a Workspace Manager who hid it keeps it hidden. An
+	item whose anchor row is missing is skipped rather than guessed at. Never raises.
+	"""
+	try:
+		_add_sidebar_items()
+	except Exception:
+		# Cosmetic: a sidebar link is not worth a failed deploy.
+		frappe.log_error(title="Core sidebar item not added", message=frappe.get_traceback())
+
+
+def _add_sidebar_items():
+	if not frappe.db.exists("DocType", "Sidebar"):
+		return
+
+	changed = False
+	for sidebar_name, additions in _ADDED_SIDEBAR_ITEMS.items():
+		if not frappe.db.exists("Sidebar", sidebar_name):
+			continue
+		for item in additions:
+			rows = frappe.get_all(
+				"Sidebar Item",
+				filters={"parenttype": "Sidebar", "parent": sidebar_name},
+				fields=["name", "idx", "link_type", "link_to"],
+				order_by="idx asc",
+			)
+			if any((r.get("link_type"), r.get("link_to")) == (item["link_type"], item["link_to"]) for r in rows):
+				continue
+			anchor = next((r for r in rows if (r.get("link_type"), r.get("link_to")) == item["after"]), None)
+			if anchor is None:
+				continue
+			idx = int(anchor.get("idx") or 0) + 1
+			for row in rows:
+				if int(row.get("idx") or 0) >= idx:
+					frappe.db.set_value(
+						"Sidebar Item", row["name"], "idx", int(row["idx"]) + 1, update_modified=False
+					)
+			frappe.get_doc(
+				{
+					"doctype": "Sidebar Item",
+					"parent": sidebar_name,
+					"parenttype": "Sidebar",
+					"parentfield": "items",
+					"idx": idx,
+					"type": "Link",
+					"label": item["label"],
+					"link_type": item["link_type"],
+					"link_to": item["link_to"],
+					"icon": item["icon"],
+					"child": item["child"],
+					"indent": 0,
+					"collapsible": 1,
+					"keep_closed": 0,
+					"show_arrow": 0,
+					"open_in_new_tab": 0,
+					"is_default_module": 0,
+				}
+			).db_insert()
+			changed = True
+
+	if changed:
+		frappe.cache.delete_key("bootinfo")
