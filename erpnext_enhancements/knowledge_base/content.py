@@ -73,21 +73,21 @@ from erpnext_enhancements.knowledge_base import constants
 #:
 #: Derived from frappe ``origin/version-16`` (the ``.js`` files below are in
 #: ``public/js/frappe/form/controls/``) and from Quill 2.0.3, the version v16 pins (the frappe
-#: repo's ``package.json:73``; Quill paths are under ``packages/quill/src/``).
+#: repo's ``package.json:74``; Quill paths are under ``packages/quill/src/``).
 #: ``tests/test_knowledge_base_rules.py`` holds the cited lines verbatim, derives this set from
 #: them, and checks the Frappe lines against a local v16 checkout when one is present.
 #:
 #: - ``ql-editor``, ``read-mode``: the wrapper the editor puts round every body it saves
-#:   (``text_editor.js:402``, ``:405``).
+#:   (``text_editor.js:562``, ``:565``).
 #: - ``ql-indent-1`` to ``ql-indent-8``: indent, and the nesting of a list, which Quill writes as a
-#:   flat list of indented items (toolbar ``text_editor.js:350``; ``formats/indent.ts:28-31``,
+#:   flat list of indented items (toolbar ``text_editor.js:510``; ``formats/indent.ts:28-31``,
 #:   registered by ``quill.ts:78``).
 #: - ``ql-align-right``, ``ql-align-center``, ``ql-align-justify``: Quill's own form of alignment
 #:   (``formats/align.ts:5``, ``:9``, registered by ``quill.ts:76``). v16 re-registers alignment as
-#:   a style (``text_editor.js:106``, ``:111``), so its editor writes ``text-align`` instead (see
+#:   a style (``text_editor.js:155``, ``:160``), so its editor writes ``text-align`` instead (see
 #:   :data:`KEPT_STYLE`), but it still reads these classes from pasted HTML, and Quill's stylesheet
 #:   renders them.
-#: - ``ql-direction-rtl``: right-to-left text (``text_editor.js:115-116`` registers the class
+#: - ``ql-direction-rtl``: right-to-left text (``text_editor.js:164-165`` registers the class
 #:   attributor; ``formats/direction.ts:5``, ``:9``).
 #: - ``ql-code-block-container``, ``ql-code-block``: a code block, which v16 writes as a ``<pre>``
 #:   (``text_editor.js:7-9``; ``formats/code.ts:46``, ``:49``).
@@ -95,19 +95,19 @@ from erpnext_enhancements.knowledge_base import constants
 #:   is drawn on (``core/quill.ts:31``, attached by ``formats/list.ts:41``). Without it a list
 #:   loses its markers. Quill only positions it (``assets/core.styl:205-206``).
 #: - ``table``, ``table-bordered``: added to every table the editor inserts
-#:   (``text_editor.js:53-54``). Quill's own table blots carry no class (``formats/table.ts``), only
+#:   (``text_editor.js:102-103``). Quill's own table blots carry no class (``formats/table.ts``), only
 #:   ``data-row``.
 #: - ``mention``, ``ql-mention-denotation-char``: an @-mention
 #:   (``quill-mention/blots/mention.js:49``, ``:9``; registered globally by ``comment.js:4``, used by
-#:   ``text_editor.js:281``).
+#:   ``text_editor.js:438``).
 #:
 #: Deliberately not kept, though Quill or Frappe can write them: ``ql-color-*``, ``ql-bg-*``,
 #: ``ql-size-*`` and ``ql-font-*`` (presentation: v16 writes them as ``style`` instead,
-#: ``text_editor.js:44-46``, ``:103-110``); ``icon`` and ``icon-sm`` on a group mention's SVG
+#: ``text_editor.js:93-95``, ``:152-159``); ``icon`` and ``icon-sm`` on a group mention's SVG
 #: (``mention.js:16``; ``icon`` is ``font-size: 0``, above, and the KB body does not enable
-#: mentions, ``text_editor.js:302``, so one arrives only pasted); ``ql-cursor``, a transient caret
+#: mentions, ``text_editor.js:459``, so one arrives only pasted); ``ql-cursor``, a transient caret
 #: span holding one U+FEFF (``blots/cursor.ts:9``); and ``ql-video`` and ``ql-formula``, which
-#: v16's toolbar does not offer (``text_editor.js:338-365``).
+#: v16's toolbar does not offer (``text_editor.js:498-525``).
 KEPT_CLASSES = frozenset(
 	{
 		"ql-editor",
@@ -140,7 +140,7 @@ KEPT_STYLE = {"text-align": frozenset({"left", "right", "center", "justify", "st
 
 #: Presentation attributes, dropped from every tag. v16's ``sanitize_html`` keeps the ``font``
 #: element and every one of these (frappe ``origin/version-16`` ``utils/html_utils.py``: ``font``
-#: at :267, ``bgcolor`` :413, ``color`` :432, ``face`` :453, ``hidden`` :462, ``size`` :516), and
+#: at :269, ``bgcolor`` :415, ``color`` :434, ``face`` :455, ``hidden`` :464, ``size`` :518), and
 #: a REST write stores the body as sent, so ``<font color="#ffffff">`` is white-on-white text and
 #: ``<p hidden>`` is not displayed at all. The Desk editor would turn a ``<font>`` into a coloured
 #: ``<span>`` (its ``CustomColor`` blot, ``text_editor.js``), but only if someone opens the draft.
@@ -151,7 +151,7 @@ PRESENTATION_ATTRIBUTES = frozenset({"bgcolor", "color", "face", "hidden", "size
 #: Every attribute dropped outright: the presentation attributes, and ``id``. v16's Text Editor
 #: never writes an ``id`` (Quill has no format for one; a mention's user is ``data-id``), and a
 #: stylesheet can hide an element by its id as surely as by its class: Frappe's desk stylesheet gives
-#: ``#freeze`` ``opacity: 0`` (frappe ``origin/version-16`` ``public/scss/desk/global.scss:511-514``),
+#: ``#freeze`` ``opacity: 0`` (frappe ``origin/version-16`` ``public/scss/desk/global.scss:532-535``),
 #: so ``<p id="freeze">`` is text no reader sees.
 DROPPED_ATTRIBUTES = PRESENTATION_ATTRIBUTES | {"id"}
 
@@ -177,10 +177,10 @@ DROPPED_ATTRIBUTES = PRESENTATION_ATTRIBUTES | {"id"}
 #: - ``h1`` to ``h6``, ``blockquote`` (``formats/header.ts:5``, ``formats/blockquote.ts:5``).
 #: - ``ol``, ``li``: a list, which Quill writes as ``<ol>`` whatever its kind
 #:   (``formats/list.ts:8``, ``:53``); ``ul``: v16 rewrites a bullet list as one
-#:   (``patch_unordered_list``, ``text_editor.js:428``).
+#:   (``patch_unordered_list``, ``text_editor.js:588``).
 #: - ``pre``, ``div``: a code block, whose container v16 makes a ``<pre>`` (``text_editor.js:8``)
 #:   round one ``div`` per line (``formats/code.ts:47``); ``div`` is also the ``ql-editor`` wrapper
-#:   (``text_editor.js:402``).
+#:   (``text_editor.js:562``).
 #: - ``table``, ``tbody``, ``tr``, ``td`` (``formats/table.ts:128``, ``:121``, ``:61``, ``:7``).
 #:   ``thead`` and ``th`` are not Quill's, but a table written any other way has them, a header cell
 #:   shows its text like any other, and unwrapping them would break the table apart.
@@ -190,7 +190,7 @@ DROPPED_ATTRIBUTES = PRESENTATION_ATTRIBUTES | {"id"}
 #:   writes the first of each pair and reads both as the same format.
 #: - ``span``: every inline style, the list marker and a mention (``blots/cursor.ts:10``,
 #:   ``mention.js:48``).
-#: - ``font``: v16's ``CustomColor`` blot (``text_editor.js:132``). Only a bare one survives, since
+#: - ``font``: v16's ``CustomColor`` blot (``text_editor.js:181``). Only a bare one survives, since
 #:   its ``color``, ``size`` and ``face`` are in :data:`PRESENTATION_ATTRIBUTES`.
 KEPT_ELEMENTS = frozenset(
 	{
