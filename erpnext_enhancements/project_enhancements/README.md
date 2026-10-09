@@ -30,11 +30,11 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. See [Project Planner](#project-planner-v15770) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py) |
-| `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`; pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py` and `api/maintenance_planner.py` |
+| `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
-| `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine; at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
+| `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
 | `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`), and the Task equipment validator | `task_actuals`, `labor_forecast`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
@@ -42,6 +42,9 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `customer_confirmations.py` | Phase 5 customer date confirmations for **both** planners (v1.583.0), **off until Settings → *Email customers their visit date* is ticked**: triggers on a customer-facing task or a draft visit, the at-most-once send, the 10-minute sweep and the preview | `on_task_update`, `on_visit_update`, `keep_stamps`, `send_one`, `send_due_confirmations`, `preview` | `doc_events` (Task, Sapphire Maintenance Record); `scheduler_events`; `api/project_planner.preview_customer_confirmation` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
 | `doctype/planner_draft_change/` | One pending change per planner per task while in draft mode; Publish applies them, Discard drops them | `PlannerDraftChange` | `api/project_planner` |
+| `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day) | read by the engine (never the note) |
+| `doctype/planner_day_note/` | Phase 6D: a note on a day for the whole crew or one group ("Shop meeting 7 am"), optionally about a project. `PDN-.YYYY.-.#####`. The schedulers write it | `PlannerDayNote` | `api/planner_blocks`; both planners, My week, the digests |
+| `doctype/planner_conflict_ack/` | Phase 6D: a conflict kept on purpose from the Conflict center, with its reason and a fingerprint of what was kept. `PCA-.YYYY.-.#####`, never edited | `PlannerConflictAck` | `api/planner_conflicts.acknowledge_conflict` |
 | `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
 | `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
@@ -779,6 +782,77 @@ shop" is one setting), through each located task, rental crew task and maintenan
   never makes an open card or a draft look "changed by someone else". It adds a timeline note but
   no Version row, and is never drafted: the flags are not bookings.
 
+### Personal blocks, day notes and the Conflict center (Phase 6D — TASK-2026-02470)
+
+The backend half, for both planners; the page UI comes next, on top of the Phase 6A kit. Nik's
+decisions of 2026-10-09.
+
+- **Personal blocks** (`Planner Block`, [`api/planner_blocks.py`](../api/planner_blocks.py)):
+  "unavailable 2–4 pm", "shop day". One person, one day (several days away belong in HR time off),
+  all day or from–to, with a note.
+  - **Who may write.** `crew_availability.SCHEDULER_ROLES` (System Manager, Projects Manager,
+    Projects User, Maintenance Supervisor) block anyone. Everyone else with planner access, the
+    technicians, creates, edits and deletes only blocks on their own Planner Resource (matched by its
+    `user`), an existing block included. They have no Desk permission on the doctype: the API's
+    explicit checks are the rule.
+  - **Who sees the note.** Others see "Unavailable"; the schedulers and the person see the note. The
+    engine reads blocks **without** the note, so no booking, conflict sentence, heatmap, route, digest
+    line for someone else or AI answer can carry it. `crew_availability.block_notes(names, viewer)` is
+    the one reader, so an endpoint that forgets to call it leaks nothing.
+  - **How they count.** An all-day block makes the day like time off: capacity 0, `off`
+    "Unavailable", a multi-day task spreads round it, and a firm booking on it is "Booked on a day off
+    (Unavailable)". A timed block is a `block` booking whose hours count (never twice where two
+    overlap, never past the day's capacity, so a block alone is never "Over by"), and a firm slot
+    overlapping it is "Unavailable 2–4 pm (TASK-1)". A pencil never conflicts. A block is not a stop,
+    so it adds no driving. Who is free says "Unavailable" or "Unavailable 2–4 pm; only 3h free"; the
+    Crew Utilization report takes a timed block off capacity and booked alike, being absence, not work.
+  - **Saving never refuses over a conflict.** `save_block` returns the conflicts the block makes with
+    firm work already booked (two one-person, one-day engine passes, with and without it) and the
+    sentence for the page ("This overlaps Dig at Riverwalk; your PM will see it in the Conflict
+    center"). **It writes no timeline comment** on the tasks or visits it overlaps: that would put a
+    technician's appointment on a customer job's timeline and go stale when the block moves, and the
+    Conflict center is where a PM deals with it.
+- **Day notes** (`Planner Day Note`): for everyone or one Planner Resource group, optionally about a
+  project, written by the schedulers. Both planners' `get_planner` return every note in range
+  (`day_notes`), `block_notes` for the caller and `can_schedule`; `get_my_week` returns the person's
+  own `blocks` with their notes and the week's `day_notes` for their group. The Maintenance Planner's
+  day cells carry `blocks` beside `items` (an item opens a Task or a trip; a block has nothing to open).
+- **Digests.** The combined 6 AM message leads with the day's notes for the person's group, then
+  their own blocks with their own note. A day note is worth a message on its own; a person's own
+  block never sends one by itself. The `Planner Digest Log` claim is untouched, so it is still at most
+  once a day. The maintenance and rental digests, which reach only the people the combined one does
+  not cover, add the same lines (`planner_blocks.digest_note_lines`).
+- **The Conflict center** ([`api/planner_conflicts.py`](../api/planner_conflicts.py)): one list of
+  everything wrong in a range of up to 60 days, from **one** engine pass with Google off that reaches
+  30 days past the range: `overbooked`, `overlap`, `day_off` (holidays and time off, never their
+  type), `blocked`, `equipment` (Phase 4's rules, through the new structured `equipment_findings`)
+  and `qualification` (Phase 3A's). Keys are stable (`kind|date|person or type:name|hash of the
+  records`); the dates of task-level conflicts come from whole spans, so they do not move as "today"
+  does. An item is `own` only for the calling planner's records (project Tasks; maintenance visits
+  and the contract behind the movable projected visit); rental crew tasks follow their booking and
+  travel its trip, so they are nobody's here. Fixes, only on owned items, name the **existing**
+  endpoint and its arguments, so the reason prompt, drafts, alerts and Undo all apply:
+  - *Move to next free day* (`crew_availability.next_free_day`: the person's next day with the hours
+    free, skipping days off, blocks and full days, the task's own hours given back, within 30 days):
+    `save_task(task, modified, start)` for a one-day task, `move_visit(record, date, modified)` for a
+    visit not started, `move_projected(contract, from_date, to_date, serial_no)` for the next projected
+    visit. Not offered for a multi-day task, where "the next day with the hours" says nothing about
+    where the whole job fits.
+  - *Pick someone who's free*: the fix carries the date and hours for `who_is_free`; a person picks,
+    then `swap_crew(task, from_resource, to_resource, modified)`, `move_visit(record, technician,
+    from_user, modified)` (who-is-free entries now carry `user`) or, for a qualification gap,
+    `add_crew(task, resource, modified)`. Nothing is filled in automatically.
+  - *Make it pencil* (project tasks only): `save_task(task, modified, tentative=1)`.
+  - *Keep it with a reason*: `acknowledge_conflict(key, reason, items, planner, fingerprint)` stores a
+    `Planner Conflict Ack` and comments "Kept a conflict on Thu Oct 12: … Reason: …" (escaped) on each
+    owned item, after `check_permission("write")` on it. A conflict with nothing of the caller's
+    planner in it can be kept only by a scheduler. It hides the conflict only while its fingerprint
+    (the records' `modified`, any block's, the wording) still matches; a stale page is refused.
+  - `get_next_free_day(resource, hours, after, task)` answers the same question for any task, for
+    the Phase 6B "Move to next free day" menu.
+- **AI tool** `crew_conflicts` (read-only): the list for a range, without fixes and **without any
+  block's note**, even for a caller allowed to read it. Triton needs a tool snapshot refresh.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
@@ -786,6 +860,7 @@ shop" is one setting), through each located task, rental crew task and maintenan
 - `scheduler_events` (every 10 minutes) → `customer_confirmations.send_due_confirmations`, a no-op while the switch is off (v1.583.0).
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
+- `assistant_tools` → `crew_conflicts.CrewConflicts` (Phase 6D: the Conflict center's list, read-only, never a block's note). Personal blocks and day notes need no hook: the engine reads them, and the planners' reads and the three digests call `api/planner_blocks` directly.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.
 - `doctype_js["Project"]` includes `public/js/project_enhancements/project_gantt_widget.js` — the embeddable Gantt widget's first embed, mounted into `custom_gantt_chart_html` on the Schedule tab (read-only, status filter + Today; replaced the legacy interactive frappe-gantt renderer that lived in `doctype/project/project.js` — see the [public README](../public/README.md)).

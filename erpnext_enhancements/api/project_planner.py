@@ -661,6 +661,7 @@ def get_planner(start, end, draft=0):
 		},
 		"can_edit": can_edit,
 	}
+	result.update(_phase6d().payload_extras(start, end, data["days"]))  # day_notes, block_notes, can_schedule
 	return _with_drafts(result, overlay, start, end) if overlay is not None else result
 
 
@@ -3254,6 +3255,7 @@ def get_my_week(date=None):
 		answer["message"] = _("Your planner entry is not active, so there is no week to show.")
 		return answer
 	answer.update(resource=resource, label=person["label"], days=days.get(resource) or [])
+	answer.update(_phase6d().my_week_extras(resource, first, last))  # Phase 6D: own blocks, day notes
 	return answer
 
 
@@ -3713,9 +3715,10 @@ PREVIEW_DOCTYPES = ("Task", "Sapphire Maintenance Record")
 def free_entry(person, cell, need):
 	"""``(is_free, entry)`` for one person on one day: free means ``need`` hours or more spare.
 
-	``entry`` is ``{"resource", "label", "group", "free_hours", "capacity", "booked"}`` plus, for
-	someone not free, ``reason``: the day-off label ("Time off", "Holiday: ...", "Not a work day"),
-	"Travelling", or "Only 2h free (6h booked of 8h)".
+	``entry`` is ``{"resource", "label", "group", "user", "free_hours", "capacity", "booked"}`` plus,
+	for someone not free, ``reason``: the day-off label ("Time off", "Holiday: ...", "Not a work day",
+	"Unavailable" for an all-day block), "Travelling", "Unavailable 2–4 pm; only 3h free" (a timed
+	personal block, Phase 6D), or "Only 2h free (6h booked of 8h)".
 	"""
 	cell = cell or {}
 	capacity, free, booked = flt(cell.get("capacity")), flt(cell.get("free")), flt(cell.get("booked"))
@@ -3723,6 +3726,7 @@ def free_entry(person, cell, need):
 		"resource": person.get("name"),
 		"label": person.get("label"),
 		"group": person.get("group"),
+		"user": person.get("user"),  # Phase 6D: the Conflict center's visit handover picks a user
 		"free_hours": round(free, 2),
 		"capacity": round(capacity, 2),
 		"booked": round(booked, 2),
@@ -3733,6 +3737,8 @@ def free_entry(person, cell, need):
 		entry["reason"] = _(cell.get("off") or "Not a work day")
 	elif any(b.get("kind") == "travel" for b in cell.get("bookings") or []):
 		entry["reason"] = _("Travelling")
+	elif engine.block_reason(cell):  # Phase 6D: "Unavailable 2–4 pm; only 3h free"
+		entry["reason"] = _("{0}; only {1}h free").format(engine.block_reason(cell), engine.fmt_hours(free))
 	else:
 		entry["reason"] = _("Only {0}h free ({1}h booked of {2}h)").format(
 			engine.fmt_hours(free), engine.fmt_hours(booked), engine.fmt_hours(capacity)
@@ -3964,3 +3970,18 @@ def preview_customer_confirmation(doctype, name):
 	from erpnext_enhancements.project_enhancements import customer_confirmations
 
 	return customer_confirmations.preview(doctype, name)
+
+
+# ====================================================================== Phase 6D: blocks, day notes
+#
+# Personal blocks, day notes and the Conflict center live in ``api/planner_blocks.py`` and
+# ``api/planner_conflicts.py``; this module only hooks them into ``get_planner`` and ``get_my_week``
+# (one line each) and gives ``free_entry`` a block's reason. Blocks themselves reach every read here
+# through the shared engine, as bookings of kind ``"block"`` that never carry the note.
+
+
+def _phase6d():
+	"""``api/planner_blocks``, imported late because it imports this module."""
+	from erpnext_enhancements.api import planner_blocks
+
+	return planner_blocks

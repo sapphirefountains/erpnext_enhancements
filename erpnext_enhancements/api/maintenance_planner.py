@@ -340,6 +340,7 @@ def get_planner(start, end):
 		"bookings": view["bookings"],
 		"can_move_visits": can_move_visits,
 		"can_move_projected": can_move_projected,
+		**_planner_extras(start, end, view["bookings"]),  # Phase 6D: day_notes, block_notes, can_schedule
 	}
 
 
@@ -454,11 +455,25 @@ def _booking_cell(cell):
 			for b in cell.get("bookings") or []
 			if b.get("kind") in FOREIGN_BOOKING_KINDS
 		],
+		# Phase 6D: personal blocks ("Unavailable", the window, the hours), never the note.
+		"blocks": [dict(b) for b in cell.get("bookings") or [] if b.get("kind") == "block"],
 	}
 	for key in DRIVE_KEYS:
 		if key in cell:
 			out[key] = cell[key]
 	return out
+
+
+def _planner_extras(start, end, bookings):
+	"""Phase 6D: ``day_notes``, ``block_notes`` and ``can_schedule`` from ``api/planner_blocks``
+	(imported late: it imports this module). ``payload_extras`` logs its own failures and never
+	raises; a module that cannot even be imported is a broken deploy every Project Planner endpoint
+	already shows, so here it only falls back to empty values: the visit calendar comes first."""
+	try:
+		from erpnext_enhancements.api import planner_blocks
+	except Exception:
+		return {"day_notes": {}, "block_notes": {}, "can_schedule": False}
+	return planner_blocks.payload_extras(start, end, bookings)
 
 
 def _log_failure(title):

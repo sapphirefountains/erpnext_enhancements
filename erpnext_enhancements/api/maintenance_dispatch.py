@@ -388,6 +388,7 @@ def _send_tech_digest(technician, visits, today):
 
     count = len(stops)
     when = formatdate(today)
+    notes = _planner_notes(technician, today)  # Phase 6D: day notes for them + their own blocks
 
     cell_number = frappe.db.get_value("Employee", {"user_id": technician}, "cell_number")
     if cell_number:
@@ -398,6 +399,7 @@ def _send_tech_digest(technician, visits, today):
         shown = text_lines[:10]
         if count > 10:
             shown.append(_("…and {0} more — see email").format(count - 10))
+        shown.extend(notes)
         message = f"Sapphire Fountains — {count} maintenance visit(s) today ({when}):\n" + "\n".join(shown)
         try:
             from erpnext_enhancements.api.telephony import send_system_sms
@@ -420,6 +422,8 @@ def _send_tech_digest(technician, visits, today):
         html = email_style.p(_("Your maintenance visits for {0}, in route order:").format(when)) + email_style.table(
             headers, rows
         )
+        if notes:
+            html += email_style.p(_("Also today:")) + email_style.bullets(notes)
         try:
             frappe.sendmail(
                 recipients=[email],
@@ -433,6 +437,18 @@ def _send_tech_digest(technician, visits, today):
             )
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Dispatch digest email failed: {technician}")
+
+
+def _planner_notes(user, today):
+    """The planners' day notes for this person and their own personal blocks, as plain lines
+    (Project Planner Phase 6D, ``api/planner_blocks.digest_note_lines``). Never raises: the visits
+    still go out without them."""
+    try:
+        from erpnext_enhancements.api.planner_blocks import digest_note_lines
+
+        return digest_note_lines(user, today)
+    except Exception:
+        return []
 
 
 def _order_by_route(visits):

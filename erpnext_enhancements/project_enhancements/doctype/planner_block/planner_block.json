@@ -1,0 +1,136 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "PBLK-.YYYY.-.#####",
+ "creation": "2026-10-09 18:00:00.000000",
+ "custom": 0,
+ "description": "Time one person is not available on one day (\"unavailable 2-4 pm\", \"shop day\"). Both planners count it against their hours; everyone but the planners sees only \"Unavailable\". Written from the planners through api/planner_blocks.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "resource",
+  "resource_name",
+  "user",
+  "column_break_main",
+  "date",
+  "all_day",
+  "from_time",
+  "to_time",
+  "section_note",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "resource",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Person",
+   "options": "Planner Resource",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fetch_from": "resource.resource_name",
+   "fieldname": "resource_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "read_only": 1
+  },
+  {
+   "description": "The person's login, copied from the Planner Resource so a person's own blocks are cheap to find.",
+   "fetch_from": "resource.user",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "1",
+   "description": "One day per block. Several days away belong in HR time off.",
+   "fieldname": "all_day",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "All day"
+  },
+  {
+   "depends_on": "eval:!doc.all_day",
+   "fieldname": "from_time",
+   "fieldtype": "Time",
+   "label": "From",
+   "mandatory_depends_on": "eval:!doc.all_day"
+  },
+  {
+   "depends_on": "eval:!doc.all_day",
+   "fieldname": "to_time",
+   "fieldtype": "Time",
+   "label": "To",
+   "mandatory_depends_on": "eval:!doc.all_day"
+  },
+  {
+   "fieldname": "section_note",
+   "fieldtype": "Section Break",
+   "label": "Note"
+  },
+  {
+   "description": "Private: only the person and the planners (System Manager, Projects Manager, Projects User, Maintenance Supervisor) read it. Everyone else sees \"Unavailable\".",
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-09 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Block",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects User"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "resource_name",
+ "track_changes": 1
+}

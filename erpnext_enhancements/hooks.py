@@ -2990,6 +2990,10 @@ assistant_tools = [
 	# everyone who is not (day off, travelling, only so many hours left). Read-only, planner role
 	# gate inherited from api/project_planner.who_is_free; "what is <person> doing" is crew_day_route.
 	"erpnext_enhancements.assistant_tools.crew_who_is_free.CrewWhoIsFree",
+	# Project Planner Phase 6D: "what's double-booked next week?", the Conflict center's list
+	# (api/planner_conflicts.get_conflicts, planner role gate inherited). Read-only: no fixes, no
+	# keeping, and never a personal block's note.
+	"erpnext_enhancements.assistant_tools.crew_conflicts.CrewConflicts",
 	# Contracts: where each stands in the e-signature flow. Returns none of the
 	# signing evidence -- token hashes, the agreement text as signed, the signature
 	# image, signer IP, user agent, consent wording. days_out is measured from
