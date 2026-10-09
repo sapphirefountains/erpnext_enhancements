@@ -449,6 +449,81 @@ class TestBackfillPatch(unittest.TestCase):
 		self.assertIn("| post |", rows[0])
 
 
+class TestMaterializeDefaults(unittest.TestCase):
+	"""v1.578.1. Writing ONE row into a never-saved Single ends load_from_db's new_doc() defaults
+	for every other field, and a blank Check loads as 0 (_fix_numeric_types). The routing
+	module's cache of the shop's coordinates did exactly that, switching drive padding and Google
+	Routes off; check_routes caught it on production before a planner load committed it."""
+
+	def _run(self, stored=(), sql_error=None):
+		_db_writes.clear()
+		frappe.logged.clear()
+		fields = list(_settings_meta_fields().values())
+
+		def sql(query, params=None):
+			if sql_error:
+				raise sql_error
+			return [(name,) for name in stored]
+
+		frappe.db = SimpleNamespace(
+			exists=lambda doctype, name=None: True,
+			sql=sql,
+			set_single_value=lambda doctype, values, **kw: _db_writes.append((doctype, dict(values), kw)),
+		)
+		frappe.get_meta = lambda doctype: SimpleNamespace(fields=fields, get_field=None, get_label=lambda f: f)
+		return settings_mod.materialize_defaults()
+
+	def test_a_never_saved_single_gets_every_default(self):
+		self.assertEqual(self._run(stored=()), 10)
+		values = _db_writes[0][1]
+		self.assertEqual(values["use_google_routes"], "1")
+		self.assertEqual(values["pad_drive_time"], "1")
+		self.assertEqual(values["default_day_hours"], "8")
+		self.assertNotIn("start_latitude", values)  # a cache, with no default to write
+		self.assertEqual(_db_writes[0][2], {"update_modified": False})
+
+	def test_the_trap_state_is_healed_and_stored_values_are_kept(self):
+		# The state routing produced: only the shop cache rows, plus a deliberate unticked box.
+		written = self._run(stored=("start_latitude", "start_longitude", "start_geocoded_from", "pad_drive_time"))
+		values = _db_writes[0][1]
+		self.assertEqual(values["use_google_routes"], "1")
+		self.assertNotIn("pad_drive_time", values)
+		self.assertEqual(written, 9)
+
+	def test_a_whole_single_writes_nothing(self):
+		every = tuple(_settings_meta_fields())
+		self.assertEqual(self._run(stored=every), 0)
+		self.assertEqual(_db_writes, [])
+
+	def test_it_never_raises(self):
+		self.assertEqual(self._run(sql_error=RuntimeError("boom")), 0)
+		self.assertEqual(len(frappe.logged), 1)
+
+	def test_missing_defaults_is_fill_only(self):
+		got = settings_mod.missing_defaults(
+			[("a", "1"), ("b", "0"), ("c", None), ("d", ""), (None, "1")], {"b"}
+		)
+		self.assertEqual(got, {"a": "1"})
+
+	def test_routing_makes_the_single_whole_before_it_caches_the_shop(self):
+		source = (APP / "project_enhancements/routing.py").read_text(encoding="utf-8")
+		body = source[source.index("def start_point(") :]
+		body = body[: body.index("\ndef ", 1)]
+		self.assertIn("materialize_defaults()", body)
+		self.assertLess(body.index("materialize_defaults()"), body.index("frappe.db.set_single_value("))
+
+	def test_the_patch_runs_it_after_model_sync(self):
+		lines = PATCHES_TXT.read_text(encoding="utf-8").splitlines()
+		name = "erpnext_enhancements.patches.materialize_project_planner_settings"
+		self.assertIn(name, lines)
+		index = lines.index(name)
+		self.assertIn("# v1.578.1", " ".join(lines[index - 3 : index]))
+		patch_source = (APP / "patches/materialize_project_planner_settings.py").read_text(encoding="utf-8")
+		self.assertIn("materialize_defaults()", patch_source)
+		rows = [l for l in PATCHES_README.read_text(encoding="utf-8").splitlines() if l.startswith("| `materialize_project_planner_settings` |")]
+		self.assertEqual(len(rows), 1)
+
+
 class TestPlannerDriveTimeDoctype(unittest.TestCase):
 	def setUp(self):
 		self.doc = _read(DRIVE_JSON)

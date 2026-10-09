@@ -75,6 +75,13 @@ Verified, and all of them expensive to rediscover:
   [`patches/backfill_marketing_settings_defaults.py`](erpnext_enhancements/patches/backfill_marketing_settings_defaults.py),
   which fills a field **only** where `tabSingles` has no row for it, never over a stored falsy
   value: an unticked box and a deliberate `0` are not the same fact.
+  **The inverse bites too: code that writes ONE field of a never-saved Single wrecks the rest.**
+  A Single with no rows loads from `new_doc()` and shows every JSON default; the first
+  `set_single_value` — a cache, a "last run" stamp — makes `load_from_db` read `tabSingles`
+  instead, every field without a row loads blank, and `_fix_numeric_types` turns a blank
+  **Check** into 0. The Project Planner's cache of the shop's coordinates silently switched drive
+  padding and Google Routes off this way (v1.578.1). Before code writes a field of a Single, write
+  every missing default first (`project_planner_settings.materialize_defaults`).
 - **On a *normal* doctype the same `default` reaches every existing row — the exact opposite
   — and a backfill patch written for the Single behaviour will silently match nothing.**
   Adding a column with a default is one `ALTER`, and MariaDB writes the default into every row

@@ -147,8 +147,13 @@ def same_point(a, b):
 
 def pair_key(a, b):
 	"""The ``Planner Drive Time`` name of the leg from ``a`` to ``b``. Direction matters: one-way
-	streets and freeway ramps make A→B and B→A different drives."""
-	return f"{_point_text(a)}>{_point_text(b)}"
+	streets and freeway ramps make A→B and B→A different drives.
+
+	Joined with ``~``. It was ``>`` until v1.578.1, and Frappe refuses ``<`` and ``>`` in any
+	document name (``naming.validate_name``), so every cache write failed and the refusal reached
+	the planner as an error dialog on load. Nothing was ever stored under the old form.
+	"""
+	return f"{_point_text(a)}~{_point_text(b)}"
 
 
 def haversine_km(a, b):
@@ -726,7 +731,26 @@ def _store(fetched, stale):
 	now = now_datetime()
 	duplicates = _duplicate_errors()
 	wrote = False
+	# A refused insert raises through frappe.throw, which queues its message for the browser even
+	# when the exception is caught here: the planner would open on an error dialog for a cache
+	# miss. Mute it; a real failure is still logged below.
+	muted = getattr(frappe.flags, "mute_messages", None)
+	frappe.flags.mute_messages = True
+	try:
+		wrote = _store_rows(fetched, stale, now, duplicates)
+	finally:
+		frappe.flags.mute_messages = muted
+	if wrote:
+		_keep_writes()
+
+
+def _store_rows(fetched, stale, now, duplicates):
+	wrote = False
 	for (a, b), value in fetched.items():
+		# A matrix block is every origin against every destination, so Google also answers each
+		# point to itself. drive_matrix never asks for those; storing them is just rows.
+		if same_point(a, b):
+			continue
 		key = pair_key(a, b)
 		values = {
 			"origin_lat": a[0],
@@ -748,12 +772,14 @@ def _store(fetched, stale):
 			wrote = True
 		except duplicates:
 			continue
-		except Exception:
+		except Exception as exc:
 			# The cache is an optimization; a site part-way through a migrate has no table yet.
-			frappe.log_error(title="Project Planner: drive time cache write failed", message=key)
+			frappe.log_error(
+				title="Project Planner: drive time cache write failed",
+				message=f"{key}: {type(exc).__name__}",
+			)
 			break
-	if wrote:
-		_keep_writes()
+	return wrote
 
 
 def _read_cache(pairs):
@@ -1030,6 +1056,14 @@ def start_point():
 		)
 		return None
 	try:
+		# Every other default gets its row first. Writing these three rows into a Settings nobody
+		# has saved would end load_from_db's new_doc() defaults, and a blank Check loads as 0:
+		# padding and Google would switch themselves off (v1.578.1, see the Settings controller).
+		from erpnext_enhancements.project_enhancements.doctype.project_planner_settings.project_planner_settings import (
+			materialize_defaults,
+		)
+
+		materialize_defaults()
 		frappe.db.set_single_value(
 			SETTINGS,
 			{"start_latitude": point[0], "start_longitude": point[1], "start_geocoded_from": address},

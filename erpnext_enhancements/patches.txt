@@ -1282,3 +1282,7 @@ erpnext_enhancements.patches.seed_planner_resources
 # since v1.577.0. A default never reaches a row that already exists, so fill each only where no tabSingles row
 # exists; a never-saved Single is left alone. Insert-only, cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_project_planner_route_settings
+# v1.578.1 Project Planner Settings had never been saved, so caching the shop's coordinates wrote its first rows and every
+# other field then loaded blank -- a blank Check loads as 0, switching drive padding and Google Routes off. Fill every
+# default that has no tabSingles row (never over a stored value). Cannot raise, safe twice.
+erpnext_enhancements.patches.materialize_project_planner_settings
