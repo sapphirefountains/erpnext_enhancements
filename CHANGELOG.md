@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.577.0] - 2026-10-09
+
+### Added
+
+- **Project Planner: a calendar for scheduling project Tasks and booking people by the hour**
+  (`/app/project-planner`, Projects workspace). Nik asked for it on 2026-10-08, modeled on the
+  Maintenance Planner, with one change: where the Maintenance Planner has an Unscheduled tray,
+  this one has a **Resources available** panel, so a PM can see who is free before booking and
+  cannot send a technician to two places at once without being told. Scope came from three rounds
+  of questions; the whole build, five phases, is tracked under TASK-2026-02427 in PRJ-00580. This
+  release is Phase 1 (TASK-2026-02428).
+  - **Views.** Month, week and a crew timeline (people down the side, days across), every one a
+    route so Back and Forward step through them. Needs crew and Unscheduled trays sit above the
+    calendar. Dragging uses the Maintenance Planner's pointer events, so it works on a phone; a
+    touch has to rest on a card before it lifts.
+  - **Booking.** Drag a task to a day to reschedule it (a multi-day task keeps its length), drag a
+    person from the panel onto a task to add them, drop a task chip on another person's row in the
+    crew view to hand it over. Clicking a card edits dates, expected hours, crew size, the crew
+    (person, hours, lead) and the qualifications the task needs. Undo reverts the last 20 changes.
+  - **Overbooking warns and never blocks.** A change that creates a conflict (over a person's
+    hours, two overlapping time slots, a booking on a day off) is not saved until the PM gives a
+    reason, and the reason goes on the Task's timeline. Refusing the save would only move the work
+    off the books, the same reasoning as the time-off and training warnings.
+  - **How hours are counted.** A task's estimate is shared across its crew and spread over each
+    person's working days. **A task with no estimate books a full day** for each person on each
+    of its days (their pattern hours, else 8), because booking nothing would make it invisible to
+    the free-hours count; only 101 of the 1,790 open tasks on production had hours on 2026-10-08.
+    A task whose start and end datetimes fall on one day books that time slot.
+  - **What else uses a person's day:** maintenance visits (2h each, a setting; clock-out minus
+    clock-in once recorded; including the visits the scheduler has not drafted yet), rental crew
+    tasks (their kind's hours from Settings when they carry no estimate, not a full day), Travel
+    Trip days, company holidays and approved Time Off Requests. Work Restrictions show as
+    warnings. Time off never shows its type or reason: everyone who opens a planner sees it.
+- **One availability engine for both planners**, `project_enhancements/crew_availability.py`.
+  Nik's rule was that Maintenance and Projects each see the other's bookings and move only their
+  own, and that a technician's free hours are the same number in both. The engine is the only
+  place that number is worked out. The Maintenance Planner now shows each technician's project,
+  rental and travel work as read-only cards and, with one technician picked, their free hours in
+  each day's header.
+- **Planner Resource**: who can be booked. A person or an outside crew rather than an Employee,
+  because subcontractors have no HR record and only some staff are booked at all. Each has a group
+  (Field, PM, Design, Subcontractor), a home team and a **weekly work pattern** with optional date
+  ranges for a seasonal schedule (Austin works Monday to Wednesday). One active resource per
+  employee: two would split a person's bookings across two rows and silence the overbooking check.
+  `patches/seed_planner_resources.py` creates one for each active technician, Project Manager and
+  Design employee, insert-only and keyed on the employee; work patterns are entered by hand.
+- **A crew on every Task.** New Task fields: Crew needed, Qualifications needed, and a Crew table
+  (person, hours, lead). The crew is mirrored into ordinary assignments
+  (`project_enhancements/crew_sync.py`), so the 6 AM technician digest, ToDo lists and the
+  morning briefing keep working unchanged. The mirror only adds people new to the crew and only
+  removes people taken off it: someone assigned from the sidebar who was never on the crew is
+  never touched. A task with no crew rows yet is crewed by its open assignees, which is how the
+  221 tasks assigned before this release, and every rental crew task, still count.
+- **Project Planner Settings** (Single): full-day hours (8), maintenance visit hours (2) and the
+  default hours of each rental crew task (Delivery 2, Setup 3, Take-down 2, Cleaning 2).
+
+### Notes
+
+- **Things that look like bugs and are not.** A blank crew-row hours is stored as 0 (a Frappe
+  Float is never NULL), so 0 means "an even share", never "no hours". A rental crew task cannot
+  be moved on the planner: its dates belong to its Rental Booking. An undated task dropped from
+  the tray gets enough weekdays for its estimate (24h for one person is three days) rather than
+  landing 24 hours on one day. The Saturday of a trip books nothing and is not a conflict;
+  otherwise every trip across a weekend would show red. Tasks on Completed, Invoiced, Paid or
+  Canceled projects are not bookings; Client Hold and Parked still are.
+- **Adding someone to a crew emails them.** Frappe v16's `assign_to.add` has no switch for it, so
+  each new crew member gets the standard "New ToDo Created" email, exactly as a sidebar assignment
+  does. Sending one notice per planning session is Phase 3 (draft and publish, TASK-2026-02448).
+- **Every Maintenance Profile defaults to Austin** (all 17 Active contracts on 2026-10-09), so every
+  projected visit lands on him and the planner will show him overbooked on future weeks, and on
+  Thursdays and Fridays once his Monday-to-Wednesday pattern is entered. That is the data being
+  honest, not the engine; the fix is in the profiles.
+- **Phase 2 (daily routes, drive time, route-aware date suggestions)** needs the Routes API allowed
+  on the server Google key first: TASK-2026-02440.
+- New bench-free suites, each in its own CI step: `test_project_planner` (the availability math,
+  conflicts and the save contract), `test_planner_doctypes` (crew sync, the DocTypes, the Task
+  fields and the seed rule) and `test_project_planner_page` (routes, POST-only writes, pointer
+  dragging, the workspace link).
+
 ## [1.576.3] - 2026-10-09
 
 ### Fixed
