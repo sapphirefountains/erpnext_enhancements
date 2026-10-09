@@ -678,7 +678,15 @@ class TestStartPoint(unittest.TestCase):
 			)
 
 		requests.get = get
-		self.assertEqual(routing.start_point(), (40.9, -111.9))
+		# v1.578.1: the Single is made whole BEFORE the cache rows are written, or the first cache
+		# write ends new_doc() defaults and every Check (padding, Google) loads as 0.
+		order = []
+		settings_module = types.ModuleType("_pp_settings_stub")
+		settings_module.materialize_defaults = lambda: order.append(("materialize", len(frappe.singles_written)))
+		controller = "erpnext_enhancements.project_enhancements.doctype.project_planner_settings.project_planner_settings"
+		with mock.patch.dict(sys.modules, {controller: settings_module}):
+			self.assertEqual(routing.start_point(), (40.9, -111.9))
+		self.assertEqual(order, [("materialize", 0)])
 		self.assertEqual(
 			requests.calls[0]["params"], {"address": "1 New Shop Way, Bountiful, UT", "key": KEY}
 		)

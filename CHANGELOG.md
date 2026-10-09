@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.578.1] - 2026-10-09
+
+### Fixed
+
+- **The first route the planners worked out would have switched drive padding and Google Routes
+  off.** Project Planner Settings had never been saved on production, so Frappe built it from
+  `new_doc()` with every JSON default. The routing module then cached the shop's coordinates by
+  writing three `tabSingles` rows, the first rows that Single ever had. From that write on, Frappe
+  read the Settings from `tabSingles`, every field without a row loaded blank, and
+  `_fix_numeric_types` turns a blank **Check** into 0. So *Count drive time against people's hours*
+  and *Drive times from Google Routes* would have turned themselves off silently the first time a
+  planner located the shop. Number fields stay blank rather than 0, and the planners already treat
+  blank as the default, so hours and visit lengths were never affected.
+  - **How it was caught:** `check_routes` was run on production right after v1.578.0 deployed. It
+    reported "Google Routes is working: a test leg from the shop took 3.3 min. The planner's
+    Settings have Google Routes turned off." It ran in the MCP sandbox, which rolls its writes back,
+    and no planner had committed the rows yet.
+  - **The fix:** new `project_planner_settings.materialize_defaults` writes every declared default
+    that has no row, and never touches a stored value. `routing.start_point` calls it before caching
+    anything, and `patches/materialize_project_planner_settings.py` runs it once on deploy, so the
+    Single is whole and stays whole. CLAUDE.md now records this inverse of the "a new field's
+    default never backfills" gotcha: code that writes **one** field of a never-saved Single wipes
+    the defaults of all the others.
+- **Google Routes is confirmed working with the server key** (TASK-2026-02440): `check_routes` drove
+  the test leg from the shop. Every drive time is Google's, not an estimate, as soon as the setting
+  reads on.
+
 ## [1.578.0] - 2026-10-09
 
 ### Added

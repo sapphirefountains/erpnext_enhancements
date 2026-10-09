@@ -1030,6 +1030,14 @@ def start_point():
 		)
 		return None
 	try:
+		# Every other default gets its row first. Writing these three rows into a Settings nobody
+		# has saved would end load_from_db's new_doc() defaults, and a blank Check loads as 0:
+		# padding and Google would switch themselves off (v1.578.1, see the Settings controller).
+		from erpnext_enhancements.project_enhancements.doctype.project_planner_settings.project_planner_settings import (
+			materialize_defaults,
+		)
+
+		materialize_defaults()
 		frappe.db.set_single_value(
 			SETTINGS,
 			{"start_latitude": point[0], "start_longitude": point[1], "start_geocoded_from": address},
