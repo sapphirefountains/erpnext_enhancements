@@ -1154,10 +1154,10 @@ COMMENT_CONTROL = "frappe/public/js/frappe/form/controls/comment.js"
 #: under ``packages/quill/src/``. No checkout carries it, so its rows were checked against the
 #: ``v2.0.3`` tag of ``slab/quill`` when this list was written.
 KEPT_CLASS_SOURCES = (
-	("frappe", "package.json", 73, '"quill": "2.0.3",'),
-	("frappe", TEXT_EDITOR, 53, 'node.classList.add("table");'),
-	("frappe", TEXT_EDITOR, 54, 'node.classList.add("table-bordered");'),
-	("frappe", TEXT_EDITOR, 402, 'value = `<div class="ql-editor read-mode">${value}</div>`;'),
+	("frappe", "package.json", 74, '"quill": "2.0.3",'),
+	("frappe", TEXT_EDITOR, 102, 'node.classList.add("table");'),
+	("frappe", TEXT_EDITOR, 103, 'node.classList.add("table-bordered");'),
+	("frappe", TEXT_EDITOR, 562, 'value = `<div class="ql-editor read-mode">${value}</div>`;'),
 	("frappe", MENTION_BLOT, 9, 'denotationChar.className = "ql-mention-denotation-char";'),
 	("frappe", MENTION_BLOT, 49, 'MentionBlot.className = "mention";'),
 	("quill", "formats/indent.ts", 28, "const IndentClass = new IndentAttributor('indent', 'ql-indent', {"),
@@ -1181,9 +1181,9 @@ KEPT_CLASS_SOURCES = (
 KEPT_CLASS_REGISTRATIONS = (
 	("frappe", TEXT_EDITOR, 7, 'const CodeBlockContainer = Quill.import("formats/code-block-container");'),
 	("frappe", TEXT_EDITOR, 8, 'CodeBlockContainer.tagName = "PRE";'),
-	("frappe", TEXT_EDITOR, 115, 'const DirectionClass = Quill.import("attributors/class/direction");'),
-	("frappe", TEXT_EDITOR, 116, "Quill.register(DirectionClass, true);"),
-	("frappe", TEXT_EDITOR, 350, '[{ indent: "-1" }, { indent: "+1" }],'),
+	("frappe", TEXT_EDITOR, 164, 'const DirectionClass = Quill.import("attributors/class/direction");'),
+	("frappe", TEXT_EDITOR, 165, "Quill.register(DirectionClass, true);"),
+	("frappe", TEXT_EDITOR, 510, '[{ indent: "-1" }, { indent: "+1" }],'),
 	("frappe", COMMENT_CONTROL, 4, 'Quill.register("modules/mention", Mention, true);'),
 	("quill", "quill.ts", 76, "'formats/align': AlignClass,"),
 	("quill", "quill.ts", 78, "'formats/indent': Indent,"),
@@ -1337,10 +1337,10 @@ KEPT_ELEMENT_SOURCES = (
 	("quill", "formats/blockquote.ts", 5, "static tagName = 'blockquote';"),
 	("quill", "formats/list.ts", 8, "ListContainer.tagName = 'OL';"),
 	("quill", "formats/list.ts", 53, "ListItem.tagName = 'LI';"),
-	("frappe", TEXT_EDITOR, 428, 'const ul = document.createElement("ul");'),
+	("frappe", TEXT_EDITOR, 588, 'const ul = document.createElement("ul");'),
 	("frappe", TEXT_EDITOR, 8, 'CodeBlockContainer.tagName = "PRE";'),
 	("quill", "formats/code.ts", 47, "CodeBlock.tagName = 'DIV';"),
-	("frappe", TEXT_EDITOR, 402, 'value = `<div class="ql-editor read-mode">${value}</div>`;'),
+	("frappe", TEXT_EDITOR, 562, 'value = `<div class="ql-editor read-mode">${value}</div>`;'),
 	("quill", "formats/table.ts", 7, "static tagName = 'TD';"),
 	("quill", "formats/table.ts", 61, "static tagName = 'TR';"),
 	("quill", "formats/table.ts", 121, "static tagName = 'TBODY';"),
@@ -1355,7 +1355,7 @@ KEPT_ELEMENT_SOURCES = (
 	("quill", "formats/image.ts", 8, "static tagName = 'IMG';"),
 	("quill", "blots/cursor.ts", 10, "static tagName = 'span';"),
 	("frappe", MENTION_BLOT, 48, 'MentionBlot.tagName = "span";'),
-	("frappe", TEXT_EDITOR, 132, 'CustomColor.tagName = "font";'),
+	("frappe", TEXT_EDITOR, 181, 'CustomColor.tagName = "font";'),
 )
 
 #: Kept without a cited line: a table's header row, which Quill never writes and a table written any
