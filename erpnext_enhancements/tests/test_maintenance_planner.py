@@ -671,7 +671,7 @@ class TestSelfApproval(unittest.TestCase):
 		maintenance = next(w for w in workflows if w["name"] == "Sapphire Maintenance Workflow")
 		self.assertEqual(
 			{t["action"]: t["allow_self_approval"] for t in maintenance["transitions"]},
-			{"Request Review": 1, "Approve & Submit": 0},
+			{"Request Review": 1, "Approve & Submit": 0, "Send Back": 1},
 		)
 
 	def test_finish_skips_a_transition_the_user_cannot_apply(self):
@@ -679,3 +679,99 @@ class TestSelfApproval(unittest.TestCase):
 		self.assertIn("has_approval_access(user, doc, t)", source)
 		self.assertIn('doc = apply_workflow(doc, usable[0]["action"])', source)
 		self.assertNotIn("transitions[0]", source)
+
+
+class TestReviewerWorkflow(unittest.TestCase):
+	"""Only the office reviewers approve a visit (v1.576.2).
+
+	Every technician holds Projects Manager, so approval keyed on it let a technician approve a
+	colleague's visit, or their own whenever the scheduler had drafted it. The reviewers named on
+	2026-10-07 (Lisa, James, Nik, Clegg) hold "Maintenance Reviewer" instead.
+	"""
+
+	def _maintenance(self):
+		workflows = json.loads((APP / "fixtures/workflow.json").read_text(encoding="utf-8"))
+		return next(w for w in workflows if w["name"] == "Sapphire Maintenance Workflow")
+
+	def test_only_reviewers_approve_edit_a_pending_visit_or_send_it_back(self):
+		workflow = self._maintenance()
+		self.assertEqual(
+			{s["state"]: s["allow_edit"] for s in workflow["states"]}["Pending Review"],
+			"Maintenance Reviewer",
+		)
+		by_action = {t["action"]: t for t in workflow["transitions"]}
+		self.assertEqual(by_action["Request Review"]["allowed"], "Maintenance User")
+		self.assertEqual(by_action["Approve & Submit"]["allowed"], "Maintenance Reviewer")
+		self.assertEqual(by_action["Approve & Submit"]["allow_self_approval"], 0)
+		back = by_action["Send Back"]
+		self.assertEqual(
+			(back["state"], back["next_state"], back["allowed"]),
+			("Pending Review", "Draft", "Maintenance Reviewer"),
+		)
+		# finish_visit takes the first usable forward transition, so approval must come first.
+		from_pending = [t["action"] for t in workflow["transitions"] if t["state"] == "Pending Review"]
+		self.assertEqual(from_pending[0], "Approve & Submit")
+
+	def test_every_workflow_action_has_a_master_fixture_and_is_exported(self):
+		actions = {
+			t["action"]
+			for w in json.loads((APP / "fixtures/workflow.json").read_text(encoding="utf-8"))
+			for t in w["transitions"]
+		}
+		masters = {
+			m["name"]
+			for m in json.loads((APP / "fixtures/workflow_action_master.json").read_text(encoding="utf-8"))
+		}
+		self.assertLessEqual(actions, masters)
+		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+		start = hooks.index('"dt": "Workflow Action Master"')
+		exported = hooks[start : hooks.index("}", start)]
+		for action in actions:
+			self.assertIn(f'"{action}"', exported, action)
+
+	def test_finish_never_sends_a_visit_back(self):
+		source = (APP / "api/maintenance_visit.py").read_text(encoding="utf-8")
+		self.assertIn('if t.get("next_state") != start', source)
+
+	def test_the_seed_runs_before_fixture_sync(self):
+		lines = (APP / "patches.txt").read_text(encoding="utf-8").splitlines()
+		self.assertGreater(
+			lines.index("erpnext_enhancements.patches.seed_maintenance_reviewer_role"),
+			lines.index("[post_model_sync]"),
+		)
+
+	def test_the_seed_creates_the_role_and_the_action_once_and_never_raises(self):
+		inserted = []
+
+		class _New(_Doc):
+			def insert(self, ignore_permissions=False):
+				if frappe.fail_insert:
+					raise RuntimeError("database went away")
+				inserted.append((self.doctype, dict(self)))
+				frappe.existing.add((self.doctype, self.get("role_name") or self.get("workflow_action_name")))
+
+		frappe.existing = set()
+		frappe.fail_insert = False
+		frappe.new_doc = lambda doctype: _New(doctype=doctype)
+		frappe.get_traceback = lambda: "traceback"
+		logged = []
+		frappe.log_error = lambda *a, **k: logged.append(k)
+		frappe.db = types.SimpleNamespace(
+			exists=lambda doctype, name: (doctype, name) in frappe.existing,
+			commit=lambda: None,
+			rollback=lambda: None,
+		)
+		seed = importlib.import_module("erpnext_enhancements.patches.seed_maintenance_reviewer_role")
+		seed.execute()
+		self.assertEqual(
+			[(doctype, row.get("role_name") or row.get("workflow_action_name")) for doctype, row in inserted],
+			[("Role", "Maintenance Reviewer"), ("Workflow Action Master", "Send Back")],
+		)
+		self.assertEqual(inserted[0][1]["desk_access"], 1)
+		seed.execute()
+		self.assertEqual(len(inserted), 2)
+		frappe.existing.clear()
+		frappe.fail_insert = True
+		seed.execute()  # a failing insert is logged, never raised into the migrate
+		self.assertEqual(logged[0]["title"], "Maintenance reviewer role seed")
+		_reset()

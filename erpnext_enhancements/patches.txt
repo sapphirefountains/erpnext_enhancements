@@ -1269,3 +1269,8 @@ erpnext_enhancements.patches.rebuild_design_review_storage
 # Puts each area's tile glyph on Workspace.icon, Sidebar.header_icon and Dock Item.icon, only where the row
 # still holds a broken name. Cannot raise; safe twice.
 erpnext_enhancements.patches.heal_desk_icon_names
+# v1.576.2 Maintenance Reviewer: seed the role the maintenance workflow now gives Approve & Submit, Pending
+# Review editing and Send Back to, and the "Send Back" Workflow Action Master. Must run before fixture sync:
+# workflow.json sorts before workflow_action_master.json and links to both. Grants the role to nobody; the
+# reviewers are set in the Desk. Insert-only, cannot raise, safe twice.
+erpnext_enhancements.patches.seed_maintenance_reviewer_role

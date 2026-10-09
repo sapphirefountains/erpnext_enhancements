@@ -11,6 +11,11 @@
   },
   {
     "doctype": "Workflow Action Master",
+    "name": "Send Back",
+    "workflow_action_name": "Send Back"
+  },
+  {
+    "doctype": "Workflow Action Master",
     "name": "Submit for Approval",
     "workflow_action_name": "Submit for Approval"
   },

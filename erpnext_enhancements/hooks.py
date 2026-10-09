@@ -1910,7 +1910,11 @@ after_migrate = [
 	# patches. Fills blanks only; one cheap statement on every later migrate.
 	"erpnext_enhancements.crm_enhancements.lead_triage.backfill_first_responses",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
-	# Hide the "Project" DocType link in the core Projects module sidebar (user request)
+	# Hide the "Project" DocType link in the core Projects module sidebar (user request).
+	# Before frappe 16.50 it drops the row from the Workspace Sidebar; from 16.50, which
+	# draws module sidebars from `Sidebar` instead, it sets `hidden` on ERPNext's own row
+	# rather than adding a Custom Sidebar layer, which would reorder the sidebar (v1.576.1).
+	# Re-applied after an ERPNext re-import; logs instead of raising.
 	"erpnext_enhancements.setup.workspace_tweaks.hide_core_sidebar_items",
 	# Desk home-grid tile artwork. Every tile this app contributes rendered as a grey
 	# letter avatar because create_desktop_icons_from_workspace() assigns `icon.app_name`,
@@ -1927,7 +1931,12 @@ after_migrate = [
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
 	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source
-	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home
+	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home.
+	# Also puts ERPNext's Projects workspace back on our layout (Projects Dashboard
+	# first) when it holds exactly ERPNext's shipped content: an ERPNext upgrade that
+	# bumps projects.json re-imports it over the site's layout, as 16.50.0 did on
+	# 2026-10-06 (v1.576.1). Must run after model sync, which is when that re-import
+	# happens; a layout someone chose is kept (setup/README.md).
 	"erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks",
 	# hr_enhancements (WI-072): place every Employee on the Position ladder. NOT in
 	# the seeding patch, because the column it writes is `Employee.custom_position`
@@ -2186,7 +2195,7 @@ fixtures = [
 	{
 		"dt": "Workflow Action Master",
 		"filters": [
-			["name", "in", ["Request Review", "Approve & Submit", "Submit for Approval", "Approve", "Reject"]]
+			["name", "in", ["Request Review", "Approve & Submit", "Send Back", "Submit for Approval", "Approve", "Reject"]]
 		],
 	},
 	{
