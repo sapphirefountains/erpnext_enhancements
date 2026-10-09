@@ -225,23 +225,30 @@ def warn_unavailable_technician(doc, method=None):
 	if cint(getattr(doc, "docstatus", 0)) == 2:
 		return
 	technician = getattr(doc, "technician", None)
-	if not technician:
+	# A multi-person visit (P1.8) books its whole crew, so each of them is asked about too.
+	# getattr(..., None) or []: doc_events fire before this app's fields exist in a test bootstrap.
+	crew = [
+		getattr(row, "user", None) or (row.get("user") if isinstance(row, dict) else None)
+		for row in getattr(doc, "crew", None) or []
+	]
+	people = [u for u in dict.fromkeys([technician, *crew]) if u]
+	if not people:
 		return
 	when = getattr(doc, "scheduled_visit_date", None) or getattr(doc, "visit_date", None)
 	if not when:
 		return
 
-	reasons = reasons_unavailable([technician], when)
-	sentences = reasons.get(technician) or []
-	if not sentences:
-		return
-
-	who = frappe.db.get_value("User", technician, "full_name") or technician
-	frappe.msgprint(
-		_("{0} {1}.").format(frappe.bold(who), "; ".join(str(s) for s in sentences)),
-		title=_("Check who is going"),
-		indicator="orange",
-	)
+	reasons = reasons_unavailable(people, when)
+	for person in people:
+		sentences = reasons.get(person) or []
+		if not sentences:
+			continue
+		who = frappe.db.get_value("User", person, "full_name") or person
+		frappe.msgprint(
+			_("{0} {1}.").format(frappe.bold(who), "; ".join(str(s) for s in sentences)),
+			title=_("Check who is going"),
+			indicator="orange",
+		)
 
 
 @frappe.whitelist()

@@ -1063,6 +1063,16 @@ def get_maintenance_context(project=None, since=None):
     submitted_since = False
     if since:
         user = frappe.session.user
+        # A crew member's visit counts too (P1.8): any of them may fill it in and send it, so a
+        # helper whose lead submitted the form has nothing left to submit.
+        or_filters = [["technician", "=", user], ["owner", "=", user]]
+        from erpnext_enhancements.sapphire_maintenance.visit_crew import crew_record_names
+
+        crewed = crew_record_names(
+            user, docstatus=1, project=project, modified_since=get_datetime(since), limit=20
+        )
+        if crewed:
+            or_filters.append(["name", "in", crewed])
         submitted_since = bool(frappe.get_all(
             "Sapphire Maintenance Record",
             filters={
@@ -1070,7 +1080,7 @@ def get_maintenance_context(project=None, since=None):
                 "docstatus": 1,
                 "modified": [">=", get_datetime(since)],
             },
-            or_filters=[["technician", "=", user], ["owner", "=", user]],
+            or_filters=or_filters,
             limit=1,
         ))
 
@@ -1088,16 +1098,24 @@ def get_maintenance_context(project=None, since=None):
 def get_my_visits_today():
     """Open maintenance visit drafts for the kiosk's "Today's Visits" list.
 
-    Draft Sapphire Maintenance Records that are unassigned or assigned to the
-    session user (the predictive scheduler creates them as bare headers).
+    Draft Sapphire Maintenance Records that are unassigned, assigned to the
+    session user, or that have the session user on their crew (P1.8: a helper
+    sees the visits they are booked on, and any crew member may fill one in).
+    The predictive scheduler creates them as bare headers.
     Returns [{name, project, project_title, serial_no, visit_label, route}],
     oldest first, capped at 10.
     """
+    from erpnext_enhancements.sapphire_maintenance.visit_crew import crew_record_names
+
     user = frappe.session.user
+    or_filters = [["technician", "=", user], ["technician", "is", "not set"]]
+    crewed = crew_record_names(user, docstatus=0, limit=50)
+    if crewed:
+        or_filters.append(["name", "in", crewed])
     drafts = frappe.get_all(
         "Sapphire Maintenance Record",
         filters={"docstatus": 0},
-        or_filters=[["technician", "=", user], ["technician", "is", "not set"]],
+        or_filters=or_filters,
         fields=["name", "project", "serial_no", "visit_label"],
         order_by="creation asc",
         limit=10,

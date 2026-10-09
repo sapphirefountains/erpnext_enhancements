@@ -15,6 +15,9 @@
   "template",
   "visit_label",
   "technician",
+  "crew",
+  "planned_hours",
+  "full_day",
   "scheduled_visit_date",
   "visit_date",
   "dispatch_digest_sent_on",
@@ -88,6 +91,27 @@
    "options": "User"
   },
   {
+   "description": "Everyone booked on this visit besides the technician filling it in.",
+   "fieldname": "crew",
+   "fieldtype": "Table",
+   "label": "Crew",
+   "options": "Sapphire Visit Crew Member"
+  },
+  {
+   "description": "How long the visit takes each person. Blank: Project Planner Settings' maintenance visit hours.",
+   "fieldname": "planned_hours",
+   "fieldtype": "Float",
+   "label": "Planned hours",
+   "precision": "2"
+  },
+  {
+   "default": "0",
+   "description": "The visit takes each person's whole day.",
+   "fieldname": "full_day",
+   "fieldtype": "Check",
+   "label": "Full day"
+  },
+  {
    "description": "Dispatch date for this visit — stamped by the scheduler from the feature's due date, shifted to a preferred visit day. Feeds the Day Board and the morning technician digest.",
    "fieldname": "scheduled_visit_date",
    "fieldtype": "Date",
@@ -101,7 +125,7 @@
    "label": "Visit Date"
   },
   {
-   "description": "Date this visit was last included in a morning technician digest. Same-day re-runs skip it (at-most-once/day); if the visit is rescheduled to a later day it re-enters that day's digest.",
+   "description": "Date the technician was last sent a morning dispatch digest that included this visit (each crew member's is on their crew row). Same-day re-runs skip them (at-most-once/day); if the visit is rescheduled to a later day it re-enters that day's digest.",
    "fieldname": "dispatch_digest_sent_on",
    "fieldtype": "Date",
    "hidden": 1,
@@ -220,7 +244,7 @@
    "label": "Client Sign-off"
   }
  ],
- "modified": "2024-05-22 12:00:00.000000",
+ "modified": "2026-10-09 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",

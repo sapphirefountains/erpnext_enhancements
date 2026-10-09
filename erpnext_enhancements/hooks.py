@@ -708,6 +708,15 @@ doc_events = {
 			# want one without the other.
 			"erpnext_enhancements.hr_enhancements.availability.warn_unavailable_technician",
 		],
+		# Multi-person visits (P1.8): mirror the visit's `crew` table into ordinary assignments
+		# (ToDos), the same one-sided mirror crew_sync.py keeps for a Task's crew. Adds a ToDo
+		# only for someone newly on the crew, removes one only for someone who was on it before
+		# this save (and is not now the technician: a Visit Wizard claim swaps the two), never
+		# touches a sidebar assignee, skips submitted/cancelled visits. Best effort; never raises.
+		# See sapphire_maintenance/visit_crew.py.
+		"on_update": [
+			"erpnext_enhancements.sapphire_maintenance.visit_crew.on_record_update",
+		],
 	},
 	"Project Contract": {
 		# quality (WI-075 sub-phase L): `validate_msa_gate` already refuses a Statement of Work

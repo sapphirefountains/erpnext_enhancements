@@ -33,6 +33,14 @@ target day is checked with and without this visit, using the shared availability
 engine (``project_enhancements.crew_availability``), so a day that was already
 over does not ask again for a visit that changes nothing about it.
 
+**Multi-person visits** (P1.8). A visit card carries its ``crew`` (``[{"user", "name",
+"hours"}]``, the technician never among them), ``planned_hours``, ``full_day`` and ``hours``, the
+technician's effective length (a full-day visit is their capacity that day). A projected card
+carries the site's default crew, length and full-day flag from its Maintenance Profile.
+:func:`move_visit` edits the crew, planned hours and full-day flag and checks every affected
+person's day; :func:`add_crew` adds one helper. The record's on_update crew mirror
+(``sapphire_maintenance.visit_crew``) moves the assignments, so nothing here touches a crew ToDo.
+
 The pure pieces (series, site names, which feature rows a move touches) take
 plain values so ``tests/test_maintenance_planner.py`` runs them without a bench.
 """
@@ -313,12 +321,14 @@ def get_planner(start, end):
 
 	visits = [_visit_card(row, today, can_move_visits) for row in _records_between(start, end)]
 	unscheduled = [_visit_card(row, today, can_move_visits) for row in _unscheduled_drafts()]
+	_attach_crews(visits + unscheduled)
 	projected = _projections(start, end, today)
 	for card in projected:
 		card["movable"] = card["movable"] and can_move_projected
 
 	_decorate(visits + unscheduled + projected)
 	view = _project_view(_technicians(visits + unscheduled + projected), start, end)
+	_set_lead_hours(visits + unscheduled + projected, view["bookings"])
 	return {
 		"start": str(start),
 		"end": str(end),
@@ -469,6 +479,7 @@ def _records_between(start, end):
 				name, project, customer, maintenance_contract, serial_no, visit_label,
 				technician, scheduled_visit_date, visit_date, docstatus, workflow_state,
 				completion_percent, has_out_of_range_readings, modified,
+				planned_hours, full_day, clock_in_time, clock_out_time,
 				CASE
 					WHEN docstatus = 1 OR workflow_state = %(pending)s
 						THEN COALESCE(visit_date, scheduled_visit_date, DATE(modified))
@@ -492,7 +503,8 @@ def _unscheduled_drafts():
 		SELECT
 			name, project, customer, maintenance_contract, serial_no, visit_label,
 			technician, scheduled_visit_date, visit_date, docstatus, workflow_state,
-			completion_percent, has_out_of_range_readings, modified, NULL AS plan_date
+			completion_percent, has_out_of_range_readings, modified,
+			planned_hours, full_day, clock_in_time, clock_out_time, NULL AS plan_date
 		FROM `tabSapphire Maintenance Record`
 		WHERE docstatus = 0
 			AND IFNULL(workflow_state, '') != %(pending)s
@@ -533,6 +545,14 @@ def _visit_card(row, today, can_move):
 		"started": bool(row.visit_date),
 		"modified": str(row.modified),
 		"overdue": bool(status == "draft" and day and day < today),
+		# Multi-person visits (P1.8). ``crew`` is filled in by _attach_crews (one query for every
+		# card) and ``hours``, the lead's effective length, by _set_lead_hours once the engine's
+		# day cells are known (a full-day visit is the lead's capacity that day).
+		"crew": [],
+		"planned_hours": _positive(row.get("planned_hours")),
+		"full_day": bool(row.get("full_day")),
+		"hours": None,
+		"clocked_hours": _clocked_hours(row.get("clock_in_time"), row.get("clock_out_time")),
 	}
 
 
@@ -586,7 +606,12 @@ def _projections(start, end, today):
 
 
 def _decorate(cards):
-	"""Site names, feature names and default technicians, one query each."""
+	"""Site names, feature names, default technicians and default crews, one query each.
+
+	A projected card also takes the site's default crew, visit length and full-day flag from its
+	Maintenance Profile (P1.8: ``crew``, ``planned_hours``, ``full_day``), which the availability
+	engine reads to book every person on a visit that is not drafted yet.
+	"""
 	from erpnext_enhancements.api.maintenance_dispatch import default_technician_for
 
 	projects = {card["project"] for card in cards if card.get("project")}
@@ -603,6 +628,9 @@ def _decorate(cards):
 		else {}
 	)
 	defaults = {project: default_technician_for(project) for project in projects}
+	crews = _default_crews(
+		{card["project"] for card in cards if card["kind"] == "projected" and card.get("project")}
+	)
 	for card in cards:
 		title = titles.get(card.get("project")) or card.get("project") or card.get("customer") or ""
 		card["site_full"] = title
@@ -610,6 +638,169 @@ def _decorate(cards):
 		card["feature"] = feature_label(card.get("serial_no"))
 		if card["kind"] == "projected":
 			card["technician"] = defaults.get(card.get("project"))
+			crew = crews.get(card.get("project")) or {}
+			card["crew"] = [
+				dict(member)
+				for member in crew.get("members") or []
+				if member.get("user") and member.get("user") != card["technician"]
+			]
+			card["planned_hours"] = crew.get("hours")
+			card["full_day"] = bool(crew.get("full_day"))
+			card.setdefault("hours", None)
+
+
+def _default_crews(projects):
+	"""``{project: {"members": [{"user", "name", "hours"}], "hours", "full_day"}}`` from the profiles.
+
+	Never raises: a crew lookup going wrong leaves projected visits with their technician alone,
+	which is what they showed before P1.8.
+	"""
+	if not projects:
+		return {}
+	try:
+		from erpnext_enhancements.api.maintenance_dispatch import default_crews_for
+
+		found = default_crews_for(sorted(projects)) or {}
+		users = sorted({row["user"] for crew in found.values() for row in crew.get("rows") or []})
+		names = _full_names(users)
+		return {
+			project: {
+				"members": [
+					{
+						"user": row["user"],
+						"name": names.get(row["user"]) or row["user"],
+						"hours": row.get("hours"),
+					}
+					for row in crew.get("rows") or []
+				],
+				"hours": crew.get("hours"),
+				"full_day": crew.get("full_day"),
+			}
+			for project, crew in found.items()
+		}
+	except Exception:
+		_log_failure("Maintenance Planner: default crews failed")
+		return {}
+
+
+def _full_names(users):
+	users = sorted({u for u in users or [] if u})
+	if not users:
+		return {}
+	return {
+		row.get("name"): row.get("full_name") or row.get("name")
+		for row in frappe.get_all("User", filters={"name": ["in", users]}, fields=["name", "full_name"])
+	}
+
+
+def _attach_crews(cards):
+	"""Fill each visit card's ``crew`` (``[{"user", "name", "hours"}]``) with one query for all of them.
+
+	``hours`` is the person's own hours when set, else None: the visit's length. Never raises: a
+	failure leaves the cards with an empty crew (logged), and the calendar stands.
+	"""
+	names = [card["name"] for card in cards if card.get("kind") == "visit" and card.get("name")]
+	if not names:
+		return
+	try:
+		from erpnext_enhancements.sapphire_maintenance.visit_crew import crew_rows_for, explicit_hours
+
+		crews = crew_rows_for(names)
+		for card in cards:
+			card["crew"] = [
+				{
+					"user": row["user"],
+					"name": row.get("full_name") or row["user"],
+					"hours": explicit_hours(row.get("hours")),
+				}
+				for row in crews.get(card.get("name")) or []
+				if row["user"] != card.get("technician")
+			]
+	except Exception:
+		_log_failure("Maintenance Planner: visit crews failed")
+
+
+def _positive(value):
+	"""A Float field's value when set: blank reads back as 0, so only > 0 is a value."""
+	try:
+		value = float(value or 0)
+	except (TypeError, ValueError):
+		return None
+	return round(value, 2) if value > 0 else None
+
+
+def _clocked_hours(clock_in, clock_out):
+	"""The clocked length of a visit with both times, else None."""
+	if not clock_in or not clock_out:
+		return None
+	def parse(value):
+		if isinstance(value, datetime.datetime):
+			return value
+		return datetime.datetime.fromisoformat(str(value)[:19])
+
+	try:
+		start, end = parse(clock_in), parse(clock_out)
+	except ValueError:
+		return None
+	return round((end - start).total_seconds() / 3600, 2) if end > start else None
+
+
+def _hour_settings():
+	"""``(maintenance visit hours, full-day hours)`` from Project Planner Settings, with defaults."""
+	visit_hours, day_hours = 2.0, 8.0
+	try:
+		from erpnext_enhancements.project_enhancements.crew_availability import get_settings
+
+		settings = get_settings() or {}
+		if settings.get("maintenance_visit_hours") is not None:
+			visit_hours = float(settings.get("maintenance_visit_hours"))
+		if settings.get("default_day_hours") is not None:
+			day_hours = float(settings.get("default_day_hours"))
+	except Exception:
+		_log_failure("Maintenance Planner: settings failed")
+	return visit_hours, day_hours
+
+
+def person_visit_hours(person_hours, full_day, planned_hours, visit_hours, capacity, day_hours, clocked=None):
+	"""What one person books for a visit, the engine's rule (``crew_availability.visit_person_hours``).
+
+	Their own hours when set; a clocked length (the technician only); on a full-day visit their
+	capacity that day, or the full-day hours when that is 0; the visit's planned hours; else the
+	Settings default. Plain values, so the bench-free tests check it against the engine.
+	"""
+	own = _positive(person_hours)
+	if own is not None:
+		return own
+	if clocked is not None:
+		return clocked
+	if full_day:
+		capacity = float(capacity or 0)
+		return round(capacity if capacity > 0 else float(day_hours or 0), 2)
+	planned = _positive(planned_hours)
+	return planned if planned is not None else round(float(visit_hours or 0), 2)
+
+
+def _set_lead_hours(cards, bookings):
+	"""Each card's ``hours``: the effective length for its technician (P1.8).
+
+	A full-day visit is the technician's capacity that day, taken from the engine's day cells the
+	planner already has (``bookings``), so no second engine call.
+	"""
+	if not cards:
+		return
+	visit_hours, day_hours = _hour_settings()
+	for card in cards:
+		lead = card.get("technician")
+		cell = ((bookings or {}).get(lead) or {}).get(card.get("date") or "") or {}
+		card["hours"] = person_visit_hours(
+			None,
+			card.get("full_day"),
+			card.get("planned_hours"),
+			visit_hours,
+			cell.get("capacity"),
+			day_hours,
+			clocked=card.get("clocked_hours"),
+		)
 
 
 def _technicians(cards):
@@ -635,6 +826,9 @@ def _technicians(cards):
 		)
 	)
 	staff |= {card["technician"] for card in cards if card.get("technician")}
+	# Everyone on a visit's crew gets a row too (P1.8), so the crew view can show a multi-person
+	# visit in each of their rows.
+	staff |= {m["user"] for card in cards for m in card.get("crew") or [] if m.get("user")}
 	if not staff:
 		return []
 	users = frappe.get_all(
@@ -647,36 +841,58 @@ def _technicians(cards):
 
 
 @frappe.whitelist()
-def move_visit(record, date=None, technician=None, modified=None, reason=None):
-	"""Reschedule an open draft visit and/or hand it to another technician.
+def move_visit(
+	record,
+	date=None,
+	technician=None,
+	modified=None,
+	reason=None,
+	crew=None,
+	planned_hours=None,
+	full_day=None,
+	from_user=None,
+):
+	"""Reschedule an open draft visit, hand it to someone else, or change who is on it.
 
 	Saved through the record under the caller's permissions, so the workflow
 	and both validate warnings run (time off, training). Their messages come
 	back as ``warnings`` for the planner to show beside the card, rather than
 	as a dialog after every drag.
 
-	Overbooking never blocks. When the move would leave the technician over their
-	hours, on a day off or double-booked on that day (and the day was not already
-	so), nothing is saved and the answer is ``{"needs_reason": True, "conflicts":
-	{technician: ["YYYY-MM-DD: Over by 2h"]}}``. Sent again with a ``reason`` it
+	Multi-person visits (P1.8), all optional:
+
+	* ``crew``: the whole crew, as a JSON list of users or of ``{"user", "hours"}`` rows
+	  (``hours`` blank: the visit's length). Replaces the crew; a person who stays keeps
+	  their row. The technician is never also crew.
+	* ``planned_hours`` (blank or 0: Settings' maintenance visit hours) and ``full_day``.
+	* ``from_user`` with ``technician``: the crew view's handover. When ``from_user`` is a
+	  helper (on the crew, not the technician) only THAT helper is swapped for
+	  ``technician``; without it, or when it is the technician, the technician is replaced.
+	  Assignments follow through the record's on_update crew mirror.
+
+	Overbooking never blocks. The conflict check runs for **every affected person** on the
+	visit's day: everyone on it when the date or the visit's length changes, otherwise each
+	person newly on it or whose own hours changed. Only conflicts the move *creates* count.
+	When there are any, nothing is saved and the answer is ``{"needs_reason": True,
+	"conflicts": {person: ["YYYY-MM-DD: Over by 2h"]}}``. Sent again with a ``reason`` it
 	saves and the reason goes on the visit's timeline.
+
+	Returns ``{"name", "date", "technician", "crew": [{"user", "name", "hours"}],
+	"planned_hours", "full_day", "modified", "warnings"}``, plus ``conflicts`` when saved
+	over some.
 	"""
 	_require_planner()
 	doc = frappe.get_doc("Sapphire Maintenance Record", record)
 	doc.check_permission("write")
-	state = doc.get("workflow_state") or "Draft"
-	if doc.docstatus != 0 or state == PENDING_STATE:
-		frappe.throw(
-			_("{0} is already finished ({1}), so it stays on the day it was done.").format(doc.name, _(state))
-		)
-	if modified and str(doc.modified) != str(modified):
-		frappe.throw(
-			_("This visit was changed by someone else since the planner loaded. Refresh and try again."),
-			title=_("Visit Out of Date"),
-		)
+	_refuse_finished(doc)
+	_check_fresh(doc, modified)
 
+	from erpnext_enhancements.sapphire_maintenance.visit_crew import set_crew
+
+	before = _hours_specs(doc)
 	changed = False
 	date_changed = False
+	length_changed = False
 	if date:
 		target = getdate(date)
 		if doc.get("visit_date"):
@@ -692,50 +908,252 @@ def move_visit(record, date=None, technician=None, modified=None, reason=None):
 			changed = date_changed = True
 
 	prior = None
-	if technician is not None and (technician or None) != (doc.technician or None):
-		if technician and not frappe.db.get_value("User", technician, "enabled"):
-			frappe.throw(_("{0} is not an active user.").format(technician))
-		prior = doc.technician or ""
-		doc.technician = technician or None
-		changed = True
+	if technician is not None:
+		new = technician or None
+		if new:
+			_require_active(new)
+		if from_user and from_user != doc.get("technician"):
+			# A helper's chip dragged to another person's row: swap that helper only.
+			current = _crew_entries(doc)
+			if from_user not in [entry["user"] for entry in current]:
+				frappe.throw(
+					_("{0} is no longer on this visit. Refresh the planner and try again.").format(from_user)
+				)
+			entries = []
+			for entry in current:
+				if entry["user"] == from_user:
+					if new:
+						entries.append({"user": new, "hours": entry["hours"]})
+				else:
+					entries.append(entry)
+			if set_crew(doc, entries):
+				changed = True
+		elif new != (doc.get("technician") or None):
+			prior = doc.get("technician") or ""
+			doc.technician = new
+			changed = True
+
+	if crew is not None:
+		entries = _parse_crew(crew)
+		for entry in entries:
+			_require_active(entry["user"])
+		if set_crew(doc, entries):
+			changed = True
+
+	if planned_hours is not None:
+		value = _positive(planned_hours) or 0
+		if value != (_positive(doc.get("planned_hours")) or 0):
+			doc.planned_hours = value
+			changed = length_changed = True
+
+	if full_day is not None:
+		flag = 1 if _truthy(full_day) else 0
+		if flag != (1 if doc.get("full_day") else 0):
+			doc.full_day = flag
+			changed = length_changed = True
 
 	conflicts = {}
-	if changed and (date_changed or prior is not None) and doc.technician and doc.scheduled_visit_date:
-		conflicts = visit_conflicts(
-			doc.technician,
-			doc.scheduled_visit_date,
-			ref=doc.name,
-			label=doc.name,
-		)
+	after = _hours_specs(doc)
+	if date_changed or length_changed:
+		affected = list(after)
+	else:
+		affected = [user for user, spec in after.items() if user not in before or before[user] != spec]
+	if changed and affected and doc.scheduled_visit_date:
+		conflicts = _people_conflicts(doc, affected)
 		reason = (reason or "").strip()
 		if conflicts and not reason:
 			return {"needs_reason": True, "conflicts": conflicts}
 
 	warnings = []
 	if changed:
-		log = (
-			frappe.local.message_log if isinstance(getattr(frappe.local, "message_log", None), list) else None
-		)
-		before = len(log) if log is not None else 0
-		doc.save()
-		if log is not None:
-			warnings = [_message_text(message) for message in log[before:]]
-			del log[before:]
+		warnings = _save_with_warnings(doc)
 		if prior is not None:
 			_move_assignment(doc, prior)
 		if conflicts and reason:
 			_comment_conflict(doc, conflicts, reason)
 
-	result = {
-		"name": doc.name,
-		"date": str(doc.scheduled_visit_date) if doc.scheduled_visit_date else None,
-		"technician": doc.technician,
-		"modified": str(doc.modified),
-		"warnings": [w for w in warnings if w],
-	}
+	result = _visit_result(doc, warnings)
 	if conflicts:
 		result["conflicts"] = conflicts
 	return result
+
+
+@frappe.whitelist(methods=["POST"])
+def add_crew(record, user, modified=None, reason=None, hours=None):
+	"""Add a helper to a visit's crew (P1.8): a technician chip dropped on a visit.
+
+	Refuses a finished or started visit, and a projected one (it is not a record yet:
+	"Set the site's default crew on its Maintenance Profile"). Adding the technician or
+	someone already on the crew changes nothing. The new person's day is checked like any
+	move: only a conflict this creates counts, and it answers ``needs_reason`` until sent
+	with a ``reason``. Their assignment comes from the record's on_update crew mirror.
+
+	Returns the same shape as :func:`move_visit`.
+	"""
+	_require_planner()
+	if "|" in str(record or "") or not frappe.db.exists("Sapphire Maintenance Record", record):
+		if "|" in str(record or "") or frappe.db.exists("Sapphire Maintenance Contract", record):
+			frappe.throw(
+				_(
+					"This visit is not drafted yet, so it has no crew of its own. Set the site's default "
+					"crew on its Maintenance Profile."
+				)
+			)
+		frappe.throw(_("Visit {0} was not found.").format(record))
+	doc = frappe.get_doc("Sapphire Maintenance Record", record)
+	doc.check_permission("write")
+	_refuse_finished(doc)
+	if doc.get("visit_date"):
+		frappe.throw(
+			_("This visit was started for {0}. Change who is on it on the visit form.").format(
+				formatdate(doc.visit_date)
+			)
+		)
+	_check_fresh(doc, modified)
+	if not user:
+		frappe.throw(_("Pick a person to add."))
+	_require_active(user)
+
+	from erpnext_enhancements.sapphire_maintenance.visit_crew import set_crew
+
+	current = _crew_entries(doc)
+	if user == doc.get("technician") or user in [entry["user"] for entry in current]:
+		return _visit_result(doc, [])
+
+	set_crew(doc, [*current, {"user": user, "hours": hours}])
+	conflicts = {}
+	if doc.get("scheduled_visit_date"):
+		conflicts = _people_conflicts(doc, [user])
+		reason = (reason or "").strip()
+		if conflicts and not reason:
+			return {"needs_reason": True, "conflicts": conflicts}
+
+	warnings = _save_with_warnings(doc)
+	if conflicts and reason:
+		_comment_conflict(doc, conflicts, reason)
+	result = _visit_result(doc, warnings)
+	if conflicts:
+		result["conflicts"] = conflicts
+	return result
+
+
+def _refuse_finished(doc):
+	state = doc.get("workflow_state") or "Draft"
+	if doc.docstatus != 0 or state == PENDING_STATE:
+		frappe.throw(
+			_("{0} is already finished ({1}), so it stays on the day it was done.").format(doc.name, _(state))
+		)
+
+
+def _check_fresh(doc, modified):
+	if modified and str(doc.modified) != str(modified):
+		frappe.throw(
+			_("This visit was changed by someone else since the planner loaded. Refresh and try again."),
+			title=_("Visit Out of Date"),
+		)
+
+
+def _require_active(user):
+	if not frappe.db.get_value("User", user, "enabled"):
+		frappe.throw(_("{0} is not an active user.").format(user))
+
+
+def _truthy(value):
+	if isinstance(value, str):
+		return value.strip().lower() in ("1", "true", "yes", "on")
+	return bool(value)
+
+
+def _parse_crew(crew):
+	"""The page's ``crew`` (JSON: users, or ``{"user", "hours"}`` rows) as ``[{"user", "hours"}]``."""
+	if isinstance(crew, str):
+		crew = frappe.parse_json(crew) if crew.strip() else []
+	entries = []
+	for item in crew or []:
+		if isinstance(item, str):
+			user, hours = item, None
+		elif isinstance(item, dict):
+			user, hours = item.get("user"), item.get("hours")
+		else:
+			continue
+		if user and user not in [entry["user"] for entry in entries]:
+			entries.append({"user": user, "hours": _positive(hours)})
+	return entries
+
+
+def _crew_entries(doc):
+	"""The visit's crew as ``[{"user", "hours"}]`` (``hours`` None when blank), technician excluded."""
+	out = []
+	for row in doc.get("crew") or []:
+		user = row.get("user")
+		if user and user != doc.get("technician") and user not in [entry["user"] for entry in out]:
+			out.append({"user": user, "hours": _positive(row.get("hours"))})
+	return out
+
+
+def _hours_specs(doc):
+	"""``{person: their own hours or None}`` for everyone on the visit, the technician first."""
+	specs = {}
+	if doc.get("technician"):
+		specs[doc.get("technician")] = None
+	for entry in _crew_entries(doc):
+		specs.setdefault(entry["user"], entry["hours"])
+	return specs
+
+
+def _people_conflicts(doc, users):
+	"""Conflicts for putting this visit on each of ``users``' day, merged into one dict."""
+	specs = _hours_specs(doc)
+	planned = _positive(doc.get("planned_hours"))
+	full_day = bool(doc.get("full_day"))
+	out = {}
+	for user in users:
+		own = specs.get(user)
+		hours = own if own is not None else (None if full_day else planned)
+		found = visit_conflicts(
+			user,
+			doc.scheduled_visit_date,
+			ref=doc.name,
+			label=doc.name,
+			hours=hours,
+			full_day=full_day and own is None,
+		)
+		for person, messages in found.items():
+			out.setdefault(person, []).extend(messages)
+	return out
+
+
+def _save_with_warnings(doc):
+	"""Save, returning the validate hooks' messages as text instead of letting them pop up."""
+	log = frappe.local.message_log if isinstance(getattr(frappe.local, "message_log", None), list) else None
+	before = len(log) if log is not None else 0
+	doc.save()
+	warnings = []
+	if log is not None:
+		warnings = [_message_text(message) for message in log[before:]]
+		del log[before:]
+	return [w for w in warnings if w]
+
+
+def _visit_result(doc, warnings):
+	return {
+		"name": doc.name,
+		"date": str(doc.scheduled_visit_date) if doc.get("scheduled_visit_date") else None,
+		"technician": doc.get("technician"),
+		"crew": [
+			{
+				"user": row.get("user"),
+				"name": row.get("full_name") or row.get("user"),
+				"hours": _positive(row.get("hours")),
+			}
+			for row in doc.get("crew") or []
+			if row.get("user") and row.get("user") != doc.get("technician")
+		],
+		"planned_hours": _positive(doc.get("planned_hours")),
+		"full_day": bool(doc.get("full_day")),
+		"modified": str(doc.modified),
+		"warnings": list(warnings or []),
+	}
 
 
 def _message_text(message):
@@ -782,12 +1200,16 @@ def new_visit_conflicts(day_conflicts, cell, ref, hours, label=None):
 	return [text for text in day_conflicts(capacity, off, [*others, visit]) if text not in known]
 
 
-def visit_conflicts(user, day, ref, label=None, hours=None):
+def visit_conflicts(user, day, ref, label=None, hours=None, full_day=False):
 	"""``{technician: ["YYYY-MM-DD: ..."]}`` for putting one visit on ``user``'s ``day``; {} when clear.
 
 	Worked out by the shared availability engine for just that technician's Planner Resource.
 	A technician with no resource has no hours to overbook, and an engine failure must never
 	stop a move (it is logged and the move goes ahead): both answer {}.
+
+	``hours`` None is Settings' maintenance visit hours; with ``full_day`` it is the person's whole
+	day instead, their capacity that day or Settings' full-day hours when that is 0 (P1.8, the
+	engine's own rule for a full-day visit).
 	"""
 	try:
 		from erpnext_enhancements.project_enhancements.crew_availability import (
@@ -809,6 +1231,10 @@ def visit_conflicts(user, day, ref, label=None, hours=None):
 		cell = ((data.get("days") or {}).get(name) or {}).get(str(getdate(day)))
 		if not cell:
 			return {}
+		if hours is None and full_day:
+			capacity = float(cell.get("capacity") or 0)
+			day_hours = get_settings().get("default_day_hours")
+			hours = capacity if capacity > 0 else (8.0 if day_hours is None else float(day_hours))
 		if hours is None:
 			hours = get_settings().get("maintenance_visit_hours")
 			hours = 2.0 if hours is None else hours
@@ -840,7 +1266,10 @@ def _move_assignment(doc, prior):
 
 	from erpnext_enhancements.api.maintenance_dispatch import assign_to_technician
 
-	if prior:
+	# A technician handed a visit who stays on it as crew (the page sent them in ``crew``) keeps
+	# their ToDo: the crew mirror leaves it alone, and so must this.
+	staying = prior and prior in [row.get("user") for row in doc.get("crew") or []]
+	if prior and not staying:
 		try:
 			remove(doc.doctype, doc.name, prior)
 		except Exception:
@@ -934,7 +1363,11 @@ def move_projected(contract, from_date, to_date, serial_no=None, reason=None):
 
 
 def _projected_conflicts(contract, serial_no, target):
-	"""Conflicts for the projected visit of ``contract`` landing on ``target``, for its default technician."""
+	"""Conflicts for the projected visit of ``contract`` landing on ``target``.
+
+	For its default technician and, since P1.8, each person on the site's default crew, each
+	for their own hours (the profile's crew-row hours, else its full-day flag or visit hours).
+	"""
 	try:
 		from erpnext_enhancements.api.maintenance_dispatch import default_technician_for
 
@@ -942,11 +1375,30 @@ def _projected_conflicts(contract, serial_no, target):
 	except Exception:
 		_log_failure("Maintenance Planner: default technician lookup failed")
 		return {}
-	if not technician:
-		return {}
-	return visit_conflicts(
-		technician, target, ref=f"{contract.name}|{serial_no or ''}|{target}", label=contract.name
-	)
+	crew = _default_crews({contract.get("project")} if contract.get("project") else set()).get(
+		contract.get("project")
+	) or {}
+	full_day = bool(crew.get("full_day"))
+	planned = _positive(crew.get("hours"))
+	people = [(technician, None)] if technician else []
+	people += [(m.get("user"), _positive(m.get("hours"))) for m in crew.get("members") or [] if m.get("user")]
+	out, seen = {}, set()
+	ref = f"{contract.name}|{serial_no or ''}|{target}"
+	for user, own in people:
+		if user in seen:
+			continue
+		seen.add(user)
+		found = visit_conflicts(
+			user,
+			target,
+			ref=ref,
+			label=contract.name,
+			hours=own if own is not None else (None if full_day else planned),
+			full_day=full_day and own is None,
+		)
+		for person, messages in found.items():
+			out.setdefault(person, []).extend(messages)
+	return out
 
 
 def _open_regular_draft_exists(contract, serial_no):

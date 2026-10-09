@@ -18,7 +18,11 @@ Against that capacity it sets everything that uses their hours:
 * **Rental crew tasks**, which are ordinary Tasks carrying ``custom_rental_booking``; the booking
   owns their dates, so they are reported as kind ``rental``.
 * **Maintenance visits**: every open or done visit record on its plan date, plus the visits the
-  scheduler has not drafted yet, projected exactly as the Maintenance Planner projects them.
+  scheduler has not drafted yet, projected exactly as the Maintenance Planner projects them. A
+  visit books its technician **and every crew member** (P1.8), each for their own hours: a crew
+  row's hours, else the person's whole day on a full-day visit, else the visit's planned hours,
+  else Settings' maintenance visit hours (:func:`visit_person_hours`). So a multi-person visit is
+  on every one of those people's days, and on every one of their drive routes.
 * **Travel Trip** days: the whole day is spoken for.
 * **Driving** (Phase 2): each person-day with stops is routed from the shop and back
   (``project_enhancements.routing``), and with Settings ``pad_drive_time`` on the drive time is
@@ -724,27 +728,104 @@ def read_crews(task_names):
 	return rows, todos
 
 
+def visit_person_hours(person_hours, full_day, planned_hours, default_hours):
+	"""``(hours, estimated)`` one person books for a visit (P1.8). ``hours`` None: their full day.
+
+	The rule, in order: the person's own crew-row ``hours`` when set (> 0); else, on a full-day
+	visit, that person's whole day, which the caller works out from their capacity the way an
+	unestimated task is (:func:`full_day_hours`); else the visit's ``planned_hours`` when set;
+	else Project Planner Settings' ``maintenance_visit_hours``. A clocked visit books its clocked
+	length for the technician instead, and the caller handles that before asking here.
+	``estimated`` is True when the hours are a default rather than something somebody entered.
+	"""
+	explicit = _float(person_hours)
+	if explicit > 0:
+		return round(explicit, 2), False
+	if full_day:
+		return None, True
+	planned = _float(planned_hours)
+	if planned > 0:
+		return round(planned, 2), False
+	return round(_float(default_hours), 2), True
+
+
+def full_day_hours(capacity, day_hours):
+	"""A person's whole day: their capacity that day, or the Settings' full day when it is 0.
+
+	The same rule as an unestimated task (:func:`allocate_task`): on a day they do not work the
+	booking still lands, so :func:`day_conflicts` says "Booked on a day off" rather than the visit
+	vanishing from the count.
+	"""
+	capacity = _float(capacity)
+	return round(capacity if capacity > 0 else _float(day_hours), 2)
+
+
+def _visit_entries(base, people, full_day, planned_hours, default_hours, clocked_hours=None, slot=None):
+	"""One booking per person on a visit. ``people``: ``[(user, crew-row hours or None)]``, lead first."""
+	out = []
+	seen = set()
+	for index, (user, person_hours) in enumerate(people):
+		if not user or user in seen:
+			continue
+		seen.add(user)
+		if index == 0 and clocked_hours is not None:
+			hours, estimated, mine = clocked_hours, False, slot
+		else:
+			hours, estimated = visit_person_hours(person_hours, full_day, planned_hours, default_hours)
+			mine = None
+		out.append(dict(base, user=user, hours=hours, slot=mine, estimated=estimated, full_day=hours is None))
+	return out
+
+
+def _read_visit_crews(names):
+	"""``{record: [(user, hours)]}`` for the visit records named. One query, crew table only."""
+	if not names:
+		return {}
+	out = defaultdict(list)
+	for row in frappe.db.sql(
+		"""
+		SELECT parent, user, hours, idx
+		FROM `tabSapphire Visit Crew Member`
+		WHERE parenttype = %(parenttype)s AND parentfield = 'crew' AND parent IN %(names)s
+		ORDER BY parent, idx
+		""",
+		{"parenttype": "Sapphire Maintenance Record", "names": tuple(sorted(names))},
+		as_dict=True,
+	) or []:
+		if row.get("parent") and row.get("user"):
+			out[row.get("parent")].append((row.get("user"), row.get("hours")))
+	return out
+
+
 def _read_visits(users, start, end, settings):
-	"""``[{"user", "date", "ref", "label", "project", "hours", "slot", "estimated"}]``.
+	"""``[{"user", "date", "ref", "label", "project", "hours", "slot", "estimated", "full_day"}]``.
 
 	Visit records on their plan date (the Maintenance Planner's own CASE: a finished visit sits on
 	the day it was done, an open one on its scheduled day), plus projected visits the scheduler has
-	not drafted, which carry the contract's default technician.
+	not drafted, which carry the site's default technician and default crew.
+
+	A visit books **every person on it** (P1.8): its technician and each crew member, one entry
+	each, so a multi-person visit shows on every one of their days and every one of their routes.
+	Hours per person follow :func:`visit_person_hours`; a clocked visit (clock in and out) books
+	its clocked length for the technician. An entry with ``hours`` None is a full-day booking,
+	which :func:`_compute` turns into that person's capacity.
 	"""
 	from erpnext_enhancements.api import maintenance_planner as mp
 
 	if not users:
 		return []
+	wanted = set(users)
 	visit_hours = settings.get("maintenance_visit_hours")
 	visit_hours = _float(
 		visit_hours if visit_hours is not None else DEFAULT_SETTINGS["maintenance_visit_hours"]
 	)
-	out = []
+	rows = []
 	for row in frappe.db.sql(
 		"""
 		SELECT * FROM (
 			SELECT
 				r.name, r.project, r.visit_label, r.technician, r.clock_in_time, r.clock_out_time,
+				r.planned_hours, r.full_day,
 				p.project_name AS project_title,
 				CASE
 					WHEN r.docstatus = 1 OR r.workflow_state = %(pending)s
@@ -753,35 +834,60 @@ def _read_visits(users, start, end, settings):
 				END AS plan_date
 			FROM `tabSapphire Maintenance Record` r
 			LEFT JOIN `tabProject` p ON p.name = r.project
-			WHERE r.docstatus < 2 AND r.technician IN %(users)s
+			WHERE r.docstatus < 2
+				AND (
+					r.technician IN %(users)s
+					OR r.name IN (
+						SELECT c.parent FROM `tabSapphire Visit Crew Member` c
+						WHERE c.parenttype = %(record)s AND c.parentfield = 'crew' AND c.user IN %(users)s
+					)
+				)
 		) visits
 		WHERE plan_date BETWEEN %(start)s AND %(end)s
 		ORDER BY plan_date, name
 		LIMIT 5000
 		""",
-		{"start": start, "end": end, "users": tuple(users), "pending": mp.PENDING_STATE},
+		{
+			"start": start,
+			"end": end,
+			"users": tuple(users),
+			"pending": mp.PENDING_STATE,
+			"record": "Sapphire Maintenance Record",
+		},
 		as_dict=True,
 	):
 		day = _as_date(row.get("plan_date"))
-		if not day or not (start <= day <= end) or row.get("technician") not in users:
-			continue
+		if day and start <= day <= end:
+			rows.append((row, day))
+
+	crews = _read_visit_crews({row.get("name") for row, _day in rows})
+	out = []
+	for row, day in rows:
+		people = [(row.get("technician"), None)] + list(crews.get(row.get("name")) or [])
 		clock_in, clock_out = _as_datetime(row.get("clock_in_time")), _as_datetime(row.get("clock_out_time"))
 		clocked = bool(clock_in and clock_out and clock_out > clock_in)
 		site = mp.short_site_name(row.get("project_title") or row.get("project") or "") or row.get("name")
-		out.append(
-			{
-				"user": row.get("technician"),
-				"date": day,
-				"ref": row.get("name"),
-				"label": f"{site} · {row.get('visit_label')}" if row.get("visit_label") else site,
-				"project": row.get("project"),
-				"hours": round((clock_out - clock_in).total_seconds() / 3600, 2) if clocked else visit_hours,
-				"slot": _slot_text((clock_in, clock_out))
-				if clocked and clock_in.date() == clock_out.date()
-				else None,
-				"estimated": not clocked,
-			}
+		base = {
+			"date": day,
+			"ref": row.get("name"),
+			"label": f"{site} · {row.get('visit_label')}" if row.get("visit_label") else site,
+			"project": row.get("project"),
+		}
+		entries = _visit_entries(
+			base,
+			people,
+			bool(row.get("full_day")),
+			row.get("planned_hours"),
+			visit_hours,
+			# Only a technician on the visit can have clocked it; no technician, nobody's clock.
+			clocked_hours=round((clock_out - clock_in).total_seconds() / 3600, 2)
+			if clocked and row.get("technician")
+			else None,
+			slot=_slot_text((clock_in, clock_out))
+			if clocked and clock_in.date() == clock_out.date()
+			else None,
 		)
+		out.extend(entry for entry in entries if entry["user"] in wanted)
 
 	try:
 		from frappe.utils import nowdate
@@ -795,21 +901,26 @@ def _read_visits(users, start, end, settings):
 		projected = []
 	for card in projected:
 		day = _as_date(card.get("date"))
-		if not day or card.get("technician") not in users or not (start <= day <= end):
+		if not day or not (start <= day <= end):
 			continue
-		out.append(
-			{
-				"user": card.get("technician"),
-				"date": day,
-				"ref": card.get("contract"),
-				"key": card.get("key"),
-				"label": "Projected visit: " + (card.get("site") or card.get("project") or ""),
-				"project": card.get("project"),
-				"hours": visit_hours,
-				"slot": None,
-				"estimated": True,
-			}
+		# A projected visit carries the site's default crew, length and full-day flag (P1.8), so the
+		# planners show the crew days of visits that are not drafted yet.
+		people = [(card.get("technician"), None)] + [
+			(member.get("user"), member.get("hours")) for member in card.get("crew") or []
+		]
+		if not any(user in wanted for user, _hours in people):
+			continue
+		base = {
+			"date": day,
+			"ref": card.get("contract"),
+			"key": card.get("key"),
+			"label": "Projected visit: " + (card.get("site") or card.get("project") or ""),
+			"project": card.get("project"),
+		}
+		entries = _visit_entries(
+			base, people, bool(card.get("full_day")), card.get("planned_hours"), visit_hours
 		)
+		out.extend(entry for entry in entries if entry["user"] in wanted)
 	return out
 
 
@@ -933,6 +1044,10 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 
 	for visit in _read_visits(list(user_to_resource), start, end, settings) if user_to_resource else []:
 		resource = user_to_resource.get(visit["user"])
+		hours = visit["hours"]
+		if hours is None:
+			# A full-day visit (P1.8): the person's whole day, the same rule as an unestimated task.
+			hours = full_day_hours(capacity_of(resource, visit["date"]), day_hours)
 		bookings[(resource, visit["date"])].append(
 			{
 				"kind": "visit",
@@ -940,7 +1055,7 @@ def _compute(start, end, resources=None, exclude=(), extra=()):
 				"key": visit.get("key") or visit["ref"],
 				"label": visit["label"],
 				"project": visit["project"],
-				"hours": visit["hours"],
+				"hours": hours,
 				"slot": visit["slot"],
 				"estimated": visit["estimated"],
 			}
