@@ -378,6 +378,7 @@ class ProjectPlanner {
 		this.init_phase3b();
 		this.init_phase4();
 		this.init_phase5();
+		this.init_phase6a();
 		this.bind_drag();
 	}
 
@@ -455,7 +456,7 @@ class ProjectPlanner {
 			this.load_route();
 			return;
 		}
-		frappe.set_route(PP.route, PP.route_view, resource, ymd);
+		this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd), false);
 	}
 
 	go(view, anchor) {
@@ -464,7 +465,7 @@ class ProjectPlanner {
 			this.load();
 			return;
 		}
-		frappe.set_route(PP.route, view, anchor);
+		this.p6a_route(() => frappe.set_route(PP.route, view, anchor), true);
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -785,6 +786,7 @@ class ProjectPlanner {
 		);
 		this.render_phase3b();
 		this.render_phase4();
+		this.render_phase6a();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -1455,6 +1457,7 @@ class ProjectPlanner {
 	// What is under the pointer when it went down: a task card, or a person.
 	drag_source(el) {
 		if (!this.data || !this.data.can_edit) return null;
+		if (el.closest(".pk-drawer")) return this.p6a_drag_source(el);
 		const person_el = el.closest(".pp-person[data-resource]");
 		if (person_el) return { kind: "person", el: person_el, resource: person_el.getAttribute("data-resource") };
 		// One overdue row at a time; its tick box and buttons stay clickable.
@@ -1513,6 +1516,7 @@ class ProjectPlanner {
 	// Near the top or bottom of the window, scroll so a far week is reachable; near the side of
 	// a sideways-scrolling grid (the crew view on a phone), scroll that.
 	edge_scroll(x, y) {
+		this.p6a_edge_scroll(x, y);
 		const edge = 56;
 		if (y < edge) window.scrollBy(0, -14);
 		else if (y > window.innerHeight - edge) window.scrollBy(0, 14);
@@ -1763,9 +1767,9 @@ class ProjectPlanner {
 						reason ? this.send(method, Object.assign({}, args, { reason }), opts) : null
 					);
 				}
-				if (opts.snapshot) this.push_undo(opts.snapshot);
+				const toasted = opts.snapshot ? this.push_undo(opts.snapshot, opts.message) : false;
 				if (result.name && result.modified) this.modified[result.name] = result.modified;
-				if (opts.message) frappe.show_alert({ message: opts.message, indicator: "green" }, 5);
+				if (opts.message && !toasted) frappe.show_alert({ message: opts.message, indicator: "green" }, 5);
 				(result.warnings || []).forEach((warning) =>
 					frappe.show_alert({ message: warning, indicator: "orange" }, 10)
 				);
@@ -1817,10 +1821,11 @@ class ProjectPlanner {
 		});
 	}
 
-	push_undo(snapshot) {
+	push_undo(snapshot, message) {
 		this.undo_stack.push(snapshot);
 		while (this.undo_stack.length > PP.undo_max) this.undo_stack.shift();
 		this.update_undo_button();
+		return this.p6a_undo_toast(snapshot, message);
 	}
 
 	update_undo_button() {
@@ -1835,6 +1840,7 @@ class ProjectPlanner {
 	// restores dates, hours and crew together. save_task reads a blank date as "unchanged", so a
 	// task dragged out of the Unscheduled tray keeps its new dates and the planner says so.
 	undo() {
+		this.p6a_close_toast();
 		const snap = this.undo_stack.pop();
 		this.update_undo_button();
 		if (!snap) {
@@ -1925,6 +1931,7 @@ class ProjectPlanner {
 		if (editable) links.push(["suggest", __("Suggest dates")]);
 		if (editable && card.tentative) links.push(["firm", __("Firm up")]);
 		links.push(...this.phase5_links(card));
+		links.push(...this.p6a_links(card));
 		const fields = [
 			{
 				fieldtype: "HTML",
@@ -2005,13 +2012,14 @@ class ProjectPlanner {
 			fields.push(...this.p4_equipment_fields(card));
 		}
 
-		const dialog = new frappe.ui.Dialog({ title: card.subject || card.name, fields, size: "large" });
+		const dialog = this.p6a_dialog({ title: card.subject || card.name, fields, size: "large" }, card);
 		if (editable) {
 			dialog.set_primary_action(__("Save"), (values) => this.save_dialog(card, dialog, values));
 		}
 		dialog.$wrapper.find("[data-action]").on("click", (e) => {
 			const action = e.currentTarget.getAttribute("data-action");
 			dialog.hide();
+			if (this.p6a_action(action, card)) return;
 			if (action === "task") frappe.set_route("Form", "Task", card.name);
 			else if (action === "project") frappe.set_route("Form", "Project", card.project);
 			else if (action === "suggest") this.suggest_dates(card);
@@ -3437,7 +3445,7 @@ const PP3B_METHODS = {
 			this.load_my_week();
 			return;
 		}
-		frappe.set_route(PP.route, PP3B.my_week, ymd);
+		this.p6a_route(() => frappe.set_route(PP.route, PP3B.my_week, ymd), false);
 	},
 
 	show_my_week(anchor) {
@@ -4333,3 +4341,764 @@ const PP5_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP5_METHODS);
+
+// ====================================================================== Phase 6A: quick looks and polish
+//
+// Nik, 2026-10-09: "click the Technicians name or something and see what their specific schedule is
+// in a pop up or something so as not to lose context overall." Everything here opens in the planner
+// kit's side drawer (public/js/planner_kit, loaded with frappe.require below), which leaves the
+// calendar visible and usable behind it (cards still move by drag); Esc and Back close it without
+// leaving the planner.
+//
+//   - click a person's name (Resources available, a crew-view row, a crew badge on a card, the route
+//     view's title)                          their week: every booking, free hours, days off,
+//                                            conflicts, the chosen day's stops in driving order,
+//                                            call/text/email (planner_views.get_person_schedule)
+//   - click a date (week and month day numbers, Resources available's day heads, crew-view column
+//     heads)                                 everyone's day side by side (get_day_overview)
+//   - click a project's name on a card, "At a glance" beside the project filter, or "Project at a
+//     glance" in a task's panel             the project: its open tasks on a timeline, planned vs
+//                                            worked, the labor forecast (get_project_overview)
+//   - click a card                          its editor opens in the side panel (planner_kit.panel
+//                                            hosts the same FieldGroup the dialog had; save_dialog,
+//                                            the reason prompt and every field are unchanged)
+//   - drag a task out of a person, day or project drawer onto a day or a person's row: the same
+//     drag_source / plan_drop / drop as a card on the board, so it asks for a reason and can be undone
+//   - every change that can be undone shows a toast with Undo; hovering a name lights up that
+//     person's bookings (pk-glow), a project's name its cards; the crew view's and the week view's
+//     headers and the people column stay put while scrolling; "?" opens the legend
+//
+// Everything Phase 6A adds to the page is in this block, mixed into ProjectPlanner below, so the work
+// of other phases on this file merges cleanly. The hooks into the class above are one line each:
+// init_phase6a (constructor), render_phase6a (render), p6a_route (go, go_route and go_my_week),
+// p6a_drag_source (drag_source), p6a_edge_scroll (edge_scroll), p6a_undo_toast (push_undo, whose
+// result send() reads so the green alert is not shown twice), p6a_close_toast (undo), and p6a_dialog,
+// p6a_links and p6a_action (open_card).
+
+const PP6A = {
+	kit: "planner_kit.bundle.js",
+	views: "erpnext_enhancements.api.planner_views",
+	owner: "pp",
+	// Drawer widths on a wide screen; a phone gets the whole screen.
+	widths: { person: 460, day: 760, project: 620, panel: 620 },
+	hints: [
+		["pp-person-peek", "Click a person's name to see their week without leaving the calendar."],
+		["pp-day-peek", "Click a date to see everyone's day side by side."],
+		["pp-glow", "Hover over a name to light up all of that person's bookings."],
+	],
+	route_icon:
+		'<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">' +
+		'<circle cx="3.5" cy="12.5" r="1.8"/><circle cx="12.5" cy="3.5" r="1.8"/>' +
+		'<path d="M5.3 12.5H10a2.5 2.5 0 0 0 0-5H6a2.5 2.5 0 0 1 0-4h4.7"/></svg>',
+};
+
+const PP6A_STYLE = `
+.pp-p6a-hints{display:flex;flex-direction:column;}
+.pp-p6a-help{font-weight:700;min-width:30px;}
+.pp-p6a-name{cursor:pointer;}
+.pp-p6a-name:hover .pp-person-name,.pp-route-title.pp-p6a-name:hover{text-decoration:underline;}
+.pp-p6a-proj{cursor:pointer;border-radius:4px;}
+.pp-p6a-proj:hover{text-decoration:underline;color:var(--text-color);}
+.pp-badge[data-pk-person]{cursor:pointer;}
+.pp-day-num[data-pp6a-day],.pp-crew-head[data-pp6a-day],.pp-res-head[data-pp6a-day]{cursor:pointer;}
+.pp-res-head[data-pp6a-day]:hover,.pp-crew-head[data-pp6a-day]:hover{color:var(--primary,#2490ef);}
+.pp-route-title{cursor:pointer;}
+.pp-p6a-sample{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--border-color);}
+.pp-p6a-sample-card{display:inline-block;width:100px;font-size:11px;padding:1px 6px;border:1px solid var(--border-color);border-left:4px solid #2563eb;border-radius:6px;background:var(--card-bg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-p6a-sample-card.pp-overdue{border-left-color:#dc2626;}
+.pp-p6a-sample-card.pp-drafted{outline:2px dashed var(--primary,#2490ef);outline-offset:-2px;}
+.pp-p6a-sample-card.pp-tentative{border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);}
+.pp-p6a-bar{display:inline-block;width:90px;}
+.pp-p6a-bar .pp-bar{display:block;}
+.pp-p6a-row{cursor:pointer;}
+.pp-p6a-row:hover{background:var(--control-bg);}
+.pp-p6a-initials{display:inline-flex;gap:2px;margin-left:4px;vertical-align:middle;}
+.pp-p6a-initials .pp-badge{width:16px;height:16px;font-size:8px;margin-left:0;}
+.pp-p6a-forecast{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;padding:6px 10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;}
+.pp-p6a-forecast-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
+@media (min-width:761px){
+.pp-crew-view .pp-scroll{max-height:calc(100vh - 150px);overflow:auto;}
+.pp-crew-view .pp-crew-head,.pp-crew-view .pp-crew-corner{position:sticky;top:0;z-index:3;background:var(--card-bg);}
+.pp-crew-view .pp-crew-corner{left:0;z-index:4;}
+.pp-week .pp-grid{max-height:calc(100vh - 150px);overflow:auto;}
+.pp-week .pp-day-head{position:sticky;top:0;z-index:2;background:var(--card-bg);padding-top:2px;padding-bottom:2px;}
+.pp-week .pp-day.pp-out .pp-day-head{background:var(--control-bg);}
+.pp-res .pp-scroll{max-height:46vh;overflow:auto;}
+.pp-res .pp-res-head{position:sticky;top:0;z-index:2;background:var(--card-bg);}
+.pp-res .pp-res-grid > .pp-res-head:first-child{left:0;z-index:3;}
+}
+`;
+
+const PP6A_METHODS = {
+	init_phase6a() {
+		if (!document.getElementById("pp-style-6a")) {
+			$("<style id='pp-style-6a'>").text(PP6A_STYLE).appendTo(document.head);
+		}
+		this.p6a = { kit: null, peek: null, panel: null, panel_card: null, seen: null, glow: [] };
+		this.$p6a_hints = $('<div class="pp-p6a-hints"></div>').insertAfter(this.$toolbar);
+		this.$p6a_glance = $('<button type="button" class="btn btn-default btn-sm pp-p6a-glance"></button>')
+			.text(__("At a glance"))
+			.attr("title", __("The project picked here, at a glance: its tasks, hours and forecast"))
+			.hide()
+			.on("click", () => {
+				if (this.project) this.p6a_open_project(this.project);
+			})
+			.insertAfter(this.$project);
+		this.$p6a_help = $('<button type="button" class="btn btn-default btn-sm pp-p6a-help">?</button>')
+			.attr("title", __("How to read the planner"))
+			.attr("aria-label", __("How to read the planner"))
+			.on("click", () => this.p6a_legend())
+			.insertAfter(this.$undo);
+		const root = this.$body[0];
+		// Capture phase: a name, a date or a project inside a card is a quick look, not the card's
+		// own click (which opens the task) and not the day number's old "show this week".
+		root.addEventListener("click", (e) => this.p6a_click(e), true);
+		root.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const el = e.target && e.target.closest ? e.target.closest(".pp-p6a-name, [data-pp6a-day]") : null;
+				if (!el || e.target !== el) return;
+				e.preventDefault();
+				e.stopPropagation();
+				el.click();
+			},
+			true
+		);
+		frappe.require(PP6A.kit, () => this.p6a_ready());
+	},
+
+	p6a_ready() {
+		const kit = window.planner_kit;
+		if (!kit || (this.p6a && this.p6a.kit)) return;
+		this.p6a.kit = kit;
+		// A booking dragged out of a drawer this page opened starts the page's own drag.
+		kit.drawer.element().addEventListener("pointerdown", (e) => {
+			const current = kit.drawer.current();
+			if (current && current.owner === PP6A.owner) this.on_down(e);
+		});
+		this.p6a.glow = [kit.hover_glow(this.$body[0], "person"), kit.hover_glow(this.$body[0], "project")];
+		this.p6a_show_hints();
+	},
+
+	// ------------------------------------------------------------------ hooks
+
+	// A route change of the planner's own: with `keep` (another week or view) an open drawer stays
+	// open over it; otherwise it closes. Either way Back does not land on a drawer that has gone.
+	p6a_route(fn, keep) {
+		const kit = this.p6a && this.p6a.kit;
+		return kit ? kit.drawer.route(fn, keep) : fn();
+	},
+
+	render_phase6a() {
+		if (!this.p6a) return;
+		this.p6a_decorate();
+		if (this.$p6a_glance) this.$p6a_glance.toggle(!!this.project && PP.views.includes(this.view));
+		this.p6a_refresh_open();
+	},
+
+	// The undo toast. True when it was shown, so send() leaves out the green alert it replaces.
+	p6a_undo_toast(snapshot, message) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !message) return false;
+		kit.toast(message, {
+			action_label: __("Undo"),
+			tone: "success",
+			on_action: () => {
+				// Only the change this toast announced: the Undo button may have been used since.
+				if (this.undo_stack[this.undo_stack.length - 1] !== snapshot) {
+					frappe.show_alert({ message: __("That change has already been undone."), indicator: "blue" }, 5);
+					return;
+				}
+				this.undo();
+			},
+		});
+		return true;
+	},
+
+	p6a_close_toast() {
+		const kit = this.p6a && this.p6a.kit;
+		if (kit) kit.toast.close();
+	},
+
+	// The card editor in the side panel, or the old dialog until the kit has loaded.
+	p6a_dialog(opts, card) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return new frappe.ui.Dialog(opts);
+		const panel = kit.panel(
+			Object.assign({}, opts, {
+				subtitle: [card.project_title || card.project, card.name].filter(Boolean).join(" · "),
+				width: PP6A.widths.panel,
+				key: `task:${card.name}`,
+				owner: PP6A.owner,
+				push: this.$body[0],
+				reopen: () => {
+					const fresh = this.by_task[card.name];
+					if (fresh) this.open_card(fresh);
+				},
+			})
+		);
+		this.p6a.panel = panel;
+		this.p6a.panel_card = card;
+		this.p6a.peek = null;
+		panel.onhide = () => {
+			if (this.p6a.panel !== panel) return;
+			this.p6a.panel = null;
+			this.p6a.panel_card = null;
+		};
+		return panel;
+	},
+
+	p6a_links(card) {
+		return this.p6a && this.p6a.kit && card.project ? [["p6a_project", __("Project at a glance")]] : [];
+	},
+
+	p6a_action(action, card) {
+		if (action !== "p6a_project") return false;
+		if (card.project) this.p6a_open_project(card.project);
+		return true;
+	},
+
+	// A drag that starts in a drawer: a task the page owns and may move, whether or not it is on the
+	// board (a later week in a person's drawer; the server sent its full card for exactly this).
+	p6a_drag_source(el) {
+		const kit = this.p6a && this.p6a.kit;
+		const current = kit && kit.drawer.current();
+		if (!current || current.owner !== PP6A.owner) return null;
+		const item = el.closest("[data-pk-drag]");
+		if (!item || el.closest("button, a, input, select, textarea")) return null;
+		if (item.getAttribute("data-pk-kind") !== "task") return null;
+		const card = this.p6a_card(item.getAttribute("data-pk-ref"));
+		if (!card || !card.movable || card.saving) return null;
+		return {
+			kind: "card",
+			el: item,
+			card,
+			from_date: item.getAttribute("data-pk-date") || card.start || null,
+			from_resource: item.getAttribute("data-pk-resource") || null,
+		};
+	},
+
+	// The crew view, the week grid and the people panel scroll inside themselves on a wide screen
+	// (so their headers can stay put): near their top or bottom edge, a drag scrolls them too.
+	p6a_edge_scroll(x, y) {
+		const el = document.elementFromPoint(x, y);
+		const box = el && el.closest ? el.closest(".pp-crew-view .pp-scroll, .pp-week .pp-grid, .pp-res .pp-scroll") : null;
+		if (!box || box.scrollHeight <= box.clientHeight) return;
+		const rect = box.getBoundingClientRect();
+		if (y < rect.top + 40) box.scrollTop -= 14;
+		else if (y > rect.bottom - 40) box.scrollTop += 14;
+	},
+
+	// ------------------------------------------------------------------ markup the quick looks need
+
+	// Drawn after every render, as Phase 3B's draft outline is: names and badges get the person's
+	// key, cards the keys of their people and project (hover glow), and the date heads a day key.
+	p6a_decorate() {
+		if (!this.data) return;
+		const root = this.$body[0];
+		const key = (value) => encodeURIComponent(String(value == null ? "" : value));
+		root.querySelectorAll(".pp-person[data-resource]").forEach((el) => {
+			el.setAttribute("data-pk-person", key(el.getAttribute("data-resource")));
+			el.classList.add("pp-p6a-name");
+			el.setAttribute("role", "button");
+			el.setAttribute("tabindex", "0");
+			if (!el.getAttribute("data-pp6a-tip")) {
+				el.setAttribute("data-pp6a-tip", "1");
+				el.setAttribute("title", `${el.getAttribute("title") || ""}\n${__("Click to see their week.")}`.trim());
+			}
+		});
+		root.querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			const card = this.by_task[el.getAttribute("data-task")];
+			if (!card) return;
+			const row = el.getAttribute("data-resource");
+			const crew = (card.crew || []).map((member) => member.resource).filter(Boolean);
+			el.setAttribute("data-pk-persons", (row ? [row] : crew).map(key).join(" "));
+			if (card.project) el.setAttribute("data-pk-projects", key(card.project));
+			el.querySelectorAll(".pp-badges .pp-badge:not(.pp-more)").forEach((badge, index) => {
+				const member = (card.crew || [])[index];
+				if (member && member.resource) badge.setAttribute("data-pk-person", key(member.resource));
+			});
+			// The project's name in the sub line becomes its own target (the crew view's chips have
+			// no project in theirs).
+			if (!row && card.project) {
+				const sub = el.querySelector(".pp-card-sub");
+				if (sub && !sub.querySelector("[data-pk-project]")) {
+					const rest = this.hours_text(card);
+					sub.innerHTML =
+						`<span class="pp-p6a-proj" data-pk-project="${pp_esc(key(card.project))}" title="${pp_esc(
+							__("See this project at a glance")
+						)}">${pp_esc(card.project_title || card.project)}</span>` + (rest ? ` · ${pp_esc(rest)}` : "");
+				}
+			}
+		});
+		root.querySelectorAll(".pp-fcard").forEach((el) => {
+			const item = this.by_foreign[el.getAttribute("data-fkey")];
+			const cell = el.closest(".pp-cell[data-resource]");
+			const who = (item && item.resource) || (cell && cell.getAttribute("data-resource"));
+			if (who) el.setAttribute("data-pk-persons", key(who));
+		});
+		root.querySelectorAll("[data-week]").forEach((el) => {
+			el.setAttribute("data-pp6a-day", el.getAttribute("data-week"));
+			el.setAttribute("title", __("See everyone's day"));
+			el.setAttribute("tabindex", "0");
+		});
+		const heads = root.querySelectorAll(".pp-res-grid > .pp-res-head");
+		const days = this.range_days();
+		heads.forEach((el, index) => {
+			const ymd = days[index - 1];
+			if (!ymd) return;
+			el.setAttribute("data-pp6a-day", ymd);
+			el.setAttribute("title", __("See everyone's day"));
+		});
+	},
+
+	// ------------------------------------------------------------------ clicks
+
+	p6a_click(e) {
+		if (!this.p6a || !this.p6a.kit || Date.now() < this.click_blocked_until) return;
+		const target = e.target;
+		if (!target || !target.closest || target.closest("button, a, input, select, textarea, .pp-route")) return;
+		const take = () => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		const person = target.closest("[data-pk-person]");
+		if (person) {
+			take();
+			this.p6a_open_person(decodeURIComponent(person.getAttribute("data-pk-person")));
+			return;
+		}
+		const project = target.closest("[data-pk-project]");
+		if (project) {
+			take();
+			this.p6a_open_project(decodeURIComponent(project.getAttribute("data-pk-project")));
+			return;
+		}
+		const day = target.closest("[data-pp6a-day]");
+		if (day) {
+			take();
+			this.p6a_open_day(day.getAttribute("data-pp6a-day"));
+			return;
+		}
+		if (target.closest(".pp-route-title") && this.route_resource) {
+			take();
+			this.p6a_open_person(this.route_resource, this.route_date);
+		}
+	},
+
+	// ------------------------------------------------------------------ the quick looks
+
+	// The first day of the week the person drawer opens on: the week on screen (the site's first
+	// weekday), the route view's day's week, or this week when the month on screen holds today.
+	p6a_week_start() {
+		const today = this.today();
+		const { start, end } = this.range();
+		let base = this.anchor;
+		if (this.view === PP.route_view && this.route_date) base = this.route_date;
+		else if (this.view === "month" && today >= pp_ymd(start) && today <= pp_ymd(end)) base = today;
+		return this.week_start_of(base || today);
+	},
+
+	p6a_card(name) {
+		if (!name) return null;
+		if (this.by_task[name]) return this.by_task[name];
+		const peek = this.p6a && this.p6a.peek;
+		const data = peek && typeof peek.data === "function" ? peek.data() : null;
+		if (!data) return null;
+		if (data.cards && data.cards[name]) return data.cards[name];
+		return [].concat(data.tasks || [], data.undated || []).find((card) => card && card.name === name) || null;
+	},
+
+	// The page owns project tasks: only those it may move can leave a drawer by drag.
+	p6a_can_drag(booking, data) {
+		if (!this.data || !this.data.can_edit || booking.kind !== "task") return false;
+		const card = this.by_task[booking.ref] || (data && data.cards && data.cards[booking.ref]);
+		return !!(card && card.movable);
+	},
+
+	p6a_open_person(resource, selected) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !resource) return;
+		this.p6a.seen = this.data;
+		this.p6a.peek = kit.peeks.person({
+			resource,
+			label: this.resource_label(resource),
+			start: this.p6a_week_start(),
+			selected: selected || null,
+			days: 7,
+			owner: PP6A.owner,
+			push: this.$body[0],
+			width: PP6A.widths.person,
+			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
+			on_full_route: (who, ymd) => kit.drawer.navigate(() => this.go_route(who, ymd)),
+		});
+	},
+
+	p6a_open_day(ymd) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !ymd) return;
+		this.p6a.seen = this.data;
+		this.p6a.peek = kit.peeks.day({
+			date: ymd,
+			group: this.group || "",
+			owner: PP6A.owner,
+			push: this.$body[0],
+			width: PP6A.widths.day,
+			person_key: (person) => person.resource,
+			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
+			on_person: (person) => this.p6a_open_person(person.resource, ymd),
+			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
+		});
+	},
+
+	p6a_open_project(project) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !project) return;
+		const known = this.by_project[project];
+		const state = { data: null, token: 0 };
+		this.p6a.seen = this.data;
+		const actions = [
+			{
+				label: __("Open project"),
+				on_click: () => kit.drawer.navigate(() => frappe.set_route("Form", "Project", project)),
+			},
+		];
+		if (known && PP.views.includes(this.view)) {
+			actions.unshift({ label: __("Show only this project"), on_click: () => this.p6a_filter_project(project) });
+		}
+		const handle = kit.drawer.open({
+			title: (known && known.title) || project,
+			subtitle: project,
+			body: `<p class="pk-empty">${pp_esc(__("Loading…"))}</p>`,
+			width: PP6A.widths.project,
+			key: `project:${project}`,
+			owner: PP6A.owner,
+			push: this.$body[0],
+			actions,
+			reopen: () => this.p6a_open_project(project),
+			on_click: (e) => {
+				const row = e.target && e.target.closest ? e.target.closest("[data-pp6a-task]") : null;
+				if (!row || Date.now() < this.click_blocked_until) return;
+				const card = this.p6a_card(row.getAttribute("data-pp6a-task"));
+				if (card) this.open_card(card);
+			},
+		});
+		const load = () => {
+			const token = ++state.token;
+			if (state.data) handle.body.classList.add("pk-busy");
+			return Promise.resolve(frappe.call({ method: `${PP6A.views}.get_project_overview`, args: { project } }))
+				.then((r) => {
+					if (token !== state.token || !handle.is_open()) return;
+					handle.body.classList.remove("pk-busy");
+					state.data = (r && r.message) || null;
+					const data = state.data || {};
+					handle.set_title(data.title || (known && known.title) || project);
+					handle.set_subtitle([project, data.customer_name].filter(Boolean).join(" · "));
+					handle.set_body(this.p6a_project_html(state.data));
+				})
+				.catch(() => {
+					if (token !== state.token || !handle.is_open()) return;
+					handle.body.classList.remove("pk-busy");
+					handle.set_body(this.p6a_project_html(null));
+				});
+		};
+		this.p6a.peek = { data: () => state.data, refresh: load, is_open: () => handle.is_open() };
+		load();
+	},
+
+	p6a_filter_project(project) {
+		this.project = project;
+		this.save_pref(PP.prefs.project, project);
+		this.show_all_unscheduled = false;
+		if (this.$project) this.$project.val(project);
+		this.render();
+	},
+
+	// After every load, a drawer that shows what changed is refreshed: the task in the side panel is
+	// reopened from its new card (so its `modified` lock and its fields are current), and a person,
+	// day or project drawer asks for its numbers again.
+	p6a_refresh_open() {
+		const p6a = this.p6a;
+		if (!p6a.kit || !this.data) return;
+		if (p6a.panel && p6a.panel.is_open() && p6a.panel_card) {
+			const fresh = this.by_task[p6a.panel_card.name];
+			if (fresh && !fresh.saving && this.p6a_signature(fresh) !== this.p6a_signature(p6a.panel_card)) {
+				this.open_card(fresh);
+				return;
+			}
+		}
+		if (p6a.peek && p6a.peek.is_open() && p6a.seen !== this.data) {
+			p6a.seen = this.data;
+			p6a.peek.refresh();
+		}
+	},
+
+	p6a_signature(card) {
+		return JSON.stringify([
+			card.modified,
+			card.start,
+			card.end,
+			card.expected_time,
+			card.tentative,
+			card.drafted,
+			(card.crew || []).map((member) => [member.resource, member.hours, member.is_lead]),
+		]);
+	},
+
+	// ------------------------------------------------------------------ the project drawer
+
+	p6a_initials(resource, label) {
+		const parts = String(this.resource_label(resource, label) || "?").split(/\s+/).filter(Boolean);
+		return ((parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+	},
+
+	p6a_hours_line(card) {
+		const actual = Number(card.actual_hours) || 0;
+		const planned = Number(card.planned_hours) || 0;
+		if (actual > 0) {
+			return planned > 0
+				? __("{0}h of {1}h", [pp_hours(actual), pp_hours(planned)])
+				: __("{0}h worked", [pp_hours(actual)]);
+		}
+		return planned > 0 ? __("{0}h planned", [pp_hours(planned)]) : "";
+	},
+
+	p6a_task_row(card, data, track) {
+		const grab = !!(card.movable && data.can_edit && this.data && this.data.can_edit);
+		const crew = (card.crew || [])
+			.slice(0, 3)
+			.map(
+				(member) =>
+					`<span class="pp-badge" style="background:${pp_esc(this.resource_color(member.resource))}" title="${pp_esc(
+						this.resource_label(member.resource, member.label)
+					)}">${pp_esc(this.p6a_initials(member.resource, member.label))}</span>`
+			)
+			.join("");
+		const when = card.start
+			? card.end && card.end !== card.start
+				? `${pp_when(card.start)} – ${pp_when(card.end)}`
+				: pp_when(card.start)
+			: __("No dates");
+		const sub = [when, this.p6a_hours_line(card)].filter(Boolean).join(" · ");
+		const chips = [];
+		if (card.over_plan) chips.push(`<span class="pp-chip pp-red">${pp_esc(__("Running over"))}</span>`);
+		if (card.tentative) chips.push(`<span class="pp-chip pp-pencil">${pp_esc(__("Pencil"))}</span>`);
+		if (card.overdue) chips.push(`<span class="pp-chip pp-red">${pp_esc(__("Overdue"))}</span>`);
+		if (card.rental_kind) chips.push(`<span class="pp-chip">${pp_esc(__(card.rental_kind))}</span>`);
+		const drag = grab
+			? ` data-pk-drag="1" data-pk-kind="task" data-pk-ref="${pp_esc(card.name)}" data-pk-key="${pp_esc(
+					card.name
+			  )}" data-pk-date="${pp_esc(card.start || "")}" data-pk-resource=""`
+			: "";
+		const tip = [card.subject, sub, grab ? __("Drag onto the calendar to move it; click to edit it.") : ""]
+			.filter(Boolean)
+			.join("\n");
+		return `
+			<div class="pk-tl-row pp-p6a-row${grab ? " pk-grab" : ""}" data-pp6a-task="${pp_esc(card.name)}"${drag}
+				title="${pp_esc(tip)}">
+				<div class="pk-tl-label"><b>${pp_esc(card.subject || card.name)}<span class="pp-p6a-initials">${crew}</span></b>
+					<span>${pp_esc(sub)}</span><div>${chips.join("")}</div></div>
+				${track}
+			</div>`;
+	},
+
+	p6a_track(card, data) {
+		const bar = card.bar || {};
+		if (bar.outside) {
+			return `<div class="pk-tl-off">${pp_esc(bar.outside === "before" ? __("← earlier") : __("later →"))}</div>`;
+		}
+		const classes = ["pk-tl-bar"];
+		if (card.tentative) classes.push("pk-tl-pencil");
+		else if (card.over_plan) classes.push("pk-tl-over");
+		if (card.overdue) classes.push("pk-tl-late");
+		if (bar.clipped_start) classes.push("pk-tl-clip-start");
+		if (bar.clipped_end) classes.push("pk-tl-clip-end");
+		const left = Math.max(0, Math.min(100, Number(bar.left_pct) || 0));
+		const width = Math.max(0, Math.min(100 - left, Number(bar.width_pct) || 0));
+		const color = card.tentative || card.over_plan ? "" : `background:${pp_esc(pp_color(card.color, PP.default_color))};`;
+		return `<div class="pk-tl-track">${this.p6a_today_mark(data)}<span class="${classes.join(" ")}" style="left:${left}%;width:${width}%;${color}"></span></div>`;
+	},
+
+	p6a_today_mark(data) {
+		const window_ = data.window;
+		if (!window_ || !data.today || data.today < window_.start || data.today > window_.end) return "";
+		const total = moment(window_.end, "YYYY-MM-DD").diff(moment(window_.start, "YYYY-MM-DD"), "days") + 1;
+		const at = (moment(data.today, "YYYY-MM-DD").diff(moment(window_.start, "YYYY-MM-DD"), "days") + 0.5) / total;
+		return `<span class="pk-tl-today" style="left:${Math.round(at * 10000) / 100}%" title="${pp_esc(__("Today"))}"></span>`;
+	},
+
+	p6a_forecast_html(forecast) {
+		if (!forecast) return "";
+		const parts = [];
+		if (forecast.booked_hours != null) parts.push(__("{0}h booked ahead", [pp_hours(forecast.booked_hours)]));
+		if (forecast.actual_hours != null) parts.push(__("{0}h worked so far", [pp_hours(forecast.actual_hours)]));
+		let note = "";
+		// Money only when the server says this person may see it, and only the figures it sent.
+		if (forecast.can_see_cost === true) {
+			if (forecast.forecast_cost != null) parts.push(__("{0} forecast", [this.p4_money(forecast.forecast_cost)]));
+			note = forecast.burdened ? __("At burdened rates.") : __("At base pay rates: payroll burden is not included yet.");
+		}
+		if (!parts.length) return "";
+		return (
+			`<div class="pk-section-title">${pp_esc(__("Labor forecast"))}</div>` +
+			`<div class="pp-p6a-forecast">${parts.map((text) => `<span>${pp_esc(text)}</span>`).join("")}${
+				note ? `<span class="pp-p6a-forecast-note">${pp_esc(note)}</span>` : ""
+			}</div>`
+		);
+	},
+
+	p6a_project_html(data) {
+		if (!data) return `<p class="pk-empty">${pp_esc(__("The project could not be loaded. Try again."))}</p>`;
+		if (!data.on_planner) {
+			return `<div class="pk-note pk-note-warn">${pp_esc(data.message || __("This project is not on the planner."))}</div>`;
+		}
+		const facts = [];
+		const fact = (label, value) => {
+			if (value) facts.push(`<tr><th>${pp_esc(label)}</th><td>${pp_esc(value)}</td></tr>`);
+		};
+		fact(__("Project"), data.project);
+		fact(__("Account"), data.customer_name);
+		fact(__("Project manager"), data.pm);
+		fact(__("Status"), data.status ? __(data.status) : "");
+		fact(__("Type"), data.project_type ? __(data.project_type) : "");
+		if (data.expected_start || data.expected_end) {
+			fact(__("Expected"), [data.expected_start, data.expected_end].filter(Boolean).map((ymd) => pp_when(ymd)).join(" – "));
+		}
+		const tasks = data.tasks || [];
+		const undated = data.undated || [];
+		const parts = [`<table class="pk-facts">${facts.join("")}</table>`, this.p6a_forecast_html(data.forecast)];
+		parts.push(`<div class="pk-section-title">${pp_esc(__("Scheduled tasks ({0})", [tasks.length]))}</div>`);
+		if (tasks.length && data.window) {
+			parts.push(
+				`<div class="pk-tl"><div class="pk-tl-scale"><span>${pp_esc(pp_when(data.window.start))}</span><span>${pp_esc(
+					pp_when(data.window.end)
+				)}</span></div>${tasks.map((card) => this.p6a_task_row(card, data, this.p6a_track(card, data))).join("")}</div>`
+			);
+		} else {
+			parts.push(`<p class="pk-empty">${pp_esc(__("No open task has dates yet."))}</p>`);
+		}
+		if (undated.length) {
+			parts.push(`<div class="pk-section-title">${pp_esc(__("Not scheduled yet ({0})", [undated.length]))}</div>`);
+			parts.push(`<div class="pk-tl">${undated.map((card) => this.p6a_task_row(card, data, "")).join("")}</div>`);
+		}
+		if (data.truncated) {
+			parts.push(`<p class="pk-note">${pp_esc(__("Showing the first {0} open tasks.", [data.limit]))}</p>`);
+		}
+		if (data.can_edit && (tasks.length || undated.length)) {
+			parts.push(`<p class="pk-note">${pp_esc(__("Drag a task onto a day or a person's row to move it. Click it to edit it."))}</p>`);
+		}
+		return `<div class="pp-p6a-project">${parts.join("")}</div>`;
+	},
+
+	// ------------------------------------------------------------------ legend and hints
+
+	p6a_show_hints() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !this.$p6a_hints) return;
+		let shown = 0;
+		PP6A.hints.forEach(([key, text]) => {
+			if (shown >= 2 || kit.hint.seen(key)) return;
+			if (kit.hint(key, __(text), { container: this.$p6a_hints[0] })) shown += 1;
+		});
+	},
+
+	p6a_legend() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return;
+		const chip = (cls, text) => `<span class="pp-chip${cls ? ` ${cls}` : ""}">${pp_esc(__(text))}</span>`;
+		const card = (cls, text, style) =>
+			`<span class="pp-p6a-sample-card${cls ? ` ${cls}` : ""}"${style ? ` style="${style}"` : ""}>${pp_esc(__(text))}</span>`;
+		const bar = (cls, width, soft) =>
+			`<span class="pp-p6a-bar ${cls}"><span class="pp-bar"><i style="width:${width}%"></i>${
+				soft ? `<b style="left:${width}%;width:${soft}%"></b>` : ""
+			}</span></span>`;
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		kit.legend(
+			[
+				{
+					title: __("Quick looks"),
+					items: [
+						item("", "Click a person's name (in the panel, a crew row or a crew badge) to see their week: bookings, free hours, days off and the day's stops in driving order."),
+						item("", "Click a date to see everyone's day side by side."),
+						item("", "Click a project's name on a card to see the whole project on a timeline, with hours and the labor forecast."),
+						item("", "Drag a task out of any of these onto a day or a person's row to move it. Esc or Back closes the side panel."),
+						item("", "Hover over a name to light up all of that person's bookings, or over a project's name to light up its cards."),
+					],
+				},
+				{
+					title: __("Task cards"),
+					items: [
+						item(card("", "Dig"), "A project task. The left edge is the task's color. Drag it to another day to move it; it keeps its length."),
+						item(card("pp-overdue", "Dig"), "Overdue: the end date has passed and the task is not done."),
+						item(card("pp-tentative", "Dig"), "Pencil (tentative): soft load, not counted as booked until you firm it up."),
+						item(card("pp-drafted", "Dig"), "Draft: a change kept to yourself until you publish it (Draft mode)."),
+					],
+				},
+				{
+					title: __("Chips on a card"),
+					items: [
+						item(chip("", "Day 2 of 3"), "Which day of a multi-day task this is."),
+						item(chip("pp-amber", "Needs 1 more"), "Fewer people than the task's Crew needed."),
+						item(chip("pp-amber", "No crew"), "Nobody is on it yet."),
+						item(chip("pp-red", "Conflict"), "Someone on it is over their hours, double-booked or booked on a day off."),
+						item(chip("pp-red", "Overdue"), "Its end date has passed."),
+						item(chip("pp-pencil", "Pencil"), "Pencilled in, not firm yet."),
+						item(chip("pp-amber", "Starts before Dig"), "It starts before a task it depends on ends."),
+						item(chip("pp-amber", "Missing Forklift"), "Nobody on the crew holds a qualification it needs."),
+						item(chip("pp-weather", "Rain 70%"), "Outdoor work on a day with rain, freezing or high wind in the forecast."),
+						item(chip("", "14h of 12h"), "Hours clocked against the plan. Red when it is running over."),
+						item(chip("pp-equip", "Truck 3"), "A vehicle or asset the task uses."),
+						item(chip("", "Delivery"), "A rental crew task. Its dates follow its Rental Booking."),
+						item(chip("", "No dates"), "Not scheduled yet: drag it onto a day."),
+						item(chip("pp-draft-chip", "Draft"), "Changed in Draft mode and not published yet."),
+					],
+				},
+				{
+					title: __("People"),
+					items: [
+						item(`<span class="pp-badge" style="background:#2563eb">AH</span>`, "Crew initials. Click one to see that person's week."),
+						item(`<span class="pp-badge pp-lead" style="background:#16a34a">JD</span>`, "The crew lead (ringed)."),
+						item(`<span class="pp-badge pp-more">+2</span>`, "More people than fit on the card."),
+					],
+				},
+				{
+					title: __("A person's day"),
+					note: __("In Resources available and the crew view. Hours count driving when Settings say so."),
+					items: [
+						item(bar("pp-green", 50), "Up to 75% of their hours booked."),
+						item(bar("pp-amber", 90), "More than 75% booked."),
+						item(bar("pp-red", 100), "Over their hours."),
+						item(bar("pp-green", 40, 30), "Hatched: pencilled hours, drawn after the firm ones."),
+						item(`<span class="pp-p6a-sample pp-offday">${pp_esc(__("Off"))}</span>`, "Not working: time off, a holiday or not a work day. The type and reason of time off are never shown."),
+						item(`<span class="pp-p6a-sample pp-conflict">${pp_esc(__("2h free"))}</span>`, "Red outline: a conflict on that day."),
+						item(`<span class="pp-p6a-sample pp-softover">${pp_esc(__("Full"))}</span>`, "Amber outline: pencilled work would put them over."),
+						item(chip("pp-red", "Long drive"), "More driving than the Settings limit."),
+						item(`<span class="pp-p6a-sample">${PP6A.route_icon}</span>`, "Open the day's route: stops in driving order, drive times and a map."),
+					],
+				},
+				{
+					title: __("Other bookings (read-only)"),
+					items: [
+						item(`<span class="pp-fcard pp-k-visit pp-p6a-sample">${pp_esc(__("Visit"))}</span>`, "A maintenance visit. It moves on the Maintenance Planner."),
+						item(`<span class="pp-fcard pp-k-rental pp-p6a-sample">${pp_esc(__("Rental"))}</span>`, "A rental crew task. It moves with its Rental Booking."),
+						item(`<span class="pp-fcard pp-k-travel pp-p6a-sample">${pp_esc(__("Travel"))}</span>`, "A travel day. The whole day is taken."),
+						item(`<span class="pp-ecard pp-clash pp-p6a-sample">${pp_esc(__("Truck 3"))}</span>`, "Crew view, equipment rows: red when a vehicle or asset is on two tasks at once, striped when it is in the shop."),
+					],
+				},
+				{
+					title: __("Dragging"),
+					items: [
+						item(`<span class="pp-p6a-sample pp-over">${pp_esc(__("Drop here"))}</span>`, "Where the card will land."),
+						item(`<span class="pp-p6a-sample pp-over-past">${pp_esc(__("Past day"))}</span>`, "A day before today: the planner asks before it schedules work there."),
+						item("", "On a touch screen, hold a card for a moment before you drag it."),
+						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
+					],
+				},
+			],
+			{ title: __("How to read the Project Planner"), owner: PP6A.owner }
+		);
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP6A_METHODS);

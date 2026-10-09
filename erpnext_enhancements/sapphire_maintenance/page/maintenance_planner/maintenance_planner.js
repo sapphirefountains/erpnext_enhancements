@@ -307,6 +307,7 @@ class MaintenancePlanner {
 		this.page.set_secondary_action(__("Day Board"), () => frappe.set_route("maintenance-day-board"));
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		this.init_phase6a();
 		this.bind_drag();
 	}
 
@@ -334,7 +335,7 @@ class MaintenancePlanner {
 			this.load();
 			return;
 		}
-		frappe.set_route(MP.route, view, anchor);
+		this.p6a_route(() => frappe.set_route(MP.route, view, anchor), true);
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -807,6 +808,7 @@ class MaintenancePlanner {
 						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Teal, amber and gray cards are project, rental and travel bookings of the same people: they open the task but are moved on the Project Planner."
 				  )
 		);
+		this.render_phase6a();
 	}
 
 	render_calendar(cards) {
@@ -1266,13 +1268,14 @@ class MaintenancePlanner {
 		const resource = el.getAttribute("data-route-resource");
 		const ymd = el.getAttribute("data-route-date");
 		if (!resource || !ymd) return false;
-		frappe.set_route(MP.project_route, "route", resource, ymd);
+		this.p6a_route(() => frappe.set_route(MP.project_route, "route", resource, ymd), false);
 		return true;
 	}
 
 	// What is under the pointer when it went down: a visit card, or a technician.
 	drag_source(el) {
 		if (!this.data) return null;
+		if (el.closest(".pk-drawer")) return this.p6a_drag_source(el);
 		const person_el = el.closest(".mp-person[data-user]");
 		if (person_el) {
 			if (!this.data.can_move_visits) return null;
@@ -1323,6 +1326,7 @@ class MaintenancePlanner {
 	// Near the top or bottom of the window, scroll so a far week is reachable; near the side of
 	// a sideways-scrolling grid (the crew view on a phone), scroll that.
 	edge_scroll(x, y) {
+		this.p6a_edge_scroll(x, y);
 		const edge = 56;
 		if (y < edge) window.scrollBy(0, -14);
 		else if (y > window.innerHeight - edge) window.scrollBy(0, 14);
@@ -1635,21 +1639,21 @@ class MaintenancePlanner {
 						reason ? this.send(method, Object.assign({}, args, { reason }), opts) : null
 					);
 				}
+				let message = opts.message;
+				if (message && result.drafted) message += ". " + __("The visit is drafted and on the technician's list.");
+				let toasted = false;
 				if (opts.snapshot) {
 					// A projected visit moved into the drafting window becomes a record at once, and its
 					// own undo is moving that record, which the page cannot yet name.
-					this.push_undo(
+					toasted = this.push_undo(
 						result.drafted && opts.snapshot.kind === "projected"
 							? { kind: "drafted", site: opts.snapshot.site }
-							: opts.snapshot
+							: opts.snapshot,
+						message
 					);
 				}
 				if (result.name && result.modified) this.modified[result.name] = result.modified;
-				if (opts.message) {
-					let message = opts.message;
-					if (result.drafted) message += ". " + __("The visit is drafted and on the technician's list.");
-					frappe.show_alert({ message, indicator: "green" }, 5);
-				}
+				if (message && !toasted) frappe.show_alert({ message, indicator: "green" }, 5);
 				(result.warnings || []).forEach((warning) =>
 					frappe.show_alert({ message: warning, indicator: "orange" }, 10)
 				);
@@ -1704,10 +1708,11 @@ class MaintenancePlanner {
 
 	// ------------------------------------------------------------------ undo
 
-	push_undo(snapshot) {
+	push_undo(snapshot, message) {
 		this.undo_stack.push(snapshot);
 		while (this.undo_stack.length > MP.undo_max) this.undo_stack.shift();
 		this.update_undo_button();
+		return this.p6a_undo_toast(snapshot, message);
 	}
 
 	update_undo_button() {
@@ -1722,6 +1727,7 @@ class MaintenancePlanner {
 	// (its date and technician), a projected visit through move_projected. A date already in the past
 	// cannot be returned to, and a visit cannot be unscheduled, so those stay and the planner says so.
 	undo() {
+		this.p6a_close_toast();
 		const snap = this.undo_stack.pop();
 		this.update_undo_button();
 		if (!snap) {
@@ -1868,6 +1874,7 @@ class MaintenancePlanner {
 		}
 		if (card.contract) links.push(["contract", __("Open contract")]);
 		links.push(...this.phase5_links(card));
+		links.push(...this.p6a_links(card));
 
 		const fields = [
 			{
@@ -1927,7 +1934,7 @@ class MaintenancePlanner {
 			}
 		}
 
-		const dialog = new frappe.ui.Dialog({ title: card.site || card.site_full || card.name, fields });
+		const dialog = this.p6a_dialog({ title: card.site || card.site_full || card.name, fields }, card);
 		if (card.movable) {
 			dialog.set_primary_action(card.kind === "visit" ? __("Save") : __("Move next visit"), (values) => {
 				const change = {};
@@ -1967,6 +1974,7 @@ class MaintenancePlanner {
 		dialog.$wrapper.find("[data-action]").on("click", (e) => {
 			const action = e.currentTarget.getAttribute("data-action");
 			dialog.hide();
+			if (this.p6a_action(action, card)) return;
 			if (action === "form") frappe.set_route("Form", "Sapphire Maintenance Record", card.name);
 			else if (action === "wizard") frappe.set_route("visit-wizard", { record: card.name });
 			else if (action === "contract") frappe.set_route("Form", "Sapphire Maintenance Contract", card.contract);
@@ -2104,3 +2112,620 @@ const MP5_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP5_METHODS);
+
+// ====================================================================== Phase 6A: quick looks and polish
+//
+// The Maintenance Planner's half of Phase 6A (the Project Planner has the same, see its own block).
+// Nik, 2026-10-09: "click the Technicians name or something and see what their specific schedule is
+// in a pop up or something so as not to lose context overall." The quick looks open in the planner
+// kit's side drawer (public/js/planner_kit, loaded with frappe.require below); the calendar stays
+// visible and usable behind it, and Esc or Back closes it without leaving the planner.
+//
+//   - click a technician's name (Resources available, a crew-view row, the initials on a visit, an
+//     "off" badge)                            their week (planner_views.get_person_schedule, by user)
+//   - click a date (day numbers, Resources available's day heads, crew-view column heads)
+//                                             every technician's day side by side (get_day_overview)
+//   - "Site at a glance" in a visit's panel  the site's upcoming, projected and recent visits, its
+//                                             default technician and crew (get_site_overview)
+//   - click a visit                          its editor opens in the side panel (planner_kit.panel
+//                                             hosts the same fields; the crew editor is unchanged)
+//   - drag a visit out of a person, day or site drawer onto a day or a technician's row: the page's
+//     own drag_source / plan_drop / drop, so a conflict asks for a reason and Undo works
+//   - every change that can be undone shows a toast with Undo; hovering a name lights up that
+//     person's visits and bookings (pk-glow); the crew view's and the week view's headers stay put
+//     while scrolling; "?" opens the legend
+//
+// Hooks into the class above, one line each: init_phase6a (constructor), render_phase6a (render),
+// p6a_route (go, open_route), p6a_drag_source (drag_source), p6a_edge_scroll (edge_scroll),
+// p6a_undo_toast (push_undo, whose answer send() reads so the alert is not shown twice),
+// p6a_close_toast (undo), and p6a_dialog, p6a_links and p6a_action (open_card).
+
+const MP6A = {
+	kit: "planner_kit.bundle.js",
+	site_method: "erpnext_enhancements.api.planner_views.get_site_overview",
+	owner: "mp",
+	widths: { person: 460, day: 760, site: 520, panel: 540 },
+	hints: [
+		["mp-person-peek", "Click a technician's name to see their week without leaving the calendar."],
+		["mp-day-peek", "Click a date to see every technician's day side by side."],
+		["mp-glow", "Hover over a name to light up all of that person's visits."],
+	],
+	status: { draft: "Scheduled", pending: "Pending review", done: "Done", projected: "Projected" },
+};
+
+const MP6A_STYLE = `
+.mp-p6a-hints{display:flex;flex-direction:column;}
+.mp-p6a-help{font-weight:700;min-width:30px;}
+.mp-p6a-name{cursor:pointer;}
+.mp-p6a-name:hover .mp-person-name{text-decoration:underline;}
+.mp-tech[data-pk-person]{cursor:pointer;}
+.mp-day-num[data-pp6a-day],.mp-crew-head[data-pp6a-day],.mp-res-head[data-pp6a-day]{cursor:pointer;}
+.mp-res-head[data-pp6a-day]:hover,.mp-crew-head[data-pp6a-day]:hover{color:var(--primary,#2490ef);}
+.mp-p6a-sample{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--border-color);}
+.mp-p6a-bar{display:inline-block;width:90px;}
+.mp-p6a-bar .mp-bar{display:block;}
+.mp-p6a-row{cursor:pointer;}
+@media (min-width:761px){
+.mp-crew-view .mp-scroll{max-height:calc(100vh - 150px);overflow:auto;}
+.mp-crew-view .mp-crew-head,.mp-crew-view .mp-crew-corner{position:sticky;top:0;z-index:3;background:var(--card-bg);}
+.mp-crew-view .mp-crew-corner{left:0;z-index:4;}
+.mp-week .mp-grid{max-height:calc(100vh - 150px);overflow:auto;}
+.mp-week .mp-day-head{position:sticky;top:0;z-index:2;background:var(--card-bg);padding-top:2px;padding-bottom:2px;}
+.mp-week .mp-day.mp-out .mp-day-head{background:var(--control-bg);}
+.mp-res .mp-scroll{max-height:46vh;overflow:auto;}
+.mp-res .mp-res-head{position:sticky;top:0;z-index:2;background:var(--card-bg);}
+.mp-res .mp-res-grid > .mp-res-head:first-child{left:0;z-index:3;}
+}
+`;
+
+const MP6A_METHODS = {
+	init_phase6a() {
+		if (!document.getElementById("mp-style-6a")) {
+			$("<style id='mp-style-6a'>").text(MP6A_STYLE).appendTo(document.head);
+		}
+		this.p6a = { kit: null, peek: null, panel: null, panel_card: null, seen: null, glow: [] };
+		const $bar = this.$body.find(".mp-toolbar").first();
+		this.$p6a_hints = $('<div class="mp-p6a-hints"></div>').insertAfter($bar);
+		this.$p6a_help = $('<button type="button" class="btn btn-default btn-sm mp-p6a-help">?</button>')
+			.attr("title", __("How to read the planner"))
+			.attr("aria-label", __("How to read the planner"))
+			.on("click", () => this.p6a_legend())
+			.insertAfter(this.$undo);
+		const root = this.$body[0];
+		// Capture phase: a name or a date inside a card or a header is a quick look, not the card's
+		// own click (which opens the visit) and not the day number's old "show this week".
+		root.addEventListener("click", (e) => this.p6a_click(e), true);
+		root.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const el = e.target && e.target.closest ? e.target.closest(".mp-p6a-name, [data-pp6a-day]") : null;
+				if (!el || e.target !== el) return;
+				e.preventDefault();
+				e.stopPropagation();
+				el.click();
+			},
+			true
+		);
+		frappe.require(MP6A.kit, () => this.p6a_ready());
+	},
+
+	p6a_ready() {
+		const kit = window.planner_kit;
+		if (!kit || (this.p6a && this.p6a.kit)) return;
+		this.p6a.kit = kit;
+		kit.drawer.element().addEventListener("pointerdown", (e) => {
+			const current = kit.drawer.current();
+			if (current && current.owner === MP6A.owner) this.on_down(e);
+		});
+		this.p6a.glow = [kit.hover_glow(this.$body[0], "person")];
+		this.p6a_show_hints();
+	},
+
+	// ------------------------------------------------------------------ hooks
+
+	p6a_route(fn, keep) {
+		const kit = this.p6a && this.p6a.kit;
+		return kit ? kit.drawer.route(fn, keep) : fn();
+	},
+
+	render_phase6a() {
+		if (!this.p6a) return;
+		this.p6a_decorate();
+		this.p6a_refresh_open();
+	},
+
+	p6a_undo_toast(snapshot, message) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !message) return false;
+		// A projected visit drafted by its move cannot be undone from here (undo() says why).
+		if (snapshot && snapshot.kind === "drafted") {
+			kit.toast(message, { tone: "success" });
+			return true;
+		}
+		kit.toast(message, {
+			action_label: __("Undo"),
+			tone: "success",
+			on_action: () => {
+				if (this.undo_stack[this.undo_stack.length - 1] !== snapshot) {
+					frappe.show_alert({ message: __("That change has already been undone."), indicator: "blue" }, 5);
+					return;
+				}
+				this.undo();
+			},
+		});
+		return true;
+	},
+
+	p6a_close_toast() {
+		const kit = this.p6a && this.p6a.kit;
+		if (kit) kit.toast.close();
+	},
+
+	p6a_dialog(opts, card) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return new frappe.ui.Dialog(opts);
+		const people = this.visit_people(card).map((user) => this.tech_name(user));
+		const panel = kit.panel(
+			Object.assign({}, opts, {
+				subtitle: [card.date ? mp_when(card.date) : __("Not scheduled"), people.join(", ")].filter(Boolean).join(" · "),
+				width: MP6A.widths.panel,
+				key: `visit:${card.key}`,
+				owner: MP6A.owner,
+				push: this.$body[0],
+				reopen: () => {
+					const fresh = this.by_key[card.key];
+					if (fresh) this.open_card(fresh);
+				},
+			})
+		);
+		this.p6a.panel = panel;
+		this.p6a.panel_card = card;
+		this.p6a.peek = null;
+		panel.onhide = () => {
+			if (this.p6a.panel !== panel) return;
+			this.p6a.panel = null;
+			this.p6a.panel_card = null;
+		};
+		return panel;
+	},
+
+	p6a_links(card) {
+		if (!this.p6a || !this.p6a.kit) return [];
+		const out = [];
+		if (card.project) out.push(["p6a_site", __("Site at a glance")]);
+		if (card.technician) out.push(["p6a_person", __("{0}'s week", [this.tech_name(card.technician)])]);
+		return out;
+	},
+
+	p6a_action(action, card) {
+		if (action === "p6a_site") {
+			this.p6a_open_site(card);
+			return true;
+		}
+		if (action === "p6a_person") {
+			this.p6a_open_person(card.technician, card.date);
+			return true;
+		}
+		return false;
+	},
+
+	// A drag that starts in a drawer this page opened: a visit on the calendar that may move.
+	p6a_drag_source(el) {
+		const kit = this.p6a && this.p6a.kit;
+		const current = kit && kit.drawer.current();
+		if (!current || current.owner !== MP6A.owner) return null;
+		const item = el.closest("[data-pk-drag]");
+		if (!item || el.closest("button, a, input, select, textarea")) return null;
+		if (item.getAttribute("data-pk-kind") !== "visit") return null;
+		const card = this.by_key[item.getAttribute("data-pk-key")];
+		if (!card || !card.movable || card.saving) return null;
+		return { kind: "card", el: item, card, from_user: item.getAttribute("data-pk-user") || null };
+	},
+
+	p6a_edge_scroll(x, y) {
+		const el = document.elementFromPoint(x, y);
+		const box = el && el.closest ? el.closest(".mp-crew-view .mp-scroll, .mp-week .mp-grid, .mp-res .mp-scroll") : null;
+		if (!box || box.scrollHeight <= box.clientHeight) return;
+		const rect = box.getBoundingClientRect();
+		if (y < rect.top + 40) box.scrollTop -= 14;
+		else if (y > rect.bottom - 40) box.scrollTop += 14;
+	},
+
+	// ------------------------------------------------------------------ markup the quick looks need
+
+	p6a_decorate() {
+		if (!this.data) return;
+		const root = this.$body[0];
+		const key = (value) => encodeURIComponent(String(value == null ? "" : value));
+		root.querySelectorAll(".mp-person[data-user]").forEach((el) => {
+			el.setAttribute("data-pk-person", key(el.getAttribute("data-user")));
+			el.classList.add("mp-p6a-name");
+			el.setAttribute("role", "button");
+			el.setAttribute("tabindex", "0");
+			if (!el.getAttribute("data-pp6a-tip")) {
+				el.setAttribute("data-pp6a-tip", "1");
+				el.setAttribute("title", `${el.getAttribute("title") || ""}\n${__("Click to see their week.")}`.trim());
+			}
+		});
+		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			const card = this.by_key[el.getAttribute("data-key")];
+			if (!card) return;
+			const row = el.getAttribute("data-row-user");
+			const people = card.kind === "booking" ? [card.technician] : row ? [row] : this.visit_people(card);
+			el.setAttribute("data-pk-persons", people.filter(Boolean).map(key).join(" "));
+			if (card.kind === "booking") {
+				const badge = el.querySelector(".mp-tech");
+				if (badge && card.technician) badge.setAttribute("data-pk-person", key(card.technician));
+				return;
+			}
+			const everyone = this.visit_people(card);
+			el.querySelectorAll(".mp-techs .mp-tech").forEach((badge, index) => {
+				if (everyone[index]) badge.setAttribute("data-pk-person", key(everyone[index]));
+			});
+		});
+		const planned = (this.data.technicians || []).filter((person) => person.enabled && person.resource);
+		root.querySelectorAll(".mp-day[data-date]").forEach((el) => {
+			const ymd = el.getAttribute("data-date");
+			const num = el.querySelector(".mp-day-num");
+			if (num) {
+				num.setAttribute("data-pp6a-day", ymd);
+				num.setAttribute("title", __("See everyone's day"));
+				num.setAttribute("tabindex", "0");
+			}
+			const off = planned.filter((person) => this.is_off(this.cell_of(person.user, ymd)));
+			el.querySelectorAll(".mp-off-badges .mp-tech").forEach((badge, index) => {
+				if (off[index]) badge.setAttribute("data-pk-person", key(off[index].user));
+			});
+		});
+		root.querySelectorAll(".mp-crew-head[data-week]").forEach((el) => {
+			el.setAttribute("data-pp6a-day", el.getAttribute("data-week"));
+			el.setAttribute("title", __("See everyone's day"));
+			el.setAttribute("tabindex", "0");
+		});
+		const days = this.range_days();
+		root.querySelectorAll(".mp-res-grid > .mp-res-head").forEach((el, index) => {
+			const ymd = days[index - 1];
+			if (!ymd) return;
+			el.setAttribute("data-pp6a-day", ymd);
+			el.setAttribute("title", __("See everyone's day"));
+		});
+	},
+
+	// ------------------------------------------------------------------ clicks
+
+	p6a_click(e) {
+		if (!this.p6a || !this.p6a.kit || Date.now() < this.click_blocked_until) return;
+		const target = e.target;
+		if (!target || !target.closest) return;
+		if (target.closest("button, a, input, select, textarea, .mp-route, [data-route-resource]")) return;
+		const take = () => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		const person = target.closest("[data-pk-person]");
+		if (person) {
+			take();
+			this.p6a_open_person(decodeURIComponent(person.getAttribute("data-pk-person")));
+			return;
+		}
+		const day = target.closest("[data-pp6a-day]");
+		if (day) {
+			take();
+			this.p6a_open_day(day.getAttribute("data-pp6a-day"));
+		}
+	},
+
+	// ------------------------------------------------------------------ the quick looks
+
+	p6a_week_start() {
+		const today = this.today();
+		const { start, end } = this.range();
+		let base = this.anchor;
+		if (this.view === "month" && today >= mp_ymd(start) && today <= mp_ymd(end)) base = today;
+		const day = moment(base || today, "YYYY-MM-DD");
+		return mp_ymd(day.clone().subtract((day.day() - this.first_weekday() + 7) % 7, "days"));
+	},
+
+	// The page owns visits: only a visit card on the calendar that may move leaves a drawer by drag.
+	p6a_can_drag(booking) {
+		if (booking.kind !== "visit") return false;
+		const card = this.by_key[booking.key];
+		return !!(card && card.movable && card.kind !== "booking");
+	},
+
+	p6a_open_person(user, selected) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !user) return;
+		this.p6a.seen = this.data;
+		this.p6a.peek = kit.peeks.person({
+			user,
+			label: this.tech_name(user),
+			start: this.p6a_week_start(),
+			selected: selected || null,
+			days: 7,
+			owner: MP6A.owner,
+			push: this.$body[0],
+			width: MP6A.widths.person,
+			can_drag: (booking) => this.p6a_can_drag(booking),
+			on_full_route: (resource, ymd) =>
+				kit.drawer.navigate(() => frappe.set_route(MP.project_route, "route", resource, ymd)),
+		});
+	},
+
+	p6a_open_day(ymd) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !ymd) return;
+		const listed = new Set(((this.data && this.data.technicians) || []).map((person) => person.user));
+		this.p6a.seen = this.data;
+		this.p6a.peek = kit.peeks.day({
+			date: ymd,
+			owner: MP6A.owner,
+			push: this.$body[0],
+			width: MP6A.widths.day,
+			only: (person) => !listed.size || (person.user && listed.has(person.user)),
+			person_key: (person) => person.user || person.resource,
+			can_drag: (booking) => this.p6a_can_drag(booking),
+			on_person: (person) => {
+				if (person.user) this.p6a_open_person(person.user, ymd);
+			},
+			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
+		});
+	},
+
+	p6a_open_site(card) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !card || !card.project) return;
+		const project = card.project;
+		const state = { data: null, token: 0 };
+		this.p6a.seen = this.data;
+		const handle = kit.drawer.open({
+			title: card.site || card.site_full || project,
+			subtitle: __("Loading…"),
+			body: `<p class="pk-empty">${mp_esc(__("Loading…"))}</p>`,
+			width: MP6A.widths.site,
+			key: `site:${project}`,
+			owner: MP6A.owner,
+			push: this.$body[0],
+			reopen: () => this.p6a_open_site(card),
+			on_click: (e) => {
+				const row = e.target && e.target.closest ? e.target.closest("[data-mp6a-visit]") : null;
+				if (!row || Date.now() < this.click_blocked_until) return;
+				const found = this.by_key[row.getAttribute("data-mp6a-visit")];
+				if (found) this.open_card(found);
+				else if (row.getAttribute("data-mp6a-record")) {
+					const name = row.getAttribute("data-mp6a-record");
+					kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Record", name));
+				}
+			},
+		});
+		const load = () => {
+			const token = ++state.token;
+			if (state.data) handle.body.classList.add("pk-busy");
+			return Promise.resolve(frappe.call({ method: MP6A.site_method, args: { project } }))
+				.then((r) => {
+					if (token !== state.token || !handle.is_open()) return;
+					handle.body.classList.remove("pk-busy");
+					state.data = (r && r.message) || null;
+					const data = state.data || {};
+					handle.set_title(data.site || data.title || card.site || project);
+					handle.set_subtitle([data.customer_name, project].filter(Boolean).join(" · "));
+					handle.set_body(this.p6a_site_html(state.data));
+					const actions = [];
+					if (data.profile && data.profile.name) {
+						actions.push({
+							label: __("Open Maintenance Profile"),
+							on_click: () =>
+								kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Profile", data.profile.name)),
+						});
+					}
+					const contract = (data.contracts || [])[0];
+					if (contract && contract.name) {
+						actions.push({
+							label: __("Open contract"),
+							on_click: () =>
+								kit.drawer.navigate(() => frappe.set_route("Form", "Sapphire Maintenance Contract", contract.name)),
+						});
+					}
+					handle.set_actions(actions);
+				})
+				.catch(() => {
+					if (token !== state.token || !handle.is_open()) return;
+					handle.body.classList.remove("pk-busy");
+					handle.set_body(this.p6a_site_html(null));
+				});
+		};
+		this.p6a.peek = { data: () => state.data, refresh: load, is_open: () => handle.is_open() };
+		load();
+	},
+
+	p6a_visit_row(visit) {
+		const card = this.by_key[visit.key];
+		const grab = !!(card && card.movable && card.kind !== "booking");
+		const people = [visit.technician_name || __("Unassigned")].concat((visit.crew || []).map((member) => member.name));
+		const what = visit.label ? __(visit.label) : visit.feature || (visit.kind === "projected" ? __("Projected visit") : __("Regular visit"));
+		const status = __(MP6A.status[visit.status] || visit.status || "");
+		const meta = [status, people.filter(Boolean).join(", ")].filter(Boolean).join(" · ");
+		const chips = visit.overdue ? `<span class="pk-chip pk-chip-red">${mp_esc(__("Overdue"))}</span>` : "";
+		const drag = grab
+			? ` data-pk-drag="1" data-pk-kind="visit" data-pk-ref="${mp_esc(visit.name || "")}" data-pk-key="${mp_esc(
+					visit.key
+			  )}" data-pk-date="${mp_esc(visit.date || "")}" data-pk-user=""`
+			: "";
+		const record = visit.kind === "visit" && visit.name ? ` data-mp6a-record="${mp_esc(visit.name)}"` : "";
+		const tip = [what, meta, grab ? __("Drag onto the calendar to move it; click to open it.") : ""].filter(Boolean).join("\n");
+		return (
+			`<li class="pk-item pk-k-visit mp-p6a-row${grab ? " pk-grab" : ""}" data-mp6a-visit="${mp_esc(visit.key)}"${record}${drag}` +
+			` title="${mp_esc(tip)}"><span class="pk-kind">${mp_esc(visit.date ? mp_when(visit.date) : __("No date"))}</span>` +
+			`<span class="pk-item-main"><span class="pk-item-label">${mp_esc(what)}</span>` +
+			`<span class="pk-item-meta">${mp_esc(meta)}</span></span>${chips}</li>`
+		);
+	},
+
+	p6a_site_html(data) {
+		if (!data) return `<p class="pk-empty">${mp_esc(__("The site could not be loaded. Try again."))}</p>`;
+		const facts = [];
+		const fact = (label, value) => {
+			if (value) facts.push(`<tr><th>${mp_esc(label)}</th><td>${mp_esc(value)}</td></tr>`);
+		};
+		fact(__("Site"), data.title);
+		fact(__("Account"), data.customer_name);
+		fact(
+			__("Contract"),
+			(data.contracts || []).map((row) => `${row.name}${row.status ? ` (${__(row.status)})` : ""}`).join(", ")
+		);
+		const profile = data.profile;
+		if (profile) {
+			fact(__("Default technician"), profile.default_technician_name);
+			fact(
+				__("Default crew"),
+				(profile.crew || [])
+					.map((member) => (Number(member.hours) > 0 ? `${member.name} (${mp_hours(member.hours)}h)` : member.name))
+					.join(", ")
+			);
+			fact(
+				__("Visit length"),
+				profile.full_day ? __("Full day") : Number(profile.visit_hours) > 0 ? __("{0}h", [mp_hours(profile.visit_hours)]) : ""
+			);
+		} else {
+			fact(__("Maintenance Profile"), __("None yet"));
+		}
+		const section = (title, visits, empty) =>
+			`<div class="pk-section-title">${mp_esc(title)}</div>` +
+			(visits.length
+				? `<ul class="pk-items pk-day">${visits.map((visit) => this.p6a_visit_row(visit)).join("")}</ul>`
+				: `<p class="pk-empty">${mp_esc(empty)}</p>`);
+		return (
+			`<div class="mp-p6a-site"><table class="pk-facts">${facts.join("")}</table>` +
+			section(__("Coming up"), data.upcoming || [], __("No visit is scheduled.")) +
+			section(__("Projected from the contract"), data.projected || [], __("Nothing projected in the next 90 days.")) +
+			section(__("Recent visits"), data.recent || [], __("No visits yet.")) +
+			`</div>`
+		);
+	},
+
+	// After a load: the visit in the side panel is reopened from its new card (fresh `modified`) when
+	// it changed; one no longer on the calendar (another week on screen) stays as it is. An open
+	// person, day or site drawer asks for its numbers again.
+	p6a_refresh_open() {
+		const p6a = this.p6a;
+		if (!p6a.kit || !this.data) return;
+		if (p6a.panel && p6a.panel.is_open() && p6a.panel_card) {
+			const fresh = this.by_key[p6a.panel_card.key];
+			if (fresh && !fresh.saving && this.p6a_signature(fresh) !== this.p6a_signature(p6a.panel_card)) {
+				this.open_card(fresh);
+				return;
+			}
+		}
+		if (p6a.peek && p6a.peek.is_open() && p6a.seen !== this.data) {
+			p6a.seen = this.data;
+			p6a.peek.refresh();
+		}
+	},
+
+	p6a_signature(card) {
+		return JSON.stringify([
+			card.modified,
+			card.date,
+			card.technician,
+			card.planned_hours,
+			card.full_day,
+			(card.crew || []).map((member) => [member.user, member.hours]),
+		]);
+	},
+
+	// ------------------------------------------------------------------ legend and hints
+
+	p6a_show_hints() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !this.$p6a_hints) return;
+		let shown = 0;
+		MP6A.hints.forEach(([key, text]) => {
+			if (shown >= 2 || kit.hint.seen(key)) return;
+			if (kit.hint(key, __(text), { container: this.$p6a_hints[0] })) shown += 1;
+		});
+	},
+
+	p6a_legend() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return;
+		const swatch = (color, text, style, fill) => ({ swatch: { color, style: style || "solid", fill }, text: __(text) });
+		const chip = (cls, text) => `<span class="mp-chip${cls ? ` ${cls}` : ""}">${mp_esc(__(text))}</span>`;
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		const bar = (cls, width) => `<span class="mp-p6a-bar ${cls}"><span class="mp-bar"><i style="width:${width}%"></i></span></span>`;
+		kit.legend(
+			[
+				{
+					title: __("Quick looks"),
+					items: [
+						item("", "Click a technician's name (in the panel, a crew row or the initials on a visit) to see their week: visits, project work, free hours, days off and the day's stops in driving order."),
+						item("", "Click a date to see every technician's day side by side."),
+						item("", "In a visit's side panel, Site at a glance shows the site's coming, projected and recent visits and its default crew."),
+						item("", "Drag a visit out of any of these onto a day or a technician's row to move it. Esc or Back closes the side panel."),
+						item("", "Hover over a name to light up all of that person's visits and bookings."),
+					],
+				},
+				{
+					title: __("Visit cards"),
+					items: [
+						swatch("#2563eb", "A scheduled visit. Drag it to another day; only a draft nobody has started moves."),
+						swatch("#d97706", "A seasonal visit (startup, winterization). Before it is drafted it sits on the 1st of its month."),
+						swatch("#7c3aed", "An extra visit or a chemistry follow-up."),
+						swatch("#ca8a04", "Pending review: the technician has sent it to the office.", "solid", "#fef9c3"),
+						swatch("#16a34a", "Done.", "solid", "#dcfce7"),
+						swatch("#94a3b8", "Projected from the contract, not drafted yet. It follows whenever the visit before it is done.", "dashed"),
+						swatch("#2563eb", "The contract's next visit (dashed, blue edge): moving it moves the contract's next visit date.", "dashed"),
+						swatch("#dc2626", "Overdue: a draft whose day has passed."),
+						swatch("#0d9488", "A project task of the same person (read-only here; moved on the Project Planner)."),
+						swatch("#b45309", "A rental crew task (read-only here)."),
+						swatch("#6b7280", "A travel day (read-only here)."),
+					],
+				},
+				{
+					title: __("Chips on a visit"),
+					items: [
+						item(chip("", "Next visit"), "The contract's stored next visit date."),
+						item(chip("", "Pending review"), "Waiting for the office to approve it."),
+						item(chip("", "Full day"), "It takes each person's whole day."),
+						item(chip("", "2h each"), "How long it books each person, when that is not the default."),
+						item(chip("mp-red", "On hold"), "The account is on a service hold."),
+						item(chip("mp-red", "Chemistry"), "A reading on the visit was out of range."),
+						item(chip("mp-red", "Day off: Holiday"), "The technician does not work that day: move it or give it to someone else."),
+					],
+				},
+				{
+					title: __("People"),
+					items: [
+						item(`<span class="mp-tech" style="background:#2563eb">AH</span>`, "Everyone on the visit. Click one to see their week."),
+						item(`<span class="mp-tech mp-lead" style="background:#16a34a">JD</span>`, "Ringed: the technician who fills the visit in."),
+						item(`<span class="mp-tech mp-tech-off" style="background:#64748b">KF</span>`, "Faded and striped: off that day (shown with All technicians)."),
+					],
+				},
+				{
+					title: __("A technician's day"),
+					items: [
+						item(bar("mp-green", 50), "Up to 75% of their hours booked."),
+						item(bar("mp-amber", 90), "More than 75% booked."),
+						item(bar("mp-red", 100), "Over their hours."),
+						item(`<span class="mp-p6a-sample mp-offday">${mp_esc(__("Holiday"))}</span>`, "Not working: a holiday, time off or not a work day. The type and reason of time off are never shown."),
+						item(`<span class="mp-p6a-sample mp-conflict">${mp_esc(__("1h free"))}</span>`, "Red outline: a conflict on that day."),
+						item(chip("mp-red", "Long drive"), "More driving than the Settings limit."),
+						item(`<span class="mp-p6a-sample">${MP_ROUTE_ICON}</span>`, "Open the day's route on the Project Planner. A ~ before a drive time means it is an estimate."),
+					],
+				},
+				{
+					title: __("Dragging"),
+					items: [
+						item(`<span class="mp-p6a-sample mp-over">${mp_esc(__("Drop here"))}</span>`, "Where the visit will land."),
+						item(`<span class="mp-p6a-sample mp-over-no">${mp_esc(__("Past day"))}</span>`, "A day before today: visits cannot move there."),
+						item("", "On a touch screen, hold a card for a moment before you drag it. Drag a technician's name onto a visit to add them to its crew."),
+						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
+					],
+				},
+			],
+			{ title: __("How to read the Maintenance Planner"), owner: MP6A.owner }
+		);
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);

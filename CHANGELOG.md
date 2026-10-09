@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.585.0] - 2026-10-09
+
+### Added
+
+- **Planner quick looks, side-panel editing and the planner kit, for both planners** (Phase 6A,
+  TASK-2026-02467). From Nik's UX round, in his words: "click the Technicians name or something
+  and see what their specific schedule is in a pop up or something so as not to lose context
+  overall."
+  - **Person peek.** Click a person's name anywhere it appears (the resources panel, a crew row, a
+    crew badge on a card, the route view) and a side drawer opens over the calendar, which stays
+    usable behind it. The drawer shows:
+    - their week, with each booking's time slot, hours and site;
+    - free hours and conflicts;
+    - days off, as "Off" or "Holiday" only, never the time-off type;
+    - the day's stops in driving order, with **Full route**;
+    - call, text and email buttons, only where a number or address exists.
+
+    Its own arrows step through weeks without moving the calendar.
+  - **Day peek.** Click a date to see everyone's day side by side: stops, drive minutes, booked and
+    free hours. It is one engine call for everybody. The old "show this week" link on a day number
+    became an *Open this week* button in the drawer.
+  - **Project peek** (Project Planner): every open task on a timeline over the job's span, crew,
+    planned vs worked hours, running-over and pencil flags, and the labor forecast. The forecast
+    shows money only to the cost roles. Customer jobs only.
+  - **Site peek** (Maintenance Planner): the site's upcoming, projected and recent visits, its
+    default technician and crew, and a link to the Maintenance Profile. Access codes and safety
+    notes are never included.
+  - **Editing happens in a side panel** instead of a pop-up. It hosts the same form, so every field,
+    the reason prompt, crews, equipment and the Phase 4–5 rows work as before.
+  - **Drag out of a drawer.** Drag a task (or, in the Maintenance Planner, a visit) from a drawer
+    onto a day or a person's row. It goes through the page's own drag, reason prompt and Undo.
+  - **Polish:**
+    - an **Undo toast** after every change ("Moved Dig to Thu · Undo");
+    - **hover glow**: hover over a name and all that person's bookings light up;
+    - **sticky headers**: on wide screens the crew view, week grid and resources panel scroll
+      inside themselves so the day headers and people column stay put;
+    - a **"?" legend** explaining every chip, color and badge, with two first-time tips.
+  - **The planner kit** (`public/js/planner_kit/`, `planner_kit.bundle.js`) is the shared drawer,
+    panel, toast, menu, legend, hint and glow layer that Phases 6B–6D build on. It is loaded only
+    by the two planner pages, through `frappe.require`.
+  - New read endpoints in `api/planner_views.py`: `get_person_schedule`, `get_day_overview`,
+    `get_project_overview` and `get_site_overview`. None of them calls Google; driving times are
+    from the cache or an estimate, and they say so.
+- **Browser Back closes an open drawer without leaving or reloading the planner.** Frappe v16 has
+  a single `popstate` listener, added at Desk boot, that re-routes the page, and a browser runs
+  window listeners in the order they were added. So nothing the kit adds can run before it.
+  - The kit wraps `frappe.router.route` once. When it is called during a popstate, the kit decides
+    first and skips the re-route only for its own history entry. Every other call passes through
+    unchanged.
+  - A drawer closed any other way steps off its entry, and a route change in the same tick replaces
+    it rather than stacking.
+  - Where this cannot be set up, no entry is pushed and Back behaves as it always has.
+
 ## [1.584.0] - 2026-10-09
 
 ### Added
