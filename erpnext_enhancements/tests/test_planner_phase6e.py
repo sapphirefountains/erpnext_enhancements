@@ -5,7 +5,8 @@
 
 1. **Move by calendar days or working days** (both planners, the selection bar). Calendar days stay
    the default; working days count Monday to Friday from each task's own start, send the weekend to the
-   next weekday and keep each task's length in working days. The switch is remembered per device
+   next weekday going forwards (the Friday before going backwards) and keep each task's length in
+   working days. The switch is remembered per device
    (``save_pref``), and the offsets are explicit starts and ends for ``move_many``, so the server
    contract is unchanged. A visit moves by that many weekdays. The pure maths runs under node, in both
    pages' copies, and agrees with ``api/project_planner.add_working_days``.
@@ -21,7 +22,9 @@
    scheduler would (its own builder, ``tasks._new_maintenance_record``), linked to the site's active
    contract when there is one, as the caller, with a reason on overbooking and an Undo that deletes the
    draft only while nothing has been attached. The page offers it on an empty spot, by double-click and
-   in the toolbar.
+   in the toolbar. A second open visit for the same fountain under the contract also asks for a
+   reason (a ``Duplicate visit`` line in the same ``conflicts`` list): submitting both would move the
+   contract's next visit date twice.
 
 Bench-free. It borrows the stubs of the two suites it builds on, one class at a time (each class sets
 its stub up and puts ``sys.modules`` back): Phase 6B's for the split, Phase 6D's for the digests and the
@@ -127,8 +130,16 @@ const shared = (P) => ({
 		[ "2026-10-09", "2026-10-10", "working" ], [ "2026-10-09", "2026-10-12", "working" ],
 		[ "2026-10-14", "2026-10-11", "working" ], [ "2026-10-09", "2026-10-10", "calendar" ],
 		[ "2026-10-14", "2026-10-11", "calendar" ], [ "2026-10-12", "2026-10-12", "working" ],
-		[ "2026-10-09", "2026-10-11", "working" ],
+		[ "2026-10-09", "2026-10-11", "working" ], [ "2026-10-14", "2026-10-10", "working" ],
+		[ "2026-10-12", "2026-10-10", "working" ], [ "2026-10-12", "2026-10-11", "working" ],
+		[ "2026-10-14", "2026-10-10", "calendar" ], [ "2026-10-11", "2026-10-10", "working" ],
+		[ "2026-10-16", "2026-10-11", "working" ],
 	].map(([a, b, unit]) => P.drop_days(a, b, unit)),
+	previous: ["2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"].map((d) => P.previous_weekday(d)),
+	snap: [
+		[ "2026-10-09", "2026-10-10" ], [ "2026-10-09", "2026-10-11" ], [ "2026-10-14", "2026-10-10" ],
+		[ "2026-10-14", "2026-10-11" ], [ "2026-10-14", "2026-10-16" ], [ "2026-10-12", "2026-10-09" ],
+	].map(([from, to]) => P.snap_weekday(from, to)),
 	date_for: [
 		[ "2026-10-09", 1, "working" ], [ "2026-10-09", 1, "calendar" ], [ "2026-10-12", -1, "working" ],
 		[ "2026-10-12", -1, "calendar" ],
@@ -149,6 +160,10 @@ out.moves = {
 	calendar: moves([{ name: "T1", start: "2026-10-09", end: "2026-10-12" }], 3, "calendar"),
 	default_unit: moves([{ name: "T1", start: "2026-10-09", end: "2026-10-09" }], 1, undefined),
 	reversed_end: moves([{ name: "T1", start: "2026-10-14", end: "2026-10-13" }], 1, "working"),
+	monday_back_one: moves([{ name: "T1", start: "2026-10-12", end: "2026-10-12" }], -1, "working"),
+	kept_length_back: moves([{ name: "T1", start: "2026-10-20", end: "2026-10-22" }], -2, "working"),
+	starts_on_saturday_back: moves([{ name: "T1", start: "2026-10-10", end: "2026-10-12" }], -1, "working"),
+	kept_length_forward: moves([{ name: "T1", start: "2026-10-14", end: "2026-10-16" }], 1, "working"),
 };
 out.args = ctx.MP.create_args(
 	{ project: "PRJ-2", date: "2026-10-14", technician: "", hours: "3.5", full_day: 0, serial_no: "S-1", template: "TPL-1", extra: "x" },
@@ -218,19 +233,58 @@ class TestWorkingDaysMaths(unittest.TestCase):
 		self.assertEqual(out["add"][9], "2026-11-02")  # across a month end
 		self.assertEqual(out["add"][10], "2026-10-02")  # Monday - 6 working days
 
-	def test_a_weekend_landing_goes_to_the_next_weekday(self):
+	def test_a_forward_weekend_landing_goes_to_the_next_weekday(self):
 		out = self.out["pp"]
 		self.assertEqual(out["weekend"], [False, True, True, False])
 		self.assertEqual(out["next"], [FRI0, MON0, MON0, MON0])
-		# A drop on Saturday or Sunday is a drop on the Monday after it.
+		# A forward drop on Saturday or Sunday is a drop on the Monday after it (unchanged).
 		self.assertEqual(out["drop"][0], 1)  # Friday -> Saturday = one working day (the Monday)
 		self.assertEqual(out["drop"][1], 1)  # Friday -> Monday
-		self.assertEqual(out["drop"][2], -2)  # Wednesday -> the Sunday before = the Monday: two back
-		self.assertEqual(out["drop"][3], 1)  # the same drop by the calendar
+		self.assertEqual(out["drop"][6], 1)  # Friday -> Sunday = the Monday
+		self.assertEqual(out["snap"][0], MON0)  # Friday -> Saturday
+		self.assertEqual(out["snap"][1], MON0)  # Friday -> Sunday
+		self.assertEqual(out["snap"][4], "2026-10-16")  # a weekday stays where it was dropped
+		self.assertEqual(out["snap"][5], FRI0)  # a backward drop on a weekday is not touched either
+
+	def test_a_backward_weekend_landing_goes_to_the_friday_before(self):
+		out = self.out["pp"]
+		self.assertEqual(out["previous"], [FRI0, FRI0, FRI0, MON0])
+		# Backwards (the target is earlier than where the card was): Saturday and Sunday are the Friday.
+		self.assertEqual(out["snap"][2], FRI0)  # Wednesday -> Saturday
+		self.assertEqual(out["snap"][3], FRI0)  # Wednesday -> Sunday
+		self.assertEqual(out["drop"][2], -3)  # Wednesday -> the Sunday before = the Friday: three back
+		self.assertEqual(out["drop"][7], -3)  # Wednesday -> Saturday = the same Friday
+		self.assertEqual(out["drop"][8], -1)  # Monday -> Saturday = the Friday: one back (was no move at all)
+		self.assertEqual(out["drop"][9], -1)  # Monday -> Sunday
+		self.assertEqual(out["drop"][11], 0)  # Sunday -> Saturday: the Friday is no working day on
+		self.assertEqual(out["drop"][12], -5)  # Friday a week on -> Sunday = the Friday: five back
+		# By the calendar nothing is snapped.
+		self.assertEqual(out["drop"][3], 1)  # the same forward drop by the calendar
+		self.assertEqual(out["drop"][10], -4)  # Wednesday -> Saturday by the calendar
 		self.assertEqual(out["drop"][4], -3)
 		self.assertEqual(out["drop"][5], 0)
 		self.assertEqual(out["drop"][6], 1)  # Friday -> Sunday = the Monday
 		self.assertEqual(out["date_for"], [MON0, SAT0, FRI0, "2026-10-11"])
+
+	def test_monday_back_one_working_day_is_the_friday(self):
+		out = self.out["pp"]
+		self.assertEqual(out["add"][4], FRI0)  # Monday - 1
+		self.assertEqual(out["date_for"][2], FRI0)
+		one = {"task": "T1", "modified": "fresh-T1"}
+		self.assertEqual(self.out["moves"]["monday_back_one"], [dict(one, start=FRI0, end=FRI0)])
+		# A card that starts on the Saturday and goes back one working day is the Friday too.
+		self.assertEqual(self.out["moves"]["starts_on_saturday_back"], [dict(one, start=FRI0, end=FRI0)])
+
+	def test_a_kept_length_survives_a_backward_move_over_a_weekend(self):
+		one = {"task": "T1", "modified": "fresh-T1"}
+		# Tue-Thu is three working days; two earlier it is Fri, Mon, Tue.
+		self.assertEqual(
+			self.out["moves"]["kept_length_back"], [dict(one, start="2026-10-16", end="2026-10-20")]
+		)
+		# And one later, Wed-Fri becomes Thu, Fri, Mon: still three working days.
+		self.assertEqual(
+			self.out["moves"]["kept_length_forward"], [dict(one, start="2026-10-15", end="2026-10-19")]
+		)
 
 	def test_working_days_between_counts_the_weekdays_after_the_first(self):
 		self.assertEqual(self.out["pp"]["between"], [1, 4, 5, -2, 0, 0, -5, 0])
@@ -428,7 +482,7 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 	const bar2 = make("<div>");
 	pp.p6e_bar_switch(bar2);
 	out.pp_working = { buttons: buttons(bar2), note: pp.p6e_bar_note(), label: pp.p6e_move_label(), default: pp.p6e_move_default(), field: pp.p6e_move_note() };
-	out.pp_working_drop = [pp.p6e_drop_days("2026-10-09", "2026-10-10"), pp.p6e_drop_days("2026-10-14", "2026-10-11")];
+	out.pp_working_drop = [pp.p6e_drop_days("2026-10-09", "2026-10-10"), pp.p6e_drop_days("2026-10-14", "2026-10-11"), pp.p6e_drop_days("2026-10-12", "2026-10-10")];
 	sent.length = 0;
 	out.pp_drop_handled = pp.p6b_drop({ kind: "card", card: pp.by_task["TASK-1"], from_date: "2026-10-09", from_resource: null }, { date: "2026-10-12" });
 	await flush();
@@ -490,7 +544,7 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 	mp.p6e_set_unit("working");
 	const mbar2 = make("<div>");
 	mp.p6e_bar_switch(mbar2);
-	out.mp_working = { unit: mp.p6e_unit(), pref: Object.assign({}, mprefs), rendered: mrendered.slice(), buttons: buttons(mbar2), date: mp.p6e_date("2026-10-09", 1), question: mp.p6e_question(2, 1), earlier: mp.p6e_question(2, -3), drop: mp.p6e_drop_days("2026-10-09", "2026-10-10"), label: mp.p6e_move_label(), default: mp.p6e_move_default(), note: mp.p6e_bar_note() };
+	out.mp_working = { unit: mp.p6e_unit(), pref: Object.assign({}, mprefs), rendered: mrendered.slice(), buttons: buttons(mbar2), date: mp.p6e_date("2026-10-09", 1), question: mp.p6e_question(2, 1), earlier: mp.p6e_question(2, -3), drop: mp.p6e_drop_days("2026-10-09", "2026-10-10"), back_drop: [mp.p6e_drop_days("2026-10-12", "2026-10-10"), mp.p6e_drop_days("2026-10-14", "2026-10-11")], back_date: mp.p6e_date("2026-10-12", -1), label: mp.p6e_move_label(), default: mp.p6e_move_default(), note: mp.p6e_bar_note() };
 	mp.p6e_unit_value = "working";
 	// Two visits move by the same number of weekdays; the past is still refused.
 	mp.p6b_move_selection(1);
@@ -669,10 +723,12 @@ class TestPagesUnderNode(unittest.TestCase):
 		self.assertIn("working days", working["field"])
 
 	def test_working_days_move_each_task_from_its_own_start_and_keep_its_length(self):
-		# Dragging from Friday to Saturday lands on the Monday: one working day. Wed-Fri (3 working days)
+		# Dragging from Friday to Saturday lands on the Monday: one working day (forwards, the weekend goes to
+		# the Monday after); Wednesday back to the Sunday is the Friday before: three back, and Monday back
+		# to the Saturday is one back. Wed-Fri (3 working days)
 		# starting a working day later is Thu-Mon; a one-day task moves a day; Fri-Mon (2 working days)
 		# starts on the Monday and runs to the Tuesday.
-		self.assertEqual(self.out["pp_working_drop"], [1, -2])
+		self.assertEqual(self.out["pp_working_drop"], [1, -3, -1])
 		self.assertTrue(self.out["pp_drop_handled"])
 		(sent,) = self.out["pp_working_sent"]
 		self.assertEqual(
@@ -714,6 +770,10 @@ class TestPagesUnderNode(unittest.TestCase):
 		self.assertEqual(working["rendered"], ["working"])
 		self.assertEqual(working["buttons"], [["Calendar days", "false"], ["Working days", "true"]])
 		self.assertEqual((working["date"], working["drop"]), (MON0, 1))
+		# Backwards, a weekend landing is the Friday before: Monday to Saturday is one back, Wednesday to
+		# Sunday three; a visit on the Monday moved one weekday earlier is the Friday.
+		self.assertEqual(working["back_drop"], [-1, -3])
+		self.assertEqual(working["back_date"], FRI0)
 		self.assertEqual(working["question"], "Move 2 visits 1 working day(s) later?")
 		self.assertEqual(working["earlier"], "Move 2 visits 3 working day(s) earlier?")
 		self.assertEqual((working["label"], working["default"]), ("Move by (working days)", 5))
@@ -1780,6 +1840,142 @@ class TestCreateVisit(_VisitCase):
 			)
 		)
 		self.assertTrue(any(t.startswith("Added on the Maintenance Planner") for t in texts))
+
+	# ---- a second open visit for the same fountain warns (Nik, 2026-10-09: warn, never block)
+
+	def open_visit(self, **row):
+		"""An existing visit on the site, open unless the row says otherwise."""
+		base = {
+			"name": "SMR-7",
+			"project": "PRJ-2",
+			"serial_no": "S-1",
+			"visit_label": None,
+			"docstatus": 0,
+			"maintenance_contract": "MNT-CON-1",
+			"scheduled_visit_date": D(2026, 10, 14),
+		}
+		base.update(row)
+		t6d.frappe.tables.setdefault("Sapphire Maintenance Record", []).append(base)
+
+	def test_a_second_open_visit_for_the_fountain_needs_a_reason_and_creates_nothing(self):
+		self.open_visit()
+		answer = self.create(serial_no="S-1")
+		self.assertEqual(set(answer), {"needs_reason", "conflicts"})
+		self.assertTrue(answer["needs_reason"])
+		(line,) = answer["conflicts"][self.actions.DUPLICATE_KEY]
+		self.assertEqual(
+			line,
+			"S 1 already has an open visit, SMR-7, on Wed Oct 14. "
+			"Submitting both moves the contract's next visit date twice.",
+		)
+		self.assertEqual(list(answer["conflicts"]), [self.actions.DUPLICATE_KEY])
+		self.assertEqual([d for d in self.created_docs if d.get("name")], [])
+		self.assertEqual(t6d.frappe.inserted, [])
+
+	def test_with_a_reason_the_duplicate_is_created_and_the_reason_is_on_the_timeline(self):
+		self.open_visit()
+		result = self.create(serial_no="S-1", reason="  Second crew for the big clean  ")
+		doc = self.inserted()
+		self.assertTrue(result["created"])
+		self.assertEqual(doc["serial_no"], "S-1")
+		self.assertEqual(doc["maintenance_contract"], "MNT-CON-1")
+		self.assertIn("SMR-7", result["conflicts"][self.actions.DUPLICATE_KEY][0])
+		texts = [text for _dt, name, _kind, text in t6d.frappe.comments if name == doc["name"]]
+		self.assertTrue(
+			any(
+				"Duplicate visit" in t
+				and "already has an open visit, SMR-7" in t
+				and "Second crew for the big clean" in t
+				for t in texts
+			),
+			texts,
+		)
+		# A reason on the page is stripped, like an overbooking's.
+		self.assertFalse(any("  Second crew" in t for t in texts))
+
+	def test_no_open_visit_means_no_warning(self):
+		answer = self.create(serial_no="S-1")
+		self.assertTrue(answer["created"])
+		self.assertNotIn("needs_reason", answer)
+		self.assertNotIn("conflicts", answer)
+
+	def test_an_open_visit_for_another_fountain_does_not_warn(self):
+		self.open_visit(serial_no="S-2")
+		answer = self.create(serial_no="S-1")
+		self.assertTrue(answer["created"])
+		self.assertNotIn("conflicts", answer)
+
+	def test_a_submitted_or_cancelled_visit_is_not_open_and_does_not_warn(self):
+		self.open_visit(name="SMR-8", docstatus=1)
+		self.open_visit(name="SMR-9", docstatus=2)
+		answer = self.create(serial_no="S-1")
+		self.assertTrue(answer["created"])
+		self.assertNotIn("conflicts", answer)
+
+	def test_a_seasonal_visit_and_another_sites_visit_are_not_the_regular_one(self):
+		self.open_visit(name="SMR-8", visit_label="Winterization")
+		self.open_visit(name="SMR-9", project="PRJ-3")
+		answer = self.create(serial_no="S-1")
+		self.assertTrue(answer["created"])
+		self.assertNotIn("conflicts", answer)
+
+	def test_a_visit_that_is_not_linked_to_the_contract_has_no_date_to_double(self):
+		# No contract: a plain visit rolls nothing forward, so another open one is not a duplicate.
+		self.active = {}
+		self.open_visit(maintenance_contract=None)
+		self.assertTrue(self.create(serial_no="S-1")["created"])
+		# A fountain the contract does not cover is not linked either.
+		self.active = {"PRJ-2": self.contract}
+		self.created_docs.clear()
+		self.open_visit(name="SMR-8", serial_no="S-9")
+		answer = self.create(serial_no="S-9")
+		self.assertTrue(answer["created"])
+		self.assertNotIn("conflicts", answer)
+
+	def test_a_whole_site_contract_counts_the_sites_open_visit(self):
+		self.contract["visit_shape"] = "Per Site Visit"
+		self.open_visit(serial_no=None)
+		answer = self.create()
+		self.assertTrue(answer["needs_reason"])
+		(line,) = answer["conflicts"][self.actions.DUPLICATE_KEY]
+		self.assertTrue(line.startswith("Highlands already has an open visit, SMR-7, on Wed Oct 14."), line)
+
+	def test_the_duplicate_line_sits_in_the_same_list_as_an_overbooking(self):
+		self.open_visit()
+		self.conflicting = {t6d.AUSTIN: [f"{t6d.FRI}: Over by 2h"]}
+		answer = self.create(serial_no="S-1")
+		self.assertEqual(list(answer["conflicts"]), [self.actions.DUPLICATE_KEY, "Austin"])
+		self.assertEqual(answer["conflicts"]["Austin"], [f"{t6d.FRI}: Over by 2h"])
+		self.assertEqual([d for d in self.created_docs if d.get("name")], [])
+		# One reason answers both, and both are on the timeline.
+		result = self.create(serial_no="S-1", reason="Customer asked")
+		texts = [text for _dt, name, _kind, text in t6d.frappe.comments if name == self.inserted()["name"]]
+		self.assertTrue(any("Duplicate visit" in t and "Austin" in t and "Customer asked" in t for t in texts))
+		self.assertEqual(set(result["conflicts"]), {self.actions.DUPLICATE_KEY, "Austin"})
+
+	def test_a_visit_with_a_dateless_open_one_still_warns(self):
+		self.open_visit(scheduled_visit_date=None)
+		answer = self.create(serial_no="S-1")
+		(line,) = answer["conflicts"][self.actions.DUPLICATE_KEY]
+		self.assertEqual(
+			line,
+			"S 1 already has an open visit, SMR-7. Submitting both moves the contract's next visit date twice.",
+		)
+
+	def test_the_duplicate_lookup_is_the_one_the_form_reports_not_a_second_query(self):
+		source = ACTIONS_PY.read_text(encoding="utf-8")
+		body = source[source.index("def _duplicate_visit(") : source.index("def sites_query(")]
+		body = body.split('"""')[2]  # the code, not the docstring
+		self.assertIn("_open_regular_visit(project, contract, serial_no)", body)
+		self.assertNotIn("docstatus", body)
+		self.assertNotIn("visit_label", body)
+		self.assertNotIn("get_all(", body)
+		create = source[source.index("def create_visit(") : source.index("# ---------------------------------------------------------------------- undo")]
+		self.assertIn("_duplicate_visit(project, linked, serial_no", create)
+		# The form's open_visit and the create check agree on the same data.
+		self.open_visit(serial_no="S-2")
+		self.assertEqual(self.actions.get_visit_defaults("PRJ-2")["open_visit"], "SMR-7")
+		self.assertIn(self.actions.DUPLICATE_KEY, self.create(serial_no="S-2")["conflicts"])
 
 	def test_the_conflict_check_is_move_visits_own(self):
 		self.assertIn("mp._people_conflicts(", ACTIONS_PY.read_text(encoding="utf-8"))

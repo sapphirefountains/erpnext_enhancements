@@ -5945,6 +5945,17 @@ const MP6E_PURE = {
 		for (let i = 0; i < 3 && MP6E_PURE.is_weekend(day); i++) day = MP6B_PURE.ymd_add(day, 1);
 		return day;
 	},
+	// A Saturday or Sunday becomes the Friday before; any other day stays.
+	previous_weekday(ymd) {
+		let day = ymd;
+		for (let i = 0; i < 3 && MP6E_PURE.is_weekend(day); i++) day = MP6B_PURE.ymd_add(day, -1);
+		return day;
+	},
+	// Where a drop on `to` lands when it is a weekend: the Friday before when the move is backwards
+	// (`to` is earlier than `from`), the Monday after when it is forwards. Nik, 2026-10-09.
+	snap_weekday(from, to) {
+		return to < from ? MP6E_PURE.previous_weekday(to) : MP6E_PURE.next_weekday(to);
+	},
 	// `count` working days later (negative: earlier). Each step lands on the next weekday, so a Friday
 	// plus one is the Monday and a Saturday plus one is the Monday too.
 	add_working_days(ymd, count) {
@@ -5969,10 +5980,11 @@ const MP6E_PURE = {
 		return sign * count;
 	},
 	// How many days a drop moved the visit in hand: by the calendar, or in weekdays to the weekday the
-	// drop lands on (a drop on a weekend is the Monday after it).
+	// drop lands on (a drop on a weekend is the Monday after it going forwards, the Friday before it
+	// going backwards).
 	drop_days(from, to, unit) {
 		if (unit !== "working") return MP6B_PURE.ymd_diff(from, to);
-		return MP6E_PURE.working_between(from, MP6E_PURE.next_weekday(to));
+		return MP6E_PURE.working_between(from, MP6E_PURE.snap_weekday(from, to));
 	},
 	// The day a visit lands on after moving `days` (calendar, or working days).
 	date_for(ymd, days, unit) {
