@@ -1253,15 +1253,21 @@ its own section in [sapphire_maintenance/README.md](../sapphire_maintenance/READ
   `ee_maintenance_planner_move_by`) and **calendar days stay the default**, exactly Phase 6B's move.
   With working days (Monday to Friday) every selected task moves by the same number of working days
   **counted from its own start**: a Friday plus one is the Monday, a landing on a weekend goes to the
-  next weekday (a card dropped on a Saturday lands on the Monday), and each task **keeps its length in
-  working days** (Wednesday to Friday, three working days, moved two working days on is Friday to
+  next weekday going forwards (a card dropped on a Saturday lands on the Monday after) and **the Friday
+  before going backwards** (the move is backwards when the drop is earlier than where the card was: a
+  card dragged from Wednesday onto the Saturday before lands on that Friday; Nik, 2026-10-09), and each
+  task **keeps its length in working days** (Wednesday to Friday, three working days, moved two working days on is Friday to
   Tuesday). A task that is only a weekend has no working days and keeps its calendar length. The
   offsets are worked out on the page and sent to `move_many` as explicit starts and ends, so the server
   contract is unchanged; the *Move…* panel, the drop, the confirmation, the reason prompt and the one
   Undo are all Phase 6B's. A visit moves by that many weekdays. The pure maths (`PP6E_PURE` /
-  `MP6E_PURE`: `add_working_days`, `working_between`, `next_weekday`, `drop_days`, `moves_for`) steps
-  with 6B's `ymd_add` and counts with its `working_days`, mirrors `project_planner.add_working_days` /
-  `working_days_between` (a test compares them) and `shift_successors` is untouched.
+  `MP6E_PURE`: `add_working_days`, `working_between`, `next_weekday`, `previous_weekday`,
+  `snap_weekday`, `drop_days`, `moves_for`) steps with 6B's `ymd_add` and counts with its
+  `working_days`, mirrors `project_planner.add_working_days` / `working_days_between` (a test compares
+  them) and `shift_successors` is untouched. The weekend snap exists only on the page, where a drop
+  becomes an offset (`drop_days` -> `snap_weekday`); the server helper has no drop to snap, already steps
+  in the direction it is given (a Saturday minus one is the Friday), and was not changed. A card's own
+  new start is `add_working_days(start, offset)`, which never lands on a weekend either way.
 - **A day note never sends a message on its own.** See *Digests* under Phase 6D: the combined 6 AM
   digest (`planner_digest.digest_lines`) now returns no lines for a person with nothing booked, so a
   note or block rides along only with a message the person gets anyway. The maintenance and rental
@@ -1293,6 +1299,19 @@ its own section in [sapphire_maintenance/README.md](../sapphire_maintenance/READ
   `remove_created_visit`, `sites_query`); `tasks._draft_maintenance_record` is now
   `tasks._new_maintenance_record` (the builder) plus the scheduler's insert, so both make a visit the
   same way.
+- **A second open visit for the same fountain warns** (Maintenance Planner, Nik, 2026-10-09: warn,
+  never block). Submitting two open visits for one fountain would roll the contract's next visit date
+  forward twice, so when the site's active contract already has an open (not submitted, not canceled)
+  regular visit for the fountain, `create_visit` answers `needs_reason` unsaved, like an overbooking,
+  with one more line in the same `conflicts` list under **Duplicate visit**: "<fountain> already has an
+  open visit, <SMR>, on Wed Oct 14. Submitting both moves the contract's next visit date twice." Sent
+  again with a `reason` it creates the visit and the reason goes on its timeline. The page needed no new
+  UI: its `ask_reason` dialog prints whatever `conflicts` holds. The open visit is found by
+  `maintenance_actions._open_regular_visit`, the lookup `get_visit_defaults` already reports as
+  `open_visit` (the scheduler's own de-dup), so the form and the create check cannot disagree. Only a
+  visit linked to the contract can double a date, so a plain visit (no contract, or a fountain the
+  contract does not cover) never warns. A Per Site Visit contract, and a whole-site visit with no
+  fountain, match on that lookup's own rules (the contract, or any open regular visit of the site).
 
 Hooks into the classes and into Phase 6B's blocks, one line each: `p6e_bar_switch` / `p6e_bar_note`
 (`p6b_render_bar`), `p6e_drop_days` (`p6b_drop`), `p6e_move_label` / `p6e_move_default` /

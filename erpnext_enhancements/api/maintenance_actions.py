@@ -25,6 +25,13 @@ Rules this keeps, because the page relies on them:
   (``maintenance_planner._people_conflicts``, for the technician and every crew member) answers
   ``{"needs_reason": True, "conflicts"}`` and creates nothing; sent again with a ``reason`` it saves,
   and the reason goes on the visit's timeline.
+* **A second open visit for the same fountain warns too.** Submitting two open visits for one fountain
+  rolls the contract's next visit date forward twice, so when the site's active contract already has an
+  open regular visit for the fountain (the lookup ``get_visit_defaults`` reports as ``open_visit``,
+  :func:`_open_regular_visit`, not a second query) ``create_visit`` answers ``needs_reason`` like an
+  overbooking, with the line folded into the same ``conflicts`` list, and creates nothing; sent again with
+  a ``reason`` it is created and the reason goes on the visit's timeline. Nik's call (2026-10-09): warn,
+  never block.
 * **A visit linked to the contract is a scheduled visit.** When it is submitted it rolls the
   contract's next visit date forward (``maintenance_scheduling.update_next_visit_dates``), and while
   it is open the scheduler does not draft that fountain's regular visit again. An unlinked visit
@@ -49,6 +56,8 @@ PROFILE = "Sapphire Maintenance Profile"
 CONTRACT = "Sapphire Maintenance Contract"
 #: What the visit is called in a conflict check before it has a name.
 NEW_REF = "New visit"
+#: The ``conflicts`` key the duplicate-visit line sits under (the page prints each key in bold, then its lines).
+DUPLICATE_KEY = "Duplicate visit"
 #: The timeline reason when nothing was said (the planner is the origin).
 ADDED_NOTE = "Added on the Maintenance Planner"
 #: Child tables of the visit form. A row in any of them means someone has started filling it in.
@@ -84,6 +93,16 @@ def default_feature(features):
 		(row for row in rows if row.get("next_visit_date")), key=lambda row: str(row["next_visit_date"])
 	)
 	return (dated or rows)[0].get("serial_no")
+
+
+def duplicate_visit_line(subject, record, day):
+	"""The warning for a second open visit: ``subject`` is the fountain or site, ``record`` the open visit,
+	``day`` its date (None for one not dated yet)."""
+	when = f", on {day:%a %b} {day.day}" if day else ""
+	return (
+		f"{subject} already has an open visit, {record}{when}. "
+		"Submitting both moves the contract's next visit date twice."
+	)
 
 
 def links_to_contract(contract_serials, serial_no):
@@ -225,6 +244,25 @@ def _open_regular_visit(project, contract, serial_no):
 	return frappe.db.get_value(DOCTYPE, filters, "name")
 
 
+def _duplicate_visit(project, contract, serial_no, title):
+	"""``{DUPLICATE_KEY: [line]}`` when ``contract`` already has an open regular visit for this fountain
+	(or, on a Per Site Visit contract, for the site), else {}.
+
+	Only a visit linked to the contract can move its next visit date, so a plain visit (no ``contract``)
+	has nothing to double. The open visit is found by :func:`_open_regular_visit`, the lookup
+	``get_visit_defaults`` reports as ``open_visit``; the date is read back by the name it returned. A
+	submitted or cancelled visit is not open (``docstatus`` 0 only), so it never warns.
+	"""
+	if not contract:
+		return {}
+	found = _open_regular_visit(project, contract, serial_no)
+	if not found:
+		return {}
+	day = frappe.db.get_value(DOCTYPE, found, "scheduled_visit_date")
+	subject = mp.feature_label(serial_no) if serial_no else title
+	return {DUPLICATE_KEY: [duplicate_visit_line(subject, found, getdate(day) if day else None)]}
+
+
 @frappe.whitelist()
 def sites_query(doctype=None, txt="", searchfield="name", start=0, page_len=20, filters=None):
 	"""The *Site* Link field's search: customer-job projects that have a Maintenance Profile.
@@ -313,6 +351,9 @@ def create_visit(
 	Overbooking warns and never blocks: a visit that creates a conflict for the technician or anyone on
 	the crew answers ``{"needs_reason": True, "conflicts": {person: ["YYYY-MM-DD: Over by 2h"]}}`` and
 	creates nothing; sent again with a ``reason`` it is created and the reason goes on its timeline.
+	A second open visit for the same fountain under the contract warns the same way, as one more line in
+	``conflicts`` (under ``"Duplicate visit"``): submitting both would roll the contract's next visit date
+	forward twice. A visit that is not linked to a contract never warns about that.
 
 	Returns what ``move_visit`` returns (``name``, ``date``, ``technician``, ``crew``, ``planned_hours``,
 	``full_day``, ``modified``, ``warnings``) plus ``created: True``, ``contract``, ``serial_no`` and, when
@@ -377,7 +418,9 @@ def create_visit(
 	record.check_permission("create")
 
 	stand_in = _stand_in(record)
-	conflicts = mp._people_conflicts(stand_in, list(mp._hours_specs(stand_in)))
+	conflicts = _duplicate_visit(project, linked, serial_no, mp.short_site_name(title))
+	for person, lines in mp._people_conflicts(stand_in, list(mp._hours_specs(stand_in))).items():
+		conflicts.setdefault(person, []).extend(lines)
 	reason = (given(reason) or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts}
