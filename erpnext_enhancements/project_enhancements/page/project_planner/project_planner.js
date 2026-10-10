@@ -6059,7 +6059,7 @@ const PP6B_METHODS = {
 				p6b: "split",
 				task: result.second.name,
 				modified: result.second.modified,
-				restore: Object.assign({}, restore, { modified: result.modified }),
+				restore: Object.assign({}, restore, { modified: result.modified }, this.p6e_dependents(result)),
 			})
 		);
 	},
@@ -6387,11 +6387,8 @@ const PP6B_METHODS = {
 			.text(__("Clear"))
 			.on("click", () => this.p6b_clear_selection())
 			.appendTo($bar);
-		$('<span class="p6b-bar-note"></span>')
-			.text(
-				__("Drag any of them and they all move by the same number of calendar days, each keeping its length. Esc clears the selection.")
-			)
-			.appendTo($bar);
+		this.p6e_bar_switch($bar);
+		$('<span class="p6b-bar-note"></span>').text(this.p6e_bar_note()).appendTo($bar);
 	},
 
 	p6b_lift(drag) {
@@ -6424,7 +6421,7 @@ const PP6B_METHODS = {
 		}
 		const from = source.from_date || source.card.start;
 		if (!from || !target.date) return true;
-		const days = PP6B_PURE.ymd_diff(from, target.date);
+		const days = this.p6e_drop_days(from, target.date);
 		if (days) this.p6b_move_selection(days);
 		return true;
 	},
@@ -6439,10 +6436,10 @@ const PP6B_METHODS = {
 				{
 					fieldtype: "Int",
 					fieldname: "days",
-					label: __("Move by (days)"),
+					label: this.p6e_move_label(),
 					reqd: 1,
-					default: 7,
-					description: __("Calendar days; a negative number moves them earlier. Each task keeps its length and time of day."),
+					default: this.p6e_move_default(),
+					description: this.p6e_move_note(),
 				},
 			],
 		});
@@ -6458,17 +6455,14 @@ const PP6B_METHODS = {
 	p6b_move_selection(days) {
 		const cards = this.p6b_selected_cards();
 		if (!cards.length || !days) return null;
-		const moves = PP6B_PURE.offset_moves(cards, days, (name) => this.modified[name] || (this.by_task[name] || {}).modified);
+		const moves = this.p6e_moves(cards, days, (name) => this.modified[name] || (this.by_task[name] || {}).modified);
 		const snapshot = {
 			p6b: "many",
 			what: "dates",
 			subject: __("{0} tasks", [cards.length]),
 			items: cards.map((card) => ({ task: card.name, start: card.start, end: card.end || card.start })),
 		};
-		const message =
-			days > 0
-				? __("{0} tasks moved {1} day(s) later", [cards.length, days])
-				: __("{0} tasks moved {1} day(s) earlier", [cards.length, -days]);
+		const message = this.p6e_message(cards.length, days);
 		const run = () => this.p6b_commit_many(cards, moves, snapshot, message);
 		if (moves.some((move) => move.start < this.today())) {
 			frappe.confirm(__("Some of these tasks would start before today. Move them anyway?"), run);
@@ -6916,7 +6910,7 @@ const PP6B_METHODS = {
 					item("", "Right-click a card, an empty spot or a name (on a touch screen, hold it still for a moment) for a menu: assign someone, move to the next free day, pencil, duplicate, split."),
 					item(
 						`<span class="pp-p6a-sample-card p6b-selected">${pp_esc(__("Dig"))}</span>`,
-						"Shift-click (or Ctrl- or ⌘-click) cards to select several. Drag one and they all move by the same number of calendar days."
+						"Shift-click (or Ctrl- or ⌘-click) cards to select several. Drag one and they all move by the same number of calendar days, or of working days if you switch the bar to that."
 					),
 					item('<span class="p6b-legend-grip"></span>', "Drag a card's left or right edge to change its first or last day (week and crew views)."),
 					item("", "Double-click an empty spot to add a task for that person and day."),
@@ -9023,3 +9017,191 @@ const PP6D_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP6D_METHODS);
+
+// ====================================================================== Phase 6E: working days, and split follow-ups
+//
+// Two small follow-ups to Phase 6B (Nik, 2026-10-09; TASK-2026-02471), both for this page:
+//
+//   - "Move by: Calendar days | Working days" in the selection bar. Dragging one of several selected
+//     cards (or the bar's Move...) moves them all by the same number of days: calendar days as before
+//     (the default), or working days (Monday to Friday) counted from each task's own start, a weekend
+//     landing going to the next weekday and each task keeping its length in WORKING days (a task of 3
+//     working days stays 3). The choice is remembered per device with save_pref. The offsets are worked
+//     out here and sent to move_many as explicit starts and ends, so the server contract is unchanged.
+//   - A split's second part now carries the tasks that waited on the original (planner_actions.
+//     split_task re-points them); the Undo has to hand the list back (p6e_dependents), because
+//     remove_created_task puts exactly those back on the first part.
+//
+// Hooks into Phase 6B's block, one line each: p6e_bar_switch and p6e_bar_note (p6b_render_bar),
+// p6e_drop_days (p6b_drop), p6e_move_label / p6e_move_default / p6e_move_note (p6b_move_panel),
+// p6e_moves and p6e_message (p6b_move_selection) and p6e_dependents (p6b_split_save). The first use of
+// the switch adds its style, so the constructor needs no hook of its own.
+
+const PP6E = {
+	pref: "ee_project_planner_move_by",
+	units: ["calendar", "working"],
+};
+
+// Pure helpers: no frappe, no moment, no page. tests/test_planner_phase6e.py runs them under node, and
+// the Maintenance Planner keeps an identical copy of the shared ones (MP6E_PURE). The weekday maths
+// is api/project_planner.add_working_days / working_days_between, kept in step and tested.
+const PP6E_PURE = {
+	is_weekend(ymd) {
+		const weekday = new Date(`${ymd}T00:00:00Z`).getUTCDay();
+		return weekday === 0 || weekday === 6;
+	},
+	// A Saturday or Sunday becomes the Monday after; any other day stays.
+	next_weekday(ymd) {
+		let day = ymd;
+		for (let i = 0; i < 3 && PP6E_PURE.is_weekend(day); i++) day = PP6B_PURE.ymd_add(day, 1);
+		return day;
+	},
+	// `count` working days later (negative: earlier). Each step lands on the next weekday, so a Friday
+	// plus one is the Monday and a Saturday plus one is the Monday too.
+	add_working_days(ymd, count) {
+		const step = count < 0 ? -1 : 1;
+		let day = ymd;
+		for (let i = 0, n = Math.min(Math.abs(Math.trunc(Number(count) || 0)), 4000); i < n; i++) {
+			day = PP6B_PURE.ymd_add(day, step);
+			while (PP6E_PURE.is_weekend(day)) day = PP6B_PURE.ymd_add(day, step);
+		}
+		return day;
+	},
+	// Signed weekdays after `from` up to and including `to` (negative when `to` is earlier).
+	working_between(from, to) {
+		if (!from || !to || from === to) return 0;
+		const sign = to > from ? 1 : -1;
+		const low = sign > 0 ? from : to;
+		const high = sign > 0 ? to : from;
+		let count = 0;
+		for (let day = PP6B_PURE.ymd_add(low, 1), i = 0; day <= high && i < 800; day = PP6B_PURE.ymd_add(day, 1), i++) {
+			if (!PP6E_PURE.is_weekend(day)) count++;
+		}
+		return sign * count;
+	},
+	// How many days a drop moved the card in hand: by the calendar, or in working days to the weekday
+	// the drop lands on (a drop on a weekend is the Monday after it).
+	drop_days(from, to, unit) {
+		if (unit !== "working") return PP6B_PURE.ymd_diff(from, to);
+		return PP6E_PURE.working_between(from, PP6E_PURE.next_weekday(to));
+	},
+	// The day a date lands on after moving `days` (calendar, or working days).
+	date_for(ymd, days, unit) {
+		return unit === "working" ? PP6E_PURE.add_working_days(ymd, days) : PP6B_PURE.ymd_add(ymd, days);
+	},
+	// The explicit moves for move_many. Working days: each task starts `days` working days from its own
+	// start and runs as many working days as it did (a task that was only a weekend keeps its calendar
+	// length). Calendar days is Phase 6B's offset_moves, unchanged.
+	moves_for(cards, days, unit, modified_of) {
+		if (unit !== "working") return PP6B_PURE.offset_moves(cards, days, modified_of);
+		return (cards || [])
+			.filter((card) => card && card.start)
+			.map((card) => {
+				const end = card.end && card.end >= card.start ? card.end : card.start;
+				const start = PP6E_PURE.add_working_days(card.start, days);
+				const length = PP6B_PURE.working_days(card.start, end);
+				return {
+					task: card.name,
+					modified: modified_of ? modified_of(card.name) : card.modified,
+					start,
+					end:
+						length > 0
+							? PP6E_PURE.add_working_days(start, length - 1)
+							: PP6B_PURE.ymd_add(start, PP6B_PURE.ymd_diff(card.start, end)),
+				};
+			});
+	},
+};
+
+const PP6E_STYLE = `
+.p6e-switch{display:inline-flex;align-items:center;gap:4px;}
+.p6e-switch-label{font-size:12px;color:var(--text-muted);}
+.p6e-opt{border-color:var(--border-color);}
+.p6e-opt.p6e-on{background:#7c3aed;border-color:#7c3aed;color:#fff;}
+`;
+
+const PP6E_METHODS = {
+	// The unit of a multi-select move, read once from the device's preference. Calendar days unless
+	// the person chose working days.
+	p6e_unit() {
+		if (!this.p6e_unit_value) {
+			this.p6e_unit_value = this.load_pref(PP6E.pref, "calendar") === "working" ? "working" : "calendar";
+		}
+		return this.p6e_unit_value;
+	},
+
+	p6e_set_unit(unit) {
+		if (!PP6E.units.includes(unit) || unit === this.p6e_unit()) return;
+		this.p6e_unit_value = unit;
+		this.save_pref(PP6E.pref, unit);
+		this.p6b_render_bar();
+	},
+
+	// "Move by: Calendar days | Working days", in the selection bar.
+	p6e_bar_switch($bar) {
+		if (!document.getElementById("pp-style-6e")) {
+			$("<style id='pp-style-6e'>").text(PP6E_STYLE).appendTo(document.head);
+		}
+		const unit = this.p6e_unit();
+		const $switch = $('<span class="p6e-switch" role="group"></span>').attr("aria-label", __("Move by")).appendTo($bar);
+		$('<span class="p6e-switch-label"></span>').text(__("Move by:")).appendTo($switch);
+		[
+			["calendar", __("Calendar days"), __("Every day counts, weekends too")],
+			["working", __("Working days"), __("Monday to Friday; each task keeps its length in working days")],
+		].forEach(([value, label, title]) => {
+			$('<button type="button" class="btn btn-default btn-xs p6e-opt"></button>')
+				.toggleClass("p6e-on", unit === value)
+				.attr({ "aria-pressed": unit === value ? "true" : "false", title })
+				.text(label)
+				.on("click", () => this.p6e_set_unit(value))
+				.appendTo($switch);
+		});
+	},
+
+	p6e_bar_note() {
+		return this.p6e_unit() === "working"
+			? __("Drag any of them and they all move by the same number of working days (Monday to Friday), each keeping its length in working days. Esc clears the selection.")
+			: __("Drag any of them and they all move by the same number of calendar days, each keeping its length. Esc clears the selection.");
+	},
+
+	p6e_drop_days(from, to) {
+		return PP6E_PURE.drop_days(from, to, this.p6e_unit());
+	},
+
+	p6e_moves(cards, days, modified_of) {
+		return PP6E_PURE.moves_for(cards, days, this.p6e_unit(), modified_of);
+	},
+
+	p6e_move_label() {
+		return this.p6e_unit() === "working" ? __("Move by (working days)") : __("Move by (days)");
+	},
+
+	p6e_move_default() {
+		return this.p6e_unit() === "working" ? 5 : 7;
+	},
+
+	p6e_move_note() {
+		return this.p6e_unit() === "working"
+			? __("Working days (Monday to Friday); a negative number moves them earlier. Each task keeps its length in working days and its time of day.")
+			: __("Calendar days; a negative number moves them earlier. Each task keeps its length and time of day.");
+	},
+
+	p6e_message(count, days) {
+		if (this.p6e_unit() === "working") {
+			return days > 0
+				? __("{0} tasks moved {1} working day(s) later", [count, days])
+				: __("{0} tasks moved {1} working day(s) earlier", [count, -days]);
+		}
+		return days > 0
+			? __("{0} tasks moved {1} day(s) later", [count, days])
+			: __("{0} tasks moved {1} day(s) earlier", [count, -days]);
+	},
+
+	// A split's answer lists the tasks it pointed at the second part; the Undo needs them back.
+	p6e_dependents(result) {
+		const names = (result && result.repointed) || [];
+		return names.length ? { dependents: names.slice() } : {};
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP6E_METHODS);

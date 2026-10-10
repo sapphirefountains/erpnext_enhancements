@@ -1616,7 +1616,7 @@ class TestDigests(unittest.TestCase):
 		_block("PBLK-1", "RES-1", MON, note=NOTE, all_day=0, start="14:00", end="16:00")
 		_block("PBLK-2", "RES-2", MON, note=OTHER_NOTE)
 
-	def test_digest_lines_put_notes_first_and_blocks_only_with_something_else(self):
+	def test_digest_lines_put_notes_first_and_notes_and_blocks_never_send_alone(self):
 		note = {"text": "Note: Shop meeting 7 am"}
 		block = {"text": "Unavailable 2–4 pm: Dentist"}
 		work = {"items": [{"label": "Pump set", "time": "09:00", "hours": 3}]}
@@ -1624,9 +1624,10 @@ class TestDigests(unittest.TestCase):
 			[line["what"] for line in digest.digest_lines(dict(work, day_notes=[note], blocks=[block]))],
 			["Note: Shop meeting 7 am", "Unavailable 2–4 pm: Dentist", "Pump set"],
 		)
-		self.assertEqual(
-			[line["what"] for line in digest.digest_lines({"day_notes": [note]})], ["Note: Shop meeting 7 am"]
-		)
+		# Phase 6E (Nik, 2026-10-09): a note rides along with a message the person gets anyway; it
+		# never causes one (tests/test_planner_phase6e.py pins the sends).
+		self.assertEqual(digest.digest_lines({"day_notes": [note]}), [])
+		self.assertEqual(digest.digest_lines({"day_notes": [note], "blocks": [block]}), [])
 		self.assertEqual(digest.digest_lines({"blocks": [block]}), [])
 		self.assertEqual([line["what"] for line in digest.digest_lines(work)], ["Pump set"])
 
@@ -1643,7 +1644,7 @@ class TestDigests(unittest.TestCase):
 		self.assertEqual(extras["RES-1"]["day_notes"][1]["text"], "Note (Riverwalk): Inspection")
 		self.assertNotIn(OTHER_NOTE, json.dumps(extras["RES-1"]))
 
-	def test_the_combined_digest_tells_people_with_only_a_note_and_still_once_a_day(self):
+	def test_the_combined_digest_carries_the_note_to_people_with_a_booking_and_is_still_once_a_day(self):
 		frappe.session.user = "Administrator"
 		frappe.tables["Planner Day Note"] = [
 			r for r in frappe.tables["Planner Day Note"] if r["name"] == "PDN-1"
@@ -1654,7 +1655,9 @@ class TestDigests(unittest.TestCase):
 
 		def people_days(start, end, resources=None):
 			data = {"resources": [{"name": "RES-3", "label": "Lisa Park"}]}
-			return data, {"RES-3": [{"date": str(MON), "items": [], "off": None}]}
+			return data, {
+				"RES-3": [{"date": str(MON), "items": [{"label": "Pump set", "time": "09:00", "hours": 3}], "off": None}]
+			}
 
 		with (
 			mock.patch.object(digest.notices, "setting", lambda field: 1),
@@ -1672,7 +1675,7 @@ class TestDigests(unittest.TestCase):
 		):
 			digest.send_daily_digests()
 			digest.send_daily_digests()
-		self.assertEqual(sends, [(LISA, ["Note: Shop meeting 7 am"])])
+		self.assertEqual(sends, [(LISA, ["Note: Shop meeting 7 am", "Pump set"])])
 		self.assertTrue(frappe.docs.get(("Planner Digest Log", f"{LISA}|{MON}")))
 
 	def test_the_maintenance_digest_carries_notes_and_own_blocks(self):

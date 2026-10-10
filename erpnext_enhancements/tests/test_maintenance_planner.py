@@ -1486,8 +1486,11 @@ class TestPlannerParity(unittest.TestCase):
 		self.assertEqual(params(planner.get_planner), {"start", "end"})
 		# The page calls exactly these methods of its API (add_crew since v1.579.0: a chip dropped on
 		# a visit that has a technician adds a helper to its crew).
+		# (and, since Phase 6E, create_visit / remove_created_visit from api/maintenance_actions, which
+		# init_phase6e adds to MP.methods so that send() reaches them)
 		self.assertEqual(
-			set(re.findall(r'this\.send\(\s*"(\w+)"', code)), {"move_projected", "move_visit", "add_crew"}
+			set(re.findall(r'this\.send\(\s*"(\w+)"', code)),
+			{"move_projected", "move_visit", "add_crew", "create_visit", "remove_created_visit"},
 		)
 		self.assertIn('visit ? "move_visit" : "move_projected"', code)
 		self.assertIn("frappe.call({ method: MP.methods[method], args })", code)

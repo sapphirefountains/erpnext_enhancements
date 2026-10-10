@@ -311,6 +311,7 @@ class MaintenancePlanner {
 		this.init_phase6b();
 		this.init_phase6c();
 		this.init_phase6d();
+		this.init_phase6e();
 		this.bind_drag();
 	}
 
@@ -817,6 +818,7 @@ class MaintenancePlanner {
 		this.render_phase6b();
 		this.render_phase6c();
 		this.render_phase6d();
+		this.render_phase6e();
 	}
 
 	render_calendar(cards) {
@@ -1748,6 +1750,7 @@ class MaintenancePlanner {
 			return;
 		}
 		if (this.p6b_undo(snap)) return;
+		if (this.p6e_undo(snap)) return;
 		const today = this.today();
 		const reason = __(MP.undo_reason);
 		if (snap.kind === "drafted") {
@@ -2770,9 +2773,8 @@ Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);
 //                                            server (search_planner, planner="maintenance")
 //   - T, the arrows, 1 2 3, Ctrl/Cmd+Z, ?, Esc keyboard shortcuts, listed in the legend
 //
-// Left out on purpose: Duplicate, Split and Pencil (a visit has none of them), resizing (no visit
-// spans several days) and "Add visit here" (every way a visit is created today belongs to the
-// contract, the scheduler or the Visit Wizard on site; see the README).
+// Left out on purpose: Duplicate, Split and Pencil (a visit has none of them) and resizing (no visit
+// spans several days). "Add visit here" was left out of 6B too; Phase 6E added it (its own block).
 //
 // Nothing here picks a person: Assign to... lists the technicians who are free that day
 // (project_planner.who_is_free) and the planner clicks one. Every write is the page's own: move_visit
@@ -3407,11 +3409,8 @@ const MP6B_METHODS = {
 			.text(__("Clear"))
 			.on("click", () => this.p6b_clear_selection())
 			.appendTo($bar);
-		$('<span class="mp-p6b-bar-note"></span>')
-			.text(
-				__("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Esc clears the selection.")
-			)
-			.appendTo($bar);
+		this.p6e_bar_switch($bar);
+		$('<span class="mp-p6b-bar-note"></span>').text(this.p6e_bar_note()).appendTo($bar);
 	},
 
 	p6b_lift(drag) {
@@ -3443,7 +3442,7 @@ const MP6B_METHODS = {
 			return true;
 		}
 		if (!source.card.date || !target.date) return true;
-		const days = MP6B_PURE.ymd_diff(source.card.date, target.date);
+		const days = this.p6e_drop_days(source.card.date, target.date);
 		if (days) this.p6b_move_selection(days);
 		return true;
 	},
@@ -3458,10 +3457,10 @@ const MP6B_METHODS = {
 				{
 					fieldtype: "Int",
 					fieldname: "days",
-					label: __("Move by (days)"),
+					label: this.p6e_move_label(),
 					reqd: 1,
-					default: 7,
-					description: __("Calendar days; a negative number moves them earlier. Visits cannot move to a day that has passed."),
+					default: this.p6e_move_default(),
+					description: this.p6e_move_note(),
 				},
 			],
 		});
@@ -3481,15 +3480,12 @@ const MP6B_METHODS = {
 		const cards = this.p6b_selected_cards();
 		if (!cards.length || !days) return;
 		const today = this.today();
-		const plans = cards.map((card) => ({ card, date: MP6B_PURE.ymd_add(card.date, days) }));
+		const plans = cards.map((card) => ({ card, date: this.p6e_date(card.date, days) }));
 		if (plans.some((plan) => plan.date < today)) {
 			frappe.show_alert({ message: __("Visits can only be moved to today or a later day."), indicator: "orange" }, 6);
 			return;
 		}
-		const question =
-			days > 0
-				? __("Move {0} visits {1} day(s) later?", [plans.length, days])
-				: __("Move {0} visits {1} day(s) earlier?", [plans.length, -days]);
+		const question = this.p6e_question(plans.length, days);
 		frappe.confirm(
 			`<p>${mp_esc(question)}</p><p class="text-muted">${mp_esc(
 				__("Each visit is saved on its own: if one cannot move, the others still do, and you are told which.")
@@ -3960,7 +3956,7 @@ const MP6B_METHODS = {
 					item("", "Right-click a visit, an empty spot or a name (on a touch screen, hold it still for a moment) for a menu: assign someone, move to the technician's next free day, the site at a glance."),
 					item(
 						`<span class="mp-p6a-sample mp-p6b-selected" style="outline:2px solid #7c3aed">${mp_esc(__("Visit"))}</span>`,
-						"Shift-click (or Ctrl- or ⌘-click) draft visits to select several. Drag one and they all move by the same number of calendar days."
+						"Shift-click (or Ctrl- or ⌘-click) draft visits to select several. Drag one and they all move by the same number of calendar days, or of weekdays if you switch the bar to working days."
 					),
 					item("", "Assign to… lists the technicians who are free that day. Nobody is picked for you."),
 				],
@@ -5897,3 +5893,445 @@ const MP6D_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);
+
+// ====================================================================== Phase 6E: working days, and Add visit here
+//
+// Two follow-ups to Phase 6B (Nik, 2026-10-09; TASK-2026-02471), for this page:
+//
+//   - "Move by: Calendar days | Working days" in the selection bar, remembered per device. A visit is
+//     one day, so with working days it moves by that many weekdays (a Friday plus one is the Monday,
+//     and a drop on a weekend lands on the Monday after it). Calendar days stay the default.
+//   - "Add visit here...": a draft visit for a site, a day and a technician, made from an empty spot
+//     (the right-click menu, through this.p6_menu_providers, or a double-click) or the toolbar's
+//     "Add visit". The form pre-fills from the site (get_visit_defaults: default technician, crew,
+//     length and Full day from its Maintenance Profile; the active contract's fountain and checklist
+//     template) and every field is editable. create_visit makes the draft exactly as the nightly
+//     scheduler would and links it to the site's active contract when there is one. Nobody is picked
+//     for the planner beyond what the site already says.
+//
+// The write goes through the page's own send(): the server asks for a reason when the visit overbooks
+// someone (needs_reason), and the Undo toast deletes the new draft again (remove_created_visit), which
+// the server allows only while nothing has been attached to it. MP.methods is where send() looks a
+// method up, so init_phase6e adds the two endpoints there.
+//
+// Hooks into the class above, one line each: init_phase6e (constructor), render_phase6e (render) and
+// p6e_undo (undo). Phase 6B's block calls p6e_bar_switch, p6e_bar_note, p6e_drop_days, p6e_date,
+// p6e_question and p6e_move_label / p6e_move_default / p6e_move_note for the working-days switch.
+
+const MP6E = {
+	api: "erpnext_enhancements.api.maintenance_actions",
+	pref: "ee_maintenance_planner_move_by",
+	units: ["calendar", "working"],
+	widths: { panel: 460 },
+};
+MP6E.methods = {
+	create_visit: `${MP6E.api}.create_visit`,
+	remove_created_visit: `${MP6E.api}.remove_created_visit`,
+};
+MP6E.defaults = `${MP6E.api}.get_visit_defaults`;
+MP6E.sites_query = `${MP6E.api}.sites_query`;
+
+// Pure helpers: no frappe, no moment, no page. The weekday maths is the Project Planner's PP6E_PURE
+// (identical copies, run through the same cases by tests/test_planner_phase6e.py) and the server's
+// api/project_planner.add_working_days / working_days_between.
+const MP6E_PURE = {
+	is_weekend(ymd) {
+		const weekday = new Date(`${ymd}T00:00:00Z`).getUTCDay();
+		return weekday === 0 || weekday === 6;
+	},
+	// A Saturday or Sunday becomes the Monday after; any other day stays.
+	next_weekday(ymd) {
+		let day = ymd;
+		for (let i = 0; i < 3 && MP6E_PURE.is_weekend(day); i++) day = MP6B_PURE.ymd_add(day, 1);
+		return day;
+	},
+	// `count` working days later (negative: earlier). Each step lands on the next weekday, so a Friday
+	// plus one is the Monday and a Saturday plus one is the Monday too.
+	add_working_days(ymd, count) {
+		const step = count < 0 ? -1 : 1;
+		let day = ymd;
+		for (let i = 0, n = Math.min(Math.abs(Math.trunc(Number(count) || 0)), 4000); i < n; i++) {
+			day = MP6B_PURE.ymd_add(day, step);
+			while (MP6E_PURE.is_weekend(day)) day = MP6B_PURE.ymd_add(day, step);
+		}
+		return day;
+	},
+	// Signed weekdays after `from` up to and including `to` (negative when `to` is earlier).
+	working_between(from, to) {
+		if (!from || !to || from === to) return 0;
+		const sign = to > from ? 1 : -1;
+		const low = sign > 0 ? from : to;
+		const high = sign > 0 ? to : from;
+		let count = 0;
+		for (let day = MP6B_PURE.ymd_add(low, 1), i = 0; day <= high && i < 800; day = MP6B_PURE.ymd_add(day, 1), i++) {
+			if (!MP6E_PURE.is_weekend(day)) count++;
+		}
+		return sign * count;
+	},
+	// How many days a drop moved the visit in hand: by the calendar, or in weekdays to the weekday the
+	// drop lands on (a drop on a weekend is the Monday after it).
+	drop_days(from, to, unit) {
+		if (unit !== "working") return MP6B_PURE.ymd_diff(from, to);
+		return MP6E_PURE.working_between(from, MP6E_PURE.next_weekday(to));
+	},
+	// The day a visit lands on after moving `days` (calendar, or working days).
+	date_for(ymd, days, unit) {
+		return unit === "working" ? MP6E_PURE.add_working_days(ymd, days) : MP6B_PURE.ymd_add(ymd, days);
+	},
+	// The create_visit arguments from the form: the technician as shown ("" is nobody), the crew as ticked,
+	// the length (0: Settings' visit length), Full day, and the fountain and checklist when set.
+	create_args(values, crew) {
+		const args = {
+			project: values.project,
+			date: values.date,
+			technician: values.technician || "",
+			crew: JSON.stringify(crew || []),
+			hours: Math.max(0, Number(values.hours) || 0),
+			full_day: values.full_day ? 1 : 0,
+		};
+		if (values.serial_no) args.serial_no = values.serial_no;
+		if (values.template) args.template = values.template;
+		return args;
+	},
+};
+
+const MP6E_STYLE = `
+.mp-p6e-switch{display:inline-flex;align-items:center;gap:4px;}
+.mp-p6e-switch-label{font-size:12px;color:var(--text-muted);}
+.mp-p6e-opt{border-color:var(--border-color);}
+.mp-p6e-opt.mp-p6e-on{background:#7c3aed;border-color:#7c3aed;color:#fff;}
+.mp-p6e-note{font-size:12px;color:var(--text-muted);margin:2px 0 8px;}
+`;
+
+const MP6E_METHODS = {
+	init_phase6e() {
+		if (!document.getElementById("mp-style-6e")) {
+			$("<style id='mp-style-6e'>").text(MP6E_STYLE).appendTo(document.head);
+		}
+		// send() looks a method up in MP.methods.
+		Object.assign(MP.methods, MP6E.methods);
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6e_menu_items(target));
+		this.p6_legend_providers = this.p6_legend_providers || [];
+		this.p6_legend_providers.push(() => this.p6e_legend_sections());
+		this.$p6e_add = $('<button type="button" class="btn btn-default btn-sm mp-p6e-add"></button>')
+			.text(__("Add visit"))
+			.attr("title", __("Draft a visit for a site, a day and a technician. Double-click an empty spot does the same."))
+			.on("click", () => this.p6e_add_visit(null))
+			.hide();
+		if (this.$undo) this.$p6e_add.insertBefore(this.$undo);
+		else this.$p6e_add.appendTo(this.$body.find(".mp-toolbar").first());
+		this.$body[0].addEventListener("dblclick", (e) => this.p6e_dblclick(e));
+	},
+
+	render_phase6e() {
+		if (this.$p6e_add) this.$p6e_add.toggle(!!(this.data && this.data.can_create_visits));
+	},
+
+	// ------------------------------------------------------------------ move by: calendar or working days
+
+	p6e_unit() {
+		if (!this.p6e_unit_value) {
+			this.p6e_unit_value = this.load_pref(MP6E.pref, "calendar") === "working" ? "working" : "calendar";
+		}
+		return this.p6e_unit_value;
+	},
+
+	p6e_set_unit(unit) {
+		if (!MP6E.units.includes(unit) || unit === this.p6e_unit()) return;
+		this.p6e_unit_value = unit;
+		this.save_pref(MP6E.pref, unit);
+		this.p6b_render_bar();
+	},
+
+	// "Move by: Calendar days | Working days", in the selection bar.
+	p6e_bar_switch($bar) {
+		const unit = this.p6e_unit();
+		const $switch = $('<span class="mp-p6e-switch" role="group"></span>').attr("aria-label", __("Move by")).appendTo($bar);
+		$('<span class="mp-p6e-switch-label"></span>').text(__("Move by:")).appendTo($switch);
+		[
+			["calendar", __("Calendar days"), __("Every day counts, weekends too")],
+			["working", __("Working days"), __("Monday to Friday: a visit moves by that many weekdays")],
+		].forEach(([value, label, title]) => {
+			$('<button type="button" class="btn btn-default btn-xs mp-p6e-opt"></button>')
+				.toggleClass("mp-p6e-on", unit === value)
+				.attr({ "aria-pressed": unit === value ? "true" : "false", title })
+				.text(label)
+				.on("click", () => this.p6e_set_unit(value))
+				.appendTo($switch);
+		});
+	},
+
+	p6e_bar_note() {
+		return this.p6e_unit() === "working"
+			? __("Drag any of them and they all move by the same number of working days (Monday to Friday). Each visit is saved on its own. Esc clears the selection.")
+			: __("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Esc clears the selection.");
+	},
+
+	p6e_drop_days(from, to) {
+		return MP6E_PURE.drop_days(from, to, this.p6e_unit());
+	},
+
+	p6e_date(ymd, days) {
+		return MP6E_PURE.date_for(ymd, days, this.p6e_unit());
+	},
+
+	p6e_move_label() {
+		return this.p6e_unit() === "working" ? __("Move by (working days)") : __("Move by (days)");
+	},
+
+	p6e_move_default() {
+		return this.p6e_unit() === "working" ? 5 : 7;
+	},
+
+	p6e_move_note() {
+		return this.p6e_unit() === "working"
+			? __("Working days (Monday to Friday); a negative number moves them earlier. Visits cannot move to a day that has passed.")
+			: __("Calendar days; a negative number moves them earlier. Visits cannot move to a day that has passed.");
+	},
+
+	p6e_question(count, days) {
+		if (this.p6e_unit() === "working") {
+			return days > 0
+				? __("Move {0} visits {1} working day(s) later?", [count, days])
+				: __("Move {0} visits {1} working day(s) earlier?", [count, -days]);
+		}
+		return days > 0
+			? __("Move {0} visits {1} day(s) later?", [count, days])
+			: __("Move {0} visits {1} day(s) earlier?", [count, -days]);
+	},
+
+	// ------------------------------------------------------------------ add visit here
+
+	p6e_menu_items(target) {
+		if (!target || target.kind !== "cell" || !target.ymd) return [];
+		const can = !!(this.data && this.data.can_create_visits);
+		const past = target.ymd < this.today();
+		return [
+			{
+				label: __("Add visit here…"),
+				hint: !can ? __("You cannot add visits") : past ? __("Not on a past day") : __("Double-click"),
+				disabled: !can || past,
+				on_click: () => this.p6e_add_visit(target),
+			},
+		];
+	},
+
+	p6e_legend_sections() {
+		return [
+			{
+				title: __("Adding a visit"),
+				items: [
+					{
+						sample_html: "",
+						text: __("Double-click an empty spot, or Add visit in the toolbar, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
+					},
+				],
+			},
+		];
+	},
+
+	p6e_dblclick(e) {
+		if (!this.data || !this.data.can_create_visits) return;
+		const el = e.target;
+		if (!el || !el.closest) return;
+		const skip =
+			".mp-card, .mp-day-head, .mp-off-badges, .mp-chip, .mp-person, .mp-toolbar, .mp-tray, .mp-res, .mp-route, " +
+			".mp-p6b-bar, [data-route-resource], [class*='pk-'], button, a, input, select, textarea, label";
+		if (el.closest(skip)) return;
+		const target = this.p6b_target(el);
+		if (!target || target.kind !== "cell" || !target.ymd) return;
+		e.preventDefault();
+		if (window.getSelection) window.getSelection().removeAllRanges();
+		this.p6e_add_visit(target);
+	},
+
+	// The technician the form starts with: the crew-view row, else the toolbar's technician filter.
+	p6e_start_user(target) {
+		const person = (target && target.user) || (this.technician && this.technician !== "__none__" ? this.technician : "");
+		const known = ((this.data && this.data.technicians) || []).some((tech) => tech.user === person && tech.enabled);
+		return known ? person : "";
+	},
+
+	// The form. `target` is an empty spot ({ymd, user}) or null from the toolbar.
+	p6e_add_visit(target) {
+		if (!this.data) return null;
+		if (!this.data.can_create_visits) {
+			frappe.show_alert({ message: __("You cannot add visits."), indicator: "orange" }, 5);
+			return null;
+		}
+		const today = this.today();
+		const start_date = target && target.ymd ? target.ymd : this.anchor > today ? this.anchor : today;
+		if (start_date < today) {
+			frappe.show_alert({ message: __("Visits can only be added to today or a later day."), indicator: "orange" }, 6);
+			return null;
+		}
+		const state = { token: 0, defaults: null, cell_user: this.p6e_start_user(target), serials: [] };
+		const technicians = ((this.data && this.data.technicians) || []).filter((person) => person.enabled);
+		const panel = this.p6b_panel({
+			title: __("Add a visit"),
+			subtitle: [target && target.user ? this.tech_name(target.user) : "", mp_when(start_date)].filter(Boolean).join(" · "),
+			key: `mp-p6e-add:${(target && target.user) || ""}:${start_date}`,
+			fields: [
+				{
+					fieldtype: "Link",
+					fieldname: "project",
+					label: __("Site"),
+					options: "Project",
+					reqd: 1,
+					description: __("Sites that have a Maintenance Profile."),
+					get_query: () => ({ query: MP6E.sites_query }),
+					onchange: () => this.p6e_load_defaults(panel, state),
+				},
+				{ fieldtype: "Date", fieldname: "date", label: __("Date"), reqd: 1, default: start_date },
+				{
+					fieldtype: "Select",
+					fieldname: "technician",
+					label: __("Technician"),
+					options: [{ label: __("Unassigned"), value: "" }].concat(
+						technicians.map((person) => ({ label: person.name, value: person.user }))
+					),
+					default: state.cell_user,
+				},
+				{ fieldtype: "Section Break", label: __("Crew") },
+				{ fieldtype: "HTML", fieldname: "crew_editor", options: '<div class="mp-cm-list"></div>' },
+				{ fieldtype: "Section Break" },
+				{
+					fieldtype: "Float",
+					fieldname: "hours",
+					label: __("Planned hours"),
+					description: __("Hours each person is booked. Blank or 0: Settings' visit length."),
+				},
+				{ fieldtype: "Column Break" },
+				{ fieldtype: "Check", fieldname: "full_day", label: __("Full day"), description: __("The visit takes each person's whole day.") },
+				{ fieldtype: "Section Break", label: __("Contract") },
+				{ fieldtype: "HTML", fieldname: "contract_note", options: '<div class="mp-p6e-note"></div>' },
+				{
+					fieldtype: "Link",
+					fieldname: "serial_no",
+					label: __("Fountain"),
+					options: "Serial No",
+					description: __("Blank for a visit to the whole site."),
+					get_query: () => (state.serials.length ? { filters: { name: ["in", state.serials] } } : {}),
+					onchange: () => this.p6e_fountain_changed(panel, state),
+				},
+				{ fieldtype: "Link", fieldname: "template", label: __("Checklist template"), options: "Sapphire Maintenance Template" },
+			],
+		});
+		panel.set_primary_action(__("Add visit"), (values) => this.p6e_add_visit_save(panel, state, values || {}));
+		panel.show();
+		this.build_crew_editor(panel, { crew: [] });
+		return panel;
+	},
+
+	// The site was picked: its default technician (unless the spot named one), crew, length, Full day,
+	// fountain and checklist.
+	p6e_load_defaults(panel, state) {
+		const project = panel.get_value("project");
+		if (!project) return null;
+		const token = ++state.token;
+		return Promise.resolve(frappe.call({ method: MP6E.defaults, args: { project } }))
+			.then((r) => {
+				const found = r && r.message;
+				if (token !== state.token || !found) return;
+				state.defaults = found;
+				this.p6e_apply_defaults(panel, state, found);
+			})
+			.catch(() => null);
+	},
+
+	p6e_apply_defaults(panel, state, found) {
+		state.serials = (found.features || []).map((feature) => feature.serial_no);
+		const known = ((this.data && this.data.technicians) || []).filter((person) => person.enabled);
+		const lead = state.cell_user || found.technician || "";
+		const options = [{ label: __("Unassigned"), value: "" }].concat(
+			known.map((person) => ({ label: person.name, value: person.user }))
+		);
+		if (lead && !known.some((person) => person.user === lead)) {
+			options.push({ label: found.technician_name || this.tech_name(lead), value: lead });
+		}
+		// The Select re-reads df.options when a value is set on it.
+		if (panel.fields_dict.technician) panel.fields_dict.technician.df.options = options;
+		panel.set_value("technician", lead);
+		panel.$wrapper.find(".mp-cm-list").empty();
+		this.build_crew_editor(panel, {
+			crew: (found.crew || []).map((member) => ({ user: member.user, name: member.name, hours: member.hours })),
+		});
+		panel.set_value("hours", Number(found.hours) || 0);
+		panel.set_value("full_day", found.full_day ? 1 : 0);
+		panel.set_value("serial_no", found.serial_no || "");
+		panel.set_value("template", found.template || "");
+		const note = found.contract
+			? __("Linked to the active contract {0}, so this counts as a scheduled visit.", [mp_esc(found.contract)])
+			: __("No active contract for this site: a plain visit, not linked to a contract.");
+		const open = found.open_visit
+			? ` ${__("{0} is already the open regular visit for it.", [mp_esc(found.open_visit)])}`
+			: "";
+		panel.$wrapper.find(".mp-p6e-note").html(`${note}${open}`);
+	},
+
+	// A different fountain: the checklist template follows it.
+	p6e_fountain_changed(panel, state) {
+		const found = state.defaults;
+		const serial_no = panel.get_value("serial_no");
+		if (!found || !serial_no) return;
+		const feature = (found.features || []).find((row) => row.serial_no === serial_no);
+		if (feature && feature.template && panel.get_value("template") !== feature.template) {
+			panel.set_value("template", feature.template);
+		}
+	},
+
+	p6e_add_visit_save(panel, state, values) {
+		if (!values.project || !values.date) return null;
+		if (values.date < this.today()) {
+			frappe.msgprint(__("Pick today or a later day."));
+			return null;
+		}
+		const lead = values.technician || "";
+		const crew = this.read_crew_editor(panel, lead);
+		const args = MP6E_PURE.create_args(values, crew);
+		const site = (state.defaults && state.defaults.title) || values.project;
+		panel.hide();
+		return this.p6e_create(args, site);
+	},
+
+	// One create_visit through send(): a conflict asks for a reason, and the Undo toast deletes the new
+	// draft again. The snapshot is filled in from the answer; send() only pushes it on success.
+	p6e_create(args, site) {
+		const snapshot = { p6e: "created", site, record: null, modified: null };
+		const message = __("{0} visit added on {1}", [site, mp_when(args.date)]);
+		let navigated = false;
+		return this.send("create_visit", args, { snapshot, message, noun: "visit" })
+			.then((result) => {
+				if (!result || !result.name) return result;
+				snapshot.record = result.name;
+				snapshot.modified = result.modified;
+				this.p6b.flash = { key: result.name, date: result.date || args.date, wait: true };
+				const date = result.date || args.date;
+				if (date && !this.range_days().includes(date)) {
+					navigated = true;
+					this.go(this.view, date);
+				}
+				return result;
+			})
+			.finally(() => {
+				if (!navigated) this.load();
+			});
+	},
+
+	// Undo of a visit that was just added: delete the draft. The server refuses once anything was
+	// attached to it, and says why.
+	p6e_undo(snap) {
+		if (!snap || snap.p6e !== "created") return false;
+		if (!snap.record) {
+			frappe.show_alert({ message: __("That visit was not added, so there is nothing to undo."), indicator: "orange" }, 5);
+			return true;
+		}
+		const modified = this.modified[snap.record] || snap.modified;
+		this.send("remove_created_visit", { record: snap.record, modified }, { message: __("Undone: {0}", [snap.site]), noun: "visit" })
+			.finally(() => this.load());
+		return true;
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);
