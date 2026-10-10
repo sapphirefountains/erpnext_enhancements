@@ -12,13 +12,16 @@ needs the server is here:
 * :func:`split_task` cuts one task in two at a day: the first keeps the days before it, the second
   (a new Task that ``depends_on`` the first) the rest. Hours, and any crew member's own hours, are
   shared pro rata by working days. A one-day task splits in two halves, the second on a day the page
-  picked (the person's next free day). All or nothing, inside one savepoint.
+  picked (the person's next free day). All or nothing, inside one savepoint. Phase 6E: the open tasks
+  of the same project that waited on the original now wait on the second part, the half that ends
+  where the work ends (:func:`_repoint_dependents`); both parts keep the same name.
 * :func:`quick_add_task` creates a task for one person on one day from a double-click.
 * :func:`move_many` moves several tasks (and/or pencils or firms them) in one call: one conflict
   check for the lot, one reason, all or nothing, as ``shift_successors`` and ``copy_week`` do.
 * :func:`remove_created_task` is the Undo of a task the planner just created (a duplicate, a quick
   add, the second half of a split): it deletes it only when nothing has been attached since, and
-  never with ``force``. For a split it also puts the first half back.
+  never with ``force``. For a split it also puts the first half back, and the tasks the split had
+  moved onto the second half go back onto the first (Phase 6E).
 * :func:`search_planner` finds tasks, projects and people for the search box, customer jobs only;
   ``planner="maintenance"`` finds visits, sites and technicians for the Maintenance Planner.
 
@@ -316,6 +319,124 @@ def duplicate_task(task, date=None, reason=None, draft=0):
 	return _created(new, warnings, conflicts, source=doc.name)
 
 
+# ---------------------------------------------------------------------- dependents (Phase 6E)
+
+
+def _dependency_rows(task):
+	"""``[{"name", "parent"}]``: the ``Task Depends On`` rows that make another task wait on ``task``."""
+	return frappe.get_all(
+		"Task Depends On",
+		filters={"parenttype": "Task", "task": task},
+		fields=["name", "parent"],
+		limit_page_length=0,
+	)
+
+
+def _open_same_project(names, project):
+	"""Of ``names``, the tasks of ``project`` that are not finished and not templates."""
+	if not names:
+		return []
+	rows = frappe.get_all(
+		"Task",
+		filters={"name": ["in", sorted(names)]},
+		fields=["name", "project", "status", "is_template"],
+		limit_page_length=0,
+	)
+	return sorted(
+		row.get("name")
+		for row in rows
+		if row.get("project") == project
+		and row.get("status") not in engine.FINISHED_STATUSES
+		and row.get("status") != "Template"
+		and not cint(row.get("is_template"))
+	)
+
+
+def _swap_dependency(dependents, old, new, new_subject, note):
+	"""Make each of ``dependents`` wait on ``new`` instead of ``old``. Returns the names changed.
+
+	**Written straight to the child table, not through ``Task.save()``**, on purpose: a save runs
+	ERPNext's ``on_update`` -> ``reschedule_dependent_tasks``, which pushes the dependent's own
+	Open successors by calendar days if any of them starts before it ends. Re-pointing a
+	dependency must move no dates, so it touches only the ``task`` of the row and the parent's
+	``depends_on_tasks`` text (ERPNext's ``update_depends_on`` rebuilds that same text on a save),
+	then leaves a timeline note. Write permission is checked first, as the caller; a task the
+	caller cannot write fails the request, and with it the whole split. Never a duplicate row: a
+	task that already waits on ``new`` simply loses its row for ``old``.
+	"""
+	changed = []
+	for name in dependents:
+		if not frappe.has_permission("Task", "write", doc=name):
+			frappe.throw(
+				_("You cannot change {0}, which waits on {1}, so nothing was changed.").format(name, old),
+				frappe.PermissionError,
+			)
+		rows = frappe.get_all(
+			"Task Depends On",
+			filters={"parenttype": "Task", "parent": name},
+			fields=["name", "task"],
+			order_by="idx asc",
+			limit_page_length=0,
+		)
+		mine = [row for row in rows if row.get("task") == old]
+		if not mine:
+			continue
+		keep_row = mine[0].get("name")
+		if any(row.get("task") == new for row in rows):
+			drop = [row.get("name") for row in mine]
+			keep_row = None
+		else:
+			frappe.db.set_value(
+				"Task Depends On", keep_row, {"task": new, "subject": new_subject}, update_modified=False
+			)
+			drop = [row.get("name") for row in mine[1:]]
+		for row_name in drop:
+			frappe.db.delete("Task Depends On", {"name": row_name})
+		kept = []
+		for row in rows:
+			if row.get("name") in drop:
+				continue
+			task = new if row.get("name") == keep_row else row.get("task")
+			if task and task not in kept:
+				kept.append(task)
+		frappe.db.set_value("Task", name, "depends_on_tasks", "".join(f"{task}," for task in kept))
+		frappe.get_doc("Task", name).add_comment("Comment", note)
+		changed.append(name)
+	return changed
+
+
+def _repoint_dependents(first, second):
+	"""Phase 6E: after a split, every open task of the same project that waited on ``first`` waits
+	on ``second`` (the part that ends where the original ended). ``second`` itself is left alone
+	(it waits on ``first``). Returns the tasks moved. Part of the split's savepoint."""
+	rows = [row for row in _dependency_rows(first.name) if row.get("parent") not in (first.name, second.name)]
+	names = _open_same_project({row.get("parent") for row in rows}, first.get("project"))
+	return _swap_dependency(
+		names,
+		first.name,
+		second.name,
+		second.get("subject"),
+		_("Now waits on {0} (second part of a split)").format(frappe.utils.escape_html(second.name)),
+	)
+
+
+def _restore_dependents(second, first, allowed):
+	"""The Undo of :func:`_repoint_dependents`: the tasks the split moved (``allowed``, the names the
+	page was told) that still wait on ``second`` wait on ``first`` again. Returns the names put
+	back."""
+	waiting = {row.get("parent") for row in _dependency_rows(second.name)}
+	names = sorted(set(allowed or ()) & waiting)
+	if not names:
+		return []
+	return _swap_dependency(
+		names,
+		second.name,
+		first.name,
+		first.get("subject"),
+		_("Waits on {0} again (the split was undone)").format(frappe.utils.escape_html(first.name)),
+	)
+
+
 # ---------------------------------------------------------------------- split
 
 
@@ -378,7 +499,13 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 	``modified`` is the optimistic lock, as for ``save_task``. A split that would overbook someone
 	answers ``needs_reason`` and writes nothing. Returns ``{"name", "modified", "card", "first":
 	{start, end, expected_time}, "second": {name, modified, start, end, expected_time, card},
-	"warnings", "conflicts"}``.
+	"repointed": [task names], "warnings", "conflicts"}``.
+
+	**Phase 6E (Nik, 2026-10-09): both parts keep the same name, and the tasks that waited on the
+	original wait on the second part.** Every open task of the same project whose ``depends_on``
+	lists the original is pointed at the second part instead (:func:`_repoint_dependents`), inside
+	the same savepoint, so a failure there rolls the whole split back. ``repointed`` names them; the
+	page hands the list back to :func:`remove_created_task` so the Undo can put them back.
 	"""
 	pp._require_planner()
 	_refuse_draft(
@@ -469,6 +596,8 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 		new.append("depends_on", {"task": doc.name})
 		new.check_permission("create")
 		warnings.extend(_insert(new))
+		# Phase 6E: what waited on the whole task now waits on its last part.
+		repointed = _repoint_dependents(doc, new)
 		second_span = pp._span_text(pp._state(new))
 		doc.add_comment(
 			"Comment",
@@ -477,6 +606,13 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 			),
 		)
 		new.add_comment("Comment", note + ".")
+		if repointed:
+			new.add_comment(
+				"Comment",
+				_("Tasks that waited on {0} now wait on this one: {1}.").format(
+					frappe.utils.escape_html(doc.name), ", ".join(frappe.utils.escape_html(n) for n in repointed)
+				),
+			)
 		if conflicts:
 			_comment_reason(
 				new, _("Split on the Project Planner over a conflict: {0}. Reason: {1}"), conflicts, reason
@@ -499,6 +635,7 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 			"expected_time": second_hours,
 			"card": pp._card(new),
 		},
+		"repointed": repointed,
 		"warnings": warnings,
 		"conflicts": conflicts,
 	}
@@ -721,12 +858,16 @@ def move_many(moves, reason=None, draft=0):
 # ---------------------------------------------------------------------- undo of a created task
 
 
-def _removal_problem(doc, modified):
+def _removal_problem(doc, modified, moved_dependents=()):
 	"""Why the task just created cannot simply be deleted again, as a phrase, or None.
 
 	Anything that has happened to it since is a reason to stop: it was changed, time was logged or
 	clocked on it, it has sub-tasks, another task depends on it, someone else commented, a file is
 	attached, or someone holds a draft change of it. Only its creator may undo it from here.
+
+	``moved_dependents`` (Phase 6E) are the tasks a split pointed at this one, which its Undo puts
+	back before it deletes: they are not "another task depends on it". Any other task that waits on
+	it, one added since, still stops the Undo.
 	"""
 	user = frappe.session.user
 	name = doc.name
@@ -740,7 +881,7 @@ def _removal_problem(doc, modified):
 		return _("someone has clocked time on it")
 	if frappe.db.exists("Task", {"parent_task": name}):
 		return _("it has sub-tasks")
-	if frappe.db.exists("Task Depends On", {"parenttype": "Task", "task": name}):
+	if {row.get("parent") for row in _dependency_rows(name)} - set(moved_dependents or ()):
 		return _("another task depends on it")
 	if frappe.get_all(
 		"Comment",
@@ -781,13 +922,20 @@ def remove_created_task(task, modified, restore=None):
 	so a link to it still refuses, and it goes to Deleted Documents), and only when nothing has been
 	attached since (:func:`_removal_problem`); otherwise it refuses with the reason and changes
 	nothing. ``restore`` (JSON, for a split) puts the first half back through ``save_task``'s own
-	path: ``{"task", "modified", "start", "end", "expected_time", "crew"}``, any conflict that brings
-	back recorded with the Undo reason. Returns ``{"removed", "name", "modified", "card",
-	"warnings"}`` (the last four for the task put back).
+	path: ``{"task", "modified", "start", "end", "expected_time", "crew", "dependents"}``, any
+	conflict that brings back recorded with the Undo reason. Returns ``{"removed", "name",
+	"modified", "card", "warnings", "restored_dependents"}`` (the middle four for the task put back).
+
+	``dependents`` (Phase 6E) are the tasks the split pointed at the second half (``split_task``'s
+	``repointed``). They are put back on the first half **before** the delete, in the same request
+	(so a failure leaves them where they were), and they are the only dependents that do not stop
+	the Undo; a task that started waiting on the second half after the split does.
 	"""
 	pp._require_planner()
 	doc = frappe.get_doc("Task", task)
-	problem = _removal_problem(doc, modified)
+	plan = _restore_plan(restore)
+	moved = [name for name in (pp.parse_list(pp.given(plan.get("dependents"))) or [])] if plan else []
+	problem = _removal_problem(doc, modified, moved)
 	if problem:
 		frappe.throw(
 			_("{0} was not removed: {1}. Delete it on the task form if it should go.").format(
@@ -799,11 +947,14 @@ def remove_created_task(task, modified, restore=None):
 		frappe.throw(
 			_("You cannot delete Tasks, so {0} was not removed.").format(doc.name), frappe.PermissionError
 		)
-	plan = _restore_plan(restore)
 	first = pp._load(plan["task"], plan.get("modified")) if plan else None
 
-	frappe.delete_doc("Task", doc.name)
+	# The tasks the split moved onto this half wait on the first half again, then it can go: the
+	# delete refuses a task that something still links to (never forced).
 	result = {"removed": doc.name, "warnings": []}
+	if first is not None:
+		result["restored_dependents"] = _restore_dependents(doc, first, moved)
+	frappe.delete_doc("Task", doc.name)
 	if first is not None:
 		restored = pp._apply(
 			first,

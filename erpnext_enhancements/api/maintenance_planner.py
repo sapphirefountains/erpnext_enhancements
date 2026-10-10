@@ -340,6 +340,8 @@ def get_planner(start, end):
 		"bookings": view["bookings"],
 		"can_move_visits": can_move_visits,
 		"can_move_projected": can_move_projected,
+		# Phase 6E: whether "Add visit here" is offered (api/maintenance_actions.create_visit).
+		"can_create_visits": bool(frappe.has_permission("Sapphire Maintenance Record", "create")),
 		**_planner_extras(start, end, view["bookings"]),  # Phase 6D: day_notes, block_notes, can_schedule
 	}
 

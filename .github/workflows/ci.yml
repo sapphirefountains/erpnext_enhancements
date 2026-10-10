@@ -898,6 +898,19 @@ jobs:
       # Own frappe stub, own step.
       - name: Planner faster scheduling (menu, resize, quick add, multi-select, search; Phase 6B)
         run: python -m unittest erpnext_enhancements.tests.test_planner_phase6b -v
+      # Planner Phase 6E, four follow-ups (Nik, 2026-10-09). Pins that a multi-select move can count
+      # working days (Monday to Friday, a weekend landing goes to the Monday, each task keeps its length
+      # in working days) with calendar days the default and the choice remembered per device, and that
+      # the JavaScript maths agrees with api/project_planner.add_working_days; that a day note never
+      # sends a morning message on its own (combined, maintenance and rental digests) and the
+      # once-a-day claim is untouched; that a split moves the open same-project tasks that waited on
+      # the original onto the second part (no duplicate row, no Task.save so no date cascade, one
+      # savepoint) and its Undo puts exactly those back while a dependent added since still stops it;
+      # and that Add visit here drafts a visit with the scheduler's own builder, linked to the active
+      # contract when there is one, as the caller, with a reason on overbooking and an Undo that
+      # deletes only an untouched draft and never with force. Borrows the 6B and 6D stubs. Own step.
+      - name: Planner follow-ups (working days, notes send nothing alone, split dependents, Add visit here; Phase 6E)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_phase6e -v
       # Planner Phase 6C, big picture, tablet mode and print (both planners). A saved view follows a
       # person across devices only if it is on the server, so this pins that views are written
       # straight to the caller's own __UserSettings row (frappe's user_settings.save writes only to

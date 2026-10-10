@@ -34,7 +34,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
-| `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
+| `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D) when the person has something booked, and never sending on a note or block alone (Phase 6E); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
 | `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`), and the Task equipment validator | `task_actuals`, `labor_forecast`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
@@ -939,10 +939,13 @@ Nik's decisions of 2026-10-09.
   own `blocks` with their notes and the week's `day_notes` for their group. The Maintenance Planner's
   day cells carry `blocks` beside `items` (an item opens a Task or a trip; a block has nothing to open).
 - **Digests.** The combined 6 AM message leads with the day's notes for the person's group, then
-  their own blocks with their own note. A day note is worth a message on its own; a person's own
-  block never sends one by itself. The `Planner Digest Log` claim is untouched, so it is still at most
-  once a day. The maintenance and rental digests, which reach only the people the combined one does
-  not cover, add the same lines (`planner_blocks.digest_note_lines`).
+  their own blocks with their own note. **Neither a note nor a block sends a message by itself**
+  (Phase 6E, Nik, 2026-10-09: a note is included only if the person gets a text anyway; Phase 6D had
+  made a day note alone message everyone it applied to): a person with nothing booked gets nothing and
+  no claim is made. The `Planner Digest Log` claim is untouched, so it is still at most once a day. The
+  maintenance and rental digests, which reach only the people the combined one does not cover, add the
+  same lines (`planner_blocks.digest_note_lines`) inside the message they were already sending for a
+  visit or a job.
 - **The Conflict center** ([`api/planner_conflicts.py`](../api/planner_conflicts.py)): one list of
   everything wrong in a range of up to 60 days, from **one** engine pass with Google off that reaches
   30 days past the range: `overbooked`, `overlap`, `day_off` (holidays and time off, never their
@@ -1001,7 +1004,8 @@ do to a drag.
   - *Duplicate* (same days) and *Duplicate to…* call `duplicate_task`, which copies with Copy week's own
     `_copy_values`: crew, hours, crew size, qualifications, pencil flag, location, equipment, the two
     Phase 5 flags. *Split* calls `split_task`: the task keeps the days before the chosen day and a new
-    task gets the rest, `depends_on` the first, hours (and each crew member's own hours) shared by
+    task gets the rest, `depends_on` the first (and, since Phase 6E, every open same-project task that
+    waited on the original now waits on this one), hours (and each crew member's own hours) shared by
     working days, a note on both timelines, all or nothing in a savepoint. A one-day task splits into
     two halves; the second goes on the person's next free day unless the planner picks another. The
     split refuses a rental crew task and a task with time on a timesheet or clocked at the kiosk.
@@ -1027,7 +1031,8 @@ do to a drag.
   or a click on empty space clears it. Drag any selected card and they all move by **the same number of
   calendar days**, each keeping its length: the card in hand lands exactly where it is dropped, as a
   single drag does, and a weekend is not skipped (working days would land the others somewhere the
-  drag does not show). A drop on another person's row is refused while several are selected (hand one
+  drag does not show; since Phase 6E the bar's *Move by: Calendar days | Working days* switch counts
+  working days instead). A drop on another person's row is refused while several are selected (hand one
   over with the selection cleared). `move_many` checks the lot together (`preview_batch`, as
   `shift_successors` and `copy_week` do), asks for one reason, saves all or nothing, furthest first when
   moving later so ERPNext's own `reschedule_dependent_tasks` finds nothing to push, and is one Undo.
@@ -1036,7 +1041,8 @@ do to a drag.
   lands in Deleted Documents) only when its creator undoes it, it is unchanged, and nothing was attached
   since: no timesheet, no clocked time, no sub-task, no task depending on it, no comment by anyone else,
   no file, no draft change. Otherwise it refuses with the reason. A split's Undo also puts the first half
-  back (its old end, hours and crew) through `save_task`'s own path.
+  back (its old end, hours and crew) through `save_task`'s own path, and (Phase 6E) the tasks the split
+  had moved onto the second half back onto the first.
 - **Draft mode.** A new task cannot be a draft: a `Planner Draft Change` is a pending change *of an
   existing task*. So Duplicate, Split and quick add say so and do nothing while Draft mode is on (the
   page refuses before it asks, and the server refuses too); `move_many` drafts each move properly.
@@ -1073,7 +1079,8 @@ Things that look like bugs and are not:
   which is which.
 - A one-day task with no estimate books a full day; split in two, each half gets half of Settings'
   full-day hours per person, written as an estimate, so the two halves do not book two full days.
-- Tasks that depended on the original still depend on the first half after a split.
+- Since Phase 6E, tasks that depended on the original wait on the second half after a split (see
+  [Follow-ups](#follow-ups-phase-6e--task-2026-02471)); before that they stayed on the first.
 ### Big picture, tablet mode and print (Phase 6C — TASK-2026-02469)
 
 Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_METHODS` /
@@ -1234,6 +1241,66 @@ Planner `set_mode`), `p6d_state` (`avail_state`), `p6d_block_html` (`booking_htm
 and in Phase 6A's blocks `p6d_person_actions`, `p6d_day_peek_opts` and `p6d_legend_sections` (the
 legend explains the bar, the chip, the note row and the marker). `tests/test_planner_phase6d_ui.py`
 pins it, and runs the kit's renderers and forms under node.
+
+### Follow-ups (Phase 6E — TASK-2026-02471)
+
+Four small changes Nik decided on 2026-10-09, after using Phases 6B and 6D. The page work is
+`PP6E_METHODS` / `MP6E_METHODS` at the end of each page file (the Maintenance Planner's *Add visit* is
+its own section in [sapphire_maintenance/README.md](../sapphire_maintenance/README.md#maintenance-planner)).
+
+- **Move by: Calendar days | Working days** (both planners). The selection bar gets a switch beside
+  *Clear*; the choice is kept per device with the page's `save_pref` (`ee_project_planner_move_by`,
+  `ee_maintenance_planner_move_by`) and **calendar days stay the default**, exactly Phase 6B's move.
+  With working days (Monday to Friday) every selected task moves by the same number of working days
+  **counted from its own start**: a Friday plus one is the Monday, a landing on a weekend goes to the
+  next weekday (a card dropped on a Saturday lands on the Monday), and each task **keeps its length in
+  working days** (Wednesday to Friday, three working days, moved two working days on is Friday to
+  Tuesday). A task that is only a weekend has no working days and keeps its calendar length. The
+  offsets are worked out on the page and sent to `move_many` as explicit starts and ends, so the server
+  contract is unchanged; the *Move…* panel, the drop, the confirmation, the reason prompt and the one
+  Undo are all Phase 6B's. A visit moves by that many weekdays. The pure maths (`PP6E_PURE` /
+  `MP6E_PURE`: `add_working_days`, `working_between`, `next_weekday`, `drop_days`, `moves_for`) steps
+  with 6B's `ymd_add` and counts with its `working_days`, mirrors `project_planner.add_working_days` /
+  `working_days_between` (a test compares them) and `shift_successors` is untouched.
+- **A day note never sends a message on its own.** See *Digests* under Phase 6D: the combined 6 AM
+  digest (`planner_digest.digest_lines`) now returns no lines for a person with nothing booked, so a
+  note or block rides along only with a message the person gets anyway. The maintenance and rental
+  digests were already sent per visit or per job, with the note lines
+  (`planner_blocks.digest_note_lines`) added inside, so they needed no change; a test now pins each. The `Planner Digest Log` claim is exactly as it was.
+- **A split's dependents follow the second part.** `planner_actions.split_task` keeps both parts' names
+  (no "(part 2)") and, inside the split's savepoint, points every **open task of the same project**
+  (not Completed, Canceled, Cancelled, Invoiced or Template) whose `depends_on` lists the original at
+  the second part instead. A task already waiting on the second part loses its old row rather than
+  getting a second one; another project's tasks are not touched; each gets the timeline note "Now waits
+  on TASK-… (second part of a split)" and the second part says which tasks now wait on it. The row is
+  rewritten **straight in `Task Depends On`** (and the parent's `depends_on_tasks` text, which
+  ERPNext rebuilds on save) rather than by `Task.save()`: a save runs `on_update` →
+  `reschedule_dependent_tasks`, which pushes the dependent's own Open successors by calendar days
+  whenever one starts before it ends, and re-pointing a dependency must move no date. The answer
+  carries `repointed` (the task names). A dependent the caller cannot write fails the request, and the
+  split rolls back with it.
+  - **Undo.** The page keeps `repointed` in the split's Undo entry (`restore.dependents`).
+    `remove_created_task` puts those that still wait on the second part back on the first **before**
+    it deletes (so the delete's link check still guards everything else), and they are the only
+    dependents that do not stop it: a task that started waiting on the second part after the split
+    still refuses the Undo ("another task depends on it"), as does any dependent when the Undo has no
+    restore plan (a duplicate, a quick add). Restoring the first half afterwards can make ERPNext push
+    a dependent that already started before the first half's old end; that is its own rule for any save
+    of the first half, not something the Undo adds.
+- **Add visit here** (Maintenance Planner): see the Maintenance Planner section of
+  [sapphire_maintenance/README.md](../sapphire_maintenance/README.md). Backend:
+  [`api/maintenance_actions.py`](../api/maintenance_actions.py) (`get_visit_defaults`, `create_visit`,
+  `remove_created_visit`, `sites_query`); `tasks._draft_maintenance_record` is now
+  `tasks._new_maintenance_record` (the builder) plus the scheduler's insert, so both make a visit the
+  same way.
+
+Hooks into the classes and into Phase 6B's blocks, one line each: `p6e_bar_switch` / `p6e_bar_note`
+(`p6b_render_bar`), `p6e_drop_days` (`p6b_drop`), `p6e_move_label` / `p6e_move_default` /
+`p6e_move_note` (`p6b_move_panel`), `p6e_moves` / `p6e_message` (Project Planner `p6b_move_selection`),
+`p6e_date` / `p6e_question` (Maintenance Planner `p6b_move_selection`), `p6e_dependents`
+(`p6b_split_save`); and on the Maintenance Planner `init_phase6e`, `render_phase6e` and `p6e_undo`. The
+Project Planner needs no constructor hook (its style is added on first use). The existing
+`p6b_undo` line is untouched. `tests/test_planner_phase6e.py` pins all four.
 
 ## `hooks.py` touchpoints
 

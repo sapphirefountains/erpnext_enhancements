@@ -514,6 +514,43 @@ def _assign_visit_people(record):
 		assign_to_technician(record.name, user)
 
 
+def _new_maintenance_record(
+	project, customer, contract=None, serial_no=None, visit_label=None, scheduled_date=None, exact_date=False
+):
+	"""A new, un-inserted visit record, dispatched the way the scheduler dispatches one.
+
+	The header (customer, project, contract link, fountain, label), the Scheduled Visit Date (the
+	due date shifted to a preferred day when the contract has an agreement; ``exact_date`` keeps it
+	as given), the site's Default Technician and its default crew, length and full-day flag
+	(:func:`_apply_default_crew`). ``contract`` is the Sapphire Maintenance Contract doc, or None
+	for a visit that belongs to no contract. The one place a visit's defaults come from: the nightly
+	scheduler (:func:`_draft_maintenance_record`) inserts it as the system, and the Maintenance
+	Planner's *Add visit here* (``api/maintenance_actions.create_visit``, Phase 6E) edits it and
+	inserts it as the caller.
+	"""
+	from erpnext_enhancements.api.maintenance_dispatch import (
+		default_technician_for,
+		resolve_scheduled_date,
+	)
+
+	record = frappe.new_doc("Sapphire Maintenance Record")
+	record.customer = customer
+	record.project = project
+	if contract is not None:
+		record.maintenance_contract = contract.name
+	record.serial_no = serial_no
+	record.visit_label = visit_label
+	if exact_date and scheduled_date:
+		record.scheduled_visit_date = getdate(scheduled_date)
+	else:
+		record.scheduled_visit_date = resolve_scheduled_date(
+			scheduled_date, contract.get("project_contract") if contract is not None else None
+		)
+	record.technician = default_technician_for(project)
+	_apply_default_crew(record, project)
+	return record
+
+
 def _draft_maintenance_record(contract, serial_no=None, visit_label=None, scheduled_date=None, exact_date=False):
 	"""Insert a draft visit record for a contract, dispatched (date + technician + crew).
 
@@ -525,23 +562,15 @@ def _draft_maintenance_record(contract, serial_no=None, visit_label=None, schedu
 	passes the day somebody dropped the visit on, and shifting it to the
 	agreement's preferred weekday would quietly overrule them.
 	"""
-	from erpnext_enhancements.api.maintenance_dispatch import (
-		default_technician_for,
-		resolve_scheduled_date,
+	record = _new_maintenance_record(
+		contract.project,
+		contract.customer,
+		contract=contract,
+		serial_no=serial_no,
+		visit_label=visit_label,
+		scheduled_date=scheduled_date,
+		exact_date=exact_date,
 	)
-
-	record = frappe.new_doc("Sapphire Maintenance Record")
-	record.customer = contract.customer
-	record.project = contract.project
-	record.maintenance_contract = contract.name
-	record.serial_no = serial_no
-	record.visit_label = visit_label
-	if exact_date and scheduled_date:
-		record.scheduled_visit_date = getdate(scheduled_date)
-	else:
-		record.scheduled_visit_date = resolve_scheduled_date(scheduled_date, contract.get("project_contract"))
-	record.technician = default_technician_for(contract.project)
-	_apply_default_crew(record, contract.project)
 	record.insert(ignore_permissions=True)
 	_assign_visit_people(record)
 	frappe.logger().info(

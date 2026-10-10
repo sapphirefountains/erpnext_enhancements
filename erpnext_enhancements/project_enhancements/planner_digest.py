@@ -27,8 +27,9 @@ Things this module is careful about, some of which look like bugs:
   is not retried: a missed digest is better than two.
 * **Nothing booked, nothing sent**, and no claim either, so switching the digest on mid-morning
   and running it by hand still reaches the people who have work. Since Phase 6D a **day note** for
-  the person's audience ("Shop meeting 7 am") counts as something to say, and leads the message;
-  their own personal blocks are listed with their own note, but never send a message by themselves.
+  the person's audience ("Shop meeting 7 am") leads the message, and their own personal blocks are
+  listed with their own note; since Phase 6E **neither sends a message by itself** (a note is for
+  people who are texted anyway).
 * **One person failing never stops the next**; each is logged on its own.
 * **Texts follow the technician digest's rules** (``planner_notices.cell_number``: the Employee's
   ``cell_number`` by ``user_id``, through ``send_system_sms``), and email goes only through the
@@ -97,21 +98,24 @@ def digest_lines(entry):
 
 	Phase 6D: the day's notes for the person's audience come first (``day_notes``), then their own
 	personal blocks with their own note (``blocks``), each entry carrying its ``text``
-	(``api/planner_blocks.digest_extras``). A day note is worth a message on its own ("Shop meeting
-	7 am" reaches someone with nothing booked); a person's own block is not, so blocks are listed
-	only when there is something else to say.
+	(``api/planner_blocks.digest_extras``). **Phase 6E (Nik, 2026-10-09): neither is worth a message
+	on its own.** They ride along only when the person already has something booked, so a day with
+	nothing but a note ("Shop meeting 7 am") answers no lines at all: no message, no claim. Notes are
+	for people who are texted anyway.
 	"""
 	notes = [
 		{"time": "", "what": e.get("text") or e.get("note") or "", "where": "", "with": "", "hours": None}
 		for e in entry.get("day_notes") or []
 	]
 	work = _work_lines(entry)
+	if not work:
+		return []
 	blocks = [
 		{"time": "", "what": e.get("text") or "", "where": "", "with": "", "hours": None}
 		for e in entry.get("blocks") or []
 		if e.get("text")
 	]
-	return notes + (blocks if (notes or work) else []) + work
+	return notes + blocks + work
 
 
 def _work_lines(entry):

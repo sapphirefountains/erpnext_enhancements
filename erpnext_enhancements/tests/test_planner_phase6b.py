@@ -1608,10 +1608,12 @@ class TestPages(unittest.TestCase):
 		drop = _method(self.pp_block, "p6b_drop")
 		self.assertIn("this.p6_selection.size < 2", drop)
 		self.assertIn("target.resource !== source.from_resource", drop)
-		self.assertIn("PP6B_PURE.ymd_diff(from, target.date)", drop)
+		# Phase 6E: the day count is the page's unit (calendar days unless the bar says working days);
+		# tests/test_planner_phase6e.py pins both.
+		self.assertIn("this.p6e_drop_days(from, target.date)", drop)
 		mp_drop = _method(self.mp_block, "p6b_drop")
 		self.assertIn('(target.user || "") !== row_user', mp_drop)
-		self.assertIn("MP6B_PURE.ymd_diff(source.card.date, target.date)", mp_drop)
+		self.assertIn("this.p6e_drop_days(source.card.date, target.date)", mp_drop)
 		self.assertIn("calendar days", self.pp_block)
 		self.assertIn("calendar days", self.mp_block)
 		# The Maintenance Planner: one confirmation, one reason for the lot, a partial failure listed.
@@ -1994,7 +1996,8 @@ const ctx = {
 };
 ctx.MaintenancePlanner.prototype.ask_reason = () => Promise.resolve("A reason");
 vm.createContext(ctx);
-vm.runInContext(pp_source + "\n" + mp_source + "\nthis.PPM = PP6B_METHODS; this.MPM = MP6B_METHODS;", ctx);
+// Phase 6E's methods are mixed in too: 6B's drop, panel and bar call p6e_* for the calendar/working switch.
+vm.runInContext(pp_source + "\n" + mp_source + "\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS);", ctx);
 const out = {};
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -2022,6 +2025,8 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 		send: (method, args, opts) => { sent.push([method, args, Object.keys(opts || {}).sort()]); return Promise.resolve({ name: "TASK-NEW-1", modified: "m-new", card: { start: "2026-10-14" }, second: { name: "TASK-NEW-2", modified: "m-2", card: { start: "2026-10-15" } } }); },
 		push_undo: (snap, message) => { pushed.push([snap, message]); return true; },
 		today: () => "2026-10-09",
+		load_pref: (key, fallback) => fallback,
+		save_pref: () => null,
 		load: () => null,
 		render: () => null,
 		open_card: () => null,
@@ -2123,6 +2128,8 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 		send: (method, args, opts) => { msent.push([method, args, Object.keys(opts || {}).sort()]); return Promise.resolve(args.record === "SMR-BAD" ? null : { name: args.record, modified: "x" }); },
 		push_undo: (snap, message) => { pushed.push([snap, message]); return true; },
 		today: () => "2026-10-09",
+		load_pref: (key, fallback) => fallback,
+		save_pref: () => null,
 		load: () => null,
 		render: () => null,
 		open_card: () => null,
@@ -2180,9 +2187,13 @@ class TestMethodsUnderNode(unittest.TestCase):
 		sources = [
 			_phase_source(
 				pp_code, "const PP6B = {", "Object.assign(ProjectPlanner.prototype, PP6B_METHODS);"
-			),
+			)
+			+ _phase_source(pp_code, "const PP6E = {", "Object.assign(ProjectPlanner.prototype, PP6E_METHODS);"),
 			_phase_source(
 				mp_code, "const MP6B = {", "Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);"
+			)
+			+ _phase_source(
+				mp_code, "const MP6E = {", "Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);"
 			),
 		]
 		result = subprocess.run(
