@@ -18,7 +18,10 @@
  *   hint(key, text, {container})        a first-time tip, dismissed once per user
  *   hover_glow(container, "person")     hovering a name lights up that person's bookings
  *   peeks.person(opts) / peeks.day(opts) the shared quick looks (api/planner_views.py)
+ *   conflicts.center(opts)              the Conflict center drawer (Phase 6D; api/planner_conflicts.py)
+ *   blocks.form / note_form / chip_html / notes_html   personal blocks and day notes (Phase 6D)
  *   glow_key / glow_keys / format.{hours, drive, day_label, add_days}
+ *   big_picture                         Phase 6C: card colors, the team capacity strip, saved views, print
  *
  * See "Planner kit" in project_enhancements/README.md for how to use each one, and
  * planner_kit/history.js for how Back closes a drawer without the router reloading the page.
@@ -34,7 +37,10 @@ import { create_legend, legend_html } from "./planner_kit/legend.js";
 import { create_hint } from "./planner_kit/hint.js";
 import { create_glow, GLOW_CLASS } from "./planner_kit/glow.js";
 import { create_peeks, person_week_html, day_overview_html, day_state } from "./planner_kit/peeks.js";
+import * as conflicts from "./planner_kit/conflicts.js";
+import * as blocks from "./planner_kit/blocks.js";
 import { CSS, STYLE_ID } from "./planner_kit/styles.js";
+import * as big_picture from "./planner_kit/big_picture.js";
 
 const VERSION = 1;
 
@@ -49,7 +55,7 @@ function install() {
 	if (!document.getElementById(STYLE_ID)) {
 		const style = document.createElement("style");
 		style.id = STYLE_ID;
-		style.textContent = CSS;
+		style.textContent = CSS + conflicts.CONFLICTS_CSS + blocks.BLOCKS_CSS;
 		document.head.appendChild(style);
 	}
 
@@ -108,6 +114,7 @@ function install() {
 
 	env.guard = create_guard(env).install();
 	env.drawer = create_drawer(env);
+	env.toast = create_toast(env);
 	const kit = {
 		version: VERSION,
 		escape,
@@ -120,14 +127,35 @@ function install() {
 		drawer: env.drawer,
 		guard: env.guard,
 		panel: create_panel(env),
-		toast: create_toast(env),
+		toast: env.toast,
 		menu: create_menu(env),
 		legend: create_legend(env),
 		legend_html,
 		hint: create_hint(env),
 		hover_glow: create_glow(env),
 		peeks: create_peeks(env),
+		// Phase 6D UI: the Conflict center, and personal blocks and day notes on screen.
+		conflicts: Object.assign(conflicts.create_conflicts(env), {
+			html: conflicts.conflicts_html,
+			picker_html: conflicts.picker_html,
+			free_people: conflicts.free_people,
+			fix_args: conflicts.fix_args,
+			open_count: conflicts.open_count,
+			index_by_ref: conflicts.index_by_ref,
+			kinds: conflicts.KIND_INFO,
+			methods: conflicts.METHODS,
+		}),
+		blocks: Object.assign(blocks.create_blocks(env), {
+			chip_html: blocks.chip_html,
+			notes_html: blocks.notes_html,
+			note_list_html: blocks.note_list_html,
+			block_text: blocks.block_text,
+			block_slot: blocks.block_slot,
+			block_window: blocks.block_window,
+			methods: blocks.METHODS,
+		}),
 		render: { person_week_html, day_overview_html, day_state },
+		big_picture,
 	};
 
 	// Esc closes the topmost kit overlay (a menu before the drawer under it), unless something

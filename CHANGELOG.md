@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.586.0] - 2026-10-09
+
+### Added
+
+- **Planner big picture, tablet mode and print, for both planners** (Phase 6C, TASK-2026-02469).
+  - **Color by.** A toolbar switch recolors the cards.
+    - Project Planner options: task color (today's look, the default), person, job type, project,
+      PM or status.
+    - Maintenance Planner options: visit type (default), technician, site, status or contract.
+    - Job type and status use fixed colors; projects and sites hash to a stable color.
+    - The "?" legend shows the current key.
+  - **Highlight a project** (or a site). Click it and every one of its cards lights up while the
+    rest fade. A toolbar pill or Esc clears it.
+  - **Saved views per person, following them across devices.** A view holds the view, the filters
+    and the color-by.
+    - The last one used is restored when the planner opens on a bare URL. That URL is replaced,
+      never pushed, and a URL that names a view always wins.
+    - Named views are saved under "Save view as…".
+    - "Running over" is never restored as the last view, because a filter that quietly hides the
+      board the next morning is a trap.
+    - **Storage.** Views are written straight to the user's `__UserSettings` row
+      (`api/planner_views_prefs.py`), not through `frappe.model.user_settings.save`. In frappe v16
+      that call only writes Redis and syncs to the database later, and every deploy FLUSHDBs Redis.
+  - **Team capacity strip.** A row across the top shows the filtered team's free hours per day:
+    amber at 90 % booked, red past capacity. Click a day for the day peek.
+  - **Tap to move**, for tablets and phones: tap a card, then tap where it goes. This uses the same
+    drop, reason prompt and Undo as a drag. It is on by default on touch screens. The layout works
+    at phone width, with 40 px tap targets.
+  - **Print this view.** It prints exactly what is on screen, filters and colors included, or only
+    the selection, on the print design system's chrome, from a browser window.
+- **Conflict center, personal blocks and day notes on screen, for both planners and My week**
+  (Phase 6D UI, TASK-2026-02470). This puts the v1.584.0 server side on screen.
+  - **Conflicts (N)** opens a drawer with every current conflict, grouped by day.
+    - The page's own records open in the side panel; anything else is a read-only link.
+    - Kept conflicts hide behind "Show kept".
+    - A card's existing conflict chip becomes the link into the drawer.
+  - **One-click fixes** run the exact write the server worked out, through the page's own save
+    path, so the reason prompt, Draft mode and Undo all apply:
+    - *Move to Thu Oct 15*;
+    - *Make it pencil*;
+    - *Pick someone who's free*: a list from "who is free", with free people first and busy people
+      greyed with their reason. **Nothing is preselected and nobody is picked for you.**
+    - *Keep it with a reason*: a reason is required, and a conflict that changed meanwhile is
+      refused with a fresh list.
+  - **Personal blocks** show on the calendar as "Unavailable". The note is shown only to the person
+    and to schedulers. Add or edit them from the person drawer, a toolbar button (schedulers), or
+    **Block my time** on each day of My week. Saving tells you what the block overlaps and never
+    refuses.
+  - **Day notes** show in a thin row under each day header, and at the top of the day drawer and My
+    week. Schedulers add, edit and delete them.
+  - The person drawer now says "Unavailable" for a blocked day. A time-off reason still never shows.
+
 ## [1.585.0] - 2026-10-09
 
 ### Added

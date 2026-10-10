@@ -308,6 +308,8 @@ class MaintenancePlanner {
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
 		this.init_phase6a();
+		this.init_phase6c();
+		this.init_phase6d();
 		this.bind_drag();
 	}
 
@@ -322,6 +324,7 @@ class MaintenancePlanner {
 	}
 
 	handle_route() {
+		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
 		this.view = target.view;
@@ -614,6 +617,7 @@ class MaintenancePlanner {
 		const off = String((cell && cell.off) || "");
 		if (off.startsWith("Holiday")) return __("Holiday");
 		if (off === "Time off") return __("Time off");
+		if (off === "Unavailable") return __("Unavailable"); // Phase 6D: an all-day personal block
 		return __("Not a work day");
 	}
 
@@ -809,6 +813,8 @@ class MaintenancePlanner {
 				  )
 		);
 		this.render_phase6a();
+		this.render_phase6c();
+		this.render_phase6d();
 	}
 
 	render_calendar(cards) {
@@ -885,6 +891,7 @@ class MaintenancePlanner {
 			} else if (everyone) {
 				this.append_off_badges($day, planned, ymd);
 			}
+			this.p6d_day_head($day, ymd);
 			day_cards.forEach((card) => $day.append(this.card_html(card)));
 		}
 		this.$grid_wrap.empty().removeClass("mp-month mp-week mp-crew-view").addClass(`mp-${this.view}`).append($grid);
@@ -1049,6 +1056,7 @@ class MaintenancePlanner {
 				)}">${mp_esc(mp_when(ymd))}</div>`
 			);
 		});
+		html.push(this.p6d_crew_notes_row(days));
 		rows.forEach(({ person, user }) => {
 			html.push(
 				person
@@ -1071,6 +1079,7 @@ class MaintenancePlanner {
 					<div class="mp-cell${ymd < today ? " mp-past" : ""}${this.is_off(cell) ? " mp-off-day" : ""}"
 						data-date="${mp_esc(ymd)}" data-user="${mp_esc(user)}">
 						${cap}
+						${this.p6d_cell_blocks(person, ymd)}
 						${list.map((card) => this.card_row_html(card, user)).join("")}
 					</div>`);
 			});
@@ -1875,6 +1884,7 @@ class MaintenancePlanner {
 		if (card.contract) links.push(["contract", __("Open contract")]);
 		links.push(...this.phase5_links(card));
 		links.push(...this.p6a_links(card));
+		links.push(...this.p6c_links(card));
 
 		const fields = [
 			{
@@ -1975,6 +1985,7 @@ class MaintenancePlanner {
 			const action = e.currentTarget.getAttribute("data-action");
 			dialog.hide();
 			if (this.p6a_action(action, card)) return;
+			if (this.p6c_action(action, card)) return;
 			if (action === "form") frappe.set_route("Form", "Sapphire Maintenance Record", card.name);
 			else if (action === "wizard") frappe.set_route("visit-wizard", { record: card.name });
 			else if (action === "contract") frappe.set_route("Form", "Sapphire Maintenance Contract", card.contract);
@@ -2220,6 +2231,7 @@ const MP6A_METHODS = {
 		});
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person")];
 		this.p6a_show_hints();
+		this.p6c_ready();
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -2450,6 +2462,7 @@ const MP6A_METHODS = {
 			can_drag: (booking) => this.p6a_can_drag(booking),
 			on_full_route: (resource, ymd) =>
 				kit.drawer.navigate(() => frappe.set_route(MP.project_route, "route", resource, ymd)),
+			actions: this.p6d_person_actions(user),
 		});
 	},
 
@@ -2470,6 +2483,7 @@ const MP6A_METHODS = {
 				if (person.user) this.p6a_open_person(person.user, ymd);
 			},
 			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
+			...this.p6d_day_peek_opts(),
 		});
 	},
 
@@ -2537,6 +2551,7 @@ const MP6A_METHODS = {
 		};
 		this.p6a.peek = { data: () => state.data, refresh: load, is_open: () => handle.is_open() };
 		load();
+		this.p6c_site_drawer(card, handle);
 	},
 
 	p6a_visit_row(visit) {
@@ -2655,6 +2670,7 @@ const MP6A_METHODS = {
 		const bar = (cls, width) => `<span class="mp-p6a-bar ${cls}"><span class="mp-bar"><i style="width:${width}%"></i></span></span>`;
 		kit.legend(
 			[
+				...this.p6c_legend_sections(),
 				{
 					title: __("Quick looks"),
 					items: [
@@ -2722,6 +2738,7 @@ const MP6A_METHODS = {
 						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
 					],
 				},
+				...this.p6d_legend_sections(),
 			],
 			{ title: __("How to read the Maintenance Planner"), owner: MP6A.owner }
 		);
@@ -2729,3 +2746,1922 @@ const MP6A_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);
+
+// ====================================================================== Phase 6C: big picture, tablet mode and print
+//
+// The Maintenance Planner's half of Phase 6C (TASK-2026-02469; the Project Planner has the same, see
+// PP6C_METHODS there for the long version):
+//
+//   - Color by (toolbar)                     Visit type (today's colors, the default), Technician,
+//                                            Site, Visit status or Contract; a key under the toolbar
+//                                            and in the "?" legend. Site and contract use the kit's
+//                                            stable hash, so a site is always the same color
+//   - "Highlight this site" in a visit's panel, the site drawer's header or the right-click menu, or
+//     a site in the color key                every visit of that site lights up and the rest fade;
+//                                            a toolbar pill and Esc clear it
+//   - Views (toolbar)                        named views and "last used", saved per person on the
+//                                            server (api/planner_views_prefs). Only a bare
+//                                            /maintenance-planner takes the saved view, by replacing
+//                                            its history entry
+//   - the team strip                         over the week and crew views: the technicians' free hours
+//                                            per day (one technician when the filter picks one),
+//                                            amber at 90%, red past capacity; click a day for
+//                                            everyone's day
+//   - Tap to move                            tap a visit, then the day or a technician's day: the
+//                                            drag's own drop -> plan_drop -> apply -> send path
+//   - Print (toolbar)                        the view on screen or 6B's selection, from the loaded
+//                                            data, on the print design system's chrome (the Service
+//                                            pillar), in a browser window
+//
+// Hooks, one line each: init_phase6c (constructor), p6c_before_route (handle_route), render_phase6c
+// (render), p6c_links and p6c_action (open_card), p6c_ready (p6a_ready), p6c_site_drawer
+// (p6a_open_site) and p6c_legend_sections (p6a_legend).
+
+const MP6C = {
+	prefs: "erpnext_enhancements.api.planner_views_prefs",
+	planner: "maintenance",
+	default_view: "month",
+	tap_pref: "ee_maintenance_planner_tap_move",
+	save_delay: 1500,
+	restore_wait: 4000,
+	key_limit: 12,
+	legend_limit: 40,
+	// What a saved view may hold: the same rules as api/planner_views_prefs.SCHEMA["maintenance"].
+	schema: {
+		view: ["enum", ["month", "week", "crew"]],
+		technician: ["text"],
+		projected: ["bool"],
+		project_work: ["bool"],
+		panel: ["bool"],
+		color_by: ["enum", ["default", "technician", "site", "status", "contract"]],
+	},
+	color_modes: [
+		["default", "Visit type"],
+		["technician", "Technician"],
+		["site", "Site"],
+		["status", "Visit status"],
+		["contract", "Contract"],
+	],
+	view_labels: { month: "Month", week: "Week", crew: "Crew" },
+	none_color: "#94a3b8",
+	booking_colors: { task: "#0d9488", rental: "#b45309", travel: "#6b7280" },
+};
+
+const MP6C_STYLE = `
+.mp-p6c-color{width:auto;max-width:200px;}
+.mp-p6c-pill{display:inline-flex;align-items:center;gap:4px;max-width:340px;border:1px solid var(--primary,#2490ef);border-radius:14px;padding:1px 2px 1px 10px;font-size:12px;background:rgba(36,144,239,.08);color:var(--text-color);}
+.mp-p6c-pill-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6c-pill-x{border:none;background:none;color:inherit;font-size:15px;line-height:1;padding:2px 7px;cursor:pointer;border-radius:10px;}
+.mp-p6c-pill-x:hover,.mp-p6c-pill-x:focus{background:var(--control-bg);outline:none;}
+.mp-p6c-tap{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-color);border-radius:14px;background:var(--card-bg);padding:3px 11px;font-size:13px;color:var(--text-color);}
+.mp-p6c-tap.mp-p6c-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);color:var(--primary,#2490ef);font-weight:600;}
+.mp-p6c-key{display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;font-size:12px;color:var(--text-muted);margin:-2px 0 8px;}
+.mp-p6c-key-title{font-weight:600;}
+.mp-p6c-key-item{display:inline-flex;align-items:center;gap:5px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6c-key-item[data-p6c-hi]{cursor:pointer;border-radius:6px;}
+.mp-p6c-key-item[data-p6c-hi]:hover{color:var(--text-color);text-decoration:underline;}
+.mp-p6c-swatch{flex:0 0 auto;display:inline-block;width:16px;height:11px;border:1px solid var(--border-color);border-left-width:4px;border-radius:3px;background:var(--card-bg);}
+.mp-card.mp-p6c-colored{border-left-color:var(--mp-p6c-c) !important;}
+.mp-p6c-on .mp-card:not(.mp-p6c-hi){opacity:.22;}
+.mp-p6c-on .mp-card.mp-p6c-hi{box-shadow:0 0 0 2px var(--primary,#2490ef),0 0 10px rgba(36,144,239,.45);}
+.mp-p6c-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:6px;overflow:hidden;}
+.mp-p6c-sday{display:flex;flex-direction:column;gap:2px;min-width:0;padding:3px 6px;font-size:11px;cursor:pointer;border-left:1px solid var(--border-color);}
+.mp-p6c-strip .mp-p6c-sday:first-child{border-left:none;}
+.mp-p6c-sday:hover,.mp-p6c-sday:focus{background-color:var(--control-bg);outline:none;}
+.mp-p6c-slabel{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6c-stext{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6c-sday.mp-red{background-color:rgba(220,38,38,.10);}
+.mp-p6c-sday.mp-red .mp-p6c-stext{color:#b91c1c;}
+.mp-p6c-sday.mp-amber .mp-p6c-stext{color:#b45309;}
+.mp-p6c-sday .mp-bar{position:relative;}
+.mp-p6c-sday .mp-bar b{position:absolute;top:0;bottom:0;background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.85) 0 2px,transparent 2px 4px);}
+.mp-p6c-scorner{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:3px 8px;font-size:11px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
+.mp-p6c-scorner span{font-size:10px;color:var(--text-muted);}
+.mp-p6c-movebar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1024;display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:min(640px,calc(100vw - 24px));padding:8px 10px 8px 14px;border:1px solid var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 10px 28px rgba(0,0,0,.22);font-size:13px;}
+.mp-p6c-movebar-text{flex:1 1 220px;min-width:0;}
+.mp-p6c-movebar-hint{display:block;font-size:12px;color:var(--text-muted);}
+.mp-card.mp-p6c-moving{outline:2px dashed var(--primary,#2490ef);outline-offset:1px;}
+.mp-p6c-armed .mp-day,.mp-p6c-armed .mp-cell{cursor:copy;}
+.mp-p6c-views-list{list-style:none;margin:0;padding:0;}
+.mp-p6c-views-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border-color);}
+.mp-p6c-views-row:first-child{border-top:none;}
+.mp-p6c-views-main{flex:1 1 auto;min-width:0;}
+.mp-p6c-views-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6c-views-sub{font-size:12px;color:var(--text-muted);}
+@media (pointer:coarse){
+.mp-toolbar .btn,.mp-toolbar select,.mp-toolbar label,.mp-seg button,.mp-p6c-tap{min-height:40px;}
+.mp-week .mp-card,.mp-crew .mp-card,.mp-tray .mp-card{min-height:40px;}
+.mp-day-num{display:inline-flex;align-items:center;min-height:32px;padding:0 10px;}
+.mp-p6c-sday{min-height:40px;}
+.mp-p6c-pill-x{min-width:40px;min-height:36px;}
+.mp-p6c-movebar .btn{min-height:40px;min-width:64px;}
+.mp-p6c-views-row .btn{min-height:40px;}
+}
+@media (max-width:1024px){
+.mp-wrap{max-width:100%;overflow-x:clip;}
+}
+@media (max-width:760px){
+.mp-toolbar select{max-width:none;flex:1 1 40%;}
+.mp-p6c-pill{max-width:100%;}
+.mp-p6c-movebar{left:12px;right:12px;bottom:12px;transform:none;max-width:none;}
+.mp-p6c-sday{padding:2px 3px;}
+.mp-p6c-key-item{max-width:160px;}
+}
+`;
+
+const MP6C_METHODS = {
+	init_phase6c() {
+		if (!document.getElementById("mp-style-6c")) {
+			$("<style id='mp-style-6c'>").text(MP6C_STYLE).appendTo(document.head);
+		}
+		this.p6c = {
+			color_by: "default",
+			highlight: null,
+			moving: null,
+			tap: this.p6c_tap_default(),
+			views: [],
+			last: null,
+			loaded: false,
+			loading: null,
+			waiting: false,
+			restored: false,
+			saved_text: null,
+			save_timer: null,
+			drawer_tool: null,
+		};
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6c_menu_items(target));
+
+		const $toolbar = this.$body.find(".mp-toolbar").first();
+		this.$p6c_pill = $('<span class="mp-p6c-pill" role="status"></span>').hide().insertAfter(this.$title);
+		$('<span class="mp-p6c-pill-text"></span>').appendTo(this.$p6c_pill);
+		$('<button type="button" class="mp-p6c-pill-x">×</button>')
+			.attr("title", __("Stop highlighting (Esc)"))
+			.attr("aria-label", __("Stop highlighting"))
+			.on("click", () => this.p6c_clear_highlight())
+			.appendTo(this.$p6c_pill);
+		this.$p6c_color = $('<select class="form-control input-sm mp-p6c-color"></select>')
+			.attr("aria-label", __("Color by"))
+			.attr("title", __("Color by"))
+			.on("change", () => this.p6c_set_color(this.$p6c_color.val() || "default"))
+			.insertAfter(this.$tech);
+		MP6C.color_modes.forEach(([value, label]) => {
+			$("<option></option>").val(value).text(__("Color: {0}", [__(label)])).appendTo(this.$p6c_color);
+		});
+		this.$p6c_tap = $('<button type="button" class="mp-p6c-tap" aria-pressed="false"></button>')
+			.text(__("Tap to move"))
+			.attr("title", __("Tap a visit, then tap the day where it goes, instead of dragging"))
+			.on("click", () => this.p6c_set_tap(!this.p6c.tap))
+			.insertBefore(this.$undo);
+		this.$p6c_views = $('<button type="button" class="btn btn-default btn-sm mp-p6c-views"></button>')
+			.text(__("Views"))
+			.attr("title", __("Your saved views: filters, view and colors"))
+			.on("click", (e) => this.p6c_views_menu(e.currentTarget))
+			.insertBefore(this.$undo);
+		this.$p6c_print = $('<button type="button" class="btn btn-default btn-sm mp-p6c-print"></button>')
+			.text(__("Print"))
+			.attr("title", __("Print exactly what is on screen, with your filters and colors"))
+			.on("click", (e) => this.p6c_print_click(e.currentTarget))
+			.insertBefore(this.$undo);
+		this.$p6c_key = $('<div class="mp-p6c-key"></div>').hide().insertAfter($toolbar);
+		this.$p6c_movebar = $('<div class="mp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
+
+		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
+		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
+		this.$body[0].addEventListener("click", (e) => this.p6c_body_click(e), true);
+		this.$body.on("change click", () => this.p6c_state_soon());
+		this.p6c_sync_controls();
+		this.p6c_fetch_views();
+	},
+
+	p6c_ready() {
+		if (this.p6c && this.data) this.render_phase6c();
+	},
+
+	render_phase6c() {
+		if (!this.p6c || !this.data) return;
+		this.p6c_sync_controls();
+		this.p6c_paint();
+		this.p6c_apply_highlight();
+		this.p6c_render_strip();
+		this.p6c_render_key();
+		this.p6c_mark_moving();
+		this.p6c_state_soon();
+	},
+
+	p6c_kit() {
+		const kit = this.p6a && this.p6a.kit;
+		return kit && kit.big_picture ? kit : null;
+	},
+
+	p6c_pick(state) {
+		const kit = this.p6c_kit();
+		if (kit) return kit.big_picture.pick_view(state, MP6C.schema);
+		const out = {};
+		Object.keys(MP6C.schema).forEach((key) => {
+			if (state && Object.prototype.hasOwnProperty.call(state, key)) out[key] = state[key];
+		});
+		return out;
+	},
+
+	p6c_here() {
+		return (frappe.get_route() || [])[0] === MP.route && this.$body.is(":visible");
+	},
+
+	// ------------------------------------------------------------------ controls
+
+	// The two filter boxes the shell made without keeping them: found by their own label.
+	p6c_checkbox(text) {
+		let found = null;
+		this.$body.find(".mp-toolbar > label").each((_index, el) => {
+			if (!found && $(el).text().trim() === text) found = $(el).find("input");
+		});
+		return found;
+	},
+
+	p6c_sync_controls() {
+		const p6c = this.p6c;
+		if (!p6c || !this.$body) return;
+		if (this.$tech) this.$tech.val(this.technician || "");
+		const projected = this.p6c_checkbox(__("Projected visits"));
+		if (projected) projected.prop("checked", !!this.show_projected);
+		const work = this.p6c_checkbox(__("Project work"));
+		if (work) work.prop("checked", !!this.show_project_work);
+		if (this.$p6c_color) this.$p6c_color.val(p6c.color_by);
+		if (this.$p6c_tap) {
+			this.$p6c_tap.toggleClass("mp-p6c-on", !!p6c.tap).attr("aria-pressed", p6c.tap ? "true" : "false");
+		}
+		if (this.$p6c_pill) {
+			this.$p6c_pill.toggle(!!p6c.highlight);
+			if (p6c.highlight) {
+				const text = __("Highlighting {0}", [p6c.highlight.label || p6c.highlight.key]);
+				this.$p6c_pill.find(".mp-p6c-pill-text").text(text).attr("title", text);
+			}
+		}
+	},
+
+	// ------------------------------------------------------------------ color by
+
+	p6c_set_color(mode) {
+		const known = MP6C.color_modes.map(([value]) => value);
+		this.p6c.color_by = known.includes(mode) ? mode : "default";
+		this.render();
+	},
+
+	p6c_mode_label(mode) {
+		const found = MP6C.color_modes.find(([value]) => value === mode);
+		return __(found ? found[1] : "Visit type");
+	},
+
+	p6c_site_key(card) {
+		return (card && (card.project || card.customer || card.site)) || "";
+	},
+
+	// The color of a card in the current mode; null keeps the card's own (and a read-only project
+	// booking keeps its teal, amber or gray unless the mode is Technician). `row`: the crew-view row.
+	p6c_card_color(card, row) {
+		const kit = this.p6c_kit();
+		const mode = this.p6c.color_by;
+		if (!kit || mode === "default" || !card) return null;
+		const bp = kit.big_picture;
+		if (mode === "technician") {
+			const user = row || card.technician;
+			return user ? this.tech_color(user) : MP6C.none_color;
+		}
+		if (card.kind === "booking") return null;
+		if (mode === "site") {
+			const key = this.p6c_site_key(card);
+			return key ? bp.hash_color(key) : MP6C.none_color;
+		}
+		if (mode === "status") return bp.palette_color(bp.VISIT_STATUSES, bp.visit_status(card));
+		if (mode === "contract") return card.contract ? bp.hash_color(card.contract) : MP6C.none_color;
+		return null;
+	},
+
+	// Today's edge color of a card (MP_STYLE), for the printed page in the default mode.
+	p6c_kind_color(card) {
+		if (card.kind === "booking") return MP6C.booking_colors[card.booking_kind] || MP6C.booking_colors.task;
+		if (card.kind === "visit" && card.overdue) return "#dc2626";
+		const labelled = card.label ? (MP.extra_labels.includes(card.label) ? "#7c3aed" : "#d97706") : "";
+		if (card.kind === "projected") return labelled || (card.movable ? "#2563eb" : "#94a3b8");
+		if (card.status === "pending") return "#ca8a04";
+		if (card.status === "done") return "#16a34a";
+		return labelled || "#2563eb";
+	},
+
+	p6c_paint() {
+		const kit = this.p6c_kit();
+		if (!kit || this.p6c.color_by === "default") return;
+		this.$body[0].querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			const card = this.by_key[el.getAttribute("data-key")];
+			const color = kit.big_picture.safe_paint(this.p6c_card_color(card, el.getAttribute("data-row-user")), "");
+			if (!color) return;
+			el.style.setProperty("--mp-p6c-c", color);
+			el.classList.add("mp-p6c-colored");
+		});
+	},
+
+	// The visits the filters let through (no read-only bookings).
+	p6c_visible_cards() {
+		if (!this.data) return [];
+		return this.all_cards().filter((card) => card.kind !== "booking" && this.visible(card));
+	},
+
+	p6c_legend_entries() {
+		const kit = this.p6c_kit();
+		const mode = this.p6c.color_by;
+		if (!kit || mode === "default") return [];
+		const bp = kit.big_picture;
+		if (mode === "status") return bp.palette_legend(bp.VISIT_STATUSES);
+		if (mode === "technician") {
+			return ((this.data && this.data.technicians) || [])
+				.filter((person) => person.enabled)
+				.map((person) => ({ key: person.user, label: person.name, color: this.tech_color(person.user) }));
+		}
+		const seen = {};
+		let none = false;
+		this.p6c_visible_cards().forEach((card) => {
+			if (mode === "site") {
+				const key = this.p6c_site_key(card);
+				if (!key) none = true;
+				else if (!seen[key]) {
+					seen[key] = {
+						key,
+						label: card.site_full || card.site || key,
+						color: bp.hash_color(key),
+						hi: card.project || "",
+					};
+				}
+				return;
+			}
+			if (!card.contract) none = true;
+			else if (!seen[card.contract]) {
+				seen[card.contract] = {
+					key: card.contract,
+					label: card.site ? `${card.contract} · ${card.site}` : card.contract,
+					color: bp.hash_color(card.contract),
+				};
+			}
+		});
+		const out = Object.values(seen).sort((a, b) => String(a.label).localeCompare(String(b.label)));
+		if (none) {
+			out.push({ key: "", label: mode === "site" ? __("No site") : __("No contract"), color: MP6C.none_color });
+		}
+		return out;
+	},
+
+	p6c_swatch_html(color) {
+		const kit = this.p6c_kit();
+		const paint = kit ? kit.big_picture.safe_paint(color, MP6C.none_color) : MP6C.none_color;
+		return `<i class="mp-p6c-swatch" style="border-left-color:${mp_esc(paint)}"></i>`;
+	},
+
+	p6c_render_key() {
+		const $key = this.$p6c_key;
+		if (!$key) return;
+		const entries = this.p6c_legend_entries();
+		if (!entries.length) {
+			$key.hide().empty();
+			return;
+		}
+		const shown = entries.slice(0, MP6C.key_limit);
+		const items = shown.map((entry) => {
+			const hi = entry.hi ? ` data-p6c-hi="${mp_esc(entry.hi)}" role="button" tabindex="0"` : "";
+			const tip = entry.hi ? __("Highlight {0}", [entry.label]) : entry.label;
+			return `<span class="mp-p6c-key-item"${hi} title="${mp_esc(tip)}">${this.p6c_swatch_html(entry.color)}${mp_esc(
+				entry.label
+			)}</span>`;
+		});
+		if (entries.length > shown.length) {
+			items.push(`<span class="mp-p6c-key-item">${mp_esc(__("+{0} more (see ?)", [entries.length - shown.length]))}</span>`);
+		}
+		$key[0].innerHTML = `<span class="mp-p6c-key-title">${mp_esc(__("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]))}</span>${items.join("")}`;
+		$key.show();
+	},
+
+	p6c_legend_sections() {
+		if (!this.p6c) return [];
+		const mode = this.p6c.color_by;
+		const entries = this.p6c_legend_entries().slice(0, MP6C.legend_limit);
+		const strip = `<span class="mp-p6c-sday mp-amber mp-p6a-sample"><span class="mp-p6c-stext">${mp_esc(__("6h free"))}</span></span>`;
+		const pill = `<span class="mp-p6c-pill"><span class="mp-p6c-pill-text">${mp_esc(__("Highlighting"))}</span></span>`;
+		const sections = [];
+		if (mode !== "default") {
+			sections.push({
+				title: __("Card colors: {0}", [this.p6c_mode_label(mode)]),
+				note: mode === "technician" ? "" : __("Project, rental and travel bookings keep their own colors."),
+				items: entries.map((entry) => ({ sample_html: this.p6c_swatch_html(entry.color), text: entry.label })),
+			});
+		}
+		sections.push({
+			title: __("The big picture"),
+			note:
+				mode === "default"
+					? __("Color by in the toolbar colors the visits by technician, site, visit status or contract instead of the visit type below.")
+					: "",
+			items: [
+				{
+					sample_html: pill,
+					text: __("Highlight this site (in a visit's panel, the site drawer or the color key) lights up all of a site's visits and fades the rest. Esc or × clears it."),
+				},
+				{
+					sample_html: strip,
+					text: __("The team row over the week and crew views: the technicians' free hours per day. Amber at 90% booked, red when they are booked past their hours. Click a day to see everyone's day."),
+				},
+				{
+					sample_html: "",
+					text: __("Tap to move: tap a visit, then tap the day (or a technician's day in the crew view) where it goes. On by default on a touch screen; it asks for a reason and can be undone like a drag."),
+				},
+				{
+					sample_html: "",
+					text: __("Views: save your filters, view and colors under a name and switch between them. The planner opens the way you last left it, on any device."),
+				},
+				{ sample_html: "", text: __("Print: exactly what is on screen, with your filters and colors, or only the visits you selected.") },
+			],
+		});
+		return sections;
+	},
+
+	// ------------------------------------------------------------------ highlight a site
+
+	p6c_site_label(project) {
+		const card = this.all_cards().find((item) => item.kind !== "booking" && item.project === project);
+		return (card && (card.site_full || card.site)) || project;
+	},
+
+	p6c_highlight(project) {
+		if (!project) return;
+		this.p6c.highlight = { key: project, label: this.p6c_site_label(project) };
+		this.p6c_apply_highlight();
+		this.p6c_sync_controls();
+		this.p6c_refresh_drawer_tool();
+	},
+
+	p6c_clear_highlight() {
+		if (!this.p6c.highlight) return;
+		this.p6c.highlight = null;
+		this.p6c_apply_highlight();
+		this.p6c_sync_controls();
+		this.p6c_refresh_drawer_tool();
+	},
+
+	p6c_toggle_highlight(project) {
+		if (this.p6c.highlight && this.p6c.highlight.key === project) this.p6c_clear_highlight();
+		else this.p6c_highlight(project);
+	},
+
+	p6c_is_lit(card) {
+		const hi = this.p6c.highlight;
+		return !!(hi && card && card.kind !== "booking" && card.project === hi.key);
+	},
+
+	p6c_apply_highlight() {
+		const root = this.$body[0];
+		root.classList.toggle("mp-p6c-on", !!this.p6c.highlight);
+		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			el.classList.toggle("mp-p6c-hi", this.p6c_is_lit(this.by_key[el.getAttribute("data-key")]));
+		});
+	},
+
+	p6c_body_click(e) {
+		const target = e.target;
+		if (!this.p6c || !target || !target.closest || Date.now() < this.click_blocked_until) return;
+		const key_item = target.closest(".mp-p6c-key [data-p6c-hi]");
+		if (key_item) this.p6c_toggle_highlight(key_item.getAttribute("data-p6c-hi"));
+	},
+
+	p6c_links(card) {
+		if (!this.p6c || !card || card.kind === "booking" || !card.project) return [];
+		const on = this.p6c.highlight && this.p6c.highlight.key === card.project;
+		return [["p6c_highlight", on ? __("Stop highlighting this site") : __("Highlight this site")]];
+	},
+
+	p6c_action(action, card) {
+		if (action !== "p6c_highlight") return false;
+		if (card && card.project) this.p6c_toggle_highlight(card.project);
+		return true;
+	},
+
+	p6c_menu_items(target) {
+		if (!this.p6c || !target || target.kind !== "card" || !target.card) return [];
+		const card = target.card;
+		const items = [];
+		if (card.kind !== "booking" && card.project) {
+			const on = this.p6c.highlight && this.p6c.highlight.key === card.project;
+			items.push({
+				label: on ? __("Stop highlighting this site") : __("Highlight this site"),
+				on_click: () => this.p6c_toggle_highlight(card.project),
+			});
+		}
+		const source = target.el ? this.drag_source(target.el) : null;
+		if (source && source.kind === "card") {
+			items.push({ label: __("Move with taps…"), hint: __("then tap a day"), on_click: () => this.p6c_arm(source) });
+		}
+		return items;
+	},
+
+	// The site drawer (6A) gets a Highlight switch in its header.
+	p6c_site_drawer(card, handle) {
+		if (!this.p6c || !card || !card.project || !handle || typeof handle.set_tools !== "function") return;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "btn btn-default btn-xs mp-p6c-drawer-hi";
+		button.title = __("Light up this site's visits on the calendar and fade the rest");
+		button.addEventListener("click", () => this.p6c_toggle_highlight(card.project));
+		handle.set_tools(button);
+		this.p6c.drawer_tool = { project: card.project, handle, button };
+		this.p6c_refresh_drawer_tool();
+	},
+
+	p6c_refresh_drawer_tool() {
+		const tool = this.p6c.drawer_tool;
+		if (!tool) return;
+		if (!tool.handle.is_open()) {
+			this.p6c.drawer_tool = null;
+			return;
+		}
+		const on = !!(this.p6c.highlight && this.p6c.highlight.key === tool.project);
+		tool.button.textContent = on ? __("Highlighted ✓") : __("Highlight");
+		tool.button.setAttribute("aria-pressed", on ? "true" : "false");
+	},
+
+	p6c_keydown(e) {
+		if (e.key !== "Escape" || e.defaultPrevented || !this.p6c || this.drag) return;
+		if (!this.p6c.moving && !this.p6c.highlight) return;
+		if (!this.p6c_here()) return;
+		const kit = this.p6a && this.p6a.kit;
+		if (kit && kit.guard && kit.guard.top()) return;
+		if (window.cur_dialog && window.cur_dialog.display) return;
+		const tag = (e.target && e.target.tagName) || "";
+		if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+		if (this.p6c.moving) this.p6c_disarm();
+		else this.p6c_clear_highlight();
+	},
+
+	// ------------------------------------------------------------------ the team strip
+
+	// The technicians the strip sums: everyone with hours on the planner, or the one the filter picks
+	// (the calendar views; the crew view always shows every row).
+	p6c_team() {
+		const people = ((this.data && this.data.technicians) || []).filter((person) => person.enabled && person.resource);
+		const one = this.view !== "crew" && this.technician && this.technician !== "__none__";
+		return one ? people.filter((person) => person.user === this.technician) : people;
+	},
+
+	p6c_team_label() {
+		const one = this.view !== "crew" && this.technician && this.technician !== "__none__";
+		return one ? this.tech_name(this.technician) : __("Technicians");
+	},
+
+	p6c_team_sum(ymd) {
+		const kit = this.p6c_kit();
+		if (!kit) return null;
+		return kit.big_picture.team_day(this.p6c_team().map((person) => this.cell_of(person.user, ymd)));
+	},
+
+	p6c_strip_cells() {
+		const kit = this.p6c_kit();
+		if (!kit) return [];
+		const bp = kit.big_picture;
+		const label = this.p6c_team_label();
+		return this.range_days().map((ymd) => {
+			const sum = this.p6c_team_sum(ymd);
+			const weekday = (kit.format.day_label(ymd) || "").split(",")[0];
+			const tone = { off: "mp-offday", red: "mp-red", amber: "mp-amber", green: "mp-green" }[sum.level] || "";
+			return {
+				ymd,
+				weekday,
+				sum,
+				tone,
+				text: bp.team_text(sum),
+				tip: `${bp.team_tip(label, weekday, sum)}\n${__("Click to see everyone's day")}`,
+			};
+		});
+	},
+
+	p6c_bar_html(sum) {
+		const width = Math.round(Math.min(1, sum.ratio) * 100);
+		const soft = Math.round(Math.min(1, sum.soft_ratio || 0) * 100);
+		return `<div class="mp-bar"><i style="width:${width}%"></i>${
+			soft > 0 ? `<b style="left:${width}%;width:${soft}%"></b>` : ""
+		}</div>`;
+	},
+
+	p6c_strip_cell_html(cell) {
+		return `
+			<div class="mp-p6c-sday ${cell.tone}" role="button" tabindex="0" data-pp6a-day="${mp_esc(cell.ymd)}"
+				title="${mp_esc(cell.tip)}" aria-label="${mp_esc(cell.tip.split("\n")[0])}">
+				<span class="mp-p6c-slabel">${mp_esc(cell.weekday)}</span>
+				<span class="mp-p6c-stext">${mp_esc(cell.text)}</span>${cell.sum.capacity > 0 ? this.p6c_bar_html(cell.sum) : ""}
+			</div>`;
+	},
+
+	p6c_render_strip() {
+		this.$grid_wrap.find(".mp-p6c-strip, .mp-crew > .mp-p6c-sday, .mp-crew > .mp-p6c-scorner").remove();
+		if (this.view !== "week" && this.view !== "crew") return;
+		if (!this.p6c_team().length) return;
+		const cells = this.p6c_strip_cells();
+		if (!cells.length) return;
+		const html = cells.map((cell) => this.p6c_strip_cell_html(cell)).join("");
+		if (this.view === "week") {
+			const $strip = $('<div class="mp-p6c-strip" role="group"></div>').attr("aria-label", __("Team capacity"));
+			$strip[0].innerHTML = html;
+			this.$grid_wrap.prepend($strip);
+			return;
+		}
+		const heads = this.$grid_wrap[0].querySelectorAll(".mp-crew > .mp-crew-head");
+		if (!heads.length) return;
+		const corner = `<div class="mp-p6c-scorner"><b>${mp_esc(this.p6c_team_label())}</b><span>${mp_esc(
+			__("free hours")
+		)}</span></div>`;
+		heads[heads.length - 1].insertAdjacentHTML("afterend", corner + html);
+	},
+
+	// ------------------------------------------------------------------ tap to move
+
+	p6c_coarse() {
+		try {
+			return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+		} catch (e) {
+			return false;
+		}
+	},
+
+	p6c_tap_default() {
+		const saved = this.load_pref(MP6C.tap_pref, "");
+		if (saved === "1") return true;
+		if (saved === "0") return false;
+		return this.p6c_coarse();
+	},
+
+	p6c_set_tap(on) {
+		this.p6c.tap = !!on;
+		this.save_pref(MP6C.tap_pref, on ? "1" : "0");
+		if (!on) this.p6c_disarm();
+		this.p6c_sync_controls();
+		frappe.show_alert(
+			{
+				message: on
+					? __("Tap to move: tap a visit, then tap the day where it goes.")
+					: __("Tap to move is off: tap a visit to open it, drag it to move it."),
+				indicator: "blue",
+			},
+			5
+		);
+	},
+
+	// Where a tap puts the visit: a technician's day in the crew view, or a day of the calendar.
+	p6c_tap_target(el) {
+		const cell = el.closest(".mp-cell[data-date]");
+		if (cell) return { el: cell, date: cell.getAttribute("data-date"), user: cell.getAttribute("data-user") || "", row: true };
+		const day = el.closest(".mp-grid .mp-day[data-date]");
+		if (day) return { el: day, date: day.getAttribute("data-date") };
+		return null;
+	},
+
+	p6c_tap_click(e) {
+		const p6c = this.p6c;
+		if (!p6c || !this.data || (!p6c.tap && !p6c.moving)) return;
+		const target = e.target;
+		if (!target || !target.closest || !this.$body[0].contains(target)) return;
+		if (e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+		if (Date.now() < this.click_blocked_until) return;
+		if (
+			target.closest(
+				".mp-p6c-movebar, button, a, input, select, textarea, label, [data-route-resource], [data-pk-person], [data-pp6a-day]"
+			)
+		) {
+			return;
+		}
+		const take = () => {
+			e.preventDefault();
+			e.stopPropagation();
+		};
+		const moving = p6c.moving;
+		if (!moving) {
+			const source = this.drag_source(target);
+			if (!source || source.kind !== "card") return;
+			take();
+			this.p6c_arm(source);
+			return;
+		}
+		const card_el = target.closest(".mp-card[data-key]");
+		if (card_el && this.p6c_is_moving_el(card_el)) {
+			take();
+			this.p6c_disarm();
+			return;
+		}
+		const place = this.p6c_tap_target(target);
+		if (!place) {
+			// Another visit outside the calendar (the Unscheduled tray): pick that one instead.
+			const other = p6c.tap ? this.drag_source(target) : null;
+			if (other && other.kind === "card") {
+				take();
+				this.p6c_arm(other);
+			}
+			return;
+		}
+		take();
+		this.p6c_tap_drop(place);
+	},
+
+	// The move goes through the drag's own path: drop -> plan_drop -> apply -> send (reason, Undo).
+	p6c_tap_drop(place) {
+		const moving = this.p6c.moving;
+		if (!moving) return;
+		this.p6c_disarm();
+		this.drop(moving.source, place);
+	},
+
+	p6c_arm(source) {
+		if (!source || !source.card) return;
+		const card = source.card;
+		this.p6c.moving = {
+			source,
+			label: card.site || card.site_full || card.name,
+			key: card.key,
+			row_user: source.from_user === undefined ? null : source.from_user,
+		};
+		this.p6c_render_movebar();
+		this.p6c_mark_moving();
+	},
+
+	p6c_disarm() {
+		if (!this.p6c || !this.p6c.moving) return;
+		this.p6c.moving = null;
+		this.p6c_render_movebar();
+		this.p6c_mark_moving();
+	},
+
+	p6c_is_moving_el(el) {
+		const moving = this.p6c.moving;
+		if (!moving || !el) return false;
+		return el.getAttribute("data-key") === moving.key && el.getAttribute("data-row-user") === moving.row_user;
+	},
+
+	p6c_mark_moving() {
+		const root = this.$body[0];
+		root.classList.toggle("mp-p6c-armed", !!(this.p6c && this.p6c.moving));
+		root.querySelectorAll(".mp-p6c-moving").forEach((el) => el.classList.remove("mp-p6c-moving"));
+		if (!this.p6c || !this.p6c.moving) return;
+		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			if (this.p6c_is_moving_el(el)) el.classList.add("mp-p6c-moving");
+		});
+	},
+
+	p6c_render_movebar() {
+		const $movebar = this.$p6c_movebar;
+		if (!$movebar) return;
+		const moving = this.p6c.moving;
+		if (!moving) {
+			$movebar.hide().empty();
+			return;
+		}
+		$movebar.empty().show();
+		const $text = $('<span class="mp-p6c-movebar-text"></span>').appendTo($movebar);
+		$("<b></b>").text(__("Moving: {0}", [moving.label])).appendTo($text);
+		$('<span class="mp-p6c-movebar-hint"></span>')
+			.text(
+				this.view === "crew"
+					? __("Tap a day on a technician's row to put it there.")
+					: __("Tap a day to put it there.")
+			)
+			.appendTo($text);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Open"))
+			.on("click", () => {
+				const card = this.by_key[moving.key] || moving.source.card;
+				this.p6c_disarm();
+				this.open_card(card);
+			})
+			.appendTo($movebar);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Cancel"))
+			.on("click", () => this.p6c_disarm())
+			.appendTo($movebar);
+	},
+
+	// ------------------------------------------------------------------ saved views
+
+	p6c_fetch_views() {
+		const p6c = this.p6c;
+		if (p6c.loading) return p6c.loading;
+		const call = Promise.resolve(
+			frappe.call({ method: `${MP6C.prefs}.get_views`, args: { planner: MP6C.planner } })
+		)
+			.then((r) => {
+				const answer = (r && r.message) || {};
+				p6c.views = Array.isArray(answer.views) ? answer.views : [];
+				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : null;
+			})
+			.catch(() => null);
+		const late = new Promise((resolve) => setTimeout(resolve, MP6C.restore_wait));
+		p6c.loading = Promise.race([call, late]).then(() => {
+			p6c.loaded = true;
+		});
+		return p6c.loading;
+	},
+
+	// First thing in handle_route; see the Project Planner's twin. The URL always wins: only a bare
+	// /maintenance-planner takes the saved view, and it replaces that history entry.
+	p6c_before_route() {
+		const p6c = this.p6c;
+		if (!p6c) return false;
+		const route = frappe.get_route() || [];
+		if (route[0] !== MP.route) return false;
+		if (!p6c.loaded) {
+			if (!p6c.waiting) {
+				p6c.waiting = true;
+				this.p6c_fetch_views().then(() => {
+					p6c.waiting = false;
+					this.handle_route();
+				});
+			}
+			return true;
+		}
+		const last = p6c.last ? this.p6c_pick(p6c.last) : null;
+		if (!p6c.restored) {
+			p6c.restored = true;
+			if (last) {
+				this.p6c_apply_state(last, { render: false });
+				p6c.saved_text = JSON.stringify(last);
+			}
+		}
+		const view = last && last.view;
+		if (!route[1] && view && view !== MP6C.default_view && MP6C.schema.view[1].includes(view)) {
+			frappe.route_flags = frappe.route_flags || {};
+			frappe.route_flags.replace_route = true;
+			frappe.set_route(MP.route, view, frappe.datetime.get_today());
+			return true;
+		}
+		return false;
+	},
+
+	p6c_state() {
+		const state = {
+			technician: this.technician || "",
+			projected: !!this.show_projected,
+			project_work: !!this.show_project_work,
+			panel: !!this.panel_open,
+			color_by: this.p6c.color_by,
+		};
+		if (MP6C.schema.view[1].includes(this.view)) state.view = this.view;
+		return this.p6c_pick(state);
+	},
+
+	p6c_apply_state(state, opts) {
+		opts = opts || {};
+		const view = this.p6c_pick(state);
+		if ("technician" in view) this.technician = view.technician;
+		if ("projected" in view) this.show_projected = !!view.projected;
+		if ("project_work" in view) this.show_project_work = !!view.project_work;
+		if ("panel" in view) this.panel_open = !!view.panel;
+		if ("color_by" in view) this.p6c.color_by = view.color_by;
+		if (this.data && this.technician && this.technician !== "__none__") {
+			const known = ((this.data && this.data.technicians) || []).some((person) => person.user === this.technician);
+			if (!known) this.technician = "";
+		}
+		this.p6c_sync_controls();
+		if (opts.route && view.view && view.view !== this.view) {
+			this.go(view.view, this.anchor);
+			return;
+		}
+		if (opts.render !== false && this.data) this.render();
+	},
+
+	p6c_state_soon() {
+		const p6c = this.p6c;
+		if (!p6c || !p6c.restored) return;
+		clearTimeout(p6c.save_timer);
+		p6c.save_timer = setTimeout(() => this.p6c_save_last(), MP6C.save_delay);
+	},
+
+	p6c_save_last() {
+		const p6c = this.p6c;
+		if (!MP6C.schema.view[1].includes(this.view)) return;
+		const state = this.p6c_state();
+		const text = JSON.stringify(state);
+		if (text === p6c.saved_text) return;
+		p6c.saved_text = text;
+		Promise.resolve(
+			frappe.call({ method: `${MP6C.prefs}.save_last_view`, args: { planner: MP6C.planner, data: text } })
+		)
+			.then((r) => {
+				const answer = (r && r.message) || {};
+				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : state;
+			})
+			.catch(() => {
+				p6c.saved_text = null;
+			});
+	},
+
+	p6c_matching_view() {
+		const now = JSON.stringify(this.p6c_state());
+		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
+	},
+
+	p6c_views_menu(anchor) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) {
+			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+			return;
+		}
+		const current = this.p6c_matching_view();
+		const items = (this.p6c.views || []).map((entry) => ({
+			label: entry.name,
+			hint: current && current.name === entry.name ? "✓" : this.p6c_view_summary(entry.data || {}),
+			on_click: () => this.p6c_use_view(entry),
+		}));
+		if (!this.p6c.loaded) items.push({ label: __("Loading your views…"), disabled: true });
+		else if (!items.length) items.push({ label: __("No saved views yet"), disabled: true });
+		items.push({ divider: true });
+		items.push({ label: __("Save view as…"), on_click: () => this.p6c_save_as() });
+		if ((this.p6c.views || []).length) items.push({ label: __("Manage views…"), on_click: () => this.p6c_manage_views() });
+		kit.menu({ anchor, items, title: __("Saved views"), owner: MP6A.owner });
+	},
+
+	p6c_use_view(entry) {
+		if (!entry) return;
+		this.p6c_apply_state(entry.data || {}, { route: true });
+		frappe.show_alert({ message: __("View: {0}", [mp_esc(entry.name)]), indicator: "green" }, 4);
+	},
+
+	p6c_view_summary(view) {
+		const parts = [];
+		view = this.p6c_pick(view || {});
+		if (view.view) parts.push(__(MP6C.view_labels[view.view] || view.view));
+		if (view.technician === "__none__") parts.push(__("Unassigned"));
+		else if (view.technician) parts.push(this.tech_name(view.technician));
+		if (view.projected === false) parts.push(__("No projected visits"));
+		if (view.project_work === false) parts.push(__("No project work"));
+		if (view.color_by && view.color_by !== "default") parts.push(__("{0} colors", [this.p6c_mode_label(view.color_by)]));
+		return parts.join(" · ");
+	},
+
+	p6c_save_as() {
+		const current = this.p6c_matching_view();
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Data",
+					fieldname: "name",
+					label: __("Name"),
+					reqd: 1,
+					default: current ? current.name : "",
+					description: __("For example: Austin, this week. Only you see your views."),
+				},
+			],
+			(values) => {
+				const name = String((values && values.name) || "")
+					.replace(/\s+/g, " ")
+					.trim()
+					.slice(0, 60);
+				if (!name) return;
+				const exists = (this.p6c.views || []).some((entry) => entry.name.toLowerCase() === name.toLowerCase());
+				const run = () => this.p6c_store_view(name);
+				if (exists) frappe.confirm(__("Replace your saved view {0}?", [mp_esc(name)]), run);
+				else run();
+			},
+			__("Save view as"),
+			__("Save")
+		);
+	},
+
+	p6c_store_view(name) {
+		return Promise.resolve(
+			frappe.call({
+				method: `${MP6C.prefs}.save_view`,
+				args: { planner: MP6C.planner, name, data: JSON.stringify(this.p6c_state()) },
+			})
+		)
+			.then((r) => {
+				const answer = (r && r.message) || {};
+				if (Array.isArray(answer.views)) this.p6c.views = answer.views;
+				frappe.show_alert({ message: __("Saved view {0}", [mp_esc(answer.saved || name)]), indicator: "green" }, 5);
+			})
+			.catch(() => null);
+	},
+
+	p6c_views_html() {
+		const views = this.p6c.views || [];
+		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from the Views button."))}</p>`;
+		const rows = views.map(
+			(entry) => `
+			<li class="mp-p6c-views-row">
+				<div class="mp-p6c-views-main">
+					<div class="mp-p6c-views-name">${mp_esc(entry.name)}</div>
+					<div class="mp-p6c-views-sub">${mp_esc(this.p6c_view_summary(entry.data || {}))}</div>
+				</div>
+				<button type="button" class="btn btn-default btn-xs" data-p6c-use="${mp_esc(entry.name)}">${mp_esc(__("Use"))}</button>
+				<button type="button" class="btn btn-default btn-xs" data-p6c-delete="${mp_esc(entry.name)}">${mp_esc(__("Delete"))}</button>
+			</li>`
+		);
+		return `<ul class="mp-p6c-views-list">${rows.join("")}</ul><p class="pk-note">${mp_esc(
+			__("Your views are saved for you on the server, so they follow you to any device. Nobody else sees them.")
+		)}</p>`;
+	},
+
+	p6c_manage_views() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return;
+		kit.drawer.open({
+			title: __("Saved views"),
+			body: this.p6c_views_html(),
+			width: 420,
+			key: "p6c-views",
+			owner: MP6A.owner,
+			push: this.$body[0],
+			reopen: () => this.p6c_manage_views(),
+			on_click: (e, handle) => {
+				const el = e.target && e.target.closest ? e.target.closest("[data-p6c-use], [data-p6c-delete]") : null;
+				if (!el) return;
+				const use = el.getAttribute("data-p6c-use");
+				const name = use || el.getAttribute("data-p6c-delete");
+				const entry = (this.p6c.views || []).find((item) => item.name === name);
+				if (!entry) return;
+				if (use) {
+					kit.drawer.navigate(() => this.p6c_use_view(entry));
+					return;
+				}
+				frappe.confirm(__("Delete your saved view {0}? This cannot be undone.", [mp_esc(entry.name)]), () =>
+					Promise.resolve(
+						frappe.call({ method: `${MP6C.prefs}.delete_view`, args: { planner: MP6C.planner, name: entry.name } })
+					)
+						.then((r) => {
+							const answer = (r && r.message) || {};
+							if (Array.isArray(answer.views)) this.p6c.views = answer.views;
+							handle.set_body(this.p6c_views_html());
+						})
+						.catch(() => null)
+				);
+			},
+		});
+	},
+
+	// ------------------------------------------------------------------ print
+
+	// 6B's multi-selection (visit keys), read defensively: empty when 6B is not there.
+	p6c_selection() {
+		const selection = this.p6_selection;
+		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
+	},
+
+	p6c_print_click(anchor) {
+		const kit = this.p6a && this.p6a.kit;
+		const selected = this.p6c_selection();
+		if (selected.size && kit) {
+			kit.menu({
+				anchor,
+				owner: MP6A.owner,
+				items: [
+					{ label: __("Print this view"), on_click: () => this.p6c_print(false) },
+					{ label: __("Print selection only ({0})", [selected.size]), on_click: () => this.p6c_print(true) },
+				],
+			});
+			return;
+		}
+		this.p6c_print(false);
+	},
+
+	p6c_print(selection_only) {
+		const kit = this.p6c_kit();
+		if (!kit || !this.data) {
+			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+			return;
+		}
+		const win = window.open("", "_blank");
+		if (!win) {
+			frappe.msgprint(__("Allow pop-ups for this site to print the planner."));
+			return;
+		}
+		win.document.write(
+			`<!doctype html><title>${mp_esc(__("Print"))}</title><p style="font-family:sans-serif">${mp_esc(
+				__("Preparing the page…")
+			)}</p>`
+		);
+		const model = this.p6c_print_model(!!selection_only);
+		Promise.resolve(
+			frappe.call({
+				method: `${MP6C.prefs}.get_print_chrome`,
+				args: { planner: MP6C.planner, title: model.heading, lines: JSON.stringify(model.lines) },
+			})
+		)
+			.then((r) => (r && r.message) || null)
+			.catch(() => null)
+			.then((chrome) => {
+				if (win.closed) return;
+				const html = kit.big_picture.print_document(
+					Object.assign({}, model, { chrome: chrome && typeof chrome.open === "string" ? chrome : null })
+				);
+				win.document.open();
+				win.document.write(html);
+				win.document.close();
+				win.focus();
+				const fonts = win.document.fonts && win.document.fonts.ready ? win.document.fonts.ready : Promise.resolve();
+				fonts.then(() => win.setTimeout(() => win.print(), 250));
+			});
+	},
+
+	p6c_day_label(ymd, short) {
+		const kit = this.p6c_kit();
+		const label = kit ? kit.format.day_label(ymd) : ymd;
+		return short ? label.split(", ").slice(1).join(", ") || label : label;
+	},
+
+	p6c_print_item(card, row) {
+		const booking = card.kind === "booking";
+		const people = booking ? [card.technician].filter(Boolean) : this.visit_people(card);
+		const names = people.map((user) => this.tech_name(user)).join(", ");
+		const marks = [];
+		let title;
+		let sub;
+		if (booking) {
+			title = card.label || card.ref;
+			const length = card.slot ? card.slot.join("–") : `${this.fmt_hours(card.hours)}h`;
+			sub = [card.project, length, row ? "" : names].filter(Boolean).join(" · ");
+			marks.push(__(MP.booking_kinds[card.booking_kind] || "Project"));
+		} else {
+			title = card.site || card.site_full || card.name;
+			const what = card.label ? __(card.label) : card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
+			sub = [what, row ? "" : names || __("Unassigned")].filter(Boolean).join(" · ");
+			if (card.kind === "projected") marks.push(card.movable ? __("Next visit") : __("Projected"));
+			if (card.status === "pending") marks.push(__("Pending review"));
+			if (card.status === "done") marks.push(__("Done"));
+			if (card.overdue) marks.push({ text: __("Overdue"), tone: "red" });
+			if (card.full_day) marks.push(__("Full day"));
+			if (card.on_hold) marks.push({ text: __("On hold"), tone: "red" });
+			if (card.flagged) marks.push({ text: __("Chemistry"), tone: "red" });
+		}
+		const lit = this.p6c_is_lit(card);
+		return {
+			title,
+			sub,
+			color: this.p6c_card_color(card, row) || this.p6c_kind_color(card),
+			dashed: card.kind === "projected",
+			marks,
+			faded: !!this.p6c.highlight && !lit,
+			highlight: lit,
+		};
+	},
+
+	p6c_print_lines(selection_only, count) {
+		const lines = [];
+		if (this.technician === "__none__") lines.push(__("Technician: Unassigned"));
+		else if (this.technician && this.view !== "crew") lines.push(__("Technician: {0}", [this.tech_name(this.technician)]));
+		if (!this.show_projected) lines.push(__("Projected visits hidden"));
+		if (!this.show_project_work) lines.push(__("Project work hidden"));
+		if (this.p6c.color_by !== "default") lines.push(__("Colored by {0}", [this.p6c_mode_label(this.p6c.color_by)]));
+		if (this.p6c.highlight) lines.push(__("Highlighting {0}", [this.p6c.highlight.label]));
+		if (selection_only) lines.push(__("Selected visits only ({0})", [count]));
+		return lines;
+	},
+
+	// Exactly what is on screen, as a model for planner_kit.big_picture.print_document.
+	p6c_print_model(selection_only) {
+		const heading = `${__(MP6C.view_labels[this.view] || this.view)} · ${this.title()}`;
+		const model = {
+			doc_title: `${__("Maintenance Planner")} · ${heading}`,
+			heading,
+			legend_title: __("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]),
+			legend: this.p6c_legend_entries().map((entry) => ({ color: entry.color, label: entry.label })),
+			notes: [],
+		};
+		const selected = this.p6c_selection();
+		if (selection_only && selected.size) {
+			const cards = this.all_cards().filter((card) => card.kind !== "booking" && selected.has(card.key));
+			cards.sort((a, b) => String(a.date || "9999").localeCompare(String(b.date || "9999")) || this.compare(a, b));
+			model.layout = "list";
+			model.columns = [__("Date"), __("Site"), __("Visit"), __("People"), __("Notes")];
+			model.rows = cards.map((card) => {
+				const item = this.p6c_print_item(card, null);
+				return {
+					color: item.color,
+					cols: [
+						card.date ? this.p6c_day_label(card.date) : __("Not scheduled"),
+						card.site_full || card.site || card.name,
+						card.label ? __(card.label) : card.feature || __("Regular visit"),
+						this.visit_people(card).map((user) => this.tech_name(user)).join(", ") || __("Unassigned"),
+						item.marks.map((mark) => (typeof mark === "string" ? mark : mark.text)).join(", "),
+					],
+				};
+			});
+			model.lines = [__("Selected visits")].concat(this.p6c_print_lines(true, cards.length));
+			model.empty = __("None of the selected visits is on screen.");
+			return model;
+		}
+		model.lines = this.p6c_print_lines(false, 0);
+		if (this.view === "crew") return Object.assign(model, this.p6c_print_crew());
+		return Object.assign(model, this.p6c_print_calendar());
+	},
+
+	p6c_print_calendar() {
+		const days = this.range_days();
+		const kit = this.p6c_kit();
+		const month = this.view === "month" ? String(this.anchor).slice(0, 7) : "";
+		const by_day = {};
+		this.all_cards().forEach((card) => {
+			if (!card.date || !this.visible(card)) return;
+			(by_day[card.date] = by_day[card.date] || []).push(card);
+		});
+		const team = this.p6c_team().length > 0;
+		const rows = [];
+		for (let index = 0; index < days.length; index += 7) {
+			rows.push({
+				cells: days.slice(index, index + 7).map((ymd) => {
+					const sum = team ? this.p6c_team_sum(ymd) : null;
+					return {
+						head: this.view === "week" ? this.p6c_day_label(ymd) : this.p6c_day_label(ymd, true),
+						sub: sum && kit ? kit.big_picture.team_text(sum) : "",
+						tone: month && ymd.slice(0, 7) !== month ? "out" : "",
+						items: (by_day[ymd] || []).sort((a, b) => this.compare(a, b)).map((card) => this.p6c_print_item(card, null)),
+					};
+				}),
+			});
+		}
+		return {
+			layout: "grid",
+			label_column: false,
+			columns: days.slice(0, 7).map((ymd) => this.p6c_day_label(ymd).split(",")[0]),
+			rows,
+		};
+	},
+
+	p6c_print_crew() {
+		const days = this.range_days();
+		const by_cell = {};
+		this.all_cards().forEach((card) => {
+			if (!card.date) return;
+			if (card.kind === "booking" && !this.show_project_work) return;
+			if (card.kind === "projected" && !this.show_projected) return;
+			const owners = card.kind === "booking" ? [card.technician || ""] : this.visit_people(card);
+			(owners.length ? owners : [""]).forEach((user) => {
+				const key = `${user}|${card.date}`;
+				(by_cell[key] = by_cell[key] || []).push(card);
+			});
+		});
+		const people = ((this.data && this.data.technicians) || []).filter(
+			(person) => person.enabled || days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length)
+		);
+		const entries = people.map((person) => ({ person, user: person.user }));
+		if (days.some((ymd) => (by_cell[`|${ymd}`] || []).length)) entries.push({ person: null, user: "" });
+		const rows = entries.map(({ person, user }) => ({
+			label: person ? person.name : __("Unassigned"),
+			sub: person && person.group ? __(person.group) : "",
+			cells: days.map((ymd) => {
+				const cell = person ? this.cell_of(user, ymd) : null;
+				const state = this.avail_state(cell);
+				return {
+					sub: state.text,
+					tone: this.is_off(cell) ? "off" : "",
+					items: (by_cell[`${user}|${ymd}`] || []).sort((a, b) => this.compare(a, b)).map((card) => this.p6c_print_item(card, user || null)),
+				};
+			}),
+		}));
+		const kit = this.p6c_kit();
+		if (kit && rows.length && this.p6c_team().length) {
+			rows.unshift({
+				label: this.p6c_team_label(),
+				sub: __("free hours"),
+				cells: days.map((ymd) => ({ head: kit.big_picture.team_text(this.p6c_team_sum(ymd)) })),
+			});
+		}
+		return {
+			layout: "grid",
+			label_column: true,
+			columns: [__("Technician")].concat(days.map((ymd) => this.p6c_day_label(ymd))),
+			rows,
+			empty: __("No technicians to show."),
+		};
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP6C_METHODS);
+
+// ====================================================================== Phase 6D: Conflict center, personal blocks, day notes
+//
+// The Maintenance Planner's half of Phase 6D's page work (the Project Planner has the same; see its
+// own block). The backend is api/planner_blocks.py and api/planner_conflicts.py; the drawer, the two
+// forms and the markup are the planner kit's (planner_kit/conflicts.js and blocks.js).
+//
+//   - "Conflicts (N)" on the toolbar        the Conflict center for the dates on screen, with
+//                                            planner="maintenance": only visits (and the contract
+//                                            behind the next projected visit) have fixes here; project
+//                                            tasks show with "Open in Project Planner". A visit in a
+//                                            conflict gets a Conflict marker (its "Day off" chip when
+//                                            it has one) that opens the list there.
+//   - a fix                                 move_visit / move_projected exactly as the server worked
+//                                            them out, through send() with the same Undo snapshot a
+//                                            drag takes; "Pick someone who's free" hands the visit to
+//                                            the person tapped (by user) and picks nobody itself
+//   - personal blocks                       a hatched chip in each technician's day (calendar and crew
+//                                            view, from each day cell's `blocks`); its note only when
+//                                            block_notes has it; never dragged. "Block time" for the
+//                                            planners, "Block time…" in a person's drawer and the menu
+//   - day notes                             under each day's head, under the crew view's column heads,
+//                                            and at the top of the day drawer
+//
+// Hooks into the class above, one line each: init_phase6d (constructor), render_phase6d (render),
+// off_label ("Unavailable" for an all-day block), p6d_day_head (render_calendar),
+// p6d_crew_notes_row and p6d_cell_blocks (render_crew), and in Phase 6A's block p6d_person_actions
+// (p6a_open_person), p6d_day_peek_opts (p6a_open_day) and p6d_legend_sections (p6a_legend).
+
+const MP6D = {
+	planner: "maintenance",
+	width: 540,
+	max_days: 60,
+	visit: "Sapphire Maintenance Record",
+	// The Conflict center runs only these, each the page's own write sent through send().
+	fix_methods: {
+		[`${MP.api}.move_visit`]: "move_visit",
+		[`${MP.api}.move_projected`]: "move_projected",
+	},
+	targets: "[data-pk-block], [data-pk-note-open], [data-p6d-conflict]",
+};
+
+const MP6D_STYLE = `
+.mp-p6d-conflicts.mp-p6d-hot{color:#b91c1c;border-color:rgba(220,38,38,.55);font-weight:600;}
+.mp-chip.mp-p6d-link{cursor:pointer;text-decoration:underline dotted;}
+.mp-p6d-crew-notes{border-left:1px solid var(--border-color);padding:3px 4px;min-width:0;}
+.mp-p6d-crew-corner{position:sticky;left:0;z-index:1;border-left:none;background:var(--card-bg);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);padding:4px 8px;}
+`;
+
+const MP6D_METHODS = {
+	init_phase6d() {
+		if (!document.getElementById("mp-style-6d")) {
+			$("<style id='mp-style-6d'>").text(MP6D_STYLE).appendTo(document.head);
+		}
+		this.p6d = { center: null, counted: null, notes: {}, asked: {}, notes_for: null };
+		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
+		this.$p6d_conflicts = $('<button type="button" class="btn btn-default btn-sm mp-p6d-conflicts"></button>')
+			.text(__("Conflicts"))
+			.attr("title", __("Everything wrong in the dates on screen, with one-click fixes"))
+			.on("click", () => this.p6d_open_conflicts(null))
+			.insertBefore(this.$undo);
+		this.$p6d_block = $('<button type="button" class="btn btn-default btn-sm mp-p6d-block-btn"></button>')
+			.text(__("Block time"))
+			.attr("title", __("Mark someone unavailable for part of a day or all of it"))
+			.hide()
+			.on("click", () => this.p6d_block_form({ date: this.p6d_default_date() }))
+			.insertBefore(this.$undo);
+		const root = this.$body[0];
+		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click.
+		root.addEventListener("click", (e) => this.p6d_click(e), true);
+		root.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const el = e.target && e.target.closest ? e.target.closest(MP6D.targets) : null;
+				if (!el || e.target !== el) return;
+				e.preventDefault();
+				e.stopPropagation();
+				el.click();
+			},
+			true
+		);
+		frappe.require(MP6A.kit, () => this.p6d_ready());
+	},
+
+	p6d_ready() {
+		const kit = window.planner_kit;
+		if (!kit || !kit.conflicts || !kit.blocks || (this.p6d && this.p6d.center)) return;
+		this.p6d.center = kit.conflicts.center({
+			planner: MP6D.planner,
+			owner: MP6A.owner,
+			push: this.$body[0],
+			width: MP6D.width,
+			range: () => this.p6d_range(),
+			can_schedule: () => !!(this.data && this.data.can_schedule),
+			draft: () => false,
+			block_note: (name) => this.p6d_block_note(name),
+			run_fix: (job) => this.p6d_run_fix(job),
+			open_item: (conflict, item) => this.p6d_open_item(conflict, item),
+			exclude: (conflict, fix) => this.p6d_exclude(conflict, fix),
+			pick_context: (conflict, fix) => this.p6d_pick_context(conflict, fix),
+			on_list: () => this.p6d_after_list(),
+		});
+		if (this.data) this.render();
+	},
+
+	p6d_kit() {
+		return this.p6d && this.p6d.center ? window.planner_kit : null;
+	},
+
+	// ------------------------------------------------------------------ hooks
+
+	render_phase6d() {
+		if (!this.p6d || !this.data) return;
+		if (this.$p6d_block) this.$p6d_block.toggle(!!this.data.can_schedule);
+		if (this.p6d.notes_for !== this.data) {
+			this.p6d.notes = {};
+			this.p6d.asked = {};
+			this.p6d.notes_for = this.data;
+		}
+		this.p6d_decorate();
+		// One Conflict center read per load (debounced), never one per render.
+		const center = this.p6d.center;
+		if (center && this.p6d.counted !== this.data) {
+			this.p6d.counted = this.data;
+			center.schedule();
+		}
+	},
+
+	// Under a day's head in the month and week views: its notes, then the blocked technicians shown.
+	p6d_day_head($day, ymd) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return;
+		const month = this.view === "month";
+		const can = !!this.data.can_schedule;
+		const parts = [kit.blocks.notes_html(this.p6d_notes_of(ymd), { date: ymd, compact: month, can_add: can && !month })];
+		const single = !!this.technician && this.technician !== "__none__";
+		const people =
+			this.technician === "__none__"
+				? []
+				: (this.data.technicians || []).filter((person) => (single ? person.user === this.technician : person.enabled));
+		people.forEach((person) => {
+			this.p6d_blocks_of(person.user, ymd).forEach((block) => {
+				const who = single ? "" : month ? this.p6d_initials(person.name) : person.name;
+				parts.push(this.p6d_chip(block, person, ymd, { who, compact: month }));
+			});
+		});
+		const html = parts.join("");
+		if (html) $day.append(html);
+	},
+
+	// The crew view: one technician's blocks in their day's cell, under the hours.
+	p6d_cell_blocks(person, ymd) {
+		if (!person || !this.p6d_kit()) return "";
+		return this.p6d_blocks_of(person.user, ymd)
+			.map((block) => this.p6d_chip(block, person, ymd, {}))
+			.join("");
+	},
+
+	p6d_chip(block, person, ymd, extra) {
+		const kit = this.p6d_kit();
+		return kit.blocks.chip_html(
+			block,
+			Object.assign(
+				{
+					note: extra.compact ? "" : this.p6d_block_note(block.ref),
+					date: ymd,
+					user: person.user,
+					resource: person.resource || "",
+					person: person.user,
+					editable: this.p6d_can_edit_block(person.user),
+				},
+				extra
+			)
+		);
+	},
+
+	p6d_crew_notes_row(days) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const can = !!this.data.can_schedule;
+		if (!can && !days.some((ymd) => this.p6d_notes_of(ymd).length)) return "";
+		const cells = days.map(
+			(ymd) =>
+				`<div class="mp-p6d-crew-notes">${kit.blocks.notes_html(this.p6d_notes_of(ymd), { date: ymd, can_add: can })}</div>`
+		);
+		return `<div class="mp-p6d-crew-notes mp-p6d-crew-corner">${mp_esc(__("Notes"))}</div>${cells.join("")}`;
+	},
+
+	// ------------------------------------------------------------------ what the page knows
+
+	p6d_notes_of(ymd) {
+		return ((this.data && this.data.day_notes) || {})[ymd] || [];
+	},
+
+	// A technician's blocks on a day: the day cell's `blocks` (maintenance_planner._booking_cell).
+	p6d_blocks_of(user, ymd) {
+		const cell = user ? this.cell_of(user, ymd) : null;
+		return ((cell && cell.blocks) || []).filter((block) => block && block.ref);
+	},
+
+	// A block's note: ONLY from the payload's block_notes (filled for the viewer by the server).
+	p6d_block_note(name) {
+		const notes = (this.data && this.data.block_notes) || {};
+		return name && notes[name] ? String(notes[name]) : "";
+	},
+
+	p6d_initials(name) {
+		const parts = String(name || "?").split(/\s+/).filter(Boolean);
+		return ((parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+	},
+
+	p6d_can_edit_block(user) {
+		if (this.data && this.data.can_schedule) return true;
+		return !!user && user === (frappe.session && frappe.session.user);
+	},
+
+	p6d_can_block(user) {
+		if (this.data && this.data.can_schedule) return true;
+		return !user || user === (frappe.session && frappe.session.user);
+	},
+
+	p6d_default_date() {
+		const today = this.today();
+		const { start, end } = this.range();
+		return today >= mp_ymd(start) && today <= mp_ymd(end) ? today : mp_ymd(start);
+	},
+
+	// ------------------------------------------------------------------ clicks
+
+	p6d_click(e) {
+		if (!this.p6d || Date.now() < this.click_blocked_until) return;
+		const target = e.target;
+		if (!target || !target.closest) return;
+		const take = () => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		const marker = target.closest("[data-p6d-conflict]");
+		if (marker) {
+			take();
+			this.p6d_open_conflicts({ key: marker.getAttribute("data-p6d-conflict") });
+			return;
+		}
+		const add = target.closest("[data-pk-note-add]");
+		if (add) {
+			take();
+			this.p6d_note_form({ date: add.getAttribute("data-pk-note-add") });
+			return;
+		}
+		const note = target.closest("[data-pk-note-open]");
+		if (note) {
+			take();
+			this.p6a_open_day(note.getAttribute("data-pk-note-open"));
+			return;
+		}
+		const block = target.closest("[data-pk-block]");
+		if (block) {
+			take();
+			this.p6d_block_click(block);
+		}
+	},
+
+	p6d_block_click(el) {
+		const kit = this.p6d_kit();
+		const name = el.getAttribute("data-pk-block");
+		const ymd = el.getAttribute("data-pk-block-date");
+		const user = el.getAttribute("data-pk-block-user");
+		if (!kit || !name) return;
+		const block = this.p6d_blocks_of(user, ymd).find((entry) => entry.ref === name);
+		if (!block) return;
+		if (this.p6d_can_edit_block(user)) {
+			this.p6d_block_form({
+				block: { name, date: ymd, all_day: !!block.all_day, slot: block.slot || null },
+				user,
+				date: ymd,
+			});
+			return;
+		}
+		kit.toast(`${this.tech_name(user)}: ${kit.blocks.block_text(block)}`, { tone: "info" });
+	},
+
+	// ------------------------------------------------------------------ blocks and notes
+
+	// The block form: a planner picks anyone on the planner; a technician blocks only their own time
+	// (the form then sends no person, and the server makes it the caller's own).
+	p6d_block_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return;
+		opts = opts || {};
+		const can = !!this.data.can_schedule;
+		const me = frappe.session && frappe.session.user;
+		const user = opts.user || (can ? "" : me);
+		if (!can && user && user !== me) {
+			frappe.show_alert({ message: __("You can only block your own time."), indicator: "orange" }, 6);
+			return;
+		}
+		const person = (this.tech_by_user || {})[user] || null;
+		const resource = (person && person.resource) || "";
+		if (can && user && !resource) {
+			frappe.msgprint(
+				__("{0} is not on the planner's list of people (Planner Resources), so their time cannot be blocked here.", [
+					this.tech_name(user),
+				])
+			);
+			return;
+		}
+		const people = (this.data.technicians || [])
+			.filter((entry) => entry.enabled && entry.resource)
+			.map((entry) => ({ value: entry.resource, label: entry.name }));
+		kit.blocks.form({
+			block: opts.block || null,
+			note: opts.block ? this.p6d_block_note(opts.block.name) : "",
+			date: opts.date || this.p6d_default_date(),
+			resource,
+			resource_label: user ? this.tech_name(user) : "",
+			people: can ? people : null,
+			self_only: !can,
+			on_saved: () => this.load(),
+			on_deleted: () => this.load(),
+		});
+	},
+
+	p6d_note_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data || !this.data.can_schedule) return;
+		opts = opts || {};
+		kit.blocks.note_form({
+			note: opts.note || null,
+			date: opts.date || this.p6d_default_date(),
+			on_saved: () => this.load(),
+			on_deleted: () => this.load(),
+		});
+	},
+
+	p6d_person_actions(user) {
+		if (!this.data || !this.p6d_can_block(user)) return [];
+		return [{ label: __("Block time…"), on_click: (info) => this.p6d_block_form({ user, date: info && info.date }) }];
+	},
+
+	p6d_day_peek_opts() {
+		const can = !!(this.data && this.data.can_schedule);
+		return {
+			head_html: (ymd) => this.p6d_peek_head(ymd),
+			on_head_click: (e, ymd) => this.p6d_peek_click(e, ymd),
+			actions: can ? [{ label: __("Add a note"), on_click: (ymd) => this.p6d_note_form({ date: ymd }) }] : [],
+		};
+	},
+
+	p6d_peek_head(ymd) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const notes = this.p6d_peek_notes(ymd);
+		return kit.blocks.note_list_html(notes || [], { loading: notes === null });
+	},
+
+	p6d_peek_notes(ymd) {
+		const { start, end } = this.range();
+		if (ymd >= mp_ymd(start) && ymd <= mp_ymd(end)) return this.p6d_notes_of(ymd);
+		const p6d = this.p6d;
+		if (p6d.notes[ymd]) return p6d.notes[ymd];
+		if (!p6d.asked[ymd]) {
+			p6d.asked[ymd] = true;
+			const kit = this.p6d_kit();
+			if (!kit) return [];
+			kit.blocks
+				.get_notes(ymd)
+				.then((notes) => {
+					p6d.notes[ymd] = notes || [];
+					const peek = this.p6a && this.p6a.peek;
+					if (peek && peek.is_open() && typeof peek.render === "function" && peek.date && peek.date() === ymd) peek.render();
+				})
+				.catch(() => {
+					p6d.notes[ymd] = [];
+				});
+		}
+		return null;
+	},
+
+	p6d_peek_click(e, ymd) {
+		const target = e.target;
+		const edit = target && target.closest ? target.closest("[data-pk-note-edit]") : null;
+		if (!edit) return false;
+		const name = edit.getAttribute("data-pk-note-edit");
+		const note = (this.p6d_peek_notes(ymd) || []).find((entry) => entry.name === name);
+		if (note) this.p6d_note_form({ note, date: ymd });
+		return true;
+	},
+
+	// ------------------------------------------------------------------ the Conflict center
+
+	p6d_open_conflicts(focus) {
+		const center = this.p6d && this.p6d.center;
+		if (center) center.open(focus || null);
+	},
+
+	p6d_range() {
+		if (!this.data || !MP.views.includes(this.view)) return null;
+		const { start, end } = this.range();
+		const last = moment.min(end.clone(), start.clone().add(MP6D.max_days - 1, "days"));
+		return { start: mp_ymd(start), end: mp_ymd(last), label: `${mp_when(mp_ymd(start))} – ${mp_when(mp_ymd(last))}` };
+	},
+
+	p6d_after_list() {
+		const center = this.p6d && this.p6d.center;
+		const count = center ? center.count() : null;
+		if (this.$p6d_conflicts) {
+			this.$p6d_conflicts
+				.text(count == null ? __("Conflicts") : __("Conflicts ({0})", [count]))
+				.toggleClass("mp-p6d-hot", Number(count) > 0)
+				.attr(
+					"title",
+					count
+						? __("{0} conflict(s) nobody has kept in the dates on screen", [count])
+						: __("Everything wrong in the dates on screen, with one-click fixes")
+				);
+		}
+		this.p6d_decorate();
+	},
+
+	p6d_projected_card(args) {
+		return (
+			Object.values(this.by_key || {}).find(
+				(card) => card && card.kind === "projected" && card.movable && card.contract === args.contract && card.from_date === args.from_date
+			) || null
+		);
+	},
+
+	// A fix from the Conflict center: exactly the method and arguments the server worked out, sent
+	// through send() with the Undo snapshot save_move takes for a drag, so the reason prompt and Undo
+	// apply. Nothing but this page's own writes (move_visit, move_projected) may run from here.
+	p6d_run_fix(job) {
+		const method = MP6D.fix_methods[job.fix.method];
+		if (!method || !job.args) {
+			frappe.show_alert({ message: __("That fix cannot run from this planner."), indicator: "orange" }, 6);
+			return Promise.resolve(null);
+		}
+		const visit = method === "move_visit";
+		const card = visit ? this.by_key[job.args.record] || null : this.p6d_projected_card(job.args);
+		const item = (job.conflict.items || []).find((entry) => entry.name === job.fix.name) || {};
+		const site = card ? this.site_of(card) : item.title || job.fix.name;
+		const snapshot = card ? this.p6d_snapshot(card, job.args, visit, site) : null;
+		if (card) {
+			card.saving = true;
+			this.render();
+		}
+		return this.send(method, job.args, { snapshot, message: this.p6d_fix_message(job, site), noun: visit ? "visit" : "contract" }).finally(
+			() => this.load()
+		);
+	},
+
+	// What Undo needs, in the shape save_move() records for the same move.
+	p6d_snapshot(card, args, visit, site) {
+		const before = this.snapshot_of(card);
+		if (visit) {
+			return {
+				kind: "visit",
+				site,
+				record: card.name,
+				date: before.date,
+				technician: before.technician,
+				crew: before.crew,
+				planned_hours: before.planned_hours,
+				full_day: before.full_day,
+			};
+		}
+		return {
+			kind: "projected",
+			site,
+			contract: card.contract,
+			serial_no: card.serial_no || null,
+			from_date: args.to_date,
+			to_date: before.date,
+		};
+	},
+
+	p6d_fix_message(job, site) {
+		const args = job.args;
+		if (job.fix.type === "next_free_day") return __("{0} moved to {1}", [site, mp_when(args.date || args.to_date)]);
+		if (job.fix.type === "pick_free") {
+			const to = (job.picked && job.picked.label) || this.tech_name(args.technician);
+			return __("{0}: {1} handed over to {2}", [site, this.tech_name(args.from_user), to]);
+		}
+		return __("{0} updated", [site]);
+	},
+
+	// A record in a conflict: a visit of this planner opens in its side panel; a project task opens on
+	// the Project Planner; a trip or a rental crew task opens its form.
+	p6d_open_item(conflict, item) {
+		const kit = this.p6d_kit();
+		const go = (fn) => (kit ? kit.drawer.navigate(fn) : fn());
+		if (item.own) {
+			const card = (item.key && this.by_key[item.key]) || this.by_key[item.name];
+			if (card && card.kind !== "booking") this.open_card(card);
+			else go(() => frappe.set_route("Form", item.doctype, item.name));
+			return;
+		}
+		if (item.planner === "project") go(() => frappe.set_route(MP.project_route, "week", conflict.date));
+		else if (item.planner === "travel") go(() => frappe.set_route("Form", "Travel Trip", item.name));
+		else if (item.doctype === "Task") go(() => frappe.set_route("Form", "Task", item.name));
+	},
+
+	// Who cannot take a visit: whoever has it now and everyone already on it.
+	p6d_exclude(conflict, fix) {
+		const out = {};
+		const card = this.by_key[fix.name];
+		if (card && card.kind === "visit") this.visit_people(card).forEach((user) => (out[user] = __("Already on it")));
+		const from = (fix.args && fix.args.from_user) || fix.user;
+		if (from) out[from] = __("Booked on it now");
+		return out;
+	},
+
+	p6d_pick_context(conflict, fix) {
+		const card = this.by_key[fix.name];
+		const item = (conflict.items || []).find((entry) => entry.name === fix.name) || {};
+		const site = card ? this.site_of(card) : item.title || fix.name;
+		const from = (fix.args && fix.args.from_user) || fix.user;
+		return from ? __("Hand {0} over from {1}", [site, this.tech_name(from)]) : site;
+	},
+
+	// A visit in a conflict nobody kept: its "Day off" chip (for a day off or a block) becomes the way
+	// into the Conflict center, else one small Conflict marker. Never two marks for one conflict.
+	p6d_decorate() {
+		const center = this.p6d && this.p6d.center;
+		if (!center || !this.data) return;
+		const root = this.$body[0];
+		root.querySelectorAll("[data-p6d-conflict]").forEach((node) => this.p6d_undecorate(node));
+		const index = center.index();
+		const day_off = __("Day off");
+		root.querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			const card = this.by_key[el.getAttribute("data-key")];
+			if (!card || card.kind === "booking") return;
+			const found = card.kind === "projected" ? index[`key|${card.key}`] : index[`${MP6D.visit}|${card.name}`];
+			if (!found) return;
+			const row = el.getAttribute("data-row-user");
+			const hit = row ? found.find((entry) => entry.user === row) : found[0];
+			const holder = el.querySelector(".mp-card-who");
+			if (!hit || !holder) return;
+			let chip = null;
+			if (hit.kind === "day_off" || hit.kind === "blocked") {
+				chip = Array.from(holder.querySelectorAll(".mp-chip.mp-red")).find((node) => node.textContent.indexOf(day_off) === 0);
+			}
+			if (!chip) {
+				chip = document.createElement("span");
+				chip.className = "mp-chip mp-red mp-p6d-mark";
+				chip.textContent = __("Conflict");
+				holder.appendChild(chip);
+			}
+			chip.classList.add("mp-p6d-link");
+			chip.setAttribute("data-p6d-conflict", hit.key);
+			chip.setAttribute("role", "button");
+			chip.setAttribute("tabindex", "0");
+			chip.setAttribute("title", __("Open the Conflict center at this conflict"));
+		});
+	},
+
+	p6d_undecorate(node) {
+		if (node.classList.contains("mp-p6d-mark")) {
+			node.remove();
+			return;
+		}
+		node.classList.remove("mp-p6d-link");
+		["data-p6d-conflict", "role", "tabindex", "title"].forEach((name) => node.removeAttribute(name));
+	},
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	p6d_menu_items(target) {
+		if (!this.p6d || !this.data || !target) return [];
+		const out = [];
+		const center = this.p6d.center;
+		const card = target.kind === "card" ? target.card : null;
+		if (card && center && card.kind !== "booking") {
+			const hits = card.kind === "projected" ? center.find("", "", card.key) : center.find(MP6D.visit, card.name);
+			if (hits && hits.length) {
+				out.push({ label: __("Show conflicts"), on_click: () => this.p6d_open_conflicts({ key: hits[0].key }) });
+			}
+		}
+		if (target.kind === "cell" && target.ymd) {
+			if (center) out.push({ label: __("Conflicts this day"), on_click: () => this.p6d_open_conflicts({ date: target.ymd }) });
+			if (this.data.can_schedule) {
+				out.push({ label: __("Add a day note…"), on_click: () => this.p6d_note_form({ date: target.ymd }) });
+			}
+		}
+		if ((target.kind === "cell" || target.kind === "person") && this.p6d_can_block(target.user)) {
+			out.push({
+				label: __("Block time…"),
+				on_click: () => this.p6d_block_form({ user: target.user || "", date: target.ymd || this.p6d_default_date() }),
+			});
+		}
+		return out;
+	},
+
+	// ------------------------------------------------------------------ legend
+
+	p6d_legend_sections() {
+		const kit = this.p6d_kit();
+		if (!kit) return [];
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		return [
+			{
+				title: __("Unavailable time, day notes and conflicts"),
+				items: [
+					item(
+						kit.blocks.chip_html({ name: "", slot: ["14:00", "16:00"] }, {}),
+						"A personal block: the technician is unavailable then. The planners and the person see its note; everyone else sees “Unavailable”."
+					),
+					item(kit.blocks.chip_html({ name: "", all_day: 1 }, {}), "Unavailable all day: the day counts like time off."),
+					item(
+						kit.blocks.notes_html([{ note: __("Shop meeting 7 am") }], {}),
+						"A note for the crew on that day. Hover over it or tap it to read it all."
+					),
+					item(
+						`<span class="mp-chip mp-red mp-p6d-link">${mp_esc(__("Conflict"))}</span>`,
+						"Click it to open the Conflict center at that conflict."
+					),
+					item(
+						"",
+						"Conflicts (N) on the toolbar lists everything wrong in the dates on screen, with one-click fixes for visits. A fix that causes a conflict still asks for a reason, like a drag."
+					),
+				],
+			},
+		];
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);

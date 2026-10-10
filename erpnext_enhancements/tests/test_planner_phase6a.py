@@ -891,7 +891,15 @@ def _strip(code):
 
 
 def _block(code, marker):
-	return code[code.index(marker) :]
+	"""The Phase 6A block: from its banner to the next phase's banner (or the end of the file).
+
+	Its house rules (it never saves, so no ``this.send(``; it reads only keys planner_views builds)
+	are 6A's own. A later phase appended after it (6B–6D) writes through ``send`` on purpose and reads
+	its own endpoints' keys, and has its own suite pinning its own rules.
+	"""
+	start = code.index(marker)
+	end = code.find("\n// ======================================================================", start + len(marker))
+	return code[start:] if end < 0 else code[start:end]
 
 
 PP_MARKER = "// ====================================================================== Phase 6A"

@@ -13,6 +13,16 @@
  *   // person_key(person): what identifies a person to the page (a resource, or a user);
  *   // only(person): which people to show (the Maintenance Planner shows its technicians).
  *
+ * Extension points (Phase 6D UI), so a page adds its own parts without a second drawer:
+ *   person({..., actions: [{label, primary, on_click(info)}]})   footer buttons; `info` is
+ *       {resource, user, date, data}: the person, the day picked in the drawer (else today when it
+ *       is in the week shown, else its first day) and the drawer's answer. "Block time…" uses it.
+ *   day({..., head_html(date, data), on_head_click(e, date), actions: [{label, on_click(date)}]})
+ *       `head_html` is drawn above everyone's columns (already escaped by the page: the day's notes);
+ *       `on_head_click` sees a click in the drawer first and returns true when it took it; the
+ *       actions go after "Open this week". The day controller also has `render()` (draw again from
+ *       what it has, without asking the server) and `date()`.
+ *
  * Each returns a controller ({ refresh(), is_open(), data() }) the page refreshes after a change of
  * its own. The arrows inside a drawer step its own days and never move the calendar behind it.
  * Times off read only "Off" / "Holiday" (the server never sends a type or a reason), drive times
@@ -30,7 +40,8 @@ export const METHODS = {
 	day: "erpnext_enhancements.api.planner_views.get_day_overview",
 };
 
-const KINDS = { task: "Task", rental: "Rental", visit: "Visit", travel: "Travel", drive: "Driving" };
+// A personal block (Phase 6D) reads "Blocked": its label is "Unavailable" and never its note.
+const KINDS = { task: "Task", rental: "Rental", visit: "Visit", travel: "Travel", drive: "Driving", block: "Blocked" };
 const MAPS = /^https:\/\/www\.google\.com\/maps\//;
 
 // One person-day as a tone and a short text: the planners' own wording.
@@ -66,13 +77,16 @@ function drag_attrs(booking, day, person) {
 
 function booking_html(booking, day, person, ctx) {
 	const kind = KINDS[booking.kind] ? booking.kind : "other";
-	const grab = !!(ctx.can_drag && booking.kind !== "drive" && ctx.can_drag(booking, day, person, ctx.data));
+	// Driving is padding and a personal block is absence (Phase 6D): neither is a booking to move.
+	const grab = !!(ctx.can_drag && booking.kind !== "drive" && booking.kind !== "block" && ctx.can_drag(booking, day, person, ctx.data));
 	const when = booking.slot && booking.slot.length === 2 ? booking.slot.join("–") : booking.arrive || "";
 	const length =
 		booking.kind === "drive"
 			? drive(day.drive_minutes || (Number(booking.hours) || 0) * 60)
 			: booking.kind === "travel"
 			? t("Away")
+			: booking.kind === "block" && !(booking.slot && booking.slot.length === 2)
+			? t("All day")
 			: `${hours(booking.hours)}h`;
 	const site = booking.project_title && booking.project_title !== booking.label ? booking.project_title : "";
 	const meta = [when, length, site].filter(Boolean).join(" · ");
@@ -334,6 +348,26 @@ export function create_peeks(env) {
 					return null;
 				});
 		};
+		// The page's own buttons (Phase 6D: "Block time…"), told who and which day the drawer is on.
+		const info = () => {
+			const data = state.data || {};
+			const last = add_days(state.start, days - 1);
+			const today = data.today && data.today >= state.start && data.today <= last ? data.today : null;
+			return {
+				resource: data.resource || opts.resource || null,
+				user: data.user || opts.user || null,
+				date: state.selected || today || state.start,
+				data: state.data,
+			};
+		};
+		const actions = (Array.isArray(opts.actions) ? opts.actions : [])
+			.filter((action) => action && action.label && typeof action.on_click === "function")
+			.map((action) => ({
+				label: action.label,
+				primary: !!action.primary,
+				title: action.title,
+				on_click: () => action.on_click(info()),
+			}));
 		state.handle = env.drawer.open({
 			title: opts.label || t("Schedule"),
 			body: loading(),
@@ -342,6 +376,7 @@ export function create_peeks(env) {
 			key: `person:${opts.resource || opts.user || ""}`,
 			owner: opts.owner || null,
 			push: opts.push || null,
+			actions,
 			reopen: () => person(Object.assign({}, opts, { start: state.start, selected: state.selected })),
 			on_click: (e) => {
 				const target = e.target;
@@ -388,7 +423,16 @@ export function create_peeks(env) {
 				state.data && typeof opts.only === "function"
 					? Object.assign({}, state.data, { people: (state.data.people || []).filter(opts.only) })
 					: state.data;
-			handle.set_body(day_overview_html(data, { can_drag: opts.can_drag, person_key: opts.person_key, data }));
+			// The page's own part above the columns (Phase 6D: the day's notes), already escaped.
+			let head = "";
+			if (typeof opts.head_html === "function") {
+				try {
+					head = opts.head_html(state.date, state.data) || "";
+				} catch (e) {
+					if (env.warn) env.warn(e);
+				}
+			}
+			handle.set_body(head + day_overview_html(data, { can_drag: opts.can_drag, person_key: opts.person_key, data }));
 		};
 		const load = () => {
 			const token = ++state.token;
@@ -420,6 +464,11 @@ export function create_peeks(env) {
 		if (typeof opts.on_week === "function") {
 			actions.push({ label: t("Open this week"), on_click: () => opts.on_week(state.date) });
 		}
+		(Array.isArray(opts.actions) ? opts.actions : []).forEach((action) => {
+			if (action && action.label && typeof action.on_click === "function") {
+				actions.push({ label: action.label, primary: !!action.primary, on_click: () => action.on_click(state.date) });
+			}
+		});
 		state.handle = env.drawer.open({
 			title: t("Everyone on {0}", [day_label(state.date, true)]),
 			body: loading(),
@@ -431,6 +480,7 @@ export function create_peeks(env) {
 			actions,
 			reopen: () => day(Object.assign({}, opts, { date: state.date })),
 			on_click: (e) => {
+				if (typeof opts.on_head_click === "function" && opts.on_head_click(e, state.date) === true) return;
 				const target = e.target;
 				const el = target && target.closest ? target.closest("[data-pk-person-open]") : null;
 				if (!el || typeof opts.on_person !== "function") return;
@@ -444,6 +494,7 @@ export function create_peeks(env) {
 		load();
 		return {
 			refresh: load,
+			render,
 			is_open: () => !!(state.handle && state.handle.is_open()),
 			data: () => state.data,
 			date: () => state.date,

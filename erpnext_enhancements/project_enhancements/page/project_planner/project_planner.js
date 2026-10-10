@@ -379,6 +379,8 @@ class ProjectPlanner {
 		this.init_phase4();
 		this.init_phase5();
 		this.init_phase6a();
+		this.init_phase6c();
+		this.init_phase6d();
 		this.bind_drag();
 	}
 
@@ -405,6 +407,7 @@ class ProjectPlanner {
 	}
 
 	handle_route() {
+		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
 		this.view = target.view;
@@ -443,6 +446,8 @@ class ProjectPlanner {
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
 		this.p4_set_mode(mode);
+		this.p6c_set_mode(mode);
+		this.p6d_set_mode(mode);
 		if (route && this.$draft_bar) this.$draft_bar.hide();
 		[this.$project, this.$pm, this.$foreign, this.$undo].forEach(($el) => $el && $el.toggle(!heatmap));
 		if (heatmap && this.$copy) this.$copy.hide();
@@ -787,6 +792,8 @@ class ProjectPlanner {
 		this.render_phase3b();
 		this.render_phase4();
 		this.render_phase6a();
+		this.render_phase6c();
+		this.render_phase6d();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -816,6 +823,7 @@ class ProjectPlanner {
 			};
 			if (day.off) state.text += ` · ${__("½ day off")}`;
 		}
+		this.p6d_state(day, state);
 		if (conflict) state.cls += " pp-conflict";
 		state.soft = soft;
 		state.soft_ratio = capacity > 0 ? Math.min(Math.max(0, 1 - state.ratio), soft / capacity) : 0;
@@ -1076,6 +1084,7 @@ class ProjectPlanner {
 								: ""
 						}
 					</div>
+					${this.p6d_day_html(ymd, resources)}
 					${cards.map((card) => this.card_html(card, ymd)).join("")}
 					${(foreign_by_day[ymd] || []).map((item) => this.foreign_html(item)).join("")}
 				</div>`);
@@ -1097,6 +1106,7 @@ class ProjectPlanner {
 				)}">${pp_esc(pp_when(ymd))}</div>`
 			);
 		});
+		html.push(this.p6d_crew_notes_row(days));
 		resources.forEach((resource) => {
 			html.push(this.person_html(resource, true));
 			days.forEach((ymd) => {
@@ -1135,6 +1145,7 @@ class ProjectPlanner {
 	booking_html(resource, ymd, booking) {
 		// Driving is padding on the day's hours, not a thing to open: the cell's drive line shows it.
 		if (booking.kind === "drive") return "";
+		if (booking.kind === "block") return this.p6d_block_html(resource, ymd, booking);
 		const card = booking.ref && this.by_task[booking.ref];
 		const hours = booking.slot ? booking.slot.join("–") : `${pp_hours(booking.hours)}h`;
 		if (card) {
@@ -1932,6 +1943,7 @@ class ProjectPlanner {
 		if (editable && card.tentative) links.push(["firm", __("Firm up")]);
 		links.push(...this.phase5_links(card));
 		links.push(...this.p6a_links(card));
+		links.push(...this.p6c_links(card));
 		const fields = [
 			{
 				fieldtype: "HTML",
@@ -2020,6 +2032,7 @@ class ProjectPlanner {
 			const action = e.currentTarget.getAttribute("data-action");
 			dialog.hide();
 			if (this.p6a_action(action, card)) return;
+			if (this.p6c_action(action, card)) return;
 			if (action === "task") frappe.set_route("Form", "Task", card.name);
 			else if (action === "project") frappe.set_route("Form", "Project", card.project);
 			else if (action === "suggest") this.suggest_dates(card);
@@ -3529,6 +3542,7 @@ const PP3B_METHODS = {
 				$('<div class="pp-mw-empty"></div>').text(entry.off ? __("Off") : __("Nothing booked")).appendTo($day);
 			}
 			items.forEach((stop) => $day.append(this.my_week_item_html(stop)));
+			this.p6d_my_week_day($day, $dh, entry, data);
 		});
 	},
 
@@ -4479,6 +4493,7 @@ const PP6A_METHODS = {
 		});
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person"), kit.hover_glow(this.$body[0], "project")];
 		this.p6a_show_hints();
+		this.p6c_ready();
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -4732,6 +4747,7 @@ const PP6A_METHODS = {
 			width: PP6A.widths.person,
 			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
 			on_full_route: (who, ymd) => kit.drawer.navigate(() => this.go_route(who, ymd)),
+			actions: this.p6d_person_actions(resource),
 		});
 	},
 
@@ -4749,6 +4765,7 @@ const PP6A_METHODS = {
 			can_drag: (booking, day, person, data) => this.p6a_can_drag(booking, data),
 			on_person: (person) => this.p6a_open_person(person.resource, ymd),
 			on_week: (date) => kit.drawer.navigate(() => this.go("week", date)),
+			...this.p6d_day_peek_opts(),
 		});
 	},
 
@@ -4805,6 +4822,7 @@ const PP6A_METHODS = {
 		};
 		this.p6a.peek = { data: () => state.data, refresh: load, is_open: () => handle.is_open() };
 		load();
+		this.p6c_project_drawer(project, handle);
 	},
 
 	p6a_filter_project(project) {
@@ -5016,6 +5034,7 @@ const PP6A_METHODS = {
 		const item = (sample_html, text) => ({ sample_html, text: __(text) });
 		kit.legend(
 			[
+				...this.p6c_legend_sections(),
 				{
 					title: __("Quick looks"),
 					items: [
@@ -5095,6 +5114,7 @@ const PP6A_METHODS = {
 						item("", "A change that causes a conflict asks for a reason, never blocks. Undo puts the last change back."),
 					],
 				},
+				...this.p6d_legend_sections(),
 			],
 			{ title: __("How to read the Project Planner"), owner: PP6A.owner }
 		);
@@ -5102,3 +5122,2090 @@ const PP6A_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP6A_METHODS);
+
+// ====================================================================== Phase 6C: big picture, tablet mode and print
+//
+// TASK-2026-02469. Nik picked all six on 2026-10-09; each is on both planners (the Maintenance Planner
+// has the same block, MP6C_METHODS):
+//
+//   - Color by (toolbar)                     the cards' left edge by Task color (today's look, the
+//                                            default), Person (the lead, or the row in the crew view),
+//                                            Job type, Project, Project manager or Status; a key under
+//                                            the toolbar and in the "?" legend. Job type and status
+//                                            use fixed palettes; project and PM a stable hash
+//                                            (planner_kit.big_picture), so a project is always the
+//                                            same color on every device; a person their own color,
+//                                            as on the dots and crew badges
+//   - click a project's name on a card, "Highlight" in the project drawer, "Highlight this project"
+//     in a task's panel or the right-click menu (6B's p6_menu_providers)
+//                                            every card of that project lights up and the rest fade,
+//                                            in every view and week; a toolbar pill and Esc clear it.
+//                                            Not remembered: a reload starts clear
+//   - Views (toolbar)                        named views ("Field crew, Build only") saved on the
+//                                            server per person (api/planner_views_prefs), switch and
+//                                            delete; the view last used is saved a moment after any
+//                                            change and restored when the planner opens, on any
+//                                            device. The route always wins: only a bare
+//                                            /project-planner takes the saved view, and it replaces
+//                                            that history entry (route_flags.replace_route), so
+//                                            Back never lands on a second copy
+//   - the team strip                         over the week and crew views: per day the free hours of
+//                                            everyone the group filter shows, amber at 90% booked,
+//                                            red past capacity, pencil hatched; click a day for
+//                                            everyone's day (6A's day peek)
+//   - Tap to move (toolbar; on by default on a touch screen)
+//                                            tap a card, then the day (or a person's day in the crew
+//                                            view): the move goes through drop -> plan_drop ->
+//                                            commit -> send, exactly like a drag, so the reason
+//                                            prompt, the past-day question and Undo all apply. A tap
+//                                            on a card with it off still opens the card
+//   - Print (toolbar)                        exactly what is on screen (view, range, filters, colors,
+//                                            highlight), or only 6B's selection, built from the
+//                                            loaded data (never the live DOM) on the print design
+//                                            system's chrome, printed from a browser window
+//
+// Everything Phase 6C adds is in this block, mixed into ProjectPlanner below. The hooks into the
+// class and the blocks above are one line each: init_phase6c (constructor), p6c_before_route
+// (handle_route), p6c_set_mode (set_mode), render_phase6c (render), p6c_links and p6c_action
+// (open_card), p6c_ready (p6a_ready), p6c_project_drawer (p6a_open_project) and p6c_legend_sections
+// (p6a_legend).
+
+const PP6C = {
+	prefs: "erpnext_enhancements.api.planner_views_prefs",
+	planner: "project",
+	default_view: "week",
+	tap_pref: "ee_project_planner_tap_move",
+	save_delay: 1500,
+	restore_wait: 4000,
+	key_limit: 12,
+	legend_limit: 40,
+	// What a saved view may hold: the same rules as api/planner_views_prefs.SCHEMA["project"].
+	schema: {
+		view: ["enum", ["week", "month", "crew", "heatmap"]],
+		project: ["text"],
+		pm: ["text"],
+		group: ["enum", ["", "Field", "PM", "Design", "Subcontractor"]],
+		foreign: ["bool"],
+		over_only: ["bool"],
+		panel: ["bool"],
+		color_by: ["enum", ["default", "person", "job_type", "project", "pm", "status"]],
+	},
+	// Phase 4's Running over chip is never restored on its own the next morning (a named view may hold it).
+	not_remembered: ["over_only"],
+	color_modes: [
+		["default", "Task color"],
+		["person", "Person"],
+		["job_type", "Job type"],
+		["project", "Project"],
+		["pm", "Project manager"],
+		["status", "Status"],
+	],
+	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap" },
+	none_color: "#94a3b8",
+};
+
+const PP6C_STYLE = `
+.pp-p6c-color{max-width:190px;}
+.pp-p6c-pill{display:inline-flex;align-items:center;gap:4px;max-width:340px;border:1px solid var(--primary,#2490ef);border-radius:14px;padding:1px 2px 1px 10px;font-size:12px;background:rgba(36,144,239,.08);color:var(--text-color);}
+.pp-p6c-pill-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-p6c-pill-x{border:none;background:none;color:inherit;font-size:15px;line-height:1;padding:2px 7px;cursor:pointer;border-radius:10px;}
+.pp-p6c-pill-x:hover,.pp-p6c-pill-x:focus{background:var(--control-bg);outline:none;}
+.pp-p6c-tap.pp-p6c-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);color:var(--primary,#2490ef);font-weight:600;}
+.pp-p6c-key{display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;font-size:12px;color:var(--text-muted);margin:-2px 0 8px;}
+.pp-p6c-key-title{font-weight:600;}
+.pp-p6c-key-item{display:inline-flex;align-items:center;gap:5px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-p6c-key-item[data-p6c-hi]{cursor:pointer;border-radius:6px;}
+.pp-p6c-key-item[data-p6c-hi]:hover{color:var(--text-color);text-decoration:underline;}
+.pp-p6c-swatch{flex:0 0 auto;display:inline-block;width:16px;height:11px;border:1px solid var(--border-color);border-left-width:4px;border-radius:3px;background:var(--card-bg);}
+.pp-card.pp-p6c-colored{border-left-color:var(--pp-p6c-c) !important;}
+.pp-p6c-on .pp-card:not(.pp-p6c-hi),.pp-p6c-on .pp-fcard,.pp-p6c-on .pp-ecard{opacity:.22;}
+.pp-p6c-on .pp-card.pp-p6c-hi{box-shadow:0 0 0 2px var(--primary,#2490ef),0 0 10px rgba(36,144,239,.45);}
+.pp-p6c-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:6px;overflow:hidden;}
+.pp-p6c-sday{display:flex;flex-direction:column;gap:2px;min-width:0;padding:3px 6px;font-size:11px;cursor:pointer;border-left:1px solid var(--border-color);}
+.pp-p6c-strip .pp-p6c-sday:first-child{border-left:none;}
+.pp-p6c-sday:hover,.pp-p6c-sday:focus{background-color:var(--control-bg);outline:none;}
+.pp-p6c-slabel{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-p6c-stext{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-p6c-sday.pp-red{background-color:rgba(220,38,38,.10);}
+.pp-p6c-sday.pp-red .pp-p6c-stext{color:#b91c1c;}
+.pp-p6c-sday.pp-amber .pp-p6c-stext{color:#b45309;}
+.pp-p6c-scorner{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:3px 8px;font-size:11px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
+.pp-p6c-scorner span{font-size:10px;color:var(--text-muted);}
+.pp-crew > .pp-p6c-sday{border-left:1px solid var(--border-color);}
+.pp-p6c-movebar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1024;display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:min(640px,calc(100vw - 24px));padding:8px 10px 8px 14px;border:1px solid var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 10px 28px rgba(0,0,0,.22);font-size:13px;}
+.pp-p6c-movebar-text{flex:1 1 220px;min-width:0;}
+.pp-p6c-movebar-hint{display:block;font-size:12px;color:var(--text-muted);}
+.pp-card.pp-p6c-moving,.pp-od-card.pp-p6c-moving{outline:2px dashed var(--primary,#2490ef);outline-offset:1px;}
+.pp-p6c-armed .pp-day,.pp-p6c-armed .pp-cell{cursor:copy;}
+.pp-p6c-views-list{list-style:none;margin:0;padding:0;}
+.pp-p6c-views-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border-color);}
+.pp-p6c-views-row:first-child{border-top:none;}
+.pp-p6c-views-main{flex:1 1 auto;min-width:0;}
+.pp-p6c-views-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pp-p6c-views-sub{font-size:12px;color:var(--text-muted);}
+@media (pointer:coarse){
+.pp-toolbar .btn,.pp-toolbar select,.pp-toolbar .pp-toggle,.pp-toolbar label,.pp-seg button{min-height:40px;}
+.pp-week .pp-card,.pp-crew .pp-card,.pp-tray .pp-card{min-height:40px;}
+.pp-day-num{display:inline-flex;align-items:center;min-height:32px;padding:0 10px;}
+.pp-p6c-sday{min-height:40px;}
+.pp-p6c-pill-x{min-width:40px;min-height:36px;}
+.pp-p6c-movebar .btn{min-height:40px;min-width:64px;}
+.pp-p6c-views-row .btn{min-height:40px;}
+}
+@media (max-width:1024px){
+.pp-wrap{max-width:100%;overflow-x:clip;}
+}
+@media (max-width:760px){
+.pp-p6c-pill{max-width:100%;}
+.pp-p6c-movebar{left:12px;right:12px;bottom:12px;transform:none;max-width:none;}
+.pp-p6c-sday{padding:2px 3px;}
+.pp-p6c-key-item{max-width:160px;}
+}
+`;
+
+const PP6C_METHODS = {
+	init_phase6c() {
+		if (!document.getElementById("pp-style-6c")) {
+			$("<style id='pp-style-6c'>").text(PP6C_STYLE).appendTo(document.head);
+		}
+		this.p6c = {
+			color_by: "default",
+			highlight: null,
+			moving: null,
+			tap: this.p6c_tap_default(),
+			views: [],
+			last: null,
+			loaded: false,
+			loading: null,
+			waiting: false,
+			restored: false,
+			saved_text: null,
+			save_timer: null,
+			drawer_tool: null,
+		};
+		// 6B's right-click menu asks every provider for items; on this branch alone nobody does, and
+		// each action here has its own way in as well (a project name, the panel's link, the toolbar).
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6c_menu_items(target));
+
+		this.$p6c_pill = $('<span class="pp-p6c-pill" role="status"></span>').hide().insertAfter(this.$title);
+		$('<span class="pp-p6c-pill-text"></span>').appendTo(this.$p6c_pill);
+		$('<button type="button" class="pp-p6c-pill-x">×</button>')
+			.attr("title", __("Stop highlighting (Esc)"))
+			.attr("aria-label", __("Stop highlighting"))
+			.on("click", () => this.p6c_clear_highlight())
+			.appendTo(this.$p6c_pill);
+		this.$p6c_color = this.make_select(this.$toolbar, __("Color by"), (value) => this.p6c_set_color(value))
+			.addClass("pp-p6c-color")
+			.insertAfter(this.$group);
+		PP6C.color_modes.forEach(([value, label]) => {
+			$("<option></option>").val(value).text(__("Color: {0}", [__(label)])).appendTo(this.$p6c_color);
+		});
+		this.$p6c_tap = $('<button type="button" class="pp-toggle pp-p6c-tap" aria-pressed="false"></button>')
+			.text(__("Tap to move"))
+			.attr("title", __("Tap a card, then tap the day where it goes, instead of dragging"))
+			.on("click", () => this.p6c_set_tap(!this.p6c.tap))
+			.insertBefore(this.$undo);
+		this.$p6c_views = $('<button type="button" class="btn btn-default btn-sm pp-p6c-views"></button>')
+			.text(__("Views"))
+			.attr("title", __("Your saved views: filters, view and colors"))
+			.on("click", (e) => this.p6c_views_menu(e.currentTarget))
+			.insertBefore(this.$undo);
+		this.$p6c_print = $('<button type="button" class="btn btn-default btn-sm pp-p6c-print"></button>')
+			.text(__("Print"))
+			.attr("title", __("Print exactly what is on screen, with your filters and colors"))
+			.on("click", (e) => this.p6c_print_click(e.currentTarget))
+			.insertBefore(this.$undo);
+		this.$p6c_key = $('<div class="pp-p6c-key"></div>').hide().insertAfter(this.$toolbar);
+		this.$p6c_movebar = $('<div class="pp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
+
+		// Capture on the document: a tap that moves a card is taken before 6A's quick looks and the
+		// card's own click see it.
+		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
+		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
+		// After 6A's capture listener on the same element: a project's name on a card highlights it
+		// (6A opens its drawer from the same click).
+		this.$body[0].addEventListener("click", (e) => this.p6c_body_click(e), true);
+		this.$body.on("change click", () => this.p6c_state_soon());
+		this.p6c_sync_controls();
+		this.p6c_fetch_views();
+	},
+
+	// The kit has loaded (6A's p6a_ready): paint what needed it.
+	p6c_ready() {
+		if (this.p6c && this.data && PP.views.includes(this.view)) this.render_phase6c();
+	},
+
+	render_phase6c() {
+		if (!this.p6c || !this.data || !PP.views.includes(this.view)) return;
+		this.p6c_sync_controls();
+		this.p6c_paint();
+		this.p6c_apply_highlight();
+		this.p6c_render_strip();
+		this.p6c_render_key();
+		this.p6c_mark_moving();
+		this.p6c_state_soon();
+	},
+
+	// The route, heatmap and My week views have no cards to color, highlight or move.
+	p6c_set_mode(mode) {
+		if (!this.p6c) return;
+		const calendar = mode === "";
+		[this.$p6c_color, this.$p6c_tap].forEach(($el) => $el && $el.toggle(calendar));
+		[this.$p6c_views, this.$p6c_print].forEach(($el) => $el && $el.toggle(calendar || mode === PP.heatmap_view));
+		if (!calendar) {
+			this.p6c_disarm();
+			if (this.$p6c_key) this.$p6c_key.hide();
+			if (this.$p6c_pill) this.$p6c_pill.hide();
+		}
+		this.p6c_state_soon();
+	},
+
+	p6c_kit() {
+		const kit = this.p6a && this.p6a.kit;
+		return kit && kit.big_picture ? kit : null;
+	},
+
+	p6c_pick(state) {
+		const kit = this.p6c_kit();
+		if (kit) return kit.big_picture.pick_view(state, PP6C.schema);
+		// Before the kit: the keys, unchecked (the server has already cleaned what it sends).
+		const out = {};
+		Object.keys(PP6C.schema).forEach((key) => {
+			if (state && Object.prototype.hasOwnProperty.call(state, key)) out[key] = state[key];
+		});
+		return out;
+	},
+
+	p6c_here() {
+		return (frappe.get_route() || [])[0] === PP.route && this.$body.is(":visible");
+	},
+
+	// ------------------------------------------------------------------ controls
+
+	p6c_sync_controls() {
+		const p6c = this.p6c;
+		if (!p6c) return;
+		// A value whose option is not there yet (before the first load) is picked up by fill_filters.
+		if (this.$project) this.$project.val(this.project || "");
+		if (this.$pm) this.$pm.val(this.pm || "");
+		if (this.$group) this.$group.val(PP.groups.includes(this.group) ? this.group : "");
+		if (this.$foreign) this.$foreign.find("input").prop("checked", !!this.show_foreign);
+		if (this.$p6c_color) this.$p6c_color.val(p6c.color_by);
+		if (this.$p6c_tap) {
+			this.$p6c_tap.toggleClass("pp-p6c-on", !!p6c.tap).attr("aria-pressed", p6c.tap ? "true" : "false");
+		}
+		if (this.$p6c_pill) {
+			const on = !!p6c.highlight && PP.views.includes(this.view);
+			this.$p6c_pill.toggle(on);
+			if (on) {
+				const text = __("Highlighting {0}", [p6c.highlight.label || p6c.highlight.key]);
+				this.$p6c_pill.find(".pp-p6c-pill-text").text(text).attr("title", text);
+			}
+		}
+	},
+
+	// ------------------------------------------------------------------ color by
+
+	p6c_set_color(mode) {
+		const known = PP6C.color_modes.map(([value]) => value);
+		this.p6c.color_by = known.includes(mode) ? mode : "default";
+		this.render();
+	},
+
+	p6c_mode_label(mode) {
+		const found = PP6C.color_modes.find(([value]) => value === mode);
+		return __(found ? found[1] : "Task color");
+	},
+
+	p6c_lead(card) {
+		const crew = card.crew || [];
+		return crew.find((member) => member.is_lead) || crew[0] || null;
+	},
+
+	// The color of a card in the current mode; null in the default mode (the card keeps its own).
+	// `row` is the crew-view row the card sits in.
+	p6c_card_color(card, row) {
+		const kit = this.p6c_kit();
+		const mode = this.p6c.color_by;
+		if (!kit || mode === "default" || !card) return null;
+		const bp = kit.big_picture;
+		if (mode === "person") {
+			const lead = row || (this.p6c_lead(card) || {}).resource;
+			return lead ? this.resource_color(lead) : PP6C.none_color;
+		}
+		if (mode === "job_type") return bp.palette_color(bp.JOB_TYPES, bp.job_type(card.project_type, card.rental_kind));
+		if (mode === "project") return card.project ? bp.hash_color(card.project) : PP6C.none_color;
+		if (mode === "pm") {
+			const project = card.project && this.by_project[card.project];
+			return project && project.pm ? bp.hash_color(project.pm) : PP6C.none_color;
+		}
+		if (mode === "status") return bp.palette_color(bp.TASK_STATUSES, bp.task_status(card.status, card.overdue));
+		return null;
+	},
+
+	p6c_paint() {
+		const kit = this.p6c_kit();
+		if (!kit || this.p6c.color_by === "default") return;
+		this.$body[0].querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			const card = this.by_task[el.getAttribute("data-task")];
+			const color = kit.big_picture.safe_paint(this.p6c_card_color(card, el.getAttribute("data-resource")), "");
+			if (!color) return;
+			el.style.setProperty("--pp-p6c-c", color);
+			el.classList.add("pp-p6c-colored");
+		});
+	},
+
+	// The cards a key or a legend describes: the ones the filters let through.
+	p6c_visible_cards() {
+		if (!this.data) return [];
+		return [].concat(this.data.tasks || [], this.data.unscheduled || []).filter((card) => this.task_visible(card));
+	},
+
+	// What the current colors mean: [{key, label, color, hi}] (hi: a project a click can highlight).
+	p6c_legend_entries() {
+		const kit = this.p6c_kit();
+		const mode = this.p6c.color_by;
+		if (!kit || mode === "default") return [];
+		const bp = kit.big_picture;
+		if (mode === "job_type") return bp.palette_legend(bp.JOB_TYPES);
+		if (mode === "status") return bp.palette_legend(bp.TASK_STATUSES);
+		if (mode === "person") {
+			return this.resources().map((resource) => ({
+				key: resource.name,
+				label: resource.label || resource.name,
+				color: this.resource_color(resource.name),
+			}));
+		}
+		const seen = {};
+		let none = false;
+		this.p6c_visible_cards().forEach((card) => {
+			if (mode === "project") {
+				if (!card.project) none = true;
+				else if (!seen[card.project]) {
+					seen[card.project] = {
+						key: card.project,
+						label: card.project_title && card.project_title !== card.project ? card.project_title : card.project,
+						color: bp.hash_color(card.project),
+						hi: card.project,
+					};
+				}
+				return;
+			}
+			const project = card.project && this.by_project[card.project];
+			if (!project || !project.pm) none = true;
+			else if (!seen[project.pm]) seen[project.pm] = { key: project.pm, label: project.pm, color: bp.hash_color(project.pm) };
+		});
+		const out = Object.values(seen).sort((a, b) => String(a.label).localeCompare(String(b.label)));
+		if (none) {
+			out.push({
+				key: "",
+				label: mode === "project" ? __("No project") : __("No project manager"),
+				color: PP6C.none_color,
+			});
+		}
+		return out;
+	},
+
+	p6c_swatch_html(color) {
+		const kit = this.p6c_kit();
+		const paint = kit ? kit.big_picture.safe_paint(color, PP6C.none_color) : PP6C.none_color;
+		return `<i class="pp-p6c-swatch" style="border-left-color:${pp_esc(paint)}"></i>`;
+	},
+
+	p6c_render_key() {
+		const $key = this.$p6c_key;
+		if (!$key) return;
+		const entries = this.p6c_legend_entries();
+		if (!entries.length || !PP.views.includes(this.view)) {
+			$key.hide().empty();
+			return;
+		}
+		const shown = entries.slice(0, PP6C.key_limit);
+		const items = shown.map((entry) => {
+			const hi = entry.hi ? ` data-p6c-hi="${pp_esc(entry.hi)}" role="button" tabindex="0"` : "";
+			const tip = entry.hi ? __("Highlight {0}", [entry.label]) : entry.label;
+			return `<span class="pp-p6c-key-item"${hi} title="${pp_esc(tip)}">${this.p6c_swatch_html(entry.color)}${pp_esc(
+				entry.label
+			)}</span>`;
+		});
+		if (entries.length > shown.length) {
+			items.push(`<span class="pp-p6c-key-item">${pp_esc(__("+{0} more (see ?)", [entries.length - shown.length]))}</span>`);
+		}
+		$key[0].innerHTML = `<span class="pp-p6c-key-title">${pp_esc(__("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]))}</span>${items.join("")}`;
+		$key.show();
+	},
+
+	// The "?" legend's sections (6A's p6a_legend lists them first).
+	p6c_legend_sections() {
+		if (!this.p6c) return [];
+		const mode = this.p6c.color_by;
+		const entries = this.p6c_legend_entries().slice(0, PP6C.legend_limit);
+		const colors = {
+			title: __("Card colors: {0}", [this.p6c_mode_label(mode)]),
+			note:
+				mode === "default"
+					? __("Each card's left edge is the task's own color. Color by in the toolbar colors the cards by person, job type, project, project manager or status instead.")
+					: "",
+			items:
+				mode === "default"
+					? [{ sample_html: this.p6c_swatch_html(PP.default_color), text: __("A task with no color of its own.") }]
+					: entries.map((entry) => ({ sample_html: this.p6c_swatch_html(entry.color), text: entry.label })),
+		};
+		const strip = `<span class="pp-p6c-sday pp-amber pp-p6a-sample"><span class="pp-p6c-stext">${pp_esc(__("46h free"))}</span></span>`;
+		const pill = `<span class="pp-p6c-pill"><span class="pp-p6c-pill-text">${pp_esc(__("Highlighting"))}</span></span>`;
+		return [
+			colors,
+			{
+				title: __("The big picture"),
+				items: [
+					{
+						sample_html: pill,
+						text: __("Click a project's name on a card, or Highlight this project, to light up all its tasks in every view and fade the rest. Esc or × clears it."),
+					},
+					{
+						sample_html: strip,
+						text: __("The team row over the week and crew views: the free hours of everyone the group filter shows. Amber at 90% booked, red when the team is booked past its hours, pencil hatched. Click a day to see everyone's day."),
+					},
+					{
+						sample_html: "",
+						text: __("Tap to move: tap a card, then tap the day (or a person's day in the crew view) where it goes. On by default on a touch screen; it asks for a reason and can be undone like a drag."),
+					},
+					{
+						sample_html: "",
+						text: __("Views: save your filters, view and colors under a name and switch between them. The planner opens the way you last left it, on any device."),
+					},
+					{
+						sample_html: "",
+						text: __("Print: exactly what is on screen, with your filters and colors, or only the cards you selected."),
+					},
+				],
+			},
+		];
+	},
+
+	// ------------------------------------------------------------------ highlight a project
+
+	p6c_project_label(project) {
+		const known = this.by_project[project];
+		return known && known.title && known.title !== project ? `${known.title} (${project})` : project;
+	},
+
+	p6c_highlight(project) {
+		if (!project) return;
+		this.p6c.highlight = { key: project, label: this.p6c_project_label(project) };
+		this.p6c_apply_highlight();
+		this.p6c_sync_controls();
+		this.p6c_refresh_drawer_tool();
+	},
+
+	p6c_clear_highlight() {
+		if (!this.p6c.highlight) return;
+		this.p6c.highlight = null;
+		this.p6c_apply_highlight();
+		this.p6c_sync_controls();
+		this.p6c_refresh_drawer_tool();
+	},
+
+	p6c_toggle_highlight(project) {
+		if (this.p6c.highlight && this.p6c.highlight.key === project) this.p6c_clear_highlight();
+		else this.p6c_highlight(project);
+	},
+
+	p6c_apply_highlight() {
+		const root = this.$body[0];
+		const hi = this.p6c.highlight;
+		root.classList.toggle("pp-p6c-on", !!hi && PP.views.includes(this.view));
+		root.querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			const card = this.by_task[el.getAttribute("data-task")];
+			el.classList.toggle("pp-p6c-hi", !!(hi && card && card.project === hi.key));
+		});
+	},
+
+	// A project's name on a card (6A made it a target), or an entry of the color key.
+	p6c_body_click(e) {
+		const target = e.target;
+		if (!this.p6c || !target || !target.closest || Date.now() < this.click_blocked_until) return;
+		const key_item = target.closest(".pp-p6c-key [data-p6c-hi]");
+		if (key_item) {
+			this.p6c_toggle_highlight(key_item.getAttribute("data-p6c-hi"));
+			return;
+		}
+		const chip = target.closest(".pp-card [data-pk-project]");
+		if (chip) this.p6c_highlight(decodeURIComponent(chip.getAttribute("data-pk-project")));
+	},
+
+	p6c_links(card) {
+		if (!this.p6c || !card || !card.project) return [];
+		const on = this.p6c.highlight && this.p6c.highlight.key === card.project;
+		return [["p6c_highlight", on ? __("Stop highlighting this project") : __("Highlight this project")]];
+	},
+
+	p6c_action(action, card) {
+		if (action !== "p6c_highlight") return false;
+		if (card && card.project) this.p6c_toggle_highlight(card.project);
+		return true;
+	},
+
+	p6c_menu_items(target) {
+		if (!this.p6c || !target || target.kind !== "card" || !target.card) return [];
+		const card = target.card;
+		const items = [];
+		if (card.project) {
+			const on = this.p6c.highlight && this.p6c.highlight.key === card.project;
+			items.push({
+				label: on ? __("Stop highlighting this project") : __("Highlight this project"),
+				on_click: () => this.p6c_toggle_highlight(card.project),
+			});
+		}
+		const source = target.el ? this.drag_source(target.el) : null;
+		if (source && source.kind === "card") {
+			items.push({ label: __("Move with taps…"), hint: __("then tap a day"), on_click: () => this.p6c_arm(source) });
+		}
+		return items;
+	},
+
+	// The project drawer (6A) gets a Highlight switch in its header.
+	p6c_project_drawer(project, handle) {
+		if (!this.p6c || !handle || typeof handle.set_tools !== "function") return;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "btn btn-default btn-xs pp-p6c-drawer-hi";
+		button.title = __("Light up this project's tasks on the calendar and fade the rest");
+		button.addEventListener("click", () => this.p6c_toggle_highlight(project));
+		handle.set_tools(button);
+		this.p6c.drawer_tool = { project, handle, button };
+		this.p6c_refresh_drawer_tool();
+	},
+
+	p6c_refresh_drawer_tool() {
+		const tool = this.p6c.drawer_tool;
+		if (!tool) return;
+		if (!tool.handle.is_open()) {
+			this.p6c.drawer_tool = null;
+			return;
+		}
+		const on = !!(this.p6c.highlight && this.p6c.highlight.key === tool.project);
+		tool.button.textContent = on ? __("Highlighted ✓") : __("Highlight");
+		tool.button.setAttribute("aria-pressed", on ? "true" : "false");
+	},
+
+	// Esc: a move being placed first, then the highlight. A drawer or menu on top takes Esc itself.
+	p6c_keydown(e) {
+		if (e.key !== "Escape" || e.defaultPrevented || !this.p6c || this.drag) return;
+		if (!this.p6c.moving && !this.p6c.highlight) return;
+		if (!this.p6c_here()) return;
+		const kit = this.p6a && this.p6a.kit;
+		if (kit && kit.guard && kit.guard.top()) return;
+		if (window.cur_dialog && window.cur_dialog.display) return;
+		const tag = (e.target && e.target.tagName) || "";
+		if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+		if (this.p6c.moving) this.p6c_disarm();
+		else this.p6c_clear_highlight();
+	},
+
+	// ------------------------------------------------------------------ the team strip
+
+	// One day of the people the group filter shows, from the payload (no request).
+	p6c_team_sum(ymd) {
+		const kit = this.p6c_kit();
+		if (!kit) return null;
+		return kit.big_picture.team_day(this.resources().map((resource) => this.day_of(resource.name, ymd)));
+	},
+
+	p6c_team_label() {
+		return this.group ? __("{0} crew", [__(this.group)]) : __("Team");
+	},
+
+	p6c_strip_cells() {
+		const kit = this.p6c_kit();
+		if (!kit) return [];
+		const bp = kit.big_picture;
+		const label = this.p6c_team_label();
+		return this.range_days().map((ymd) => {
+			const sum = this.p6c_team_sum(ymd);
+			const weekday = (kit.format.day_label(ymd) || "").split(",")[0];
+			const tone = { off: "pp-offday", red: "pp-red", amber: "pp-amber", green: "pp-green" }[sum.level] || "";
+			return {
+				ymd,
+				weekday,
+				sum,
+				tone,
+				text: bp.team_text(sum),
+				tip: `${bp.team_tip(label, weekday, sum)}\n${__("Click to see everyone's day")}`,
+			};
+		});
+	},
+
+	p6c_strip_cell_html(cell) {
+		const bar = cell.sum.capacity > 0 ? this.bar_html({ ratio: Math.min(1, cell.sum.ratio), soft_ratio: cell.sum.soft_ratio }) : "";
+		return `
+			<div class="pp-p6c-sday ${cell.tone}" role="button" tabindex="0" data-pp6a-day="${pp_esc(cell.ymd)}"
+				title="${pp_esc(cell.tip)}" aria-label="${pp_esc(cell.tip.split("\n")[0])}">
+				<span class="pp-p6c-slabel">${pp_esc(cell.weekday)}</span>
+				<span class="pp-p6c-stext">${pp_esc(cell.text)}</span>${bar}
+			</div>`;
+	},
+
+	p6c_render_strip() {
+		this.$grid_wrap.find(".pp-p6c-strip, .pp-crew > .pp-p6c-sday, .pp-crew > .pp-p6c-scorner").remove();
+		if (this.view !== "week" && this.view !== "crew") return;
+		const cells = this.p6c_strip_cells();
+		if (!cells.length || !this.resources().length) return;
+		const html = cells.map((cell) => this.p6c_strip_cell_html(cell)).join("");
+		if (this.view === "week") {
+			const $strip = $('<div class="pp-p6c-strip" role="group"></div>').attr("aria-label", __("Team capacity"));
+			$strip[0].innerHTML = html;
+			this.$grid_wrap.prepend($strip);
+			return;
+		}
+		const heads = this.$grid_wrap[0].querySelectorAll(".pp-crew > .pp-crew-head");
+		if (!heads.length) return;
+		const corner = `<div class="pp-p6c-scorner"><b>${pp_esc(this.p6c_team_label())}</b><span>${pp_esc(
+			__("free hours")
+		)}</span></div>`;
+		heads[heads.length - 1].insertAdjacentHTML("afterend", corner + html);
+	},
+
+	// ------------------------------------------------------------------ tap to move
+
+	p6c_coarse() {
+		try {
+			return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+		} catch (e) {
+			return false;
+		}
+	},
+
+	// This device's choice (a tablet stays a tablet), else on for a touch screen.
+	p6c_tap_default() {
+		const saved = this.load_pref(PP6C.tap_pref, "");
+		if (saved === "1") return true;
+		if (saved === "0") return false;
+		return this.p6c_coarse();
+	},
+
+	p6c_set_tap(on) {
+		this.p6c.tap = !!on;
+		this.save_pref(PP6C.tap_pref, on ? "1" : "0");
+		if (!on) this.p6c_disarm();
+		this.p6c_sync_controls();
+		frappe.show_alert(
+			{
+				message: on
+					? __("Tap to move: tap a card, then tap the day where it goes.")
+					: __("Tap to move is off: tap a card to open it, drag it to move it."),
+				indicator: "blue",
+			},
+			5
+		);
+	},
+
+	// Where a tap puts the card: a person's day in the crew view, or a day of the calendar.
+	p6c_tap_target(el) {
+		const cell = el.closest(".pp-cell[data-date][data-resource]");
+		if (cell) return { el: cell, date: cell.getAttribute("data-date"), resource: cell.getAttribute("data-resource") };
+		const day = el.closest(".pp-day[data-date]");
+		if (day) return { el: day, date: day.getAttribute("data-date") };
+		return null;
+	},
+
+	p6c_tap_click(e) {
+		const p6c = this.p6c;
+		if (!p6c || !this.data || (!p6c.tap && !p6c.moving)) return;
+		const target = e.target;
+		if (!target || !target.closest || !this.$body[0].contains(target)) return;
+		if (e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+		if (!PP.views.includes(this.view) || Date.now() < this.click_blocked_until) return;
+		if (target.closest(".pp-p6c-movebar, button, a, input, select, textarea, label, .pp-route, [data-pk-person], [data-pp6a-day]")) {
+			return;
+		}
+		const take = () => {
+			e.preventDefault();
+			e.stopPropagation();
+		};
+		const moving = p6c.moving;
+		if (!moving) {
+			const source = this.drag_source(target);
+			if (!source || (source.kind !== "card" && source.kind !== "overdue")) return;
+			take();
+			this.p6c_arm(source);
+			return;
+		}
+		const card_el = target.closest(".pp-card[data-task], .pp-od-card[data-od-task]");
+		if (card_el && this.p6c_is_moving_el(card_el)) {
+			take();
+			this.p6c_disarm();
+			return;
+		}
+		const place = this.p6c_tap_target(target);
+		if (!place) {
+			// Another card outside the calendar (a tray, the Overdue list): pick that one instead.
+			const other = p6c.tap ? this.drag_source(target) : null;
+			if (other && (other.kind === "card" || other.kind === "overdue")) {
+				take();
+				this.p6c_arm(other);
+			}
+			return;
+		}
+		take();
+		this.p6c_tap_drop(place);
+	},
+
+	// The move goes through the drag's own path: drop -> plan_drop -> commit -> send (reason, Undo).
+	p6c_tap_drop(place) {
+		const moving = this.p6c.moving;
+		if (!moving) return;
+		this.p6c_disarm();
+		this.drop(moving.source, place);
+	},
+
+	p6c_arm(source) {
+		if (!source) return;
+		const label =
+			source.kind === "overdue"
+				? (source.row && (source.row.subject || source.row.name)) || ""
+				: (source.card && (source.card.subject || source.card.name)) || "";
+		this.p6c.moving = {
+			source,
+			label,
+			task: source.kind === "overdue" ? source.row.name : source.card.name,
+			date: source.from_date || "",
+			resource: source.from_resource || "",
+		};
+		this.p6c_render_movebar();
+		this.p6c_mark_moving();
+	},
+
+	p6c_disarm() {
+		if (!this.p6c || !this.p6c.moving) return;
+		this.p6c.moving = null;
+		this.p6c_render_movebar();
+		this.p6c_mark_moving();
+	},
+
+	p6c_is_moving_el(el) {
+		const moving = this.p6c.moving;
+		if (!moving || !el) return false;
+		if (moving.source.kind === "overdue") return el.getAttribute("data-od-task") === moving.task;
+		return (
+			el.getAttribute("data-task") === moving.task &&
+			(el.getAttribute("data-date") || "") === moving.date &&
+			(el.getAttribute("data-resource") || "") === moving.resource
+		);
+	},
+
+	p6c_mark_moving() {
+		const root = this.$body[0];
+		root.classList.toggle("pp-p6c-armed", !!(this.p6c && this.p6c.moving));
+		root.querySelectorAll(".pp-p6c-moving").forEach((el) => el.classList.remove("pp-p6c-moving"));
+		if (!this.p6c || !this.p6c.moving) return;
+		root.querySelectorAll(".pp-card[data-task], .pp-od-card[data-od-task]").forEach((el) => {
+			if (this.p6c_is_moving_el(el)) el.classList.add("pp-p6c-moving");
+		});
+	},
+
+	p6c_render_movebar() {
+		const $movebar = this.$p6c_movebar;
+		if (!$movebar) return;
+		const moving = this.p6c.moving;
+		if (!moving) {
+			$movebar.hide().empty();
+			return;
+		}
+		$movebar.empty().show();
+		const $text = $('<span class="pp-p6c-movebar-text"></span>').appendTo($movebar);
+		$("<b></b>").text(__("Moving: {0}", [moving.label])).appendTo($text);
+		$('<span class="pp-p6c-movebar-hint"></span>')
+			.text(
+				this.view === "crew"
+					? __("Tap a day on a person's row to put it there.")
+					: __("Tap a day to put it there; it keeps its length.")
+			)
+			.appendTo($text);
+		const card = moving.source.kind === "card" ? moving.source.card : null;
+		if (card) {
+			$('<button type="button" class="btn btn-default btn-sm"></button>')
+				.text(__("Open"))
+				.on("click", () => {
+					this.p6c_disarm();
+					const fresh = this.by_task[card.name] || card;
+					this.open_card(fresh);
+				})
+				.appendTo($movebar);
+		}
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Cancel"))
+			.on("click", () => this.p6c_disarm())
+			.appendTo($movebar);
+	},
+
+	// ------------------------------------------------------------------ saved views
+
+	p6c_fetch_views() {
+		const p6c = this.p6c;
+		if (p6c.loading) return p6c.loading;
+		const call = Promise.resolve(
+			frappe.call({ method: `${PP6C.prefs}.get_views`, args: { planner: PP6C.planner } })
+		)
+			.then((r) => {
+				const answer = (r && r.message) || {};
+				p6c.views = Array.isArray(answer.views) ? answer.views : [];
+				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : null;
+			})
+			.catch(() => null);
+		// A slow answer must not keep the planner blank: after a few seconds it opens without it.
+		const late = new Promise((resolve) => setTimeout(resolve, PP6C.restore_wait));
+		p6c.loading = Promise.race([call, late]).then(() => {
+			p6c.loaded = true;
+		});
+		return p6c.loading;
+	},
+
+	// Called first thing in handle_route. True: it has taken this route over (it is waiting for the
+	// saved views, or it has replaced a bare /project-planner with the saved view's route) and
+	// handle_route runs again when the route lands. The URL always wins: a route that names a view is
+	// used as it is, and only the filters are restored on the first open.
+	p6c_before_route() {
+		const p6c = this.p6c;
+		if (!p6c) return false;
+		const route = frappe.get_route() || [];
+		if (route[0] !== PP.route) return false;
+		if (!p6c.loaded) {
+			if (!p6c.waiting) {
+				p6c.waiting = true;
+				this.p6c_fetch_views().then(() => {
+					p6c.waiting = false;
+					this.handle_route();
+				});
+			}
+			return true;
+		}
+		const last = p6c.last ? this.p6c_pick(p6c.last) : null;
+		// The server never remembers these; nor does the page, whatever an older row says.
+		if (last) PP6C.not_remembered.forEach((key) => delete last[key]);
+		if (!p6c.restored) {
+			p6c.restored = true;
+			if (last) {
+				this.p6c_apply_state(last, { render: false });
+				p6c.saved_text = JSON.stringify(last);
+			}
+		}
+		const view = last && last.view;
+		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view)) {
+			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
+			frappe.route_flags = frappe.route_flags || {};
+			frappe.route_flags.replace_route = true;
+			frappe.set_route(PP.route, view, frappe.datetime.get_today());
+			return true;
+		}
+		return false;
+	},
+
+	// The page's state as a view. `remembered`: as "last used" (without the Running over chip).
+	p6c_state(remembered) {
+		const views = PP6C.schema.view[1];
+		const state = {
+			project: this.project || "",
+			pm: this.pm || "",
+			group: this.group || "",
+			foreign: !!this.show_foreign,
+			panel: !!this.panel_open,
+			color_by: this.p6c.color_by,
+		};
+		if (views.includes(this.view)) state.view = this.view;
+		if (!remembered) state.over_only = !!this.over_only;
+		return this.p6c_pick(state);
+	},
+
+	// Apply a view: filters, colors, and (with `route`) its calendar view as a normal route change.
+	p6c_apply_state(state, opts) {
+		opts = opts || {};
+		const view = this.p6c_pick(state);
+		if ("project" in view) this.project = view.project;
+		if ("pm" in view) this.pm = view.pm;
+		if ("group" in view) this.group = view.group;
+		if ("foreign" in view) this.show_foreign = !!view.foreign;
+		if ("panel" in view) this.panel_open = !!view.panel;
+		if ("over_only" in view) this.over_only = !!view.over_only;
+		if ("color_by" in view) this.p6c.color_by = view.color_by;
+		if (this.data) {
+			// A project or PM no longer on the planner would filter out everything.
+			if (this.project && !this.by_project[this.project]) this.project = "";
+			if (this.pm && !(this.data.projects || []).some((project) => project.pm === this.pm)) this.pm = "";
+		}
+		this.show_all_unscheduled = false;
+		this.p6c_sync_controls();
+		if (opts.route && view.view && view.view !== this.view) {
+			this.go(view.view, this.anchor);
+			return;
+		}
+		if (opts.render !== false && this.data) this.render();
+	},
+
+	p6c_state_soon() {
+		const p6c = this.p6c;
+		if (!p6c || !p6c.restored) return;
+		clearTimeout(p6c.save_timer);
+		p6c.save_timer = setTimeout(() => this.p6c_save_last(), PP6C.save_delay);
+	},
+
+	p6c_save_last() {
+		const p6c = this.p6c;
+		if (!PP6C.schema.view[1].includes(this.view)) return;
+		const state = this.p6c_state(true);
+		const text = JSON.stringify(state);
+		if (text === p6c.saved_text) return;
+		p6c.saved_text = text;
+		Promise.resolve(
+			frappe.call({ method: `${PP6C.prefs}.save_last_view`, args: { planner: PP6C.planner, data: text } })
+		)
+			.then((r) => {
+				const answer = (r && r.message) || {};
+				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : state;
+			})
+			.catch(() => {
+				p6c.saved_text = null;
+			});
+	},
+
+	// The saved view the page shows right now, if any.
+	p6c_matching_view() {
+		const now = JSON.stringify(this.p6c_state(false));
+		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
+	},
+
+	p6c_views_menu(anchor) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) {
+			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+			return;
+		}
+		const current = this.p6c_matching_view();
+		const items = (this.p6c.views || []).map((entry) => ({
+			label: entry.name,
+			hint: current && current.name === entry.name ? "✓" : this.p6c_view_summary(entry.data || {}),
+			on_click: () => this.p6c_use_view(entry),
+		}));
+		if (!this.p6c.loaded) items.push({ label: __("Loading your views…"), disabled: true });
+		else if (!items.length) items.push({ label: __("No saved views yet"), disabled: true });
+		items.push({ divider: true });
+		items.push({ label: __("Save view as…"), on_click: () => this.p6c_save_as() });
+		if ((this.p6c.views || []).length) items.push({ label: __("Manage views…"), on_click: () => this.p6c_manage_views() });
+		kit.menu({ anchor, items, title: __("Saved views"), owner: PP6A.owner });
+	},
+
+	p6c_use_view(entry) {
+		if (!entry) return;
+		this.p6c_apply_state(entry.data || {}, { route: true });
+		frappe.show_alert({ message: __("View: {0}", [pp_esc(entry.name)]), indicator: "green" }, 4);
+	},
+
+	// "Crew · Field · Job type colors": what a saved view holds, in a few words.
+	p6c_view_summary(view) {
+		const parts = [];
+		view = this.p6c_pick(view || {});
+		if (view.view) parts.push(__(PP6C.view_labels[view.view] || view.view));
+		if (view.group) parts.push(__(view.group));
+		if (view.project) parts.push(this.p6c_project_label(view.project));
+		if (view.pm) parts.push(view.pm);
+		if (view.over_only) parts.push(__("Running over"));
+		if (view.foreign === false) parts.push(__("No maintenance, rentals, travel"));
+		if (view.color_by && view.color_by !== "default") parts.push(__("{0} colors", [this.p6c_mode_label(view.color_by)]));
+		return parts.join(" · ");
+	},
+
+	p6c_save_as() {
+		const current = this.p6c_matching_view();
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Data",
+					fieldname: "name",
+					label: __("Name"),
+					reqd: 1,
+					default: current ? current.name : "",
+					description: __("For example: Field crew, Build only. Only you see your views."),
+				},
+			],
+			(values) => {
+				const name = String((values && values.name) || "")
+					.replace(/\s+/g, " ")
+					.trim()
+					.slice(0, 60);
+				if (!name) return;
+				const exists = (this.p6c.views || []).some((entry) => entry.name.toLowerCase() === name.toLowerCase());
+				const run = () => this.p6c_store_view(name);
+				if (exists) frappe.confirm(__("Replace your saved view {0}?", [pp_esc(name)]), run);
+				else run();
+			},
+			__("Save view as"),
+			__("Save")
+		);
+	},
+
+	p6c_store_view(name) {
+		return Promise.resolve(
+			frappe.call({
+				method: `${PP6C.prefs}.save_view`,
+				args: { planner: PP6C.planner, name, data: JSON.stringify(this.p6c_state(false)) },
+			})
+		)
+			.then((r) => {
+				const answer = (r && r.message) || {};
+				if (Array.isArray(answer.views)) this.p6c.views = answer.views;
+				frappe.show_alert({ message: __("Saved view {0}", [pp_esc(answer.saved || name)]), indicator: "green" }, 5);
+			})
+			.catch(() => null);
+	},
+
+	p6c_views_html() {
+		const views = this.p6c.views || [];
+		if (!views.length) return `<p class="pk-empty">${pp_esc(__("No saved views yet. Save one from the Views button."))}</p>`;
+		const rows = views.map(
+			(entry) => `
+			<li class="pp-p6c-views-row">
+				<div class="pp-p6c-views-main">
+					<div class="pp-p6c-views-name">${pp_esc(entry.name)}</div>
+					<div class="pp-p6c-views-sub">${pp_esc(this.p6c_view_summary(entry.data || {}))}</div>
+				</div>
+				<button type="button" class="btn btn-default btn-xs" data-p6c-use="${pp_esc(entry.name)}">${pp_esc(__("Use"))}</button>
+				<button type="button" class="btn btn-default btn-xs" data-p6c-delete="${pp_esc(entry.name)}">${pp_esc(__("Delete"))}</button>
+			</li>`
+		);
+		return `<ul class="pp-p6c-views-list">${rows.join("")}</ul><p class="pk-note">${pp_esc(
+			__("Your views are saved for you on the server, so they follow you to any device. Nobody else sees them.")
+		)}</p>`;
+	},
+
+	p6c_manage_views() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return;
+		kit.drawer.open({
+			title: __("Saved views"),
+			body: this.p6c_views_html(),
+			width: 420,
+			key: "p6c-views",
+			owner: PP6A.owner,
+			push: this.$body[0],
+			reopen: () => this.p6c_manage_views(),
+			on_click: (e, handle) => {
+				const el = e.target && e.target.closest ? e.target.closest("[data-p6c-use], [data-p6c-delete]") : null;
+				if (!el) return;
+				const use = el.getAttribute("data-p6c-use");
+				const name = use || el.getAttribute("data-p6c-delete");
+				const entry = (this.p6c.views || []).find((item) => item.name === name);
+				if (!entry) return;
+				if (use) {
+					kit.drawer.navigate(() => this.p6c_use_view(entry));
+					return;
+				}
+				frappe.confirm(__("Delete your saved view {0}? This cannot be undone.", [pp_esc(entry.name)]), () =>
+					Promise.resolve(
+						frappe.call({ method: `${PP6C.prefs}.delete_view`, args: { planner: PP6C.planner, name: entry.name } })
+					)
+						.then((r) => {
+							const answer = (r && r.message) || {};
+							if (Array.isArray(answer.views)) this.p6c.views = answer.views;
+							handle.set_body(this.p6c_views_html());
+						})
+						.catch(() => null)
+				);
+			},
+		});
+	},
+
+	// ------------------------------------------------------------------ print
+
+	// 6B's multi-selection (task names), read defensively: empty when 6B is not there.
+	p6c_selection() {
+		const selection = this.p6_selection;
+		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
+	},
+
+	p6c_print_click(anchor) {
+		const kit = this.p6a && this.p6a.kit;
+		const selected = this.p6c_selection();
+		if (selected.size && kit) {
+			kit.menu({
+				anchor,
+				owner: PP6A.owner,
+				items: [
+					{ label: __("Print this view"), on_click: () => this.p6c_print(false) },
+					{ label: __("Print selection only ({0})", [selected.size]), on_click: () => this.p6c_print(true) },
+				],
+			});
+			return;
+		}
+		this.p6c_print(false);
+	},
+
+	// The window opens on the click itself (one opened after a request is a blocked pop-up) and fills
+	// in when the print design system's chrome arrives; the body is built from the data now.
+	p6c_print(selection_only) {
+		const kit = this.p6c_kit();
+		if (!kit || (!this.data && this.view !== PP.heatmap_view)) {
+			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+			return;
+		}
+		if (!PP6C.schema.view[1].includes(this.view)) {
+			frappe.msgprint(__("Open the week, month, crew or heatmap view to print it."));
+			return;
+		}
+		const win = window.open("", "_blank");
+		if (!win) {
+			frappe.msgprint(__("Allow pop-ups for this site to print the planner."));
+			return;
+		}
+		win.document.write(
+			`<!doctype html><title>${pp_esc(__("Print"))}</title><p style="font-family:sans-serif">${pp_esc(
+				__("Preparing the page…")
+			)}</p>`
+		);
+		const model = this.p6c_print_model(!!selection_only);
+		Promise.resolve(
+			frappe.call({
+				method: `${PP6C.prefs}.get_print_chrome`,
+				args: { planner: PP6C.planner, title: model.heading, lines: JSON.stringify(model.lines) },
+			})
+		)
+			.then((r) => (r && r.message) || null)
+			.catch(() => null)
+			.then((chrome) => {
+				if (win.closed) return;
+				const html = kit.big_picture.print_document(
+					Object.assign({}, model, { chrome: chrome && typeof chrome.open === "string" ? chrome : null })
+				);
+				win.document.open();
+				win.document.write(html);
+				win.document.close();
+				win.focus();
+				const fonts = win.document.fonts && win.document.fonts.ready ? win.document.fonts.ready : Promise.resolve();
+				fonts.then(() => win.setTimeout(() => win.print(), 250));
+			});
+	},
+
+	p6c_day_label(ymd, short) {
+		const kit = this.p6c_kit();
+		const label = kit ? kit.format.day_label(ymd) : ymd;
+		return short ? label.split(", ").slice(1).join(", ") || label : label;
+	},
+
+	// Whole days from `a` to `b` ("YYYY-MM-DD"), without the Desk's moment (the print model runs in tests).
+	p6c_days_between(a, b) {
+		const day = (ymd) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10)));
+		return Math.round((day(b) - day(a)) / 86400000);
+	},
+
+	// The color a printed card carries: the current mode's, else the card's own edge as on screen.
+	p6c_print_color(card, row) {
+		const color = this.p6c_card_color(card, row);
+		if (color) return color;
+		if (card.overdue) return "#dc2626";
+		return pp_color(card.color, PP.default_color);
+	},
+
+	p6c_print_item(card, ymd, row) {
+		const hi = this.p6c.highlight;
+		const marks = [];
+		if (card.tentative) marks.push(__("Pencil"));
+		if (card.overdue) marks.push({ text: __("Overdue"), tone: "red" });
+		if (this.task_conflicts(card).length) marks.push({ text: __("Conflict"), tone: "red" });
+		if (card.drafted) marks.push(__("Draft"));
+		if (ymd && card.start && card.end && card.end > card.start) {
+			marks.push(
+				__("Day {0} of {1}", [this.p6c_days_between(card.start, ymd) + 1, this.p6c_days_between(card.start, card.end) + 1])
+			);
+		}
+		const crew = (card.crew || []).map((member) => this.resource_label(member.resource, member.label)).join(", ");
+		return {
+			title: card.subject || card.name,
+			sub: [row ? "" : card.project_title || card.project, this.hours_text(card), row ? "" : crew].filter(Boolean).join(" · "),
+			color: this.p6c_print_color(card, row),
+			dashed: !!card.tentative,
+			marks,
+			faded: !!(hi && card.project !== hi.key) || !!(row && !this.task_visible(card)),
+			highlight: !!(hi && card.project === hi.key),
+		};
+	},
+
+	p6c_foreign_item(label, sub) {
+		return { title: label, sub, color: PP6C.none_color, dashed: true, faded: !!this.p6c.highlight };
+	},
+
+	p6c_print_lines(selection_only, count) {
+		const lines = [];
+		if (this.view === PP.heatmap_view) {
+			// The heatmap answers to the group filter only.
+			if (this.group) lines.push(__("Group: {0}", [__(this.group)]));
+			return lines;
+		}
+		if (this.project) lines.push(__("Project: {0}", [this.p6c_project_label(this.project)]));
+		if (this.pm) lines.push(__("Project manager: {0}", [this.pm]));
+		if (this.group) lines.push(__("Group: {0}", [__(this.group)]));
+		if (this.over_only) lines.push(__("Only tasks running over"));
+		if (!this.show_foreign && this.view !== PP.heatmap_view) lines.push(__("Maintenance, rentals and travel hidden"));
+		if (this.p6c.color_by !== "default") lines.push(__("Colored by {0}", [this.p6c_mode_label(this.p6c.color_by)]));
+		if (this.p6c.highlight) lines.push(__("Highlighting {0}", [this.p6c.highlight.label]));
+		if (selection_only) lines.push(__("Selected tasks only ({0})", [count]));
+		if (this.draft_on) lines.push(__("With your unpublished drafts"));
+		return lines;
+	},
+
+	// Exactly what is on screen, as a model for planner_kit.big_picture.print_document.
+	p6c_print_model(selection_only) {
+		const view = this.view;
+		const heading = `${__(PP6C.view_labels[view] || view)} · ${this.title()}`;
+		const legend = this.p6c_legend_entries().map((entry) => ({ color: entry.color, label: entry.label }));
+		const model = {
+			doc_title: `${__("Project Planner")} · ${heading}`,
+			heading,
+			legend_title: __("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]),
+			legend,
+			notes: [],
+		};
+		const selected = this.p6c_selection();
+		if (selection_only && selected.size && this.data) {
+			const cards = [].concat(this.data.tasks || [], this.data.unscheduled || []).filter((card) => selected.has(card.name));
+			cards.sort((a, b) => String(a.start || "9999").localeCompare(String(b.start || "9999")) || this.compare(a, b));
+			model.layout = "list";
+			model.columns = [__("Dates"), __("Task"), __("Project"), __("Crew"), __("Hours"), __("Notes")];
+			model.rows = cards.map((card) => {
+				const item = this.p6c_print_item(card, null, null);
+				const when = card.start
+					? card.end && card.end !== card.start
+						? `${this.p6c_day_label(card.start)} – ${this.p6c_day_label(card.end)}`
+						: this.p6c_day_label(card.start)
+					: __("Not scheduled");
+				return {
+					color: item.color,
+					cols: [
+						when,
+						card.subject || card.name,
+						card.project_title || card.project || "",
+						(card.crew || []).map((member) => this.resource_label(member.resource, member.label)).join(", "),
+						this.hours_text(card),
+						item.marks.map((mark) => (typeof mark === "string" ? mark : mark.text)).join(", "),
+					],
+				};
+			});
+			model.lines = [__("Selected tasks")].concat(this.p6c_print_lines(true, cards.length));
+			model.empty = __("None of the selected tasks is on screen.");
+			return model;
+		}
+		model.lines = this.p6c_print_lines(false, 0);
+		if (view === PP.heatmap_view) return Object.assign(model, this.p6c_print_heatmap());
+		if (view === "crew") return Object.assign(model, this.p6c_print_crew());
+		return Object.assign(model, this.p6c_print_calendar());
+	},
+
+	p6c_print_calendar() {
+		const days = this.range_days();
+		const people = this.resources();
+		const visible_people = new Set(people.map((resource) => resource.name));
+		const month = this.view === "month" ? String(this.anchor).slice(0, 7) : "";
+		const rows = [];
+		for (let index = 0; index < days.length; index += 7) {
+			const cells = days.slice(index, index + 7).map((ymd) => {
+				const cards = (this.data.tasks || [])
+					.filter((card) => this.task_visible(card) && this.covered(card, [ymd]).length)
+					.sort((a, b) => this.compare(a, b));
+				const items = cards.map((card) => this.p6c_print_item(card, ymd, null));
+				if (this.show_foreign) {
+					(this.data.foreign || []).forEach((item) => {
+						if (item.date !== ymd || (item.ref && this.by_task[item.ref])) return;
+						if (item.resource && !visible_people.has(item.resource)) return;
+						const who = item.resource ? this.resource_label(item.resource) : "";
+						const hours = item.hours ? `${pp_hours(item.hours)}h` : "";
+						const kind = { visit: __("Maintenance"), rental: __("Rental"), travel: __("Travel") }[item.kind] || "";
+						items.push(this.p6c_foreign_item(item.label || item.ref, [kind, who, hours].filter(Boolean).join(" · ")));
+					});
+				}
+				const sum = this.p6c_team_sum(ymd);
+				const kit = this.p6c_kit();
+				return {
+					head: this.view === "week" ? this.p6c_day_label(ymd) : this.p6c_day_label(ymd, true),
+					sub: people.length && sum && kit ? kit.big_picture.team_text(sum) : "",
+					tone: month && ymd.slice(0, 7) !== month ? "out" : "",
+					items,
+				};
+			});
+			rows.push({ cells });
+		}
+		return {
+			layout: "grid",
+			label_column: false,
+			columns: days.slice(0, 7).map((ymd) => this.p6c_day_label(ymd).split(",")[0]),
+			rows,
+		};
+	},
+
+	p6c_print_crew() {
+		const days = this.range_days();
+		const rows = this.resources().map((resource) => ({
+			label: resource.label || resource.name,
+			sub: resource.group ? __(resource.group) : "",
+			cells: days.map((ymd) => {
+				const day = this.day_of(resource.name, ymd);
+				const state = this.avail_state(day);
+				const items = [];
+				((day && day.bookings) || []).forEach((booking) => {
+					if (booking.kind === "drive") return;
+					const card = booking.ref && this.by_task[booking.ref];
+					if (card) {
+						items.push(this.p6c_print_item(card, null, resource.name));
+						return;
+					}
+					if (!this.show_foreign) return;
+					const length = booking.slot ? booking.slot.join("–") : `${pp_hours(booking.hours)}h`;
+					items.push(this.p6c_foreign_item(booking.label || booking.ref, length));
+				});
+				return { sub: state.text, tone: String(state.cls).includes("pp-offday") ? "off" : "", items };
+			}),
+		}));
+		const kit = this.p6c_kit();
+		if (kit && rows.length) {
+			rows.unshift({
+				label: this.p6c_team_label(),
+				sub: __("free hours"),
+				cells: days.map((ymd) => ({ head: kit.big_picture.team_text(this.p6c_team_sum(ymd)) })),
+			});
+		}
+		return {
+			layout: "grid",
+			label_column: true,
+			columns: [__("Person")].concat(days.map((ymd) => this.p6c_day_label(ymd))),
+			rows,
+			empty: __("No planner resources to show."),
+		};
+	},
+
+	p6c_print_heatmap() {
+		const heat = this.heatmap;
+		if (!heat) return { layout: "grid", columns: [], rows: [], empty: __("The heatmap could not be loaded.") };
+		const rows = heat.rows
+			.filter((row) => !this.group || !row.group || row.group === this.group)
+			.map((row) => ({
+				label: row.label,
+				sub: row.group ? __(row.group) : "",
+				cells: heat.weeks.map((week, index) => {
+					const state = this.heat_state(row.by_start[week.start] || row.ordered[index] || {});
+					return { head: state.pct, sub: state.sub, tone: String(state.cls).includes("pp-offday") ? "off" : "" };
+				}),
+			}));
+		return {
+			layout: "grid",
+			label_column: true,
+			columns: [__("Person")].concat(heat.weeks.map((week) => __("Week of {0}", [this.p6c_day_label(week.start, true)]))),
+			rows,
+			legend: [],
+			empty: __("No planner resources to show."),
+		};
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP6C_METHODS);
+
+// ====================================================================== Phase 6D: Conflict center, personal blocks, day notes
+//
+// Nik, 2026-10-09, for both planners: one list of everything wrong right now with one-click fixes
+// (the Conflict center); personal blocks ("unavailable 2–4 pm", "shop day") that planners put on
+// anyone and each person on their own time, which others see as "Unavailable" and planners with the
+// note; and day notes for the whole crew ("Shop meeting 7 am"). The backend is api/planner_blocks.py
+// and api/planner_conflicts.py (Phase 6D); the drawer, the two forms and the markup are the planner
+// kit's (planner_kit/conflicts.js and blocks.js), shared with the Maintenance Planner.
+//
+//   - "Conflicts (N)" on the toolbar        the Conflict center for the dates on screen. N is what
+//                                            nobody has kept, red above 0, read after each load (one
+//                                            call, debounced), never on a plain re-render. A card in
+//                                            a conflict has its Conflict chip turned into the way in
+//                                            (a small marker when it had no chip): it opens the list
+//                                            at that conflict.
+//   - a fix in the list                     exactly the method and arguments the server worked out,
+//                                            sent through commit()/send() like a drag, so a conflict
+//                                            asks for a reason, Draft mode drafts it and Undo puts it
+//                                            back. "Pick someone who's free" lists who_is_free and
+//                                            picks nobody; "Keep it with a reason" needs a reason.
+//   - "Block time" (planners), "Block       the block form. A block shows in the crew view as a
+//     time…" in a person's drawer and the    hatched "Unavailable 2–4 pm" bar, in week and month as a
+//     right-click menu                       chip; its note only when block_notes has it. Blocks are
+//                                            never dragged.
+//   - a day's notes                         a thin row under each day head (week), a row under the
+//                                            crew view's column heads, a small marker (month); "+ note"
+//                                            for planners; the day drawer shows them in full on top
+//   - My week                               your own blocks with their notes, the notes for your
+//                                            group, and "Block my time" on each day (only your own)
+//
+// Hooks into the class above, one line each: init_phase6d (constructor), render_phase6d (render),
+// p6d_set_mode (set_mode), p6d_state (avail_state), p6d_block_html (booking_html), p6d_day_html
+// (render_calendar), p6d_crew_notes_row (render_crew), p6d_my_week_day (render_my_week), and in
+// Phase 6A's block p6d_person_actions (p6a_open_person), p6d_day_peek_opts (p6a_open_day) and
+// p6d_legend_sections (p6a_legend).
+
+const PP6D = {
+	planner: "project",
+	width: 540,
+	max_days: 60,
+	unavailable: "Unavailable",
+	// The Conflict center runs only these, each the page's own write sent through commit()/send().
+	fix_methods: {
+		[`${PP.api}.save_task`]: "save_task",
+		[`${PP.api}.swap_crew`]: "swap_crew",
+		[`${PP.api}.add_crew`]: "add_crew",
+	},
+	// A maintenance visit opens on the Maintenance Planner, which Projects Users cannot open.
+	maintenance_roles: ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"],
+	// What this block's capture listener answers: a block, a note, a conflict marker.
+	targets: "[data-pk-block], [data-pk-note-open], [data-p6d-conflict]",
+};
+
+const PP6D_STYLE = `
+.pp-p6d-conflicts.pp-p6d-hot{color:#b91c1c;border-color:rgba(220,38,38,.55);font-weight:600;}
+.pp-chip.pp-p6d-link{cursor:pointer;text-decoration:underline dotted;}
+.pp-day > .pk-notes,.pp-day > .pk-notes-mark{margin:0 2px;}
+.pp-p6d-crew-notes{border-left:1px solid var(--border-color);padding:3px 4px;min-width:0;}
+.pp-p6d-crew-corner{position:sticky;left:0;z-index:1;border-left:none;background:var(--card-bg);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);padding:4px 8px;}
+.pp-p6d-mw{display:flex;flex-direction:column;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border-color);}
+.pp-p6d-mw .pk-block{font-size:13px;padding:6px 8px;}
+@media (max-width:760px){
+.pp-p6d-mw-btn{padding:4px 10px;font-size:13px;}
+}
+`;
+
+const PP6D_METHODS = {
+	init_phase6d() {
+		if (!document.getElementById("pp-style-6d")) {
+			$("<style id='pp-style-6d'>").text(PP6D_STYLE).appendTo(document.head);
+		}
+		this.p6d = { center: null, counted: null, notes: {}, asked: {}, notes_for: null };
+		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
+		this.$p6d_conflicts = $('<button type="button" class="btn btn-default btn-sm pp-p6d-conflicts"></button>')
+			.text(__("Conflicts"))
+			.attr("title", __("Everything wrong in the dates on screen, with one-click fixes"))
+			.on("click", () => this.p6d_open_conflicts(null))
+			.insertBefore(this.$undo);
+		this.$p6d_block = $('<button type="button" class="btn btn-default btn-sm pp-p6d-block-btn"></button>')
+			.text(__("Block time"))
+			.attr("title", __("Mark someone unavailable for part of a day or all of it"))
+			.hide()
+			.on("click", () => this.p6d_block_form({ date: this.p6d_default_date() }))
+			.insertBefore(this.$undo);
+		const root = this.$body[0];
+		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click,
+		// not the card's (which opens the task) and not the day's.
+		root.addEventListener("click", (e) => this.p6d_click(e), true);
+		root.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const el = e.target && e.target.closest ? e.target.closest(PP6D.targets) : null;
+				if (!el || e.target !== el) return;
+				e.preventDefault();
+				e.stopPropagation();
+				el.click();
+			},
+			true
+		);
+		frappe.require(PP6A.kit, () => this.p6d_ready());
+	},
+
+	p6d_ready() {
+		const kit = window.planner_kit;
+		if (!kit || !kit.conflicts || !kit.blocks || (this.p6d && this.p6d.center)) return;
+		this.p6d.center = kit.conflicts.center({
+			planner: PP6D.planner,
+			owner: PP6A.owner,
+			push: this.$body[0],
+			width: PP6D.width,
+			range: () => this.p6d_range(),
+			can_schedule: () => !!(this.data && this.data.can_schedule),
+			draft: () => !!this.draft_on,
+			block_note: (name) => this.p6d_block_note(name),
+			run_fix: (job) => this.p6d_run_fix(job),
+			open_item: (conflict, item) => this.p6d_open_item(conflict, item),
+			exclude: (conflict, fix) => this.p6d_exclude(conflict, fix),
+			pick_context: (conflict, fix) => this.p6d_pick_context(conflict, fix),
+			on_list: () => this.p6d_after_list(),
+		});
+		// The calendar may have been drawn before the kit arrived: draw its blocks and notes now.
+		if (this.data && PP.views.includes(this.view)) this.render();
+	},
+
+	p6d_kit() {
+		return this.p6d && this.p6d.center ? window.planner_kit : null;
+	},
+
+	// ------------------------------------------------------------------ hooks
+
+	render_phase6d() {
+		if (!this.p6d || !this.data) return;
+		if (this.$p6d_block) this.$p6d_block.toggle(!!this.data.can_schedule && PP.views.includes(this.view));
+		if (this.p6d.notes_for !== this.data) {
+			// Notes read for days off the screen are as old as the last load.
+			this.p6d.notes = {};
+			this.p6d.asked = {};
+			this.p6d.notes_for = this.data;
+		}
+		this.p6d_decorate();
+		// One Conflict center read per load (debounced), never one per render.
+		const center = this.p6d.center;
+		if (center && this.p6d.counted !== this.data) {
+			this.p6d.counted = this.data;
+			center.schedule();
+		}
+	},
+
+	// The route, heatmap and My week views have no Conflicts or Block time button.
+	p6d_set_mode(mode) {
+		const calendar = mode === "";
+		if (this.$p6d_conflicts) this.$p6d_conflicts.toggle(calendar);
+		if (this.$p6d_block && !calendar) this.$p6d_block.hide();
+	},
+
+	// An all-day personal block makes the day read "Unavailable" rather than "Off".
+	p6d_state(day, state) {
+		if (!day || day.off !== PP6D.unavailable || Number(day.capacity) > 0) return;
+		const booked = Number(day.booked) || 0;
+		state.text = booked > 0.01 ? __("Unavailable, {0}h booked", [pp_hours(booked)]) : __("Unavailable");
+	},
+
+	// A block in the crew view: a hatched "Unavailable 2–4 pm" bar, never a card that drags.
+	p6d_block_html(resource, ymd, booking) {
+		const kit = this.p6d_kit();
+		if (!kit) return "";
+		return kit.blocks.chip_html(booking, {
+			note: this.p6d_block_note(booking.ref),
+			date: ymd,
+			resource,
+			person: resource,
+			editable: this.p6d_can_edit_block(resource),
+		});
+	},
+
+	// Under a day's head in the week and month views: its notes, then everyone shown who is blocked.
+	p6d_day_html(ymd, resources) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const month = this.view === "month";
+		const can = !!this.data.can_schedule;
+		const parts = [
+			kit.blocks.notes_html(this.p6d_notes_of(ymd), { date: ymd, compact: month, can_add: can && !month, project_link: true }),
+		];
+		(resources || []).forEach((person) => {
+			this.p6d_blocks_of(person.name, ymd).forEach((booking) => {
+				parts.push(
+					kit.blocks.chip_html(booking, {
+						who: month ? this.p6a_initials(person.name, person.label) : person.label,
+						note: month ? "" : this.p6d_block_note(booking.ref),
+						date: ymd,
+						resource: person.name,
+						person: person.name,
+						compact: month,
+						editable: this.p6d_can_edit_block(person.name),
+					})
+				);
+			});
+		});
+		return parts.join("");
+	},
+
+	// The crew view's notes row under its column heads; left out when there is nothing to show or add.
+	p6d_crew_notes_row(days) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const can = !!this.data.can_schedule;
+		if (!can && !days.some((ymd) => this.p6d_notes_of(ymd).length)) return "";
+		const cells = days.map(
+			(ymd) =>
+				`<div class="pp-p6d-crew-notes">${kit.blocks.notes_html(this.p6d_notes_of(ymd), {
+					date: ymd,
+					can_add: can,
+					project_link: true,
+				})}</div>`
+		);
+		return `<div class="pp-p6d-crew-notes pp-p6d-crew-corner">${pp_esc(__("Notes"))}</div>${cells.join("")}`;
+	},
+
+	// ------------------------------------------------------------------ what the page knows
+
+	p6d_notes_of(ymd) {
+		return ((this.data && this.data.day_notes) || {})[ymd] || [];
+	},
+
+	p6d_blocks_of(resource, ymd) {
+		const day = resource ? this.day_of(resource, ymd) : null;
+		return ((day && day.bookings) || []).filter((booking) => booking && booking.kind === "block" && booking.ref);
+	},
+
+	// A block's note: ONLY from the payload's block_notes, which the server fills for the viewer (the
+	// planners read every note, a person their own). Every block this page draws reads it here.
+	p6d_block_note(name) {
+		const notes = (this.data && this.data.block_notes) || {};
+		return name && notes[name] ? String(notes[name]) : "";
+	},
+
+	p6d_block_of(booking, resource, ymd) {
+		return { name: booking.ref, date: ymd, resource, all_day: !!booking.all_day, slot: booking.slot || null };
+	},
+
+	p6d_own_resource() {
+		const me = frappe.session && frappe.session.user;
+		const own = ((this.data && this.data.resources) || []).find((person) => person.user && person.user === me);
+		return own ? own.name : "";
+	},
+
+	// A planner edits anyone's block; everyone else only their own.
+	p6d_can_edit_block(resource) {
+		if (this.data && this.data.can_schedule) return true;
+		return !!resource && resource === this.p6d_own_resource();
+	},
+
+	// Who may be offered "Block time…" for `resource` (none: the person themselves, if on the planner).
+	p6d_can_block(resource) {
+		if (this.data && this.data.can_schedule) return true;
+		const own = this.p6d_own_resource();
+		return !!own && (!resource || resource === own);
+	},
+
+	p6d_default_date() {
+		const today = this.today();
+		const { start, end } = this.range();
+		return today >= pp_ymd(start) && today <= pp_ymd(end) ? today : pp_ymd(start);
+	},
+
+	p6d_reload() {
+		if (this.view === PP3B.my_week) return this.load_my_week();
+		if (PP.views.includes(this.view)) return this.load();
+		return null;
+	},
+
+	// ------------------------------------------------------------------ clicks
+
+	p6d_click(e) {
+		if (!this.p6d || Date.now() < this.click_blocked_until) return;
+		const target = e.target;
+		if (!target || !target.closest) return;
+		const take = () => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		const marker = target.closest("[data-p6d-conflict]");
+		if (marker) {
+			take();
+			this.p6d_open_conflicts({ key: marker.getAttribute("data-p6d-conflict") });
+			return;
+		}
+		const add = target.closest("[data-pk-note-add]");
+		if (add) {
+			take();
+			this.p6d_note_form({ date: add.getAttribute("data-pk-note-add") });
+			return;
+		}
+		const note = target.closest("[data-pk-note-open]");
+		if (note) {
+			take();
+			this.p6a_open_day(note.getAttribute("data-pk-note-open"));
+			return;
+		}
+		const block = target.closest("[data-pk-block]");
+		if (block) {
+			take();
+			this.p6d_block_click(block);
+		}
+	},
+
+	p6d_block_click(el) {
+		const kit = this.p6d_kit();
+		const name = el.getAttribute("data-pk-block");
+		const ymd = el.getAttribute("data-pk-block-date");
+		if (!kit || !name) return;
+		if (this.view === PP3B.my_week) {
+			const mine = ((this.my_week_data && this.my_week_data.blocks) || []).find((block) => block && block.name === name);
+			if (mine) this.p6d_my_week_block(mine.date, mine);
+			return;
+		}
+		const resource = el.getAttribute("data-pk-block-resource");
+		const booking = this.p6d_blocks_of(resource, ymd).find((entry) => entry.ref === name);
+		if (!booking) return;
+		if (this.p6d_can_edit_block(resource)) {
+			this.p6d_block_form({ block: this.p6d_block_of(booking, resource, ymd), resource, date: ymd });
+			return;
+		}
+		kit.toast(`${this.resource_label(resource)}: ${kit.blocks.block_text(booking)}`, { tone: "info" });
+	},
+
+	// ------------------------------------------------------------------ blocks and notes
+
+	// The block form: a planner picks anyone; everyone else blocks only their own time (the form then
+	// sends no person at all, and the server makes it the caller's own).
+	p6d_block_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return;
+		opts = opts || {};
+		const can = !!this.data.can_schedule;
+		const own = this.p6d_own_resource();
+		const resource = opts.resource || (can ? "" : own);
+		if (!can && resource && resource !== own) {
+			frappe.show_alert({ message: __("You can only block your own time."), indicator: "orange" }, 6);
+			return;
+		}
+		const people = (this.data.resources || [])
+			.slice()
+			.sort((a, b) => String(a.label).localeCompare(String(b.label)))
+			.map((person) => ({ value: person.name, label: person.label }));
+		kit.blocks.form({
+			block: opts.block || null,
+			note: opts.block ? this.p6d_block_note(opts.block.name) : "",
+			date: opts.date || this.p6d_default_date(),
+			resource,
+			resource_label: resource ? this.resource_label(resource) : "",
+			people: can ? people : null,
+			self_only: !can,
+			on_saved: () => this.p6d_reload(),
+			on_deleted: () => this.p6d_reload(),
+		});
+	},
+
+	p6d_note_form(opts) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data || !this.data.can_schedule) return;
+		opts = opts || {};
+		kit.blocks.note_form({
+			note: opts.note || null,
+			date: opts.date || this.p6d_default_date(),
+			on_saved: () => this.load(),
+			on_deleted: () => this.load(),
+		});
+	},
+
+	// "Block time…" in a person's drawer (6A), for a planner or for the person themselves.
+	p6d_person_actions(resource) {
+		if (!this.data || !this.p6d_can_block(resource)) return [];
+		return [
+			{
+				label: __("Block time…"),
+				on_click: (info) => this.p6d_block_form({ resource: (info && info.resource) || resource, date: info && info.date }),
+			},
+		];
+	},
+
+	// The day drawer (6A): the day's notes in full at the top, Edit on each for a planner, "Add a note".
+	p6d_day_peek_opts() {
+		const can = !!(this.data && this.data.can_schedule);
+		return {
+			head_html: (ymd) => this.p6d_peek_head(ymd),
+			on_head_click: (e, ymd) => this.p6d_peek_click(e, ymd),
+			actions: can ? [{ label: __("Add a note"), on_click: (ymd) => this.p6d_note_form({ date: ymd }) }] : [],
+		};
+	},
+
+	p6d_peek_head(ymd) {
+		const kit = this.p6d_kit();
+		if (!kit || !this.data) return "";
+		const notes = this.p6d_peek_notes(ymd);
+		return kit.blocks.note_list_html(notes || [], { loading: notes === null, project_link: true });
+	},
+
+	// The notes of a day on screen come with the planner; a day the drawer stepped past them is read
+	// once (get_day_notes) and drawn when it arrives.
+	p6d_peek_notes(ymd) {
+		const { start, end } = this.range();
+		if (ymd >= pp_ymd(start) && ymd <= pp_ymd(end)) return this.p6d_notes_of(ymd);
+		const p6d = this.p6d;
+		if (p6d.notes[ymd]) return p6d.notes[ymd];
+		if (!p6d.asked[ymd]) {
+			p6d.asked[ymd] = true;
+			const kit = this.p6d_kit();
+			if (!kit) return [];
+			kit.blocks
+				.get_notes(ymd)
+				.then((notes) => {
+					p6d.notes[ymd] = notes || [];
+					const peek = this.p6a && this.p6a.peek;
+					if (peek && peek.is_open() && typeof peek.render === "function" && peek.date && peek.date() === ymd) peek.render();
+				})
+				.catch(() => {
+					p6d.notes[ymd] = [];
+				});
+		}
+		return null;
+	},
+
+	p6d_peek_click(e, ymd) {
+		const target = e.target;
+		if (!target || !target.closest) return false;
+		const edit = target.closest("[data-pk-note-edit]");
+		if (edit) {
+			const name = edit.getAttribute("data-pk-note-edit");
+			const note = (this.p6d_peek_notes(ymd) || []).find((entry) => entry.name === name);
+			if (note) this.p6d_note_form({ note, date: ymd });
+			return true;
+		}
+		const project = target.closest("[data-pk-note-project]");
+		if (project) {
+			this.p6a_open_project(project.getAttribute("data-pk-note-project"));
+			return true;
+		}
+		return false;
+	},
+
+	// ------------------------------------------------------------------ My week
+
+	// The phone view: the person's own blocks with their notes, the notes for their group, and "Block
+	// my time" on each day, which only ever blocks their own time.
+	p6d_my_week_day($day, $dh, entry, data) {
+		const kit = this.p6d_kit();
+		if (!kit || !data || !data.resource || !entry) return;
+		$('<button type="button" class="btn btn-default btn-xs pp-p6d-mw-btn"></button>')
+			.text(__("Block my time"))
+			.attr("title", __("Mark yourself unavailable for part of this day or all of it"))
+			.on("click", () => this.p6d_my_week_block(entry.date, null))
+			.appendTo($dh);
+		const notes = (data.day_notes || {})[entry.date] || [];
+		const mine = (data.blocks || []).filter((block) => block && block.date === entry.date);
+		if (!notes.length && !mine.length) return;
+		const $box = $('<div class="pp-p6d-mw"></div>');
+		if (notes.length) $box.append(kit.blocks.notes_html(notes, { date: entry.date, full: true }));
+		// get_my_week returns only the person's own blocks, with the note it read through block_notes.
+		mine.forEach((block) =>
+			$box.append(kit.blocks.chip_html(block, { note: block.note, date: entry.date, editable: !!block.can_edit }))
+		);
+		$box.insertAfter($dh);
+		// An all-day block says so itself; the plain "Off" line under it would only repeat it.
+		if (mine.some((block) => block.all_day) && !(entry.items || []).length && !entry.travel) {
+			$day.children(".pp-mw-empty").remove();
+		}
+	},
+
+	p6d_my_week_block(ymd, block) {
+		const kit = this.p6d_kit();
+		const data = this.my_week_data;
+		if (!kit || !data || !data.resource) return;
+		kit.blocks.form({
+			block: block || null,
+			note: block ? block.note : "",
+			date: ymd,
+			resource_label: data.label,
+			self_only: true,
+			can_delete: block ? !!block.can_edit : false,
+			on_saved: () => this.load_my_week(),
+			on_deleted: () => this.load_my_week(),
+		});
+	},
+
+	// ------------------------------------------------------------------ the Conflict center
+
+	p6d_open_conflicts(focus) {
+		const center = this.p6d && this.p6d.center;
+		if (center) center.open(focus || null);
+	},
+
+	p6d_range() {
+		if (!this.data || !PP.views.includes(this.view)) return null;
+		const { start, end } = this.range();
+		const last = moment.min(end.clone(), start.clone().add(PP6D.max_days - 1, "days"));
+		return { start: pp_ymd(start), end: pp_ymd(last), label: `${pp_when(pp_ymd(start))} – ${pp_when(pp_ymd(last))}` };
+	},
+
+	p6d_after_list() {
+		const center = this.p6d && this.p6d.center;
+		const count = center ? center.count() : null;
+		if (this.$p6d_conflicts) {
+			this.$p6d_conflicts
+				.text(count == null ? __("Conflicts") : __("Conflicts ({0})", [count]))
+				.toggleClass("pp-p6d-hot", Number(count) > 0)
+				.attr(
+					"title",
+					count
+						? __("{0} conflict(s) nobody has kept in the dates on screen", [count])
+						: __("Everything wrong in the dates on screen, with one-click fixes")
+				);
+		}
+		this.p6d_decorate();
+	},
+
+	// A fix from the Conflict center: exactly the method and arguments the server worked out, sent
+	// through commit() (or send() for a task that is not on the board) like any drag, so the reason
+	// prompt, Draft mode and Undo all apply. Nothing but this page's own writes may run from here.
+	p6d_run_fix(job) {
+		const method = PP6D.fix_methods[job.fix.method];
+		if (!method || !job.args || !job.args.task) {
+			frappe.show_alert({ message: __("That fix cannot run from this planner."), indicator: "orange" }, 6);
+			return Promise.resolve(null);
+		}
+		const card = this.by_task[job.args.task] || null;
+		const message = this.p6d_fix_message(job, card);
+		if (card) return this.commit(card, method, job.args, message);
+		return this.send(method, job.args, { message }).finally(() => this.load());
+	},
+
+	p6d_fix_message(job, card) {
+		const fix = job.fix;
+		const args = job.args;
+		const item = (job.conflict.items || []).find((entry) => entry.name === args.task) || {};
+		const subject = (card && (card.subject || card.name)) || item.title || args.task;
+		const picked = (job.picked && job.picked.label) || "";
+		if (fix.type === "next_free_day") return __("{0} moved to {1}", [subject, pp_when(args.start)]);
+		if (fix.type === "pencil") return __("{0} is now pencil", [subject]);
+		if (fix.type === "pick_free" && args.to_resource) {
+			return __("{0}: {1} in place of {2}", [subject, this.resource_label(args.to_resource, picked), this.resource_label(args.from_resource)]);
+		}
+		if (fix.type === "pick_free") return __("{0} added to {1}", [this.resource_label(args.resource, picked), subject]);
+		return __("{0} updated", [subject]);
+	},
+
+	// A record in a conflict: this planner's task opens in its side panel; anything else is a link.
+	p6d_open_item(conflict, item) {
+		const kit = this.p6d_kit();
+		const go = (fn) => (kit ? kit.drawer.navigate(fn) : fn());
+		if (item.own && item.doctype === "Task") {
+			const card = this.by_task[item.name];
+			if (card) this.open_card(card);
+			else go(() => frappe.set_route("Form", "Task", item.name));
+			return;
+		}
+		if (item.planner === "maintenance") {
+			if (frappe.user && frappe.user.has_role && frappe.user.has_role(PP6D.maintenance_roles)) {
+				go(() => frappe.set_route("maintenance-planner", "week", conflict.date));
+			} else {
+				frappe.show_alert({ message: __("A maintenance visit: it moves on the Maintenance Planner."), indicator: "blue" });
+			}
+		} else if (item.planner === "travel") {
+			go(() => frappe.set_route("Form", "Travel Trip", item.name));
+		} else if (item.doctype === "Task") {
+			go(() => frappe.set_route("Form", "Task", item.name));
+		}
+	},
+
+	// Who cannot be picked to take a task: whoever it is booked on now and everyone already on it.
+	p6d_exclude(conflict, fix) {
+		const out = {};
+		const card = this.by_task[fix.name];
+		((card && card.crew) || []).forEach((member) => {
+			if (member && member.resource) out[member.resource] = __("Already on it");
+		});
+		if (fix.resource) out[fix.resource] = __("Booked on it now");
+		return out;
+	},
+
+	p6d_pick_context(conflict, fix) {
+		const card = this.by_task[fix.name];
+		const item = (conflict.items || []).find((entry) => entry.name === fix.name) || {};
+		const subject = (card && (card.subject || card.name)) || item.title || fix.name;
+		if (fix.args && fix.args.from_resource) {
+			return __("In place of {0} on {1}", [this.resource_label(fix.args.from_resource), subject]);
+		}
+		if ((fix.credentials || []).length) return __("Add someone to {0}. It needs: {1}", [subject, fix.credentials.join(", ")]);
+		return __("Add someone to {0}", [subject]);
+	},
+
+	// A card in a conflict nobody kept: its red Conflict chip (or, for a missing qualification, the
+	// amber chip that says so) becomes the way into the Conflict center; a card with neither gets one
+	// small marker. Never two marks for one conflict.
+	p6d_decorate() {
+		const center = this.p6d && this.p6d.center;
+		if (!center || !this.data) return;
+		const root = this.$body[0];
+		root.querySelectorAll("[data-p6d-conflict]").forEach((node) => this.p6d_undecorate(node));
+		const index = center.index();
+		const missing = __("Missing {0}", ["|"]).split("|")[0];
+		root.querySelectorAll(".pp-card[data-task]").forEach((el) => {
+			const found = index[`Task|${el.getAttribute("data-task")}`];
+			if (!found) return;
+			const row = el.getAttribute("data-resource");
+			const ymd = el.getAttribute("data-date");
+			const hit = row ? found.find((entry) => entry.resource === row && entry.date === ymd) : found[0];
+			const holder = el.querySelector(".pp-card-chips");
+			if (!hit || !holder) return;
+			const chips = Array.from(holder.querySelectorAll(".pp-chip"));
+			let chip = chips.find((node) => node.classList.contains("pp-red") && node.textContent === __("Conflict"));
+			if (!chip && hit.kind === "qualification") {
+				chip = chips.find((node) => node.classList.contains("pp-amber") && missing && node.textContent.indexOf(missing) === 0);
+			}
+			if (!chip) {
+				chip = document.createElement("span");
+				chip.className = "pp-chip pp-red pp-p6d-mark";
+				chip.textContent = __("Conflict");
+				holder.appendChild(chip);
+			}
+			chip.classList.add("pp-p6d-link");
+			chip.setAttribute("data-p6d-conflict", hit.key);
+			chip.setAttribute("role", "button");
+			chip.setAttribute("tabindex", "0");
+			chip.setAttribute("title", __("Open the Conflict center at this conflict"));
+		});
+	},
+
+	p6d_undecorate(node) {
+		if (node.classList.contains("pp-p6d-mark")) {
+			node.remove();
+			return;
+		}
+		node.classList.remove("pp-p6d-link");
+		["data-p6d-conflict", "role", "tabindex", "title"].forEach((name) => node.removeAttribute(name));
+	},
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	// 6B's menu calls this with what was right-clicked (phase6-wave2's registry).
+	p6d_menu_items(target) {
+		if (!this.p6d || !this.data || !target) return [];
+		const out = [];
+		const center = this.p6d.center;
+		if (target.kind === "card" && target.card && center) {
+			const hits = center.find("Task", target.card.name);
+			if (hits && hits.length) {
+				out.push({ label: __("Show conflicts"), on_click: () => this.p6d_open_conflicts({ key: hits[0].key }) });
+			}
+		}
+		if (target.kind === "cell" && target.ymd) {
+			if (center) out.push({ label: __("Conflicts this day"), on_click: () => this.p6d_open_conflicts({ date: target.ymd }) });
+			if (this.data.can_schedule) {
+				out.push({ label: __("Add a day note…"), on_click: () => this.p6d_note_form({ date: target.ymd }) });
+			}
+		}
+		if ((target.kind === "cell" || target.kind === "person") && this.p6d_can_block(target.resource)) {
+			out.push({
+				label: __("Block time…"),
+				on_click: () => this.p6d_block_form({ resource: target.resource || "", date: target.ymd || this.p6d_default_date() }),
+			});
+		}
+		return out;
+	},
+
+	// ------------------------------------------------------------------ legend
+
+	p6d_legend_sections() {
+		const kit = this.p6d_kit();
+		if (!kit) return [];
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		return [
+			{
+				title: __("Unavailable time, day notes and conflicts"),
+				items: [
+					item(
+						kit.blocks.chip_html({ name: "", slot: ["14:00", "16:00"] }, {}),
+						"A personal block: the person is unavailable then. The planners and the person see its note; everyone else sees “Unavailable”. Click it to change it, if it is yours to change."
+					),
+					item(kit.blocks.chip_html({ name: "", all_day: 1 }, {}), "Unavailable all day: the day counts like time off."),
+					item(
+						kit.blocks.notes_html([{ note: __("Shop meeting 7 am") }], {}),
+						"A note for the crew on that day. Hover over it or tap it to read it all; planners add one with + note."
+					),
+					item(
+						`<span class="pp-chip pp-red pp-p6d-link">${pp_esc(__("Conflict"))}</span>`,
+						"Click a Conflict chip to open the Conflict center at that conflict."
+					),
+					item(
+						"",
+						"Conflicts (N) on the toolbar lists everything wrong in the dates on screen, with one-click fixes. A fix that causes a conflict still asks for a reason, like a drag, and Undo puts it back."
+					),
+				],
+			},
+		];
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP6D_METHODS);
