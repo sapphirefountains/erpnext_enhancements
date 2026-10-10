@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.588.0] - 2026-10-09
+
+### Added
+
+- **"Add visit here…" on the Maintenance Planner** (Phase 6E; Nik, 2026-10-09). There are three
+  ways in: right-click an empty spot, double-click it, or use the toolbar's **Add visit**.
+  - **The form** is a side panel with these fields:
+    - the site: customer-job projects with a Maintenance Profile;
+    - the day and technician, taken from the spot you clicked;
+    - the site's default crew, hours and full day;
+    - the fountain and checklist from the site's active contract.
+  - **What gets created:** a **draft** visit, built by the same code as the nightly scheduler's
+    drafts. That code is now one helper, `tasks._new_maintenance_record`, which the scheduler calls
+    too, so the two cannot drift.
+    - With an active contract, the visit is linked to it like a scheduled visit.
+    - Without one, it is a plain visit.
+  - **Overbooking** warns and asks for a reason, never blocks. It uses the same check as moving a
+    visit.
+  - **Undo** deletes the draft only while nothing has happened to it and nobody else has touched it.
+    It never forces a delete.
+  - New endpoints in `api/maintenance_actions.py`: `get_visit_defaults`, `create_visit`,
+    `remove_created_visit` and `sites_query`.
+- **Move several at once by calendar days or working days** (both planners). A switch in the
+  selection bar picks the unit, and the page remembers it.
+  - With working days, each task moves by the same number of weekdays from its own start and keeps
+    its length in working days. A weekend landing goes to the Monday.
+  - Visits move by weekdays.
+
+### Changed
+
+- **A day note never sends the 6 AM message on its own.** It is added to a message the person
+  already gets, so a crew with nothing booked is not texted just for "Shop meeting 7 am". The
+  combined digest's once-a-day claim is unchanged.
+- **Splitting a task moves its dependents to the second part.** Tasks that waited on the original
+  now wait on the part that finishes the job, each with a timeline note.
+  - The change is written straight to `Task Depends On`, not through `Task.save()`. Saving would
+    have set off ERPNext's own `reschedule_dependent_tasks` date cascade.
+  - Both parts keep the original name.
+  - Undoing the split puts the dependents back.
+
 ## [1.587.0] - 2026-10-09
 
 ### Added
